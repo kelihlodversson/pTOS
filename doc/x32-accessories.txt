@@ -158,6 +158,13 @@ A real callback frees the visible-rectangle output heap block while cleanup
 closes a retired window, without revoking registration. Failed NEXT and FIRST
 calls must preserve their cursor; a valid retry receives the undelivered next
 rectangle or the previous end marker, and a successful FIRST restarts the walk.
+A second cursor regression queues a VDI callback after successful copyout.
+The real trap-return path must defer its hooks through SYSRET: the callback
+would unregister/re-register the owner, allowing the following reap hook to
+close retired windows and invoke another callback that frees the output.
+The kernel observes the completed return before user IRQs can deliver work;
+a later user boundary must run both callbacks and finish cleanup. No global
+deferral flag may suppress nested calls or a later ordinary syscall.
 Slider position/size updates cover closed and topped open windows with no
 sliders, unrelated title/mover or arrow/sizer gadgets, one slider axis, and
 both axes. Missing gadgets return EINVAL without changing state; supported

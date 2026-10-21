@@ -48,6 +48,44 @@ static PD *test_borrow_owner;
 static AESPD *test_borrow_executor;
 static WORD test_borrow_handle, test_borrow_phase;
 static WORD test_cursor_handle, test_cursor_cases;
+static PD *test_return_owner;
+static WORD test_return_handle, test_return_phase;
+static UQUAD test_return_output;
+static BOOL test_return_pending;
+
+static void test_return_committed(PD *pd, CLIENT_WINDOW *w, UQUAD output)
+{
+    WORD h;
+
+    if (test_return_phase || strcmp(w->title, "Return cursor probe"))
+        return;
+    for (h = 1; h < NUM_WIN; h++)
+        if (windows[h].owner == pd && !strcmp(windows[h].title, "Return cursor cleanup"))
+            break;
+    if (h == NUM_WIN)
+        panic("accessory return cleanup fixture missing FAIL\n");
+    test_return_owner = pd;
+    test_return_handle = h;
+    test_return_output = output;
+    test_return_phase = 1;
+    test_return_pending = TRUE;
+    /* The actual return-work VDI hook will unregister/re-register this
+     * owner. Its following reap hook must wait for a later user boundary. */
+    vdi_service_callback_event(VDI_CALLBACK_BUTTON, 630, 0);
+}
+
+static void test_return_closed(WORD h)
+{
+    if (h != test_return_handle || test_return_phase == 3)
+        return;
+    if (test_return_pending || test_return_phase != 2)
+        panic("accessory cleanup crossed committed return FAIL\n");
+    /* Once deferred hooks resume, reproduce another real callback during
+     * the close. It frees the output delivered at the earlier boundary. */
+    vdi_service_callback_event(VDI_CALLBACK_BUTTON, 631, 0);
+    vdi_service_callback_work();
+    test_return_phase = 3;
+}
 
 static void test_cursor_prepare(PD *pd, const AES_WINDOW_REQUEST *request)
 {
@@ -277,6 +315,7 @@ static LONG delete_window(WORD h, CLIENT_WINDOW *w)
         test_replace_closed(h, w);
         test_borrow_closed(h, w);
         test_cursor_closed(h, w);
+        test_return_closed(h);
 #endif
         /* END_UPDATE may have handed the lock to a waiter and dispatched.
          * Leave this closed window for retry rather than delete under it. */
@@ -404,6 +443,10 @@ void x86_64_aes_window_drain(void)
     test_borrow_executor = NULL;
     test_borrow_handle = test_borrow_phase = 0;
     test_cursor_handle = test_cursor_cases = 0;
+    test_return_owner = NULL;
+    test_return_handle = test_return_phase = 0;
+    test_return_output = 0;
+    test_return_pending = FALSE;
 #endif
     /* Every accessory continuation, including borrowed cleanup, has now
      * been cancelled. No executor can resume these reservations. */
@@ -721,8 +764,12 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         if (result == E_OK) {
             if (!kproc_copy_to_user(output, rectangle, sizeof(*rectangle)))
                 result = EIMBA;
-            else
+            else {
                 w->visible_next = cursor;
+#if CONF_WITH_X32_ACCESSORY_TEST
+                test_return_committed(pd, w, output);
+#endif
+            }
         }
         w->busy = NULL;
         return result;
@@ -765,6 +812,21 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
 }
 
 #if CONF_WITH_X32_ACCESSORY_TEST
+/* Observe the real trap-return path after user_callback_return_work(),
+ * before SYSRET enables user IRQ delivery or executes caller instructions. */
+void x86_64_aes_window_test_return(PD *pd)
+{
+    if (!test_return_pending)
+        return;
+    if (pd != test_return_owner || test_return_phase != 1 ||
+        !kproc_aes_get(pd) || windows[test_return_handle].retired ||
+        !(D.w_win[test_return_handle].w_flags & VF_ISOPEN) ||
+        !kproc_validate_user_write(test_return_output, sizeof(GRECT)))
+        panic("accessory hooks crossed committed return FAIL\n");
+    test_return_pending = FALSE;
+    test_return_phase = 2;
+}
+
 BOOL x86_64_aes_window_test_ready(void)
 {
     WORD h, count = 0;
@@ -799,6 +861,8 @@ void x86_64_aes_window_test(void)
         panic("accessory borrowed cleanup case missing FAIL\n");
     if (test_cursor_cases != 2 || test_cursor_handle)
         panic("accessory cursor copyout cases missing FAIL\n");
+    if (test_return_phase != 3 || test_return_pending)
+        panic("accessory committed return case missing FAIL\n");
     for (i = 0; i < 2; i++) {
         h = test_replaced[i];
         if (!h)

@@ -16,6 +16,7 @@ BOOL x86_64_aes_window_redraw(PD *pd, const WORD *message);
 BOOL x86_64_aes_window_pending(PD *pd, AES_MESSAGE *message);
 #if CONF_WITH_X32_ACCESSORY_TEST
 void x86_64_aes_window_test(void);
+void x86_64_aes_window_test_return(PD *pd);
 BOOL x86_64_aes_window_test_ready(void);
 BOOL x86_64_aes_window_test_revoke(PD *pd);
 BOOL x86_64_aes_window_test_reuse(PD *pd);

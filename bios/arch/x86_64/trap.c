@@ -20,6 +20,9 @@
 #include "trap.h"
 #include "vdi_service.h"
 #include "aes_service.h"
+#if CONF_WITH_X32_ACCESSORY_TEST
+#include "aes_window.h"
+#endif
 #include "user_callback.h"
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
 #include "pc_x86_64_memtest.h"
@@ -156,7 +159,8 @@ static x86_64_percpu_t percpu;
 #define SYSCALL_STACK_BYTES 8192
 static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
 
-static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
+                           BOOL *defer_return_work);
 
 /*
  * Set while a real ring-3 `syscall` is being serviced: its entry stub did
@@ -169,6 +173,10 @@ static volatile int syscall_gs_swapped;
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
+    /* Stack-local policy belongs to this invocation across nested callbacks,
+     * Pexec and AES dispatch. No global latch can leak to another return. */
+    BOOL defer_return_work = FALSE;
+
     if (from_ring3)
         syscall_gs_swapped = 1;
 #if CONF_WITH_USER_CALLBACKS
@@ -185,10 +193,14 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     if (from_ring3)
         x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
 #endif
-    trap_dispatch(frame, from_ring3);
+    trap_dispatch(frame, from_ring3, &defer_return_work);
 #if CONF_WITH_USER_CALLBACKS
     if (from_ring3)
-        user_callback_return_work(x86_64_get_saved_user_rsp());
+        user_callback_return_work(x86_64_get_saved_user_rsp(), !defer_return_work);
+#endif
+#if CONF_WITH_X32_ACCESSORY_TEST
+    if (from_ring3 && defer_return_work)
+        x86_64_aes_window_test_return(run);
 #endif
     if (from_ring3)
         syscall_gs_swapped = 0;
@@ -298,12 +310,17 @@ static int xbios_returns_void(ULONG fn)
     return fn == 0x00 || fn == 0x06 || fn == 0x0C || fn == 0x12 || fn == 0x19;
 }
 
-static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
+                           BOOL *defer_return_work)
 {
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;
     long cargs[4];
     long crc;
+
+#if !CONF_WITH_X32_AES
+    (void)defer_return_work;
+#endif
 
     /*
      * The raw argument registers are not inspected here: which of them a
@@ -337,7 +354,8 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     case AES_SERVICE_CLASS:
 #if CONF_WITH_X32_AES
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
-            aes_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10) : EINVFN);
+            aes_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10,
+                          defer_return_work) : EINVFN);
 #else
         frame->rax = (UQUAD)(QUAD)EINVFN;
 #endif

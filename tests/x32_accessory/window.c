@@ -15,6 +15,8 @@ int accessory_window_borrow(void);
 static volatile LONG revoked, reregistered;
 static volatile LONG cursor_freed;
 static GRECT *cursor_output;
+static volatile LONG return_revoked, return_registered, return_freed;
+static GRECT *return_output;
 static AES_APP_INFO callback_info;
 static WORD peer_window;
 
@@ -30,6 +32,15 @@ static void free_cursor_output(WORD status)
 {
     if (status == 629)
         cursor_freed = Mfree(cursor_output);
+}
+
+static void return_cursor_callback(WORD status)
+{
+    if (status == 630) {
+        return_revoked = aes_appl_exit();
+        return_registered = aes_appl_init("ACCTWO", &callback_info);
+    } else if (status == 631)
+        return_freed = Mfree(return_output);
 }
 
 #define CHECK(c) do { if (!(c)) { char failure[80]; \
@@ -345,6 +356,45 @@ static int cursor_copyout(WORD vdi_handle)
     CHECK(aes_wind_delete((WORD)overlay) == E_OK);
     CHECK(aes_wind_delete((WORD)handle) == E_OK);
     (void)Cconws("x32 visible rectangle copyout: PASS\r\n");
+    return 0;
+}
+
+static int cursor_return(const AES_APP_INFO *info, WORD vdi_handle)
+{
+    GRECT rectangle = { 40, 60, 340, 240 }, offscreen = { 2000, 2000, 40, 40 };
+    LONG handle, cleanup, memory;
+    AES_WINDOW_INFO state;
+    VDICONTROL control = { 0 };
+    VDIPB pb = { &control, NULL, NULL, NULL, NULL };
+    VDI_BUTTON_CALLBACK *old_button;
+
+    handle = aes_wind_create(kind, &rectangle);
+    CHECK(handle > 0 && aes_wind_open((WORD)handle, &rectangle) == E_OK);
+    CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, "Return cursor probe") == E_OK);
+    cleanup = aes_wind_create(0, &offscreen);
+    CHECK(cleanup > 0 && aes_wind_open((WORD)cleanup, &offscreen) == E_OK);
+    CHECK(aes_wind_set_text((WORD)cleanup, AES_WINDOW_NAME, "Return cursor cleanup") == E_OK);
+    control.code = 125; control.handle = vdi_handle;
+    control.args.button.new_handler = return_cursor_callback;
+    CHECK(vdi(&pb) == E_OK);
+    old_button = control.args.button.old_handler;
+    memory = Malloc(4096);
+    CHECK(memory > 0);
+    return_output = (GRECT *)(uintptr_t)(ULONG)memory;
+    return_revoked = return_registered = return_freed = EINVAL;
+    CHECK(aes_wind_rect((WORD)handle, 0, return_output) == E_OK);
+    /* The kernel checks the completed return before SYSRET. User IRQs may
+     * now deliver the deferred callback, so do not dereference its freed
+     * buffer. The next ordinary syscall must also permit pending hooks. */
+    CHECK(aes_appl_find("ACCTWO") == info->id);
+    CHECK(return_revoked == E_OK && return_registered == E_OK && return_freed == E_OK);
+    CHECK(callback_info.id == info->id);
+    CHECK(aes_wind_get((WORD)handle, &state) == EIHNDL);
+    CHECK(aes_wind_get((WORD)cleanup, &state) == EIHNDL);
+    control.args.button.new_handler = old_button;
+    CHECK(vdi(&pb) == E_OK);
+    return_output = NULL;
+    (void)Cconws("x32 visible rectangle return hooks: PASS\r\n");
     return 0;
 }
 
@@ -818,6 +868,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(aes_wind_get((WORD)extra, &state) == EIHNDL);
     CHECK(aes_wind_get((WORD)peer, &state) == EACCDN);
     CHECK(borrowed_cleanup(info, vdi_handle, &rectangle) == 0);
+    CHECK(cursor_return(info, vdi_handle) == 0);
     /* Leave a live, text-bearing window for desktop restart cleanup. */
     handle = aes_wind_create(kind, &rectangle);
     CHECK(handle > 0 && copied_text((WORD)handle) == 0);

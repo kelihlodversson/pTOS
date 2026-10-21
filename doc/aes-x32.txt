@@ -202,7 +202,11 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         copied successfully before advancing or restarting the cursor. A
         failed copyout preserves the cursor for retry. No cleanup can dispatch
         between selection, copyout and cursor commit, or after commit before
-        returning success. Mutating that window restarts its cursor.
+        returning success. The completed syscall defers optional return-work
+        hooks until a later syscall or user IRQ boundary; stack, watchdog and
+        fatal-owner validation still run. This policy belongs to the current
+        trap invocation, including across nested callbacks and AES dispatch.
+        Mutating that window restarts its cursor.
         Each call rescans the current native list by ordinal, retaining no
         native rectangle-node pointer across calls. Clients clip VDI to these
         rectangles; window ownership does not replace workstation clipping.

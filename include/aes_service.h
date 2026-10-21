@@ -45,7 +45,10 @@ typedef char aes_window_request_size[(sizeof(AES_WINDOW_REQUEST) == 24) ? 1 : -1
 #if defined(ARCH_X86_64) && !defined(__ILP32__)
 #include "bdosdefs.h"
 typedef struct aes_client_state AES_CLIENT_STATE;
-LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
+/* The dispatcher initializes this invocation's return policy to FALSE.
+ * Successful cursor copyout sets it to defer optional return-work hooks. */
+LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
+                   BOOL *defer_return_work);
 void aes_service_process_exit(PD *pd);
 LONG aes_service_kernel_message(PD *pd, const WORD *message);
 BOOL aes_service_window_unlocked(PD *pd);

@@ -574,7 +574,7 @@ BOOL user_callback_work_register(void (*work)(void))
     return FALSE;
 }
 
-void user_callback_return_work(UQUAD rsp)
+void user_callback_return_work(UQUAD rsp, BOOL allow_hooks)
 {
     kproc_record_rsp(run, rsp);
     if (active && (rsp < active->stack_bottom || rsp > active->stack_top))
@@ -582,7 +582,7 @@ void user_callback_return_work(UQUAD rsp)
     if (active && (LONG)((ULONG)hz_200 - active->deadline) >= 0)
         user_callback_fault();
     check_fatal();
-    if (!active) {
+    if (!active && allow_hooks) {
         UWORD i;
 
         for (i = 0; i < ARRAY_SIZE(work_hooks); i++)

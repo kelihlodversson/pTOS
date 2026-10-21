@@ -354,7 +354,7 @@ static LONG input_events(UQUAD input, UQUAD output)
 #endif
 }
 
-static LONG window_service(UQUAD input, UQUAD output)
+static LONG window_service(UQUAD input, UQUAD output, BOOL *defer_return_work)
 {
     AES_WINDOW_REQUEST r;
     AES_WINDOW_INFO info;
@@ -428,14 +428,18 @@ static LONG window_service(UQUAD input, UQUAD output)
     if (size && r.operation != AES_WIN_VISIBLE && !kproc_copy_to_user(output,
             r.operation == AES_WIN_GET ? (const void *)&info : &rectangle, size))
         return EIMBA;
+    if (r.operation == AES_WIN_VISIBLE)
+        *defer_return_work = TRUE;
     return result;
 #else
     (void)result;
+    (void)defer_return_work;
     return EACCDN;
 #endif
 }
 
-LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
+LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
+                   BOOL *defer_return_work)
 {
     AES_CLIENT_STATE *p;
     char name[AES_NAME_MAX + 1];
@@ -480,7 +484,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     case AES_SERVICE_MULTI:
         return input_events(a, b);
     case AES_SERVICE_WINDOW:
-        return window_service(a, b);
+        return window_service(a, b, defer_return_work);
     case AES_SERVICE_WAIT:
         if (a != AES_EVENT_MESSAGE)
             return EINVAL;
