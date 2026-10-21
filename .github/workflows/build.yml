@@ -271,7 +271,7 @@ jobs:
         run: |
           mkdir products
           # The PE32+ EFI application, plus the map file with its symbols.
-          for product in *.efi emutos.map; do
+          for product in *.efi emutos.map cli/emucon.tos; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -316,6 +316,8 @@ jobs:
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          # EmuCON, the x32 program the kernel loads from the boot drive
+          cp cli/emucon.tos esp/EMUCON.TOS
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
           make CROSS_COMPILE= x32test

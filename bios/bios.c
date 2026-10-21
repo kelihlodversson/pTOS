@@ -301,7 +301,7 @@ static void start_external_cli(char *env)
         kcprintf("EmuCON: EMUCON.TOS is not in the root directory of the boot drive %c:\n",
                  'A' + (int)bootdev);
     else if (rc < 0)
-        kcprintf("EmuCON: cannot start EMUCON.TOS (error %ld)\n", rc);
+        kcprintf("EmuCON: cannot start EMUCON.TOS (error %ld)\n", (long)rc);
 }
 #endif
 

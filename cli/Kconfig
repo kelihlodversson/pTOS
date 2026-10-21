@@ -20,9 +20,9 @@ config CONF_WITH_CLI
 
 config CONF_EXTERNAL_CLI
 	bool "Load EmuCON from the boot drive instead of linking it in"
-	depends on CONF_WITH_CLI && !ARCH_X86_64 && !ARCH_COLDFIRE
-	depends on (ARCH_ARM && CONF_WITH_ELF_LOADER) || (ARCH_M68K && CONF_WITH_PRG_LOADER)
-	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
+	depends on CONF_WITH_CLI && !ARCH_COLDFIRE
+	depends on ((ARCH_ARM || ARCH_X86_64) && CONF_WITH_ELF_LOADER) || (ARCH_M68K && CONF_WITH_PRG_LOADER)
+	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL || TARGET_PC_X86_64_EFI
 	help
 	  Build EmuCON as an ordinary program, emucon.tos, and leave it out
 	  of the kernel image.  The kernel starts it with Pexec() from the
@@ -40,7 +40,8 @@ config CONF_EXTERNAL_CLI
 	  does not support (its Line-A calls differ).
 
 	  On by default for the images that are loaded into RAM from a disk
-	  (Raspberry Pi, virt-arm, virt-m68k).  The x86-64 image already
-	  runs EmuCON as a separate process, embedded in the image.
+	  (Raspberry Pi, virt-arm, virt-m68k, x86-64).  On x86-64 the program
+	  is the x32 EmuCON (see the top level Makefile), which runs as an
+	  ordinary ring-3 process; without this option the image embeds it.
 
 endmenu

@@ -683,6 +683,7 @@ build QEMU can run in place of a legacy BIOS.
 make pc-x86_64_defconfig && make
 mkdir -p esp/EFI/BOOT
 cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+cp cli/emucon.tos esp/EMUCON.TOS   # EmuCON is a program (CONF_EXTERNAL_CLI)
 cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
@@ -728,6 +729,7 @@ make menuconfig
 make
 mkdir -p esp/EFI/BOOT
 cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+cp cli/emucon.tos esp/EMUCON.TOS   # EmuCON is a program (CONF_EXTERNAL_CLI)
 cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
