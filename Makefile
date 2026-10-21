@@ -536,18 +536,11 @@ IMAGE = $(if $(IMAGE_NAME),$(IMAGE_NAME),$(image-default))
 # root directory as EMUCON.TOS (bios/bios.c).
 #
 ifeq ($(CONF_EXTERNAL_CLI),y)
-EMUCON_TOS = emucon.tos
+EMUCON_TOS = cli/emucon.tos
 image-extra += $(EMUCON_TOS)
-
-emucon.tos: $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile) version.mk $(AUTOCONF_H)
-	@echo '  EMUCON'
-	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k)
-	@cp cli/emucon2.tos $@
-
 else
 EMUCON_TOS =
 endif
-TOCLEAN += emucon.tos cli/emucon2.tos cli/.arch-* cli/*.o
 
 TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym *.efi
 
@@ -1443,7 +1436,7 @@ vdi/%_cf.S: vdi/%_preprocessed.s
 # Standalone EmuCON, built by cli/Makefile
 #
 
-TOCLEAN += cli/version.c cli/*.o cli/*.tos
+TOCLEAN += cli/version.c cli/*.o cli/*.tos cli/.arch-*
 
 #
 # The targets for building a release are in a separate file
@@ -1498,6 +1491,91 @@ LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
 LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
+
+# Build libcmini from the submodule.  The defconfig is arch-specific; for
+# m68k we use mintelf_defconfig, which produces ELF-compatible objects
+# that also work as a.out with --emit-relocs.  ABI details that are
+# specific to pTOS (e.g. the ARM float ABI) live in libcmini's own
+# defconfig/build, not here: this Makefile only picks which defconfig to
+# load.
+ifdef ARCH_ARM
+LIBCMINI_DEFCONFIG = ptos_arm_defconfig
+else ifdef ARCH_X86_64
+LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
+else
+LIBCMINI_DEFCONFIG = mintelf_defconfig
+endif
+
+# libcmini's build/ directory is a single flat path (build/./libcmini.a)
+# that isn't parameterized by architecture or defconfig, so switching
+# between e.g. ptos_arm_defconfig and mintelf_defconfig across two builds
+# would otherwise leave a stale libcmini.a from the *previous* arch sitting
+# at a path Make considers up to date -- Make's staleness check has no way
+# to know the desired configuration changed, since that's not expressed as
+# a file it tracks.
+#
+# LIBCMINI_STAMP makes that configuration state an explicit, trackable
+# file: it depends on the always-out-of-date FORCE target, so its recipe
+# runs on every invocation and actually compares the desired defconfig
+# against the one last applied, cleaning and reconfiguring only on a real
+# mismatch. The stamp file's mtime -- and therefore whether it forces
+# $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
+# real mismatch, not on every invocation.
+#
+# The comparison is against the defconfig *file's content*, not just its
+# name: comparing names alone would miss a defconfig whose content changed
+# underneath an unchanged selection (e.g. a submodule bump that edits
+# configs/ptos_arm_defconfig without touching any sources/*.c or
+# sources/arch/$(ARCH)/*.S -- $(LIBCMINI_LIB)'s own prerequisites, so
+# nothing else would notice either). Reproduced directly: with the name
+# comparison alone, editing that file's content and rebuilding without
+# touching LIBCMINI_DEFCONFIG left lib/libcmini/.config -- and therefore
+# libcmini.a -- silently built from the stale content.
+.PHONY: FORCE
+FORCE:
+
+# lib/libcmini is a git submodule: a plain "git clone" without
+# --recurse-submodules (or before "git submodule update --init") leaves
+# $(LIBCMINI_DIR) present but empty, and every rule below that invokes
+# "$(MAKE) -C $(LIBCMINI_DIR)" would then fail with a generic nested-make
+# error ("No rule to make target ...") that gives no hint what's actually
+# wrong. Gate on the submodule's own Makefile so the real problem is
+# reported once, up front, instead.
+$(LIBCMINI_DIR)/Makefile:
+	@echo "$@ not found -- run 'git submodule update --init' first" >&2
+	@exit 1
+
+$(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
+	@mkdir -p $(dir $@)
+	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
+	have=$$(cat $@ 2>/dev/null || true); \
+	if [ "$$want" != "$$have" ]; then \
+	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
+	    $(LIBCMINI_MAKE) clean; \
+	    $(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG); \
+	    printf '%s' "$$want" > $@; \
+	fi
+
+# Only the one library and the one startup object the test programs link are
+# requested, not libcmini's "libs startups": those build every multilib
+# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
+# of which the test programs use.
+$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
+	@echo '  LIBCMINI'
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
+
+$(LIBCMINI_CRT0): $(LIBCMINI_LIB)
+
+#
+# EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
+# EmuCON, against the libcmini that is built here, and the file goes on the
+# boot drive next to the image (see the top of this file).
+#
+ifeq ($(CONF_EXTERNAL_CLI),y)
+$(EMUCON_TOS): $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile) version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
+	@echo '  EMUCON'
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR)
+endif
 
 ifdef CONF_WITH_REGRESSION_TESTS
 
@@ -1648,79 +1726,6 @@ $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 
-# Build libcmini from the submodule.  The defconfig is arch-specific; for
-# m68k we use mintelf_defconfig, which produces ELF-compatible objects
-# that also work as a.out with --emit-relocs.  ABI details that are
-# specific to pTOS (e.g. the ARM float ABI) live in libcmini's own
-# defconfig/build, not here: this Makefile only picks which defconfig to
-# load.
-ifdef ARCH_ARM
-LIBCMINI_DEFCONFIG = ptos_arm_defconfig
-else ifdef ARCH_X86_64
-LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
-else
-LIBCMINI_DEFCONFIG = mintelf_defconfig
-endif
-
-# libcmini's build/ directory is a single flat path (build/./libcmini.a)
-# that isn't parameterized by architecture or defconfig, so switching
-# between e.g. ptos_arm_defconfig and mintelf_defconfig across two builds
-# would otherwise leave a stale libcmini.a from the *previous* arch sitting
-# at a path Make considers up to date -- Make's staleness check has no way
-# to know the desired configuration changed, since that's not expressed as
-# a file it tracks.
-#
-# LIBCMINI_STAMP makes that configuration state an explicit, trackable
-# file: it depends on the always-out-of-date FORCE target, so its recipe
-# runs on every invocation and actually compares the desired defconfig
-# against the one last applied, cleaning and reconfiguring only on a real
-# mismatch. The stamp file's mtime -- and therefore whether it forces
-# $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
-# real mismatch, not on every invocation.
-#
-# The comparison is against the defconfig *file's content*, not just its
-# name: comparing names alone would miss a defconfig whose content changed
-# underneath an unchanged selection (e.g. a submodule bump that edits
-# configs/ptos_arm_defconfig without touching any sources/*.c or
-# sources/arch/$(ARCH)/*.S -- $(LIBCMINI_LIB)'s own prerequisites, so
-# nothing else would notice either). Reproduced directly: with the name
-# comparison alone, editing that file's content and rebuilding without
-# touching LIBCMINI_DEFCONFIG left lib/libcmini/.config -- and therefore
-# libcmini.a -- silently built from the stale content.
-.PHONY: FORCE
-FORCE:
-
-# lib/libcmini is a git submodule: a plain "git clone" without
-# --recurse-submodules (or before "git submodule update --init") leaves
-# $(LIBCMINI_DIR) present but empty, and every rule below that invokes
-# "$(MAKE) -C $(LIBCMINI_DIR)" would then fail with a generic nested-make
-# error ("No rule to make target ...") that gives no hint what's actually
-# wrong. Gate on the submodule's own Makefile so the real problem is
-# reported once, up front, instead.
-$(LIBCMINI_DIR)/Makefile:
-	@echo "$@ not found -- run 'git submodule update --init' first" >&2
-	@exit 1
-
-$(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
-	@mkdir -p $(dir $@)
-	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
-	have=$$(cat $@ 2>/dev/null || true); \
-	if [ "$$want" != "$$have" ]; then \
-	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
-	    $(LIBCMINI_MAKE) clean; \
-	    $(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG); \
-	    printf '%s' "$$want" > $@; \
-	fi
-
-# Only the one library and the one startup object the test programs link are
-# requested, not libcmini's "libs startups": those build every multilib
-# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
-# of which the test programs use.
-$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
-	@echo '  LIBCMINI'
-	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
-
-$(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
 # $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) ...): those carry kernel-only

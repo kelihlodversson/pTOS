@@ -6,12 +6,12 @@
 # This file is distributed under the GPL, version 2 or at your
 # option any later version.  See doc/license.txt for details.
 #
-# Builds emucon2.tos, a portable command processor. Deliberately
+# Builds emucon.tos, a portable command processor. Deliberately
 # self-contained (its own compiler/flags, no dependency on the top-level
 # Makefile or its Kconfig-driven configuration) so it stays
 # "cd cli && make"-buildable on its own.
 #
-# ARCH selects which emucon2.tos gets built -- "make" (or explicitly
+# ARCH selects which emucon.tos gets built -- "make" (or explicitly
 # "make ARCH=m68k") builds one that runs under ANY TOS, not just this
 # OS's own ROM build; "make ARCH=arm" builds one that runs under pTOS's
 # own ARM ports (raspi/virt-arm) specifically, since ARM has no other
@@ -23,7 +23,7 @@
 
 include ../version.mk
 
-TARGET = emucon2.tos
+TARGET = emucon.tos
 ARCH ?= m68k
 
 # libcmini provides the C library, GEMDOS/BIOS/XBIOS bindings, and startup
@@ -137,12 +137,12 @@ $(LIBCMINI_DIR)/Makefile:
 # prerequisite on the defconfig file itself: without it, a submodule
 # bump that changes configs/$(LIBCMINI_DEFCONFIG)'s content -- without
 # touching any source file -- would leave an already-built .config/
-# libcmini.a looking up to date to Make, silently linking emucon2.tos
+# libcmini.a looking up to date to Make, silently linking emucon.tos
 # against a stale libcmini configuration.
 $(LIBCMINI_BUILDDIR)/.config: $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG) | $(LIBCMINI_DIR)/Makefile
 	@$(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG)
 
-# Only the library and the startup object emucon2.tos links, not "libs startups"
+# Only the library and the startup object emucon.tos links, not "libs startups"
 # (every multilib variant the toolchain offers).
 $(LIBCMINI_LIB): $(LIBCMINI_BUILDDIR)/.config $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S)
 	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)

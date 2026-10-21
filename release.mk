@@ -248,7 +248,7 @@ release-emucon:
 	$(MAKE) distclean
 	$(MAKE) -C cli
 	mkdir $(RELEASE_EMUCON)
-	cp cli/emucon2.tos cli/readme.txt $(RELEASE_EMUCON)
+	cp cli/emucon.tos cli/readme.txt $(RELEASE_EMUCON)
 	unix2dos $(RELEASE_EMUCON)/readme.txt
 	cd $(RELEASE_DIR) && zip -9 -r ptos-emucon-$(VERSION).zip emucon
 	rm -r $(RELEASE_EMUCON)
