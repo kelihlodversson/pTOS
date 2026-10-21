@@ -86,7 +86,17 @@ C_SYM(gemtrap):
 
 no_vdi:
         cmn     r0, #2                  // vq_gdos call? (r0 == -2)
+#if CONF_WITH_VDI_SCALABLE_FONTS
+        bne     3f
+        ldr     r0, =C_SYM(vdi_gdos_id) // the built-in GDOS's id, once active
+        ldr     r0, [r0]                //  (vdi/vdi_gdos.c), else 0
+        cmp     r0, #0
+        mvneq   r0, #1                  // not active: -2, no GDOS installed
+        b       1f
+3:
+#else
         beq     1f                      // r0 is already -2  -  no GDOS installed
+#endif
 
         cmn     r0, #1                  //  query for jsr:able address? (r0 == -1?)
         ldreq   r0, =C_SYM(GSX_ENTRY)         // Return address of VDI dispatcher

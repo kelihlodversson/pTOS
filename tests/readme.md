@@ -84,10 +84,11 @@ hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
   --acsi test-hd.img --conout 2 --run-vbls 1200
 ```
 
-CI runs the suite on three machines (the `regression` job in
-`.github/workflows/build.yml`) with `tools/run-regression-tests.sh
-<virt-arm|virt-m68k|pc-x86_64>`, which also works locally once the matching
-configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it) or `pc-x86_64`) is built and
+CI runs the suite on five machines (the `regression` job in
+`.github/workflows/build.yml`: virt-arm, virt-m68k, virt-m68k with
+`-mfastcall`, pc-x86_64 and raspi2b) with `tools/run-regression-tests.sh
+<virt-arm|virt-m68k|pc-x86_64|raspi2b>`, which also works locally once the matching
+configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it), `pc-x86_64` or `rpi2-test` (the Pi 2 with the console on the UART as well: its desktop starts the suite from `emudesk.inf`, so there are no shutdown checks)) is built and
 `make test-dir` has run. The virt machines are the `-cli` configurations so
 that they boot to EmuCON, where the script types `runtests.tos` into the
 serial console; the script ends QEMU when the harness has printed its

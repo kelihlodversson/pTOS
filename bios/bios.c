@@ -706,6 +706,12 @@ static void bios_init(void)
     clock_init();       /* init clock */
     KDEBUG(("after clock_init()\n"));
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* before GEMDOS, which takes the memory that is left; late enough for
+     * KINFO() to reach the serial port everywhere */
+    vdi_freetype_init();    /* the scalable fonts' FreeType (#573) */
+#endif
+
 #if CONF_WITH_NOVA
     /* Detect and initialize a Nova card, skip if Ctrl is pressed */
     if (HAS_NOVA && !(kbshift(-1) & MODE_CTRL)) {
@@ -1091,6 +1097,10 @@ void biosmain(void)
     Dsetdrv(bootdev);           /* Set boot drive */
     init_default_environment(); /* Build default environment string */
 
+#if CONF_WITH_VDI_SCALABLE_FONTS && defined(CONF_DEBUG_FREETYPE_TEST_FONT)
+    vdi_freetype_test_font();   /* check FreeType's port layer with a font */
+#endif
+
 #if CONF_WITH_X86_64_MEMTEST
     x86_64_memtest_run();       /* reports "x86-64 memtest: PASS" or FAIL */
 #endif
@@ -1113,6 +1123,10 @@ void biosmain(void)
 #endif
 
     autoexec();                 /* autoexec PRGs from AUTO folder */
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_gdos_init();            /* the built-in GDOS, unless AUTO had one */
+#endif
 
     /* clear commandline */
 
@@ -1703,7 +1717,7 @@ const PFLONG bios_vecs[] = {
 
 const UWORD bios_ent = ARRAY_SIZE(bios_vecs);
 
-#if CONF_WITH_EXTENDED_MOUSE
+#if CONF_WITH_EXTENDED_MOUSE || (CONF_WITH_VDI_SCALABLE_FONTS && !ARCH_X86_64)
 
 /* Does this pointer belong to our TEXT segment? */
 BOOL is_text_pointer(const void *p)
@@ -1712,4 +1726,4 @@ BOOL is_text_pointer(const void *p)
     return (pb >= (UBYTE *)&os_header) && (pb < _etext);
 }
 
-#endif /* CONF_WITH_EXTENDED_MOUSE */
+#endif /* CONF_WITH_EXTENDED_MOUSE || (CONF_WITH_VDI_SCALABLE_FONTS && !ARCH_X86_64) */

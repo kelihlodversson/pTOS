@@ -110,7 +110,10 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.m68k) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # Same idea as the architecture split above: a config that turns on
       # CONF_WITH_MFASTCALL needs Thorsten Otto's toolchain instead of
@@ -191,7 +194,10 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.arm) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
@@ -241,7 +247,10 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.x86_64) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
@@ -486,10 +495,32 @@ jobs:
             runner: ubuntu-latest
             qemu: qemu-system-arm
             make_args: ''
+          # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
+          # screen of the Pi's framebuffer.  The desktop starts the suite
+          # (tests/emudesk.inf) and the console is on the UART as well
+          # (rpi2-test_defconfig), where the script reads the verdict; no
+          # shutdown checks, which type into EmuCON
+          - machine: raspi2b
+            config: rpi2-test
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
           - machine: virt-m68k
             config: virt-m68k-cli-elf
             arch: m68k
             # pinned for the toolchain PPA, like the m68k build jobs
+            runner: ubuntu-22.04
+            qemu: qemu-system-misc
+            make_args: ''
+          # the register-argument calling convention (-mfastcall), which
+          # needs Thorsten Otto's toolchain: the VDI's scalable fonts call
+          # FreeType on a stack of its own, which it has to survive
+          - machine: virt-m68k-fastcall
+            script_machine: virt-m68k
+            config: virt-m68k-cli-fastcall
+            arch: m68k
+            mfastcall: true
             runner: ubuntu-22.04
             qemu: qemu-system-misc
             make_args: ''
@@ -508,11 +539,21 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: ${{ matrix.arch }}
+          mfastcall: ${{ matrix.mfastcall || 'false' }}
 
       - name: Install QEMU
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ${{ matrix.qemu }}
+          # scalable fonts for the gdos_answer suite: TrueType and CFF, one
+          # whose ascender is taller than its em (Loma), and a monospaced one
+          # with marks of no width (Liberation Mono); fontTools makes a TrueType
+          # collection of two Liberation Sans faces
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf \
+              fonts-liberation
+          # for the interpreter the test script runs (setup-toolchain
+          # selects its own Python, which the system's packages are not for)
+          python3 -m pip install fonttools
 
       - name: Build the kernel and the test programs
         env:
@@ -524,7 +565,7 @@ jobs:
           make $MAKE_ARGS test-dir
 
       - name: Run the regression suite
-        run: tools/run-regression-tests.sh ${{ matrix.machine }}
+        run: tools/run-regression-tests.sh ${{ matrix.script_machine || matrix.machine }}
 
       - name: Report the failure
         if: failure()
@@ -588,7 +629,7 @@ jobs:
       # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
       # release-raspi-resources" uses on the bundled text files, same as
       # every other pTOS release archive.  curl is what
-      # tools/fetch-raspi-firmware.sh downloads with, listed explicitly
+      # tools/fetch-raspi-firmware.sh and tools/fetch-fonts.sh download with, listed explicitly
       # rather than assumed from the runner image.
       - name: Install SD card image tooling
         run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl zip
@@ -613,6 +654,12 @@ jobs:
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
           make release-raspi-resources DEST="sdcard/$archive"
+
+          # The default scalable fonts (DejaVu, with their licence), which
+          # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive
+          # without any configuration: tools/fetch-fonts.sh, pinned and
+          # checked by checksum like the boot firmware.
+          ./tools/fetch-fonts.sh "sdcard/$archive/GEMSYS/FONTS"
 
           ./tools/mkraspi-image.sh "sdcard/$archive" "sdcard/$archive.img"
 

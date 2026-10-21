@@ -120,7 +120,10 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
@@ -131,7 +134,7 @@ jobs:
       # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
       # release-raspi-resources" uses on the bundled text files, same as
       # every other pTOS release archive.  curl is what
-      # tools/fetch-raspi-firmware.sh downloads with, listed explicitly
+      # tools/fetch-raspi-firmware.sh and tools/fetch-fonts.sh download with, listed explicitly
       # rather than assumed from the runner image.
       - name: Install SD card image tooling
         run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl
@@ -169,6 +172,12 @@ jobs:
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
           make release-raspi-resources DEST="release-archives/$archive"
+
+          # The default scalable fonts (DejaVu, with their licence), which
+          # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive
+          # without any configuration: tools/fetch-fonts.sh, pinned and
+          # checked by checksum like the boot firmware.
+          ./tools/fetch-fonts.sh "release-archives/$archive/GEMSYS/FONTS"
 
           # A raw disk image for dd/Raspberry Pi Imager/balenaEtcher, built
           # from the very same files, before the directory is zipped up for

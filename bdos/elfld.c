@@ -131,6 +131,7 @@
  * access that is not 4-byte aligned, whereas m68k only requires 2-byte
  * alignment (and routinely relocates 2-byte-aligned instruction operands),
  * and x86-64 has none. */
+
 #if ARCH_ARM
 #define ELF_EM_EXPECTED 40      /* EM_ARM */
 #define ELF_R_DIR32     2       /* R_ARM_ABS32 */
@@ -456,6 +457,9 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_tlen = (LONG)(info.file_end - info.link_base);
     hd->h01_dlen = 0;
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
+#ifdef __arm__
+    hd->h01_tlen += PROG_IMAGE_ALIGN;    /* room for elf_pgmld() to align the image */
+#endif
 #if CONF_WITH_USER_ASPACE
     /* the image does not live in the TPA but in private pages of the
      * process's own address space (elf_pgmld()): the TPA is the basepage and
@@ -1292,14 +1296,30 @@ LONG elf_pgmld(FH h, PD *p)
     layout->end = 0;
     layout->entry = (ULONG)ehdr.e_entry + (ULONG)bias;
 #else
-    /* the image is loaded at the first byte after the basepage */
+    /*
+     * the image is loaded at the first byte after the basepage, but on
+     * ARM at an address that keeps the alignment of what it holds: the
+     * bias it is relocated by is a multiple of PROG_IMAGE_ALIGN, so that an
+     * 8 byte aligned object (the compiler assumes it of statics, for the
+     * double word stores of the NEON/VFP hard-float ABI) is still aligned
+     * where it ends up, whatever the lowest address of the image is.  The
+     * TPA is only word aligned, so without it a program's data landed 4
+     * bytes off and took an alignment fault (found by the scalable font
+     * tests on raspi2b, #579).  That needs at most PROG_IMAGE_ALIGN - 1
+     * bytes more than the image.
+     */
     load_base = (UBYTE *)(p + 1);
+#ifdef __arm__
+    load_base = (UBYTE *)(uintptr_t)(info.link_base
+                  + ((((ULONG)(uintptr_t)load_base - info.link_base) + (PROG_IMAGE_ALIGN - 1))
+                     & ~(ULONG)(PROG_IMAGE_ALIGN - 1)));
+#endif
     /* compute the bias in unsigned then reinterpret as signed; this avoids
      * signed overflow UB when either operand has its high bit set, and the
      * relocation arithmetic downstream already relies on unsigned wrap. */
     bias = (LONG)((ULONG)load_base - info.link_base);
 
-    tpalen = (LONG)(p->p_hitpa - p->p_lowtpa) - (LONG)sizeof(PD);
+    tpalen = (LONG)(p->p_hitpa - p->p_lowtpa) - (LONG)((uintptr_t)load_base - (uintptr_t)p);
     if ((LONG)(info.mem_end - info.link_base) > tpalen)
     {
         KDEBUG(("BDOS elf_pgmld: ENSMEM\n"));
@@ -1316,7 +1336,14 @@ LONG elf_pgmld(FH h, PD *p)
      * launching a process at a truncated, wrong address (#356's own
      * review flagged the previous plain assignment for exactly this). */
     p->p_tbase = PTR_TO_USERPTR(load_base + (ehdr.e_entry - info.link_base));
-    p->p_tlen  = (LONG)(info.file_end - info.link_base);
+    /*
+     * the gap the alignment left after the basepage is part of the text
+     * length: sizeof(PD) + text + data + bss (what a program that shrinks its
+     * TPA is guided by) then reaches the end of the image, and p_bbase +
+     * p_blen, where the startup code puts argv, is the end of the bss
+     */
+    p->p_tlen  = (LONG)(info.file_end - info.link_base)
+                 + (LONG)((uintptr_t)load_base - (uintptr_t)(p + 1));
     p->p_dbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_dlen  = 0;
     p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));

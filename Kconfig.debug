@@ -156,6 +156,18 @@ config CONF_DEBUG_FORCE_MC68000
 	  Hatari), since it will misidentify an actual 68010+ CPU as a
 	  68000.
 
+config CONF_DEBUG_FREETYPE_TEST_FONT
+	string "Font file for FreeType to render at boot"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	default ""
+	help
+	  If set, the path of a TrueType or OpenType font file (for example
+	  C:\FONTS\TEST.TTF) that FreeType opens once GEMDOS has the boot
+	  drive.  A few glyphs are rendered at a few sizes, and the result,
+	  the memory used and the depth reached on FreeType's own stack are
+	  written to the debug output.  For checking the FreeType port layer
+	  (vdi/vdi_ftsystem.c) on a new machine; leave empty otherwise.
+
 source "tests/Kconfig"
 
 endmenu
