@@ -92,7 +92,8 @@ make
 
 ### m68k
 
-The recommended Ubuntu installation is the same PPA/package path used by CI:
+Vincent Rivière's PPA is the quickest install, though CI no longer uses it (it
+uses Thorsten Otto's toolchain, below, for every m68k job):
 
 ```sh
 sudo add-apt-repository -y ppa:vriviere/mintelf
@@ -102,8 +103,8 @@ sudo apt-get install -y cross-mintelf-essential
 
 This PPA gcc has **no `-mfastcall`**. It builds every m68k config except
 the `CONF_WITH_MFASTCALL=y` ones (amiga, amiga-kickdisk, `*-fastcall`), and
-the Makefile stops those with "does not support -mfastcall". CI installs both
-toolchains and puts Otto's first on `PATH` for the fastcall jobs. Do the same
+the Makefile stops those with "does not support -mfastcall". CI installs only
+Otto's toolchain (the same three archives as below). Do the same
 locally with the user-directory install below.
 
 ### -mfastcall toolchain without sudo
