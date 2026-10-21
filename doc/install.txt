@@ -263,6 +263,29 @@ m548x-dbug          ptos-m548x-dbug.s19, for dBUG on ColdFire boards
 m548x-bas           ptos-m548x-bas.s19, for BaS_gcc on ColdFire boards
 m548x-prg           ptos.prg, a RAM TOS for ColdFire boards with BaS_gcc
 
+EmuCON as a program (CONF_EXTERNAL_CLI)
+---------------------------------------
+
+On the images that are loaded into RAM from a disk (rpi1-rpi4, virt-arm,
+virt-m68k) EmuCON is not linked into the kernel: "make" also builds
+emucon.tos, the standalone EmuCON of cli/Makefile (it is in English only),
+and the kernel starts it with Pexec() from the root directory of the boot
+drive, as EMUCON.TOS, when there is no AES to start (the CLI configurations),
+for the early console (Esc at the welcome screen), and for the Console item
+of the desktop.  If the file is not there the kernel says so on the console.
+
+The file has to be on the boot drive.  "make test-dir" and "make test-hd"
+put it there (the CLI regression runs boot QEMU on such a disk),
+release-raspi-resources puts it on the card, and for any other disk it is
+copied by hand.  Without a disk -- QEMU -kernel alone -- these images boot
+and stop at "EMUCON.TOS is not in the root directory of the boot drive".
+
+The option is in "make menuconfig" under EmuCON.  It is off by default for
+the ROM images (Atari, Amiga, ColdFire), which keep EmuCON in the ROM; it can
+be turned on there too, and EmuCON is then loaded from the boot drive as well.
+The x86-64 image does not have it: it runs its EmuCON as a separate process
+from a copy embedded in the image.
+
 Raspberry Pi
 ------------
 

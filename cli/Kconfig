@@ -18,4 +18,22 @@ config CONF_WITH_CLI
 	  It is reachable from the desktop, and is started directly when the
 	  AES is not included.
 
+config CONF_EXTERNAL_CLI
+	bool "Load EmuCON from the boot drive instead of linking it in"
+	depends on CONF_WITH_CLI && !ARCH_X86_64
+	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
+	help
+	  Build EmuCON as an ordinary program, emucon.tos, and leave it out
+	  of the kernel image.  The kernel starts it with Pexec() from the
+	  root directory of the boot drive (EMUCON.TOS) when it has no AES to
+	  start: as the console of the image, and as the early console.
+
+	  The program is the standalone EmuCON of cli/Makefile, which is in
+	  English only.  It has to be on the boot drive: "make test-dir",
+	  "make test-hd" and the Raspberry Pi archives put it there.
+
+	  On by default for the images that are loaded into RAM from a disk
+	  (Raspberry Pi, virt-arm, virt-m68k).  The x86-64 image already
+	  runs EmuCON as a separate process, embedded in the image.
+
 endmenu

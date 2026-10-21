@@ -33,6 +33,7 @@
 #include "gemlib.h"
 #include "gem_rsc.h"
 #include "biosext.h"
+#include "tosvars.h"
 #include "optimize.h"
 
 #include "gemdosif.h"
@@ -53,7 +54,7 @@
 #include "gemshlib.h"
 #include "../desk/deskstub.h"
 
-#if CONF_WITH_CLI
+#if CONF_WITH_CLI && !CONF_EXTERNAL_CLI
 #include "../cli/clistub.h"
 #endif
 
@@ -104,7 +105,7 @@ GLOBAL WORD gl_nextrez;
 
 /* Prototypes: */
 extern void deskstart(void) NORETURN;   /* see ../desk/deskstart.S */
-#if CONF_WITH_CLI != 0
+#if CONF_WITH_CLI != 0 && !CONF_EXTERNAL_CLI
 extern void coma_start(void) NORETURN;  /* see cli/cmdasm.S */
 #endif
 
@@ -627,7 +628,16 @@ static WORD sh_ldapp(SHELL *psh)
     if (psh->sh_nextapp == CONSOLE_APP)
     {
         /* start the EmuCON shell: */
+#if CONF_EXTERNAL_CLI
+        /* ... the program EMUCON.TOS, in the root directory of the boot drive */
+        strcpy(D.s_cmd, "A:\\EMUCON.TOS");
+        D.s_cmd[0] += bootdev;
+        p_nameit(rlr, sh_name(D.s_cmd));
+        p_setappdir(rlr, D.s_cmd);
+        dos_exec(PE_LOADGO, D.s_cmd, "", ad_envrn);
+#else
         aes_run_rom_program(coma_start);
+#endif
         set_default_desktop(psh);
         return 0;
     }

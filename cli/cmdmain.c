@@ -24,7 +24,7 @@
 #include "cmd.h"
 #include "version.h"
 #include "string.h"
-#if CONF_WITH_NATIVE_ABI && !defined(X32_USERLAND)
+#if CONF_WITH_NATIVE_ABI && !defined(STANDALONE_CONSOLE)
 #include "tosvars.h"
 #endif
 
@@ -88,7 +88,7 @@ WORD argc, rc;
     current_res = original_res;
     original_color3 = Setcolor(3,-1);
 
-#ifdef X32_USERLAND
+#ifdef CLI_USE_SSYSTEM
     nflops_copy = get_nflops();     /* ring 3: no Supexec(), ask Ssystem() */
 #else
     nflops_copy = Supexec(get_nflops);      /* number of floppy drives */
@@ -305,9 +305,9 @@ PRIVATE void change_res(WORD res)
      *  when switching from ST medium, restore original colour
      */
     if (res == ST_MEDIUM)
-        Setcolor(3,BLACK);
+        (void)Setcolor(3,BLACK);
     else if (current_res == ST_MEDIUM)
-        Setcolor(3,original_color3);
+        (void)Setcolor(3,original_color3);
     fgcol = 15; /* OS masks color index, so 15 is fine also for mono/medium modes */
     bgcol = 0;
 
@@ -370,7 +370,7 @@ int valid_res(WORD res)
 
 PRIVATE WORD get_nflops(void)
 {
-#ifdef X32_USERLAND
+#ifdef CLI_USE_SSYSTEM
     /* S_GETWVAL (bdos/ssystem.h) of the _nflops system variable at 0x4a6:
      * a ring-3 program cannot read the kernel's own variable. */
     LONG n = Ssystem(0x000b,0x4a6L,0L);

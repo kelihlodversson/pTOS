@@ -334,9 +334,16 @@ qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_error
 # (polling, see pass-signal notes below) but interactive verification in a
 # sandboxed shell may be unreliable for environment reasons unrelated to the
 # driver -- check with strace before assuming it's broken.
-make virt-arm-cli_defconfig && make
-qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
-make virt-m68k-cli_defconfig && make
+# EmuCON is the program EMUCON.TOS (CONF_EXTERNAL_CLI), loaded from the boot
+# drive: give the machine a disk that has it -- "make test-dir" collects it
+# with the test programs, and QEMU's vvfat driver presents the directory.
+make virt-arm-cli_defconfig && make && make test-dir
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -device virtio-blk-device,drive=hd0 -d guest_errors -serial stdio
+# virt-m68k-cli: the same disk (-global/-drive/-device as above) is needed
+make virt-m68k-cli_defconfig && make && make test-dir
 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
 

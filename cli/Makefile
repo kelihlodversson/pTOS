@@ -103,6 +103,15 @@ all: default
 
 HEADERS = cmd.h
 
+# The objects live in this directory whatever the ARCH: a stamp per ARCH
+# throws away the ones of the other when it changes (the top level Makefile
+# builds this for the architecture of its configuration, and a developer may
+# switch between the two).
+$(OBJECTS) version.c: | .arch-$(ARCH)
+.arch-$(ARCH):
+	-rm -f *.o version.c $(TARGET) .arch-*
+	touch $@
+
 # Order-only on $(LIBCMINI_DIR)/Makefile: the .c/.S sources #include
 # libcmini headers (via cmd.h), so without this, an uninitialized submodule
 # fails compilation with a raw "No such file" from the compiler instead of
@@ -144,7 +153,7 @@ $(TARGET): $(LIBCMINI_CRT0) $(OBJECTS) $(LIBCMINI_LIB)
 	$(CC) -nostartfiles -nostdlib $(LIBCMINI_CRT0) $(OBJECTS) -L$(dir $(LIBCMINI_LIB)) -lcmini -lgcc $(LDFLAGS) -o $@
 
 clean:
-	-rm -f *.o version.c
+	-rm -f *.o version.c .arch-*
 	-rm -f $(TARGET)
 	-rm -rf libcmini-build-m68k libcmini-build-arm
 

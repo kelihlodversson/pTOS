@@ -109,7 +109,9 @@ void stonx_kprintf_init(void);      /* defined in kprintasm.S */
 extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 #endif
 
-#if CONF_WITH_CLI
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+static void start_external_cli(char *env);
+#elif CONF_WITH_CLI
 #if CONF_WITH_USER_ASPACE
 #include "progimage.h"
 extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);    /* bdos/kproc.c */
@@ -285,7 +287,25 @@ static void vecs_init(void)
 
 extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
-#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+/*
+ * EmuCON is the program EMUCON.TOS (cli/Makefile), loaded from the root
+ * directory of the boot drive like any other program: it is no part of this
+ * image.  It returns here when the user leaves it.
+ */
+static void start_external_cli(char *env)
+{
+    LONG rc = Pexec(PE_LOADGO, "EMUCON.TOS", "", env);
+
+    if (rc == EFILNF || rc == EPTHNF)
+        kcprintf("EmuCON: EMUCON.TOS is not in the root directory of the boot drive %c:\n",
+                 'A' + (int)bootdev);
+    else if (rc <= ENSMEM && rc >= EPLFMT)
+        kcprintf("EmuCON: cannot start EMUCON.TOS (error %ld)\n", rc);
+}
+#endif
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI && !CONF_EXTERNAL_CLI
 /*
  * Runs the built-in EmuCON, an x32 program embedded in this image
  * (cli/arch/x86_64/emucon_image.c), as an ordinary ring-3 process: a
@@ -752,7 +772,7 @@ static void bios_init(void)
     /* set start of user interface */
 #if CONF_WITH_AES
     exec_os = ui_start;
-#elif CONF_WITH_CLI && !CONF_WITH_USER_ASPACE
+#elif CONF_WITH_CLI && !CONF_WITH_USER_ASPACE && !CONF_EXTERNAL_CLI
     exec_os = coma_start;
 #else
     /* Without the AES and with per-process address spaces, EmuCON is a
@@ -1101,7 +1121,9 @@ void biosmain(void)
 
 #if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
-#if CONF_WITH_USER_ASPACE
+#if CONF_EXTERNAL_CLI
+        start_external_cli(default_env);
+#elif CONF_WITH_USER_ASPACE
         start_builtin_cli(default_env);
 #else
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
@@ -1133,7 +1155,12 @@ void biosmain(void)
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GO, "", (char *)pd, default_env);
     }
-#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+    else {
+        /* the default shell of an image without the AES: the program */
+        start_external_cli(default_env);
+    }
+#elif CONF_WITH_USER_ASPACE && CONF_WITH_CLI
     else {
         /* the default shell of an x86-64 image without the AES */
         start_builtin_cli(default_env);

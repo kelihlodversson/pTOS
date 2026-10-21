@@ -529,6 +529,26 @@ endif
 
 IMAGE = $(if $(IMAGE_NAME),$(IMAGE_NAME),$(image-default))
 
+#
+# EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
+# EmuCON, and the file goes on the boot drive next to the image (test-dir,
+# test-hd.img, the Raspberry Pi archives).  The kernel starts it from the
+# root directory as EMUCON.TOS (bios/bios.c).
+#
+ifeq ($(CONF_EXTERNAL_CLI),y)
+EMUCON_TOS = emucon.tos
+image-extra += $(EMUCON_TOS)
+
+emucon.tos: $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile) version.mk $(AUTOCONF_H)
+	@echo '  EMUCON'
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k)
+	@cp cli/emucon2.tos $@
+
+else
+EMUCON_TOS =
+endif
+TOCLEAN += emucon.tos cli/emucon2.tos cli/.arch-* cli/*.o
+
 TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym *.efi
 
 #
@@ -1902,9 +1922,9 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
+TEST_HD_FILES = runtests.tos $(EMUCON_TOS) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos $(EMUCON_TOS) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 

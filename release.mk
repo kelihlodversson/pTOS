@@ -212,13 +212,14 @@ release-floppy:
 	rm -r $(RELEASE_FLOPPY)
 
 .PHONY: release-raspi-resources
-release-raspi-resources:
+release-raspi-resources: $(EMUCON_TOS)
 	@if [ -z '$(DEST)' ]; then \
 	  echo 'DEST is not set; usage: make release-raspi-resources DEST=<archive-dir>' >&2; \
 	  exit 1; \
 	fi
 	mkdir -p $(DEST)
 	$(call copy-resources,$(DEST))
+	$(if $(EMUCON_TOS),cp $(EMUCON_TOS) $(DEST)/EMUCON.TOS)
 	# desk/emudesk-raspi.inf: same #R/#E/#Q/#M/#T/file-type-association
 	# content deskapp.c's own built-in default generates (see
 	# desk_inf_data1/desk_inf_data2), except the first #W window slot
