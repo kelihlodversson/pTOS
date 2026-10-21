@@ -558,6 +558,7 @@ MEMBOT_TOS404_NAME = TOS 4.04
 
 define report-memory
 MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map); \
+$(if $(CONF_WITH_HIGHER_HALF),MEMBOT=$$(($$MEMBOT - 0x80000000));) \
 echo "# RAM used: $$(($$MEMBOT)) bytes$(if $(MEMBOT_REFERENCE), ($$(($$MEMBOT - $(MEMBOT_$(MEMBOT_REFERENCE)))) bytes more than $(MEMBOT_$(MEMBOT_REFERENCE)_NAME)))"
 endef
 

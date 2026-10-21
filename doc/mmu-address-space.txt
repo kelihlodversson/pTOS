@@ -1,5 +1,6 @@
 pTOS - address spaces on 32-bit ARM and m68k with an MMU
-=========================================================
+==================================================
+
 
 The layout the MMU configurations of ARM (ARMv6/ARMv7) and m68k
 (68030/68040/68060) move to under #549: one address space per process, and a
@@ -401,6 +402,76 @@ end state above, until #568 gives each process a table of its own:
     which a string of the kernel image has now.
 
 
+virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
+....................................................
+
+The image that requires the PMMU (virt-m68k-mmu_defconfig,
+CONF_REQUIRE_PMMU) is a higher-half kernel with the 68040 MMU on from the
+start.  QEMU's 68040 only: the check of #564 now accepts a 68040 or a 68060,
+not a 68030, which has a PMMU but not the tree below.
+
+  - emutos.ld: the TOS low memory -- the vectors, the system variables, the
+    BIOS stack and the variables of .low_stram, 32 KiB at most -- stays at its
+    addresses, where the absolute short addressing and Setexc() expect it
+    (nothing of the m68k code had to change).  The rest of the kernel (.text,
+    .data, .bss) is linked in the window, right after it: the RAM at physical 0
+    is at 0x80000000, the bytes are loaded at their physical addresses
+    (LMA = VMA - 0x80000000), and QEMU's -kernel loader turns the entry point
+    into the physical one, as it does on virt-arm.
+  - startup.S: main is a trampoline that always continues at the physical
+    (low) alias of itself, so that it works both from QEMU's reset (MMU off)
+    and from a software reset (warm_reset() jumps to main with the MMU on).
+    The code up to the jump to the window is position independent: a symbol
+    of the window is converted with PHYS() where it has to be reached before
+    the MMU is on (the PMMU check, the bootinfo list QEMU puts after the
+    image, the RAM size kept for a software reset).  Then
+    virt_mmu_early.S builds the tables and switches the MMU on, and startup.S
+    jumps to the window and goes on as before.
+  - The tree has one root for the supervisor and the user (URP = SRP), page
+    size 4 KiB, with the descriptors global.  The RAM is in it twice, at 0
+    (the pool the memory of programs is taken from, the TOS low memory, and
+    where the start runs when the MMU is switched on) and at the window, and
+    the two share their pointer and page tables.  The pool is the memory
+    after the kernel image (virt_pool_start()), so Malloc() and Pexec()
+    results stay positive LONGs, and phystop, membot and memtop are pool
+    addresses.  The first page (the vectors, the system variables and the
+    BIOS stack) is supervisor-only; the rest of the low memory is user
+    accessible, as .low_stram is meant to be.  The tables are at the top of
+    the RAM, and phystop stops below them (about 1 KiB per MiB of RAM).
+    RAM is limited to 1 GiB, what the window holds.
+  - The devices (0xff000000 and up) are not in the tree: DTTR0 maps that
+    16 MiB to itself, supervisor only and not cached.  Nothing else is
+    mapped, and faults.
+  - processor_init() leaves the MMU alone (it used to disable translation
+    and install transparent translations for all addresses, which would
+    take the window away).
+  - Addresses given to hardware are converted: virtio (VIRTIO_PHYS(), as on
+    virt-arm) and the goldfish TTY's read buffer.  NLS_MSGID_FLAG is
+    0xc0000000, as on virt-arm.
+  - As on virt-arm, the window is not supervisor-only yet: the command line
+    and the desktop run in user mode from the kernel image (#568, #570).
+
+What QEMU's 68040 MMU (QEMU 10.1) does and does not do, as far as this uses
+it:
+
+  - The tree walk follows the 68040's three levels, 4 KiB pages, and writes
+    the used/modified bits back into the descriptors, which therefore have to
+    be in writable RAM.  Table descriptors with UDT = 2 are valid.
+  - The S bit of a page is enforced: a user-mode read of the first page ends
+    in an access error (a format 7 frame; the BIOS then panics: "Bus Error").
+  - DTTR0 works as a transparent window with the supervisor-only (S = 01) and
+    cache mode fields; ITTR0/1 and DTTR1 are not needed and are cleared.
+  - CPUSHA, PFLUSHA and the cache control register are accepted; there are
+    no caches to flush, and no ATC behaviour that differs from the
+    architecture was found with a tree that is not changed after TC.E is set
+    (what PFLUSH/PFLUSHAN need for the per-process trees is #570's).
+  - The 68060 of QEMU has neither TC nor the TTRs (movec raises an illegal
+    instruction), and there is no 68030 PMMU: -cpu m68030 is a CPU without
+    one, as tools/test-pmmu-check.sh counts it.
+  - The ELF loader rewrites e_entry for p_vaddr != p_paddr in the segment
+    that holds it (as for virt-arm); the bootinfo list is placed after the
+    highest *physical* address of the image.
+=======
 Raspberry Pi, as built by #567 (CONF_WITH_HIGHER_HALF)
 .......................................................
 

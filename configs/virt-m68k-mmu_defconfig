@@ -1,10 +1,11 @@
 # ELF kernel image for QEMU's m68k 'virt' machine that needs a PMMU: the
-# start of the m68k MMU configuration of #549.  For now it is
-# virt-m68k-cli with CONF_REQUIRE_PMMU, the startup check of #564: on a
+# m68k MMU configuration of #549.  It is virt-m68k-cli-elf with
+# CONF_REQUIRE_PMMU, the startup check of #564: on a
 # 68040 it boots to EmuCON as virt-m68k-cli does, and on a CPU without a
 # usable PMMU (-cpu m68000/m68010/m68020) it prints why it cannot run and
-# stops.  tools/test-pmmu-check.sh boots it both ways in CI.  The higher-half
-# kernel and the address spaces (#569, #570) will be built on this one.
+# stops.  tools/test-pmmu-check.sh boots it both ways in CI.  It is the
+# higher-half kernel of #569, with the MMU on (68040 only; QEMU has no other
+# PMMU), and the address spaces (#570) will be built on it.
 MACHINE_VIRT_M68K=y
 
 # QEMU's m68k 'virt' board defaults to an m68040 core (see hw/m68k/virt.c's
@@ -51,5 +52,13 @@ CONF_WITH_AES=n
 # without a matching -fsdev/-device on the QEMU command line.
 CONF_WITH_PLUGGABLE_FS=y
 
-# The point of this defconfig: refuse to start without a PMMU (#564).
+# The ELF loader, as virt-m68k-cli-elf_defconfig has it, so that the regression
+# suite of CI (tools/run-regression-tests.sh virt-m68k-mmu) has the same
+# suites as the one of virt-m68k.
+CONF_WITH_ELF_LOADER=y
+
+# The point of this defconfig: refuse to start without a PMMU (#564).  It
+# makes the kernel a higher-half one too (CONF_WITH_HIGHER_HALF, #569): it is
+# linked in the physical-memory window at 0x80000000 and runs with the 68040
+# MMU on from its first instructions.
 CONF_REQUIRE_PMMU=y

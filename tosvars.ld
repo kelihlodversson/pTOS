@@ -21,7 +21,7 @@
 
  /* ==== Start of Exception related variables ================================ */
 #define TOSVAR(name, address) C_SYM(name) = address
-#if !CONF_WITH_HIGHER_HALF
+#if !NO_LOW_MEMORY
 /* A higher-half kernel has nothing at these addresses: there the crash page
  * is made of ordinary variables (bios/arch/arm/vectors.c) */
 TOSVAR(proc_lives, 0x380);      /* validates system crash page, if 0x12345678 */
@@ -37,7 +37,7 @@ TOSVAR(proc_aregs, C_SYM(proc_dregs) + 32);
 #endif
 
 /* ==== Start of System variables =========================================== */
-#if !CONF_WITH_HIGHER_HALF
+#if !NO_LOW_MEMORY
 C_SYM(sysvars_start) = 0x400;
 #endif
 /*
