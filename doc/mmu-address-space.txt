@@ -401,6 +401,55 @@ end state above, until #568 gives each process a table of its own:
     which a string of the kernel image has now.
 
 
+Raspberry Pi, as built by #567 (CONF_WITH_HIGHER_HALF)
+.......................................................
+
+The same design on the Pi 1, 2, 3 and 4, whenever the MMU is set up at all
+(CONF_WITH_ARM_PMMU, the default; without it the kernel stays low, as it was).
+What differs from virt-arm:
+
+  - The RAM is at physical 0, so the window is the RAM at 0x80000000 + its
+    physical address, and the firmware's load address 0x8000 is where the
+    kernel is: linked at 0x80008000, the load addresses of the sections are
+    the link addresses minus 0x80000000 (emutos.ld, LMA_AT()), so
+    "objcopy -O binary" still makes the same kernel.img.  The pool at virtual
+    0 is the RAM at its physical address, so it doubles as the mapping that
+    the start code and a reset run in; nothing else of the low half is
+    mapped.
+  - The start (bios/machine/raspi/startup.S up to the jump into the window)
+    keeps what the firmware gave it in registers (r0-r2, and whether it was
+    started in HYP mode), and uses a small stack just below the kernel.  The
+    one C function it calls, raspi_mmu_bootstrap() (raspi_mmu_boot.c), asks
+    the VideoCore how much RAM there is (the same property tag as later, with
+    the uncached bus alias of a buffer below the kernel), builds both tables
+    in the megabyte at the top of the RAM -- TTBR1 16 KiB, TTBR0 8 KiB, the
+    page table of the first megabyte of the window for
+    CONF_WITH_MMU_TEXT_PROTECT, then the coherent buffers -- and switches the
+    MMU on.  startup.S clears the BSS from the window and stores what it kept,
+    and phystop, which is the top of the pool, the table megabyte excluded.
+    The window is 1 GiB at most (a Pi 4 with more RAM leaves the rest unused);
+    what the ARM sees above its RAM and below its peripherals, the memory of
+    the VideoCore, is in the window as device memory: the framebuffer address
+    the VideoCore hands out is converted with phys_to_window().
+  - The peripherals and the per core registers are in the device half, at
+    0xf0000000 | (physical & 0x0fffffff) as in the table above (RASPI_DEV_VA()
+    in include/machine/raspi/raspi_memmap.h), and raspi_board.io_base and
+    local_base are those virtual addresses; the BCM2711 also has its PCIe
+    controller at 0xfd500000 mapped.  The PCIe window of the Pi 4 is not
+    reachable without LPAE (#76, #276), as before.
+  - Everything a bus master is given goes through virt_to_phys()
+    (bios/machine/raspi/memory.c) and then phys_to_bus(): raspi_dma_bus() for
+    the mailbox buffer, the hardware cursor image and the DWC2 transfers, and
+    virt_to_phys() for the xHCI rings, which the PCIe inbound window reaches
+    by the physical address.
+  - The vector table is the same handler variables as on virt-arm.  A reset
+    (warm_reset(), Ctrl-Alt-Del) comes back to startup.S with the MMU on:
+    it switches to the physical alias of the code and turns the MMU and the
+    caches off, as they are at power on, then starts as the first boot did.
+  - The kernel half is not supervisor-only yet, for the same reason as on
+    virt-arm (#568).
+
+
 Kernel pointers and LONG results
 ---------------------------------
 

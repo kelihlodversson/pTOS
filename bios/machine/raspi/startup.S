@@ -9,6 +9,7 @@
 
 #include "asmdefs.h"
 #include "header.h"
+#include "raspi_memmap.h"
 
 #if defined(TARGET_RPI4)
 #define CORE0_MBOX3_SET             0xff80008C
@@ -26,6 +27,17 @@
 #endif
 #define EARLY_UART0_DR               (EARLY_UART0_BASE + 0x00)
 #define EARLY_UART0_FR               (EARLY_UART0_BASE + 0x18)
+#if CONF_WITH_HIGHER_HALF
+#define EARLY_UART0_VBASE            (RASPI_IO_BASE + 0x201000)
+#define EARLY_UART0_VDR              (EARLY_UART0_VBASE + 0x00)
+#define EARLY_UART0_VFR              (EARLY_UART0_VBASE + 0x18)
+#endif
+#endif
+
+#if CONF_WITH_HIGHER_HALF
+/* where the stack is until the MMU is on: the RAM below the kernel, which the
+ * firmware loads at 0x8000 (raspi_mmu_boot.c has the mailbox buffer above) */
+#define EARLY_STACK                  0x7000
 #endif
 // ==== Definitions ==========================================================
 
@@ -40,6 +52,12 @@
 
         // BIOS C part
         .extern C_SYM(biosmain)     // BIOS C entry point
+#if CONF_WITH_HIGHER_HALF
+        .extern C_SYM(raspi_mmu_bootstrap) // build the tables, switch the MMU on
+        .extern C_SYM(phystop)
+        .extern __bss
+        .extern __ebss
+#endif
 
         // Overall memory map
         .extern __endvdibss   // end of VDI BSS
@@ -125,6 +143,237 @@ os_dummy:
  *
  */
 
+#if CONF_WITH_HIGHER_HALF
+/*
+ * The kernel is linked in the physical-memory window (RASPI_WINDOW_VBASE and
+ * up) and the firmware loads it at 0x8000, with the MMU off.  So this runs
+ * at its physical address: up to the jump into the window it is position
+ * independent -- relative branches, and literal pools holding constants or
+ * addresses of the window from which RASPI_WINDOW_VBASE is subtracted, never
+ * the address of a symbol used as it is -- and the C function it calls
+ * (raspi_mmu_bootstrap()) touches no global.  Everything it must keep for
+ * the C part (the boot loader's registers, whether it was started in HYP
+ * mode, the top of the RAM) is in r8-r11 and r6 until the BSS is cleared.
+ */
+.balign 4
+C_SYM(main):
+    /*
+     * The boot loader hands us r0 = 0, r1 = the ARM Linux machine type and
+     * r2 = the address of the ATAG list, or of a flattened device tree when
+     * the firmware built one.  bios/bootargs.c reads this to recognize a
+     * "ptos.lang=xx" parameter on the command line.  Note that QEMU started
+     * with -bios does not set them up at all, so a reader must not assume
+     * the pointer is valid.  Only the boot core is handed meaningful
+     * values, but the others are told to park before they matter.
+     */
+    mov r8, r0
+    mov r9, r1
+    mov r10, r2
+    mov r11, #0                     /* start_in_hyp */
+
+    /*
+     * A software reset (cold_reset/warm_reset in bios/arch/arm/panicasm.S)
+     * branches here with the MMU on and the code running at its virtual
+     * address.  Take over what the first boot found (the registers saved
+     * in arm_boot_regs, whether it was started in HYP mode), then switch to
+     * the physical alias of this code, which the lower half keeps (the RAM
+     * is mapped at virtual 0), and turn the MMU and the caches off, as they
+     * are at power on.  The firmware is not asked again for anything else
+     * that startup did: the mode is the one it left, the monitor and the
+     * other cores are as they were.
+     */
+    mrc p15, 0, r3, c1, c0, 0
+    tst r3, #1                      /* SCTLR.M */
+    beq 2f
+    cpsid aif
+    bl  C_SYM(flush_data_cache_all)
+    ldr r4, =C_SYM(arm_boot_regs)
+    ldmia r4, {r8-r10}
+    ldr r4, =C_SYM(start_in_hyp)
+    ldr r11, [r4]
+    ldr r4, =0f
+    sub r4, r4, #RASPI_WINDOW_VBASE
+    bx  r4
+0:  mrc p15, 0, r3, c1, c0, 0
+    ldr r4, =0x1805                 /* M, C, Z and I */
+    bic r3, r3, r4
+    mcr p15, 0, r3, c1, c0, 0
+    mov r3, #0
+    mcr p15, 0, r3, c8, c7, 0       /* invalidate the TLB */
+    mcr p15, 0, r3, c7, c5, 0       /* invalidate the instruction cache */
+    mcr p15, 0, r3, c7, c5, 6       /* and the branch predictor */
+    mcr p15, 0, r3, c7, c10, 4      /* data synchronization barrier */
+    mcr p15, 0, r3, c7, c5, 4       /* flush the prefetch buffer */
+    b   3f
+2:
+
+#if CONF_WITH_RASPI_UART0
+    mov r0, #0x45                   /* E: entry */
+    bl  early_uart_putc
+#endif
+
+#ifndef TARGET_RPI1
+    bl  switch_from_hyp
+
+    /* with some firmware versions, for some reason we need to call into monitor mode and unset the NS bit */
+    /* copy our temporary monitor vectors to the old vector base address. */
+    mrc p15, 0, r1, c12, c0, 0 ;@ get vbar
+    ldr r0,=_monitor_vectors
+    sub r0, r0, #RASPI_WINDOW_VBASE
+    ldmia r0!,{r2,r3,r4,r5,r6,r7}
+    stmia r1!,{r2,r3,r4,r5,r6,r7}
+
+    /* flush caches etc.*/
+    mov r12,#0
+    mcr p15, 0, r12, c7, c10, 1
+    dsb
+    mov r12, #0
+    mcr p15, 0, r12, c7, c5, 0
+    mov r12, #0
+    mcr p15, 0, r12, c7, c5, 6
+    dsb
+    isb
+
+    /* Since TOS does not support SMP, a quick hack to tell remaining cores to
+    start execution in _start_secondary */
+
+    // On real hardware, only core 0 starts executing at 0x8000, but
+    // Qemu seems to send all cores to this address.
+    mrc p15,0,r0,c0,c0,5    // Read MPIDR into r0
+    ands r0,#3              // Mask out core id
+    bne  _start_secondary   // Make sure only core 0 continues from here
+
+    // On real hardware, the other cores are looping somewhere in low
+    // memory waiting for someone to give them an address through a
+    // mailbox mechanism. We'll send them to our own loop in case we
+    // overwrite the memory they're currently at.  The mailbox wants the
+    // physical address.
+
+    ldr r1, =_start_secondary
+    sub r1, r1, #RASPI_WINDOW_VBASE
+
+    // Get mailbox for core 1
+    ldr r0, = CORE0_MBOX3_SET + 0x10
+    str r1, [r0]
+
+    // Get mailbox for core 2
+    ldr r0, = CORE0_MBOX3_SET + 0x20
+    str r1, [r0]
+
+    // Get mailbox for core 3
+    ldr r0, = CORE0_MBOX3_SET + 0x30
+    str r1, [r0]
+    dsb
+#endif
+3:
+
+    /* the early stack, physical, with all exceptions masked */
+    cpsid aif
+    ldr sp, =EARLY_STACK
+
+    /* Enable VFP/NEON before the first C code runs (see below). */
+    mrc     p15, 0, ip, c1, c0, 2
+    orr     ip, ip, #0xF00000       /* enable cp10 (single precision) and cp11 (double precision) */
+    mcr     p15, 0, ip, c1, c0, 2
+#ifdef TARGET_RPI1
+    mov     ip, #0
+    mcr     p15, 0, ip, c7, c5, 4   /* flush prefetch buffer (ARMv6 has no isb) */
+#else
+    isb                             /* make the CPACR change visible before the first CP10/11 access */
+#endif
+    mov     ip, #0x40000000         /* FPEXC.EN (bit 30) */
+    mcr     p10, 7, ip, c8, c0, 0   /* VMSR FPEXC, ip */
+#ifdef TARGET_RPI1
+    mov     ip, #0
+    mcr     p15, 0, ip, c7, c5, 4
+#else
+    isb
+#endif
+
+#if CONF_WITH_RASPI_UART0
+    mov r0, #0x4d                   /* M: immediately before MMU */
+    bl  early_uart_putc
+#endif
+
+    /*
+     * MMU bring-up (bios/machine/raspi/raspi_mmu_boot.c): asks the VideoCore
+     * how much RAM there is, builds the tables, switches the MMU on and
+     * returns the top of the RAM, in r6 (callee-saved).
+     */
+    bl  C_SYM(raspi_mmu_bootstrap)
+    mov r6, r0
+
+    ldr pc, =raspi_post_mmu
+
+raspi_post_mmu:
+    /*
+     * Running in the window now, with the RAM also at virtual 0 (the pool).
+     * Note that we set all the stack pointers to point to the same place,
+     * as we actually only use the user and supervisor stack pointer.
+     */
+    cps #0x11               /* set fiq mode */
+    ldr sp, =C_SYM(stktop)
+    cps #0x12               /* set irq mode */
+    ldr sp, =C_SYM(stktop)
+    cps #0x17               /* set abort mode */
+    ldr sp, =C_SYM(stktop)
+    cps #0x1B               /* set "undefined" mode */
+    ldr sp, =C_SYM(stktop)
+    cps #0x13               /* set supervisor mode */
+    ldr sp, =C_SYM(stktop)
+
+    ldr r0, =arm_vectors
+    mcr p15, 0, r0, c12, c0, 0      /* set VBAR to our table at the start of the os */
+
+#if CONF_WITH_RASPI_UART0
+    mov r0, #0x52                   /* R: MMU return */
+    bl  early_uart_putc_va
+#endif
+
+    /* Clear the BSS segment now that virtual addressing is live. */
+    ldr r0, =__bss
+    ldr r1, =__ebss
+    mov r2, #0
+1:  cmp r0, r1
+    bge 2f
+    str r2, [r0], #4
+    b   1b
+2:
+
+    /*
+     * What the start found, now that the BSS is cleared: where the pool
+     * ends (the megabyte at the top of the RAM is the MMU tables and the
+     * coherent buffers), the boot loader's registers and whether it was
+     * started in HYP mode.
+     */
+    ldr r0, =C_SYM(phystop)
+    sub r1, r6, #0x100000
+    str r1, [r0]
+    /*
+     * The boot loader's pointer (ATAGs, or the device tree) is a physical
+     * address, which the lower half does not map above the pool (the last
+     * megabyte of the RAM may well hold the device tree): keep it as the
+     * address in the window, which maps all of the RAM.  After a software
+     * reset it is that already.
+     */
+    cmp r10, #0
+    beq 3f
+    cmp r10, #RASPI_WINDOW_SIZE
+    addlo r10, r10, #RASPI_WINDOW_VBASE
+3:  ldr r3, =C_SYM(arm_boot_regs)
+    stmia r3, {r8-r10}
+    ldr r3, =C_SYM(start_in_hyp)
+    str r11, [r3]
+
+    bl     C_SYM(raspi_vcmem_init)         // the board, the buffers (needs sp)
+
+/*
+ * From now, the stack is allowed, and C code can be used.
+ * The BIOS startup goes on in bios.c
+ */
+    b     C_SYM(biosmain)
+
+#else
 .extern C_SYM(raspi_screen_init)
 .extern C_SYM(raspi_screen_debug)
 .balign 4
@@ -277,6 +526,8 @@ _core0:
 
     b     C_SYM(biosmain)
 
+#endif /* CONF_WITH_HIGHER_HALF */
+
 #if CONF_WITH_RASPI_UART0
 /* The firmware has already selected and initialized the PL011.  Do not wait
  * for a full FIFO here: a diagnostic marker must never stop early boot. */
@@ -286,6 +537,18 @@ early_uart_putc:
     tst r2, #0x20                   /* TXFF */
     bxne lr
     ldr r1, =EARLY_UART0_DR
+    str r0, [r1]
+    bx lr
+#endif
+
+#if CONF_WITH_RASPI_UART0 && CONF_WITH_HIGHER_HALF
+/* The same through the device window, once the MMU is on. */
+early_uart_putc_va:
+    ldr r1, =EARLY_UART0_VFR
+    ldr r2, [r1]
+    tst r2, #0x20                   /* TXFF */
+    bxne lr
+    ldr r1, =EARLY_UART0_VDR
     str r0, [r1]
     bx lr
 #endif
@@ -307,9 +570,13 @@ switch_from_hyp:
     /* branch if not HYP mode */
     bne 1f
 
+#if CONF_WITH_HIGHER_HALF
+    mov r11, #1                     /* start_in_hyp: kept until the BSS is cleared */
+#else
     ldr r1, =C_SYM(start_in_hyp)
     mov r2, #1
     str r2, [r1]
+#endif
 
     msr spsr_cxsf, r0
 
@@ -361,7 +628,14 @@ C_SYM(arm_dispatch_undef):
     moveq  r0, #0x28       // VEC_LINEA - we use e7f...f. as the lineA emulation
     movne  r0, #0x10       // VEC_ILLEGAL - other illegal instructions will simulate an illegal instruction vector
     mov    r1, sp          // Stack pointer points to the exception frame
+#if CONF_WITH_HIGHER_HALF
+    // the handlers are variables (bios/arch/arm/vectors.c): r0 is only the vector number
+    ldreq  ip, =C_SYM(tos_vec_linea)
+    ldrne  ip, =C_SYM(tos_vec_undef)
+    ldr    ip, [ip]
+#else
     ldr    ip, [r0]        // load handler address the illegal instruction will be passed in as the first argument
+#endif
     blx ip                 // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 instruction, u32 pc)
 
     add    sp, #4*15
@@ -379,11 +653,25 @@ C_SYM(arm_dispatch_svc):
     // that returns normally is unaffected (rfefd restores CPSR from the
     // pre-trap SPSR_svc), so this only bit us on the first blocking
     // console read a process makes (#185).
+#if CONF_WITH_HIGHER_HALF
+    // The handler of TRAP #n is tos_vec_svc[n] (bios/arch/arm/vectors.c): r3
+    // is borrowed to reach the array and restored from the stack (with IRQ
+    // still masked, as the exception left it), as every argument register is
+    // live.
+    str r3, [sp, #-4]!
+    ldr ip, [lr, #-4]      // load svc instruction from code
+    and ip, ip, #0xF       // mask out low nybble of instruction (we emulate trap #0 - #15)
+    ldr r3, =C_SYM(tos_vec_svc)
+    ldr ip, [r3, ip, lsl #2]
+    ldr r3, [sp], #4
+    cpsie i
+#else
     cpsie i
     ldr ip, [lr, #-4]      // load svc instruction from code
     and ip, ip, #0xF       // mask out low nybble of instruction (we emulate trap #0 - #15)
     lsl ip, ip, #0x2       // multiply index by 4
     ldr ip, [ip, #+0x80]   // load handler address at 80 + ip
+#endif
     bx  ip                 // jump to it. It will use the registers as arguments.
 
     .globl C_SYM(arm_dispatch_prefetch_abort)
@@ -401,7 +689,12 @@ C_SYM(arm_dispatch_prefetch_abort):
 
     mov r0, #0x08   // VEC_BUS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
+#if CONF_WITH_HIGHER_HALF
+    ldr ip, =C_SYM(tos_vec_prefetch)
+    ldr ip, [ip]    // load handler address
+#else
     ldr ip, [r0]    // load handler address
+#endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
 
     add    sp, #4*15
@@ -422,7 +715,12 @@ C_SYM(arm_dispatch_data_abort):
 
     mov r0, #0x0c   // VEC_ADDRESS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
+#if CONF_WITH_HIGHER_HALF
+    ldr ip, =C_SYM(tos_vec_data)
+    ldr ip, [ip]    // load handler address
+#else
     ldr ip, [r0]    // load handler address
+#endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
 
     add    sp, #4*15

@@ -679,7 +679,7 @@ static void dwc2_async_start(struct dwc2_priv *priv,
            (slot->pid << DWC2_HCTSIZ_PID_OFFSET), &hc->hctsiz);
     invalidate_data_cache(slot->dma_buffer,
                           roundup(slot->msg->transfer_len, ARCH_DMA_MINALIGN));
-    writel(phys_to_bus((unsigned long)slot->dma_buffer), &hc->hcdma);
+    writel(raspi_dma_bus(slot->dma_buffer), &hc->hcdma);
     writel(0x3fff, &hc->hcint);
     hcintmsk = DWC2_HCINTMSK_XFERCOMPL | DWC2_HCINTMSK_CHHLTD |
                DWC2_HCINTMSK_STALL | DWC2_HCINTMSK_AHBERR |
@@ -1296,7 +1296,7 @@ static int transfer_chunk(struct dwc2_hc_regs *hc_regs, void *aligned_buffer,
         }
     }
 
-    writel(phys_to_bus((unsigned long)aligned_buffer), &hc_regs->hcdma);
+    writel(raspi_dma_bus(aligned_buffer), &hc_regs->hcdma);
 
     /* Clear old interrupt conditions for this host channel. */
     writel(0x3fff, &hc_regs->hcint);
