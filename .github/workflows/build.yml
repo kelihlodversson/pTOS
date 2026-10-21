@@ -111,6 +111,9 @@ jobs:
         config: ${{ fromJSON(needs.configurations.outputs.m68k) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # CONF_EXTERNAL_CLI builds EmuCON against the libcmini submodule
+          submodules: true
 
       # Same idea as the architecture split above: a config that turns on
       # CONF_WITH_MFASTCALL needs Thorsten Otto's toolchain instead of
@@ -192,6 +195,9 @@ jobs:
         config: ${{ fromJSON(needs.configurations.outputs.arm) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # CONF_EXTERNAL_CLI builds EmuCON against the libcmini submodule
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
