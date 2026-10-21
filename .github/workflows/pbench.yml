@@ -54,6 +54,7 @@ jobs:
 
       - name: Build the system and pBench
         run: |
+          make "${{ matrix.config }}_defconfig"
           make
           make pbench.prg
           mkdir products

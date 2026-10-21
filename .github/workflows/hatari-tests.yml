@@ -47,6 +47,7 @@ jobs:
 
       - name: Build the system and the test disk
         run: |
+          make "${{ matrix.config }}_defconfig"
           make
           make test-hd
           mkdir products
