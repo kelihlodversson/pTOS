@@ -1340,7 +1340,14 @@ LONG elf_pgmld(FH h, PD *p)
     p->p_dbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_dlen  = 0;
     p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
-    p->p_blen  = (LONG)(info.mem_end - info.file_end);
+    /*
+     * the footprint the sizes add up to (sizeof(PD) + text + data + bss, what
+     * a program that shrinks its TPA is guided by) has to reach the end of the
+     * image: the gap the alignment left after the basepage is part of the bss
+     * (the addresses of the segments, and the entry point, are not moved by it)
+     */
+    p->p_blen  = (LONG)(info.mem_end - info.file_end)
+                 + (LONG)((uintptr_t)load_base - (uintptr_t)(p + 1));
 
 #endif
 
