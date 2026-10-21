@@ -193,6 +193,8 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         Top an open owned window. Slider fields are AES_WINDOW_HSLIDE,
         VSLIDE, HSLSIZ or VSLSIZ; values are 0..1000, with -1 also accepted
         for the native default size. Native AES normalizes zero to one.
+        Position and size updates require the corresponding HSLIDE/VSLIDE
+        gadget, even on closed windows; otherwise EINVAL leaves state intact.
 
     LONG aes_wind_rect(WORD handle, UWORD next, GRECT *rectangle);
         next=0 starts the owned window's visible-work-rectangle walk;

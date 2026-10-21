@@ -703,8 +703,15 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
             result = wm_set(h, WF_TOP, fields) ? E_OK : EINVAL;
         break;
     case AES_WIN_SLIDER:
-        fields[0] = r->value;
-        result = wm_set(h, sliders[r->selector], fields) ? E_OK : EINVAL;
+        /* Native slider redraw walks the gadget's object-tree links.
+         * Arrow buttons and a sizer do not imply that the slider exists. */
+        if (!(native->w_kind & (r->selector == AES_WINDOW_HSLIDE ||
+                               r->selector == AES_WINDOW_HSLSIZ ? HSLIDE : VSLIDE)))
+            result = EINVAL;
+        else {
+            fields[0] = r->value;
+            result = wm_set(h, sliders[r->selector], fields) ? E_OK : EINVAL;
+        }
         break;
     case AES_WIN_VISIBLE:
         /* Selection, copyout and cursor commit are bounded and cannot

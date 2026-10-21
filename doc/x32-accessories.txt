@@ -158,6 +158,10 @@ A real callback frees the visible-rectangle output heap block while cleanup
 closes a retired window, without revoking registration. Failed NEXT and FIRST
 calls must preserve their cursor; a valid retry receives the undelivered next
 rectangle or the previous end marker, and a successful FIRST restarts the walk.
+Slider position/size updates cover closed and topped open windows with no
+sliders, unrelated title/mover or arrow/sizer gadgets, one slider axis, and
+both axes. Missing gadgets return EINVAL without changing state; supported
+updates change only the selected field, with 3D objects enabled and disabled.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its

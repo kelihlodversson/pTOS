@@ -236,6 +236,61 @@ static int mover_boundaries(void)
     return 0;
 }
 
+static int slider_gadgets(void)
+{
+    static const UWORD kinds[] = {
+        0, AES_WINDOW_NAME_GADGET | AES_WINDOW_MOVER,
+        AES_WINDOW_SIZER | AES_WINDOW_UPARROW | AES_WINDOW_DNARROW |
+            AES_WINDOW_LFARROW | AES_WINDOW_RTARROW,
+        AES_WINDOW_HSLIDE_GADGET, AES_WINDOW_VSLIDE_GADGET,
+        AES_WINDOW_HSLIDE_GADGET | AES_WINDOW_VSLIDE_GADGET
+    };
+    static const UWORD required[] = {
+        AES_WINDOW_HSLIDE_GADGET, AES_WINDOW_VSLIDE_GADGET,
+        AES_WINDOW_HSLIDE_GADGET, AES_WINDOW_VSLIDE_GADGET
+    };
+    GRECT rectangle = { 40, 60, 340, 240 };
+    AES_WINDOW_INFO before, after;
+    LONG handle, result;
+    UWORD i, field;
+    WORD opened, value;
+
+    for (i = 0; i < ARRAY_SIZE(kinds); i++) {
+        handle = aes_wind_create(kinds[i], &rectangle);
+        CHECK(handle > 0);
+        for (opened = 0; opened < 2; opened++) {
+            if (opened) {
+                CHECK(aes_wind_open((WORD)handle, &rectangle) == E_OK);
+                CHECK(aes_wind_top((WORD)handle) == E_OK);
+            }
+            for (field = 0; field < ARRAY_SIZE(required); field++) {
+                CHECK(aes_wind_get((WORD)handle, &before) == E_OK);
+                if (opened)
+                    CHECK(before.top == handle);
+                value = 500 + opened * 100 + field;
+                result = aes_wind_slider((WORD)handle, field, value);
+                if (kinds[i] & required[field]) {
+                    CHECK(result == E_OK);
+                    switch (field) {
+                    case AES_WINDOW_HSLIDE: before.hslide = value; break;
+                    case AES_WINDOW_VSLIDE: before.vslide = value; break;
+                    case AES_WINDOW_HSLSIZ: before.hslsiz = value; break;
+                    case AES_WINDOW_VSLSIZ: before.vslsiz = value; break;
+                    }
+                } else
+                    CHECK(result == EINVAL);
+                /* Rejection preserves all state; accepted updates change
+                 * only the selected slider, including on topped windows. */
+                CHECK(aes_wind_get((WORD)handle, &after) == E_OK);
+                CHECK(!memcmp(&before, &after, sizeof(before)));
+            }
+        }
+        CHECK(aes_wind_delete((WORD)handle) == E_OK);
+    }
+    (void)Cconws("x32 slider gadget validation: PASS\r\n");
+    return 0;
+}
+
 static int cursor_copyout(WORD vdi_handle)
 {
     GRECT border = { 40, 60, 340, 240 }, cover = { 180, 60, 30, 240 };
@@ -624,6 +679,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(cleanup_synchronization(&rectangle) == 0);
     CHECK(boundary_resizes() == 0);
     CHECK(mover_boundaries() == 0);
+    CHECK(slider_gadgets() == 0);
     CHECK(cursor_copyout(vdi_handle) == 0);
     CHECK(copied_text((WORD)handle) == 0);
     memset(too_long, 'X', sizeof(too_long));
