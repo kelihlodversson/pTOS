@@ -266,6 +266,45 @@ static int replacement_deletion(const AES_APP_INFO *info, const GRECT *rectangle
     return 0;
 }
 
+static int cleanup_synchronization(const GRECT *rectangle)
+{
+    LONG first, later, probe, created;
+    AES_WINDOW_INFO state;
+    WORD i;
+
+    for (i = 0; i < 3; i++) {
+        first = aes_wind_create(kind, rectangle);
+        CHECK(first > 0);
+        CHECK(aes_wind_set_text((WORD)first, AES_WINDOW_NAME, "Sync cleanup") == E_OK);
+        CHECK(aes_wind_open((WORD)first, rectangle) == E_OK);
+        later = aes_wind_create(kind, rectangle);
+        CHECK(later > first);
+        CHECK(aes_wind_set_text((WORD)later, AES_WINDOW_NAME, "Sync later") == E_OK);
+        CHECK(aes_wind_open((WORD)later, rectangle) == E_OK);
+        probe = aes_wind_create(0, rectangle);
+        CHECK(probe > 0);
+        CHECK(aes_wind_set_text((WORD)probe, AES_WINDOW_NAME, "Sync probe") == E_OK);
+        /* Retry releases the simulated foreign owner, then finishes cleanup
+         * before executing the request. Native contention must prevent a
+         * new allocation; each typed token must prevent query copyout. */
+        if (!i) {
+            CHECK(aes_wind_create(0, rectangle) == EAGAIN);
+            created = aes_wind_create(0, rectangle);
+            CHECK(created > 0 && aes_wind_delete((WORD)created) == E_OK);
+        } else {
+            memset(&state, 0x6c, sizeof(state));
+            CHECK(aes_wind_get((WORD)probe, &state) == EAGAIN);
+            CHECK(state.handle == 0x6c6c && state.reserved == 0x6c6c);
+            CHECK(aes_wind_get((WORD)probe, &state) == E_OK && state.handle == probe);
+        }
+        CHECK(aes_wind_get((WORD)first, &state) == EIHNDL);
+        CHECK(aes_wind_get((WORD)later, &state) == EIHNDL);
+        CHECK(aes_wind_delete((WORD)probe) == E_OK);
+    }
+    (void)Cconws("x32 cleanup synchronization recheck: PASS\r\n");
+    return 0;
+}
+
 int accessory_window_reopen(WORD role, WORD vdi_handle)
 {
     GRECT rectangle = { 48, 60, 356, 240 };
@@ -404,6 +443,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(count > 0 && count < 32);
     for (i = 0; i < count; i++)
         CHECK(aes_wind_delete(exhausted[i]) == E_OK);
+    CHECK(cleanup_synchronization(&rectangle) == 0);
     CHECK(boundary_resizes() == 0);
     CHECK(copied_text((WORD)handle) == 0);
     memset(too_long, 'X', sizeof(too_long));

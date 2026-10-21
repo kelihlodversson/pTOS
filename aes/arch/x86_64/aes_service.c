@@ -249,6 +249,23 @@ static LONG update_ownership(AES_CLIENT_STATE *p, UQUAD code)
     return E_OK;
 }
 
+BOOL aes_service_window_unlocked(PD *pd)
+{
+    AES_CLIENT_STATE *p = kproc_aes_get(pd);
+
+    return p && (!update[0].owner || update[0].owner == p) &&
+        (!update[1].owner || update[1].owner == p);
+}
+
+#if CONF_WITH_X32_ACCESSORY_TEST
+LONG aes_service_test_coordination(WORD code)
+{
+    AES_CLIENT_STATE *p = find_name("ACCWAIT");
+
+    return p ? update_ownership(p, code) : ESRCH;
+}
+#endif
+
 static BOOL valid_rectangle(const AES_EVENT_RECT *mouse)
 {
     return (mouse->outside == 0 || mouse->outside == 1) &&
@@ -337,7 +354,7 @@ static LONG input_events(UQUAD input, UQUAD output)
 #endif
 }
 
-static LONG window_service(AES_CLIENT_STATE *p, UQUAD input, UQUAD output)
+static LONG window_service(UQUAD input, UQUAD output)
 {
     AES_WINDOW_REQUEST r;
     AES_WINDOW_INFO info;
@@ -403,9 +420,6 @@ static LONG window_service(AES_CLIENT_STATE *p, UQUAD input, UQUAD output)
 #if CONF_WITH_AES
     if (!x86_64_aes_owned(run))
         return EACCDN;
-    if ((update[0].owner && update[0].owner != p) ||
-        (update[1].owner && update[1].owner != p))
-        return EAGAIN;
     result = x86_64_aes_window(run, &r, text, &info, &rectangle);
     if (result < 0)
         return result;
@@ -414,7 +428,6 @@ static LONG window_service(AES_CLIENT_STATE *p, UQUAD input, UQUAD output)
         return EIMBA;
     return result;
 #else
-    (void)p;
     (void)result;
     return EACCDN;
 #endif
@@ -465,7 +478,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     case AES_SERVICE_MULTI:
         return input_events(a, b);
     case AES_SERVICE_WINDOW:
-        return window_service(p, a, b);
+        return window_service(a, b);
     case AES_SERVICE_WAIT:
         if (a != AES_EVENT_MESSAGE)
             return EINVAL;

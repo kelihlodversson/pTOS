@@ -36,6 +36,75 @@ static CLIENT_WINDOW windows[NUM_WIN];
 static PD *test_revoking;
 static PD *test_reusing;
 static WORD test_replaced[2];
+static WORD test_sync_cases, test_sync_first, test_sync_later;
+static BOOL test_sync_held;
+
+/* At the close boundary, model the state left by a dispatched lock waiter
+ * or another typed client acquiring one of the coordination tokens. */
+static void test_sync_closed(WORD h, CLIENT_WINDOW *w)
+{
+    AESPD *saved = rlr, *foreign = D.w_win[0].w_owner;
+
+    if (h != test_sync_first || strcmp(w->title, "Sync cleanup"))
+        return;
+    if (test_sync_held || test_sync_cases >= 3)
+        panic("accessory cleanup synchronization setup FAIL\n");
+    if (!test_sync_cases) {
+        if (wind_spb.sy_tas || !foreign || foreign == rlr)
+            panic("accessory native lock handoff setup FAIL\n");
+        rlr = foreign;
+        wm_update(BEG_UPDATE); /* Free lock: cannot yield on acquisition. */
+        rlr = saved;
+    } else if (aes_service_test_coordination(test_sync_cases == 1 ?
+                                            AES_BEG_UPDATE : AES_BEG_MCTRL) != E_OK)
+        panic("accessory coordination handoff setup FAIL\n");
+    test_sync_held = TRUE;
+}
+
+static void test_sync_prepare(PD *pd, const AES_WINDOW_REQUEST *request)
+{
+    WORD h = request->handle;
+
+    if (request->operation == AES_WIN_CREATE) {
+        for (h = 1; h < NUM_WIN; h++)
+            if (windows[h].owner == pd && !strcmp(windows[h].title, "Sync probe"))
+                break;
+    } else if (request->operation != AES_WIN_GET)
+        return;
+    if (h <= 0 || h >= NUM_WIN || windows[h].owner != pd ||
+        strcmp(windows[h].title, "Sync probe"))
+        return;
+    if (test_sync_held) {
+        if (!test_sync_cases) {
+            /* Cleanup must have stopped before deleting the just-closed
+             * window or closing a later retired window under a foreign lock. */
+            if (!(D.w_win[test_sync_first].w_flags & VF_INUSE) ||
+                (D.w_win[test_sync_first].w_flags & VF_ISOPEN) ||
+                !(D.w_win[test_sync_later].w_flags & VF_ISOPEN) ||
+                wind_spb.sy_owner != D.w_win[0].w_owner)
+                panic("accessory cleanup accessed contended windows FAIL\n");
+            wm_update(END_UPDATE);
+        } else if (aes_service_test_coordination(test_sync_cases == 1 ?
+                                                AES_END_UPDATE : AES_END_MCTRL) != E_OK)
+            panic("accessory coordination release FAIL\n");
+        test_sync_held = FALSE;
+        test_sync_first = test_sync_later = 0;
+        test_sync_cases++;
+        return;
+    }
+    if (test_sync_cases >= 3)
+        panic("accessory cleanup synchronization repeated FAIL\n");
+    for (h = 1; h < NUM_WIN; h++)
+        if (windows[h].owner == pd) {
+            if (!strcmp(windows[h].title, "Sync cleanup"))
+                test_sync_first = h;
+            if (!strcmp(windows[h].title, "Sync later"))
+                test_sync_later = h;
+        }
+    if (!test_sync_first || test_sync_first >= test_sync_later)
+        panic("accessory retired synchronization windows setup FAIL\n");
+    windows[test_sync_first].retired = windows[test_sync_later].retired = TRUE;
+}
 
 /* Reproduce the native reset/recreate effect at the close/delete boundary.
  * Unlike typed CREATE, a native creator ignores the busy bookkeeping slot. */
@@ -105,14 +174,21 @@ static LONG delete_window(WORD h, CLIENT_WINDOW *w)
     PD *owner = w->owner;
     AESPD *task = w->task;
 
+    if (!unlocked())
+        return EAGAIN;
     if (!same_window(h, w, owner, task))
         return EIHNDL;
     if (D.w_win[h].w_flags & VF_ISOPEN) {
         if (!wm_close(h))
             return EINVAL;
 #if CONF_WITH_X32_ACCESSORY_TEST
+        test_sync_closed(h, w);
         test_replace_closed(h, w);
 #endif
+        /* END_UPDATE may have handed the lock to a waiter and dispatched.
+         * Leave this closed window for retry rather than delete under it. */
+        if (!unlocked())
+            return EAGAIN;
         if (!same_window(h, w, owner, task))
             return EIHNDL;
     }
@@ -135,9 +211,10 @@ static void reap(void)
     if (user_callback_active())
         return;
 #endif
-    if (!unlocked())
-        return;
     for (h = 1; h < NUM_WIN; h++) {
+        /* An earlier deletion may have yielded and lost the native lock. */
+        if (!unlocked())
+            return;
         w = &windows[h];
         if (!w->owner || w->busy)
             continue;
@@ -219,6 +296,8 @@ void x86_64_aes_window_drain(void)
     test_revoking = NULL;
     test_reusing = NULL;
     memset(test_replaced, 0, sizeof(test_replaced));
+    test_sync_cases = test_sync_first = test_sync_later = 0;
+    test_sync_held = FALSE;
 #endif
     for (h = 1; h < NUM_WIN; h++)
         if (windows[h].owner)
@@ -384,11 +463,18 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
 
     if (!x86_64_aes_begin_call(pd))
         return EACCDN;
-    if (!unlocked())
+#if CONF_WITH_X32_ACCESSORY_TEST
+    test_sync_prepare(pd, r);
+#endif
+    if (!unlocked() || !aes_service_window_unlocked(pd))
         return EAGAIN;
     reap();
     if (x86_64_aes_call_cancelled(pd))
         return EACCDN;
+    /* Cleanup can dispatch: refresh both native synchronization and typed
+     * coordination ownership before validating handles or entering AES. */
+    if (!unlocked() || !aes_service_window_unlocked(pd))
+        return EAGAIN;
     if (r->operation == AES_WIN_FIND)
         return wm_find(input.g_x, input.g_y);
     if (r->operation == AES_WIN_CALC) {
@@ -518,8 +604,10 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
     if (w->retired || x86_64_aes_call_cancelled(pd)) {
         w->retired = TRUE;
         result = EACCDN;
-    } else if (r->operation == AES_WIN_DELETE)
+    } else if (r->operation == AES_WIN_DELETE && result != EAGAIN)
         w->retired = TRUE;
+    else if (!unlocked())
+        result = EAGAIN;
     else if (!(native->w_flags & VF_INUSE) || native->w_owner != w->task) {
         w->retired = TRUE;
         result = EIHNDL;
@@ -560,6 +648,8 @@ void x86_64_aes_window_test(void)
     CLIENT_WINDOW *w;
 
     reap();
+    if (test_sync_cases != 3 || test_sync_held)
+        panic("accessory cleanup synchronization cases missing FAIL\n");
     for (i = 0; i < 2; i++) {
         h = test_replaced[i];
         if (!h)

@@ -209,6 +209,11 @@ These calls return E_OK except create/find. Invalid/deleted handles return
 EIHNDL; foreign and desktop mutation attempts return EACCDN. Both coordination
 tokens and the native manager's lock can cause EAGAIN. Native fields that
 expose pointers or global color/desktop mutations are not part of this API.
+Requests recheck cancellation, the native lock and both typed coordination
+tokens after cleanup can dispatch, before accessing the requested native
+handle. Cleanup also rechecks the native lock after each yielding close and
+before visiting another window. If deletion closes a window but loses the
+lock, EAGAIN leaves that closed handle owned and available for retry.
 Unregister, normal exit/fault and restart close/delete the client's windows,
 clear its retained text and discard pending redraws. A callback may revoke
 and renew registration while a window call is suspended: that call returns

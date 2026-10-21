@@ -142,6 +142,11 @@ Deferred native arrow actions are injected while the owner is runnable; typed
 read/poll/wait/multi deliver sender 0, preserving the action across a full FIFO.
 After cancellation and context erasure, repeated native cleanup messages must
 be rejected without entering the task's legacy queue.
+Synchronization regressions inject a foreign native-lock owner, then each
+typed coordination token, after cleanup closes a window. CREATE must return
+EAGAIN without allocation; queries must return EAGAIN without copyout. Cleanup
+must leave its just-closed window and a later retired window untouched while
+the native lock is contended. Releasing the injected owner allows retry.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its

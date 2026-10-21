@@ -48,5 +48,9 @@ typedef struct aes_client_state AES_CLIENT_STATE;
 LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 void aes_service_process_exit(PD *pd);
 LONG aes_service_kernel_message(PD *pd, const WORD *message);
+BOOL aes_service_window_unlocked(PD *pd);
+#if CONF_WITH_X32_ACCESSORY_TEST
+LONG aes_service_test_coordination(WORD code);
+#endif
 #endif
 #endif

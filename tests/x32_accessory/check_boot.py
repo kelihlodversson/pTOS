@@ -26,6 +26,7 @@ for regression in ("poll timer", "queued button", "button snapshot", "revocation
     assert output.count("x32 input " + regression + ": PASS") == 4, regression
 assert output.count("x32 window events/ownership/lifecycle: PASS") == 4
 assert output.count("x32 window boundary resizes: PASS") == 4
+assert output.count("x32 cleanup synchronization recheck: PASS") == 4
 for regression in ("closed window geometry cleanup", "deferred arrow delivery", "replacement deletion isolation"):
     assert output.count("x32 " + regression + ": PASS") == 4, regression
 assert output.count("x32 native replacement windows preserved: PASS") >= 4
