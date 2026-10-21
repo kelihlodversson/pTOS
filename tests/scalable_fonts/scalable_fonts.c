@@ -699,8 +699,9 @@ void test_scalable_fonts(void)
     {
         vs_call(handle, 122, 0, 0, 1);
         vs_close_screen(handle);
+        /* the font is on the test disk (tests/fonts/PTOSTEST.TTF): a GDOS that lists no fonts is broken */
         ptest_begin("scalable_fonts (#579)");
-        conws("SKIP (no scalable fonts, or not " FONT_NAME ")\r\n");
+        ptest_fail(FONT_NAME " is not listed by vst_load_fonts()");
         return;
     }
 #ifdef PRINT_HASHES
