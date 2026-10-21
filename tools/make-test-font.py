@@ -26,7 +26,8 @@ POSTSCRIPT = "PTOSTestMono-Regular"
 
 def main():
     if len(sys.argv) != 3:
-        sys.exit(__doc__)
+        sys.stderr.write("usage: %s <DejaVuSansMono.ttf> <PTOSTEST.TTF>\n" % sys.argv[0])
+        sys.exit(2)
     src, dst = sys.argv[1:]
 
     opts = subset.Options()
