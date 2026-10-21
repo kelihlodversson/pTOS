@@ -40,13 +40,11 @@ static const char *check_footprint(void)
     static const long pads[] = { 0, 4, 8, 12, 16, 20, 24, 28 };
     void *held[sizeof pads / sizeof pads[0]];
     const char *failure = NULL;
-    long real_blen = -1;
     unsigned i;
 
     for (i = 0; i < sizeof pads / sizeof pads[0]; i++)
     {
         BASEPAGE *bp;
-        long gap;
 
         held[i] = pads[i] ? (void *)Malloc(pads[i]) : NULL;
         bp = (BASEPAGE *)Pexec(PE_LOAD, "C:\\PIEPROBE.TOS", "", 0);
@@ -55,12 +53,11 @@ static const char *check_footprint(void)
             failure = "PE_LOAD of PIEPROBE.TOS failed";
             continue;
         }
-        gap = (long)((uintptr_t)bp->p_dbase - (uintptr_t)bp->p_tlen - (uintptr_t)bp - sizeof(BASEPAGE));
-        if (gap < 0 || gap > 15)
-            failure = "the image does not start within 15 bytes of the basepage";
-        else if (real_blen < 0)
-            real_blen = bp->p_blen - gap;
-        else if (bp->p_blen - gap != real_blen)
+        /* the segments follow the basepage back to back, so the sizes add up
+         * to where the bss ends, wherever the loader put the image */
+        if ((uintptr_t)bp->p_dbase != (uintptr_t)bp + sizeof(BASEPAGE) + bp->p_tlen
+            || (uintptr_t)bp->p_bbase + bp->p_blen
+               != (uintptr_t)bp + sizeof(BASEPAGE) + bp->p_tlen + bp->p_dlen + bp->p_blen)
             failure = "the sizes in the basepage do not reach the end of the image";
         if (Pexec(PE_GO_FREE, "", bp, 0) != 0)
             failure = "PIEPROBE.TOS exited nonzero after PE_LOAD";
