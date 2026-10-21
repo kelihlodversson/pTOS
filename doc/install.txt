@@ -281,8 +281,12 @@ copied by hand.  Without a disk -- QEMU -kernel alone -- these images boot
 and stop at "EMUCON.TOS is not in the root directory of the boot drive".
 
 The option is in "make menuconfig" under EmuCON.  It is off by default for
-the ROM images (Atari, Amiga, ColdFire), which keep EmuCON in the ROM; it can
-be turned on there too, and EmuCON is then loaded from the boot drive as well.
+the ROM images (Atari, Amiga), which keep EmuCON in the ROM; it can be turned
+on there too, and EmuCON is then loaded from the boot drive as well.  It needs
+the loader of the program's format (CONF_WITH_ELF_LOADER on ARM,
+CONF_WITH_PRG_LOADER on m68k).  ColdFire is not supported: the standalone
+build makes plain m68k code, whose Line-A calls (cmdasm.S) are not those of
+ColdFire, so the ColdFire images keep EmuCON in the ROM.
 The x86-64 image does not have it: it runs its EmuCON as a separate process
 from a copy embedded in the image.
 

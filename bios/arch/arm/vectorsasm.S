@@ -124,6 +124,7 @@ C_SYM(biostrap):
         srsfd sp!, #0x13
 
         push {r1-r4}      // argument registers: a caller may keep using them
+        sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
         mov r11, r0
         mov r0, r1
@@ -147,6 +148,7 @@ C_SYM(xbiostrap):
         srsfd sp!, #0x13
 
         push {r1-r4}      // argument registers: a caller may keep using them
+        sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
         mov r11, r0
         mov r0, r1
@@ -174,6 +176,7 @@ C_SYM(xbiostrap):
 
 2:
         pop   {r5-r11}       // restore stacked argument registers
+        add   sp, sp, #4     // ... the padding
         pop   {r1-r4}        // ... and r1-r4: only r0 (the result) is changed,
                              // as GEMDOS does (the library wrappers rely on it)
         // return to caller with saved state on stack

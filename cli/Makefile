@@ -109,7 +109,7 @@ CFLAGS = $(CPPFLAGS) -Os -Wall -Wundef -Wold-style-definition -fno-tree-loop-dis
 NLS ?= 0
 NLS_SOURCES = cmdint cmdmain cmdparse cmdutil
 ifeq ($(NLS),1)
-BUG ?= ../bug
+BUG ?= $(abspath ../bug)
 CPPFLAGS += -DCLI_NLS -I../util
 OBJECTS := $(filter-out $(addsuffix .o,$(NLS_SOURCES)),$(OBJECTS)) \
            $(addprefix ml/,$(addsuffix .tr.o,$(NLS_SOURCES))) ml/cli-langs.o cmdnls.o
@@ -125,13 +125,16 @@ HEADERS = cmd.h
 # The objects live in this directory whatever the ARCH: a stamp per ARCH
 # throws away the ones of the other when it changes (the top level Makefile
 # builds this for the architecture of its configuration, and a developer may
-# switch between the two).
-$(OBJECTS) version.c: | .arch-$(ARCH)
+# switch between the two).  A normal prerequisite, not an order-only one:
+# the stamp deletes objects make may already have found up to date, and
+# creating it must force them to be rebuilt.  ml/ waits for it too, so a
+# parallel build cannot generate files the stamp then removes.
+$(OBJECTS) version.c: .arch-$(ARCH)
 .arch-$(ARCH):
 	-rm -rf ml *.o version.c $(TARGET) .arch-*
 	touch $@
 
-ml:
+ml: .arch-$(ARCH)
 	mkdir -p $@
 
 # static pattern rules: a plain ml/%.c would also match ml/cmdmain.tr.c and

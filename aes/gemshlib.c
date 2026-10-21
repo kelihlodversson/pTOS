@@ -634,12 +634,13 @@ static WORD sh_ldapp(SHELL *psh)
         D.s_cmd[0] += bootdev;
         p_nameit(rlr, sh_name(D.s_cmd));
         p_setappdir(rlr, D.s_cmd);
-        dos_exec(PE_LOADGO, D.s_cmd, "", ad_envrn);
+        ret = dos_exec(PE_LOADGO, D.s_cmd, "", ad_envrn);
 #else
         aes_run_rom_program(coma_start);
+        ret = 0;
 #endif
         set_default_desktop(psh);
-        return 0;
+        return (ret < 0) ? ret : 0;   /* sh_main() shows the error alert */
     }
 #endif
 

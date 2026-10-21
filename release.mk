@@ -212,14 +212,24 @@ release-floppy:
 	rm -r $(RELEASE_FLOPPY)
 
 .PHONY: release-raspi-resources
-release-raspi-resources: $(EMUCON_TOS)
+# The external EmuCON (CONF_EXTERNAL_CLI) is an ARM program, the same for every
+# Pi: the one the last build of this tree left in cli/, or RASPI_EMUCON=<file>
+# (the CI job that assembles the SD card from the artifacts of the kernel builds
+# has no build tree).  "make release%" does not read the configuration, so the
+# file cannot be a prerequisite of its own rule.
+RASPI_EMUCON ?= cli/emucon.tos
+release-raspi-resources:
 	@if [ -z '$(DEST)' ]; then \
 	  echo 'DEST is not set; usage: make release-raspi-resources DEST=<archive-dir>' >&2; \
 	  exit 1; \
 	fi
 	mkdir -p $(DEST)
 	$(call copy-resources,$(DEST))
-	$(if $(EMUCON_TOS),cp $(EMUCON_TOS) $(DEST)/EMUCON.TOS)
+	@if [ ! -f '$(RASPI_EMUCON)' ]; then \
+	  echo '$(RASPI_EMUCON) not found: build a Raspberry Pi configuration first, or set RASPI_EMUCON' >&2; \
+	  exit 1; \
+	fi
+	cp $(RASPI_EMUCON) $(DEST)/EMUCON.TOS
 	# desk/emudesk-raspi.inf: same #R/#E/#Q/#M/#T/file-type-association
 	# content deskapp.c's own built-in default generates (see
 	# desk_inf_data1/desk_inf_data2), except the first #W window slot

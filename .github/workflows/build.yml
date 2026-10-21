@@ -219,8 +219,9 @@ jobs:
         run: |
           mkdir products
           # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
-          # ELF the image was extracted from, which still has the symbols.
-          for product in *.img emutos.elf emutos.map; do
+          # ELF the image was extracted from, which still has the symbols,
+          # and EmuCON, the program CONF_EXTERNAL_CLI loads from the boot drive.
+          for product in *.img emutos.elf emutos.map cli/emucon.tos; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -563,6 +564,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the image loads EmuCON (CONF_EXTERNAL_CLI): libcmini builds it
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
@@ -667,7 +671,8 @@ jobs:
           # The loadable mouse cursor and desktop icon resources, and a
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
-          make release-raspi-resources DEST="sdcard/$archive"
+          make release-raspi-resources DEST="sdcard/$archive" \
+            RASPI_EMUCON=raspi-build/emucon.tos
 
           ./tools/mkraspi-image.sh "sdcard/$archive" "sdcard/$archive.img"
 
