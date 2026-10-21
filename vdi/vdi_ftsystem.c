@@ -197,6 +197,12 @@ static unsigned long fm_total(void)
 
 #endif /* CONF_WITH_KHEAP */
 
+/* the font memory in use, bytes: vqt_cachesize(2)'s answer */
+unsigned long vdi_ft_used(void)
+{
+    return fm_used;
+}
+
 static void *fm_alloc(unsigned long size)
 {
     FM_BLOCK *b;

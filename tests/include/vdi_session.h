@@ -60,6 +60,34 @@ static void aes(short op, short nintin, short nintout)
 }
 
 
+/* vq_gdos(): what trap #2 leaves in d0/r0 when called with -2; -2 if there is no GDOS */
+static long __attribute__((unused)) vs_gdos(void)
+{
+#ifdef __mc68000__
+    register long d0 __asm__("d0") = -2;
+
+    __asm__ volatile (
+        "trap #2"
+        : "+d" (d0)
+        :
+        : "d1", "d2", "a0", "a1", "memory", "cc");
+
+    return d0;
+#elif defined(__arm__)
+    register long r0 __asm__("r0") = -2;
+
+    __asm__ volatile (
+        "svc 2"
+        : "+r" (r0)
+        :
+        : "r1", "r2", "r3", "r12", "lr", "memory", "cc");
+
+    return r0;
+#else
+    return -2;
+#endif
+}
+
 /* a workstation on the screen: its handle, or 0 */
 static short vs_open_screen(void)
 {

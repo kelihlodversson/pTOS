@@ -23,5 +23,6 @@ long vdi_ft_call(long (*fn)(void *), void *arg);
 /* the kernel's font memory, which FreeType uses too; NULL when it is out */
 void *vdi_ft_alloc(unsigned long size);
 void vdi_ft_free(void *p);
+unsigned long vdi_ft_used(void);        /* bytes of it in use */
 
 #endif /* VDI_FTSYSTEM_H */

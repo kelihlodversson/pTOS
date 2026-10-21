@@ -1470,6 +1470,11 @@ endif
 #
 
 TEST_DESTDIR = tests/destdata/TESTS
+
+# The font of the scalable font tests (#579), on the disk as
+# \GEMSYS\FONTS\PTOSTEST.TTF where the built-in GDOS looks, with its licence
+TEST_FONT_STAGE = obj/test-fonts/GEMSYS
+TEST_FONT_FILES = $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT
 TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 
 # libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
@@ -1924,9 +1929,17 @@ endif
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
 TEST_HD_FILES = runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
+$(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+$(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
-	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd
 test-hd: test-hd.img
@@ -1938,12 +1951,12 @@ test-hd: test-hd.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(TEST_HD_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)
 	@cp $(TEST_HD_FILES) $(TEST_DIR)/
-	@cp -R $(TEST_DESTDIR) $(TEST_DIR)/
+	@cp -R $(TEST_DESTDIR) $(TEST_FONT_STAGE) $(TEST_DIR)/
 
 ifdef ARCH_ARM
 # A desk accessory is not part of the regression image: load this probe

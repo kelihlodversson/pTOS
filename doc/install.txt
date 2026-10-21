@@ -321,7 +321,9 @@ vst_error(), vqt_cachesize(), v_flushcache() and vqt_get_table().
 Advances are in whole pixels, as the characters are placed.  There are
 no kerning tracks, no character bitmaps for v_getbitmap_info() (which
 gives the advance only), no outlines for v_getoutline() (0 points), and
-no cache file: v_savecache() and v_loadcache() fail.  The FSMC cookie
+no cache file: v_savecache() and v_loadcache() fail.  As an extension,
+vqt_cachesize(2) returns the bytes of font memory in use (the cache's free
+bytes are 0 and 1's).  The FSMC cookie
 stays at version 4.00: the calls of later versions are answered all the
 same, and an application looks for NVDI's by trying them.
 

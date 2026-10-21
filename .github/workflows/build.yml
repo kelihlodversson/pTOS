@@ -495,10 +495,32 @@ jobs:
             runner: ubuntu-latest
             qemu: qemu-system-arm
             make_args: ''
+          # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
+          # screen of the Pi's framebuffer.  The desktop starts the suite
+          # (tests/emudesk.inf) and the console is on the UART as well
+          # (rpi2-test_defconfig), where the script reads the verdict; no
+          # shutdown checks, which type into EmuCON
+          - machine: raspi2b
+            config: rpi2-test
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
           - machine: virt-m68k
             config: virt-m68k-cli-elf
             arch: m68k
             # pinned for the toolchain PPA, like the m68k build jobs
+            runner: ubuntu-22.04
+            qemu: qemu-system-misc
+            make_args: ''
+          # the register-argument calling convention (-mfastcall), which
+          # needs Thorsten Otto's toolchain: the VDI's scalable fonts call
+          # FreeType on a stack of its own, which it has to survive
+          - machine: virt-m68k-fastcall
+            script_machine: virt-m68k
+            config: virt-m68k-cli-fastcall
+            arch: m68k
+            mfastcall: true
             runner: ubuntu-22.04
             qemu: qemu-system-misc
             make_args: ''
@@ -517,6 +539,7 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: ${{ matrix.arch }}
+          mfastcall: ${{ matrix.mfastcall || 'false' }}
 
       - name: Install QEMU
         run: |
@@ -542,7 +565,7 @@ jobs:
           make $MAKE_ARGS test-dir
 
       - name: Run the regression suite
-        run: tools/run-regression-tests.sh ${{ matrix.machine }}
+        run: tools/run-regression-tests.sh ${{ matrix.script_machine || matrix.machine }}
 
       - name: Report the failure
         if: failure()

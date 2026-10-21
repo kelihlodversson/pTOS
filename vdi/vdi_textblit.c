@@ -1015,7 +1015,13 @@ static void screen_blit16(LOCALVARS *vars)
      * pre_blit() clears F_SKEW and F_THICKEN after it has processed them.
      */
     skew = linea_vars.LOFF + linea_vars.ROFF;
-    skew_mask = (UWORD)vars->skew_msk;
+    /*
+     * vars->skew_msk is only the assembler blit's own (it reloads it for every
+     * character); nothing in C sets it, so the mask of a character is
+     * the font's: left alone, skewed text had the leftovers of the stack
+     * for it (found by the scalable font tests on a true colour screen)
+     */
+    skew_mask = (UWORD)linea_vars.SKEWMASK;
     skew_start = vars->height;
 
     /*
