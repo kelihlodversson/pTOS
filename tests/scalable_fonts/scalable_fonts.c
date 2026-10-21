@@ -583,13 +583,15 @@ static void check_rotation(void)
  */
 static void dirty_buffers(void)
 {
-    /* (all of it on the screen: with clipping off, what is outside it is written to memory) */
-    set_height(28);
+    short x, y;
+
+    /* (all of it on the screen, by place(): with clipping off, what is outside it is written to memory) */
+    set_height(22);
     set_top_left();
     set_color(1);
     set_effects(0x1f);
-    set_rotation(900);
-    gtext(AREA_X + 60, AREA_Y + 50, "W@Q");
+    place("W@", 900, &x, &y);
+    gtext(x, y, "W@");
     set_rotation(0);
     set_effects(0);
 }
