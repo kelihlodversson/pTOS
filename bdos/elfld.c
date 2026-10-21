@@ -1298,15 +1298,21 @@ LONG elf_pgmld(FH h, PD *p)
 #else
     /*
      * the image is loaded at the first byte after the basepage, but on
-     * ARM at an address its segments' alignment (8 bytes for the code the
-     * compiler makes for the NEON/VFP hard-float ABI: double word stores to
-     * statics) is kept at: the TPA is only word aligned, so a program's
-     * data would otherwise land 4 bytes off and take an alignment fault
-     * from such a store (found by the scalable font tests on raspi2b, #579)
+     * ARM at an address that keeps the alignment of what it holds: the
+     * bias it is relocated by is a multiple of PROG_IMAGE_ALIGN, so that an
+     * 8 byte aligned object (the compiler assumes it of statics, for the
+     * double word stores of the NEON/VFP hard-float ABI) is still aligned
+     * where it ends up, whatever the lowest address of the image is.  The
+     * TPA is only word aligned, so without it a program's data landed 4
+     * bytes off and took an alignment fault (found by the scalable font
+     * tests on raspi2b, #579).  That needs at most PROG_IMAGE_ALIGN - 1
+     * bytes more than the image.
      */
     load_base = (UBYTE *)(p + 1);
 #ifdef __arm__
-    load_base = (UBYTE *)(((uintptr_t)load_base + (PROG_IMAGE_ALIGN - 1)) & ~(uintptr_t)(PROG_IMAGE_ALIGN - 1));
+    load_base = (UBYTE *)(uintptr_t)(info.link_base
+                  + ((((ULONG)(uintptr_t)load_base - info.link_base) + (PROG_IMAGE_ALIGN - 1))
+                     & ~(ULONG)(PROG_IMAGE_ALIGN - 1)));
 #endif
     /* compute the bias in unsigned then reinterpret as signed; this avoids
      * signed overflow UB when either operand has its high bit set, and the

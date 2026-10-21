@@ -707,7 +707,9 @@ static void check_memory(void)
     find_font();
     vdi_font(font_id);
     after = font_memory();
-    CHECK(with >= before, "drawing uses no font memory?", with, before);
+    /* a counter that stayed at 0 or at one value would pass the checks below: it has to see the sizes */
+    CHECK(before > 0, "vqt_cachesize(2) reports no font memory in use:", before, 0);
+    CHECK(with > before, "drawing uses no font memory?", with, before);
     /* what the first rounds keep (lists, sizes) is not a leak; what every round adds is */
     CHECK(per_round[19] <= per_round[2], "font memory grows with every round: round 3/20",
           per_round[2], per_round[19]);
