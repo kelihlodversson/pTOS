@@ -228,7 +228,7 @@ static void xhci_init_command_ring(struct xhci_priv *priv)
         xhci_cmd_ring[i].control = 0UL;
     }
 
-    addr = (ULONG)xhci_cmd_ring;
+    addr = virt_to_phys(xhci_cmd_ring);
     xhci_cmd_ring[last].param_lo = addr;
     xhci_cmd_ring[last].param_hi = 0UL;
     xhci_cmd_ring[last].status = 0UL;
@@ -264,7 +264,7 @@ static void xhci_init_event_ring(struct xhci_priv *priv)
     flush_data_cache((void *)xhci_event_ring,
                       (long)((ULONG)XHCI_TRBS_PER_SEGMENT * sizeof(xhci_trb_t)));
 
-    addr = (ULONG)xhci_event_ring;
+    addr = virt_to_phys(xhci_event_ring);
     xhci_erst[0].seg_addr_lo = addr;
     xhci_erst[0].seg_addr_hi = 0UL;
     xhci_erst[0].seg_size = (ULONG)XHCI_TRBS_PER_SEGMENT;
@@ -273,7 +273,7 @@ static void xhci_init_event_ring(struct xhci_priv *priv)
 
     xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERDP, addr);
     xhci_writel(priv->rt_base, XHCI_RT_IR0_ERSTSZ, 1UL);
-    xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERSTBA, (ULONG)xhci_erst);
+    xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERSTBA, virt_to_phys(xhci_erst));
 }
 
 /*
@@ -330,14 +330,14 @@ static BOOL xhci_init_scratchpad(struct xhci_priv *priv)
     }
 
     for (i = 0UL; i < num_sp; i++) {
-        addr = (ULONG)(xhci_scratchpad_bufs + (i * XHCI_PAGE_SIZE));
+        addr = virt_to_phys(xhci_scratchpad_bufs + (i * XHCI_PAGE_SIZE));
         xhci_scratchpad_array[i].lo = addr;
         xhci_scratchpad_array[i].hi = 0UL;
     }
     flush_data_cache((void *)xhci_scratchpad_bufs, (long)(num_sp * XHCI_PAGE_SIZE));
     flush_data_cache((void *)xhci_scratchpad_array, (long)(num_sp * sizeof(xhci_qword_t)));
 
-    xhci_dcbaa[0].lo = (ULONG)xhci_scratchpad_array;
+    xhci_dcbaa[0].lo = virt_to_phys(xhci_scratchpad_array);
     xhci_dcbaa[0].hi = 0UL;
     flush_data_cache((void *)&xhci_dcbaa[0], (long)sizeof(xhci_qword_t));
 
@@ -414,7 +414,7 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
     xhci_configure_slots(priv);
     xhci_init_dcbaa();
     xhci_init_command_ring(priv);
-    xhci_writeq(priv->op_base, XHCI_OP_DCBAAP, (ULONG)xhci_dcbaa);
+    xhci_writeq(priv->op_base, XHCI_OP_DCBAAP, virt_to_phys(xhci_dcbaa));
     xhci_init_event_ring(priv);
 
     if (!xhci_init_scratchpad(priv)) {
