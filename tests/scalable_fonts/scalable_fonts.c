@@ -638,6 +638,13 @@ static void check_unsupported(void)
 
 void test_scalable_fonts(void)
 {
+    if (vs_gdos() == -2)
+    {
+        /* no GDOS (the fixed-size images): nothing to test, and no VDI call to risk */
+        ptest_begin("scalable_fonts (#579)");
+        conws("SKIP (no GDOS)\r\n");
+        return;
+    }
     handle = vs_open_screen();
     if (handle <= 0)
     {
