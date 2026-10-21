@@ -461,12 +461,12 @@ static const struct draw_case cases[] = {
     { "shadow",         "Shadow",        18, 32, 1, 0,    NO_CLIP, 0xe1841991UL, 0xe1841991UL },
     { "bold italic",    "Both",          18, 5,  1, 0,    NO_CLIP, 0x2de16e19UL, 0xe977814fUL },
     { "transparent",    "Transparent",   16, 0,  2, 0,    NO_CLIP, 0x9b5e5cfcUL, 0x9b5e5cfcUL },
-    { "xor",            "XOR text",      16, 0,  3, 0,    NO_CLIP, 0x27a72afdUL, 0x27a72afdUL },
+    { "xor",            "XOR text",      16, 0,  3, 0,    NO_CLIP, 0xc84963f5UL, 0xc84963f5UL },
     { "reverse transp", "Reverse",       16, 0,  4, 0,    NO_CLIP, 0xa8847e19UL, 0xa8847e19UL },
     { "rotated 90",     "Up",            18, 0,  1, 900,  NO_CLIP, 0xfed7e74dUL, 0xfed7e74dUL },
     { "rotated 180",    "Upside",        18, 0,  1, 1800, NO_CLIP, 0xd6f22d8cUL, 0xd6f22d8cUL },
     { "rotated 270",    "Down",          18, 0,  1, 2700, NO_CLIP, 0xa9e6e215UL, 0xa9e6e215UL },
-    { "clipped",        "Clipped text",  18, 0,  1, 0,    CLIPPED, 0x3889594dUL, 0x3889594dUL },
+    { "clipped",        "Clipped text",  18, 0,  1, 0,    CLIPPED, 0x2c94a5b1UL, 0x2c94a5b1UL },
 };
 
 #define N_CASES ((int)(sizeof cases / sizeof cases[0]))
@@ -476,13 +476,13 @@ static void draw_case(const struct draw_case *c, struct ink *ink)
     clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
     if (c->mode == 3)
     {
-        /* XOR on a pattern, so that it is seen to invert and not only to set */
+        /* XOR on black behind the text, so that it is seen to invert and not only to set */
         vs_intin[0] = 1;
         vs_call(handle, 25, 0, 0, 1);       /* vsf_color(1) */
         vs_ptsin[0] = AREA_X;
-        vs_ptsin[1] = AREA_Y + AREA_H / 2;
+        vs_ptsin[1] = AREA_Y + 4;
         vs_ptsin[2] = AREA_X + AREA_W - 1;
-        vs_ptsin[3] = AREA_Y + AREA_H - 1;
+        vs_ptsin[3] = AREA_Y + 40;
         vs_call(handle, 114, 0, 2, 0);
     }
     set_height(c->height);
@@ -492,7 +492,7 @@ static void draw_case(const struct draw_case *c, struct ink *ink)
     set_mode(c->mode);
     set_rotation(c->rotation);
     if (c->clip)
-        set_clip(1, AREA_X + 14, AREA_Y + 10, AREA_X + 50, AREA_Y + 34);
+        set_clip(1, AREA_X + 14, AREA_Y + 10, AREA_X + 47, AREA_Y + 34);
     gtext(AREA_X + (c->rotation == 900 || c->rotation == 2700 ? 30 : 8),
           AREA_Y + (c->rotation ? 28 : 10), c->text);
     if (c->clip)
@@ -586,7 +586,7 @@ static void check_drawing(void)
         if (c->mode != 3)
             CHECK(a.count > 0, "nothing drawn:", i, 0);
         if (c->clip)
-            CHECK(a.x0 >= AREA_X + 14 && a.x1 <= AREA_X + 50 && a.y0 >= AREA_Y + 10
+            CHECK(a.x0 >= AREA_X + 14 && a.x1 <= AREA_X + 47 && a.y0 >= AREA_Y + 10
                   && a.y1 <= AREA_Y + 34, "ink outside the clip:", i, 0);
         {
             unsigned long known = planes > 8 ? c->hash_true : c->hash;
