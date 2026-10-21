@@ -520,6 +520,24 @@ static void check_rotation(void)
     set_rotation(0);
 }
 
+/*
+ * text of another size, with every effect and turned, so that whatever text
+ * output keeps between calls (its scratch buffers) holds something else
+ * when the next string is drawn: the result must not depend on it
+ */
+static void dirty_buffers(void)
+{
+    /* (all of it on the screen: with clipping off, what is outside it is written to memory) */
+    set_height(28);
+    set_top_left();
+    set_color(1);
+    set_effects(0x1f);
+    set_rotation(900);
+    gtext(AREA_X + 60, AREA_Y + 50, "W@Q");
+    set_rotation(0);
+    set_effects(0);
+}
+
 /* the two things that need no reference: it is the same each time, and clipped it stays in the clip */
 static void check_drawing(void)
 {
@@ -541,6 +559,7 @@ static void check_drawing(void)
         conws("\r\n");
 #endif
         draw_case(c, &a);
+        dirty_buffers();
         draw_case(c, &b);
 #ifdef PRINT_HASHES
         {
@@ -563,7 +582,7 @@ static void check_drawing(void)
             conws("\r\n");
         }
 #endif
-        CHECK(a.hash == b.hash, "drawing is not repeatable:", i, 0);
+        CHECK(a.hash == b.hash, "drawing depends on what was drawn before:", i, 0);
         if (c->mode != 3)
             CHECK(a.count > 0, "nothing drawn:", i, 0);
         if (c->clip)

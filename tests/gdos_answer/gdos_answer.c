@@ -2073,6 +2073,14 @@ static void check_fonts(void)
     screen_w = intout[0] + 1;
     screen_h = intout[1] + 1;
 
+    /*
+     * neither the mouse pointer nor the text cursor of the console (which
+     * blinks where the output so far ended, near the pixels that are read
+     * back) are among them
+     */
+    vdi_op(123, 0, handle);             /* v_hide_c() */
+    (void)Cursconf(0, 0);               /* no text cursor */
+
     intin[0] = 0;
     vdi_op(119, 1, handle);             /* vst_load_fonts() */
     fonts_loaded = intout[0];
@@ -2152,6 +2160,9 @@ static void check_fonts(void)
     font_check(intout[0] == 0, "a second vst_load_fonts() added fonts");
 
     vdi_op(120, 1, handle);             /* vst_unload_fonts() */
+    intin[0] = 1;
+    vdi_op(122, 1, handle);             /* v_show_c(reset) */
+    (void)Cursconf(1, 0);
     if (aes_there)
     {
         vdi_op(101, 0, handle);         /* v_clsvwk() */

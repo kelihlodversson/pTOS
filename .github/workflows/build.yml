@@ -495,6 +495,17 @@ jobs:
             runner: ubuntu-latest
             qemu: qemu-system-arm
             make_args: ''
+          # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
+          # screen of the Pi's framebuffer.  The desktop starts the suite
+          # (tests/emudesk.inf) and the console is on the UART as well
+          # (rpi2-test_defconfig), where the script reads the verdict; no
+          # shutdown checks, which type into EmuCON
+          - machine: raspi2b
+            config: rpi2-test
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
           - machine: virt-m68k
             config: virt-m68k-cli-elf
             arch: m68k

@@ -61,7 +61,7 @@ static void aes(short op, short nintin, short nintout)
 
 
 /* vq_gdos(): what trap #2 leaves in d0/r0 when called with -2; -2 if there is no GDOS */
-static long vs_gdos(void)
+static long __attribute__((unused)) vs_gdos(void)
 {
 #ifdef __mc68000__
     register long d0 __asm__("d0") = -2;
