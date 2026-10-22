@@ -159,6 +159,9 @@ WORD boot_status;               /* see kprint.h for bit flags */
 /* Boot flags */
 UBYTE bootflags;
 
+/* the drive that is booted from unless another is selected (tosvars.h) */
+WORD default_bootdev;
+
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
 void (*vector_5ms)(void);       /* 200 Hz system timer */
