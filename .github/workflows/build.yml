@@ -492,7 +492,7 @@ jobs:
           # kernel -- loaded from the boot drive as EMUCON.TOS (the kernel
           # says "EmuCON: ..." when it cannot), so its banner can only come
           # from that process.
-          if grep -Eq '^EmuCON: (cannot|no shell)' boot.log; then
+          if grep -Eq '^EmuCON: (cannot|this system has no built-in shell)' boot.log; then
             echo "::error::the kernel could not start the ring-3 EmuCON"
             exit 1
           fi
