@@ -48,6 +48,7 @@
 #include "aesext.h"
 #include "aesvars.h"
 #include "gemdosif.h"
+#include "gemdos.h"
 #include "gemdisp.h"
 #include "geminput.h"
 #include "gemflag.h"

@@ -2,7 +2,7 @@
 #
 # run-regression-tests.sh - run the regression suite under QEMU
 #
-# Usage: run-regression-tests.sh <virt-arm|virt-m68k|pc-x86_64> [timeout-seconds]
+# Usage: run-regression-tests.sh <virt-arm|virt-m68k|pc-x86_64|raspi2b> [timeout-seconds]
 #
 # Expects the matching configuration to be built and `make test-dir` to have
 # collected the test programs into test-dir/ (QEMU's FAT driver presents a copy
@@ -11,6 +11,7 @@
 #   virt-arm     virt-arm-cli_defconfig       virt-arm.elf    qemu-system-arm
 #   virt-m68k    virt-m68k-cli-elf_defconfig  virt-m68k.elf   qemu-system-m68k
 #   pc-x86_64    pc-x86_64_defconfig          pc-x86_64.efi   qemu-system-x86_64 + OVMF
+#   raspi2b      rpi2-test_defconfig          kernel7.img     qemu-system-arm
 #
 # The virt machines are configured without the AES so that they boot to
 # EmuCON, where programs are started by typing their name into the serial
@@ -157,6 +158,7 @@ wait_exit() {
 # type_line <text>: type a line into the guest's console
 type_line() {
     case $machine in
+    raspi2b) ;;                 # the desktop starts the suite itself (emudesk.inf)
     pc-x86_64) python3 "$tools/qemu-type.py" "$work/mon.sock" "$1" ;;
     *) printf '%s\r' "$1" >&3 ;;
     esac
@@ -172,6 +174,47 @@ start_vm() {
     disk=$work/disk-$label
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
+    # scalable fonts for the built-in GDOS (gdos_answer), when the host
+    # has them: the default set of the release images (DejaVu Sans, Serif
+    # and Sans Mono, regular and bold: the names tools/fetch-fonts.sh
+    # gives them), OpenType with CFF outlines (Inter), one whose ascender
+    # is taller than its em (Loma) and a monospaced one whose combining
+    # marks have no width (Liberation Mono), under 8.3 names
+    dv=/usr/share/fonts/truetype/dejavu
+    for f in $dv/DejaVuSans.ttf:DJVUSANS.TTF \
+             $dv/DejaVuSans-Bold.ttf:DJVUSANB.TTF \
+             $dv/DejaVuSerif.ttf:DJVUSERF.TTF \
+             $dv/DejaVuSerif-Bold.ttf:DJVUSERB.TTF \
+             $dv/DejaVuSansMono.ttf:DJVUMONO.TTF \
+             $dv/DejaVuSansMono-Bold.ttf:DJVUMONB.TTF \
+             /usr/share/fonts/opentype/inter/Inter-Regular.otf:INTER.OTF \
+             /usr/share/fonts/opentype/tlwg/Loma.otf:LOMA.OTF \
+             /usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf:LIBMONO.TTF; do
+        if [ -f "${f%%:*}" ]; then
+            mkdir -p "$disk/GEMSYS/FONTS"
+            cp "${f%%:*}" "$disk/GEMSYS/FONTS/${f##*:}"
+        fi
+    done
+    # and a TrueType collection of the regular and bold Liberation Sans
+    # (fontTools), whose two faces are fonts of their own
+    lib=/usr/share/fonts/truetype/liberation
+    if [ -f "$lib/LiberationSans-Regular.ttf" ] && [ -f "$lib/LiberationSans-Bold.ttf" ]; then
+        mkdir -p "$disk/GEMSYS/FONTS"
+        python3 -c 'import sys
+from fontTools.ttLib import TTFont
+from fontTools.ttLib.ttCollection import TTCollection
+c = TTCollection()
+c.fonts = [TTFont(f) for f in sys.argv[2:]]
+c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
+            "$lib/LiberationSans-Regular.ttf" "$lib/LiberationSans-Bold.ttf" 2>/dev/null \
+            || { rm -f "$disk/GEMSYS/FONTS/LIBSANS.TTC"
+                 echo "$0: no TrueType collection for the font tests (python3 fontTools missing?)" >&2; }
+    fi
+    # a scalable font as the system font (#600), for the machine that is to
+    # have one: the setting file, with a font that is on the disk
+    if [ -n "${system_font:-}" ] && [ -f "$disk/GEMSYS/FONTS/$system_font" ]; then
+        printf 'SYSTEMFONT=%s\r\n' "$system_font" >"$disk/GEMSYS/PTOS.INF"
+    fi
     case $machine in
     virt-arm | virt-m68k)
         if [ "$machine" = virt-arm ]; then
@@ -181,6 +224,10 @@ start_vm() {
             set -- qemu-system-m68k -M virt -cpu m68020 -m 128 \
                 -kernel "$top/virt-m68k.elf"
         fi
+        # a host directory over virtio-9p as well (Q:), for the suites
+        # that test the pluggable file system (pfs_seek)
+        host=$work/host-$label
+        mkdir -p "$host"
         # stdin is a FIFO held open from here, so that QEMU's serial console
         # never sees an end of file; the commands are written to it.
         rm -f "$work/in"
@@ -190,6 +237,8 @@ start_vm() {
         "$@" -global virtio-mmio.force-legacy=false \
             -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir="$disk",file.rw=on \
             -device virtio-blk-device,drive=hd0 \
+            -fsdev local,id=host0,path="$host",security_model=none \
+            -device virtio-9p-device,fsdev=host0,mount_tag=host \
             -d guest_errors -serial stdio -display none \
             <"$work/in" >"$log" 2>"${log%.log}.qemu" &
         qemu_pid=$!
@@ -198,6 +247,16 @@ start_vm() {
         # the prompt is A:\ on the m68k machine and C:\ on ARM; the tests are on C:
         type_line 'C:'
         sleep 2
+        ;;
+    raspi2b)
+        # the desktop, with the console on the UART too (rpi2-test_defconfig);
+        # emudesk.inf's autorun line starts runtests.tos, whose output is the log.
+        # The SD card has to be a power of two in size: vvfat gets a window of 256M
+        qemu-system-arm -M raspi2b -bios "$top/kernel7.img" \
+            -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir="$disk",file.rw=on \
+            -d guest_errors -serial file:"$log" -display none -monitor none \
+            >"${log%.log}.qemu" 2>&1 &
+        qemu_pid=$!
         ;;
     pc-x86_64)
         mkdir -p "$disk/EFI/BOOT"
@@ -216,7 +275,7 @@ start_vm() {
         sleep 1
         ;;
     *)
-        echo "usage: $0 <virt-arm|virt-m68k|pc-x86_64> [timeout-seconds]" >&2
+        echo "usage: $0 <virt-arm|virt-m68k|pc-x86_64|raspi2b> [timeout-seconds]" >&2
         exit 2
         ;;
     esac
@@ -310,7 +369,7 @@ while [ "$n" -lt "$limit" ]; do
 done
 suite_log=$log
 
-if grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
+if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
     type_line 'poweroff.tos'
     shutdown_check poweroff "powering off"
 
@@ -337,6 +396,34 @@ if grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log";
             fi
         fi
     fi
+fi
+
+# -- a machine with a scalable system font (#600) -----------------------------
+#
+# The whole suite again, on a screen whose system font is a monospaced
+# scalable one, when the host has one (DejaVu Sans Mono, that is on the disk
+# for the other tests): every program and test that draws text then does it
+# with that font, and the log must say that it was made.
+
+if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]; then
+    system_font=DJVUMONO.TTF
+    start_vm sysfont
+    system_font=
+    type_line 'runtests.tos'
+    n=0
+    while [ "$n" -lt "$limit" ]; do
+        grep -aqE 'All tests passed\.|Some tests FAILED\.' "$log" && break
+        sleep 1
+        n=$((n + 1))
+    done
+    if ! grep -aq 'is the system font' "$log"; then
+        record "scalable system font" FAIL "the kernel did not make the font the system font"
+    elif grep -aq 'All tests passed\.' "$log" && ! grep -aq 'FAIL' "$log"; then
+        record "scalable system font" PASS
+    else
+        record "scalable system font" FAIL "the suite did not pass with it"
+    fi
+    stop_vm
 fi
 
 # -- the verdict ----------------------------------------------------------------

@@ -337,3 +337,20 @@ proprietary programs.  If your program is a subroutine library, you may
 consider it more useful to permit linking proprietary applications with the
 library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.
+
+
+			Bundled fonts
+
+The release images of the targets with scalable fonts (see doc/install.txt)
+carry the DejaVu fonts, which are not part of pTOS and not under the GPL:
+
+  DejaVu Sans, Sans Bold, Serif, Serif Bold, Sans Mono and Sans Mono Bold,
+  version 2.37, unmodified (tools/fetch-fonts.sh), in \GEMSYS\FONTS.
+
+Fonts are (c) Bitstream (Bitstream Vera Fonts Copyright), with glyphs
+imported from the Arev fonts (c) Tavmjong Bah; DejaVu's own changes are in
+the public domain.  The licence permits using, copying and redistributing
+the fonts, with or without pTOS, provided that its notice travels with
+them, and forbids modified fonts to keep the names "Bitstream" or "Vera".
+Its full text is in fonts/dejavu/LICENSE, and is put next to the fonts as
+LICENSE.TXT on the images.

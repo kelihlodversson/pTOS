@@ -255,7 +255,10 @@ ifdef ARCH_X86_64
 # function using a calling convention other than the compiler's default.
 MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
                 -fshort-wchar -fno-ident -maccumulate-outgoing-args
-TOOLCHAIN_CFLAGS = -ffreestanding
+# --param=min-pagesize=0: the TOS vectors and system variables really live
+# at low constant addresses (bios/vectors.h, tosvars.h), which GCC 12 and
+# later otherwise treat as the unmapped null page (-Warray-bounds).
+TOOLCHAIN_CFLAGS = -ffreestanding --param=min-pagesize=0
 
 # See the MULTILIBFLAGS comment above. All seven objects below are kept
 # on plain -fpie; none of them do the cross-translation-unit function-
@@ -401,6 +404,19 @@ SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 # Linker: relocation information and, for most targets, a raw binary.
 LD = $(CC) $(MULTILIBFLAGS) -nostartfiles -nostdlib
 LIBS = -lgcc
+
+# FreeType, for the scalable fonts: a library of its own, linked into the
+# image only (not into the test programs, which also use $(LIBS)), ahead
+# of libgcc.  It is built by vdi/freetype/freetype.mk, included further down.
+FREETYPE_LIB =
+ifdef CONF_WITH_VDI_SCALABLE_FONTS
+FREETYPE_LIB = obj/freetype-build/libfreetype.a
+ifdef CONFIGURED
+ifeq (,$(wildcard lib/freetype/src/base/ftinit.c))
+$(error CONF_WITH_VDI_SCALABLE_FONTS needs FreeType: run "git submodule update --init lib/freetype", or disable the option in "make menuconfig")
+endif
+endif
+endif
 LDFLAGS = -Wl,-T,obj/emutospp.ld
 PCREL_LDFLAGS = -Wl,--oformat=binary,-Ttext=0,--entry=0
 
@@ -417,6 +433,14 @@ LDFLAGS += -Wl,-build-id=none
 else
 EMUTOS_IMG = emutos.img
 endif
+endif
+
+ifdef BUILD_TOOLCHAIN_IS_ELF
+# The hand-written .S files carry no .note.GNU-stack section, which recent
+# binutils (2.45 in the -mfastcall toolchain) warns about.  A ROM or RAM
+# image has no stack permissions to set, so say so instead.
+LDFLAGS += -Wl,-z,noexecstack
+PCREL_LDFLAGS += -Wl,-z,noexecstack
 endif
 
 #
@@ -636,18 +660,25 @@ ifdef ARCH_X86_64
 # driver also means it never adds libgcc.a's own directory to the search
 # path the way it would for an ordinary $(CC)-driven link, so -lgcc below
 # needs an explicit -L for it, found the same way gcc itself would.
+#
+# The PE backend does not look up symbols in an archive's ELF index, so the
+# FreeType library is linked as a whole (it only holds what is used anyway).
 X86_64_LD = $(CROSS_COMPILE)ld
 X86_64_LIBGCC_DIR = $(shell dirname $(shell $(CC) $(MULTILIBFLAGS) -print-libgcc-file-name))
 
-$(EMUTOS_IMG): $(OBJECTS)
+$(EMUTOS_IMG): $(OBJECTS) $(FREETYPE_LIB)
 	$(X86_64_LD) -m i386pep -pie --subsystem 10 -e efi_main \
 	  -L$(X86_64_LIBGCC_DIR) \
-	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS)
+	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) \
+	  $(if $(FREETYPE_LIB),--whole-archive $(FREETYPE_LIB) --no-whole-archive) $(LIBS)
 else
-$(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
-	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) \
+$(EMUTOS_IMG): $(OBJECTS) $(FREETYPE_LIB) obj/emutospp.ld
+	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(FREETYPE_LIB) $(LIBS) $(LDFLAGS) \
 	  -Wl,-Map=emutos.map -o $@
-	@if [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
+	@# .data shares the read-only ROM region with .text (emutos.ld), so it
+	@# must stay empty -- unless the image is loaded into RAM
+	@if [ "$(EMUTOS_LIVES_IN_RAM)" != y ] && \
+	    [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
 	  echo "### Warning: The DATA segment is not empty."; \
 	  echo "### Please examine emutos.map and use \"const\" where appropriate."; \
 	fi
@@ -1363,6 +1394,11 @@ endif
 obj/%.o : %.S | obj
 	$(CC) $(SFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
 
+# FreeType, after the rules above as it uses $(M68K_LOCAL_LABEL_FIX).
+ifdef CONF_WITH_VDI_SCALABLE_FONTS
+include vdi/freetype/freetype.mk
+endif
+
 %.dsm : %.c
 	$(CC) $(CFILE_FLAGS) -S $< -o $@
 
@@ -1560,6 +1596,11 @@ endif
 #
 
 TEST_DESTDIR = tests/destdata/TESTS
+
+# The font of the scalable font tests (#579), on the disk as
+# \GEMSYS\FONTS\PTOSTEST.TTF where the built-in GDOS looks, with its licence
+TEST_FONT_STAGE = obj/test-fonts/GEMSYS
+TEST_FONT_FILES = $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF $(TEST_FONT_STAGE)/FONTS/PTOSTES2.TMP $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT
 TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 
 # libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
@@ -1700,7 +1741,8 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
-              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
+              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
 # AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.
@@ -2039,9 +2081,23 @@ endif
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
 TEST_HD_FILES = runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
+$(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+# the same font as PTOSTEST.TTF under another name, kept out of the boot scan by
+# its extension: the rescan test (scalable_fonts) renames it to .TTF
+$(TEST_FONT_STAGE)/FONTS/PTOSTES2.TMP: tests/fonts/PTOSTES2.TTF
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+$(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
-	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd
 test-hd: test-hd.img
@@ -2053,12 +2109,12 @@ test-hd: test-hd.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(TEST_HD_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)
 	@cp $(TEST_HD_FILES) $(TEST_DIR)/
-	@cp -R $(TEST_DESTDIR) $(TEST_DIR)/
+	@cp -R $(TEST_DESTDIR) $(TEST_FONT_STAGE) $(TEST_DIR)/
 
 ifdef ARCH_ARM
 # A desk accessory is not part of the regression image: load this probe
@@ -2107,7 +2163,7 @@ TOCLEAN += $(GEN_SRC)
 .PHONY: clean
 clean: $(TOCLEAN_POST)
 	rm -f $(TOCLEAN)
-	rm -rf test-dir
+	rm -rf test-dir obj/freetype-build
 
 .PHONY: distclean
 distclean: clean

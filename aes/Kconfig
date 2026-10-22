@@ -41,6 +41,7 @@ config AES_STACK_SIZE
 	int "Size of the private AES stack, in LONGs"
 	default 4096 if ARCH_X86_64
 	default 2048 if MACHINE_FIREBEE || MACHINE_M548X
+	default 1024 if ARCH_ARM
 	default 590
 	help
 	  Size of the private stack of each AES process.  It is used for the
@@ -60,6 +61,14 @@ config AES_STACK_SIZE
 	  adjacent memory the first time this arch actually exercised a
 	  SMALL-font desktop text draw (#375), corrupting THEGLO and causing
 	  a division by zero in aes/gemgraf.c's gsx_tcalc() shortly after.
+
+	  ARM's frames are larger than m68k's too: opening a window (wm_open ->
+	  draw_change -> w_update -> w_redraw -> ap_sendmsg -> ap_rdwr ->
+	  ev_block -> iasync) overflowed the 590 LONGs, and the overflow runs
+	  into the AES globals just below the first process (rlr, eul, dlr,
+	  zlr), so the next event allocation panicked with "no free EVBs
+	  available" (#635).  800 LONGs was enough for that path; 1024 leaves
+	  room for the rest.
 
 	  A suitable value can be estimated by enabling CONF_DEBUG_AES_STACK.
 

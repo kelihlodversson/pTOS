@@ -589,7 +589,7 @@ void w_bldactive(WORD w_handle)
      */
 
     /* if we have both bars or a SIZER, we draw a corner element */
-    corner_x = -1;          /* assume no corner (SIZER or dummy) */
+    corner_x = corner_y = -1;   /* assume no corner (SIZER or dummy) */
     if ((havehbar && havevbar) || (kind & SIZER))
     {
         corner_x = t.g_w - gl_wbox - ADJ3DSTD;

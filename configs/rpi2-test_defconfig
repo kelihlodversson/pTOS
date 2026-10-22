@@ -1,0 +1,9 @@
+# rpi2_defconfig with the console on the UART as well, for the regression
+# suite on QEMU's raspi2b machine: the desktop starts the suite from
+# tests/emudesk.inf's autorun line, and what the suite prints reaches the
+# serial port, where tools/run-regression-tests.sh reads the verdict.
+MACHINE_RPI=y
+TARGET_RPI2=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set
+CONF_SERIAL_CONSOLE=y

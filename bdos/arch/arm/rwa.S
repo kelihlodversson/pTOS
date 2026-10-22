@@ -14,6 +14,7 @@
 
 #include "asmdefs.h"
 #include "asmpd.h"
+#include "arch/arm/fpusave.h"
 
 // ==== Definitions ==========================================================
 
@@ -85,6 +86,10 @@ C_SYM(enter):
         srsfd   sp!, #0x13       // save LR and SPSR
 
 3:
+        // The whole FPU state goes into the frame that is returned to, above
+        // the arguments: another process may be returned to in its place
+        // (Pexec()).  r10 and r11 are saved in the basepage and free here.
+        FPU_PUSH_ALL r10
         stmfd   sp!, {r0-r8}     // Arguments (and other stack pointer) to current stack
         mov     r0, sp           // Argument 0 points to the stacked arguments
         str     sp, [ip, #4*5]   // save updated stack pointer to basepage struct
@@ -105,6 +110,7 @@ C_SYM(gouser):
         str     r0, [ip]        // save result register
 ggusr:  ldr     r8, [ip, #4*5]  // saved stack pointer (maybe usp, maybe ssp)
         ldmfd   r8!, {r0-r7, r9} // argument registers, other stack pointer in r9
+        FPU_LOAD_ALL r8, r10     // the FPU state; r10 is reloaded below
 
         ldr     r10, [r8, #4]    // peek at stacked SPSR register
         and     r10, r10, #0x1f

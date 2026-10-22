@@ -589,7 +589,7 @@ static LONG scsidriv_Open(WORD busnum, const DLONG *SCSIId, ULONG *MaxLen)
     h->status = IN_USE;
     h->busdev = ((busnum & 0x0f) << 4) | (SCSIId->lo & 0x0f);
 
-    return (LONG)&h->features;
+    return (LONG)(uintptr_t)&h->features; /* truncated on x86-64 (#563) */
 }
 
 /*

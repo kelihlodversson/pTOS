@@ -29,6 +29,11 @@ int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, size_t n);
 int strncasecmp(const char *a, const char *b, size_t n);
 char *strchr(const char *s, int c);
+/* only FreeType needs these, see util/clibext.c */
+char *strncpy(char *RESTRICT dest, const char *RESTRICT src, size_t n);
+char *strrchr(const char *s, int c);
+char *strstr(const char *haystack, const char *needle);
+void *memchr(const void *s, int c, size_t n);
 int toupper(int c);
 int sprintf(char *RESTRICT str, const char *RESTRICT fmt, ...) SPRINTF_STYLE;
 
