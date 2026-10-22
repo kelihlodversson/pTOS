@@ -133,6 +133,8 @@ config CONF_DEBUG_AES_STACK
 config CONF_DEBUG_DESK_STACK
 	bool "Monitor the desktop stack usage"
 	depends on CONF_WITH_AES
+	# it prints with the kernel's kprintf(), which the desktop program has not
+	depends on !CONF_EXTERNAL_DESK
 	default n
 
 config CONF_DEBUG_FORCE_MC68000

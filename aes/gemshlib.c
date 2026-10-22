@@ -613,8 +613,25 @@ static void set_default_desktop(SHELL *psh)
  */
 static LONG try_shell(const char *path, void *unused)
 {
+    DTA *save_dta;
+    WORD missing;
+    size_t n = strlen(path);
+
     MAYBE_UNUSED(unused);
     strcpy(D.s_cmd, path);
+
+    /* is it there?  (a mode change for a file that is not would flicker) */
+    save_dta = dos_gdta();
+    missing = dos_sfirst(D.s_cmd, FA_RO | FA_HIDDEN | FA_SYSTEM);
+    dos_sdta(save_dta);
+    if (missing)
+        return EFILNF;
+
+    /* a console program (.TOS) runs in alpha mode, the desktop and the other
+     * GEM programs in graphics mode */
+    sh.sh_isgem = !(n >= 4 && !strcmp(path + n - 4, ".TOS"));
+    sh_chgrf(&sh);
+
     p_nameit(rlr, sh_name(D.s_cmd));
     p_setappdir(rlr, D.s_cmd);
     return dos_exec(PE_LOADGO, D.s_cmd, "", ad_envrn);
@@ -634,6 +651,11 @@ static LONG no_shell_alert(const char *const *names)
 
     shell_drives(drives);
     KINFO(("sh_ldapp(): no shell in the root directory of %s\n", drives));
+
+    /* the alert is a graphical one: back to graphics mode, which restores
+     * the buffer and the mouse handlers that alpha mode gave up */
+    sh.sh_isgem = TRUE;
+    sh_chgrf(&sh);
 
     /* the first two names, which is what a user can supply */
     list[0] = '\0';
@@ -675,6 +697,8 @@ static WORD sh_ldapp(SHELL *psh)
             if (ret == EFILNF)
             {
                 KINFO(("sh_ldapp(): no desktop in the root directory of the boot drive\n"));
+                psh->sh_isgem = FALSE;      /* EmuCON is a console program */
+                sh_chgrf(psh);
                 aes_run_rom_program(coma_start);
                 ret = 0;
             }
@@ -683,6 +707,8 @@ static WORD sh_ldapp(SHELL *psh)
             if (ret == EFILNF)
                 ret = no_shell_alert(shell_names_gui);
 #endif
+            psh->sh_isgem = TRUE;           /* back to the desktop after a console shell */
+
             /* like an application: clean up after one that left without appl_exit() */
             if (rlr->p_flags & AP_OPEN)
             {
