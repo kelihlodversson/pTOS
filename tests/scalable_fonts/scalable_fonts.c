@@ -876,7 +876,8 @@ static short unload_load(void)
  * The test font under another name, as a font installer would copy a new one in.
  * An entry of the list stays until the next boot, even when its file is gone,
  * and a file the list already has is not read again: so each run uses a name
- * that no earlier run in this boot did.
+ * that no earlier run in this boot did (and leaves its file, which the list
+ * still refers to).
  */
 static long write_copy(const char *file, char digit)
 {
@@ -954,7 +955,11 @@ static void check_rescan(void)
     rc = write_copy(file, *candidate);
     CHECK(rc == 0, "rescan: cannot write the copy:", rc, 0);
     if (rc != 0)
+    {
+        if (other > 0)
+            vs_call(other, 101, 0, 0, 0);   /* v_clsvwk() */
         return;
+    }
 
     n1 = unload_load();
     id_copy = font_by_name(name, system_fonts + n1);
@@ -982,7 +987,12 @@ static void check_rescan(void)
     CHECK(font_by_name(name, system_fonts + n2) == id_copy, "rescan: the added font's id changed:",
           font_by_name(name, system_fonts + n2), id_copy);
 
-    (void)Fdelete(file);                    /* its entry stays listed until the next boot */
+    /*
+     * The file stays: its entry in the list lasts until the next boot, and a
+     * later run's check_alignment() selects every font of the list, which
+     * needs the file to render it.  Each run adds a file of its own, at most
+     * as many as the candidate names.
+     */
 }
 
 void test_scalable_fonts(void)
