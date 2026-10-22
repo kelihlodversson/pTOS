@@ -9,6 +9,8 @@
 
 #include "emutos.h"
 #include "gemerror.h"
+#include "tosvars.h"
+#include "string.h"
 #include "shells.h"
 
 const char *const shell_names_gui[] =
@@ -27,19 +29,50 @@ const char *const shell_names_cli[] =
     "EMUCON.TOS", "EMUCON2.TOS", "COMMAND.TOS", "SHELL.TOS", NULL
 };
 
-LONG shell_start(const char *const *names, LONG (*start)(const char *name, void *arg),
-                 void *arg, const char **found)
+static BOOL is_missing(LONG rc)
 {
+    return rc == EFILNF || rc == EPTHNF || rc == EDRIVE;
+}
+
+LONG shell_start(const char *const *names, LONG (*start)(const char *path, void *arg),
+                 void *arg, char *path)
+{
+    WORD drives[2];
+    int nd = 0, d;
     LONG rc;
 
-    *found = NULL;
-    for ( ; *names; names++)
+    drives[nd++] = bootdev;
+    if (default_bootdev != bootdev)
+        drives[nd++] = default_bootdev;
+
+    for (d = 0; d < nd; d++)
     {
-        rc = start(*names, arg);
-        if (rc == EFILNF || rc == EPTHNF)
-            continue;
-        *found = *names;
-        return rc;
+        const char *const *n;
+
+        for (n = names; *n; n++)
+        {
+            path[0] = 'A' + drives[d];
+            path[1] = ':';
+            path[2] = '\\';
+            strcpy(path + 3, *n);
+            rc = start(path, arg);
+            if (!is_missing(rc))
+                return rc;
+        }
     }
     return EFILNF;
+}
+
+void shell_drives(char *buf)
+{
+    *buf++ = 'A' + bootdev;
+    *buf++ = ':';
+    if (default_bootdev != bootdev)
+    {
+        strcpy(buf, " or ");
+        buf += 4;
+        *buf++ = 'A' + default_bootdev;
+        *buf++ = ':';
+    }
+    *buf = '\0';
 }

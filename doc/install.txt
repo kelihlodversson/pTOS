@@ -446,9 +446,11 @@ release-raspi-resources put it on the boot drive (RASPI_EMUDESK=<file> for the
 last, in the same way as RASPI_EMUCON).
 
 The option needs the loader of the program's format (CONF_WITH_ELF_LOADER on
-ARM, CONF_WITH_PRG_LOADER on m68k), and is not offered for ColdFire, for
-x86-64 (follow-up #651), or with the MMU kernels (CONF_WITH_USER_ASPACE),
-whose processes cannot call the VDI from user mode yet (#548).
+ARM, CONF_WITH_PRG_LOADER on m68k), and is not offered for x86-64
+(follow-up #651) or with the MMU kernels (CONF_WITH_USER_ASPACE),
+whose processes cannot call the VDI and the AES from user mode yet
+(doc/mmu-address-space.txt: they need a validated GEM entry; #548 is that for
+x86-64).
 
 Which program is the shell
 --------------------------

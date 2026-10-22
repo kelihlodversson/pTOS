@@ -53,6 +53,7 @@
 
 #include "gemshlib.h"
 #include "shells.h"
+#include "gemfmalt.h"
 #include "../desk/deskstub.h"
 
 #if CONF_WITH_CLI && !CONF_EXTERNAL_CLI
@@ -610,15 +611,41 @@ static void set_default_desktop(SHELL *psh)
  * root directory of the boot drive.  The environment is the AES' own, with
  * the LANG that the programs take their language from.
  */
-static LONG try_shell(const char *name, void *unused)
+static LONG try_shell(const char *path, void *unused)
 {
     MAYBE_UNUSED(unused);
-    strcpy(D.s_cmd, "A:\\");
-    D.s_cmd[0] += bootdev;
-    strcat(D.s_cmd, name);
+    strcpy(D.s_cmd, path);
     p_nameit(rlr, sh_name(D.s_cmd));
     p_setappdir(rlr, D.s_cmd);
     return dos_exec(PE_LOADGO, D.s_cmd, "", ad_envrn);
+}
+
+/*
+ * No shell at all: say so, and why, instead of the alert for a file that
+ * is not found.  Returns 0, the alert has been shown.
+ */
+static LONG no_shell_alert(const char *const *names)
+{
+    char drives[12];
+    char list[48];
+    char alert[200];
+    const char *const *n;
+
+    shell_drives(drives);
+    KINFO(("sh_ldapp(): no shell in the root directory of %s\n", drives));
+
+    /* the first two names, which is what a user can supply */
+    list[0] = '\0';
+    for (n = names; *n && n < names + 2; n++)
+    {
+        if (n != names)
+            strcat(list, ", ");
+        strcat(list, *n);
+    }
+    sprintf(alert, "[3][This system has no built-in shell,|and none was found in the root|directory of the boot drive %s|(%s, ...).][OK]",
+            drives, list);
+    fm_alert(1, alert);
+    return 0;
 }
 #endif
 
@@ -640,9 +667,9 @@ static WORD sh_ldapp(SHELL *psh)
          * EmuCON it is the one fallback; without, the list goes on.
          */
         {
-            const char *found;
+            char path[SHELL_PATH_SIZE];
 #if CONF_WITH_CLI != 0 && !CONF_EXTERNAL_CLI
-            ret = shell_start(shell_names_desk, try_shell, NULL, &found);
+            ret = shell_start(shell_names_desk, try_shell, NULL, path);
             if (ret == EFILNF)
             {
                 KINFO(("sh_ldapp(): no desktop in the root directory of the boot drive\n"));
@@ -650,9 +677,9 @@ static WORD sh_ldapp(SHELL *psh)
                 ret = 0;
             }
 #else
-            ret = shell_start(shell_names_gui, try_shell, NULL, &found);
+            ret = shell_start(shell_names_gui, try_shell, NULL, path);
             if (ret == EFILNF)
-                KINFO(("sh_ldapp(): no shell in the root directory of the boot drive\n"));
+                ret = no_shell_alert(shell_names_gui);
 #endif
             /* like an application: clean up after one that left without appl_exit() */
             if (rlr->p_flags & AP_OPEN)
@@ -687,11 +714,11 @@ static WORD sh_ldapp(SHELL *psh)
 #if CONF_EXTERNAL_CLI
         /* ... a program: EMUCON.TOS, or the first of the others of include/shells.h */
         {
-            const char *found;
+            char path[SHELL_PATH_SIZE];
 
-            ret = shell_start(shell_names_cli, try_shell, NULL, &found);
+            ret = shell_start(shell_names_cli, try_shell, NULL, path);
             if (ret == EFILNF)
-                KINFO(("sh_ldapp(): no shell in the root directory of the boot drive\n"));
+                ret = no_shell_alert(shell_names_cli);
         }
 #else
         aes_run_rom_program(coma_start);

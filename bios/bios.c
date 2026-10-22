@@ -295,27 +295,27 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
  * first of the others that shells.h lists that is there.  It is no part of
  * this image.  It returns here when the user leaves it.
  */
-static LONG try_shell(const char *name, void *env)
+static LONG try_shell(const char *path, void *env)
 {
-    return Pexec(PE_LOADGO, name, "", (char *)env);
+    return Pexec(PE_LOADGO, path, "", (char *)env);
 }
 
 static void start_external_cli(char *env)
 {
-    const char *name;
+    char path[SHELL_PATH_SIZE], drives[12];
     const char *const *n;
-    LONG rc = shell_start(shell_names_cli, try_shell, env, &name);
+    LONG rc = shell_start(shell_names_cli, try_shell, env, path);
 
     if (rc == EFILNF || rc == EPTHNF)
     {
-        kcprintf("EmuCON: no shell in the root directory of the boot drive %c: (",
-                 'A' + (int)bootdev);
+        shell_drives(drives);
+        kcprintf("EmuCON: this system has no built-in shell, and none was found in the root directory of %s (", drives);
         for (n = shell_names_cli; *n; n++)
             kcprintf("%s%s", n == shell_names_cli ? "" : ", ", *n);
         kcprintf(")\n");
     }
     else if (rc < 0)
-        kcprintf("EmuCON: cannot start %s (error %ld)\n", name, (long)rc);
+        kcprintf("EmuCON: cannot start %s (error %ld)\n", path, (long)rc);
 }
 #endif
 
@@ -1123,8 +1123,9 @@ void biosmain(void)
      * this allows a boot device that was selected via the welcome
      * screen to persist across warm boots.
      */
+    default_bootdev = blkdev_avail(DEFAULT_BOOTDEV) ? DEFAULT_BOOTDEV : FLOPPY_BOOTDEV;
     if (FIRST_BOOT)
-        bootdev = blkdev_avail(DEFAULT_BOOTDEV) ? DEFAULT_BOOTDEV : FLOPPY_BOOTDEV;
+        bootdev = default_bootdev;
 
 #if INITINFO_DURATION == 0
     show_initinfo = FALSE;

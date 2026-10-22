@@ -28,11 +28,20 @@ extern const char *const shell_names_desk[];    /* the first two of them: the de
 extern const char *const shell_names_cli[];
 
 /*
- * The first name of the list, in order, for which start(name, arg) does not
- * say that the file or its directory is not there (EFILNF or EPTHNF); its
- * result is returned, and *found is its name.  EFILNF if none is there.
+ * The first name of the list, in order, for which start(path, arg) does not
+ * say that the file, its directory or its drive is not there (EFILNF,
+ * EPTHNF, EDRIVE); its result is returned, and path (at least SHELL_PATH_SIZE
+ * bytes) is the one it was started with.  The root directory of the boot
+ * drive is searched first; if the boot drive was selected at the welcome screen
+ * and is not the default one (default_bootdev, tosvars.h), the root directory
+ * of that follows, so that a kernel that was loaded from a disk finds its
+ * shell there when the other drive has none.  EFILNF if none is there.
  */
-LONG shell_start(const char *const *names, LONG (*start)(const char *name, void *arg),
-                 void *arg, const char **found);
+#define SHELL_PATH_SIZE 24
+LONG shell_start(const char *const *names, LONG (*start)(const char *path, void *arg),
+                 void *arg, char *path);
+
+/* "C:" or "C: or A:": the drives shell_start() searches, in words, for a message */
+void shell_drives(char *buf);
 
 #endif /* SHELLS_H */

@@ -49,6 +49,7 @@ WORD seekrate;
 WORD timer_ms;
 WORD fverify;
 WORD bootdev;
+WORD default_bootdev;    /* the drive that is booted from unless another is selected */
 UBYTE defshiftmod;
 UBYTE sshiftmod;
 
