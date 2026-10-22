@@ -624,6 +624,7 @@ static LONG try_shell(const char *path, void *unused)
  * No shell at all: say so, and why, instead of the alert for a file that
  * is not found.  Returns 0, the alert has been shown.
  */
+#if (CONF_EXTERNAL_DESK && !(CONF_WITH_CLI && !CONF_EXTERNAL_CLI)) || (CONF_WITH_CLI && CONF_EXTERNAL_CLI)
 static LONG no_shell_alert(const char *const *names)
 {
     char drives[12];
@@ -647,6 +648,7 @@ static LONG no_shell_alert(const char *const *names)
     fm_alert(1, alert);
     return 0;
 }
+#endif
 #endif
 
 static WORD sh_ldapp(SHELL *psh)
