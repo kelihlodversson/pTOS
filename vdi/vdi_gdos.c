@@ -279,6 +279,28 @@ static BOOL sfont_known(const VDI_SFONT *fonts, WORD count, const char *file)
     return FALSE;
 }
 
+/* the file name of the system font that is wanted (upper case), set before the scan: see sfont_scan() */
+static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14];   /* BSS: .data may be in ROM */
+
+/*
+ * whether fonts[count] has the identity of one of the first count fonts (the
+ * same font as a .TTF and an .OTF, say): it would be dropped in the end, so it
+ * is not let to use a slot of the SFONT_MAX meanwhile.  The file that the
+ * system font setting names is kept, so that it can take the other's place.
+ */
+static BOOL sfont_duplicate(const VDI_SFONT *fonts, WORD count)
+{
+    WORD i;
+
+    if (!strcmp(fonts[count].file, sfont_wanted))
+        return FALSE;
+    for (i = 0; i < count; i++)
+        if (fonts[i].key == fonts[count].key && !strcmp(fonts[i].name, fonts[count].name))
+            return TRUE;
+
+    return FALSE;
+}
+
 /*
  * add the fonts matching one pattern, except those of files the first
  * known fonts came from; returns how many there are now
@@ -304,14 +326,15 @@ static WORD sfont_find(VDI_SFONT *fonts, WORD known, WORD count, const char *pat
                    sfont_dta.d_fname));
             continue;
         }
-        count++;
+        if (!sfont_duplicate(fonts, count))
+            count++;
 
         /* a collection: the other faces, which are fonts of their own */
         for (face = 1; face < sfont_faces && face < 256 && count < SFONT_MAX; face++)
         {
             strcpy(fonts[count].file, sfont_dta.d_fname);
             fonts[count].face = (UBYTE)face;
-            if (vdi_ft_call(sfont_open, &fonts[count]) == 0)
+            if (vdi_ft_call(sfont_open, &fonts[count]) == 0 && !sfont_duplicate(fonts, count))
                 count++;
         }
     }
@@ -346,8 +369,6 @@ static BOOL sfont_id_used(const VDI_SFONT *fonts, WORD count, WORD id)
 }
 
 /* the fonts in CONF_VDI_FONT_DIR, sorted by name, with their ids */
-/* the file name of the system font that is wanted (upper case), set before the scan: see sfont_scan() */
-static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14];   /* BSS: .data may be in ROM */
 
 static BOOL sfont_stale;            /* a workstation unloaded its fonts since the last scan */
 
