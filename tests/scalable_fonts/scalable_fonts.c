@@ -284,6 +284,35 @@ static void scan(struct ink *ink)
         }
 }
 
+/* the same for a window of the area: what is set in it, as a hash and a count */
+static void scan_in(struct ink *ink, short x0, short y0, short x1, short y1)
+{
+    short x, y;
+
+    ink->hash = 2166136261UL;
+    ink->count = 0;
+    ink->x0 = ink->y0 = 32767;
+    ink->x1 = ink->y1 = -1;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+        {
+            int set = get_pixel(x, y) != 0;
+
+            ink->hash = (ink->hash ^ (unsigned long)set) * 16777619UL;
+            if (!set)
+                continue;
+            ink->count++;
+            if (x < ink->x0)
+                ink->x0 = x;
+            if (x > ink->x1)
+                ink->x1 = x;
+            if (y < ink->y0)
+                ink->y0 = y;
+            if (y > ink->y1)
+                ink->y1 = y;
+        }
+}
+
 /* --- the font --- */
 
 static short system_fonts, loaded_fonts;
@@ -311,6 +340,28 @@ static int find_font(void)
             font_id = vs_intout[0];
             return 1;
         }
+    }
+
+    return 0;
+}
+
+/* the id of a font whose name has 'part' in it, or 0 */
+static short find_named(const char *part)
+{
+    short n, count, i;
+
+    count = system_fonts + loaded_fonts;
+    for (n = 1; n <= count; n++)
+    {
+        char name[34];
+
+        vs_intin[0] = n;
+        vs_call(handle, 130, 0, 0, 1);      /* vqt_name() */
+        for (i = 0; i < 32; i++)
+            name[i] = (char)vs_intout[1 + i];
+        name[32] = '\0';
+        if (strstr(name, part))
+            return vs_intout[0];
     }
 
     return 0;
@@ -667,6 +718,387 @@ static void check_drawing(void)
     }
 }
 
+/* --- ink that leaves its cell (#607) --- */
+
+static void set_skew(short tenths)
+{
+    vs_intin[0] = tenths;
+    vs_call(handle, 253, 0, 0, 1);          /* vst_skew() */
+}
+
+/* the text, in the writing mode, drawn at (x, y) with rotation 0 */
+static void gtext_mode(short mode, short x, short y, const char *s)
+{
+    set_mode(mode);
+    gtext(x, y, s);
+}
+
+/*
+ * Slanted (vst_skew()), the top bar of a T goes past its advance, to the left
+ * of its origin when the slant is positive (the characters lean to the left)
+ * and to the right of its advance when it is negative, and the foot of a j
+ * past the other.  That ink is the glyph's as much as the rest: it is there,
+ * a character that follows does not erase it in replace mode, and turned it
+ * is the same ink turned.
+ */
+static void check_overhang(void)
+{
+    static const short angles[] = { 0, 900, 1800, 2700 };
+    struct ink a, b, turned[4];
+    short x = AREA_X + 40, y = AREA_Y + 10, adv, i, planes;
+
+    vs_intin[0] = 1;
+    vs_call(handle, 102, 0, 0, 1);          /* vq_extnd(1): the planes */
+    planes = vs_intout[4];
+
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(0);
+    adv = (short)string_extent("T");
+    CHECK(adv > 8, "the advance of a T is", adv, 0);
+
+    /* leaning to the left: ink to the left of the origin */
+    set_skew(150);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&a);
+    CHECK(a.count > 0, "a skewed T is not drawn:", 0, 0);
+    CHECK(a.x0 < x, "the ink of a T leaning left is cut at its cell:", a.x0, x);
+
+    /* leaning to the right: ink past the advance */
+    set_skew(-150);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&a);
+    CHECK(a.x1 >= x + adv, "the ink of a T leaning right is cut at its cell:", a.x1, x + adv);
+
+    /*
+     * two of them in replace mode: the second's cell, background and all,
+     * must not cover the ink of the first that is over it; the same as
+     * each in transparent mode
+     */
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "TT");
+    scan(&a);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(2, x, y, "T");
+    gtext_mode(2, x + adv, y, "T");
+    scan(&b);
+    CHECK(a.hash == b.hash && a.count == b.count,
+          "replace mode erases the ink of a character that leaves its cell:", a.count, b.count);
+
+    /* turned: the same ink, in the same number of pixels, a quarter at a time */
+    for (i = 0; i < 4; i++)
+    {
+        short tx, ty;
+
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        place("T", angles[i], &tx, &ty);
+        set_mode(1);
+        gtext(tx, ty, "T");
+        set_rotation(0);
+        scan(&turned[i]);
+        CHECK(turned[i].count > 0, "a turned skewed T is not drawn:", angles[i], 0);
+    }
+    for (i = 1; i < 4; i++)
+    {
+        short w0 = turned[0].x1 - turned[0].x0, h0 = turned[0].y1 - turned[0].y0;
+        short w = turned[i].x1 - turned[i].x0, h = turned[i].y1 - turned[i].y0;
+
+        if (i == 2)
+            CHECK(w == w0 && h == h0, "a skewed T turned a half has another size:", i, 0);
+        else
+            CHECK(w == h0 && h == w0, "a skewed T turned a quarter has another size:", i, 0);
+        if (planes <= 8)
+            CHECK(turned[i].count == turned[0].count,
+                  "a skewed T turned has another number of pixels:", i,
+                  turned[i].count - turned[0].count);
+    }
+    set_skew(0);
+    set_mode(1);
+
+    /*
+     * bold: thickening adds ink, to the glyph and to what leaves its cell
+     * (in a fixed-pitch font the cell stays as it is, but that ink is not
+     * cut off by it): the ink of the plain one is in the bold one's, on the
+     * side that the slant puts it
+     */
+    for (i = 0; i < 8; i++)
+    {
+        static const short slants[] = { -150, 150, -70, 70, -40, 40, -25, 25 };
+        struct ink plain, bold;
+
+        set_skew(slants[i]);
+        set_effects(0);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "T");
+        scan(&plain);
+        set_effects(1);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "T");
+        scan(&bold);
+        set_effects(0);
+        CHECK(bold.count > plain.count, "bold has no more ink than plain:", bold.count, plain.count);
+        if (slants[i] > 0)
+            CHECK(bold.x0 <= plain.x0, "bold loses the ink of a T that leaves its cell on the left:",
+                  bold.x0, plain.x0);
+        else
+            CHECK(bold.x1 >= plain.x1, "bold loses the ink of a T that leaves its cell on the right:",
+                  bold.x1, plain.x1);
+    }
+
+    /*
+     * a steep slant puts ink further out than a cell is wide: all of it is
+     * drawn (the bar of the T is over 2 cells away from where it is plain)
+     */
+    set_skew(-700);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&a);
+    CHECK(a.x1 > x + 2 * adv, "the ink of a steeply slanted T is cut short:", a.x1, x + 2 * adv);
+    set_skew(0);
+}
+
+/*
+ * Ink that leaves the cell is drawn where the cell is not: at the edge of
+ * the screen a j (or the T of a slant to the left) has ink at a negative x,
+ * which is not drawn (with clipping off, which is the default, it would
+ * come back at the other end of the line above)
+ */
+static void check_overhang_edge(void)
+{
+    struct ink right_edge, left_edge;
+    short xres, y = AREA_Y + 10;
+
+    vs_intin[0] = 0;
+    vs_call(handle, 102, 0, 0, 1);          /* vq_extnd(0): the width of the screen, less 1 */
+    xres = vs_intout[0];
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(150);                          /* leaning left: ink left of the origin */
+    clear_area(xres - 15, y - 3, xres, y + 50);
+    clear_area(0, y - 3, 40, y + 50);
+    gtext_mode(1, 0, y, "T");
+    scan_in(&right_edge, xres - 15, y - 3, xres, y + 50);
+    scan_in(&left_edge, 0, y - 3, 40, y + 50);
+    CHECK(left_edge.count > 0, "a T at the left edge is not drawn:", 0, 0);
+    CHECK(right_edge.count == 0, "ink left of the screen comes back at the right:",
+          right_edge.count, 0);
+    clear_area(0, y - 3, 40, y + 50);
+    set_skew(0);
+}
+
+/* XOR: bold text, whose ink goes outside its cells, is drawn, and twice it is gone */
+static void check_overhang_xor(void)
+{
+    struct ink a;
+    short x = AREA_X + 40, y = AREA_Y + 10, effects;
+    static const short styles[] = { 1 };
+
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_rotation(0);
+    set_skew(-150);
+    for (effects = 0; effects < (short)(sizeof styles / sizeof styles[0]); effects++)
+    {
+        set_effects(styles[effects]);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(3, x, y, "T");
+        scan(&a);
+        CHECK(a.count > 0, "XOR text with an effect is not drawn:", styles[effects], 0);
+        gtext_mode(3, x, y, "T");
+        scan(&a);
+        CHECK(a.count == 0, "XOR text with an effect drawn twice is not gone:", styles[effects],
+              a.count);
+    }
+    set_effects(0);
+    set_skew(0);
+    set_mode(1);
+}
+
+/*
+ * a size in points, 16.16, as vst_arbpt32() (opcode 246) or vst_setsize32()
+ * (252) take it: a long as it is in memory, the high word first only on a
+ * big endian machine
+ */
+static void set_size32(short opcode, long size)
+{
+    memcpy(&vs_intin[0], &size, sizeof size);
+    vs_call(handle, opcode, 0, 0, 2);
+}
+
+/*
+ * Mirrored (a negative size): the ink of a slanted T that leaves its cell
+ * is mirrored with it, and nothing of it is lost: the same number of pixels
+ * as the T that is not.  Mirrored along the x axis (the rows upside down) it
+ * still goes out on the right of the advance; mirrored along y (each cell
+ * left to right) on the left of the origin.  (vst_arbpt32() gives the width
+ * of the size back to the default, vst_setsize32() sets it: the T that a
+ * mirrored one is compared with is set up as it is.)
+ */
+static void check_overhang_mirror(void)
+{
+    struct ink norm, flipped;
+    long size;
+    struct size sz;
+    short x = AREA_X + 40, y = AREA_Y + 10, adv;
+
+    /* the size in points that is about 30 pixels: the points a pixel is varies with the screen */
+    set_point(12);
+    attributes(&sz);
+    CHECK(sz.ch > 0, "no character height at 12 points:", sz.ch, 0);
+    size = (12L * 30 / sz.ch) << 16;
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(0);
+    set_size32(246, size);
+    adv = (short)string_extent("T");
+    set_skew(-150);
+
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&norm);
+    CHECK(norm.count > 0, "a skewed T is not drawn:", 0, 0);
+    set_size32(246, -(size));
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&flipped);
+    CHECK(flipped.count == norm.count, "a T mirrored along x has other pixels:",
+          flipped.count, norm.count);
+    CHECK(flipped.x1 >= x + adv, "the ink of a T mirrored along x is cut at its cell:",
+          flipped.x1, x + adv);
+
+    set_size32(246, size);
+    set_size32(252, size);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&norm);
+    set_size32(252, -(size));
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&flipped);
+    CHECK(flipped.count == norm.count, "a T mirrored along y has other pixels:",
+          flipped.count, norm.count);
+    CHECK(flipped.x0 < x, "the ink of a T mirrored along y is cut at its cell:", flipped.x0, x);
+
+    set_size32(246, size);
+    set_skew(0);
+}
+
+/*
+ * An italic face (Inter Italic, when the test disk has it) has ink that
+ * leaves its cells without any slant asked for: the hook of an f to the
+ * right of it, the tail of a j to the left.  Nothing of either is lost, and
+ * in replace mode a character that follows does not erase the hook.
+ */
+static void check_overhang_italic(void)
+{
+    struct ink a, b;
+    short id = find_named("Italic");
+    short x = AREA_X + 40, y = AREA_Y + 10, adv;
+
+    if (!id)
+        return;                             /* no italic face on this disk */
+    vdi_font(id);
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(0);
+
+    adv = (short)string_extent("f");
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "f");
+    scan(&a);
+    CHECK(a.x1 >= x + adv, "the hook of an italic f is cut at its cell:", a.x1, x + adv);
+
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "j");
+    scan(&a);
+    CHECK(a.x0 < x, "the tail of an italic j is cut at its cell:", a.x0, x);
+
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "ffj");
+    scan(&a);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(2, x, y, "f");
+    gtext_mode(2, x + adv, y, "f");
+    adv = (short)string_extent("ff");
+    gtext_mode(2, x + adv, y, "j");
+    scan(&b);
+    CHECK(a.hash == b.hash && a.count == b.count,
+          "replace mode erases the ink of an italic that leaves its cell:", a.count, b.count);
+
+
+    /*
+     * bold: the hook goes on being where it is, thickened to the right, and
+     * not as many pixels further as thickening adds (about two here)
+     */
+    {
+        struct ink plain, bold;
+
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "f");
+        scan(&plain);
+        set_effects(1);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "f");
+        scan(&bold);
+        set_effects(0);
+        CHECK(bold.x1 >= plain.x1 && bold.x1 <= plain.x1 + 3,
+              "the hook of a bold italic f is not where thickening puts it:", bold.x1, plain.x1);
+    }
+
+    /*
+     * clipped at the top, by any number of rows: what is in the window is
+     * what is there when it is not clipped (an f has ink on both sides of
+     * its cell, drawn one after the other from the same rows of the form)
+     */
+    {
+        short cut;
+
+        for (cut = 2; cut <= 12; cut += 2)
+        {
+            struct ink all, part;
+
+            clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            gtext_mode(1, x, y, "f");
+            scan_in(&all, AREA_X, y + cut, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            set_clip(1, AREA_X, y + cut, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            gtext_mode(1, x, y, "f");
+            set_clip(0, 0, 0, 0, 0);
+            scan_in(&part, AREA_X, y + cut, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            CHECK(part.hash == all.hash && part.count == all.count,
+                  "an italic f clipped at the top is not what is left of the whole one:",
+                  cut, part.count - all.count);
+        }
+    }
+
+    /*
+     * the face last used stays open (and its file in font memory): back to
+     * the test font's, so that whatever is left of this is not another
+     * test's baseline
+     */
+    set_mode(1);
+    vdi_font(font_id);
+    v_flushcache(handle);
+    set_height(13);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "x");
+    v_flushcache(handle);
+}
+
 /* --- memory --- */
 
 static long font_memory(void)
@@ -987,8 +1419,13 @@ void test_scalable_fonts(void)
     SECTION(check_rotation);
     SECTION(check_alignment);
     SECTION(check_drawing);
+    SECTION(check_overhang);
+    SECTION(check_overhang_mirror);
+    SECTION(check_overhang_edge);
+    SECTION(check_overhang_xor);
     SECTION(check_memory);
     SECTION(check_unsupported);
+    SECTION(check_overhang_italic);
 #ifdef TEST_WITH_FONT_RESCAN
     SECTION(check_rescan);
 #endif

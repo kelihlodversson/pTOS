@@ -177,7 +177,8 @@ start_vm() {
     # scalable fonts for the built-in GDOS (gdos_answer), when the host
     # has them: the default set of the release images (DejaVu Sans, Serif
     # and Sans Mono, regular and bold: the names tools/fetch-fonts.sh
-    # gives them), OpenType with CFF outlines (Inter), one whose ascender
+    # gives them), OpenType with CFF outlines (Inter, and its italic, whose
+    # glyphs leave their cells), one whose ascender
     # is taller than its em (Loma) and a monospaced one whose combining
     # marks have no width (Liberation Mono), under 8.3 names
     dv=/usr/share/fonts/truetype/dejavu
@@ -188,6 +189,7 @@ start_vm() {
              $dv/DejaVuSansMono.ttf:DJVUMONO.TTF \
              $dv/DejaVuSansMono-Bold.ttf:DJVUMONB.TTF \
              /usr/share/fonts/opentype/inter/Inter-Regular.otf:INTER.OTF \
+             /usr/share/fonts/opentype/inter/Inter-Italic.otf:INTERIT.OTF \
              /usr/share/fonts/opentype/tlwg/Loma.otf:LOMA.OTF \
              /usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf:LIBMONO.TTF; do
         if [ -f "${f%%:*}" ]; then
