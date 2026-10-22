@@ -13,7 +13,16 @@
 #ifndef SETJMP_H
 #define SETJMP_H
 
+/*
+ * enough for the callee-saved registers of each architecture's setjmp():
+ * m68k 13, x86-64 8, ARM 11, plus d8-d15 (16 words) with the hard-float
+ * ABI (util/arch/arm/setjmp.S)
+ */
+#if defined(__arm__) && defined(__ARM_PCS_VFP)
+typedef long jmp_buf[27];
+#else
 typedef long jmp_buf[13];
+#endif
 
 int setjmp(jmp_buf state);
 void longjmp(jmp_buf state, WORD value) NORETURN;

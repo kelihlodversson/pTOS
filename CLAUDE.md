@@ -35,6 +35,15 @@ it first.
 The user merges the PR themselves once they're satisfied and any review
 comments are addressed — never merge or force-push a PR as part of this flow.
 
+When checking a PR for code review results, read the review summary comment
+as well as the inline threads: Copilot may put findings in the summary (for
+example under "previously missed issues") without opening an inline thread
+for them. Check for those explicitly.
+
+All documentation, communication (issues, PRs, review replies, commit
+messages) and code are written in English. The exceptions are i18n and
+explicit translations of documentation.
+
 ### Epic branches
 
 For larger features or refactorings that span multiple related issues, create an
@@ -77,8 +86,9 @@ unbuildable. The two cases that trip agents most often:
 - pc-x86_64 uses the host's native gcc: `make CROSS_COMPILE=`.
 - `CONF_WITH_MFASTCALL=y` configs (amiga, amiga-kickdisk, the `*-fastcall`
   ones) need Thorsten Otto's toolchain, because the PPA's
-  `m68k-atari-mintelf-gcc` has no `-mfastcall`. The skill shows how to
-  install it into a user directory and put it first on `PATH`.
+  `m68k-atari-mintelf-gcc` has no `-mfastcall`. CI uses his toolchain for
+  every m68k job. The skill shows how to install it into a user directory
+  and put it first on `PATH`.
 
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.
@@ -175,9 +185,14 @@ same object.
   The codebase overwhelmingly uses `/* */` comments; match the file you are in.
 - 4 spaces, never a hard tab, in `.c`, `.h` and `.S`. Run `make gitready`
   before committing.
-- **`int` is 16 bits on m68k** (`-mshort`) and 32 bits on ARM. Use the
-  `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`, `ULONG`, `BOOL` — and
-  suffix constants that must survive on m68k (`132 * 1000UL`).
+- **`int` is 32 bits on every target.** m68k dropped `-mshort` in #300, so
+  code written upstream for a 16-bit `int` can misbehave: a `WORD` compared
+  with `0xff02` never matches, so write `(WORD)0xff02`. **The pc-x86_64
+  kernel is LP64:** `long` and pointers are 64 bits there, while `LONG`
+  stays 32. Use the `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`,
+  `ULONG`, `BOOL` — for anything with a fixed width, cast between pointers
+  and integers through `uintptr_t`, and pass `%ld`/`%lx` arguments as
+  `long`/`unsigned long`.
 - Assembler: leading underscore on symbols callable from C, CDECL conventions,
   68000-only instructions, `movem.l` never `movem.w`.
 - Trace with `KDEBUG(("..."))` / `KINFO(())` from `include/kprint.h`, not with

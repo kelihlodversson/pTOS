@@ -65,6 +65,7 @@ extern const LONG cicontest_rsc_size;
 #include "deskobj.h"
 #include "deskrez.h"
 #include "deskmain.h"
+#include "deskrt.h"
 #include "scancode.h"
 
 /* structure pointed to by return value from Keytbl() */
@@ -392,22 +393,26 @@ static void play_sound(UWORD frequency, UWORD duration)
     snddat[12] = 13;    snddat[13] = 9;             /* envelope type */
     snddat[14] = 0xFF;  snddat[15] = 0;
 
-    Dosound((LONG)snddat);
+    Dosound((long)(uintptr_t)snddat);
 }
 #endif
 
 
 static void detect_features(void)
 {
-    can_change_resolution = rez_changeable();
+    can_change_resolution = desk_rez_changeable();
     blitter_is_present = Blitmode(-1) & 0x0002;
 #if CONF_WITH_CACHE_CONTROL
-    cache_is_present = cache_exists();
+    cache_is_present = desk_cache_exists();
 #endif
 }
 
 
 #if CONF_WITH_CACHE_CONTROL
+#if CONF_EXTERNAL_DESK
+/* the kernel does it (Ssystem()) */
+#define desk_apply_cache()  desk_set_cache(G.g_cache)
+#else
 /*
  * Routine to set cache on/off: must be Supexec'd because the set_cache()
  * function must run in supervisor state
@@ -420,6 +425,8 @@ static LONG desktop_set_cache(void)
     set_cache(G.g_cache);
     return 0;
 }
+#define desk_apply_cache()  Supexec((LONG)desktop_set_cache)
+#endif
 #endif
 
 
@@ -594,7 +601,7 @@ static void men_update(void)
 #endif
 
 #if CONF_WITH_SHUTDOWN
-    menu_ienable(tree, QUITITEM, can_shutdown());
+    menu_ienable(tree, QUITITEM, desk_can_shutdown());
 #endif
 
     menu_ienable(tree, RESITEM, can_change_resolution);
@@ -784,7 +791,7 @@ static WORD do_filemenu(WORD item)
 
 #if CONF_WITH_SHUTDOWN
     case QUITITEM:
-        enable_ceh = FALSE; /* avoid possibility of useless form_alert()s */
+        desk_set_ceh(FALSE); /* avoid possibility of useless form_alert()s */
         display_free_stack();
         shel_write(SHW_SHUTDOWN, FALSE, 2, NULL, NULL);
         done = TRUE;
@@ -948,7 +955,7 @@ static WORD do_optnmenu(WORD item)
     case CACHITEM:
         G.g_cache = !G.g_cache;
         menu_icheck(desk_rs_trees[ADMENU], CACHITEM, G.g_cache);    /* flip cache mode */
-        Supexec((LONG)desktop_set_cache);   /* uses G.g_cache */
+        desk_apply_cache();   /* uses G.g_cache */
         break;
 #endif
     }
@@ -1994,6 +2001,7 @@ BOOL deskmain(void)
 
     /* get GEM's gsx handle */
     gl_handle = graf_handle(&gl_wchar, &gl_hchar, &gl_wbox, &gl_hbox);
+    desk_rt_init();                 /* (CONF_EXTERNAL_DESK) the rest of the AES and VDI state */
 
     /* get desktop work area coordinates */
     wind_get_grect(DESKWH, WF_WXYWH, &G.g_desk);
@@ -2111,7 +2119,7 @@ BOOL deskmain(void)
      * we now have the cache state from EMUDESK.INF, so we can apply it
      */
     if (cache_is_present)
-        Supexec((LONG)desktop_set_cache);
+        desk_apply_cache();
 #endif
 
     men_update();
@@ -2131,7 +2139,7 @@ BOOL deskmain(void)
     done = FALSE;
 
     /* enable graphical critical error handler */
-    enable_ceh = TRUE;
+    desk_set_ceh(TRUE);
 
 #if CONF_WITH_X32_ACCESSORY_TEST
     {
@@ -2220,6 +2228,9 @@ BOOL deskmain(void)
 
     /* give up the desktop */
     wind_set(DESKWH, WF_NEWDESK, NULL, 0, 0);
+
+    /* close the VDI workstation of the program (CONF_EXTERNAL_DESK) */
+    desk_rt_exit();
 
     /* exit the gem AES */
     appl_exit();

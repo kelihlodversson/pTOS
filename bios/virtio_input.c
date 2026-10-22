@@ -126,7 +126,7 @@ static LONG virtio_input_last_scaled_x, virtio_input_last_scaled_y;
  * whatever motion happened. */
 static void virtio_input_send_mouse_delta(WORD dx, WORD dy)
 {
-    UBYTE packet[3];
+    SBYTE packet[3];
     WORD step_x, step_y;
 
     do
@@ -134,9 +134,9 @@ static void virtio_input_send_mouse_delta(WORD dx, WORD dy)
         step_x = (dx > 127) ? 127 : (dx < -128) ? -128 : dx;
         step_y = (dy > 127) ? 127 : (dy < -128) ? -128 : dy;
 
-        packet[0] = (UBYTE)(0xf8 | virtio_input_ptr_buttons);
-        packet[1] = (UBYTE)step_x;
-        packet[2] = (UBYTE)step_y;
+        packet[0] = (SBYTE)(0xf8 | virtio_input_ptr_buttons);
+        packet[1] = (SBYTE)step_x;
+        packet[2] = (SBYTE)step_y;
         call_mousevec(packet);
 
         dx = (WORD)(dx - step_x);

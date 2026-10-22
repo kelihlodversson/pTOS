@@ -116,6 +116,7 @@ void int_timerc(void)
  * fn) -- this body exists only so the symbol is valid and unimplemented
  * xbios_vecs[] slots have something real to take the address of.
  */
+LONG xbios_unimpl(void);       /* also declared in bios/xbios.c */
 LONG xbios_unimpl(void)
 {
     return -1;

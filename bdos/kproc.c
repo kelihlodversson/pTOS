@@ -220,8 +220,10 @@ BOOL kproc_create(PD *pd)
     return TRUE;
 }
 
+#if CONF_WITH_USER_ASPACE
 static void give_image_back(KPROC *kproc);
 static void release_loaded(KPROC *kproc);
+#endif
 
 void kproc_destroy(PD *pd)
 {
@@ -423,12 +425,12 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
         KINFO(("Missing kernel process record for %p\n", pd));
         halt();
 #else
-        pd->p_xdta = PTR_TO_USERPTR_UNCHECKED(dta);
+        pd->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
         return;
 #endif
     }
     kproc->dta = dta;
-    pd->p_xdta = PTR_TO_USERPTR_UNCHECKED(dta);
+    pd->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
 }
 
 DTAINFO *kproc_get_dta(PD *pd)
@@ -450,7 +452,7 @@ DTAINFO *kproc_get_dta(PD *pd)
 #else
     /* No memory protection to defeat here: p_xdta is itself the full
      * native pointer, so honour a direct write to it as TOS always has. */
-    if (kproc && PTR_TO_USERPTR_UNCHECKED(kproc->dta) == pd->p_xdta)
+    if (kproc && PTR_TO_USERPTR_UNCHECKED((DTA *)kproc->dta) == pd->p_xdta)
         return kproc->dta;
     return (DTAINFO *)USERPTR_TO_PTR(pd->p_xdta);
 #endif
@@ -1758,7 +1760,7 @@ void kproc_destroy(PD *pd)
 
 void kproc_set_dta(PD *pd, DTAINFO *dta)
 {
-    pd->p_xdta = PTR_TO_USERPTR_UNCHECKED(dta);
+    pd->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
 }
 
 DTAINFO *kproc_get_dta(PD *pd)

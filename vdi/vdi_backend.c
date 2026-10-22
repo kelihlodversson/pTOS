@@ -78,7 +78,7 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
     if (mode->layout == SCREEN_LAYOUT_PACKED
         && mode->color_model == SCREEN_COLOR_TRUECOLOR
         && mode->pixel_format == SCREEN_PIXEL_RGB565) {
-        vdi_backend_ops_init(&packed_truecolor_backend_ops);
+        vdi_backend_packed_ops_ready(&packed_truecolor_backend_ops);
         return &packed_truecolor_backend_ops;
     }
 #endif
@@ -87,7 +87,7 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
     if (mode->layout == SCREEN_LAYOUT_PACKED
         && mode->color_model == SCREEN_COLOR_TRUECOLOR
         && mode->pixel_format == SCREEN_PIXEL_XRGB8888) {
-        vdi_backend_ops_init(&packed_truecolor32_backend_ops);
+        vdi_backend_packed_ops_ready(&packed_truecolor32_backend_ops);
         return &packed_truecolor32_backend_ops;
     }
 #endif

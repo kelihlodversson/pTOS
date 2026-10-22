@@ -12,3 +12,5 @@ _start:
 .Lhalt:
         jmp     .Lhalt
         .size   _start, .-_start
+
+        .section .note.GNU-stack,"",@progbits

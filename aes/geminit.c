@@ -245,7 +245,7 @@ static AESPD *iprocess(char *pname, PFVOID routine)
 
     /* figure out load addr */
 
-    ldaddr = (ULONG) routine;
+    ldaddr = (ULONG)(uintptr_t)routine;
 
     /* create process to execute it */
     return pstart(routine, pname, ldaddr);
@@ -547,7 +547,7 @@ static WORD load_mouse_cursors(char *buf)
      * load the pointers
      */
     for (i = 0, bb = (BITBLK *)(buf+hdr->rsh_bitblk); i < NUM_MOUSE_CURSORS; i++, bb++)
-        mouse_cursor[i] = (MFORM *)(buf+(LONG)bb->bi_pdata);
+        mouse_cursor[i] = (MFORM *)(buf+(LONG)(uintptr_t)bb->bi_pdata);
 
     return 0;
 }

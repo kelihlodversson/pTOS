@@ -501,7 +501,7 @@ LONG xmaddalt(UBYTE *start, LONG size)
     }
 
 #if CONF_WITH_STATIC_ALT_RAM
-    if (start == _static_altram_start && _static_altram_end > _static_altram_start)
+    if (start == _static_altram_start && &_static_altram_end[0] > &_static_altram_start[0])
     {
         /* This region is used by EmuTOS static data.
          * Keep the lower part safe, and only add the upper part to the pool */

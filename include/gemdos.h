@@ -27,6 +27,31 @@ LONG dos_avail_anyram(void);
 WORD dos_free(void *maddr);
 WORD dos_shrink(void *maddr, LONG length);
 
+static __inline__ void dos_sdta(void *ldta)
+{
+    Fsetdta(ldta);
+}
+
+static __inline__ WORD dos_sfirst(char *pspec, WORD attr)
+{
+    return Fsfirst(pspec,attr);
+}
+
+static __inline__ WORD dos_snext(void)
+{
+    return Fsnext();
+}
+
+static __inline__ LONG dos_chdir(char *pdrvpath)
+{
+    return Dsetpath(pdrvpath);
+}
+
+static __inline__ LONG dos_sdrv(WORD newdrv)
+{
+    return Dsetdrv(newdrv);
+}
+
 static __inline__ LONG dos_rawcin(void)
 {
     return Crawcin();
@@ -47,24 +72,9 @@ static __inline__ WORD dos_gdrv(void)
     return Dgetdrv();
 }
 
-static __inline__ void dos_sdta(void *ldta)
-{
-    Fsetdta(ldta);
-}
-
 static __inline__ void *dos_gdta(void)
 {
     return (void *)Fgetdta();
-}
-
-static __inline__ WORD dos_sfirst(char *pspec, WORD attr)
-{
-    return Fsfirst(pspec,attr);
-}
-
-static __inline__ WORD dos_snext(void)
-{
-    return Fsnext();
 }
 
 static __inline__ LONG dos_open(char *pname, WORD access)
@@ -92,19 +102,9 @@ static __inline__ LONG dos_lseek(WORD handle, WORD smode, LONG sofst)
     return Fseek(sofst, handle, smode);
 }
 
-static __inline__ LONG dos_chdir(char *pdrvpath)
-{
-    return Dsetpath(pdrvpath);
-}
-
 static __inline__ WORD dos_gdir(WORD drive, char *pdrvpath)
 {
     return Dgetpath(pdrvpath,drive);
-}
-
-static __inline__ LONG dos_sdrv(WORD newdrv)
-{
-    return Dsetdrv(newdrv);
 }
 
 static __inline__ LONG dos_create(char *name, WORD attr)

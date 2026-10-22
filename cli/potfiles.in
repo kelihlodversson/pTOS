@@ -1,0 +1,9 @@
+#
+# the sources of the standalone EmuCON that have _("...") and N_("...") strings
+# (cli/Makefile, NLS=1); the same files as cli/ has in po/POTFILES.in
+#
+
+cli/cmdint.c
+cli/cmdmain.c
+cli/cmdparse.c
+cli/cmdutil.c

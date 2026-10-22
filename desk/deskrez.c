@@ -35,6 +35,7 @@
 #include "bdosbind.h"
 #include "xbiosbind.h"
 #include "has.h"                /* for has_videl etc */
+#include "deskrt.h"
 #include "biosdefs.h"
 #include "biosext.h"
 
@@ -320,12 +321,12 @@ int change_resolution(WORD *newres,WORD *newmode)
 #endif
 
 #if CONF_WITH_VIDEL
-    if (has_videl)
+    if (desk_has_videl())
         return change_falcon_rez(newres,newmode);
 #endif
 
 #if CONF_WITH_TT_SHIFTER
-    if (has_tt_shifter)
+    if (desk_has_tt_shifter())
         return change_tt_rez(newres);
 #endif
 

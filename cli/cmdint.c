@@ -469,7 +469,7 @@ WORD res = -1, rate = -1, delay = -1, height = -1;
             } else return INVALID_PARAM;
         }
         if ((delay >= 0) || (rate >= 0))
-            Kbrate(delay,rate);
+            (void)Kbrate(delay,rate);
         if (height >= 0) {
             Setscreen(-1L,-1L,-1,height);
             enable_cursor();

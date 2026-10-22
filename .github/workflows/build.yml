@@ -100,9 +100,7 @@ jobs:
     # the entry in the checks list, without opening any logs.
     name: ${{ matrix.config }}
     needs: configurations
-    # Pinned: the m68k toolchain comes from a PPA, which does not necessarily
-    # have packages for whatever ubuntu-latest currently points at.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       # Every configuration is an independent compatibility check, so one
       # failure must not hide the state of the others.
@@ -110,49 +108,26 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.m68k) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
-
-      # Same idea as the architecture split above: a config that turns on
-      # CONF_WITH_MFASTCALL needs Thorsten Otto's toolchain instead of
-      # Vincent Riviere's (see setup-toolchain's own mfastcall input), and
-      # this makes that automatic for whichever configs need it, present or
-      # future, without this workflow having to list them.
-      #
-      # Generate the real .config rather than grepping the defconfig text:
-      # CONF_WITH_MFASTCALL could end up enabled through a Kconfig default,
-      # a "depends on", or a "select" without ever appearing as a literal
-      # "CONF_WITH_MFASTCALL=y" line in the defconfig itself, which would
-      # silently pick the wrong toolchain. "make X_defconfig" below runs
-      # "python3 -m defconfig" (tools/kconfig.mk), so kconfiglib has to be
-      # installed first -- no cross toolchain needed yet for that;
-      # setup-toolchain below installs it again, which is harmless. Pinned
-      # (see setup-toolchain/action.yml's own install step) so a new
-      # kconfiglib release can't silently change what "defconfig" accepts
-      # and break this step out from under an unrelated PR.
-      - name: Install kconfiglib
-        run: python3 -m pip install --disable-pip-version-check kconfiglib==14.1.0
-
-      - name: Check whether this config needs -mfastcall
-        id: check-mfastcall
-        run: |
-          make "${{ matrix.config }}_defconfig"
-          if grep -qE '^CONF_WITH_MFASTCALL=y' .config; then
-            echo "mfastcall=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "mfastcall=false" >>"$GITHUB_OUTPUT"
-          fi
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
-          mfastcall: ${{ steps.check-mfastcall.outputs.mfastcall }}
 
       - name: Build ${{ matrix.config }}
         env:
           CONFIG: ${{ matrix.config }}
         run: |
-          make "${CONFIG}_defconfig"
-          make
+          set -o pipefail   # tee below must not hide a failing make
+          # Kconfig warns about a discarded assignment only here, so the
+          # log starts with the defconfig
+          make "${CONFIG}_defconfig" 2>&1 | tee build.log
+          make 2>&1 | tee -a build.log
+          # every configuration builds without warnings (#584): keep it so
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |
@@ -186,7 +161,10 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.arm) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
@@ -196,15 +174,22 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
-          make "${CONFIG}_defconfig"
-          make
+          set -o pipefail   # tee below must not hide a failing make
+          # Kconfig warns about a discarded assignment only here, so the
+          # log starts with the defconfig
+          make "${CONFIG}_defconfig" 2>&1 | tee build.log
+          make 2>&1 | tee -a build.log
+          # every configuration builds without warnings (#584): keep it so
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |
           mkdir products
           # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
-          # ELF the image was extracted from, which still has the symbols.
-          for product in *.img emutos.elf emutos.map; do
+          # ELF the image was extracted from, which still has the symbols,
+          # EmuCON and EmuDesk, the programs CONF_EXTERNAL_CLI and
+          # CONF_EXTERNAL_DESK load from the boot drive.
+          for product in *.img emutos.elf emutos.map cli/emucon.tos emudesk.prg; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -231,6 +216,7 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.x86_64) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
         with:
           submodules: true
@@ -243,10 +229,14 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
-          make "${CONFIG}_defconfig"
+          set -o pipefail   # tee below must not hide a failing make
+          # Kconfig warns about a discarded assignment only here, so the
+          # log starts with the defconfig
+          make "${CONFIG}_defconfig" 2>&1 | tee build.log
           # CI deliberately uses Ubuntu's native gcc/binutils instead of the
           # x86_64-elf- cross toolchain selected by the developer default.
-          make CROSS_COMPILE=
+          make CROSS_COMPILE= 2>&1 | tee -a build.log
+          tools/check-build-warnings.sh build.log
 
       - name: Check the x32 VDI parameter contract
         run: make CROSS_COMPILE= vdi-contract-test
@@ -255,7 +245,7 @@ jobs:
         run: |
           mkdir products
           # The PE32+ EFI application, plus the map file with its symbols.
-          for product in *.efi emutos.map; do
+          for product in *.efi emutos.map cli/emucon.tos; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -300,6 +290,8 @@ jobs:
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          # EmuCON, the x32 program the kernel loads from the boot drive
+          cp cli/emucon.tos esp/EMUCON.TOS
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
@@ -497,9 +489,11 @@ jobs:
           fi
 
           # EmuCON is an x32 program run in ring 3 -- not linked into the
-          # kernel -- so its banner can only come from that process.
-          if ! grep -q 'EmuCON: starting the x32 image in ring 3' boot.log; then
-            echo "::error::the kernel never started the ring-3 EmuCON"
+          # kernel -- loaded from the boot drive as EMUCON.TOS (the kernel
+          # says "EmuCON: ..." when it cannot), so its banner can only come
+          # from that process.
+          if grep -Eq '^EmuCON: (cannot|this system has no built-in shell)' boot.log; then
+            echo "::error::the kernel could not start the ring-3 EmuCON"
             exit 1
           fi
           if ! grep -q 'Welcome to EmuCON2' boot.log; then
@@ -533,11 +527,30 @@ jobs:
             runner: ubuntu-latest
             qemu: qemu-system-arm
             make_args: ''
+          # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
+          # screen of the Pi's framebuffer.  The desktop starts the suite
+          # (tests/emudesk.inf) and the console is on the UART as well
+          # (rpi2-test_defconfig), where the script reads the verdict; no
+          # shutdown checks, which type into EmuCON
+          - machine: raspi2b
+            config: rpi2-test
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
           - machine: virt-m68k
             config: virt-m68k-cli-elf
             arch: m68k
-            # pinned for the toolchain PPA, like the m68k build jobs
-            runner: ubuntu-22.04
+            runner: ubuntu-latest
+            qemu: qemu-system-misc
+            make_args: ''
+          # the register-argument calling convention (-mfastcall): the VDI's scalable fonts call
+          # FreeType on a stack of its own, which it has to survive
+          - machine: virt-m68k-fastcall
+            script_machine: virt-m68k
+            config: virt-m68k-cli-fastcall
+            arch: m68k
+            runner: ubuntu-latest
             qemu: qemu-system-misc
             make_args: ''
           - machine: pc-x86_64
@@ -560,6 +573,15 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ${{ matrix.qemu }}
+          # scalable fonts for the gdos_answer suite: TrueType and CFF, one
+          # whose ascender is taller than its em (Loma), and a monospaced one
+          # with marks of no width (Liberation Mono); fontTools makes a TrueType
+          # collection of two Liberation Sans faces
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf \
+              fonts-liberation
+          # for the interpreter the test script runs (setup-toolchain
+          # selects its own Python, which the system's packages are not for)
+          python3 -m pip install fonttools
 
       - name: Build the kernel and the test programs
         env:
@@ -571,7 +593,7 @@ jobs:
           make $MAKE_ARGS test-dir
 
       - name: Run the regression suite
-        run: tools/run-regression-tests.sh ${{ matrix.machine }}
+        run: tools/run-regression-tests.sh ${{ matrix.script_machine || matrix.machine }}
 
       - name: Report the failure
         if: failure()
@@ -580,7 +602,7 @@ jobs:
 
   release-archives:
     name: Release archives
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       # release-emucon (part of "make release") builds against the
       # lib/libcmini submodule.
@@ -591,9 +613,6 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
-          # "make release" builds atari192/atari256 among the m68k
-          # targets, and both defconfigs now enable CONF_WITH_MFASTCALL.
-          mfastcall: "true"
 
       # Not a release: these archives are only kept as workflow artifacts, to
       # confirm that "make release" still works and to have something to
@@ -635,7 +654,7 @@ jobs:
       # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
       # release-raspi-resources" uses on the bundled text files, same as
       # every other pTOS release archive.  curl is what
-      # tools/fetch-raspi-firmware.sh downloads with, listed explicitly
+      # tools/fetch-raspi-firmware.sh and tools/fetch-fonts.sh download with, listed explicitly
       # rather than assumed from the runner image.
       - name: Install SD card image tooling
         run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl zip
@@ -659,7 +678,15 @@ jobs:
           # The loadable mouse cursor and desktop icon resources, and a
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
-          make release-raspi-resources DEST="sdcard/$archive"
+          make release-raspi-resources DEST="sdcard/$archive" \
+            RASPI_EMUCON=raspi-build/emucon.tos \
+            RASPI_EMUDESK=raspi-build/emudesk.prg
+
+          # The default scalable fonts (DejaVu, with their licence), which
+          # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive
+          # without any configuration: tools/fetch-fonts.sh, pinned and
+          # checked by checksum like the boot firmware.
+          ./tools/fetch-fonts.sh "sdcard/$archive/GEMSYS/FONTS"
 
           ./tools/mkraspi-image.sh "sdcard/$archive" "sdcard/$archive.img"
 

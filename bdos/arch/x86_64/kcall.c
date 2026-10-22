@@ -9,12 +9,15 @@
  * array.  osif() is only what a process's `syscall` reaches, and the only
  * place that looks at a caller's pointers (bdos/uaccess.c).
  *
- * Only the calls kernel code makes exist. File operations retain the
- * normal handle resolution in xread()/xwrite() and the filesystem layer.
+ * Only the calls kernel code makes exist; one that needs more is added here
+ * with the translation osif() does for it.  Fopen(), Fread(), Fseek() and
+ * Fclose() are in bdos/kfile.c, as kernel code on every architecture uses
+ * them. File operations retain normal handle resolution in xread()/xwrite()
+ * and the filesystem layer.
  *
  * osif() also catches the longjmp() the file system makes on a disk error.
- * A call that can reach the disk does the same here, minus the media change
- * retry: it returns the error code.
+ * A call that can reach the disk does the same here, with DISK_CALL()
+ * (bdos/fs.h), minus the media change retry: it returns the error code.
  *
  * Copyright (C) 2018-2026 The pTOS development team.
  *
@@ -30,28 +33,6 @@
 #include "proc.h"
 #include "console.h"
 #include "bdosbind.h"
-
-/*
- * run a call that can reach the disk; the file system reports a hard error
- * with a longjmp() to errbuf, which only osif() has set up so far
- */
-#define DISK_CALL(call)                                         \
-__extension__                                                   \
-({                                                              \
-    long _rc;                                                   \
-    jmp_buf _saved;                                             \
-                                                                \
-    memcpy(_saved, errbuf, sizeof(errbuf));                     \
-    if (setjmp(errbuf))                                         \
-    {                                                           \
-        _rc = errcode;                                          \
-        mark_bcbs_invalid(errdrv);                              \
-    }                                                           \
-    else                                                        \
-        _rc = (call);                                           \
-    memcpy(errbuf, _saved, sizeof(errbuf));                     \
-    _rc;                                                        \
-})
 
 long kdos_crawio(long w)
 {
@@ -139,29 +120,13 @@ long kdos_fgetdta(void)
 {
     return (long)xgetdta();
 }
-long kdos_fopen(long name, long mode)
-{
-    return DISK_CALL(xopen((char *)name, (WORD)mode));
-}
 long kdos_fcreate(long name, long attr)
 {
     return DISK_CALL(xcreat((char *)name, (UBYTE)attr));
 }
-long kdos_fclose(long handle)
-{
-    return DISK_CALL(xclose((WORD)handle));
-}
-long kdos_fread(long handle, long count, long buffer)
-{
-    return DISK_CALL(xread((WORD)handle, count, (void *)buffer));
-}
 long kdos_fwrite(long handle, long count, long buffer)
 {
     return DISK_CALL(xwrite((WORD)handle, count, (void *)buffer));
-}
-long kdos_fseek(long offset, long handle, long mode)
-{
-    return DISK_CALL(xlseek((LONG)offset, (WORD)handle, (WORD)mode));
 }
 long kdos_fdelete(long name)
 {

@@ -261,8 +261,11 @@ raster paths, which the STE's 68000 does not have: see tests/readme.md.
 
 tools/pBench/check-baseline.py makes the comparison.  The check fails if the
 geometric mean over the ten tests (the Display score) is more than 3% slower
-than the baseline, or any test more than 8% slower, or pBench did not finish.
-If the mean is more than 3% faster, or a test more than 8%, the workflow
+than the baseline, or any test more than 15% slower, or pBench did not finish.
+(The limit for a test is wide because moving code in the ROM, with no change to
+the drawing routines, can move single tests by up to about 10% in either
+direction through the cache lines of the emulated 68030.)
+If the mean is more than 3% faster, or a test more than 15%, the workflow
 comments on the pull request, so that an improvement is noticed.  The comment
 is updated by the next push to the pull request, not repeated.  (A pull
 request from a fork cannot comment; the table is in the job summary.)

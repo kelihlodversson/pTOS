@@ -467,9 +467,28 @@ long xsnext(void)
  */
 long xgsdtof(DOSTIME *buf, WORD h, WORD wrt)
 {
-    OFD *f = getofd(h);
+    OFD *f;
     DFD *dfd;
 
+#if CONF_WITH_PLUGGABLE_FS
+    {
+        FTAB *slot = getpfsslot(h);
+        if (slot)
+        {
+            UWORD time, date;   /* DOSTIME is packed */
+            long rc = pfs_handle_datime(&slot->f_pfs, &time, &date, wrt);
+
+            if (rc == E_OK)
+            {
+                buf->time = time;
+                buf->date = date;
+            }
+            return rc;
+        }
+    }
+#endif
+
+    f = getofd(h);
     if (!f)
         return EIHNDL;
 
@@ -977,9 +996,10 @@ DND *findit(char *name, const char **sp, int dflag)
  *      scans a directory indicated by a DND.  attributes figure in matching
  *      as well as the entry's name.  posp is an indicator as to where to start
  *      searching.  A posp of -1 means to use the scan pointer in the dnd, and
- *      return the pointer to the DND, not the FCB.
+ *      return the pointer to the DND, not the FCB.  So the result is a
+ *      void *: an FCB is packed where a DND is not (OPT_PACKED, fs.h).
  */
-FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
+void *scan(DND *dnd, const char *n, WORD att, LONG *posp)
 {
     char name[12];
     FCB *fcb;
@@ -1053,7 +1073,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
     if (*posp == -1)
     {       /*  seek to position of found entry  */
         ixlseek(fd,fd->o_bytnum - 32);
-        return (FCB *)dnd1;
+        return dnd1;
     }
 
     return fcb;
@@ -1172,7 +1192,7 @@ static DND *dcrack(const char **np)
 
     /* M01.01.1212.01 */
     if ((l=ckdrv(d, TRUE)) < 0) /*  check for valid drive & log */
-        return (DND *)l;        /*    in.  abort if error       */
+        return (DND *)(intptr_t)l;  /*  in.  abort if error       */
 
     /*
      *  if the pathspec begins with SLASH, then the first element is

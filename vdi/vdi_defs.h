@@ -244,6 +244,18 @@ struct Vwk_ {
     WORD mark_scale;            /* Current scale factor for marker data */
     Vwk *next_work;             /* Pointer to next virtual workstation  */
     WORD num_fonts;             /* Total number of faces available  */
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    WORD sfonts_loaded;         /* built-in GDOS's scalable fonts added: how many this workstation has (0: none) */
+    WORD *error_var;            /* vst_error(): where errors go, or NULL */
+    WORD char_map;              /* vst_map_mode(): MAP_ATARI, ... */
+    LONG sf_size;               /* the em size its scalable size was asked for, 1/64 pixel, */
+    WORD sf_want;               /* and the top (0: none), as the size cache has them apart */
+    LONG sf_width;              /* vst_setsize(): em width, 1/64 pixel; 0: as the height */
+    WORD sf_skew;               /* vst_skew(): slant, 1/10 degree */
+    WORD sf_mirror;             /* negative sizes: SF_MIRROR_X, SF_MIRROR_Y */
+    BOOL pair_kern;             /* vst_kern(): pair kerning on */
+    LONG track_offset;          /* vst_track_offset(): added per character, 16.16 pixels */
+#endif
     WORD scaled;                /* TRUE if font scaled in any way   */
     Fonthead scratch_head;      /* Holder for the doubled font data */
     WORD text_color;            /* Current text color (PEL value)   */
@@ -339,6 +351,9 @@ void arb_line(Line *line);
 int GSX_ENTRY(int op, VDIPB* paramblock);
 /* C Support routines */
 Vwk * get_vwk_by_handle(WORD);
+#if CONF_WITH_VDI_SCALABLE_FONTS
+BOOL vdi_font_in_use(const Fonthead *font);
+#endif
 Vwk * vdi_physical_vwk(void);
 UWORD * get_start_addr(const WORD x, const WORD y);
 void set_LN_MASK(Vwk *vwk);
@@ -518,6 +533,41 @@ void vdi_vqt_fontinfo(Vwk *);       /* 131 */
 #if CONF_WITH_EXTENDED_MOUSE
 void vdi_vex_wheelv(Vwk *);         /* 134 */
 #endif
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* SpeedoGDOS's and NVDI's font calls, in vdi_speedo.c */
+void vdi_vqt_char_index(Vwk *);     /* 190 */
+void vdi_vqt_xfntinfo(Vwk *);       /* 229 */
+void vdi_vst_name(Vwk *);           /* 230 */
+void vdi_vst_width(Vwk *);          /* 231 */
+void vdi_vqt_fontheader(Vwk *);     /* 232 */
+void vdi_vqt_trackkern(Vwk *);      /* 234 */
+void vdi_vqt_pairkern(Vwk *);       /* 235 */
+void vdi_vst_charmap(Vwk *);        /* 236 */
+void vdi_vst_kern(Vwk *);           /* 237 */
+void vdi_v_getbitmap_info(Vwk *);   /* 239 */
+void vdi_vqt_f_extent(Vwk *);       /* 240, in vdi_text.c */
+void vdi_v_ftext(Vwk *);            /* 241, in vdi_text.c */
+void vdi_v_getoutline(Vwk *);       /* 243 */
+void vdi_vst_error(Vwk *);          /* 245 */
+void vdi_vst_arbpt(Vwk *);          /* 246 */
+void vdi_vqt_advance(Vwk *);        /* 247 */
+void vdi_v_savecache(Vwk *);        /* 249 */
+void vdi_v_loadcache(Vwk *);        /* 250 */
+void vdi_v_flushcache(Vwk *);       /* 251 */
+void vdi_vst_setsize(Vwk *);        /* 252 */
+void vdi_vst_skew(Vwk *);           /* 253 */
+void vdi_vqt_get_table(Vwk *);      /* 254 */
+void vdi_vqt_cachesize(Vwk *);      /* 255 */
+void vdi_sfont_error(Vwk *vwk, WORD error);
+const Fonthead *vdi_sfont_select(Vwk *vwk, WORD index, LONG size, WORD want);
+
+/* in vdi_text.c */
+BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont);
+const Fonthead *vdi_text_char(Vwk *vwk, WORD c, WORD *ch);
+WORD vdi_text_advance(Vwk *vwk, WORD c);
+#endif
+WORD vdi_text_width(Vwk *vwk, WORD count, const WORD *str);
 
 #if CONF_WITH_VDI_TEXT_SPEEDUP
 void direct_screen_blit(WORD count, WORD *str);

@@ -2168,7 +2168,7 @@ static void test_x32image(void)
     snap(&s);
     CHECK(image_check(good, &entry) && entry >= USER_IMAGE_BASE &&
           entry < USER_IMAGE_BASE + USER_IMAGE_SIZE, "probe image is valid");
-#if CONF_WITH_CLI
+#if CONF_WITH_CLI && !CONF_EXTERNAL_CLI
     CHECK(image_check(emucon_image(), &entry), "EmuCON image is valid");
 #endif
 

@@ -124,7 +124,7 @@ C_SYM(x86_64_syscall_entry):
          * `sysretq` uses it. A non-canonical target is not merely "the
          * process faults after resuming" -- `sysretq` can fault on it
          * directly, partway through changing privilege level/segment
-         * state, the same hardware hazard CVE-2012-0217 (and its Xen/*BSD
+         * state, the same hardware hazard CVE-2012-0217 (and its Xen and *BSD
          * analogues) exploited to run a #GP handler with attacker-
          * influenced state still in effect. Checked here, still on the
          * trusted kernel stack with kernel %gs, before either is given up

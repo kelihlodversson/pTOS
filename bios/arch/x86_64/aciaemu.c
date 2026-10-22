@@ -48,8 +48,8 @@ void init_acia_vecs(void)
     kbdvecs.midivec = (PFVOID)_dummy_c;
     kbdvecs.vkbderr = (PFVOID)_dummy_c;
     kbdvecs.vmiderr = (PFVOID)_dummy_c;
-    kbdvecs.statvec = (PFVOID)_dummy_p;
-    kbdvecs.mousevec = (PFVOID)_dummy_p;
+    kbdvecs.statvec = _dummy_p;
+    kbdvecs.mousevec = _dummy_p;
 
     ikbdiorec.buf = ikbdibufbuf;
     ikbdiorec.size = 0x100;

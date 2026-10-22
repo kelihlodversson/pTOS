@@ -35,6 +35,15 @@ extern WORD *root[MAXQUICK];
  * and also by bios/kprint.c */
 extern PD *run;
 
+/* GEMDOS file calls for kernel code, without a trap (bdos/kfile.c).
+ * The arguments are as for Fopen(), Fclose(), Fread() and Fseek(), as longs. */
+long kdos_fopen(long name, long mode);
+long kdos_fclose(long h);
+long kdos_fread(long h, long count, long buf);
+long kdos_fseek(long offset, long h, long mode);
+long kdos_fsfirst_at(long name, long att, DTA *dta);
+long kdos_fsnext_at(DTA *dta);
+
 /* BDOS current date/time.
  * Declared here because also updated by XBIOS Settime() */
 extern UWORD current_date, current_time;

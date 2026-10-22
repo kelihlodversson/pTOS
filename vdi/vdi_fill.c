@@ -716,7 +716,8 @@ UWORD planar_get_pixel(WORD x, WORD y)
     return get_color(mask, addr);           /* return the composed color value */
 }
 
-#if CONF_WITH_VDI_16BIT
+/* only the planar-only end_pts() below uses these */
+#if CONF_WITH_VDI_16BIT && !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR
 /*
  * search_to_right16() - Truecolor version of search_to_right()
  */

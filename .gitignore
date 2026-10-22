@@ -39,6 +39,10 @@
 /tests/run_tests.c
 /runtests.tos
 /pieprobe.tos
+/poweroff.tos
+/reboot.tos
+/coldboot.tos
+/halt.tos
 /LOADFAIL.TOS
 /relocprobe-unpacked.tos
 /PTRELOC.TOS
@@ -80,3 +84,6 @@ __pycache__/
 /.superpowers/
 /task-*-report.md
 /tests/*/*.tos
+
+# EmuCON as a program (CONF_EXTERNAL_CLI)
+/emucon.tos

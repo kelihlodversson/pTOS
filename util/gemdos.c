@@ -39,7 +39,7 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
     if (ret < 0L)
         return -1;
 
-    *ldaddr = (LONG *) ret;
+    *ldaddr = (LONG *)(uintptr_t)(ULONG)ret;
 
     /* program length = code+data+bss lengths plus basepage length */
     temp = *ldaddr;
@@ -83,7 +83,7 @@ WORD dos_label(char drive, char *plabel)
     char    path[8];
     WORD    result;
 
-    save_dta = Fgetdta();
+    save_dta = dos_gdta();
     Fsetdta(&dta);
     strcpy(path, " :\\*.*");
     path[0] = (drive + 'A') - 1;

@@ -37,6 +37,17 @@ void linea_fill(void);
 void linea_blit(struct blit_frame *info);
 void linea_raster(void);
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* set FreeType up, before GEMDOS takes the memory (vdi/vdi_ftsystem.c) */
+void vdi_freetype_init(void);
+#ifdef CONF_DEBUG_FREETYPE_TEST_FONT
+/* render glyphs from that font file, once GEMDOS has the boot drive */
+void vdi_freetype_test_font(void);
+#endif
+/* start the built-in GDOS once the AUTO folder has run (vdi/vdi_gdos.c) */
+void vdi_gdos_init(void);
+#endif
+
 /* End of the VDI BSS section.
  * This is referenced by the OSHEADER */
 extern UBYTE _endvdibss[]; /* defined in vdi/endvdi.S */

@@ -48,6 +48,7 @@
 #include "deskmain.h"
 #include "deskdir.h"
 #include "desksupp.h"
+#include "deskrt.h"
 #include "deskins.h"
 #include "deskobj.h"
 #include "nls.h"
@@ -217,7 +218,7 @@ void do_wredraw(WORD w_handle, GRECT *gptr)
         root = pw->w_root;
     }
 
-    G.g_idt = Supexec((LONG)get_idt_cookie);    /* current _IDT for format_fnode() */
+    G.g_idt = desk_idt();    /* current _IDT for format_fnode() */
 
     graf_mouse(M_OFF, NULL);
 
@@ -265,7 +266,7 @@ void do_xyfix(WORD *px, WORD *py)
     *px = (*px + 8) & 0xfff0;   /* horizontally align to nearest 16-pixel boundary */
 #if CONF_WITH_3D_OBJECTS
     /* ensure that we can still access the mover */
-    if (*px + gl_wbox + 2*ADJ3DSTD >= linea_vars.V_REZ_HZ)
+    if (*px + gl_wbox + 2*ADJ3DSTD >= gl_width)
         *px -= 16;
 #endif
     if (*py < G.g_desk.g_y)     /* ensure it's below menu bar */
@@ -513,11 +514,11 @@ static WORD get_key(void)
 
     while(!bios_conis())
     {
-        if (linea_vars.MOUSE_BT & 0x0002)  /* right mouse button means quit */
+        if (desk_mouse_buttons() & 0x0002)  /* right mouse button means quit */
             return 'Q';
-        if (linea_vars.MOUSE_BT & 0x0001)  /* left mouse button means next page */
+        if (desk_mouse_buttons() & 0x0001)  /* left mouse button means next page */
             return ' ';
-#if USE_STOP_INSN_TO_FREE_HOST_CPU
+#if USE_STOP_INSN_TO_FREE_HOST_CPU && !CONF_EXTERNAL_DESK    /* a program cannot STOP */
         Supexec((LONG)stop_until_interrupt);
 #endif
     }
@@ -1612,7 +1613,7 @@ void do_format(void)
      * adjust the initial default formatting option, hiding
      * the high density option if not available
      */
-    if (Supexec((LONG)get_floppy_type) == 0)
+    if (desk_floppy_type() == 0)
     {
         if (tree[FMT_HD].ob_state & SELECTED)   /* first time */
         {
@@ -1685,7 +1686,7 @@ void refresh_window(WNODE *pw, BOOL force_mediach)
         if (drive == 'A' || drive == 'B')
         {
             KDEBUG(("Forcing media change for drive %c\n", drive));
-            Rwabs(READSEC, (LONG)NULL, MEDIACHANGE, 0, drive - 'A', 0);
+            Rwabs(READSEC, (long)0, MEDIACHANGE, 0, drive - 'A', 0);
         }
     }
 

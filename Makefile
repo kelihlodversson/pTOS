@@ -255,7 +255,10 @@ ifdef ARCH_X86_64
 # function using a calling convention other than the compiler's default.
 MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
                 -fshort-wchar -fno-ident -maccumulate-outgoing-args
-TOOLCHAIN_CFLAGS = -ffreestanding
+# --param=min-pagesize=0: the TOS vectors and system variables really live
+# at low constant addresses (bios/vectors.h, tosvars.h), which GCC 12 and
+# later otherwise treat as the unmapped null page (-Warray-bounds).
+TOOLCHAIN_CFLAGS = -ffreestanding --param=min-pagesize=0
 
 # See the MULTILIBFLAGS comment above. All seven objects below are kept
 # on plain -fpie; none of them do the cross-translation-unit function-
@@ -401,6 +404,19 @@ SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 # Linker: relocation information and, for most targets, a raw binary.
 LD = $(CC) $(MULTILIBFLAGS) -nostartfiles -nostdlib
 LIBS = -lgcc
+
+# FreeType, for the scalable fonts: a library of its own, linked into the
+# image only (not into the test programs, which also use $(LIBS)), ahead
+# of libgcc.  It is built by vdi/freetype/freetype.mk, included further down.
+FREETYPE_LIB =
+ifdef CONF_WITH_VDI_SCALABLE_FONTS
+FREETYPE_LIB = obj/freetype-build/libfreetype.a
+ifdef CONFIGURED
+ifeq (,$(wildcard lib/freetype/src/base/ftinit.c))
+$(error CONF_WITH_VDI_SCALABLE_FONTS needs FreeType: run "git submodule update --init lib/freetype", or disable the option in "make menuconfig")
+endif
+endif
+endif
 LDFLAGS = -Wl,-T,obj/emutospp.ld
 PCREL_LDFLAGS = -Wl,--oformat=binary,-Ttext=0,--entry=0
 
@@ -414,9 +430,22 @@ ifdef ARCH_ARM
 # The ARM linker script cannot produce a raw binary directly.
 EMUTOS_IMG = emutos.elf
 LDFLAGS += -Wl,-build-id=none
+# This kernel image deliberately shares one load segment for code and data;
+# the Raspberry Pi image is extracted as a flat binary. Newer linkers warn
+# about its RWX segment. Keep older toolchains, which lack this option, usable.
+LDFLAGS += $(shell $(CROSS_COMPILE)ld --help 2>/dev/null | \
+                  grep -q -- '--no-warn-rwx-segments' && echo -Wl,--no-warn-rwx-segments)
 else
 EMUTOS_IMG = emutos.img
 endif
+endif
+
+ifdef BUILD_TOOLCHAIN_IS_ELF
+# The hand-written .S files carry no .note.GNU-stack section, which recent
+# binutils (2.45 in the -mfastcall toolchain) warns about.  A ROM or RAM
+# image has no stack permissions to set, so say so instead.
+LDFLAGS += -Wl,-z,noexecstack
+PCREL_LDFLAGS += -Wl,-z,noexecstack
 endif
 
 #
@@ -520,6 +549,27 @@ image-default = pc-x86_64.efi
 endif
 
 IMAGE = $(if $(IMAGE_NAME),$(IMAGE_NAME),$(image-default))
+
+#
+# EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
+# EmuCON, and the file goes on the boot drive next to the image (test-dir,
+# test-hd.img, the Raspberry Pi archives).  The kernel starts it from the
+# root directory as EMUCON.TOS (bios/bios.c).
+#
+ifeq ($(CONF_EXTERNAL_CLI),y)
+EMUCON_TOS = cli/emucon.tos
+image-extra += $(EMUCON_TOS)
+else
+EMUCON_TOS =
+endif
+
+# EmuDesk as a program (CONF_EXTERNAL_DESK), see desk/program.mk
+ifeq ($(CONF_EXTERNAL_DESK),y)
+EMUDESK_PRG = emudesk.prg
+image-extra += $(EMUDESK_PRG)
+else
+EMUDESK_PRG =
+endif
 
 TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym *.efi
 
@@ -636,18 +686,25 @@ ifdef ARCH_X86_64
 # driver also means it never adds libgcc.a's own directory to the search
 # path the way it would for an ordinary $(CC)-driven link, so -lgcc below
 # needs an explicit -L for it, found the same way gcc itself would.
+#
+# The PE backend does not look up symbols in an archive's ELF index, so the
+# FreeType library is linked as a whole (it only holds what is used anyway).
 X86_64_LD = $(CROSS_COMPILE)ld
 X86_64_LIBGCC_DIR = $(shell dirname $(shell $(CC) $(MULTILIBFLAGS) -print-libgcc-file-name))
 
-$(EMUTOS_IMG): $(OBJECTS)
+$(EMUTOS_IMG): $(OBJECTS) $(FREETYPE_LIB)
 	$(X86_64_LD) -m i386pep -pie --subsystem 10 -e efi_main \
 	  -L$(X86_64_LIBGCC_DIR) \
-	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS)
+	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) \
+	  $(if $(FREETYPE_LIB),--whole-archive $(FREETYPE_LIB) --no-whole-archive) $(LIBS)
 else
-$(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
-	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) \
+$(EMUTOS_IMG): $(OBJECTS) $(FREETYPE_LIB) obj/emutospp.ld
+	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(FREETYPE_LIB) $(LIBS) $(LDFLAGS) \
 	  -Wl,-Map=emutos.map -o $@
-	@if [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
+	@# .data shares the read-only ROM region with .text (emutos.ld), so it
+	@# must stay empty -- unless the image is loaded into RAM
+	@if [ "$(EMUTOS_LIVES_IN_RAM)" != y ] && \
+	    [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
 	  echo "### Warning: The DATA segment is not empty."; \
 	  echo "### Please examine emutos.map and use \"const\" where appropriate."; \
 	fi
@@ -764,9 +821,9 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # harmless where the default already matches, and is what lets the
 # Homebrew "x86_64-elf-" toolchain build this program; see
 # doc/install.txt.
-X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
+X32_CFLAGS = -mx32 -ffreestanding -Wa,--noexecstack -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
-X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none \
+X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
 X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
@@ -812,7 +869,7 @@ TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
 #
 X32_CLI_CFLAGS = $(X32_CFLAGS) -fno-tree-loop-distribute-patterns \
                  -fno-builtin -fno-stack-protector -std=gnu90 -Os -Wall -Wundef
-X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
+X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 \
                   -Wl,-e,_start
@@ -843,7 +900,7 @@ obj/x32/vdi_image.ld: vdi/x32/vdi_image.ld.S include/x32vdi_image.h | obj/x32
 	$(X32_CC) -E -P -x c -Iinclude $< -o $@
 obj/x32/vdi_client.elf: $(X32_VDI_OBJ) obj/x32/vdi_image.ld
 	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
-	  -Wl,--build-id=none -Wl,-T,obj/x32/vdi_image.ld -o $@ $(X32_VDI_OBJ)
+	  -Wl,--build-id=none,-z,noexecstack -Wl,-T,obj/x32/vdi_image.ld -o $@ $(X32_VDI_OBJ)
 obj/x32/vdi_client.bin: obj/x32/vdi_client.elf
 	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
 obj/vdi_image.o: obj/x32/vdi_client.bin
@@ -888,7 +945,7 @@ obj/x32/aes_image.ld: aes/x32/aes_image.ld.S include/x32aes_image.h include/aes_
 	$(X32_CC) -E -P -x c -Iinclude $< -o $@
 obj/x32/aes_client.elf: $(X32_AES_OBJ) obj/x32/aes_image.ld
 	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
-	  -Wl,--build-id=none -Wl,-T,obj/x32/aes_image.ld -o $@ $(X32_AES_OBJ)
+	  -Wl,--build-id=none,-z,noexecstack -Wl,-T,obj/x32/aes_image.ld -o $@ $(X32_AES_OBJ)
 obj/x32/aes_client.bin: obj/x32/aes_client.elf
 	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
 obj/aes_image.o: obj/x32/aes_client.bin
@@ -1363,6 +1420,11 @@ endif
 obj/%.o : %.S | obj
 	$(CC) $(SFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
 
+# FreeType, after the rules above as it uses $(M68K_LOCAL_LABEL_FIX).
+ifdef CONF_WITH_VDI_SCALABLE_FONTS
+include vdi/freetype/freetype.mk
+endif
+
 %.dsm : %.c
 	$(CC) $(CFILE_FLAGS) -S $< -o $@
 
@@ -1534,7 +1596,7 @@ vdi/%_cf.S: vdi/%_preprocessed.s
 # Standalone EmuCON, built by cli/Makefile
 #
 
-TOCLEAN += cli/version.c cli/*.o cli/*.tos
+TOCLEAN += cli/version.c cli/*.o cli/*.tos cli/.arch-*
 
 #
 # The targets for building a release are in a separate file
@@ -1560,6 +1622,11 @@ endif
 #
 
 TEST_DESTDIR = tests/destdata/TESTS
+
+# The font of the scalable font tests (#579), on the disk as
+# \GEMSYS\FONTS\PTOSTEST.TTF where the built-in GDOS looks, with its licence
+TEST_FONT_STAGE = obj/test-fonts/GEMSYS
+TEST_FONT_FILES = $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF $(TEST_FONT_STAGE)/FONTS/PTOSTES2.TMP $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT
 TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 
 # libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
@@ -1589,6 +1656,112 @@ LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
 LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
+
+# Build libcmini from the submodule.  The defconfig is arch-specific; for
+# m68k we use mintelf_defconfig, which produces ELF-compatible objects
+# that also work as a.out with --emit-relocs.  ABI details that are
+# specific to pTOS (e.g. the ARM float ABI) live in libcmini's own
+# defconfig/build, not here: this Makefile only picks which defconfig to
+# load.
+ifdef ARCH_ARM
+LIBCMINI_DEFCONFIG = ptos_arm_defconfig
+else ifdef ARCH_X86_64
+LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
+else
+LIBCMINI_DEFCONFIG = mintelf_defconfig
+endif
+
+# libcmini's build/ directory is a single flat path (build/./libcmini.a)
+# that isn't parameterized by architecture or defconfig, so switching
+# between e.g. ptos_arm_defconfig and mintelf_defconfig across two builds
+# would otherwise leave a stale libcmini.a from the *previous* arch sitting
+# at a path Make considers up to date -- Make's staleness check has no way
+# to know the desired configuration changed, since that's not expressed as
+# a file it tracks.
+#
+# LIBCMINI_STAMP makes that configuration state an explicit, trackable
+# file: it depends on the always-out-of-date FORCE target, so its recipe
+# runs on every invocation and actually compares the desired defconfig
+# against the one last applied, cleaning and reconfiguring only on a real
+# mismatch. The stamp file's mtime -- and therefore whether it forces
+# $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
+# real mismatch, not on every invocation.
+#
+# The comparison is against the defconfig *file's content*, not just its
+# name: comparing names alone would miss a defconfig whose content changed
+# underneath an unchanged selection (e.g. a submodule bump that edits
+# configs/ptos_arm_defconfig without touching any sources/*.c or
+# sources/arch/$(ARCH)/*.S -- $(LIBCMINI_LIB)'s own prerequisites, so
+# nothing else would notice either). Reproduced directly: with the name
+# comparison alone, editing that file's content and rebuilding without
+# touching LIBCMINI_DEFCONFIG left lib/libcmini/.config -- and therefore
+# libcmini.a -- silently built from the stale content.
+.PHONY: FORCE
+FORCE:
+
+# lib/libcmini is a git submodule: a plain "git clone" without
+# --recurse-submodules (or before "git submodule update --init") leaves
+# $(LIBCMINI_DIR) present but empty, and every rule below that invokes
+# "$(MAKE) -C $(LIBCMINI_DIR)" would then fail with a generic nested-make
+# error ("No rule to make target ...") that gives no hint what's actually
+# wrong. Gate on the submodule's own Makefile so the real problem is
+# reported once, up front, instead.
+$(LIBCMINI_DIR)/Makefile:
+	@echo "$@ not found -- run 'git submodule update --init' first" >&2
+	@exit 1
+
+$(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
+	@mkdir -p $(dir $@)
+	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
+	have=$$(cat $@ 2>/dev/null || true); \
+	if [ "$$want" != "$$have" ]; then \
+	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
+	    $(LIBCMINI_MAKE) clean; \
+	    $(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG); \
+	    printf '%s' "$$want" > $@; \
+	fi
+
+# Only the one library and the one startup object the test programs link are
+# requested, not libcmini's "libs startups": those build every multilib
+# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
+# of which the test programs use.
+$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
+	@echo '  LIBCMINI'
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
+
+$(LIBCMINI_CRT0): $(LIBCMINI_LIB)
+
+#
+# EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
+# EmuCON, against the libcmini that is built here, and the file goes on the
+# boot drive next to the image (see the top of this file).
+#
+ifeq ($(CONF_EXTERNAL_CLI),y)
+ifdef ARCH_X86_64
+# the x32 EmuCON, built with the rest of the x32 programs (above)
+# FORCE, and a copy only when it differs: "make -C cli" may have left a
+# standalone ARM or m68k executable there, which a timestamp test cannot tell
+# from a good one.  The stamps go so that build starts over, too.
+$(EMUCON_TOS): FORCE obj/x32/emucon.elf
+	@cmp -s obj/x32/emucon.elf $@ || { rm -f cli/.arch-*; cp obj/x32/emucon.elf $@; }
+else
+# FORCE: cli/emucon.tos is also what "make -C cli" leaves there for another
+# ARCH or NLS, so the sub-make always gets to compare the build identity (the
+# stamp) and its own dependencies; the file's time only changes when it builds.
+$(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
+	@echo '  EMUCON'
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
+endif
+endif
+
+#
+# EmuDesk as a program (CONF_EXTERNAL_DESK): emudesk.prg, built here from the
+# objects of desk/build.mk's desk-prog-y (desk/program.mk), goes on the boot
+# drive next to the image as EMUDESK.PRG.
+#
+ifeq ($(CONF_EXTERNAL_DESK),y)
+include desk/program.mk
+endif
 
 ifdef CONF_WITH_REGRESSION_TESTS
 
@@ -1700,7 +1873,8 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
-              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
+              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
 # AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.
@@ -1738,79 +1912,6 @@ $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 
-# Build libcmini from the submodule.  The defconfig is arch-specific; for
-# m68k we use mintelf_defconfig, which produces ELF-compatible objects
-# that also work as a.out with --emit-relocs.  ABI details that are
-# specific to pTOS (e.g. the ARM float ABI) live in libcmini's own
-# defconfig/build, not here: this Makefile only picks which defconfig to
-# load.
-ifdef ARCH_ARM
-LIBCMINI_DEFCONFIG = ptos_arm_defconfig
-else ifdef ARCH_X86_64
-LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
-else
-LIBCMINI_DEFCONFIG = mintelf_defconfig
-endif
-
-# libcmini's build/ directory is a single flat path (build/./libcmini.a)
-# that isn't parameterized by architecture or defconfig, so switching
-# between e.g. ptos_arm_defconfig and mintelf_defconfig across two builds
-# would otherwise leave a stale libcmini.a from the *previous* arch sitting
-# at a path Make considers up to date -- Make's staleness check has no way
-# to know the desired configuration changed, since that's not expressed as
-# a file it tracks.
-#
-# LIBCMINI_STAMP makes that configuration state an explicit, trackable
-# file: it depends on the always-out-of-date FORCE target, so its recipe
-# runs on every invocation and actually compares the desired defconfig
-# against the one last applied, cleaning and reconfiguring only on a real
-# mismatch. The stamp file's mtime -- and therefore whether it forces
-# $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
-# real mismatch, not on every invocation.
-#
-# The comparison is against the defconfig *file's content*, not just its
-# name: comparing names alone would miss a defconfig whose content changed
-# underneath an unchanged selection (e.g. a submodule bump that edits
-# configs/ptos_arm_defconfig without touching any sources/*.c or
-# sources/arch/$(ARCH)/*.S -- $(LIBCMINI_LIB)'s own prerequisites, so
-# nothing else would notice either). Reproduced directly: with the name
-# comparison alone, editing that file's content and rebuilding without
-# touching LIBCMINI_DEFCONFIG left lib/libcmini/.config -- and therefore
-# libcmini.a -- silently built from the stale content.
-.PHONY: FORCE
-FORCE:
-
-# lib/libcmini is a git submodule: a plain "git clone" without
-# --recurse-submodules (or before "git submodule update --init") leaves
-# $(LIBCMINI_DIR) present but empty, and every rule below that invokes
-# "$(MAKE) -C $(LIBCMINI_DIR)" would then fail with a generic nested-make
-# error ("No rule to make target ...") that gives no hint what's actually
-# wrong. Gate on the submodule's own Makefile so the real problem is
-# reported once, up front, instead.
-$(LIBCMINI_DIR)/Makefile:
-	@echo "$@ not found -- run 'git submodule update --init' first" >&2
-	@exit 1
-
-$(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
-	@mkdir -p $(dir $@)
-	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
-	have=$$(cat $@ 2>/dev/null || true); \
-	if [ "$$want" != "$$have" ]; then \
-	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
-	    $(LIBCMINI_MAKE) clean; \
-	    $(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG); \
-	    printf '%s' "$$want" > $@; \
-	fi
-
-# Only the one library and the one startup object the test programs link are
-# requested, not libcmini's "libs startups": those build every multilib
-# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
-# of which the test programs use.
-$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
-	@echo '  LIBCMINI'
-	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
-
-$(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
 # $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) ...): those carry kernel-only
@@ -2037,11 +2138,25 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
+TEST_HD_FILES = runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
+$(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+# the same font as PTOSTEST.TTF under another name, kept out of the boot scan by
+# its extension: the rescan test (scalable_fonts) renames it to .TTF
+$(TEST_FONT_STAGE)/FONTS/PTOSTES2.TMP: tests/fonts/PTOSTES2.TTF
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+$(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+test-hd.img: runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
-	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd
 test-hd: test-hd.img
@@ -2053,12 +2168,12 @@ test-hd: test-hd.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(TEST_HD_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)
 	@cp $(TEST_HD_FILES) $(TEST_DIR)/
-	@cp -R $(TEST_DESTDIR) $(TEST_DIR)/
+	@cp -R $(TEST_DESTDIR) $(TEST_FONT_STAGE) $(TEST_DIR)/
 
 ifdef ARCH_ARM
 # A desk accessory is not part of the regression image: load this probe
@@ -2107,7 +2222,7 @@ TOCLEAN += $(GEN_SRC)
 .PHONY: clean
 clean: $(TOCLEAN_POST)
 	rm -f $(TOCLEAN)
-	rm -rf test-dir
+	rm -rf test-dir obj/freetype-build
 
 .PHONY: distclean
 distclean: clean
@@ -2122,6 +2237,8 @@ distclean: clean
 
 $(OBJECTS) $(EXTRA_OBJ): $(AUTOCONF_H)
 $(OBJECTS) $(EXTRA_OBJ): | $(GEN_SRC)
+$(DESK_OBJ): $(AUTOCONF_H)
+$(DESK_OBJ): | $(GEN_SRC)
 
 #
 # Header dependencies, generated by the compiler along with the objects

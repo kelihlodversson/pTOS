@@ -338,7 +338,7 @@ void vdi_vq_mouse(Vwk * vwk)
 
 
 
-#ifdef __mc68000__
+#if defined(__mc68000__) && CONF_WITH_EXTENDED_MOUSE
 /*
  * Call the user_but vector from C
  */

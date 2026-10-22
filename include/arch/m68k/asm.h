@@ -409,39 +409,6 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 
 /*
- * roll(ULONG x, WORD count);
- *  rotates x leftwards by count bits
- */
-#ifndef __mcoldfire__
-#define roll(x,n)                   \
-    __asm__ volatile                \
-    ("rol.l %2,%1"                  \
-    : "=d"(x)       /* outputs */   \
-    : "0"(x),"I"(n) /* inputs */    \
-    : "cc"          /* clobbered */ \
-    )
-#else
-#define roll(x,n)   ((x)=(((x)>>(32-(n)))|((x)<<(n))))
-#endif
-
-/*
- * rorl(ULONG x, WORD count);
- *  rotates x rightwards by count bits
- */
-#ifndef __mcoldfire__
-#define rorl(x,n)                   \
-    __asm__ volatile                \
-    ("ror.l %2,%1"                  \
-    : "=d"(x)       /* outputs */   \
-    : "0"(x),"I"(n) /* inputs */    \
-    : "cc"          /* clobbered */ \
-    )
-#else
-#define rorl(x,n)   ((x)=(((x)<<(32-(n)))|((x)>>(n))))
-#endif
-
-
-/*
  * Pseudo-prototype for macro: void roll(byref ULONG x, WORD count);
  *  rotates x leftwards by count bits
  */
