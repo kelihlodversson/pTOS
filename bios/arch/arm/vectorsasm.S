@@ -14,6 +14,7 @@
  */
 
 #include "asmdefs.h"
+#include "arch/arm/fpusave.h"
 
 // ==== Definitions ==========================================================
 
@@ -85,7 +86,17 @@ C_SYM(gemtrap):
 
 no_vdi:
         cmn     r0, #2                  // vq_gdos call? (r0 == -2)
+#if CONF_WITH_VDI_SCALABLE_FONTS
+        bne     3f
+        ldr     r0, =C_SYM(vdi_gdos_id) // the built-in GDOS's id, once active
+        ldr     r0, [r0]                //  (vdi/vdi_gdos.c), else 0
+        cmp     r0, #0
+        mvneq   r0, #1                  // not active: -2, no GDOS installed
+        b       1f
+3:
+#else
         beq     1f                      // r0 is already -2  -  no GDOS installed
+#endif
 
         cmn     r0, #1                  //  query for jsr:able address? (r0 == -1?)
         ldreq   r0, =C_SYM(GSX_ENTRY)         // Return address of VDI dispatcher
@@ -94,8 +105,11 @@ no_vdi:
 2:
         // save return state onto the SVC stack
         srsfd sp!, #0x13
+        // the FPU registers the kernel may change (r2 is free)
+        FPU_PUSH_SCRATCH r2
         // Call VDI entry. Arguments are already in registers at the right place
         bl      C_SYM(GSX_ENTRY)
+        FPU_POP_SCRATCH r2
         // return to caller with saved state on stack
         rfefd   sp!
 
@@ -123,6 +137,10 @@ C_SYM(biostrap):
         // save caller return address and SPSR on stack
         srsfd sp!, #0x13
 
+        // the FPU registers the kernel may change; ip is free.  Below the
+        // argument registers pushed next, which the handler reads off the
+        // stack as its fifth and later arguments
+        FPU_PUSH_SCRATCH ip
         push {r1-r4}      // argument registers: a caller may keep using them
         sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
@@ -147,6 +165,10 @@ C_SYM(xbiostrap):
         // save caller return address and SPSR on stack
         srsfd sp!, #0x13
 
+        // the FPU registers the kernel may change; ip is free.  Below the
+        // argument registers pushed next, which the handler reads off the
+        // stack as its fifth and later arguments
+        FPU_PUSH_SCRATCH ip
         push {r1-r4}      // argument registers: a caller may keep using them
         sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
@@ -179,6 +201,7 @@ C_SYM(xbiostrap):
         add   sp, sp, #4     // ... the padding
         pop   {r1-r4}        // ... and r1-r4: only r0 (the result) is changed,
                              // as GEMDOS does (the library wrappers rely on it)
+        FPU_POP_SCRATCH ip
         // return to caller with saved state on stack
         rfefd   sp!
 

@@ -14,9 +14,12 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
           sudo apt-get update
           sudo apt-get install cross-mintelf-essential
 
-      The CI build installs this package from the same PPA too, plus the
-      older cross-mint one for the a.out choice and the tools "make
-      release" needs, see .github/actions/setup-toolchain/action.yml.
+      That PPA's gcc has no -mfastcall, which the CONF_WITH_MFASTCALL
+      configurations need.  The CI build therefore uses only Thorsten
+      Otto's prebuilt m68k-atari-mintelf toolchain (gcc, binutils and
+      mintlib from https://tho-otto.m68k.eu/crossmint.php), see
+      .github/actions/setup-toolchain/action.yml; it works for every
+      m68k configuration.
 
       Three m68k toolchains are offered, chosen under "m68k toolchain"
       in the Toolchain menu:
@@ -195,6 +198,10 @@ You will also need:
     and run gmake instead.
   * Python 3 with kconfiglib, which provides the configuration front ends:
         pip3 install kconfiglib
+  * The git submodules, for the configurations that use them:
+        git submodule update --init
+    lib/libcmini is used by the regression tests and EmuCON, lib/freetype
+    by the scalable fonts (see below).
 
 
 Configuring and building
@@ -229,6 +236,122 @@ Other configuration targets:
 To contribute a new configuration, adjust it with "make menuconfig", run
 "make savedefconfig", and copy the resulting ./defconfig file to
 configs/<name>_defconfig.
+
+Scalable fonts (CONF_WITH_VDI_SCALABLE_FONTS, in the VDI menu) link the
+FreeType library from the lib/freetype submodule into the image; the build
+stops with a message if the submodule has not been fetched.  FreeType is
+compiled with the image's own compiler and flags into obj/freetype-build,
+with pTOS's configuration headers from vdi/freetype/ in place of its own,
+so it needs nothing from the host's C library.  It adds about 285 KB on
+m68k and ARM and 400 KB on x86-64, so the option is on by default only for
+the images without a fixed size: the Raspberry Pi, ARM virt, m68k virt and
+x86-64 kernels.  FreeType gets memory of the kernel's own, not GEMDOS's:
+a pool of CONF_VDI_FONT_MEMORY KB (4 MB by default) set aside at start-up,
+or the kernel heap on x86-64; font files are read into it whole.  It runs
+on a 64 KB stack of its own.  CONF_DEBUG_FREETYPE_TEST_FONT (in the
+debugging menu) names a font file to render at boot, to check all this on
+a new machine.  FreeType is used under its GPL licence option (version 2
+or any later version, the same terms as pTOS; see lib/freetype/LICENSE.TXT).
+Work on the feature is tracked in #573.
+
+With scalable fonts, pTOS also has a GDOS built in, which applications
+recognise as SpeedoGDOS (vdi/vdi_gdos.c).  Once the AUTO folder has run,
+vq_gdos() answers '_FSM' and an FSMC cookie with the magic '_SPD' and
+version 4.00 and quality -1 (as fVDI's SpeedoGDOS mode) is installed
+(not on x86-64, where programs cannot call the VDI).  vst_load_fonts() then adds the TrueType (*.TTF), OpenType (*.OTF)
+and TrueType collection (*.TTC, each of its faces) fonts of CONF_VDI_FONT_DIR
+(\GEMSYS\FONTS on the boot drive by default) to a workstation, and vqt_name() lists them after the system fonts with the
+outline flag of SpeedoGDOS (intout[33] = 1).  Their font ids, from 10000
+on, come from a hash of the font's name, so they stay the same from boot
+to boot.  A GDOS loaded from the AUTO folder (NVDI, SpeedoGDOS, FontGDOS,
+...) takes precedence: when trap #2 is hooked, or an FSMC or NVDI cookie
+is there, the built-in GDOS stays out altogether and that GDOS works as
+before.  GEM bitmap fonts (*.FNT, from ASSIGN.SYS) are left to such a
+GDOS: the built-in one does not load them.
+
+The font directory is scanned once, right after the AUTO folder has run.
+A directory that is missing or empty gives a system with the bitmap fonts
+only, and no error; if the scan found no font, the first vst_load_fonts()
+looks again (for a drive that was not there at boot).  To add fonts, copy
+the files to that directory under 8.3 names (the FAT volumes are read
+without long names) and restart; to look elsewhere, change "Directory of
+the scalable fonts" (CONF_VDI_FONT_DIR) in make menuconfig, with a drive
+letter if the directory is not on the boot drive.  The style Regular,
+Book, Roman and Normal is left out of a font's name ("DejaVu Sans", not
+"DejaVu Sans Book").
+
+The release images of the targets with scalable fonts (the Raspberry Pi SD
+card image and archive) come with DejaVu Sans, Serif and Sans Mono, each
+regular and bold, in \GEMSYS\FONTS as DJVUSANS.TTF, DJVUSANB.TTF,
+DJVUSERF.TTF, DJVUSERB.TTF, DJVUMONO.TTF and DJVUMONB.TTF, with their
+licence in LICENSE.TXT beside them.  The fonts are not part of the source
+tree: tools/fetch-fonts.sh <dir> downloads them from the pinned DejaVu 2.37
+release, checks them against checksums pinned in the script, and writes
+them under these names (fonts/dejavu/LICENSE is the licence).  For an image
+of your own, run it on the GEMSYS/FONTS directory of the files that go
+into it.  The regression tests' disk gets the host's copies of DejaVu
+under the same names (tools/run-regression-tests.sh).
+
+A monospaced scalable font can be the system font (font id 1: the
+console's, the desktop's, and that of every program that picks no other).
+Set "System font" (CONF_VDI_SYSTEM_FONT) in make menuconfig to the file
+name in the font directory, e.g. DJVUMONO.TTF; or, with no change to the
+image, put a line SYSTEMFONT=DJVUMONO.TTF into \GEMSYS\PTOS.INF on the
+boot drive, which takes precedence.  The font is rendered once at the
+cells of the 8x8 and 8x16 system fonts, after AUTO programs have run and
+before the AES starts; the 6x6 font stays the built-in one, and so does a
+character the font lacks.  The font has to be monospaced, the character
+set the Atari ST's, and no disk-based GDOS present; otherwise there is a
+message on the console log and the ROM fonts stay.  The rendered forms
+stay in memory for good.  With no setting nothing changes.
+
+vst_font() then selects a scalable font, and vst_point() and vst_height()
+set exactly the size asked for.  Each size is rendered whole by FreeType,
+as a bitmap font of that size with the 256 characters of the Atari set,
+so the text path draws it with all its writing modes, effects, rotation
+and clipping (vdi/vdi_sfont.c).  Rendered sizes are kept up to
+CONF_VDI_FONT_CACHE KB (1 MB by default); the one used longest ago that
+no workstation has selected goes first.  Ink that reaches past a
+character's advance width is cut off (#607).
+
+The built-in GDOS also answers the font calls SpeedoGDOS added, and those
+NVDI added to them (opcodes 190 and 229 to 255, vdi/vdi_speedo.c; #577):
+vqt_ext_name(), vqt_xfntinfo(), vst_name() and vqt_name_and_id(),
+vqt_fontheader() (a virtual Speedo header); vst_arbpt(), vst_setsize()
+(both also in their 32-bit forms), vst_width() and vst_skew(), which size
+and slant a scalable font exactly; vqt_advance(), vqt_f_extent(),
+vqt_real_extent(), v_ftext() and v_ftext_offset(); vst_kern(),
+vst_track_offset(), vqt_pairkern() and vqt_trackkern(), the kerning being
+that of a font's 'kern' table and applied to drawing and measuring alike;
+vst_error(), vqt_cachesize(), v_flushcache() and vqt_get_table().
+Advances are in whole pixels, as the characters are placed.  There are
+no kerning tracks, no character bitmaps for v_getbitmap_info() (which
+gives the advance only), no outlines for v_getoutline() (0 points), and
+no cache file: v_savecache() and v_loadcache() fail.  As an extension,
+vqt_cachesize(2) returns the bytes of font memory in use (the cache's free
+bytes are 0 and 1's).  The FSMC cookie
+stays at version 4.00: the calls of later versions are answered all the
+same, and an application looks for NVDI's by trying them.
+
+vst_map_mode() (and vst_charmap()) chooses what the WORDs of text are:
+BICS (only its ASCII part is known), the Atari character set (the
+default), Unicode's first plane (UCS-2, mode 2) or, as pTOS's own mode 3,
+all of Unicode in UTF-16, a surrogate pair being one character.  An
+application finds mode 3 by setting it and checking that vst_map_mode()
+returns 3.  In Unicode, a scalable font is drawn in runs: ASCII from the
+size itself, any other character from a page of 256 characters of that
+size, rendered when first needed and kept in the same cache.  A character
+the font lacks shows its missing-glyph shape, a lone surrogate the
+replacement character.  The bitmap fonts keep the Atari character set: a
+Unicode character is drawn as its Atari one, or as '?'.  In these maps,
+vqt_width() answers -1 for a character the font lacks, whatever is drawn
+for it, so that it tells which characters a font has.  vqt_char_index() converts
+between the maps, its "direct" index being the BICS of mode 0, as
+SpeedoGDOS has it, and not a font's own glyph index, so that what it
+answers is drawn in mode 0 as the character asked about.  Only VDI text is
+Unicode: the AES, the desktop and file names stay 8-bit.
+tests/include/vdi_speedo.h has bindings for these calls, with gemlib's
+names, for programs built against libcmini.
 
 
 Available configurations

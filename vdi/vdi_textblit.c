@@ -488,7 +488,7 @@ void rotate(LOCALVARS *vars)
         {
             for (j = form_width, p = (UWORD *)src; j > 0; j--)
             {
-                in = *p++;
+                in = get_buf_word(p++);
                 out = reverse_nybble[in&0x000f];    /* reverse 4 bits at a time */
                 for (k = 3; k > 0; k--)
                 {
@@ -496,7 +496,7 @@ void rotate(LOCALVARS *vars)
                     in >>= 4;
                     out |= reverse_nybble[in&0x000f];
                 }
-                *--q = out;
+                put_buf_word(--q, out);
             }
             src += vars->s_next;
         }
@@ -532,20 +532,20 @@ void rotate(LOCALVARS *vars)
     {
         for (j = vars->height; j > 0; j--)
         {
-            if (*p & srcbit)
+            if (get_buf_word(p) & srcbit)
                 out |= dstbit;
             dstbit >>= 1;
             if (!dstbit)
             {
                 dstbit = 0x8000;
-                *q++ = out;
+                put_buf_word(q++, out);
                 out = 0;
             }
             p = (UWORD *)((UBYTE *)p + vars->s_next);
         }
 
         dstbit = 0x8000;
-        *q = out;
+        put_buf_word(q, out);
         out = 0;
         dst += vars->d_next;
         q = (UWORD *)dst;
@@ -585,7 +585,7 @@ static __inline__ UWORD *shift_and_update(UWORD *dst, UWORD *dstbit, UWORD *out)
     if (!*dstbit)           /* end of word ? */
     {
         *dstbit = 0x8000;   /* reset test bit */
-        *dst++ = *out;      /* output accumulated word */
+        put_buf_word(dst++, *out);      /* output accumulated word */
         *out = 0;           /* & reset it */
     }
 
@@ -607,7 +607,7 @@ static void scaleup(LOCALVARS *vars, UWORD *src, UWORD *dst)
 
     out = 0;
     accum = linea_vars.XDDA;
-    in = *src++;        /* prime the source word */
+    in = get_buf_word(src++);        /* prime the source word */
 
     for (i = vars->width; i > 0; i--)
     {
@@ -636,11 +636,11 @@ static void scaleup(LOCALVARS *vars, UWORD *src, UWORD *dst)
         if (!srcbit)
         {
             srcbit = 0x8000;
-            in = *src++;
+            in = get_buf_word(src++);
         }
     }
 
-    *dst = out;
+    put_buf_word(dst, out);
 }
 
 
@@ -658,7 +658,7 @@ static void scaledown(LOCALVARS *vars, UWORD *src, UWORD *dst)
 
     out = 0;
     accum = linea_vars.XDDA;
-    in = *src++;        /* prime the source word */
+    in = get_buf_word(src++);        /* prime the source word */
 
     for (i = vars->width; i > 0; i--)
     {
@@ -680,11 +680,11 @@ static void scaledown(LOCALVARS *vars, UWORD *src, UWORD *dst)
         if (!srcbit)
         {
             srcbit = 0x8000;
-            in = *src++;
+            in = get_buf_word(src++);
         }
     }
 
-    *dst = out;
+    put_buf_word(dst, out);
 }
 
 
@@ -861,6 +861,19 @@ static void direct_screen_blit16(WORD count, WORD *str)
 
 
 /*
+ * The words of a bitplane screen are in the CPU's own byte order wherever the
+ * VDI reads or writes them as words: on the ARM kernels' little-endian words
+ * the leftmost 8 pixels of a word are in its second byte.  A byte-wide
+ * character written a byte at a time has to go there too.  (m68k and
+ * ColdFire words are big endian, as the Atari's.)
+ */
+#if defined(__arm__)
+#define SCR_BYTE(p)     (*(UBYTE *)((uintptr_t)(p) ^ 1))
+#else
+#define SCR_BYTE(p)     (*(p))
+#endif
+
+/*
  * output a character string directly to the screen
  *
  * this is used for the special (but common) case of a string with no
@@ -908,7 +921,7 @@ void direct_screen_blit(WORD count, WORD *str)
                 {
                     for (n = height, p = src, q = dst; n > 0; n--)
                     {
-                        *q = *p;
+                        SCR_BYTE(q) = *p;
                         p += src_width;
                         q += dst_width;
                     }
@@ -917,7 +930,7 @@ void direct_screen_blit(WORD count, WORD *str)
                 {
                     for (n = height, q = dst; n > 0; n--)
                     {
-                        *q = 0;
+                        SCR_BYTE(q) = 0;
                         q += dst_width;
                     }
                 }
@@ -927,7 +940,7 @@ void direct_screen_blit(WORD count, WORD *str)
                 {
                     for (n = height, p = src, q = dst; n > 0; n--)
                     {
-                        *q |= *p;
+                        SCR_BYTE(q) |= *p;
                         p += src_width;
                         q += dst_width;
                     }
@@ -936,7 +949,7 @@ void direct_screen_blit(WORD count, WORD *str)
                 {
                     for (n = height, p = src, q = dst; n > 0; n--)
                     {
-                        *q &= ~*p;
+                        SCR_BYTE(q) &= ~*p;
                         p += src_width;
                         q += dst_width;
                     }
@@ -945,7 +958,7 @@ void direct_screen_blit(WORD count, WORD *str)
             case WM_XOR:
                 for (n = height, p = src, q = dst; n > 0; n--)
                 {
-                    *q ^= *p;
+                    SCR_BYTE(q) ^= *p;
                     p += src_width;
                     q += dst_width;
                 }
@@ -955,7 +968,7 @@ void direct_screen_blit(WORD count, WORD *str)
                 {
                     for (n = height, p = src, q = dst; n > 0; n--)
                     {
-                        *q |= ~*p;
+                        SCR_BYTE(q) |= ~*p;
                         p += src_width;
                         q += dst_width;
                     }
@@ -964,7 +977,7 @@ void direct_screen_blit(WORD count, WORD *str)
                 {
                     for (n = height, p = src, q = dst; n > 0; n--)
                     {
-                        *q &= *p;
+                        SCR_BYTE(q) &= *p;
                         p += src_width;
                         q += dst_width;
                     }
@@ -1002,7 +1015,13 @@ static void screen_blit16(LOCALVARS *vars)
      * pre_blit() clears F_SKEW and F_THICKEN after it has processed them.
      */
     skew = linea_vars.LOFF + linea_vars.ROFF;
-    skew_mask = (UWORD)vars->skew_msk;
+    /*
+     * vars->skew_msk is only the assembler blit's own (it reloads it for every
+     * character); nothing in C sets it, so the mask of a character is
+     * the font's: left alone, skewed text had the leftovers of the stack
+     * for it (found by the scalable font tests on a true colour screen)
+     */
+    skew_mask = (UWORD)linea_vars.SKEWMASK;
     skew_start = vars->height;
 
     /*
@@ -1596,6 +1615,17 @@ void text_blt(void)
         vars.tmp_dely = dely = char_resize(0x7fff, vars.DELY);
         vars.tmp_delx = delx = char_resize(linea_vars.XDDA, vars.DELX);
     }
+
+    /*
+     * a glyph with no width (or height), as it is or scaled, has nothing
+     * to draw, whatever the effects, but still moves the position on by
+     * them (upda_dst, which takes a scaled glyph's width from tmp_delx,
+     * just set); blitting it is not harmless: rotated, its width becomes
+     * the height that the blit loops count down from, and 0 is 65536 rows
+     * there
+     */
+    if (delx <= 0 || dely <= 0)
+        goto upda_dst;
 
     vars.smear = 0;
     if (vars.STYLE & F_THICKEN)

@@ -1,3 +1,6 @@
 [submodule "lib/libcmini"]
 	path = lib/libcmini
 	url = https://github.com/KeliHlodversson/libcmini
+[submodule "lib/freetype"]
+	path = lib/freetype
+	url = https://github.com/freetype/freetype

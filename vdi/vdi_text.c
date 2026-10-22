@@ -22,6 +22,7 @@
 #include "biosext.h"
 #include "has.h"
 #include "vdi_textblit.h"
+#include "vdi_gdos.h"
 
 
 extern WORD deftxbuf[];         /* Default text scratch buffer */
@@ -50,11 +51,25 @@ static WORD calc_height(Vwk *vwk)
 }
 
 /*
- * calculates width of text string
+ * whether a font's bold characters stay in their cells (are no wider than
+ * plain ones): those of a monospaced font, and of every size and page of a
+ * fixed-pitch scalable face
  */
-static WORD calc_width(Vwk *vwk, WORD cnt, WORD *str)
+static BOOL bold_in_cell(const Fonthead *fnt_ptr)
 {
-    const Fonthead *fnt_ptr = vwk->cur_font;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if ((fnt_ptr->flags & (F_SFONT | F_SFONT_FIXED)) == (F_SFONT | F_SFONT_FIXED))
+        return TRUE;
+#endif
+    return (fnt_ptr->flags & F_MONOSPACE) != 0;
+}
+
+/*
+ * calculates width of text string, in a font of the workstation's: what
+ * its characters add up to, unscaled
+ */
+static WORD raw_width(const Fonthead *fnt_ptr, WORD cnt, const WORD *str)
+{
     WORD table_start = fnt_ptr->first_ade;
     WORD i, chr, width;
 
@@ -70,6 +85,12 @@ static WORD calc_width(Vwk *vwk, WORD cnt, WORD *str)
         }
     }
 
+    return width;
+}
+
+/* the width of 'cnt' characters 'width' wide in the font, as scaled and styled */
+static WORD styled_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, WORD width)
+{
     if (vwk->scaled) {
         if (vwk->dda_inc == 0xFFFF)
             width *= 2;
@@ -77,7 +98,7 @@ static WORD calc_width(Vwk *vwk, WORD cnt, WORD *str)
             width = act_siz(vwk, width);
     }
 
-    if ((vwk->style & F_THICKEN) && !(fnt_ptr->flags & F_MONOSPACE))
+    if ((vwk->style & F_THICKEN) && !bold_in_cell(fnt_ptr))
         width += cnt * fnt_ptr->thicken;
 
     if (vwk->style & F_SKEW)
@@ -87,6 +108,11 @@ static WORD calc_width(Vwk *vwk, WORD cnt, WORD *str)
         width += cnt * OUTLINE_THICKNESS * 2;   /* outlining adds 1 pixel all around */
 
     return width;
+}
+
+static WORD calc_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, const WORD *str)
+{
+    return styled_width(vwk, fnt_ptr, cnt, raw_width(fnt_ptr, cnt, str));
 }
 
 #if CONF_WITH_VDI_TEXT_SPEEDUP
@@ -103,9 +129,8 @@ static WORD calc_width(Vwk *vwk, WORD cnt, WORD *str)
  *  the font contains glyphs for all 256 characters
  *  the entire text string will not be clipped
  */
-static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
+static BOOL ok_for_direct_blit(Vwk *vwk, const Fonthead *fnt_ptr, WORD width, JUSTINFO *justified)
 {
-    const Fonthead *fnt_ptr;
     WORD xmin, xmax, ymin, ymax;
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
@@ -131,9 +156,8 @@ static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
             return FALSE;
     }
 
-    fnt_ptr = vwk->cur_font;
-
-    if (!linea_vars.MONO || (fnt_ptr->max_cell_width != 8))
+    /* every character 8 pixels wide (MONO alone says only how bold is) */
+    if (!(fnt_ptr->flags & F_MONOSPACE) || (fnt_ptr->max_cell_width != 8))
         return FALSE;
 
     if ((fnt_ptr->first_ade != 0) || (fnt_ptr->last_ade != 255))
@@ -263,12 +287,23 @@ static inline void justify_step(JUSTINFO *justified, WORD ch)
 }
 
 /*
- * output specified text string
+ * output specified text string, in one of the workstation's fonts
  *
  * 'width' is the pre-calculated width of the text on the screen;
- * if negative, it has not yet been calculated
+ * if negative, it has not yet been calculated.  'align' is the width
+ * the alignment is made for, unless ALIGN_UNSET: the whole string's (which
+ * a negative track offset can make negative), of
+ * which this is the first run of characters in one font.  With 'cont',
+ * this run follows one already output, where that one left off: it is
+ * not aligned.  With 'more', another run follows this one, from where
+ * it leaves off.  The underline of runs is drawn once, by the last, from
+ * where the first started (kept in 'ul_start').
  */
-static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
+#define ALIGN_UNSET ((WORD)0x8000)     /* output_run(): align for the run's own width */
+
+static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
+                       WORD width, WORD align, JUSTINFO *justified, BOOL cont, BOOL more,
+                       Point *ul_start)
 {
     WORD i, j;
     WORD startx, starty;
@@ -281,7 +316,6 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     WORD temp;
     BOOL done, skip_clipped, line_out, run_mode;
     WORD adv_extra, clip_extra, xmn, xmx, xlim;
-    const Fonthead *fnt_ptr;
     Point * point;
 #if CONF_WITH_BLITTER
     WORD (*blitter_string)(const Fonthead *, WORD, const WORD *, JUSTINFO *);
@@ -291,15 +325,15 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         return;
 
     if (width < 0)      /* called from vdi_v_gtext() */
-        width = calc_width(vwk, count, str);
-
-    fnt_ptr = vwk->cur_font;    /* get current font pointer */
+        width = calc_width(vwk, fnt_ptr, count, str);
+    if (align == ALIGN_UNSET)
+        align = width;
 
     /* some data copying for the assembler part */
     linea_vars.DDAINC = vwk->dda_inc;
     linea_vars.SCALDIR = vwk->t_sclsts;
     linea_vars.SCALE = vwk->scaled;
-    linea_vars.MONO = F_MONOSPACE & fnt_ptr->flags;
+    linea_vars.MONO = bold_in_cell(fnt_ptr);   /* bold stays in the cell */
     linea_vars.WRT_MODE = vwk->wrt_mode;
 
     linea_vars.CLIP = vwk->clip;
@@ -311,6 +345,11 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     linea_vars.CHUP = vwk->chup;
     linea_vars.SCRPT2 = vwk->scrpt2;
     linea_vars.SCRTCHP = vwk->scrtchp;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font's glyphs can be bigger than the default buffer holds */
+    if (fnt_ptr->flags & F_SFONT)
+        vdi_sfont_scratch(fnt_ptr, &linea_vars.SCRTCHP, &linea_vars.SCRPT2);
+#endif
 
     if (vwk->style & F_THICKEN)
         linea_vars.WEIGHT = fnt_ptr->thicken;
@@ -344,10 +383,10 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         delh = 0;
         break;
     case 1:
-        delh = width / 2 - outline;
+        delh = align / 2 - outline;
         break;
     case 2:
-        delh = width - (outline * 2);
+        delh = align - (outline * 2);
         break;
     }
 
@@ -395,32 +434,40 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     point = (Point*)PTSIN;
     switch(vwk->chup) {
     default:                /* normally case 0: no rotation */
-        linea_vars.DESTX = point->x - delh - outline;
-        linea_vars.DESTY = point->y - delv - outline;
+        if (!cont) {
+            linea_vars.DESTX = point->x - delh - outline;
+            linea_vars.DESTY = point->y - delv - outline;
+        }
         startx = linea_vars.DESTX;
         starty = linea_vars.DESTY + fnt_ptr->top + underline;
         xfact = 0;
         yfact = 1;
         break;
     case 900:
-        linea_vars.DESTX = point->x - delv - outline;
-        linea_vars.DESTY = point->y + delh + outline + 1;
+        if (!cont) {
+            linea_vars.DESTX = point->x - delv - outline;
+            linea_vars.DESTY = point->y + delh + outline + 1;
+        }
         startx = linea_vars.DESTX + fnt_ptr->top + underline;
         starty = linea_vars.DESTY;
         xfact = 1;
         yfact = 0;
         break;
     case 1800:
-        linea_vars.DESTX = point->x + delh + outline + 1;
-        linea_vars.DESTY = point->y - ((fnt_ptr->top + fnt_ptr->bottom) - delv) - outline;
+        if (!cont) {
+            linea_vars.DESTX = point->x + delh + outline + 1;
+            linea_vars.DESTY = point->y - ((fnt_ptr->top + fnt_ptr->bottom) - delv) - outline;
+        }
         startx = linea_vars.DESTX;
         starty = linea_vars.DESTY + fnt_ptr->bottom - underline;
         xfact = 0;
         yfact = -1;
         break;
     case 2700:
-        linea_vars.DESTX = point->x - ((fnt_ptr->top + fnt_ptr->bottom) - delv) - outline;
-        linea_vars.DESTY = point->y - delh - outline;
+        if (!cont) {
+            linea_vars.DESTX = point->x - ((fnt_ptr->top + fnt_ptr->bottom) - delv) - outline;
+            linea_vars.DESTY = point->y - delh - outline;
+        }
         startx = linea_vars.DESTX + fnt_ptr->bottom - underline;
         starty = linea_vars.DESTY;
         xfact = -1;
@@ -435,14 +482,16 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     /*
      * call special direct screen blit routine if applicable
      */
-    if (ok_for_direct_blit(vwk, width, justified))
+    if (ok_for_direct_blit(vwk, fnt_ptr, width, justified))
     {
         direct_screen_blit(count, str);
+        linea_vars.DESTX += width;      /* where a run that follows starts */
         return;
     }
 #endif
 
-    linea_vars.XDDA = 32767;       /* init the horizontal dda */
+    if (!cont)
+        linea_vars.XDDA = 32767;   /* init the horizontal dda (a run goes on with it) */
 
 #if CONF_WITH_BLITTER
     /* the blitter's way of outputting several characters at once, if any */
@@ -487,7 +536,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         WORD clip_dely = fnt_ptr->form_height;
 
         adv_extra = 0;
-        if ((vwk->style & F_THICKEN) && !(fnt_ptr->flags & F_MONOSPACE))
+        if ((vwk->style & F_THICKEN) && !bold_in_cell(fnt_ptr))
             adv_extra += fnt_ptr->thicken;
         clip_extra = adv_extra;
         if (vwk->style & F_SKEW)
@@ -575,7 +624,22 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
             if (run_mode)
             {
                 if (linea_vars.DESTX > xmx)
+                {
+                    /*
+                     * the rest is right of the window: not drawn, but if
+                     * another run follows (which kerning or a track
+                     * offset can bring back left), the destination moved
+                     * over it all the same, as that one starts there
+                     */
+                    for (; more && j < count; j++)
+                    {
+                        load_char(fnt_ptr, str[j]);
+                        linea_vars.DESTX += linea_vars.DELX + adv_extra;
+                        if (justified)
+                            justify_step(justified, str[j]);
+                    }
                     break;
+                }
             }
             else
             {
@@ -616,7 +680,21 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
 
     }                   /* for j */
 
-    if (vwk->style & F_UNDER) {
+    if (ul_start)
+    {
+        if (!cont)
+        {
+            ul_start->x = startx;
+            ul_start->y = starty;
+        }
+        else
+        {
+            startx = ul_start->x;
+            starty = ul_start->y;
+        }
+    }
+
+    if ((vwk->style & F_UNDER) && !more) {
         Line * line = (Line*)PTSIN;
         line->x1 = startx;
         line->y1 = starty;
@@ -662,10 +740,762 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     }
 }
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/*
+ * Text in a character map other than the Atari character set
+ * (vst_map_mode()): BICS, Unicode's first plane (UCS-2) or all of it
+ * (UTF-16, which pairs surrogates).  A bitmap font only has the Atari
+ * characters, so the text is turned into those, '?' where there is none.
+ * A scalable font has a size for each Unicode page of 256 characters
+ * (vdi_sfont_page()): the text is cut into runs of characters in one page,
+ * each output where the one before left off, in its page's size.  ASCII,
+ * the most of most text, is the same in the Atari character set, so it
+ * stays in the size itself and its characters as they are.
+ *
+ * Kerning (vst_kern()) is applied in the same way, in any character map:
+ * a run also ends before a character that is kerned against the one before
+ * it, and the next run starts that much further on.  The kerning is in
+ * fractions of a pixel (16.16), which are carried on, so that a track
+ * offset of less than a pixel per character adds up as it should.  The
+ * underline is drawn once, under all the runs.
+ */
+
+/* a distance along the baseline as a move on the screen, for the rotation */
+static void along_baseline(Vwk *vwk, WORD d, WORD *dx, WORD *dy)
+{
+    switch(vwk->chup) {
+    default:
+        *dx = d;
+        *dy = 0;
+        break;
+    case 900:
+        *dx = 0;
+        *dy = -d;
+        break;
+    case 1800:
+        *dx = -d;
+        *dy = 0;
+        break;
+    case 2700:
+        *dx = 0;
+        *dy = d;
+        break;
+    }
+}
+
+/* how far a move on the screen goes along the baseline */
+static WORD baseline_part(Vwk *vwk, WORD dx, WORD dy)
+{
+    switch(vwk->chup) {
+    default:
+        return dx;
+    case 900:
+        return -dy;
+    case 1800:
+        return -dx;
+    case 2700:
+        return dy;
+    }
+}
+
+/* whether kerning applies to text in the workstation's current font */
+static BOOL kerning_applies(Vwk *vwk)
+{
+    const Fonthead *font = vwk->cur_font;
+    WORD index;
+
+    if (!(font->flags & F_SFONT))
+        return FALSE;
+    if (vwk->track_offset)
+        return TRUE;
+    index = vwk->pair_kern ? vdi_sfont_find(font->font_id) : -1;
+
+    return index >= 0 && vdi_sfonts[index].kern_pairs;
+}
+
+#define RUN_MAX     32              /* characters copied for a run */
+#define RUN_SAME    (-1)            /* the run is in the current font itself */
+
+typedef struct
+{
+    const WORD *str;                /* the string */
+    WORD count;                     /* how long it is */
+    WORD pos;                       /* how far it has been read */
+    const Fonthead *font;           /* the run's font */
+    WORD *chars;                    /* its characters, as the font has them */
+    WORD n;                         /* how many */
+    WORD kern;                      /* how far on it starts, in pixels: kerning */
+    BOOL kerning;                   /* whether kerning applies */
+    LONG prev_cp;                   /* the character before the run, or -1 */
+    LONG kern_sum;                  /* the kerning so far, in 16.16 pixels, */
+    LONG kern_done;                 /* and what of it has been applied, in pixels */
+    LONG kept[RUN_MAX];             /* the pairs' kerning past where the last run was cut, */
+    WORD kept_n;                    /* for how many characters, */
+    WORD kept_pos;                  /* from where in the string */
+    WORD buf[RUN_MAX];
+} TEXT_RUN;
+
+/* the next character of a string, as a Unicode code point; -1 if none */
+static LONG next_char(WORD map, const WORD *str, WORD count, WORD *pos)
+{
+    UWORD c = str[(*pos)++], c2;
+
+    switch (map) {
+    case MAP_BICS:
+        return vdi_bics_to_unicode(c);
+    case MAP_UTF16:
+        if (c >= 0xdc00 && c < 0xe000)
+            return -1;                  /* half a pair */
+        if (c >= 0xd800 && c < 0xdc00)
+        {
+            if (*pos >= count)
+                return -1;
+            c2 = str[*pos];
+            if (c2 < 0xdc00 || c2 >= 0xe000)
+                return -1;
+            (*pos)++;
+            return 0x10000L + (((LONG)c - 0xd800) << 10) + (c2 - 0xdc00);
+        }
+        return c;
+    default:                            /* MAP_UCS2 */
+        return c;
+    }
+}
+
+/*
+ * where a code point is in the workstation's current font: in the font
+ * itself (RUN_SAME), as the character in *ch, or in a Unicode page of it,
+ * whose number is returned, as *ch in it
+ */
+static LONG char_place(Vwk *vwk, LONG cp, WORD *ch)
+{
+    WORD atari;
+
+    if (cp >= 0x20 && cp < 0x7f)
+    {
+        *ch = (WORD)cp;
+        return RUN_SAME;
+    }
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        if (cp < 0)
+            cp = 0xfffdL;               /* a lone surrogate: the replacement character */
+        *ch = (WORD)(cp & 0xff);
+        return cp >> 8;
+    }
+    atari = vdi_unicode_to_atari(cp);
+    *ch = atari >= 0 ? atari : '?';
+    return RUN_SAME;
+}
+
+/*
+ * the font a page is in (a page of a scalable font, or failing that the
+ * font itself, the characters then turned into the Atari ones)
+ */
+static const Fonthead *place_font(Vwk *vwk, LONG page, WORD *chars, WORD n)
+{
+    const Fonthead *font;
+    WORD i, atari;
+
+    if (page == RUN_SAME)
+        return vwk->cur_font;
+    font = vdi_sfont_page(vwk->cur_font, (UWORD)page);
+    if (font)
+        return font;
+    for (i = 0; i < n; i++)
+    {
+        atari = vdi_unicode_to_atari((page << 8) | (UBYTE)chars[i]);
+        chars[i] = atari >= 0 ? atari : '?';
+    }
+    return vwk->cur_font;
+}
+
+/* whether text in the workstation's current font goes in runs */
+static BOOL text_in_runs(Vwk *vwk)
+{
+    return vwk->char_map != MAP_ATARI || kerning_applies(vwk);
+}
+
+static void run_begin(Vwk *vwk, TEXT_RUN *r, const WORD *str, WORD count)
+{
+    r->str = str;
+    r->count = count;
+    r->pos = 0;
+    r->kerning = kerning_applies(vwk);
+    r->prev_cp = -1;
+    r->kern_sum = r->kern_done = 0;
+    r->kept_n = 0;
+}
+
+/*
+ * The kerning before each character of a run (as yet): where it comes to
+ * a whole pixel more after the first character, the run is cut there.
+ * It goes on from what the runs before have had, and from the pairs'
+ * kerning they worked out past where they were cut ('start' is where the
+ * run starts in the string), so that each pair is looked up once.
+ */
+static void run_kern(Vwk *vwk, TEXT_RUN *r, WORD start, const LONG *cps, const WORD *ends)
+{
+    LONG kern[RUN_MAX], sum = r->kern_sum, done = r->kern_done, next, px;
+    WORD i, n = r->n, known = 0;
+
+    if (r->kept_n && r->kept_pos == start)
+    {
+        known = r->kept_n < n ? r->kept_n : n;
+        memcpy(kern, r->kept, known * sizeof(LONG));
+    }
+    r->kept_n = 0;
+    if (known < n && (!vwk->pair_kern
+                      || !vdi_sfont_kerning(vwk->cur_font, known ? cps[known - 1] : r->prev_cp,
+                                            cps + known, n - known, kern + known)))
+        bzero(kern + known, (n - known) * sizeof(LONG));
+
+    r->kern = 0;
+    for (i = 0; i < r->n; i++)
+    {
+        next = sum;
+        if (r->prev_cp >= 0 || i)
+            next += (kern[i] << 10) + vwk->track_offset;    /* in 16.16 */
+        px = (next >= 0 ? next + 0x8000L : next - 0x7fffL) / 0x10000L - done;
+        if (i && px)
+        {
+            /* the run ends before this one, which the next run starts with */
+            r->n = i;
+            r->pos = ends[i - 1];
+            if (vwk->pair_kern)
+            {
+                r->kept_n = n - i;
+                r->kept_pos = r->pos;
+                memcpy(r->kept, kern + i, r->kept_n * sizeof(LONG));
+            }
+            break;
+        }
+        if (!i)
+            r->kern = (WORD)px;
+        sum = next;
+        done += px;
+    }
+    r->kern_sum = sum;
+    r->kern_done = done;
+    r->prev_cp = cps[r->n - 1];
+}
+
+/*
+ * the next run of characters in one font: as they are in the string where
+ * that is what the font has (ASCII in Unicode, all in the Atari set),
+ * else copied, RUN_MAX at most; copied, with their code points, for
+ * kerning too
+ */
+static BOOL next_run(Vwk *vwk, TEXT_RUN *r)
+{
+    WORD start = r->pos, here, ch;
+    LONG place, run_place = RUN_SAME, cp;
+    BOOL direct = !r->kerning;
+    LONG cps[RUN_MAX];
+    WORD ends[RUN_MAX];
+
+    r->n = 0;
+    while (r->pos < r->count)
+    {
+        here = r->pos;
+        if (vwk->char_map == MAP_ATARI)
+        {
+            ch = r->str[r->pos++];
+            cp = ch >= 0 && ch < 256 ? vdi_atari_to_unicode((UBYTE)ch) : 0;
+            place = RUN_SAME;
+        }
+        else
+        {
+            cp = next_char(vwk->char_map, r->str, r->count, &r->pos);
+            place = char_place(vwk, cp, &ch);
+            if (cp < 0 && (vwk->cur_font->flags & F_SFONT))
+                cp = 0xfffdL;           /* drawn as the replacement character: kerned so */
+        }
+        if (r->n == 0)
+            run_place = place;
+        else if (place != run_place)
+        {
+            r->pos = here;
+            break;
+        }
+        if (direct && (place != RUN_SAME || r->pos != here + 1 || ch != r->str[here]))
+        {
+            /* not as it is in the string: copied from here on */
+            if (r->n > RUN_MAX - 1)
+            {
+                r->pos = here;
+                break;
+            }
+            memcpy(r->buf, r->str + start, r->n * sizeof(WORD));
+            direct = FALSE;
+        }
+        if (!direct)
+        {
+            if (r->n == RUN_MAX)
+            {
+                r->pos = here;
+                break;
+            }
+            r->buf[r->n] = ch;
+            cps[r->n] = cp;
+            ends[r->n] = r->pos;
+        }
+        r->n++;
+    }
+    if (!r->n)
+        return FALSE;
+
+    r->kern = 0;
+    if (r->kerning)
+        run_kern(vwk, r, start, cps, ends);
+    r->chars = direct ? (WORD *)(r->str + start) : r->buf;
+    r->font = place_font(vwk, run_place, r->chars, r->n);
+
+    return TRUE;
+}
+
+/*
+ * the width of a string in the character map: what its runs add up to,
+ * less what skewing adds to each but once
+ */
+static WORD text_bounds(Vwk *vwk, WORD count, const WORD *str, WORD *lo, WORD *hi)
+{
+    TEXT_RUN run;
+    WORD width = 0, skew = 0, raw = 0, n = 0, start;
+
+    *lo = *hi = 0;
+    run_begin(vwk, &run, str, count);
+    while (next_run(vwk, &run))
+    {
+        if (vwk->scaled)
+        {
+            /* one font, scaled as one string, as it is drawn */
+            raw += raw_width(run.font, run.n, run.chars);
+            n += run.n;
+            width += run.kern;
+            continue;
+        }
+        /* a negative offset can take a run back over those before it */
+        start = width + run.kern - skew;
+        width = start + calc_width(vwk, run.font, run.n, run.chars);
+        if (start < *lo)
+            *lo = start;
+        if (width > *hi)
+            *hi = width;
+        if (vwk->style & F_SKEW)
+            skew = run.font->left_offset + run.font->right_offset;
+    }
+    if (vwk->scaled)
+    {
+        width += styled_width(vwk, vwk->cur_font, n, raw);
+        *hi = width;
+    }
+    vdi_sfont_trim();                   /* the pages it took past the cache's bound */
+
+    return width;
+}
+
+static WORD text_width(Vwk *vwk, WORD count, const WORD *str)
+{
+    WORD lo, hi;
+
+    return text_bounds(vwk, count, str, &lo, &hi);
+}
+
+/* how many blanks a string has in the character map */
+static WORD text_spaces(Vwk *vwk, WORD count, const WORD *str)
+{
+    WORD pos = 0, n = 0;
+
+    while (pos < count)
+        if (next_char(vwk->char_map, str, count, &pos) == ' ')
+            n++;
+
+    return n;
+}
+
+/* how many characters a string has in the character map (pairs being one) */
+static WORD text_chars(Vwk *vwk, WORD count, const WORD *str)
+{
+    WORD pos = 0, n = 0;
+
+    while (pos < count)
+    {
+        next_char(vwk->char_map, str, count, &pos);
+        n++;
+    }
+
+    return n;
+}
+
+/*
+ * The font and the character in it of a character in the character map
+ * (one WORD: a code point of the first plane in UTF-16), for the calls
+ * about one character; NULL if it has none
+ */
+const Fonthead *vdi_text_char(Vwk *vwk, WORD c, WORD *ch)
+{
+    WORD pos = 0;
+    LONG cp, place;
+
+    if (vwk->char_map == MAP_ATARI)
+    {
+        *ch = c;
+        return vwk->cur_font;
+    }
+    cp = next_char(vwk->char_map, &c, 1, &pos);
+    if (cp < 0)
+        return NULL;
+    place = char_place(vwk, cp, ch);
+
+    return place_font(vwk, place, ch, 1);
+}
+
+/*
+ * whether the current font has a character (one WORD, as for
+ * vdi_text_char()) of a character map other than the Atari one: not just
+ * a shape drawn for it, the missing-glyph one or an Atari '?'
+ */
+static BOOL text_char_exists(Vwk *vwk, WORD c)
+{
+    const Fonthead *font = vwk->cur_font;
+    WORD pos = 0, atari, index;
+    LONG cp;
+
+    cp = next_char(vwk->char_map, &c, 1, &pos);
+    if (cp <= 0)
+        return FALSE;
+    if (font->flags & F_SFONT)
+    {
+        index = vdi_sfont_find(font->font_id);
+        return index >= 0 && vdi_sfont_char_glyph(index, cp) != 0;
+    }
+    atari = vdi_unicode_to_atari(cp);
+
+    return atari >= font->first_ade && atari <= font->last_ade;
+}
+
+/*
+ * a character's advance, as the text path moves on after it: its width,
+ * scaled as the font is, with what bold and outline add (not skewing,
+ * which is added once per string); 0 if the font has no such character
+ */
+WORD vdi_text_advance(Vwk *vwk, WORD c)
+{
+    const Fonthead *font;
+    WORD ch, adv;
+
+    font = vdi_text_char(vwk, c, &ch);
+    if (!font)
+        return 0;
+    if (ch < font->first_ade || ch > font->last_ade)
+        ch = '?';                       /* as load_char() draws it */
+    adv = calc_width(vwk, font, 1, &ch);
+    if (vwk->style & F_SKEW)
+        adv -= font->left_offset + font->right_offset;
+    vdi_sfont_trim();                   /* a page it took past the cache's bound */
+
+    return adv;
+}
+#endif
+
+/* the width of a string in the current font, in the character map */
+WORD vdi_text_width(Vwk *vwk, WORD count, const WORD *str)
+{
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (text_in_runs(vwk))
+        return text_width(vwk, count, str);
+#endif
+
+    return calc_width(vwk, vwk->cur_font, count, str);
+}
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* a text string in runs, aligned for 'width' */
+static void text_runs(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
+{
+    TEXT_RUN run;
+    BOOL cont = FALSE;
+    WORD dx, dy;
+    Point ul_start;
+    JUSTINFO words;
+    BOOL page;
+
+    run_begin(vwk, &run, str, count);
+    while (next_run(vwk, &run))
+    {
+        if (cont && run.kern)
+        {
+            along_baseline(vwk, run.kern, &dx, &dy);
+            linea_vars.DESTX += dx;
+            linea_vars.DESTY += dy;
+        }
+        /*
+         * a blank is always in the font itself: in a page, the
+         * character 0x20 (U+0420, say) is none, and gets no word space
+         */
+        page = justified && run.font != vwk->cur_font;
+        if (page)
+        {
+            words = *justified;
+            justified->wordx = justified->wordy = 0;
+            justified->rmword = 0;
+        }
+        output_run(vwk, run.font, run.n, run.chars, -1, cont ? ALIGN_UNSET : width,
+                   justified, cont, run.pos < count, &ul_start);
+        if (page)
+        {
+            justified->wordx = words.wordx;
+            justified->wordy = words.wordy;
+            justified->rmword = words.rmword;
+        }
+        cont = TRUE;
+    }
+}
+
+/* whether a character can be drawn over one before it: negative spacing */
+static BOOL runs_overlap(Vwk *vwk)
+{
+    return vwk->track_offset < 0 || (vwk->pair_kern && kerning_applies(vwk));
+}
+#endif
+
+/*
+ * output a text string, in the workstation's character map
+ *
+ * 'width' is as for output_run(): the width it is aligned for, if not
+ * negative
+ */
+static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
+{
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (text_in_runs(vwk))
+    {
+        if (count <= 0)
+            return;
+        if (width < 0)
+            width = text_width(vwk, count, str);
+        if (vwk->wrt_mode == WM_REPLACE && runs_overlap(vwk))
+        {
+            /*
+             * a character's cell, background and all, would cover the ink
+             * of one before it that it is drawn over: the string is drawn
+             * as it is, then its characters again, transparently, from the
+             * same point (which the underline has taken over) and with
+             * the same spacing
+             */
+            WORD x = PTSIN[0], y = PTSIN[1];
+            JUSTINFO just;
+
+            if (justified)
+                just = *justified;
+            text_runs(vwk, count, str, width, justified);
+            PTSIN[0] = x;
+            PTSIN[1] = y;
+            if (justified)
+                *justified = just;
+            vwk->wrt_mode = WM_TRANS;
+            text_runs(vwk, count, str, width, justified);
+            vwk->wrt_mode = WM_REPLACE;
+        }
+        else
+            text_runs(vwk, count, str, width, justified);
+        vdi_sfont_trim();               /* the pages it took past the cache's bound */
+        return;
+    }
+#endif
+
+    output_run(vwk, vwk->cur_font, count, str, width, ALIGN_UNSET, justified, FALSE, FALSE, NULL);
+}
+
 void vdi_v_gtext(Vwk * vwk)
 {
     output_text(vwk, CONTRL->nintin, INTIN, -1, NULL);
 }
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/*
+ * v_ftext() is v_gtext(), and v_ftext_offset() (more than one point in
+ * ptsin) places each character at its own offset (ptsin[2..], a pair per
+ * WORD of the string) from where the one before it is, the first from the
+ * point, instead of after the one before, as fVDI does.  In UTF-16, the
+ * second WORD of a surrogate pair is no character of its own: its offset
+ * is not used.  The alignment is for the extent from the first character
+ * to the end of the last.
+ */
+void vdi_v_ftext(Vwk * vwk)
+{
+    WORD count = CONTRL->nintin, noffs = CONTRL->nptsin - 1;
+    WORD *str = INTIN, *off = PTSIN + 2, *old_ptsin = PTSIN;
+    WORD pos, next, last = 0, along, h_align, dx, dy, pen_x, pen_y;
+    WORD pts[4];                        /* the underline is drawn through PTSIN[0..3] */
+    WORD lstlin = linea_vars.LSTLIN, pass, passes;
+
+    if (noffs < 1)
+    {
+        output_text(vwk, count, str, -1, NULL);
+        return;
+    }
+
+    /* the extent along the baseline, for the alignment */
+    along = 0;
+    if (count > noffs)
+        count = noffs;
+    for (pos = 0; pos < count; pos = next)
+    {
+        next = pos;
+        next_char(vwk->char_map, str, count, &next);
+        if (pos)
+            along += baseline_part(vwk, off[2 * pos], off[2 * pos + 1]);
+        last = pos;
+    }
+    along += vdi_text_width(vwk, pos - last, str + last);
+    along_baseline(vwk, vwk->h_align == 1 ? along / 2 : vwk->h_align == 2 ? along : 0,
+                   &dx, &dy);
+
+    h_align = vwk->h_align;
+    vwk->h_align = 0;
+    PTSIN = pts;
+
+    /*
+     * In replace mode, a character placed over the one before it would
+     * cover its ink with its cell's background: the characters are all
+     * drawn as they are, then all again, transparently, as output_text()
+     * does with a string whose spacing is negative.
+     */
+    passes = vwk->wrt_mode == WM_REPLACE ? 2 : 1;
+    for (pass = 0; pass < passes; pass++)
+    {
+        if (pass)
+            vwk->wrt_mode = WM_TRANS;
+        pen_x = old_ptsin[0] - dx;
+        pen_y = old_ptsin[1] - dy;
+        for (pos = 0; pos < count; pos = next)
+        {
+            next = pos;
+            next_char(vwk->char_map, str, count, &next);
+            pen_x += off[2 * pos];
+            pen_y += off[2 * pos + 1];
+            pts[0] = pen_x;
+            pts[1] = pen_y;
+            /*
+             * underlined in XOR mode, each character's underline leaves its
+             * last pixel to the next one's, as the lines of a polyline do,
+             * so that where they meet is not drawn twice
+             */
+            linea_vars.LSTLIN = next < count ? FALSE : lstlin;
+            output_text(vwk, next - pos, str + pos, -1, NULL);
+        }
+    }
+    if (passes == 2)
+        vwk->wrt_mode = WM_REPLACE;
+    linea_vars.LSTLIN = lstlin;
+    PTSIN = old_ptsin;
+    vwk->h_align = h_align;
+}
+
+static void extent_box(Vwk *vwk, WORD width);
+
+/*
+ * vqt_f_extent() is vqt_extent() without the skewing (it is the sum of the
+ * advances, as NVDI has it); vqt_real_extent() (subcode 4200) is the box
+ * the text takes when output at the point in ptsin, alignment and rotation
+ * and all: its lower left, lower right, upper right and upper left
+ * corners, as the text has them
+ */
+void vdi_vqt_f_extent(Vwk * vwk)
+{
+    const Fonthead *fnt_ptr = vwk->cur_font;
+    WORD x = PTSIN[0], y = PTSIN[1], width, height, delh, delv, i;
+    WORD outline, d1, d2, lo, hi;
+    WORD u[4], v[4];
+
+    /*
+     * vqt_f_extent() itself: the advances, for where the cursor goes, as
+     * vqt_extent() has them but without what skewing adds to the box
+     */
+    if (CONTRL->subcode != 4200)
+    {
+        width = vdi_text_width(vwk, CONTRL->nintin, INTIN);
+        if (vwk->style & F_SKEW)
+            width -= fnt_ptr->left_offset + fnt_ptr->right_offset;
+        extent_box(vwk, width);
+        return;
+    }
+
+    /*
+     * placed as output_run() places the text: alignment, skew, outline;
+     * the alignment is for where the text ends, the box from where it
+     * goes furthest each way (a negative offset taking it back)
+     */
+    lo = 0;
+    if (text_in_runs(vwk))
+        width = text_bounds(vwk, CONTRL->nintin, INTIN, &lo, &hi);
+    else
+        width = hi = calc_width(vwk, fnt_ptr, CONTRL->nintin, INTIN);
+    height = calc_height(vwk);
+    outline = (vwk->style & F_OUTLINE) ? OUTLINE_THICKNESS : 0;
+    d1 = (vwk->style & F_SKEW) ? fnt_ptr->left_offset : 0;
+    d2 = (vwk->style & F_SKEW) ? fnt_ptr->right_offset : 0;
+    delh = vwk->h_align == 1 ? width / 2 - outline
+         : vwk->h_align == 2 ? width - outline * 2 : 0;
+    switch(vwk->v_align) {
+    default:
+        delv = fnt_ptr->top;
+        delh += d1;
+        break;
+    case 1:
+        delv = fnt_ptr->top - fnt_ptr->half;
+        delh += divs(muls(fnt_ptr->half, d2), fnt_ptr->top);
+        break;
+    case 2:
+        delv = fnt_ptr->top - fnt_ptr->ascent;
+        delh += divs(muls(fnt_ptr->ascent, d2), fnt_ptr->top);
+        break;
+    case 3:
+        delv = fnt_ptr->top + fnt_ptr->bottom;
+        break;
+    case 4:
+        delv = fnt_ptr->top + fnt_ptr->descent;
+        delh += divs(muls(fnt_ptr->descent, d1), fnt_ptr->bottom);
+        break;
+    case 5:
+        delv = 0;
+        delh += d1 + d2;
+        break;
+    }
+    delh += outline;
+    delv += outline;
+
+    /* along the baseline and down from the top, in the order of the corners */
+    u[0] = u[3] = lo - delh;
+    u[1] = u[2] = hi - delh;
+    v[0] = v[1] = height - 1 - delv;
+    v[2] = v[3] = -delv;
+    for (i = 0; i < 4; i++)
+    {
+        WORD dx, dy;
+
+        along_baseline(vwk, u[i], &dx, &dy);
+        switch(vwk->chup) {
+        default:
+            dy += v[i];
+            break;
+        case 900:
+            dx += v[i];
+            break;
+        case 1800:
+            dy -= v[i];
+            break;
+        case 2700:
+            dx -= v[i];
+            break;
+        }
+        PTSOUT[2 * i] = x + dx;
+        PTSOUT[2 * i + 1] = y + dy;
+    }
+}
+#endif
 
 #if CONF_WITH_GDOS
 /*
@@ -696,6 +1526,18 @@ void text_init2(Vwk * vwk)
     vwk->scrpt2 = scrtsiz;
     vwk->scrtchp = deftxbuf;
     vwk->num_fonts = linea_vars.font_count;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vwk->sfonts_loaded = FALSE;
+    vwk->error_var = NULL;
+    vwk->char_map = MAP_ATARI;
+    vwk->sf_size = 0;
+    vwk->sf_want = 0;
+    vwk->sf_width = 0;
+    vwk->sf_skew = 0;
+    vwk->sf_mirror = 0;
+    vwk->pair_kern = FALSE;
+    vwk->track_offset = 0;
+#endif
 
     vwk->style = 0;        /* reset special effects */
     vwk->scaled = FALSE;
@@ -797,7 +1639,8 @@ static void setup_width_height(const Fonthead *font)
     flip_y = 1;
 }
 
-void vdi_vst_height(Vwk * vwk)
+/* the height of the current font: vst_height(), and vst_font() keeping it */
+static void text_height(Vwk * vwk)
 {
     const Fonthead **chain_ptr;
     const Fonthead *test_font, *single_font;
@@ -807,6 +1650,26 @@ void vdi_vst_height(Vwk * vwk)
 
     font_id = vwk->cur_font->font_id;
     vwk->pts_mode = FALSE;
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font: exactly that height, nothing nearest or scaled */
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        WORD index = vdi_sfont_find(font_id);
+        const Fonthead *f = NULL;
+
+        if (index >= 0)
+            f = vdi_sfont_select(vwk, index, vdi_sfont_size_for_top(index, PTSIN[1]), PTSIN[1]);
+        if (f)
+            vwk->cur_font = f;
+        else
+            vdi_sfont_error(vwk, SPEEDO_CACHE_FULL);
+        vdi_sfont_trim();               /* the size it had may go now */
+        vwk->scaled = FALSE;
+        setup_width_height(vwk->cur_font);
+        return;
+    }
+#endif
 
     /* Find the smallest font in the requested face */
     chain_ptr = linea_vars.font_ring;
@@ -936,7 +1799,8 @@ static void make_header(Vwk * vwk)
 }
 
 
-void vdi_vst_point(Vwk * vwk)
+/* the size of the current font: vst_point(), and vst_font() keeping it */
+static void text_point(Vwk * vwk)
 {
     WORD font_id;
     const Fonthead **chain_ptr, *double_font;
@@ -946,6 +1810,27 @@ void vdi_vst_point(Vwk * vwk)
 
     font_id = vwk->cur_font->font_id;
     vwk->pts_mode = TRUE;
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font: exactly that size, nothing nearest or doubled */
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        WORD index = vdi_sfont_find(font_id);
+        const Fonthead *f = NULL;
+
+        if (index >= 0)
+            f = vdi_sfont_select(vwk, index, vdi_sfont_size_for_points(INTIN[0]), 0);
+        if (f)
+            vwk->cur_font = f;
+        else
+            vdi_sfont_error(vwk, SPEEDO_CACHE_FULL);
+        vdi_sfont_trim();               /* the size it had may go now */
+        vwk->scaled = FALSE;
+        setup_width_height(vwk->cur_font);
+        INTOUT[0] = vwk->cur_font->point;
+        return;
+    }
+#endif
 
     /* Find the smallest font in the requested face */
     chain_ptr = linea_vars.font_ring;
@@ -994,6 +1879,29 @@ void vdi_vst_point(Vwk * vwk)
 
     /* also return point size actually set */
     INTOUT[0] = single_font->point;
+}
+
+
+/*
+ * vst_height() and vst_point(): a scalable font's width follows its height
+ * again (vst_setsize() and vst_width() set it apart)
+ */
+void vdi_vst_height(Vwk * vwk)
+{
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vwk->sf_width = 0;
+    vwk->sf_mirror = 0;
+#endif
+    text_height(vwk);
+}
+
+void vdi_vst_point(Vwk * vwk)
+{
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vwk->sf_width = 0;
+    vwk->sf_mirror = 0;
+#endif
+    text_point(vwk);
 }
 
 
@@ -1061,6 +1969,10 @@ void vdi_vst_font(Vwk * vwk)
     WORD face;
     const Fonthead *test_font, **chain_ptr;
     BOOL found;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    const Fonthead *old_font = vwk->cur_font;
+    BOOL exact = FALSE;                 /* a scalable font, sized here */
+#endif
 
     test_font = vwk->cur_font;
     point = test_font->point;
@@ -1077,6 +1989,50 @@ void vdi_vst_font(Vwk * vwk)
         } while (!found && (test_font = test_font->next_font));
     }
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font the built-in GDOS added to this workstation */
+    if (!found && vwk->sfonts_loaded)
+    {
+        WORD index = vdi_sfont_find(face);
+
+        if (index >= 0)
+        {
+            const Fonthead *f;
+            LONG size;
+            WORD want;
+
+            /*
+             * the size as it was: from a scalable font, the exact one asked
+             * for (a fractional one from vst_arbpt32(), say), not its point
+             * size, which is rounded
+             */
+            if (old_font->flags & F_SFONT)
+            {
+                size = vwk->sf_size;
+                want = vwk->sf_want;
+                if (want)
+                    size = vdi_sfont_size_for_top(index, want);
+            }
+            else if (vwk->pts_mode)
+            {
+                size = vdi_sfont_size_for_points(point);
+                want = 0;
+            }
+            else
+            {
+                size = vdi_sfont_size_for_top(index, dummy[1]);
+                want = dummy[1];
+            }
+            f = vdi_sfont_select(vwk, index, size, want);
+            if (f)
+            {
+                test_font = f;
+                found = exact = TRUE;
+            }
+        }
+    }
+#endif
+
     /* If we fell through the loop, we could not find the face. */
     /* Default to the system font.                  */
     if (!found)
@@ -1085,6 +2041,17 @@ void vdi_vst_font(Vwk * vwk)
     /* Call down to the set text height routine to get the proper size */
     vwk->cur_font = test_font;
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (exact)
+    {
+        /* already at its size: sizing it again from the points would round it */
+        vwk->scaled = FALSE;
+        vdi_sfont_trim();
+        INTOUT[0] = vwk->cur_font->font_id;
+        return;
+    }
+#endif
+
     old_intin = INTIN;
     old_ptsin = PTSIN;
     old_ptsout = PTSOUT;
@@ -1092,13 +2059,17 @@ void vdi_vst_font(Vwk * vwk)
     PTSIN = PTSOUT = dummy;
 
     if (vwk->pts_mode)
-        vdi_vst_point(vwk);
+        text_point(vwk);
     else
-        vdi_vst_height(vwk);
+        text_height(vwk);
 
     INTIN = old_intin;
     PTSIN = old_ptsin;
     PTSOUT = old_ptsout;
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_sfont_trim();                   /* a scalable size it had may go now */
+#endif
 
     INTOUT[0] = vwk->cur_font->font_id;
 }
@@ -1140,12 +2111,12 @@ void vdi_vqt_attributes(Vwk * vwk)
 }
 
 
-void vdi_vqt_extent(Vwk * vwk)
+/* the box of vqt_extent(), for text that wide, as it is rotated */
+static void extent_box(Vwk *vwk, WORD width)
 {
-    WORD height, width;
+    WORD height;
 
     height = calc_height(vwk);
-    width = calc_width(vwk, CONTRL->nintin, INTIN);
 
     bzero(PTSOUT,8*sizeof(WORD));
     switch (vwk->chup) {
@@ -1177,6 +2148,11 @@ void vdi_vqt_extent(Vwk * vwk)
     flip_y = 1;
 }
 
+void vdi_vqt_extent(Vwk * vwk)
+{
+    extent_box(vwk, vdi_text_width(vwk, CONTRL->nintin, INTIN));
+}
+
 
 void vdi_vqt_width(Vwk * vwk)
 {
@@ -1192,10 +2168,19 @@ void vdi_vqt_width(Vwk * vwk)
     *(pointer + 4) = 0;
 
     k = INTIN[0];
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* the character as the font has it, in a page of it maybe */
+    fnt_ptr = vdi_text_char(vwk, INTIN[0], &k);
+    if (!fnt_ptr || (vwk->char_map != MAP_ATARI && !text_char_exists(vwk, INTIN[0])))
+    {
+        fnt_ptr = vwk->cur_font;
+        k = -1;
+    }
+#endif
     if ((k < fnt_ptr->first_ade) || (k > fnt_ptr->last_ade))
         INTOUT[0] = -1;
     else {
-        INTOUT[0] = k;
+        INTOUT[0] = INTIN[0];
         k -= fnt_ptr->first_ade;
         *(pointer) = fnt_ptr->off_table[k + 1] - fnt_ptr->off_table[k];
         if (vwk->scaled) {
@@ -1210,11 +2195,54 @@ void vdi_vqt_width(Vwk * vwk)
             *(pointer + 4) = fnt_ptr->hor_table[(k * 2) + 1];
         }
     }
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_sfont_trim();                   /* a page it took past the cache's bound */
+#endif
 
     flip_y = 1;
 }
 
 
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/*
+ * The font at a place in the workstation's list, as vqt_name() counts
+ * them from 1: a bitmap font, or after those, once vst_load_fonts() has
+ * added them, a scalable font, whose index in vdi_sfonts goes in *sfont
+ * (else -1).  FALSE if there is no font there.
+ */
+BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont)
+{
+    WORD i, current_font_id;
+    const Fonthead *tmp_font, **chain_ptr;
+
+    *font = NULL;
+    *sfont = -1;
+    chain_ptr = linea_vars.font_ring;
+    i = 0;
+    current_font_id = -1;
+
+    while ((tmp_font = *chain_ptr++)) {
+        do {
+            if (tmp_font->font_id != current_font_id) {
+                current_font_id = tmp_font->font_id;    /* remember current id */
+                if ((++i) == element) {
+                    *font = tmp_font;
+                    return TRUE;
+                }
+            }
+        } while ((tmp_font = tmp_font->next_font));
+    }
+
+    if (vwk->sfonts_loaded && element > i && element - i <= vdi_sfont_count)
+    {
+        *sfont = element - i - 1;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+#endif
 
 void vdi_vqt_name(Vwk * vwk)
 {
@@ -1225,6 +2253,50 @@ void vdi_vqt_name(Vwk * vwk)
     BOOL found;
 
     element = INTIN[0];
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /*
+     * After the bitmap fonts come the built-in GDOS's scalable fonts, once
+     * vst_load_fonts() has added them; intout[33] says which kind a font
+     * is, 0 for a bitmap font, 1 for an outline font, as with SpeedoGDOS.
+     * NVDI's vqt_ext_name() (subcode 1, with a second intin) keeps that
+     * in intout[33], and adds the format and flags in intout[34].
+     */
+    if (vdi_gdos_id)
+    {
+        const VDI_SFONT *sfont = NULL;
+        WORD index;
+        BOOL ext = CONTRL->subcode == 1 && CONTRL->nintin >= 2;
+
+        if (!vdi_font_at(vwk, element, &tmp_font, &index))
+            tmp_font = &fon6x6;
+        if (index >= 0)
+            sfont = &vdi_sfonts[index];
+
+        int_out = INTOUT;
+        *int_out++ = sfont ? sfont->id : tmp_font->font_id;
+        name = sfont ? sfont->name : tmp_font->name;
+        /* at most 31 characters, so that the name always ends in a NUL */
+        for (i = 0; i < FONT_NAME_LEN - 1 && name[i]; i++)
+            *int_out++ = (UBYTE)name[i];
+        while (i++ < FONT_NAME_LEN)
+            *int_out++ = 0;
+        *int_out++ = sfont ? 1 : 0;
+        if (ext)
+        {
+            if (sfont)
+                *int_out = ((sfont->flags & SFONT_MONOSPACE) << 8) | sfont->format;
+            else
+                *int_out = ((tmp_font->flags & F_MONOSPACE) ? SFONT_MONOSPACE << 8 : 0)
+                         | SFONT_BITMAP;
+            CONTRL->nintout = 35;
+        }
+        else
+            CONTRL->nintout = 34;
+        return;
+    }
+#endif
+
     chain_ptr = linea_vars.font_ring;
     i = 0;
     current_font_id = -1;
@@ -1298,7 +2370,7 @@ void gdp_justified(Vwk * vwk)
     WORD spaces = 0;
     WORD expand;
     WORD interword, interchar;
-    WORD cnt, width, max_x;
+    WORD cnt, cnt_chars, width, max_x;
     WORD i, direction, delword, delchar;
     WORD *pointer, *str;
     JUSTINFO just;
@@ -1314,12 +2386,23 @@ void gdp_justified(Vwk * vwk)
      * if interword adjustment required, count spaces
      */
     if (interword) {
+#if CONF_WITH_VDI_SCALABLE_FONTS
+        if (vwk->char_map != MAP_ATARI)
+            spaces = text_spaces(vwk, cnt, str);    /* a BICS blank is 0 */
+        else
+#endif
         for (i = 0; i < cnt; i++)
             if (*(pointer++) == ' ')
                 spaces++;
     }
 
-    width = calc_width(vwk, cnt, str);
+    width = vdi_text_width(vwk, cnt, str);
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (vwk->char_map != MAP_ATARI)
+        cnt_chars = text_chars(vwk, cnt, str);  /* a pair of surrogates is one */
+    else
+#endif
+        cnt_chars = cnt;
 
     max_x = PTSIN[2];
 
@@ -1374,9 +2457,9 @@ void gdp_justified(Vwk * vwk)
     /*
      * calculate values for intercharacter spacing
      */
-    if (interchar && cnt > 1) {
-        delchar = divs((WORD)(max_x - width), cnt - 1);
-        just.rmchar = mods((WORD)(max_x - width), cnt - 1);
+    if (interchar && cnt_chars > 1) {
+        delchar = divs((WORD)(max_x - width), cnt_chars - 1);
+        just.rmchar = mods((WORD)(max_x - width), cnt_chars - 1);
 
         if (just.rmchar < 0) {
             direction = -1;
@@ -1414,6 +2497,35 @@ void vdi_vst_load_fonts(Vwk * vwk)
     WORD id, count, *control;
 
     Fonthead *first_font;
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /*
+     * The built-in GDOS is only active when no GDOS was loaded from disk,
+     * so this is an application's own call, not a GDOS passing its fonts
+     * on: add the scalable fonts, once, as SpeedoGDOS does.
+     */
+    if (vdi_gdos_id)
+    {
+        if (vwk->sfonts_loaded)
+            INTOUT[0] = 0;
+        else
+        {
+            vdi_sfont_rescan();     /* if the boot-time scan found none */
+            /*
+             * Loaded only if there are fonts to add: a workstation that
+             * found none can ask again, once they are there, and cannot
+             * see a list that its count does not include.
+             */
+            if (vdi_sfont_count)
+            {
+                vwk->sfonts_loaded = TRUE;
+                vwk->num_fonts += vdi_sfont_count;
+            }
+            INTOUT[0] = vdi_sfont_count;
+        }
+        return;
+    }
+#endif
 
     /* Init some common variables */
     control = (WORD *) CONTRL;
@@ -1472,6 +2584,9 @@ void vdi_vst_load_fonts(Vwk * vwk)
 void vdi_vst_unload_fonts(Vwk * vwk)
 {
 #if CONF_WITH_GDOS
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vwk->sfonts_loaded = FALSE;
+#endif
     /* Since we always unload all fonts, this is easy. */
     vwk->loaded_fonts = NULL;           /* No fonts installed */
     linea_vars.font_ring[2] = NULL;

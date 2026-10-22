@@ -41,6 +41,19 @@ no_vdi:
         cmp.w   #0xffff,d0              // query for jsr:able address?
         jeq     query
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/*
+ * vq_gdos(): once the built-in GDOS is active (vdi/vdi_gdos.c), answer
+ * with its id, as SpeedoGDOS does.
+ */
+        cmp.w   #0xfffe,d0
+        jne     not_gdos
+        tst.l   C_SYM(vdi_gdos_id)
+        jeq     not_gdos
+        move.l  C_SYM(vdi_gdos_id),d0
+not_gdos:
+#endif
+
 /*
  * Just like Atari TOS, we leave d0 unchanged, indicating the absence of
  * GDOS if this is called with -2 in the low-order word of d0.
