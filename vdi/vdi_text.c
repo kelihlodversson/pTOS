@@ -2510,7 +2510,7 @@ void vdi_vst_load_fonts(Vwk * vwk)
             INTOUT[0] = 0;
         else
         {
-            vdi_sfont_rescan();     /* if the boot-time scan found none */
+            vdi_sfont_rescan();     /* if the boot-time scan found none, or after an unload */
             /*
              * Loaded only if there are fonts to add: a workstation that
              * found none can ask again, once they are there, and cannot
@@ -2586,6 +2586,7 @@ void vdi_vst_unload_fonts(Vwk * vwk)
 #if CONF_WITH_GDOS
 #if CONF_WITH_VDI_SCALABLE_FONTS
     vwk->sfonts_loaded = FALSE;
+    vdi_sfont_unloaded();
 #endif
     /* Since we always unload all fonts, this is easy. */
     vwk->loaded_fonts = NULL;           /* No fonts installed */

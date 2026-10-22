@@ -23,6 +23,9 @@
  *  - loading, drawing and unloading fonts in a loop leaves no font memory
  *    behind (vqt_cachesize(2), pTOS's extension, is the font memory in
  *    use);
+ *  - with TEST_WITH_FONT_RESCAN (CONF_VDI_FONT_RESCAN), a font copied into the directory is added
+ *    by the next vst_unload_fonts() and vst_load_fonts() (#648), and the
+ *    fonts that were there keep their ids;
  *  - the calls of the NVDI/Speedo interface that have nothing to answer
  *    (v_getoutline() with no outline, v_savecache()) give the documented
  *    values.
@@ -831,6 +834,109 @@ static void check_unsupported(void)
           v_loadcache(handle, "NOSUCH.CAC", 0), -1);
 }
 
+/* --- fonts copied into the directory while the system runs (#648) --- */
+
+#define FONT_FILE   "\\GEMSYS\\FONTS\\PTOSTEST.TTF"
+#define FONT_COPY   "\\GEMSYS\\FONTS\\PTOSTES2.TTF"
+#define COPY_NAME   "PTOS Test Mon2"
+
+static unsigned char font_image[40000];
+
+/* the id of the font with that name among the first count, 0 if none */
+static short font_by_name(const char *wanted, short count)
+{
+    short n, i;
+
+    for (n = 1; n <= count; n++)
+    {
+        char name[34];
+
+        vs_intin[0] = n;
+        vs_call(handle, 130, 0, 0, 1);      /* vqt_name() */
+        for (i = 0; i < 32; i++)
+            name[i] = (char)vs_intout[1 + i];
+        name[32] = '\0';
+        if (!strcmp(name, wanted))
+            return vs_intout[0];
+    }
+
+    return 0;
+}
+
+static short unload_load(void)
+{
+    vs_call(handle, 120, 0, 0, 0);          /* vst_unload_fonts() */
+    vs_intin[0] = 0;
+    vs_call(handle, 119, 0, 0, 1);          /* vst_load_fonts() */
+
+    return vs_intout[0];
+}
+
+/* the test font under another name, as a font installer would copy a new one in */
+static long write_copy(void)
+{
+    long fd, n, i, j, total;
+    static const char from[] = "PTOS Test Mono";
+
+    fd = Fopen(FONT_FILE, 0);
+    if (fd < 0)
+        return fd;
+    total = Fread((short)fd, sizeof font_image, font_image);
+    Fclose((short)fd);
+    if (total <= 0 || total >= (long)sizeof font_image)
+        return -1;
+    /* the name table has it in 8-bit and in 16-bit characters */
+    for (i = 0; i + 14 <= total; i++)
+        if (!memcmp(font_image + i, from, 14))
+            font_image[i + 13] = '2';
+    for (i = 0; i + 28 <= total; i++)
+    {
+        for (j = 0; j < 14; j++)
+            if (font_image[i + 2 * j] != 0 || font_image[i + 2 * j + 1] != (unsigned char)from[j])
+                break;
+        if (j == 14)
+            font_image[i + 27] = '2';
+    }
+    fd = Fcreate(FONT_COPY, 0);
+    if (fd < 0)
+        return fd;
+    n = Fwrite((short)fd, total, font_image);
+    Fclose((short)fd);
+
+    return n == total ? 0 : -1;
+}
+
+static void check_rescan(void)
+{
+    short n0, n1, n2, id_mono, id_copy;
+    long rc;
+
+    n0 = unload_load();
+    id_mono = font_by_name(FONT_NAME, system_fonts + n0);
+    CHECK(id_mono != 0, "rescan: the test font is not there before:", n0, 0);
+    CHECK(font_by_name(COPY_NAME, system_fonts + n0) == 0, "rescan: the copy is there before:", n0, 0);
+
+    rc = write_copy();
+    CHECK(rc == 0, "rescan: cannot write " FONT_COPY ":", rc, 0);
+    if (rc != 0)
+        return;
+
+    n1 = unload_load();
+    id_copy = font_by_name(COPY_NAME, system_fonts + n1);
+    CHECK(n1 == n0 + 1, "rescan: the font was not added to the list:", n1, n0 + 1);
+    CHECK(id_copy != 0 && id_copy != id_mono, "rescan: the added font has no id of its own:", id_copy, id_mono);
+    CHECK(font_by_name(FONT_NAME, system_fonts + n1) == id_mono, "rescan: the first font's id changed:",
+          font_by_name(FONT_NAME, system_fonts + n1), id_mono);
+
+    /* nothing new: the same list */
+    n2 = unload_load();
+    CHECK(n2 == n1, "rescan: a second reload changed the list:", n2, n1);
+    CHECK(font_by_name(COPY_NAME, system_fonts + n2) == id_copy, "rescan: the added font's id changed:",
+          font_by_name(COPY_NAME, system_fonts + n2), id_copy);
+
+    (void)Fdelete(FONT_COPY);               /* its entry stays listed until the next boot */
+}
+
 void test_scalable_fonts(void)
 {
     if (vs_gdos() == -2)
@@ -875,6 +981,9 @@ void test_scalable_fonts(void)
     SECTION(check_drawing);
     SECTION(check_memory);
     SECTION(check_unsupported);
+#ifdef TEST_WITH_FONT_RESCAN
+    SECTION(check_rescan);
+#endif
 
     vs_intin[0] = 1;
     vs_call(handle, 122, 0, 0, 1);          /* v_show_c(reset) */
