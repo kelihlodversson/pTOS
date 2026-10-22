@@ -52,7 +52,11 @@ WORD desk_floppy_type(void);            /* 0 if DD, 1 if HD (the _FDC cookie) */
 #define desk_rt_exit()          do { } while (0)
 #define desk_bootflags()        (bootflags)
 #define desk_rez_changeable()   (rez_changeable())
+#if CONF_WITH_ALT_RAM
 #define desk_has_alt_ram()      (has_alt_ram != 0)
+#else
+#define desk_has_alt_ram()      (0)
+#endif
 #define desk_idt()              (Supexec((LONG)get_idt_cookie))
 #define desk_set_ceh(e)         (enable_ceh = (e))
 #define desk_set_background(p)  (set_aes_background(p))
