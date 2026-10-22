@@ -313,6 +313,28 @@ static int find_font(void)
     return 0;
 }
 
+/* the id of a font whose name has 'part' in it, or 0 */
+static short find_named(const char *part)
+{
+    short n, count, i;
+
+    count = system_fonts + loaded_fonts;
+    for (n = 1; n <= count; n++)
+    {
+        char name[34];
+
+        vs_intin[0] = n;
+        vs_call(handle, 130, 0, 0, 1);      /* vqt_name() */
+        for (i = 0; i < 32; i++)
+            name[i] = (char)vs_intout[1 + i];
+        name[32] = '\0';
+        if (strstr(name, part))
+            return vs_intout[0];
+    }
+
+    return 0;
+}
+
 static void check_selection(void)
 {
     struct size s;
@@ -767,6 +789,65 @@ static void check_overhang(void)
     set_mode(1);
 }
 
+/*
+ * An italic face (Inter Italic, when the test disk has it) has ink that
+ * leaves its cells without any slant asked for: the hook of an f to the
+ * right of it, the tail of a j to the left.  Nothing of either is lost, and
+ * in replace mode a character that follows does not erase the hook.
+ */
+static void check_overhang_italic(void)
+{
+    struct ink a, b;
+    short id = find_named("Italic");
+    short x = AREA_X + 40, y = AREA_Y + 10, adv;
+
+    if (!id)
+        return;                             /* no italic face on this disk */
+    vdi_font(id);
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(0);
+
+    adv = (short)string_extent("f");
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "f");
+    scan(&a);
+    CHECK(a.x1 >= x + adv, "the hook of an italic f is cut at its cell:", a.x1, x + adv);
+
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "j");
+    scan(&a);
+    CHECK(a.x0 < x, "the tail of an italic j is cut at its cell:", a.x0, x);
+
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "ffj");
+    scan(&a);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(2, x, y, "f");
+    gtext_mode(2, x + adv, y, "f");
+    adv = (short)string_extent("ff");
+    gtext_mode(2, x + adv, y, "j");
+    scan(&b);
+    CHECK(a.hash == b.hash && a.count == b.count,
+          "replace mode erases the ink of an italic that leaves its cell:", a.count, b.count);
+
+    /*
+     * the face last used stays open (and its file in font memory): back to
+     * the test font's, so that whatever is left of this is not another
+     * test's baseline
+     */
+    set_mode(1);
+    vdi_font(font_id);
+    v_flushcache(handle);
+    set_height(13);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "x");
+    v_flushcache(handle);
+}
+
 /* --- memory --- */
 
 static long font_memory(void)
@@ -979,6 +1060,7 @@ void test_scalable_fonts(void)
     SECTION(check_overhang);
     SECTION(check_memory);
     SECTION(check_unsupported);
+    SECTION(check_overhang_italic);
 
     vs_intin[0] = 1;
     vs_call(handle, 122, 0, 0, 1);          /* v_show_c(reset) */
