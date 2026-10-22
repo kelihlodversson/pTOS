@@ -23,6 +23,9 @@ enum { VDI_CALLBACK_TIMER, VDI_CALLBACK_BUTTON, VDI_CALLBACK_MOTION,
 #define VDI_SERVICE_CHECK 5
 #define VDI_SERVICE_VECTOR 6
 #define VDI_SERVICE_PIXEL 7
+#define VDI_SERVICE_DRAW 8
+#define VDI_SERVICE_SCREEN_COPY 9
+#define VDI_SERVICE_MAX_TEXT 256
 #define VDI_SERVICE_MAX_POINTS 256
 #define VDI_SERVICE_MAX_BITMAP (1024UL * 1024UL)
 
@@ -44,6 +47,31 @@ typedef struct {
     ULONG old_handler;
     WORD tick_ms, reserved;
 } VDI_SERVICE_VECTOR_RESULT;
+
+/* Pointer-free drawing request. Counts are determined by the allowlisted
+ * operation, not trusted as native VDI array bounds. */
+typedef struct {
+    WORD code, subcode, nintin, nptsin;
+    WORD intin[VDI_SERVICE_MAX_TEXT];
+    WORD ptsin[4];
+} VDI_SERVICE_DRAW_REQUEST;
+
+typedef struct {
+    WORD nintout, nptsout;
+    WORD intout[45], ptsout[12];
+} VDI_SERVICE_DRAW_RESULT;
+
+typedef struct {
+    WORD mode, reserved;
+    WORD xy[8];
+} VDI_SERVICE_SCREEN_REQUEST;
+
+typedef char vdi_draw_request_size[(sizeof(VDI_SERVICE_DRAW_REQUEST) == 528) ? 1 : -1];
+typedef char vdi_draw_result_size[(sizeof(VDI_SERVICE_DRAW_RESULT) == 118) ? 1 : -1];
+typedef char vdi_screen_request_size[(sizeof(VDI_SERVICE_SCREEN_REQUEST) == 20) ? 1 : -1];
+
+LONG vdi_user_draw_shape(const VDI_SERVICE_DRAW_REQUEST *request,
+                         WORD *nintout, WORD *nptsout);
 
 typedef char vdi_service_workstation_size[(sizeof(VDI_SERVICE_WORKSTATION) == 116) ? 1 : -1];
 typedef char vdi_service_vector_size[(sizeof(VDI_SERVICE_VECTOR_RESULT) == 8) ? 1 : -1];

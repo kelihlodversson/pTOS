@@ -122,6 +122,132 @@ static LONG pixel(VDIPB *pb, WORD x, WORD y)
     return rc ? rc : (UWORD)pb->intout[1];
 }
 
+static int drawing_checks(WORD handle)
+{
+    VDICONTROL control = { 0 };
+    WORD input[VDI_SERVICE_MAX_TEXT] = { 0 }, points[8] = { 0 };
+    WORD output[45], outpoints[12];
+    VDIPB pb = { &control, input, points, output, outpoints };
+    VDI_SERVICE_DRAW_REQUEST request = { 0 };
+    VDI_SERVICE_DRAW_RESULT result;
+    VDI_SERVICE_SCREEN_REQUEST screen = { 0 };
+    VDI_USER_FDB source = { 0 }, destination = { 0 };
+    LONG white, black, i, x, y, changed = 0;
+    int failures = 0;
+
+#define CHECK(condition) do { if (!(condition) && !failures) failures = __LINE__; } while (0)
+    control.handle = handle;
+    CHECK(call(&pb, 129, 1, 2) == E_OK); /* independent of the caller's clip */
+    CHECK(call(&pb, 38, 0, 0) == E_OK && control.nintout == 6 && control.nptsout == 2);
+    CHECK(outpoints[1] > 0 && outpoints[2] > 0 && outpoints[3] > 0);
+    points[1] = 6;
+    CHECK(call(&pb, 12, 0, 1) == E_OK && outpoints[1] > 0);
+    points[1] = 16;
+    CHECK(call(&pb, 12, 0, 1) == E_OK && outpoints[1] > 0);
+    points[0] = 1; points[1] = 0;
+    CHECK(call(&pb, 16, 0, 1) == E_OK && outpoints[0] == 1);
+    input[0] = 7;
+    CHECK(call(&pb, 15, 1, 0) == E_OK && output[0] == 7);
+    input[0] = (WORD)0xffff;
+    CHECK(call(&pb, 113, 1, 0) == E_OK && !control.nintout);
+    input[0] = 1;
+    CHECK(call(&pb, 32, 1, 0) == E_OK && output[0] == 1);
+    CHECK(call(&pb, 23, 1, 0) == E_OK && output[0] == 1);
+    CHECK(call(&pb, 24, 1, 0) == E_OK && output[0] == 1);
+    CHECK(call(&pb, 102, 1, 0) == E_OK && output[4] > 0);
+    control.subcode = 1;
+    CHECK(call(&pb, 102, 1, 0) == E_OK && control.nintout == 45 && control.nptsout == 6);
+    control.subcode = 0;
+    input[0] = 0;
+    CHECK(call(&pb, 25, 1, 0) == E_OK && output[0] == 0);
+    points[0] = 0; points[1] = 8; points[2] = 63; points[3] = 39;
+    CHECK(call(&pb, 114, 0, 2) == E_OK);
+    white = pixel(&pb, 4, 20);
+    input[0] = 1;
+    CHECK(call(&pb, 25, 1, 0) == E_OK);
+    points[0] = 8; points[1] = 16; points[2] = 15; points[3] = 23;
+    CHECK(call(&pb, 114, 0, 2) == E_OK);
+    black = pixel(&pb, 8, 16);
+    CHECK(white >= 0 && black >= 0 && white != black);
+    /* A narrower clip applies to both fills and screen copies. */
+    points[0] = 10; points[1] = 18; points[2] = 11; points[3] = 19;
+    CHECK(call(&pb, 129, 1, 2) == E_OK);
+    input[0] = 0;
+    CHECK(call(&pb, 25, 1, 0) == E_OK);
+    points[0] = 8; points[1] = 16; points[2] = 15; points[3] = 23;
+    control.subcode = 1;
+    CHECK(call(&pb, 11, 0, 2) == E_OK);
+    control.subcode = 0;
+    CHECK(pixel(&pb, 10, 18) == white && pixel(&pb, 8, 16) == black);
+    input[0] = 0;
+    CHECK(call(&pb, 129, 1, 2) == E_OK);
+    screen.mode = 3;
+    screen.xy[0] = 8; screen.xy[1] = 16; screen.xy[2] = 9; screen.xy[3] = 17;
+    screen.xy[4] = 32; screen.xy[5] = 16; screen.xy[6] = 33; screen.xy[7] = 17;
+    CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, handle, (uintptr_t)&screen, 0, 0) == E_OK);
+    CHECK(pixel(&pb, 32, 16) == black && pixel(&pb, 34, 16) == white);
+    points[0] = 32; points[1] = 16; points[2] = 33; points[3] = 17;
+    CHECK(call(&pb, 114, 0, 2) == E_OK); /* erase the first copy */
+    points[0] = 33;
+    input[0] = 1;
+    CHECK(call(&pb, 129, 1, 2) == E_OK);
+    CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, handle, (uintptr_t)&screen, 0, 0) == E_OK);
+    CHECK(pixel(&pb, 32, 16) == white && pixel(&pb, 33, 16) == black);
+    input[0] = 0;
+    CHECK(call(&pb, 129, 1, 2) == E_OK);
+    /* The public client also routes screen descriptors through the service. */
+    for (i = 0; i < 8; i++)
+        points[i] = screen.xy[i];
+    points[4] = 36; points[6] = 37;
+    input[0] = 3;
+    control.args.raster.source = &source;
+    control.args.raster.destination = &destination;
+    CHECK(call(&pb, 109, 1, 4) == E_OK);
+    control.args.arrays.reserved[0] = control.args.arrays.reserved[1] = 0;
+    CHECK(pixel(&pb, 36, 16) == black);
+    input[0] = 1;
+    CHECK(call(&pb, 22, 1, 0) == E_OK);
+    input[0] = 'A';
+    points[0] = 48; points[1] = 30;
+    CHECK(call(&pb, 8, 1, 1) == E_OK);
+    for (y = 8; y < 39; y++)
+        for (x = 48; x < 63; x++)
+            if (pixel(&pb, x, y) == black)
+                changed++;
+    CHECK(changed > 0 && changed < 15 * 31);
+    for (i = 0; i < VDI_SERVICE_MAX_TEXT; i++)
+        input[i] = 'A';
+    points[0] = -10000; points[1] = -10000;
+    CHECK(call(&pb, 8, VDI_SERVICE_MAX_TEXT, 1) == E_OK);
+    CHECK(call(&pb, 8, VDI_SERVICE_MAX_TEXT + 1, 1) == EINVAL);
+    request.code = 38;
+    CHECK(raw_service(VDI_SERVICE_DRAW, handle, (uintptr_t)&request, (uintptr_t)&result, 0) == E_OK);
+    CHECK(result.nintout == 6 && result.nptsout == 2);
+    request.nintin = 256;
+    CHECK(raw_service(VDI_SERVICE_DRAW, handle, (uintptr_t)&request, (uintptr_t)&result, 0) == EINVAL);
+    request.nintin = 0;
+    request.intin[255] = 1;
+    CHECK(raw_service(VDI_SERVICE_DRAW, handle, (uintptr_t)&request, (uintptr_t)&result, 0) == EINVAL);
+    request.intin[255] = 0;
+    CHECK(raw_service(VDI_SERVICE_DRAW, handle, (uintptr_t)&request, 0, 0) == EIMBA);
+    CHECK(raw_service(VDI_SERVICE_DRAW, handle, 0, (uintptr_t)&result, 0) == EIMBA);
+    CHECK(raw_service(VDI_SERVICE_DRAW, handle, (uintptr_t)&request, (uintptr_t)&result, 1) == EINVAL);
+    screen.xy[4] = -1;
+    CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, handle, (uintptr_t)&screen, 0, 0) == EINVAL);
+    screen.xy[4] = 32;
+    screen.xy[6]++;
+    CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, handle, (uintptr_t)&screen, 0, 0) == EINVAL);
+    screen.xy[6]--;
+    screen.mode = 16;
+    CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, handle, (uintptr_t)&screen, 0, 0) == EINVAL);
+    screen.mode = 3;
+    screen.reserved = 1;
+    CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, handle, (uintptr_t)&screen, 0, 0) == EINVAL);
+    CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, handle, 0, 0, 0) == EIMBA);
+#undef CHECK
+    return failures;
+}
+
 static int clipping_checks(WORD handle, WORD max_x, WORD max_y)
 {
     VDICONTROL control = { 0 };
@@ -211,6 +337,8 @@ int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open)
         CHECK(raw_service(VDI_SERVICE_CHECK, inherited_handle, 0, 0, 0) == EIHNDL);
         CHECK(raw_service(VDI_SERVICE_CLOSE, inherited_handle, 0, 0, 0) == EIHNDL);
         CHECK(raw_service(VDI_SERVICE_LINE, inherited_handle, 2, (uintptr_t)points, 0) == EIHNDL);
+        CHECK(raw_service(VDI_SERVICE_DRAW, inherited_handle, 0, 0, 0) == EIHNDL);
+        CHECK(raw_service(VDI_SERVICE_SCREEN_COPY, inherited_handle, 0, 0, 0) == EIHNDL);
     }
     CHECK(raw_call(2, 0x73, 0, 0, 0, 0) == -1); /* generic GEM remains unavailable */
     CHECK(vdi((VDIPB *)0) == EIMBA);
@@ -320,7 +448,11 @@ int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open)
         CHECK(raw_call(1, 0x4b, PE_LOADGO, (uintptr_t)"X32VDI.TOS", (uintptr_t)tail, 0) == 0);
         CHECK(raw_service(VDI_SERVICE_CHECK, handle, 0, 0, 0) == E_OK);
     }
-    CHECK(call(&pb, 8, 0, 0) == EINVFN); /* unsupported pairs never reach legacy VDI */
+    CHECK(call(&pb, 8, 0, 0) == EINVAL); /* wrong text shape never reaches legacy VDI */
+    i = drawing_checks(handle);
+    CHECK(i == 0);
+    if (i)
+        return i;
     control.reserved = 1;
     CHECK(call(&pb, 101, 0, 0) == EINVAL);
     control.reserved = 0;

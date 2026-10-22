@@ -36,6 +36,8 @@ for line in result.stdout.splitlines():
         expected = 0 if 1 <= subcode <= 19 else -1
     elif code == 11:
         expected = 0 if 1 <= subcode <= 10 else -1
+    elif code == 102 and subcode == 1:
+        expected = 0
     elif not handler or handler == "vdi_v_nop" or subcode:
         expected = -1
     else:

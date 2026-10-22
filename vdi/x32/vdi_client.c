@@ -55,6 +55,18 @@ static LONG memory_raster(VDI_SERVICE_RASTER_REQUEST *request)
     QUAD allocation;
     LONG rc;
 
+    if (request->operation == 109 && !request->source.fd_addr &&
+        !request->destination.fd_addr) {
+        VDI_SERVICE_SCREEN_REQUEST screen;
+
+        screen.mode = request->mode;
+        screen.reserved = request->reserved;
+        for (i = 0; i < 8; i++)
+            screen.xy[i] = request->xy[i];
+        return service(VDI_SERVICE_SCREEN_COPY, (UWORD)request->handle,
+                       (uintptr_t)&screen, 0, 0);
+    }
+
     rc = service(VDI_SERVICE_CHECK, (UWORD)request->handle, 0, 0, 0);
     if (rc)
         return rc;
@@ -82,6 +94,51 @@ static LONG memory_raster(VDI_SERVICE_RASTER_REQUEST *request)
     return E_OK;
 }
 
+static LONG draw(VDIPB *pb, VDICONTROL *control)
+{
+    VDI_SERVICE_DRAW_REQUEST request = { 0 };
+    VDI_SERVICE_DRAW_RESULT result;
+    WORD ni, np;
+    LONG i, rc;
+
+    if (!zero_tail(control, 0) || control->nintin > VDI_SERVICE_MAX_TEXT ||
+        control->nptsin > 2)
+        return EINVAL;
+    if ((control->nintin && ((uintptr_t)pb->intin & 1)) ||
+        (control->nptsin && ((uintptr_t)pb->ptsin & 1)) ||
+        !accessible(pb->intin, control->nintin * sizeof(WORD), FALSE) ||
+        !accessible(pb->ptsin, control->nptsin * 2 * sizeof(WORD), FALSE))
+        return EIMBA;
+    request.code = control->code;
+    request.subcode = control->subcode;
+    request.nintin = control->nintin;
+    request.nptsin = control->nptsin;
+    for (i = 0; i < request.nintin; i++)
+        request.intin[i] = pb->intin[i];
+    for (i = 0; i < request.nptsin * 2; i++)
+        request.ptsin[i] = pb->ptsin[i];
+    rc = vdi_user_draw_shape(&request, &ni, &np);
+    if (rc)
+        return rc;
+    if ((ni && ((uintptr_t)pb->intout & 1)) ||
+        (np && ((uintptr_t)pb->ptsout & 1)) ||
+        !accessible(pb->intout, ni * sizeof(WORD), TRUE) ||
+        !accessible(pb->ptsout, np * 2 * sizeof(WORD), TRUE))
+        return EIMBA;
+    rc = service(VDI_SERVICE_DRAW, (UWORD)control->handle,
+                 (uintptr_t)&request, (uintptr_t)&result, 0);
+    if (rc)
+        return rc;
+    for (i = 0; i < ni; i++)
+        pb->intout[i] = result.intout[i];
+    for (i = 0; i < np * 2; i++)
+        pb->ptsout[i] = result.ptsout[i];
+    control->nintout = ni;
+    control->nptsout = np;
+    *pb->contrl = *control;
+    return E_OK;
+}
+
 LONG vdi(VDIPB *parameter_block)
 {
     VDIPB pb;
@@ -106,6 +163,9 @@ LONG vdi(VDIPB *parameter_block)
     if (kind == VDI_USER_UNSUPPORTED || kind == VDI_USER_FONT_LOAD)
         return EINVFN;
     switch (control.code) {
+    case 8: case 11: case 12: case 15: case 16: case 22: case 23:
+    case 24: case 25: case 32: case 38: case 102: case 113: case 114:
+        return draw(&pb, &control);
     case 100:
         nintin = 11;
         nintout = 45;
