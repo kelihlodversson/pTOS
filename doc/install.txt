@@ -14,9 +14,12 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
           sudo apt-get update
           sudo apt-get install cross-mintelf-essential
 
-      The CI build installs this package from the same PPA too, plus the
-      older cross-mint one for the a.out choice and the tools "make
-      release" needs, see .github/actions/setup-toolchain/action.yml.
+      That PPA's gcc has no -mfastcall, which the CONF_WITH_MFASTCALL
+      configurations need.  The CI build therefore uses only Thorsten
+      Otto's prebuilt m68k-atari-mintelf toolchain (gcc, binutils and
+      mintlib from https://tho-otto.m68k.eu/crossmint.php), see
+      .github/actions/setup-toolchain/action.yml; it works for every
+      m68k configuration.
 
       Three m68k toolchains are offered, chosen under "m68k toolchain"
       in the Toolchain menu:

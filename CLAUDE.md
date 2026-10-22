@@ -86,8 +86,9 @@ unbuildable. The two cases that trip agents most often:
 - pc-x86_64 uses the host's native gcc: `make CROSS_COMPILE=`.
 - `CONF_WITH_MFASTCALL=y` configs (amiga, amiga-kickdisk, the `*-fastcall`
   ones) need Thorsten Otto's toolchain, because the PPA's
-  `m68k-atari-mintelf-gcc` has no `-mfastcall`. The skill shows how to
-  install it into a user directory and put it first on `PATH`.
+  `m68k-atari-mintelf-gcc` has no `-mfastcall`. CI uses his toolchain for
+  every m68k job. The skill shows how to install it into a user directory
+  and put it first on `PATH`.
 
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.
