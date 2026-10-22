@@ -53,6 +53,7 @@
 #include <ft2build.h>
 #include <freetype/freetype.h>
 #include <freetype/fttrigon.h>
+#include <freetype/ftoutln.h>
 
 #define SF_CHARS        256
 #define SF_MIN_PIXELS   4
@@ -78,9 +79,12 @@ typedef struct sf_size
     ULONG bytes;                    /* of the whole block */
     ULONG used;                     /* when last asked for */
     WORD *scratch;                  /* the scratch buffer, after the form */
+    UBYTE *over_form;               /* the overhang form, after the scratch buffer */
+    UWORD over_fw;                  /* its row, in bytes; 0: no glyph has any overhang */
     Fonthead head;
     UWORD off[SF_CHARS + 1];
-    /* the form follows, then the scratch buffer */
+    UWORD over_off[2 * SF_CHARS + 1];   /* the overhang form's cells, see sf_build() */
+    /* the form follows, then the scratch buffer, then the overhang form */
 } SF_SIZE;
 
 #define SF_ATARI        (-1)        /* the page of the Atari character set */
@@ -291,6 +295,7 @@ typedef struct
     UWORD form_width, form_height;
     WORD skew, thicken;
     LONG half;                      /* scratch buffer half, in bytes */
+    UWORD over_fw;                  /* the overhang form's row, in bytes (0: none) */
     ULONG bytes;
     BOOL drawable;
 } SF_LAYOUT;
@@ -405,13 +410,37 @@ static LONG sf_scratch_half(const SF_LAYOUT *l)
 }
 
 /*
+ * how many columns of ink the glyph just loaded can have outside its cell,
+ * the advance 'adv' wide, to its left and right together: from its outline,
+ * which is the glyph as rendered (the pixels are those of the box, rounded
+ * out), so that the most of it is known without rendering the glyph
+ */
+static LONG sf_overhang_bound(UWORD adv)
+{
+    FT_BBox box;
+    LONG n = 0;
+
+    if (sf_face->glyph->format != FT_GLYPH_FORMAT_OUTLINE)
+        return 0;
+    FT_Outline_Get_CBox(&sf_face->glyph->outline, &box);
+    if (box.xMax <= box.xMin)
+        return 0;
+    if ((box.xMin >> 6) < 0)
+        n += -(box.xMin >> 6);
+    if (((box.xMax + 63) >> 6) > (LONG)adv)
+        n += ((box.xMax + 63) >> 6) - adv;
+
+    return n;
+}
+
+/*
  * the layout of the current face at a size (already set); FALSE when
  * FreeType ran out of memory on the way, which a retry with less of the
  * font memory in use may not
  */
 static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
 {
-    LONG x = 0;
+    LONG x = 0, over = 0;
     UWORD ch, adv;
     FT_Error err;
 
@@ -425,7 +454,10 @@ static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
         if (err == FT_Err_Out_Of_Memory)
             return FALSE;
         if (!err)                       /* a broken glyph: no width */
+        {
             adv = (UWORD)((sf_face->glyph->advance.x + 32) >> 6);
+            over += sf_overhang_bound(adv);
+        }
         if (ch && adv != l->max_cell)
             l->mono = FALSE;
         if (adv > l->max_cell)
@@ -447,7 +479,9 @@ static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
     l->skew = (l->bottom + 1) / 2 + (l->top + 1) / 2;   /* left + right offset */
     l->thicken = 1 + pixels / 24;
     l->half = sf_scratch_half(l);
-    l->bytes = sizeof(SF_SIZE) + (ULONG)l->form_width * l->form_height + 2UL * l->half;
+    l->over_fw = (over > 0 && over <= SF_MAX_WIDTH) ? (UWORD)(((over + 15) / 16) * 2) : 0;
+    l->bytes = sizeof(SF_SIZE) + (ULONG)l->form_width * l->form_height + 2UL * l->half
+             + (ULONG)l->over_fw * l->form_height;
     l->drawable = x <= SF_MAX_WIDTH && l->half <= SF_MAX_HALF;
 
     return TRUE;
@@ -473,25 +507,33 @@ static WORD sf_bearing_y(UWORD ch)
  * character's cell left to right.  The cells, and so the advances and the
  * alignment lines, stay where they are.
  */
+/* the rows of a form, upside down */
+static void sf_flip_rows(UBYTE *form, UWORD fw, UWORD fh)
+{
+    UWORD row, i;
+    UBYTE *a, *b, t;
+
+    for (row = 0; row < fh / 2; row++)
+    {
+        a = form + (ULONG)row * fw;
+        b = form + (ULONG)(fh - 1 - row) * fw;
+        for (i = 0; i < fw; i++)
+        {
+            t = a[i];
+            a[i] = b[i];
+            b[i] = t;
+        }
+    }
+}
+
 static void sf_mirror(UBYTE *form, const SF_LAYOUT *l, WORD mirror)
 {
     UWORD fw = l->form_width, fh = l->form_height, row, ch;
-    UBYTE *a, *b, t;
+    UBYTE *a;
     LONG x, left, right;
-    UWORD i;
 
     if (mirror & SF_MIRROR_X)
-        for (row = 0; row < fh / 2; row++)
-        {
-            a = form + (ULONG)row * fw;
-            b = form + (ULONG)(fh - 1 - row) * fw;
-            for (i = 0; i < fw; i++)
-            {
-                t = a[i];
-                a[i] = b[i];
-                b[i] = t;
-            }
-        }
+        sf_flip_rows(form, fw, fh);
 
     if (mirror & SF_MIRROR_Y)
         for (ch = 0; ch < SF_CHARS; ch++)
@@ -519,6 +561,45 @@ static void sf_mirror(UBYTE *form, const SF_LAYOUT *l, WORD mirror)
 }
 
 /*
+ * The ink of a rendered glyph (x0, y0 are where the top left of its bitmap
+ * goes in the form, 'fh' rows high) that is outside its cell
+ * [cell_left, cell_right): how far it goes to the left of it and to the right
+ * of it, as drawn (mirrored along the x axis, what was right of the cell is
+ * left of it)
+ */
+static void sf_ink_outside(const FT_Bitmap *bm, LONG x0, WORD y0, WORD fh, LONG cell_left,
+                           LONG cell_right, BOOL mirror, LONG *left, LONG *right)
+{
+    LONG lo = cell_left, hi = cell_right, x;
+    WORD row, col, y;
+
+    for (row = 0; row < (WORD)bm->rows; row++)
+    {
+        const UBYTE *src = bm->buffer + row * bm->pitch;
+
+        y = y0 + row;
+        if (y < 0 || y >= fh)
+            continue;
+        for (col = 0; col < (WORD)bm->width; col++)
+        {
+            if (!(src[col >> 3] & (0x80 >> (col & 7))))
+                continue;
+            x = x0 + col;
+            if (x >= cell_left && x < cell_right)
+                continue;
+            if (mirror)
+                x = cell_left + cell_right - 1 - x;
+            if (x < lo)
+                lo = x;
+            if (x >= hi)
+                hi = x + 1;
+        }
+    }
+    *left = cell_left - lo;
+    *right = hi - cell_right;
+}
+
+/*
  * Measure a size, or render it: exactly that size, which the caller has
  * found fits (b->bytes and b->drawable say whether it does)
  */
@@ -531,6 +612,7 @@ static long sf_build(void *arg)
     Fonthead *h;
     UBYTE *form;
     UWORD max_ink = 0;
+    LONG ox = 0;                        /* where the next overhang cell starts */
 
     if (!sf_open(b->index))
         return -1;
@@ -553,14 +635,29 @@ static long sf_build(void *arg)
     bzero(form, (ULONG)l.form_width * l.form_height);
     memcpy(s->off, l.off, sizeof(l.off));
 
+    /*
+     * the ink that leaves its cell goes in a second form of cells, after the
+     * scratch buffer, two for each character: what is left of its cell and
+     * what is right of it (see output_run() in vdi/vdi_text.c)
+     */
+    bzero(s->over_off, sizeof(s->over_off));
+    s->over_fw = l.over_fw;
+    s->over_form = NULL;
+    if (l.over_fw)
+    {
+        s->over_form = form + (ULONG)l.form_width * l.form_height + 2UL * l.half;
+        bzero(s->over_form, (ULONG)l.over_fw * l.form_height);
+    }
+
     /* the glyphs, each in its cell, the baseline on row 'top' */
     for (ch = 0; ch < SF_CHARS; ch++)
     {
         FT_Bitmap *bm;
-        LONG x, x0, cell_left, cell_right;
+        LONG x, x0, cell_left, cell_right, lc = 0, rc = 0;
         WORD row, col, y0;
         FT_Error err;
 
+        s->over_off[2 * ch] = s->over_off[2 * ch + 1] = (UWORD)ox;
         err = FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_RENDER | SF_LOAD);
         if (err == FT_Err_Out_Of_Memory)
         {
@@ -578,6 +675,18 @@ static long sf_build(void *arg)
         cell_right = l.off[ch + 1];
         x0 = cell_left + sf_face->glyph->bitmap_left;
         y0 = l.top + 1 - sf_face->glyph->bitmap_top;
+        if (s->over_form)
+        {
+            sf_ink_outside(bm, x0, y0, l.form_height, cell_left, cell_right,
+                           (b->mirror & SF_MIRROR_Y) != 0, &lc, &rc);
+            if (lc > (LONG)l.max_cell)
+                lc = l.max_cell;
+            if (rc > (LONG)l.max_cell)
+                rc = l.max_cell;
+            if (ox + lc + rc > (LONG)s->over_fw * 8)
+                lc = rc = 0;            /* more than the outline said it could be */
+            s->over_off[2 * ch + 1] = (UWORD)(ox + lc);
+        }
         for (row = 0; row < (WORD)bm->rows; row++)
         {
             const UBYTE *src = bm->buffer + row * bm->pitch;
@@ -592,12 +701,27 @@ static long sf_build(void *arg)
                 if (!(src[col >> 3] & (0x80 >> (col & 7))))
                     continue;
                 x = x0 + col;
-                if (x < cell_left || x >= cell_right)
-                    continue;           /* outside its cell */
-                dst[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
+                if (x >= cell_left && x < cell_right)
+                    dst[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
+                else if (lc || rc)
+                {
+                    if (b->mirror & SF_MIRROR_Y)
+                        x = cell_left + cell_right - 1 - x;
+                    if (x < cell_left && x >= cell_left - lc)
+                        x = ox + (x - (cell_left - lc));
+                    else if (x >= cell_right && x < cell_right + rc)
+                        x = ox + lc + (x - cell_right);
+                    else
+                        continue;       /* further out than the cell has room for */
+                    s->over_form[(ULONG)y * l.over_fw + (x >> 3)] |= (UBYTE)(0x80 >> (x & 7));
+                }
             }
         }
+        ox += lc + rc;
     }
+    s->over_off[2 * SF_CHARS] = (UWORD)ox;
+    if (s->over_form && (b->mirror & SF_MIRROR_X))
+        sf_flip_rows(s->over_form, l.over_fw, l.form_height);
 
     sf_mirror(form, &l, b->mirror);
 
@@ -1043,6 +1167,27 @@ void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half)
 
     *buffer = s->scratch;
     *half = s->half;
+}
+
+/*
+ * the cells of ink that leave their characters' cells in a size, for the
+ * text path (vdi/vdi_text.c): two for each character, the one that goes to
+ * the left of its cell and the one to the right of it, in the form 'form'
+ * with rows of 'form_width' bytes, as high as the size's own.  FALSE if no
+ * character has any
+ */
+BOOL vdi_sfont_overhang(const Fonthead *font, const UWORD **off, const UBYTE **form,
+                        UWORD *form_width)
+{
+    const SF_SIZE *s = sf_of(font);
+
+    if (!s->over_fw)
+        return FALSE;
+    *off = s->over_off;
+    *form = s->over_form;
+    *form_width = s->over_fw;
+
+    return TRUE;
 }
 
 

@@ -149,6 +149,10 @@ ULONG vdi_sfont_cache_free(void);
 /* the text scratch buffer of a size (an F_SFONT font), and its halves' offset */
 void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half);
 
+/* the cells of ink that leave their characters' cells in a size (see vdi_sfont.c) */
+BOOL vdi_sfont_overhang(const Fonthead *font, const UWORD **off, const UBYTE **form,
+                        UWORD *form_width);
+
 #endif /* CONF_WITH_VDI_SCALABLE_FONTS */
 
 #endif /* VDI_GDOS_H */

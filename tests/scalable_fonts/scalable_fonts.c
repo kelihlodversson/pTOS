@@ -664,6 +664,109 @@ static void check_drawing(void)
     }
 }
 
+/* --- ink that leaves its cell (#607) --- */
+
+static void set_skew(short tenths)
+{
+    vs_intin[0] = tenths;
+    vs_call(handle, 253, 0, 0, 1);          /* vst_skew() */
+}
+
+/* the text, in the writing mode, drawn at (x, y) with rotation 0 */
+static void gtext_mode(short mode, short x, short y, const char *s)
+{
+    set_mode(mode);
+    gtext(x, y, s);
+}
+
+/*
+ * Slanted (vst_skew()), the top bar of a T goes past its advance, to the left
+ * of its origin when the slant is positive (the characters lean to the left)
+ * and to the right of its advance when it is negative, and the foot of a j
+ * past the other.  That ink is the glyph's as much as the rest: it is there,
+ * a character that follows does not erase it in replace mode, and turned it
+ * is the same ink turned.
+ */
+static void check_overhang(void)
+{
+    static const short angles[] = { 0, 900, 1800, 2700 };
+    struct ink a, b, turned[4];
+    short x = AREA_X + 40, y = AREA_Y + 10, adv, i, planes;
+
+    vs_intin[0] = 1;
+    vs_call(handle, 102, 0, 0, 1);          /* vq_extnd(1): the planes */
+    planes = vs_intout[4];
+
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(0);
+    adv = (short)string_extent("T");
+    CHECK(adv > 8, "the advance of a T is", adv, 0);
+
+    /* leaning to the left: ink to the left of the origin */
+    set_skew(150);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&a);
+    CHECK(a.count > 0, "a skewed T is not drawn:", 0, 0);
+    CHECK(a.x0 < x, "the ink of a T leaning left is cut at its cell:", a.x0, x);
+
+    /* leaning to the right: ink past the advance */
+    set_skew(-150);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&a);
+    CHECK(a.x1 >= x + adv, "the ink of a T leaning right is cut at its cell:", a.x1, x + adv);
+
+    /*
+     * two of them in replace mode: the second's cell, background and all,
+     * must not cover the ink of the first that is over it; the same as
+     * each in transparent mode
+     */
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "TT");
+    scan(&a);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(2, x, y, "T");
+    gtext_mode(2, x + adv, y, "T");
+    scan(&b);
+    CHECK(a.hash == b.hash && a.count == b.count,
+          "replace mode erases the ink of a character that leaves its cell:", a.count, b.count);
+
+    /* turned: the same ink, in the same number of pixels, a quarter at a time */
+    for (i = 0; i < 4; i++)
+    {
+        short tx, ty;
+
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        place("T", angles[i], &tx, &ty);
+        set_mode(1);
+        gtext(tx, ty, "T");
+        set_rotation(0);
+        scan(&turned[i]);
+        CHECK(turned[i].count > 0, "a turned skewed T is not drawn:", angles[i], 0);
+    }
+    for (i = 1; i < 4; i++)
+    {
+        short w0 = turned[0].x1 - turned[0].x0, h0 = turned[0].y1 - turned[0].y0;
+        short w = turned[i].x1 - turned[i].x0, h = turned[i].y1 - turned[i].y0;
+
+        if (i == 2)
+            CHECK(w == w0 && h == h0, "a skewed T turned a half has another size:", i, 0);
+        else
+            CHECK(w == h0 && h == w0, "a skewed T turned a quarter has another size:", i, 0);
+        if (planes <= 8)
+            CHECK(turned[i].count == turned[0].count,
+                  "a skewed T turned has another number of pixels:", i,
+                  turned[i].count - turned[0].count);
+    }
+    set_skew(0);
+    set_mode(1);
+}
+
 /* --- memory --- */
 
 static long font_memory(void)
@@ -873,6 +976,7 @@ void test_scalable_fonts(void)
     SECTION(check_rotation);
     SECTION(check_alignment);
     SECTION(check_drawing);
+    SECTION(check_overhang);
     SECTION(check_memory);
     SECTION(check_unsupported);
 
