@@ -131,7 +131,7 @@ WORD ap_getinfo(WORD type, WORD *out1, WORD *out2, WORD *out3, WORD *out4)
         return FALSE;
 
     *out1 = gsx_screen_rez() + 2;   /* graphics device */
-    *out2 = gl_ws.ws_ncolors;       /* AES object colours */
+    *out2 = gl_ws.ws_ncolors > 16 ? 16 : gl_ws.ws_ncolors;
 #if CONF_WITH_COLOUR_ICONS
     *out3 = TRUE;                   /* AES_SYSTEM: colour icons supported */
     *out4 = TRUE;                   /* AES_SYSTEM: extended RSC format supported */
