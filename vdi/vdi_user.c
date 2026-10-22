@@ -15,6 +15,8 @@ enum vdi_user_kind vdi_user_control_kind(WORD code, WORD subcode)
         return subcode >= 1 && subcode <= 19 ? VDI_USER_ARRAYS : VDI_USER_UNSUPPORTED;
     if (code == 11)
         return subcode >= 1 && subcode <= 10 ? VDI_USER_ARRAYS : VDI_USER_UNSUPPORTED;
+    if (code == 102 && subcode == 1)
+        return VDI_USER_ARRAYS;
     if (subcode != 0)
         return VDI_USER_UNSUPPORTED;    /* includes disabled Bezier subcode 13 */
 

@@ -12,6 +12,7 @@
 #include "string.h"
 #include "biosbind.h"
 #include "intmath.h"
+#include "gsxdefs.h"
 #include "procmem.h"
 #include "../../../bdos/kproc.h"
 #if CONF_WITH_USER_CALLBACKS
@@ -405,13 +406,105 @@ static LONG pixel_call(UQUAD handle, UQUAD x, UQUAD y, UQUAD address)
     return kproc_copy_to_user(address, output, sizeof(output)) ? E_OK : EIMBA;
 }
 
+/* Drawing always intersects the virtual clip with the physical screen,
+ * including when the client has disabled its optional clip rectangle. */
+static void bounded_invoke(VDICONTROL *control, WORD *input, WORD *points,
+                            WORD *output, WORD *outpoints)
+{
+    Vwk *vwk = get_vwk_by_handle(control->handle);
+    VwkClip saved = *VDI_CLIP(vwk);
+    VwkClip clip = { 0, min((LONG)linea_vars.V_REZ_HZ - 1, 32767L),
+                    0, min((LONG)linea_vars.V_REZ_VT - 1, 32767L) };
+    WORD enabled = vwk->clip;
+
+    if (enabled) {
+        clip.xmn_clip = max(clip.xmn_clip, saved.xmn_clip);
+        clip.xmx_clip = min(clip.xmx_clip, saved.xmx_clip);
+        clip.ymn_clip = max(clip.ymn_clip, saved.ymn_clip);
+        clip.ymx_clip = min(clip.ymx_clip, saved.ymx_clip);
+    }
+    if (clip.xmn_clip <= clip.xmx_clip && clip.ymn_clip <= clip.ymx_clip) {
+        *VDI_CLIP(vwk) = clip;
+        vwk->clip = TRUE;
+        invoke(control, input, points, output, outpoints);
+    }
+    *VDI_CLIP(vwk) = saved;
+    vwk->clip = enabled;
+    linea_vars.CLIP = enabled;
+    linea_vars.XMINCL = saved.xmn_clip;
+    linea_vars.XMAXCL = saved.xmx_clip;
+    linea_vars.YMINCL = saved.ymn_clip;
+    linea_vars.YMAXCL = saved.ymx_clip;
+}
+
+static LONG draw_call(WORD handle, UQUAD input, UQUAD output)
+{
+    VDI_SERVICE_DRAW_REQUEST request;
+    VDI_SERVICE_DRAW_RESULT result = { 0 };
+    VDICONTROL control = { 0 };
+    LONG rc, i;
+
+    if ((input & 1) || (output & 1) ||
+        !kproc_copy_from_user(&request, input, sizeof(request)) ||
+        !kproc_validate_user_write(output, sizeof(result)))
+        return EIMBA;
+    rc = vdi_user_draw_shape(&request, &result.nintout, &result.nptsout);
+    if (rc)
+        return rc;
+    for (i = 0; i < request.nptsin * 2; i++)
+        if (request.ptsin[i] < -MAX_COORDINATE || request.ptsin[i] > MAX_COORDINATE)
+            return EINVAL;
+    control.code = request.code;
+    control.subcode = request.subcode;
+    control.handle = handle;
+    control.nintin = request.nintin;
+    control.nptsin = request.nptsin;
+    if (request.code == 8 || request.code == 11 || request.code == 114)
+        bounded_invoke(&control, request.intin, request.ptsin, result.intout, result.ptsout);
+    else
+        invoke(&control, request.intin, request.ptsin, result.intout, result.ptsout);
+    return kproc_copy_to_user(output, &result, sizeof(result)) ? E_OK : EIMBA;
+}
+
+static LONG screen_copy(WORD handle, UQUAD input)
+{
+    VDI_SERVICE_SCREEN_REQUEST request;
+    VDICONTROL control = { 0 };
+    FDB screen = { 0 };
+    WORD integers[45], points[12];
+    LONG i;
+
+    if ((input & 1) || !kproc_copy_from_user(&request, input, sizeof(request)))
+        return EIMBA;
+    if (request.reserved || request.mode < 0 || request.mode > 15)
+        return EINVAL;
+    for (i = 0; i < 8; i += 4)
+        if (request.xy[i] < 0 || request.xy[i + 1] < 0 ||
+            request.xy[i + 2] < request.xy[i] || request.xy[i + 3] < request.xy[i + 1] ||
+            request.xy[i + 2] - request.xy[i] > 32766 ||
+            request.xy[i + 3] - request.xy[i + 1] > 32766 ||
+            request.xy[i + 2] >= linea_vars.V_REZ_HZ ||
+            request.xy[i + 3] >= linea_vars.V_REZ_VT)
+            return EINVAL;
+    if (request.xy[2] - request.xy[0] != request.xy[6] - request.xy[4] ||
+        request.xy[3] - request.xy[1] != request.xy[7] - request.xy[5])
+        return EINVAL;
+    control.code = 109;
+    control.handle = handle;
+    control.nintin = 1;
+    control.nptsin = 4;
+    control.ptr1 = control.ptr2 = &screen;
+    bounded_invoke(&control, &request.mode, request.xy, integers, points);
+    return E_OK;
+}
+
 LONG vdi_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
     if (!kproc_user_aspace(run))
         return EACCDN;
     if (fn == VDI_SERVICE_OPEN)
         return open_workstation(a, b);
-    if (fn > VDI_SERVICE_PIXEL)
+    if (fn > VDI_SERVICE_SCREEN_COPY)
         return EINVFN;
     if (!owned(a))
         return EIHNDL;
@@ -430,6 +523,10 @@ LONG vdi_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         return vector_call(b, c, d);
     case VDI_SERVICE_PIXEL:
         return pixel_call(a, b, c, d);
+    case VDI_SERVICE_DRAW:
+        return d ? EINVAL : draw_call((WORD)a, b, c);
+    case VDI_SERVICE_SCREEN_COPY:
+        return (c || d) ? EINVAL : screen_copy((WORD)a, b);
     default:
         return EINVFN;
     }

@@ -121,6 +121,54 @@ static int callback_types(void)
 }
 #endif
 
+static int draw_checks(void)
+{
+    VDI_SERVICE_DRAW_REQUEST r = { 0 };
+    WORD ni, np;
+    int failures = 0;
+
+#define CHECK(condition) do { if (!(condition)) failures++; } while (0)
+    r.code = 8;
+    r.nptsin = 1;
+    r.nintin = VDI_SERVICE_MAX_TEXT;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == E_OK && !ni && !np);
+    r.nintin++;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVAL);
+    r.nintin = -1;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVAL);
+    r.nintin = 0;
+    r.intin[VDI_SERVICE_MAX_TEXT - 1] = 1;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVAL);
+    r.intin[VDI_SERVICE_MAX_TEXT - 1] = 0;
+    r.code = 12;
+    r.ptsin[1] = 16;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == E_OK && !ni && np == 2);
+    r.ptsin[1] = 0;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVAL);
+    r.ptsin[1] = 257;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVAL);
+    r.ptsin[1] = 0;
+    r.nptsin = 0;
+    r.code = 102;
+    r.nintin = r.intin[0] = 1;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == E_OK && ni == 45 && np == 6);
+    r.subcode = 1;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == E_OK);
+    r.intin[0] = 0;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVAL);
+    r.code = 11;
+    r.nintin = 0;
+    r.nptsin = 2;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == E_OK);
+    r.subcode = 2;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVFN);
+    r.code = 119;
+    r.subcode = 0;
+    CHECK(vdi_user_draw_shape(&r, &ni, &np) == EINVFN);
+#undef CHECK
+    return failures;
+}
+
 int vdi_contract_checks(void)
 {
     VDI_USER_FDB form = { 0 };
@@ -131,6 +179,7 @@ int vdi_contract_checks(void)
     CHECK(sizeof(VDICONTROL) == 28 && sizeof(VDIPB) == 20);
     CHECK(sizeof(((VDIPB *)0)->ptsin) == 4);
     CHECK(raster_checks() == 0);
+    CHECK(draw_checks() == 0);
     CHECK(vdi_user_control_kind(1, 0) == VDI_USER_ARRAYS);
     CHECK(vdi_user_control_kind(100, 0) == VDI_USER_ARRAYS);
     CHECK(vdi_user_control_kind(6, 0) == VDI_USER_ARRAYS);
@@ -219,6 +268,7 @@ int main(int argc, char **argv)
         for (subcode = 1; subcode <= 100; subcode++) {
             printf("5 %d %d\n", subcode, vdi_user_control_kind(5, subcode));
             printf("11 %d %d\n", subcode, vdi_user_control_kind(11, subcode));
+            printf("102 %d %d\n", subcode, vdi_user_control_kind(102, subcode));
         }
     }
     return vdi_contract_checks();
