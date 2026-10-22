@@ -917,7 +917,7 @@ static void check_rescan(void)
     short n0, n1, n2, id_mono, id_copy, other, i;
     long rc;
     char file[sizeof COPY_FILE], name[sizeof COPY_NAME];
-    char *candidate = "23456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    char *candidate = "23456789ABCDEFGHIJKLMNOPQRSUVWXYZ";    /* no T: PTOSTEST.TTF is the fixture */
 
     n0 = unload_load();
     id_mono = font_by_name(FONT_NAME, system_fonts + n0);
