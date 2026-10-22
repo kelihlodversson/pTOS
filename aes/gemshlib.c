@@ -707,7 +707,11 @@ static WORD sh_ldapp(SHELL *psh)
             if (ret == EFILNF)
                 ret = no_shell_alert(shell_names_gui);
 #endif
-            psh->sh_isgem = TRUE;           /* back to the desktop after a console shell */
+            /* back to the desktop after a console shell; but not over what the
+             * desktop asked for with shel_write() (a .TOS program is run in
+             * alpha mode) */
+            if (psh->sh_nextapp == DESKTOP_APP)
+                psh->sh_isgem = TRUE;
 
             /* like an application: clean up after one that left without appl_exit() */
             if (rlr->p_flags & AP_OPEN)

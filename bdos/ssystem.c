@@ -523,7 +523,11 @@ static LONG ssystem_deskinfo(long arg1, LONG arg2)
 
     info.bootflags = bootflags;
     info.rez_changeable = rez_changeable();
+#if CONF_WITH_ALT_RAM
     info.has_alt_ram = has_alt_ram != 0;
+#else
+    info.has_alt_ram = 0;
+#endif
 #if CONF_WITH_CACHE_CONTROL
     info.cache_exists = cache_exists();
 #else
