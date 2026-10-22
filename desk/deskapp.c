@@ -1093,7 +1093,7 @@ static WORD desk_get_videomode(void)
 #else
 
 #if CONF_WITH_VIDEL
-    mode = get_videl_mode();
+    mode = desk_videl_mode();
     if (!mode)                      /* i.e. not videl */
 #endif
         mode = 0xff00 | Getrez();

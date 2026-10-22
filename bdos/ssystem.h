@@ -145,11 +145,16 @@ struct mem_info {
 /* items of S_DESKSET */
 #define DESKSET_CEH         1   /* the critical error handler shows alerts: 0 or 1 */
 #define DESKSET_BACKGROUND  2   /* the pattern and colour of the AES desktop (a byte) */
+#define DESKSET_CACHE       3   /* the CPU caches on or off (0 or 1), where there is cache control */
 
 struct desk_info {
     ULONG bootflags;        /* BOOTFLAG_* (include/biosext.h) */
     UWORD rez_changeable;   /* the resolution can be changed */
     UWORD has_alt_ram;      /* there is alternative (TT) RAM */
+    UWORD cache_exists;     /* DESKSET_CACHE has an effect */
+    UWORD can_shutdown;     /* Shutdown() can power off or reset the machine */
+    UWORD has_videl;        /* a Falcon VIDEL */
+    UWORD has_tt_shifter;   /* a TT shifter */
 };
 
 struct console_dim {

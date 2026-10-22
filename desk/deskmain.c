@@ -403,12 +403,16 @@ static void detect_features(void)
     can_change_resolution = desk_rez_changeable();
     blitter_is_present = Blitmode(-1) & 0x0002;
 #if CONF_WITH_CACHE_CONTROL
-    cache_is_present = cache_exists();
+    cache_is_present = desk_cache_exists();
 #endif
 }
 
 
 #if CONF_WITH_CACHE_CONTROL
+#if CONF_EXTERNAL_DESK
+/* the kernel does it (Ssystem()) */
+#define desk_apply_cache()  desk_set_cache(G.g_cache)
+#else
 /*
  * Routine to set cache on/off: must be Supexec'd because the set_cache()
  * function must run in supervisor state
@@ -421,6 +425,8 @@ static LONG desktop_set_cache(void)
     set_cache(G.g_cache);
     return 0;
 }
+#define desk_apply_cache()  Supexec((LONG)desktop_set_cache)
+#endif
 #endif
 
 
@@ -595,7 +601,7 @@ static void men_update(void)
 #endif
 
 #if CONF_WITH_SHUTDOWN
-    menu_ienable(tree, QUITITEM, can_shutdown());
+    menu_ienable(tree, QUITITEM, desk_can_shutdown());
 #endif
 
     menu_ienable(tree, RESITEM, can_change_resolution);
@@ -949,7 +955,7 @@ static WORD do_optnmenu(WORD item)
     case CACHITEM:
         G.g_cache = !G.g_cache;
         menu_icheck(desk_rs_trees[ADMENU], CACHITEM, G.g_cache);    /* flip cache mode */
-        Supexec((LONG)desktop_set_cache);   /* uses G.g_cache */
+        desk_apply_cache();   /* uses G.g_cache */
         break;
 #endif
     }
@@ -2113,7 +2119,7 @@ BOOL deskmain(void)
      * we now have the cache state from EMUDESK.INF, so we can apply it
      */
     if (cache_is_present)
-        Supexec((LONG)desktop_set_cache);
+        desk_apply_cache();
 #endif
 
     men_update();
