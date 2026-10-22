@@ -625,7 +625,7 @@ static LONG try_shell(const char *path, void *unused)
     missing = dos_sfirst(D.s_cmd, FA_RO | FA_HIDDEN | FA_SYSTEM);
     dos_sdta(save_dta);
     if (missing)
-        return EFILNF;
+        return missing;     /* EFILNF, EPTHNF and EDRIVE go on to the next, others are the result */
 
     /* a console program (.TOS) runs in alpha mode, the desktop and the other
      * GEM programs in graphics mode */
@@ -722,7 +722,8 @@ static WORD sh_ldapp(SHELL *psh)
                     ap_rdwr(MU_MESAG, rlr, rlr->p_qindex, (WORD *)D.g_valstr);
                 rlr->p_flags &= ~AP_OPEN;
             }
-            if (ret != 0)
+            /* a shell that left holding a wind_update() or the mouse (or failed) */
+            if (ret != 0 || gl_shgem)
                 wm_new();   /* run wind_new() to clean up */
         }
         return (ret < 0) ? ret : 0;
