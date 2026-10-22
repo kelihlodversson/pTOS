@@ -347,6 +347,13 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
         left = off[2 * temp + 1] - off[2 * temp];
         right = off[2 * temp + 2] - off[2 * temp + 1];
     }
+    /*
+     * XOR toggles a pixel each time it is drawn: the cell and a piece, each
+     * thickened, outlined or slanted by itself, overlap, and would toggle the
+     * same pixels twice.  That ink is left as the cells have it.
+     */
+    if (linea_vars.WRT_MODE == WM_XOR && (linea_vars.STYLE & (F_THICKEN | F_OUTLINE | F_SKEW)))
+        left = right = 0;
     if (left > 0 || right > 0)
     {
         linea_vars.FBASE = form;
@@ -446,6 +453,15 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
     linea_vars.WRT_MODE = vwk->wrt_mode;
 
     linea_vars.CLIP = vwk->clip;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /*
+     * the ink outside the cells can be off the screen where the cells are
+     * not (a j at the left edge): the bounds of the workstation are the
+     * screen's if it does not clip, so this clips it to the screen
+     */
+    if (over_pass)
+        linea_vars.CLIP = TRUE;
+#endif
     linea_vars.XMINCL = vwk->xmn_clip;
     linea_vars.YMINCL = vwk->ymn_clip;
     linea_vars.XMAXCL = vwk->xmx_clip;

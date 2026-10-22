@@ -863,6 +863,67 @@ static void check_overhang(void)
 }
 
 /*
+ * Ink that leaves the cell is drawn where the cell is not: at the edge of
+ * the screen a j (or the T of a slant to the left) has ink at a negative x,
+ * which is not drawn (with clipping off, which is the default, it would
+ * come back at the other end of the line above)
+ */
+static void check_overhang_edge(void)
+{
+    struct ink right_edge, left_edge;
+    short xres, y = AREA_Y + 10;
+
+    vs_intin[0] = 0;
+    vs_call(handle, 102, 0, 0, 1);          /* vq_extnd(0): the width of the screen, less 1 */
+    xres = vs_intout[0];
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(150);                          /* leaning left: ink left of the origin */
+    clear_area(xres - 15, y - 3, xres, y + 50);
+    clear_area(0, y - 3, 40, y + 50);
+    gtext_mode(1, 0, y, "T");
+    scan_in(&right_edge, xres - 15, y - 3, xres, y + 50);
+    scan_in(&left_edge, 0, y - 3, 40, y + 50);
+    CHECK(left_edge.count > 0, "a T at the left edge is not drawn:", 0, 0);
+    CHECK(right_edge.count == 0, "ink left of the screen comes back at the right:",
+          right_edge.count, 0);
+    clear_area(0, y - 3, 40, y + 50);
+    set_skew(0);
+}
+
+/* XOR: bold text, whose ink goes outside its cells, is drawn, and twice it is gone */
+static void check_overhang_xor(void)
+{
+    struct ink a;
+    short x = AREA_X + 40, y = AREA_Y + 10, effects;
+    static const short styles[] = { 1 };
+
+    set_height(30);
+    set_top_left();
+    set_color(1);
+    set_rotation(0);
+    set_skew(-150);
+    for (effects = 0; effects < 1; effects++)
+    {
+        set_effects(styles[effects]);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(3, x, y, "T");
+        scan(&a);
+        CHECK(a.count > 0, "XOR text with an effect is not drawn:", styles[effects], 0);
+        gtext_mode(3, x, y, "T");
+        scan(&a);
+        CHECK(a.count == 0, "XOR text with an effect drawn twice is not gone:", styles[effects],
+              a.count);
+    }
+    set_effects(0);
+    set_skew(0);
+    set_mode(1);
+}
+
+/*
  * a size in points, 16.16, as vst_arbpt32() (opcode 246) or vst_setsize32()
  * (252) take it: a long as it is in memory, the high word first only on a
  * big endian machine
@@ -1360,6 +1421,8 @@ void test_scalable_fonts(void)
     SECTION(check_drawing);
     SECTION(check_overhang);
     SECTION(check_overhang_mirror);
+    SECTION(check_overhang_edge);
+    SECTION(check_overhang_xor);
     SECTION(check_memory);
     SECTION(check_unsupported);
     SECTION(check_overhang_italic);
