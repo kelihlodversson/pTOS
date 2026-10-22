@@ -360,6 +360,10 @@ static long ssystem_ok(const long *pw)
      * a user process.  (Without address spaces every caller is trusted.) */
     if (mode >= 0x000d && mode <= 0x000f)
         return EACCDN;
+    /* S_DESKSET changes the state of the AES and of the CPU caches, for the
+     * desktop of a kernel that has no address spaces */
+    if (mode == S_DESKSET)
+        return EACCDN;
 #endif
     if (mode == S_KNAME)                                /* the buffers of the strings */
         return string_buf_ok(arg1, size, sizeof(SSYSTEM_KNAME));
@@ -375,6 +379,9 @@ static long ssystem_ok(const long *pw)
     if (mode == (WORD)0xfffe && size > 0)               /* S_CONSOLE_DIM struct */
         return buf_ok(arg1, size < (long)sizeof(struct console_dim) ? size
                             : (long)sizeof(struct console_dim), TRUE);
+    if (mode == S_DESKINFO && size > 0)                 /* S_DESKINFO struct */
+        return buf_ok(arg1, size < (long)sizeof(struct desk_info) ? size
+                            : (long)sizeof(struct desk_info), TRUE);
     return E_OK;
 }
 

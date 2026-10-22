@@ -169,6 +169,8 @@ config CONF_EXTERNAL_DESK
 config CONF_WITH_VDI_CICON_TEST
 	bool "Embedded colour-icon rendering test"
 	depends on CONF_WITH_AES && CONF_WITH_COLOUR_ICONS && !CONF_WITH_LEGACY_RSC_LOAD
+	# it uses the AES resource loader and an embedded resource of the kernel
+	depends on !CONF_EXTERNAL_DESK
 	default n
 	help
 	  Test hook for issue #107: embeds a hand-built 'new format' RSC

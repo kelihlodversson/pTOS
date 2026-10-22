@@ -2229,6 +2229,9 @@ BOOL deskmain(void)
     /* give up the desktop */
     wind_set(DESKWH, WF_NEWDESK, NULL, 0, 0);
 
+    /* close the VDI workstation of the program (CONF_EXTERNAL_DESK) */
+    desk_rt_exit();
+
     /* exit the gem AES */
     appl_exit();
 
