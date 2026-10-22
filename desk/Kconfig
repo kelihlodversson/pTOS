@@ -129,6 +129,40 @@ config CONF_WITH_EASTER_EGG
 	default n if TARGET_192
 	default y
 
+config CONF_EXTERNAL_DESK
+	bool "Load EmuDesk from the boot drive instead of linking it in"
+	depends on CONF_WITH_AES && !ARCH_COLDFIRE && !ARCH_X86_64
+	depends on ((ARCH_ARM || BUILD_TOOLCHAIN_ELF) && CONF_WITH_ELF_LOADER) || (ARCH_M68K && !BUILD_TOOLCHAIN_ELF && CONF_WITH_PRG_LOADER)
+	# the program talks to the VDI through trap #2, which a process in its
+	# own address space cannot do until #548
+	depends on !CONF_WITH_USER_ASPACE
+	select CONF_WITH_SSYSTEM
+	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
+	help
+	  Build the desktop as an ordinary program, emudesk.prg, and leave it
+	  out of the kernel image.  The AES starts it with Pexec() from the
+	  root directory of the boot drive (EMUDESK.PRG) when it runs the
+	  desktop, and reads its settings from EMUDESK.INF there as before.
+	  If the file is not there, the AES says so on the console and runs
+	  EmuCON instead.
+
+	  The program is made of the objects of desk/, the helpers of util/
+	  and a small runtime (desk/deskrt.c) that gets what the kernel's own
+	  desktop read from its variables -- the screen and character cell
+	  sizes, the boot flags, whether the resolution can change -- through
+	  the AES, the VDI and Ssystem(), which this option therefore turns on
+	  on m68k.  It has to be on the boot drive: "make test-dir", "make
+	  test-hd" and the Raspberry Pi archives put it there.
+
+	  Needs the loader of the program's format: ELF on ARM and with the
+	  bare m68k-elf toolchain (CONF_WITH_ELF_LOADER), PRG with the other
+	  m68k toolchains.  Not offered for ColdFire, nor for x86-64 (#651),
+	  nor with the MMU kernels, whose processes cannot reach the VDI yet
+	  (#548).
+
+	  On by default for the images that are loaded into RAM from a disk
+	  (Raspberry Pi, virt-arm, virt-m68k).
+
 config CONF_WITH_VDI_CICON_TEST
 	bool "Embedded colour-icon rendering test"
 	depends on CONF_WITH_AES && CONF_WITH_COLOUR_ICONS && !CONF_WITH_LEGACY_RSC_LOAD

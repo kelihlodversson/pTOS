@@ -52,6 +52,7 @@
 #include "miscutil.h"
 
 #include "gemshlib.h"
+#include "shells.h"
 #include "../desk/deskstub.h"
 
 #if CONF_WITH_CLI && !CONF_EXTERNAL_CLI
@@ -602,6 +603,25 @@ static void set_default_desktop(SHELL *psh)
 }
 
 
+
+#if CONF_EXTERNAL_DESK || (CONF_WITH_CLI && CONF_EXTERNAL_CLI)
+/*
+ * A shell that is a program (include/shells.h): the file of that name in the
+ * root directory of the boot drive.  The environment is the AES' own, with
+ * the LANG that the programs take their language from.
+ */
+static LONG try_shell(const char *name, void *unused)
+{
+    MAYBE_UNUSED(unused);
+    strcpy(D.s_cmd, "A:\\");
+    D.s_cmd[0] += bootdev;
+    strcat(D.s_cmd, name);
+    p_nameit(rlr, sh_name(D.s_cmd));
+    p_setappdir(rlr, D.s_cmd);
+    return dos_exec(PE_LOADGO, D.s_cmd, "", ad_envrn);
+}
+#endif
+
 static WORD sh_ldapp(SHELL *psh)
 {
     char *fname = sh_name(D.s_cmd);     /* filename portion of program */
@@ -612,8 +632,43 @@ static WORD sh_ldapp(SHELL *psh)
 
     if (psh->sh_nextapp == DESKTOP_APP)
     {
-        /* Start the ROM desktop: */
         sh_show("");        /* like TOS, we don't display a name */
+#if CONF_EXTERNAL_DESK
+        /*
+         * The desktop is a program (EMUDESK.PRG, or the first of the other
+         * shells of include/shells.h that is there).  With a built-in
+         * EmuCON it is the one fallback; without, the list goes on.
+         */
+        {
+            const char *found;
+#if CONF_WITH_CLI != 0 && !CONF_EXTERNAL_CLI
+            ret = shell_start(shell_names_desk, try_shell, NULL, &found);
+            if (ret == EFILNF)
+            {
+                KINFO(("sh_ldapp(): no desktop in the root directory of the boot drive\n"));
+                aes_run_rom_program(coma_start);
+                ret = 0;
+            }
+#else
+            ret = shell_start(shell_names_gui, try_shell, NULL, &found);
+            if (ret == EFILNF)
+                KINFO(("sh_ldapp(): no shell in the root directory of the boot drive\n"));
+#endif
+            /* like an application: clean up after one that left without appl_exit() */
+            if (rlr->p_flags & AP_OPEN)
+            {
+                KDEBUG(("sh_ldapp: appl_init() without appl_exit()\n"));
+                mn_cleanup();
+                if (rlr->p_qindex)
+                    ap_rdwr(MU_MESAG, rlr, rlr->p_qindex, (WORD *)D.g_valstr);
+                rlr->p_flags &= ~AP_OPEN;
+            }
+            if (ret != 0)
+                wm_new();   /* run wind_new() to clean up */
+        }
+        return (ret < 0) ? ret : 0;
+#else
+        /* Start the ROM desktop: */
         p_nameit(rlr, fname);
         p_setappdir(rlr, D.s_cmd);
         if (aes_run_rom_program(deskstart))
@@ -622,6 +677,7 @@ static WORD sh_ldapp(SHELL *psh)
             wm_new();           /* run wind_new() to clean up */
         }
         return 0;
+#endif
     }
 
 #if CONF_WITH_CLI != 0
@@ -629,12 +685,14 @@ static WORD sh_ldapp(SHELL *psh)
     {
         /* start the EmuCON shell: */
 #if CONF_EXTERNAL_CLI
-        /* ... the program EMUCON.TOS, in the root directory of the boot drive */
-        strcpy(D.s_cmd, "A:\\EMUCON.TOS");
-        D.s_cmd[0] += bootdev;
-        p_nameit(rlr, sh_name(D.s_cmd));
-        p_setappdir(rlr, D.s_cmd);
-        ret = dos_exec(PE_LOADGO, D.s_cmd, "", ad_envrn);
+        /* ... a program: EMUCON.TOS, or the first of the others of include/shells.h */
+        {
+            const char *found;
+
+            ret = shell_start(shell_names_cli, try_shell, NULL, &found);
+            if (ret == EFILNF)
+                KINFO(("sh_ldapp(): no shell in the root directory of the boot drive\n"));
+        }
 #elif ARCH_X86_64
         {
             extern void start_builtin_cli(char *env);

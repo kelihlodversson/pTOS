@@ -33,6 +33,7 @@
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
+#include "deskrt.h"
 #include "intmath.h"
 #include "aesbind.h"
 #include "deskobj.h"

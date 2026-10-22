@@ -22,6 +22,7 @@
 #include "emutos.h"
 #include "biosext.h"
 #include "bios.h"
+#include "shells.h"
 #include "../bdos/bdosstub.h"
 #include "../vdi/vdistub.h"
 #include "bdosbind.h"
@@ -289,19 +290,32 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
 #if CONF_WITH_CLI && CONF_EXTERNAL_CLI
 /*
- * EmuCON is the program EMUCON.TOS (cli/Makefile), loaded from the root
- * directory of the boot drive like any other program: it is no part of this
- * image.  It returns here when the user leaves it.
+ * The shell of an image without the AES is a program, loaded from the root
+ * directory of the boot drive like any other: EmuCON (cli/Makefile), or the
+ * first of the others that shells.h lists that is there.  It is no part of
+ * this image.  It returns here when the user leaves it.
  */
+static LONG try_shell(const char *name, void *env)
+{
+    return Pexec(PE_LOADGO, name, "", (char *)env);
+}
+
 static void start_external_cli(char *env)
 {
-    LONG rc = Pexec(PE_LOADGO, "EMUCON.TOS", "", env);
+    const char *name;
+    const char *const *n;
+    LONG rc = shell_start(shell_names_cli, try_shell, env, &name);
 
     if (rc == EFILNF || rc == EPTHNF)
-        kcprintf("EmuCON: EMUCON.TOS is not in the root directory of the boot drive %c:\n",
+    {
+        kcprintf("EmuCON: no shell in the root directory of the boot drive %c: (",
                  'A' + (int)bootdev);
+        for (n = shell_names_cli; *n; n++)
+            kcprintf("%s%s", n == shell_names_cli ? "" : ", ", *n);
+        kcprintf(")\n");
+    }
     else if (rc < 0)
-        kcprintf("EmuCON: cannot start EMUCON.TOS (error %ld)\n", (long)rc);
+        kcprintf("EmuCON: cannot start %s (error %ld)\n", name, (long)rc);
 }
 #endif
 

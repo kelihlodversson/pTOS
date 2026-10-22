@@ -166,7 +166,9 @@ config CONF_WITH_SSYSTEM
 	  Ssystem() (GEMDOS 0x154, bdos/ssystem.c) is written in C and
 	  dispatched from osif(); on the other architectures it is handled by
 	  the assembly trap entry.  Not user-selectable: it follows the
-	  architecture.
+	  architecture, and the options that need it (the desktop as a
+	  program, CONF_EXTERNAL_DESK, which asks the kernel what it used to
+	  read from its variables) select it on m68k.
 
 config CONF_WITH_GEMDOS_SHUTDOWN
 	bool "Shutdown() GEMDOS call"

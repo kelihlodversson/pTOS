@@ -33,6 +33,7 @@
 #include "deskwin.h"
 #include "aesbind.h"
 #include "deskact.h"
+#include "deskrt.h"
 #include "deskmain.h"
 #include "desksupp.h"
 #include "deskins.h"
