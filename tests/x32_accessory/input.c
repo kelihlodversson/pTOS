@@ -237,8 +237,10 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
         request.mask = revoked_masks[i];
         CHECK(aes_evnt_multi(&request, &event) == EACCDN);
         CHECK(revoke_calls == i + 1 && revoke_result == E_OK);
-        if (i == 1)
+        if (i == 1) {
             CHECK(renew_result == E_OK && callback_info.id == info->id);
+            CHECK(callback_info.features & AES_FEATURE_INPUT);
+        }
         CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
     }
     control.args.button.new_handler = old_button;

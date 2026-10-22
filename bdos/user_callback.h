@@ -24,6 +24,7 @@ typedef union {
 
 BOOL user_callback_image_load(ASPACE *as);
 BOOL user_callback_work_register(void (*work)(void));
+BOOL user_callback_active(void);
 LONG user_callback_exchange(USER_CALLBACK **slot, UWORD signature,
                              UQUAD handler, const USER_CALLBACK_NATIVE *fallback,
                              ULONG *old);
@@ -33,7 +34,9 @@ LONG user_callback_invoke(USER_CALLBACK *handler, UWORD signature,
                            LONG a, LONG b, ULONG *result);
 void user_callback_process_exit(PD *pd);
 BOOL user_callback_pinned(PD *pd, UQUAD address, UQUAD size);
-void user_callback_return_work(UQUAD rsp);
+/* Committed syscall returns retain boundary validation but defer optional
+ * hooks until a later syscall or user IRQ boundary. */
+void user_callback_return_work(UQUAD rsp, BOOL allow_hooks);
 BOOL user_callback_fault(void);
 BOOL user_callback_syscall_allowed(UQUAD call, UQUAD first);
 LONG user_callback_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c,

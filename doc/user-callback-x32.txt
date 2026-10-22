@@ -152,6 +152,11 @@ are excluded: the watchdog cannot safely unwind a filesystem operation or
 allocator while it is running in kernel mode. These operations can be done
 after the callback returns. Automatic event delivery does not reenter active
 callbacks; explicit OLD chaining remains available within the depth limit.
+Successful visible-rectangle syscalls defer optional return hooks across
+their committed cursor/copyout return. Stack, deadline and fatal-owner
+validation still run; pending hooks resume at a later syscall or user IRQ
+boundary. The return policy is local to each trap invocation, including
+nested callbacks and suspended AES continuations.
 
 Regression coverage
 --------------------

@@ -129,6 +129,7 @@ x86_64_irq_common:
         testb   $3, 656(%rsp)    /* frame->cs = 512 + 144 */
         jz      1f
         movq    672(%rsp), %rdi  /* frame->rsp = 512 + 160 */
+        movl    $1, %esi         /* User IRQ boundaries allow deferred hooks. */
         call    C_SYM(user_callback_return_work)
 1:
 #endif

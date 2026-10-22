@@ -12,6 +12,7 @@
 #include "tosvars.h"
 #if CONF_WITH_AES
 #include "aes_accessory.h"
+#include "aes_window.h"
 #endif
 #include "../../../bdos/kproc.h"
 
@@ -100,6 +101,9 @@ void aes_service_process_exit(PD *pd)
             break;
         }
     kproc_aes_set(pd, NULL);
+#if CONF_WITH_AES
+    x86_64_aes_window_exit(pd);
+#endif
     kfree(p);
 }
 
@@ -142,8 +146,8 @@ static LONG register_client(UQUAD address, UQUAD output)
     info.queue_capacity = AES_MESSAGE_QUEUE;
     info.features = AES_FEATURE_MESSAGE | AES_FEATURE_UPDATE;
 #if CONF_WITH_AES
-    if (x86_64_aes_owned(run)) {
-        info.features |= AES_FEATURE_WAIT | AES_FEATURE_INPUT;
+    if (x86_64_aes_associated(run)) {
+        info.features |= AES_FEATURE_WAIT | AES_FEATURE_INPUT | AES_FEATURE_WINDOW;
         x86_64_aes_registration(run, TRUE);
     }
 #endif
@@ -180,6 +184,21 @@ static LONG send_message(AES_CLIENT_STATE *sender, UQUAD id, UQUAD input)
     return E_OK;
 }
 
+static void flush_native_messages(AES_CLIENT_STATE *p)
+{
+#if CONF_WITH_AES
+    AES_MESSAGE message;
+
+    x86_64_aes_pending_message(p->owner);
+    while (p->count < AES_MESSAGE_QUEUE && x86_64_aes_window_pending(p->owner, &message)) {
+        p->queue[(p->head + p->count) % AES_MESSAGE_QUEUE] = message;
+        p->count++;
+    }
+#else
+    (void)p;
+#endif
+}
+
 static LONG receive_message(AES_CLIENT_STATE *p, UQUAD output, BOOL poll)
 {
     AES_EVENT event = { 0 };
@@ -187,6 +206,7 @@ static LONG receive_message(AES_CLIENT_STATE *p, UQUAD output, BOOL poll)
 
     if ((output & 1) || !kproc_validate_user_write(output, size))
         return EIMBA;
+    flush_native_messages(p);
     if (p->count) {
         event.events = AES_EVENT_MESSAGE;
         event.message = p->queue[p->head];
@@ -228,6 +248,23 @@ static LONG update_ownership(AES_CLIENT_STATE *p, UQUAD code)
     }
     return E_OK;
 }
+
+BOOL aes_service_window_unlocked(PD *pd)
+{
+    AES_CLIENT_STATE *p = kproc_aes_get(pd);
+
+    return p && (!update[0].owner || update[0].owner == p) &&
+        (!update[1].owner || update[1].owner == p);
+}
+
+#if CONF_WITH_X32_ACCESSORY_TEST
+LONG aes_service_test_coordination(WORD code)
+{
+    AES_CLIENT_STATE *p = find_name("ACCWAIT");
+
+    return p ? update_ownership(p, code) : ESRCH;
+}
+#endif
 
 static BOOL valid_rectangle(const AES_EVENT_RECT *mouse)
 {
@@ -278,6 +315,7 @@ static LONG input_events(UQUAD input, UQUAD output)
         p = kproc_aes_get(run);
         if (!p)
             return EACCDN;
+        flush_native_messages(p);
         /* Only blocking waits have deadlines. A callback may drain a
          * message after waking this task; keep the original timeout when
          * retrying such a spurious wake. Polls ignore positive timers. */
@@ -296,6 +334,7 @@ static LONG input_events(UQUAD input, UQUAD output)
         p = kproc_aes_get(run);
         if (!p)
             return EACCDN;
+        flush_native_messages(p);
         if ((request.mask & AES_EVENT_MESSAGE) && p->count) {
             event.events |= AES_EVENT_MESSAGE;
             event.message = p->queue[p->head];
@@ -315,7 +354,92 @@ static LONG input_events(UQUAD input, UQUAD output)
 #endif
 }
 
-LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
+static LONG window_service(UQUAD input, UQUAD output, BOOL *defer_return_work)
+{
+    AES_WINDOW_REQUEST r;
+    AES_WINDOW_INFO info;
+    GRECT rectangle = { 0 };
+    char text[AES_WINDOW_TEXT_MAX + 1] = { 0 };
+    ULONG size = 0, i;
+    BOOL geometry_input;
+    LONG result;
+
+    if ((input & 3) || !kproc_copy_from_user(&r, input, sizeof(r)))
+        return EIMBA;
+    if (r.operation < AES_WIN_CREATE || r.operation > AES_WIN_FIND)
+        return EINVFN;
+    geometry_input = r.operation == AES_WIN_CREATE || r.operation == AES_WIN_OPEN ||
+        r.operation == AES_WIN_RECT || r.operation == AES_WIN_CALC;
+    if (r.reserved || (r.kind & ~0x0fff) ||
+        (r.operation != AES_WIN_CREATE && r.operation != AES_WIN_CALC && r.kind) ||
+        ((r.operation == AES_WIN_CREATE || r.operation == AES_WIN_CALC ||
+          r.operation == AES_WIN_FIND) && r.handle) ||
+        (r.operation != AES_WIN_SLIDER && r.value) ||
+        (r.operation == AES_WIN_SLIDER &&
+         (r.selector > AES_WINDOW_VSLSIZ || r.value > 1000 ||
+          r.value < ((r.selector >= AES_WINDOW_HSLSIZ) ? -1 : 0))) ||
+        ((r.operation == AES_WIN_TEXT || r.operation == AES_WIN_VISIBLE ||
+          r.operation == AES_WIN_CALC) && r.selector > 1) ||
+        (r.operation != AES_WIN_TEXT && r.operation != AES_WIN_VISIBLE &&
+         r.operation != AES_WIN_CALC && r.operation != AES_WIN_SLIDER && r.selector) ||
+        (r.operation != AES_WIN_FIND &&
+         (r.rectangle.g_x || r.rectangle.g_y || r.rectangle.g_w || r.rectangle.g_h)) ||
+        (r.operation == AES_WIN_FIND && (r.rectangle.g_w || r.rectangle.g_h)) ||
+        (!geometry_input && r.operation != AES_WIN_TEXT && r.data))
+        return EINVAL;
+    if (geometry_input) {
+        if ((r.data & 1) || !kproc_copy_from_user(&r.rectangle, r.data, sizeof(r.rectangle)))
+            return EIMBA;
+        if (r.rectangle.g_w <= 0 || r.rectangle.g_h <= 0 ||
+            r.rectangle.g_w > 32765 || r.rectangle.g_h > 32765 ||
+            r.rectangle.g_x < -32765 || r.rectangle.g_y < -32765 ||
+            (LONG)r.rectangle.g_x + r.rectangle.g_w > 32765L ||
+            (LONG)r.rectangle.g_y + r.rectangle.g_h > 32765L)
+            return EINVAL;
+    }
+    if (r.operation == AES_WIN_TEXT) {
+        for (i = 0; i < sizeof(text); i++) {
+            if ((UQUAD)r.data + i > 0xffffffffULL ||
+                !kproc_copy_from_user(text + i, (UQUAD)r.data + i, 1))
+                return EIMBA;
+            if (!text[i])
+                break;
+        }
+        if (i == sizeof(text))
+            return EINVAL;
+    }
+    if (r.operation == AES_WIN_GET)
+        size = sizeof(info);
+    if (r.operation == AES_WIN_VISIBLE || r.operation == AES_WIN_CALC)
+        size = sizeof(rectangle);
+    if (size) {
+        if ((output & 1) || !kproc_validate_user_write(output, size))
+            return EIMBA;
+    } else if (output)
+        return EINVAL;
+#if CONF_WITH_AES
+    if (!x86_64_aes_owned(run))
+        return EACCDN;
+    result = x86_64_aes_window(run, &r, text, &info, &rectangle, output);
+    if (result < 0)
+        return result;
+    /* Visible rectangles copy and commit their cursor together, without
+     * yielding cleanup between selection, copyout and return. */
+    if (size && r.operation != AES_WIN_VISIBLE && !kproc_copy_to_user(output,
+            r.operation == AES_WIN_GET ? (const void *)&info : &rectangle, size))
+        return EIMBA;
+    if (r.operation == AES_WIN_VISIBLE)
+        *defer_return_work = TRUE;
+    return result;
+#else
+    (void)result;
+    (void)defer_return_work;
+    return EACCDN;
+#endif
+}
+
+LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
+                   BOOL *defer_return_work)
 {
     AES_CLIENT_STATE *p;
     char name[AES_NAME_MAX + 1];
@@ -323,7 +447,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 
     if (!kproc_user_aspace(run))
         return EACCDN;
-    if (fn > AES_SERVICE_MULTI)
+    if (fn > AES_SERVICE_WINDOW)
         return EINVFN;
     if (c || d || ((fn == AES_SERVICE_EXIT || fn == AES_SERVICE_YIELD) && (a || b)) ||
         ((fn == AES_SERVICE_FIND || fn == AES_SERVICE_READ ||
@@ -337,6 +461,9 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     switch (fn) {
     case AES_SERVICE_EXIT:
         aes_service_process_exit(run);
+#if CONF_WITH_AES
+        x86_64_aes_window_unregister(run);
+#endif
         return E_OK;
     case AES_SERVICE_FIND:
         rc = copy_name(a, name);
@@ -356,6 +483,8 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         return update_ownership(p, a);
     case AES_SERVICE_MULTI:
         return input_events(a, b);
+    case AES_SERVICE_WINDOW:
+        return window_service(a, b, defer_return_work);
     case AES_SERVICE_WAIT:
         if (a != AES_EVENT_MESSAGE)
             return EINVAL;
@@ -367,6 +496,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         /* A successful previous wait can leave a pending wake flag. Check
          * the queue again after every resume, and validate copyout afresh. */
         do {
+            flush_native_messages(p);
             x86_64_aes_flags(run, 2); /* AP_MESAG, even if already queued */
             if (p->count)
                 return receive_message(p, b, TRUE);
@@ -398,6 +528,10 @@ LONG aes_service_kernel_message(PD *pd, const WORD *words)
 
     if (!p)
         return EACCDN;
+#if CONF_WITH_AES
+    if (x86_64_aes_window_redraw(pd, words))
+        return E_OK;
+#endif
     if (p->count == AES_MESSAGE_QUEUE)
         return EAGAIN;
     memcpy(&message, words, sizeof(message));

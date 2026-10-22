@@ -15,6 +15,9 @@ void x86_64_aes_restore(void);
 void x86_64_aes_enter(void) NORETURN;
 void x86_64_aes_drain(void);
 BOOL x86_64_aes_owned(PD *pd);
+BOOL x86_64_aes_associated(PD *pd);
+BOOL x86_64_aes_begin_call(PD *pd);
+BOOL x86_64_aes_call_cancelled(PD *pd);
 LONG x86_64_aes_wait(PD *pd);
 LONG x86_64_aes_yield(PD *pd);
 LONG x86_64_aes_events(PD *pd, const AES_EVENT_REQUEST *request,
@@ -23,6 +26,7 @@ void x86_64_aes_wake(PD *pd);
 void x86_64_aes_flags(PD *pd, UWORD flags);
 void x86_64_aes_registration(PD *pd, BOOL active);
 LONG x86_64_aes_message(struct aespd *pd, const WORD *message);
+void x86_64_aes_pending_message(PD *pd);
 #if CONF_WITH_X32_ACCESSORY_TEST
 struct _object;
 void x86_64_aes_test_begin(void);

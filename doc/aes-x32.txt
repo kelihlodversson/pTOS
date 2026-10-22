@@ -1,8 +1,8 @@
-Native x32 AES clients and kernel service (#404, #613)
-====================================================
+Native x32 AES clients and kernel service (#404, #613, #626)
+==========================================================
 
 CONF_WITH_X32_AES enables typed ring-3 clients and kernel-owned application
-registration, messaging, message events and update ownership. It depends on
+registration, messages, input events, windows and update ownership. It depends on
 the optional x32 VDI support. pc-x86_64-aes_defconfig selects both; the plain
 PC and VDI-only configurations leave AES services disabled. The EmuCON-only
 baseline is independent of this feature.
@@ -64,8 +64,10 @@ plus mutable AES global array. Prototypes and buffer directions are explicit:
         registration, with a maximum depth of 32767. A conflicting acquire
         returns EAGAIN; release by a nonowner returns EACCDN. There is no
         silent transfer or unbounded wait inside the service. This provides
-        kernel-owned cross-client coordination before window rendering and
-        the AES scheduler are connected to x32 processes.
+        kernel-owned cross-client coordination. Typed window calls respect
+        both tokens and also use the native manager's synchronization during
+        each call. These tokens coordinate typed clients; they do not suspend
+        legacy kernel dialogs/menus across arbitrary user waits.
 
 The library uses ordinary x32 SysV C calls; the program-entry contract in
 process-entry.txt (#387) is unchanged. No user context/state argument is
@@ -105,7 +107,8 @@ needed because each syscall identifies the current KPROC.
         Keyboard input comes from the task's own AES queue. Mouse conditions
         and delivery follow AES focus ownership; a background task does not
         satisfy its mouse wait using the focused task's current state. This
-        call does not grant focus. Future window services will manage it.
+        call does not grant focus. Opening/topping a window uses native AES
+        focus ownership.
         Completed button waits return the completing event's coordinates and
         button state, even if later transitions or another task's native
         event return overwrite the shared mouse history. A queued press/release
@@ -131,7 +134,148 @@ needed because each syscall identifies the current KPROC.
         registrations and return EACCDN, including when the callback has
         already registered the process again before that wait resumes.
 
-All functions except find/poll/wait/multi return E_OK on success. Calls other
+Window API (#626)
+-----------------
+
+Only associated clients advertising AES_FEATURE_WINDOW can use these calls.
+Ordinary Pexec clients, nested children and user callbacks are refused.
+All window requests use copied scalar records; no native wind_get/set field
+selector, object tree or pointer-bearing parameter array crosses the boundary.
+
+    LONG aes_wind_create(UWORD kind, const GRECT *full);
+        Allocate a native window; return its positive handle. kind is the
+        low 12 native AES gadget bits, named AES_WINDOW_* in aes_client.h.
+        The full rectangle must leave a positive work area. Handles can be
+        reused after deletion; callers must discard deleted handles.
+        A freed native handle stays reserved while its old service call is
+        unwinding; creation returns EAGAIN until that bookkeeping is released.
+
+    LONG aes_wind_open(WORD handle, const GRECT *rectangle);
+    LONG aes_wind_close(WORD handle);
+    LONG aes_wind_delete(WORD handle);
+        Open a created window, close an open one, or delete either state.
+        Opening/topping follows native stacking and focus rules. Repeated
+        open/close in the wrong state returns EINVAL. Deleting an open window
+        closes it first. Desktop handle 0 cannot be mutated.
+        A native desktop/application reset can invalidate accessory handles;
+        clients recreate windows when reopening after that reset.
+
+    LONG aes_wind_get(WORD handle, AES_WINDOW_INFO *info);
+    LONG aes_wind_set_rect(WORD handle, const GRECT *rectangle);
+        Query only the caller's window or the public desktop geometry (0).
+        Change current border geometry in either open or closed state.
+        Dimensions must be positive and leave positive work dimensions.
+        Coordinates and computed border/work rectangles must fit signed WORD
+        arithmetic; width/height and right/bottom leave two pixels for the
+        native shadow (maximum 32765), and x/y are at least -32765.
+        Rendering/moves also require the combined screen, requested bounds
+        and allocated windows' old current bounds to span at most 32767 in
+        each axis, reserving four pixels for the two native shadow additions
+        during resizing. Thus rendered dimensions are at most 32763, with
+        tighter limits when distant bounds widen the union. Reject wider
+        unions with EINVAL before native arithmetic or any geometry change.
+        MOVER windows also require the native title-drag constraint width
+        (screen width + border width - box width - 6, minus the 3D adjustment
+        where enabled) to fit a positive signed WORD. This applies with or
+        without a NAME gadget; non-mover windows retain the rendering bound.
+
+    LONG aes_wind_set_text(WORD handle, UWORD field, const char *text);
+        field is AES_WINDOW_NAME or AES_WINDOW_INFO_LINE. Copy a terminated
+        string of at most AES_WINDOW_TEXT_MAX (127) bytes. Empty text is
+        valid. The caller may immediately change or free its source. Fixed
+        kernel-owned window slots retain both strings until window deletion;
+        no user pointer reaches native rendering or survives the syscall.
+        Text for an absent title/info gadget is retained without redrawing a
+        missing native object.
+
+    LONG aes_wind_top(WORD handle);
+    LONG aes_wind_slider(WORD handle, UWORD field, WORD value);
+        Top an open owned window. Slider fields are AES_WINDOW_HSLIDE,
+        VSLIDE, HSLSIZ or VSLSIZ; values are 0..1000, with -1 also accepted
+        for the native default size. Native AES normalizes zero to one.
+        Position and size updates require the corresponding HSLIDE/VSLIDE
+        gadget, even on closed windows; otherwise EINVAL leaves state intact.
+
+    LONG aes_wind_rect(WORD handle, UWORD next, GRECT *rectangle);
+        next=0 starts the owned window's visible-work-rectangle walk;
+        next=1 advances it. Zero width/height marks the end. The output is
+        copied successfully before advancing or restarting the cursor. A
+        failed copyout preserves the cursor for retry. No cleanup can dispatch
+        between selection, copyout and cursor commit, or after commit before
+        returning success. The completed syscall defers optional return-work
+        hooks until a later syscall or user IRQ boundary; stack, watchdog and
+        fatal-owner validation still run. This policy belongs to the current
+        trap invocation, including across nested callbacks and AES dispatch.
+        Mutating that window restarts its cursor.
+        Each call rescans the current native list by ordinal, retaining no
+        native rectangle-node pointer across calls. Clients clip VDI to these
+        rectangles; window ownership does not replace workstation clipping.
+
+        The x86-64 native rectangle pool reserves the worst case for all
+        handles and transient splits: NUM_WIN*(2*NUM_WIN-1)^2+4 nodes.
+        A list is partitioned by at most NUM_WIN-1 other rectangles; their
+        edges form at most 2*NUM_WIN-1 bands on each axis. Include cached
+        lists of closed windows and four nodes allocated during a split.
+        This costs about 28 KiB with eight handles or 240 KiB with sixteen,
+        and requires no allocation during window changes or cleanup.
+
+    LONG aes_wind_calc(UWORD mode, UWORD kind, const GRECT *input, GRECT *output);
+    LONG aes_wind_find(WORD x, WORD y);
+        Calculate border from work (AES_WINDOW_BORDER=0) or work from border
+        (AES_WINDOW_WORK=1), rejecting arithmetic overflow or empty results.
+        Input/output overlap is supported. Find returns the global handle
+        under the point, 0 for desktop, or -1 for no hit. It grants no access
+        to a foreign window's private state. Get also reports the global top
+        handle, while owner and all other fields remain private.
+
+These calls return E_OK except create/find. Invalid/deleted handles return
+EIHNDL; foreign and desktop mutation attempts return EACCDN. Both coordination
+tokens and the native manager's lock can cause EAGAIN. Native fields that
+expose pointers or global color/desktop mutations are not part of this API.
+Requests recheck cancellation, the native lock and both typed coordination
+tokens after cleanup can dispatch, before accessing the requested native
+handle. Cleanup also rechecks the native lock after each yielding close and
+before visiting another window. If deletion closes a window but loses the
+lock, EAGAIN leaves that closed handle owned and available for retry.
+Unregister, normal exit/fault and restart close/delete the client's windows,
+clear its retained text and discard pending redraws. A callback may revoke
+and renew registration while a window call is suspended: that call returns
+EACCDN and never writes its old result into the renewed registration. Cleanup
+inside user callbacks only retires resources; native deletion runs after the
+callback returns, through a return-work hook or the completing window call.
+Normal appl_exit also completes native deletion directly outside callbacks,
+including builds without callback support. Process termination drops its AES
+association before native cleanup can yield and reuse the old basepage.
+Each busy reservation records the AES coroutine executing that continuation.
+Owner unregister/exit releases only reservations belonging to the executor
+whose calls have unwound; cleanup suspended on another task remains pinned.
+Abandoned borrowed reservations are released when their executor finishes.
+Session drain releases every remaining reservation only after all accessory
+continuations have been cancelled.
+Deletion closes first, then rechecks slot/native ownership after the close
+can yield, before deleting the still-owned closed handle. Explicit deletion
+and deferred cleanup share this path. Closed-window geometry remains queryable
+until deletion; deletion normalizes native dimensions before returning its
+rectangle nodes, so invisible windows cannot obscure other windows or leak
+the rectangle pool. A native reset also retires stale, non-busy records even
+when a later create chooses a different handle. Restart marks cancelled tasks
+dead before clearing their contexts, so cleanup messages cannot fall back to
+their unconsumed legacy queues. Other yielding calls likewise recheck ownership
+and native validity before changing bookkeeping or copying results.
+
+Native WM_REDRAW notifications are clipped to the screen before coalescing
+to one bounding rectangle per owned window. Empty intersections are dropped;
+retained redraws therefore cannot overflow WORD dimensions across window moves.
+They move into the client's FIFO when space is available, after
+already queued messages. Window drawing never waits for its own full queue.
+Deleting/unregistering discards pending redraws; already queued messages may
+still refer to deleted handles, as with native AES. Other control messages
+retain their FIFO and backpressure behavior.
+Native arrow/scrollbar actions deferred while the associated task is runnable
+also enter this FIFO with sender 0. Read, poll, wait and combined waits collect
+them; a full FIFO preserves the deferred action until enqueue succeeds.
+
+Unless documented otherwise, successful calls return E_OK. Calls other
 than init require registration. Disabled service classes return EINVFN. Malformed
 scalars or names return EINVAL, inaccessible/misaligned buffers EIMBA,
 registration/ownership violations EACCDN, absent recipients/names ESRCH,
@@ -145,14 +289,18 @@ Representations (native byte order)
 
 AES_APP_INFO (12 bytes, alignment 4): UWORD version at 0 (0x0100: this client
 ABI's version), WORD id at 2, UWORD queue_capacity at 4 (8), UWORD reserved
-at 6 (zero), ULONG features at 8 (MESSAGE=1, UPDATE=2, WAIT=4, INPUT=8).
-WAIT and INPUT are advertised only for associated AES tasks. It is a value
+at 6 (zero), ULONG features at 8 (MESSAGE=1, UPDATE=2, WAIT=4, INPUT=8, WINDOW=16).
+WAIT, INPUT and WINDOW are advertised only for associated AES tasks. It is a value
 result, not writable shared service state. Editing it cannot change ownership.
 
 AES_MESSAGE (16 bytes, alignment 2): WORD type at 0, sender at 2, reserved
 at 4 (zero), data[5] at 6. Messages are application data, not authenticated
-kernel-generated window/input notifications. The recipient can identify
-which registered process sent one from the kernel-supplied sender field.
+kernel-generated window/input notifications when sender is positive. The
+recipient can identify which registered process sent one from the supplied
+sender field. Native window notifications have sender=0, which user sends
+cannot forge; their data[0] is the native window handle. WM_REDRAW (20) has
+x/y/width/height in data[1..4]; WM_CLOSED (22) requests a close and leaves the
+window open until its owner calls aes_wind_close/delete.
 
 AES_EVENT (20 bytes, alignment 2): UWORD events at 0, reserved at 2 (zero),
 AES_MESSAGE message at 4. Output records and unused fields are initialized;
@@ -165,6 +313,13 @@ at 12/22, and ULONG timer_ms at 32. It contains no pointers.
 AES_INPUT_EVENT (32 bytes, alignment 2): UWORD events/reserved at 0/2,
 WORD mouse_x/mouse_y at 4/6, UWORD buttons/modifiers/key/clicks at 8/10/12/14,
 and AES_MESSAGE at 16. The existing AES_EVENT remains 20 bytes.
+
+AES_WINDOW_INFO (52 bytes, alignment 2): WORD handle/owner at 0/2,
+UWORD kind/flags at 4/6, GRECT full/work/current/previous at 8/16/24/32,
+and WORD hslide/vslide/hslsiz/vslsiz/top/reserved at 40/42/44/46/48/50.
+The owner is the registration id, flags contains AES_WINDOW_OPEN, top is the
+global top handle (0 for desktop), and reserved is zero. It contains no
+strings, pointers, native AES task ids or mutable server state.
 
 GRECT remains the existing four WORDs x/y/width/height (8 bytes, alignment 2),
 now defined in grect.h so rectangle helpers need no kernel configuration.
@@ -208,6 +363,17 @@ before narrowing, and every user span belongs to the current process.
        7       message mask     AES_EVENT out*    unused
        8       unused           unused            unused
        9       request input*   input event out*  unused
+      10       window request*  result or unused  unused
+
+The private window request is 24 bytes (alignment 4): UWORD operation at 0,
+WORD handle at 2, UWORD selector/kind at 4/6, WORD value at 8, zero reserved
+at 10, ULONG x32 data address at 12, and GRECT at 16. FIND uses rectangle.x/y;
+all other geometry and text are copied from data. Operations 1..12 are
+CREATE, OPEN, CLOSE, DELETE, GET, RECT, TEXT, TOP, SLIDER, VISIBLE, CALC, FIND.
+Only GET writes the 52-byte info; VISIBLE/CALC write an 8-byte rectangle;
+other output arguments must be zero. Every unused request field is zero.
+The original exports 0..14 remain unchanged; the 12 window exports append
+at 15..26 in the order declared in aes_client_exports.h.
 
 The kernel attaches AES_CLIENT_STATE to KPROC, not the public basepage or a
 caller-supplied context pointer. The id comes from the kernel process record;
@@ -222,7 +388,11 @@ space. Queued messages contain copied scalar data and sender ids, not links
 to another process record; already-delivered messages remain valid after the
 sender exits. No process can dequeue, close, or release another's state by
 supplying an id. Coordination currently follows the single-CPU synchronous
-process model; requests that would require waiting return EAGAIN.
+process model; contended window synchronization returns EAGAIN. Native
+window operations may yield when releasing synchronization to a waiter.
+Their trusted input copies survive suspension and output is revalidated.
+Registration revocation cancels the call even if a callback immediately
+registers again; in-flight window records retire only after the call unwinds.
 
 Imports and SDK
 ----------------
@@ -341,15 +511,15 @@ signatures do not imply x32 availability. Classifications:
     SCRP_CLEAR         desktop   not exposed; shared desktop/window/menu/shell state
     FSEL_INPUT         mixed     not exposed; owned resources, file I/O and/or display
     FSEL_EXINPUT       mixed     not exposed; owned resources, file I/O and/or display
-    WIND_CREATE        desktop   not exposed; shared desktop/window/menu/shell state
-    WIND_OPEN          desktop   not exposed; shared desktop/window/menu/shell state
-    WIND_CLOSE         desktop   not exposed; shared desktop/window/menu/shell state
-    WIND_DELETE        desktop   not exposed; shared desktop/window/menu/shell state
-    WIND_GET           desktop   not exposed; shared desktop/window/menu/shell state
-    WIND_SET           desktop   not exposed; shared desktop/window/menu/shell state
-    WIND_FIND          desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_CREATE        desktop   aes_wind_create (associated task, owned resource)
+    WIND_OPEN          desktop   aes_wind_open (owned window)
+    WIND_CLOSE         desktop   aes_wind_close (owned window)
+    WIND_DELETE        desktop   aes_wind_delete (owned window)
+    WIND_GET           desktop   aes_wind_get/rect (bounded pointer-free results)
+    WIND_SET           desktop   aes_wind_set_rect/text/top/slider (owned window)
+    WIND_FIND          desktop   aes_wind_find (global handle, no authority)
     WIND_UPDATE        desktop   aes_wind_update (nonblocking coordination)
-    WIND_CALC          desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_CALC          desktop   aes_wind_calc (bounded geometry)
     WIND_NEW           desktop   not exposed; shared desktop/window/menu/shell state
     RSRC_LOAD          mixed     not exposed; owned resources, file I/O and/or display
     RSRC_FREE          local     not exposed; needs native tree/resource ownership

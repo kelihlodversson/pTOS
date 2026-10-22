@@ -27,6 +27,30 @@
 #define AES_FEATURE_UPDATE 2UL
 #define AES_FEATURE_WAIT 4UL
 #define AES_FEATURE_INPUT 8UL
+#define AES_FEATURE_WINDOW 16UL
+#define AES_WINDOW_TEXT_MAX 127
+#define AES_WINDOW_OPEN 1
+#define AES_WINDOW_NAME 0
+#define AES_WINDOW_INFO_LINE 1
+#define AES_WINDOW_HSLIDE 0
+#define AES_WINDOW_VSLIDE 1
+#define AES_WINDOW_HSLSIZ 2
+#define AES_WINDOW_VSLSIZ 3
+#define AES_WINDOW_BORDER 0
+#define AES_WINDOW_WORK 1
+/* Window gadgets retain their native AES bit assignments. */
+#define AES_WINDOW_NAME_GADGET 0x0001
+#define AES_WINDOW_CLOSER 0x0002
+#define AES_WINDOW_FULLER 0x0004
+#define AES_WINDOW_MOVER 0x0008
+#define AES_WINDOW_INFO_GADGET 0x0010
+#define AES_WINDOW_SIZER 0x0020
+#define AES_WINDOW_UPARROW 0x0040
+#define AES_WINDOW_DNARROW 0x0080
+#define AES_WINDOW_VSLIDE_GADGET 0x0100
+#define AES_WINDOW_LFARROW 0x0200
+#define AES_WINDOW_RTARROW 0x0400
+#define AES_WINDOW_HSLIDE_GADGET 0x0800
 
 typedef struct {
     UWORD version;
@@ -68,6 +92,13 @@ typedef struct {
     AES_MESSAGE message;
 } AES_INPUT_EVENT;
 
+typedef struct {
+    WORD handle, owner;
+    UWORD kind, flags;
+    GRECT full, work, current, previous;
+    WORD hslide, vslide, hslsiz, vslsiz, top, reserved;
+} AES_WINDOW_INFO;
+
 LONG aes_appl_init(const char *name, AES_APP_INFO *info);
 LONG aes_appl_exit(void);
 LONG aes_appl_find(const char *name);
@@ -80,6 +111,18 @@ LONG aes_wind_update(WORD code);
 LONG aes_evnt_wait(UWORD mask, AES_EVENT *event);
 LONG aes_appl_yield(void);
 LONG aes_evnt_multi(const AES_EVENT_REQUEST *request, AES_INPUT_EVENT *event);
+LONG aes_wind_create(UWORD kind, const GRECT *full);
+LONG aes_wind_open(WORD handle, const GRECT *rectangle);
+LONG aes_wind_close(WORD handle);
+LONG aes_wind_delete(WORD handle);
+LONG aes_wind_get(WORD handle, AES_WINDOW_INFO *info);
+LONG aes_wind_set_rect(WORD handle, const GRECT *rectangle);
+LONG aes_wind_set_text(WORD handle, UWORD field, const char *text);
+LONG aes_wind_top(WORD handle);
+LONG aes_wind_slider(WORD handle, UWORD field, WORD value);
+LONG aes_wind_rect(WORD handle, UWORD next, GRECT *rectangle);
+LONG aes_wind_calc(UWORD mode, UWORD kind, const GRECT *input, GRECT *output);
+LONG aes_wind_find(WORD x, WORD y);
 
 #define AES_ASSERT(name, expr) typedef char aes_assert_##name[(expr) ? 1 : -1]
 AES_ASSERT(info_size, sizeof(AES_APP_INFO) == 12);
@@ -93,6 +136,10 @@ AES_ASSERT(request_size, sizeof(AES_EVENT_REQUEST) == 36);
 AES_ASSERT(request_timer, offsetof(AES_EVENT_REQUEST, timer_ms) == 32);
 AES_ASSERT(input_size, sizeof(AES_INPUT_EVENT) == 32);
 AES_ASSERT(input_message, offsetof(AES_INPUT_EVENT, message) == 16);
+AES_ASSERT(window_size, sizeof(AES_WINDOW_INFO) == 52);
+AES_ASSERT(window_work, offsetof(AES_WINDOW_INFO, work) == 16);
+AES_ASSERT(window_top, offsetof(AES_WINDOW_INFO, top) == 48);
+AES_ASSERT(window_align, __alignof__(AES_WINDOW_INFO) == 2);
 AES_ASSERT(rect_size, sizeof(GRECT) == 8);
 AES_ASSERT(info_align, __alignof__(AES_APP_INFO) == 4);
 AES_ASSERT(message_align, __alignof__(AES_MESSAGE) == 2);
