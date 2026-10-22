@@ -19,6 +19,7 @@
 #if CONF_EXTERNAL_DESK
 
 void desk_rt_init(void);                /* once the AES is up (graf_handle()) */
+void desk_rt_exit(void);                /* before appl_exit(): closes what desk_rt_init() opened */
 UBYTE desk_bootflags(void);             /* BOOTFLAG_* of include/biosext.h */
 BOOL desk_rez_changeable(void);         /* the resolution can be changed */
 BOOL desk_has_alt_ram(void);            /* there is alternative (TT) RAM */
@@ -48,6 +49,7 @@ WORD desk_floppy_type(void);            /* 0 if DD, 1 if HD (the _FDC cookie) */
 #include "lineavars.h"
 
 #define desk_rt_init()          do { } while (0)
+#define desk_rt_exit()          do { } while (0)
 #define desk_bootflags()        (bootflags)
 #define desk_rez_changeable()   (rez_changeable())
 #define desk_has_alt_ram()      (has_alt_ram != 0)

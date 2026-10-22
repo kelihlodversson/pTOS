@@ -206,6 +206,16 @@ void desk_rt_init(void)
 }
 
 
+/* closes the workstation of desk_rt_init(), or Read INF would leave one more each time */
+void desk_rt_exit(void)
+{
+    if (vdi_handle)
+    {
+        vdi(101, 0, 0, 0);              /* v_clsvwk() */
+        vdi_handle = 0;
+    }
+}
+
 /* ---- what the kernel told (Ssystem(S_DESKINFO)) and what it is told ---- */
 
 UBYTE desk_bootflags(void)
