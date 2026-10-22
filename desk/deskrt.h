@@ -26,6 +26,13 @@ LONG desk_idt(void);                    /* the _IDT cookie, 0 if there is none *
 void desk_set_ceh(BOOL enable);         /* the critical error handler shows alerts */
 void desk_set_background(UBYTE patcol); /* the pattern and colour of the AES desktop */
 WORD desk_mouse_buttons(void);          /* bit 0 left, bit 1 right */
+BOOL desk_cache_exists(void);           /* desk_set_cache() has an effect */
+void desk_set_cache(WORD enable);       /* the CPU caches on or off */
+BOOL desk_can_shutdown(void);           /* Shutdown() can power off or reset */
+BOOL desk_has_videl(void);              /* a Falcon VIDEL */
+BOOL desk_has_tt_shifter(void);         /* a TT shifter */
+WORD desk_videl_mode(void);             /* the VIDEL mode, 0 if there is none */
+WORD desk_floppy_type(void);            /* 0 if DD, 1 if HD (the _FDC cookie) */
 
 /*
  * the helpers of the AES and the VDI that the desktop uses (aes/gemgraf.c,
@@ -48,6 +55,12 @@ WORD desk_mouse_buttons(void);          /* bit 0 left, bit 1 right */
 #define desk_set_ceh(e)         (enable_ceh = (e))
 #define desk_set_background(p)  (set_aes_background(p))
 #define desk_mouse_buttons()    (linea_vars.MOUSE_BT)
+#define desk_cache_exists()     (cache_exists())
+#define desk_can_shutdown()     (can_shutdown())
+#define desk_has_videl()        (has_videl)
+#define desk_has_tt_shifter()   (has_tt_shifter)
+#define desk_videl_mode()       (get_videl_mode())
+#define desk_floppy_type()      (Supexec((LONG)get_floppy_type))
 
 #endif /* CONF_EXTERNAL_DESK */
 

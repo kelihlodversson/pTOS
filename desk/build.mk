@@ -14,7 +14,7 @@ ifeq ($(CONF_EXTERNAL_DESK),y)
 desk-prog-y := deskstart.o deskrt.o $(desk-objs)
 desk-prog-y += doprintf.o intmath.o langs.o memmove.o string.o nls.o miscutil.o \
 	       gemdos.o optimize.o rectfunc.o version.o
-desk-prog-y += $(if $(ARCH_M68K),miscasm.o memset.o stringasm.o optimopt.o)
+desk-prog-y += $(if $(ARCH_M68K),pexec.o memset.o stringasm.o optimopt.o)
 desk-prog-y += $(if $(ARCH_ARM),miscasm.o)
 
 else

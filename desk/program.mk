@@ -40,10 +40,15 @@ DESK_SFILE_FLAGS = $(strip $(DESK_CFLAGS) $($(current_dir)_sopts))
 $(DESK_OBJDIR):
 	@mkdir -p $@
 
-# the translated sources (po/POTFILES.in) of a multi-language image are
-# compiled from their .tr.c, like the kernel's
+# the translated sources (po/POTFILES.in) of a multi-language image, or of
+# one in a language other than English, are compiled from their .tr.c, like
+# the kernel's (see "Mono-country translated" in the top level Makefile)
+ifeq (,$(and $(UNIQUE),$(filter us,$(ETOSLANG))))
 $(DESK_OBJDIR)/%.o : %.tr.c | $(DESK_OBJDIR)
 	$(CC) $(DESK_CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(DESK_OBJ): $(filter desk/%,$(TRANS_SRC))
+endif
 
 ifdef ARCH_M68K
 ifdef BUILD_TOOLCHAIN_IS_ELF

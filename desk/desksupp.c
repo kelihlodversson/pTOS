@@ -518,7 +518,7 @@ static WORD get_key(void)
             return 'Q';
         if (desk_mouse_buttons() & 0x0001)  /* left mouse button means next page */
             return ' ';
-#if USE_STOP_INSN_TO_FREE_HOST_CPU
+#if USE_STOP_INSN_TO_FREE_HOST_CPU && !CONF_EXTERNAL_DESK    /* a program cannot STOP */
         Supexec((LONG)stop_until_interrupt);
 #endif
     }
@@ -1613,7 +1613,7 @@ void do_format(void)
      * adjust the initial default formatting option, hiding
      * the high density option if not available
      */
-    if (Supexec((LONG)get_floppy_type) == 0)
+    if (desk_floppy_type() == 0)
     {
         if (tree[FMT_HD].ob_state & SELECTED)   /* first time */
         {

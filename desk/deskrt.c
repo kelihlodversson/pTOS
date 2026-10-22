@@ -23,6 +23,7 @@
 #include "gsxdefs.h"
 #include "aesbind.h"
 #include "biosext.h"
+#include "xbiosbind.h"
 #include "bdosbind.h"
 #include "string.h"
 #include "../bdos/ssystem.h"
@@ -206,6 +207,50 @@ void desk_set_ceh(BOOL enable)
 void desk_set_background(UBYTE patcol)
 {
     ssys(S_DESKSET, DESKSET_BACKGROUND, patcol);
+}
+
+BOOL desk_cache_exists(void)
+{
+    return info.cache_exists != 0;
+}
+
+void desk_set_cache(WORD enable)
+{
+    ssys(S_DESKSET, DESKSET_CACHE, enable != 0);
+}
+
+BOOL desk_can_shutdown(void)
+{
+    return info.can_shutdown != 0;
+}
+
+BOOL desk_has_videl(void)
+{
+    return info.has_videl != 0;
+}
+
+BOOL desk_has_tt_shifter(void)
+{
+    return info.has_tt_shifter != 0;
+}
+
+WORD desk_videl_mode(void)
+{
+#if CONF_WITH_VIDEL
+    return info.has_videl ? VsetMode(-1) : 0;
+#else
+    return 0;
+#endif
+}
+
+/* the type of the floppy drives, from the _FDC cookie: 0 if DD, 1 if HD */
+WORD desk_floppy_type(void)
+{
+    LONG value;
+
+    if (ssys(S_GETCOOKIE, 0x5f464443L, &value) < 0)     /* '_FDC' */
+        return 0;
+    return (WORD)((ULONG)value >> 24);
 }
 
 /* the mouse buttons, as Line-A has them (bit 0 left, bit 1 right) */

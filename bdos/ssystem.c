@@ -572,6 +572,26 @@ static LONG ssystem_deskinfo(long arg1, LONG arg2)
     info.bootflags = bootflags;
     info.rez_changeable = rez_changeable();
     info.has_alt_ram = has_alt_ram != 0;
+#if CONF_WITH_CACHE_CONTROL
+    info.cache_exists = cache_exists();
+#else
+    info.cache_exists = 0;
+#endif
+#if CONF_WITH_SHUTDOWN
+    info.can_shutdown = can_shutdown();
+#else
+    info.can_shutdown = 0;
+#endif
+#if CONF_WITH_VIDEL
+    info.has_videl = has_videl != 0;
+#else
+    info.has_videl = 0;
+#endif
+#if CONF_WITH_TT_SHIFTER
+    info.has_tt_shifter = has_tt_shifter != 0;
+#else
+    info.has_tt_shifter = 0;
+#endif
 
     n = arg2 < (LONG)sizeof(info) ? arg2 : (LONG)sizeof(info);
     svar_copy((void *)arg1, &info, n);
@@ -593,6 +613,11 @@ static LONG ssystem_deskset(LONG item, LONG value)
 #if CONF_WITH_BACKGROUNDS
     case DESKSET_BACKGROUND:
         set_aes_background((UBYTE)value);
+        return 0;
+#endif
+#if CONF_WITH_CACHE_CONTROL
+    case DESKSET_CACHE:
+        set_cache((WORD)value);
         return 0;
 #endif
     }
