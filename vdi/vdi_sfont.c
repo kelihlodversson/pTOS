@@ -22,9 +22,12 @@
  * size also has pages of 256 Unicode characters, each rendered as the
  * size itself is, with the same cell height and alignment lines, so that
  * the text path can draw a string in runs of one page each.  Each glyph
- * gets its cell of its advance width: ink that reaches past the cell (an
- * italic's overhang, a negative left bearing, a slant of vst_skew()) is
- * cut off, as it would be in a bitmap font.  Kerning is not applied.
+ * gets its cell of its advance width, so that the advances, extents and
+ * alignment are those of a bitmap font.  Ink that reaches past the cell (an
+ * italic's overhang, a negative left bearing, a slant of vst_skew())
+ * is not in it: it is in a second, small form of cells, two for each
+ * character, what is left of its cell and what is right of it, which the
+ * text path outputs after the characters (vdi_sfont_overhang(), #607).
  * A size can also have its own width (vst_setsize(), vst_width()).
  *
  * Each size also carries a text scratch buffer big enough for its

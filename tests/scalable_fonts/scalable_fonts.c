@@ -789,6 +789,67 @@ static void check_overhang(void)
     set_mode(1);
 }
 
+/* a size in points, 16.16, as vst_arbpt32() (opcode 246) or vst_setsize32() (252) take it */
+static void set_size32(short opcode, long size)
+{
+    vs_intin[0] = (short)(size >> 16);
+    vs_intin[1] = (short)(size & 0xffff);
+    vs_call(handle, opcode, 0, 0, 2);
+}
+
+/*
+ * Mirrored (a negative size): the ink of a slanted T that leaves its cell
+ * is mirrored with it, and nothing of it is lost: the same number of pixels
+ * as the T that is not.  Mirrored along the x axis (the rows upside down) it
+ * still goes out on the right of the advance; mirrored along y (each cell
+ * left to right) on the left of the origin.  (vst_arbpt32() gives the width
+ * of the size back to the default, vst_setsize32() sets it: the T that a
+ * mirrored one is compared with is set up as it is.)
+ */
+static void check_overhang_mirror(void)
+{
+    struct ink norm, flipped;
+    short x = AREA_X + 40, y = AREA_Y + 10, adv;
+
+    set_top_left();
+    set_color(1);
+    set_effects(0);
+    set_rotation(0);
+    set_skew(0);
+    set_size32(246, 20L << 16);
+    adv = (short)string_extent("T");
+    set_skew(-150);
+
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&norm);
+    CHECK(norm.count > 0, "a skewed T of 20 points is not drawn:", 0, 0);
+    set_size32(246, -(20L << 16));
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&flipped);
+    CHECK(flipped.count == norm.count, "a T mirrored along x has other pixels:",
+          flipped.count, norm.count);
+    CHECK(flipped.x1 >= x + adv, "the ink of a T mirrored along x is cut at its cell:",
+          flipped.x1, x + adv);
+
+    set_size32(246, 20L << 16);
+    set_size32(252, 20L << 16);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&norm);
+    set_size32(252, -(20L << 16));
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&flipped);
+    CHECK(flipped.count == norm.count, "a T mirrored along y has other pixels:",
+          flipped.count, norm.count);
+    CHECK(flipped.x0 < x, "the ink of a T mirrored along y is cut at its cell:", flipped.x0, x);
+
+    set_size32(246, 20L << 16);
+    set_skew(0);
+}
+
 /*
  * An italic face (Inter Italic, when the test disk has it) has ink that
  * leaves its cells without any slant asked for: the hook of an f to the
@@ -1058,6 +1119,7 @@ void test_scalable_fonts(void)
     SECTION(check_alignment);
     SECTION(check_drawing);
     SECTION(check_overhang);
+    SECTION(check_overhang_mirror);
     SECTION(check_memory);
     SECTION(check_unsupported);
     SECTION(check_overhang_italic);
