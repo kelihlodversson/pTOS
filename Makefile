@@ -816,9 +816,9 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # harmless where the default already matches, and is what lets the
 # Homebrew "x86_64-elf-" toolchain build this program; see
 # doc/install.txt.
-X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
+X32_CFLAGS = -mx32 -ffreestanding -Wa,--noexecstack -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
-X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none \
+X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
 X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
@@ -864,7 +864,7 @@ TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
 #
 X32_CLI_CFLAGS = $(X32_CFLAGS) -fno-tree-loop-distribute-patterns \
                  -fno-builtin -fno-stack-protector -std=gnu90 -Os -Wall -Wundef
-X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
+X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 \
                   -Wl,-e,_start
@@ -895,7 +895,7 @@ obj/x32/vdi_image.ld: vdi/x32/vdi_image.ld.S include/x32vdi_image.h | obj/x32
 	$(X32_CC) -E -P -x c -Iinclude $< -o $@
 obj/x32/vdi_client.elf: $(X32_VDI_OBJ) obj/x32/vdi_image.ld
 	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
-	  -Wl,--build-id=none -Wl,-T,obj/x32/vdi_image.ld -o $@ $(X32_VDI_OBJ)
+	  -Wl,--build-id=none,-z,noexecstack -Wl,-T,obj/x32/vdi_image.ld -o $@ $(X32_VDI_OBJ)
 obj/x32/vdi_client.bin: obj/x32/vdi_client.elf
 	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
 obj/vdi_image.o: obj/x32/vdi_client.bin
@@ -940,7 +940,7 @@ obj/x32/aes_image.ld: aes/x32/aes_image.ld.S include/x32aes_image.h include/aes_
 	$(X32_CC) -E -P -x c -Iinclude $< -o $@
 obj/x32/aes_client.elf: $(X32_AES_OBJ) obj/x32/aes_image.ld
 	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
-	  -Wl,--build-id=none -Wl,-T,obj/x32/aes_image.ld -o $@ $(X32_AES_OBJ)
+	  -Wl,--build-id=none,-z,noexecstack -Wl,-T,obj/x32/aes_image.ld -o $@ $(X32_AES_OBJ)
 obj/x32/aes_client.bin: obj/x32/aes_client.elf
 	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
 obj/aes_image.o: obj/x32/aes_client.bin

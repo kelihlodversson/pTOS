@@ -393,7 +393,7 @@ static void play_sound(UWORD frequency, UWORD duration)
     snddat[12] = 13;    snddat[13] = 9;             /* envelope type */
     snddat[14] = 0xFF;  snddat[15] = 0;
 
-    Dosound((LONG)snddat);
+    Dosound((long)(uintptr_t)snddat);
 }
 #endif
 

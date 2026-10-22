@@ -1686,7 +1686,7 @@ void refresh_window(WNODE *pw, BOOL force_mediach)
         if (drive == 'A' || drive == 'B')
         {
             KDEBUG(("Forcing media change for drive %c\n", drive));
-            Rwabs(READSEC, (LONG)NULL, MEDIACHANGE, 0, drive - 'A', 0);
+            Rwabs(READSEC, (long)0, MEDIACHANGE, 0, drive - 'A', 0);
         }
     }
 

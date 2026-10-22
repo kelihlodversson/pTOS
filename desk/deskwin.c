@@ -468,7 +468,7 @@ void win_bldview(WNODE *pwin, GRECT *r)
             obj->ob_type = G_USERDEF;
             obj->ob_spec.userblk = ub;
             ub->ub_code = dr_code;
-            ub->ub_parm = (LONG)pstart;
+            ub->ub_parm = (intptr_t)pstart;
             win_icalc(pstart, pwin);
             break;
         case V_ICON:

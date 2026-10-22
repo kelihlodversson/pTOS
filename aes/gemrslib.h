@@ -24,7 +24,7 @@ typedef struct aesglobal {
     RSHDR *ap_rscmem;               /* native materialized resource image */
     UWORD ap_rsclen;                /* length of rsc file */
     WORD ap_planes;                 /* # of colour planes on screen */
-    LONG ap_3resv;                  /* ptr to AES global area D (struct THEGLO) */
+    intptr_t ap_3resv;              /* ptr to AES global area D (struct THEGLO) */
     LONG ap_4resv;                  /* reserved for use in AES 4.00 */
 } AESGLOBAL;
 

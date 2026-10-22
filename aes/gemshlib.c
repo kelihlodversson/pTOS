@@ -585,7 +585,7 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
 
     /* Create a basepage with the standard Pexec() */
     pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
-    pd->p_tbase = (UBYTE *) entry;
+    pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)entry);
 #if CONF_WITH_USER_ASPACE
     mark_kernel_code_pd(pd);
 #endif

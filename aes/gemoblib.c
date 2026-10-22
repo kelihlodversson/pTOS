@@ -105,7 +105,7 @@ static WORD xor_color(WORD color)
 /*
  * Return TRUE iff it's ok to toggle an object's SELECTED state via XOR
  */
-static BOOL xor_is_ok(WORD obtype, WORD obflags, LONG obspec)
+static BOOL xor_is_ok(WORD obtype, WORD obflags, OBSPEC obspec)
 {
     WORD colour_word;
 
@@ -127,11 +127,11 @@ static BOOL xor_is_ok(WORD obtype, WORD obflags, LONG obspec)
     case G_FBOXTEXT:
     case G_TEXT:
     case G_FTEXT:
-        colour_word = ((TEDINFO *)obspec)->te_color;
+        colour_word = obspec.tedinfo->te_color;
         break;
     case G_BOX:
     case G_BOXCHAR:
-        colour_word = LOWORD(obspec);
+        colour_word = LOWORD(obspec.index);
         break;
     default:    /* G_USERDEF, G_ICON, G_CICON */
         return TRUE;
@@ -527,7 +527,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     else
     {
         movetext = FALSE;
-        changecol = !xor_is_ok(obtype, flags, spec.index);
+        changecol = !xor_is_ok(obtype, flags, spec);
     }
 #endif
 
@@ -1300,7 +1300,7 @@ void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
          */
         if ((new_state ^ curr_state) & SELECTED)
         {
-            BOOL ok = xor_is_ok(obtype,flags, spec.index);
+            BOOL ok = xor_is_ok(obtype,flags, spec);
             if (ok || ((obtype == G_IMAGE) && !(new_state & SELECTED)))
             {
                 bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,

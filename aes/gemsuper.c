@@ -97,7 +97,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         tree = rs_trees[DESKTOP];
         pglobal->ap_private = tree[ROOT].ob_spec.index;
         pglobal->ap_planes = gl_nplanes;
-        pglobal->ap_3resv = (LONG)&D;
+        pglobal->ap_3resv = (intptr_t)&D;
         ret = ap_init();
         break;
     case APPL_READ:

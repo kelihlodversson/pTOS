@@ -120,29 +120,13 @@ long kdos_fgetdta(void)
 {
     return (long)xgetdta();
 }
-long kdos_fopen(long name, long mode)
-{
-    return DISK_CALL(xopen((char *)name, (WORD)mode));
-}
 long kdos_fcreate(long name, long attr)
 {
     return DISK_CALL(xcreat((char *)name, (UBYTE)attr));
 }
-long kdos_fclose(long handle)
-{
-    return DISK_CALL(xclose((WORD)handle));
-}
-long kdos_fread(long handle, long count, long buffer)
-{
-    return DISK_CALL(xread((WORD)handle, count, (void *)buffer));
-}
 long kdos_fwrite(long handle, long count, long buffer)
 {
     return DISK_CALL(xwrite((WORD)handle, count, (void *)buffer));
-}
-long kdos_fseek(long offset, long handle, long mode)
-{
-    return DISK_CALL(xlseek((LONG)offset, (WORD)handle, (WORD)mode));
 }
 long kdos_fdelete(long name)
 {

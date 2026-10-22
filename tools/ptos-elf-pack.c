@@ -315,7 +315,7 @@ typedef struct {
 static const char *g_argv0;
 static int g_is_be;
 
-static void die(const char *fmt, ...)
+static void __attribute__((noreturn)) die(const char *fmt, ...)
 {
     va_list ap;
 
