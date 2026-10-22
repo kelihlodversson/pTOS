@@ -331,11 +331,12 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
 {
     WORD x = linea_vars.DESTX, y = linea_vars.DESTY;
     WORD delx = linea_vars.DELX, adv = delx;
+    WORD mono = linea_vars.MONO;
     WORD left, right;
     const UBYTE *fbase = linea_vars.FBASE;
     WORD fwidth = linea_vars.FWIDTH;
 
-    if ((linea_vars.STYLE & F_THICKEN) && !linea_vars.MONO)
+    if ((linea_vars.STYLE & F_THICKEN) && !mono)
         adv += linea_vars.WEIGHT;
     if (linea_vars.STYLE & F_OUTLINE)
         adv += OUTLINE_THICKNESS * 2;
@@ -350,10 +351,19 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
     {
         linea_vars.FBASE = form;
         linea_vars.FWIDTH = form_width;
-        linea_vars.SOURCEY = 0;
+        /*
+         * A piece is not a cell of a fixed-pitch font, whose bold stays in
+         * it (the last columns of the source are not drawn, as thickening
+         * puts them in the cell's): it is thickened as the cell of any
+         * other font is, and so is one column wide.  Each piece is drawn
+         * from the top of the form, whatever clipping the one before
+         * moved the source by (do_clip() does that to SOURCEX and SOURCEY).
+         */
+        linea_vars.MONO = 0;
         if (left > 0)
         {
             linea_vars.SOURCEX = off[2 * temp];
+            linea_vars.SOURCEY = 0;
             linea_vars.DELX = left;
             move_along(-left);
             text_blt();
@@ -362,13 +372,16 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
         }
         if (right > 0)
         {
+            /* where the cell ends, which its thickening or outline does not move */
             linea_vars.SOURCEX = off[2 * temp + 1];
+            linea_vars.SOURCEY = 0;
             linea_vars.DELX = right;
-            move_along(adv);
+            move_along(delx);
             text_blt();
             linea_vars.DESTX = x;
             linea_vars.DESTY = y;
         }
+        linea_vars.MONO = mono;
         linea_vars.FBASE = fbase;
         linea_vars.FWIDTH = fwidth;
         linea_vars.DELX = delx;

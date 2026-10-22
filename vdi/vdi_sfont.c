@@ -293,6 +293,7 @@ typedef struct
 {
     UWORD off[SF_CHARS + 1];
     UWORD max_cell;
+    UWORD max_over;                 /* the most ink of a glyph outside its cell on a side */
     BOOL mono;                      /* all advances the same */
     WORD top, bottom;
     UWORD form_width, form_height;
@@ -399,7 +400,8 @@ static BOOL sf_set(SF_BUILD *b)
  */
 static LONG sf_scratch_half(const SF_LAYOUT *l)
 {
-    LONG w = (LONG)l->max_cell + l->thicken + 3 + l->skew;  /* widest glyph */
+    LONG w = (LONG)(l->max_over > l->max_cell ? l->max_over : l->max_cell)
+             + l->thicken + 3 + l->skew;                    /* widest glyph or piece of it */
     LONG h = (LONG)l->form_height + 3;                      /* tallest */
     LONG flat = (((w + 15) >> 4) * 2 + 2) * h;
     LONG turned = (((h + 15) >> 4) * 2 + 2) * (w + 1);
@@ -414,26 +416,24 @@ static LONG sf_scratch_half(const SF_LAYOUT *l)
 
 /*
  * how many columns of ink the glyph just loaded can have outside its cell,
- * the advance 'adv' wide, to its left and right together: from its outline,
+ * the advance 'adv' wide, to its left and to its right: from its outline,
  * which is the glyph as rendered (the pixels are those of the box, rounded
  * out), so that the most of it is known without rendering the glyph
  */
-static LONG sf_overhang_bound(UWORD adv)
+static void sf_overhang_bound(UWORD adv, LONG *left, LONG *right)
 {
     FT_BBox box;
-    LONG n = 0;
 
+    *left = *right = 0;
     if (sf_face->glyph->format != FT_GLYPH_FORMAT_OUTLINE)
-        return 0;
+        return;
     FT_Outline_Get_CBox(&sf_face->glyph->outline, &box);
     if (box.xMax <= box.xMin)
-        return 0;
+        return;
     if ((box.xMin >> 6) < 0)
-        n += -(box.xMin >> 6);
+        *left = -(box.xMin >> 6);
     if (((box.xMax + 63) >> 6) > (LONG)adv)
-        n += ((box.xMax + 63) >> 6) - adv;
-
-    return n;
+        *right = ((box.xMax + 63) >> 6) - adv;
 }
 
 /*
@@ -448,6 +448,7 @@ static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
     FT_Error err;
 
     l->max_cell = 0;
+    l->max_over = 0;
     l->mono = (vdi_sfonts[sf_face_index].flags & SFONT_MONOSPACE) != 0;
     for (ch = 0; ch < SF_CHARS; ch++)
     {
@@ -458,8 +459,15 @@ static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
             return FALSE;
         if (!err)                       /* a broken glyph: no width */
         {
+            LONG lo, hi;
+
             adv = (UWORD)((sf_face->glyph->advance.x + 32) >> 6);
-            over += sf_overhang_bound(adv);
+            sf_overhang_bound(adv, &lo, &hi);
+            over += lo + hi;
+            if (lo > l->max_over)
+                l->max_over = (UWORD)(lo > 0x7fff ? 0x7fff : lo);
+            if (hi > l->max_over)
+                l->max_over = (UWORD)(hi > 0x7fff ? 0x7fff : hi);
         }
         if (ch && adv != l->max_cell)
             l->mono = FALSE;
@@ -682,10 +690,10 @@ static long sf_build(void *arg)
         {
             sf_ink_outside(bm, x0, y0, l.form_height, cell_left, cell_right,
                            (b->mirror & SF_MIRROR_Y) != 0, &lc, &rc);
-            if (lc > (LONG)l.max_cell)
-                lc = l.max_cell;
-            if (rc > (LONG)l.max_cell)
-                rc = l.max_cell;
+            if (lc > (LONG)l.max_over)
+                lc = l.max_over;
+            if (rc > (LONG)l.max_over)
+                rc = l.max_over;
             if (ox + lc + rc > (LONG)s->over_fw * 8)
                 lc = rc = 0;            /* more than the outline said it could be */
             s->over_off[2 * ch + 1] = (UWORD)(ox + lc);

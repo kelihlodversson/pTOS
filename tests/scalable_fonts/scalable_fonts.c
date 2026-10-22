@@ -284,6 +284,35 @@ static void scan(struct ink *ink)
         }
 }
 
+/* the same for a window of the area: what is set in it, as a hash and a count */
+static void scan_in(struct ink *ink, short x0, short y0, short x1, short y1)
+{
+    short x, y;
+
+    ink->hash = 2166136261UL;
+    ink->count = 0;
+    ink->x0 = ink->y0 = 32767;
+    ink->x1 = ink->y1 = -1;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+        {
+            int set = get_pixel(x, y) != 0;
+
+            ink->hash = (ink->hash ^ (unsigned long)set) * 16777619UL;
+            if (!set)
+                continue;
+            ink->count++;
+            if (x < ink->x0)
+                ink->x0 = x;
+            if (x > ink->x1)
+                ink->x1 = x;
+            if (y < ink->y0)
+                ink->y0 = y;
+            if (y > ink->y1)
+                ink->y1 = y;
+        }
+}
+
 /* --- the font --- */
 
 static short system_fonts, loaded_fonts;
@@ -790,6 +819,47 @@ static void check_overhang(void)
     }
     set_skew(0);
     set_mode(1);
+
+    /*
+     * bold: thickening adds ink, to the glyph and to what leaves its cell
+     * (in a fixed-pitch font the cell stays as it is, but that ink is not
+     * cut off by it): the ink of the plain one is in the bold one's, on the
+     * side that the slant puts it
+     */
+    for (i = 0; i < 8; i++)
+    {
+        static const short slants[] = { -150, 150, -70, 70, -40, 40, -25, 25 };
+        struct ink plain, bold;
+
+        set_skew(slants[i]);
+        set_effects(0);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "T");
+        scan(&plain);
+        set_effects(1);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "T");
+        scan(&bold);
+        set_effects(0);
+        CHECK(bold.count > plain.count, "bold has no more ink than plain:", bold.count, plain.count);
+        if (slants[i] > 0)
+            CHECK(bold.x0 <= plain.x0, "bold loses the ink of a T that leaves its cell on the left:",
+                  bold.x0, plain.x0);
+        else
+            CHECK(bold.x1 >= plain.x1, "bold loses the ink of a T that leaves its cell on the right:",
+                  bold.x1, plain.x1);
+    }
+
+    /*
+     * a steep slant puts ink further out than a cell is wide: all of it is
+     * drawn (the bar of the T is over 2 cells away from where it is plain)
+     */
+    set_skew(-700);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    gtext_mode(1, x, y, "T");
+    scan(&a);
+    CHECK(a.x1 > x + 2 * adv, "the ink of a steeply slanted T is cut short:", a.x1, x + 2 * adv);
+    set_skew(0);
 }
 
 /*
@@ -907,6 +977,52 @@ static void check_overhang_italic(void)
     scan(&b);
     CHECK(a.hash == b.hash && a.count == b.count,
           "replace mode erases the ink of an italic that leaves its cell:", a.count, b.count);
+
+
+    /*
+     * bold: the hook goes on being where it is, thickened to the right, and
+     * not as many pixels further as thickening adds (about two here)
+     */
+    {
+        struct ink plain, bold;
+
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "f");
+        scan(&plain);
+        set_effects(1);
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext_mode(1, x, y, "f");
+        scan(&bold);
+        set_effects(0);
+        CHECK(bold.x1 >= plain.x1 && bold.x1 <= plain.x1 + 3,
+              "the hook of a bold italic f is not where thickening puts it:", bold.x1, plain.x1);
+    }
+
+    /*
+     * clipped at the top, by any number of rows: what is in the window is
+     * what is there when it is not clipped (an f has ink on both sides of
+     * its cell, drawn one after the other from the same rows of the form)
+     */
+    {
+        short cut;
+
+        for (cut = 2; cut <= 12; cut += 2)
+        {
+            struct ink all, part;
+
+            clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            gtext_mode(1, x, y, "f");
+            scan_in(&all, AREA_X, y + cut, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            set_clip(1, AREA_X, y + cut, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            gtext_mode(1, x, y, "f");
+            set_clip(0, 0, 0, 0, 0);
+            scan_in(&part, AREA_X, y + cut, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+            CHECK(part.hash == all.hash && part.count == all.count,
+                  "an italic f clipped at the top is not what is left of the whole one:",
+                  cut, part.count - all.count);
+        }
+    }
 
     /*
      * the face last used stays open (and its file in font memory): back to
