@@ -96,7 +96,7 @@ typedef struct window
     ORECT *w_rnext;             /* used for search first, search next */
 } WINDOW;
 
-#ifdef ARCH_X86_64
+#if ARCH_X86_64
 /* Each list starts with one rectangle and is cut by at most NUM_WIN-1
  * windows. Their edges divide each axis into at most 2*NUM_WIN-1 bands.
  * Disjoint pieces each contain a grid cell, so one list cannot exceed
