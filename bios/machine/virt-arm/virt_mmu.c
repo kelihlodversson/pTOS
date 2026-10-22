@@ -12,6 +12,7 @@
 #endif
 
 #include "portab.h"
+#include "arch/arm/arm_boot.h"
 #include "raspi_mmu.h"
 #include "processor_arm.h"
 #include "asm.h"

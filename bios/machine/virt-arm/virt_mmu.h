@@ -49,11 +49,6 @@ ULONG virt_to_phys(const void *va);
  * address in the window is given: the pool starts there (bios/biosmem.c). */
 UBYTE *virt_pool_start(UBYTE *kernel_end);
 
-#if CONF_WITH_PROCESS_ASPACES
-/* Before a reset (panicasm.S): the table with the identity mapping is loaded again. */
-void machine_reset_prepare(void);
-#endif
-
 #endif /* MACHINE_VIRT_ARM */
 
 #endif /* VIRT_MMU_H */

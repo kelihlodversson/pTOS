@@ -58,8 +58,13 @@
 
 #ifdef TARGET_RPI1
 #define TTBR_MODE       ARM_TTBR_INNER_CACHEABLE
+/* the ARM1176 (ARMv6) has the barriers as operations on CP15, not as instructions */
+#define DSB()           __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (0) : "memory")
+#define ISB()           __asm__ volatile ("mcr p15, 0, %0, c7, c5, 4" : : "r" (0) : "memory")
 #else
 #define TTBR_MODE       (ARM_TTBR_INNER_WRITE_BACK | ARM_TTBR_OUTER_WRITE_BACK)
+#define DSB()           __asm__ volatile ("dsb" : : : "memory")
+#define ISB()           __asm__ volatile ("isb" : : : "memory")
 #endif
 
 ULONG aspace_hw_root_pages(void)
@@ -79,7 +84,7 @@ static volatile ULONG *l1(PADDR root)
 
 static void barrier(void)
 {
-    __asm__ volatile ("dsb" : : : "memory");
+    DSB();
 }
 
 /* the second-level table of the megabyte of va, and its software words; NULL
@@ -230,11 +235,11 @@ static void invalidate_asid(void)
 {
     ULONG zero = 0;
 
-    __asm__ volatile ("dsb" : : : "memory");
+    DSB();
     __asm__ volatile ("mcr p15, 0, %0, c8, c7, 2" : : "r" (zero) : "memory");  /* TLBIASID, ASID 0 */
     __asm__ volatile ("mcr p15, 0, %0, c7, c5, 6" : : "r" (zero) : "memory");  /* branch predictor */
-    __asm__ volatile ("dsb" : : : "memory");
-    __asm__ volatile ("isb" : : : "memory");
+    DSB();
+    ISB();
 }
 
 PADDR aspace_hw_current(void)
@@ -247,9 +252,9 @@ PADDR aspace_hw_current(void)
 
 void aspace_hw_switch(PADDR root)
 {
-    __asm__ volatile ("dsb" : : : "memory");
+    DSB();
     __asm__ volatile ("mcr p15, 0, %0, c2, c0, 0" : : "r" ((ULONG)root | TTBR_MODE) : "memory");
-    __asm__ volatile ("isb" : : : "memory");
+    ISB();
     invalidate_asid();
 }
 
@@ -265,8 +270,8 @@ void aspace_hw_code_changed(void)
     flush_data_cache_all();                                                     /* clean to memory */
     __asm__ volatile ("mcr p15, 0, %0, c7, c5, 0" : : "r" (zero) : "memory");   /* ICIALLU */
     __asm__ volatile ("mcr p15, 0, %0, c7, c5, 6" : : "r" (zero) : "memory");   /* BPIALL */
-    __asm__ volatile ("dsb" : : : "memory");
-    __asm__ volatile ("isb" : : : "memory");
+    DSB();
+    ISB();
 }
 
 #endif /* CONF_WITH_USER_ASPACE */

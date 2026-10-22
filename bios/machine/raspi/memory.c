@@ -13,6 +13,7 @@
 #endif
 
 #include "portab.h"
+#include "arch/arm/arm_boot.h"
 #include "raspi_io.h"
 #include "raspi_int.h"
 #include "raspi_mbox.h"
@@ -139,7 +140,11 @@ UBYTE* raspi_get_coherent_buffer(int tag)
  */
 void raspi_vcmem_init(void)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    UBYTE *tables = phystop;            /* (in the window already) */
+#else
     UBYTE *tables = phystop + RASPI_WINDOW_VBASE;
+#endif
 
     /*
      * Describe the board before anything reads a peripheral register: the
@@ -171,8 +176,10 @@ ULONG virt_to_phys(const void *va)
 
     if (a >= RASPI_WINDOW_VBASE && a - RASPI_WINDOW_VBASE < RASPI_WINDOW_SIZE)
         return a - RASPI_WINDOW_VBASE;
+#if !CONF_WITH_PROCESS_ASPACES
     if (a < RASPI_WINDOW_SIZE)
         return a;
+#endif
     KDEBUG(("virt_to_phys(%p): not RAM\n", va));
     return 0;
 }
@@ -183,8 +190,40 @@ ULONG virt_to_phys(const void *va)
  */
 UBYTE *virt_pool_start(UBYTE *kernel_end)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    return kernel_end;          /* the memory of the kernel is all in the window */
+#else
     return kernel_end - RASPI_WINDOW_VBASE;
+#endif
 }
+
+#if CONF_WITH_PROCESS_ASPACES
+extern ULONG boot_ttbr0;        /* startup.S */
+
+/* how the table walk reads the table (raspi_mmu_boot.c) */
+#ifdef TARGET_RPI1
+#define RASPI_TTBR_MODE ( ARM_TTBR_INNER_CACHEABLE | ARM_TTBR_OUTER_NON_CACHEABLE)
+#else
+#define RASPI_TTBR_MODE ( ARM_TTBR_INNER_WRITE_BACK | ARM_TTBR_OUTER_WRITE_BACK)
+#endif
+
+/*
+ * A reset comes back to startup.S with the MMU on, and goes to the physical
+ * alias of the code, which only the table the MMU was first switched on with
+ * has: load it before the jump (the tables of the processes have no identity
+ * mapping).
+ */
+void machine_reset_prepare(void)
+{
+    ULONG zero = 0;
+
+    __asm__ volatile ("mcr p15, 0, %0, c2, c0, 0" : : "r" (boot_ttbr0 | RASPI_TTBR_MODE) : "memory");
+    __asm__ volatile ("mcr p15, 0, %0, c7, c5, 4" : : "r" (zero) : "memory");   /* flush the prefetch buffer */
+    __asm__ volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (zero) : "memory");   /* the whole TLB */
+    __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (zero) : "memory");  /* data synchronization barrier */
+    __asm__ volatile ("mcr p15, 0, %0, c7, c5, 4" : : "r" (zero) : "memory");
+}
+#endif
 #else
 extern long start_in_hyp;
 void raspi_vcmem_init(void)

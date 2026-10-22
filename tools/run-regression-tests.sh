@@ -2,7 +2,7 @@
 #
 # run-regression-tests.sh - run the regression suite under QEMU
 #
-# Usage: run-regression-tests.sh <virt-arm|virt-m68k|virt-m68k-mmu|pc-x86_64|raspi2b> [timeout-seconds]
+# Usage: run-regression-tests.sh <virt-arm|virt-m68k|virt-m68k-mmu|pc-x86_64|raspi2b|raspi2b-mmu> [timeout-seconds]
 #
 # Expects the matching configuration to be built and `make test-dir` to have
 # collected the test programs into test-dir/ (QEMU's FAT driver presents a copy
@@ -14,6 +14,9 @@
 #                (the higher-half kernel with the MMU on)
 #   pc-x86_64    pc-x86_64_defconfig          pc-x86_64.efi   qemu-system-x86_64 + OVMF
 #   raspi2b      rpi2-test_defconfig          kernel7.img     qemu-system-arm
+#   raspi2b-mmu  rpi2-mmu_defconfig           kernel7.img     qemu-system-arm -M raspi2b
+#                (EmuCON on the UART, every process in an address space of its own; the
+#                suite only: QEMU's raspi2b does not switch off)
 #
 # The virt machines are configured without the AES so that they boot to
 # EmuCON, where programs are started by typing their name into the serial
@@ -253,6 +256,22 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         type_line 'C:'
         sleep 2
         ;;
+    raspi2b-mmu)
+        # EmuCON on the UART (rpi2-mmu_defconfig), its programs in address spaces of
+        # their own; the SD card as below
+        rm -f "$work/in"
+        mkfifo "$work/in"
+        exec 3<>"$work/in"
+        qemu-system-arm -M raspi2b -bios "$top/kernel7.img" \
+            -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir="$disk",file.rw=on \
+            -d guest_errors -serial stdio -display none -monitor none \
+            <"$work/in" >"$log" 2>"${log%.log}.qemu" &
+        qemu_pid=$!
+        wait_for 'Type HELP for builtin commands' 120 || die "EmuCON never started ($label)" "never started"
+        sleep 2
+        type_line 'C:'
+        sleep 2
+        ;;
     raspi2b)
         # the desktop, with the console on the UART too (rpi2-test_defconfig);
         # emudesk.inf's autorun line starts runtests.tos, whose output is the log.
@@ -280,7 +299,7 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         sleep 1
         ;;
     *)
-        echo "usage: $0 <virt-arm|virt-m68k|virt-m68k-mmu|pc-x86_64|raspi2b> [timeout-seconds]" >&2
+        echo "usage: $0 <virt-arm|virt-m68k|virt-m68k-mmu|pc-x86_64|raspi2b|raspi2b-mmu> [timeout-seconds]" >&2
         exit 2
         ;;
     esac
@@ -374,7 +393,7 @@ while [ "$n" -lt "$limit" ]; do
 done
 suite_log=$log
 
-if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
+if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-mmu ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
     type_line 'poweroff.tos'
     shutdown_check poweroff "powering off"
 
@@ -411,7 +430,7 @@ fi
 # with that font, and the log must say that it was made.
 
 # (and only for a build that has scalable fonts: the kernel of the tree in $top)
-if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ] \
+if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-mmu ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ] \
    && grep -q '^#define CONF_WITH_VDI_SCALABLE_FONTS 1' "$top/obj/autoconf.h" 2>/dev/null; then
     system_font=DJVUMONO.TTF
     start_vm sysfont
