@@ -906,7 +906,7 @@ static void check_overhang_xor(void)
     set_color(1);
     set_rotation(0);
     set_skew(-150);
-    for (effects = 0; effects < 1; effects++)
+    for (effects = 0; effects < (short)(sizeof styles / sizeof styles[0]); effects++)
     {
         set_effects(styles[effects]);
         clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
