@@ -65,6 +65,7 @@ extern const LONG cicontest_rsc_size;
 #include "deskobj.h"
 #include "deskrez.h"
 #include "deskmain.h"
+#include "deskrt.h"
 #include "scancode.h"
 
 /* structure pointed to by return value from Keytbl() */
@@ -399,7 +400,7 @@ static void play_sound(UWORD frequency, UWORD duration)
 
 static void detect_features(void)
 {
-    can_change_resolution = rez_changeable();
+    can_change_resolution = desk_rez_changeable();
     blitter_is_present = Blitmode(-1) & 0x0002;
 #if CONF_WITH_CACHE_CONTROL
     cache_is_present = cache_exists();
@@ -784,7 +785,7 @@ static WORD do_filemenu(WORD item)
 
 #if CONF_WITH_SHUTDOWN
     case QUITITEM:
-        enable_ceh = FALSE; /* avoid possibility of useless form_alert()s */
+        desk_set_ceh(FALSE); /* avoid possibility of useless form_alert()s */
         display_free_stack();
         shel_write(SHW_SHUTDOWN, FALSE, 2, NULL, NULL);
         done = TRUE;
@@ -1994,6 +1995,7 @@ BOOL deskmain(void)
 
     /* get GEM's gsx handle */
     gl_handle = graf_handle(&gl_wchar, &gl_hchar, &gl_wbox, &gl_hbox);
+    desk_rt_init();                 /* (CONF_EXTERNAL_DESK) the rest of the AES and VDI state */
 
     /* get desktop work area coordinates */
     wind_get_grect(DESKWH, WF_WXYWH, &G.g_desk);
@@ -2131,7 +2133,7 @@ BOOL deskmain(void)
     done = FALSE;
 
     /* enable graphical critical error handler */
-    enable_ceh = TRUE;
+    desk_set_ceh(TRUE);
 
     /* loop handling user input until done */
     while(!done)

@@ -38,6 +38,10 @@
 #include "biosext.h"       /* phys_pages_total() */
 #include "kproc.h"
 #include "string.h"
+#include "has.h"           /* has_alt_ram */
+#if CONF_WITH_AES
+#include "aesext.h"        /* enable_ceh, set_aes_background() */
+#endif
 
 /* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
 extern volatile LONG vbclock;
@@ -551,6 +555,55 @@ static LONG ssystem_meminfo(long arg1, LONG arg2)
     return n;
 }
 
+/*
+ * ssystem_deskinfo - S_DESKINFO (pTOS extension, see ssystem.h)
+ */
+static LONG ssystem_deskinfo(long arg1, LONG arg2)
+{
+    struct desk_info info;
+    LONG n;
+
+    if (arg2 == -1)
+        return (LONG)sizeof(info);
+
+    if (!arg1 || arg2 <= 0)
+        return EINVFN;
+
+    info.bootflags = bootflags;
+    info.rez_changeable = rez_changeable();
+    info.has_alt_ram = has_alt_ram != 0;
+
+    n = arg2 < (LONG)sizeof(info) ? arg2 : (LONG)sizeof(info);
+    svar_copy((void *)arg1, &info, n);
+    return n;
+}
+
+
+/*
+ * ssystem_deskset - S_DESKSET (pTOS extension, see ssystem.h)
+ */
+static LONG ssystem_deskset(LONG item, LONG value)
+{
+#if CONF_WITH_AES
+    switch (item)
+    {
+    case DESKSET_CEH:
+        enable_ceh = value != 0;
+        return 0;
+#if CONF_WITH_BACKGROUNDS
+    case DESKSET_BACKGROUND:
+        set_aes_background((UBYTE)value);
+        return 0;
+#endif
+    }
+#else
+    MAYBE_UNUSED(item);
+    MAYBE_UNUSED(value);
+#endif
+    return EINVFN;
+}
+
+
 /* the modes xssystem() implements, for S_INQUIRE; keep in step with it */
 static BOOL ssystem_has_mode(WORD mode)
 {
@@ -576,6 +629,8 @@ static BOOL ssystem_has_mode(WORD mode)
     case S_CVERSION:
     case S_MEMINFO:
     case S_CONSOLE_DIM:
+    case S_DESKINFO:
+    case S_DESKSET:
         return TRUE;
     default:
         return FALSE;
@@ -705,6 +760,12 @@ LONG xssystem(WORD mode, long arg1, long arg2)
 
     case S_CONSOLE_DIM:
         return ssystem_console_dim(arg1, arg2);
+
+    case S_DESKINFO:
+        return ssystem_deskinfo(arg1, arg2);
+
+    case S_DESKSET:
+        return ssystem_deskset(arg1, arg2);
 
     default:
         return EINVFN;

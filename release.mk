@@ -218,6 +218,8 @@ release-floppy:
 # has no build tree).  "make release%" does not read the configuration, so the
 # file cannot be a prerequisite of its own rule.
 RASPI_EMUCON ?= cli/emucon.tos
+# ... and so is the desktop (CONF_EXTERNAL_DESK), emudesk.prg of the top directory
+RASPI_EMUDESK ?= emudesk.prg
 release-raspi-resources:
 	@if [ -z '$(DEST)' ]; then \
 	  echo 'DEST is not set; usage: make release-raspi-resources DEST=<archive-dir>' >&2; \
@@ -230,6 +232,11 @@ release-raspi-resources:
 	  exit 1; \
 	fi
 	cp $(RASPI_EMUCON) $(DEST)/EMUCON.TOS
+	@if [ ! -f '$(RASPI_EMUDESK)' ]; then \
+	  echo '$(RASPI_EMUDESK) not found: build a Raspberry Pi configuration first, or set RASPI_EMUDESK' >&2; \
+	  exit 1; \
+	fi
+	cp $(RASPI_EMUDESK) $(DEST)/EMUDESK.PRG
 	# desk/emudesk-raspi.inf: same #R/#E/#Q/#M/#T/file-type-association
 	# content deskapp.c's own built-in default generates (see
 	# desk_inf_data1/desk_inf_data2), except the first #W window slot

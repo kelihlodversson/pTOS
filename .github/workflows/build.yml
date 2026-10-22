@@ -188,8 +188,9 @@ jobs:
           mkdir products
           # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
           # ELF the image was extracted from, which still has the symbols,
-          # and EmuCON, the program CONF_EXTERNAL_CLI loads from the boot drive.
-          for product in *.img emutos.elf emutos.map cli/emucon.tos; do
+          # EmuCON and EmuDesk, the programs CONF_EXTERNAL_CLI and
+          # CONF_EXTERNAL_DESK load from the boot drive.
+          for product in *.img emutos.elf emutos.map cli/emucon.tos emudesk.prg; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -443,7 +444,7 @@ jobs:
           # kernel -- loaded from the boot drive as EMUCON.TOS (the kernel
           # says "EmuCON: ..." when it cannot), so its banner can only come
           # from that process.
-          if grep -Eq '^EmuCON: (cannot|EMUCON.TOS is not)' boot.log; then
+          if grep -Eq '^EmuCON: (cannot|no shell)' boot.log; then
             echo "::error::the kernel could not start the ring-3 EmuCON"
             exit 1
           fi
@@ -671,7 +672,8 @@ jobs:
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
           make release-raspi-resources DEST="sdcard/$archive" \
-            RASPI_EMUCON=raspi-build/emucon.tos
+            RASPI_EMUCON=raspi-build/emucon.tos \
+            RASPI_EMUDESK=raspi-build/emudesk.prg
 
           # The default scalable fonts (DejaVu, with their licence), which
           # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive
