@@ -422,6 +422,32 @@ Pass signals (verified on rpi1):
 `raspi2b` takes the same `-drive ...,if=sd` treatment with `-bios
 kernel7.img`; the size restriction and pass signals are identical.
 
+### The desktop as a program (`CONF_EXTERNAL_DESK`)
+
+The images that load from a disk (rpi1-rpi4, virt-arm, virt-m68k) and
+`atari512-extdesk` have no desktop in the kernel: the AES starts `EMUDESK.PRG`
+(`emudesk.prg` of the build tree) from the root directory of the boot drive,
+the first of `emudesk.prg, desktop.prg, emucon.tos, emucon2.tos, command.tos,
+shell.prg, shell.tos` that is there (`include/shells.h`).  "make test-dir" and
+"make test-hd" carry it; for a look at the desktop itself, put `emudesk.prg`,
+`emucon.tos` and `desk/emudesk-raspi.inf` (as `EMUDESK.INF`) on a disk:
+
+```sh
+make rpi2_defconfig && make
+mkdir dd && cp cli/emucon.tos dd/EMUCON.TOS && cp emudesk.prg dd/EMUDESK.PRG \
+  && cp desk/emudesk-raspi.inf dd/EMUDESK.INF
+./tools/mkhdisk.sh desk.img 4194304 dd/EMUCON.TOS dd/EMUDESK.PRG dd/EMUDESK.INF
+qemu-system-arm -M raspi2b -bios kernel7.img -drive file=desk.img,format=raw,if=sd \
+  -device usb-mouse -device usb-kbd -display none -serial stdio \
+  -monitor unix:/tmp/qmon.sock,server,nowait     # then: screendump shot.ppm
+```
+
+Pass signal: the menu bar and a `C:\*.*` window listing the three files.  The
+language is the `LANG` of the kernel's environment.  Without the file the AES
+runs EmuCON if that is there, and shows the "cannot find the file" alert if
+nothing is.  On Hatari, the ROM images boot from a disk given with `--acsi`
+(ST/STE) or `--ide-master` (Falcon) that has `EMUDESK.PRG`.
+
 ### Running the regression test suite (`make test-hd`)
 
 The regression test harness (`CONF_WITH_REGRESSION_TESTS`) is enabled by
