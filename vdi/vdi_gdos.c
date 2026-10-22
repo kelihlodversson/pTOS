@@ -267,8 +267,45 @@ LONG vdi_sfont_face(WORD index)
     return vdi_sfonts[index].face;
 }
 
-/* add the fonts matching one pattern; returns how many there are now */
-static WORD sfont_find(VDI_SFONT *fonts, WORD count, const char *pattern)
+/* whether the first count fonts include a face of that file */
+static BOOL sfont_known(const VDI_SFONT *fonts, WORD count, const char *file)
+{
+    WORD i;
+
+    for (i = 0; i < count; i++)
+        if (!strcmp(fonts[i].file, file))
+            return TRUE;
+
+    return FALSE;
+}
+
+/* the file name of the system font that is wanted (upper case), set before the scan: see sfont_scan() */
+static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14];   /* BSS: .data may be in ROM */
+
+/*
+ * whether fonts[count] has the identity of one of the first count fonts (the
+ * same font as a .TTF and an .OTF, say): it would be dropped in the end, so it
+ * is not let to use a slot of the SFONT_MAX meanwhile.  The file that the
+ * system font setting names is kept, so that it can take the other's place.
+ */
+static BOOL sfont_duplicate(const VDI_SFONT *fonts, WORD count)
+{
+    WORD i;
+
+    if (!strcmp(fonts[count].file, sfont_wanted))
+        return FALSE;
+    for (i = 0; i < count; i++)
+        if (fonts[i].key == fonts[count].key && !strcmp(fonts[i].name, fonts[count].name))
+            return TRUE;
+
+    return FALSE;
+}
+
+/*
+ * add the fonts matching one pattern, except those of files the first
+ * known fonts came from; returns how many there are now
+ */
+static WORD sfont_find(VDI_SFONT *fonts, WORD known, WORD count, const char *pattern)
 {
     long rc, face;
 
@@ -277,7 +314,7 @@ static WORD sfont_find(VDI_SFONT *fonts, WORD count, const char *pattern)
          rc = kdos_fsnext_at(&sfont_dta))
     {
         /* go on to the end even when full: the search is then over */
-        if (count == SFONT_MAX)
+        if (count == SFONT_MAX || sfont_known(fonts, known, sfont_dta.d_fname))
             continue;
         strcpy(fonts[count].file, sfont_dta.d_fname);
         sfont_set_path(sfont_dta.d_fname);
@@ -289,14 +326,15 @@ static WORD sfont_find(VDI_SFONT *fonts, WORD count, const char *pattern)
                    sfont_dta.d_fname));
             continue;
         }
-        count++;
+        if (!sfont_duplicate(fonts, count))
+            count++;
 
         /* a collection: the other faces, which are fonts of their own */
         for (face = 1; face < sfont_faces && face < 256 && count < SFONT_MAX; face++)
         {
             strcpy(fonts[count].file, sfont_dta.d_fname);
             fonts[count].face = (UBYTE)face;
-            if (vdi_ft_call(sfont_open, &fonts[count]) == 0)
+            if (vdi_ft_call(sfont_open, &fonts[count]) == 0 && !sfont_duplicate(fonts, count))
                 count++;
         }
     }
@@ -331,38 +369,55 @@ static BOOL sfont_id_used(const VDI_SFONT *fonts, WORD count, WORD id)
 }
 
 /* the fonts in CONF_VDI_FONT_DIR, sorted by name, with their ids */
-/* the file name of the system font that is wanted (upper case), set before the scan: see sfont_scan() */
-static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14];   /* BSS: .data may be in ROM */
 
-static void sfont_scan(void)
+static BOOL sfont_stale;            /* a workstation unloaded its fonts since the last scan */
+
+/*
+ * Scan the font directory.  With add, the fonts found already stay as
+ * they are, at the same index and with the same id, since workstations
+ * and the cache of sizes refer to them; only the new files' fonts are
+ * added after them (sorted among themselves), so a font that was
+ * removed stays listed until the next boot.
+ */
+static void sfont_scan(BOOL add)
 {
     VDI_SFONT *fonts;
-    WORD count, i, n;
+    WORD count, known, i, j, n;
     UWORD slot;
 
-    fonts = vdi_ft_alloc(SFONT_MAX * sizeof(VDI_SFONT));
+    known = add ? vdi_sfont_count : 0;
+    fonts = known ? vdi_sfonts : vdi_ft_alloc(SFONT_MAX * sizeof(VDI_SFONT));
     if (!fonts)
     {
         KINFO(("GDOS: no memory to list the scalable fonts\n"));
         return;
     }
 
-    count = sfont_find(fonts, 0, "*.TTF");
-    count = sfont_find(fonts, count, "*.OTF");
-    count = sfont_find(fonts, count, "*.TTC");
-    qsort(fonts, count, sizeof(VDI_SFONT), sfont_compare);
+    count = sfont_find(fonts, known, known, "*.TTF");
+    count = sfont_find(fonts, known, count, "*.OTF");
+    count = sfont_find(fonts, known, count, "*.TTC");
+    qsort(fonts + known, count - known, sizeof(VDI_SFONT), sfont_compare);
 
     /* the same font twice (a .TTF and an .OTF, say): keep the first file */
-    for (i = n = 0; i < count; i++)
-        if (!n || fonts[i].key != fonts[n - 1].key
-            || strcmp(fonts[i].name, fonts[n - 1].name))
+    for (i = n = known; i < count; i++)
+    {
+        if (n > 0 && i > known && fonts[i].key == fonts[n - 1].key
+            && !strcmp(fonts[i].name, fonts[n - 1].name))
+        {
+            if (n - 1 >= known && !strcmp(fonts[i].file, sfont_wanted))
+                fonts[n - 1] = fonts[i];    /* unless the system font is the other file */
+            continue;
+        }
+        for (j = 0; j < known; j++)         /* or one that was found before */
+            if (fonts[j].key == fonts[i].key && !strcmp(fonts[j].name, fonts[i].name))
+                break;
+        if (j == known)
             fonts[n++] = fonts[i];
-        else if (!strcmp(fonts[i].file, sfont_wanted))
-            fonts[n - 1] = fonts[i];        /* unless the system font is the other file */
+    }
     count = n;
 
     /* the ids, in name order, so that collisions resolve the same way */
-    for (i = 0; i < count; i++)
+    for (i = known; i < count; i++)
     {
         slot = (UWORD)(fonts[i].key % SFONT_ID_COUNT);
         while (sfont_id_used(fonts, i, (WORD)(SFONT_ID_FIRST + slot)))
@@ -379,6 +434,7 @@ static void sfont_scan(void)
     }
     vdi_sfonts = fonts;
     vdi_sfont_count = count;
+    sfont_stale = FALSE;
 }
 
 
@@ -497,13 +553,24 @@ static void sfont_system(void)
     }
 }
 
+void vdi_sfont_unloaded(void)
+{
+    sfont_stale = TRUE;
+}
+
 void vdi_sfont_rescan(void)
 {
-    if (vdi_gdos_id && !vdi_sfont_count && sfont_dir[0])
-    {
-        sfont_scan();
-        KINFO(("GDOS: %d scalable fonts in %s now\n", vdi_sfont_count, sfont_dir));
-    }
+    if (!vdi_gdos_id || !sfont_dir[0])
+        return;
+    if (!vdi_sfont_count)
+        sfont_scan(FALSE);
+#if CONF_VDI_FONT_RESCAN
+    else if (sfont_stale)
+        sfont_scan(TRUE);
+#endif
+    else
+        return;
+    KINFO(("GDOS: %d scalable fonts in %s now\n", vdi_sfont_count, sfont_dir));
 }
 
 
@@ -547,7 +614,7 @@ void vdi_gdos_init(void)
 
     sfont_set_dir();
     sfont_system_wanted();
-    sfont_scan();
+    sfont_scan(FALSE);
     sfont_system();
     vdi_gdos_id = GDOS_ID_FSM;
 

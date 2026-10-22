@@ -1474,7 +1474,7 @@ TEST_DESTDIR = tests/destdata/TESTS
 # The font of the scalable font tests (#579), on the disk as
 # \GEMSYS\FONTS\PTOSTEST.TTF where the built-in GDOS looks, with its licence
 TEST_FONT_STAGE = obj/test-fonts/GEMSYS
-TEST_FONT_FILES = $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT
+TEST_FONT_FILES = $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF $(TEST_FONT_STAGE)/FONTS/PTOSTES2.TMP $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT
 TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 
 # libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
@@ -1615,7 +1615,8 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
-              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
+              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
 # AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.
@@ -1930,6 +1931,12 @@ endif
 TEST_HD_FILES = runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
+	@mkdir -p $(dir $@)
+	@cp $< $@
+
+# the same font as PTOSTEST.TTF under another name, kept out of the boot scan by
+# its extension: the rescan test (scalable_fonts) renames it to .TTF
+$(TEST_FONT_STAGE)/FONTS/PTOSTES2.TMP: tests/fonts/PTOSTES2.TTF
 	@mkdir -p $(dir $@)
 	@cp $< $@
 

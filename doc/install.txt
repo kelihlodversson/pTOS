@@ -271,7 +271,11 @@ A directory that is missing or empty gives a system with the bitmap fonts
 only, and no error; if the scan found no font, the first vst_load_fonts()
 looks again (for a drive that was not there at boot).  To add fonts, copy
 the files to that directory under 8.3 names (the FAT volumes are read
-without long names) and restart; to look elsewhere, change "Directory of
+without long names) and restart, or, with "Look for new scalable fonts
+after vst_unload_fonts()" (CONF_VDI_FONT_RESCAN, on by default), let the
+program that copied them call vst_unload_fonts() and vst_load_fonts():
+the new files' fonts are then added after the existing ones, which keep
+their index and id (a deleted font stays listed until the restart); to look elsewhere, change "Directory of
 the scalable fonts" (CONF_VDI_FONT_DIR) in make menuconfig, with a drive
 letter if the directory is not on the boot drive.  The style Regular,
 Book, Roman and Normal is left out of a font's name ("DejaVu Sans", not
