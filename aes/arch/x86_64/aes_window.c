@@ -466,8 +466,9 @@ void x86_64_aes_window_drain(void)
 }
 
 /* Native window drawing must never wait for its own caller's full queue.
- * Keep one union per window; transfer it into the typed queue when it has
- * room. Other control messages retain normal FIFO/backpressure behavior. */
+ * Keep one screen-clipped union per window so retained redraws cannot span
+ * unrepresentable WORD bounds across moves. Transfer it into the typed queue
+ * when it has room; other messages retain FIFO/backpressure behavior. */
 BOOL x86_64_aes_window_redraw(PD *pd, const WORD *message)
 {
     WORD h = message[3];
@@ -482,6 +483,8 @@ BOOL x86_64_aes_window_redraw(PD *pd, const WORD *message)
     if (w->retired)
         return TRUE;
     memcpy(&dirty, message + 4, sizeof(dirty));
+    if (!rc_intersect(&gl_rscreen, &dirty))
+        return TRUE;
     if (w->redraw)
         rc_union(&dirty, &w->dirty);
     else
@@ -852,6 +855,46 @@ BOOL x86_64_aes_window_test_ready(void)
     return count == 2;
 }
 
+static void test_redraw_bounds(WORD h, CLIENT_WINDOW *w)
+{
+    static const GRECT notifications[2][3] = {
+        { { 30000, 60, 340, 240 }, { 0, 60, 344, 240 }, { -30000, 60, 31000, 240 } },
+        { { 60, 30000, 340, 240 }, { 60, 0, 340, 244 }, { 60, -30000, 340, 31000 } }
+    };
+    WORD message[8] = { WM_REDRAW, 0, 0, 0, 0, 0, 0, 0 };
+    WORD axis, i;
+    GRECT rectangle, expected, saved = w->dirty;
+    BOOL pending = w->redraw;
+
+    message[3] = h;
+    for (axis = 0; axis < 2; axis++) {
+        w->redraw = FALSE;
+        /* Supply raw native notifications independently of w_update(),
+         * whose earlier desktop clipping may hide coalescer overflows. */
+        for (i = 0; i < 3; i++) {
+            rectangle = notifications[axis][i];
+            memcpy(message + 4, &rectangle, sizeof(rectangle));
+            if (!x86_64_aes_window_redraw(w->owner, message))
+                panic("accessory raw redraw routing FAIL\n");
+        }
+        expected = rectangle;
+        if (!rc_intersect(&gl_rscreen, &expected) || !w->redraw ||
+            w->dirty.g_w <= 0 || w->dirty.g_h <= 0 || !rc_equal(&expected, &w->dirty))
+            panic("accessory raw redraw coalescing bounds FAIL\n");
+        rectangle = notifications[axis][0];
+        memcpy(message + 4, &rectangle, sizeof(rectangle));
+        if (!x86_64_aes_window_redraw(w->owner, message) || !w->redraw ||
+            !rc_equal(&expected, &w->dirty))
+            panic("accessory offscreen redraw changed pending union FAIL\n");
+        w->redraw = FALSE;
+        if (!x86_64_aes_window_redraw(w->owner, message) || w->redraw)
+            panic("accessory offscreen redraw retained FAIL\n");
+    }
+    w->dirty = saved;
+    w->redraw = pending;
+    kcprintf("x32 native redraw clipping: PASS\n");
+}
+
 void x86_64_aes_window_test(void)
 {
     WORD h, i, count = 0;
@@ -900,6 +943,8 @@ void x86_64_aes_window_test(void)
                 strcmp(w->info, "Copied window information") ||
                 (uintptr_t)w->title <= 0xffffffffULL)
                 panic("accessory window ownership/text/exit cleanup FAIL\n");
+            if (count == 1)
+                test_redraw_bounds(h, w);
         }
         if ((D.w_win[h].w_flags & VF_INUSE) && D.w_win[h].w_owner &&
             (D.w_win[h].w_owner->p_stat & X32_AES_DEAD))

@@ -263,8 +263,10 @@ dead before clearing their contexts, so cleanup messages cannot fall back to
 their unconsumed legacy queues. Other yielding calls likewise recheck ownership
 and native validity before changing bookkeeping or copying results.
 
-Native WM_REDRAW notifications coalesce to one bounding rectangle per owned
-window. They move into the client's FIFO when space is available, after
+Native WM_REDRAW notifications are clipped to the screen before coalescing
+to one bounding rectangle per owned window. Empty intersections are dropped;
+retained redraws therefore cannot overflow WORD dimensions across window moves.
+They move into the client's FIFO when space is available, after
 already queued messages. Window drawing never waits for its own full queue.
 Deleting/unregistering discards pending redraws; already queued messages may
 still refer to deleted handles, as with native AES. Other control messages

@@ -203,6 +203,80 @@ static int boundary_resizes(void)
     return 0;
 }
 
+static int redraw_bounds(WORD id)
+{
+    AES_WINDOW_INFO desktop, state;
+    AES_MESSAGE message = { 646, 0, 0, { 0 } }, received;
+    GRECT offscreen, rectangle, dirty, expected, covered;
+    LONG handle;
+    WORD axis, full, i;
+
+    CHECK(aes_wind_get(0, &desktop) == E_OK);
+    for (axis = 0; axis < 2; axis++) {
+        for (full = 0; full < 2; full++) {
+            while (aes_appl_read(&received) == E_OK)
+                CHECK(received.type == 20);
+            if (full)
+                for (i = 0; i < AES_MESSAGE_QUEUE; i++) {
+                    message.data[0] = i;
+                    CHECK(aes_appl_write(id, &message) == E_OK);
+                }
+            offscreen.g_x = axis ? 60 : 30000;
+            offscreen.g_y = axis ? 30000 : 60;
+            offscreen.g_w = 340;
+            offscreen.g_h = 240;
+            handle = aes_wind_create(0, &offscreen);
+            CHECK(handle > 0 && aes_wind_open((WORD)handle, &offscreen) == E_OK);
+            /* Do not drain redraws between these moves. Their combined
+             * raw bounds exceed 32767 although each move is valid. */
+            rectangle = offscreen;
+            if (axis) {
+                rectangle.g_y = 0;
+                rectangle.g_h += 4;
+            } else {
+                rectangle.g_x = 0;
+                rectangle.g_w += 4;
+            }
+            CHECK(aes_wind_set_rect((WORD)handle, &rectangle) == E_OK);
+            if (axis) {
+                rectangle.g_y = -30000;
+                rectangle.g_h = 31000;
+            } else {
+                rectangle.g_x = -30000;
+                rectangle.g_w = 31000;
+            }
+            CHECK(aes_wind_set_rect((WORD)handle, &rectangle) == E_OK);
+            CHECK(aes_wind_get((WORD)handle, &state) == E_OK &&
+                  rc_equal(&rectangle, &state.current));
+            if (full)
+                for (i = 0; i < AES_MESSAGE_QUEUE; i++) {
+                    CHECK(aes_appl_read(&received) == E_OK);
+                    CHECK(received.type == 646 && received.data[0] == i);
+                }
+            CHECK(aes_appl_read(&received) == E_OK);
+            CHECK(received.type == 20 && !received.sender && received.data[0] == handle);
+            memcpy(&dirty, received.data + 1, sizeof(dirty));
+            CHECK(dirty.g_w > 0 && dirty.g_h > 0);
+            covered = dirty;
+            CHECK(rc_intersect(&desktop.current, &covered) && rc_equal(&dirty, &covered));
+            expected = state.work;
+            CHECK(rc_intersect(&desktop.work, &expected));
+            covered = dirty;
+            CHECK(rc_intersect(&expected, &covered) && rc_equal(&expected, &covered));
+            CHECK(aes_appl_read(&received) == EAGAIN);
+            /* A wholly off-screen open must leave no redraw to deliver. */
+            CHECK(aes_wind_close((WORD)handle) == E_OK);
+            while (aes_appl_read(&received) == E_OK)
+                CHECK(received.type == 20);
+            CHECK(aes_wind_open((WORD)handle, &offscreen) == E_OK);
+            CHECK(aes_appl_read(&received) == EAGAIN);
+            CHECK(aes_wind_delete((WORD)handle) == E_OK);
+        }
+    }
+    (void)Cconws("x32 redraw coalescing bounds: PASS\r\n");
+    return 0;
+}
+
 static int mover_boundaries(void)
 {
     GRECT small = { 0, 60, 340, 240 }, large;
@@ -822,6 +896,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
         CHECK(aes_wind_delete(exhausted[i]) == E_OK);
     CHECK(cleanup_synchronization(&rectangle) == 0);
     CHECK(boundary_resizes() == 0);
+    CHECK(redraw_bounds(info->id) == 0);
     CHECK(mover_boundaries() == 0);
     CHECK(slider_gadgets() == 0);
     CHECK(cursor_copyout(vdi_handle) == 0);

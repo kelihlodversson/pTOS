@@ -177,6 +177,11 @@ all closed lists until deletion, restores the peer window, and repeats over
 desktop restarts. The kernel records a transient peak above the old limit.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
+Horizontal and vertical moves from +30000 through zero to -30000 retain
+redraws with both empty and full queues. Delivered rectangles stay on-screen
+and cover the final visible work area; wholly off-screen opens emit none.
+Direct raw native notifications also exercise clipping at the coalescer,
+independently of the earlier clipping performed by native desktop drawing.
 The input driver sends a key to the topped ring-3 window, then clicks its
 native close gadget. WM_CLOSED arrives with kernel sender=0 and the correct
 handle; the client explicitly closes/deletes the window. A real user callback
