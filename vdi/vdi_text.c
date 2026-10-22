@@ -1475,7 +1475,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
             just = *justified;
         overhang_seen = FALSE;
         output_text_pass(vwk, count, str, width, justified);
-        if (!overhang_seen)
+        if (!overhang_seen || mode == WM_ERASE)     /* erase would blank the next glyph's ink */
             return;
 
         /* the underline has taken the point, and what follows it in ptsin */

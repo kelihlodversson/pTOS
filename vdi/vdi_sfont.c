@@ -63,6 +63,7 @@
 #define SF_MAX_PIXELS   400
 #define SF_MAX_WIDTH    0x7ff0L     /* the text path's source x is a WORD */
 #define SF_MAX_HALF     0x7ff0L     /* and so is the scratch buffer's SCRPT2 */
+#define SF_OVER_GUARD   4UL         /* zeroed bytes after the overhang form: blits read past a piece */
 
 /* a rendered size: its Fonthead, offsets, form and scratch buffer, in one block */
 typedef struct sf_size
@@ -489,10 +490,13 @@ static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
     l->form_height = l->top + l->bottom + 1;
     l->skew = (l->bottom + 1) / 2 + (l->top + 1) / 2;   /* left + right offset */
     l->thicken = 1 + pixels / 24;
-    l->half = sf_scratch_half(l);
     l->over_fw = (over > 0 && over <= SF_MAX_WIDTH) ? (UWORD)(((over + 15) / 16) * 2) : 0;
-    l->bytes = sizeof(SF_SIZE) + (ULONG)l->form_width * l->form_height + 2UL * l->half
-             + (ULONG)l->over_fw * l->form_height;
+    if (!l->over_fw)
+        l->max_over = 0;                /* no overhang form: no scratch for its pieces */
+    l->half = sf_scratch_half(l);
+    l->bytes = sizeof(SF_SIZE) + (ULONG)l->form_width * l->form_height + 2UL * l->half;
+    if (l->over_fw)                     /* and a zeroed guard: blits read a word or two past a piece */
+        l->bytes += (ULONG)l->over_fw * l->form_height + SF_OVER_GUARD;
     l->drawable = x <= SF_MAX_WIDTH && l->half <= SF_MAX_HALF;
 
     return TRUE;
@@ -657,7 +661,7 @@ static long sf_build(void *arg)
     if (l.over_fw)
     {
         s->over_form = form + (ULONG)l.form_width * l.form_height + 2UL * l.half;
-        bzero(s->over_form, (ULONG)l.over_fw * l.form_height);
+        bzero(s->over_form, (ULONG)l.over_fw * l.form_height + SF_OVER_GUARD);
     }
 
     /* the glyphs, each in its cell, the baseline on row 'top' */
