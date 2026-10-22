@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#if CONF_WITH_NATIVE_ABI && !defined(X32_USERLAND)
+#if CONF_WITH_NATIVE_ABI && !defined(STANDALONE_CONSOLE)
 #include "tosvars.h"
 #endif
 #include "string.h"
@@ -349,7 +349,7 @@ char c1, c2;
  * is exactly LONG's width on m68k/ARM (ILP32), so this changes nothing
  * there.
  */
-#ifndef X32_USERLAND
+#ifndef CLI_USE_SSYSTEM
 PRIVATE long getjar(void)
 {
 #if CONF_WITH_NATIVE_ABI
@@ -358,14 +358,14 @@ PRIVATE long getjar(void)
     return *(LONG *)0x5a0;
 #endif
 }
-#endif /* !X32_USERLAND */
+#endif /* !CLI_USE_SSYSTEM */
 
 /*
  *  getcookie()
  */
 WORD getcookie(LONG cookie,LONG *pvalue)
 {
-#ifdef X32_USERLAND
+#ifdef CLI_USE_SSYSTEM
     /*
      * Ring 3: the cookie jar is kernel memory (and a 64-bit pointer
      * besides); Ssystem(S_GETCOOKIE, tag, &value) looks the tag up on the
@@ -410,7 +410,7 @@ COOKIE *jar, *c;
     }
 
     return 0;
-#endif /* X32_USERLAND */
+#endif /* CLI_USE_SSYSTEM */
 }
 
 /*

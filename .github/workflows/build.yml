@@ -186,8 +186,9 @@ jobs:
         run: |
           mkdir products
           # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
-          # ELF the image was extracted from, which still has the symbols.
-          for product in *.img emutos.elf emutos.map; do
+          # ELF the image was extracted from, which still has the symbols,
+          # and EmuCON, the program CONF_EXTERNAL_CLI loads from the boot drive.
+          for product in *.img emutos.elf emutos.map cli/emucon.tos; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -243,7 +244,7 @@ jobs:
         run: |
           mkdir products
           # The PE32+ EFI application, plus the map file with its symbols.
-          for product in *.efi emutos.map; do
+          for product in *.efi emutos.map cli/emucon.tos; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -288,6 +289,8 @@ jobs:
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          # EmuCON, the x32 program the kernel loads from the boot drive
+          cp cli/emucon.tos esp/EMUCON.TOS
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
@@ -485,9 +488,11 @@ jobs:
           fi
 
           # EmuCON is an x32 program run in ring 3 -- not linked into the
-          # kernel -- so its banner can only come from that process.
-          if ! grep -q 'EmuCON: starting the x32 image in ring 3' boot.log; then
-            echo "::error::the kernel never started the ring-3 EmuCON"
+          # kernel -- loaded from the boot drive as EMUCON.TOS (the kernel
+          # says "EmuCON: ..." when it cannot), so its banner can only come
+          # from that process.
+          if grep -Eq '^EmuCON: (cannot|EMUCON.TOS is not)' boot.log; then
+            echo "::error::the kernel could not start the ring-3 EmuCON"
             exit 1
           fi
           if ! grep -q 'Welcome to EmuCON2' boot.log; then
@@ -672,7 +677,8 @@ jobs:
           # The loadable mouse cursor and desktop icon resources, and a
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
-          make release-raspi-resources DEST="sdcard/$archive"
+          make release-raspi-resources DEST="sdcard/$archive" \
+            RASPI_EMUCON=raspi-build/emucon.tos
 
           # The default scalable fonts (DejaVu, with their licence), which
           # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive

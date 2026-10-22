@@ -30,18 +30,37 @@
  #endif
  #define MAXPATHLEN      256
  #define BLKDEVNUM       26
+ /* a native-ABI program cannot read the system variables or the cookie
+    jar, or call Supexec(): it asks Ssystem() (x86-64 x32, ARM) */
+ #if defined(__arm__) || defined(__x86_64__)
+  #define CLI_USE_SSYSTEM       1
+  #include <mint/mintbind.h>    /* Ssystem() */
+ #endif
  /* sysconf.h */
  #define DRIVESEP       ':'
  #define PATHSEP        '\\'
- /* nls.h */
- #define _(a) a
- #define N_(a) a
- #define gettext(a) a
+ /* nls.h: English only, or (CLI_NLS) the translations of cli/ are in the
+    program and the language comes from the LANG variable of the
+    environment (cmdnls.c) */
+ #ifdef CLI_NLS
+  #define NLS_MSGID_FLAG 0xc0000000UL   /* ids are 'flag | n'; a pointer never has both bits */
+  #define _(a) etos_gettext((unsigned long)(a))
+  #define N_(a) ((char *)((unsigned long)(a) | NLS_MSGID_FLAG))
+  #define gettext(a) etos_gettext((unsigned long)(a))
+  const char *etos_gettext(unsigned long msgid);
+  void nls_set_lang_env(const char *value);
+ #else
+  #define _(a) a
+  #define N_(a) a
+  #define gettext(a) a
+ #endif
  typedef unsigned char   UBYTE;
  typedef short int       WORD;
  typedef unsigned short  UWORD;
  typedef long            LONG;
  typedef unsigned long   ULONG;
+ typedef void            (*PFVOID)(void);
+ typedef void            PRG_ENTRY(void);
  #define MAXPATHLEN      256
  #define BLKDEVNUM       26
  #define LOWORD(x) ((UWORD)(ULONG)(x))
@@ -226,6 +245,14 @@ static __inline__ long cli_supexec_(long a)
 #define _VDO_ST         0x00000000L     /* ST */
 #define _VDO_TT         0x00020000L     /* TT */
 #define _VDO_VIDEL      0x00030000L     /* Falcon videl */
+/* libcmini's <mint/ostruct.h> has these too, with the values of the screen
+ * mode word; the ones here are those of Getrez() */
+#undef ST_LOW
+#undef ST_MEDIUM
+#undef ST_HIGH
+#undef TT_MEDIUM
+#undef TT_HIGH
+#undef TT_LOW
 #define ST_LOW          0               /* from Getrez() */
 #define ST_MEDIUM       1
 #define ST_HIGH         2
