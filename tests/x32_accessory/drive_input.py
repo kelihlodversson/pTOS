@@ -31,15 +31,15 @@ try:
                 r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)): READY"
                 r"(?: (?P<x>-?\d+) (?P<y>-?\d+) (?P<old_x>-?\d+) (?P<old_y>-?\d+))?\r?\n", output))
             for match in ready[seen:]:
-                stage = match['input'] or match['window']
+                stage = match.group('input') or match.group('window')
                 if connection is None:
                     connection = socket.socket(socket.AF_UNIX)
                     connection.settimeout(2)
                     connection.connect(args.monitor)
                 connection.settimeout(2)
                 if stage == 'close':
-                    dx = int(match['x']) - int(match['old_x'])
-                    dy = int(match['y']) - int(match['old_y'])
+                    dx = int(match.group('x')) - int(match.group('old_x'))
+                    dy = int(match.group('y')) - int(match.group('old_y'))
                     connection.sendall(("mouse_move %d %d\n" % (dx, dy)).encode())
                     time.sleep(0.1)
                     connection.sendall(b"mouse_button 1\n")
