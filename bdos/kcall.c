@@ -1,5 +1,5 @@
 /*
- * kcall.c - GEMDOS for kernel code on x86-64
+ * kcall.c - GEMDOS for kernel code with address spaces
  *
  * Kernel code (the boot sequence, the self-tests, the VDI) calls GEMDOS by
  * name: Pexec(), Mfree(), Fsfirst(), ... (include/bdosbind.h).  On this

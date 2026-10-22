@@ -16,10 +16,10 @@
 #include "bdosdefs.h"
 #include "config.h"
 
-#if CONF_WITH_KCALL && defined(__LP64__)
+#if CONF_WITH_KCALL
 /*
  * Kernel code (CONF_WITH_KCALL) does not trap into GEMDOS: these are plain C calls
- * to the implementations (bdos/arch/x86_64/kcall.c).  Only the calls kernel
+ * to the implementations (bdos/kcall.c).  Only the calls kernel
  * code makes exist.
  */
 #define TRAP1_ARG(x) ((long)(x))

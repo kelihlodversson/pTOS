@@ -144,6 +144,14 @@ C_SYM(biostrap):
         push {r1-r4}      // argument registers: a caller may keep using them
         sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
+#if CONF_WITH_USER_ASPACE
+        mov r9, #0              // BIOS (1: XBIOS)
+        mrs r10, spsr           // r10: the caller is a user process
+        and r10, r10, #0x1f
+        cmp r10, #0x10
+        moveq r10, #1
+        movne r10, #0
+#endif
         mov r11, r0
         mov r0, r1
         mov r1, r2
@@ -172,6 +180,14 @@ C_SYM(xbiostrap):
         push {r1-r4}      // argument registers: a caller may keep using them
         sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
+#if CONF_WITH_USER_ASPACE
+        mov r9, #1              // XBIOS (0: BIOS)
+        mrs r10, spsr           // r10: the caller is a user process
+        and r10, r10, #0x1f
+        cmp r10, #0x10
+        moveq r10, #1
+        movne r10, #0
+#endif
         mov r11, r0
         mov r0, r1
         mov r1, r2
@@ -193,10 +209,38 @@ C_SYM(xbiostrap):
         movhi   r0,#0           // Return 0 when out of range
         bhi     2f
 
+#if CONF_WITH_USER_ASPACE
+        cmp     r10, #0
+        beq     3f              // the kernel's own call: its pointers are the kernel's
+        // a user process: look at the pointers the call is given
+        push    {r0-r3}
+        mov     r0, r11         // the function
+        mov     r1, sp          // arguments 1-4
+        add     r2, sp, #16     // the fifth and later ones, as the call reads them
+        mov     r3, r9          // XBIOS?
+        bl      C_SYM(arm_user_check)
+        mov     ip, r0
+        pop     {r0-r3}
+        cmp     ip, #0
+        movne   r0, ip          // refused: the result is the error
+        bne     2f
+3:
+#endif
         ldr     ip, [r4, +r11, LSL #2]   // get the procedure's address
         blx     ip            //
 
+#if CONF_WITH_USER_ASPACE
+        cmp     r10, #0
+        beq     2f
+        mov     r1, r11         // what a user process is told of the result
+        mov     r2, r9
+        bl      C_SYM(arm_user_result)
+#endif
+
 2:
+#if CONF_WITH_USER_ASPACE
+        mov     ip, #0          // (the address of the call is not for a user process)
+#endif
         pop   {r5-r11}       // restore stacked argument registers
         add   sp, sp, #4     // ... the padding
         pop   {r1-r4}        // ... and r1-r4: only r0 (the result) is changed,

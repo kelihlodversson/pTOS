@@ -69,7 +69,11 @@ static void section_entry(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *entry,
     entry->XNBit   = is_ram ? 0 : 1;
     entry->Domain  = 0;
     entry->IMPBit  = 0;
+#if CONF_WITH_PROCESS_ASPACES
+    entry->AP      = AP_SYSTEM_ACCESS;      /* the kernel half is not for user mode */
+#else
     entry->AP      = AP_ALL_ACCESS;
+#endif
     entry->APXBit  = APX_RW_ACCESS;
     entry->NGBit   = 0;
     entry->Value0  = 0;
@@ -131,11 +135,15 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
         if (device_section(i, &va_section))
             section_entry(&ktable[va_section], i * MEGABYTE, FALSE);
 
+#if !CONF_WITH_PROCESS_ASPACES
     /* the lower half (TTBR0): the RAM at virtual 0 as well, the pool the
      * memory of the programs comes from (their addresses are not kernel
-     * addresses: positive LONGs) */
+     * addresses: positive LONGs).  With address spaces of their own the
+     * memory of a process is mapped into its own tables, and nothing is
+     * here but the identity mapping below. */
     for (i = 0; i < ram_sections; i++)
         section_entry(&utable[i], i * MEGABYTE + VIRT_RAM_BASE, TRUE);
+#endif
 
     /* the first part of the RAM where it physically is, for the code that
      * is executing there right now, pre-MMU, and must keep executing from
@@ -183,8 +191,10 @@ ULONG virt_to_phys(const void *va)
 
     if (a >= VIRT_WINDOW_VBASE && a - VIRT_WINDOW_VBASE < VIRT_MAX_RAM_SIZE)
         return a - VIRT_WINDOW_VBASE + VIRT_RAM_BASE;
+#if !CONF_WITH_PROCESS_ASPACES
     if (a < VIRT_MAX_RAM_SIZE)
         return a + VIRT_RAM_BASE;
+#endif
     KDEBUG(("virt_to_phys(%p): not RAM\n", va));
     return 0;
 }
@@ -195,5 +205,30 @@ ULONG virt_to_phys(const void *va)
  */
 UBYTE *virt_pool_start(UBYTE *kernel_end)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    return kernel_end;          /* the memory of the kernel is all in the window */
+#else
     return kernel_end - VIRT_WINDOW_VBASE;
+#endif
 }
+
+#if CONF_WITH_PROCESS_ASPACES
+extern ULONG boot_ttbr0;        /* startup.S */
+
+/*
+ * A reset comes back to startup.S with the MMU on, and goes to the physical
+ * alias of the code, which only the table the MMU was first switched on with
+ * has: load it before the jump (the tables of the processes have no identity
+ * mapping).
+ */
+void machine_reset_prepare(void)
+{
+    ULONG zero = 0;
+
+    __asm__ volatile ("mcr p15, 0, %0, c2, c0, 0" : : "r" (boot_ttbr0 | TTBR_MODE) : "memory");
+    __asm__ volatile ("isb" : : : "memory");
+    __asm__ volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (zero) : "memory");   /* the whole TLB */
+    __asm__ volatile ("dsb" : : : "memory");
+    __asm__ volatile ("isb" : : : "memory");
+}
+#endif

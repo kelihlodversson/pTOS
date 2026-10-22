@@ -937,7 +937,7 @@ static void proc_go(PD *p)
 #endif
     run = (PD *)p;
 
-#ifdef __arm__
+#if defined(__arm__) && !CONF_WITH_USER_ASPACE
     /* gouser() would store whatever r0 happens to hold over the basepage
      * proc_launch_prepare() put there for the new process to find in r0 */
     termuser();
