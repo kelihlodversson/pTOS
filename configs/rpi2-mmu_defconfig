@@ -1,0 +1,11 @@
+# The Raspberry Pi 2 with a process address space of its own for every process
+# (CONF_WITH_PROCESS_ASPACES, #568): EmuCON and the programs it runs are in
+# user mode, each in its own page tables, the kernel half of the address space
+# is supervisor-only, and a fault in a process ends that process only.  No
+# desktop yet (doc/mmu-address-space.txt, "The screen"); the console is on the
+# UART as well, for QEMU's raspi2b machine.
+MACHINE_RPI=y
+TARGET_RPI2=y
+CONF_SERIAL_CONSOLE=y
+CONF_WITH_AES=n
+CONF_WITH_PROCESS_ASPACES=y

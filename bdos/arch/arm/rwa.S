@@ -16,6 +16,8 @@
 #include "asmpd.h"
 #include "arch/arm/fpusave.h"
 
+#if !CONF_WITH_USER_ASPACE     // (a process in an address space of its own: uspaceasm.S)
+
 // ==== Definitions ==========================================================
 
         .globl  C_SYM(termuser)
@@ -239,3 +241,5 @@ x20_sup:
         mov     sp, r1
         cps     #0x13
         b       1b
+
+#endif /* !CONF_WITH_USER_ASPACE */

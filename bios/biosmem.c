@@ -55,6 +55,38 @@ static BOOL bmem_allowed;
  *   LONG memtop     TOS variable in 0x436: top of TPA
  *   LONG phystop    TOS variable in 0x43a: top of ST-RAM
  */
+#if CONF_WITH_PROCESS_ASPACES
+#include "pmem32.h"
+#include "aspace32.h"
+
+/*
+ * With an address space for every process (doc/mmu-address-space.txt) the
+ * memory of the programs is not the pool of the GEMDOS memory descriptors but
+ * pages: the pool is what the kernel's own calls get (a quarter of the RAM,
+ * 8 MiB at most), the pages after it are the physical page allocator's
+ * (include/pmem32.h) up to the top of the RAM, and the kernel's own address
+ * space, with the process window, is made here, before anything allocates
+ * a process.
+ */
+#define POOL_MAX    0x00800000UL
+#define POOL_MIN    0x00100000UL
+
+static void process_memory_init(void)
+{
+    ULONG avail = (ULONG)(phystop - membot);
+    ULONG pool = avail / 4;
+
+    if (pool > POOL_MAX)
+        pool = POOL_MAX;
+    if (pool < POOL_MIN)
+        pool = POOL_MIN;
+    memtop = (UBYTE *)(((ULONG)membot + pool) & ~0xfffUL);
+    pmem32_init(pmem32_phys(memtop), pmem32_phys(phystop));
+    if (!aspace_kernel_init())
+        panic("no memory for the address spaces\n");
+}
+#endif
+
 void bmem_init(void)
 {
     KDEBUG(("Memory map before balloc() adjustments:\n"));
@@ -92,6 +124,9 @@ void bmem_init(void)
     /* End of available ST-RAM */
     /* The screen buffer will be allocated later */
     memtop = phystop;
+#if CONF_WITH_PROCESS_ASPACES
+    process_memory_init();
+#endif
     KDEBUG(("       memtop = %p\n", memtop));
 
 #if CONF_WITH_STATIC_ALT_RAM

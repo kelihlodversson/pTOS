@@ -349,6 +349,13 @@ raspi_post_mmu:
      */
     ldr r0, =C_SYM(phystop)
     sub r1, r6, #0x100000
+#if CONF_WITH_PROCESS_ASPACES
+    mov r2, r1                      /* the table the MMU was switched on with: a reset needs it back */
+    add r2, r2, #0x4000             /* (behind the 16 KiB of the kernel half) */
+    ldr r3, =C_SYM(boot_ttbr0)
+    str r2, [r3]
+    add r1, r1, #RASPI_WINDOW_VBASE /* phystop is in the window: the memory of the kernel is all there is */
+#endif
     str r1, [r0]
     /*
      * The boot loader's pointer (ATAGs, or the device tree) is a physical
@@ -793,3 +800,9 @@ C_SYM(start_in_hyp): .ds.l 1
  */
 .global C_SYM(arm_boot_regs)
 C_SYM(arm_boot_regs): .ds.l 3
+
+/* the physical address of the table of the lower half that the MMU was
+ * switched on with (identity mapping of the RAM), which a reset needs back
+ * (CONF_WITH_PROCESS_ASPACES) */
+.global C_SYM(boot_ttbr0)
+C_SYM(boot_ttbr0): .ds.l 1

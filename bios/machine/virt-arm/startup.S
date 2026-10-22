@@ -133,6 +133,9 @@ C_SYM(main):
     bl  C_SYM(flush_data_cache_all)
     ldr r4, =C_SYM(phystop)
     ldr r11, [r4]
+#if CONF_WITH_PROCESS_ASPACES
+    sub r11, r11, #(VIRT_WINDOW_VBASE & 0xff000000)     /* phystop is in the window */
+#endif
     add r11, r11, #0x100000     /* the RAM window */
     ldr r4, =C_SYM(arm_boot_regs)
     ldmia r4, {r8-r10}
@@ -209,7 +212,13 @@ virt_arm_post_mmu:
      * switch to C_SYM(stktop) below.  The physical alias of the start of the
      * RAM is not needed any more, except for a reset.
      */
+#if CONF_WITH_PROCESS_ASPACES
+    ldr sp, =VIRT_WINDOW_VBASE  /* no pool: the kernel is all there is in the window */
+    add sp, sp, r11
+    sub sp, sp, #0x10000
+#else
     sub sp, r11, #0x10000
+#endif
     ldr r4, =hello_msg_virt
     bl  print_string
 
@@ -257,6 +266,17 @@ virt_arm_post_mmu:
      */
     ldr r0, =C_SYM(phystop)
     sub r1, r11, #0x100000
+#if CONF_WITH_PROCESS_ASPACES
+    ldr r2, =VIRT_WINDOW_VBASE  /* the top of the RAM in the window */
+    add r1, r1, r2
+    ldr r0, =C_SYM(boot_ttbr0)  /* the table the MMU was switched on with: for a reset */
+    ldr r2, =VIRT_RAM_BASE
+    add r2, r2, r11
+    sub r2, r2, #0x100000
+    add r2, r2, #0x4000         /* behind the 16 KiB of the kernel half */
+    str r2, [r0]
+    ldr r0, =C_SYM(phystop)
+#endif
     str r1, [r0]
 
     /*
@@ -280,7 +300,12 @@ virt_arm_post_mmu:
     sub r0, r10, r0
     cmp r0, r11
     movhs r10, #0
+#if CONF_WITH_PROCESS_ASPACES
+    ldrlo r2, =VIRT_WINDOW_VBASE
+    addlo r10, r0, r2           /* the window address of the same bytes */
+#else
     movlo r10, r0
+#endif
 3:
     ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r8-r10}
@@ -609,3 +634,8 @@ C_SYM(start_in_hyp): .word 0
 .balign 4
 .global C_SYM(arm_boot_regs)
 C_SYM(arm_boot_regs): .ds.l 3
+/* the physical address of the table of the lower half that the MMU was
+ * switched on with (identity mapping of the start of the RAM), which a
+ * reset needs back (CONF_WITH_PROCESS_ASPACES) */
+.global C_SYM(boot_ttbr0)
+C_SYM(boot_ttbr0): .ds.l 1

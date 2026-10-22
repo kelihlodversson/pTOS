@@ -56,7 +56,7 @@ static __inline__ LONG dos_sdrv(WORD newdrv)
  * The x86-64 kernel calls GEMDOS directly (bdosbind.h) and has only the
  * calls above; the wrappers below need the full trap bindings.
  */
-#if !(CONF_WITH_KCALL && defined(__LP64__))
+#if !CONF_WITH_KCALL
 
 static __inline__ LONG dos_rawcin(void)
 {

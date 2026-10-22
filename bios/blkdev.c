@@ -14,6 +14,9 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#if CONF_WITH_USER_ASPACE
+#include <aspace_types.h>
+#endif
 #include "classicvec.h"
 #include "string.h"
 #include "endian.h"
@@ -463,6 +466,48 @@ BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size)
 }
 #endif
 
+#if CONF_WITH_USER_ASPACE && !defined(__x86_64__)
+/*
+ * A buffer of a process is not memory a device can be given: its address is a
+ * virtual one of the process's own address space, and its pages need not be
+ * next to each other in physical memory.  The transfer goes through a buffer
+ * of the kernel, in pieces of as many sectors as it holds.
+ */
+static UBYTE bounce[32768] __attribute__((aligned(16)));
+
+static LONG disk_rw_bounced(WORD unit, WORD rw, LONG lrecnr, WORD scount, UBYTE *buf)
+{
+    ULONG ss = 1UL << units[unit].psshift;
+    ULONG per = sizeof(bounce) / ss;
+    LONG r = 0;
+
+    if (!per)
+        return EGENRL;
+    while (scount > 0) {
+        WORD n = scount > per ? (WORD)per : scount;
+
+        if ((rw & RW_RW) == RW_WRITE)
+            memcpy(bounce, buf, n * ss);
+        r = disk_rw(unit, rw, lrecnr, n, bounce);
+        if (r < 0)
+            return r;
+        if ((rw & RW_RW) == RW_READ)
+            memcpy(buf, bounce, n * ss);
+        buf += n * ss;
+        lrecnr += n;
+        scount -= n;
+    }
+    return r;
+}
+
+#define DISK_RW(unit, rw, lrecnr, scount, buf) \
+    ((ULONG)(uintptr_t)(buf) < USER_VA_LIMIT \
+     ? disk_rw_bounced(unit, rw, lrecnr, scount, buf) \
+     : disk_rw(unit, rw, lrecnr, scount, buf))
+#else
+#define DISK_RW(unit, rw, lrecnr, scount, buf) disk_rw(unit, rw, lrecnr, scount, buf)
+#endif
+
 LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr)
 {
     int retry_count, retries;
@@ -573,7 +618,7 @@ LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrec
             retries = retry_count;
             do {    /* inner loop automatically retries */
                 retval = (unit<NUMFLOPPIES) ? floppy_rw(rw, buf, scount, lrecnr, geo->spt, geo->sides, unit)
-                                            : disk_rw(unit, (rw & ~RW_NOTRANSLATE), lrecnr, scount, buf);
+                                            : DISK_RW(unit, (rw & ~RW_NOTRANSLATE), lrecnr, scount, buf);
                 if (retval == E_CHNG)       /* no automatic retry on media change */
                     break;
             } while((retval < 0) && (--retries > 0));

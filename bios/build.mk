@@ -54,6 +54,7 @@ obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi_cf.o
 
 obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o cpudetect.o
+obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),usertrap.o)
 
 # tosvars.c is arch-neutral C (see its own header comment), needed by
 # every non-m68k/ColdFire arch alike -- x86-64 gets its own obj-y line
@@ -62,6 +63,14 @@ obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o cpudetect.o
 # stand-in, bios/arch/x86_64/aciaemu.c) is a genuine per-arch file, same
 # as ARM's own, just listed on its own line here for the same reason.
 obj-$(ARCH_X86_64) += tosvars.o aciaemu.o
+
+# The memory of the processes of the 32-bit MMU configurations, each in an
+# address space of its own (CONF_WITH_PROCESS_ASPACES): the physical page
+# allocator, the kernel heap, the process window, the address spaces, the
+# layout of a loaded program (bios/aspace.c and the page-table backend of the
+# architecture).  x86-64 has its own, in bios/machine/pc-x86_64/.
+obj-$(CONF_WITH_PROCESS_ASPACES) += pmem32.o kheap.o procmem.o aspace.o progimage.o
+obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),aspace_hw.o)
 
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.
