@@ -123,6 +123,84 @@ config CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
 	  are thickened only once.  It takes some 2.5 KB of ROM, which the
 	  192 KB images do not have to spare.
 
+config CONF_WITH_VDI_SCALABLE_FONTS
+	bool "Scalable fonts (FreeType)"
+	select CONF_WITH_GDOS
+	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL
+	default y if TARGET_VIRT_M68K_KERNEL || TARGET_PC_X86_64_EFI
+	default n
+	help
+	  Link the FreeType library (the lib/freetype submodule) into the
+	  VDI, to give it TrueType and OpenType fonts at any size (#573).
+	  FreeType is used under its GPL option ("version 2, any later
+	  version can be used also"), the same terms as pTOS's own.
+
+	  It adds a few hundred KB, so it is on by default only for the
+	  images that have no fixed size (the Raspberry Pi, virt and x86-64
+	  kernels) and off for the ROM, cartridge, floppy, Amiga and
+	  S-record images, and for the RAM TOS, which has to fit in the RAM
+	  of small machines.
+
+	  Needs the submodule: git submodule update --init lib/freetype
+
+config CONF_VDI_FONT_MEMORY
+	int "Memory for the scalable fonts, in KB"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS && !CONF_WITH_KHEAP
+	range 256 65536
+	default 4096
+	help
+	  The memory FreeType uses (font files, which are loaded whole, the
+	  faces, sizes and glyphs it works with, and its own stack) is kept
+	  out of GEMDOS: it is set aside while the system starts, and is
+	  the kernel's, not that of whichever program the VDI happens to be
+	  working for.  A TrueType font file takes from 20 KB to about 1 MB.
+	  The x86-64 kernel uses its growable kernel heap instead.
+
+config CONF_VDI_FONT_CACHE
+	int "Memory for rendered sizes of the scalable fonts, in KB"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	range 64 16384
+	default 1024
+	help
+	  Each size of a scalable font that is selected is rendered whole,
+	  as a bitmap font of that size, and kept for the next time.  This
+	  bounds the memory those sizes take, out of the font memory: the
+	  sizes used longest ago that no workstation has selected are
+	  dropped to make room.  A size that would not fit by itself is
+	  made smaller until it does.
+
+config CONF_VDI_FONT_DIR
+	string "Directory of the scalable fonts"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	default "\\GEMSYS\\FONTS"
+	help
+	  Where the built-in GDOS looks for TrueType (*.TTF), OpenType
+	  (*.OTF) and TrueType collection (*.TTC) fonts, once the AUTO
+	  folder has run.  Without a drive letter, it is on the boot drive.
+	  The fonts found are what vst_load_fonts() adds to a workstation,
+	  as SpeedoGDOS does.  A missing or empty directory just leaves
+	  the bitmap fonts.  The release images put DejaVu fonts here
+	  (tools/fetch-fonts.sh).
+
+config CONF_VDI_SYSTEM_FONT
+	string "Monospaced scalable font to replace the system font (file name)"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	default ""
+	help
+	  The 8-bit file name, in the font directory, of a monospaced
+	  TrueType or OpenType font that the built-in GDOS makes the system
+	  font of (font id 1): of the VT52 console, the AES, the desktop,
+	  and of every program that picks no other font.  It is rendered at
+	  the cells of the 8x8 and 8x16 ROM fonts, which keep their sizes
+	  and metrics; a character it lacks keeps the glyph of the ROM font.
+	  The 6x6 font stays as it is.  Empty: the ROM fonts.
+
+	  A file \GEMSYS\PTOS.INF on the boot drive with a line
+	  "SYSTEMFONT=NAME.TTF" takes the place of this, without a rebuild.
+	  Only with the Atari ST character set, and only where the built-in
+	  GDOS starts (none loaded from disk).  A font that is missing, is
+	  not monospaced, or cannot be read leaves the ROM fonts.
+
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"
 	default n if TARGET_192

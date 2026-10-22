@@ -7,6 +7,7 @@
 
 #include "asmdefs.h"
 #include "header.h"
+#include "arch/arm/fpusave.h"
 #include "virt_memmap.h"
 
         .globl  C_SYM(os_entry)
@@ -505,10 +506,12 @@ C_SYM(arm_dispatch_undef):
     moveq  r0, #0x28
     movne  r0, #0x10
     mov    r1, sp
+    FPU_PUSH_SCRATCH ip             /* below the frame r1 points to (keeps the flags) */
     ldreq  ip, =C_SYM(tos_vec_linea)
     ldrne  ip, =C_SYM(tos_vec_undef)
     ldr    ip, [ip]
     blx ip
+    FPU_POP_SCRATCH ip
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
@@ -576,7 +579,9 @@ C_SYM(arm_dispatch_irq):
     srsfd  sp!, #0x13
     cps    #0x13
     stmfd  sp!, {r0-r3, ip, lr}
+    FPU_PUSH_ALL r0                 /* the interrupted code's FPU state */
     bl     C_SYM(virt_int_handler)
+    FPU_POP_ALL r0
     ldmfd  sp!, {r0-r3, ip, lr}
     rfefd  sp!
 

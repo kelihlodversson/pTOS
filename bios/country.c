@@ -238,3 +238,19 @@ void get_fonts(const Fonthead **f6x6,
     *f8x8 = font_sets[j].f8x8;
     *f8x16 = font_sets[j].f8x16;
 }
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/*
+ * whether the system fonts are in the Atari ST character set (not the
+ * Latin-2, Greek or Cyrillic of some countries): a font made from another
+ * (#600) knows the characters of that one only
+ */
+BOOL country_charset_is_st(void)
+{
+#if CONF_MULTILANG
+    return get_charset_index() == CHARSET_ST;
+#else
+    return CONF_CHARSET == CHARSET_ST;
+#endif
+}
+#endif /* CONF_WITH_VDI_SCALABLE_FONTS */

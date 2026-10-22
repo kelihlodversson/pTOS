@@ -35,6 +35,15 @@ it first.
 The user merges the PR themselves once they're satisfied and any review
 comments are addressed — never merge or force-push a PR as part of this flow.
 
+When checking a PR for code review results, read the review summary comment
+as well as the inline threads: Copilot may put findings in the summary (for
+example under "previously missed issues") without opening an inline thread
+for them. Check for those explicitly.
+
+All documentation, communication (issues, PRs, review replies, commit
+messages) and code are written in English. The exceptions are i18n and
+explicit translations of documentation.
+
 ### Epic branches
 
 For larger features or refactorings that span multiple related issues, create an
@@ -77,8 +86,9 @@ unbuildable. The two cases that trip agents most often:
 - pc-x86_64 uses the host's native gcc: `make CROSS_COMPILE=`.
 - `CONF_WITH_MFASTCALL=y` configs (amiga, amiga-kickdisk, the `*-fastcall`
   ones) need Thorsten Otto's toolchain, because the PPA's
-  `m68k-atari-mintelf-gcc` has no `-mfastcall`. The skill shows how to
-  install it into a user directory and put it first on `PATH`.
+  `m68k-atari-mintelf-gcc` has no `-mfastcall`. CI uses his toolchain for
+  every m68k job. The skill shows how to install it into a user directory
+  and put it first on `PATH`.
 
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.

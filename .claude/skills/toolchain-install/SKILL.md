@@ -92,7 +92,8 @@ make
 
 ### m68k
 
-The recommended Ubuntu installation is the same PPA/package path used by CI:
+Vincent Rivière's PPA is the quickest install, though CI no longer uses it (it
+uses Thorsten Otto's toolchain, below, for every m68k job):
 
 ```sh
 sudo add-apt-repository -y ppa:vriviere/mintelf
@@ -102,8 +103,8 @@ sudo apt-get install -y cross-mintelf-essential
 
 This PPA gcc has **no `-mfastcall`**. It builds every m68k config except
 the `CONF_WITH_MFASTCALL=y` ones (amiga, amiga-kickdisk, `*-fastcall`), and
-the Makefile stops those with "does not support -mfastcall". CI installs both
-toolchains and puts Otto's first on `PATH` for the fastcall jobs. Do the same
+the Makefile stops those with "does not support -mfastcall". CI installs only
+Otto's toolchain (the same three archives as below). Do the same
 locally with the user-directory install below.
 
 ### -mfastcall toolchain without sudo
@@ -123,7 +124,7 @@ dest=$HOME/.local/th-otto-mintelf
     dl=$HOME/.local/th-otto-dl
     # Download and extract exactly these files, never a *.tar.xz glob: a
     # leftover archive in the reused download directory has not been checked.
-    archives="gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
+    archives="gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz
               binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
               mintlib-0.60.1-mintelf-20240718-dev.tar.xz"
     mkdir -p "$dest" "$dl" && cd "$dl" || exit 1
@@ -131,7 +132,7 @@ dest=$HOME/.local/th-otto-mintelf
         curl -sSLO --fail --retry 3 "https://tho-otto.m68k.eu/download/mint/$f" || exit 1
     done
     sha256sum -c - <<'EOF' || exit 1
-70ae7f69ec54484b805990ddef517af13fccc3744018dbca3cc0e61eec1c55b6  gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
+2c582c04d689e8fb8c3568155246fa8039a320c1fad95a02c228a001f284f57b  gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz
 e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025  binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
 0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec  mintlib-0.60.1-mintelf-20240718-dev.tar.xz
 EOF
@@ -152,7 +153,7 @@ If using archives from the tho-otto page instead, download these three
 matching Linux 64-bit archives from the latest toolchain section:
 
 - `binutils-2.45-mintelf-20250812-bin-linux64.tar.xz`
-- `gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz`
+- `gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz`
 - `mintlib-0.60.1-mintelf-20240718-dev.tar.xz`
 
 The binutils and GCC archives share the filesystem root and are intended to be
@@ -170,7 +171,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 for archive in \
     binutils-2.45-mintelf-20250812-bin-linux64.tar.xz \
-    gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz \
+    gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz \
     mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
     entries=$(tar -tJf "$archive") || exit 1
     while IFS= read -r path; do
@@ -268,7 +269,7 @@ Download these matching macOS archives from the latest toolchain section at
 the tho-otto page:
 
 - `binutils-2.45-mintelf-20250812-bin-macos.tar.xz`
-- `gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz`
+- `gcc-14.3.0-mintelf-20250702-bin-macos.tar.xz`
 - `mintlib-0.60.1-mintelf-20240718-dev.tar.xz`
 
 <https://tho-otto.m68k.eu/crossmint.php>
@@ -289,7 +290,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 for archive in \
     binutils-2.45-mintelf-20250812-bin-macos.tar.xz \
-    gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz \
+    gcc-14.3.0-mintelf-20250702-bin-macos.tar.xz \
     mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
     entries=$(tar -tJf "$archive") || exit 1
     while IFS= read -r path; do

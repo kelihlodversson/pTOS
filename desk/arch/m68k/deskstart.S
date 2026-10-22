@@ -28,6 +28,9 @@ C_SYM(deskstart):
         movea.l a7,a5
         movea.l #deskustack,a7
         movea.l 4(a5),a5
+#if CONF_EXTERNAL_DESK
+        move.l  a5,C_SYM(desk_basepage)         // for the environment (LANG)
+#endif
 
         move.l  0xC(a5),d0
         add.l   0x14(a5),d0

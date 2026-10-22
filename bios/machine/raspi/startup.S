@@ -10,6 +10,7 @@
 #include "asmdefs.h"
 #include "header.h"
 #include "raspi_memmap.h"
+#include "arch/arm/fpusave.h"
 
 #if defined(TARGET_RPI4)
 #define CORE0_MBOX3_SET             0xff80008C
@@ -630,13 +631,16 @@ C_SYM(arm_dispatch_undef):
     mov    r1, sp          // Stack pointer points to the exception frame
 #if CONF_WITH_HIGHER_HALF
     // the handlers are variables (bios/arch/arm/vectors.c): r0 is only the vector number
+    FPU_PUSH_SCRATCH ip    // the FPU registers the handler may change, below the frame (keeps the flags)
     ldreq  ip, =C_SYM(tos_vec_linea)
     ldrne  ip, =C_SYM(tos_vec_undef)
     ldr    ip, [ip]
 #else
+    FPU_PUSH_SCRATCH ip    // the FPU registers the handler may change, below the frame
     ldr    ip, [r0]        // load handler address the illegal instruction will be passed in as the first argument
 #endif
     blx ip                 // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 instruction, u32 pc)
+    FPU_POP_SCRATCH ip
 
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^   /* restore user registers */
@@ -734,7 +738,9 @@ C_SYM(arm_dispatch_irq):
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
     cps    #0x13           /* switch to supervisor mode */
     stmfd  sp!, {r0-r3, ip, lr} /* store registers not saved by the C handler (link register is important in case the interrupt interrupted while the processor was in SVC mode.)*/
+    FPU_PUSH_ALL r0        /* the interrupted code's FPU state */
     bl     C_SYM(raspi_int_handler)
+    FPU_POP_ALL r0
     ldmfd  sp!, {r0-r3, ip, lr}
     rfefd  sp!             /* load pc and CPSR from stack */
 

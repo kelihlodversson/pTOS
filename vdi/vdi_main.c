@@ -15,6 +15,7 @@
 #include "kprint.h"
 #include "vdi_backend.h"
 #include "asm.h"
+#include "vdi_gdos.h"
 
 /* forward prototypes */
 void screen(void);
@@ -114,8 +115,47 @@ static struct vdi_jmptab const jmptb2[] = {
 #endif
 };
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* The font calls of SpeedoGDOS and NVDI, for the built-in GDOS's fonts */
+#define VQT_CHAR_INDEX_OP 190
+static struct vdi_jmptab const jmp_char_index =
+    { 0,  1, vdi_vqt_char_index };     /* 190 */
+
+#define JMPTB3_FIRST    229
+static struct vdi_jmptab const jmptb3[] = {
+    { 0,  3, vdi_vqt_xfntinfo },       /* 229 */
+    { 0,  0, vdi_vst_name },           /* 230 */ /* also vqt_name_and_id */
+    { 2,  0, vdi_vst_width },          /* 231 */
+    { 0,  0, vdi_vqt_fontheader },     /* 232 */
+    { 0,  0, vdi_v_nop },              /* 233 */
+    { 0,  4, vdi_vqt_trackkern },      /* 234 */
+    { 0,  4, vdi_vqt_pairkern },       /* 235 */
+    { 0,  0, vdi_vst_charmap },        /* 236 */ /* also vst_map_mode */
+    { 0,  2, vdi_vst_kern },           /* 237 */ /* also vst_track_offset */
+    { 0,  0, vdi_v_nop },              /* 238 */
+    { 0, 12, vdi_v_getbitmap_info },   /* 239 */
+    { 4,  0, vdi_vqt_f_extent },       /* 240 */ /* also vqt_real_extent */
+    { 0,  0, vdi_v_ftext },            /* 241 */ /* also v_ftext_offset */
+    { 0,  0, vdi_v_nop },              /* 242 */ /* v_killoutline: nothing to free */
+    { 0,  1, vdi_v_getoutline },       /* 243 */
+    { 0,  0, vdi_v_nop },              /* 244 */ /* vst_scratch: no buffer to size */
+    { 0,  0, vdi_vst_error },          /* 245 */
+    { 2,  1, vdi_vst_arbpt },          /* 246 */ /* also vst_arbpt32 */
+    { 4,  0, vdi_vqt_advance },        /* 247 */ /* also vqt_advance32 */
+    { 0,  0, vdi_v_nop },              /* 248 */ /* vq_devinfo: not a font call */
+    { 0,  1, vdi_v_savecache },        /* 249 */
+    { 0,  1, vdi_v_loadcache },        /* 250 */
+    { 0,  1, vdi_v_flushcache },       /* 251 */
+    { 2,  1, vdi_vst_setsize },        /* 252 */ /* also vst_setsize32 */
+    { 0,  1, vdi_vst_skew },           /* 253 */
+    { 0,  2, vdi_vqt_get_table },      /* 254 */
+    { 0,  2, vdi_vqt_cachesize }       /* 255 */
+};
+#endif
+
 #define JMPTB1_ENTRIES  ARRAY_SIZE(jmptb1)
 #define JMPTB2_ENTRIES  ARRAY_SIZE(jmptb2)
+#define JMPTB3_ENTRIES  ARRAY_SIZE(jmptb3)
 
 
 /*
@@ -162,7 +202,17 @@ void screen(void)
     }
     else if ((opcode >= V_OPNVWK_OP) && (opcode < V_OPNVWK_OP+JMPTB2_ENTRIES)) {
         jmptab = &jmptb2[opcode - V_OPNVWK_OP];
-    } else {
+    }
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* only with the built-in GDOS: without it, there is no SpeedoGDOS */
+    else if (vdi_gdos_id && (opcode >= JMPTB3_FIRST) && (opcode < JMPTB3_FIRST+JMPTB3_ENTRIES)) {
+        jmptab = &jmptb3[opcode - JMPTB3_FIRST];
+    }
+    else if (vdi_gdos_id && opcode == VQT_CHAR_INDEX_OP) {
+        jmptab = &jmp_char_index;
+    }
+#endif
+    else {
         return;
     }
     CONTRL->nptsout = jmptab->nptsout;

@@ -76,6 +76,31 @@ extern  jmp_buf errbuf;
 extern  int     errdrv;
 extern  long    errcode;
 
+/*
+ * run a call that can reach the disk, for kernel code calling the GEMDOS
+ * functions directly (bdos/kfile.c, bdos/arch/x86_64/kcall.c): the file
+ * system reports a hard error with a longjmp() to errbuf, which only
+ * osif() sets up otherwise.  The call returns the error code, without
+ * osif()'s media change retry.
+ */
+#define DISK_CALL(call)                                         \
+__extension__                                                   \
+({                                                              \
+    long _rc;                                                   \
+    jmp_buf _saved;                                             \
+                                                                \
+    memcpy(_saved, errbuf, sizeof(errbuf));                     \
+    if (setjmp(errbuf))                                         \
+    {                                                           \
+        _rc = errcode;                                          \
+        mark_bcbs_invalid(errdrv);                              \
+    }                                                           \
+    else                                                        \
+        _rc = (call);                                           \
+    memcpy(errbuf, _saved, sizeof(errbuf));                     \
+    _rc;                                                        \
+})
+
 #define longjmp_rwabs(flg,buf,cnt,rec,dev)            \
     if (rec <= 32767)                                 \
     {                                                 \

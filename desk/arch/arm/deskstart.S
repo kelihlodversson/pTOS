@@ -25,6 +25,10 @@
 
 C_SYM(deskstart):
         // our basepage address is in r0.
+#if CONF_EXTERNAL_DESK
+        ldr     r1, =C_SYM(desk_basepage)       // for the environment (LANG)
+        str     r0, [r1]
+#endif
 
         // set our temporary user stack
         ldr     sp, =deskustack

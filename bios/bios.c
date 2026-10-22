@@ -22,6 +22,7 @@
 #include "emutos.h"
 #include "biosext.h"
 #include "bios.h"
+#include "shells.h"
 #include "../bdos/bdosstub.h"
 #include "../vdi/vdistub.h"
 #include "bdosbind.h"
@@ -158,6 +159,9 @@ WORD boot_status;               /* see kprint.h for bit flags */
 /* Boot flags */
 UBYTE bootflags;
 
+/* the drive that is booted from unless another is selected (tosvars.h) */
+WORD default_bootdev;
+
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
 void (*vector_5ms)(void);       /* 200 Hz system timer */
@@ -289,19 +293,32 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
 #if CONF_WITH_CLI && CONF_EXTERNAL_CLI
 /*
- * EmuCON is the program EMUCON.TOS (cli/Makefile), loaded from the root
- * directory of the boot drive like any other program: it is no part of this
- * image.  It returns here when the user leaves it.
+ * The shell of an image without the AES is a program, loaded from the root
+ * directory of the boot drive like any other: EmuCON (cli/Makefile), or the
+ * first of the others that shells.h lists that is there.  It is no part of
+ * this image.  It returns here when the user leaves it.
  */
+static LONG try_shell(const char *path, void *env)
+{
+    return Pexec(PE_LOADGO, path, "", (char *)env);
+}
+
 static void start_external_cli(char *env)
 {
-    LONG rc = Pexec(PE_LOADGO, "EMUCON.TOS", "", env);
+    char path[SHELL_PATH_SIZE], drives[12];
+    const char *const *n;
+    LONG rc = shell_start(shell_names_cli, try_shell, env, path);
 
     if (rc == EFILNF || rc == EPTHNF)
-        kcprintf("EmuCON: EMUCON.TOS is not in the root directory of the boot drive %c:\n",
-                 'A' + (int)bootdev);
+    {
+        shell_drives(drives);
+        kcprintf("EmuCON: this system has no built-in shell, and none was found in the root directory of %s (", drives);
+        for (n = shell_names_cli; *n; n++)
+            kcprintf("%s%s", n == shell_names_cli ? "" : ", ", *n);
+        kcprintf(")\n");
+    }
     else if (rc < 0)
-        kcprintf("EmuCON: cannot start EMUCON.TOS (error %ld)\n", (long)rc);
+        kcprintf("EmuCON: cannot start %s (error %ld)\n", path, (long)rc);
 }
 #endif
 
@@ -726,6 +743,12 @@ static void bios_init(void)
     clock_init();       /* init clock */
     KDEBUG(("after clock_init()\n"));
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* before GEMDOS, which takes the memory that is left; late enough for
+     * KINFO() to reach the serial port everywhere */
+    vdi_freetype_init();    /* the scalable fonts' FreeType (#573) */
+#endif
+
 #if CONF_WITH_NOVA
     /* Detect and initialize a Nova card, skip if Ctrl is pressed */
     if (HAS_NOVA && !(kbshift(-1) & MODE_CTRL)) {
@@ -1103,8 +1126,9 @@ void biosmain(void)
      * this allows a boot device that was selected via the welcome
      * screen to persist across warm boots.
      */
+    default_bootdev = blkdev_avail(DEFAULT_BOOTDEV) ? DEFAULT_BOOTDEV : FLOPPY_BOOTDEV;
     if (FIRST_BOOT)
-        bootdev = blkdev_avail(DEFAULT_BOOTDEV) ? DEFAULT_BOOTDEV : FLOPPY_BOOTDEV;
+        bootdev = default_bootdev;
 
 #if INITINFO_DURATION == 0
     show_initinfo = FALSE;
@@ -1137,6 +1161,10 @@ void biosmain(void)
     Dsetdrv(bootdev);           /* Set boot drive */
     init_default_environment(); /* Build default environment string */
 
+#if CONF_WITH_VDI_SCALABLE_FONTS && defined(CONF_DEBUG_FREETYPE_TEST_FONT)
+    vdi_freetype_test_font();   /* check FreeType's port layer with a font */
+#endif
+
 #if CONF_WITH_X86_64_MEMTEST
     x86_64_memtest_run();       /* reports "x86-64 memtest: PASS" or FAIL */
 #endif
@@ -1161,6 +1189,10 @@ void biosmain(void)
 #endif
 
     autoexec();                 /* autoexec PRGs from AUTO folder */
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_gdos_init();            /* the built-in GDOS, unless AUTO had one */
+#endif
 
     /* clear commandline */
 
@@ -1762,7 +1794,7 @@ const PFLONG bios_vecs[] = {
 
 const UWORD bios_ent = ARRAY_SIZE(bios_vecs);
 
-#if CONF_WITH_EXTENDED_MOUSE
+#if CONF_WITH_EXTENDED_MOUSE || (CONF_WITH_VDI_SCALABLE_FONTS && !ARCH_X86_64)
 
 /* Does this pointer belong to our TEXT segment? */
 BOOL is_text_pointer(const void *p)
@@ -1771,4 +1803,4 @@ BOOL is_text_pointer(const void *p)
     return (pb >= (UBYTE *)&os_header) && (pb < _etext);
 }
 
-#endif /* CONF_WITH_EXTENDED_MOUSE */
+#endif /* CONF_WITH_EXTENDED_MOUSE || (CONF_WITH_VDI_SCALABLE_FONTS && !ARCH_X86_64) */

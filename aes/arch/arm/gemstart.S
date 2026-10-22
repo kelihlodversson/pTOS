@@ -17,6 +17,7 @@
 
 #include "asmdefs.h"
 #include "asmstruct.h"
+#include "arch/arm/fpusave.h"
 
         .globl  C_SYM(ui_start)
         .globl  C_SYM(accdesk_start)
@@ -245,7 +246,8 @@ C_SYM(dos_exec):
         ldr     ip, [r7, UDA_SPSUPER]
         str     ip, [sp, #+4*5]         // Save rlr->p_uda->u_spsuper where we saved r5 earlier
 
-        sub     ip, sp, #0x50           // Adjust the stack (see above)
+        // (the trap #1 prologue also saves the FPU registers: FPU_ALL_BYTES)
+        sub     ip, sp, #0x50 + FPU_ALL_BYTES   // Adjust the stack (see above)
 
         // This value stays live in UDA_SPSUPER for as long as the launched
         // child runs -- for the desktop shell (launched from
@@ -287,8 +289,8 @@ old_gem_ssp:
 
 
 
-// Space for the user stack:
-        .ds.b   256
+// Space for the user stack (the GEMDOS calls made on it save the FPU registers too):
+        .ds.b   256 + FPU_ALL_BYTES
 gemusp:
 
 

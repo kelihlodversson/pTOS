@@ -42,6 +42,7 @@
 #include "deskrsrc.h"
 #include "desksupp.h"
 #include "deskinf.h"
+#include "deskrt.h"
 #include "deskins.h"
 #include "deskfun.h"
 #include "biosdefs.h"
@@ -915,7 +916,7 @@ BOOL inf_backgrounds(void)
         /* check for desktop background change */
         if (G.g_screen[DROOT].ob_spec.index != curdesk)
         {
-            set_aes_background(curdesk & 0xff);
+            desk_set_background(curdesk & 0xff);
             G.g_patcol[index].desktop = curdesk & 0xff;
             G.g_screen[DROOT].ob_spec.index = curdesk;
             do_wredraw(DESKWH, &G.g_desk);
@@ -1132,7 +1133,7 @@ void inf_conf(void)
     /* set up available memory line */
     n = sprintf(G.g_work, "%ld %s", dos_avail_stram()/1024L, _("KB"));
 #if CONF_WITH_ALT_RAM
-    if (has_alt_ram)
+    if (desk_has_alt_ram())
         n += sprintf(G.g_work+n, " + %ld %s", dos_avail_altram()/1024L, _("KB"));
 #endif
     memset(G.g_work+n, ' ', 40);    /* enough spaces to fill object's text field */

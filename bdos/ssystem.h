@@ -128,6 +128,35 @@ struct mem_info {
                          * 0xffffffff where there are none (no CONF_WITH_KPROC) */
 };
 
+/*
+ * S_DESKINFO and S_DESKSET - pTOS-only too, for the desktop when it is a
+ * program (CONF_EXTERNAL_DESK, desk/deskrt.c): what EmuDesk reads from
+ * variables of the kernel when it is linked into it, and the two things it
+ * sets there.  A program cannot read the kernel's variables (on m68k they
+ * are at fixed addresses, but not for a process of its own), so it asks.
+ *
+ * S_DESKINFO has the protocol of S_CONSOLE_DIM (arg1 a struct desk_info*,
+ * arg2 its size, -1 asks for the size).  S_DESKSET takes the item in arg1
+ * and the value in arg2 and returns 0.
+ */
+#define S_DESKINFO      ((WORD)0xfffc)
+#define S_DESKSET       ((WORD)0xfffb)
+
+/* items of S_DESKSET */
+#define DESKSET_CEH         1   /* the critical error handler shows alerts: 0 or 1 */
+#define DESKSET_BACKGROUND  2   /* the pattern and colour of the AES desktop (a byte) */
+#define DESKSET_CACHE       3   /* the CPU caches on or off (0 or 1), where there is cache control */
+
+struct desk_info {
+    ULONG bootflags;        /* BOOTFLAG_* (include/biosext.h) */
+    UWORD rez_changeable;   /* the resolution can be changed */
+    UWORD has_alt_ram;      /* there is alternative (TT) RAM */
+    UWORD cache_exists;     /* DESKSET_CACHE has an effect */
+    UWORD can_shutdown;     /* Shutdown() can power off or reset the machine */
+    UWORD has_videl;        /* a Falcon VIDEL */
+    UWORD has_tt_shifter;   /* a TT shifter */
+};
+
 struct console_dim {
     UWORD width;        /* columns */
     UWORD height;       /* rows */
