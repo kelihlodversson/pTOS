@@ -23,6 +23,9 @@
  *  - loading, drawing and unloading fonts in a loop leaves no font memory
  *    behind (vqt_cachesize(2), pTOS's extension, is the font memory in
  *    use);
+ *  - with TEST_WITH_FONT_RESCAN (CONF_VDI_FONT_RESCAN), a font copied into the directory is added
+ *    by the next vst_unload_fonts() and vst_load_fonts() (#648), and the
+ *    fonts that were there keep their ids;
  *  - the calls of the NVDI/Speedo interface that have nothing to answer
  *    (v_getoutline() with no outline, v_savecache()) give the documented
  *    values.
@@ -1086,6 +1089,117 @@ static void check_unsupported(void)
           v_loadcache(handle, "NOSUCH.CAC", 0), -1);
 }
 
+/* --- fonts that appear in the directory while the system runs (#648) --- */
+
+/*
+ * tests/fonts/PTOSTES2.TTF is the test font under another name ("PTOS Test
+ * Mon2"), on the test disk as PTOSTES2.TMP so that the scan at boot does not
+ * list it.  The test renames it to .TTF, as an installer would copy a font in
+ * (a rename: the guest does not write a new file, which QEMU's vvfat does not
+ * always take back to the host directory).  It then stays, as the list's entry
+ * does until the next boot, so that later runs can still render it; a second
+ * run finds the font listed and skips this check.
+ */
+#define FONT_TMP    "\\GEMSYS\\FONTS\\PTOSTES2.TMP"
+#define FONT_NEW    "\\GEMSYS\\FONTS\\PTOSTES2.TTF"
+#define COPY_NAME   "PTOS Test Mon2"
+
+static short font_by_name(const char *wanted, short count)
+{
+    short n, i;
+
+    for (n = 1; n <= count; n++)
+    {
+        char name[34];
+
+        vs_intin[0] = n;
+        vs_call(handle, 130, 0, 0, 1);      /* vqt_name() */
+        for (i = 0; i < 32; i++)
+            name[i] = (char)vs_intout[1 + i];
+        name[32] = '\0';
+        if (!strcmp(name, wanted))
+            return vs_intout[0];
+    }
+
+    return 0;
+}
+
+static short unload_load(void)
+{
+    vs_call(handle, 120, 0, 0, 0);          /* vst_unload_fonts() */
+    vs_intin[0] = 0;
+    vs_call(handle, 119, 0, 0, 1);          /* vst_load_fonts() */
+
+    return vs_intout[0];
+}
+
+static void check_rescan(void)
+{
+    short n0, n1, n2, id_mono, id_copy, other, i;
+    long rc, fd;
+
+    n0 = unload_load();
+    id_mono = font_by_name(FONT_NAME, system_fonts + n0);
+    CHECK(id_mono != 0, "rescan: the test font is not there before:", n0, 0);
+    if (font_by_name(COPY_NAME, system_fonts + n0) != 0)
+        return;                             /* an earlier run in this boot did it */
+    fd = Fopen(FONT_TMP, 0);
+    if (fd < 0)
+        return;                             /* not on this disk */
+    Fclose((short)fd);
+
+    /* a second workstation that loaded its fonts before: the new font is not its own */
+    for (i = 0; i < 10; i++)
+        vs_intin[i] = 1;
+    vs_intin[10] = 2;
+    vs_call(handle, 100, 0, 0, 11);         /* v_opnvwk() */
+    other = vs_contrl[6];
+    if (other > 0)
+    {
+        short main_handle = handle;
+
+        handle = other;
+        vs_intin[0] = 0;
+        vs_call(handle, 119, 0, 0, 1);
+        handle = main_handle;
+    }
+
+    rc = Frename(0, FONT_TMP, FONT_NEW);
+    CHECK(rc == 0, "rescan: cannot rename the font in:", rc, 0);
+    if (rc != 0)
+    {
+        if (other > 0)
+            vs_call(other, 101, 0, 0, 0);   /* v_clsvwk() */
+        return;
+    }
+
+    n1 = unload_load();
+    id_copy = font_by_name(COPY_NAME, system_fonts + n1);
+    CHECK(n1 == n0 + 1, "rescan: the font was not added to the list:", n1, n0 + 1);
+    CHECK(id_copy != 0 && id_copy != id_mono, "rescan: the added font has no id of its own:", id_copy, id_mono);
+    CHECK(font_by_name(FONT_NAME, system_fonts + n1) == id_mono, "rescan: the first font's id changed:",
+          font_by_name(FONT_NAME, system_fonts + n1), id_mono);
+
+    if (other > 0)
+    {
+        short main_handle = handle, selected;
+
+        handle = other;
+        CHECK(font_by_name(COPY_NAME, system_fonts + n1) == 0, "rescan: another workstation lists the added font:",
+              font_by_name(COPY_NAME, system_fonts + n1), 0);
+        selected = vdi_font(id_copy);
+        CHECK(selected != id_copy, "rescan: another workstation selects the added font:", selected, id_copy);
+        handle = main_handle;
+        vs_call(other, 101, 0, 0, 0);       /* v_clsvwk() */
+    }
+
+    /* nothing new: the same list */
+    n2 = unload_load();
+    CHECK(n2 == n1, "rescan: a second reload changed the list:", n2, n1);
+    CHECK(font_by_name(COPY_NAME, system_fonts + n2) == id_copy, "rescan: the added font's id changed:",
+          font_by_name(COPY_NAME, system_fonts + n2), id_copy);
+}
+
 void test_scalable_fonts(void)
 {
     if (vs_gdos() == -2)
@@ -1133,6 +1247,9 @@ void test_scalable_fonts(void)
     SECTION(check_memory);
     SECTION(check_unsupported);
     SECTION(check_overhang_italic);
+#ifdef TEST_WITH_FONT_RESCAN
+    SECTION(check_rescan);
+#endif
 
     vs_intin[0] = 1;
     vs_call(handle, 122, 0, 0, 1);          /* v_show_c(reset) */

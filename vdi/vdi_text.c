@@ -1693,7 +1693,7 @@ void text_init2(Vwk * vwk)
     vwk->scrtchp = deftxbuf;
     vwk->num_fonts = linea_vars.font_count;
 #if CONF_WITH_VDI_SCALABLE_FONTS
-    vwk->sfonts_loaded = FALSE;
+    vwk->sfonts_loaded = 0;
     vwk->error_var = NULL;
     vwk->char_map = MAP_ATARI;
     vwk->sf_size = 0;
@@ -2161,7 +2161,7 @@ void vdi_vst_font(Vwk * vwk)
     {
         WORD index = vdi_sfont_find(face);
 
-        if (index >= 0)
+        if (index >= 0 && index < vwk->sfonts_loaded)   /* not one that a later scan added */
         {
             const Fonthead *f;
             LONG size;
@@ -2400,7 +2400,7 @@ BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont)
         } while ((tmp_font = tmp_font->next_font));
     }
 
-    if (vwk->sfonts_loaded && element > i && element - i <= vdi_sfont_count)
+    if (vwk->sfonts_loaded && element > i && element - i <= vwk->sfonts_loaded)
     {
         *sfont = element - i - 1;
         return TRUE;
@@ -2676,7 +2676,7 @@ void vdi_vst_load_fonts(Vwk * vwk)
             INTOUT[0] = 0;
         else
         {
-            vdi_sfont_rescan();     /* if the boot-time scan found none */
+            vdi_sfont_rescan();     /* if the boot-time scan found none, or after an unload */
             /*
              * Loaded only if there are fonts to add: a workstation that
              * found none can ask again, once they are there, and cannot
@@ -2684,10 +2684,10 @@ void vdi_vst_load_fonts(Vwk * vwk)
              */
             if (vdi_sfont_count)
             {
-                vwk->sfonts_loaded = TRUE;
+                vwk->sfonts_loaded = vdi_sfont_count;   /* the fonts of this workstation: later scans add more */
                 vwk->num_fonts += vdi_sfont_count;
             }
-            INTOUT[0] = vdi_sfont_count;
+            INTOUT[0] = vwk->sfonts_loaded;
         }
         return;
     }
@@ -2751,7 +2751,8 @@ void vdi_vst_unload_fonts(Vwk * vwk)
 {
 #if CONF_WITH_GDOS
 #if CONF_WITH_VDI_SCALABLE_FONTS
-    vwk->sfonts_loaded = FALSE;
+    vwk->sfonts_loaded = 0;
+    vdi_sfont_unloaded();
 #endif
     /* Since we always unload all fonts, this is easy. */
     vwk->loaded_fonts = NULL;           /* No fonts installed */

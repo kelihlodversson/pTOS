@@ -182,6 +182,23 @@ config CONF_VDI_FONT_DIR
 	  the bitmap fonts.  The release images put DejaVu fonts here
 	  (tools/fetch-fonts.sh).
 
+config CONF_VDI_FONT_RESCAN
+	bool "Look for new scalable fonts after vst_unload_fonts()"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	default y
+	help
+	  The font directory is scanned once, after the AUTO folder has run.
+	  With this option, the vst_load_fonts() that follows a
+	  vst_unload_fonts() scans it again, so that a program which has
+	  copied a font there (a font installer) can have it show up
+	  without a restart: unload, load, and the new fonts are in the list.
+	  Fonts that were already found keep their index and id, so that
+	  workstations which have one selected, and the rendered sizes, are
+	  not disturbed; only files that are new are added, after the others.
+	  A font that was deleted stays listed until the next boot, and a
+	  workstation that has not unloaded and loaded its fonts again does
+	  not see the added ones.  The scan costs a directory search.
+
 config CONF_VDI_SYSTEM_FONT
 	string "Monospaced scalable font to replace the system font (file name)"
 	depends on CONF_WITH_VDI_SCALABLE_FONTS
