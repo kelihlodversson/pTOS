@@ -137,7 +137,7 @@ NAME/MOVER and MOVER-only windows additionally exercise their screen-dependent
 drag-width boundary for create/open/resize; NAME-only windows retain the larger
 non-mover limit.
 192 create/set-closed-geometry/delete cycles preserve the neighbor's visible
-rectangle and exceed the native rectangle pool size. Normal exit, fault,
+rectangle without retaining rectangle nodes. Normal exit, fault,
 unregister and callback cleanup also leave closed windows with set geometry.
 Native replacement injection between close and delete checks both explicit
 deletion and deferred cleanup: the foreign replacement must survive.
@@ -169,6 +169,12 @@ Slider position/size updates cover closed and topped open windows with no
 sliders, unrelated title/mover or arrow/sizer gadgets, one slider axis, and
 both axes. Missing gadgets return EINVAL without changing state; supported
 updates change only the selected field, with 3D objects enabled and disabled.
+The rectangle-pool regression uses every user handle across two clients.
+With AES 3.40, eight horizontal strips are followed by seven vertical strips
+on the 1280x800 desktop, including the last window that exceeded the former
+160-node pool. It tops every window, walks its visible rectangles, retains
+all closed lists until deletion, restores the peer window, and repeats over
+desktop restarts. The kernel records a transient peak above the old limit.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its

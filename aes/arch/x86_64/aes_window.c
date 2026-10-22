@@ -19,6 +19,7 @@
 #if CONF_WITH_X32_ACCESSORY_TEST
 #include "vdi_service.h"
 #include "gemevlib.h"
+#include "gemwrect.h"
 #endif
 
 typedef struct {
@@ -52,6 +53,7 @@ static PD *test_return_owner;
 static WORD test_return_handle, test_return_phase;
 static UQUAD test_return_output;
 static BOOL test_return_pending;
+static BOOL test_pool_seen;
 
 static void test_return_committed(PD *pd, CLIENT_WINDOW *w, UQUAD output)
 {
@@ -447,6 +449,7 @@ void x86_64_aes_window_drain(void)
     test_return_handle = test_return_phase = 0;
     test_return_output = 0;
     test_return_pending = FALSE;
+    test_pool_seen = FALSE;
 #endif
     /* Every accessory continuation, including borrowed cleanup, has now
      * been cancelled. No executor can resume these reservations. */
@@ -863,6 +866,14 @@ void x86_64_aes_window_test(void)
         panic("accessory cursor copyout cases missing FAIL\n");
     if (test_return_phase != 3 || test_return_pending)
         panic("accessory committed return case missing FAIL\n");
+#if AES_VERSION > 0x0320
+    if (!test_pool_seen) {
+        if (or_test_peak() <= NUM_WIN * 10)
+            panic("accessory old rectangle pool limit not exceeded FAIL\n");
+        kcprintf("x32 rectangle pool peak: %d/%d\n", or_test_peak(), NUM_ORECT);
+        test_pool_seen = TRUE;
+    }
+#endif
     for (i = 0; i < 2; i++) {
         h = test_replaced[i];
         if (!h)

@@ -32,6 +32,7 @@ assert output.count("x32 mover drag boundaries: PASS") == 4
 assert output.count("x32 slider gadget validation: PASS") == 4
 assert output.count("x32 visible rectangle copyout: PASS") == 4
 assert output.count("x32 visible rectangle return hooks: PASS") == 4
+assert output.count("x32 rectangle pool overlap: PASS") == 4
 for regression in ("closed window geometry cleanup", "deferred arrow delivery", "replacement deletion isolation"):
     assert output.count("x32 " + regression + ": PASS") == 4, regression
 assert output.count("x32 native replacement windows preserved: PASS") >= 4

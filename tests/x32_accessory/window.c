@@ -1,4 +1,5 @@
 /* Loaded ring-3 windows: ownership, copied buffers and real native routing. */
+#include "../../include/config.h"
 #include <mint/mintbind.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +12,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
 int accessory_window_redraw(WORD handle, WORD vdi_handle);
 int accessory_window_reopen(WORD role, WORD vdi_handle);
 int accessory_window_borrow(void);
+int accessory_window_pool(WORD command, WORD *handle);
 
 static volatile LONG revoked, reregistered;
 static volatile LONG cursor_freed;
@@ -19,6 +21,8 @@ static volatile LONG return_revoked, return_registered, return_freed;
 static GRECT *return_output;
 static AES_APP_INFO callback_info;
 static WORD peer_window;
+static GRECT pool_previous;
+static UWORD pool_kind;
 
 static void revoke_window(WORD status)
 {
@@ -302,6 +306,94 @@ static int slider_gadgets(void)
     return 0;
 }
 
+int accessory_window_pool(WORD command, WORD *handle)
+{
+    AES_WINDOW_INFO state;
+    GRECT strip = { 40 + 165 * (NUM_WIN / 2 - 2), 20, 20, 740 };
+
+    if (command == 640) {
+        CHECK(aes_wind_get(peer_window, &state) == E_OK);
+        pool_previous = state.current;
+        pool_kind = state.kind;
+        CHECK(aes_wind_delete(peer_window) == E_OK);
+        peer_window = aes_wind_create(0, &pool_previous);
+        CHECK(peer_window > 0);
+    } else if (command == 642)
+        CHECK(aes_wind_open(peer_window, &strip) == E_OK);
+    else {
+        CHECK(command == 644);
+        CHECK(aes_wind_delete(peer_window) == E_OK);
+        peer_window = aes_wind_create(pool_kind, &pool_previous);
+        CHECK(peer_window > 0 && copied_text(peer_window) == 0);
+        CHECK(aes_wind_open(peer_window, &pool_previous) == E_OK);
+    }
+    *handle = peer_window;
+    return 0;
+}
+
+static int pool_command(WORD peer, WORD command, WORD *handle)
+{
+    AES_MESSAGE message = { 0 };
+    AES_EVENT event;
+
+    message.type = command;
+    CHECK(aes_appl_write(peer, &message) == E_OK);
+    do {
+        CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
+    } while (event.message.type >= 20 && event.message.type <= 31);
+    CHECK(event.message.type == command + 1 && event.message.sender == peer);
+    *handle = event.message.data[0];
+    return 0;
+}
+
+static int rectangle_pool(WORD *peer_handle)
+{
+    WORD handles[NUM_WIN - 2], i, count, peer;
+    GRECT strip, visible;
+    AES_WINDOW_INFO state;
+
+    peer = aes_appl_find("ACCWAIT");
+    CHECK(peer > 0 && pool_command(peer, 640, peer_handle) == 0);
+    /* With AES 3.40, all fifteen user handles form the reported eight
+     * horizontal and seven vertical strips. The other client owns the
+     * final vertical strip, opened after our fourteen windows. */
+    for (i = 0; i < NUM_WIN - 2; i++) {
+        if (i < NUM_WIN / 2) {
+            strip.g_x = 20; strip.g_y = 30 + 87 * i;
+            strip.g_w = 1200; strip.g_h = 20;
+        } else {
+            strip.g_x = 40 + 165 * (i - NUM_WIN / 2); strip.g_y = 20;
+            strip.g_w = 20; strip.g_h = 740;
+        }
+        handles[i] = aes_wind_create(0, &strip);
+        CHECK(handles[i] > 0 && aes_wind_open(handles[i], &strip) == E_OK);
+    }
+    CHECK(pool_command(peer, 642, peer_handle) == 0);
+    CHECK(aes_wind_create(0, &strip) == ENSMEM);
+    for (i = 0; i < NUM_WIN - 2; i++) {
+        CHECK(aes_wind_top(handles[i]) == E_OK);
+        CHECK(aes_wind_get(handles[i], &state) == E_OK);
+        CHECK(aes_wind_rect(handles[i], 0, &visible) == E_OK);
+        CHECK(rc_equal(&visible, &state.work));
+        count = 0;
+        while (visible.g_w && visible.g_h) {
+            CHECK(++count < 1024);
+            CHECK(rc_intersect(&state.work, &visible));
+            CHECK(aes_wind_rect(handles[i], 1, &visible) == E_OK);
+        }
+        CHECK(count == 1);
+    }
+    /* Retain every closed window's list until all windows are closed,
+     * then reclaim the handles and restore the other client's window. */
+    for (i = 0; i < NUM_WIN - 2; i++)
+        CHECK(aes_wind_close(handles[i]) == E_OK);
+    for (i = 0; i < NUM_WIN - 2; i++)
+        CHECK(aes_wind_delete(handles[i]) == E_OK);
+    CHECK(pool_command(peer, 644, peer_handle) == 0);
+    (void)Cconws("x32 rectangle pool overlap: PASS\r\n");
+    return 0;
+}
+
 static int cursor_copyout(WORD vdi_handle)
 {
     GRECT border = { 40, 60, 340, 240 }, cover = { 180, 60, 30, 240 };
@@ -406,8 +498,8 @@ static int closed_geometry(WORD visible_handle, const GRECT *rectangle)
     WORD i;
 
     CHECK(aes_wind_rect(visible_handle, 0, &before) == E_OK && before.g_w > 0);
-    /* More cycles than the native fixed rectangle pool: a never-opened
-     * window must neither obscure its neighbor nor leak a node on delete. */
+    /* Repeated deletion of a never-opened window must neither obscure its
+     * neighbor nor retain a rectangle node. */
     for (i = 0; i < 192; i++) {
         handle = aes_wind_create(0, rectangle);
         CHECK(handle > 0 && aes_wind_set_rect((WORD)handle, rectangle) == E_OK);
@@ -624,7 +716,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     LONG handle, peer, target, extra, memory;
     WORD exhausted[32];
     UBYTE *edge;
-    WORD i, count;
+    WORD i, count, pool_peer;
 
     CHECK(info->features & AES_FEATURE_WINDOW);
     if (role != 2 && role != 4) {
@@ -709,6 +801,8 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(aes_wind_calc(AES_WINDOW_BORDER, kind, &calculated, &visible) == EINVAL);
     calculated = rectangle; calculated.g_w = 1;
     CHECK(aes_wind_create(kind, &calculated) == EINVAL);
+    CHECK(rectangle_pool(&pool_peer) == 0);
+    peer = pool_peer;
     handle = aes_wind_create(kind, &rectangle);
     CHECK(handle > 0 && handle != peer);
     CHECK(aes_wind_get((WORD)handle, &state) == E_OK);

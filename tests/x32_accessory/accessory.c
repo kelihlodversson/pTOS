@@ -13,6 +13,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
 int accessory_window_redraw(WORD handle, WORD vdi_handle);
 int accessory_window_reopen(WORD role, WORD vdi_handle);
 int accessory_window_borrow(void);
+int accessory_window_pool(WORD command, WORD *handle);
 long _stksize = 65536;
 UQUAD acc_entry_base, acc_entry_type, acc_entry_stack;
 UWORD acc_entry_cs;
@@ -115,6 +116,12 @@ int main(int argc, char **argv, char **envp)
 #endif
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
 #if ACC_ROLE == 4
+        if (event.message.type == 640 || event.message.type == 642 || event.message.type == 644) {
+            CHECK(accessory_window_pool(event.message.type, &message.data[0]) == 0);
+            message.type = event.message.type + 1;
+            CHECK(aes_appl_write(event.message.sender, &message) == E_OK);
+            continue;
+        }
         if (event.message.type == 636) {
             CHECK(accessory_window_borrow() == 0);
             continue;

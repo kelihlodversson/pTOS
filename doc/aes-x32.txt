@@ -211,6 +211,14 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         native rectangle-node pointer across calls. Clients clip VDI to these
         rectangles; window ownership does not replace workstation clipping.
 
+        The x86-64 native rectangle pool reserves the worst case for all
+        handles and transient splits: NUM_WIN*(2*NUM_WIN-1)^2+4 nodes.
+        A list is partitioned by at most NUM_WIN-1 other rectangles; their
+        edges form at most 2*NUM_WIN-1 bands on each axis. Include cached
+        lists of closed windows and four nodes allocated during a split.
+        This costs about 28 KiB with eight handles or 240 KiB with sixteen,
+        and requires no allocation during window changes or cleanup.
+
     LONG aes_wind_calc(UWORD mode, UWORD kind, const GRECT *input, GRECT *output);
     LONG aes_wind_find(WORD x, WORD y);
         Calculate border from work (AES_WINDOW_BORDER=0) or work from border
