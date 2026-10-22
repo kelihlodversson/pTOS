@@ -121,6 +121,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the kernels' EmuCON (CONF_EXTERNAL_CLI) builds against libcmini
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
