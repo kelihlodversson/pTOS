@@ -26,6 +26,8 @@
 #include "xbiosbind.h"
 #include "bdosbind.h"
 #include "string.h"
+#include "nls.h"
+#include "bdosdefs.h"
 #include "../bdos/ssystem.h"
 #include "deskrt.h"
 
@@ -41,6 +43,9 @@ WORD gl_width, gl_height;       /* the screen */
 WORD gl_nplanes;
 GRECT gl_rscreen;               /* the screen */
 GRECT gl_rfull;                 /* the screen but the menu bar */
+
+/* the basepage of this program, from its startup code (deskstart.S) */
+void *desk_basepage;
 
 /* what Ssystem() told, once */
 static struct desk_info info;
@@ -118,9 +123,38 @@ static void ibm_size(void)
     hptschar_ibm = ptsout[1];
 }
 
+/*
+ * the language of the messages: LANG of the environment, which the kernel
+ * puts there (bios/bios.c), as for EmuCON; the default is English
+ */
+static void set_language(void)
+{
+#if CONF_WITH_NLS
+    const char *env = desk_basepage ? (const char *)((PD *)desk_basepage)->p_env : NULL;
+    char name[3];
+
+    nls_init();
+    for ( ; env && *env; env += strlen(env) + 1)
+    {
+        if (!strncmp(env, "LANG=", 5) && env[5])
+        {
+            name[0] = env[5];
+            name[1] = env[6];
+            name[2] = '\0';
+            if (!strcmp(name, "el"))    /* pTOS names Greek "gr", ISO 639 "el" */
+                strcpy(name, "gr");
+            nls_set_lang(name);
+            break;
+        }
+    }
+#endif
+}
+
 void desk_rt_init(void)
 {
     WORD i, wc, hc;
+
+    set_language();
 
     ssys(S_DESKINFO, &info, sizeof(info));
 
