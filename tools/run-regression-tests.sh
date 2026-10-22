@@ -410,7 +410,9 @@ fi
 # for the other tests): every program and test that draws text then does it
 # with that font, and the log must say that it was made.
 
-if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]; then
+# (and only for a build that has scalable fonts: the kernel of the tree in $top)
+if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ] \
+   && grep -q '^#define CONF_WITH_VDI_SCALABLE_FONTS 1' "$top/obj/autoconf.h" 2>/dev/null; then
     system_font=DJVUMONO.TTF
     start_vm sysfont
     system_font=
