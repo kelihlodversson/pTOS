@@ -700,4 +700,3 @@ char *rs_str(UWORD stnum)
 {
     return (char *)gettext(rs_fstr[stnum]);
 }
-

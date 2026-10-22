@@ -430,6 +430,11 @@ ifdef ARCH_ARM
 # The ARM linker script cannot produce a raw binary directly.
 EMUTOS_IMG = emutos.elf
 LDFLAGS += -Wl,-build-id=none
+# This kernel image deliberately shares one load segment for code and data;
+# the Raspberry Pi image is extracted as a flat binary. Newer linkers warn
+# about its RWX segment. Keep older toolchains, which lack this option, usable.
+LDFLAGS += $(shell $(CROSS_COMPILE)ld --help 2>/dev/null | \
+                  grep -q -- '--no-warn-rwx-segments' && echo -Wl,--no-warn-rwx-segments)
 else
 EMUTOS_IMG = emutos.img
 endif
