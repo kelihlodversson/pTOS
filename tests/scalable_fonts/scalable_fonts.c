@@ -789,11 +789,14 @@ static void check_overhang(void)
     set_mode(1);
 }
 
-/* a size in points, 16.16, as vst_arbpt32() (opcode 246) or vst_setsize32() (252) take it */
+/*
+ * a size in points, 16.16, as vst_arbpt32() (opcode 246) or vst_setsize32()
+ * (252) take it: a long as it is in memory, the high word first only on a
+ * big endian machine
+ */
 static void set_size32(short opcode, long size)
 {
-    vs_intin[0] = (short)(size >> 16);
-    vs_intin[1] = (short)(size & 0xffff);
+    memcpy(&vs_intin[0], &size, sizeof size);
     vs_call(handle, opcode, 0, 0, 2);
 }
 
@@ -809,22 +812,29 @@ static void set_size32(short opcode, long size)
 static void check_overhang_mirror(void)
 {
     struct ink norm, flipped;
+    long size;
+    struct size sz;
     short x = AREA_X + 40, y = AREA_Y + 10, adv;
 
+    /* the size in points that is about 30 pixels: the points a pixel is varies with the screen */
+    set_point(12);
+    attributes(&sz);
+    CHECK(sz.ch > 0, "no character height at 12 points:", sz.ch, 0);
+    size = (12L * 30 / sz.ch) << 16;
     set_top_left();
     set_color(1);
     set_effects(0);
     set_rotation(0);
     set_skew(0);
-    set_size32(246, 20L << 16);
+    set_size32(246, size);
     adv = (short)string_extent("T");
     set_skew(-150);
 
     clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
     gtext_mode(1, x, y, "T");
     scan(&norm);
-    CHECK(norm.count > 0, "a skewed T of 20 points is not drawn:", 0, 0);
-    set_size32(246, -(20L << 16));
+    CHECK(norm.count > 0, "a skewed T is not drawn:", 0, 0);
+    set_size32(246, -(size));
     clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
     gtext_mode(1, x, y, "T");
     scan(&flipped);
@@ -833,12 +843,12 @@ static void check_overhang_mirror(void)
     CHECK(flipped.x1 >= x + adv, "the ink of a T mirrored along x is cut at its cell:",
           flipped.x1, x + adv);
 
-    set_size32(246, 20L << 16);
-    set_size32(252, 20L << 16);
+    set_size32(246, size);
+    set_size32(252, size);
     clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
     gtext_mode(1, x, y, "T");
     scan(&norm);
-    set_size32(252, -(20L << 16));
+    set_size32(252, -(size));
     clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
     gtext_mode(1, x, y, "T");
     scan(&flipped);
@@ -846,7 +856,7 @@ static void check_overhang_mirror(void)
           flipped.count, norm.count);
     CHECK(flipped.x0 < x, "the ink of a T mirrored along y is cut at its cell:", flipped.x0, x);
 
-    set_size32(246, 20L << 16);
+    set_size32(246, size);
     set_skew(0);
 }
 
