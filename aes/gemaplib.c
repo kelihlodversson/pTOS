@@ -127,7 +127,7 @@ WORD ap_getinfo(WORD type, WORD *out1, WORD *out2, WORD *out3, WORD *out4)
     *out3 = 0;
     *out4 = 0;
 
-    if (type != 0)                  /* AES_SYSTEM */
+    if (type != 2)                  /* AES_SYSTEM */
         return FALSE;
 
 #if CONF_WITH_COLOUR_ICONS
