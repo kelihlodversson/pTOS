@@ -834,15 +834,21 @@ static void check_unsupported(void)
           v_loadcache(handle, "NOSUCH.CAC", 0), -1);
 }
 
-/* --- fonts copied into the directory while the system runs (#648) --- */
+/* --- fonts that appear in the directory while the system runs (#648) --- */
 
-#define FONT_FILE   "\\GEMSYS\\FONTS\\PTOSTEST.TTF"
-#define COPY_FILE   "\\GEMSYS\\FONTS\\PTOSTESx.TTF"   /* the x is replaced, */
-#define COPY_NAME   "PTOS Test Monx"                    /* as is this one */
+/*
+ * tests/fonts/PTOSTES2.TTF is the test font under another name ("PTOS Test
+ * Mon2"), on the test disk as PTOSTES2.TMP so that the scan at boot does not
+ * list it.  The test renames it to .TTF, as an installer would copy a font in
+ * (a rename: the guest does not write a new file, which QEMU's vvfat does not
+ * always take back to the host directory).  It then stays, as the list's entry
+ * does until the next boot, so that later runs can still render it; a second
+ * run finds the font listed and skips this check.
+ */
+#define FONT_TMP    "\\GEMSYS\\FONTS\\PTOSTES2.TMP"
+#define FONT_NEW    "\\GEMSYS\\FONTS\\PTOSTES2.TTF"
+#define COPY_NAME   "PTOS Test Mon2"
 
-static unsigned char font_image[40000];
-
-/* the id of the font with that name among the first count, 0 if none */
 static short font_by_name(const char *wanted, short count)
 {
     short n, i;
@@ -872,69 +878,20 @@ static short unload_load(void)
     return vs_intout[0];
 }
 
-/*
- * The test font under another name, as a font installer would copy a new one in.
- * An entry of the list stays until the next boot, even when its file is gone,
- * and a file the list already has is not read again: so each run uses a name
- * that no earlier run in this boot did (and leaves its file, which the list
- * still refers to).
- */
-static long write_copy(const char *file, char digit)
-{
-    long fd, n, i, j, total;
-    static const char from[] = "PTOS Test Mono";
-
-    fd = Fopen(FONT_FILE, 0);
-    if (fd < 0)
-        return fd;
-    total = Fread((short)fd, sizeof font_image, font_image);
-    Fclose((short)fd);
-    if (total <= 0 || total >= (long)sizeof font_image)
-        return -1;
-    /* the name table has it in 8-bit and in 16-bit characters */
-    for (i = 0; i + 14 <= total; i++)
-        if (!memcmp(font_image + i, from, 14))
-            font_image[i + 13] = digit;
-    for (i = 0; i + 28 <= total; i++)
-    {
-        for (j = 0; j < 14; j++)
-            if (font_image[i + 2 * j] != 0 || font_image[i + 2 * j + 1] != (unsigned char)from[j])
-                break;
-        if (j == 14)
-            font_image[i + 27] = digit;
-    }
-    fd = Fcreate(file, 0);
-    if (fd < 0)
-        return fd;
-    n = Fwrite((short)fd, total, font_image);
-    Fclose((short)fd);
-
-    return n == total ? 0 : -1;
-}
-
 static void check_rescan(void)
 {
     short n0, n1, n2, id_mono, id_copy, other, i;
-    long rc;
-    char file[sizeof COPY_FILE], name[sizeof COPY_NAME];
-    char *candidate = "23456789ABCDEFGHIJKLMNOPQRSUVWXYZ";    /* no T: PTOSTEST.TTF is the fixture */
+    long rc, fd;
 
     n0 = unload_load();
     id_mono = font_by_name(FONT_NAME, system_fonts + n0);
     CHECK(id_mono != 0, "rescan: the test font is not there before:", n0, 0);
-
-    /* a name that no earlier run since the boot used */
-    strcpy(file, COPY_FILE);
-    strcpy(name, COPY_NAME);
-    for (; *candidate; candidate++)
-    {
-        file[sizeof COPY_FILE - 6] = *candidate;
-        name[sizeof COPY_NAME - 2] = *candidate;
-        if (font_by_name(name, system_fonts + n0) == 0)
-            break;
-    }
-    if (!*candidate)
-        return;                             /* all used: more runs than a boot is likely to see */
+    if (font_by_name(COPY_NAME, system_fonts + n0) != 0)
+        return;                             /* an earlier run in this boot did it */
+    fd = Fopen(FONT_TMP, 0);
+    if (fd < 0)
+        return;                             /* not on this disk */
+    Fclose((short)fd);
 
     /* a second workstation that loaded its fonts before: the new font is not its own */
     for (i = 0; i < 10; i++)
@@ -952,8 +909,8 @@ static void check_rescan(void)
         handle = main_handle;
     }
 
-    rc = write_copy(file, *candidate);
-    CHECK(rc == 0, "rescan: cannot write the copy:", rc, 0);
+    rc = Frename(0, FONT_TMP, FONT_NEW);
+    CHECK(rc == 0, "rescan: cannot rename the font in:", rc, 0);
     if (rc != 0)
     {
         if (other > 0)
@@ -962,7 +919,7 @@ static void check_rescan(void)
     }
 
     n1 = unload_load();
-    id_copy = font_by_name(name, system_fonts + n1);
+    id_copy = font_by_name(COPY_NAME, system_fonts + n1);
     CHECK(n1 == n0 + 1, "rescan: the font was not added to the list:", n1, n0 + 1);
     CHECK(id_copy != 0 && id_copy != id_mono, "rescan: the added font has no id of its own:", id_copy, id_mono);
     CHECK(font_by_name(FONT_NAME, system_fonts + n1) == id_mono, "rescan: the first font's id changed:",
@@ -973,8 +930,8 @@ static void check_rescan(void)
         short main_handle = handle, selected;
 
         handle = other;
-        CHECK(font_by_name(name, system_fonts + n1) == 0, "rescan: another workstation lists the added font:",
-              font_by_name(name, system_fonts + n1), 0);
+        CHECK(font_by_name(COPY_NAME, system_fonts + n1) == 0, "rescan: another workstation lists the added font:",
+              font_by_name(COPY_NAME, system_fonts + n1), 0);
         selected = vdi_font(id_copy);
         CHECK(selected != id_copy, "rescan: another workstation selects the added font:", selected, id_copy);
         handle = main_handle;
@@ -984,15 +941,8 @@ static void check_rescan(void)
     /* nothing new: the same list */
     n2 = unload_load();
     CHECK(n2 == n1, "rescan: a second reload changed the list:", n2, n1);
-    CHECK(font_by_name(name, system_fonts + n2) == id_copy, "rescan: the added font's id changed:",
-          font_by_name(name, system_fonts + n2), id_copy);
-
-    /*
-     * The file stays: its entry in the list lasts until the next boot, and a
-     * later run's check_alignment() selects every font of the list, which
-     * needs the file to render it.  Each run adds a file of its own, at most
-     * as many as the candidate names.
-     */
+    CHECK(font_by_name(COPY_NAME, system_fonts + n2) == id_copy, "rescan: the added font's id changed:",
+          font_by_name(COPY_NAME, system_fonts + n2), id_copy);
 }
 
 void test_scalable_fonts(void)
