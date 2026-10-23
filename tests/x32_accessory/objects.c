@@ -252,8 +252,10 @@ static int colour_checks(void)
         }
         CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, r.header.bytes, &out) == E_OK);
         tree = out.value;
+        CHECK(command(tree, AES_OBJECT_GET, 0, 0, 0, 0, 0, &out) == E_OK && out.object.type == r.object.type);
         CHECK(draw_tree(tree) == E_OK);
         CHECK(command(tree, AES_OBJECT_READ, 0, 0, 0, (uintptr_t)&snapshot, r.header.bytes, &out) == E_OK);
+        CHECK(snapshot.object.type == r.object.type);
         CHECK(snapshot.colour.data == r.colour.data && snapshot.data[0] == r.data[0]);
         if (planes == 4) {
             CHECK(command(tree, AES_OBJECT_STATE, 0, 1, 0, 0, 0, &out) == E_OK);

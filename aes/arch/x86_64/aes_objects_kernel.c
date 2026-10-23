@@ -519,6 +519,11 @@ static LONG create(UQUAD address, ULONG bytes)
                     destroy(t);
                     return rc;
                 }
+#if !CONF_WITH_COLOUR_ICONS
+                /* The native draw switch has no G_CICON case in this build.
+                 * Keep the original wire type for GET/READ. */
+                o->ob_type = (o->ob_type & 0xff00) | G_ICON;
+#endif
             }
             break;
         case G_USERDEF: {
@@ -752,7 +757,7 @@ static void test_colour_pixels(AES_TREE_STATE *t)
     ULONG pixel;
     WORD x, y, code;
 
-    if (t->count != 1 || (o->ob_type & 0xff) != G_CICON ||
+    if (t->count != 1 || (wire->type & 0xff) != G_CICON ||
         strcmp(t->payload->text, "X32 colour regression"))
         return;
     icon = (const AES_OBJECT_CICON *)(t->blob + wire->spec);
@@ -766,9 +771,18 @@ static void test_colour_pixels(AES_TREE_STATE *t)
      * inspecting the packer's output or just accepting a successful call. */
     for (y = 0; y < 16; y++)
         for (x = 0; x < 16; x++) {
+#if CONF_WITH_COLOUR_ICONS
             code = colour->planes == 1 ? 1 - (x & 1) : 15 - x;
             if (o->ob_state & SELECTED)
                 code = ((1 << colour->planes) - 1) - code;
+#else
+            /* The mono fixture alternates black/white VDI pens, including
+             * when the wire resource also provides four colour planes. */
+            code = 1 - (x & 1);
+            if (o->ob_state & SELECTED)
+                code = 1 - code;
+            code = MAP_COL[code];
+#endif
             pixel = *(ULONG *)(gop_screenbase() + (420 + y) * mode.pitch + (760 + x) * sizeof(ULONG));
             if (pixel != vdi_truecolor_pixel_for_index(code))
                 panic("accessory colour icon framebuffer FAIL\n");

@@ -53,8 +53,10 @@ Supported types use the standard GEM numbers 20 through 33:
   at most eight palette planes is converted into separately owned device
   pixels, including selected data. These buffers count against the global
   allocation quota and are freed with the tree. If no variant can be
-  converted, rendering uses the validated monochrome icon. Wire colour
-  planes are never handed directly to the native renderer.
+  converted, rendering uses the validated monochrome icon. With
+  CONF_WITH_COLOUR_ICONS=n, native rendering uses G_ICON; GET and READ
+  preserve the original wire CICON type. Wire colour planes are never
+  handed directly to the native renderer.
 * USERDEF references AES_OBJECT_USERDEF (handler and opaque parameter).
   It requires CONF_WITH_USER_CALLBACKS; otherwise creation returns EINVFN.
 
@@ -190,7 +192,8 @@ accessory suite draws a real USERDEF, edits a dialog with PS/2 input, selects
 a native menu item, checks foreign handles and immutable snapshots, revokes
 registration during active menu tracking/drawing, preserves new registration
 locks after modal cancellation and faults in USERDEF. It also verifies
-normal/selected colour-icon framebuffer pixels from short planar inputs,
+normal/selected colour-icon framebuffer pixels from short planar inputs
+(including monochrome fallback with CONF_WITH_COLOUR_ICONS=n),
 exact native text-buffer limits and rejected oversized updates, consecutive
 menu title numbering, off-screen relative geometry and radio drag selection.
 All existing window/input and allocator cleanup checks repeat across four
