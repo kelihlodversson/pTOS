@@ -653,6 +653,21 @@ long osif(short *pw)
 restrt:
     fn = pw[0];
 
+#if CONF_WITH_MMAP
+    switch (fn)
+    {
+    case GEMDOS_MMAP:
+        /* The native ABI supplies six scalar slots. Anonymous mappings
+         * do not use fd (pw[5]); offset is still required to be zero. */
+        return kproc_mmap(run, (UQUAD)pw[1], (UQUAD)pw[2], (UQUAD)pw[3],
+                          (UQUAD)pw[4], (UQUAD)pw[6]);
+    case GEMDOS_MUNMAP:
+        return kproc_munmap(run, (UQUAD)pw[1], (UQUAD)pw[2]);
+    case GEMDOS_MPROT:
+        return kproc_mprot(run, (UQUAD)pw[1], (UQUAD)pw[2], (UQUAD)pw[3]);
+    }
+#endif
+
 #if CONF_WITH_SSYSTEM
     /*
      * Ssystem() (0x154) is far outside the funcs[] table above, and

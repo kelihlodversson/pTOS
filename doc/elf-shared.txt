@@ -4,12 +4,17 @@ pTOS - standard ELF shared libraries (#660)
 Status and scope
 ----------------
 
-This is the design and first implementation milestone for a userspace ELF
+This is the design and initial implementation work for a userspace ELF
 runtime linker.  It does NOT yet make a dynamically linked program runnable.
 The implemented portion is lib/ldso/dynamic.c: a freestanding ELF32 dynamic
 metadata reader and per-object SysV-hash symbol lookup.  It reads DT_NEEDED
 and DT_SONAME and validates its table/string accesses.  It has no file I/O,
 kernel symbol resolver, relocator, constructors or process-entry stub.
+
+Private anonymous mapping services are implemented separately as Mmap,
+Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
+selects that option. These services enforce W^X, accounting and process
+ownership; they do not yet provide file-backed shared code pages.
 
 CONF_WITH_ELF_SHARED is an experimental, off-by-default Kconfig option.  It
 builds this core into obj/ldso/libldso.a, separately from the kernel.  It
@@ -25,8 +30,8 @@ their MMU-backed, separate-process-address-space implementations have merged
 to master and the corresponding linker backend has been tested.  FDPIC and
 non-MMU loading are outside this issue.
 
-The remainder of this document is the intended ABI, not implemented runtime
-behaviour.  It is a contract for subsequent milestones and their tests.
+Except for the portions identified above, the remainder is the intended ABI,
+not implemented runtime behaviour. It is a contract for subsequent milestones.
 
 
 ELF format and toolchains
@@ -138,17 +143,16 @@ reference; process faults/Pterm release them without calling user code.
 Memory services and permissions
 ------------------------------
 
-The current aspace_* kernel primitives are building blocks, not userspace
-mmap or mprotect services.  Malloc/Mxalloc currently produce private heap
-memory and do not provide the linker with file-backed executable mappings.
-This prerequisite still needs an explicit userspace syscall contract.
+Mmap, Munmap and Mprot now expose private anonymous mappings and checked
+permission changes (doc/mmap.txt). Existing file calls can fill RW pages
+before Mprot makes text RX. Malloc/Mxalloc are separate private heap services.
+File-backed mappings, read-only page sharing and the interpreter's executable
+and library mapping policy remain to be implemented.
 
-Reserve a linker mapping window outside USER_IMAGE_*, the ancestors page,
-the heap/stack and guards.  A candidate is 0x01000000..0x0effffff; this is
-not an allocated ABI range yet.  The mapping API must own/reserve the whole
-object span atomically, report collision/permission/overflow failures, allow
-rollback, and support file-backed mappings plus anonymous zero-filled bss.
-Do not implement MAP_FIXED by replacing arbitrary existing process pages.
+The mapping window is [0x01000000, 0x0f000000), outside USER_IMAGE_*, the
+ancestors page, heap/stack and guards. Anonymous reservations are atomic and
+roll back failed allocation. MAP_FIXED_NOREPLACE is available; destructive
+MAP_FIXED is refused. File-backed object mappings must keep these guarantees.
 An ET_EXEC must keep its linked virtual addresses; the legacy static loader's
 relocate-to-fit rule cannot be reused for a standard ET_EXEC.
 
@@ -229,8 +233,10 @@ Implementation and validation milestones
 
 1. This change: x32-only Kconfig gate, ABI/design contract, freestanding
    metadata/SysV lookup core, tests using actual ET_EXEC/PIC ET_DYN output.
-2. Safe file/memory/protection syscalls and dynamic-image address-space
-   ownership, including failure cleanup and split Pexec load/launch.
+2. Private anonymous Mmap/Munmap/Mprot services are implemented, with
+   permission faults, limits, isolation, failure cleanup and CI boot tests.
+   File backing and dynamic-image ownership through split Pexec load/launch
+   remain to be implemented.
 3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes.
    Preserve static ELF/PIE, built-in images and m68k PRG regression tests.
 4. Self-relocating interpreter, dependency graph, scope and x32 relocations;

@@ -285,6 +285,13 @@ class Metadata(unittest.TestCase):
                     self.assertEqual(option.tri_value, expected)
                     if expected:
                         self.assertEqual(config.syms["CONF_WITH_USER_ASPACE"].tri_value, 2)
+                        self.assertEqual(config.syms["CONF_WITH_MMAP"].tri_value, 2)
+                        option.set_value(0)
+                        config.syms["CONF_WITH_MMAP"].set_value(2)
+                        self.assertEqual(config.syms["CONF_WITH_MMAP"].tri_value, 2)
+                    else:
+                        config.syms["CONF_WITH_MMAP"].set_value(2)
+                        self.assertEqual(config.syms["CONF_WITH_MMAP"].tri_value, 0)
         finally:
             os.chdir(old_cwd)
             if old_prefix is None:

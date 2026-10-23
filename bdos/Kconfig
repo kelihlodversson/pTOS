@@ -132,9 +132,21 @@ config CONF_WITH_USER_ASPACE
 	  requires CONF_WITH_KPROC.  The separate-address-spaces option
 	  (#402) will become the real home of this.
 
+config CONF_WITH_MMAP
+	bool "Private anonymous process mappings"
+	depends on CONF_WITH_USER_ASPACE && ARCH_X86_64
+	default n
+	help
+	  Provide Mmap, Munmap and Mprot for private, anonymous pages in a
+	  separate per-process mapping window.  Enforce W^X and process memory
+	  limits; mappings are reclaimed on exit.  File-backed/shared mappings
+	  and replacing MAP_FIXED are not supported yet.  Initially x32 only;
+	  other backends need isolated MMU address spaces first.
+
 config CONF_WITH_ELF_SHARED
 	bool "Experimental userspace ELF shared-library linker core"
 	depends on CONF_WITH_ELF_LOADER && CONF_WITH_USER_ASPACE && ARCH_X86_64
+	select CONF_WITH_MMAP
 	default n
 	help
 	  Build the freestanding userspace linker core for standard ELF shared
@@ -142,9 +154,10 @@ config CONF_WITH_ELF_SHARED
 	  x32 provides the necessary backend initially.  ARM and m68k can be
 	  enabled here after their address-space implementations are merged.
 
-	  This is the first milestone of #660, not a working ld.so yet:
-	  interpreter startup, user mapping services and relocation remain to
-	  be implemented.  Static ELF and classic PRG loading are unchanged.
+	  This is groundwork for #660, not a working ld.so yet.  Private
+	  mapping/protection services use Mmap, Munmap and Mprot; interpreter
+	  startup, file-page sharing and relocation remain to be implemented.
+	  Static ELF and classic PRG loading are unchanged.
 	  The core is built separately from the kernel, in obj/ldso/.
 
 config CONF_WITH_KHEAP

@@ -1242,6 +1242,121 @@ static void probe_expect(char mode, long want, const char *what)
     same(&s, what);
 }
 
+#if CONF_WITH_MMAP
+static void free_mapping_process(PD *pd)
+{
+    if (pd) {
+        set_owner(pd, pd);
+        set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+        proc_free_owned(pd);
+    }
+}
+
+static void test_mmap(void)
+{
+    SNAP s;
+    PD *a, *b;
+    ASPACE *as, *bs;
+    UQUAD pa, pb;
+    ULONG value;
+    UWORD prot;
+    LONG rc;
+    int k, refused = 0, mapped = 0;
+
+    snap(&s);
+    a = new_basepage();
+    b = new_basepage();
+    if (a && b && kproc_prepare_user(a, run) && kproc_prepare_user(b, run)) {
+        as = kproc_user_aspace(a);
+        bs = kproc_user_aspace(b);
+        CHECK(kproc_mmap(a, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, 0) == PTOS_MMAP_BASE,
+              "first process anonymous map");
+        CHECK(kproc_mmap(b, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, 0) == PTOS_MMAP_BASE,
+              "second process uses same virtual address");
+        pa = pb = 0;
+        CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) &&
+              aspace_translate(bs, PTOS_MMAP_BASE, &pb, NULL) && pa != pb,
+              "anonymous mappings have distinct physical pages");
+        value = 0x660;
+        CHECK(aspace_copy_to_user(as, PTOS_MMAP_BASE, &value, sizeof(value)),
+              "write first process mapping");
+        value = 1;
+        CHECK(aspace_copy_from_user(bs, &value, PTOS_MMAP_BASE, sizeof(value)) && !value,
+              "second process private data stays zero");
+        CHECK(kproc_psetlimit(a, PSETLIMIT_DATA, PAGE) == 0,
+              "set anonymous allocation limit");
+        CHECK(kproc_mmap(a, 0, PAGE, PROT_READ,
+                        MAP_PRIVATE | MAP_ANONYMOUS, 0) == ENSMEM &&
+              !kproc_uheap_alloc(a, PAGE), "mapping bytes count against allocation limits");
+        CHECK(kproc_psetlimit(a, PSETLIMIT_DATA, 0) == PAGE, "restore limit");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE, PAGE, PROT_READ | PROT_EXEC) == 0 &&
+              aspace_translate(as, PTOS_MMAP_BASE, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC) && !(prot & ASPACE_PROT_WRITE),
+              "Mprot applies RX permissions");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE, PAGE, PROT_WRITE | PROT_EXEC) == EACCDN,
+              "Mprot refuses WX");
+        CHECK(kproc_munmap(a, PTOS_MMAP_BASE + PAGE, PAGE) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, NULL),
+              "middle unmap removes the page");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE, 3 * PAGE, PROT_READ) == EIMBA &&
+              aspace_translate(as, PTOS_MMAP_BASE, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC), "Mprot across a hole is atomic");
+        CHECK(kproc_munmap(a, PTOS_MMAP_BASE, 3 * PAGE) == 0,
+              "unmap spans two remaining regions and a hole");
+    } else {
+        CHECK(FALSE, "mapping test process preparation");
+    }
+    free_mapping_process(a);
+    free_mapping_process(b);             /* unmap on destruction, too */
+    same(&s, "anonymous mapping isolation/cleanup");
+
+    for (k = 1; k <= 16; k++) {
+        snap(&s);
+        a = new_basepage();
+        if (a && kproc_prepare_user(a, run)) {
+            x86_64_pmem_test_fail_after(k);
+            rc = kproc_mmap(a, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, 0);
+            x86_64_pmem_test_fail_after(0);
+            CHECK(rc == ENSMEM || rc == PTOS_MMAP_BASE, "mapping allocation outcome");
+            if (rc == ENSMEM) {
+                refused++;
+                CHECK(!aspace_translate(kproc_user_aspace(a), PTOS_MMAP_BASE, NULL, NULL),
+                      "failed mapping leaves no page");
+                CHECK(kproc_mmap(a, PTOS_MMAP_BASE, 3 * PAGE, PROT_READ,
+                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, 0)
+                       == PTOS_MMAP_BASE, "failed mapping leaves no reservation");
+            } else {
+                mapped++;
+            }
+        } else {
+            CHECK(FALSE, "failure-injection process preparation");
+        }
+        free_mapping_process(a);
+        same(&s, "anonymous mapping failure rollback");
+    }
+    CHECK(refused && mapped, "mapping allocation failures and successes exercised");
+}
+
+static void test_mapping_ring3(void)
+{
+    int before = failures;
+
+    test_mmap();
+    probe_expect('S', 0, "ELF mapping syscall: bounds, ownership, partial unmap, zeroing");
+    probe_expect('T', 0, "ELF private code executes after RW to RX transition");
+    probe_expect('U', 0xffff, "ELF RX mapping refuses writes");
+    probe_expect('V', 0xffff, "ELF NX mapping refuses execution");
+    probe_expect('W', 0xffff, "ELF PROT_NONE mapping refuses reads");
+    probe_expect('X', 0, "ELF mappings reclaimed on exit");
+    kcprintf("x86-64 mmap syscalls: %s\n", failures == before ? "PASS" : "FAIL");
+
+}
+
+#endif
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -1252,6 +1367,13 @@ static void test_ring3(void)
      * syscall boundary, and the exit code coming back */
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
+
+#if CONF_WITH_MMAP
+    test_mapping_ring3();
+#else
+    probe_expect('Q', 0, "mapping calls are unavailable when disabled");
+    kcprintf("x86-64 mmap syscalls: disabled\n");
+#endif
 
     /* each process gets fresh private pages: what the first leaves in its
      * data, the second does not see */

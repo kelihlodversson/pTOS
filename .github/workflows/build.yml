@@ -46,6 +46,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-multilib
+          sudo apt-get install -y qemu-system-x86 ovmf dosfstools mtools
           python3 -m venv /tmp/elf-shared-venv
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
       - name: Test metadata, corrupt inputs and Kconfig isolation
@@ -63,6 +64,12 @@ jobs:
           PY
           make CROSS_COMPILE= obj/ldso/libldso.a
           test -z "$(nm -u obj/ldso/dynamic.o)"
+      - name: Build and boot-test enabled mapping syscalls
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make CROSS_COMPILE= -j2
+          make CROSS_COMPILE= x32test
+          sh tools/test-mmap-boot.sh
 
   # The matrices are derived from configs/ instead of being written out here,
   # so that adding a configuration automatically makes it a compatibility

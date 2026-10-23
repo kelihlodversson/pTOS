@@ -11,6 +11,15 @@
 
 #include "bdosdefs.h"
 #if CONF_WITH_USER_ASPACE
+#if CONF_WITH_MMAP
+#include "mman.h"
+/* Kernel-owned mapping records: only this process's linker window is
+ * affected.  Full-width syscall slots are checked before narrowing. */
+LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
+                UQUAD flags, UQUAD offset);
+LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length);
+LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection);
+#endif
 #include "procmem.h"      /* ASPACE */
 #include "progimage.h"
 #endif

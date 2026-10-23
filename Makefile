@@ -892,8 +892,8 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $^
+obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S include/mman.h | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $(filter %.c %.S,$^)
 
 obj/x32probe_image.o: obj/x32/x32probe.elf
 endif

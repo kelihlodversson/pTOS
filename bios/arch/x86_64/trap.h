@@ -30,7 +30,7 @@
  * Entry-time calling convention for `syscall`:
  *
  *   RAX = (trap_class << 32) | function_number
- *   RDI, RSI, RDX, R10 = up to 4 real arguments
+ *   RDI, RSI, RDX, R10, R8, R9 = up to 6 GEMDOS scalar arguments
  *
  * R10 stands in for the "4th argument register" rather than RCX: the
  * `syscall` instruction itself clobbers RCX (loaded with the return RIP)
@@ -45,11 +45,12 @@
  * handler table (bdos/bdosmain.c's osif(), bios.c's bios_vecs[],
  * xbios.c's xbios_vecs[]) already expects.
  *
- * Only 4 real argument registers, matching ARM's own convention (rather
- * than the 2 more x86-64 could spare after RCX/R11 are excluded): the
- * handful of BIOS/XBIOS calls needing more than that already have an
- * established solution, reused unchanged -- a pointer to one of
- * include/biosargs.h's structs as the single real argument.
+ * GEMDOS now also exposes R8/R9 for six-argument calls such as Mmap.
+ * Existing calls ignore unused slots; callers need not initialize them.
+ * BIOS/XBIOS retain their existing four-register convention and argument
+ * blocks for wider calls; this does not change those interfaces. Other
+ * architecture backends must define their own equivalent before exposing
+ * CONF_WITH_MMAP.
  *
  * The entry/exit mechanism (trapasm.S's x86_64_syscall_entry, reached only
  * via the actual `syscall` instruction) is genuinely ring-3-capable, not a

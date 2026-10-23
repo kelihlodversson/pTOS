@@ -65,14 +65,15 @@
  *   p  execute a privileged instruction (a general protection fault)
  *
  * The syscall convention is bios/arch/x86_64/trap.h's: RAX = (class << 32) |
- * function, arguments in RDI/RSI/RDX/R10, all four always set (the kernel
- * checks all four whatever the call's own arity).
+ * function, arguments in RDI/RSI/RDX/R10/R8/R9. Calls inspect only the slots they use.
  *
  * Copyright (C) 2026 The pTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
+
+#include "../../include/mman.h"
 
 typedef unsigned long long u64;
 typedef long long s64;
@@ -91,19 +92,26 @@ typedef unsigned int u32;
 #define USER_CODE_SEL 0x2b
 #define USER_DATA_SEL 0x23
 
-static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
+static s64 sys6(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d, s64 e, s64 f)
 {
     register u64 rax __asm__("rax") = (class << 32) | func;
     register s64 rdi __asm__("rdi") = a;
     register s64 rsi __asm__("rsi") = b;
     register s64 rdx __asm__("rdx") = c;
     register s64 r10 __asm__("r10") = d;
+    register s64 r8 __asm__("r8") = e;
+    register s64 r9 __asm__("r9") = f;
 
     __asm__ volatile ("syscall"
                       : "+r" (rax)
-                      : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
+                      : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10), "r" (r8), "r" (r9)
                       : "rcx", "r11", "memory");
     return (s64)rax;
+}
+
+static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
+{
+    return sys6(class, func, a, b, c, d, 0, 0);
 }
 
 static s64 sys(u64 class, u64 func, s64 a, s64 b, s64 c)
@@ -124,6 +132,81 @@ static void pterm(int code)
 }
 
 static volatile u32 marker;
+
+static s64 mmap_private(u64 address, u64 length, u64 protection, u64 flags, u64 offset)
+{
+    return sys6(GEMDOS, GEMDOS_MMAP, address, length, protection, flags, -1, offset);
+}
+
+static int mapping_api(void)
+{
+    const u32 flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    s64 address, second;
+    volatile u32 *data;
+    int bad = 0;
+
+    if (mmap_private(0, 0, PROT_READ, flags, 0) != EINVAL ||
+        mmap_private(0x100000000ULL, 4096, PROT_READ, flags, 0) != EIMBA ||
+        mmap_private(0, 0x100001000ULL, PROT_READ, flags, 0) != EIMBA ||
+        mmap_private(0, 4096, 0x100000001ULL, flags, 0) != EINVAL)
+        bad |= 1;
+    /* A nonzero sixth argument must reach the kernel intact. */
+    if (mmap_private(0, 4096, PROT_READ, flags, 4096) != EINVAL ||
+        mmap_private(0, 4096, PROT_READ, flags, 0x100000000ULL) != EINVAL)
+        bad |= 2;
+    if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE, 0) != -307 ||
+        mmap_private(0, 4096, PROT_READ, MAP_SHARED | MAP_ANONYMOUS, 0) != -307 ||
+        mmap_private(0, 4096, PROT_READ, flags | MAP_FIXED, 0) != -307)
+        bad |= 4;
+    if (mmap_private(PTOS_MMAP_BASE + 1, 4096, PROT_READ,
+                      flags | MAP_FIXED_NOREPLACE, 0) != EINVAL ||
+        mmap_private(0xfffff000u, 8192, PROT_READ,
+                      flags | MAP_FIXED_NOREPLACE, 0) != EIMBA)
+        bad |= 8;
+    if (mmap_private(0, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, flags, 0) != EACCDN)
+        bad |= 16;
+    address = mmap_private(0, 12288, PROT_READ | PROT_WRITE, flags, 0);
+    if (address != PTOS_MMAP_BASE)
+        return bad | 32;
+    data = (volatile u32 *)(unsigned long)address;
+    if (data[0] || data[3071])
+        bad |= 64;
+    data[0] = 0x660;
+    if (mmap_private(address, 12288, PROT_READ,
+                     flags | MAP_FIXED_NOREPLACE, 0) != EACCDN || data[0] != 0x660)
+        bad |= 128;
+    second = mmap_private(address, 4096, PROT_READ, flags, 0);
+    if (second != address + 12288 || gemdos(GEMDOS_MUNMAP, second, 4096))
+        bad |= 128;                    /* an occupied hint falls back */
+    if (sys(GEMDOS, GEMDOS_MPROT, address + 8192, 8192, PROT_READ) != EIMBA)
+        bad |= 256;
+    data[2048] = 0x660;                /* failed Mprot changed nothing */
+    if (sys(GEMDOS, GEMDOS_MPROT, address + 4096, 4096, PROT_READ))
+        bad |= 256;
+    if (sys(GEMDOS, 0x3f, -1, 4, address + 4096) != EIMBA)
+        bad |= 256;                    /* Fread checks the mapping's permissions */
+    if (sys(GEMDOS, 0x17d, address + 4096, 4, 1) != 0 ||
+        sys(GEMDOS, 0x17d, address + 4096, 4, 0) != EINVAL)
+        bad |= 256;                    /* Maccess tests; it never changes access */
+    if (gemdos(GEMDOS_MUNMAP, address + 4096, 4096) ||
+        sys(GEMDOS, GEMDOS_MPROT, address, 12288, PROT_READ) != EIMBA)
+        bad |= 512;                    /* partial unmap split the reservation */
+    second = mmap_private(address + 4096, 4096, PROT_READ | PROT_WRITE,
+                          flags | MAP_FIXED_NOREPLACE, 0);
+    if (second != address + 4096 || data[1024])
+        return bad | 1024;
+    if (sys(GEMDOS, GEMDOS_MPROT, address, 12288, PROT_READ) ||
+        gemdos(GEMDOS_MUNMAP, address, 12288) ||
+        gemdos(GEMDOS_MUNMAP, address, 12288))
+        bad |= 2048;                   /* adjacent reservations and holes */
+    if (sys(GEMDOS, GEMDOS_MPROT, 0x10000000, 4096, PROT_READ) != EIMBA ||
+        gemdos(GEMDOS_MUNMAP, 0x10000000, 4096) != EIMBA)
+        bad |= 4096;                   /* heap/stack/image are never affected */
+    second = mmap_private(0, 1, PROT_READ | PROT_WRITE, flags, 0);
+    if (second != address || data[0] || gemdos(GEMDOS_MUNMAP, second, 1))
+        bad |= 8192;                   /* lengths round up; no stale data */
+    return bad;
+}
 
 /* an address the compiler cannot see through, so that dereferencing a bad
  * one stays a runtime fault rather than a compile-time diagnostic */
@@ -166,6 +249,50 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+    case 'Q':
+        if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0) != EINVFN ||
+            sys(GEMDOS, GEMDOS_MPROT, PTOS_MMAP_BASE, 4096, PROT_READ) != EINVFN ||
+            gemdos(GEMDOS_MUNMAP, PTOS_MMAP_BASE, 4096) != EINVFN)
+            pterm(1);
+        pterm(0);
+        break;
+    case 'S':
+        pterm(mapping_api());
+        break;
+    case 'T':
+    case 'U':
+    case 'V':
+    case 'W':
+    case 'X': {
+        s64 address = mmap_private(0, 4096, PROT_READ | PROT_WRITE,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, 0);
+        volatile unsigned char *code;
+        u32 protection;
+        int (*fn)(void);
+
+        if (address <= 0)
+            pterm(1);
+        code = (volatile unsigned char *)(unsigned long)address;
+        /* mov $42, %eax; ret -- a real x32 user function in a new mapping */
+        code[0] = 0xb8; code[1] = 42; code[2] = 0;
+        code[3] = 0; code[4] = 0; code[5] = 0xc3;
+        if (tail[0] == 'X')
+            pterm(0);                  /* exit reclaims mapping and metadata */
+        protection = tail[0] == 'W' ? PROT_NONE : PROT_READ;
+        if (tail[0] == 'T' || tail[0] == 'U')
+            protection |= PROT_EXEC;
+        if (sys(GEMDOS, GEMDOS_MPROT, address, 4096, protection))
+            pterm(2);
+        if (tail[0] == 'U')
+            code[0] = 0;               /* RX write must fault */
+        if (tail[0] == 'W')
+            bad = code[0];             /* NONE read must fault */
+        fn = (int (*)(void))(unsigned long)address;
+        if (fn() != 42)                /* T: executes; V: NX must fault */
+            pterm(3);
+        pterm(gemdos(GEMDOS_MUNMAP, address, 4096) ? 4 : 0);
+        break;
+    }
     case 'e':
         if (!basepage || basepage > 0xffffffffULL ||
             *(const u32 *)(unsigned long)basepage != (u32)basepage)

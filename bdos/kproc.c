@@ -40,6 +40,12 @@ enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
 #if CONF_WITH_KPROC
 
 typedef struct kproc KPROC;
+#if CONF_WITH_MMAP
+typedef struct mmap_region {
+    ULONG address, length;
+    struct mmap_region *next;
+} MMAP_REGION;
+#endif
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
 struct kproc {
@@ -82,6 +88,10 @@ struct kproc {
         PD *pd;                 /* UH_LOADED: the process it is loaded for */
     } *heap;
     ULONG nheap, heap_capacity;
+#if CONF_WITH_MMAP
+    MMAP_REGION *mappings;      /* sorted reservations in the mapping window */
+    UQUAD mapping_bytes;        /* charged to both allocation/core limits */
+#endif
     UQUAD stack_size;           /* Psetlimit(): the stack's address space; 0: the default */
     UQUAD stack_low;            /* the lowest stack page backed so far; 0: none */
     UQUAD lim_core, lim_data;   /* Psetlimit(): total / allocatable memory in bytes; 0: no limit */
@@ -234,6 +244,14 @@ void kproc_destroy(PD *pd)
             aspace_destroy(kproc->aspace);
             kstack_free(kproc->kstack_phys);
             kfree(kproc->heap);
+#if CONF_WITH_MMAP
+            while (kproc->mappings) {
+                MMAP_REGION *region = kproc->mappings;
+
+                kproc->mappings = region->next;
+                kfree(region);        /* backing pages died with the aspace */
+            }
+#endif
 #endif
             KPROC_FREE(kproc);
             return;
@@ -941,7 +959,7 @@ static UQUAD heap_limit(const KPROC *kproc)
     return USER_STACK_TOP - stack_bytes(kproc) - USER_PAGE_SIZE;
 }
 
-/* how many bytes of Malloc() blocks the process holds, and how big its image is
+/* how many bytes of Malloc()/Mmap() blocks the process holds, and how big its image is
  * (what Psetlimit()'s limits 3 and 2 count) */
 static UQUAD heap_malloc_bytes(const KPROC *kproc)
 {
@@ -951,6 +969,9 @@ static UQUAD heap_malloc_bytes(const KPROC *kproc)
     for (i = 0; i < kproc->nheap; i++)
         if (kproc->heap[i].kind == UH_MALLOC)
             bytes += (UQUAD)kproc->heap[i].pages * USER_PAGE_SIZE;
+#if CONF_WITH_MMAP
+    bytes += kproc->mapping_bytes;
+#endif
     return bytes;
 }
 
@@ -984,6 +1005,222 @@ static UQUAD alloc_room(const KPROC *kproc)
     }
     return room;
 }
+
+#if CONF_WITH_MMAP
+static LONG mapping_length(UQUAD *length)
+{
+    if (!*length)
+        return EINVAL;
+    if (*length > PTOS_MMAP_LIMIT - PTOS_MMAP_BASE)
+        return EIMBA;
+    *length = (*length + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
+    return E_OK;
+}
+
+static BOOL mapping_range(UQUAD address, UQUAD length)
+{
+    return !(address & (USER_PAGE_SIZE - 1)) &&
+           address >= PTOS_MMAP_BASE && address < PTOS_MMAP_LIMIT &&
+           length <= PTOS_MMAP_LIMIT - address;
+}
+
+static LONG mapping_protection(UQUAD flags, UWORD *prot)
+{
+    if (flags & ~(UQUAD)(PROT_READ | PROT_WRITE | PROT_EXEC))
+        return EINVAL;
+    if ((flags & PROT_WRITE) && (flags & PROT_EXEC))
+        return EACCDN;
+    *prot = flags ? ASPACE_PROT_USER : 0;  /* NONE: supervisor-only, NX */
+    if (flags & PROT_WRITE)
+        *prot |= ASPACE_PROT_WRITE;
+    if (flags & PROT_EXEC)
+        *prot |= ASPACE_PROT_EXEC;
+    return E_OK;
+}
+
+/* Sorted per-process reservations; a hint may fall back to first fit, an
+ * exact no-replace request may not.  No existing mapping is ever removed. */
+static MMAP_REGION **mapping_slot(KPROC *kproc, UQUAD *address,
+                                 UQUAD length, BOOL exact)
+{
+    MMAP_REGION **link;
+    UQUAD at;
+
+    if (*address && mapping_range(*address, length)) {
+        for (link = &kproc->mappings; *link; link = &(*link)->next) {
+            if (*address + length <= (*link)->address)
+                break;
+            if (*address < (UQUAD)(*link)->address + (*link)->length)
+                break;
+        }
+        if (!*link || *address + length <= (*link)->address)
+            return link;
+    }
+    if (exact)
+        return NULL;
+    at = PTOS_MMAP_BASE;
+    for (link = &kproc->mappings; *link; link = &(*link)->next) {
+        if (at + length <= (*link)->address)
+            break;
+        at = (UQUAD)(*link)->address + (*link)->length;
+    }
+    if (!mapping_range(at, length))
+        return NULL;
+    *address = at;
+    return link;
+}
+
+LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
+                UQUAD flags, UQUAD offset)
+{
+    KPROC *kproc = kproc_find(pd);
+    MMAP_REGION **link, *region;
+    UWORD prot;
+    LONG rc;
+    BOOL exact = (flags & MAP_FIXED_NOREPLACE) != 0;
+
+    if (!kproc || !kproc->aspace)
+        return EACCDN;
+    /* Anonymous private memory only. Do not silently emulate unsupported
+     * file/shared mappings or MAP_FIXED's destructive replacement rule. */
+    if ((flags & ~(UQUAD)(MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE)) ||
+        (flags & (MAP_PRIVATE | MAP_ANONYMOUS)) != (MAP_PRIVATE | MAP_ANONYMOUS))
+        return EOPNOTSUPP;
+    if (offset)
+        return EINVAL;
+    if (address > 0xffffffffULL)
+        return EIMBA;
+    rc = mapping_length(&length);
+    if (rc)
+        return rc;
+    rc = mapping_protection(protection, &prot);
+    if (rc)
+        return rc;
+    if (exact) {
+        if (address & (USER_PAGE_SIZE - 1))
+            return EINVAL;
+        if (!mapping_range(address, length))
+            return EIMBA;
+    } else {
+        address &= ~(USER_PAGE_SIZE - 1);  /* ordinary hint, not MAP_FIXED */
+    }
+    link = mapping_slot(kproc, &address, length, exact);
+    if (!link)
+        return exact ? EACCDN : ENSMEM;
+    if (length > alloc_room(kproc))
+        return ENSMEM;
+    region = kalloc(sizeof(*region));
+    if (!region)
+        return ENSMEM;
+    if (!aspace_map_private(kproc->aspace, address, length, prot)) {
+        kfree(region);
+        return ENSMEM;              /* mapper rolls back partial work */
+    }
+    region->address = (ULONG)address;
+    region->length = (ULONG)length;
+    region->next = *link;
+    *link = region;
+    kproc->mapping_bytes += length;
+    return (LONG)address;
+}
+
+LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
+{
+    KPROC *kproc = kproc_find(pd);
+    MMAP_REGION **link, *region, *tail;
+    UQUAD end, first, last, region_end;
+    LONG rc;
+
+    if (!kproc || !kproc->aspace)
+        return EACCDN;
+    if (address & (USER_PAGE_SIZE - 1))
+        return EINVAL;
+    rc = mapping_length(&length);
+    if (rc)
+        return rc;
+    if (!mapping_range(address, length))
+        return EIMBA;
+    end = address + length;
+    for (link = &kproc->mappings; *link;) {
+        region = *link;
+        region_end = (UQUAD)region->address + region->length;
+        if (region->address >= end)
+            break;
+        if (region_end <= address) {
+            link = &region->next;
+            continue;
+        }
+        first = address > region->address ? address : region->address;
+        last = end < region_end ? end : region_end;
+        tail = NULL;
+        if (first > region->address && last < region_end) {
+            /* A middle cut is the only case needing metadata. Allocate it
+             * before touching pages; this case intersects just one region. */
+            tail = kalloc(sizeof(*tail));
+            if (!tail)
+                return ENSMEM;
+            tail->address = (ULONG)last;
+            tail->length = (ULONG)(region_end - last);
+            tail->next = region->next;
+        }
+        if (!aspace_unmap_private(kproc->aspace, first, last - first)) {
+            kfree(tail);
+            return EINTRN;              /* ledger and ownership disagree */
+        }
+        kproc->mapping_bytes -= last - first;
+        if (first == region->address && last == region_end) {
+            *link = region->next;
+            kfree(region);
+        } else if (first == region->address) {
+            region->address = (ULONG)last;
+            region->length = (ULONG)(region_end - last);
+            link = &region->next;
+        } else {
+            region->length = (ULONG)(first - region->address);
+            if (tail)
+                region->next = tail;
+            link = &region->next;
+        }
+    }
+    return E_OK;                       /* unmapped holes are harmless */
+}
+
+LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
+{
+    KPROC *kproc = kproc_find(pd);
+    MMAP_REGION *region;
+    UQUAD at = address, end;
+    UWORD prot;
+    LONG rc;
+
+    if (!kproc || !kproc->aspace)
+        return EACCDN;
+    if (address & (USER_PAGE_SIZE - 1))
+        return EINVAL;
+    rc = mapping_length(&length);
+    if (rc)
+        return rc;
+    if (!mapping_range(address, length))
+        return EIMBA;
+    rc = mapping_protection(protection, &prot);
+    if (rc)
+        return rc;
+    end = address + length;
+    /* Check the entire range before changing any page; a gap must not
+     * leave earlier mappings with new permissions. Adjacent regions work. */
+    for (region = kproc->mappings; region && at < end; region = region->next) {
+        if ((UQUAD)region->address + region->length <= at)
+            continue;
+        if (region->address > at)
+            return EIMBA;
+        at = (UQUAD)region->address + region->length;
+    }
+    if (at < end)
+        return EIMBA;
+    return aspace_protect_private(kproc->aspace, address, length, prot)
+            ? E_OK : EINTRN;
+}
+#endif
 
 static BOOL heap_room(KPROC *kproc)
 {
