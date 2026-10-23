@@ -147,10 +147,10 @@ LONG aes_form_do(ULONG tree, WORD start)
                 break;
             }
         }
-    rc = aes_wind_update(AES_BEG_UPDATE);
+    rc = simple(tree, AES_OBJECT_UPDATE, 0, AES_BEG_UPDATE, 0, 0, NULL);
     if (rc) return rc;
     update = TRUE;
-    rc = aes_wind_update(AES_BEG_MCTRL);
+    rc = simple(tree, AES_OBJECT_UPDATE, 0, AES_BEG_MCTRL, 0, 0, NULL);
     if (rc) goto cleanup;
     mouse = TRUE;
     rc = simple(tree, AES_OBJECT_FORM, 0, 1, 0, 0, NULL);
@@ -204,11 +204,9 @@ cleanup:
         end = simple(tree, AES_OBJECT_FORM, 0, 0, 0, 0, NULL);
         if (!rc) rc = end;
     }
-    /* Unregister releases the old tokens. A callback can register again
-     * before the wait resumes; never release that new registration's locks. */
-    if (simple(tree, AES_OBJECT_GET, 0, 0, 0, 0, &root) == E_OK) {
-        if (mouse) (void)aes_wind_update(AES_END_MCTRL);
-        if (update) (void)aes_wind_update(AES_END_UPDATE);
-    }
+    /* Each release validates the original registration's tree handle in
+     * the kernel, even if callbacks replace it at a syscall return. */
+    if (mouse) (void)simple(tree, AES_OBJECT_UPDATE, 0, AES_END_MCTRL, 0, 0, NULL);
+    if (update) (void)simple(tree, AES_OBJECT_UPDATE, 0, AES_END_UPDATE, 0, 0, NULL);
     return rc ? rc : answer;
 }

@@ -392,6 +392,7 @@ void x86_64_aes_drain(void)
 #include "../../../bdos/kproc.h"
 #include "../../../desk/aesbind.h"
 #include "gemwmlib.h"
+#include "gemmnlib.h"
 #include "gemevlib.h"
 #include "vdi_service.h"
 
@@ -551,6 +552,8 @@ BOOL x86_64_aes_test_run(void)
     WORD revocations = 0;
     BOOL reuse_sent = FALSE;
     BOOL objects_sent = FALSE;
+    BOOL fault_mode_sent = FALSE, foreign_fault_done = FALSE;
+    BOOL disabled_cancelled = FALSE;
     const EVSPEC revoke_masks[3] = { MU_KEYBD, MU_M1, MU_TIMER };
     AESPD *task;
 
@@ -565,11 +568,47 @@ BOOL x86_64_aes_test_run(void)
             set_mown(contexts[i].aes);
     for (attempt = 0; attempt < 1000; attempt++) {
         ev_timer(10L);
+        if (!disabled_cancelled && mn_test_disabled_waiting()) {
+            /* Both the disabled-title tracker and its owner are asleep.
+             * Cancel from this foreign task, then wake native tracking by
+             * retiring its menu while its saved continuation stays pinned. */
+            vdi_service_callback_event(VDI_CALLBACK_BUTTON, 1, 0);
+            vdi_service_callback_work();
+            x86_64_aes_objects_reap();
+            disabled_cancelled = TRUE;
+        }
         dead = waiting = 0;
         for (i = 2; i < NUM_PDS; i++) {
             c = &contexts[i];
             if (!c->aes)
                 continue;
+            if (c->owner && !memcmp(c->aes->p_name, "ACCFAULT", 8) &&
+                (c->aes->p_stat & WAITIN) && c->aes->p_evwait == MESSAGE_WAIT) {
+                if (!fault_mode_sent && x86_64_aes_objects_test_fault_ready(c->owner, FALSE)) {
+                    WORD fault_message[8] = { 665, 0, 0, 0, 0, 0, 0, 0 };
+                    fault_message[3] = test_sessions & 1;
+                    if (!ap_rdwr(MU_SDMSG, c->aes, sizeof(fault_message), fault_message))
+                        panic("accessory fault mode wake FAIL\n");
+                    fault_mode_sent = TRUE;
+                } else if ((test_sessions & 1) && !foreign_fault_done &&
+                    x86_64_aes_objects_test_fault_ready(c->owner, TRUE)) {
+                    PD *failed_owner = c->owner;
+                    wm_update(BEG_UPDATE);
+                    w_drawdesk(&gl_rscreen);
+                    /* Still on the foreign drawing task, before the owner
+                     * resumes: cancellation must have retired its trees
+                     * and moved its indefinite wait off the sleeping list. */
+                    if (kproc_aes_get(failed_owner) ||
+                        x86_64_aes_objects_test_fault_ready(failed_owner, FALSE))
+                        panic("accessory foreign callback retirement FAIL\n");
+                    for (task = nrl; task; task = task->p_link)
+                        if (task == c->aes)
+                            panic("accessory foreign callback stayed asleep FAIL\n");
+                    foreign_fault_done = TRUE;
+                    wm_update(END_UPDATE);
+                    kcprintf("x32 foreign USERDEF fault retirement/wake: PASS\n");
+                }
+            }
             test_button_snapshot(c);
             if (c->owner && !reuse_sent && x86_64_aes_window_test_reuse(c->owner)) {
                 reuse_sent = TRUE;
@@ -637,7 +676,8 @@ BOOL x86_64_aes_test_run(void)
         set_mown(old_owner);
         gl_ctmown = old_ctmown;
     }
-    if (attempt == 1000 || dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3 || !reuse_sent || test_arrows != 4)
+    if (attempt == 1000 || dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3 || !reuse_sent || test_arrows != 4 ||
+        !fault_mode_sent || !disabled_cancelled || ((test_sessions & 1) && !foreign_fault_done))
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
     x86_64_aes_window_test();
     /* Exercise the native AES message bridge and receive acknowledgement. */

@@ -31,6 +31,7 @@ LONG user_callback_exchange(USER_CALLBACK **slot, UWORD signature,
                              ULONG *old);
 void user_callback_drop(USER_CALLBACK **slot);
 BOOL user_callback_owner(USER_CALLBACK *handler, PD *pd);
+BOOL user_callback_owner_failed(PD *pd);
 LONG user_callback_invoke(USER_CALLBACK *handler, UWORD signature,
                            LONG a, LONG b, ULONG *result);
 LONG user_callback_invoke_data(USER_CALLBACK *handler, const void *data,

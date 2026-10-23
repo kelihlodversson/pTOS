@@ -251,6 +251,13 @@ static LONG update_ownership(AES_CLIENT_STATE *p, UQUAD code)
     return E_OK;
 }
 
+LONG aes_service_update(PD *pd, UWORD code)
+{
+    AES_CLIENT_STATE *p = kproc_aes_get(pd);
+
+    return p ? update_ownership(p, code) : EACCDN;
+}
+
 BOOL aes_service_window_unlocked(PD *pd)
 {
     AES_CLIENT_STATE *p = kproc_aes_get(pd);

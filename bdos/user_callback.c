@@ -375,6 +375,13 @@ static void check_fatal(void)
     }
 }
 
+BOOL user_callback_owner_failed(PD *pd)
+{
+    USER_CALLBACK_STATE *state = kproc_callbacks_get(pd);
+
+    return state && state->fatal;
+}
+
 static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
                      const void *data, ULONG bytes, ULONG *result)
 {

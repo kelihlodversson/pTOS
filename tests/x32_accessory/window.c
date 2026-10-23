@@ -425,6 +425,15 @@ static int rectangle_pool(WORD *peer_handle)
     WORD handles[NUM_WIN - 2], i, count, peer;
     GRECT strip, visible;
     AES_WINDOW_INFO state;
+    AES_EVENT_REQUEST wait = { 0 };
+    AES_INPUT_EVENT event;
+
+    /* The fault fixture now also sleeps for a foreign desktop redraw.
+     * Wait for its teardown before requiring every user window slot. */
+    wait.mask = AES_EVENT_TIMER; wait.timer_ms = 10;
+    for (count = 0; count < 100 && aes_appl_find("ACCFAULT") > 0; count++)
+        CHECK(aes_evnt_multi(&wait, &event) == AES_EVENT_TIMER);
+    CHECK(aes_appl_find("ACCFAULT") == ESRCH);
 
     peer = aes_appl_find("ACCWAIT");
     CHECK(peer > 0 && pool_command(peer, 640, peer_handle) == 0);

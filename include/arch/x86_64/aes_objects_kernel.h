@@ -22,4 +22,7 @@ BOOL x86_64_aes_tree_managed(struct _object *tree);
 void x86_64_aes_tree_message(PD *owner, WORD *message);
 void wm_snapshot_set(struct _object *tree, WORD root);
 void wm_snapshot_clear(struct _object *tree);
+#if CONF_WITH_X32_ACCESSORY_TEST
+BOOL x86_64_aes_objects_test_fault_ready(PD *owner, BOOL desktop);
+#endif
 #endif

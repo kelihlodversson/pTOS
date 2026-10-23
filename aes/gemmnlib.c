@@ -215,6 +215,14 @@ static void menu_sr(WORD saveit, OBJECT *tree, WORD imenu)
 {
     GRECT   t;
 
+    /* A disabled title can be tracked without ever opening a popup. */
+    if (imenu == NIL) {
+#if CONF_WITH_X32_ACCESSORY_TEST
+        kcprintf("x32 disabled menu popup cleanup: PASS\n");
+#endif
+        return;
+    }
+
     /* do the blit to save or restore */
     gsx_sclip(&gl_rzero);
     ob_actxywh(tree, imenu, &t);
@@ -249,6 +257,22 @@ static WORD menu_down(OBJECT *tree, WORD ititle)
 
     return imenu;
 }
+
+#if CONF_WITH_X32_ACCESSORY_TEST
+static BOOL disabled_waiting;
+
+BOOL mn_test_disabled_waiting(void)
+{
+    return disabled_waiting;
+}
+
+static void test_disabled_wait(OBJECT *tree, WORD title, WORD menu)
+{
+    disabled_waiting = title != NIL && menu == NIL &&
+        x86_64_aes_tree_managed(tree) && !x86_64_aes_tree_cancelled(tree) &&
+        (tree[title].ob_state & DISABLED);
+}
+#endif
 
 
 #if CONF_WITH_MENU_EXTENSION
@@ -359,6 +383,9 @@ static WORD mn_do_native(WORD *ptitle, WORD *pitem, OBJECT **ptree)
          */
 
         /* wait for something */
+#if CONF_WITH_X32_ACCESSORY_TEST
+        test_disabled_wait(tree, cur_title, cur_menu);
+#endif
 #if ARCH_X86_64
         if (x86_64_aes_tree_cancelled(tree))
             break;
@@ -610,6 +637,9 @@ static WORD mn_do_native(WORD *ptitle, WORD *pitem)
          */
 
         /* wait for something */
+#if CONF_WITH_X32_ACCESSORY_TEST
+        test_disabled_wait(tree, cur_title, cur_menu);
+#endif
 #if ARCH_X86_64
         if (x86_64_aes_tree_cancelled(tree))
             break;
@@ -740,6 +770,9 @@ WORD mn_do(WORD *ptitle, WORD *pitem)
     if (!x86_64_aes_tree_alive(guard))
         result = FALSE;
     x86_64_aes_tree_unpin(guard);
+#endif
+#if CONF_WITH_X32_ACCESSORY_TEST
+    disabled_waiting = FALSE;
 #endif
     return result;
 }

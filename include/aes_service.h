@@ -53,6 +53,8 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
 void aes_service_process_exit(PD *pd);
 LONG aes_service_kernel_message(PD *pd, const WORD *message);
 BOOL aes_service_window_unlocked(PD *pd);
+/* Called without yielding after validating a registration-scoped token. */
+LONG aes_service_update(PD *pd, UWORD code);
 #if CONF_WITH_X32_ACCESSORY_TEST
 LONG aes_service_test_coordination(WORD code);
 #endif

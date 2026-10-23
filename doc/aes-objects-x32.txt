@@ -112,6 +112,14 @@ All operations on a tree require its creating process and live registration.
     METRICS         none                             value=VDI handle,
                                                      rectangle.x/y=char w/h,
                                                      rectangle.w/h=box w/h
+    UPDATE          tree, value=AES_*_UPDATE/MCTRL    none
+
+UPDATE uses the never-reused tree handle as a registration-scoped lock token.
+The kernel validates it and adjusts the update/mouse-control depth without
+yielding between those actions. Unregister invalidates that token and releases
+its locks. A stale END cannot release a replacement registration's locks,
+including when a callback replaces the registration at a syscall return.
+aes_form_do uses UPDATE for both acquisition and cleanup.
 
 RECTANGLE carries relative geometry, which may be negative or entirely off
 screen; it uses the screen clip rather than treating that geometry as a clip.
@@ -179,8 +187,10 @@ the returned low seven bits are the remaining GEM draw state. Existing
 callback depth, stack, executable-page, syscall and timeout checks apply.
 Object operations and waiting are refused inside callbacks. A callback may
 unregister its owner; the in-flight tree stays pinned until drawing unwinds.
-A callback fault unwinds native drawing before terminating the owner, leaving
-other AES tasks and their menu/window state intact.
+A callback fault retires the owner's registration and snapshots and wakes any
+pending wait, including when another task draws its retained desktop. Native
+drawing stays pinned while it unwinds; the owner terminates at its next user
+boundary, leaving the foreign drawing task intact.
 
 Validation
 -----------
@@ -196,5 +206,9 @@ normal/selected colour-icon framebuffer pixels from short planar inputs
 (including monochrome fallback with CONF_WITH_COLOUR_ICONS=n),
 exact native text-buffer limits and rejected oversized updates, consecutive
 menu title numbering, off-screen relative geometry and radio drag selection.
+It also cancels a disabled menu title before any popup opens, replaces a
+registration at GET/END syscall returns to check scoped lock cleanup, and
+faults a sleeping desktop owner during another task's native redraw. Both
+owner-initiated and foreign-task USERDEF faults run across the four sessions.
 All existing window/input and allocator cleanup checks repeat across four
 desktop sessions, including both 8- and 16-window configurations.

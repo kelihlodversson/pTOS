@@ -31,6 +31,7 @@
 #include "../../../vdi/vdi_backend.h"
 #if CONF_WITH_X32_ACCESSORY_TEST
 #include "../../../bios/machine/pc-x86_64/gop.h"
+#include "vdi_service.h"
 #endif
 
 #define TREE_ALLOCATION_LIMIT (16UL * 1024 * 1024)
@@ -336,6 +337,7 @@ static WORD user_draw(PARMBLK *pb)
 #if CONF_WITH_USER_CALLBACKS
     AES_OBJECT_DRAW draw = { 0 };
     ULONG state;
+    PD *owner = t->owner;
 
     if (t->retired)
         return 0;
@@ -346,8 +348,14 @@ static WORD user_draw(PARMBLK *pb)
     draw.current = pb->pb_currstate;
     memcpy(&draw.rectangle, &pb->pb_x, sizeof(GRECT));
     memcpy(&draw.clip, &pb->pb_xc, sizeof(GRECT));
-    if (user_callback_invoke_data(p->u.user.callback, &draw, sizeof(draw), &state))
+    if (user_callback_invoke_data(p->u.user.callback, &draw, sizeof(draw), &state)) {
+        /* The caller can be another AES task drawing a retained desktop.
+         * Cancel and wake a fatal owner now; its user boundary terminates
+         * it after this pinned native drawing continuation unwinds. */
+        if (owner && user_callback_owner_failed(owner))
+            aes_service_process_exit(owner);
         return 0;
+    }
     return state & 0x007f;
 #else
     MAYBE_UNUSED(t);
@@ -604,7 +612,7 @@ static BOOL valid_request(AES_OBJECT_REQUEST r)
     case AES_OBJECT_KEY: r.tree = r.object = r.value = 0; break;
     case AES_OBJECT_FORM:
         r.tree = r.value = 0; memset(&r.rectangle, 0, sizeof(r.rectangle)); break;
-    case AES_OBJECT_MENU: r.tree = r.value = 0; break;
+    case AES_OBJECT_MENU: case AES_OBJECT_UPDATE: r.tree = r.value = 0; break;
     case AES_OBJECT_DESKTOP: r.tree = r.object = r.value = 0; break;
     case AES_OBJECT_GET: case AES_OBJECT_OFFSET: r.tree = r.object = 0; break;
     case AES_OBJECT_CENTER: case AES_OBJECT_DESTROY: r.tree = 0; break;
@@ -791,6 +799,39 @@ static void test_colour_pixels(AES_TREE_STATE *t)
 }
 #endif
 
+#if CONF_WITH_X32_ACCESSORY_TEST
+BOOL x86_64_aes_objects_test_fault_ready(PD *owner, BOOL desktop)
+{
+    AES_TREE_STATE *t;
+
+    for (t = trees; t; t = t->next)
+        if (!t->retired && t->owner == owner && (!desktop || t->desktop))
+            return TRUE;
+    return FALSE;
+}
+
+static void test_scope_return(AES_TREE_STATE *t, const AES_OBJECT_REQUEST *r)
+{
+    static ULONG delivered;
+    WORD event = 0;
+
+    if (!t || t->retired || t->handle == delivered || t->count != 4)
+        return;
+    if (r->operation == AES_OBJECT_GET && !r->object &&
+        !strcmp(t->payload[2].text, "Scope A"))
+        event = 666;
+    if (r->operation == AES_OBJECT_UPDATE && r->value == AES_END_MCTRL &&
+        !strcmp(t->payload[2].text, "Scope B"))
+        event = 667;
+    if (event) {
+        delivered = t->handle;
+        /* Deliver on the completed syscall return, after the result was
+         * committed, rather than while the scoped operation is running. */
+        vdi_service_callback_event(VDI_CALLBACK_BUTTON, event, 0);
+    }
+}
+#endif
+
 LONG x86_64_aes_objects(UQUAD input, UQUAD output)
 {
     AES_OBJECT_REQUEST r;
@@ -808,7 +849,7 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
     if ((input & 3) || !kproc_copy_from_user(&r, input, sizeof(r)) ||
         (output & 3) || !kproc_validate_user_write(output, sizeof(result)))
         return EIMBA;
-    if (r.operation < AES_OBJECT_CREATE || r.operation > AES_OBJECT_METRICS)
+    if (r.operation < AES_OBJECT_CREATE || r.operation > AES_OBJECT_UPDATE)
         return EINVFN;
     if (!valid_request(r))
         return EINVAL;
@@ -841,7 +882,7 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
         return EINVAL;
     render = r.operation != AES_OBJECT_GET && r.operation != AES_OBJECT_READ &&
              r.operation != AES_OBJECT_OFFSET && r.operation != AES_OBJECT_FIND &&
-             r.operation != AES_OBJECT_DESTROY;
+             r.operation != AES_OBJECT_DESTROY && r.operation != AES_OBJECT_UPDATE;
     if (render && !clip_rectangle(&r.rectangle))
         return EINVAL;
     if (render && ((wind_spb.sy_tas && wind_spb.sy_owner != rlr) ||
@@ -864,6 +905,12 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
         gsx_sclip(&clip);
     }
     switch (r.operation) {
+    case AES_OBJECT_UPDATE:
+        /* Handles are never reused and unregister retires every snapshot.
+         * Resolve that registration token and mutate lock depth in this
+         * non-yielding call, including between the client's END calls. */
+        rc = aes_service_update(run, (UWORD)r.value);
+        break;
     case AES_OBJECT_DESTROY:
         t->retired = TRUE;
         break;
@@ -1024,6 +1071,10 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
         rc = EACCDN;
     if (!rc && !kproc_copy_to_user(output, &result, sizeof(result)))
         rc = EIMBA;
+#if CONF_WITH_X32_ACCESSORY_TEST
+    if (!rc)
+        test_scope_return(t, &r);
+#endif
     x86_64_aes_tree_unpin(t);
     x86_64_aes_objects_reap();
     return rc;

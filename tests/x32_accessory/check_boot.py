@@ -25,6 +25,12 @@ assert output.count("x32 input events: PASS") == 4, "typed input in all sessions
 assert output.count("x32 objects snapshot/menu/dialog/USERDEF/revocation: PASS") == 4
 assert output.count("x32 object active menu cancellation: PASS") == 4
 assert output.count("x32 object cancelled modal preserves new locks: PASS") == 4
+assert output.count("x32 object scoped lock return races: PASS") == 4
+assert output.count("x32 disabled menu popup cleanup: PASS") >= 4
+assert output.count("x32 object disabled title cancellation: PASS") == 4
+assert output.count("x32 object owner USERDEF fault: ARMED") == 2
+assert output.count("x32 object foreign USERDEF fault: ARMED") == 2
+assert output.count("x32 foreign USERDEF fault retirement/wake: PASS") >= 2
 for regression in ("native text limits", "consecutive menu titles", "radio drag selection", "relative geometry"):
     assert output.count("x32 object " + regression + ": PASS") == 4, regression
 assert output.count("x32 object colour pixels: PASS") >= 12
