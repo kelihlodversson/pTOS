@@ -222,16 +222,14 @@ config GEMDOS_VERSION
 
 config AES_VERSION
 	hex "AES version returned by appl_init()"
-	default 0x0320 if !CONF_WITH_MENU_EXTENSION
-	default 0x0330 if !CONF_WITH_3D_OBJECTS
-	default 0x0340
+	default 0x0320
 	help
 	  Useful values are 0x0120 (TOS 1.02), 0x0140 (TOS 1.04 and 1.62),
 	  0x0320 (TOS 2.06 and 3.06), 0x0330 (TOS 3.06) and 0x0340 (TOS
-	  4.04).  The default reflects the enabled AES extensions: 3.30 menu
-	  functions and 3.40 3D object support.  appl_getinfo() capability
-	  discovery remains available through ?AGI regardless of this value.
-	  Do not change this arbitrarily, as each value implies the presence or
-	  absence of certain AES functions.
+	  4.04).  The default is kept at 3.20 because the AES 3.30 WF_OWNER
+	  neighbour results are not fully implemented.  appl_getinfo()
+	  capability discovery remains available through ?AGI regardless of
+	  this value.  Do not change this arbitrarily, as each value implies
+	  the presence or absence of certain AES functions.
 
 endmenu
