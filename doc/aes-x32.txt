@@ -669,7 +669,9 @@ rejects any FAIL/fault/panic/reset and verifies:
   - held-button selection/drag wait compatibility (classic mask 0xff -> 3);
   - a graphical app launched from EmuDesk, bad pointer/size/command rejection,
     saved-shell-buffer copies, private nested-child ownership and accessory IPC;
-  - file-selector cancellation, filename editing, loading TYPED.INF and restart;
+  - file-selector cancellation, directory navigation, filtered multi-page
+    listings, mouse row selection, filename editing and double-click loading;
+  - loading an INF file and restarting the desktop in the same process;
   - graphical/console transitions and a fresh ring-3 desktop after EmuCON exits;
   - a missing external desktop falling back to the EmuCON prompt.
 

@@ -33,6 +33,12 @@ class Guest:
                                    ("obj/x32/DESKACC.ACC", "DESKACC.ACC"),
                                    ("desk/emudesk-raspi.inf", "TYPED.INF")):
                 shutil.copy(source, esp / target)
+            shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")
+            files = esp / "INFS"
+            (files / "SUB").mkdir(parents=True)
+            for number in range(14):
+                shutil.copy("desk/emudesk-raspi.inf", files / ("FILE%02d.INF" % number))
+            (files / "NOISE.TXT").write_text("This must not appear in an INF listing.\n")
         variables = self.root / "vars.fd"
         shutil.copy(args.ovmf_vars, variables)
         self.log = self.output / "boot.log"
@@ -94,6 +100,10 @@ class Guest:
         self.command("mouse_button 1")
         self.command("mouse_button 0")
 
+    def double_click(self):
+        for state in (1, 0, 1, 0):
+            self.command("mouse_button %d" % state, delay=0.01)
+
     def key(self, key):
         self.command("sendkey " + key)
 
@@ -108,7 +118,32 @@ class Guest:
         assert width >= 640 and height >= 400
         return text
 
-    def select_inf(self, count):
+    def selector(self, count):
+        text = self.wait("x32 desktop selector WAIT", count)
+        frame = text.split("x32 desktop selector READY ")[count].split("x32 desktop selector WAIT")[0]
+        controls = {int(n): (int(x), int(y)) for n, x, y in
+                    re.findall(r"x32 desktop selector CONTROL (\d+) (\d+) (\d+)\r?\n", frame)}
+        rows = {name: (int(x), int(y)) for name, x, y in
+                re.findall(r"x32 desktop selector ROW (\S+) (\d+) (\d+)\r?\n", frame)}
+        path = re.search(r"x32 desktop selector PATH (.*?)\r?\n", frame).group(1)
+        name = re.search(r"x32 desktop selector NAME (.*?)\r?\n", frame).group(1)
+        return {"controls": controls, "rows": rows, "path": path, "name": name}
+
+    def selector_click(self, point):
+        count = self.text().count("x32 desktop selector WAIT") + 1
+        self.move(*point)
+        self.click()
+        return self.selector(count)
+
+    def cancel_selector(self, frame):
+        count = self.text().count("x32 desktop form PASS") + 1
+        self.move(*frame["controls"][8])
+        self.click()
+        self.wait("x32 desktop form PASS", count)
+        time.sleep(0.3)
+
+    def select_inf(self):
+        count = self.text().count("x32 desktop selector WAIT") + 1
         text = self.text()
         records = re.findall(r"x32 desktop readinf TARGET (\d+) (\d+) (\d+) (\d+)\r?\n", text)
         item_x, item_y, title_x, title_y = map(int, records[-1])
@@ -116,10 +151,7 @@ class Guest:
         time.sleep(0.25)
         self.move(item_x, item_y)
         self.click()
-        text = self.wait(r"x32 desktop selector READY \d+ \d+\r?\n", count, regex=True)
-        records = re.findall(r"x32 desktop selector READY (\d+) (\d+)\r?\n", text)
-        assert len(records) >= count
-        return tuple(map(int, records[count - 1]))
+        return self.selector(count)
 
     def close(self):
         if self.process.poll() is None:
@@ -190,27 +222,56 @@ def desktop(guest):
     guest.screenshot("application-return")
     # Exercise the user-side file selector, including cancellation and the
     # editable filename copied back from the owned kernel snapshot.
-    cancel = guest.select_inf(1)
+    frame = guest.select_inf()
     guest.screenshot("selector")
-    guest.move(*cancel)
-    guest.click()
-    guest.wait("x32 desktop form PASS", 2)
-    time.sleep(0.3)
-    guest.select_inf(2)
+    guest.cancel_selector(frame)
+    frame = guest.select_inf()
+    assert frame["path"] == "C:\\*.INF" and "INFS" in frame["rows"]
+    frame = guest.selector_click(frame["rows"]["INFS"])
+    assert frame["path"] == "C:\\INFS\\*.INF"
+    assert "SUB" in frame["rows"] and "NOISE.TXT" not in frame["rows"]
+    first_page = set(frame["rows"])
+    selected_name = sorted(name for name in first_page if name.endswith(".INF"))[0]
+    frame = guest.selector_click(frame["controls"][6])  # Next page
+    second_page = set(frame["rows"])
+    assert not first_page.intersection(second_page)
+    assert first_page.union(second_page) == {"SUB"}.union("FILE%02d.INF" % number for number in range(14))
+    guest.screenshot("selector-next-page")
+    frame = guest.selector_click(frame["controls"][5])  # Previous page
+    assert set(frame["rows"]) == first_page
+    frame = guest.selector_click(frame["rows"]["SUB"])
+    assert frame["path"] == "C:\\INFS\\SUB\\*.INF" and not frame["rows"]
+    frame = guest.selector_click(frame["controls"][4])  # Parent
+    assert frame["path"] == "C:\\INFS\\*.INF"
+    frame = guest.selector_click(frame["rows"][selected_name])
+    assert frame["name"] == selected_name
+    guest.screenshot("selector-selected-row")
+    guest.cancel_selector(frame)
+    frame = guest.select_inf()
+    assert frame["path"] == "C:\\*.INF"
+    frame = guest.selector_click(frame["rows"]["TYPED.INF"])
+    assert frame["name"] == "TYPED.INF"
     guest.key("esc")
-    for key in ("t", "y", "p", "e", "d", "dot", "i", "n", "f"):
+    for key in ("e", "d", "i", "t", "e", "d", "dot", "i", "n", "f"):
         guest.key(key)
+    guest.screenshot("selector-edited-filename")
     guest.key("ret")
-    guest.wait("x32 desktop form PASS", 3)
+    guest.wait(r"x32 desktop selector ACCEPT C:\\(?i:edited\.inf)\r?\n", regex=True)
     guest.ready(3)
     guest.screenshot("read-inf-return")
+    frame = guest.select_inf()
+    guest.move(*frame["rows"]["TYPED.INF"])
+    guest.double_click()
+    guest.wait("x32 desktop selector ACCEPT C:\\TYPED.INF")
+    guest.ready(4)
+    guest.screenshot("selector-double-click-return")
     # The console transition drops the graphical association. Returning to
     # AES loads a fresh ring-3 desktop with the saved shell context.
     guest.key("ctrl-z")
     guest.wait("C:\\>")
     for key in ("e", "x", "i", "t", "ret"):
         guest.key(key)
-    guest.ready(4)
+    guest.ready(5)
     guest.screenshot("console-return")
     text = guest.text()
     assert text.count("x32 desktop CPL3 PASS") == 3, text[-3000:]
@@ -225,7 +286,7 @@ def main():
     parser.add_argument("--ovmf-code", default=firmware("code"))
     parser.add_argument("--ovmf-vars", default=firmware("vars"))
     parser.add_argument("--output", type=Path, default=Path("obj/x32-desktop-runtime"))
-    parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--mode", choices=("desktop", "missing", "both"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:
