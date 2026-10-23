@@ -453,7 +453,7 @@ signatures do not imply x32 availability. Classifications:
     event     kernel input/timer state and scheduler/event delivery
     desktop   shared menu/window/shell/desktop state and ownership
     draw      privileged display work plus validated/copy-owned objects
-    local     possible caller-local tree/resource work; not yet exported
+    local     caller-local tree/resource preparation
     mixed     needs local data preparation and a separate privileged service
 
     operation          class      native status / boundary reason
@@ -537,10 +537,10 @@ signatures do not imply x32 availability. Classifications:
     SHEL_RDEF          desktop   not exposed; shared desktop/window/menu/shell state
     SHEL_WDEF          desktop   not exposed; shared desktop/window/menu/shell state
 
-Window lifecycle/rendering, menu state, resources and shell
-coordination stay kernel responsibilities when exposed; this phase does not
-make those legacy pointer-rich entries callable. The inventory prevents a
-future new legacy opcode from accidentally escaping boundary review.
+Window lifecycle/rendering and persistent menu/desktop state remain kernel
+responsibilities. Resource conversion runs in the caller before CREATE; shell
+coordination remains future work. The legacy pointer-rich trap entries stay
+unavailable. This inventory keeps new legacy opcodes subject to boundary review.
 
 Tests
 ------

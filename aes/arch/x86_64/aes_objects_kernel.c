@@ -184,8 +184,11 @@ void x86_64_aes_objects_menu_fixup(OBJECT *objects, WORD box)
 
     for (t = trees; t; t = t->next)
         if (t->objects == objects) {
-            for (i = box + 1; i <= box + 2 + NUM_ACCS; i++)
-                t->parents[i] = -1;
+            /* menu_fixup replaces the whole Desk child list, including
+             * any original children outside the reserved DA slots. */
+            for (i = 0; i < t->count; i++)
+                if (t->parents[i] == box)
+                    t->parents[i] = -1;
             for (i = objects[box].ob_head; i != box; i = objects[i].ob_next)
                 t->parents[i] = box;
             return;

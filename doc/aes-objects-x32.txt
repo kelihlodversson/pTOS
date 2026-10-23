@@ -123,7 +123,9 @@ Menu, desktop and modal lifetimes
 
 MENU validates the ordinary GEM fixed layout: root, bar 1, active titles 2,
 matching title/menu siblings and contiguous reserved Desk accessory entries.
-It rejects USERDEFs and menus whose popup backup (including alignment and
+Native installation replaces the Desk child list with its active reserved
+entries; discarded original children become detached. It rejects USERDEFs
+and menus whose popup backup (including alignment and
 shadow) would exceed the native screen-save buffer. Geometry changes and
 centering are refused while a menu is installed. DESKTOP retains the selected
 root for native desktop drawing. Only one typed owner can install a menu or
@@ -173,6 +175,7 @@ deterministic malformed-input corpus. The parser test also supports host
 ASan/UBSan. make x32-aes-import-test binds all appended exports. The loaded
 accessory suite draws a real USERDEF, edits a dialog with PS/2 input, selects
 a native menu item, checks foreign handles and immutable snapshots, revokes
-registration during active menu tracking/drawing and faults in USERDEF.
+registration during active menu tracking/drawing, preserves new registration
+locks after modal cancellation and faults in USERDEF.
 All existing window/input and allocator cleanup checks repeat across four
 desktop sessions, including both 8- and 16-window configurations.

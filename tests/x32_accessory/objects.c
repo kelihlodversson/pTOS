@@ -132,6 +132,10 @@ static void menu_resource(MENU_RESOURCE *r)
         r->objects[i].rectangle.g_w = 160; r->objects[i].rectangle.g_h = 16;
         strcpy(r->text[i], i == 6 ? " About..." : " ------------");
     }
+    /* Native menu installation discards this extra original child. Its
+     * stale sibling chain must never be accepted by later native calls. */
+    r->objects[5].tail = 14;
+    r->objects[13].next = 14; r->objects[14].next = 5;
 }
 
 static LONG draw_tree(ULONG tree)
@@ -240,6 +244,7 @@ int accessory_object_checks(WORD vdi_handle)
     CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&menu, sizeof(menu), &out) == E_OK);
     menu_tree = out.value;
     CHECK(command(menu_tree, AES_OBJECT_MENU, 0, 1, 0, 0, 0, &out) == E_OK);
+    CHECK(command(menu_tree, AES_OBJECT_OFFSET, 14, 0, 0, 0, 0, &out) == EINVAL);
     CHECK(command(0, AES_OBJECT_MOUSE_STATE, 0, 0, 0, 0, 0, &out) == E_OK);
     sprintf(ready, "x32 object menu: READY 20 8 %d %d\r\n", out.rectangle.g_x, out.rectangle.g_y);
     (void)Cconws(ready);
