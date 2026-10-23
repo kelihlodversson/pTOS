@@ -82,6 +82,8 @@ int dl_read_dynamic(DL_OBJECT *out, const unsigned char *image,
     o.image_size = image_size;
     o.link_base = link_base;
     o.bias = bias;
+    o.dynamic = dyn_vaddr;
+    o.dynamic_size = dyn_size;
     dyn = image_at(&o, dyn_vaddr, dyn_size);
     if (!dyn || dyn_size % 8)
         return DL_BAD_ELF;
@@ -106,6 +108,24 @@ int dl_read_dynamic(DL_OBJECT *out, const unsigned char *image,
         case DT_SYMENT: bit = 16; syment = value; break;
         case DT_SONAME: bit = 32; o.soname = value; o.has_soname = 1; break;
         case DT_GNU_HASH: have_gnu_hash = 1; break;
+        case 7: bit = 1U << 6; o.rela = value; o.reloc_seen |= 1; break;
+        case 8: bit = 1U << 7; o.relasz = value; o.reloc_seen |= 2; break;
+        case 9: bit = 1U << 8; o.relaent = value; o.reloc_seen |= 4; break;
+        case 23: bit = 1U << 9; o.jmprel = value; o.reloc_seen |= 8; break;
+        case 2: bit = 1U << 10; o.pltrelsz = value; o.reloc_seen |= 16; break;
+        case 20: bit = 1U << 11; o.pltrel = value; o.reloc_seen |= 32; break;
+        case 17: bit = 1U << 12; o.rel = value; o.reloc_seen |= 64; break;
+        case 18: bit = 1U << 13; o.relsz = value; o.reloc_seen |= 128; break;
+        case 19: bit = 1U << 14; o.relent = value; o.reloc_seen |= 256; break;
+        case 30: bit = 1U << 15; o.flags = value; break;
+        case 0x6ffffffbUL: bit = 1U << 16; o.flags1 = value; break;
+        case 22: o.features |= DL_FEATURE_TEXTREL; break;
+        case 35: case 36: case 37: o.features |= DL_FEATURE_RELR; break;
+        case 0x6ffffff0UL: case 0x6ffffffcUL: case 0x6ffffffdUL:
+        case 0x6ffffffeUL: case 0x6fffffffUL:
+            o.features |= DL_FEATURE_VERSION; break;
+        case 16: o.features |= DL_FEATURE_SYMBOLIC; break;
+        case 15: case 29: o.features |= DL_FEATURE_PATHS; break;
         }
         if (seen & bit)
             return DL_BAD_ELF;
@@ -206,4 +226,66 @@ int dl_find_symbol(const DL_OBJECT *o, const char *name,
         index = read_word(hash + 8 + o->nbucket * 4 + index * 4);
     }
     return index ? DL_BAD_ELF : DL_NOT_FOUND;
+}
+
+int dl_resolve_symbol(const DL_OBJECT *o, uint32_t index,
+                        const DL_OBJECT *const *scope, uint32_t count,
+                        uint32_t *address)
+{
+    const unsigned char *table;
+    const char *name;
+    DL_SYMBOL sym, found;
+    uint32_t i, value;
+    unsigned int bind, visibility;
+    int rc;
+
+    if (count > DL_MAX_OBJECTS || (count && !scope) || index >= o->nchain)
+        return DL_BAD_ELF;
+    table = image_at(o, o->symtab, o->nchain * sizeof(sym));
+    if (!table)
+        return DL_BAD_ELF;
+    copy_bytes(&sym, table + index * sizeof(sym), sizeof(sym));
+    if (!index) {
+        if (sym.name || sym.value || sym.size || sym.info || sym.other || sym.shndx)
+            return DL_BAD_ELF;
+        *address = 0;
+        return DL_OK;
+    }
+    name = dl_string(o, sym.name);
+    if (!name)
+        return DL_BAD_ELF;
+    bind = sym.info >> 4;
+    visibility = sym.other & 3;
+    if (bind > 2 || (sym.info & 15) > 2 ||
+        (sym.shndx >= 0xff00 && sym.shndx != 0xfff1))
+        return DL_UNSUPPORTED;
+    if (sym.shndx && (!bind || visibility)) {
+        value = sym.value;
+        if (sym.shndx != 0xfff1) {
+            if (!image_at(o, value, sym.size ? sym.size : 1) ||
+                value > UINT32_MAX - o->bias)
+                return DL_BAD_ELF;
+            value += o->bias;
+        }
+        *address = value;
+        return DL_OK;
+    }
+    if (bind && !visibility) {
+        for (i = 0; i < count; i++) {
+            if (!scope[i])
+                return DL_BAD_ELF;
+            rc = dl_find_symbol(scope[i], name, &found, &value);
+            if (rc == DL_OK) {
+                *address = value;
+                return DL_OK;
+            }
+            if (rc != DL_NOT_FOUND)
+                return rc;
+        }
+    }
+    if (bind == 2 && !sym.shndx) {
+        *address = 0;
+        return DL_OK;
+    }
+    return DL_UNRESOLVED;
 }

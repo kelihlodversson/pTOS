@@ -241,6 +241,10 @@ static int walk_ancestors(u64 basepage)
     return 0x100 + n;
 }
 
+#if CONF_WITH_ELF_SHARED
+extern int x32_ldso_probe(void);
+#endif
+
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss);
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
@@ -249,6 +253,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+#if CONF_WITH_ELF_SHARED
+    case 'R':
+        pterm(x32_ldso_probe());
+        break;
+#endif
     case 'Q':
         if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0) != EINVFN ||
             sys(GEMDOS, GEMDOS_MPROT, PTOS_MMAP_BASE, 4096, PROT_READ) != EINVFN ||

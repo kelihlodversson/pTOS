@@ -6,10 +6,12 @@ Status and scope
 
 This is the design and initial implementation work for a userspace ELF
 runtime linker.  It does NOT yet make a dynamically linked program runnable.
-The implemented portion is lib/ldso/dynamic.c: a freestanding ELF32 dynamic
-metadata reader and per-object SysV-hash symbol lookup.  It reads DT_NEEDED
-and DT_SONAME and validates its table/string accesses.  It has no file I/O,
-kernel symbol resolver, relocator, constructors or process-entry stub.
+The implemented core reads ELF32 dynamic metadata, performs SysV-hash
+lookup and ordered-scope symbol resolution, and eagerly applies RELA
+relocations. The architecture-neutral planner is lib/ldso/relocate.c;
+lib/ldso/arch/x32/reloc.c supplies x32 relocation widths and arithmetic.
+There is no interpreter file I/O, dependency graph, constructor lifecycle
+or process-entry stub yet.
 
 Private anonymous mapping services are implemented separately as Mmap,
 Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
@@ -52,12 +54,15 @@ section headers, --emit-relocs, PT_PTOS_RELOC or PT_PTOS_IMPORTS on this path.
 tools/test-elf-shared.py builds an independent libleaf.so, libtest.so and
 ET_EXEC consumer using the actual compiler/linker.  The consumer requests
 /GEMSYS/LIB/X32/LD.SO with PT_INTERP; libtest.so carries a transitive
-DT_NEEDED and a constructor.  Host tests inspect and resolve the metadata;
-they do not execute x32 code or claim the constructor has run.
+DT_NEEDED and a constructor.  Host tests resolve symbols and apply the actual emitted relocations.
+The ring-3 self-test separately maps the two DSOs with Mmap, relocates them,
+seals text RX and data RW/NX, and calls through their GOT/PLT. It manually
+calls the relocated constructor and verifies fresh data after unloading and
+reloading. This fixture loader does not implement PT_INTERP startup or the
+runtime linker's constructor ordering.
 
-The later x32 backend must support the emitted RELA forms, including
-R_X86_64_RELATIVE, R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT, R_X86_64_32 and
-R_X86_64_64 as required by the psABI.  x32 pointers are 32 bits, but some
+The x32 backend supports NONE, RELATIVE, RELATIVE64, GLOB_DAT, JUMP_SLOT,
+32, 32S, PC32 and 64 RELA relocations.  x32 pointers are 32 bits, but some
 relocation slots are 64 bits; relocation width is a property of the type,
 not sizeof(void *).  Check signed/unsigned overflow as specified for each
 type.  Reject unsupported relocation types before starting the application.
@@ -185,8 +190,8 @@ ELF import service belongs in the kernel.  No kernel address may escape into
 a DSO as an ordinary symbol; kernel/CUIS operations remain syscall services.
 
 The initial engine uses SysV DT_HASH, bounded dynsym/strtab reads and
-DT_NEEDED traversal.  lib/ldso/dynamic.c currently provides only the per-object
-metadata and lookup part.  It accepts global/weak definitions of NOTYPE,
+DT_NEEDED traversal.  lib/ldso/dynamic.c provides metadata, per-object lookup and ordered-scope
+resolution; dependency traversal remains to be implemented.  It accepts global/weak definitions of NOTYPE,
 OBJECT or FUNC with DEFAULT/PROTECTED visibility, excludes undefined/local/
 HIDDEN/INTERNAL symbols, and leaves address outputs untouched on lookup
 failure.  SHN_ABS is not biased.  Matched TLS/IFUNC/COMMON symbols fail
@@ -201,7 +206,17 @@ first eligible definition wins, including weak definitions; unresolved weak
 references resolve to zero, unresolved strong references are errors.
 Protected definitions bind locally inside their defining object; local and
 hidden symbols never participate in inter-object lookup.  These binding
-rules remain to be implemented above the per-object lookup.
+rules are implemented by dl_resolve_symbol; the caller supplies the scope.
+
+The relocation planner validates every write before changing the image.
+Destinations must lie within caller-approved private writable segment ranges;
+relocations into lookup/dynamic/relocation metadata and overlapping writes
+are rejected. Failure leaves the image unchanged. Caller-owned scratch space
+must be disjoint from all image views. Bounds are 4096 relocation records,
+128 scope objects and 32 writable ranges per call. REL, text relocations,
+RELR, versioning, symbolic binding and path tags are rejected by this initial
+relocation path. Final RELRO permissions and architecture cache synchronization
+remain mapper responsibilities.
 
 Start with eager binding for every object, regardless of a lazy-binding flag.
 Handle cyclic dependency graphs without repeated loads or unbounded recursion.
@@ -239,7 +254,8 @@ Implementation and validation milestones
    remain to be implemented.
 3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes.
    Preserve static ELF/PIE, built-in images and m68k PRG regression tests.
-4. Self-relocating interpreter, dependency graph, scope and x32 relocations;
+4. Ordered scope and eager x32 relocations are implemented and tested in
+   ring 3. Remaining: self-relocating interpreter and dependency graph;
    run an ET_EXEC consumer of a separately built libtest.so under QEMU.
 5. Constructors/finalizers and a real shared libcmini or client-helper
    component, with an independently built compatible dynamic CRT.
@@ -261,5 +277,6 @@ temporary and do not modify the active .config or repository files.
 To build the userspace core, select pc-x86_64_defconfig, enable
 CONF_WITH_ELF_SHARED in menuconfig, then make CROSS_COMPILE= on Linux.
 Disabling the option leaves ordinary static builds unchanged.  An archive
-build or passing host metadata tests is not proof of interpreter startup,
-relocation, constructor execution or physical-page sharing.
+build alone is not proof of runtime behavior. With shared support enabled,
+tools/test-mmap-boot.sh also requires the ring-3 relocation PASS marker.
+Interpreter startup and physical-page sharing remain unimplemented.

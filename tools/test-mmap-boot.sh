@@ -50,6 +50,9 @@ if [ -f "$log" ]; then cat "$log"; fi
 [ "$(grep -c 'EFI entry reached' "$log" || true)" -eq 1 ]
 ! grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"
 grep -q "x86-64 mmap syscalls: $expected" "$log"
+if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
+    grep -q 'x86-64 ldso relocations: PASS' "$log"
+fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"
 ! sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'

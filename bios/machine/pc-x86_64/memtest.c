@@ -1375,6 +1375,14 @@ static void test_ring3(void)
     kcprintf("x86-64 mmap syscalls: disabled\n");
 #endif
 
+#if CONF_WITH_ELF_SHARED
+    {
+        int before = failures;
+        probe_expect('R', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
+        kcprintf("x86-64 ldso relocations: %s\n", failures == before ? "PASS" : "FAIL");
+    }
+#endif
+
     /* each process gets fresh private pages: what the first leaves in its
      * data, the second does not see */
     probe_expect('i', 0, "first run starts with zeroed data");
@@ -1869,7 +1877,14 @@ static void test_x32image(void)
     mutated(good, 18, 2, 3, "other machine refused");
     mutated(good, 44, 2, 0, "no program headers refused");
     mutated(good, 24, 4, 0x500000, "entry point outside the image refused");
-    mutated(good, 24, 4, 0x405000, "entry point in a non-executable segment refused");
+    {
+        /* The embedded probe grows as tests are added. Use its data PT_LOAD
+         * address instead of assuming a fixed end of executable text. */
+        const UBYTE *p = good->data + 52 + 32 + 8;
+        ULONG data_va = (ULONG)p[0] | ((ULONG)p[1] << 8) |
+                        ((ULONG)p[2] << 16) | ((ULONG)p[3] << 24);
+        mutated(good, 24, 4, data_va, "entry point in a non-executable segment refused");
+    }
     mutated(good, 52 + 8, 4, 0x100000, "segment below the image window refused");
     mutated(good, 52 + 8, 4, 0x7ff000, "segment running past the image window refused");
     mutated(good, 52 + 24, 4, 7, "a writable and executable segment refused");

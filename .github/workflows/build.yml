@@ -63,7 +63,8 @@ jobs:
           config.write_config()
           PY
           make CROSS_COMPILE= obj/ldso/libldso.a
-          test -z "$(nm -u obj/ldso/dynamic.o)"
+          ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o -o /tmp/ldso-core.o
+          test -z "$(nm -u /tmp/ldso-core.o)"
       - name: Build and boot-test enabled mapping syscalls
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
