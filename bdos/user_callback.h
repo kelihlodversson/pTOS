@@ -13,7 +13,8 @@ typedef struct user_callback_state USER_CALLBACK_STATE;
 typedef struct user_callback USER_CALLBACK;
 enum user_callback_signature {
     USER_CALLBACK_I32_VOID, USER_CALLBACK_I16_VOID,
-    USER_CALLBACK_I16_I16_U32, USER_CALLBACK_I16_I16_VOID, USER_CALLBACK_SIGNATURES
+    USER_CALLBACK_I16_I16_U32, USER_CALLBACK_I16_I16_VOID,
+    USER_CALLBACK_DATA_U16, USER_CALLBACK_SIGNATURES
 };
 typedef union {
     void (*i32_void)(int);
@@ -32,6 +33,8 @@ void user_callback_drop(USER_CALLBACK **slot);
 BOOL user_callback_owner(USER_CALLBACK *handler, PD *pd);
 LONG user_callback_invoke(USER_CALLBACK *handler, UWORD signature,
                            LONG a, LONG b, ULONG *result);
+LONG user_callback_invoke_data(USER_CALLBACK *handler, const void *data,
+                                ULONG bytes, ULONG *result);
 void user_callback_process_exit(PD *pd);
 BOOL user_callback_pinned(PD *pd, UQUAD address, UQUAD size);
 /* Committed syscall returns retain boundary validation but defer optional

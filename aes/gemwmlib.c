@@ -43,6 +43,9 @@
 #include "string.h"
 #include "intmath.h"
 #include "asm.h"
+#if ARCH_X86_64
+#include "aes_objects_kernel.h"
+#endif
 
 /*
  *  defines
@@ -350,6 +353,9 @@ void w_drawdesk(GRECT *pc)
     OBJECT  *tree;
     WORD    depth;
     WORD    root;
+#if ARCH_X86_64
+    AES_TREE_STATE *guard;
+#endif
 
     if (gl_newdesk)
     {
@@ -364,8 +370,32 @@ void w_drawdesk(GRECT *pc)
         root = ROOT;
     }
 
+#if ARCH_X86_64
+    guard = x86_64_aes_tree_pin(tree);
+#endif
     do_walk(DESKWH, tree, root, depth, pc);
+#if ARCH_X86_64
+    x86_64_aes_tree_unpin(guard);
+#endif
 }
+
+#if ARCH_X86_64
+void wm_snapshot_set(OBJECT *tree, WORD root)
+{
+    gl_newdesk = tree;
+    gl_newroot = root;
+    D.w_win[DESKWH].w_owner = rlr;
+}
+
+void wm_snapshot_clear(OBJECT *tree)
+{
+    if (gl_newdesk == tree) {
+        gl_newdesk = NULL;
+        gl_newroot = 0;
+        D.w_win[DESKWH].w_owner = &D.g_int[0].a_pd;
+    }
+}
+#endif
 
 
 static void w_cpwalk(WORD wh, WORD obj, WORD depth, BOOL usetrue)
@@ -1918,6 +1948,9 @@ void w_redraw_desktop(GRECT *pt)
     OBJECT *tree;
     WORD root;
     WORD curr[4];   /* current rectangle */
+#if ARCH_X86_64
+    AES_TREE_STATE *guard;
+#endif
 
     t = *pt;
 
@@ -1933,6 +1966,9 @@ void w_redraw_desktop(GRECT *pt)
     }
 
     /* prevent interference */
+#if ARCH_X86_64
+    guard = x86_64_aes_tree_pin(tree);
+#endif
     gsx_moff();
     wm_update(BEG_UPDATE);
 
@@ -1953,5 +1989,8 @@ void w_redraw_desktop(GRECT *pt)
     /* back to normal */
     wm_update(END_UPDATE);
     gsx_mon();
+#if ARCH_X86_64
+    x86_64_aes_tree_unpin(guard);
+#endif
 }
 #endif

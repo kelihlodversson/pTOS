@@ -7,7 +7,7 @@ obj-$(CONF_WITH_X32_AES) += aes_service.o aes_image.o
 ifeq ($(CONF_WITH_AES),y)
 obj-y += gemasm.o gemstart.o gemdosif.o
 obj-$(ARCH_ARM) += gemdosifc.o
-obj-$(ARCH_X86_64) += aes_accessory.o aes_window.o
+obj-$(ARCH_X86_64) += aes_accessory.o aes_window.o aes_objects_kernel.o aes_tree.o
 
 obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
 	 gemfmalt.o gemfmlib.o gemfslib.o gemgraf.o gemgrlib.o gemgsxif.o \

@@ -1,6 +1,7 @@
 /* Real ring-3 registration, queue isolation, event delivery and ownership. */
 #include "config.h"
 #include "aes_client.h"
+#include "aes_objects.h"
 #include "aes_service.h"
 #include "gemerror.h"
 #include "vdipb.h"
@@ -100,6 +101,14 @@ static int child_checks(char mode)
         return 0;                       /* normal process exit must clean up */
     CHECK(aes_appl_exit() == E_OK);
     CHECK(aes_appl_exit() == EACCDN);
+    {
+        AES_OBJECT_REQUEST request = { 0 };
+        AES_OBJECT_RESULT result;
+        request.operation = AES_OBJECT_METRICS;
+        CHECK(aes_object(&request, &result) == EACCDN);
+        CHECK(aes_form_do(0, 0) == EACCDN);
+        CHECK(aes_tree_validate(NULL, 0, NULL) == EINVAL);
+    }
     CHECK(aes_wind_update(AES_BEG_UPDATE) == EACCDN);
     return failure;
 }

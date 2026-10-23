@@ -40,6 +40,9 @@
 #include "rectfunc.h"
 #include "gemmnlib.h"
 #include "gemmnext.h"
+#if ARCH_X86_64
+#include "aes_objects_kernel.h"
+#endif
 #include "geminit.h"
 
 
@@ -246,7 +249,7 @@ static WORD menu_down(OBJECT *tree, WORD ititle)
 
 
 #if CONF_WITH_MENU_EXTENSION
-WORD mn_do(WORD *ptitle, WORD *pitem, OBJECT **ptree)
+static WORD mn_do_native(WORD *ptitle, WORD *pitem, OBJECT **ptree)
 {
     OBJECT  *tree, *p1tree, *smtree;
     LONG    buparm;
@@ -353,7 +356,17 @@ WORD mn_do(WORD *ptitle, WORD *pitem, OBJECT **ptree)
          */
 
         /* wait for something */
+#if ARCH_X86_64
+        if (x86_64_aes_tree_cancelled(tree))
+            break;
+        if (x86_64_aes_tree_managed(tree))
+            mnu_flags |= MU_KEYBD;
+#endif
         ev_which = ev_multi(mnu_flags, &p1mor, &p2mor, &p3mor, 0x0L, buparm, NULL, rets);
+#if ARCH_X86_64
+        if (x86_64_aes_tree_cancelled(tree))
+            break;
+#endif
 
         /*
          * if it's a button. first check if we are still in the initial state.
@@ -515,7 +528,7 @@ WORD mn_do(WORD *ptitle, WORD *pitem, OBJECT **ptree)
     return done;
 }
 #else
-WORD mn_do(WORD *ptitle, WORD *pitem)
+static WORD mn_do_native(WORD *ptitle, WORD *pitem)
 {
     OBJECT  *tree;
     LONG    buparm;
@@ -594,7 +607,17 @@ WORD mn_do(WORD *ptitle, WORD *pitem)
          */
 
         /* wait for something */
+#if ARCH_X86_64
+        if (x86_64_aes_tree_cancelled(tree))
+            break;
+        if (x86_64_aes_tree_managed(tree))
+            mnu_flags |= MU_KEYBD;
+#endif
         ev_which = ev_multi(mnu_flags, &p1mor, &p2mor, 0x0L, buparm, NULL, rets);
+#if ARCH_X86_64
+        if (x86_64_aes_tree_cancelled(tree))
+            break;
+#endif
 
         /*
          * if it's a button. first check if we are still in the initial state.
@@ -694,6 +717,29 @@ WORD mn_do(WORD *ptitle, WORD *pitem)
     return done;
 }
 #endif
+
+#if CONF_WITH_MENU_EXTENSION
+WORD mn_do(WORD *ptitle, WORD *pitem, OBJECT **ptree)
+#else
+WORD mn_do(WORD *ptitle, WORD *pitem)
+#endif
+{
+    WORD result;
+#if ARCH_X86_64
+    AES_TREE_STATE *guard = x86_64_aes_tree_pin(gl_mntree);
+#endif
+#if CONF_WITH_MENU_EXTENSION
+    result = mn_do_native(ptitle, pitem, ptree);
+#else
+    result = mn_do_native(ptitle, pitem);
+#endif
+#if ARCH_X86_64
+    if (!x86_64_aes_tree_alive(guard))
+        result = FALSE;
+    x86_64_aes_tree_unpin(guard);
+#endif
+    return result;
+}
 
 /*
  *  Routine to display the menu bar.  Clipping is turned completely

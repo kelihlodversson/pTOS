@@ -12,6 +12,7 @@
 #include "aes_service.h"
 #include "aes_accessory.h"
 #include "aes_window.h"
+#include "aes_objects_kernel.h"
 #include "process.h"
 #include "gemerror.h"
 #include "gemaplib.h"
@@ -89,6 +90,7 @@ void x86_64_aes_enter(void)
      * association first; native window messages to this task are dropped. */
     c->owner = NULL;
     x86_64_aes_window_finished(owner, rlr);
+    x86_64_aes_objects_finished(rlr);
     /* Pterm/fault unwound onto this UDA, and freed the user's syscall stack.
      * The dispatcher will remove this task without putting it back on a list. */
     rlr->p_flags |= AP_MESAG | AP_ACCLOSE;
@@ -378,6 +380,7 @@ void x86_64_aes_drain(void)
     kcprintf("x32 cancelled task messages dropped: PASS\n");
 #endif
     x86_64_aes_window_drain();
+    x86_64_aes_objects_drain();
     /* Internal screen manager and process zero are rebuilt on restart. */
     memset(contexts, 0, sizeof(contexts));
 }
