@@ -27,6 +27,9 @@ typedef struct {
 static ULONG expected_tree;
 static volatile WORD callbacks, callback_bad, revoke, fault;
 static volatile LONG unregistered;
+static volatile WORD renew;
+static volatile LONG renewed, update_lock, mouse_lock;
+static AES_APP_INFO renewed_info;
 static WORD drawing_handle;
 
 #define CHECK(c) do { if (!(c)) { (void)Cconws("accessory object FAIL: " #c "\r\n"); return __LINE__; } } while (0)
@@ -155,8 +158,14 @@ int accessory_object_fault(WORD vdi_handle)
 
 static void cancel_menu(WORD buttons)
 {
-    if (buttons & 1)
+    if (buttons & 1) {
         unregistered = aes_appl_exit();
+        if (renew) {
+            renewed = aes_appl_init("ACCTWO", &renewed_info);
+            update_lock = aes_wind_update(AES_BEG_UPDATE);
+            mouse_lock = aes_wind_update(AES_BEG_MCTRL);
+        }
+    }
 }
 
 int accessory_object_checks(WORD vdi_handle)
@@ -257,6 +266,28 @@ int accessory_object_checks(WORD vdi_handle)
     CHECK(command(tree, AES_OBJECT_GET, 0, 0, 0, 0, 0, &out) == EIHNDL);
     CHECK(command(menu_tree, AES_OBJECT_GET, 0, 0, 0, 0, 0, &out) == EIHNDL);
     (void)Cconws("x32 object active menu cancellation: PASS\r\n");
+    resource(&r);
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == E_OK);
+    tree = expected_tree = out.value;
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&menu, sizeof(menu), &out) == E_OK);
+    menu_tree = out.value;
+    CHECK(command(menu_tree, AES_OBJECT_MENU, 0, 1, 0, 0, 0, &out) == E_OK);
+    CHECK(draw_tree(tree) == E_OK);
+    control.args.button.new_handler = cancel_menu;
+    CHECK(vdi(&pb) == E_OK);
+    old_button = control.args.button.old_handler;
+    renew = 1;
+    (void)Cconws("x32 object modal: READY\r\n");
+    CHECK(aes_form_do(tree, 1) == EACCDN);
+    renew = 0;
+    CHECK(unregistered == E_OK && renewed == E_OK && update_lock == E_OK && mouse_lock == E_OK);
+    control.args.button.new_handler = old_button;
+    CHECK(vdi(&pb) == E_OK);
+    CHECK(aes_wind_update(AES_END_MCTRL) == E_OK);
+    CHECK(aes_wind_update(AES_END_UPDATE) == E_OK);
+    CHECK(command(tree, AES_OBJECT_GET, 0, 0, 0, 0, 0, &out) == EIHNDL);
+    CHECK(command(menu_tree, AES_OBJECT_GET, 0, 0, 0, 0, 0, &out) == EIHNDL);
+    (void)Cconws("x32 object cancelled modal preserves new locks: PASS\r\n");
     resource(&r);
     CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == E_OK);
     tree = expected_tree = out.value;

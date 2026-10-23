@@ -48,7 +48,7 @@ int aes_tree_contract_checks(void)
     struct {
         AES_TREE_HEADER header;
         AES_OBJECT objects[10];
-    } deep = { { AES_TREE_VERSION, 0, 10, 0, 0 } };
+    } deep = { 0 };
     WORD parents[10];
     ULONG i;
     int failure = 0;
@@ -129,7 +129,8 @@ int aes_tree_contract_checks(void)
     bitmap.image.row_bytes = 3;
     CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
 #undef AT
-    deep.header.bytes = sizeof(deep);
+    deep.header.version = AES_TREE_VERSION;
+    deep.header.count = 10; deep.header.bytes = sizeof(deep);
     for (i = 0; i < 10; i++) {
         deep.objects[i].next = i - 1;
         deep.objects[i].head = deep.objects[i].tail = i < 9 ? i + 1 : -1;

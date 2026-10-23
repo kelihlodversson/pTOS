@@ -208,6 +208,16 @@ static void modal_end(void)
     unpin_as(t, executor);
 }
 
+BOOL x86_64_aes_objects_control(void)
+{
+    if (!modal.tree || modal.tree->retired)
+        return FALSE;
+    /* The control manager can wake for a pending menu key after FORM
+     * begins. Its ordinary active-window refresh must preserve modal input. */
+    ct_chgown(modal.tree->task, &gl_rscreen);
+    return TRUE;
+}
+
 void x86_64_aes_objects_reap(void)
 {
     AES_TREE_STATE *t, *next;

@@ -335,6 +335,10 @@ void w_setactive(void)
     WORD    wh;
     AESPD   *ppd;
 
+#if ARCH_X86_64
+    if (x86_64_aes_objects_control())
+        return;
+#endif
     wh = w_top();
     w_getsize(WS_WORK, wh, &d);
     ppd = D.w_win[wh].w_owner;

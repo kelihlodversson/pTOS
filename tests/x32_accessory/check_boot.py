@@ -24,6 +24,7 @@ assert "x32 accessory desktop: PASS" in live
 assert output.count("x32 input events: PASS") == 4, "typed input in all sessions"
 assert output.count("x32 objects snapshot/menu/dialog/USERDEF/revocation: PASS") == 4
 assert output.count("x32 object active menu cancellation: PASS") == 4
+assert output.count("x32 object cancelled modal preserves new locks: PASS") == 4
 assert output.count("x32 object USERDEF fault: ARMED") == 4
 for regression in ("poll timer", "queued button", "button snapshot", "revocation"):
     assert output.count("x32 input " + regression + ": PASS") == 4, regression

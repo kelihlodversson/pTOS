@@ -35,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-input-") as temporary:
                  b"mouse_move -80 131\nmouse_move 0 20\nmouse_button 1\nmouse_button 0\n"),
                 (b"x32 object cancel: READY 20 8 100 -123",
                  b"mouse_move -80 131\nmouse_move 0 20\nmouse_button 1\nmouse_button 0\nmouse_move 480 472\n"),
+                (b"x32 object modal: READY", b"mouse_button 1\nmouse_button 0\n"),
             )
             with log.open("ab", buffering=0) as serial:
                 for session in range(4):
@@ -64,6 +65,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-input-") as temporary:
                         assert received == expected, (received, expected)
                     serial.write(b"x32 input events: PASS\r\n"
                                  b"x32 object active menu cancellation: PASS\r\n"
+                                 b"x32 object cancelled modal preserves new locks: PASS\r\n"
                                  b"x32 object USERDEF fault: ARMED\r\n"
                                  b"x32 window events/ownership/lifecycle: PASS\r\n"
                                  b"x32 objects snapshot/menu/dialog/USERDEF/revocation: PASS\r\n")

@@ -28,7 +28,7 @@ try:
                 output = log.read()
             assert not any(x in output for x in ("panic:", "accessory input FAIL", "accessory window FAIL", "accessory object FAIL")), output[-4000:]
             ready = list(re.finditer(
-                r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)|object (?P<object>dialog|menu|cancel)): READY"
+                r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)|object (?P<object>dialog|menu|cancel|modal)): READY"
                 r"(?: (?P<x>-?\d+) (?P<y>-?\d+) (?P<old_x>-?\d+) (?P<old_y>-?\d+))?\r?\n", output))
             for match in ready[seen:]:
                 stage = match.group('input') or match.group('window') or match.group('object')
@@ -42,6 +42,11 @@ try:
                     connection.sendall(b"sendkey a\n")
                     time.sleep(0.15)
                     connection.sendall(b"sendkey ret\n")
+                elif stage == 'modal':
+                    time.sleep(0.1)
+                    connection.sendall(b"mouse_button 1\n")
+                    time.sleep(0.1)
+                    connection.sendall(b"mouse_button 0\n")
                 elif stage in ('menu', 'cancel'):
                     dx = int(match.group('x')) - int(match.group('old_x'))
                     dy = int(match.group('y')) - int(match.group('old_y'))
@@ -74,7 +79,8 @@ try:
                 except socket.timeout:
                     pass
             if "x32 accessory desktop: PASS" in output:
-                assert seen == 36 and output.count("x32 input events: PASS") == 4
+                assert seen == 40 and output.count("x32 input events: PASS") == 4
+                assert output.count("x32 object cancelled modal preserves new locks: PASS") == 4
                 assert output.count("x32 object active menu cancellation: PASS") == 4
                 assert output.count("x32 object USERDEF fault: ARMED") == 4
                 assert output.count("x32 objects snapshot/menu/dialog/USERDEF/revocation: PASS") == 4
