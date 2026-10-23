@@ -58,6 +58,28 @@ class Backend(C.Structure):
     _fields_ = [("kind", C.c_void_p), ("value", C.c_void_p)]
 
 
+class Mapping(C.Structure):
+    _fields_ = [("object", Object), ("identity", C.c_uint64), ("cookie", C.c_void_p)]
+
+
+class GraphNode(C.Structure):
+    _fields_ = [("mapping", Mapping), ("name", C.c_char_p), ("edges", C.c_uint16 * 32)]
+
+
+class Graph(C.Structure):
+    _fields_ = [("nodes", GraphNode * 128), ("scope", C.POINTER(Object) * 128),
+                ("order", C.c_uint16 * 128), ("count", C.c_uint32),
+                ("order_count", C.c_uint32)]
+
+
+Acquire = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_char_p, C.POINTER(Mapping))
+Release = C.CFUNCTYPE(None, C.c_void_p, C.POINTER(Mapping))
+
+
+class GraphOps(C.Structure):
+    _fields_ = [("acquire", Acquire), ("release", Release)]
+
+
 def fixture():
     data = bytearray(1024)
     # One bucket, two symbols; symbol 1 is the definition of "value".
@@ -98,7 +120,7 @@ class Metadata(unittest.TestCase):
         run(CC + ["-std=c90", "-pedantic", "-Wall", "-Wextra", "-Werror",
                   "-O2", "-fPIC", "-shared", "-I" + str(ROOT / "lib/ldso"),
                   str(ROOT / "lib/ldso/dynamic.c"), str(ROOT / "lib/ldso/relocate.c"),
-                  str(ROOT / "lib/ldso/arch/x32/reloc.c"),
+                  str(ROOT / "lib/ldso/arch/x32/reloc.c"), str(ROOT / "lib/ldso/graph.c"),
                   "-o", str(hostlib)])
         cls.lib = C.CDLL(str(hostlib))
         cls.lib.dl_read_dynamic.argtypes = [C.POINTER(Object), C.c_void_p] + [C.c_uint32] * 5
@@ -118,6 +140,10 @@ class Metadata(unittest.TestCase):
                                        C.POINTER(Write), C.c_uint32,
                                        C.POINTER(C.c_uint32), C.POINTER(Backend)]
         cls.lib.dl_relocate.restype = C.c_int
+        cls.lib.dl_graph_open.argtypes = [C.POINTER(Graph), C.POINTER(Mapping),
+                                          C.POINTER(GraphOps), C.c_void_p]
+        cls.lib.dl_graph_open.restype = C.c_int
+        cls.lib.dl_graph_close.argtypes = [C.POINTER(Graph), C.POINTER(GraphOps), C.c_void_p]
         cls.backend = Backend.in_dll(cls.lib, "dl_x32_reloc_backend")
 
     @classmethod
@@ -395,6 +421,125 @@ class Metadata(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.lookup(obj)[2], 0x1400200)
 
+    def graph_object(self, soname, needed=(), extra=()):
+        data = fixture() + bytearray(3072)
+        names = bytearray(b"\0value\0")
+        tags = [(4, 128), (5, 256), (6, 192), (11, 16)]
+        if soname is not None:
+            tags.append((14, len(names)))
+            names += soname.encode() + b"\0"
+        for name in needed:
+            tags.append((1, len(names)))
+            names += name.encode() + b"\0"
+        data[256:256 + len(names)] = names
+        tags += [(10, len(names)), *extra, (0, 0)]
+        for i, pair in enumerate(tags):
+            struct.pack_into("=II", data, 1024 + i * 8, *pair)
+        rc, obj, mem = self.parse(data, dynamic=1024, size=len(tags) * 8)
+        self.assertEqual(rc, 0)
+        return obj, mem
+
+    def graph_run(self, definitions, root="app", fail=None, identities=None, expected=0):
+        objects = {name: self.graph_object(*spec) for name, spec in definitions.items()}
+        ids = {name: i + 1 for i, name in enumerate(definitions)}
+        ids.update(identities or {})
+        acquired, released = [], []
+
+        @Acquire
+        def acquire(ctx, name, out):
+            name = name.decode()
+            acquired.append(name)
+            if name == fail or name not in objects:
+                return 1  # DL_NOT_FOUND
+            out[0] = Mapping(objects[name][0], ids[name], ids[name])
+            return 0
+
+        @Release
+        def release(ctx, mapping):
+            released.append(mapping.contents.identity)
+
+        ops = GraphOps(acquire, release)
+        graph = Graph()
+        rc = self.lib.dl_graph_open(C.byref(graph),
+                    C.byref(Mapping(objects[root][0], ids[root], ids[root])), C.byref(ops), None)
+        self.assertEqual(rc, expected)
+        scope = [graph.nodes[i].mapping.identity for i in range(graph.count)]
+        order = [scope[graph.order[i]] for i in range(graph.order_count)]
+        if rc:
+            self.assertEqual((graph.count, graph.order_count), (0, 0))
+        self.lib.dl_graph_close(C.byref(graph), C.byref(ops), None)
+        # Idempotent close must never drop a reference twice or release root.
+        before = released[:]
+        self.lib.dl_graph_close(C.byref(graph), C.byref(ops), None)
+        self.assertEqual(released, before)
+        self.assertNotIn(ids[root], released)
+        # Keep object buffers alive until callbacks and graph are finished.
+        self.assertEqual(len(objects), len(definitions))
+        return acquired, released, scope, order
+
+    def test_dependency_diamond_breadth_first_scope(self):
+        a, r, scope, order = self.graph_run({
+            "app": (None, ("a.so", "b.so")), "a.so": ("a.so", ("c.so",)),
+            "b.so": ("b.so", ("c.so",)), "c.so": ("c.so", ())})
+        self.assertEqual(a, ["a.so", "b.so", "c.so"])
+        self.assertEqual(scope, [1, 2, 3, 4])
+        self.assertEqual(order, [4, 2, 3, 1])
+        self.assertEqual(r, [4, 3, 2])
+
+    def test_dependency_cycles_and_duplicate_needed(self):
+        a, r, scope, order = self.graph_run({
+            "app": ("app", ("a.so", "a.so")),
+            "a.so": ("a.so", ("b.so",)), "b.so": ("b.so", ("a.so", "app"))})
+        self.assertEqual(a, ["a.so", "b.so"])
+        self.assertEqual(order, [3, 2, 1])
+        self.assertEqual(r, [3, 2])
+
+    def test_dependency_missing_unwinds_every_acquisition(self):
+        a, r, scope, order = self.graph_run({
+            "app": (None, ("a.so", "missing.so")), "a.so": ("a.so", ())}, expected=1)
+        self.assertEqual(a, ["a.so", "missing.so"])
+        self.assertEqual(r, [2])
+
+    def test_dependency_failure_at_each_acquire(self):
+        defs = {"app": (None, ("a.so", "b.so")), "a.so": ("a.so", ("c.so",)),
+                "b.so": ("b.so", ()), "c.so": ("c.so", ())}
+        for i, name in enumerate(("a.so", "b.so", "c.so")):
+            with self.subTest(name=name):
+                a, released, _, _ = self.graph_run(defs, fail=name, expected=1)
+                self.assertEqual(len(a), i + 1)
+                self.assertEqual(released, list(range(i + 1, 1, -1)))
+
+    def test_dependency_names_soname_and_features(self):
+        for bad in (".", "..", "../a.so", "dir/a.so", "dir\\a.so", "C:a.so", "a\n.so"):
+            with self.subTest(name=bad):
+                a, r, _, _ = self.graph_run({"app": (None, (bad,))}, expected=-1)
+                self.assertEqual(a, [])
+                self.assertEqual(r, [])
+        for spec, error in ((("other.so", ()), -1),
+                            (("a.so", (), ((29, 1),)), -2)):
+            a, r, _, _ = self.graph_run({"app": (None, ("a.so",)), "a.so": spec}, expected=error)
+            self.assertEqual(r, [2])
+        self.graph_run({"app": (None, ("A.so",)), "a.so": ("a.so", ())}, expected=1)
+
+    def test_dependency_identity_alias_releases_extra_reference(self):
+        a, r, scope, order = self.graph_run({"app": (None, ("a.so", "alias.so", "alias.so")),
+             "a.so": (None, ()), "alias.so": (None, ())}, identities={"alias.so": 2})
+        self.assertEqual(a, ["a.so", "alias.so"])
+        self.assertEqual(scope, [1, 2])
+        self.assertEqual(r, [2, 2])  # duplicate acquire, then retained mapping
+
+    def test_dependency_object_limit_and_long_chain(self):
+        defs = {"app": (None, ("lib0.so",))}
+        for i in range(127):
+            defs[f"lib{i}.so"] = (f"lib{i}.so", (f"lib{i+1}.so",) if i < 126 else ())
+        a, r, scope, order = self.graph_run(defs)
+        self.assertEqual(len(scope), 128)
+        self.assertEqual(order, list(range(128, 0, -1)))
+        defs["lib126.so"] = ("lib126.so", ("overflow.so",))
+        a, r, _, _ = self.graph_run(defs, expected=-4)
+        self.assertEqual(len(a), 127)
+        self.assertEqual(len(r), 127)
+
     def test_real_x32_objects(self):
         leaf = self.path / "leaf.c"
         leaf.write_text((ROOT / "tests/ldso_reloc/leaf.c").read_text())
@@ -468,7 +613,30 @@ class Metadata(unittest.TestCase):
 
         # Resolve and apply the actual compiler-produced data/GOT/PLT and
         # constructor-pointer relocations, with distinct target load biases.
-        scope = [loaded[n][0] for n in ("program.elf", "libtest.so", "libleaf.so")]
+        acquired, released = [], []
+        ids = {"program.elf": 1, "libtest.so": 2, "libleaf.so": 3}
+
+        @Acquire
+        def acquire(ctx, name, mapping):
+            name = name.decode()
+            acquired.append(name)
+            if name not in loaded:
+                return 1
+            mapping[0] = Mapping(loaded[name][0], ids[name], ids[name])
+            return 0
+
+        @Release
+        def release(ctx, mapping):
+            released.append(mapping.contents.identity)
+
+        graph, ops = Graph(), GraphOps(acquire, release)
+        root = Mapping(loaded["program.elf"][0], 1, 1)
+        self.assertEqual(self.lib.dl_graph_open(C.byref(graph), C.byref(root),
+                                               C.byref(ops), None), 0)
+        self.assertEqual(acquired, ["libtest.so", "libleaf.so"])
+        self.assertEqual([graph.nodes[i].mapping.identity for i in range(graph.count)], [1, 2, 3])
+        self.assertEqual(list(graph.order[:graph.order_count]), [2, 1, 0])
+        scope = [graph.scope[i].contents for i in range(graph.count)]
         leaf = self.lookup(loaded["libleaf.so"][0], b"leaf")[2]
         answer = self.lookup(loaded["libtest.so"][0], b"answer")[2]
         value = self.lookup(loaded["libtest.so"][0], b"value")[2]
@@ -487,6 +655,8 @@ class Metadata(unittest.TestCase):
                 self.assertIn(value, values)
         obj, memory, _ = loaded["libtest.so"]
         self.assertEqual(struct.unpack_from("<I", memory, value - obj.bias - obj.link_base)[0], 5)
+        self.lib.dl_graph_close(C.byref(graph), C.byref(ops), None)
+        self.assertEqual(released, [3, 2])
 
     def test_kconfig_platform_gate(self):
         import kconfiglib

@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include "../../lib/ldso/relocate.h"
+#include "../../lib/ldso/graph.h"
 #include "../../include/mman.h"
 
 extern const unsigned char dl_test_leaf_start[], dl_test_leaf_end[];
@@ -140,6 +141,51 @@ static int seal(const SAMPLE *s)
     return 1;
 }
 
+/* Large graph storage belongs in private .bss, not on the user stack. */
+static DL_GRAPH graph;
+
+typedef struct {
+    SAMPLE *leaf;
+    int acquisitions, release_bad;
+} FIXTURE_CONTEXT;
+
+static int acquire(void *context, const char *name, DL_MAPPING *mapping)
+{
+    FIXTURE_CONTEXT *ctx = context;
+    const char *expected = "libleaf.so";
+    uint32_t i = 0;
+
+    while (name[i] && name[i] == expected[i])
+        i++;
+    if (name[i] != expected[i])
+        return DL_NOT_FOUND;
+    ctx->acquisitions++;
+    if (!load(ctx->leaf, dl_test_leaf_start,
+                (uint32_t)(dl_test_leaf_end - dl_test_leaf_start))) {
+        if (ctx->leaf->address) {
+            call(GEMDOS_MUNMAP, ctx->leaf->address, ctx->leaf->size, 0, 0, 0, 0);
+            ctx->leaf->address = 0;
+        }
+        return DL_BAD_ELF;
+    }
+    mapping->object = ctx->leaf->object;
+    mapping->identity = 2;
+    mapping->cookie = ctx->leaf;
+    return DL_OK;
+}
+
+static void release(void *context, const DL_MAPPING *mapping)
+{
+    FIXTURE_CONTEXT *ctx = context;
+    SAMPLE *sample = mapping->cookie;
+
+    if (call(GEMDOS_MUNMAP, sample->address, sample->size, 0, 0, 0, 0))
+        ctx->release_bad = 1;
+    sample->address = 0;
+}
+
+static const DL_GRAPH_OPS graph_ops = { acquire, release };
+
 int x32_ldso_probe(void);
 
 int x32_ldso_probe(void)
@@ -148,26 +194,32 @@ int x32_ldso_probe(void)
 
     for (cycle = 0; cycle < 2; cycle++) {
         SAMPLE leaf = { 0 }, library = { 0 };
-        const DL_OBJECT *scope[2] = { &library.object, &leaf.object };
+        FIXTURE_CONTEXT context = { &leaf, 0, 0 };
+        DL_MAPPING root;
         DL_RELOC_WRITE work[32];
         DL_SYMBOL symbol;
         uint32_t written, answer, value, scratch, i, init = 0, initsz = 0;
         int (*function)(void);
 
-        if (!load(&leaf, dl_test_leaf_start, (uint32_t)(dl_test_leaf_end - dl_test_leaf_start))) {
-            rc = 1; goto done;
-        }
         if (!load(&library, dl_test_library_start,
                    (uint32_t)(dl_test_library_end - dl_test_library_start))) {
             rc = 2; goto done;
         }
+        root.object = library.object;
+        root.identity = 1;
+        root.cookie = &library;
+        if (dl_graph_open(&graph, &root, &graph_ops, &context) ||
+            graph.count != 2 || graph.order_count != 2 ||
+            graph.order[0] != 1 || graph.order[1] != 0 || context.acquisitions != 1) {
+            rc = 1; goto done;
+        }
         if (dl_relocate(&leaf.object, (unsigned char *)(uintptr_t)leaf.address,
-                         scope, 2, leaf.writable, leaf.nwritable, work, 32, &written,
+                         graph.scope, graph.count, leaf.writable, leaf.nwritable, work, 32, &written,
                          &dl_x32_reloc_backend)) {
             rc = 3; goto done;
         }
         if (dl_relocate(&library.object, (unsigned char *)(uintptr_t)library.address,
-                         scope, 2, library.writable, library.nwritable, work, 32, &written,
+                         graph.scope, graph.count, library.writable, library.nwritable, work, 32, &written,
                          &dl_x32_reloc_backend)) {
             rc = 4; goto done;
         }
@@ -207,6 +259,9 @@ int x32_ldso_probe(void)
         if (function() != 30)
             rc = 10;
 done:
+        dl_graph_close(&graph, &graph_ops, &context);
+        if (context.release_bad)
+            rc = 12;
         if (library.address && call(GEMDOS_MUNMAP, library.address, library.size, 0, 0, 0, 0))
             rc = 11;
         if (leaf.address && call(GEMDOS_MUNMAP, leaf.address, leaf.size, 0, 0, 0, 0))

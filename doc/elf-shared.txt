@@ -7,11 +7,13 @@ Status and scope
 This is the design and initial implementation work for a userspace ELF
 runtime linker.  It does NOT yet make a dynamically linked program runnable.
 The implemented core reads ELF32 dynamic metadata, performs SysV-hash
-lookup and ordered-scope symbol resolution, and eagerly applies RELA
-relocations. The architecture-neutral planner is lib/ldso/relocate.c;
+lookup and ordered-scope symbol resolution, discovers the dependency graph,
+and eagerly applies RELA relocations. The architecture-neutral planner is
+lib/ldso/relocate.c;
 lib/ldso/arch/x32/reloc.c supplies x32 relocation widths and arithmetic.
-There is no interpreter file I/O, dependency graph, constructor lifecycle
-or process-entry stub yet.
+lib/ldso/graph.c builds a bounded dependency closure through mapper callbacks.
+There is no interpreter file I/O, constructor lifecycle or process-entry
+stub yet.
 
 Private anonymous mapping services are implemented separately as Mmap,
 Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
@@ -59,7 +61,8 @@ The ring-3 self-test separately maps the two DSOs with Mmap, relocates them,
 seals text RX and data RW/NX, and calls through their GOT/PLT. It manually
 calls the relocated constructor and verifies fresh data after unloading and
 reloading. This fixture loader does not implement PT_INTERP startup or the
-runtime linker's constructor ordering.
+runtime linker's constructor execution. The graph discovers libleaf.so
+from libtest.so's actual DT_NEEDED rather than preloading it.
 
 The x32 backend supports NONE, RELATIVE, RELATIVE64, GLOB_DAT, JUMP_SLOT,
 32, 32S, PC32 and 64 RELA relocations.  x32 pointers are 32 bits, but some
@@ -191,7 +194,7 @@ a DSO as an ordinary symbol; kernel/CUIS operations remain syscall services.
 
 The initial engine uses SysV DT_HASH, bounded dynsym/strtab reads and
 DT_NEEDED traversal.  lib/ldso/dynamic.c provides metadata, per-object lookup and ordered-scope
-resolution; dependency traversal remains to be implemented.  It accepts global/weak definitions of NOTYPE,
+resolution; lib/ldso/graph.c supplies dependency traversal.  It accepts global/weak definitions of NOTYPE,
 OBJECT or FUNC with DEFAULT/PROTECTED visibility, excludes undefined/local/
 HIDDEN/INTERNAL symbols, and leaves address outputs untouched on lookup
 failure.  SHN_ABS is not biased.  Matched TLS/IFUNC/COMMON symbols fail
@@ -200,7 +203,27 @@ resource limit is 32 DT_NEEDED entries per object; exceeding it fails.
 The caller must supply a stable, entirely readable contiguous image view,
 with gaps zero-filled.  ELF-header/segment admission belongs to the mapper.
 
-The full resolver's initial global scope is the executable, followed by its
+dl_graph_open builds the executable-first breadth-first scope in DT_NEEDED
+order. Its caller owns stable graph storage; a mapper callback acquires
+references with stable file identities, and a release callback drops them.
+Exact case-sensitive names are cached, file identities deduplicated, and
+cycles terminate without repeated loads. Only bare dependency names are
+accepted; an available SONAME must equal the request. Path tags and other
+unsupported feature flags fail before discovery proceeds. A missing file,
+callback failure, invalid name/SONAME or 128-object limit unwinds every
+acquired reference, leaving the borrowed root untouched. dl_graph_close is
+idempotent and releases references in reverse acquisition order; it executes
+no user finalizers. The mapper still has to implement trusted-directory I/O,
+stable file identities and file-replacement policy.
+
+The graph also supplies a deterministic initialization schedule: iterative
+DFS postorder, visiting children in DT_NEEDED order and skipping edges to
+active ancestors. Each object appears once; acyclic dependencies precede
+their dependents. Within cycles this traversal rule fixes the order, since
+no order can put every member before its dependents. Constructor execution
+and finalizer tracking remain a separate implementation step.
+
+The resolver's global scope is the executable, followed by its
 dependency closure in deterministic breadth-first DT_NEEDED order.  The
 first eligible definition wins, including weak definitions; unresolved weak
 references resolve to zero, unresolved strong references are errors.
@@ -255,7 +278,9 @@ Implementation and validation milestones
 3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes.
    Preserve static ELF/PIE, built-in images and m68k PRG regression tests.
 4. Ordered scope and eager x32 relocations are implemented and tested in
-   ring 3. Remaining: self-relocating interpreter and dependency graph;
+   ring 3. Bounded dependency discovery, BFS scope, cycle scheduling and
+   rollback are implemented. Remaining: self-relocating interpreter and
+   trusted-directory file mapper;
    run an ET_EXEC consumer of a separately built libtest.so under QEMU.
 5. Constructors/finalizers and a real shared libcmini or client-helper
    component, with an independently built compatible dynamic CRT.
