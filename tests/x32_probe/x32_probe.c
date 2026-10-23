@@ -268,6 +268,52 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 'S':
         pterm(mapping_api());
         break;
+    case 'Y': {
+        s64 address = mmap_private(0, 12288, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, 0);
+        volatile u32 *data = (volatile u32 *)(unsigned long)address;
+        s64 handle, result;
+
+        if (address <= 0)
+            pterm(1);
+        if (sys(GEMDOS, GEMDOS_MPROT, address, 4096, PROT_READ) || data[0])
+            pterm(2);                  /* a legal first read sees zero */
+        if (sys(GEMDOS, GEMDOS_MPROT, address + 4096, 4096, PROT_READ | PROT_WRITE))
+            pterm(3);
+        handle = gemdos(0x3d, (s64)(unsigned long)"C:\\X32HELLO.TOS", 0);
+        if (handle < 0)
+            pterm(4);
+        result = sys(GEMDOS, 0x3f, handle, 4, address + 4096);
+        gemdos(0x3e, handle, 0);
+        if (result != 4 || data[1024] != 0x464c457fU)
+            pterm(5);                  /* kernel writes to an untouched RW page */
+        if (sys(GEMDOS, 0x17d, address + 8192, 4, 1) != EINVAL ||
+            sys(GEMDOS, 0x3f, -1, 4, address + 8192) != EIMBA)
+            pterm(6);                  /* untouched NONE is never an allowed buffer */
+        if (sys(GEMDOS, GEMDOS_MPROT, address, 12288, PROT_READ | PROT_WRITE) ||
+            data[0] || data[1024] != 0x464c457fU || data[2048])
+            pterm(7);                  /* mixed present/absent pages keep data and permissions */
+        pterm(gemdos(GEMDOS_MUNMAP, address, 12288) ? 8 : 0);
+        break;
+    }
+    case 'Z':
+    case 'J':
+    case 'K': {
+        s64 address = mmap_private(0, 4096, tail[0] == 'K' ? PROT_NONE : PROT_READ,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, 0);
+        volatile u32 *data = (volatile u32 *)(unsigned long)address;
+        int (*fn)(void) = (int (*)(void))(unsigned long)address;
+
+        if (address <= 0)
+            pterm(1);
+        if (tail[0] == 'Z')
+            *data = 1;                 /* first touch cannot write a read-only page */
+        else if (tail[0] == 'J')
+            bad = fn();                /* first touch cannot execute an NX page */
+        else
+            bad = *data;               /* first touch cannot read PROT_NONE */
+        pterm(2);
+        break;
+    }
     case 'T':
     case 'U':
     case 'V':

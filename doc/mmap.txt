@@ -55,12 +55,22 @@ basepages, Malloc memory, stacks, guards and kernel mappings. Every process
 owns its own reservations and pages; another process can use the same virtual
 addresses but cannot see their contents. All returned addresses are positive
 signed GEMDOS longs. Out-of-window/oversized ranges return EIMBA, zero length
-EINVAL, and exhausted address space, physical memory or process limits ENSMEM.
+EINVAL; exhausted address space, reservation metadata or process limits
+return ENSMEM.
 
-Mappings are eager, private and zero-filled. A failed allocation rolls back
-its partial pages, page tables and reservation. Mapping bytes count against
-both Psetlimit's data (3) and total/core (2) allocation budgets, together with
-Malloc memory. They are reclaimed by Munmap or process teardown, including
+Anonymous mappings are lazy, private and zero-filled. Mmap reserves virtual
+address space and kernel metadata, without allocating backing pages or page
+tables. Each page receives a zeroed private physical page on its first legal
+read, write or instruction fetch, including kernel access to a validated user
+buffer. Disallowed access never allocates a page. PROT_NONE reservations cost
+no backing memory until access is enabled and a page is touched. As with lazy
+Malloc/stack memory, physical exhaustion on a legal first touch terminates
+the touching process while preserving the kernel's memory reserve. Mmap can
+therefore reserve more virtual memory than free physical RAM.
+
+The full reservation counts against both Psetlimit's data (3) and total/core
+(2) allocation budgets immediately, together with Malloc memory. Reservations
+and backing pages are reclaimed by Munmap or process teardown, including
 fault termination. No ownership comes from user-writable basepage fields.
 
 Mprot
@@ -77,7 +87,12 @@ EXEC is requested. NONE removes user access and execution; it does not free
 the backing pages. Unknown protection bits return EINVAL. WRITE|EXEC is
 EACCDN, for both Mmap and Mprot. No page is simultaneously writable and
 executable. The backend invalidates stale MMU translations when changing
-permissions. A successful operation returns E_OK.
+permissions. Untouched pages stay unbacked: kernel-private reservation records
+hold their new permissions for future faults. Present private pages are
+updated immediately. Boundary-split metadata is allocated before any
+permission changes; allocation failure leaves all permissions unchanged.
+Adjacent reservations with identical permissions are coalesced. A successful
+operation returns E_OK.
 
 Munmap
 ------
@@ -90,9 +105,9 @@ reservations and holes, or remove the beginning, end or middle of one mapping.
 A middle removal splits its reservation. Metadata for that split is allocated
 before removing any page; failure leaves the original mapping intact.
 
-Unmapped pages are returned once, accounting is reduced by mapped bytes
-actually removed, and reuse gets freshly zeroed pages. Empty lower page tables
-may be retained by the address space until process exit, as with other
+Backed pages are returned once and untouched pages are skipped; accounting
+is reduced by reservation bytes actually removed. Reuse gets freshly zeroed
+pages on first touch. Empty lower page tables may be retained by the address space until process exit, as with other
 private mappings; they are never leaked across process destruction.
 
 Validation and remaining work
@@ -102,9 +117,11 @@ The x32 boot self-test exercises these calls from real ring-3 code, including
 the sixth argument, high-bit rejection, collisions, advisory hints, partial
 unmaps, adjacent-range protection, rollback across holes, Maccess/Fread
 permission checks, zeroing on reuse, process exit and MMU permission faults.
-It also checks distinct physical pages at identical virtual addresses in two
-processes, allocation limits and injected physical-allocation failures, with
-allocator/record/page counts checked after destruction.
+It also checks reservations without backing, sparse touches, permissions
+changed before first touch, refusal of borrowed pages during sparse protection,
+distinct physical pages at identical virtual addresses in two processes,
+full-reservation allocation limits and injected first-touch physical-allocation
+failures, with allocator/record/page counts checked after destruction.
 
 Build pc-x86_64 with CONF_WITH_MMAP and CONF_WITH_X86_64_MEMTEST, then:
 

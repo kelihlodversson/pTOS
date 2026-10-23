@@ -234,10 +234,11 @@ private:
                     environment, say) takes the ordinary path.
 
   demand paging     The page fault handler (bios/arch/x86_64/panic.c) asks
-                    first, for a fault on a page that is not there and is not
-                    an instruction fetch, whether the address is in the
-                    running process's stack or in one of its Malloc() blocks
-                    (kproc_demand_page()); if so it maps a zeroed page
+                    first, for a not-present fault without reserved-bit errors,
+                    whether the address is in the running process's lazy stack,
+                    Malloc() blocks or anonymous Mmap reservations and permits
+                    the requested read, write or instruction fetch
+                    (kproc_demand_page()); if so it maps a zeroed private page
                     (aspace_fault_in()) and resumes the instruction.
                     Anything else is the process's own fault, as before:
                     Pterm(-1).  Untouched address space costs nothing, not

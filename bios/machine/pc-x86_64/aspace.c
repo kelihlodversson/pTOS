@@ -649,7 +649,7 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
     return TRUE;
 }
 
-BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL lazy)
 {
     UQUAD pages, i;
 
@@ -657,11 +657,27 @@ BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
         bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
-    if (!range_is_private(as, va, pages))
-        return FALSE;
+    /* Missing pages are legal only for a caller-validated lazy reservation.
+     * Validate ownership of every present page before updating any PTE. */
     for (i = 0; i < pages; i++) {
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
-        UQUAD e = (*pte & (PTE_ADDR | X86_64_PTE_OWNED)) | PTE_PRESENT;
+
+        if (!pte || !(*pte & PTE_PRESENT)) {
+            /* A missing leaf PTE can also mean a foreign large-page
+             * mapping; only genuinely absent pages count as lazy holes. */
+            if (!lazy || aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
+                return FALSE;
+        } else if (!(*pte & X86_64_PTE_OWNED)) {
+            return FALSE;
+        }
+    }
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        UQUAD e;
+
+        if (!pte || !(*pte & PTE_PRESENT))
+            continue;
+        e = (*pte & (PTE_ADDR | X86_64_PTE_OWNED)) | PTE_PRESENT;
 
         if (prot & ASPACE_PROT_USER)
             e |= PTE_USER;
@@ -674,6 +690,16 @@ BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);
     return TRUE;
+}
+
+BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    return protect_private(as, va, bytes, prot, FALSE);
+}
+
+BOOL aspace_protect_lazy(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    return protect_private(as, va, bytes, prot, TRUE);
 }
 
 /*

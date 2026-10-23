@@ -310,6 +310,10 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
  * not one of its private pages.
  */
 BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+/* Same ownership/atomicity checks, but absent pages are skipped. The caller
+ * owns and validates the lazy reservation and records its future permissions.
+ * Never allocates physical backing or page tables. */
+BOOL aspace_protect_lazy(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
 
 /*
  * Software walk of the address space's own page tables, through the physical

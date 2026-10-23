@@ -43,6 +43,7 @@ typedef struct kproc KPROC;
 #if CONF_WITH_MMAP
 typedef struct mmap_region {
     ULONG address, length;
+    UWORD prot;
     struct mmap_region *next;
 } MMAP_REGION;
 #endif
@@ -1112,12 +1113,9 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     region = kalloc(sizeof(*region));
     if (!region)
         return ENSMEM;
-    if (!aspace_map_private(kproc->aspace, address, length, prot)) {
-        kfree(region);
-        return ENSMEM;              /* mapper rolls back partial work */
-    }
     region->address = (ULONG)address;
     region->length = (ULONG)length;
+    region->prot = prot;
     region->next = *link;
     *link = region;
     kproc->mapping_bytes += length;
@@ -1161,9 +1159,10 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
                 return ENSMEM;
             tail->address = (ULONG)last;
             tail->length = (ULONG)(region_end - last);
+            tail->prot = region->prot;
             tail->next = region->next;
         }
-        if (!aspace_unmap_private(kproc->aspace, first, last - first)) {
+        if (!aspace_release_lazy(kproc->aspace, first, last - first)) {
             kfree(tail);
             return EINTRN;              /* ledger and ownership disagree */
         }
@@ -1185,10 +1184,21 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
     return E_OK;                       /* unmapped holes are harmless */
 }
 
+/* Split a reservation at an interior boundary using preallocated metadata. */
+static void mapping_split(MMAP_REGION *region, UQUAD at, MMAP_REGION *tail)
+{
+    *tail = *region;
+    tail->address = (ULONG)at;
+    tail->length = region->length - (ULONG)(at - region->address);
+    region->length = (ULONG)(at - region->address);
+    region->next = tail;
+}
+
 LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
 {
     KPROC *kproc = kproc_find(pd);
-    MMAP_REGION *region;
+    MMAP_REGION *region, *first = NULL, *last = NULL;
+    MMAP_REGION *left = NULL, *right = NULL;
     UQUAD at = address, end;
     UWORD prot;
     LONG rc;
@@ -1206,19 +1216,62 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
     if (rc)
         return rc;
     end = address + length;
-    /* Check the entire range before changing any page; a gap must not
-     * leave earlier mappings with new permissions. Adjacent regions work. */
+    /* Check full coverage first, including pages not physically backed. */
     for (region = kproc->mappings; region && at < end; region = region->next) {
         if ((UQUAD)region->address + region->length <= at)
             continue;
         if (region->address > at)
             return EIMBA;
+        if (!first)
+            first = region;
+        last = region;
         at = (UQUAD)region->address + region->length;
     }
     if (at < end)
         return EIMBA;
-    return aspace_protect_private(kproc->aspace, address, length, prot)
-            ? E_OK : EINTRN;
+    /* At most two boundary splits are needed. Reserve both nodes before
+     * changing any permission, so allocation failure is atomic. */
+    if (address > first->address) {
+        left = kalloc(sizeof(*left));
+        if (!left)
+            return ENSMEM;
+    }
+    if (end < (UQUAD)last->address + last->length) {
+        right = kalloc(sizeof(*right));
+        if (!right) {
+            kfree(left);
+            return ENSMEM;
+        }
+    }
+    if (!aspace_protect_lazy(kproc->aspace, address, length, prot)) {
+        kfree(left);
+        kfree(right);
+        return EINTRN;
+    }
+    if (left) {
+        mapping_split(first, address, left);
+        if (last == first)
+            last = left;
+    }
+    if (right)
+        mapping_split(last, end, right);
+    for (region = kproc->mappings; region; region = region->next)
+        if (region->address >= address && region->address < end)
+            region->prot = prot;
+    /* Repeated permission changes should not accumulate redundant nodes. */
+    for (region = kproc->mappings; region && region->next;) {
+        MMAP_REGION *next = region->next;
+
+        if ((UQUAD)region->address + region->length == next->address &&
+            region->prot == next->prot) {
+            region->length += next->length;
+            region->next = next->next;
+            kfree(next);
+        } else {
+            region = next;
+        }
+    }
+    return E_OK;
 }
 #endif
 
@@ -1295,16 +1348,28 @@ static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
 }
 
 /*
- * Demand paging.  The stack and the Malloc() blocks have address space but, until
- * the process touches a page of it, no physical page: this is the page fault
+ * Demand paging. The stack, Malloc() blocks and anonymous mappings reserve
+ * address space, but have no physical page until first touch. This is the fault
  * handler's question (and the kernel's, before it reads or writes a user buffer):
  * is `va` in such an area, and if so, back its page now.  FALSE: it is not (a
  * real fault), or no physical page could be had (the process is terminated).
  */
-static BOOL lazy_area(const KPROC *kproc, UQUAD va)
+static BOOL lazy_area(const KPROC *kproc, UQUAD va, UWORD *prot)
 {
     ULONG i;
 
+    *prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
+#if CONF_WITH_MMAP
+    {
+        const MMAP_REGION *region;
+
+        for (region = kproc->mappings; region; region = region->next)
+            if (va >= region->address && va < (UQUAD)region->address + region->length) {
+                *prot = region->prot;
+                return TRUE;
+            }
+    }
+#endif
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP)
         return TRUE;
     for (i = 0; i < kproc->nheap; i++)
@@ -1317,7 +1382,10 @@ static BOOL lazy_area(const KPROC *kproc, UQUAD va)
 /* backs the page of a lazy area; the stack remembers how far down it has been */
 static BOOL back_page(KPROC *kproc, UQUAD va)
 {
-    if (!aspace_fault_in(kproc->aspace, va, ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+    UWORD prot;
+
+    if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER) ||
+        !aspace_fault_in(kproc->aspace, va, prot))
         return FALSE;
     va &= ~(USER_PAGE_SIZE - 1);
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP &&
@@ -1326,11 +1394,13 @@ static BOOL back_page(KPROC *kproc, UQUAD va)
     return TRUE;
 }
 
-int kproc_demand_page(PD *pd, UQUAD va)
+int kproc_demand_page(PD *pd, UQUAD va, UWORD access)
 {
     KPROC *kproc = kproc_find(pd);
+    UWORD prot;
 
-    if (!kproc || !kproc->aspace || !lazy_area(kproc, va))
+    if (!kproc || !kproc->aspace || !lazy_area(kproc, va, &prot) ||
+        !(prot & ASPACE_PROT_USER) || (access & ~prot))
         return 0;
     return back_page(kproc, va) ? 1 : 2;
 }
@@ -1357,7 +1427,8 @@ static BOOL range_allowed(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
         if (aspace_translate(kproc->aspace, page, NULL, &prot)) {
             if (!(prot & ASPACE_PROT_USER) || (write && !(prot & ASPACE_PROT_WRITE)))
                 return FALSE;
-        } else if (!lazy_area(kproc, page)) {
+        } else if (!lazy_area(kproc, page, &prot) ||
+                   !(prot & ASPACE_PROT_USER) || (write && !(prot & ASPACE_PROT_WRITE))) {
             return FALSE;
         }
     }

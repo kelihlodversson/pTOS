@@ -94,7 +94,7 @@ extern UQUAD x86_64_read_cr3(void);
 extern UQUAD x86_64_kernel_pml4_phys(void);
 
 void enter(void);
-int x86_64_demand_page(UQUAD address);     /* called from bios/arch/x86_64/panic.c */
+int x86_64_demand_page(UQUAD address, UQUAD error_code);     /* called from bios/arch/x86_64/panic.c */
 void bdos_trap2(void);
 void gouser(void);
 void termuser(void) NORETURN;
@@ -315,19 +315,21 @@ void gouser(void)
 /*
  * A page fault on a page that is not there (bios/arch/x86_64/panic.c asks
  * before it treats the fault as fatal): if it is a page of the running process's
- * stack or Malloc() memory, which are backed when first touched, back it and
+ * stack, Malloc() or anonymous memory, back it with the reservation's access and
  * resume.  The process's address space must be the one in use; a fault at a user
  * address while the kernel runs for the process (a buffer it did not validate)
  * is answered the same way.  0: not a lazy page; 1: backed; 2: it is one and no
  * physical page is left.
  */
-int x86_64_demand_page(UQUAD address)
+int x86_64_demand_page(UQUAD address, UQUAD error_code)
 {
     UQUAD pml4 = kproc_user_root(run);
 
     if (address >= USER_VA_LIMIT || !pml4 || pml4 != x86_64_read_cr3())
         return 0;
-    return kproc_demand_page(run, address);
+    return kproc_demand_page(run, address,
+                ((error_code & 2) ? ASPACE_PROT_WRITE : 0) |
+                ((error_code & 16) ? ASPACE_PROT_EXEC : 0));
 }
 
 void termuser(void)

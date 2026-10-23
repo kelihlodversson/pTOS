@@ -148,18 +148,18 @@ static NORETURN void hang(void)
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
                        UQUAD sp) NORETURN;
 /* bdos/arch/x86_64/rwa.c */
-extern int x86_64_demand_page(UQUAD address);
+extern int x86_64_demand_page(UQUAD address, UQUAD error_code);
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
     /*
      * The one fault that is no fault: a process touches a page of its stack or
-     * of its Malloc() memory that has no physical page yet (error code bit 0
-     * clear: not present; bit 4 clear: not an instruction fetch).  Back it and
-     * resume the instruction.
+     * of its anonymous memory that has no physical page yet (not-present,
+     * without a reserved-bit violation). The reservation's permissions must
+     * allow this read, write or instruction fetch before backing the page.
      */
-    if (frame->vector == 14 && !(frame->error_code & 0x11)) {
-        int answer = x86_64_demand_page(x86_64_read_cr2());
+    if (frame->vector == 14 && !(frame->error_code & 0x09)) {
+        int answer = x86_64_demand_page(x86_64_read_cr2(), frame->error_code);
 
         if (answer == 1)
             return;

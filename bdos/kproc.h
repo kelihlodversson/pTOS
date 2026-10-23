@@ -147,11 +147,13 @@ UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
  * Mshrink() of a block's start (EIMBA: no such block, EGSBF: bigger).
  */
 BOOL kproc_has_heap(PD *pd);
-/* The page fault handler's question: `va` is in the stack or a Malloc() block of
+/* The page fault handler's question: `va` is in lazy stack, Malloc() or anonymous memory of
  * the process, whose page has not been touched yet.  0: it is not (a real fault);
  * 1: it is, and the page is backed now; 2: it is, and no physical page was left
  * (the process is to be terminated). */
-int kproc_demand_page(PD *pd, UQUAD va);
+/* access: ASPACE_PROT_WRITE for a write, ASPACE_PROT_EXEC for a fetch,
+ * zero for a read. Disallowed access returns 0 without allocating a page. */
+int kproc_demand_page(PD *pd, UQUAD va, UWORD access);
 /* Psetlimit(): modes 2 and 3 are MiNT's (total memory, Malloc()ed memory, in
  * bytes), PSETLIMIT_STACK is this port's (the stack's address space); see
  * bdos/kproc.c.  Returns the old value, or a negative error code. */

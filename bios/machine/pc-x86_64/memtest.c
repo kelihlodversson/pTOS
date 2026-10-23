@@ -752,6 +752,12 @@ static void test_isolation(void)
         CHECK(aspace_fault_in(a, va + 100 * PAGE, rw) &&
               aspace_private_pages(a) == before + 2,
               "a second page, far away");
+        CHECK(!aspace_protect_private(a, va, 101 * PAGE, ASPACE_PROT_USER) &&
+              aspace_protect_lazy(a, va, 101 * PAGE, ASPACE_PROT_USER) &&
+              aspace_private_pages(a) == before + 2 &&
+              aspace_translate(a, va + 100 * PAGE, NULL, &prot) &&
+              !(prot & ASPACE_PROT_WRITE) && !aspace_translate(a, va + PAGE, NULL, NULL),
+              "lazy protection skips gaps without allocating; eager protection still refuses them");
         CHECK(!aspace_fault_in(a, USER_VA_LIMIT, rw), "not above the 32-bit limit");
         CHECK(aspace_release_lazy(a, va, 200 * PAGE) &&
               aspace_private_pages(a) == before &&
@@ -777,6 +783,29 @@ static void test_isolation(void)
     }
     aspace_destroy(a);
     same(&s, "lazy pages");
+
+    /* A foreign page late in a sparse range must prevent every permission
+     * change, including changes to an earlier private page. */
+    snap(&s);
+    a = must_create("lazy protection ownership");
+    probe = x86_64_pmem_try_alloc_pages(1, 0);
+    if (a && probe != X86_64_PMEM_NONE) {
+        UQUAD va = 0x20000000ULL;
+        UWORD prot;
+
+        CHECK(aspace_fault_in(a, va, ASPACE_PROT_USER) &&
+              aspace_map_page(a, va + 2 * PAGE, probe, ASPACE_PROT_USER),
+              "private and borrowed pages around an untouched gap");
+        CHECK(!aspace_protect_lazy(a, va, 3 * PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE) &&
+              aspace_translate(a, va, NULL, &prot) && !(prot & ASPACE_PROT_WRITE),
+              "lazy protection refuses borrowed backing before changing any page");
+    } else {
+        CHECK(FALSE, "lazy protection ownership allocation");
+    }
+    aspace_destroy(a);
+    if (probe != X86_64_PMEM_NONE)
+        x86_64_pmem_free_pages(probe, 1);
+    same(&s, "lazy protection ownership");
 
     /* many create/map/destroy cycles, and failure at every allocation point */
     for (i = 0; i < 300; i++) {
@@ -1258,7 +1287,7 @@ static void test_mmap(void)
     PD *a, *b;
     ASPACE *as, *bs;
     UQUAD pa, pb;
-    ULONG value;
+    ULONG value, private_a, private_b;
     UWORD prot;
     LONG rc;
     int k, refused = 0, mapped = 0;
@@ -1269,12 +1298,24 @@ static void test_mmap(void)
     if (a && b && kproc_prepare_user(a, run) && kproc_prepare_user(b, run)) {
         as = kproc_user_aspace(a);
         bs = kproc_user_aspace(b);
+        private_a = aspace_private_pages(as);
+        private_b = aspace_private_pages(bs);
         CHECK(kproc_mmap(a, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS, 0) == PTOS_MMAP_BASE,
               "first process anonymous map");
         CHECK(kproc_mmap(b, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS, 0) == PTOS_MMAP_BASE,
               "second process uses same virtual address");
+        CHECK(!aspace_translate(as, PTOS_MMAP_BASE, NULL, NULL) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE, NULL, NULL) &&
+              aspace_private_pages(as) == private_a && aspace_private_pages(bs) == private_b,
+              "anonymous reservations have no physical backing yet");
+        CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 1 &&
+              kproc_demand_page(b, PTOS_MMAP_BASE, 0) == 1,
+              "first legal touches back private pages");
+        CHECK(aspace_private_pages(as) == private_a + 1 &&
+              aspace_private_pages(bs) == private_b + 1,
+              "one physical page per touched mapping page");
         pa = pb = 0;
         CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) &&
               aspace_translate(bs, PTOS_MMAP_BASE, &pb, NULL) && pa != pb,
@@ -1297,6 +1338,25 @@ static void test_mmap(void)
               "Mprot applies RX permissions");
         CHECK(kproc_mprot(a, PTOS_MMAP_BASE, PAGE, PROT_WRITE | PROT_EXEC) == EACCDN,
               "Mprot refuses WX");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE + PAGE, PAGE, PROT_READ) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + PAGE, ASPACE_PROT_WRITE) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + PAGE, 0) == 1 &&
+              aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, &prot) &&
+              (prot & ASPACE_PROT_USER) && !(prot & (ASPACE_PROT_WRITE | ASPACE_PROT_EXEC)),
+              "untouched read-only page is backed only for a legal read");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE + 2 * PAGE, PAGE, PROT_NONE) == 0 &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + 2 * PAGE, 0) == 0 &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + 2 * PAGE, ASPACE_PROT_EXEC) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
+              "PROT_NONE never allocates a page");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE + 2 * PAGE, PAGE, PROT_READ | PROT_EXEC) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL) &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + 2 * PAGE, ASPACE_PROT_EXEC) == 1 &&
+              aspace_translate(as, PTOS_MMAP_BASE + 2 * PAGE, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC) && !(prot & ASPACE_PROT_WRITE),
+              "first instruction fetch honors permissions changed before first touch");
         CHECK(kproc_munmap(a, PTOS_MMAP_BASE + PAGE, PAGE) == 0 &&
               !aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, NULL),
               "middle unmap removes the page");
@@ -1305,6 +1365,18 @@ static void test_mmap(void)
               (prot & ASPACE_PROT_EXEC), "Mprot across a hole is atomic");
         CHECK(kproc_munmap(a, PTOS_MMAP_BASE, 3 * PAGE) == 0,
               "unmap spans two remaining regions and a hole");
+        CHECK(aspace_private_pages(as) == private_a,
+              "unmap frees only pages that were backed");
+        CHECK(kproc_mmap(a, 0, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, 0) == PTOS_MMAP_BASE &&
+              aspace_private_pages(as) == private_a,
+              "full mapping window is reserved without physical pages");
+        CHECK(kproc_demand_page(a, PTOS_MMAP_LIMIT - PAGE, ASPACE_PROT_WRITE) == 1 &&
+              aspace_private_pages(as) == private_a + 1,
+              "sparse reservation backs only its last page on touch");
+        CHECK(kproc_munmap(a, PTOS_MMAP_BASE, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE) == 0 &&
+              aspace_private_pages(as) == private_a,
+              "sparse unmap skips untouched pages");
     } else {
         CHECK(FALSE, "mapping test process preparation");
     }
@@ -1316,18 +1388,22 @@ static void test_mmap(void)
         snap(&s);
         a = new_basepage();
         if (a && kproc_prepare_user(a, run)) {
+            CHECK(kproc_mmap(a, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, 0) == PTOS_MMAP_BASE,
+                  "reserve mapping before first-touch failure injection");
             x86_64_pmem_test_fail_after(k);
-            rc = kproc_mmap(a, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
-                            MAP_PRIVATE | MAP_ANONYMOUS, 0);
+            rc = kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE);
             x86_64_pmem_test_fail_after(0);
-            CHECK(rc == ENSMEM || rc == PTOS_MMAP_BASE, "mapping allocation outcome");
-            if (rc == ENSMEM) {
+            CHECK(rc == 1 || rc == 2, "first-touch allocation outcome");
+            if (rc == 2) {
                 refused++;
                 CHECK(!aspace_translate(kproc_user_aspace(a), PTOS_MMAP_BASE, NULL, NULL),
-                      "failed mapping leaves no page");
-                CHECK(kproc_mmap(a, PTOS_MMAP_BASE, 3 * PAGE, PROT_READ,
+                      "failed first touch leaves no backing page");
+                CHECK(kproc_mmap(a, PTOS_MMAP_BASE, PAGE, PROT_READ,
                                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, 0)
-                       == PTOS_MMAP_BASE, "failed mapping leaves no reservation");
+                       == EACCDN, "failed first touch retains its reservation");
+                CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 1,
+                      "first touch can be retried after allocation failure");
             } else {
                 mapped++;
             }
@@ -1335,9 +1411,9 @@ static void test_mmap(void)
             CHECK(FALSE, "failure-injection process preparation");
         }
         free_mapping_process(a);
-        same(&s, "anonymous mapping failure rollback");
+        same(&s, "anonymous first-touch failure cleanup");
     }
-    CHECK(refused && mapped, "mapping allocation failures and successes exercised");
+    CHECK(refused && mapped, "first-touch allocation failures and successes exercised");
 }
 
 static void test_mapping_ring3(void)
@@ -1351,6 +1427,10 @@ static void test_mapping_ring3(void)
     probe_expect('V', 0xffff, "ELF NX mapping refuses execution");
     probe_expect('W', 0xffff, "ELF PROT_NONE mapping refuses reads");
     probe_expect('X', 0, "ELF mappings reclaimed on exit");
+    probe_expect('Y', 0, "lazy anonymous first reads and kernel writes, untouched NONE, mixed Mprot");
+    probe_expect('Z', 0xffff, "first touch cannot write read-only anonymous memory");
+    probe_expect('J', 0xffff, "first touch cannot execute NX anonymous memory");
+    probe_expect('K', 0xffff, "first touch cannot read PROT_NONE anonymous memory");
     kcprintf("x86-64 mmap syscalls: %s\n", failures == before ? "PASS" : "FAIL");
 
 }

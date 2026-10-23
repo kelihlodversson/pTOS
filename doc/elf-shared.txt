@@ -17,7 +17,7 @@ x32 format policy is selected separately in arch/x32/image_abi.c.
 There is no interpreter file I/O, constructor lifecycle or process-entry
 stub yet.
 
-Private anonymous mapping services are implemented separately as Mmap,
+Lazy private anonymous mapping services are implemented separately as Mmap,
 Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
 selects that option. These services enforce W^X, accounting and process
 ownership; they do not yet provide file-backed shared code pages.
@@ -163,7 +163,9 @@ admission and private-image population are implemented in lib/ldso/image.c.
 
 The mapping window is [0x01000000, 0x0f000000), outside USER_IMAGE_*, the
 ancestors page, heap/stack and guards. Anonymous reservations are atomic and
-roll back failed allocation. MAP_FIXED_NOREPLACE is available; destructive
+use full-reservation accounting. Backing pages are zero-filled on first legal
+touch; Mprot updates untouched reservations without allocating pages.
+MAP_FIXED_NOREPLACE is available; destructive
 MAP_FIXED is refused. File-backed object mappings must keep these guarantees.
 An ET_EXEC must keep its linked virtual addresses; the legacy static loader's
 relocate-to-fit rule cannot be reused for a standard ET_EXEC.
