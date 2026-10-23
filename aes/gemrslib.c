@@ -335,7 +335,7 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
  *  code -- is the calibration constant the design calls out; the first
  *  screencap (Task 6) confirms or flips it to (1 << (planes-1-p)).
  */
-static void pack_planes(const WORD *data, void *pixels, WORD planes, WORD w, WORD h, WORD pixel_size)
+void rs_cicon_pack(const WORD *data, void *pixels, WORD planes, WORD w, WORD h, WORD pixel_size)
 {
     LONG mono_words = ((LONG)w + 15) / 16;
     UWORD *pix16 = pixels;
@@ -383,7 +383,7 @@ static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
     if (!packed)
         return FALSE;
 
-    pack_planes(cicon->col_data, packed, cicon->num_planes, w, h, pixel_size);
+    rs_cicon_pack(cicon->col_data, packed, cicon->num_planes, w, h, pixel_size);
     cicon->col_data = (WORD *)packed;
 
     if (cicon->sel_data)
@@ -392,14 +392,14 @@ static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
         {
             UWORD *selbuf = (UWORD *)packed + pixels;
 
-            pack_planes(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
+            rs_cicon_pack(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
             cicon->sel_data = (WORD *)selbuf;
         }
         else
         {
             ULONG *selbuf = (ULONG *)packed + pixels;
 
-            pack_planes(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
+            rs_cicon_pack(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
             cicon->sel_data = (WORD *)selbuf;
         }
     }

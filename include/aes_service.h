@@ -17,6 +17,7 @@
 #define AES_SERVICE_YIELD 8
 #define AES_SERVICE_MULTI 9
 #define AES_SERVICE_WINDOW 10
+#define AES_SERVICE_OBJECT 11
 #define AES_WIN_CREATE 1
 #define AES_WIN_OPEN 2
 #define AES_WIN_CLOSE 3
@@ -52,6 +53,8 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
 void aes_service_process_exit(PD *pd);
 LONG aes_service_kernel_message(PD *pd, const WORD *message);
 BOOL aes_service_window_unlocked(PD *pd);
+/* Called without yielding after validating a registration-scoped token. */
+LONG aes_service_update(PD *pd, UWORD code);
 #if CONF_WITH_X32_ACCESSORY_TEST
 LONG aes_service_test_coordination(WORD code);
 #endif

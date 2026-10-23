@@ -4,7 +4,7 @@ import sys
 
 output = Path(sys.argv[1]).read_text(errors="replace")
 assert output.count("EFI entry reached") == 1, "reset/triple-fault loop"
-for forbidden in ("panic:", "accessory FAIL", "accessory window FAIL", "memtest: FAIL", "System halted!"):
+for forbidden in ("panic:", "accessory FAIL", "accessory window FAIL", "accessory object FAIL", "memtest: FAIL", "System halted!"):
     assert forbidden not in output, forbidden
 for marker in (
     "x86-64 memtest: PASS",
@@ -22,6 +22,19 @@ for name in ("ACCONE", "ACCTWO", "ACCFAULT", "ACCWAIT"):
 assert "x32 accessory message/exit/fault: PASS" in live
 assert "x32 accessory desktop: PASS" in live
 assert output.count("x32 input events: PASS") == 4, "typed input in all sessions"
+assert output.count("x32 objects snapshot/menu/dialog/USERDEF/revocation: PASS") == 4
+assert output.count("x32 object active menu cancellation: PASS") == 4
+assert output.count("x32 object cancelled modal preserves new locks: PASS") == 4
+assert output.count("x32 object scoped lock return races: PASS") == 4
+assert output.count("x32 disabled menu popup cleanup: PASS") >= 4
+assert output.count("x32 object disabled title cancellation: PASS") == 4
+assert output.count("x32 object owner USERDEF fault: ARMED") == 2
+assert output.count("x32 object foreign USERDEF fault: ARMED") == 2
+assert output.count("x32 foreign USERDEF fault retirement/wake: PASS") >= 2
+for regression in ("native text limits", "consecutive menu titles", "radio drag selection", "relative geometry"):
+    assert output.count("x32 object " + regression + ": PASS") == 4, regression
+assert output.count("x32 object colour pixels: PASS") >= 12
+assert output.count("x32 object USERDEF fault: ARMED") == 4
 for regression in ("poll timer", "queued button", "button snapshot", "revocation"):
     assert output.count("x32 input " + regression + ": PASS") == 4, regression
 assert output.count("x32 window events/ownership/lifecycle: PASS") == 4

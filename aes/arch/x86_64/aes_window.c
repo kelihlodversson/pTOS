@@ -855,6 +855,19 @@ BOOL x86_64_aes_window_test_ready(void)
     return count == 2;
 }
 
+BOOL x86_64_aes_window_objects_done(void)
+{
+    WORD h;
+    for (h = 1; h < NUM_WIN; h++)
+        if (windows[h].owner && !windows[h].retired && !strcmp(windows[h].title, "Objects complete")) {
+            /* Consume the fixture's completion handshake, then restore the
+             * title checked by the unchanged native window assertions. */
+            strcpy(windows[h].title, "Typed x32 window");
+            return TRUE;
+        }
+    return FALSE;
+}
+
 static void test_redraw_bounds(WORD h, CLIENT_WINDOW *w)
 {
     static const GRECT notifications[2][3] = {

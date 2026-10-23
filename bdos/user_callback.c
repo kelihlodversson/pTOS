@@ -375,15 +375,25 @@ static void check_fatal(void)
     }
 }
 
-LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
-                           LONG a, LONG b, ULONG *result)
+BOOL user_callback_owner_failed(PD *pd)
+{
+    USER_CALLBACK_STATE *state = kproc_callbacks_get(pd);
+
+    return state && state->fatal;
+}
+
+static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
+                     const void *data, ULONG bytes, ULONG *result)
 {
     USER_CALLBACK_STATE *state;
     CALLBACK_FRAME *frame;
-    UQUAD sp, top, bottom, stack_top, words[2];
+    UQUAD sp, top, bottom, stack_top, words[2], payload = 0;
     BOOL failed;
 
     *result = signature == USER_CALLBACK_I16_I16_U32 ? MAKE_ULONG(a, b) : 0;
+    if (bytes > 256 || (bytes && !data) ||
+        (signature == USER_CALLBACK_DATA_U16 && !bytes))
+        return EINVAL;
     if (!cb || !cb->owner)
         return E_OK;
     if (cb->signature != signature || !executable(cb->owner, cb->handler))
@@ -433,11 +443,18 @@ LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
     }
     /* Preserve the interrupted x32 ABI's 128-byte red zone, and keep a full
      * page for the handler before its first instruction can run. */
+    frame->failed = top > (frame->alternate ?
+        (UQUAD)state->stack.ss_sp + state->stack.ss_size : USER_STACK_TOP);
+    if (bytes && top >= 144 + bytes) {
+        payload = (top - 128 - bytes) & ~15ULL;
+        top = payload;
+        a = (LONG)payload;
+    }
     sp = top >= 152 ? ((top - 144) & ~15ULL) - 8 : 0;
     frame->stack_bottom = bottom;
     frame->stack_top = frame->alternate ?
         (UQUAD)state->stack.ss_sp + state->stack.ss_size : USER_STACK_TOP;
-    frame->failed = sp < bottom + 4096 ||
+    frame->failed |= sp < bottom + 4096 ||
         top > (frame->alternate ? (UQUAD)state->stack.ss_sp + state->stack.ss_size : USER_STACK_TOP);
     frame->gs_swapped = x86_64_gs_to_user();
     active = frame;
@@ -450,6 +467,8 @@ LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
 #endif
         words[0] = USER_CALLBACK_IMAGE;
         words[1] = frame->token;
+        if (bytes && (!payload || !kproc_copy_to_user(payload, data, bytes)))
+            user_callback_fault();
         if (!kproc_copy_to_user(sp, words, sizeof(words)))
             user_callback_fault();
         x86_64_set_kernel_stack(stack_top);
@@ -471,7 +490,8 @@ LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
     if (frame->gs_swapped)
         x86_64_gs_back_to_syscall();
     __asm__ volatile ("fxrstor %0" :: "m"(frame->fpu));
-    *result = signature == USER_CALLBACK_I16_I16_U32 ? frame->result : 0;
+    *result = signature == USER_CALLBACK_I16_I16_U32 ? frame->result :
+              signature == USER_CALLBACK_DATA_U16 ? (UWORD)frame->result : 0;
     failed = frame->failed;
     release(frame->registration);
     kstack_free(frame->stack_phys);
@@ -479,8 +499,23 @@ LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
     kfree(frame);
     /* A suspended foreign owner is quarantined now and terminated at its
      * next user boundary; unwinding its launch here would kill the caller. */
-    check_fatal();
+    if (signature != USER_CALLBACK_DATA_U16)
+        check_fatal();                  /* DATA callers must unwind native drawing first */
     return failed ? EACCDN : E_OK;
+}
+
+LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
+                           LONG a, LONG b, ULONG *result)
+{
+    if (signature == USER_CALLBACK_DATA_U16)
+        return EINVAL;                  /* scalar CHAIN cannot forge a payload */
+    return invoke(cb, signature, a, b, NULL, 0, result);
+}
+
+LONG user_callback_invoke_data(USER_CALLBACK *cb, const void *data,
+                                ULONG bytes, ULONG *result)
+{
+    return invoke(cb, USER_CALLBACK_DATA_U16, 0, 0, data, bytes, result);
 }
 
 LONG user_callback_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD pc)

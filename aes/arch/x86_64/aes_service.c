@@ -13,6 +13,7 @@
 #if CONF_WITH_AES
 #include "aes_accessory.h"
 #include "aes_window.h"
+#include "aes_objects_kernel.h"
 #endif
 #include "../../../bdos/kproc.h"
 
@@ -89,6 +90,7 @@ void aes_service_process_exit(PD *pd)
         return;
 #if CONF_WITH_AES
     x86_64_aes_registration(pd, FALSE);
+    x86_64_aes_objects_exit(pd);
 #endif
     for (i = 0; i < 2; i++)
         if (update[i].owner == p) {
@@ -147,7 +149,7 @@ static LONG register_client(UQUAD address, UQUAD output)
     info.features = AES_FEATURE_MESSAGE | AES_FEATURE_UPDATE;
 #if CONF_WITH_AES
     if (x86_64_aes_associated(run)) {
-        info.features |= AES_FEATURE_WAIT | AES_FEATURE_INPUT | AES_FEATURE_WINDOW;
+        info.features |= AES_FEATURE_WAIT | AES_FEATURE_INPUT | AES_FEATURE_WINDOW | AES_FEATURE_OBJECT;
         x86_64_aes_registration(run, TRUE);
     }
 #endif
@@ -247,6 +249,13 @@ static LONG update_ownership(AES_CLIENT_STATE *p, UQUAD code)
             update[index].owner = NULL;
     }
     return E_OK;
+}
+
+LONG aes_service_update(PD *pd, UWORD code)
+{
+    AES_CLIENT_STATE *p = kproc_aes_get(pd);
+
+    return p ? update_ownership(p, code) : EACCDN;
 }
 
 BOOL aes_service_window_unlocked(PD *pd)
@@ -447,7 +456,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
 
     if (!kproc_user_aspace(run))
         return EACCDN;
-    if (fn > AES_SERVICE_WINDOW)
+    if (fn > AES_SERVICE_OBJECT)
         return EINVFN;
     if (c || d || ((fn == AES_SERVICE_EXIT || fn == AES_SERVICE_YIELD) && (a || b)) ||
         ((fn == AES_SERVICE_FIND || fn == AES_SERVICE_READ ||
@@ -463,6 +472,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
         aes_service_process_exit(run);
 #if CONF_WITH_AES
         x86_64_aes_window_unregister(run);
+        x86_64_aes_objects_reap();
 #endif
         return E_OK;
     case AES_SERVICE_FIND:
@@ -485,6 +495,12 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
         return input_events(a, b);
     case AES_SERVICE_WINDOW:
         return window_service(a, b, defer_return_work);
+    case AES_SERVICE_OBJECT:
+#if CONF_WITH_AES
+        return x86_64_aes_objects(a, b);
+#else
+        return EACCDN;
+#endif
     case AES_SERVICE_WAIT:
         if (a != AES_EVENT_MESSAGE)
             return EINVAL;
@@ -535,6 +551,9 @@ LONG aes_service_kernel_message(PD *pd, const WORD *words)
     if (p->count == AES_MESSAGE_QUEUE)
         return EAGAIN;
     memcpy(&message, words, sizeof(message));
+#if CONF_WITH_AES
+    x86_64_aes_tree_message(pd, (WORD *)&message);
+#endif
     message.sender = 0;
     message.reserved = 0;
     p->queue[(p->head + p->count) % AES_MESSAGE_QUEUE] = message;

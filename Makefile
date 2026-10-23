@@ -933,7 +933,11 @@ x32-vdi-import-test: obj/x32/VDIIMP.TOS obj/x32/VDIREL.TOS obj/x32/VDIPLT.TOS
 	python3 tests/x32_vdi_import/check_imports.py obj/x32
 
 # Native AES client stubs and the existing application-local rectangle helpers.
-X32_AES_OBJ = obj/x32/aes_client.o obj/x32/aes_rectfunc.o
+X32_AES_OBJ = obj/x32/aes_client.o obj/x32/aes_rectfunc.o obj/x32/aes_object_client.o obj/x32/aes_tree.o
+obj/x32/aes_object_client.o: aes/x32/aes_object_client.c include/aes_objects.h include/aes_service.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/aes_tree.o: aes/aes_tree.c include/aes_objects.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
 obj/x32/aes_client.o: aes/x32/aes_client.c include/aes_client.h include/aes_service.h $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
 obj/x32/aes_rectfunc.o: util/rectfunc.c include/grect.h include/rectfunc.h $(AUTOCONF_H) | obj/x32
@@ -1040,8 +1044,11 @@ aes-contract-test: $(AUTOCONF_H)
 	  tests/aes_contract/aes_contract.c util/rectfunc.c -o obj/aes-contract-test
 	./obj/aes-contract-test
 	python3 tests/aes_contract/check_inventory.py
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_TREE_HOST_TEST \
+	  tests/aes_contract/tree_contract.c aes/aes_tree.c -o obj/aes-tree-contract-test
+	./obj/aes-tree-contract-test
 
-TOCLEAN += obj/aes-contract-test
+TOCLEAN += obj/aes-contract-test obj/aes-tree-contract-test
 
 TOCLEAN += obj/vdi-contract-test
 
@@ -1952,13 +1959,13 @@ obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: ACC_TEST_CRT = $(LI
 $(LIBCMINI_OBJDIR)/crt0.o: $(LIBCMINI_LIB)
 	$(LIBCMINI_MAKE) $@
 obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: \
-  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/entry.S \
+  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/objects.c tests/x32_accessory/entry.S \
   $(LIBCMINI_LIB) $(LIBCMINI_CRT0) $(LIBCMINI_OBJDIR)/crt0.o \
   obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -I$(LIBCMINI_INC) -Iinclude -Iobj \
 	  -DACC_ROLE=$(ACC_TEST_ROLE) -DACC_NAME='"$(basename $(notdir $@))"' \
 	  $(X32_LDFLAGS) -Wl,-e,acc_probe_entry -o $@ \
-	  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
+  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/objects.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
 	  -Lobj/x32 -lptos-aes -lptos-vdi $(LIBCMINI_LIB)
 .PHONY: x32-accessory-test
 x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC obj/x32/BADACC.ACC
