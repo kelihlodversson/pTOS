@@ -97,6 +97,11 @@ GLOBAL char *ad_stail;
 
 static BOOL gl_shgem;                   /* TRUE iff currently in graphics mode */
 
+BOOL sh_graphics_active(void)
+{
+    return gl_shgem;
+}
+
 /*
  *  Resolution settings:
  *      gl_changerez: 0=no change, 1=change ST resolution, 2=change Falcon resolution

@@ -13,8 +13,15 @@
 #include "aesext.h"
 #include "gsxdefs.h"
 #include "intmath.h"
+#if CONF_WITH_X32_DESKTOP_TEST
+#include "desk_rsc.h"
+#endif
 
 static AESGLOBAL resource;
+static BOOL registered;
+#if CONF_WITH_X32_DESKTOP_TEST
+static BOOL test_ready;
+#endif
 static LONG shell(AES_SHELL_REQUEST *request)
 {
     LONG rc;
@@ -39,6 +46,26 @@ static WORD parent(OBJECT *tree, WORD object)
     }
     return -1;
 }
+
+#if CONF_WITH_X32_DESKTOP_TEST
+static void menu_target(OBJECT *tree)
+{
+    WORD object, at, x[2] = { 0, 0 }, y[2] = { 0, 0 };
+    WORD ids[2] = { READITEM, OPTNMENU };
+    char message[100];
+
+    for (object = 0; object < 2; object++) {
+        for (at = ids[object]; at >= 0; at = parent(tree, at)) {
+            x[object] += tree[at].ob_x;
+            y[object] += tree[at].ob_y;
+        }
+        x[object] += tree[ids[object]].ob_width / 2;
+        y[object] += tree[ids[object]].ob_height / 2;
+    }
+    sprintf(message, "x32 desktop readinf TARGET %d %d %d %d\r\n", x[0], y[0], x[1], y[1]);
+    desk_test_record(message);
+}
+#endif
 
 static BOOL unlink_object(OBJECT *tree, WORD object)
 {
@@ -116,6 +143,7 @@ static WORD rubber(const UWORD *in, UWORD *out)
 {
     AES_EVENT_REQUEST request = { 0 };
     AES_INPUT_EVENT event;
+    LONG result;
     WORD x, y, buttons, modifiers, width, height, nw, nh;
 
     graf_mkstate(&x, &y, &buttons, &modifiers);
@@ -128,16 +156,41 @@ static WORD rubber(const UWORD *in, UWORD *out)
         graf_mouse(M_OFF, NULL);
         outline(in[0], in[1], width, height);
         graf_mouse(M_ON, NULL);
-        if (aes_evnt_multi(&request, &event) < 0)
-            break;
+        result = aes_evnt_multi(&request, &event);
         graf_mouse(M_OFF, NULL);
         outline(in[0], in[1], width, height);
         graf_mouse(M_ON, NULL);
+        if (result < 0)
+            break;
         nw = max((WORD)(event.mouse_x - (WORD)in[0]), (WORD)in[2]);
         nh = max((WORD)(event.mouse_y - (WORD)in[1]), (WORD)in[3]);
         width = nw; height = nh; buttons = event.buttons;
     }
     out[1] = width; out[2] = height;
+    return TRUE;
+}
+
+static WORD animate(const UWORD *in)
+{
+    GRECT old, rectangle;
+    const WORD *from = (const WORD *)in;
+    const WORD *to = (const WORD *)(in + 4);
+    WORD i, coordinate;
+
+    gsx_gclip(&old);
+    for (i = 1; i <= 8; i++) {
+        for (coordinate = 0; coordinate < 4; coordinate++)
+            ((WORD *)&rectangle)[coordinate] = from[coordinate] +
+                ((LONG)to[coordinate] - from[coordinate]) * i / 8;
+        graf_mouse(M_OFF, NULL);
+        outline(rectangle.g_x, rectangle.g_y, rectangle.g_w, rectangle.g_h);
+        graf_mouse(M_ON, NULL);
+        evnt_timer(10, 0);
+        graf_mouse(M_OFF, NULL);
+        outline(rectangle.g_x, rectangle.g_y, rectangle.g_w, rectangle.g_h);
+        graf_mouse(M_ON, NULL);
+    }
+    gsx_sclip(&old);
     return TRUE;
 }
 
@@ -262,15 +315,19 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
     GRECT rectangle;
     DESK_TREE snapshot;
     LONG rc = EINVFN;
-    WORD i;
     void *pointer;
 
+    desk_tree_checkpoint();
     (void)results;
     memset(out, 0, 7 * sizeof(*out));
     switch (opcode) {
     case APPL_INIT:
         rc = aes_appl_init("EMUDESK", &app);
         if (!rc) {
+            registered = TRUE;
+#if CONF_WITH_X32_DESKTOP_TEST
+            test_ready = FALSE;
+#endif
             memset(global, 0, 32 * sizeof(*global));
             ((AESGLOBAL *)global)->ap_version = AES_VERSION;
             ((AESGLOBAL *)global)->ap_count = 1;
@@ -280,19 +337,45 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
         }
         break;
     case APPL_EXIT:
-        desk_trees_exit(); rc = aes_appl_exit(); break;
+        desk_trees_exit();
+        sr.operation = AES_SHELL_RESET;
+        rc = shell(&sr);
+        if (rc < 0)
+            break;
+        rc = aes_appl_exit();
+        registered = FALSE;
+        break;
     case EVNT_MULTI:
+#if CONF_WITH_X32_DESKTOP_TEST
+        {
+            if ((in[0] & (MU_KEYBD | MU_BUTTON | MU_MESAG)) == (MU_KEYBD | MU_BUTTON | MU_MESAG))
+                desk_test_record("x32 desktop IDLE\r\n");
+            if (!test_ready) {
+                AES_OBJECT_REQUEST request = { 0 };
+                AES_OBJECT_RESULT result;
+                char message[100];
+
+                request.operation = AES_OBJECT_MOUSE_STATE;
+                if (!desk_object_call(&request, &result)) {
+                    sprintf(message, "x32 desktop READY %d %d %d %d\r\n",
+                            result.rectangle.g_x, result.rectangle.g_y, gl_width, gl_height);
+                    desk_test_record(message);
+                }
+                test_ready = TRUE;
+            }
+        }
+#endif
         event_request.mask = in[0];
-        event_request.clicks = in[1]; event_request.button_mask = in[2];
-        event_request.button_state = in[3];
+        event_request.clicks = in[1]; event_request.button_mask = in[2] & 3;
+        event_request.button_state = in[3] & 3;
         memcpy(&event_request.mouse1, in + 4, sizeof(AES_EVENT_RECT));
         memcpy(&event_request.mouse2, in + 9, sizeof(AES_EVENT_RECT));
         event_request.timer_ms = (ULONG)in[14] | ((ULONG)in[15] << 16);
         goto wait_event;
     case EVNT_BUTTON:
         event_request.mask = AES_EVENT_BUTTON;
-        event_request.clicks = in[0]; event_request.button_mask = in[1];
-        event_request.button_state = in[2];
+        event_request.clicks = in[0]; event_request.button_mask = in[1] & 3;
+        event_request.button_state = in[2] & 3;
         goto wait_event;
     case EVNT_TIMER:
         event_request.mask = AES_EVENT_TIMER;
@@ -313,7 +396,12 @@ wait_event:
         sr.operation = AES_SHELL_DCLICK; sr.value = in[0]; sr.extra = in[1];
         out[0] = shell(&sr); return out[0];
     case MENU_BAR:
-        out[0] = desk_tree_retain(tree, 0, TRUE, in[0]); return out[0];
+        out[0] = desk_tree_retain(tree, 0, TRUE, in[0]);
+#if CONF_WITH_X32_DESKTOP_TEST
+        if (out[0] && in[0])
+            menu_target(tree);
+#endif
+        return out[0];
     case MENU_ICHECK: case MENU_IENABLE: case MENU_TNORMAL:
         if (opcode == MENU_ICHECK)
             tree[in[0]].ob_state = in[1] ? tree[in[0]].ob_state | CHECKED : tree[in[0]].ob_state & ~CHECKED;
@@ -345,7 +433,10 @@ wait_event:
     case FORM_DO:
         if (!desk_tree_create(&snapshot, tree))
             break;
+        desk_test_record("x32 desktop form READY\r\n");
         rc = aes_form_do(snapshot.handle, in[0]);
+        if (rc >= 0)
+            desk_test_record("x32 desktop form PASS\r\n");
         desk_tree_read(&snapshot);
         desk_tree_destroy(&snapshot);
         out[0] = rc < 0 ? 0 : rc; return out[0];
@@ -364,7 +455,7 @@ wait_event:
     case GRAF_RUBBOX:
         out[0] = rubber(in, out); return out[0];
     case GRAF_GROWBOX: case GRAF_SHRINKBOX:
-        rc = E_OK; break;
+        out[0] = animate(in); return out[0];
     case GRAF_HANDLE:
         object_request.operation = AES_OBJECT_METRICS;
         rc = desk_object_call(&object_request, &object_result);
@@ -378,13 +469,23 @@ wait_event:
         rc = desk_object_call(&object_request, &object_result);
         out[1] = object_result.rectangle.g_x; out[2] = object_result.rectangle.g_y;
         out[3] = object_result.value; out[4] = object_result.key; break;
+    case FSEL_EXINPUT: {
+        WORD button = 0;
+
+        out[0] = desk_file_select((char *)addresses[0], (char *)addresses[1], &button, (const char *)addresses[2]);
+        out[1] = button;
+        return out[0];
+    }
     case WIND_CREATE:
         memcpy(&rectangle, in + 1, sizeof(GRECT));
         rc = aes_wind_create(in[0], &rectangle);
         out[0] = rc < 0 ? -1 : rc; return out[0];
     case WIND_OPEN:
         memcpy(&rectangle, in + 1, sizeof(GRECT));
-        rc = aes_wind_open(in[0], &rectangle); break;
+        rc = aes_wind_open(in[0], &rectangle);
+        if (!rc)
+            desk_test_record("x32 desktop window OPEN\r\n");
+        break;
     case WIND_CLOSE: rc = aes_wind_close(in[0]); break;
     case WIND_DELETE: rc = aes_wind_delete(in[0]); break;
     case WIND_GET: rc = window_get(in[0], in[1], out); break;
@@ -417,11 +518,9 @@ wait_event:
         memcpy(&rectangle, in + 2, sizeof(GRECT));
         rc = aes_wind_calc(in[0], in[1], &rectangle, (GRECT *)(out + 1)); break;
     case WIND_NEW:
-        for (i = 1; i < NUM_WIN; i++) {
-            aes_wind_close(i);
-            aes_wind_delete(i);
-        }
-        rc = E_OK; break;
+        sr.operation = AES_SHELL_RESET;
+        rc = registered ? shell(&sr) : E_OK;
+        break;
     case RSRC_LOAD:
         rc = rs_load(&resource, (char *)addresses[0]) ? E_OK : EFILNF;
         if (!rc)

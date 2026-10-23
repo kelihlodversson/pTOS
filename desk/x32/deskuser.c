@@ -1,19 +1,35 @@
 /* Freestanding x32 EmuDesk process runtime. GPL version 2 or later. */
 #include "emutos.h"
 #include "bdosbind.h"
+#include "bdosdefs.h"
 #include "obdefs.h"
 #include "deskmain.h"
 #include "syscall.h"
 #include "asm.h"
 #include <stdarg.h>
+#include "biosbind.h"
+#include "deskaes.h"
 
 extern void *desk_basepage;
 void desk_user_start(PD *basepage, long entry_type) NORETURN;
 void desk_user_start(PD *basepage, long entry_type)
 {
     (void)entry_type;
+#if CONF_WITH_X32_DESKTOP_TEST
+    {
+        UWORD cs;
+
+        __asm__ volatile ("mov %%cs,%0" : "=r"(cs));
+        if ((cs & 3) != 3) {
+            desk_test_record("x32 desktop CPL FAIL\r\n");
+            Pterm0();
+        }
+        desk_test_record("x32 desktop CPL3 PASS\r\n");
+    }
+#endif
     desk_basepage = basepage;
-    deskmain();
+    while (!deskmain())
+        ;
     Pterm0();
     for (;;)
         ;
@@ -54,5 +70,20 @@ long trap1(WORD function, ...)
 WORD sh_find(char *path);
 WORD sh_find(char *path)
 {
-    return Fsfirst(path, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0;
+    DTA dta;
+    void *saved = (void *)Fgetdta();
+    WORD found;
+
+    Fsetdta(&dta);
+    found = Fsfirst(path, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0;
+    Fsetdta(saved);
+    return found;
 }
+
+#if CONF_WITH_X32_DESKTOP_TEST
+void desk_test_record(const char *message)
+{
+    while (*message)
+        Bconout(1, *message++);
+}
+#endif

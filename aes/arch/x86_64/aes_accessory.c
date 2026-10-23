@@ -24,6 +24,7 @@
 #include "gemevlib.h"
 #include "gemgsxif.h"
 #include "gemctrl.h"
+#include "gemmnlib.h"
 
 #define MESSAGE_WAIT 0x8000
 typedef struct {
@@ -32,6 +33,9 @@ typedef struct {
     PD *launch_parent;
     BOOL started;
     BOOL registration_revoked;
+    BOOL menu_registered;
+    BOOL shell_closed;
+    char menu_label[11];
     LONG result;
     X86_64_PROCESS_CONTEXT context;
 } ACCESSORY_CONTEXT;
@@ -72,7 +76,16 @@ void x86_64_aes_launch_process(PD *pd, PD *parent)
         return;
     c->launch_parent = NULL;
     c->owner = pd;
+    c->shell_closed = FALSE;
     c->registration_revoked = FALSE;
+}
+
+void x86_64_aes_shell_closed(PD *pd)
+{
+    ACCESSORY_CONTEXT *c = owned(pd);
+
+    if (c && c->aes->p_pid == 0)
+        c->shell_closed = TRUE;
 }
 
 void x86_64_aes_launch_end(void)
@@ -83,6 +96,13 @@ void x86_64_aes_launch_end(void)
     c->launch_parent = NULL;
     c->owner = NULL;
     if (owner) {
+        /* Typed appl_exit and fault cleanup retire the registration before
+         * Pexec returns. Still perform the foreground shell transition:
+         * accessories must close their windows before wm_new resets them. */
+        if (!c->shell_closed) {
+            mn_cleanup();
+            wait_for_accs(AP_ACCLOSE);
+        }
         x86_64_aes_window_finished(owner, c->aes);
         x86_64_aes_objects_finished(c->aes);
     }
@@ -309,8 +329,19 @@ void x86_64_aes_registration(PD *pd, BOOL active)
     if (!c)
         return;
     if (active) {
+        c->shell_closed = FALSE;
         c->aes->p_flags |= AP_OPEN;
         c->aes->p_flags &= ~AP_ACCLOSE;
+        /* Loaded typed accessories have no legacy menu_register call.
+         * Register their filename once, before wait_for_accs lets the shell
+         * publish its menu. Storage lasts for the whole AES session, even
+         * if the accessory exits or its client registration is replaced. */
+        if (c->aes->p_pid >= 2 && !c->menu_registered) {
+            c->menu_label[0] = c->menu_label[1] = ' ';
+            memcpy(c->menu_label + 2, c->aes->p_name, 8);
+            c->menu_label[10] = 0;
+            c->menu_registered = mn_register(c->aes->p_pid, c->menu_label) >= 0;
+        }
     } else {
         /* Do not erase cancellation if the callback registers again before
          * the suspended wait resumes. Only a fresh wait clears this flag. */

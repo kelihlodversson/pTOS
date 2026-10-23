@@ -2,6 +2,7 @@
 #include "config.h"
 #include "aes_client.h"
 #include "aes_objects.h"
+#include "aes_shell.h"
 #include "aes_service.h"
 #include "gemerror.h"
 #include "vdipb.h"
@@ -138,6 +139,7 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     CHECK(aes_appl_find("PARENT") == EACCDN);
     CHECK(aes_appl_exit() == EACCDN);
     CHECK(aes_appl_yield() == EACCDN);
+    CHECK(aes_shell(NULL) == EACCDN);
     CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == EACCDN);
     CHECK(aes_appl_init(NULL, &info) == EIMBA);
     CHECK(aes_appl_init("", &info) == EINVAL);

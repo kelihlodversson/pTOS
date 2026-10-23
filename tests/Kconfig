@@ -32,4 +32,13 @@ config CONF_WITH_X32_ACCESSORY_TEST
       Input regressions include real user callbacks revoking registrations
       while keyboard, mouse and timer waits are suspended.
 
+config CONF_WITH_X32_DESKTOP_TEST
+    bool "Report external x32 desktop integration checkpoints"
+    depends on ARCH_X86_64 && CONF_EXTERNAL_DESK && CONF_WITH_USER_CALLBACKS
+    depends on CONF_WITH_READ_INF && CONF_WITH_CLI && CONF_EXTERNAL_CLI
+    default n
+    help
+      Emit serial-only markers from the real desktop for the QEMU PS/2
+      integration driver, including CPL, menus, forms and USERDEF drawing.
+
 endmenu

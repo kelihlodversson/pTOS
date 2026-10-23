@@ -5,6 +5,11 @@
 #include "obdefs.h"
 WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
                        intptr_t *addresses, intptr_t *results);
+#if CONF_WITH_X32_DESKTOP_TEST
+void desk_test_record(const char *message);
+#else
+#define desk_test_record(message) ((void)0)
+#endif
 typedef struct {
     OBJECT *source;
     UBYTE *blob;
@@ -20,4 +25,6 @@ LONG desk_tree_operation(OBJECT *tree, WORD object, UWORD operation,
                          AES_OBJECT_RESULT *result);
 WORD desk_tree_retain(OBJECT *tree, WORD root, BOOL menu, BOOL show);
 void desk_trees_exit(void);
+void desk_tree_checkpoint(void);
+WORD desk_file_select(char *path, char *selection, WORD *button, const char *title);
 #endif

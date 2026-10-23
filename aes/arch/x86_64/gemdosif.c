@@ -56,6 +56,7 @@
 #include "biosbind.h"
 #include "bdosbind.h"
 #include "aes_accessory.h"
+#include "gemshlib.h"
 
 extern PD *run;
 
@@ -299,7 +300,8 @@ LONG dos_exec(WORD mode, const char *path, const char *tail, const char *env)
 {
     LONG result;
 
-    x86_64_aes_launch_begin(run);
+    if (sh_graphics_active())
+        x86_64_aes_launch_begin(run);
     result = Pexec(mode, path, tail, env);
     x86_64_aes_launch_end();
     return result;

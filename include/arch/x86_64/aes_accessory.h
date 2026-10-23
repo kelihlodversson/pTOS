@@ -15,6 +15,7 @@ void x86_64_aes_restore(void);
 void x86_64_aes_enter(void) NORETURN;
 void x86_64_aes_launch_begin(PD *parent);
 void x86_64_aes_launch_end(void);
+void x86_64_aes_shell_closed(PD *pd);
 void x86_64_aes_launch_process(PD *pd, PD *parent);
 void x86_64_aes_drain(void);
 BOOL x86_64_aes_owned(PD *pd);

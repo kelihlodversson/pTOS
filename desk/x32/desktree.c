@@ -5,6 +5,11 @@
 #include "string.h"
 #include "gemerror.h"
 #include "deskaes.h"
+#if CONF_WITH_X32_DESKTOP_TEST
+#include "deskapp.h"
+#include "deskfpd.h"
+#include "deskinf.h"
+#endif
 
 typedef struct { OBJECT *tree; USERBLK *block; } DRAW_CONTEXT;
 typedef struct {
@@ -13,6 +18,28 @@ typedef struct {
     BOOL failed;
 } BUILDER;
 static DESK_TREE retained[2];
+#if CONF_WITH_X32_DESKTOP_TEST
+static BOOL user_drawn, user_reported, probe_drawn, probe_reported;
+static GRECT probe_rectangle;
+#endif
+
+void desk_tree_checkpoint(void)
+{
+#if CONF_WITH_X32_DESKTOP_TEST
+    if (probe_drawn && !probe_reported) {
+        char message[80];
+
+        probe_reported = TRUE;
+        sprintf(message, "x32 desktop program TARGET %d %d\r\n",
+                probe_rectangle.g_x + 16, probe_rectangle.g_y + probe_rectangle.g_h / 2);
+        desk_test_record(message);
+    }
+    if (user_drawn && !user_reported) {
+        user_reported = TRUE;
+        desk_test_record("x32 desktop USERDEF PASS\r\n");
+    }
+#endif
+}
 
 LONG desk_object_call(AES_OBJECT_REQUEST *request, AES_OBJECT_RESULT *result)
 {
@@ -89,6 +116,14 @@ static WORD draw_bridge(const AES_OBJECT_DRAW *draw)
     memcpy(&p.pb_x, &draw->rectangle, sizeof(GRECT));
     memcpy(&p.pb_xc, &draw->clip, sizeof(GRECT));
     p.pb_parm = context->block->ub_parm;
+#if CONF_WITH_X32_DESKTOP_TEST
+    user_drawn = TRUE;
+    if (context->block->ub_code == dr_code &&
+        !strcmp(((FNODE *)(uintptr_t)context->block->ub_parm)->f_name, "GEMTEST.PRG")) {
+        probe_drawn = TRUE;
+        probe_rectangle = draw->rectangle;
+    }
+#endif
     return context->block->ub_code(&p);
 }
 

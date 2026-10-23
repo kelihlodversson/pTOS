@@ -10,6 +10,9 @@
 #include "gemshlib.h"
 #include "gemfmlib.h"
 #include "gemevlib.h"
+#include "gemmnlib.h"
+#include "gemwmlib.h"
+#include "geminit.h"
 #include "gemerror.h"
 #include "string.h"
 #include "../../../bios/ikbd.h"
@@ -48,6 +51,8 @@ LONG x86_64_aes_shell(UQUAD address)
         unused.value = unused.extra = 0;
         unused.data = unused.second = unused.bytes = 0;
         break;
+    case AES_SHELL_RESET:
+        break;
     case AES_SHELL_WDEF:
         unused.data = unused.second = 0;
         break;
@@ -78,17 +83,30 @@ LONG x86_64_aes_shell(UQUAD address)
     if (r.operation == AES_SHELL_DAMAGE) {
         if (r.rectangle.g_w <= 0 || r.rectangle.g_h <= 0 ||
             r.rectangle.g_x < -10000 || r.rectangle.g_y < -10000 ||
+            r.rectangle.g_x > 10000 || r.rectangle.g_y > 10000 ||
             r.rectangle.g_w > 10000 || r.rectangle.g_h > 10000)
             return EINVAL;
-        if (!aes_service_window_unlocked(run))
+        if ((wind_spb.sy_tas && wind_spb.sy_owner != rlr) ||
+            !aes_service_window_unlocked(run))
             return EAGAIN;
-        return fm_dial(FMD_FINISH, &empty, &r.rectangle);
+        wm_update(BEG_UPDATE);
+        rc = fm_dial(FMD_FINISH, &empty, &r.rectangle);
+        wm_update(END_UPDATE);
+        return rc;
     }
     /* The foreground application owns the shell continuation. Accessories
      * cannot overwrite its pending program or desktop settings. */
     if (rlr->p_pid != 0)
         return EACCDN;
     switch (r.operation) {
+    case AES_SHELL_RESET:
+        if (!aes_service_window_unlocked(run))
+            return EAGAIN;
+        mn_cleanup();
+        wait_for_accs(AP_ACCLOSE);
+        wm_new();
+        x86_64_aes_shell_closed(run);
+        return E_OK;
     case AES_SHELL_GET: case AES_SHELL_PUT:
         if (r.bytes > sizeof(buffer))
             return ERANGE;
@@ -116,8 +134,18 @@ LONG x86_64_aes_shell(UQUAD address)
             r.value != SHW_SHUTDOWN && r.value != SHW_RESCHNG))
             return EINVAL;
         if (r.value == SHW_EXEC) {
+            char *name;
+
             if (r.extra < 0 || r.extra > 1 || (rc = path(r.data, first)) != E_OK)
                 return r.extra < 0 || r.extra > 1 ? EINVAL : rc;
+            /* Native shell search concatenates this basename with its
+             * application directory. Enforce the TOS component limits,
+             * not only the size of the copied complete command. */
+            name = sh_name(first);
+            if (!*name)
+                return EINVAL;
+            if (strlen(name) >= LEN_ZFNAME || name - first >= LEN_ZPATH)
+                return ERANGE;
             if (!kproc_copy_from_user(second, r.second, AES_SHELL_TAIL_BYTES))
                 return EIMBA;
         } else {
