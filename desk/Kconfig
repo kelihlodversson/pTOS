@@ -136,6 +136,7 @@ config CONF_EXTERNAL_DESK
 	# x32 uses the typed AES/VDI client libraries. ARM and m68k still
 	# use trap #2, unavailable from their isolated user address spaces.
 	depends on !CONF_WITH_USER_ASPACE || ARCH_X86_64
+	depends on !ARCH_X86_64 || CONF_WITH_USER_CALLBACKS
 	select CONF_WITH_SSYSTEM
 	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
 	help

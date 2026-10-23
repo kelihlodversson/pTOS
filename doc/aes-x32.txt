@@ -665,6 +665,7 @@ rejects any FAIL/fault/panic/reset and verifies:
 
   - CPL3 and the process-entry ABI for EmuDesk, an accessory and a graphical app;
   - real menu selection, About, disk-window icon/text drawing and USERDEF;
+  - opening an accessory from the Desk menu and closing its window gadget;
   - held-button selection/drag wait compatibility (classic mask 0xff -> 3);
   - a graphical app launched from EmuDesk, bad pointer/size/command rejection,
     saved-shell-buffer copies, private nested-child ownership and accessory IPC;

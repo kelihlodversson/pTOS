@@ -59,9 +59,9 @@ static void accessory(void)
     CHECK(aes_appl_init("DESKACC", &app) == E_OK);
     CHECK((app.features & (AES_FEATURE_WAIT | AES_FEATURE_WINDOW)) ==
                           (AES_FEATURE_WAIT | AES_FEATURE_WINDOW));
-    h = aes_wind_create(AES_WINDOW_NAME_GADGET | AES_WINDOW_MOVER, &rectangle);
-    CHECK(h > 0);
-    CHECK(aes_wind_set_text(h, AES_WINDOW_NAME, "Ring-3 accessory") == E_OK);
+    /* The shell resets the window table when it starts the first desktop
+     * too. Allocate lazily on AC_OPEN, as at subsequent application returns. */
+    h = 0;
     record("x32 desktop accessory READY\r\n");
     for (;;) {
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
@@ -79,14 +79,40 @@ static void accessory(void)
             h = 0;
             opened = FALSE;
             record("x32 desktop accessory CLOSE\r\n");
+        } else if (event.message.type == 22 && opened) {
+            do {
+                rc = aes_wind_close(h);
+                if (rc == EAGAIN)
+                    CHECK(aes_appl_yield() == E_OK);
+            } while (rc == EAGAIN);
+            CHECK(rc == E_OK);
+            opened = FALSE;
+            record("x32 desktop accessory window CLOSED\r\n");
         } else if (event.message.type == 40 || event.message.type == 650) {
             if (!h) {
-                h = aes_wind_create(AES_WINDOW_NAME_GADGET | AES_WINDOW_MOVER, &rectangle);
+                do {
+                    h = aes_wind_create(AES_WINDOW_NAME_GADGET | AES_WINDOW_MOVER | AES_WINDOW_CLOSER, &rectangle);
+                    if (h == EAGAIN)
+                        CHECK(aes_appl_yield() == E_OK);
+                } while (h == EAGAIN);
                 CHECK(h > 0);
-                CHECK(aes_wind_set_text(h, AES_WINDOW_NAME, "Ring-3 accessory") == E_OK);
+                do {
+                    rc = aes_wind_set_text(h, AES_WINDOW_NAME, "Ring-3 accessory");
+                    if (rc == EAGAIN)
+                        CHECK(aes_appl_yield() == E_OK);
+                } while (rc == EAGAIN);
+                CHECK(rc == E_OK);
             }
-            if (!opened)
-                CHECK(aes_wind_open(h, &rectangle) == E_OK);
+            if (!opened) {
+                /* AC_OPEN may arrive before the desktop releases its
+                 * menu/update lock. Typed window services ask us to yield. */
+                do {
+                    rc = aes_wind_open(h, &rectangle);
+                    if (rc == EAGAIN)
+                        CHECK(aes_appl_yield() == E_OK);
+                } while (rc == EAGAIN);
+                CHECK(rc == E_OK);
+            }
             opened = TRUE;
             record("x32 desktop accessory OPEN\r\n");
             if (event.message.type == 650)

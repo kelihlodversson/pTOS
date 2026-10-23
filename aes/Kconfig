@@ -17,8 +17,9 @@ config CONF_WITH_X32_AES
 	  Enable the typed client library and kernel-owned registrations,
 	  message queues, message-event polling and update ownership for x32
 	  graphical applications. Application-local rectangle helpers run in
-	  ring 3. This is a prerequisite for the x32 desktop, not its launch
-	  path: the legacy AES scheduler and EmuDesk remain separate work.
+	  ring 3. With CONF_WITH_AES, associated graphical applications and
+	  accessories use the native scheduler, windows and owned object trees.
+	  CONF_EXTERNAL_DESK builds EmuDesk as a loaded x32 ring-3 program.
 	  Generic ring-3 GEM trap class 2 stays disabled.
 
 config CONF_WITH_AES
@@ -32,8 +33,9 @@ config CONF_WITH_AES
 	  This is only useful when the image size is severely restricted,
 	  such as for the diagnostic cartridge.
 
-	  On x86-64 the native AES/EmuDesk runs in the kernel and loaded
-	  accessories use the typed ring-3 AES and VDI services.
+	  On x86-64 the native AES runs in the kernel; loaded applications,
+	  accessories and the optional external EmuDesk use the typed ring-3
+	  AES and VDI services.
 
 if CONF_WITH_AES
 

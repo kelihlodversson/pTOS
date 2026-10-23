@@ -348,18 +348,24 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
     case EVNT_MULTI:
 #if CONF_WITH_X32_DESKTOP_TEST
         {
-            if ((in[0] & (MU_KEYBD | MU_BUTTON | MU_MESAG)) == (MU_KEYBD | MU_BUTTON | MU_MESAG))
-                desk_test_record("x32 desktop IDLE\r\n");
-            if (!test_ready) {
+            BOOL main_wait = (in[0] & (MU_KEYBD | MU_BUTTON | MU_MESAG)) == (MU_KEYBD | MU_BUTTON | MU_MESAG);
+
+            if (!test_ready || main_wait) {
                 AES_OBJECT_REQUEST request = { 0 };
                 AES_OBJECT_RESULT result;
                 char message[100];
 
                 request.operation = AES_OBJECT_MOUSE_STATE;
                 if (!desk_object_call(&request, &result)) {
-                    sprintf(message, "x32 desktop READY %d %d %d %d\r\n",
-                            result.rectangle.g_x, result.rectangle.g_y, gl_width, gl_height);
-                    desk_test_record(message);
+                    if (main_wait) {
+                        sprintf(message, "x32 desktop IDLE %d %d\r\n", result.rectangle.g_x, result.rectangle.g_y);
+                        desk_test_record(message);
+                    }
+                    if (!test_ready) {
+                        sprintf(message, "x32 desktop READY %d %d %d %d\r\n",
+                                result.rectangle.g_x, result.rectangle.g_y, gl_width, gl_height);
+                        desk_test_record(message);
+                    }
                 }
                 test_ready = TRUE;
             }

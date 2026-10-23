@@ -57,11 +57,12 @@ class Guest:
         assert self.process.poll() is None, "QEMU exited before the desktop test completed"
         return text
 
-    def wait(self, marker, count=1, timeout=15):
+    def wait(self, marker, count=1, timeout=15, after=0, regex=False):
         deadline = min(self.deadline, time.monotonic() + timeout)
         while time.monotonic() < deadline:
             text = self.text()
-            if text.count(marker) >= count:
+            found = len(re.findall(marker, text[after:])) if regex else text[after:].count(marker)
+            if found >= count:
                 return text
             time.sleep(0.05)
         raise AssertionError("timeout waiting for %r #%d\n%s" % (marker, count, self.text()[-5000:]))
@@ -80,8 +81,14 @@ class Guest:
             pass
 
     def move(self, x, y):
-        self.command("mouse_move %d %d" % (x - self.x, y - self.y))
-        self.x, self.y = x, y
+        # Keep every PS/2 packet inside its signed-byte movement range.
+        # Large monitor deltas can lose motion before a direction reversal.
+        while (self.x, self.y) != (x, y):
+            dx = max(-100, min(100, x - self.x))
+            dy = max(-100, min(100, y - self.y))
+            self.command("mouse_move %d %d" % (dx, dy), delay=0.05)
+            self.x += dx
+            self.y += dy
 
     def click(self):
         self.command("mouse_button 1")
@@ -94,7 +101,7 @@ class Guest:
         self.command("screendump " + str(self.output / (name + ".ppm")))
 
     def ready(self, count):
-        text = self.wait("x32 desktop READY", count)
+        text = self.wait(r"x32 desktop READY \d+ \d+ \d+ \d+\r?\n", count, regex=True)
         records = re.findall(r"x32 desktop READY (\d+) (\d+) (\d+) (\d+)\r?\n", text)
         assert len(records) >= count, "partial READY record"
         self.x, self.y, width, height = map(int, records[count - 1])
@@ -109,7 +116,7 @@ class Guest:
         time.sleep(0.25)
         self.move(item_x, item_y)
         self.click()
-        text = self.wait("x32 desktop selector READY", count)
+        text = self.wait(r"x32 desktop selector READY \d+ \d+\r?\n", count, regex=True)
         records = re.findall(r"x32 desktop selector READY (\d+) (\d+)\r?\n", text)
         assert len(records) >= count
         return tuple(map(int, records[count - 1]))
@@ -145,15 +152,28 @@ def desktop(guest):
     guest.key("ret")
     guest.wait("x32 desktop form PASS")
     time.sleep(0.3)
+    guest.move(38, 8)
+    time.sleep(0.25)
+    guest.move(70, 59)
+    guest.click()
+    guest.wait("x32 desktop accessory OPEN")
+    guest.screenshot("accessory-menu-open")
+    guest.move(858, 508)
+    guest.click()
+    guest.wait("x32 desktop accessory window CLOSED")
     guest.key("alt-c")
-    guest.wait("x32 desktop window OPEN")
+    text = guest.wait("x32 desktop window OPEN")
+    text = guest.wait(r"x32 desktop IDLE \d+ \d+\r?\n", after=text.rfind("x32 desktop window OPEN"), regex=True)
+    coordinates = re.findall(r"x32 desktop IDLE (\d+) (\d+)\r?\n", text)
+    guest.x, guest.y = map(int, coordinates[-1])
     time.sleep(0.3)
     guest.screenshot("icons")
     guest.move(135, 8)
     time.sleep(0.25)
+    guest.screenshot("view-menu")
     guest.move(135, 44)
     guest.click()
-    text = guest.wait("x32 desktop program TARGET")
+    text = guest.wait(r"x32 desktop program TARGET \d+ \d+\r?\n", regex=True)
     guest.wait("x32 desktop USERDEF PASS")
     guest.screenshot("text")
     target = re.search(r"x32 desktop program TARGET (\d+) (\d+)\r?\n", text)
@@ -205,7 +225,7 @@ def main():
     parser.add_argument("--ovmf-code", default=firmware("code"))
     parser.add_argument("--ovmf-vars", default=firmware("vars"))
     parser.add_argument("--output", type=Path, default=Path("obj/x32-desktop-runtime"))
-    parser.add_argument("--timeout", type=float, default=90)
+    parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--mode", choices=("desktop", "missing", "both"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:
