@@ -1,0 +1,178 @@
+Owned x32 AES object snapshots (#659)
+===================================
+
+include/aes_objects.h extends the typed AES API described in aes-x32.txt.
+The appended exports aes_object, aes_form_do and aes_tree_validate preserve
+all earlier export indices. AES_FEATURE_OBJECT (32) advertises the service
+to registered processes associated with a native AES task. The plain PC,
+VDI-only and non-associated Pexec paths do not gain object services.
+
+Resources and translation
+-------------------------
+
+Resource loading, character-to-pixel coordinate conversion and topology
+editing belong to the application. Build a native-byte-order version-1 blob
+containing a 16-byte AES_TREE_HEADER, count consecutive 24-byte AES_OBJECTs,
+and their payloads. header.bytes must equal the complete supplied size;
+reserved and flags must be zero. Coordinates are pixels. All payload/text/
+bitmap links are offsets from the beginning of this blob, never pointers.
+G_BOX/G_IBOX/G_BOXCHAR spec holds the ordinary scalar GEM box specification.
+The sole executable address is AES_OBJECT_USERDEF.handler, checked against
+the creating process's executable mappings during native translation.
+
+The kernel copies the entire blob before validation. The parser checks
+indices, sibling termination, parent uniqueness, cycles, depth, geometry,
+per-type offsets, alignment, terminated strings and bitmap sizes. Root 0 has
+next=-1. Sibling lists end at their parent; head and tail are both -1 for
+leaves. Detached reserve nodes are allowed but cannot be used by object
+operations until native menu installation connects its reserved DA entries.
+INDIRECT and SUBMENU flags are rejected. Resource topology is immutable
+after creation; build a replacement snapshot to change it.
+
+Supported types use the standard GEM numbers 20 through 33:
+
+* STRING, TITLE and BUTTON reference AES_OBJECT_STRING (text offset and
+  byte capacity, including the terminator).
+* TEXT, BOXTEXT, FTEXT and FBOXTEXT reference AES_OBJECT_TEXT. Its text,
+  template and validation strings have separate capacities; validation must
+  be nonempty. Fonts are 3 or 5, justification 0-2 and thickness -16..16.
+  Only FTEXT/FBOXTEXT may be EDITABLE. Editable templates must have at least
+  text_capacity-1 underscores. Native editing uses separate owned buffers
+  and cannot overwrite structural metadata, even with aliased input offsets.
+* IMAGE references AES_OBJECT_IMAGE: even positive row_bytes <=128,
+  height 1..512, x=y=0 and an in-blob monochrome bitmap.
+* ICON references AES_OBJECT_ICON: width is a multiple of 16 in 16..512,
+  height 1..512, mask/data offsets and a STRING descriptor for its label.
+* CICON references AES_OBJECT_CICON, with the same mono icon and up to eight
+  linked AES_OBJECT_COLOUR records. Each contains 1..32 planes and bounded
+  data/mask offsets; selected data and mask must appear together. The colour
+  chain ends with next=0.
+* USERDEF references AES_OBJECT_USERDEF (handler and opaque parameter).
+  It requires CONF_WITH_USER_CALLBACKS; otherwise creation returns EINVFN.
+
+Limits: 256 KiB per blob, 2048 objects, tree depth 8, strings/capacities at
+most 256 bytes, object dimensions 0..10000 and absolute origins -10000..10000.
+There are at most 16 live/retiring trees per process and 16 MiB of native
+tree allocations globally. Native trees/payloads use LP64 kernel pointers;
+the wire records remain fixed width. No kernel pointer is copied back.
+
+aes_tree_validate(blob, bytes, parents) runs the same parser locally, with
+count writable WORDs of caller-supplied scratch space. It performs no kernel
+call and assumes its local buffers are accessible. Kernel CREATE always
+validates its own copy independently.
+
+Operations
+-----------
+
+aes_object(request, result) returns E_OK or a negative GEMDOS error.
+The request and non-NULL result must be 4-byte aligned; the library supplies
+a local result when NULL is passed. The request is 28 bytes; result is 40.
+Unused request fields must be zero. Result fields not listed below are zero.
+All operations on a tree require its creating process and live registration.
+
+    operation       request fields                   result
+    CREATE          data=blob, bytes=size            value=positive handle
+    DESTROY         tree                             none
+    READ            tree, data=output, bytes=size    complete snapshot
+    GET             tree, object                     object, value=count,
+                                                     index=parent (-1 root),
+                                                     key=ancestor-visible
+    DRAW_TREE       tree, object, value=depth,       none
+                    rectangle=clip
+    FIND            tree, object, value=depth,       value=found index or -1
+                    rectangle.x/y=point
+    OFFSET          tree, object                     rectangle=absolute bounds
+    STATE           tree, object, value=state,       none
+                    extra=redraw (0/1), rectangle=clip
+    RECTANGLE       tree, object, rectangle=relative none
+    SET_TEXT        tree, object, data=text,         none
+                    bytes=length including NUL
+    EDIT            tree, object, value=key,         index=new cursor index
+                    extra=ED_* (0..3), bytes=index
+    CENTER          tree                             rectangle=outer bounds
+    KEY             tree, object=current edit,      value=continue (0/1),
+                    value=key                        key=unconsumed key,
+                                                     index=next/exit object
+    MENU            tree, value=show (0/1)           none
+    DESKTOP         tree, object=root, value=show    none
+    FORM            tree, value=begin (0/1)          none
+    MOUSE           value=shape                      none
+    MOUSE_STATE     none                             rectangle.x/y=mouse,
+                                                     value=buttons, key=shift
+    METRICS         none                             value=VDI handle,
+                                                     rectangle.x/y=char w/h,
+                                                     rectangle.w/h=box w/h
+
+DRAW/STATE use the screen when either clip dimension is zero, otherwise
+intersect the supplied clip with the physical screen. Depth is 0..8. SET_TEXT
+is restricted to text/string/button/title nodes and their original capacity;
+native DA title slots cannot be replaced. EDIT requires a visible editable
+node and an index no greater than its current text length. KEY implements
+Return/default selection and bounded Tab/Up/Down field navigation, skipping
+hidden ancestors and disabled nodes. MOUSE permits predefined shapes 0..7,
+256 (off), 257 (on), with no caller-supplied persistent MFORM pointer.
+
+READ requires exactly the original blob size. It copies the original resource
+with updated topology/geometry/state and editable text, preserving offsets
+and the original USERDEF address/opaque parameter. For deliberately aliased
+payload ranges, later text writes win and the header/object records win last.
+It is a bounded snapshot, not a pointer-bearing native AES resource.
+
+Menu, desktop and modal lifetimes
+--------------------------------
+
+MENU validates the ordinary GEM fixed layout: root, bar 1, active titles 2,
+matching title/menu siblings and contiguous reserved Desk accessory entries.
+It rejects USERDEFs and menus whose popup backup (including alignment and
+shadow) would exceed the native screen-save buffer. Geometry changes and
+centering are refused while a menu is installed. DESKTOP retains the selected
+root for native desktop drawing. Only one typed owner can install a menu or
+desktop at a time; the same owner may replace its own snapshot. Hiding or
+destroying restores the default desktop/menu handling. MN_SELECTED messages
+carry title/item in words 3/4 and the scalar tree handle in words 5/6 (low/high)
+instead of the legacy native pointer slots.
+
+aes_form_do(tree, start) runs its modal loop in ring 3. start=0 selects the
+first visible editable node. It uses typed event waits, native bounded text
+editing, default buttons, radio buttons and press/drag-out/release selection.
+The result is the exit object, with bit 15 for a double-clicked TOUCHEXIT.
+FORM saves/restores menu/input focus while the client owns typed update and
+mouse-control tokens. It does not leave a native form continuation or native
+screen lock suspended across a user wait. Registration cancellation interrupts
+the loop and never releases locks belonging to a new registration.
+
+Native rendering calls and menu tracking pin their snapshot across yields.
+Unregister, exit/fault and desktop restart retire all owned trees, detach
+menus/backgrounds, cancel waits, and defer frees until native continuations
+unwind. Handles are positive, monotonically allocated and never reused.
+Foreign/stale handles return EIHNDL. Inaccessible memory returns EIMBA;
+malformed contracts return EINVAL, exhausted quotas ENSMEM, unsupported
+operations EINVFN, and missing/revoked association EACCDN. Contended typed or
+native display ownership returns EAGAIN; callers may aes_appl_yield and retry.
+
+USERDEF
+--------
+
+The callback has signature WORD handler(const AES_OBJECT_DRAW *draw). A copied
+32-byte record is placed on the owner's user stack below its preserved red
+zone. It contains only the tree handle, opaque parameter, object index, old/
+new states, drawing rectangle and clip. There is no native PARMBLK/tree or
+supervisor address. The callback runs at CPL3 and may use typed VDI drawing;
+the returned low seven bits are the remaining GEM draw state. Existing
+callback depth, stack, executable-page, syscall and timeout checks apply.
+Object operations and waiting are refused inside callbacks. A callback may
+unregister its owner; the in-flight tree stays pinned until drawing unwinds.
+A callback fault unwinds native drawing before terminating the owner, leaving
+other AES tasks and their menu/window state intact.
+
+Validation
+-----------
+
+make aes-contract-test exercises topology, payload/geometry bounds and a
+deterministic malformed-input corpus. The parser test also supports host
+ASan/UBSan. make x32-aes-import-test binds all appended exports. The loaded
+accessory suite draws a real USERDEF, edits a dialog with PS/2 input, selects
+a native menu item, checks foreign handles and immutable snapshots, revokes
+registration during active menu tracking/drawing and faults in USERDEF.
+All existing window/input and allocator cleanup checks repeat across four
+desktop sessions, including both 8- and 16-window configurations.

@@ -24,7 +24,13 @@ static LONG simple(ULONG tree, UWORD op, UWORD object, WORD value, WORD extra,
                     ULONG index, AES_OBJECT_RESULT *out)
 {
     AES_OBJECT_REQUEST r = { tree, op, object, value, extra, { 0 }, 0, index };
-    return aes_object(&r, out);
+    LONG rc;
+    do {
+        rc = aes_object(&r, out);
+        if (rc == EAGAIN && aes_appl_yield())
+            return EACCDN;
+    } while (rc == EAGAIN);
+    return rc;
 }
 
 static LONG state(ULONG tree, WORD object, UWORD flags)
@@ -130,10 +136,16 @@ LONG aes_form_do(ULONG tree, WORD start)
     if (rc) return rc;
     if (start < 0 || start >= root.value)
         return EINVAL;
+    if (start) {
+        rc = simple(tree, AES_OBJECT_GET, start, 0, 0, 0, &out);
+        if (rc) return rc;
+        if (!out.key || !(out.object.flags & 8) || (out.object.state & 8))
+            return EINVAL;
+    }
     if (!next)
         for (i = 1; i < root.value; i++) {
             rc = simple(tree, AES_OBJECT_GET, i, 0, 0, 0, &out);
-            if (!rc && (out.object.flags & 8) && !(out.object.flags & 128) && !(out.object.state & 8)) {
+            if (!rc && out.key && (out.object.flags & 8) && !(out.object.state & 8)) {
                 next = i;
                 break;
             }
@@ -195,7 +207,11 @@ cleanup:
         end = simple(tree, AES_OBJECT_FORM, 0, 0, 0, 0, NULL);
         if (!rc) rc = end;
     }
-    if (mouse) (void)aes_wind_update(AES_END_MCTRL);
-    if (update) (void)aes_wind_update(AES_END_UPDATE);
+    /* Unregister releases the old tokens. A callback can register again
+     * before the wait resumes; never release that new registration's locks. */
+    if (simple(tree, AES_OBJECT_GET, 0, 0, 0, 0, &root) == E_OK) {
+        if (mouse) (void)aes_wind_update(AES_END_MCTRL);
+        if (update) (void)aes_wind_update(AES_END_UPDATE);
+    }
     return rc ? rc : answer;
 }

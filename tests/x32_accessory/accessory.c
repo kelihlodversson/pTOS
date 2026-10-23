@@ -4,6 +4,7 @@
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
 #include "aes_client.h"
+#include "aes_objects.h"
 #include "gemerror.h"
 #include "vdipb.h"
 
@@ -13,6 +14,9 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
 int accessory_window_redraw(WORD handle, WORD vdi_handle);
 int accessory_window_reopen(WORD role, WORD vdi_handle);
 int accessory_window_borrow(void);
+int accessory_object_checks(WORD vdi_handle);
+int accessory_object_fault(WORD vdi_handle);
+int accessory_window_object_restore(WORD vdi_handle);
 int accessory_window_pool(WORD command, WORD *handle);
 long _stksize = 65536;
 UQUAD acc_entry_base, acc_entry_type, acc_entry_stack;
@@ -97,6 +101,7 @@ int main(int argc, char **argv, char **envp)
 #if ACC_ROLE == 1
     return 17;
 #elif ACC_ROLE == 3
+    CHECK(accessory_object_fault(control.handle) == 0);
     __asm__ volatile ("ud2");
 #else
     for (;;) {
@@ -118,6 +123,16 @@ int main(int argc, char **argv, char **envp)
 #endif
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
 #if ACC_ROLE == 4
+        if (event.message.type == 663) {
+            AES_OBJECT_REQUEST foreign = { 0 };
+            AES_OBJECT_RESULT result;
+            foreign.tree = (UWORD)event.message.data[0] | (ULONG)(UWORD)event.message.data[1] << 16;
+            foreign.operation = AES_OBJECT_GET;
+            message.type = 664;
+            message.data[0] = aes_object(&foreign, &result);
+            CHECK(aes_appl_write(event.message.sender, &message) == E_OK);
+            continue;
+        }
         if (event.message.type == 640 || event.message.type == 642 || event.message.type == 644) {
             CHECK(accessory_window_pool(event.message.type, &message.data[0]) == 0);
             message.type = event.message.type + 1;
@@ -162,6 +177,11 @@ int main(int argc, char **argv, char **envp)
             queued = 0;
         }
 #endif
+        if (event.message.type == 662 && !event.message.sender) {
+            CHECK(accessory_object_checks(control.handle) == 0);
+            CHECK(accessory_window_object_restore(control.handle) == 0);
+            continue;
+        }
         if (event.message.type == 631 && !event.message.sender) {
             CHECK(accessory_window_reopen(ACC_ROLE, control.handle) == 0);
             continue;

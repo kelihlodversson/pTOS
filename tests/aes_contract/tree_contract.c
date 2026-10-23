@@ -35,7 +35,22 @@ static void fixture(TEST_RESOURCE *r)
 int aes_tree_contract_checks(void)
 {
     TEST_RESOURCE r;
-    WORD parents[3];
+    struct {
+        AES_TREE_HEADER header;
+        AES_OBJECT object;
+        AES_OBJECT_CICON icon;
+        AES_OBJECT_COLOUR colour;
+        AES_OBJECT_STRING label;
+        AES_OBJECT_IMAGE image;
+        WORD pixels[16];
+        char text[4];
+    } bitmap = { 0 };
+    struct {
+        AES_TREE_HEADER header;
+        AES_OBJECT objects[10];
+    } deep = { { AES_TREE_VERSION, 0, 10, 0, 0 } };
+    WORD parents[10];
+    ULONG i;
     int failure = 0;
 
 #define CHECK(c) do { if (!(c) && !failure) failure = __LINE__; } while (0)
@@ -82,6 +97,48 @@ int aes_tree_contract_checks(void)
     fixture(&r);
     r.header.bytes--;
     CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
+    bitmap.header.version = AES_TREE_VERSION;
+    bitmap.header.bytes = sizeof(bitmap); bitmap.header.count = 1;
+    bitmap.object.next = bitmap.object.head = bitmap.object.tail = -1;
+    bitmap.object.type = 33;
+#define AT(member) ((UBYTE *)&bitmap.member - (UBYTE *)&bitmap)
+    bitmap.object.spec = AT(icon);
+    bitmap.icon.mono.icon.g_w = bitmap.icon.mono.icon.g_h = 16;
+    bitmap.icon.mono.mask = bitmap.icon.mono.data = AT(pixels);
+    bitmap.icon.mono.text = AT(label);
+    bitmap.label.text = AT(text); bitmap.label.capacity = sizeof(bitmap.text);
+    bitmap.icon.colours = AT(colour);
+    bitmap.colour.planes = 1;
+    bitmap.colour.mask = bitmap.colour.data = AT(pixels);
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == E_OK);
+    bitmap.colour.selected_data = AT(pixels); /* selected mask is mandatory */
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
+    bitmap.colour.selected_mask = AT(pixels);
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == E_OK);
+    bitmap.colour.planes = 32;            /* data span exceeds copied bytes */
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
+    bitmap.colour.planes = 1; bitmap.colour.next = AT(colour);
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
+    bitmap.object.type = 31;
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == E_OK);
+    bitmap.icon.mono.icon.g_w = 15;
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
+    bitmap.object.type = 23; bitmap.object.spec = AT(image);
+    bitmap.image.data = AT(pixels); bitmap.image.row_bytes = 2; bitmap.image.height = 16;
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == E_OK);
+    bitmap.image.row_bytes = 3;
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
+#undef AT
+    deep.header.bytes = sizeof(deep);
+    for (i = 0; i < 10; i++) {
+        deep.objects[i].next = i - 1;
+        deep.objects[i].head = deep.objects[i].tail = i < 9 ? i + 1 : -1;
+        deep.objects[i].type = 25;
+    }
+    CHECK(aes_tree_validate(&deep, sizeof(deep), parents) == EINVAL);
+    deep.header.count = 9;
+    deep.objects[8].head = deep.objects[8].tail = -1;
+    CHECK(aes_tree_validate(&deep, sizeof(deep), parents) == E_OK);
 #undef CHECK
     return failure;
 }

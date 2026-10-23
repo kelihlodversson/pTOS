@@ -125,6 +125,9 @@ static void menu_fixup(void)
     }
 
     tree[dabox].ob_height = height;
+#if ARCH_X86_64
+    x86_64_aes_objects_menu_fixup(tree, dabox);
+#endif
 }
 
 
@@ -751,6 +754,9 @@ void mn_bar(OBJECT *tree, WORD showit)
     AESPD   *p;
     OBJECT  *obj;
 
+#if ARCH_X86_64
+    x86_64_aes_objects_menu_change(tree, showit);
+#endif
     p = fpdnm(NULL, rlr->p_pid);
 
     if (showit)

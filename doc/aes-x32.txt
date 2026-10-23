@@ -1,8 +1,9 @@
-Native x32 AES clients and kernel service (#404, #613, #626)
+Native x32 AES clients and kernel service (#404, #613, #626, #659)
 ==========================================================
 
 CONF_WITH_X32_AES enables typed ring-3 clients and kernel-owned application
-registration, messages, input events, windows and update ownership. It depends on
+registration, messages, input events, windows, object snapshots and update
+ownership. It depends on
 the optional x32 VDI support. pc-x86_64-aes_defconfig selects both; the plain
 PC and VDI-only configurations leave AES services disabled. The EmuCON-only
 baseline is independent of this feature.
@@ -403,7 +404,8 @@ Imports and SDK
 
 obj/x32/libptos-aes.a supports static linking. libptos-aes.so.1 is a link-time
 stub for .ptos.imports consumers, not a filesystem DSO to install or execute.
-It exports ten aes_* functions and five existing rectangle helpers.
+It exports 30 functions, including five rectangle helpers and three object/
+dialog/resource functions described in aes-objects-x32.txt.
 The single ordered list in aes_client_exports.h is used by the stub, client
 image, packer and loader. The namespace is aes:, ABI major 1/minor 0.
 
@@ -470,32 +472,32 @@ signatures do not imply x32 availability. Classifications:
     EVNT_TIMER         event     aes_evnt_multi; native AES tick scheduling
     EVNT_MULTI         event     aes_evnt_multi; typed request/result records
     EVNT_DCLICK        event     not exposed; input, callbacks or scheduling
-    MENU_BAR           desktop   not exposed; shared desktop/window/menu/shell state
-    MENU_ICHECK        desktop   not exposed; shared desktop/window/menu/shell state
-    MENU_IENABLE       desktop   not exposed; shared desktop/window/menu/shell state
-    MENU_TNORMAL       desktop   not exposed; shared desktop/window/menu/shell state
-    MENU_TEXT          desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_BAR           desktop   AES_OBJECT_MENU; owned validated menu snapshot
+    MENU_ICHECK        desktop   AES_OBJECT_STATE; CHECKED bit
+    MENU_IENABLE       desktop   AES_OBJECT_STATE; DISABLED bit
+    MENU_TNORMAL       desktop   AES_OBJECT_STATE; SELECTED bit
+    MENU_TEXT          desktop   AES_OBJECT_SET_TEXT; bounded copied string
     MENU_REGISTER      desktop   not exposed; shared desktop/window/menu/shell state
     MENU_POPUP         desktop   not exposed; shared desktop/window/menu/shell state
     MENU_ATTACH        desktop   not exposed; shared desktop/window/menu/shell state
     MENU_ISTART        desktop   not exposed; shared desktop/window/menu/shell state
     MENU_SETTINGS      desktop   not exposed; shared desktop/window/menu/shell state
-    OBJC_ADD           local     not exposed; needs native tree/resource ownership
-    OBJC_DELETE        local     not exposed; needs native tree/resource ownership
-    OBJC_DRAW          mixed     not exposed; local data plus input/display state
-    OBJC_FIND          local     not exposed; needs native tree/resource ownership
-    OBJC_OFFSET        local     not exposed; needs native tree/resource ownership
-    OBJC_ORDER         local     not exposed; needs native tree/resource ownership
-    OBJC_EDIT          mixed     not exposed; local data plus input/display state
-    OBJC_CHANGE        mixed     not exposed; local data plus input/display state
+    OBJC_ADD           local     caller-local topology; replace snapshot
+    OBJC_DELETE        local     caller-local topology; replace snapshot
+    OBJC_DRAW          mixed     AES_OBJECT_DRAW_TREE; pinned native translation
+    OBJC_FIND          local     AES_OBJECT_FIND; bounded tree and coordinates
+    OBJC_OFFSET        local     AES_OBJECT_OFFSET; scalar absolute geometry
+    OBJC_ORDER         local     caller-local topology; replace snapshot
+    OBJC_EDIT          mixed     AES_OBJECT_EDIT; bounded owned text buffers
+    OBJC_CHANGE        mixed     AES_OBJECT_STATE; validated state/redraw
     OBJC_SYSVAR        mixed     not exposed; local data plus input/display state
-    FORM_DO            mixed     not exposed; local data plus input/display state
+    FORM_DO            mixed     aes_form_do; ring-3 event loop
     FORM_DIAL          mixed     not exposed; local data plus input/display state
     FORM_ALERT         mixed     not exposed; local data plus input/display state
     FORM_ERROR         mixed     not exposed; local data plus input/display state
-    FORM_CENTER        mixed     not exposed; local data plus input/display state
-    FORM_KEYBD         mixed     not exposed; local data plus input/display state
-    FORM_BUTTON        mixed     not exposed; local data plus input/display state
+    FORM_CENTER        mixed     AES_OBJECT_CENTER; owned tree geometry
+    FORM_KEYBD         mixed     AES_OBJECT_KEY; bounded navigation/default
+    FORM_BUTTON        mixed     aes_form_do client-side button handling
     GRAF_RUBBOX        mixed     not exposed; local data plus input/display state
     GRAF_DRAGBOX       mixed     not exposed; local data plus input/display state
     GRAF_MBOX          mixed     not exposed; local data plus input/display state
@@ -503,9 +505,9 @@ signatures do not imply x32 availability. Classifications:
     GRAF_SHRINKBOX     mixed     not exposed; local data plus input/display state
     GRAF_WATCHBOX      mixed     not exposed; local data plus input/display state
     GRAF_SLIDEBOX      mixed     not exposed; local data plus input/display state
-    GRAF_HANDLE        mixed     not exposed; local data plus input/display state
-    GRAF_MOUSE         mixed     not exposed; local data plus input/display state
-    GRAF_MKSTATE       mixed     not exposed; local data plus input/display state
+    GRAF_HANDLE        mixed     AES_OBJECT_METRICS; scalar VDI handle/metrics
+    GRAF_MOUSE         mixed     AES_OBJECT_MOUSE; predefined shapes only
+    GRAF_MKSTATE       mixed     AES_OBJECT_MOUSE_STATE; copied scalar input
     SCRP_READ          desktop   not exposed; shared desktop/window/menu/shell state
     SCRP_WRITE         desktop   not exposed; shared desktop/window/menu/shell state
     SCRP_CLEAR         desktop   not exposed; shared desktop/window/menu/shell state
@@ -521,11 +523,11 @@ signatures do not imply x32 availability. Classifications:
     WIND_UPDATE        desktop   aes_wind_update (nonblocking coordination)
     WIND_CALC          desktop   aes_wind_calc (bounded geometry)
     WIND_NEW           desktop   not exposed; shared desktop/window/menu/shell state
-    RSRC_LOAD          mixed     not exposed; owned resources, file I/O and/or display
-    RSRC_FREE          local     not exposed; needs native tree/resource ownership
-    RSRC_GADDR         local     not exposed; needs native tree/resource ownership
-    RSRC_SADDR         local     not exposed; needs native tree/resource ownership
-    RSRC_OBFIX         local     not exposed; needs native tree/resource ownership
+    RSRC_LOAD          mixed     caller-local file/offset conversion, then CREATE
+    RSRC_FREE          local     AES_OBJECT_DESTROY plus caller-local free
+    RSRC_GADDR         local     caller-local offsets or AES_OBJECT_GET/READ
+    RSRC_SADDR         local     caller-local payload edit, then replace snapshot
+    RSRC_OBFIX         local     caller-local character-to-pixel conversion
     SHEL_READ          desktop   not exposed; shared desktop/window/menu/shell state
     SHEL_WRITE         desktop   not exposed; shared desktop/window/menu/shell state
     SHEL_GET           desktop   not exposed; shared desktop/window/menu/shell state

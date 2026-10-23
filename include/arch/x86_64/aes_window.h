@@ -18,6 +18,7 @@ BOOL x86_64_aes_window_pending(PD *pd, AES_MESSAGE *message);
 void x86_64_aes_window_test(void);
 void x86_64_aes_window_test_return(PD *pd);
 BOOL x86_64_aes_window_test_ready(void);
+BOOL x86_64_aes_window_objects_done(void);
 BOOL x86_64_aes_window_test_revoke(PD *pd);
 BOOL x86_64_aes_window_test_reuse(PD *pd);
 WORD x86_64_aes_window_test_arrow(PD *pd);

@@ -11,6 +11,8 @@ void x86_64_aes_objects_exit(PD *owner);
 void x86_64_aes_objects_reap(void);
 void x86_64_aes_objects_drain(void);
 void x86_64_aes_objects_finished(struct aespd *executor);
+void x86_64_aes_objects_menu_change(struct _object *tree, WORD show);
+void x86_64_aes_objects_menu_fixup(struct _object *tree, WORD box);
 AES_TREE_STATE *x86_64_aes_tree_pin(struct _object *tree);
 void x86_64_aes_tree_unpin(AES_TREE_STATE *tree);
 BOOL x86_64_aes_tree_alive(AES_TREE_STATE *tree);

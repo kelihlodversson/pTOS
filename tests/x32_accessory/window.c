@@ -751,6 +751,18 @@ static int borrowed_cleanup(const AES_APP_INFO *info, WORD vdi_handle, const GRE
     return 0;
 }
 
+int accessory_window_object_restore(WORD vdi_handle);
+int accessory_window_object_restore(WORD vdi_handle)
+{
+    GRECT rectangle = { 48, 60, 356, 240 };
+    LONG handle = aes_wind_create(kind, &rectangle);
+    CHECK(handle > 0 && copied_text((WORD)handle) == 0);
+    CHECK(aes_wind_open((WORD)handle, &rectangle) == E_OK);
+    CHECK(accessory_window_redraw((WORD)handle, vdi_handle) == 0);
+    CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, "Objects complete") == E_OK);
+    return 0;
+}
+
 int accessory_window_reopen(WORD role, WORD vdi_handle)
 {
     GRECT rectangle = { 48, 60, 356, 240 };

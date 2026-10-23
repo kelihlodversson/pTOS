@@ -64,15 +64,18 @@ static struct {
     AES_TREE_STATE *tree, *menu;
     OBJECT *native_menu;
     AESPD *mouse;
+    WORD executor;
     GRECT control;
 } modal;
 extern PD *run;
 
-static void pin(AES_TREE_STATE *t)
+static void pin_as(AES_TREE_STATE *t, WORD executor)
 {
     t->pins++;
-    t->executors[rlr->p_pid]++;
+    t->executors[executor]++;
 }
+
+static void pin(AES_TREE_STATE *t) { pin_as(t, rlr->p_pid); }
 
 static AES_TREE_STATE *find(ULONG handle)
 {
@@ -142,19 +145,57 @@ static void destroy(AES_TREE_STATE *t)
     kfree(t);
 }
 
-void x86_64_aes_tree_unpin(AES_TREE_STATE *t)
+static void unpin_as(AES_TREE_STATE *t, WORD executor)
 {
     if (t) {
         t->pins--;
-        t->executors[rlr->p_pid]--;
+        t->executors[executor]--;
         if (t->retired && !t->pins && !t->menu && !t->desktop && modal.tree != t)
             destroy(t);
     }
 }
 
+void x86_64_aes_tree_unpin(AES_TREE_STATE *t) { unpin_as(t, rlr->p_pid); }
+
+void x86_64_aes_objects_menu_change(OBJECT *objects, WORD show)
+{
+    AES_TREE_STATE *t, *old = modal.menu;
+
+    if (!modal.tree)
+        return;
+    modal.menu = NULL;
+    modal.native_menu = show ? objects : NULL;
+    if (show)
+        for (t = trees; t; t = t->next)
+            if (t->objects == objects) {
+                modal.menu = t;
+                pin_as(t, modal.executor);
+                break;
+            }
+    /* A native application may hide/free its old menu during a typed
+     * dialog. Never restore that obsolete pointer at modal teardown. */
+    unpin_as(old, modal.executor);
+}
+
+void x86_64_aes_objects_menu_fixup(OBJECT *objects, WORD box)
+{
+    AES_TREE_STATE *t;
+    WORD i;
+
+    for (t = trees; t; t = t->next)
+        if (t->objects == objects) {
+            for (i = box + 1; i <= box + 2 + NUM_ACCS; i++)
+                t->parents[i] = -1;
+            for (i = objects[box].ob_head; i != box; i = objects[i].ob_next)
+                t->parents[i] = box;
+            return;
+        }
+}
+
 static void modal_end(void)
 {
     AES_TREE_STATE *t = modal.tree, *menu = modal.menu;
+    WORD executor = modal.executor;
 
     if (!t)
         return;
@@ -163,8 +204,8 @@ static void modal_end(void)
     if (!gl_mntree && x86_64_aes_tree_alive(menu))
         gl_mntree = menu ? menu->objects : modal.native_menu;
     memset(&modal, 0, sizeof(modal));
-    x86_64_aes_tree_unpin(menu);
-    x86_64_aes_tree_unpin(t);
+    unpin_as(menu, executor);
+    unpin_as(t, executor);
 }
 
 void x86_64_aes_objects_reap(void)
@@ -223,8 +264,12 @@ void x86_64_aes_objects_drain(void)
 {
     /* Only after every user and native AES continuation is cancelled. */
     memset(&modal, 0, sizeof(modal));
-    while (trees)
+    while (trees) {
+        if (gl_mntree == trees->objects)
+            gl_mntree = NULL;
+        wm_snapshot_clear(trees->objects);
         destroy(trees);
+    }
 }
 
 void x86_64_aes_tree_message(PD *owner, WORD *message)
@@ -249,6 +294,14 @@ static BOOL connected(AES_TREE_STATE *t, UWORD object)
     while (at > 0)
         at = t->parents[at];
     return at == 0;
+}
+
+static BOOL visible(AES_TREE_STATE *t, WORD object)
+{
+    for (; object != -1; object = t->parents[object])
+        if (t->objects[object].ob_flags & HIDETREE)
+            return FALSE;
+    return TRUE;
 }
 
 static WORD user_draw(PARMBLK *pb)
@@ -557,7 +610,8 @@ static BOOL menu_shape(AES_TREE_STATE *t)
         o[2].ob_head < 3 || box + 2 + NUM_ACCS >= t->count)
         return FALSE;
     for (item = box + 1; item <= box + 2 + NUM_ACCS; item++)
-        if ((o[item].ob_type & 0xff) != G_STRING)
+        if ((o[item].ob_type & 0xff) != G_STRING || o[item].ob_head != -1 ||
+            (t->parents[item] != box && t->parents[item] != -1))
             return FALSE;
     title = o[2].ob_head;
     item = box;
@@ -609,7 +663,7 @@ static LONG key_event(AES_TREE_STATE *t, UWORD object, WORD key, AES_OBJECT_RESU
     out->key = 0;
     for (; i >= 0 && i < t->count; i += step)
         if (connected(t, i) && (t->objects[i].ob_flags & flag) &&
-            !(t->objects[i].ob_flags & HIDETREE) && !(t->objects[i].ob_state & DISABLED)) {
+            visible(t, i) && !(t->objects[i].ob_state & DISABLED)) {
             out->index = i;
             if (exit) {
                 ob_change(t->objects, i, t->objects[i].ob_state | SELECTED, TRUE);
@@ -637,6 +691,8 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
     if ((input & 3) || !kproc_copy_from_user(&r, input, sizeof(r)) ||
         (output & 3) || !kproc_validate_user_write(output, sizeof(result)))
         return EIMBA;
+    if (r.operation < AES_OBJECT_CREATE || r.operation > AES_OBJECT_METRICS)
+        return EINVFN;
     if (!valid_request(r))
         return EINVAL;
     if (!x86_64_aes_owned(run))
@@ -651,7 +707,12 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
         if (rc < 0)
             return rc;
         result.value = rc;
-        return kproc_copy_to_user(output, &result, sizeof(result)) ? E_OK : EIMBA;
+        if (kproc_copy_to_user(output, &result, sizeof(result)))
+            return E_OK;
+        t = find(result.value);
+        if (t)
+            destroy(t);
+        return EIMBA;
     }
     t = r.tree ? find(r.tree) : NULL;
     if (!t && r.operation != AES_OBJECT_MOUSE && r.operation != AES_OBJECT_MOUSE_STATE &&
@@ -695,6 +756,8 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
     case AES_OBJECT_GET:
         object_record(t, r.object, &result.object);
         result.value = t->count;
+        result.index = t->parents[r.object];
+        result.key = visible(t, r.object);
         break;
     case AES_OBJECT_DRAW_TREE:
         if (r.value < 0 || r.value > MAX_DEPTH || !clip_rectangle(&r.rectangle))
@@ -738,7 +801,8 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
     case AES_OBJECT_SET_TEXT:
         if ((o->ob_type & 0xff) == G_STRING || (o->ob_type & 0xff) == G_TITLE ||
             (o->ob_type & 0xff) == G_BUTTON)
-            capacity = ((AES_OBJECT_STRING *)(t->blob + wire[r.object].spec))->capacity;
+            capacity = o->ob_spec.free_string == t->payload[r.object].text ?
+                ((AES_OBJECT_STRING *)(t->blob + wire[r.object].spec))->capacity : 0;
         else if ((o->ob_type & 0xff) == G_TEXT || (o->ob_type & 0xff) == G_BOXTEXT ||
                  (o->ob_type & 0xff) == G_FTEXT || (o->ob_type & 0xff) == G_FBOXTEXT)
             capacity = ((AES_OBJECT_TEXT *)(t->blob + wire[r.object].spec))->text_capacity;
@@ -749,7 +813,8 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
         break;
     case AES_OBJECT_EDIT:
         length = strlen(t->payload[r.object].text);
-        if (!(o->ob_flags & EDITABLE) || r.extra < 0 || r.extra > 3 || r.bytes > length) {
+        if (!(o->ob_flags & EDITABLE) || !visible(t, r.object) ||
+            r.extra < 0 || r.extra > 3 || r.bytes > length) {
             rc = EINVAL; break;
         }
         index = r.bytes;
@@ -801,6 +866,7 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
         if (r.value) {
             if (modal.tree) { rc = EAGAIN; break; }
             modal.tree = t; pin(t);
+            modal.executor = rlr->p_pid;
             modal.native_menu = gl_mntree;
             modal.menu = x86_64_aes_tree_pin(gl_mntree);
             get_mown(&modal.mouse); get_ctrl(&modal.control);

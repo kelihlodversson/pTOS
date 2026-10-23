@@ -550,6 +550,7 @@ BOOL x86_64_aes_test_run(void)
     BOOL old_ctmown = gl_ctmown;
     WORD revocations = 0;
     BOOL reuse_sent = FALSE;
+    BOOL objects_sent = FALSE;
     const EVSPEC revoke_masks[3] = { MU_KEYBD, MU_M1, MU_TIMER };
     AESPD *task;
 
@@ -619,8 +620,17 @@ BOOL x86_64_aes_test_run(void)
         }
         /* Message wakeups can leave p_evwait set on a runnable task. Wait
          * for both clients to have finished their windows and really slept. */
-        if (dead == 2 && waiting == 2 && x86_64_aes_window_test_ready())
-            break;
+        if (dead == 2 && waiting == 2 && x86_64_aes_window_test_ready()) {
+            if (!objects_sent) {
+                WORD objects_message[8] = { 662, 0, 0, 0, 0, 0, 0, 0 };
+                for (i = 2; i < NUM_PDS; i++)
+                    if (contexts[i].owner && !memcmp(contexts[i].aes->p_name, "ACCTWO  ", 8))
+                        if (!ap_rdwr(MU_SDMSG, contexts[i].aes, sizeof(objects_message), objects_message))
+                            panic("accessory object test wake FAIL\n");
+                objects_sent = TRUE;
+            } else if (x86_64_aes_window_objects_done())
+                break;
+        }
     }
     if (revocations != 3) {
         set_ctrl(&old_control);

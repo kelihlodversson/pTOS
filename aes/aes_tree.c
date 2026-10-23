@@ -105,7 +105,7 @@ LONG aes_tree_validate(const void *data, ULONG bytes, WORD *parents)
             return EINVAL;
         switch (p->type & 0xff) {
         case 20: case 25: case 27: {     /* box, invisible box, box character */
-            LONG thickness = (BYTE)(p->spec >> 16);
+            LONG thickness = (int8_t)(p->spec >> 16);
 
             if (thickness < -16 || thickness > 16)
                 return EINVAL;

@@ -26,18 +26,36 @@ try:
             # Preserve a trailing CR: only the LF completes a serial record.
             with args.log.open(errors="replace", newline="") as log:
                 output = log.read()
-            assert not any(x in output for x in ("panic:", "accessory input FAIL", "accessory window FAIL")), output[-4000:]
+            assert not any(x in output for x in ("panic:", "accessory input FAIL", "accessory window FAIL", "accessory object FAIL")), output[-4000:]
             ready = list(re.finditer(
-                r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)): READY"
+                r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)|object (?P<object>dialog|menu|cancel)): READY"
                 r"(?: (?P<x>-?\d+) (?P<y>-?\d+) (?P<old_x>-?\d+) (?P<old_y>-?\d+))?\r?\n", output))
             for match in ready[seen:]:
-                stage = match.group('input') or match.group('window')
+                stage = match.group('input') or match.group('window') or match.group('object')
                 if connection is None:
                     connection = socket.socket(socket.AF_UNIX)
                     connection.settimeout(2)
                     connection.connect(args.monitor)
                 connection.settimeout(2)
-                if stage == 'close':
+                if stage == 'dialog':
+                    time.sleep(0.1)
+                    connection.sendall(b"sendkey a\n")
+                    time.sleep(0.15)
+                    connection.sendall(b"sendkey ret\n")
+                elif stage in ('menu', 'cancel'):
+                    dx = int(match.group('x')) - int(match.group('old_x'))
+                    dy = int(match.group('y')) - int(match.group('old_y'))
+                    connection.sendall(("mouse_move %d %d\n" % (dx, dy)).encode())
+                    time.sleep(0.15)
+                    connection.sendall(b"mouse_move 0 20\n")
+                    time.sleep(0.15)
+                    connection.sendall(b"mouse_button 1\n")
+                    time.sleep(0.1)
+                    connection.sendall(b"mouse_button 0\n")
+                    if stage == 'cancel':
+                        time.sleep(0.1)
+                        connection.sendall(b"mouse_move 480 472\n")
+                elif stage == 'close':
                     dx = int(match.group('x')) - int(match.group('old_x'))
                     dy = int(match.group('y')) - int(match.group('old_y'))
                     connection.sendall(("mouse_move %d %d\n" % (dx, dy)).encode())
@@ -56,7 +74,10 @@ try:
                 except socket.timeout:
                     pass
             if "x32 accessory desktop: PASS" in output:
-                assert seen == 24 and output.count("x32 input events: PASS") == 4
+                assert seen == 36 and output.count("x32 input events: PASS") == 4
+                assert output.count("x32 object active menu cancellation: PASS") == 4
+                assert output.count("x32 object USERDEF fault: ARMED") == 4
+                assert output.count("x32 objects snapshot/menu/dialog/USERDEF/revocation: PASS") == 4
                 assert output.count("x32 window events/ownership/lifecycle: PASS") == 4
                 assert output.count("x32 window reopened on desktop: PASS") == 2
                 print("PS/2 input, focused window keys and native close clicks in four sessions: PASS")
