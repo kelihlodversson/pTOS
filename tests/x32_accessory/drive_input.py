@@ -28,7 +28,7 @@ try:
                 output = log.read()
             assert not any(x in output for x in ("panic:", "accessory input FAIL", "accessory window FAIL", "accessory object FAIL")), output[-4000:]
             ready = list(re.finditer(
-                r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)|object (?P<object>dialog|menu|cancel|modal)): READY"
+                r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)|object (?P<object>dialog|menu|cancel|modal|radio)): READY"
                 r"(?: (?P<x>-?\d+) (?P<y>-?\d+) (?P<old_x>-?\d+) (?P<old_y>-?\d+))?\r?\n", output))
             for match in ready[seen:]:
                 stage = match.group('input') or match.group('window') or match.group('object')
@@ -40,6 +40,18 @@ try:
                 if stage == 'dialog':
                     time.sleep(0.1)
                     connection.sendall(b"sendkey a\n")
+                    time.sleep(0.15)
+                    connection.sendall(b"sendkey ret\n")
+                elif stage == 'radio':
+                    dx = int(match.group('x')) - int(match.group('old_x'))
+                    dy = int(match.group('y')) - int(match.group('old_y'))
+                    connection.sendall(("mouse_move %d %d\n" % (dx, dy)).encode())
+                    time.sleep(0.1)
+                    connection.sendall(b"mouse_button 1\n")
+                    time.sleep(0.5)      # let the two-click wait deliver the press before dragging
+                    connection.sendall(b"mouse_move 0 60\n")
+                    time.sleep(0.1)
+                    connection.sendall(b"mouse_button 0\n")
                     time.sleep(0.15)
                     connection.sendall(b"sendkey ret\n")
                 elif stage == 'modal':
@@ -79,7 +91,8 @@ try:
                 except socket.timeout:
                     pass
             if "x32 accessory desktop: PASS" in output:
-                assert seen == 40 and output.count("x32 input events: PASS") == 4
+                assert seen == 44 and output.count("x32 input events: PASS") == 4
+                assert output.count("x32 object radio drag selection: PASS") == 4
                 assert output.count("x32 object cancelled modal preserves new locks: PASS") == 4
                 assert output.count("x32 object active menu cancellation: PASS") == 4
                 assert output.count("x32 object USERDEF fault: ARMED") == 4

@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-input-") as temporary:
         listener.settimeout(2)
         process = subprocess.Popen(
             [sys.executable, str(Path(__file__).with_name("drive_input.py")),
-             str(log), str(monitor), "--timeout", "20"],
+             str(log), str(monitor), "--timeout", "30"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         connection = None
         try:
@@ -31,6 +31,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-input-") as temporary:
                 (b"x32 window close: READY 120 80 100 -123",
                  b"mouse_move 20 203\nmouse_button 1\nmouse_button 0\n"),
                 (b"x32 object dialog: READY", b"sendkey a\nsendkey ret\n"),
+                (b"x32 object radio: READY 260 130 100 -123",
+                 b"mouse_move 160 253\nmouse_button 1\nmouse_move 0 60\nmouse_button 0\nsendkey ret\n"),
                 (b"x32 object menu: READY 20 8 100 -123",
                  b"mouse_move -80 131\nmouse_move 0 20\nmouse_button 1\nmouse_button 0\n"),
                 (b"x32 object cancel: READY 20 8 100 -123",
@@ -67,6 +69,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-input-") as temporary:
                                  b"x32 object active menu cancellation: PASS\r\n"
                                  b"x32 object cancelled modal preserves new locks: PASS\r\n"
                                  b"x32 object USERDEF fault: ARMED\r\n"
+                                 b"x32 object radio drag selection: PASS\r\n"
                                  b"x32 window events/ownership/lifecycle: PASS\r\n"
                                  b"x32 objects snapshot/menu/dialog/USERDEF/revocation: PASS\r\n")
                 serial.write(b"x32 window reopened on desktop: PASS\r\n" * 2)

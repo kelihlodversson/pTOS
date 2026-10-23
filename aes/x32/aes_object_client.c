@@ -49,14 +49,14 @@ static LONG click(ULONG tree, WORD object, UWORD clicks, AES_OBJECT_RESULT *out)
     AES_OBJECT_RESULT node, bounds, sibling;
     AES_EVENT_REQUEST wait = { 0 };
     AES_INPUT_EVENT event;
-    LONG rc, i, parent = -1, count;
+    LONG rc, i;
+    WORD parent;
     UWORD flags, original, selected;
     BOOL in = TRUE;
 
     rc = simple(tree, AES_OBJECT_GET, object, 0, 0, 0, &node);
     if (rc)
         return rc;
-    count = node.value;
     flags = node.object.flags;
     original = node.object.state;
     out->index = 0;
@@ -67,20 +67,7 @@ static LONG click(ULONG tree, WORD object, UWORD clicks, AES_OBJECT_RESULT *out)
         selected = original ^ 1;
         if (flags & 16) {               /* RBUTTON: only this sibling stays selected */
             selected = original | 1;
-            for (i = 0; i < count; i++) {
-                WORD child, attempts = 0;
-                rc = simple(tree, AES_OBJECT_GET, i, 0, 0, 0, &sibling);
-                if (rc)
-                    continue;           /* detached reserve entries */
-                child = sibling.object.head;
-                while (child >= 0 && child != i && attempts++ < count) {
-                    if (child == object) { parent = i; break; }
-                    rc = simple(tree, AES_OBJECT_GET, child, 0, 0, 0, &sibling);
-                    if (rc) return rc;
-                    child = sibling.object.next;
-                }
-                if (parent >= 0) break;
-            }
+            parent = node.index;
             if (parent < 0) return EINVAL;
             rc = simple(tree, AES_OBJECT_GET, parent, 0, 0, 0, &sibling);
             if (rc) return rc;
@@ -97,20 +84,30 @@ static LONG click(ULONG tree, WORD object, UWORD clicks, AES_OBJECT_RESULT *out)
         }
         rc = state(tree, object, selected);
         if (rc) return rc;
-        rc = simple(tree, AES_OBJECT_OFFSET, object, 0, 0, 0, &bounds);
-        if (rc) return rc;
-        wait.mask = AES_EVENT_BUTTON | AES_EVENT_MOUSE1;
         wait.clicks = wait.button_mask = 1;
-        wait.mouse1.rectangle = bounds.rectangle;
-        do {
-            wait.mouse1.outside = in;
-            rc = aes_evnt_multi(&wait, &event);
-            if (rc < 0) return rc;
-            in = contains_point(&bounds.rectangle, event.mouse_x, event.mouse_y);
-            rc = state(tree, object, in ? selected : original);
+        if (flags & 16) {
+            /* Native radio buttons commit on press. Moving outside must
+             * neither clear the new choice nor restore just one sibling. */
+            if (!(flags & 64)) {
+                wait.mask = AES_EVENT_BUTTON;
+                rc = aes_evnt_multi(&wait, &event);
+                if (rc < 0) return rc;
+            }
+        } else {
+            rc = simple(tree, AES_OBJECT_OFFSET, object, 0, 0, 0, &bounds);
             if (rc) return rc;
-        } while (!(event.events & AES_EVENT_BUTTON));
-        if (!in) return E_OK;
+            wait.mask = AES_EVENT_BUTTON | AES_EVENT_MOUSE1;
+            wait.mouse1.rectangle = bounds.rectangle;
+            do {
+                wait.mouse1.outside = in;
+                rc = aes_evnt_multi(&wait, &event);
+                if (rc < 0) return rc;
+                in = contains_point(&bounds.rectangle, event.mouse_x, event.mouse_y);
+                rc = state(tree, object, in ? selected : original);
+                if (rc) return rc;
+            } while (!(event.events & AES_EVENT_BUTTON));
+            if (!in) return E_OK;
+        }
         if ((flags & 4) && (selected & 1))  /* EXIT */
             out->value = 0;
     }

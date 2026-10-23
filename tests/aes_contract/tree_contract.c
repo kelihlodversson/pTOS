@@ -12,7 +12,7 @@ typedef struct {
     AES_OBJECT objects[3];
     AES_OBJECT_TEXT text;
     AES_OBJECT_STRING button;
-    char value[8], pattern[8], valid[2], label[8];
+    char value[256], pattern[256], valid[256], label[256];
 } TEST_RESOURCE;
 
 static void fixture(TEST_RESOURCE *r)
@@ -43,7 +43,7 @@ int aes_tree_contract_checks(void)
         AES_OBJECT_STRING label;
         AES_OBJECT_IMAGE image;
         WORD pixels[16];
-        char text[4];
+        char text[129];
     } bitmap = { 0 };
     struct {
         AES_TREE_HEADER header;
@@ -97,6 +97,40 @@ int aes_tree_contract_checks(void)
     fixture(&r);
     r.header.bytes--;
     CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
+    fixture(&r);
+    r.text.text_capacity = 1;             /* native edit would decrement index below zero */
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
+    fixture(&r);
+    r.text.text_capacity = r.text.template_capacity = 80;
+    r.text.validation_capacity = 81;
+    for (i = 0; i < 80; i++) {
+        r.value[i] = i < 79 ? 'a' : 0;
+        r.pattern[i] = i < 79 ? '_' : 0;
+        r.valid[i] = 'X';
+    }
+    r.valid[80] = 0;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == E_OK);
+    r.text.template_capacity = 81;        /* expansion also writes a terminator */
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
+    r.objects[1].flags = 0;              /* noneditable formatted drawing fits all 81 bytes */
+    r.text.text_capacity = 81;
+    r.value[79] = 'a'; r.value[80] = 0;
+    r.pattern[79] = '_'; r.pattern[80] = 0;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == E_OK);
+    r.text.text_capacity = 82;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
+    r.text.text_capacity = 81; r.text.template_capacity = 82;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
+    r.text.template_capacity = 81; r.text.validation_capacity = 82;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
+    fixture(&r);
+    r.button.capacity = 128;
+    for (i = 0; i < 127; i++)
+        r.label[i] = 'x';
+    r.label[127] = 0;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == E_OK);
+    r.button.capacity = 129;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == EINVAL);
     bitmap.header.version = AES_TREE_VERSION;
     bitmap.header.bytes = sizeof(bitmap); bitmap.header.count = 1;
     bitmap.object.next = bitmap.object.head = bitmap.object.tail = -1;
@@ -106,11 +140,14 @@ int aes_tree_contract_checks(void)
     bitmap.icon.mono.icon.g_w = bitmap.icon.mono.icon.g_h = 16;
     bitmap.icon.mono.mask = bitmap.icon.mono.data = AT(pixels);
     bitmap.icon.mono.text = AT(label);
-    bitmap.label.text = AT(text); bitmap.label.capacity = sizeof(bitmap.text);
+    bitmap.label.text = AT(text); bitmap.label.capacity = 128;
     bitmap.icon.colours = AT(colour);
     bitmap.colour.planes = 1;
     bitmap.colour.mask = bitmap.colour.data = AT(pixels);
     CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == E_OK);
+    bitmap.label.capacity = 129;
+    CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
+    bitmap.label.capacity = 128;
     bitmap.colour.selected_data = AT(pixels); /* selected mask is mandatory */
     CHECK(aes_tree_validate(&bitmap, sizeof(bitmap), parents) == EINVAL);
     bitmap.colour.selected_mask = AT(pixels);

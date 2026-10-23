@@ -8,7 +8,12 @@
 #define AES_TREE_VERSION 1
 #define AES_TREE_MAX_BYTES (256UL * 1024)
 #define AES_TREE_MAX_OBJECTS 2048
-#define AES_TREE_MAX_TEXT 256
+/* Capacities include the terminator. Native AES intin has 128 WORDs;
+ * TED scratch strings have 81 bytes. ob_edit also terminates its expanded
+ * validation at template_capacity, requiring one additional byte there. */
+#define AES_TREE_MAX_TEXT 128
+#define AES_TREE_MAX_TED_TEXT 81
+#define AES_TREE_MAX_EDIT_TEMPLATE 80
 #define AES_TREE_MAX_DEPTH 8
 
 /* Every offset is relative to the start of the blob. There are no process

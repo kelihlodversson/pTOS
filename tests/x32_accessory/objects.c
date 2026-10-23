@@ -23,6 +23,28 @@ typedef struct {
     AES_OBJECT_STRING strings[16];
     char text[16][16];
 } MENU_RESOURCE;
+typedef struct {
+    AES_TREE_HEADER header;
+    AES_OBJECT objects[3];
+    AES_OBJECT_TEXT ted;
+    AES_OBJECT_STRING string;
+    char text[81], pattern[81], valid[82], label[129];
+} LIMIT_RESOURCE;
+typedef struct {
+    AES_TREE_HEADER header;
+    AES_OBJECT object;
+    AES_OBJECT_CICON icon;
+    AES_OBJECT_COLOUR colour;
+    AES_OBJECT_STRING label;
+    char text[24];
+    WORD mono[16], mask[16], data[64], selected[64];
+} ICON_RESOURCE;
+typedef struct {
+    AES_TREE_HEADER header;
+    AES_OBJECT objects[4];
+    AES_OBJECT_STRING strings[3];
+    char text[3][8];
+} RADIO_RESOURCE;
 
 static ULONG expected_tree;
 static volatile WORD callbacks, callback_bad, revoke, fault;
@@ -144,6 +166,169 @@ static LONG draw_tree(ULONG tree)
     return aes_object(&r, NULL);
 }
 
+static int text_limit_checks(void)
+{
+    LIMIT_RESOURCE r = {
+        { AES_TREE_VERSION, sizeof(LIMIT_RESOURCE), 3, 0, 0 },
+        {
+            { -1, 1, 2, 25, 0, 0, 0, { 30, 30, 1100, 64 } },
+            { 2, -1, -1, 29, 8, 0, offsetof(LIMIT_RESOURCE, ted), { 0, 0, 640, 16 } },
+            { 0, -1, -1, 28, 0, 0, offsetof(LIMIT_RESOURCE, string), { 0, 30, 1100, 16 } }
+        },
+        { offsetof(LIMIT_RESOURCE, text), offsetof(LIMIT_RESOURCE, pattern), offsetof(LIMIT_RESOURCE, valid),
+          81, 3, 0, 0x1100, 0, 80, 80 },
+        { offsetof(LIMIT_RESOURCE, label), 128 }, { 0 }, { 0 }, { 0 }, { 0 }
+    };
+    AES_OBJECT_RESULT out;
+    ULONG tree;
+    WORD i;
+
+    for (i = 0; i < 80; i++) {
+        r.text[i] = i < 79 ? 'a' : 0;
+        r.pattern[i] = i < 79 ? '_' : 0;
+        r.valid[i] = 'X';
+    }
+    for (i = 0; i < 127; i++) r.label[i] = 'b';
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == E_OK);
+    tree = out.value;
+    CHECK(draw_tree(tree) == E_OK);
+    CHECK(command(tree, AES_OBJECT_EDIT, 1, 0, 1, 0, 0, &out) == E_OK && out.index == 79);
+    CHECK(command(tree, AES_OBJECT_EDIT, 1, 0x0e08, 2, 0, 79, &out) == E_OK && out.index == 78);
+    CHECK(command(tree, AES_OBJECT_EDIT, 1, 'a', 2, 0, 78, &out) == E_OK && out.index == 79);
+    CHECK(command(tree, AES_OBJECT_EDIT, 1, 0, 3, 0, 79, &out) == E_OK);
+    CHECK(command(tree, AES_OBJECT_SET_TEXT, 1, 0, 0, (uintptr_t)r.text, 81, &out) == EINVAL);
+    CHECK(command(tree, AES_OBJECT_SET_TEXT, 1, 0, 0, (uintptr_t)r.text, 80, &out) == E_OK);
+    CHECK(command(tree, AES_OBJECT_SET_TEXT, 2, 0, 0, (uintptr_t)r.label, 129, &out) == EINVAL);
+    CHECK(command(tree, AES_OBJECT_SET_TEXT, 2, 0, 0, (uintptr_t)r.label, 128, &out) == E_OK);
+    CHECK(draw_tree(tree) == E_OK);
+    CHECK(command(tree, AES_OBJECT_DESTROY, 0, 0, 0, 0, 0, &out) == E_OK);
+    r.ted.template_capacity = 81;
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == EINVAL);
+    r.objects[1].flags = 0;
+    r.ted.text_capacity = 81;
+    r.text[79] = 'a'; r.pattern[79] = '_';
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == E_OK);
+    tree = out.value;
+    CHECK(draw_tree(tree) == E_OK);
+    CHECK(command(tree, AES_OBJECT_DESTROY, 0, 0, 0, 0, 0, &out) == E_OK);
+    r.ted.text_capacity = 82;
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == EINVAL);
+    (void)Cconws("x32 object native text limits: PASS\r\n");
+    return 0;
+}
+
+static int colour_checks(void)
+{
+    ICON_RESOURCE r = { 0 }, snapshot;
+    AES_OBJECT_RESULT out;
+    ULONG tree;
+    WORD planes, i, p;
+
+    r.header.version = AES_TREE_VERSION; r.header.count = 1;
+    r.object.next = r.object.head = r.object.tail = -1;
+    r.object.type = 33; r.object.spec = offsetof(ICON_RESOURCE, icon);
+    r.object.rectangle.g_x = 760; r.object.rectangle.g_y = 420;
+    r.object.rectangle.g_w = r.object.rectangle.g_h = 16;
+    r.icon.mono.mask = offsetof(ICON_RESOURCE, mask); r.icon.mono.data = offsetof(ICON_RESOURCE, mono);
+    r.icon.mono.text = offsetof(ICON_RESOURCE, label); r.icon.mono.character = 0x1000;
+    r.icon.mono.icon.g_w = r.icon.mono.icon.g_h = 16;
+    r.icon.mono.label.g_y = 20; r.icon.mono.label.g_w = 120; r.icon.mono.label.g_h = 8;
+    r.icon.colours = offsetof(ICON_RESOURCE, colour);
+    r.colour.data = offsetof(ICON_RESOURCE, data); r.colour.mask = offsetof(ICON_RESOURCE, mask);
+    r.label.text = offsetof(ICON_RESOURCE, text); r.label.capacity = sizeof(r.text);
+    strcpy(r.text, "X32 colour regression");
+    for (planes = 1; planes <= 4; planes += 3) {
+        r.colour.planes = planes;
+        r.header.bytes = planes == 1 ? offsetof(ICON_RESOURCE, data) + 32 : sizeof(r);
+        for (i = 0; i < 16; i++) { r.mono[i] = 0xaaaa; r.mask[i] = -1; }
+        for (p = 0; p < planes; p++)
+            for (i = 0; i < 16; i++) {
+                r.data[p * 16 + i] = p == 0 ? 0xaaaa : p == 1 ? 0xcccc : p == 2 ? 0xf0f0 : 0xff00;
+                r.selected[p * 16 + i] = ~r.data[p * 16 + i];
+            }
+        if (planes == 4) {
+            r.colour.selected_data = offsetof(ICON_RESOURCE, selected);
+            r.colour.selected_mask = offsetof(ICON_RESOURCE, mask);
+        }
+        CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, r.header.bytes, &out) == E_OK);
+        tree = out.value;
+        CHECK(draw_tree(tree) == E_OK);
+        CHECK(command(tree, AES_OBJECT_READ, 0, 0, 0, (uintptr_t)&snapshot, r.header.bytes, &out) == E_OK);
+        CHECK(snapshot.colour.data == r.colour.data && snapshot.data[0] == r.data[0]);
+        if (planes == 4) {
+            CHECK(command(tree, AES_OBJECT_STATE, 0, 1, 0, 0, 0, &out) == E_OK);
+            CHECK(draw_tree(tree) == E_OK);
+        }
+        CHECK(command(tree, AES_OBJECT_DESTROY, 0, 0, 0, 0, 0, &out) == E_OK);
+    }
+    return 0;
+}
+
+static int menu_validation_checks(void)
+{
+    MENU_RESOURCE r;
+    AES_OBJECT_RESULT out;
+    ULONG tree;
+    WORD parents[16];
+
+    menu_resource(&r);
+    r.objects[5].tail = 13; r.objects[13].next = 5;
+    r.objects[14] = r.objects[3];
+    r.objects[3].type = 25; r.objects[3].spec = 0; r.objects[3].next = -1;
+    r.objects[2].head = r.objects[2].tail = 14;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == E_OK);
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == E_OK);
+    tree = out.value;
+    CHECK(command(tree, AES_OBJECT_MENU, 0, 1, 0, 0, 0, &out) == EINVAL);
+    CHECK(command(tree, AES_OBJECT_DESTROY, 0, 0, 0, 0, 0, &out) == E_OK);
+    menu_resource(&r);
+    r.objects[5].tail = 13; r.objects[13].next = 5;
+    r.objects[14] = r.objects[5]; r.objects[14].head = r.objects[14].tail = -1;
+    r.objects[14].next = 4; r.objects[14].rectangle.g_x = 200;
+    r.objects[5].next = 14; r.objects[4].tail = 14;
+    r.objects[15] = r.objects[3]; r.objects[15].rectangle.g_x = 100;
+    r.objects[3].next = 15; r.objects[2].tail = 15;
+    CHECK(aes_tree_validate(&r, sizeof(r), parents) == E_OK);
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == E_OK);
+    tree = out.value;
+    CHECK(command(tree, AES_OBJECT_MENU, 0, 1, 0, 0, 0, &out) == EINVAL);
+    CHECK(command(tree, AES_OBJECT_DESTROY, 0, 0, 0, 0, 0, &out) == E_OK);
+    (void)Cconws("x32 object consecutive menu titles: PASS\r\n");
+    return 0;
+}
+
+static int radio_checks(void)
+{
+    RADIO_RESOURCE r = {
+        { AES_TREE_VERSION, sizeof(RADIO_RESOURCE), 4, 0, 0 },
+        {
+            { -1, 1, 3, 25, 0, 0, 0, { 100, 100, 240, 140 } },
+            { 2, -1, -1, 26, 17, 1, offsetof(RADIO_RESOURCE, strings), { 20, 20, 80, 20 } },
+            { 3, -1, -1, 26, 17, 0, offsetof(RADIO_RESOURCE, strings) + sizeof(AES_OBJECT_STRING), { 120, 20, 80, 20 } },
+            { 0, -1, -1, 26, 7, 0, offsetof(RADIO_RESOURCE, strings) + 2 * sizeof(AES_OBJECT_STRING), { 60, 80, 80, 20 } }
+        },
+        { { offsetof(RADIO_RESOURCE, text), 8 }, { offsetof(RADIO_RESOURCE, text) + 8, 8 },
+          { offsetof(RADIO_RESOURCE, text) + 16, 8 } },
+        { "First", "Second", "OK" }
+    }, snapshot;
+    AES_OBJECT_RESULT out;
+    ULONG tree;
+    char ready[100];
+
+    CHECK(command(0, AES_OBJECT_CREATE, 0, 0, 0, (uintptr_t)&r, sizeof(r), &out) == E_OK);
+    tree = out.value;
+    CHECK(draw_tree(tree) == E_OK);
+    CHECK(command(0, AES_OBJECT_MOUSE_STATE, 0, 0, 0, 0, 0, &out) == E_OK);
+    sprintf(ready, "x32 object radio: READY 260 130 %d %d\r\n", out.rectangle.g_x, out.rectangle.g_y);
+    (void)Cconws(ready);
+    CHECK(aes_form_do(tree, 0) == 3);
+    CHECK(command(tree, AES_OBJECT_READ, 0, 0, 0, (uintptr_t)&snapshot, sizeof(snapshot), &out) == E_OK);
+    CHECK(!(snapshot.objects[1].state & 1) && (snapshot.objects[2].state & 1));
+    CHECK(command(tree, AES_OBJECT_DESTROY, 0, 0, 0, 0, 0, &out) == E_OK);
+    (void)Cconws("x32 object radio drag selection: PASS\r\n");
+    return 0;
+}
+
 int accessory_object_fault(WORD vdi_handle)
 {
     RESOURCE r;
@@ -191,6 +376,10 @@ int accessory_object_checks(WORD vdi_handle)
     VDI_BUTTON_CALLBACK *old_button;
 
     drawing_handle = vdi_handle;
+    CHECK(text_limit_checks() == 0);
+    CHECK(colour_checks() == 0);
+    CHECK(menu_validation_checks() == 0);
+    CHECK(radio_checks() == 0);
     resource(&r);
     CHECK(aes_tree_validate(&r, sizeof(r), parents) == E_OK);
     r.objects[1].next = 1;
@@ -219,6 +408,21 @@ int accessory_object_checks(WORD vdi_handle)
     request.operation = AES_OBJECT_RECTANGLE;
     request.rectangle.g_x = 32767; request.rectangle.g_w = request.rectangle.g_h = 1;
     CHECK(aes_object(&request, &out) == EINVAL);
+    request.object = 1;
+    request.rectangle.g_x = -20; request.rectangle.g_y = 20;
+    request.rectangle.g_w = 10; request.rectangle.g_h = 16;
+    CHECK(aes_object(&request, &out) == E_OK);
+    CHECK(command(tree, AES_OBJECT_OFFSET, 1, 0, 0, 0, 0, &out) == E_OK && out.rectangle.g_x == 10);
+    request.rectangle.g_x = 20; request.rectangle.g_w = 160;
+    CHECK(aes_object(&request, &out) == E_OK);
+    request.object = 0;
+    request.rectangle.g_x = -500; request.rectangle.g_y = 30;
+    request.rectangle.g_w = 240; request.rectangle.g_h = 140;
+    CHECK(aes_object(&request, &out) == E_OK);
+    CHECK(command(tree, AES_OBJECT_GET, 0, 0, 0, 0, 0, &out) == E_OK && out.object.rectangle.g_x == -500);
+    request.rectangle.g_x = 30;
+    CHECK(aes_object(&request, &out) == E_OK);
+    (void)Cconws("x32 object relative geometry: PASS\r\n");
     CHECK(draw_tree(tree) == E_OK && callbacks > 0 && !callback_bad);
     CHECK(command(tree, AES_OBJECT_DESKTOP, 0, 1, 0, 0, 0, &out) == E_OK);
     CHECK(command(tree, AES_OBJECT_DESKTOP, 0, 0, 0, 0, 0, &out) == E_OK);

@@ -20,18 +20,29 @@
 #include "gemctrl.h"
 #include "geminput.h"
 #include "gemwmlib.h"
+#include "gemrslib.h"
 #include "gempd.h"
 #include "kheap.h"
 #include "string.h"
 #include "rectfunc.h"
+#include "biosext.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/user_callback.h"
+#include "../../../vdi/vdi_backend.h"
+#if CONF_WITH_X32_ACCESSORY_TEST
+#include "../../../bios/machine/pc-x86_64/gop.h"
+#endif
+
+#define TREE_ALLOCATION_LIMIT (16UL * 1024 * 1024)
+
+typedef char native_text_bounds[(AES_TREE_MAX_TEXT <= sizeof(intin) / sizeof(*intin) &&
+    AES_TREE_MAX_TED_TEXT <= MAX_LEN && AES_TREE_MAX_EDIT_TEMPLATE < MAX_LEN) ? 1 : -1];
 
 typedef struct {
     char text[AES_TREE_MAX_TEXT];
     union {
         struct { TEDINFO ted; char template[AES_TREE_MAX_TEXT], validation[AES_TREE_MAX_TEXT]; } edit;
-        struct { CICONBLK icon; CICON colours[8]; } icon;
+        struct { CICONBLK icon; CICON colour; void *pixels; } icon;
         BITBLK image;
         struct {
             USERBLK block;
@@ -130,13 +141,14 @@ static void destroy(AES_TREE_STATE *t)
             *link = t->next;
             break;
         }
+    for (i = 0; t->objects && t->payload && i < t->count; i++) {
+        if ((t->objects[i].ob_type & 0xff) == G_CICON)
+            kfree(t->payload[i].u.icon.pixels);
 #if CONF_WITH_USER_CALLBACKS
-    for (i = 0; t->objects && t->payload && i < t->count; i++)
         if ((t->objects[i].ob_type & 0xff) == G_USERDEF)
             user_callback_drop(&t->payload[i].u.user.callback);
-#else
-    MAYBE_UNUSED(i);
 #endif
+    }
     allocated -= t->cost;
     kfree(t->parents);
     kfree(t->payload);
@@ -362,12 +374,61 @@ static void native_icon(AES_TREE_STATE *t, NATIVE_PAYLOAD *p, const AES_OBJECT_I
     memcpy(&dst->ib_xtext, &src->label, sizeof(GRECT));
 }
 
+static LONG native_colour(AES_TREE_STATE *t, NATIVE_PAYLOAD *p, const AES_OBJECT_CICON *src)
+{
+#if CONF_WITH_COLOUR_ICONS && CONF_WITH_VDI_BACKEND_TRUECOLOR
+    const AES_OBJECT_COLOUR *s, *best = NULL;
+    ULONG next, bytes, normal;
+    WORD w = src->mono.icon.g_w, h = src->mono.icon.g_h, pixel_size;
+    CICON *c = &p->u.icon.colour;
+
+    if (!vdi_truecolor_screen())
+        return E_OK;                    /* validated monochrome fallback */
+    for (next = src->colours; next; next = s->next) {
+        s = (const AES_OBJECT_COLOUR *)(t->blob + next);
+        /* The native palette has 256 entries. Wider variants cannot be
+         * interpreted as packed pixels or palette codes; use a lower
+         * supported variant, or the mono icon if there is none. */
+        if (s->planes <= 8 && s->planes <= gl_nplanes &&
+            (!best || s->planes > best->planes))
+            best = s;
+    }
+    if (!best)
+        return E_OK;
+    pixel_size = vdi_truecolor_pixel_size();
+    normal = (ULONG)w * h * pixel_size;
+    bytes = normal * (best->selected_data ? 2 : 1);
+    if (bytes > TREE_ALLOCATION_LIMIT - allocated)
+        return ENSMEM;
+    p->u.icon.pixels = kalloc(bytes);
+    if (!p->u.icon.pixels)
+        return ENSMEM;
+    t->cost += bytes;
+    allocated += bytes;
+    c->col_data = p->u.icon.pixels;
+    c->col_mask = (WORD *)(t->blob + best->mask);
+    rs_cicon_pack((const WORD *)(t->blob + best->data), c->col_data,
+                  best->planes, w, h, pixel_size);
+    if (best->selected_data) {
+        c->sel_data = (WORD *)((UBYTE *)p->u.icon.pixels + normal);
+        c->sel_mask = (WORD *)(t->blob + best->selected_mask);
+        rs_cicon_pack((const WORD *)(t->blob + best->selected_data), c->sel_data,
+                      best->planes, w, h, pixel_size);
+    }
+    c->num_planes = 1;                  /* native packed-truecolor convention */
+    p->u.icon.icon.mainlist = c;         /* publish only owned device pixels */
+#else
+    MAYBE_UNUSED(t); MAYBE_UNUSED(p); MAYBE_UNUSED(src);
+#endif
+    return E_OK;
+}
+
 static LONG create(UQUAD address, ULONG bytes)
 {
     AES_TREE_HEADER header;
     AES_TREE_STATE *t, *other;
     AES_OBJECT *src;
-    ULONG cost, owned = 0, i, j, next;
+    ULONG cost, owned = 0, i;
     LONG rc;
 
     if (bytes < sizeof(header) || bytes > AES_TREE_MAX_BYTES || (address & 3) ||
@@ -379,7 +440,7 @@ static LONG create(UQUAD address, ULONG bytes)
     for (other = trees; other; other = other->next)
         if (other->owner == run)
             owned++;
-    if (owned >= 16 || cost > 16UL * 1024 * 1024 - allocated || next_handle == 0x7fffffffUL)
+    if (owned >= 16 || cost > TREE_ALLOCATION_LIMIT - allocated || next_handle == 0x7fffffffUL)
         return ENSMEM;
     t = kalloc(sizeof(*t));
     if (!t)
@@ -453,18 +514,11 @@ static LONG create(UQUAD address, ULONG bytes)
             native_icon(t, p, spec);
             o->ob_spec.ciconblk = &p->u.icon.icon;
             if ((o->ob_type & 0xff) == G_CICON) {
-                next = ((const AES_OBJECT_CICON *)spec)->colours;
-                for (j = 0; next; j++) {
-                    const AES_OBJECT_COLOUR *s = (const AES_OBJECT_COLOUR *)(t->blob + next);
-                    CICON *c = &p->u.icon.colours[j];
-                    c->num_planes = s->planes;
-                    c->col_data = (WORD *)(t->blob + s->data); c->col_mask = (WORD *)(t->blob + s->mask);
-                    c->sel_data = s->selected_data ? (WORD *)(t->blob + s->selected_data) : NULL;
-                    c->sel_mask = s->selected_mask ? (WORD *)(t->blob + s->selected_mask) : NULL;
-                    next = s->next;
-                    c->next_res = next ? c + 1 : NULL;
+                rc = native_colour(t, p, spec);
+                if (rc) {
+                    destroy(t);
+                    return rc;
                 }
-                p->u.icon.icon.mainlist = j ? p->u.icon.colours : NULL;
             }
             break;
         case G_USERDEF: {
@@ -630,7 +684,7 @@ static BOOL menu_shape(AES_TREE_STATE *t)
     item = box;
     gsx_mret(&ignored, &available);
     while (title != 2 && item != menus && ++count <= t->count) {
-        if ((o[title].ob_type & 0xff) != G_TITLE ||
+        if (title != (WORD)(2 + count) || (o[title].ob_type & 0xff) != G_TITLE ||
             o[title].ob_width <= 0 || o[title].ob_height <= 0 ||
             ((o[item].ob_type & 0xff) != G_BOX && (o[item].ob_type & 0xff) != G_IBOX))
             return FALSE;
@@ -686,6 +740,42 @@ static LONG key_event(AES_TREE_STATE *t, UWORD object, WORD key, AES_OBJECT_RESU
         }
     return E_OK;
 }
+
+#if CONF_WITH_X32_ACCESSORY_TEST && CONF_WITH_VDI_BACKEND_TRUECOLOR
+static void test_colour_pixels(AES_TREE_STATE *t)
+{
+    OBJECT *o = t->objects;
+    SCREEN_MODE_DESC mode;
+    const AES_OBJECT_CICON *icon;
+    const AES_OBJECT_COLOUR *colour;
+    AES_OBJECT *wire = (AES_OBJECT *)((AES_TREE_HEADER *)t->blob + 1);
+    ULONG pixel;
+    WORD x, y, code;
+
+    if (t->count != 1 || (o->ob_type & 0xff) != G_CICON ||
+        strcmp(t->payload->text, "X32 colour regression"))
+        return;
+    icon = (const AES_OBJECT_CICON *)(t->blob + wire->spec);
+    colour = (const AES_OBJECT_COLOUR *)(t->blob + icon->colours);
+    gop_get_current_mode_desc(&mode);
+    if (mode.bits_per_pixel != 32 || o->ob_x != 760 || o->ob_y != 420 ||
+        mode.width < 776 || mode.height < 436 ||
+        (colour->planes != 1 && colour->planes != 4))
+        panic("accessory colour icon fixture FAIL\n");
+    /* Check real framebuffer pixels, including selected data, rather than
+     * inspecting the packer's output or just accepting a successful call. */
+    for (y = 0; y < 16; y++)
+        for (x = 0; x < 16; x++) {
+            code = colour->planes == 1 ? 1 - (x & 1) : 15 - x;
+            if (o->ob_state & SELECTED)
+                code = ((1 << colour->planes) - 1) - code;
+            pixel = *(ULONG *)(gop_screenbase() + (420 + y) * mode.pitch + (760 + x) * sizeof(ULONG));
+            if (pixel != vdi_truecolor_pixel_for_index(code))
+                panic("accessory colour icon framebuffer FAIL\n");
+        }
+    kcprintf("x32 object colour pixels: PASS\n");
+}
+#endif
 
 LONG x86_64_aes_objects(UQUAD input, UQUAD output)
 {
@@ -749,7 +839,7 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
     wire = t ? (AES_OBJECT *)((AES_TREE_HEADER *)t->blob + 1) : NULL;
     gsx_gclip(&saved);
     clip = r.rectangle;
-    if (!clip.g_w || !clip.g_h)
+    if (r.operation == AES_OBJECT_RECTANGLE || !clip.g_w || !clip.g_h)
         clip = gl_rscreen;
     else if (!rc_intersect(&gl_rscreen, &clip)) {
         x86_64_aes_tree_unpin(t);
@@ -775,8 +865,12 @@ LONG x86_64_aes_objects(UQUAD input, UQUAD output)
     case AES_OBJECT_DRAW_TREE:
         if (r.value < 0 || r.value > MAX_DEPTH || !clip_rectangle(&r.rectangle))
             rc = EINVAL;
-        else
+        else {
             ob_draw(t->objects, r.object, r.value);
+#if CONF_WITH_X32_ACCESSORY_TEST && CONF_WITH_VDI_BACKEND_TRUECOLOR
+            test_colour_pixels(t);
+#endif
+        }
         break;
     case AES_OBJECT_FIND:
         if (r.value < 0 || r.value > MAX_DEPTH || r.rectangle.g_w || r.rectangle.g_h ||

@@ -36,8 +36,11 @@ Supported types use the standard GEM numbers 20 through 33:
 * TEXT, BOXTEXT, FTEXT and FBOXTEXT reference AES_OBJECT_TEXT. Its text,
   template and validation strings have separate capacities; validation must
   be nonempty. Fonts are 3 or 5, justification 0-2 and thickness -16..16.
-  Only FTEXT/FBOXTEXT may be EDITABLE. Editable templates must have at least
-  text_capacity-1 underscores. Native editing uses separate owned buffers
+  Only FTEXT/FBOXTEXT may be EDITABLE. TED text, template and validation
+  capacities are at most 81 bytes including NUL. Editable text needs capacity
+  at least 2; editable template capacity is at most 80, leaving room for the
+  native validation expansion terminator. Editable templates must have at
+  least text_capacity-1 underscores. Native editing uses separate owned buffers
   and cannot overwrite structural metadata, even with aliased input offsets.
 * IMAGE references AES_OBJECT_IMAGE: even positive row_bytes <=128,
   height 1..512, x=y=0 and an in-blob monochrome bitmap.
@@ -46,12 +49,17 @@ Supported types use the standard GEM numbers 20 through 33:
 * CICON references AES_OBJECT_CICON, with the same mono icon and up to eight
   linked AES_OBJECT_COLOUR records. Each contains 1..32 planes and bounded
   data/mask offsets; selected data and mask must appear together. The colour
-  chain ends with next=0.
+  chain ends with next=0. On packed-truecolor screens, the best variant of
+  at most eight palette planes is converted into separately owned device
+  pixels, including selected data. These buffers count against the global
+  allocation quota and are freed with the tree. If no variant can be
+  converted, rendering uses the validated monochrome icon. Wire colour
+  planes are never handed directly to the native renderer.
 * USERDEF references AES_OBJECT_USERDEF (handler and opaque parameter).
   It requires CONF_WITH_USER_CALLBACKS; otherwise creation returns EINVFN.
 
-Limits: 256 KiB per blob, 2048 objects, tree depth 8, strings/capacities at
-most 256 bytes, object dimensions 0..10000 and absolute origins -10000..10000.
+Limits: 256 KiB per blob, 2048 objects, tree depth 8, string/button/title/icon-label capacities at
+most 128 bytes including NUL (TED limits above), object dimensions 0..10000 and absolute origins -10000..10000.
 There are at most 16 live/retiring trees per process and 16 MiB of native
 tree allocations globally. Native trees/payloads use LP64 kernel pointers;
 the wire records remain fixed width. No kernel pointer is copied back.
@@ -103,6 +111,8 @@ All operations on a tree require its creating process and live registration.
                                                      rectangle.x/y=char w/h,
                                                      rectangle.w/h=box w/h
 
+RECTANGLE carries relative geometry, which may be negative or entirely off
+screen; it uses the screen clip rather than treating that geometry as a clip.
 DRAW/STATE use the screen when either clip dimension is zero, otherwise
 intersect the supplied clip with the physical screen. Depth is 0..8. SET_TEXT
 is restricted to text/string/button/title nodes and their original capacity;
@@ -122,7 +132,8 @@ Menu, desktop and modal lifetimes
 --------------------------------
 
 MENU validates the ordinary GEM fixed layout: root, bar 1, active titles 2,
-matching title/menu siblings and contiguous reserved Desk accessory entries.
+matching title/menu siblings, consecutive title indices 3, 4, ... in that
+sibling order, and contiguous reserved Desk accessory entries.
 Native installation replaces the Desk child list with its active reserved
 entries; discarded original children become detached. It rejects USERDEFs
 and menus whose popup backup (including alignment and
@@ -137,6 +148,8 @@ instead of the legacy native pointer slots.
 aes_form_do(tree, start) runs its modal loop in ring 3. start=0 selects the
 first visible editable node. It uses typed event waits, native bounded text
 editing, default buttons, radio buttons and press/drag-out/release selection.
+Radio selection commits on press and remains selected when dragged outside;
+ordinary selectable buttons retain press/drag-out/release cancellation.
 The result is the exit object, with bit 15 for a double-clicked TOUCHEXIT.
 FORM saves/restores menu/input focus while the client owns typed update and
 mouse-control tokens. It does not leave a native form continuation or native
@@ -176,6 +189,9 @@ ASan/UBSan. make x32-aes-import-test binds all appended exports. The loaded
 accessory suite draws a real USERDEF, edits a dialog with PS/2 input, selects
 a native menu item, checks foreign handles and immutable snapshots, revokes
 registration during active menu tracking/drawing, preserves new registration
-locks after modal cancellation and faults in USERDEF.
+locks after modal cancellation and faults in USERDEF. It also verifies
+normal/selected colour-icon framebuffer pixels from short planar inputs,
+exact native text-buffer limits and rejected oversized updates, consecutive
+menu title numbering, off-screen relative geometry and radio drag selection.
 All existing window/input and allocator cleanup checks repeat across four
 desktop sessions, including both 8- and 16-window configurations.

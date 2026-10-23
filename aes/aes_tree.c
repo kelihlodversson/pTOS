@@ -130,6 +130,11 @@ LONG aes_tree_validate(const void *data, ULONG bytes, WORD *parents)
             t = (const AES_OBJECT_TEXT *)(blob + p->spec);
             if ((t->font != 3 && t->font != 5) || t->justification < 0 ||
                 t->justification > 2 || t->thickness < -16 || t->thickness > 16 ||
+                t->text_capacity > AES_TREE_MAX_TED_TEXT ||
+                t->template_capacity > AES_TREE_MAX_TED_TEXT ||
+                t->validation_capacity > AES_TREE_MAX_TED_TEXT ||
+                ((p->flags & 8) && (t->text_capacity < 2 ||
+                                   t->template_capacity > AES_TREE_MAX_EDIT_TEMPLATE)) ||
                 !string(blob, bytes, t->text, t->text_capacity, FALSE) ||
                 !string(blob, bytes, t->template, t->template_capacity, FALSE) ||
                 !string(blob, bytes, t->validation, t->validation_capacity, TRUE))
