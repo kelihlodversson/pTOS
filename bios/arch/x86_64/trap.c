@@ -675,16 +675,38 @@ void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
         "mov %0, %%cr3\n\t"
         "mov %3, %%rdi\n\t"
         "mov %4, %%rsi\n\t"
+        "xor %%edx, %%edx\n\t"                 /* no runtime finalizer yet */
         "pushq $" XSTR(X86_64_USER_DATA_SEL) "\n\t" /* SS */
         "pushq %1\n\t"                              /* RSP */
         "pushq $0x202\n\t"                          /* RFLAGS: IF enabled */
         "pushq $" XSTR(X86_64_USER_CODE_SEL) "\n\t" /* CS */
         "pushq %2\n\t"                              /* RIP */
-        "iretq"
+        /* No operand is needed after the iret frame is complete. A zero
+         * basepage selects standard ELF entry: clear every scratch register
+         * so no kernel address survives into the interpreter. Legacy entry
+         * retains its explicit RDI/RSI contract. This function never returns. */
+        "testq %%rdi, %%rdi\n\t"
+        "jnz 1f\n\t"
+        "xor %%eax, %%eax\n\t"
+        "xor %%edi, %%edi\n\t"
+        "xor %%esi, %%esi\n\t"
+        "xor %%edx, %%edx\n\t"
+        "xor %%ebx, %%ebx\n\t"
+        "xor %%ecx, %%ecx\n\t"
+        "xor %%ebp, %%ebp\n\t"
+        "xor %%r8d, %%r8d\n\t"
+        "xor %%r9d, %%r9d\n\t"
+        "xor %%r10d, %%r10d\n\t"
+        "xor %%r11d, %%r11d\n\t"
+        "xor %%r12d, %%r12d\n\t"
+        "xor %%r13d, %%r13d\n\t"
+        "xor %%r14d, %%r14d\n\t"
+        "xor %%r15d, %%r15d\n\t"
+        "1: iretq"
         :
         : "r"(pml4_phys), "r"(user_rsp), "r"(entry_rip),
           "r"(basepage), "r"(entry_type)
-        : "rdi", "rsi", "memory"
+        : "rdi", "rsi", "rdx", "memory"
     );
     __builtin_unreachable();
 }

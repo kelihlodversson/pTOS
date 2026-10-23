@@ -51,6 +51,9 @@ int dl_image_read(DL_IMAGE *out, const unsigned char *file, uint32_t length,
 int dl_image_range(const DL_IMAGE *plan, uint32_t address, uint32_t size,
                     uint32_t flags);
 
+int dl_image_file_range(const DL_IMAGE *plan, uint32_t address, uint32_t size,
+                            uint32_t flags);
+
 /* Populate an already allocated private RW span, zeroing holes and BSS.
  * plan must be an unmodified successful dl_image_read result for this same
  * immutable file; image/plan/file/output must not alias. bias is the target

@@ -219,6 +219,10 @@ void x86_64_trap_init(void);
  * mechanism).  This function is only the primitive for a process's FIRST entry
  * into ring 3.
  *
+ * A zero basepage explicitly selects standard ELF interpreter entry: RSP
+ * points to argc/argv/envp/auxv, is 16-byte aligned and all other GPRs are
+ * zero. Nonzero basepage preserves the legacy RDI/RSI entry contract.
+ *
  * Never returns to its caller: the only way back into the kernel from
  * here on is a fault or `syscall` from the code now running at
  * entry_rip, exactly like any other ring-3 caller.

@@ -63,7 +63,7 @@ jobs:
           config.write_config()
           PY
           make CROSS_COMPILE= obj/ldso/libldso.a
-          ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o -o /tmp/ldso-core.o
+          ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
           test -z "$(nm -u /tmp/ldso-core.o)"
       - name: Build and boot-test enabled mapping syscalls
         run: |

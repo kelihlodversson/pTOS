@@ -63,6 +63,13 @@ BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched *
  * with it by kproc_destroy(), exactly once.  kproc_create() must have
  * succeeded for pd first.
  */
+#if CONF_WITH_ELF_SHARED
+#include "../lib/ldso/image.h"
+LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
+                            const DL_IMAGE *interpreter, const UBYTE *interp_file,
+                            const char *filename);
+#endif
+BOOL kproc_standard_entry(PD *pd);
 BOOL kproc_prepare_user(PD *pd, PD *parent);
 /*
  * Makes the process a built-in x32 program: kproc_prepare_user() will also

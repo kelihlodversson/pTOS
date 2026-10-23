@@ -24,6 +24,9 @@
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"
 #include "progimage.h"
+#if CONF_WITH_ELF_SHARED
+#include "../lib/ldso/startup.h"
+#endif
 
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
@@ -74,6 +77,10 @@ struct kproc {
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
+#if CONF_WITH_ELF_SHARED
+    BOOL standard_entry;
+    UQUAD interp_entry, initial_rsp, interp_bytes;
+#endif
     ASPACE *pending_as;  /* a program loaded from a file: the address space made for it */
                                 /* at load time, with its image in it; the launch adopts it */
     BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
@@ -602,9 +609,20 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
             }
         }
     }
+#if CONF_WITH_ELF_SHARED
+    if (kproc->standard_entry && USER_STACK_TOP - kproc->stack_low >
+        (kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE))
+        return prepare_failed(kproc, as);
+#endif
     kproc->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16; its pages come with the first touch */
     if (kproc->has_image)
         kproc->entry = kproc->layout.entry;
+#if CONF_WITH_ELF_SHARED
+    if (kproc->standard_entry) {
+        kproc->entry = kproc->interp_entry;
+        kproc->stack_top = kproc->initial_rsp;
+    }
+#endif
     kproc->aspace = as;
     kproc->pending_as = NULL;               /* (the address space is the process's now) */
     return TRUE;
@@ -790,6 +808,141 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout)
     kproc->has_image = TRUE;
     return TRUE;
 }
+
+BOOL kproc_standard_entry(PD *pd)
+{
+#if CONF_WITH_ELF_SHARED
+    KPROC *kproc = kproc_find(pd);
+    return kproc && kproc->standard_entry;
+#else
+    (void)pd;
+    return FALSE;
+#endif
+}
+
+#if CONF_WITH_ELF_SHARED
+#define INTERPRETER_BASE  0x0f000000UL
+#define INTERPRETER_LIMIT 0x0fff0000UL
+
+static BOOL interpreter_fill(ASPACE *as, const DL_IMAGE *plan, const UBYTE *file, ULONG bias)
+{
+    ULONG i;
+    for (i = 0; i < plan->nload; i++) {
+        const DL_LOAD *s = &plan->loads[i];
+        if (s->filesz && !aspace_copy_to_user(as, (UQUAD)s->address + bias,
+                                             file + s->offset, s->filesz))
+            return FALSE;
+    }
+    if (!aspace_protect_private(as, (UQUAD)plan->base + bias, plan->size, 0))
+        return FALSE;
+    for (i = 0; i < plan->nload; i++) {
+        const DL_LOAD *s = &plan->loads[i];
+        UQUAD first = s->address & ~(USER_PAGE_SIZE - 1);
+        UQUAD end = ((UQUAD)s->address + s->memsz + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
+        UWORD prot = ASPACE_PROT_USER;
+        if (s->flags & DL_PF_W) prot |= ASPACE_PROT_WRITE;
+        if (s->flags & DL_PF_X) prot |= ASPACE_PROT_EXEC;
+        if (!aspace_protect_private(as, first + bias, end - first, prot))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
+                            const DL_IMAGE *interpreter, const UBYTE *interp_file,
+                            const char *filename)
+{
+    KPROC *kproc = kproc_find(pd);
+    ULONG bias = 0, ibias, i, rsp = 0, used = 0, fnsize = 0;
+    UQUAD stack_first;
+    UBYTE *stack;
+    DL_START_INFO info;
+    LONG rc = ENSMEM;
+    int status;
+
+    if (!kproc || kproc->has_image || kproc->pending_as || kproc->aspace ||
+        program->nload > PROG_MAX_SEGMENTS ||
+        (program->type == 3 && program->base > USER_IMAGE_BASE) ||
+        interpreter->base > INTERPRETER_BASE)
+        return EPLFMT;
+    if (program->type == 3)
+        bias = USER_IMAGE_BASE - program->base;
+    ibias = INTERPRETER_BASE - interpreter->base;
+    ibias = (ibias + interpreter->align - 1) & ~(interpreter->align - 1);
+    if (bias % program->align || (UQUAD)program->base + bias < USER_IMAGE_BASE ||
+        (UQUAD)program->base + bias + program->size > USER_IMAGE_BASE + USER_IMAGE_SIZE ||
+        (UQUAD)interpreter->base + ibias < INTERPRETER_BASE ||
+        (UQUAD)interpreter->base + ibias + interpreter->size > INTERPRETER_LIMIT)
+        return EPLFMT;
+    while (fnsize < 1024 && filename[fnsize]) fnsize++;
+    if (fnsize == 1024)
+        return ERANGE;
+    stack = kalloc(DL_START_CAPACITY);
+    if (!stack)
+        return ENSMEM;
+    info.phdr = program->phdr + bias;
+    info.phnum = program->phnum;
+    info.entry = program->entry + bias;
+    info.base = ibias;
+    info.pagesz = USER_PAGE_SIZE;
+    info.basepage = (ULONG)(uintptr_t)pd;
+    status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
+                        (const unsigned char *)pd->p_cmdlin, sizeof(pd->p_cmdlin), kproc->env_start,
+                        (ULONG)(kproc->env_end - kproc->env_start), &info, &rsp, &used);
+    if (status != DL_OK) {
+        KDEBUG(("PT_INTERP: stack construction failed %ld\n", (long)status));
+        rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;
+        goto done;
+    }
+    if (!kproc_load_begin(pd, program->base + bias, program->size)) {
+        KDEBUG(("PT_INTERP: main reservation failed\n"));
+        goto done;
+    }
+    if (!aspace_map_private(kproc->pending_as, interpreter->base + ibias, interpreter->size,
+                           ASPACE_PROT_USER | ASPACE_PROT_WRITE)) {
+        KDEBUG(("PT_INTERP: interpreter reservation failed\n"));
+        goto done;
+    }
+    if (!interpreter_fill(kproc->pending_as, program, file, bias) ||
+        !interpreter_fill(kproc->pending_as, interpreter, interp_file, ibias)) {
+        KDEBUG(("PT_INTERP: image copy/protection failed\n"));
+        goto done;
+    }
+    stack_first = rsp & ~(USER_PAGE_SIZE - 1);
+    if (!aspace_load_private(kproc->pending_as, stack_first, USER_STACK_TOP - stack_first,
+                            ASPACE_PROT_USER | ASPACE_PROT_WRITE,
+                            stack + DL_START_CAPACITY - (USER_STACK_TOP - stack_first),
+                            (ULONG)(USER_STACK_TOP - stack_first))) {
+        KDEBUG(("PT_INTERP: stack reservation failed\n"));
+        goto done;
+    }
+    kproc->layout.nseg = program->nload;
+    kproc->layout.entry = info.entry;
+    kproc->layout.end = program->base + bias + program->size;
+    for (i = 0; i < program->nload; i++) {
+        PROG_SEGMENT *s = &kproc->layout.seg[i];
+        s->vaddr = program->loads[i].address + bias;
+        s->filesz = program->loads[i].filesz;
+        s->memsz = program->loads[i].memsz;
+        s->flags = program->loads[i].flags;
+        s->src = NULL;                 /* already in the child's private pages */
+    }
+    for (i = 0; i < interpreter->nload; i++)
+        kproc->interp_bytes += interpreter->loads[i].memsz;
+    kproc->has_image = kproc->standard_entry = TRUE;
+    kproc->interp_entry = interpreter->entry + ibias;
+    kproc->initial_rsp = rsp;
+    kproc->stack_low = stack_first;
+    pd->p_tbase = info.entry;
+    pd->p_tlen = program->size;
+    pd->p_dbase = pd->p_bbase = kproc->layout.end;
+    pd->p_dlen = pd->p_blen = 0;
+    rc = E_OK;
+done:
+    kfree(stack);
+    return rc;
+}
+#endif
 
 void kproc_set_creator(PD *pd, PD *creator)
 {
@@ -984,6 +1137,9 @@ static UQUAD image_bytes(const KPROC *kproc)
     if (kproc->has_image)
         for (i = 0; i < kproc->layout.nseg; i++)
             bytes += kproc->layout.seg[i].memsz;
+#if CONF_WITH_ELF_SHARED
+    bytes += kproc->interp_bytes;
+#endif
     return bytes;
 }
 

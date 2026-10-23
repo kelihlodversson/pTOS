@@ -1437,6 +1437,46 @@ static void test_mapping_ring3(void)
 
 #endif
 
+#if CONF_WITH_ELF_SHARED
+static void discard_interpreter(long address)
+{
+    PD *pd = (PD *)(uintptr_t)address;
+    void *env = USERPTR_TO_PTR(pd->p_env);
+    CHECK(Mfree(pd) == 0 && Mfree(env) == 0, "discard staged interpreter and environment");
+}
+
+static void test_interpreter_failures(void)
+{
+    static const char tail[] = { 0, 0 };
+    static const char env[] = "CHECK=660\0SECOND=value\0\0";
+    SNAP s;
+    long rc;
+    int k, failed = 0, succeeded = 0;
+
+    /* Prime filesystem caches before taking allocator snapshots. */
+    rc = Pexec(PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
+    CHECK(rc > 0, "interpreter failure-test fixture is available");
+    if (rc <= 0)
+        return;
+    discard_interpreter(rc);
+    for (k = 1; k <= 64; k++) {
+        snap(&s);
+        x86_64_pmem_test_fail_after(k);
+        rc = Pexec(PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
+        x86_64_pmem_test_fail_after(0);
+        if (rc > 0) {
+            succeeded++;
+            discard_interpreter(rc);
+        } else {
+            failed++;
+            CHECK(rc == ENSMEM, "failed interpreter allocation reports ENSMEM");
+        }
+        same(&s, "interpreter load allocation failure/discard");
+    }
+    CHECK(failed && succeeded, "interpreter allocation failures and successes exercised");
+}
+#endif
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -1459,7 +1499,10 @@ static void test_ring3(void)
     {
         int before = failures;
         probe_expect('R', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
+        probe_expect('I', 0, "PT_INTERP initial stack/auxv, direct and split Pexec, repeated cleanup");
+        test_interpreter_failures();
         kcprintf("x86-64 ldso relocations: %s\n", failures == before ? "PASS" : "FAIL");
+        kcprintf("x86-64 PT_INTERP startup: %s\n", failures == before ? "PASS" : "FAIL");
     }
 #endif
 

@@ -254,17 +254,86 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 
     switch (tail[0]) {
 #if CONF_WITH_ELF_SHARED
+    case 'I': {
+        static char args[] = "!\"hello world\" \"\" C:\\tmp";
+        static const char env[] = "CHECK=660\0SECOND=value\0\0";
+        static const char extended[] = "CHECK=660\0SECOND=value\0ARGV=\0custom-name\0hello world\0C:\\tmp\0\0";
+        static const unsigned char argv_tail[] = { 127, 0 };
+        const char *path = "C:\\DYNTEST.TOS";
+        s64 child;
+        u32 child_env;
+        int cycle;
+
+        static const char *const bad_files[] = {
+            "C:\\DYNMISS.TOS", "C:\\DYNBAD.TOS", "C:\\DYNNEST.TOS",
+            "C:\\DYNDUPE.TOS", "C:\\DYNNX.TOS", "C:\\DYNTRNC.TOS"
+        };
+        unsigned int k;
+
+        args[0] = sizeof(args) - 2;
+        for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)bad_files[k],
+                         (s64)(unsigned long)args, (s64)(unsigned long)env);
+            if (child != (k == 0 ? -33 : -66))
+                pterm(0x200 | (k << 4) | ((int)child & 15));
+        }
+        child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\DYNPIE.TOS",
+                     (s64)(unsigned long)args, (s64)(unsigned long)env);
+        if (child != 37)
+            pterm(0x300 | ((int)child & 0xff));
+        /* A staged image may be discarded without ever entering userspace. */
+        child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+                     (s64)(unsigned long)args, (s64)(unsigned long)env);
+        if (child <= 0)
+            pterm(5);
+        child_env = ((volatile u32 *)(unsigned long)child)[11];
+        if (gemdos(0x49, child, 0) || gemdos(0x49, child_env, 0))
+            pterm(6);
+        for (cycle = 0; cycle < 2; cycle++) {
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)args, (s64)(unsigned long)env);
+            if (child != 37)
+                pterm(0x100 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+                         (s64)(unsigned long)argv_tail, (s64)(unsigned long)extended);
+            if (child <= 0)
+                pterm(2);
+            /* Editing the public entry cannot redirect a staged interpreter.
+             * Its startup vectors are private snapshots, too. */
+            child_env = ((volatile u32 *)(unsigned long)child)[11];
+            ((volatile u32 *)(unsigned long)child)[2] = 0;
+            ((volatile unsigned char *)(unsigned long)child)[0x80] = 0;
+            *(volatile char *)(unsigned long)child_env = 'X';
+            if (sys4(GEMDOS, 0x4b, 4, 0, child, 0) != 37)
+                pterm(3);
+            if (gemdos(0x49, child, 0) || gemdos(0x49, child_env, 0))
+                pterm(4);
+        }
+        child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+                     (s64)(unsigned long)args, (s64)(unsigned long)env);
+        if (child <= 0 || sys4(GEMDOS, 0x4b, 6, 0, child, 0) != 37)
+            pterm(7);
+        pterm(0);
+        break;
+    }
     case 'R':
         pterm(x32_ldso_probe());
         break;
 #endif
-    case 'Q':
+    case 'Q': {
+        s64 rc;
+        static const char empty_tail[] = { 0, 0 };
         if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0) != EINVFN ||
             sys(GEMDOS, GEMDOS_MPROT, PTOS_MMAP_BASE, 4096, PROT_READ) != EINVFN ||
             gemdos(GEMDOS_MUNMAP, PTOS_MMAP_BASE, 4096) != EINVFN)
             pterm(1);
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\DYNTEST.TOS",
+                  (s64)(unsigned long)empty_tail, 0);
+        if (rc != -66 && rc != -33)
+            pterm(2);                  /* PT_INTERP never enters the static fallback */
         pterm(0);
         break;
+    }
     case 'S':
         pterm(mapping_api());
         break;

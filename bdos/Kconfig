@@ -156,8 +156,9 @@ config CONF_WITH_ELF_SHARED
 
 	  This is groundwork for #660, not a working ld.so yet.  Private
 	  mapping/protection services use Mmap, Munmap and Mprot; interpreter
-	  startup and file-page sharing remain to be implemented. Eager x32
-	  relocation and ordered-scope symbol resolution are available in the core.
+	  handoff and a private argc/argv/envp/auxv stack are implemented and tested.
+	  Eager x32 relocation and dependency discovery are available in the core.
+	  A self-relocating ld.so, dependency file I/O and shared code pages remain.
 	  Static ELF and classic PRG loading are unchanged.
 	  The core is built separately from the kernel, in obj/ldso/.
 

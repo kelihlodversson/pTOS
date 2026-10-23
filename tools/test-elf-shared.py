@@ -72,6 +72,10 @@ class Image(C.Structure):
     _fields_ += [("loads", Load * 32)]
 
 
+class StartInfo(C.Structure):
+    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage")]
+
+
 class Mapping(C.Structure):
     _fields_ = [("object", Object), ("identity", C.c_uint64), ("cookie", C.c_void_p)]
 
@@ -164,7 +168,8 @@ class Metadata(unittest.TestCase):
                   "-O2", "-fPIC", "-shared", "-I" + str(ROOT / "lib/ldso"),
                   str(ROOT / "lib/ldso/dynamic.c"), str(ROOT / "lib/ldso/relocate.c"),
                   str(ROOT / "lib/ldso/arch/x32/reloc.c"), str(ROOT / "lib/ldso/graph.c"),
-                  str(ROOT / "lib/ldso/image.c"), str(ROOT / "lib/ldso/arch/x32/image_abi.c"),
+                  str(ROOT / "lib/ldso/image.c"), str(ROOT / "lib/ldso/image_plan.c"),
+                  str(ROOT / "lib/ldso/startup.c"), str(ROOT / "lib/ldso/arch/x32/image_abi.c"),
                   "-o", str(hostlib)])
         cls.lib = C.CDLL(str(hostlib))
         cls.lib.dl_read_dynamic.argtypes = [C.POINTER(Object), C.c_void_p] + [C.c_uint32] * 5
@@ -197,6 +202,10 @@ class Metadata(unittest.TestCase):
         cls.lib.dl_image_range.argtypes = [C.POINTER(Image), C.c_uint32, C.c_uint32, C.c_uint32]
         cls.lib.dl_image_range.restype = C.c_int
         cls.image_abi = ImageAbi.in_dll(cls.lib, "dl_x32_image_abi")
+        cls.lib.dl_start_stack.argtypes = [C.c_void_p, C.c_uint32, C.c_uint32,
+            C.c_void_p, C.c_uint32, C.c_void_p, C.c_uint32, C.c_void_p, C.c_uint32,
+            C.POINTER(StartInfo), C.POINTER(C.c_uint32), C.POINTER(C.c_uint32)]
+        cls.lib.dl_start_stack.restype = C.c_int
         cls.backend = Backend.in_dll(cls.lib, "dl_x32_reloc_backend")
 
     @classmethod
@@ -473,6 +482,92 @@ class Metadata(unittest.TestCase):
         rc, obj, memory = self.parse(data, base=base, dynamic=base)
         self.assertEqual(rc, 0)
         self.assertEqual(self.lookup(obj)[2], 0x1400200)
+
+    def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
+                capacity=131072, filename=b'C:\\DYNTEST.TOS'):
+        tail = bytes([len(args)]) + args if tail is None else tail
+        memory = C.create_string_buffer(capacity)
+        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000)
+        rsp, used = C.c_uint32(123), C.c_uint32(456)
+        rc = self.lib.dl_start_stack(memory, capacity, 0x80000000,
+            C.create_string_buffer(filename), len(filename) + 1,
+            C.create_string_buffer(tail), len(tail), C.create_string_buffer(env), len(env),
+            C.byref(info), C.byref(rsp), C.byref(used))
+        if rc:
+            self.assertEqual((rsp.value, used.value), (0, 0))
+            return rc, None
+        self.assertEqual(rsp.value & 15, 0)
+        self.assertEqual(rsp.value + used.value, 0x80000000)
+        data = bytes(memory)
+        base = 0x80000000 - capacity
+
+        def word(address):
+            self.assertGreaterEqual(address, rsp.value)
+            self.assertLessEqual(address, 0x80000000 - 4)
+            return struct.unpack_from('=I', data, address - base)[0]
+
+        def string(address):
+            self.assertGreaterEqual(address, rsp.value)
+            self.assertLess(address, 0x80000000)
+            return data[address - base:data.index(b'\0', address - base)]
+
+        argc = word(rsp.value)
+        argv = [string(word(rsp.value + 4 + i * 4)) for i in range(argc)]
+        at = rsp.value + 4 + argc * 4
+        self.assertEqual(word(at), 0)
+        at += 4
+        envp = []
+        while word(at):
+            envp.append(string(word(at)))
+            at += 4
+        at += 4
+        aux = {}
+        while word(at):
+            self.assertNotIn(word(at), aux)
+            aux[word(at)] = word(at + 4)
+            at += 8
+        self.assertEqual(word(at + 4), 0)
+        self.assertEqual((aux[3], aux[4], aux[5], aux[6], aux[7], aux[9], aux[0x5000]),
+                         (info.phdr, 32, info.phnum, 4096, info.base, info.entry, info.basepage))
+        self.assertEqual(string(aux[31]), filename)
+        return rc, (argv, envp, aux)
+
+    def test_standard_initial_stack_short_tail(self):
+        rc, result = self.startup(b'"hello world" "" C:\\tmp')
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'C:\\DYNTEST.TOS', b'hello world', b'', b'C:\\tmp'])
+        self.assertEqual(result[1], [b'CHECK=660', b'SECOND=value'])
+        rc, result = self.startup(b" a' b 'c \"d\"e ")
+        self.assertEqual(result[0][1:], [b'a b c', b'de'])
+        self.assertEqual(self.startup(env=b'\0\0')[1][1], [])
+
+    def test_standard_initial_stack_extended_argv(self):
+        env = b'CHECK=660\0SECOND=value\0ARGV=\0custom-name\0hello world\0C:\\tmp\0\0'
+        rc, result = self.startup(env=env, tail=b'\x7f\0')
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'custom-name', b'hello world', b'C:\\tmp'])
+        self.assertEqual(result[1], [b'CHECK=660', b'SECOND=value'])
+        rc, result = self.startup(b'normal', env=env)
+        self.assertEqual(result[0], [b'C:\\DYNTEST.TOS', b'normal'])
+        self.assertEqual(result[1], [b'CHECK=660', b'SECOND=value'])
+
+    def test_standard_initial_stack_malformed_and_capacity(self):
+        self.assertEqual(self.startup(b'"unterminated')[0], -1)
+        self.assertEqual(self.startup(tail=b'\x7f\0')[0], -1)
+        self.assertEqual(self.startup(tail=b'\x80')[0], -1)
+        self.assertEqual(self.startup(tail=b'\x05abc')[0], -1)
+        self.assertEqual(self.startup(env=b'A=B')[0], -1)
+        self.assertEqual(self.startup(env=b'\0x')[0], -1)
+        self.assertEqual(self.startup(env=b'ARGV=NULL:1\0app\0a\0\0', tail=b'\x7f')[0], -2)
+        self.assertEqual(self.startup(capacity=64)[0], -1)
+        self.assertEqual(self.startup(b'x' * 126, capacity=128)[0], -4)
+        self.assertEqual(self.startup(filename=b'x' * 1024)[0], -1)
+
+    def test_standard_initial_stack_large_environment(self):
+        rc, result = self.startup(env=b'X\0' * 16383 + b'\0')
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(result[1]), 16383)
+        self.assertEqual(self.startup(env=b'X\0' * 16384 + b'\0')[0], -1)
 
     def image_read(self, data, role=1, abi=None):
         raw, plan = C.create_string_buffer(bytes(data)), Image()

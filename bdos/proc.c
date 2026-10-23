@@ -613,7 +613,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     }
 
     /* now, load the rest of the program, perform relocation, close the file */
-    rc = kpgmld(cur_p, fh, &hdr);
+    rc = kpgmld(cur_p, fh, &hdr, path);
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */

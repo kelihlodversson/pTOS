@@ -5,17 +5,20 @@ Status and scope
 ----------------
 
 This is the design and initial implementation work for a userspace ELF
-runtime linker.  It does NOT yet make a dynamically linked program runnable.
+runtime linker. Kernel PT_INTERP handoff is implemented and verified with a
+minimal interpreter. A general self-relocating LD.SO is not implemented yet.
 The implemented core reads ELF32 dynamic metadata, performs SysV-hash
 lookup and ordered-scope symbol resolution, discovers the dependency graph,
 and eagerly applies RELA relocations. The architecture-neutral planner is
 lib/ldso/relocate.c;
 lib/ldso/arch/x32/reloc.c supplies x32 relocation widths and arithmetic.
 lib/ldso/graph.c builds a bounded dependency closure through mapper callbacks.
-lib/ldso/image.c validates ELF32 load plans and populates private images;
+lib/ldso/image_plan.c validates ELF32 load plans; lib/ldso/image.c populates
+private userspace images;
 x32 format policy is selected separately in arch/x32/image_abi.c.
-There is no interpreter file I/O, constructor lifecycle or process-entry
-stub yet.
+bdos/elfinterp.c opens the named interpreter, and lib/ldso/startup.c constructs
+the private initial stack. Runtime-linker dependency file I/O, self relocation
+and the full constructor/finalizer lifecycle remain to be implemented.
 
 Lazy private anonymous mapping services are implemented separately as Mmap,
 Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
@@ -36,8 +39,8 @@ their MMU-backed, separate-process-address-space implementations have merged
 to master and the corresponding linker backend has been tested.  FDPIC and
 non-MMU loading are outside this issue.
 
-Except for the portions identified above, the remainder is the intended ABI,
-not implemented runtime behaviour. It is a contract for subsequent milestones.
+The sections below distinguish implemented kernel startup and userspace core
+operations from the remaining runtime-linker and page-sharing milestones.
 
 
 ELF format and toolchains
@@ -97,14 +100,18 @@ interpreter at its own entry point.  Preserve the executable entry separately.
 Interpreter admission requires ET_DYN, the matching machine/class/endian,
 no nested PT_INTERP and no pTOS-private imports or compact relocations.
 The kernel neither resolves DT_NEEDED nor performs their symbol binding.
-The interpreter bootstraps its own relocations before calling C that relies
-on relocated addresses; do not relocate it twice.
+The interpreter must bootstrap its own relocations before calling C that
+relies on relocated addresses; the kernel does not relocate it. The current
+probe is independently linked PIC with no self relocations.
 
 PT_INTERP must be unique, nonempty, bounded, exactly NUL-terminated and an
 absolute pathname.  The parser must validate file offsets and sizes before
 reading.  The kernel opens that exact interpreter, with no shell expansion
-or environment search.  Failure to open it is a load failure; never run the
-main program directly in its place.
+or environment search. ELF slash paths are translated to GEMDOS separators
+on the explicit boot drive, independent of the caller's drive and directory.
+Colon, backslash and control bytes are refused. Failure to open it is a load
+failure; the main program is never entered in its place. Disabled shared
+support rejects PT_INTERP instead of falling through to static relocation.
 
 The standard x32 initial stack is distinct from the existing pTOS
 function-call entry contract in doc/process-entry.txt:
@@ -120,8 +127,20 @@ the ordinary RSP+8 C-call alignment before invoking a C function.  All
 pointers and auxiliary addresses must fit in x32 user memory.  Copy the
 argument strings, environment, vectors and auxiliary data into the child's
 private stack with checked arithmetic; do not expose parent/kernel pointers.
-Define argument tokenization and the GEMDOS ARGV environment conversion in
-the producer/consumer tests before implementing the handoff.
+lib/ldso/startup.c and the host/ring-3 probes implement the producer/consumer
+contract. Short GEMDOS tails (0..126 bytes) split on spaces/tabs; single and
+double quotes group text, are removed and preserve empty arguments. Adjacent
+quoted/unquoted pieces concatenate. Backslashes are literal; unmatched quotes
+or embedded NULs are invalid. argv[0] is the supplied executable filename.
+
+With tail length 127, an exact ARGV= environment marker supplies a following
+NUL-separated list including argv[0]. The marker and all following entries
+are omitted from envp. With a short tail that payload is omitted, but unused.
+ARGV=NULL: extensions for empty arguments are explicitly unsupported. Missing
+extended argv or unterminated environments fail. Bounds are 32768 environment
+bytes, 1024 filename bytes including NUL and a 128 KiB construction buffer.
+Strings and vectors are copied at load time; later edits of the public
+basepage or environment cannot change the staged startup arguments.
 
 Required auxiliary entries:
 
@@ -132,23 +151,42 @@ Required auxiliary entries:
     AT_BASE    interpreter load bias
     AT_PAGESZ  address-space backend's page size (4096 initially)
     AT_EXECFN  pointer to the copied executable pathname
+    AT_PTOS_BASEPAGE (0x5000)  child's own public GEMDOS basepage
     AT_NULL    terminator
 
 The executable's headers must be in readable user memory; map or copy them
 explicitly when no PT_LOAD covers them.  Do not synthesize AT_PHDR by adding
 the bias to a file offset unless the segment mapping proves it valid.
 Kernel bookkeeping, not a mutable basepage, owns entries and mapping handles.
-An OS-specific basepage auxiliary entry can be specified with the new CRT;
-the old RDI/RSI function-call convention must not be assumed on this path.
-On interpreter-to-program transfer, RDX supplies the normal runtime-linker
-finalizer callback (or zero until the compatible exit path exists).
+The kernel clears all general registers except RSP on standard ELF entry;
+RDI/RSI do not carry the legacy function-call entry contract. The interpreter
+must transfer to AT_ENTRY on the original standard stack, supplying the normal
+runtime-linker finalizer callback in RDX (zero in the current probe).
 
-Pexec(PE_LOAD/PE_GO) must retain executable/interpreter metadata and mapping
-ownership through the split load/launch lifecycle.  An interpreter-backed
-program cannot be silently treated as the current single relocatable image
-block in the caller's heap.  Specify and test its transfer protocol before
-enabling this path.  Load errors release every mapping, handle, sidecar and
-reference; process faults/Pterm release them without calling user code.
+Pexec(PE_LOAD/PE_GO/PE_GOTHENFREE) retains kernel-owned executable/interpreter
+entries and private mappings through split load/launch. Dynamic images stay
+in the child's pending address space; they are never exposed as a patchable
+relocatable block in the caller's heap. Discarding a staged basepage destroys
+the pending address space; successful launch adopts it. Failures and Pterm
+release ownership exactly once. File operations catch disk-error longjmps
+before releasing the bounded transient file buffers and interpreter handle.
+
+The initial kernel policy limits the executable to [0x00400000,0x00800000)
+(eight PT_LOAD segments maximum), preserving ET_EXEC addresses; a PIE may be
+biased into this window. The interpreter is aligned in
+[0x0f000000,0x0fff0000), above Mmap and below the ancestors page, avoiding the
+supervisor framebuffer window. Each ELF file has an 8 MiB input limit, with
+allocation failure returning ENSMEM. Temporary file buffers are freed before
+launch. Interpreter bytes count with the main image for Psetlimit core limits.
+The inherited stack limit must accommodate the populated initial stack.
+The kernel leaves RELRO writable until the interpreter has bound relocations.
+
+Boot tests cover ET_EXEC and PIE, direct/split launch, extended argv,
+entry-register clearing,
+transfer to the executable, public-field tampering, staged discard, repeated
+cleanup, missing/wrong-machine/nested interpreters, duplicate PT_INTERP,
+non-executable entry points, truncated files and 64 allocation-failure points.
+Allocator, handle/directory-reference and process counters return to baseline.
 
 
 Memory services and permissions
@@ -159,7 +197,7 @@ permission changes (doc/mmap.txt). Existing file calls can fill RW pages
 before Mprot makes text RX. Malloc/Mxalloc are separate private heap services.
 File-backed mappings, read-only page sharing and the interpreter's executable
 and library reservation/file-I/O policy remain to be implemented. ELF32
-admission and private-image population are implemented in lib/ldso/image.c.
+admission is in lib/ldso/image_plan.c; userspace population is in image.c.
 
 The mapping window is [0x01000000, 0x0f000000), outside USER_IMAGE_*, the
 ancestors page, heap/stack and guards. Anonymous reservations are atomic and
@@ -233,8 +271,9 @@ failure.  SHN_ABS is not biased.  Matched TLS/IFUNC/COMMON symbols fail
 explicitly.  Malformed hash chains have bounded traversal.  The current
 resource limit is 32 DT_NEEDED entries per object; exceeding it fails.
 The caller must supply a stable, entirely readable contiguous image view,
-with gaps zero-filled.  ELF-header/segment admission and file-backed metadata checks are provided by
-lib/ldso/image.c; the mapper owns its private reservations and permissions.
+with gaps zero-filled. ELF-header/segment admission is in image_plan.c;
+file-backed metadata checks are in image.c. The mapper owns reservations and
+permissions.
 
 dl_graph_open builds the executable-first breadth-first scope in DT_NEEDED
 order. Its caller owns stable graph storage; a mapper callback acquires
@@ -308,9 +347,10 @@ Implementation and validation milestones
    permission faults, limits, isolation, failure cleanup and CI boot tests.
    ELF32 load admission, private image population and a RELRO sealing probe
    are also implemented. File backing, runtime reservation/file-I/O policy
-   and dynamic-image ownership through split Pexec load/launch remain.
-3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes.
-   Preserve static ELF/PIE, built-in images and m68k PRG regression tests.
+   remain. Split dynamic-image ownership is implemented.
+3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes are
+   implemented for direct and split Pexec. Static ELF/PIE, built-in images
+   and m68k PRG paths retain their existing loading conventions.
 4. Ordered scope and eager x32 relocations are implemented and tested in
    ring 3. Bounded dependency discovery, BFS scope, cycle scheduling and
    rollback are implemented. Remaining: self-relocating interpreter and
@@ -338,4 +378,5 @@ CONF_WITH_ELF_SHARED in menuconfig, then make CROSS_COMPILE= on Linux.
 Disabling the option leaves ordinary static builds unchanged.  An archive
 build alone is not proof of runtime behavior. With shared support enabled,
 tools/test-mmap-boot.sh also requires the ring-3 relocation PASS marker.
-Interpreter startup and physical-page sharing remain unimplemented.
+Kernel interpreter startup is covered by a separate PT_INTERP PASS marker.
+Self-relocating LD.SO and physical-page sharing remain unimplemented.

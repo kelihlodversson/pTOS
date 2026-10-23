@@ -258,6 +258,7 @@ void gouser(void)
          * not in the user-writable basepage (the TPA is no stack).  The entry
          * contract of doc/process-entry.txt: RSP + 8 divisible by 16. */
         UQUAD user_rsp = kproc_user_stack(p);
+        BOOL standard_entry = kproc_standard_entry(p);
         jmp_buf buf;
         jmp_buf *saved_resume = x86_64_kexec_resume;
         UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
@@ -269,7 +270,7 @@ void gouser(void)
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys || !kstack_phys || !user_rsp)
             panic("x86-64: process launched without an address space, stack or kernel stack\n");
-        if ((user_rsp & 15) != 8)
+        if ((user_rsp & 15) != (standard_entry ? 0 : 8))
             panic("x86-64: process stack not aligned for entry\n");
 
         /*
@@ -293,7 +294,7 @@ void gouser(void)
         launcher_in_syscall = x86_64_gs_to_user();
         if (setjmp(buf) == 0)
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
-                              (UQUAD)(uintptr_t)p, 0);
+                              standard_entry ? 0 : (UQUAD)(uintptr_t)p, 0);
         x86_64_kexec_resume = saved_resume;
         /* Pterm() was a system call, still on the child's stack with the
          * kernel GS base swapped in: normalise that first, then restore the
