@@ -8,6 +8,10 @@ the syscall ABI; the x32 syscall ABI is a separate contract.
 The launcher supplies an explicit entry type.  Startup code must not infer
 the type from p_parent, a filename, or any unspecified register value.
 
+The proposed standard ELF interpreter path (#660) has a separate initial
+stack/auxv ABI, described in doc/elf-shared.txt.  That path is not yet
+implemented and does not change the existing entry conventions below.
+
     ENTRY_PROGRAM = 0
     ENTRY_ACCESSORY = 1
 

@@ -553,6 +553,14 @@ all: $(IMAGE) $(image-extra)
 	@echo "# $(IMAGE) is ready"
 	@$(call report-memory)
 
+# Userspace linker code must never become a kernel symbol-resolution service.
+# Kconfig selects supported address-space backends; shared C code needs no
+# architecture conditionals.  The initial milestone builds the core archive,
+# not an executable interpreter (doc/elf-shared.txt).
+ifeq ($(CONF_WITH_ELF_SHARED),y)
+include lib/ldso/build.mk
+endif
+
 # The reference values below have been gathered from major TOS versions,
 # and are used to put the amount of RAM used by EmuTOS in perspective.
 MEMBOT_TOS102 = 0x0000ca00
@@ -2012,7 +2020,7 @@ TOCLEAN += $(GEN_SRC)
 .PHONY: clean
 clean: $(TOCLEAN_POST)
 	rm -f $(TOCLEAN)
-	rm -rf test-dir obj/freetype-build
+	rm -rf test-dir obj/freetype-build obj/ldso
 
 .PHONY: distclean
 distclean: clean

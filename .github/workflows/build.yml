@@ -35,6 +35,33 @@ permissions:
   contents: read
 
 jobs:
+  elf-shared-core:
+    name: x32 ELF shared-library metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host and x32 test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+          python3 -m venv /tmp/elf-shared-venv
+          /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
+      - name: Test metadata, corrupt inputs and Kconfig isolation
+        run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
+      - name: Build the enabled freestanding x32 core
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make pc-x86_64_defconfig
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.write_config()
+          PY
+          make CROSS_COMPILE= obj/ldso/libldso.a
+          test -z "$(nm -u obj/ldso/dynamic.o)"
+
   # The matrices are derived from configs/ instead of being written out here,
   # so that adding a configuration automatically makes it a compatibility
   # check without anyone having to remember this file.

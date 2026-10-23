@@ -1,0 +1,259 @@
+pTOS - standard ELF shared libraries (#660)
+==========================================
+
+Status and scope
+----------------
+
+This is the design and first implementation milestone for a userspace ELF
+runtime linker.  It does NOT yet make a dynamically linked program runnable.
+The implemented portion is lib/ldso/dynamic.c: a freestanding ELF32 dynamic
+metadata reader and per-object SysV-hash symbol lookup.  It reads DT_NEEDED
+and DT_SONAME and validates its table/string accesses.  It has no file I/O,
+kernel symbol resolver, relocator, constructors or process-entry stub.
+
+CONF_WITH_ELF_SHARED is an experimental, off-by-default Kconfig option.  It
+builds this core into obj/ldso/libldso.a, separately from the kernel.  It
+requires CONF_WITH_ELF_LOADER, CONF_WITH_USER_ASPACE and, initially,
+ARCH_X86_64.  Both x32 and the address-space prerequisite are intentional:
+standard shared libraries must never fall back to a flat address space.
+
+Shared C code is controlled by the feature/build configuration, not by
+architecture-specific preprocessor tests.  Architecture selection belongs
+in Kconfig and the build rules; relocation and startup backends belong in
+separate files.  Do not widen the Kconfig dependency to ARM or m68k until
+their MMU-backed, separate-process-address-space implementations have merged
+to master and the corresponding linker backend has been tested.  FDPIC and
+non-MMU loading are outside this issue.
+
+The remainder of this document is the intended ABI, not implemented runtime
+behaviour.  It is a contract for subsequent milestones and their tests.
+
+
+ELF format and toolchains
+------------------------
+
+The initial target is the x32 psABI: little-endian ELFCLASS32, EM_X86_64,
+ILP32 C types and pointers, executing x86-64 instructions in long mode.
+ELF32 does not mean EM_386, and ELF64/LP64 is not an alternative encoding.
+Use an x32-capable GCC and GNU binutils (native gcc -mx32 on Linux, or
+x86_64-elf tools supporting -mx32 and elf32_x86_64).
+
+An ordinary, fixed-address ET_EXEC with PT_INTERP is sufficient.  Do not
+require PIE.  Its dependencies and the interpreter are standard PIC ET_DYN
+objects built with -fPIC -shared, with PT_DYNAMIC and DT_* entries.  Use
+--hash-style=sysv for the initial subset.  The kernel must not require
+section headers, --emit-relocs, PT_PTOS_RELOC or PT_PTOS_IMPORTS on this path.
+
+tools/test-elf-shared.py builds an independent libleaf.so, libtest.so and
+ET_EXEC consumer using the actual compiler/linker.  The consumer requests
+/GEMSYS/LIB/X32/LD.SO with PT_INTERP; libtest.so carries a transitive
+DT_NEEDED and a constructor.  Host tests inspect and resolve the metadata;
+they do not execute x32 code or claim the constructor has run.
+
+The later x32 backend must support the emitted RELA forms, including
+R_X86_64_RELATIVE, R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT, R_X86_64_32 and
+R_X86_64_64 as required by the psABI.  x32 pointers are 32 bits, but some
+relocation slots are 64 bits; relocation width is a property of the type,
+not sizeof(void *).  Check signed/unsigned overflow as specified for each
+type.  Reject unsupported relocation types before starting the application.
+Initial applications should use PIC accesses to data even in ET_EXEC,
+avoiding COPY relocations until copy-relocation semantics are implemented.
+
+GNU-hash-only objects, TLS, symbol versioning, IFUNC, STB_GNU_UNIQUE,
+SHN_COMMON, dlopen/dlsym/dlclose, lazy binding, auditing and Linux libc
+compatibility are not in the initial subset.  Future load admission must
+reject unsupported required facilities explicitly.  The current metadata
+reader skips tags it does not interpret; it is not that admission check.
+
+
+Kernel responsibilities and process entry
+----------------------------------------
+
+Keep the existing PRG and static-ELF dispatch and entry conventions.  Select
+the standard dynamic startup path only through a validated PT_INTERP, never
+merely because an ELF is ET_DYN or has PT_DYNAMIC (static PIE may have both).
+Malformed or unsupported dynamic objects must fail, not enter the static
+loader's additive relocation/import path.  A bare DSO is not an executable.
+
+The kernel validates the executable and interpreter headers and PT_LOAD
+segments, maps both into the child's own address space and enters the
+interpreter at its own entry point.  Preserve the executable entry separately.
+Interpreter admission requires ET_DYN, the matching machine/class/endian,
+no nested PT_INTERP and no pTOS-private imports or compact relocations.
+The kernel neither resolves DT_NEEDED nor performs their symbol binding.
+The interpreter bootstraps its own relocations before calling C that relies
+on relocated addresses; do not relocate it twice.
+
+PT_INTERP must be unique, nonempty, bounded, exactly NUL-terminated and an
+absolute pathname.  The parser must validate file offsets and sizes before
+reading.  The kernel opens that exact interpreter, with no shell expansion
+or environment search.  Failure to open it is a load failure; never run the
+main program directly in its place.
+
+The standard x32 initial stack is distinct from the existing pTOS
+function-call entry contract in doc/process-entry.txt:
+
+    RSP -> uint32_t argc
+           uint32_t argv[argc], followed by a zero pointer
+           uint32_t envp[envc], followed by a zero pointer
+           Elf32_auxv_t auxv[], terminated by { AT_NULL, 0 }
+
+Each auxv entry is two 32-bit words.  RSP is 16-byte aligned at the initial
+instruction, with no synthetic return address; the startup assembly creates
+the ordinary RSP+8 C-call alignment before invoking a C function.  All
+pointers and auxiliary addresses must fit in x32 user memory.  Copy the
+argument strings, environment, vectors and auxiliary data into the child's
+private stack with checked arithmetic; do not expose parent/kernel pointers.
+Define argument tokenization and the GEMDOS ARGV environment conversion in
+the producer/consumer tests before implementing the handoff.
+
+Required auxiliary entries:
+
+    AT_PHDR    runtime address of the executable's program-header table
+    AT_PHENT   sizeof(Elf32_Phdr), 32
+    AT_PHNUM   executable program-header count
+    AT_ENTRY   executable's runtime entry, not the interpreter's entry
+    AT_BASE    interpreter load bias
+    AT_PAGESZ  address-space backend's page size (4096 initially)
+    AT_EXECFN  pointer to the copied executable pathname
+    AT_NULL    terminator
+
+The executable's headers must be in readable user memory; map or copy them
+explicitly when no PT_LOAD covers them.  Do not synthesize AT_PHDR by adding
+the bias to a file offset unless the segment mapping proves it valid.
+Kernel bookkeeping, not a mutable basepage, owns entries and mapping handles.
+An OS-specific basepage auxiliary entry can be specified with the new CRT;
+the old RDI/RSI function-call convention must not be assumed on this path.
+On interpreter-to-program transfer, RDX supplies the normal runtime-linker
+finalizer callback (or zero until the compatible exit path exists).
+
+Pexec(PE_LOAD/PE_GO) must retain executable/interpreter metadata and mapping
+ownership through the split load/launch lifecycle.  An interpreter-backed
+program cannot be silently treated as the current single relocatable image
+block in the caller's heap.  Specify and test its transfer protocol before
+enabling this path.  Load errors release every mapping, handle, sidecar and
+reference; process faults/Pterm release them without calling user code.
+
+
+Memory services and permissions
+------------------------------
+
+The current aspace_* kernel primitives are building blocks, not userspace
+mmap or mprotect services.  Malloc/Mxalloc currently produce private heap
+memory and do not provide the linker with file-backed executable mappings.
+This prerequisite still needs an explicit userspace syscall contract.
+
+Reserve a linker mapping window outside USER_IMAGE_*, the ancestors page,
+the heap/stack and guards.  A candidate is 0x01000000..0x0effffff; this is
+not an allocated ABI range yet.  The mapping API must own/reserve the whole
+object span atomically, report collision/permission/overflow failures, allow
+rollback, and support file-backed mappings plus anonymous zero-filled bss.
+Do not implement MAP_FIXED by replacing arbitrary existing process pages.
+An ET_EXEC must keep its linked virtual addresses; the legacy static loader's
+relocate-to-fit rule cannot be reused for a standard ET_EXEC.
+
+Validate every segment's file extent, filesz <= memsz, address arithmetic,
+power-of-two alignment/congruence and page-rounded extent before mapping.
+Reject incompatible overlapping segments, reserved/user-limit addresses,
+entry points outside executable memory, and W+X page unions.  Keep data/GOT
+private and NX.  Apply relocations only to approved private writable pages;
+reject DT_TEXTREL and relocations into shared text.  Protect PT_GNU_RELRO
+after eager binding.  Flush/synchronize instruction caches through the
+architecture backend where necessary.
+
+Read-only code-page sharing needs reference-counted backing pages keyed by
+stable file identity, offset and contents/version, with a defined policy for
+files modified while mapped.  aspace_map_page() currently borrows a page;
+it does not implement such a cache or its lifetime.  Private mappings are
+needed first, then shared physical read-only mappings must be proved between
+two distinct process address spaces.  Never share writable relocation state.
+Process teardown drops references, freeing a backing page exactly once when
+the last mapping is gone.  No address-space backend means no shared libraries.
+
+
+Userspace link engine, search and lifetime
+-----------------------------------------
+
+Keep dependency traversal, object identity, dynsym/hash processing and symbol
+scope architecture-neutral.  Put startup, relocation width/semantics, PLT
+and cache operations in small backend files.  No general symbol lookup or
+ELF import service belongs in the kernel.  No kernel address may escape into
+a DSO as an ordinary symbol; kernel/CUIS operations remain syscall services.
+
+The initial engine uses SysV DT_HASH, bounded dynsym/strtab reads and
+DT_NEEDED traversal.  lib/ldso/dynamic.c currently provides only the per-object
+metadata and lookup part.  It accepts global/weak definitions of NOTYPE,
+OBJECT or FUNC with DEFAULT/PROTECTED visibility, excludes undefined/local/
+HIDDEN/INTERNAL symbols, and leaves address outputs untouched on lookup
+failure.  SHN_ABS is not biased.  Matched TLS/IFUNC/COMMON symbols fail
+explicitly.  Malformed hash chains have bounded traversal.  The current
+resource limit is 32 DT_NEEDED entries per object; exceeding it fails.
+The caller must supply a stable, entirely readable contiguous image view,
+with gaps zero-filled.  ELF-header/segment admission belongs to the mapper.
+
+The full resolver's initial global scope is the executable, followed by its
+dependency closure in deterministic breadth-first DT_NEEDED order.  The
+first eligible definition wins, including weak definitions; unresolved weak
+references resolve to zero, unresolved strong references are errors.
+Protected definitions bind locally inside their defining object; local and
+hidden symbols never participate in inter-object lookup.  These binding
+rules remain to be implemented above the per-object lookup.
+
+Start with eager binding for every object, regardless of a lazy-binding flag.
+Handle cyclic dependency graphs without repeated loads or unbounded recursion.
+Run dependency constructors before their dependents, once per object, with
+an explicitly tested deterministic rule for strongly connected components.
+Implement DT_PREINIT_ARRAY for the executable and DT_INIT/DT_INIT_ARRAY as
+specified by the ABI.  Finalizers run in reverse initialization order on
+normal CRT-managed exit; a raw Pterm, crash or forced exit only guarantees
+kernel resource cleanup, never execution of user callbacks.
+
+Initial installation layout:
+
+    /GEMSYS/LIB/X32/LD.SO      interpreter named by PT_INTERP
+    /GEMSYS/LIB/X32/*.SO       trusted system-library directory
+
+These are paths rooted on the pTOS boot filesystem, translated by the file
+interface; they do not presume a Linux root filesystem.  DT_NEEDED and
+DT_SONAME are case-sensitive ELF names even where the filesystem folds case;
+define identity checks before caching.  Initially allow bare dependency
+names from that directory, not relative paths, the current directory,
+LD_LIBRARY_PATH or LD_PRELOAD.  RPATH/RUNPATH, $ORIGIN and privileged-launch
+policy need a separate specified extension; unsupported path tags must not
+be silently advertised as honoured.  The main program and interpreter can
+be installed independently of their dependent DSOs.
+
+
+Implementation and validation milestones
+---------------------------------------
+
+1. This change: x32-only Kconfig gate, ABI/design contract, freestanding
+   metadata/SysV lookup core, tests using actual ET_EXEC/PIC ET_DYN output.
+2. Safe file/memory/protection syscalls and dynamic-image address-space
+   ownership, including failure cleanup and split Pexec load/launch.
+3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes.
+   Preserve static ELF/PIE, built-in images and m68k PRG regression tests.
+4. Self-relocating interpreter, dependency graph, scope and x32 relocations;
+   run an ET_EXEC consumer of a separately built libtest.so under QEMU.
+5. Constructors/finalizers and a real shared libcmini or client-helper
+   component, with an independently built compatible dynamic CRT.
+6. Reference-counted read-only page sharing, two-process isolation, W^X and
+   permission-fault probes, plus corrupted ELF, missing libraries/symbols,
+   cycles, invalid relocations, rollback and repeated-load leak tests in CI.
+7. ARM/m68k backends only after their isolated-address-space prerequisites
+   merge.  Verify m68k -fpic/-fPIC and emitted relocations then; PIE is not
+   a prerequisite.  FDPIC, non-MMU, TLS and advanced features stay separate.
+
+Run the first milestone's tests with:
+
+    python3 tools/test-elf-shared.py
+
+They require kconfiglib, a native host compiler and an x32-capable gcc/ld;
+CC_HOST and X32_CC can override the compiler commands.  Test outputs are
+temporary and do not modify the active .config or repository files.
+
+To build the userspace core, select pc-x86_64_defconfig, enable
+CONF_WITH_ELF_SHARED in menuconfig, then make CROSS_COMPILE= on Linux.
+Disabling the option leaves ordinary static builds unchanged.  An archive
+build or passing host metadata tests is not proof of interpreter startup,
+relocation, constructor execution or physical-page sharing.
