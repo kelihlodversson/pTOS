@@ -55,6 +55,9 @@
 #include "gemfmlib.h"
 #include "biosbind.h"
 #include "bdosbind.h"
+#include "aes_accessory.h"
+
+extern PD *run;
 
 /* aes/geminput.c's own comments mark these "called only from
  * aes/gemdosif.S", so they're declared only there, not in geminput.h --
@@ -294,5 +297,10 @@ void takeerr(void)
  */
 LONG dos_exec(WORD mode, const char *path, const char *tail, const char *env)
 {
-    return Pexec(mode, path, tail, env);
+    LONG result;
+
+    x86_64_aes_launch_begin(run);
+    result = Pexec(mode, path, tail, env);
+    x86_64_aes_launch_end();
+    return result;
 }

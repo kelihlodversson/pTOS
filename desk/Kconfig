@@ -131,14 +131,14 @@ config CONF_WITH_EASTER_EGG
 
 config CONF_EXTERNAL_DESK
 	bool "Load EmuDesk from the boot drive instead of linking it in"
-	depends on CONF_WITH_AES && !ARCH_X86_64
-	depends on ((ARCH_ARM || BUILD_TOOLCHAIN_ELF) && CONF_WITH_ELF_LOADER) || (ARCH_M68K && !BUILD_TOOLCHAIN_ELF && CONF_WITH_PRG_LOADER)
+	depends on CONF_WITH_AES
+	depends on ((ARCH_ARM || ARCH_X86_64 || BUILD_TOOLCHAIN_ELF) && CONF_WITH_ELF_LOADER) || (ARCH_M68K && !BUILD_TOOLCHAIN_ELF && CONF_WITH_PRG_LOADER)
 	# the program talks to the VDI through trap #2, which a process in its
 	# own address space cannot do: the kernels with per-process address
 	# spaces refuse VDI and AES calls from user mode until they have a
 	# validated GEM entry (doc/mmu-address-space.txt; on x86-64 that is
 	# #548, for the MMU kernels it has no issue of its own yet)
-	depends on !CONF_WITH_USER_ASPACE
+	depends on !CONF_WITH_USER_ASPACE || ARCH_X86_64
 	select CONF_WITH_SSYSTEM
 	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
 	help

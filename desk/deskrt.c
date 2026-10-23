@@ -21,6 +21,9 @@
 #include "obdefs.h"
 #include "aesdefs.h"
 #include "gsxdefs.h"
+#if defined(X32_USERLAND)
+#include "vdipb.h"
+#endif
 #include "aesbind.h"
 #include "biosext.h"
 #include "xbiosbind.h"
@@ -73,7 +76,14 @@ GRECT gl_clip;
 
 static void vdi_call(void)
 {
-#ifdef __arm__
+#if defined(X32_USERLAND)
+    LONG rc = vdi(&vdipb);
+    if (rc < 0) {
+        char message[64];
+        sprintf(message, "VDI %d error %ld\r\n", contrl.code, (long)rc);
+        Cconws(message);
+    }
+#elif defined(__arm__)
     register unsigned long r0 __asm__("r0") = VDI_OPCODE;
     register void *r1 __asm__("r1") = &vdipb;
 
@@ -92,8 +102,12 @@ static void vdi_call(void)
 }
 
 /* a call of the desktop's workstation, with the numbers of the parameters */
-static void vdi(WORD opcode, WORD nptsin, WORD nintin, WORD sub)
+static void desk_vdi(WORD opcode, WORD nptsin, WORD nintin, WORD sub)
 {
+#if defined(X32_USERLAND)
+    if (opcode != 109 && opcode != 110)
+        memset(&contrl.args, 0, sizeof(contrl.args));
+#endif
     contrl.code = opcode;
     contrl.nptsin = nptsin;
     contrl.nptsout = 0;
@@ -119,7 +133,7 @@ static void vdi(WORD opcode, WORD nptsin, WORD nintin, WORD sub)
 
 static void ibm_size(void)
 {
-    vdi(38, 0, 0, 0);                   /* vqt_attributes() */
+    desk_vdi(38, 0, 0, 0);                   /* vqt_attributes() */
     hptschar_ibm = ptsout[1];
 }
 
@@ -163,7 +177,7 @@ void desk_rt_init(void)
         intin[i] = 1;
     intin[10] = 2;                      /* raster coordinates */
     vdi_handle = gl_handle;
-    vdi(100, 0, 11, 0);                 /* v_opnvwk() */
+    desk_vdi(100, 0, 11, 0);                 /* v_opnvwk() */
     vdi_handle = contrl.handle;
     gl_width = intout[0] + 1;
     gl_height = intout[1] + 1;
@@ -172,7 +186,7 @@ void desk_rt_init(void)
     (void)wc;
 
     intin[0] = 1;
-    vdi(102, 0, 1, 1);                  /* vq_extnd(1): the planes */
+    desk_vdi(102, 0, 1, 1);                  /* vq_extnd(1): the planes */
     gl_nplanes = vdi_planes = intout[4];
 
     /* the normal font is the current one, the small font the smallest */
@@ -180,22 +194,20 @@ void desk_rt_init(void)
     hptschar_small = hc;
     ptsin[0] = 0;
     ptsin[1] = hptschar_small;
-    vdi(12, 1, 0, 0);                   /* vst_height() */
+    desk_vdi(12, 1, 0, 0);                   /* vst_height() */
     gl_wschar = ptsout[2];
     gl_hschar = ptsout[3];
     ptsin[0] = 0;
     ptsin[1] = hptschar_ibm;
-    vdi(12, 1, 0, 0);                   /* back to the normal font */
+    desk_vdi(12, 1, 0, 0);                   /* back to the normal font */
 
     intin[0] = 7;
-    vdi(15, 0, 1, 0);                   /* vsl_type() */
-    intin[0] = 1;
-    vdi(16, 1, 0, 0);                   /* vsl_width() */
+    desk_vdi(15, 0, 1, 0);                   /* vsl_type() */
     ptsin[0] = 1;
     ptsin[1] = 0;
-    vdi(16, 1, 0, 0);
+    desk_vdi(16, 1, 0, 0);
     intin[0] = (WORD)0xffff;
-    vdi(113, 0, 1, 0);                  /* vsl_udsty() */
+    desk_vdi(113, 0, 1, 0);                  /* vsl_udsty() */
 
     gl_mode = gl_tcolor = gl_lcolor = -1;
     gl_fis = gl_patt = gl_font = -1;
@@ -211,7 +223,7 @@ void desk_rt_exit(void)
 {
     if (vdi_handle)
     {
-        vdi(101, 0, 0, 0);              /* v_clsvwk() */
+        desk_vdi(101, 0, 0, 0);              /* v_clsvwk() */
         vdi_handle = 0;
     }
 }
@@ -324,7 +336,7 @@ void gsx_sclip(const GRECT *pt)
     }
     else
         intin[0] = FALSE;
-    vdi(129, 2, 1, 0);                  /* vs_clip() */
+    desk_vdi(129, 2, 1, 0);                  /* vs_clip() */
 }
 
 void gsx_gclip(GRECT *pt)
@@ -340,7 +352,7 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
     if (mode != gl_mode)
     {
         intin[0] = gl_mode = mode;
-        vdi(32, 0, 1, 0);               /* vswr_mode() */
+        desk_vdi(32, 0, 1, 0);               /* vswr_mode() */
     }
 
     if (text)
@@ -348,7 +360,7 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
         if (color != gl_tcolor)
         {
             intin[0] = gl_tcolor = color;
-            vdi(22, 0, 1, 0);           /* vst_color() */
+            desk_vdi(22, 0, 1, 0);           /* vst_color() */
         }
     }
     else
@@ -356,7 +368,7 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
         if (color != gl_lcolor)
         {
             intin[0] = gl_lcolor = color;
-            vdi(17, 0, 1, 0);           /* vsl_color() */
+            desk_vdi(17, 0, 1, 0);           /* vsl_color() */
         }
     }
     intin[0] = tmp;
@@ -372,7 +384,7 @@ void gsx_pline(WORD offx, WORD offy, WORD cnt, const Point *pts)
         ptsin[2 * i] = offx + pts[i].x;
         ptsin[2 * i + 1] = offy + pts[i].y;
     }
-    vdi(6, cnt, 0, 0);                  /* v_pline() */
+    desk_vdi(6, cnt, 0, 0);                  /* v_pline() */
 }
 
 /* the text in intin[], tb_nc characters of it, in the IBM or the small font */
@@ -387,7 +399,7 @@ void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
         {
             ptsin[0] = 0;
             ptsin[1] = *hin;
-            vdi(12, 1, 0, 0);           /* vst_height() */
+            desk_vdi(12, 1, 0, 0);           /* vst_height() */
             *hout = ptsout[1];
             gl_font = tb_f;
         }
@@ -396,7 +408,7 @@ void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
 
     ptsin[0] = x;
     ptsin[1] = y;
-    vdi(8, 1, tb_nc, 0);                /* v_gtext() */
+    desk_vdi(8, 1, tb_nc, 0);                /* v_gtext() */
 }
 
 /* the MFDB of a raster form of wb bytes per row and h rows, or of the screen */
@@ -424,14 +436,27 @@ static void fix_mfdb(FDB *pfd, void *addr, WORD wb, WORD h)
 /* a monochrome standard form to the device format, in place */
 void gsx_trans(void *addr, UWORD wb, UWORD h)
 {
+#if defined(X32_USERLAND)
+    /* With one plane the standard and device forms are identical (see
+     * vrn_trnfm()). Built-in bitmaps may reside in a read-only ELF segment. */
+    MAYBE_UNUSED(addr);
+    MAYBE_UNUSED(wb);
+    MAYBE_UNUSED(h);
+#else
     FDB src, dst;
 
     fix_mfdb(&src, addr, wb, h);
     src.fd_stand = TRUE;
     fix_mfdb(&dst, addr, wb, h);
+#if defined(X32_USERLAND)
+    contrl.args.raster.source = (VDI_USER_FDB *)&src;
+    contrl.args.raster.destination = (VDI_USER_FDB *)&dst;
+#else
     contrl.ptr1 = &src;
     contrl.ptr2 = &dst;
-    vdi(110, 0, 0, 0);                  /* vrn_trnfm() */
+#endif
+    desk_vdi(110, 0, 0, 0);                  /* vrn_trnfm() */
+#endif
 }
 
 /* a filled rectangle */
@@ -441,19 +466,19 @@ void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh)
     if (fis != gl_fis)
     {
         intin[0] = gl_fis = fis;
-        vdi(23, 0, 1, 0);               /* vsf_interior() */
+        desk_vdi(23, 0, 1, 0);               /* vsf_interior() */
     }
     if (patt != gl_patt)
     {
         intin[0] = gl_patt = patt;
-        vdi(24, 0, 1, 0);               /* vsf_style() */
+        desk_vdi(24, 0, 1, 0);               /* vsf_style() */
     }
 
     ptsin[0] = hx;
     ptsin[1] = hy;
     ptsin[2] = hx + hw - 1;
     ptsin[3] = hy + hh - 1;
-    vdi(11, 2, 0, 1);                   /* vr_recfl() */
+    desk_vdi(11, 2, 0, 1);                   /* vr_recfl() */
 }
 
 /* a screen area copied to another */
@@ -472,10 +497,15 @@ void bb_screen(WORD scsx, WORD scsy, WORD scdx, WORD scdy, WORD scw, WORD sch)
     ptsin[6] = scdx + scw - 1;
     ptsin[7] = scdy + sch - 1;
     intin[0] = S_ONLY;
+#if defined(X32_USERLAND)
+    contrl.args.raster.source = (VDI_USER_FDB *)&src;
+    contrl.args.raster.destination = (VDI_USER_FDB *)&dst;
+#else
     contrl.ptr1 = &src;
     contrl.ptr2 = &dst;
+#endif
     graf_mouse(M_OFF, NULL);
-    vdi(109, 4, 1, 0);                  /* vro_cpyfm() */
+    desk_vdi(109, 4, 1, 0);                  /* vro_cpyfm() */
     graf_mouse(M_ON, NULL);
 }
 

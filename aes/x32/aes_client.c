@@ -3,6 +3,7 @@
  * This file is distributed under the GPL, version 2 or any later version.
  */
 #include "aes_service.h"
+#include "aes_shell.h"
 
 static LONG service(ULONG fn, UQUAD a, UQUAD b)
 {
@@ -25,6 +26,10 @@ LONG aes_appl_init(const char *name, AES_APP_INFO *info)
 LONG aes_appl_exit(void)
 {
     return service(AES_SERVICE_EXIT, 0, 0);
+}
+LONG aes_shell(const AES_SHELL_REQUEST *request)
+{
+    return service(AES_SERVICE_SHELL, (uintptr_t)request, 0);
 }
 LONG aes_appl_find(const char *name)
 {

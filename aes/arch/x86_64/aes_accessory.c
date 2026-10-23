@@ -29,6 +29,7 @@
 typedef struct {
     AESPD *aes;
     PD *owner;
+    PD *launch_parent;
     BOOL started;
     BOOL registration_revoked;
     LONG result;
@@ -48,10 +49,43 @@ static ACCESSORY_CONTEXT *owned(PD *pd)
 {
     WORD i;
 
-    for (i = 2; i < NUM_PDS; i++)
+    for (i = 0; i < NUM_PDS; i++)
         if (contexts[i].owner == pd && pd)
             return &contexts[i];
     return NULL;
+}
+
+/* Only the native shell can grant an ordinary program its AES coroutine.
+ * Consume the grant on the first loaded launch: nested user Pexec calls do
+ * not inherit their parent's event/window ownership. */
+void x86_64_aes_launch_begin(PD *parent)
+{
+    if (rlr && rlr->p_pid == 0 && !contexts[0].owner)
+        contexts[0].launch_parent = parent;
+}
+
+void x86_64_aes_launch_process(PD *pd, PD *parent)
+{
+    ACCESSORY_CONTEXT *c = &contexts[0];
+
+    if (!rlr || rlr != c->aes || !parent || c->launch_parent != parent)
+        return;
+    c->launch_parent = NULL;
+    c->owner = pd;
+    c->registration_revoked = FALSE;
+}
+
+void x86_64_aes_launch_end(void)
+{
+    ACCESSORY_CONTEXT *c = &contexts[0];
+    PD *owner = c->owner;
+
+    c->launch_parent = NULL;
+    c->owner = NULL;
+    if (owner) {
+        x86_64_aes_window_finished(owner, c->aes);
+        x86_64_aes_objects_finished(c->aes);
+    }
 }
 
 void x86_64_aes_setup(AESPD *pd, PD *accessory)

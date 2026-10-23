@@ -30,7 +30,9 @@
 #include "string.h"
 #include <stdarg.h>
 
-#ifdef __x86_64__
+#if defined(X32_USERLAND)
+#include "deskaes.h"
+#elif defined(__x86_64__)
 #include "asm.h"        /* kernel_trap() */
 #endif
 
@@ -78,7 +80,10 @@ static intptr_t         addr_out[AO_SIZE];
 
 static __inline__ WORD gem(const GEMBLK *gb)
 {
-#ifdef __arm__
+#if defined(X32_USERLAND)
+    WORD retval = desk_aes_dispatch(gb->gb_pcontrol[0], gb->gb_pglobal,
+                         gb->gb_pintin, gb->gb_pintout, gb->gb_padrin, gb->gb_padrout);
+#elif defined(__arm__)
     register WORD retval __asm__("r0");
     register WORD opcode __asm__("r0") = 200; /* AES */
     register const GEMBLK *gbreg __asm__("r1") = gb;

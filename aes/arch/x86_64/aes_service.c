@@ -456,11 +456,11 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
 
     if (!kproc_user_aspace(run))
         return EACCDN;
-    if (fn > AES_SERVICE_OBJECT)
+    if (fn > AES_SERVICE_SHELL)
         return EINVFN;
     if (c || d || ((fn == AES_SERVICE_EXIT || fn == AES_SERVICE_YIELD) && (a || b)) ||
         ((fn == AES_SERVICE_FIND || fn == AES_SERVICE_READ ||
-          fn == AES_SERVICE_UPDATE) && b))
+          fn == AES_SERVICE_UPDATE || fn == AES_SERVICE_SHELL) && b))
         return EINVAL;
     if (fn == AES_SERVICE_INIT)
         return register_client(a, b);
@@ -498,6 +498,12 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
     case AES_SERVICE_OBJECT:
 #if CONF_WITH_AES
         return x86_64_aes_objects(a, b);
+#else
+        return EACCDN;
+#endif
+    case AES_SERVICE_SHELL:
+#if CONF_WITH_AES
+        return x86_64_aes_shell(a);
 #else
         return EACCDN;
 #endif
