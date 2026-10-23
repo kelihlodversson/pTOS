@@ -6,6 +6,7 @@
  */
 #include "../../lib/ldso/relocate.h"
 #include "../../lib/ldso/graph.h"
+#include "../../lib/ldso/image.h"
 #include "../../include/mman.h"
 
 extern const unsigned char dl_test_leaf_start[], dl_test_leaf_end[];
@@ -13,9 +14,9 @@ extern const unsigned char dl_test_library_start[], dl_test_library_end[];
 
 typedef struct {
     DL_OBJECT object;
-    uint32_t address, size, nseg, nwritable;
-    struct { uint32_t va, size, flags; } seg[16];
-    DL_WRITE_RANGE writable[16];
+    DL_IMAGE plan;
+    uint32_t address, size, nwritable;
+    DL_WRITE_RANGE writable[DL_MAX_LOADS];
 } SAMPLE;
 
 static int64_t call(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
@@ -52,72 +53,36 @@ static uint32_t word(const unsigned char *p)
     return v;
 }
 
-/* The samples are small native-endian ELF32 ET_DYN objects with link base 0.
- * Check all file/memory extents before copying into new anonymous pages. */
+/* Use the production ELF admission/population code; only mapping syscalls
+ * and embedded-file selection are specific to this test harness. */
 static int load(SAMPLE *s, const unsigned char *file, uint32_t length)
 {
-    uint32_t phoff, count, i, end = 0, base = UINT32_MAX;
-    uint32_t dynamic = 0, dynsize = 0;
     int64_t mapped;
+    uint32_t i;
 
-    if (length < 52 || word(file) != 0x464c457fUL || file[4] != 1 ||
-        file[5] != 1 || file[16] != 3 || file[17] || file[18] != 62 || file[19] ||
-        file[42] != 32 || file[43] || file[45])
-        return 0;
-    count = file[44];
-    phoff = word(file + 28);
-    if (!count || count > 16 || phoff > length || count * 32 > length - phoff)
-        return 0;
-    s->nseg = s->nwritable = 0;
-    for (i = 0; i < count; i++) {
-        const unsigned char *ph = file + phoff + i * 32;
-        uint32_t type = word(ph), off = word(ph + 4), va = word(ph + 8);
-        uint32_t filesz = word(ph + 16), memsz = word(ph + 20), flags = word(ph + 24);
-        uint32_t align = word(ph + 28);
-
-        if (type == 3)                  /* no interpreter in a DSO */
-            return 0;
-        if (type == 2) {
-            if (dynsize || !filesz || off > length || filesz > length - off)
-                return 0;
-            dynamic = va;
-            dynsize = filesz;
-        }
-        if (type != 1 || !memsz)
-            continue;
-        if (filesz > memsz || off > length || filesz > length - off ||
-            va > 0x100000 || memsz > 0x100000 - va || (flags & 3) == 3 ||
-            (align > 1 && ((align & (align - 1)) || (va - off) % align)))
-            return 0;
-        if (va < base)
-            base = va;
-        if (va + memsz > end)
-            end = va + memsz;
-        s->seg[s->nseg].va = va;
-        s->seg[s->nseg].size = memsz;
-        s->seg[s->nseg++].flags = flags;
-        if (flags & 2) {
-            s->writable[s->nwritable].address = va;
-            s->writable[s->nwritable++].size = memsz;
-        }
-    }
-    if (base || !dynsize || !end)
-        return 0;
-    s->size = (end + 4095) & ~4095U;
+    if (dl_image_read(&s->plan, file, length, DL_IMAGE_DSO, &dl_x32_image_abi) ||
+        s->plan.align > 4096)
+        return 0;                       /* large alignment reservation is future work */
+    s->size = s->plan.size;
     mapped = call(GEMDOS_MMAP, 0, s->size, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, UINT64_MAX, 0);
     if (mapped <= 0)
         return 0;
     s->address = (uint32_t)mapped;
-    for (i = 0; i < count; i++) {
-        const unsigned char *ph = file + phoff + i * 32;
+    if (s->address < s->plan.base)
+        return 0;
+    s->nwritable = 0;
+    for (i = 0; i < s->plan.nload; i++) {
+        const DL_LOAD *l = &s->plan.loads[i];
 
-        if (word(ph) == 1 && word(ph + 20))
-            bytes((void *)(uintptr_t)(s->address + word(ph + 8)),
-                   file + word(ph + 4), word(ph + 16));
+        if (l->flags & DL_PF_W) {
+            s->writable[s->nwritable].address = l->address;
+            s->writable[s->nwritable++].size = l->memsz;
+        }
     }
-    return dl_read_dynamic(&s->object, (const unsigned char *)(uintptr_t)s->address,
-                            s->size, 0, s->address, dynamic, dynsize) == DL_OK;
+    return dl_image_copy(&s->plan, file, length,
+                          (unsigned char *)(uintptr_t)s->address, s->size,
+                          s->address - s->plan.base, &s->object) == DL_OK;
 }
 
 static int seal(const SAMPLE *s)
@@ -126,18 +91,22 @@ static int seal(const SAMPLE *s)
 
     if (call(GEMDOS_MPROT, s->address, s->size, PROT_NONE, 0, 0, 0))
         return 0;
-    for (i = 0; i < s->nseg; i++) {
-        uint32_t first = s->seg[i].va & ~4095U;
-        uint32_t end = (s->seg[i].va + s->seg[i].size + 4095) & ~4095U;
+    for (i = 0; i < s->plan.nload; i++) {
+        const DL_LOAD *l = &s->plan.loads[i];
+        uint32_t first = l->address & ~4095U;
+        uint32_t end = (l->address + l->memsz + 4095) & ~4095U;
         uint32_t prot = PROT_READ;
 
-        if (s->seg[i].flags & 2)
+        if (l->flags & DL_PF_W)
             prot |= PROT_WRITE;
-        if (s->seg[i].flags & 1)
+        if (l->flags & DL_PF_X)
             prot |= PROT_EXEC;
-        if (call(GEMDOS_MPROT, s->address + first, end - first, prot, 0, 0, 0))
+        if (call(GEMDOS_MPROT, s->object.bias + first, end - first, prot, 0, 0, 0))
             return 0;
     }
+    if (s->plan.relro_size && call(GEMDOS_MPROT,
+            s->object.bias + s->plan.relro, s->plan.relro_size, PROT_READ, 0, 0, 0))
+        return 0;
     return 1;
 }
 
@@ -231,13 +200,24 @@ int x32_ldso_probe(void)
             dl_find_symbol(&library.object, "scratch", &symbol, &scratch)) {
             rc = 6; goto done;
         }
+        /* RELRO must be readable but no longer writable, while ordinary
+         * .data stays writable and executable text never becomes writable. */
+        if (!library.plan.relro_size ||
+            call(0x17d, library.object.bias + library.plan.relro,
+                 library.plan.relro_size, 1, 0, 0, 0) ||
+            call(0x17d, library.object.bias + library.plan.relro,
+                 library.plan.relro_size, 0, 0, 0, 0) >= 0 ||
+            call(0x17d, value, 4, 0, 0, 0, 0) ||
+            call(0x17d, answer, 1, 0, 0, 0, 0) >= 0) {
+            rc = 13; goto done;
+        }
         function = (int (*)(void))(uintptr_t)answer;
         if (*(uint32_t *)(uintptr_t)value != 5 || *(uint32_t *)(uintptr_t)scratch ||
             function() != 12) {           /* PLT -> leaf(), GOT -> value/bss */
             rc = 7; goto done;
         }
         for (i = 0; i < library.object.dynamic_size; i += 8) {
-            const unsigned char *d = library.object.image + library.object.dynamic + i;
+            const unsigned char *d = library.object.image + library.object.dynamic - library.object.link_base + i;
             uint32_t tag = word(d);
 
             if (!tag)
@@ -247,10 +227,10 @@ int x32_ldso_probe(void)
             if (tag == 27)
                 initsz = word(d + 4);
         }
-        if (initsz != 4 || init > library.size - 4) {
+        if (initsz != 4 || !dl_image_range(&library.plan, init, 4, DL_PF_R)) {
             rc = 8; goto done;
         }
-        ((void (*)(void))(uintptr_t)word(library.object.image + init))();
+        ((void (*)(void))(uintptr_t)word(library.object.image + init - library.object.link_base))();
         if (function() != 16 || *(uint32_t *)(uintptr_t)value != 9) {
             rc = 9; goto done;
         }

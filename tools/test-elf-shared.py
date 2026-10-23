@@ -58,6 +58,20 @@ class Backend(C.Structure):
     _fields_ = [("kind", C.c_void_p), ("value", C.c_void_p)]
 
 
+class ImageAbi(C.Structure):
+    _fields_ = [(n, C.c_uint32) for n in ("machine", "endian", "page_size", "max_span")]
+
+
+class Load(C.Structure):
+    _fields_ = [(n, C.c_uint32) for n in ("offset", "address", "filesz", "memsz", "flags", "align")]
+
+
+class Image(C.Structure):
+    _fields_ = [(n, C.c_uint32) for n in ("base", "size", "entry", "dynamic", "dynamic_size",
+        "interp_offset", "interp_size", "phdr", "phnum", "align", "relro", "relro_size", "nload", "type")]
+    _fields_ += [("loads", Load * 32)]
+
+
 class Mapping(C.Structure):
     _fields_ = [("object", Object), ("identity", C.c_uint64), ("cookie", C.c_void_p)]
 
@@ -111,6 +125,35 @@ def relocation_fixture(entries=(), plt=(), extra=()):
     return data, 1024, len(tags) * 8
 
 
+def image_fixture(base=0, executable=False):
+    data = bytearray(0x2200)
+    data[:7] = b"\x7fELF\x01\x01\x01"
+    interp = b"/GEMSYS/LIB/X32/LD.SO\0"
+    headers = [
+        (1, 0, base, 0, 0x400, 0x400, 4, 4096),
+        (1, 0x1000, base + 0x1000, 0, 0x100, 0x100, 5, 4096),
+        (1, 0x2000, base + 0x3000, 0, 0x200, 0x1300, 6, 4096),
+        (2, 0x2000, base + 0x3000, 0, 48, 48, 6, 4),
+        (0x6474e551, 0, 0, 0, 0, 0, 6, 16),
+        (0x6474e552, 0x2000, base + 0x3000, 0, 0x200, 0x1000, 4, 1)]
+    if executable:
+        headers.append((3, 0x300, base + 0x300, 0, len(interp), len(interp), 4, 1))
+        data[0x300:0x300 + len(interp)] = interp
+    struct.pack_into("<HHIIIIIHHHHHH", data, 16, 2 if executable else 3, 62, 1,
+                     base + 0x1000, 52, 0, 0, 52, 32, len(headers), 0, 0, 0)
+    for i, ph in enumerate(headers):
+        struct.pack_into("<8I", data, 52 + i * 32, *ph)
+    struct.pack_into("<5I", data, 0x200, 1, 2, 1, 0, 0)
+    struct.pack_into("<IIIBBH", data, 0x250, 1, base + 0x4100, 4, 0x11, 0, 1)
+    data[0x280:0x287] = b"\0value\0"
+    for i, pair in enumerate(((4, base + 0x200), (5, base + 0x280), (6, base + 0x240),
+                              (10, 7), (11, 16), (0, 0))):
+        struct.pack_into("<II", data, 0x2000 + i * 8, *pair)
+    data[0x1000:0x1100] = b"\xcc" * 256
+    data[0x2100:0x2200] = b"\x5a" * 256
+    return data
+
+
 class Metadata(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -121,6 +164,7 @@ class Metadata(unittest.TestCase):
                   "-O2", "-fPIC", "-shared", "-I" + str(ROOT / "lib/ldso"),
                   str(ROOT / "lib/ldso/dynamic.c"), str(ROOT / "lib/ldso/relocate.c"),
                   str(ROOT / "lib/ldso/arch/x32/reloc.c"), str(ROOT / "lib/ldso/graph.c"),
+                  str(ROOT / "lib/ldso/image.c"), str(ROOT / "lib/ldso/arch/x32/image_abi.c"),
                   "-o", str(hostlib)])
         cls.lib = C.CDLL(str(hostlib))
         cls.lib.dl_read_dynamic.argtypes = [C.POINTER(Object), C.c_void_p] + [C.c_uint32] * 5
@@ -144,6 +188,15 @@ class Metadata(unittest.TestCase):
                                           C.POINTER(GraphOps), C.c_void_p]
         cls.lib.dl_graph_open.restype = C.c_int
         cls.lib.dl_graph_close.argtypes = [C.POINTER(Graph), C.POINTER(GraphOps), C.c_void_p]
+        cls.lib.dl_image_read.argtypes = [C.POINTER(Image), C.c_void_p, C.c_uint32,
+                                          C.c_uint32, C.POINTER(ImageAbi)]
+        cls.lib.dl_image_read.restype = C.c_int
+        cls.lib.dl_image_copy.argtypes = [C.POINTER(Image), C.c_void_p, C.c_uint32,
+                                          C.c_void_p, C.c_uint32, C.c_uint32, C.POINTER(Object)]
+        cls.lib.dl_image_copy.restype = C.c_int
+        cls.lib.dl_image_range.argtypes = [C.POINTER(Image), C.c_uint32, C.c_uint32, C.c_uint32]
+        cls.lib.dl_image_range.restype = C.c_int
+        cls.image_abi = ImageAbi.in_dll(cls.lib, "dl_x32_image_abi")
         cls.backend = Backend.in_dll(cls.lib, "dl_x32_reloc_backend")
 
     @classmethod
@@ -421,6 +474,156 @@ class Metadata(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.lookup(obj)[2], 0x1400200)
 
+    def image_read(self, data, role=1, abi=None):
+        raw, plan = C.create_string_buffer(bytes(data)), Image()
+        C.memset(C.byref(plan), 0xa5, C.sizeof(plan))
+        rc = self.lib.dl_image_read(C.byref(plan), raw, len(data), role,
+                                    C.byref(self.image_abi if abi is None else abi))
+        if rc:
+            self.assertEqual(bytes(plan), bytes(Image()))
+        return rc, plan, raw
+
+    def image_copy(self, plan, raw, bias=0x1000000, capacity=None):
+        capacity = plan.size if capacity is None else capacity
+        memory, obj = C.create_string_buffer(b"\xa5" * max(1, capacity)), Object()
+        rc = self.lib.dl_image_copy(C.byref(plan), raw, len(raw) - 1,
+                                    memory, capacity, bias, C.byref(obj))
+        if rc:
+            self.assertEqual(bytes(obj), bytes(Object()))
+        return rc, obj, memory
+
+    def test_image_population_bss_holes_and_nonzero_link_base(self):
+        for base in (0, 0x200000):
+            with self.subTest(base=base):
+                rc, plan, raw = self.image_read(image_fixture(base))
+                self.assertEqual(rc, 0)
+                self.assertEqual((plan.base, plan.size, plan.nload), (base, 0x5000, 3))
+                self.assertEqual((plan.relro, plan.relro_size), (base + 0x3000, 0x1000))
+                self.assertEqual(plan.phdr, base + 52)
+                rc, obj, memory = self.image_copy(plan, raw)
+                self.assertEqual(rc, 0)
+                self.assertEqual((obj.link_base, obj.bias), (base, 0x1000000))
+                self.assertEqual(bytes(memory)[0x1000:0x1100], b"\xcc" * 256)
+                self.assertEqual(bytes(memory)[0x2100:0x3000], bytes(0xf00))
+                self.assertEqual(bytes(memory)[0x400:0x1000], bytes(0xc00))
+                self.assertEqual(bytes(memory)[0x3100:0x3200], b"\x5a" * 256)
+                self.assertEqual(bytes(memory)[0x3200:0x5000], bytes(0x1e00))
+                self.assertEqual(self.lookup(obj)[2], base + 0x1004100)
+                self.assertEqual(self.lib.dl_image_range(C.byref(plan), base + 0x4100, 4, 6), 1)
+                self.assertEqual(self.lib.dl_image_range(C.byref(plan), base + 0x2000, 4, 4), 0)
+
+    def test_image_header_and_truncation_rejection(self):
+        original = image_fixture()
+        for cut in (0, 6, 51, 52, 52 + 6 * 32 - 1, len(original) - 1):
+            self.assertEqual(self.image_read(original[:cut])[0], -1)
+        for off, fmt, value in ((4, "B", 2), (5, "B", 2), (6, "B", 0),
+             (16, "H", 1), (18, "H", 3), (20, "I", 0), (36, "I", 1),
+             (40, "H", 64), (42, "H", 56), (44, "H", 0), (44, "H", 129),
+             (28, "I", 0xfffffff0)):
+            with self.subTest(offset=off, value=value):
+                data = bytearray(original)
+                struct.pack_into("<" + fmt, data, off, value)
+                self.assertEqual(self.image_read(data)[0], -1)
+
+    def test_image_load_bounds_alignment_and_page_permissions(self):
+        for ph, field, value in ((0, 16, 0x500), (0, 4, 0x3000),
+                (1, 8, 0xfffff000), (1, 20, 0xfffff000), (1, 28, 24),
+                (1, 24, 7), (1, 24, 1), (1, 24, 0x84)):
+            with self.subTest(ph=ph, field=field, value=value):
+                data = image_fixture()
+                struct.pack_into("<I", data, 52 + ph * 32 + field, value)
+                self.assertEqual(self.image_read(data)[0], -1)
+        # Nonoverlapping bytes in one page still cannot disagree on rights.
+        data = image_fixture()
+        struct.pack_into("<8I", data, 84, 1, 0x800, 0x800, 0, 0x100, 0x100, 5, 1)
+        self.assertEqual(self.image_read(data)[0], -1)
+        # Same permissions may share a page; overlapping bytes may not.
+        struct.pack_into("<I", data, 84 + 24, 4)
+        self.assertEqual(self.image_read(data)[0], 0)
+        struct.pack_into("<8I", data, 84, 1, 0x300, 0x300, 0, 0x100, 0x100, 4, 1)
+        self.assertEqual(self.image_read(data)[0], -1)
+
+    def test_image_dynamic_and_relro_admission(self):
+        for ph, field, value in ((3, 0, 0), (3, 4, 0x2008), (3, 8, 0x3200),
+                (3, 16, 47), (3, 20, 0), (3, 20, 56), (5, 8, 0x1000), (5, 20, 0x2000), (5, 4, 0x2008), (5, 16, 0x2000)):
+            with self.subTest(ph=ph, field=field, value=value):
+                data = image_fixture()
+                struct.pack_into("<I", data, 52 + ph * 32 + field, value)
+                self.assertEqual(self.image_read(data)[0], -1)
+        # Point strtab into zero-filled BSS. The metadata reader can find a
+        # terminator there, but image admission must demand file-backed bytes.
+        data = image_fixture()
+        struct.pack_into("<I", data, 0x2000 + 8 + 4, 0x4100)
+        rc, plan, raw = self.image_read(data)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.image_copy(plan, raw)[0], -1)
+        for ph_type in (7, 0x60000001, 0x60000002):
+            data = image_fixture()
+            struct.pack_into("<I", data, 52 + 4 * 32, ph_type)
+            self.assertEqual(self.image_read(data)[0], -2)
+        data = image_fixture()
+        struct.pack_into("<I", data, 52 + 4 * 32 + 24, 7)
+        self.assertEqual(self.image_read(data)[0], -2)
+
+    def test_image_roles_interpreter_entry_and_program_headers(self):
+        data = image_fixture(executable=True)
+        self.assertEqual(self.image_read(data, role=3)[0], 0)
+        self.assertEqual(self.image_read(data, role=1)[0], -1)
+        self.assertEqual(self.image_read(data, role=2)[0], -1)
+        self.assertEqual(self.image_read(image_fixture(), role=2)[0], 0)
+        self.assertEqual(self.image_read(image_fixture(), role=3)[0], -1)
+        for value in (0x1100, 0x3000, 0xfffffff0):
+            bad = bytearray(data)
+            struct.pack_into("<I", bad, 24, value)
+            self.assertEqual(self.image_read(bad, role=3)[0], -1)
+        for replacement in (b"relative/path\0", b"/has\0nul/data\0", b"/unterminated"):
+            bad = bytearray(data)
+            bad[0x300:0x300 + len(replacement)] = replacement
+            struct.pack_into("<I", bad, 52 + 6 * 32 + 16, len(replacement))
+            self.assertEqual(self.image_read(bad, role=3)[0], -1)
+        # Duplicate PT_INTERP and invalid explicit PT_PHDR must fail.
+        bad = bytearray(data)
+        bad[52 + 4 * 32:52 + 5 * 32] = bad[52 + 6 * 32:52 + 7 * 32]
+        self.assertEqual(self.image_read(bad, role=3)[0], -1)
+        bad = bytearray(data)
+        struct.pack_into("<8I", bad, 52 + 4 * 32, 6, 52, 0xdead, 0, 224, 224, 4, 4)
+        self.assertEqual(self.image_read(bad, role=3)[0], -1)
+
+    def test_image_duplicate_headers_and_load_limit(self):
+        for header in (3, 5):  # PT_DYNAMIC / PT_GNU_RELRO
+            data = image_fixture()
+            data[52 + 4 * 32:52 + 5 * 32] = data[52 + header * 32:52 + (header + 1) * 32]
+            self.assertEqual(self.image_read(data)[0], -1)
+        data = image_fixture()
+        struct.pack_into("<H", data, 44, 34)
+        # 33 distinct PT_LOAD ranges exceed the bounded plan capacity.
+        for i in range(33):
+            struct.pack_into("<8I", data, 52 + i * 32, 1, 0, i * 4096, 0, 0x400, 0x400, 4, 4096)
+        struct.pack_into("<8I", data, 52 + 33 * 32, 2, 0, 0, 0, 8, 8, 4, 4)
+        self.assertEqual(self.image_read(data)[0], -4)
+
+    def test_image_copy_limits_and_runtime_bounds(self):
+        rc, plan, raw = self.image_read(image_fixture())
+        self.assertEqual(rc, 0)
+        for bias, capacity in ((1, plan.size), (0xfffff000, plan.size), (0, plan.size - 1)):
+            rc, obj, memory = self.image_copy(plan, raw, bias=bias, capacity=capacity)
+            self.assertEqual(rc, -1)
+            self.assertEqual(bytes(memory)[:capacity], b"\xa5" * capacity)
+        # Larger p_align is legal, but its load bias must preserve alignment.
+        data = image_fixture()
+        struct.pack_into("<I", data, 84 + 28, 0x2000)
+        rc, large, large_raw = self.image_read(data)
+        self.assertEqual(rc, 0)
+        self.assertEqual(large.align, 0x2000)
+        self.assertEqual(self.image_copy(large, large_raw, bias=0x1001000)[0], -1)
+        self.assertEqual(self.image_copy(large, large_raw, bias=0x1000000)[0], 0)
+        small = ImageAbi(62, 1, 4096, 4096)
+        self.assertEqual(self.image_read(image_fixture(), abi=small)[0], -4)
+        rc, plan, raw = self.image_read(image_fixture(0x400000, executable=True), role=3)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.image_copy(plan, raw)[0], -1)  # ET_EXEC cannot move.
+        self.assertEqual(self.image_copy(plan, raw, bias=0)[0], 0)
+
     def graph_object(self, soname, needed=(), extra=()):
         data = fixture() + bytearray(3072)
         names = bytearray(b"\0value\0")
@@ -577,9 +780,13 @@ class Metadata(unittest.TestCase):
                     image[h[2] - base:h[2] - base + h[4]] = raw[h[1]:h[1] + h[4]]
                 dynamic = next(h for h in headers if h[0] == 2)
                 bias = {"libleaf.so": 0x3000000, "libtest.so": 0x2000000, "program.elf": 0}[filename]
-                rc, obj, memory = self.parse(image, base=base, bias=bias,
-                                             dynamic=dynamic[2], size=dynamic[4])
+                rc, plan, raw_buffer = self.image_read(raw, role=1 if kind == 3 else 3)
                 self.assertEqual(rc, 0)
+                self.assertEqual(plan.base, base)
+                rc, obj, memory = self.image_copy(plan, raw_buffer, bias=bias)
+                self.assertEqual(rc, 0)
+                self.assertEqual(bytes(memory)[:len(image)], bytes(image))
+                self.assertEqual(bytes(memory)[len(image):plan.size], bytes(plan.size - len(image)))
                 loaded[filename] = (obj, memory, headers)
                 tags = {}
                 for offset in range(0, dynamic[4], 8):

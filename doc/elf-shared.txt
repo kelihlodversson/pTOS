@@ -12,6 +12,8 @@ and eagerly applies RELA relocations. The architecture-neutral planner is
 lib/ldso/relocate.c;
 lib/ldso/arch/x32/reloc.c supplies x32 relocation widths and arithmetic.
 lib/ldso/graph.c builds a bounded dependency closure through mapper callbacks.
+lib/ldso/image.c validates ELF32 load plans and populates private images;
+x32 format policy is selected separately in arch/x32/image_abi.c.
 There is no interpreter file I/O, constructor lifecycle or process-entry
 stub yet.
 
@@ -60,8 +62,9 @@ DT_NEEDED and a constructor.  Host tests resolve symbols and apply the actual em
 The ring-3 self-test separately maps the two DSOs with Mmap, relocates them,
 seals text RX and data RW/NX, and calls through their GOT/PLT. It manually
 calls the relocated constructor and verifies fresh data after unloading and
-reloading. This fixture loader does not implement PT_INTERP startup or the
-runtime linker's constructor execution. The graph discovers libleaf.so
+reloading. The harness uses the shared image admission/population code,
+seals RELRO and checks it with Maccess. It does not implement PT_INTERP
+startup or the runtime linker's constructor execution. The graph discovers libleaf.so
 from libtest.so's actual DT_NEEDED rather than preloading it.
 
 The x32 backend supports NONE, RELATIVE, RELATIVE64, GLOB_DAT, JUMP_SLOT,
@@ -155,7 +158,8 @@ Mmap, Munmap and Mprot now expose private anonymous mappings and checked
 permission changes (doc/mmap.txt). Existing file calls can fill RW pages
 before Mprot makes text RX. Malloc/Mxalloc are separate private heap services.
 File-backed mappings, read-only page sharing and the interpreter's executable
-and library mapping policy remain to be implemented.
+and library reservation/file-I/O policy remain to be implemented. ELF32
+admission and private-image population are implemented in lib/ldso/image.c.
 
 The mapping window is [0x01000000, 0x0f000000), outside USER_IMAGE_*, the
 ancestors page, heap/stack and guards. Anonymous reservations are atomic and
@@ -172,6 +176,32 @@ private and NX.  Apply relocations only to approved private writable pages;
 reject DT_TEXTREL and relocations into shared text.  Protect PT_GNU_RELRO
 after eager binding.  Flush/synchronize instruction caches through the
 architecture backend where necessary.
+
+The image reader validates a complete immutable file without section headers,
+allocation or syscalls. Separate DSO, interpreter and executable roles enforce
+ET_DYN/no-nested-interpreter and executable-entry constraints. Executables
+require a bounded absolute PT_INTERP and mapped program headers; ET_EXEC is
+kept at its linked addresses, while PIE/DSO biases must preserve p_align.
+The initial format policy is ELF32 EM_X86_64, little endian, zero e_flags,
+4096-byte pages and a maximum image span of 224 MiB. Plans are bounded to
+128 program headers and 32 load segments. Overlapping memory extents,
+conflicting permissions on a shared page, W+X, non-readable loads, executable
+stacks, PT_TLS and pTOS-private relocation/import headers are refused.
+PT_DYNAMIC must be uniquely file-backed, with matching file/virtual offsets
+and equal file/memory sizes. Dynamic lookup and relocation tables must lie
+entirely in readable file-backed segments; zero-filled holes/BSS are not
+accepted as metadata. The caller must keep the file and plan unchanged.
+
+The population step checks destination capacity, alignment and runtime
+address bounds, zeroes the entire private span and copies each segment's
+file bytes. It returns a dynamic-object view; failure requires discarding
+the mapping. It does not allocate or seal memory. The ring-3 harness supplies
+Mmap/Mprot/Munmap, protects gaps with PROT_NONE, seals text RX/data RW-NX and
+applies whole-page PT_GNU_RELRO after eager binding (rounding its end down to
+avoid protecting writable data beyond RELRO). It currently reserves only
+page-aligned images; larger p_align reservation and trusted file I/O remain
+runtime-mapper work. No ELF admission path in this userspace core changes
+the existing kernel static-ELF or PRG loader.
 
 Read-only code-page sharing needs reference-counted backing pages keyed by
 stable file identity, offset and contents/version, with a defined policy for
@@ -201,7 +231,8 @@ failure.  SHN_ABS is not biased.  Matched TLS/IFUNC/COMMON symbols fail
 explicitly.  Malformed hash chains have bounded traversal.  The current
 resource limit is 32 DT_NEEDED entries per object; exceeding it fails.
 The caller must supply a stable, entirely readable contiguous image view,
-with gaps zero-filled.  ELF-header/segment admission belongs to the mapper.
+with gaps zero-filled.  ELF-header/segment admission and file-backed metadata checks are provided by
+lib/ldso/image.c; the mapper owns its private reservations and permissions.
 
 dl_graph_open builds the executable-first breadth-first scope in DT_NEEDED
 order. Its caller owns stable graph storage; a mapper callback acquires
@@ -273,8 +304,9 @@ Implementation and validation milestones
    metadata/SysV lookup core, tests using actual ET_EXEC/PIC ET_DYN output.
 2. Private anonymous Mmap/Munmap/Mprot services are implemented, with
    permission faults, limits, isolation, failure cleanup and CI boot tests.
-   File backing and dynamic-image ownership through split Pexec load/launch
-   remain to be implemented.
+   ELF32 load admission, private image population and a RELRO sealing probe
+   are also implemented. File backing, runtime reservation/file-I/O policy
+   and dynamic-image ownership through split Pexec load/launch remain.
 3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes.
    Preserve static ELF/PIE, built-in images and m68k PRG regression tests.
 4. Ordered scope and eager x32 relocations are implemented and tested in
