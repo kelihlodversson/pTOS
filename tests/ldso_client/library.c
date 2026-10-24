@@ -4,6 +4,7 @@
 /* Exercise the shared exports rather than libcmini header inlines. */
 #undef strlen
 #undef strcmp
+#undef strchr
 extern int lifecycle;
 
 static void handler(void)
@@ -15,9 +16,11 @@ __attribute__((constructor)) static void init(void)
 {
     size_t (*volatile length)(const char *) = strlen;
     int (*volatile compare)(const char *, const char *) = strcmp;
+    char *(*volatile find)(const char *, int) = strchr;
     const char *value = getenv("CHECK");
     if (!value || compare(value, "660") || length(value) != 3 || !ptos_basepage ||
-        atexit(handler)) _Exit(95);
+        find(value, 0) != value + 3 || find(value, 0x136) != value ||
+        find(value, 'x') || atexit(handler)) _Exit(95);
     lifecycle = 1;
 }
 static void destructor_handler(void)

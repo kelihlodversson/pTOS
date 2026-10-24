@@ -333,7 +333,6 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
     DFD *dfd;
     FCB *b;
     DND *dn;
-    OFD *open_link;
     int h,cl,plen;
     long rc;
     PFSCOOKIE newfc;
@@ -405,17 +404,13 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
         f2->f_clust = le2cpu16(dfd->o_strtcl);
     }
     f2->f_fileln = 0;
-    open_link = f->o_link;
-    memcpy(f, f0, sizeof(OFD));
-    f->o_link = open_link;       /* preserve other open/backing references */
-    /* the memcpy also copied f->o_dfd, which now points at f0's embedded
-     * DFD; nextcl() already marked that DFD O_DIRTY, so ixclose() below
-     * sees the flag and writes the parent directory entry. */
-    ixclose(f,CL_DIR | CL_FULL);    /* force flush and write */
-    xmfreblk(f);
-    sft[h-NUMSTD].f_own = 0;
-    sft[h-NUMSTD].f_ofd = 0;
-    return E_OK;
+    /* Synchronize the new directory's metadata through the temporary open
+     * file without borrowing the directory-owned OFD/DFD or its lifetime. */
+    memcpy(&f->o_dfd->o_td, &f0->o_dfd->o_td, 10);
+    f->o_dfd->o_flag |= O_DIRTY;
+    ixclose(f, CL_DIR | CL_KEEP);
+    f0->o_dfd->o_flag &= ~O_DIRTY;
+    return xclose(h);
 }
 
 static LONG fat_remove(PFSCOOKIE *dir, const char *name)

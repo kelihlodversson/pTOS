@@ -218,17 +218,23 @@ class Metadata(unittest.TestCase):
         try:
             os.chdir(ROOT)
             os.environ["CONFIG_"] = ""
-            run([sys.executable, str(ROOT / "tools/genconfig.py"),
-                 "--kconfig", "Kconfig", "--config", "configs/pc-x86_64_defconfig",
-                 "--header", str(self.path / "autoconf.h"),
-                 "--makefile", str(self.path / "auto.conf")])
-            binary = self.path / "fat-reclaim"
-            run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
-                      "-ffunction-sections", "-fdata-sections", "-fno-builtin",
-                      "-I" + str(self.path), "-Iinclude", "-Iinclude/arch/x86_64",
-                      "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c",
-                      "-Wl,--gc-sections", "-o", str(binary)])
-            run([str(binary)])
+            for pins in (False, True):
+                config = self.path / "reclaim.config"
+                text = (ROOT / "configs/pc-x86_64_defconfig").read_text()
+                if not pins:
+                    text += "\nCONF_WITH_X86_64_MEMTEST=n\n"
+                config.write_text(text)
+                run([sys.executable, str(ROOT / "tools/genconfig.py"),
+                     "--kconfig", "Kconfig", "--config", str(config),
+                     "--header", str(self.path / "autoconf.h"),
+                     "--makefile", str(self.path / "auto.conf")])
+                binary = self.path / "fat-reclaim"
+                run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
+                          "-ffunction-sections", "-fdata-sections", "-fno-builtin",
+                          "-I" + str(self.path), "-Iinclude", "-Iinclude/arch/x86_64",
+                          "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c",
+                          "-Wl,--gc-sections", "-o", str(binary)])
+                run([str(binary)])
             binary = self.path / "backing-reclaim"
             run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                       "-ffunction-sections", "-fdata-sections", "-fno-builtin",

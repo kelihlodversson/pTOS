@@ -317,24 +317,28 @@ static long sftdel(FTAB *slot)
 
 /* Media-change invalidates file handles, but backing pins must remain safe
  * to release after the DMD/DND tree has gone. Never reclaim the new medium. */
+static void invalidate_file(OFD *fd)
+{
+    int i;
+    BOOL handles = FALSE;
+    fd->o_dfd->o_flag |= O_MEDIA_LOST;
+    fd->o_dmd = NULL; fd->o_dnode = NULL; fd->o_dirfil = NULL;
+    for (i = 0; i < OPNFILES; i++)
+        if (sft[i].f_ofd == fd) {
+            sft[i].f_ofd = NULL; sft[i].f_own = NULL; sft[i].f_use = 0;
+            handles = TRUE;
+        }
+    if (handles) ofd_put(fd);
+}
+
 static void invalidate_directory_files(DND *dn)
 {
     OFD *fd, *next;
-    int i;
-    BOOL handles;
     if (dn->d_left) invalidate_directory_files(dn->d_left);
     if (dn->d_right) invalidate_directory_files(dn->d_right);
     for (fd = dn->d_files; fd; fd = next) {
         next = fd->o_link;
-        fd->o_dfd->o_flag |= O_MEDIA_LOST;
-        fd->o_dmd = NULL; fd->o_dnode = NULL; fd->o_dirfil = NULL;
-        handles = FALSE;
-        for (i = 0; i < OPNFILES; i++)
-            if (sft[i].f_ofd == fd) {
-                sft[i].f_ofd = NULL; sft[i].f_own = NULL; sft[i].f_use = 0;
-                handles = TRUE;
-            }
-        if (handles) ofd_put(fd);
+        invalidate_file(fd);
     }
     dn->d_files = NULL;
 }
@@ -342,7 +346,17 @@ static void invalidate_directory_files(DND *dn)
 void ofd_invalidate_drive(DMD *dm)
 {
     OFD **link = &pending_unlinks, *fd;
+    int i;
     if (dm->m_dtl) invalidate_directory_files(dm->m_dtl);
+    /* A close may have detached an OFD before a later flush failed. */
+    for (i = 0; i < OPNFILES; i++) {
+        fd = sft[i].f_ofd;
+#if CONF_WITH_PLUGGABLE_FS
+        if (sft[i].f_pfs.fs) continue;
+#endif
+        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dmd == dm)
+            invalidate_file(fd);
+    }
     while ((fd = *link)) {
         if (fd->o_dfd->o_flag & O_MEDIA_LOST) {
             *link = fd->o_thread;

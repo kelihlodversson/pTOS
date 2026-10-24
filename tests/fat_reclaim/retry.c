@@ -13,6 +13,8 @@ static int allocated, freed, fail_directory, directory_erased;
 FTAB sft[OPNFILES];
 static DND *allocation_directory;
 static int scavenged;
+static void *directory_owned;
+static int freed_directory;
 
 void *xmgetblk(WORD type)
 {
@@ -24,7 +26,11 @@ void *xmgetblk(WORD type)
     memset(fd, 0, sizeof(*fd));
     return fd;
 }
-void xmfreblk(void *memory) { (void)memory; freed++; }
+void xmfreblk(void *memory)
+{
+    if (memory == directory_owned) freed_directory = 1;
+    freed++;
+}
 long ixlseek(OFD *fd, long offset) { fd->o_bytnum = offset; return offset; }
 long ixwrite(OFD *fd, long size, void *buffer)
 {
@@ -129,6 +135,48 @@ static int unlink_retry(int directory_failure, int lose_media, int locked)
     return 0;
 }
 
+/* Directory metadata and the mkdir handle must retain separate ownership;
+ * media cleanup must also find a handle detached before a failed flush. */
+static int invalidate_mkdir(int detached)
+{
+    static DMD media, other_media;
+    static DND directory;
+    static OFD dirfile, temporary, unrelated;
+    memset(&directory, 0, sizeof(directory));
+    memset(&dirfile, 0, sizeof(dirfile));
+    memset(&temporary, 0, sizeof(temporary));
+    memset(&unrelated, 0, sizeof(unrelated));
+    memset(sft, 0, sizeof(sft));
+    directory.d_ofd = &dirfile;
+    directory.d_files = detached ? NULL : &temporary;
+    media.m_dtl = &directory;
+    dirfile.o_dfd = &dirfile.o_disk;
+    dirfile.o_disk.o_usecnt = 1;
+    temporary.o_dfd = &temporary.o_disk;
+    temporary.o_disk.o_usecnt = 1;
+#if CONF_WITH_FILE_PINS
+    temporary.o_refs = 1;
+#endif
+    temporary.o_dmd = &media;
+    temporary.o_dnode = &directory;
+    unrelated.o_dmd = &other_media;
+    sft[0].f_ofd = sft[1].f_ofd = &temporary;
+    sft[0].f_use = sft[1].f_use = 1;
+    sft[2].f_ofd = &unrelated;
+    sft[3].f_ofd = (OFD *)-3L;
+    directory_owned = &dirfile;
+    freed = freed_directory = 0;
+    ofd_invalidate_drive(&media);
+    directory_owned = NULL;
+    if (freed != 1 || freed_directory || dirfile.o_disk.o_usecnt != 1)
+        return 16;
+    if (sft[0].f_ofd || sft[1].f_ofd || sft[0].f_use || sft[1].f_use ||
+        sft[2].f_ofd != &unrelated || sft[3].f_ofd != (OFD *)-3L ||
+        directory.d_files) return 17;
+    memset(sft, 0, sizeof(sft));
+    return 0;
+}
+
 int main(void)
 {
     static DFD file;
@@ -182,6 +230,10 @@ int main(void)
             failed = unlink_retry(cluster, 1, copy);
             if (failed) return failed;
         }
+    }
+    for (cluster = 0; cluster < 2; cluster++) {
+        failed = invalidate_mkdir(cluster);
+        if (failed) return failed;
     }
     return 0;
 }
