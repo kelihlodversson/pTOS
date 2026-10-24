@@ -156,7 +156,7 @@ void gsx_1code(WORD code, WORD value)
 
 
 
-static WORD screen_rez(void)
+WORD gsx_screen_rez(void)
 {
     if (HAS_VIDEL)
         return FALCON_REZ;
@@ -177,7 +177,7 @@ static void gsx_wsopen(void)
      * we need to use the special pseudo-screen rez, and put the actual
      * videl mode into intout[45] (!).
      */
-    *p++ = screen_rez() + 2;
+    *p++ = gsx_screen_rez() + 2;
     for (i = 1; i < 10; i++)
         *p++ = 1;
     *p = 2;                         /* device coordinate space */

@@ -39,16 +39,13 @@ void gsx_xline(WORD ptscount, WORD *ppoints)
  */
 void gsx_bxpts(GRECT *pt)
 {
-    ptsin[0] = pt->g_x;
-    ptsin[1] = pt->g_y;
-    ptsin[2] = pt->g_x + pt->g_w - 1;
-    ptsin[3] = pt->g_y;
-    ptsin[4] = pt->g_x + pt->g_w - 1;
-    ptsin[5] = pt->g_y + pt->g_h - 1;
-    ptsin[6] = pt->g_x;
-    ptsin[7] = pt->g_y + pt->g_h - 1;
-    ptsin[8] = pt->g_x;
-    ptsin[9] = pt->g_y;
+    WORD left = pt->g_x, top = pt->g_y;
+    WORD right = left + pt->g_w - 1, bottom = top + pt->g_h - 1;
+
+    ptsin[0] = ptsin[6] = ptsin[8] = left;
+    ptsin[1] = ptsin[3] = ptsin[9] = top;
+    ptsin[2] = ptsin[4] = right;
+    ptsin[5] = ptsin[7] = bottom;
 }
 
 
@@ -69,39 +66,41 @@ void gsx_xbox(GRECT *pt)
 void gsx_xcbox(GRECT *pt)
 {
     WORD    wa, ha;
+    WORD    left = pt->g_x, top = pt->g_y;
+    WORD    right = left + pt->g_w, bottom = top + pt->g_h;
 
     wa = 2 * gl_wbox;
     ha = 2 * gl_hbox;
-    ptsin[0] = pt->g_x;
-    ptsin[1] = pt->g_y + ha;
-    ptsin[2] = pt->g_x;
-    ptsin[3] = pt->g_y;
-    ptsin[4] = pt->g_x + wa;
-    ptsin[5] = pt->g_y;
+    ptsin[0] = left;
+    ptsin[1] = top + ha;
+    ptsin[2] = left;
+    ptsin[3] = top;
+    ptsin[4] = left + wa;
+    ptsin[5] = top;
     gsx_xline(3, ptsin);
 
-    ptsin[0] = pt->g_x + pt->g_w - wa;
-    ptsin[1] = pt->g_y;
-    ptsin[2] = pt->g_x + pt->g_w - 1;
-    ptsin[3] = pt->g_y;
-    ptsin[4] = pt->g_x + pt->g_w - 1;
-    ptsin[5] = pt->g_y + ha;
+    ptsin[0] = right - wa;
+    ptsin[1] = top;
+    ptsin[2] = right - 1;
+    ptsin[3] = top;
+    ptsin[4] = right - 1;
+    ptsin[5] = top + ha;
     gsx_xline(3, ptsin);
 
-    ptsin[0] = pt->g_x + pt->g_w - 1;
-    ptsin[1] = pt->g_y + pt->g_h - ha;
-    ptsin[2] = pt->g_x + pt->g_w - 1;
-    ptsin[3] = pt->g_y + pt->g_h - 1;
-    ptsin[4] = pt->g_x + pt->g_w - wa;
-    ptsin[5] = pt->g_y + pt->g_h - 1;
+    ptsin[0] = right - 1;
+    ptsin[1] = bottom - ha;
+    ptsin[2] = right - 1;
+    ptsin[3] = bottom - 1;
+    ptsin[4] = right - wa;
+    ptsin[5] = bottom - 1;
     gsx_xline(3, ptsin);
 
-    ptsin[0] = pt->g_x + wa;
-    ptsin[1] = pt->g_y + pt->g_h - 1;
-    ptsin[2] = pt->g_x;
-    ptsin[3] = pt->g_y + pt->g_h - 1;
-    ptsin[4] = pt->g_x;
-    ptsin[5] = pt->g_y + pt->g_h - ha;
+    ptsin[0] = left + wa;
+    ptsin[1] = bottom - 1;
+    ptsin[2] = left;
+    ptsin[3] = bottom - 1;
+    ptsin[4] = left;
+    ptsin[5] = bottom - ha;
     gsx_xline(3, ptsin);
 }
 

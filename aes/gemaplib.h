@@ -36,6 +36,7 @@ extern BOOL     gl_rec_started;
 WORD ap_init(void);
 WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff);
 WORD ap_find(char *pname);
+WORD ap_getinfo(WORD type, WORD *out1, WORD *out2, WORD *out3, WORD *out4);
 void ap_tplay(const EVNTREC *pbuff, WORD length, WORD scale);
 WORD ap_trecd(EVNTREC *pbuff, WORD length);
 void ap_exit(void);
