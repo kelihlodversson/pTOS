@@ -18,7 +18,7 @@ AES family     Application-local libaes.so       Kernel CUIS responsibility
 ----------     --------------------------       --------------------------
 appl_*         GEM API/name/message adapters    Session handles and lifecycle;
                                                 bounded authorized delivery
- evnt_*        GEM predicates/result adapters   Atomic test/wait/wakeup, queues,
+evnt_*        GEM predicates/result adapters   Atomic test/wait/wakeup, queues,
                                                 timeouts, input routing
 wind_*         Decorations, layout, local       Window identity/ownership,
                geometry (wind_calc)             geometry, Z-order, visible regions
@@ -28,7 +28,7 @@ form_*         Dialog state, validation,        Focus/capture and atomic waits
                object selection/editing
 objc_*         Trees, traversal, drawing,       No owned copy of a GEM object
                hit testing, USERDEF callbacks   tree; validate VDI/CUIS requests
- graf_*        Geometry and interaction logic   Pointer snapshot/capture and
+graf_*        Geometry and interaction logic   Pointer snapshot/capture and
                                                 display coordination
 rsrc_*         File parsing, relocation,        None beyond normal safe file/VM
                resource ownership               services
@@ -38,10 +38,10 @@ scrp_*         Compatibility and file helpers   Any shared selection/ownership
                                                 policy must be explicit
 
 Current sources expose the migration points: gemaplib/gemevlib/gemasync and
- aes_service.c combine registration, scheduling, GEM messages and waits;
+aes_service.c combine registration, scheduling, GEM messages and waits;
 gemwmlib/gemwrect and aes_window.c combine authoritative windows with
 GEM decorations; gemoblib/gemobjop/gemobed, aes_tree.c and
- aes_objects_kernel.c implement tree operations; gemrslib/rsload_portable
+aes_objects_kernel.c implement tree operations; gemrslib/rsload_portable
 load resources; gemfmlib/gemmnlib/gemgraf implement local interaction and
 rendering with scheduler dependencies. These dependencies must be split,
 not copied wholesale into the shared library. Native CUIS must never expose
@@ -114,3 +114,27 @@ input, timers, copy/VM facilities and VDI. Test two active isolated GUI
 clients, focus, grabs, timeouts, redraw and failure cleanup as those features
 land. The two-session nested-client foundation test does not claim concurrent
 window/event functionality. Full libcmini integration (#673) is independent.
+
+Validation
+----------
+
+    python3 tools/test-cuis.py
+
+This compiles the production session service for host tests of malformed
+headers, failed allocation/copyout, two owners, foreign/stale handles,
+idempotent attach, process cleanup and handle exhaustion. Kconfig tests
+require x32 plus the shared linker and keep ARM/m68k disabled.
+
+For the real syscall and dynamic-linker path, configure pc-x86_64 with
+CONF_WITH_ELF_SHARED, CONF_WITH_LIBAES and CONF_WITH_X86_64_MEMTEST, then:
+
+    make CROSS_COMPILE= -j4
+    sh tools/test-mmap-boot.sh
+
+CUIS.TOS is a normal PT_INTERP executable with DT_NEEDED libaes.so and
+libptos.so. A parent keeps its session while children register independently,
+reject its handle and exit normally, via _Exit, or by a user exception.
+The boot test checks shared DSO-page reuse, allocator/session counts after
+teardown, and the CUIS PASS markers. It also exercises invalid user pointers,
+high syscall bits, immutable output memory and local rectangle helpers.
+The disabled-feature memory self-test explicitly requires EINVFN.

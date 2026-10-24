@@ -49,6 +49,9 @@
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#endif
 #if CONF_WITH_X32_VDI
 #include "lineavars.h"
 #include "screen_mode.h"
@@ -2154,6 +2157,20 @@ static void test_ring3(void)
         kcprintf("x86-64 ldso relocations: %s\n", failures == before ? "PASS" : "FAIL");
         kcprintf("x86-64 PT_INTERP startup: %s\n", failures == before ? "PASS" : "FAIL");
     }
+#endif
+
+#if CONF_WITH_LIBAES
+    {
+        int before = failures;
+        ULONG shares = aspace_file_cross_shares();
+        ULONG sessions = cuis_session_count();
+        probe_expect(':', 0, "libaes/CUIS: nested owners, private state, geometry and fault cleanup");
+        CHECK(cuis_session_count() == sessions, "CUIS sessions reclaimed after normal, raw and fault exits");
+        CHECK(aspace_file_cross_shares() != shares, "nested CUIS clients reuse DSO pages");
+        kcprintf("x86-64 CUIS sessions: %s\n", failures == before ? "PASS" : "FAIL");
+    }
+#else
+    probe_expect(':', 0, "CUIS services are unavailable when disabled");
 #endif
 
     /* each process gets fresh private pages: what the first leaves in its

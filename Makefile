@@ -124,8 +124,9 @@ core-dirs-y = bios bdos fs util
 optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 ifneq ($(CONF_WITH_AES),y)
-optional-dirs-$(CONF_WITH_X32_AES) += aes
-optional-dirs-$(CONF_WITH_CUIS) += aes
+ifneq ($(filter y,$(CONF_WITH_X32_AES) $(CONF_WITH_CUIS)),)
+optional-dirs-y += aes
+endif
 endif
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
@@ -2299,3 +2300,7 @@ $(DESK_OBJ): | $(GEN_SRC)
 #
 
 -include $(wildcard obj/*.d)
+
+.PHONY: cuis-contract-test
+cuis-contract-test:
+	python3 tools/test-cuis.py
