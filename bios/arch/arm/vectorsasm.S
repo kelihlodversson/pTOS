@@ -145,6 +145,7 @@ C_SYM(arm_svc_unhandled):
         mov     r0, r0, lsl #2
         add     r0, r0, #0x80
         mov     r1, sp
+        sub     sp, sp, #4              // srs (8) + frame (60) leave sp 4 mod 8: pad for the AAPCS
         mov     r2, #0
         mov     r3, #0
         ldr     ip, =C_SYM(any_vec)

@@ -586,8 +586,8 @@ C_SYM(arm_dispatch_data_abort):
     cps    #0x13
     sub    sp, #4*15
     stmia  sp, {r0-r14}^
-    mrc p15, 0, r2, c6, c0,  0
-    mrc p15, 0, r3, c5, c0,  0
+    mrc p15, 0, r2, c5, c0,  0      /* DFSR, then DFAR: the order of any_vec() */
+    mrc p15, 0, r3, c6, c0,  0
     mov r0, #0x0c
     mov r1, sp
     ldr ip, =C_SYM(tos_vec_data)

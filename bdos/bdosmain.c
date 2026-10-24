@@ -894,7 +894,7 @@ restrt:
         return 0;
 #endif
 
-    if (fn > MAX_FNCALL)
+    if (fn < 0 || fn > MAX_FNCALL)      /* a negative number from a WORD would index before funcs[] */
         return EINVFN;
 
     KDEBUG(("BDOS (fn=0x%04x)\n",fn));

@@ -999,6 +999,10 @@ iil_back:
  */
 C_SYM(int_priv):
         movem.l d0/a0,-(sp)             // saving d0 and a0 while we test
+#if CONF_WITH_USER_ASPACE
+        btst    #5,8(sp)                // a process in user mode: its code may be
+        jeq     pi_back                 // read-only, so it is not patched, it is a fault
+#endif
         movea.l 10(sp),a0               // the offending address
         move.w  (a0),d0                 // the offending instruction
         andi.w  #0xffc0,d0              // isolate move from SR opcode

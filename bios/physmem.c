@@ -15,10 +15,18 @@
 #include "emutos.h"
 #include "tosvars.h"
 #include "biosext.h"
+#if CONF_WITH_PROCESS_ASPACES
+#include "pmem32.h"
+#endif
 
 LONG phys_pages_total(void)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    /* phystop is an address of the kernel window: the RAM starts at its base */
+    return (LONG)(((ULONG)(uintptr_t)phystop - (ULONG)PMEM32_WINDOW_BASE) / 4096UL);
+#else
     return (LONG)((ULONG)(uintptr_t)phystop / 4096UL);
+#endif
 }
 
 LONG phys_pages_free(void)

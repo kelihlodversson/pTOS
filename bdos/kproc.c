@@ -893,7 +893,9 @@ LONG kproc_shrink_tpa(PD *caller, void *blk, long len)
 
     if (!kproc || kproc->user_start != (UBYTE *)blk)
         return EIMBA;
-    if (procmem_owner(blk) != (const void *)caller)
+    /* the block of the caller, or the TPA the caller runs in: a PE_GO process
+     * does not own the block its launcher loaded with PE_LOAD */
+    if (procmem_owner(blk) != (const void *)caller && blk != (void *)caller)
         return EACCDN;
     old = procmem_size(blk);
     if (len < (long)sizeof(PD))
