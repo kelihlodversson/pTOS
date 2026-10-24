@@ -71,18 +71,21 @@ void test_open_unlink(void)
                      "write new backing before its metadata is flushed");
     b = Fopen(FIXTURE, 0);
     /* GEMDOS Fdup accepts only standard handles. Temporarily redirect
-     * AUX, duplicate it, then restore AUX before testing deletion. */
+     * AUX and leave that mapping live to test deletion closes it too. */
     saved = Fdup(4);
     alias = -1;
     if (saved >= 0 && Fforce(4, a) == 0)
     {
         alias = Fdup(4);
-        Fclose(4);
-        Fforce(4, saved);
     }
-    if (saved >= 0) Fclose(saved);
     ptest_assert_msg(b >= 0 && alias >= 0, "independent open and duplicate");
     ptest_assert_msg(Fdelete(FIXTURE) == 0, "delete caller's open file");
+    ptest_assert_msg(Fclose(4) == 0, "standard mapping reset by deletion");
+    if (saved >= 0)
+    {
+        Fforce(4, saved);
+        Fclose(saved);
+    }
     ptest_assert_msg(Fopen(FIXTURE, 0) == -33L, "deleted name no longer opens");
     ptest_assert_msg(Fclose(a) == -37L, "writer closed by deletion");
     if (b >= 0)

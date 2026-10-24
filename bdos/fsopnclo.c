@@ -644,12 +644,22 @@ long ixdel(DND *dn, FCB *f, long pos)
         if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
         {
             long rc;
-            do
+            int h;
+            /* Reset standard-handle mappings as well, before a new file
+             * can reuse this SFT slot. */
+            for (h = 0; h < NUMSTD; h++)
+                if (PD_UFT(run)[h] == n + NUMSTD)
+                {
+                    rc = xclose(h);
+                    if (rc < 0)
+                        return rc;
+                }
+            while (sft[n].f_own)
             {
                 rc = xclose(n + NUMSTD);
                 if (rc < 0)
                     return rc;
-            } while (sft[n].f_own);
+            }
         }
     }
 
