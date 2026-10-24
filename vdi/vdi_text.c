@@ -328,11 +328,16 @@ static void move_along(WORD d)
  * go on from the cell's, it is rotated by that much (the masks of fonts
  * have a period of two rows, so only the parity counts).
  */
-static void light_phase(WORD d)
+static void light_phase(WORD piece, WORD cell)
 {
     UWORD m = (UWORD)linea_vars.LITEMASK;
 
-    if ((linea_vars.STYLE & F_LIGHT) && (d & 1))
+    /* the mask starts at the bottom row that is drawn: do_clip() cuts the rest */
+    if (piece > linea_vars.YMAXCL)
+        piece = linea_vars.YMAXCL;
+    if (cell > linea_vars.YMAXCL)
+        cell = linea_vars.YMAXCL;
+    if ((linea_vars.STYLE & F_LIGHT) && ((piece - cell) & 1))
         linea_vars.LITEMASK = (WORD)((m << 1) | (m >> 15));
 }
 
@@ -399,7 +404,8 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
             linea_vars.DELX = left;
             move_along(-left);
             if (turned)
-                light_phase(linea_vars.CHUP == 900 ? left : delx);
+                light_phase(linea_vars.CHUP == 900 ? y + left : y,
+                            linea_vars.CHUP == 900 ? y : y + delx);
             text_blt();
             linea_vars.LITEMASK = lite;
             linea_vars.DESTX = x;
@@ -413,7 +419,8 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
             linea_vars.DELX = right;
             move_along(delx);
             if (turned)
-                light_phase(linea_vars.CHUP == 900 ? delx : right);
+                light_phase(linea_vars.CHUP == 900 ? y - delx : y + delx + right,
+                            linea_vars.CHUP == 900 ? y : y + delx);
             text_blt();
             linea_vars.LITEMASK = lite;
             linea_vars.DESTX = x;
