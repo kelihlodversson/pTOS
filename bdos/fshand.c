@@ -82,7 +82,7 @@ long ixforce(int std, int h, PD *p)
              * conservative marker until all opens of this identity close:
              * f_use alone cannot distinguish a parent's closed explicit
              * handle from the child's remaining inherited reference. */
-            if (p != sft[h-NUMSTD].f_own)
+            if (sft[h-NUMSTD].f_ofd && p != sft[h-NUMSTD].f_own)
                 sft[h-NUMSTD].f_ofd->o_dfd->o_flag |= O_INHERITED;
 #endif
         }
