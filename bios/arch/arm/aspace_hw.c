@@ -67,6 +67,26 @@
 #define ISB()           __asm__ volatile ("isb" : : : "memory")
 #endif
 
+/*
+ * The table walk reads descriptors from memory, and the window the tables are
+ * written through is write-back cached: on the ARM1176 (and any core without
+ * coherent walks) the MMU would see the old descriptor until the line is
+ * cleaned.  Clean the lines of [p, p + bytes) to the point of coherency.
+ */
+static void clean_range(const volatile void *p, ULONG bytes)
+{
+    ULONG a = (ULONG)(uintptr_t)p & ~31UL;
+    ULONG end = (ULONG)(uintptr_t)p + bytes;
+
+    for (; a < end; a += 32)
+        __asm__ volatile ("mcr p15, 0, %0, c7, c10, 1" : : "r" (a) : "memory");  /* DCCMVAC */
+}
+
+static volatile ULONG *l1(PADDR root)
+{
+    return (volatile ULONG *)pmem32_virt(root);
+}
+
 ULONG aspace_hw_root_pages(void)
 {
     return L1_BYTES / PAGE;
@@ -84,12 +104,9 @@ BOOL aspace_hw_init(void)
 
 void aspace_hw_init_root(PADDR root)
 {
-    (void)root;                         /* nothing is the same in every root */
-}
-
-static volatile ULONG *l1(PADDR root)
-{
-    return (volatile ULONG *)pmem32_virt(root);
+    /* nothing is the same in every root; the zeroed table goes to memory */
+    clean_range(l1(root), L1_BYTES);
+    DSB();
 }
 
 static void barrier(void)
@@ -153,12 +170,15 @@ BOOL aspace_hw_map(PADDR root, VADDR va, PADDR phys, UWORD prot, UWORD flags,
 
         if (t == PMEM32_NONE)
             return FALSE;
+        clean_range(pmem32_virt(t), PAGE);          /* the zeroed table, before it is linked */
         l1(root)[j] = (ULONG)t | L1_COARSE;
         l1(root)[j + 1] = ((ULONG)t + 1024) | L1_COARSE;
+        clean_range(&l1(root)[j], 8);
         tables(root, va, &hw, &soft);
     }
     *soft = flags | 0x80000000UL;       /* (a leaf is there) */
     *hw = make_desc(phys, prot);
+    clean_range(hw, 4);
     barrier();
     return TRUE;
 }
@@ -189,6 +209,7 @@ BOOL aspace_hw_unmap(PADDR root, VADDR va)
     was = (*hw & L2_SMALL) != 0;
     *hw = 0;
     *soft = 0;
+    clean_range(hw, 4);
     barrier();
     return was;
 }
@@ -201,6 +222,7 @@ BOOL aspace_hw_update(PADDR root, VADDR va, UWORD prot, UWORD flags)
         return FALSE;
     *hw = make_desc(*hw & ~(PAGE - 1), prot);
     *soft = flags | 0x80000000UL;
+    clean_range(hw, 4);
     barrier();
     return TRUE;
 }
@@ -235,6 +257,7 @@ void aspace_hw_drop_tables(PADDR root, const PADDR *pages, ULONG n)
         for (k = 0; k < n; k++)
             if ((e & ~(PAGE - 1)) == pages[k]) {
                 l1(root)[i] = 0;
+                clean_range(&l1(root)[i], 4);
                 break;
             }
     }

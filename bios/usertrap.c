@@ -24,9 +24,15 @@
 #include "disk.h"
 #include "../bdos/uaccess.h"
 #include "biosaccess.h"
+#ifdef __arm__
+#include "biosargs.h"
+#endif
 
 #define BIOS_RWABS      4
 #define XBIOS_SETPALETTE 6
+#define XBIOS_RSCONF    0x0F
+#define XBIOS_SETSCREEN 5
+#define XBIOS_RSCONF    0x0F
 #define XBIOS_FLOPRD    8
 #define XBIOS_FLOPWR    9
 #define XBIOS_FLOPFMT   10
@@ -46,6 +52,24 @@ long bios_user_check(WORD fn, const long *a, const long *rest, int xbios)
 {
     if (!xbios) {
         if (fn == BIOS_RWABS) {
+#ifdef __arm__
+            /* Rwabs() takes one argument, a block in the process (biosargs.h) */
+            const struct bios_lrwabs_args *p = (const struct bios_lrwabs_args *)a[0];
+            WORD rw, cnt, dev;
+            ULONG bytes;
+            long rc = user_buf_check(a[0], sizeof(*p), FALSE);
+
+            if (rc != E_OK)
+                return rc;
+            rw = (WORD)p->r_w;
+            cnt = (WORD)p->numb;
+            dev = (WORD)p->drive;
+            if (!p->adr && dev >= 0 && dev < NUMFLOPPIES)
+                return E_OK;        /* TOS: a null buffer updates the media-change state */
+            if (!blkdev_rwabs_buffer_size(rw, cnt, dev, &bytes))
+                return ERANGE;
+            return user_buf_check((long)(uintptr_t)p->adr, (long)bytes, (rw & RW_RW) == RW_READ);
+#else
             /* Rwabs(rwflag, buf, cnt, recno, dev, lrecno) */
             WORD rw = (WORD)a[0];
             WORD cnt = (WORD)a[2];
@@ -57,11 +81,16 @@ long bios_user_check(WORD fn, const long *a, const long *rest, int xbios)
             if (!blkdev_rwabs_buffer_size(rw, cnt, dev, &bytes))
                 return ERANGE;
             return user_buf_check(a[1], (long)bytes, (rw & RW_RW) == RW_READ);
+#endif
         }
         return bios_check_user_args(fn, a);
     }
 
     switch (fn) {
+#ifdef __arm__
+    case XBIOS_RSCONF:              /* a block of six longs, read by the kernel (biosargs.h) */
+        return user_buf_check(a[0], sizeof(struct xbios_rsconf_args), FALSE);
+#endif
     case XBIOS_SETPALETTE:          /* the kernel reads the palette at a later time, under other tables */
     case XBIOS_FLOPRD:              /* the floppy calls take more arguments than four... */
     case XBIOS_FLOPWR:
