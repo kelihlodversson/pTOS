@@ -57,6 +57,60 @@ done:
 }
 
 #else
+#include <mint/basepage.h>
+
+#ifndef TEST_WITH_USER_ASPACE
+static void inherited_child(void)
+{
+    char c = 0;
+    long rc = Fseek(0L, 4, 0);
+    if (rc == 0 && Fread(4, 1L, &c) == 1 && c == 'x')
+        Pterm(77);
+    Pterm(1);
+}
+
+static void staged_inheritance(void)
+{
+    long a, saved, raw;
+    BASEPAGE *child;
+    char c = 'x';
+
+    a = Fcreate("C:\\INHERIT.TST", 0);
+    if (a < 0) { ptest_fail("cannot create inheritance fixture"); return; }
+    ptest_assert_msg(Fwrite(a, 1L, &c) == 1, "write inheritance fixture");
+    saved = Fdup(4);
+    if (saved < 0) { Fclose(a); ptest_fail("cannot save AUX"); return; }
+    Fforce(4, a);
+    raw = Pexec(5, 0L, "", 0L);
+    ptest_assert_msg(raw > 0, "stage child inheriting AUX");
+    if (raw > 0)
+    {
+        child = (BASEPAGE *)raw;
+        ptest_assert_msg(Mshrink(child, 4096L) == 0, "shrink staged child");
+        child->p_hitpa = (char *)child + 4096;
+        child->p_tbase = (char *)inherited_child;
+        ptest_assert_msg(Fdelete("C:\\INHERIT.TST") == -36L,
+                         "staged child's reference prevents deletion");
+        ptest_assert_msg(Fseek(0L, a, 0) == 0 && Fread(a, 1L, &c) == 1 && c == 'x',
+                         "refused deletion preserves caller's handles and data");
+        Fclose(4);
+        Fclose(a);
+        a = -1;
+        ptest_assert_msg(Fdelete("C:\\INHERIT.TST") == -36L,
+                         "child-only reference prevents deletion and slot reuse");
+        ptest_assert_msg(Pexec(6, 0L, child, 0L) == 77,
+                         "child still reads its inherited file and releases it on exit");
+    }
+    else
+        Fclose(4);
+    Fforce(4, saved);
+    Fclose(saved);
+    if (a >= 0) Fclose(a);
+    ptest_assert_msg(Fdelete("C:\\INHERIT.TST") == 0,
+                     "deletion succeeds after final inherited reference closes");
+}
+#endif
+
 /* Small-ROM deletion closes this process's handles before freeing backing. */
 void test_open_unlink(void)
 {
@@ -64,6 +118,9 @@ void test_open_unlink(void)
     char original[1024], buffer[1024];
 
     ptest_begin("open_unlink (traditional GEMDOS)");
+#ifndef TEST_WITH_USER_ASPACE
+    staged_inheritance();
+#endif
     memset(original, 0x5a, sizeof(original));
     a = Fcreate(FIXTURE, 0);
     if (a < 0) { ptest_fail("cannot create fixture"); return; }

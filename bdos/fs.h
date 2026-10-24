@@ -176,6 +176,9 @@ typedef struct
 /*
  * bit usage in o_flag
  */
+#if !CONF_WITH_FAT_FILE_LIFETIMES
+#define O_INHERITED 32 /* identity shared with another process; deletion refused */
+#endif
 #define O_DIRTY     1   /* contents have changed, FCB on disk must be updated */
 #define O_UNLINKED  2   /* directory entry removed; reclaim at last reference */
 #define O_CLOSING 16 /* reclamation started: public I/O and new pins refused */

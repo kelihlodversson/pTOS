@@ -633,7 +633,7 @@ long ixdel(DND *dn, FCB *f, long pos)
         fd = sft[n].f_ofd;
         if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
         {
-            if (sft[n].f_own != run)
+            if (sft[n].f_own != run || (fd->o_dfd->o_flag & O_INHERITED))
                 return EACCDN;
             first = fd->o_dfd->o_strtcl;   /* metadata may not be on disk yet */
         }

@@ -77,6 +77,14 @@ long ixforce(int std, int h, PD *p)
         {
             PD_UFT(p)[std] = h;
             sft[h-NUMSTD].f_use++;
+#if !CONF_WITH_FAT_FILE_LIFETIMES
+            /* Inheritance does not change the slot owner. Retain a
+             * conservative marker until all opens of this identity close:
+             * f_use alone cannot distinguish a parent's closed explicit
+             * handle from the child's remaining inherited reference. */
+            if (p != sft[h-NUMSTD].f_own)
+                sft[h-NUMSTD].f_ofd->o_dfd->o_flag |= O_INHERITED;
+#endif
         }
     }
 

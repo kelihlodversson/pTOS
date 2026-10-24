@@ -767,7 +767,11 @@ are retained for retry, and pending clusters cannot be allocated again.
 
 With it disabled, deletion uses traditional GEMDOS semantics: another
 process's open file cannot be deleted; the caller's handles are closed before
-its clusters are freed. Directory-allocation and media-change safety remain
+its clusters are freed. If a file identity has been shared with another
+process through standard-handle inheritance, deletion is conservatively
+refused until all handles to that identity close (even after the child exits).
+Close and reopen the file before deleting it. Directory-allocation and
+media-change safety remain
 enabled. CONF_WITH_FILE_PINS selects extended lifetimes automatically, so
 file mappings cannot be configured without them.
 
