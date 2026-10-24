@@ -13,7 +13,7 @@ obj-$(ARCH_X86_64) += aes_accessory.o aes_window.o aes_objects_kernel.o aes_tree
 
 obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
 	 gemfmalt.o gemfmerror.o gemfmlib.o gemfslib.o gemgraf.o gemgraphutil.o gemgrlib.o gemgsxif.o \
-	 geminit.o geminput.o gemmnlib.o gemobed.o gemobjop.o gemoblib.o \
+	 geminit.o geminput.o gemmnlib.o gemobed.o gemobjop.o gemoblib.o gemobjtree.o \
 	 gempd.o gemqueue.o gemrslib.o gemsclib.o gemshlib.o gemsuper.o \
 	 gemwmlib.o gemwrect.o gsx2.o gem_rsc.o mforms.o
 obj-$(CONF_WITH_LEGACY_RSC_LOAD) += rsload_legacy.o

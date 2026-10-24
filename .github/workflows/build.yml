@@ -51,7 +51,7 @@ jobs:
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
       - name: Test metadata, corrupt inputs and Kconfig isolation
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
-      - name: Test CUIS ownership, failure cleanup and Kconfig isolation
+      - name: Test CUIS ownership and caller-local AES object contracts
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Build the enabled freestanding x32 core
         run: |

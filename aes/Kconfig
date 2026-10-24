@@ -18,8 +18,8 @@ config CONF_WITH_LIBAES
     select CONF_WITH_CUIS
     default n
     help
-      Build an ordinary PIC libaes.so with local geometry and private
-      process-owned CUIS sessions. Requires the x32 userspace ELF linker.
+      Build an ordinary PIC libaes.so with local geometry, object-tree
+      editing and private process-owned CUIS sessions. Requires the x32 userspace ELF linker.
       This is the initial foundation of #661, not a complete GEM AES API.
       Existing AES paths remain available during migration. Other backends
       follow their isolated address-space and shared-linker support.
