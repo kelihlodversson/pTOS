@@ -756,6 +756,22 @@ is not offered on m68k yet.  The rpi2-kproc configuration builds with it.
 
 
 
+Native FAT file lifetimes
+-------------------------
+
+CONF_WITH_FAT_FILE_LIFETIMES controls retained native FAT file lifetimes.
+It defaults off for the 192 KB ROM and on for other images. With it enabled,
+deleting an open file removes its name but keeps its contents until the last
+handle or backing reference closes. Interrupted deletion and FAT reclamation
+are retained for retry, and pending clusters cannot be allocated again.
+
+With it disabled, deletion uses traditional GEMDOS semantics: another
+process's open file cannot be deleted; the caller's handles are closed before
+its clusters are freed. Directory-allocation and media-change safety remain
+enabled. CONF_WITH_FILE_PINS selects extended lifetimes automatically, so
+file mappings cannot be configured without them.
+
+
 Adding a configuration option
 =============================
 
