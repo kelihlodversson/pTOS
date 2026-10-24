@@ -36,3 +36,18 @@ for va, offset, size in loads:
 else:
     raise AssertionError('relocation table is not file backed')
 (root / 'test/BD.SO').write_bytes(image)
+
+# PT_PHDR is optional when PT_LOAD covers the program-header table.
+# Remove only that descriptor, preserving the admitted table and segments.
+for source, output in (("soapp.elf", "SOEXPH.TOS"), ("soapp-pie.elf", "SOPIPH.TOS")):
+    data = bytearray((root / "test" / source).read_bytes())
+    phoff = struct.unpack_from('<I', data, 28)[0]
+    phnum = struct.unpack_from('<H', data, 44)[0]
+    found = False
+    for i in range(phnum):
+        at = phoff + i * 32
+        if struct.unpack_from('<I', data, at)[0] == 6:
+            struct.pack_into('<I', data, at, 0)  # PT_NULL
+            found = True
+    assert found, 'source executable must have PT_PHDR'
+    (root / "test" / output).write_bytes(data)

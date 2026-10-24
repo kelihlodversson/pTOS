@@ -85,7 +85,8 @@ static void writable(OBJECT *o)
 }
 
 /* Kernel startup headers are immutable and already admitted. Reconstruct
- * views from PT_PHDR/PT_LOAD, not from reopened executable contents. */
+ * views from PT_LOAD and the validated load bias, without reopening files
+ * or requiring the optional PT_PHDR program header. */
 static int loaded(OBJECT *o, const unsigned char *ph, uint32_t count, uint32_t bias)
 {
     uint32_t i, low = UINT32_MAX, high = 0;
@@ -362,13 +363,10 @@ uint32_t dl_runtime(const uint32_t *stack)
         case 7: base = aux[1]; break;
         case 9: entry = aux[1]; break;
         case DL_AT_PTOS_BOOTDRIVE: bootdrive = aux[1]; break;
+        case DL_AT_PTOS_LOADBIAS: bias = aux[1]; break;
         }
     }
     if (i == 32 || !phdr || !phnum || phnum > DL_MAX_PHDRS || !base || !entry || bootdrive >= 26) return fail();
-    for (i = 0; i < phnum; i++) {
-        const unsigned char *ph = (const unsigned char *)(uintptr_t)(phdr + i * 32);
-        if (word(ph) == 6 && phdr >= word(ph + 8)) bias = phdr - word(ph + 8);
-    }
     if (bias == UINT32_MAX || !loaded(&objects[0], (const unsigned char *)(uintptr_t)phdr, phnum, bias)) return fail();
     header = (const unsigned char *)(uintptr_t)base;
     if (!loaded(&self, header + word(header + 28), header[44] | ((uint32_t)header[45] << 8), base)) return fail();

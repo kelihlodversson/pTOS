@@ -952,6 +952,7 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     info.pagesz = USER_PAGE_SIZE;
     info.basepage = (ULONG)(uintptr_t)pd;
     info.bootdrive = bootdev;
+    info.load_bias = bias;
     status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
                         (const unsigned char *)pd->p_cmdlin, sizeof(pd->p_cmdlin), kproc->env_start,
                         (ULONG)(kproc->env_end - kproc->env_start), &info, &rsp, &used);

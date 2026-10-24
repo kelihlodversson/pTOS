@@ -345,6 +345,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static const char *const bad_files[] = {
             "C:\\SOMISS.TOS", "C:\\SOSYM.TOS", "C:\\SOBOOT.TOS"
         };
+        static const char *const good_files[] = {
+            "C:\\SOAPP.TOS", "C:\\SOEXPH.TOS", "C:\\SOPIPH.TOS"
+        };
         unsigned int k;
         int cycle;
         for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
@@ -353,9 +356,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (child != 127) pterm(0x200 | (k << 8) | ((int)child & 0xff));
         }
         for (cycle = 0; cycle < 2; cycle++) {
-            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\SOAPP.TOS",
-                             (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
-            if (child != 77) pterm(0x100 | ((int)child & 0xff));
+            for (k = 0; k < sizeof(good_files) / sizeof(good_files[0]); k++) {
+                s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)good_files[k],
+                                 (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
+                if (child != 77) pterm(0x100 | (k << 8) | ((int)child & 0xff));
+            }
         }
         for (cycle = 0; cycle < 2; cycle++) {
             static const char return_tail[] = { 6, 'r', 'e', 't', 'u', 'r', 'n', 0 };

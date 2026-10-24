@@ -73,7 +73,7 @@ class Image(C.Structure):
 
 
 class StartInfo(C.Structure):
-    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive")]
+    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias")]
 
 
 class Mapping(C.Structure):
@@ -537,10 +537,10 @@ class Metadata(unittest.TestCase):
         self.assertEqual(self.lookup(obj)[2], 0x1400200)
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
-                capacity=131072, filename=b'C:\\DYNTEST.TOS'):
+                capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0):
         tail = bytes([len(args)]) + args if tail is None else tail
         memory = C.create_string_buffer(capacity)
-        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2)
+        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias)
         rsp, used = C.c_uint32(123), C.c_uint32(456)
         rc = self.lib.dl_start_stack(memory, capacity, 0x80000000,
             C.create_string_buffer(filename), len(filename) + 1,
@@ -584,7 +584,15 @@ class Metadata(unittest.TestCase):
                          (info.phdr, 32, info.phnum, 4096, info.base, info.entry, info.basepage))
         self.assertEqual(string(aux[31]), filename)
         self.assertEqual(aux[0x5001], 2)
+        self.assertEqual(aux[0x5002], info.load_bias)
         return rc, (argv, envp, aux)
+
+    def test_standard_initial_stack_load_bias(self):
+        for bias in (0, 0x400000):
+            with self.subTest(load_bias=bias):
+                rc, result = self.startup(load_bias=bias)
+                self.assertEqual(rc, 0)
+                self.assertEqual(result[2][0x5002], bias)
 
     def test_standard_initial_stack_short_tail(self):
         rc, result = self.startup(b'"hello world" "" C:\\tmp')

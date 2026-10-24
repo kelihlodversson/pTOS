@@ -156,7 +156,12 @@ Required auxiliary entries:
     AT_EXECFN  pointer to the copied executable pathname
     AT_PTOS_BASEPAGE (0x5000)  child's own public GEMDOS basepage
     AT_PTOS_BOOTDRIVE (0x5001) kernel boot filesystem drive, A=0 through Z=25
+    AT_PTOS_LOADBIAS (0x5002)  kernel-validated executable load bias (0 for ET_EXEC)
     AT_NULL    terminator
+
+LD.SO uses AT_PTOS_LOADBIAS independently of optional PT_PHDR headers; both
+ET_EXEC and PIE executables without PT_PHDR are supported. The value comes
+from the admitted kernel mapping rather than reopened file contents.
 
 The executable's headers must be in readable user memory; map or copy them
 explicitly when no PT_LOAD covers them.  Do not synthesize AT_PHDR by adding

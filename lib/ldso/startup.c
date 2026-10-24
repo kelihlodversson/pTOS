@@ -55,7 +55,7 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
 {
     STACK s;
     uint32_t pos, n, argc = 0, envend, argstart = 0, execfn, i, at, vectors;
-    uint32_t aux[20];
+    uint32_t aux[22];
     unsigned char token[128], quote;
 
     *rsp = *used = 0;
@@ -164,8 +164,9 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     aux[12] = 31; aux[13] = execfn;
     aux[14] = DL_AT_PTOS_BASEPAGE; aux[15] = info->basepage;
     aux[16] = DL_AT_PTOS_BOOTDRIVE; aux[17] = info->bootdrive;
-    aux[18] = aux[19] = 0;
-    for (i = 0; i < 20; i++)
+    aux[18] = DL_AT_PTOS_LOADBIAS; aux[19] = info->load_bias;
+    aux[20] = aux[21] = 0;
+    for (i = 0; i < sizeof(aux) / sizeof(aux[0]); i++)
         if (!word(&s, aux[i]))
             return DL_NO_SPACE;
     for (i = 0; i < 4; i++)

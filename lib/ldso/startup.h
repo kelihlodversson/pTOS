@@ -5,9 +5,10 @@
 #define DL_START_CAPACITY 131072
 #define DL_AT_PTOS_BASEPAGE 0x5000
 #define DL_AT_PTOS_BOOTDRIVE 0x5001
+#define DL_AT_PTOS_LOADBIAS 0x5002
 
 typedef struct {
-    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive;
+    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias;
 } DL_START_INFO;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
