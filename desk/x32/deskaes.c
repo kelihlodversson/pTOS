@@ -159,6 +159,11 @@ static WORD rubber(const UWORD *in, UWORD *out)
     graf_mkstate(&x, &y, &buttons, &modifiers);
     width = max((WORD)(x - arguments.g_x), arguments.g_w);
     height = max((WORD)(y - arguments.g_y), arguments.g_h);
+#if CONF_WITH_X32_DESKTOP_TEST
+    sprintf(message, "x32 desktop rubber READY %d %d %d\r\n",
+            arguments.g_x, arguments.g_y, buttons);
+    desk_test_record(message);
+#endif
     request.mask = AES_EVENT_BUTTON | AES_EVENT_TIMER;
     request.clicks = 1; request.button_mask = 1; request.button_state = 0;
     request.timer_ms = 20;
@@ -174,6 +179,12 @@ static WORD rubber(const UWORD *in, UWORD *out)
             break;
         nw = max((WORD)(event.mouse_x - arguments.g_x), arguments.g_w);
         nh = max((WORD)(event.mouse_y - arguments.g_y), arguments.g_h);
+#if CONF_WITH_X32_DESKTOP_TEST
+        if (nw != width || nh != height) {
+            sprintf(message, "x32 desktop rubber TRACK %d %d %d\r\n", nw, nh, event.buttons);
+            desk_test_record(message);
+        }
+#endif
         width = nw; height = nh; buttons = event.buttons;
     }
     out[1] = width; out[2] = height;

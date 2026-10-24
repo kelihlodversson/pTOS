@@ -234,9 +234,15 @@ def desktop(guest):
     # cursor calls, in both drag directions on empty desktop background.
     for start, end in (((900, 600), (1000, 650)), ((1000, 650), (900, 600))):
         count = guest.text().count("x32 desktop rubber RESULT") + 1
+        gesture = len(guest.text())
         guest.move(*start)
         guest.command("mouse_button 1")
+        # The native double-click recognizer may delay the next press.
+        # Hold it until the desktop has entered the rubber-band call.
+        guest.wait(r"x32 desktop rubber READY %d %d 1\r?\n" % start, after=gesture, regex=True)
+        tracking = len(guest.text())
         guest.move(*end)
+        guest.wait(r"x32 desktop rubber TRACK %d %d 1\r?\n" % (end[0] - start[0], end[1] - start[1]), after=tracking, regex=True)
         guest.command("mouse_button 0")
         text = guest.wait(r"x32 desktop rubber RESULT -?\d+ -?\d+ -?\d+ -?\d+\r?\n", count, regex=True)
         result = re.findall(r"x32 desktop rubber RESULT (-?\d+) (-?\d+) (-?\d+) (-?\d+)\r?\n", text)[-1]
