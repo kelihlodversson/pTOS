@@ -176,6 +176,7 @@ typedef struct
  */
 #define O_DIRTY     1   /* contents have changed, FCB on disk must be updated */
 #define O_UNLINKED  2   /* directory entry removed; reclaim at last reference */
+#define O_CLOSING 16 /* reclamation started: public I/O and new pins refused */
 #define O_RECLAIM_PENDING 8 /* saved successor valid until FAT flush succeeds */
 #define O_MEDIA_LOST 4  /* backing medium invalidated; never touch its FAT */
 
@@ -220,6 +221,7 @@ typedef char ofd_legacy_size[(sizeof(void *) != 4 || sizeof(OFD) <= 64) ? 1 : -1
  * note: bits 4-7 are only used if GEMDOS file-sharing/record-locking
  *       is implemented
  */
+#define UNLINK_PENDING 0x0100 /* queue owns an uncommitted name removal */
 #define INH_MODE    0x80    /* bit 7 is inheritance flag (not yet implemented) */
 #define MODE_FSM    0x70    /* bits 4-6 are file sharing mode (not yet implemented) */
 #define MODE_FAC    0x07    /* bits 0-2 are file access code: */
@@ -489,6 +491,7 @@ long ixclose(OFD *fd, int part);
 BOOL ofd_hold(OFD *fd);
 #endif
 OFD *ofd_find(DND *dn, long pos);
+void ofd_reap(void);
 long ofd_put(OFD *fd);
 void ofd_invalidate_drive(DMD *dm);
 

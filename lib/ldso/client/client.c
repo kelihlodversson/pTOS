@@ -59,6 +59,7 @@ void exit(int status)
     /* Pop before calling: callbacks may register another callback. */
     while (count) handlers[--count]();
     if (loader_fini) loader_fini();
+    while (count) handlers[--count]();
     _Exit(status);
 }
 

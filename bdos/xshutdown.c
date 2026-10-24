@@ -59,6 +59,7 @@ static void sync_buffers(void)
     BCB *volatile b;
     volatile int i;
 
+    if (!setjmp(errbuf)) ofd_reap();
     for (i = 0; i < 2; i++)
         for (b = bufl[i]; b; b = b->b_link)
             if (b->b_bufdrv >= 0 && b->b_dirty && !setjmp(errbuf))

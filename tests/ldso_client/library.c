@@ -20,12 +20,18 @@ __attribute__((constructor)) static void init(void)
         atexit(handler)) _Exit(95);
     lifecycle = 1;
 }
-__attribute__((destructor)) static void fini(void)
+static void destructor_handler(void)
 {
     static const char message[] = "x32 dynamic CRT lifecycle: PASS\r\n";
+    if (lifecycle != 7) _Exit(98);
+    lifecycle = 8;
+    if (ptos_write(1, message, sizeof(message) - 1) != sizeof(message) - 1) _Exit(97);
+}
+__attribute__((destructor)) static void fini(void)
+{
     if (lifecycle != 6) _Exit(96);
     lifecycle = 7;
-    if (ptos_write(1, message, sizeof(message) - 1) != sizeof(message) - 1) _Exit(97);
+    if (atexit(destructor_handler)) _Exit(99);
 }
 void client_exit(void)
 {

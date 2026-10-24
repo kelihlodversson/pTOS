@@ -1831,6 +1831,12 @@ static void test_unlinked_backing(void)
           DISK_CALL(ixwrite(pin, 1, replacement)) == 1, "unlinked backing may grow without touching new entry");
     CHECK(DISK_CALL(ixlseek(pin, 0)) == 0 && DISK_CALL(ixread(pin, 8, readback)) == 8 &&
           readback[0] == 'A', "pin can read after all handles close");
+    pin->o_dfd->o_flag |= O_CLOSING;
+    CHECK(DISK_CALL(ixread(pin, 1, readback)) == EACCDN &&
+          DISK_CALL(ixwrite(pin, 1, replacement)) == EACCDN &&
+          DISK_CALL(ixlseek(pin, 0)) == EACCDN && !ofd_hold(pin),
+          "closing backing refuses ordinary I/O and fresh mapping pins");
+    pin->o_dfd->o_flag &= ~O_CLOSING;
     rc = DISK_CALL(ofd_put(pin));
     CHECK(rc == E_OK, "release final in-memory reference");
     if (rc == E_OK) pin = NULL;

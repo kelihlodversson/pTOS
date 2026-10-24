@@ -42,7 +42,7 @@ LONG fileback_get(LONG handle, FILE_BACKING **out)
 #endif
     fd = getofd(handle);
     if (!fd || IS_BIOS_HANDLE(fd)) return EIHNDL;
-    if ((fd->o_mod & MODE_FAC) == WO_MODE || (fd->o_dfd->o_flag & O_MEDIA_LOST)) return EACCDN;
+    if ((fd->o_mod & MODE_FAC) == WO_MODE || (fd->o_dfd->o_flag & (O_MEDIA_LOST | O_CLOSING))) return EACCDN;
     if (fd->o_dfd->o_fileln < 0) return EOPNOTSUPP;
     for (b = backings; b; b = b->next)
         if (b->references && b->current && b->file->o_dfd == fd->o_dfd) {
@@ -80,7 +80,7 @@ LONG fileback_read(FILE_BACKING *b, ULONG offset, void *buffer, ULONG size)
     RECNO record = fd->o_currec;
     UWORD byte = fd->o_curbyt;
     ULONG count;
-    if ((fd->o_dfd->o_flag & O_MEDIA_LOST) || offset >= b->size) return EREADF;
+    if ((fd->o_dfd->o_flag & (O_MEDIA_LOST | O_CLOSING)) || offset >= b->size) return EREADF;
     count = b->size - offset < size ? b->size - offset : size;
     memset(buffer, 0, size);
     rc = DISK_CALL(__extension__ ({

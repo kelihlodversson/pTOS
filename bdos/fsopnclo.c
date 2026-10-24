@@ -73,7 +73,8 @@
  * forward prototypes
  */
 long opnfil(FCB *f, DND *dn, int mod);
-static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2);
+static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2);
+static OFD *pending_unlinks;
 static long sftdel(FTAB *sftp);
 
 
@@ -87,6 +88,7 @@ static long sftdel(FTAB *sftp);
 long xcreat(char *name, UBYTE attr)
 {
     int a = attr & ~FA_SUBDIR;
+    ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_create(name, (UWORD)a);
 #else
@@ -107,6 +109,7 @@ long xcreat(char *name, UBYTE attr)
 long xopen(char *name, WORD mod)
 {
     int m = mod & VALID_FOPEN_BITS;
+    ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_open(name, m);
 #else
@@ -119,7 +122,7 @@ long xopen(char *name, WORD mod)
 **  makopn - make an open file for sft handle h
 **
 */
-static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2)
+static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2)
 {
     OFD *p;
     DFD *dfd;
@@ -134,7 +137,6 @@ static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2)
 #endif
     p->o_mod = mod;                 /*  set mode                    */
     p->o_dmd = dm;                  /*  link OFD to media           */
-    sft[h-NUMSTD].f_ofd = p;
     /* MGET zeroes the initial file cursor. */
     p->o_dnode = dn;                /*  link to directory           */
     p->o_dirfil = dn->d_ofd;        /*  link to dir's ofd           */
@@ -151,8 +153,6 @@ static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2)
     {
         dfd = p2->o_dfd;
         dfd->o_usecnt++;                /* more than one user of DFD! */
-        /* not used yet... TBA *********/
-        p2->o_thread = p;
     }
     else
     {
@@ -166,7 +166,7 @@ static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2)
 
     p->o_dfd = dfd;                     /* for future reference ... */
 
-    return h;
+    return p;
 }
 
 
@@ -209,7 +209,8 @@ long opnfil(FCB *f, DND *dn, int mod)
     sft[i].f_use = 1;
     h = i + NUMSTD;
 
-    return makopn(f, dn, h, mod, shared);
+    sft[i].f_ofd = makopn(f, dn, mod, shared);
+    return h;
 }
 
 
@@ -219,7 +220,7 @@ long opnfil(FCB *f, DND *dn, int mod)
 BOOL ofd_hold(OFD *fd)
 {
     if (!fd || !fd->o_refs || fd->o_refs == 0xffff ||
-        (fd->o_dfd->o_flag & O_MEDIA_LOST)) return FALSE;
+        (fd->o_dfd->o_flag & (O_MEDIA_LOST | O_CLOSING))) return FALSE;
     fd->o_refs++;
     return TRUE;
 }
@@ -257,6 +258,7 @@ long ofd_put(OFD *fd)
 #endif
     if (dfd->o_usecnt == 1 && (dfd->o_flag & O_UNLINKED) &&
         !(dfd->o_flag & O_MEDIA_LOST)) {
+        dfd->o_flag |= O_CLOSING;
         free_file_chain(dfd, fd->o_dmd);
         ixclose(fd, CL_KEEP);            /* flush while reference still live */
     }
@@ -319,7 +321,14 @@ static void invalidate_directory_files(DND *dn)
 
 void ofd_invalidate_drive(DMD *dm)
 {
+    OFD **link = &pending_unlinks, *fd;
     if (dm->m_dtl) invalidate_directory_files(dm->m_dtl);
+    while ((fd = *link)) {
+        if (fd->o_dfd->o_flag & O_MEDIA_LOST) {
+            *link = fd->o_thread;
+            ofd_put(fd);                 /* memory only, never new disk I/O */
+        } else link = &fd->o_thread;
+    }
 }
 
 /*
@@ -340,6 +349,7 @@ long xclose(WORD h)
     OFD *fd;
     long rc;
 
+    ofd_reap();
     if (h < 0)
         return E_OK;    /* always a good close on a character device */
 
@@ -509,6 +519,7 @@ long ixclose(OFD *fd, int part)
  */
 long xunlink(char *name)
 {
+    ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_unlink(name);
 #else
@@ -517,30 +528,42 @@ long xunlink(char *name)
 }
 
 
-/* Remove the name now; open/backing references retain the old DFD and chain.
- * A reused directory slot must never attach a new open to that unlinked DFD. */
+/* A queue-owned OFD pins the directory, medium and shared file identity
+ * before any directory write. It survives disk-error longjmps, including
+ * deletion of files that had no public handles. */
+void ofd_reap(void)
+{
+    while (pending_unlinks) {
+        OFD *fd = pending_unlinks;
+        OFD *next = fd->o_thread;
+        DFD *file = fd->o_dfd;
+        char erased = (char)ERASE_MARKER;
+        if (!(file->o_flag & O_MEDIA_LOST) && (fd->o_mod & UNLINK_PENDING)) {
+            ixlseek(fd->o_dirfil, fd->o_dirbyt);
+            ixwrite(fd->o_dirfil, 1, &erased);
+            ixclose(fd->o_dirfil, CL_DIR);
+            /* Only a persisted name removal permits chain reclamation. */
+            file->o_flag |= O_UNLINKED;
+            fd->o_mod &= ~UNLINK_PENDING;
+        }
+        ofd_put(fd);
+        pending_unlinks = next;
+    }
+}
+
 long ixdel(DND *dn, FCB *f, long pos)
 {
-    OFD *fd;
-    DFD *live = NULL;
-    DMD *dm = dn->d_drv;
-    DFD deleted;
-    char erased = (char)ERASE_MARKER;
-
-    deleted.o_flag = 0;
-    deleted.o_strtcl = le2cpu16(f->f_clust);
-
-    fd = ofd_find(dn, pos);
-    if (fd) live = fd->o_dfd;
-    fd = dn->d_ofd;
-    ixlseek(fd, pos);
-    ixwrite(fd, 1, &erased);
-    if (live) live->o_flag |= O_UNLINKED;
-    ixclose(fd, CL_DIR);                 /* persist removal before reclaiming */
-    if (!live) {
-        free_file_chain(&deleted, dm);
-        ixclose(fd, CL_DIR);
-    }
+    FCB saved = *f;
+    OFD *live, *fd;
+    ofd_reap();
+    live = ofd_find(dn, pos);
+    if (live && live->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
+    fd = makopn(&saved, dn, RO_MODE, live);
+    fd->o_dirbyt = pos;
+    fd->o_mod |= UNLINK_PENDING;
+    fd->o_thread = pending_unlinks;
+    pending_unlinks = fd;
+    ofd_reap();
     return E_OK;
 }
 

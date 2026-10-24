@@ -836,6 +836,11 @@ restrt:
         return rc;
     }
 
+    /* Finish interrupted directory removal before another filesystem call
+     * can reuse its directory slot or released clusters. Keep process exit
+     * and memory services usable even if the disk remains unavailable. */
+    if ((fn >= 0x36 && fn < 0x48) || (fn >= 0x4e && fn <= 0x57))
+        ofd_reap();
     f = &funcs[fn];
     typ = f->stdio_typ;
 
