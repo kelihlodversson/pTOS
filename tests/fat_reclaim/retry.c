@@ -133,6 +133,8 @@ int main(void)
 {
     static DFD file;
     static DMD media;
+    static DND root, child, sibling;
+    static OFD handle;
     int copy, cluster, failed;
     for (fail_copy = 0; fail_copy < 2; fail_copy++) {
         for (fail_cluster = 2; fail_cluster <= 4; fail_cluster++) {
@@ -153,7 +155,20 @@ int main(void)
                 !(file.o_flag & O_RECLAIM_PENDING) ||
                 file.o_reclaim_next != (fail_cluster == 4 ? 0xffff : fail_cluster + 1))
                 return 2;
+            /* Model a failed handle-owned final close, outside both retry
+             * lists. It remains visible even with mapping support disabled. */
+            root.d_left = &child;
+            child.d_right = &sibling;
+            sibling.d_files = &handle;
+            handle.o_dfd = &file;
+            media.m_dtl = &root;
+            if (!ofd_cluster_pending(media.m_dtl, fail_cluster) ||
+                ofd_cluster_pending(media.m_dtl, fail_cluster + 1) ||
+                ofd_cluster_pending(NULL, fail_cluster)) return 13;
+            if (fail_copy == 1 && disk[0][fail_cluster] != FREECLUSTER)
+                return 14;
             free_file_chain(&file, &media);
+            if (ofd_cluster_pending(media.m_dtl, fail_cluster)) return 15;
             if (file.o_strtcl || (file.o_flag & O_RECLAIM_PENDING)) return 3;
             for (copy = 0; copy < 2; copy++)
                 for (cluster = 2; cluster <= 4; cluster++)

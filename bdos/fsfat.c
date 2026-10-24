@@ -205,7 +205,8 @@ static CLNO findfree16(DMD *dm)
          */
         for ( ; (offset < dm->m_recsiz) && (clnum < (dm->m_numcl+2)); offset += sizeof(CLNO), clnum++)
         {
-            if (*(CLNO *)(buf+offset) == 0)
+            if (*(CLNO *)(buf+offset) == 0 &&
+                !ofd_cluster_pending(dm->m_dtl, clnum))
                 return clnum;
         }
     }
@@ -238,7 +239,7 @@ static CLNO findfree(CLNO cl, DMD *dm)
         cl = 2;     /* start search at first or current cluster */
     for (i = 0; i < dm->m_numcl; i++, cl++) /* look at every cluster once */
     {
-        if (!getrealcl(cl,dm))      /* check for empty cluster */
+        if (!getrealcl(cl,dm) && !ofd_cluster_pending(dm->m_dtl, cl))
             return cl;
         if (cl == dm->m_numcl+1)    /* wrap at max cluster num */
             cl = 1;

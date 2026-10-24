@@ -252,6 +252,21 @@ static void free_file_chain(DFD *file, DMD *media)
     file->o_strtcl = 0;
 }
 
+/* Every live native file stays on its directory's list, including failed
+ * closes and retired mapping pins. A partially flushed free must not be
+ * allocated again until its owner has committed both FAT copies. */
+BOOL ofd_cluster_pending(DND *dn, CLNO cluster)
+{
+    OFD *fd;
+    if (!dn) return FALSE;
+    for (fd = dn->d_files; fd; fd = fd->o_link)
+        if ((fd->o_dfd->o_flag & O_RECLAIM_PENDING) &&
+            fd->o_dfd->o_strtcl == cluster)
+            return TRUE;
+    return ofd_cluster_pending(dn->d_left, cluster) ||
+           ofd_cluster_pending(dn->d_right, cluster);
+}
+
 long ofd_put(OFD *fd)
 {
     DFD *dfd = fd->o_dfd;

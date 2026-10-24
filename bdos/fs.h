@@ -492,6 +492,7 @@ BOOL ofd_hold(OFD *fd);
 #endif
 OFD *ofd_find(DND *dn, long pos);
 void ofd_reap(void);
+BOOL ofd_cluster_pending(DND *dn, CLNO cluster);
 long ofd_put(OFD *fd);
 void ofd_invalidate_drive(DMD *dm);
 
