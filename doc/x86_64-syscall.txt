@@ -296,8 +296,12 @@ Typed x32 VDI uses a separate class 0x100 when CONF_WITH_X32_VDI is enabled
 (#427). Its user-mode vdi() client sends operation-specific scalar and
 array requests, never a general VDIPB. The services validate process-owned
 workstation handles and every user range before using trusted kernel VDI
-structures. Memory bitmap operations run in the client. Callback pointers
-are checked but registration is refused until #432. With the option off,
+structures. Memory bitmap operations run in the client. With
+CONF_WITH_USER_CALLBACKS enabled, validated vex_* handlers can be registered
+and delivered in ring 3. With callbacks disabled, a valid non-null handler
+returns EINVFN and OLD is zero; a null handler succeeds. Invalid handler
+addresses return EIMBA in either configuration. See doc/user-callback-x32.txt
+for registration, delivery and lifetime rules. With CONF_WITH_X32_VDI off,
 class 0x100 returns EINVFN. See doc/vdi-x32.txt for the complete service and
 public parameter ABI.
 
