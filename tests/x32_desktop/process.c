@@ -12,6 +12,8 @@ UQUAD entry_base, entry_type, entry_stack;
 UWORD entry_cs;
 static char shell_saved[AES_SHELL_BUFFER_MAX], shell_probe[AES_SHELL_BUFFER_MAX];
 static char long_command[AES_SHELL_PATH_MAX];
+static const char teardown_tail[128] = { 8, 't', 'e', 'a', 'r', 'd', 'o', 'w', 'n' };
+static const char fault_tail[128] = { 5, 'f', 'a', 'u', 'l', 't' };
 static const char child_tail[128] = { 5, 'c', 'h', 'i', 'l', 'd' };
 
 static void record(const char *text)
@@ -65,7 +67,17 @@ static void accessory(void)
     record("x32 desktop accessory READY\r\n");
     for (;;) {
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
-        if (event.message.type == 41) {
+        if (event.message.type == 652) {
+            AES_MESSAGE ack = { 653, 0, 0, { 0 } };
+            AES_EVENT_REQUEST wait = { AES_EVENT_TIMER, 0, 0, 0, 0, 0, { 0 }, { 0 }, 150 };
+            AES_INPUT_EVENT input;
+            WORD mode = event.message.data[0];
+
+            CHECK(aes_wind_update(mode) == E_OK);
+            CHECK(aes_appl_write(event.message.sender, &ack) == E_OK);
+            CHECK(aes_evnt_multi(&wait, &input) == AES_EVENT_TIMER);
+            CHECK(aes_wind_update(mode - 1) == E_OK);
+        } else if (event.message.type == 41) {
             if (opened) {
                 do {
                     rc = aes_wind_close(h);
@@ -138,6 +150,55 @@ static void nested(void)
     finish(0);
 }
 
+static void schedule(const char *tail)
+{
+    AES_SHELL_REQUEST request = { 0 };
+
+    request.operation = AES_SHELL_WRITE;
+    request.value = request.extra = request.bytes = 1;
+    request.data = (ULONG)(uintptr_t)"C:\\APPTEST.PRG";
+    request.second = (ULONG)(uintptr_t)tail;
+    CHECK(aes_shell(&request) > 0);
+}
+
+static void teardown(BOOL fault) NORETURN;
+static void teardown(BOOL fault)
+{
+    AES_APP_INFO app;
+    LONG handles[12], handle, rc;
+    WORD count = 0, i;
+    AES_EVENT_REQUEST poll = { AES_EVENT_MESSAGE, AES_EVENT_POLL, 0, 0, 0, 0, { 0 }, { 0 }, 0 };
+    AES_INPUT_EVENT input;
+    GRECT rectangle = { 360, 140, 260, 160 };
+
+    CHECK(aes_appl_init("TEARDOWN", &app) == E_OK);
+    while (count < 12) {
+        handle = aes_wind_create(AES_WINDOW_NAME_GADGET, &rectangle);
+        if (handle == ENSMEM)
+            break;
+        CHECK(handle > 0);
+        handles[count++] = handle;
+    }
+    CHECK(count >= 4);
+    /* Cleanup visits ascending handles. Open in reverse so every close
+     * exposes a different live window, generating distinct redraw messages. */
+    for (i = count - 1; i >= 0; i--) {
+        CHECK(aes_wind_open(handles[i], &rectangle) == E_OK);
+        do {
+            rc = aes_evnt_multi(&poll, &input);
+            CHECK(rc >= 0);
+        } while (rc);
+    }
+    if (!fault) {
+        schedule(fault_tail);
+        record("x32 desktop teardown normal READY\r\n");
+        finish(0);
+    }
+    record("x32 desktop teardown fault READY\r\n");
+    __asm__ volatile ("ud2");
+    finish(99);
+}
+
 void desktop_test_start(PD *basepage, LONG kind) NORETURN;
 void desktop_test_start(PD *basepage, LONG kind)
 {
@@ -163,6 +224,8 @@ void desktop_test_start(PD *basepage, LONG kind)
     if (kind == 1)
         accessory();
     CHECK(kind == 0);
+    if (basepage->p_cmdlin[1] == 't' || basepage->p_cmdlin[1] == 'f')
+        teardown(basepage->p_cmdlin[1] == 'f');
     if (basepage->p_cmdlin[0] == 5 && basepage->p_cmdlin[1] == 'c')
         nested();
     CHECK(aes_appl_init("GEMPROBE", &app) == E_OK);
@@ -218,7 +281,7 @@ void desktop_test_start(PD *basepage, LONG kind)
     CHECK(aes_wind_set_text(h, AES_WINDOW_NAME, "Ordinary ring-3 application") == E_OK);
     CHECK(aes_wind_open(h, &rectangle) == E_OK);
     CHECK(aes_evnt_multi(&timer, &input) == AES_EVENT_TIMER);
-    CHECK(desk_syscall(1, 0x4b, 0, (long)"C:\\GEMTEST.PRG", (long)child_tail, 0) == 0);
+    CHECK(desk_syscall(1, 0x4b, 0, (long)"C:\\APPTEST.PRG", (long)child_tail, 0) == 0);
     CHECK(aes_wind_get(h, &info) == E_OK && info.handle == h);
     peer = aes_appl_find("DESKACC");
     CHECK(peer > 0);
@@ -234,6 +297,7 @@ void desktop_test_start(PD *basepage, LONG kind)
     CHECK(vdi(&pb) == E_OK);
     CHECK(aes_wind_close(h) == E_OK);
     CHECK(aes_wind_delete(h) == E_OK);
+    schedule(teardown_tail);
     CHECK(aes_appl_exit() == E_OK);
     record("x32 desktop application and accessory PASS\r\n");
     finish(0);

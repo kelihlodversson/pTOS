@@ -35,6 +35,7 @@ typedef struct {
     BOOL registration_revoked;
     BOOL menu_registered;
     BOOL shell_closed;
+    BOOL tearing_down;
     char menu_label[11];
     LONG result;
     X86_64_PROCESS_CONTEXT context;
@@ -64,7 +65,7 @@ static ACCESSORY_CONTEXT *owned(PD *pd)
  * not inherit their parent's event/window ownership. */
 void x86_64_aes_launch_begin(PD *parent)
 {
-    if (rlr && rlr->p_pid == 0 && !contexts[0].owner)
+    if (rlr && rlr->p_pid == 0 && !contexts[0].owner && !contexts[0].tearing_down)
         contexts[0].launch_parent = parent;
 }
 
@@ -72,7 +73,7 @@ void x86_64_aes_launch_process(PD *pd, PD *parent)
 {
     ACCESSORY_CONTEXT *c = &contexts[0];
 
-    if (!rlr || rlr != c->aes || !parent || c->launch_parent != parent)
+    if (!rlr || rlr != c->aes || !parent || c->launch_parent != parent || c->tearing_down)
         return;
     c->launch_parent = NULL;
     c->owner = pd;
@@ -92,8 +93,12 @@ void x86_64_aes_launch_end(void)
 {
     ACCESSORY_CONTEXT *c = &contexts[0];
     PD *owner = c->owner;
+    BOOL tearing_down = c->tearing_down;
 
     c->launch_parent = NULL;
+    /* Retire the user association before cleanup can yield or reuse its
+     * basepage, while keeping task-zero messages off the legacy FIFO. */
+    c->tearing_down = tearing_down || owner != NULL;
     c->owner = NULL;
     if (owner) {
         /* Typed appl_exit and fault cleanup retire the registration before
@@ -106,6 +111,8 @@ void x86_64_aes_launch_end(void)
         x86_64_aes_window_finished(owner, c->aes);
         x86_64_aes_objects_finished(c->aes);
     }
+    /* Native task-zero delivery is safe again when the shell resumes. */
+    c->tearing_down = tearing_down;
 }
 
 void x86_64_aes_setup(AESPD *pd, PD *accessory)
@@ -365,6 +372,8 @@ LONG x86_64_aes_message(AESPD *pd, const WORD *message)
 {
     ACCESSORY_CONTEXT *c = &contexts[pd->p_pid];
 
+    if (c->tearing_down)
+        return EACCDN;
     if (!c->owner)
         return (c->started || (pd->p_stat & X32_AES_DEAD)) ? EACCDN : EINVFN;
     return aes_service_kernel_message(c->owner, message);

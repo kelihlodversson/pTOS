@@ -9,11 +9,21 @@
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskinf.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "gsxdefs.h"
 #endif
 
 typedef struct { OBJECT *tree; USERBLK *block; } DRAW_CONTEXT;
 typedef struct {
+    const void *source;
+    ULONG bytes, offset;
+} BITMAP_COPY;
+
+typedef struct {
     UBYTE *data;
+    BITMAP_COPY *bitmaps;
+    UWORD bitmap_count, bitmap_capacity;
     ULONG used;
     BOOL failed;
 } BUILDER;
@@ -75,6 +85,27 @@ static ULONG copy(BUILDER *b, const void *data, ULONG bytes)
     return at;
 }
 
+/* Desktop objects share icon payload pointers. Cache immutable bitmap
+ * copies by pointer and byte length; text and editable fields stay private. */
+static ULONG bitmap(BUILDER *b, const void *source, ULONG bytes)
+{
+    UWORD i;
+    ULONG at;
+
+    for (i = 0; i < b->bitmap_count; i++)
+        if (b->bitmaps[i].source == source && b->bitmaps[i].bytes == bytes)
+            return b->bitmaps[i].offset;
+    at = copy(b, source, bytes);
+    if (at && b->bitmap_count < b->bitmap_capacity) {
+        BITMAP_COPY *entry = &b->bitmaps[b->bitmap_count++];
+
+        entry->source = source;
+        entry->bytes = bytes;
+        entry->offset = at;
+    }
+    return at;
+}
+
 static ULONG string(BUILDER *b, const char *s, ULONG capacity)
 {
     ULONG n, at;
@@ -119,7 +150,7 @@ static WORD draw_bridge(const AES_OBJECT_DRAW *draw)
 #if CONF_WITH_X32_DESKTOP_TEST
     user_drawn = TRUE;
     if (context->block->ub_code == dr_code &&
-        !strcmp(((FNODE *)(uintptr_t)context->block->ub_parm)->f_name, "GEMTEST.PRG")) {
+        !strcmp(((FNODE *)(uintptr_t)context->block->ub_parm)->f_name, "APPTEST.PRG")) {
         probe_drawn = TRUE;
         probe_rectangle = draw->rectangle;
     }
@@ -136,8 +167,8 @@ static void icon(BUILDER *b, AES_OBJECT_ICON *p, const ICONBLK *s)
         return;
     }
     bytes = (ULONG)s->ib_wicon / 8 * s->ib_hicon;
-    p->mask = copy(b, s->ib_pmask, bytes);
-    p->data = copy(b, s->ib_pdata, bytes);
+    p->mask = bitmap(b, s->ib_pmask, bytes);
+    p->data = bitmap(b, s->ib_pdata, bytes);
     p->text = string_spec(b, s->ib_ptext);
     p->character = s->ib_char;
     p->character_x = s->ib_xchar; p->character_y = s->ib_ychar;
@@ -185,6 +216,13 @@ BOOL desk_tree_create(DESK_TREE *snapshot, OBJECT *source)
     b.data = (void *)Malloc(AES_TREE_MAX_BYTES);
     if ((intptr_t)b.data <= 0)
         return FALSE;
+    b.bitmap_count = 0;
+    b.bitmap_capacity = count * 2;
+    b.bitmaps = (void *)Malloc(b.bitmap_capacity * sizeof(*b.bitmaps));
+    if ((intptr_t)b.bitmaps <= 0) {
+        Mfree(b.data);
+        return FALSE;
+    }
     b.used = 0; b.failed = FALSE;
     reserve(&b, sizeof(*header) + count * sizeof(*objects));
     header = (AES_TREE_HEADER *)b.data;
@@ -283,11 +321,11 @@ BOOL desk_tree_create(DESK_TREE *snapshot, OBJECT *source)
                 at = *link = reserve(&b, sizeof(*c));
                 c = (AES_OBJECT_COLOUR *)(b.data + at);
                 c->planes = colour->num_planes;
-                c->data = copy(&b, colour->col_data, bytes * c->planes);
-                c->mask = copy(&b, colour->col_mask, bytes);
+                c->data = bitmap(&b, colour->col_data, bytes * c->planes);
+                c->mask = bitmap(&b, colour->col_mask, bytes);
                 if (colour->sel_data) {
-                    c->selected_data = copy(&b, colour->sel_data, bytes * c->planes);
-                    c->selected_mask = copy(&b, colour->sel_mask, bytes);
+                    c->selected_data = bitmap(&b, colour->sel_data, bytes * c->planes);
+                    c->selected_mask = bitmap(&b, colour->sel_mask, bytes);
                 }
                 link = &c->next;
             }
@@ -310,6 +348,7 @@ BOOL desk_tree_create(DESK_TREE *snapshot, OBJECT *source)
             b.failed = TRUE;
         }
     }
+    Mfree(b.bitmaps);
     header->bytes = b.used;
     request.operation = AES_OBJECT_CREATE;
     request.data = (ULONG)(uintptr_t)b.data; request.bytes = b.used;
@@ -438,3 +477,69 @@ void desk_trees_exit(void)
     desk_tree_destroy(&retained[0]);
     desk_tree_destroy(&retained[1]);
 }
+
+#if CONF_WITH_X32_DESKTOP_TEST
+/* A near-capacity screen tree with shared 32x32 icon assets. The old
+ * serializer overflowed its byte budget well before this object count. */
+void desk_tree_test(void)
+{
+    static BOOL done;
+    static WORD mask[64], data[64];
+    ICONBLK icon;
+    OBJECT *tree;
+    DESK_TREE snapshot;
+    AES_OBJECT_REQUEST request = { 0 };
+    AES_OBJECT_RESULT result;
+    WORD i;
+    BOOL ok = FALSE;
+
+    if (done)
+        return;
+    done = TRUE;
+    tree = (void *)Malloc(1901 * sizeof(*tree));
+    if ((intptr_t)tree <= 0) {
+        desk_test_record("x32 desktop shared icon snapshot FAIL\r\n");
+        return;
+    }
+    memset(tree, 0, 1901 * sizeof(*tree));
+    memset(&icon, 0, sizeof(icon));
+    for (i = 0; i < 64; i++) {
+        mask[i] = 0xffff;
+        data[i] = 0xaaaa;
+    }
+    icon.ib_pmask = mask; icon.ib_pdata = data;
+    icon.ib_ptext = "LONGNAME.INF";
+    icon.ib_wicon = icon.ib_hicon = 32;
+    icon.ib_ytext = 32; icon.ib_wtext = 96; icon.ib_htext = gl_hchar;
+    tree[0].ob_next = -1;
+    tree[0].ob_head = 1; tree[0].ob_tail = 1900;
+    tree[0].ob_type = G_IBOX;
+    tree[0].ob_width = gl_width; tree[0].ob_height = gl_height;
+    for (i = 1; i <= 1900; i++) {
+        tree[i].ob_next = i == 1900 ? 0 : i + 1;
+        tree[i].ob_head = tree[i].ob_tail = -1;
+        tree[i].ob_type = G_ICON;
+        tree[i].ob_flags = SELECTABLE;
+        tree[i].ob_spec.iconblk = &icon;
+        tree[i].ob_x = 4; tree[i].ob_y = gl_hbox + 4;
+        tree[i].ob_width = 96; tree[i].ob_height = 32 + gl_hchar;
+    }
+    tree[1900].ob_flags |= LASTOB;
+    if (desk_tree_create(&snapshot, tree)) {
+        request.tree = snapshot.handle;
+        request.operation = AES_OBJECT_FIND;
+        request.value = AES_TREE_MAX_DEPTH;
+        request.rectangle.g_x = 5; request.rectangle.g_y = gl_hbox + 5;
+        ok = desk_object_call(&request, &result) == E_OK && result.value == 1900;
+        request.operation = AES_OBJECT_DRAW_TREE;
+        request.object = 1900; request.value = 0;
+        /* Keep the test drawing outside the icon; no visible desktop damage. */
+        r_set(&request.rectangle, 0, 0, 1, 1);
+        ok = desk_object_call(&request, &result) == E_OK && ok;
+        desk_tree_destroy(&snapshot);
+    }
+    Mfree(tree);
+    desk_test_record(ok ? "x32 desktop shared icon snapshot PASS\r\n" :
+                          "x32 desktop shared icon snapshot FAIL\r\n");
+}
+#endif

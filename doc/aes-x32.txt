@@ -610,7 +610,10 @@ The desktop's classic function wrappers are a local adapter, not a legacy
 AESPB syscall ABI. desk/x32/ serializes only connected source objects into
 bounded immutable snapshots; indirect specs are resolved locally and internal
 alignment flags are removed. Menus and the desktop keep owned snapshots;
-dialogs copy back edited text/state. USERDEF receives values on the owner's
+dialogs copy back edited text/state. Shared icon bitmap pointers are copied
+once per source address and byte length; editable text keeps separate storage.
+Window getters yield and retry when another task owns update/mouse coordination.
+USERDEF receives values on the owner's
 user stack and reconstructs a caller-local PARMBLK before invoking dr_code.
 
 The x32 desktop links the existing gemfslib.c selector and gem_rsc.c resources.
@@ -673,6 +676,10 @@ rejects any FAIL/fault/panic/reset and verifies:
   - CPL3 and the process-entry ABI for EmuDesk, an accessory and a graphical app;
   - real menu selection, About, disk-window icon/text drawing and USERDEF;
   - opening an accessory from the Desk menu and closing its window gadget;
+  - a 1,900-icon snapshot sharing bitmap assets, including draw and hit testing;
+  - getters retrying while an accessory holds update and mouse locks;
+  - normal Pterm and a deliberate #UD fault with overlapping windows left open,
+    followed by successful foreground cleanup and return to the desktop;
   - held-button selection/drag wait compatibility (classic mask 0xff -> 3);
   - a graphical app launched from EmuDesk, bad pointer/size/command rejection,
     saved-shell-buffer copies, private nested-child ownership and accessory IPC;
@@ -680,6 +687,8 @@ rejects any FAIL/fault/panic/reset and verifies:
     and disabled drive buttons, sorted directory listings, editable directory
     and wildcard mask, scrollbar paging and dragging, invalid-path recovery,
     mouse row selection, formatted filename editing and double-click loading;
+  - deep-directory limits, rejection before exceeding LEN_ZPATH, and replacing
+    the mask with a full 8.3 filename for an actual Read INF load;
   - loading an INF file and restarting the desktop in the same process;
   - graphical/console transitions and a fresh ring-3 desktop after EmuCON exits;
   - a missing external desktop falling back to the EmuCON prompt.

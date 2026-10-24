@@ -22,10 +22,12 @@ config CONF_WITH_X86_64_MEMTEST
 
 config CONF_WITH_X32_ACCESSORY_TEST
     bool "Exercise loaded x32 accessories and desktop restart at boot"
+    depends on !CONF_EXTERNAL_DESK
     depends on CONF_WITH_AES && ARCH_X86_64 && CONF_WITH_X86_64_MEMTEST
     depends on CONF_WITH_USER_CALLBACKS
     default n
     help
+      Requires the built-in desktop.
       Load the four ACC fixtures from make x32-accessory-test, verify
       cooperative message delivery, exit/fault and cancellation, and restart
       the desktop three times while checking tracked resources for leaks.

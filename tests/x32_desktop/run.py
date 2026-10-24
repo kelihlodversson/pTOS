@@ -29,11 +29,17 @@ class Guest:
         shutil.copy("cli/emucon.tos", esp / "EMUCON.TOS")
         if not missing:
             for source, target in (("emudesk.prg", "EMUDESK.PRG"),
-                                   ("obj/x32/GEMTEST.PRG", "GEMTEST.PRG"),
+                                   ("obj/x32/GEMTEST.PRG", "APPTEST.PRG"),
                                    ("obj/x32/DESKACC.ACC", "DESKACC.ACC"),
                                    ("desk/emudesk-raspi.inf", "TYPED.INF")):
                 shutil.copy(source, esp / target)
             shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")
+            deep = esp
+            for level in range(1, 14):
+                deep = deep / "LONGDIR0"
+                deep.mkdir()
+                shutil.copy("desk/emudesk-raspi.inf", deep / "LONGNAME.INF")
+                shutil.copy("desk/emudesk-raspi.inf", deep / ("DEPTH%02d.INF" % level))
             files = esp / "INFS"
             (files / "SUB").mkdir(parents=True)
             for number in reversed(range(14)):
@@ -62,7 +68,12 @@ class Guest:
 
     def text(self):
         text = self.log.read_text(errors="replace")
-        assert not any(marker in text for marker in ("panic:", "process fault:", " FAIL", "resource snapshot rejected")), text[-5000:]
+        assert not any(marker in text for marker in ("panic:", " FAIL", "resource snapshot rejected")), text[-5000:]
+        faults = re.findall(r"^process fault: (.*)$", text, re.MULTILINE)
+        expected = text.count("x32 desktop teardown fault READY")
+        # The early logger and console both report the same expected #UD.
+        assert len(set(faults)) <= expected and len(faults) <= 2 * expected, text[-5000:]
+        assert all(line.startswith("#UD Invalid Opcode") for line in faults), text[-5000:]
         assert not re.search(r"VDI \d+ error -?\d+", text), text[-5000:]
         assert text.count("EFI entry reached") <= 1, "guest reset during integration test"
         assert self.process.poll() is None, "QEMU exited before the desktop test completed"
@@ -169,6 +180,15 @@ class Guest:
             self.key("ret")
         return self.selector(count)
 
+    def selector_reject(self, point):
+        count = self.text().count("x32 desktop selector WAIT") + 1
+        alerts = self.text().count("x32 desktop alert READY") + 1
+        self.move(*point)
+        self.short_click()
+        self.wait("x32 desktop alert READY", alerts)
+        self.key("ret")
+        return self.selector(count)
+
     def cancel_selector(self, frame):
         count = self.text().count("x32 desktop form PASS") + 1
         self.move(*frame["controls"][52])
@@ -206,6 +226,8 @@ class Guest:
 def desktop(guest):
     guest.ready(1)
     guest.wait("x32 desktop CPL3 PASS")
+    guest.wait("x32 desktop shared icon snapshot PASS")
+    guest.wait("x32 desktop window getter retries PASS")
     guest.wait("x32 desktop accessory READY")
     guest.screenshot("desktop")
     guest.move(38, 8)
@@ -252,6 +274,9 @@ def desktop(guest):
     guest.wait("x32 desktop application and accessory PASS")
     guest.wait("x32 desktop rejected blocks and shell copies PASS")
     guest.wait("x32 desktop nested ownership PASS")
+    guest.wait("x32 desktop teardown normal READY")
+    guest.wait("x32 desktop teardown fault READY")
+    guest.wait("process fault:")
     guest.ready(2)
     guest.screenshot("application-return")
     # Exercise the user-side file selector, including cancellation and the
@@ -313,6 +338,24 @@ def desktop(guest):
     guest.screenshot("selector-selected-row")
     guest.cancel_selector(frame)
     frame = guest.select_inf()
+    for depth in range(12):
+        frame = guest.selector_click(frame["rows"]["LONGDIR0"], short=True)
+        expected_path = "C:\\" + "LONGDIR0\\" * (depth + 1) + "*.INF"
+        # GEM displays only the leading 38 characters of the full path.
+        assert frame["path"] == expected_path[:38]
+        assert "DEPTH%02d.INF" % (depth + 1) in frame["rows"]
+    old_path = frame["path"]
+    frame = guest.selector_reject(frame["rows"]["LONGDIR0"])
+    assert frame["path"] == old_path and "DEPTH12.INF" in frame["rows"]
+    assert "DEPTH13.INF" not in frame["rows"]
+    frame = guest.selector_click(frame["rows"]["LONGNAME.INF"])
+    assert frame["name"] == "LONGNAME.INF"
+    guest.screenshot("selector-path-limit")
+    guest.move(*frame["controls"][51])
+    guest.click()
+    guest.wait("x32 desktop selector ACCEPT C:\\" + "LONGDIR0\\" * 12 + "LONGNAME.INF")
+    guest.ready(3)
+    frame = guest.select_inf()
     assert frame["path"] == "C:\\*.INF"
     frame = guest.selector_click(frame["rows"]["TYPED.INF"])
     assert frame["name"] == "TYPED.INF"
@@ -322,13 +365,13 @@ def desktop(guest):
     guest.screenshot("selector-edited-filename")
     guest.key("ret")
     guest.wait(r"x32 desktop selector ACCEPT C:\\(?i:edited\.inf)\r?\n", regex=True)
-    guest.ready(3)
+    guest.ready(4)
     guest.screenshot("read-inf-return")
     frame = guest.select_inf()
     guest.move(*frame["rows"]["TYPED.INF"])
     guest.double_click()
     guest.wait("x32 desktop selector ACCEPT C:\\TYPED.INF")
-    guest.ready(4)
+    guest.ready(5)
     guest.screenshot("selector-double-click-return")
     # The console transition drops the graphical association. Returning to
     # AES loads a fresh ring-3 desktop with the saved shell context.
@@ -336,7 +379,7 @@ def desktop(guest):
     guest.wait("C:\\>")
     for key in ("e", "x", "i", "t", "ret"):
         guest.key(key)
-    guest.ready(5)
+    guest.ready(6)
     guest.screenshot("console-return")
     text = guest.text()
     assert text.count("x32 desktop CPL3 PASS") == 3, text[-3000:]
@@ -351,7 +394,7 @@ def main():
     parser.add_argument("--ovmf-code", default=firmware("code"))
     parser.add_argument("--ovmf-vars", default=firmware("vars"))
     parser.add_argument("--output", type=Path, default=Path("obj/x32-desktop-runtime"))
-    parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--mode", choices=("desktop", "missing", "both"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:

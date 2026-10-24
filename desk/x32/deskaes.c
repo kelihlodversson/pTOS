@@ -10,6 +10,7 @@
 #include "gemobed.h"
 #include "gemfmlib.h"
 #include "gemfmalt.h"
+#include "gemgrlib.h"
 #include "gemerror.h"
 #include "string.h"
 #include "bdosbind.h"
@@ -173,29 +174,24 @@ static WORD rubber(const UWORD *in, UWORD *out)
     return TRUE;
 }
 
-static WORD animate(const UWORD *in)
+static WORD animate(const UWORD *in, BOOL shrink)
 {
-    GRECT old, rectangle;
-    const WORD *from = (const WORD *)in;
-    const WORD *to = (const WORD *)(in + 4);
-    WORD i, coordinate;
+    GRECT old, small, large;
 
+    memcpy(&small, in, sizeof(small));
+    memcpy(&large, in + 4, sizeof(large));
     gsx_gclip(&old);
-    for (i = 1; i <= 8; i++) {
-        for (coordinate = 0; coordinate < 4; coordinate++)
-            ((WORD *)&rectangle)[coordinate] = from[coordinate] +
-                ((LONG)to[coordinate] - from[coordinate]) * i / 8;
-        graf_mouse(M_OFF, NULL);
-        outline(rectangle.g_x, rectangle.g_y, rectangle.g_w, rectangle.g_h);
-        graf_mouse(M_ON, NULL);
-        evnt_timer(10, 0);
-        graf_mouse(M_OFF, NULL);
-        outline(rectangle.g_x, rectangle.g_y, rectangle.g_w, rectangle.g_h);
-        graf_mouse(M_ON, NULL);
-    }
+    if (shrink)
+        gr_shrinkbox(&small, &large);
+    else
+        gr_growbox(&small, &large);
     gsx_sclip(&old);
     return TRUE;
 }
+
+#if CONF_WITH_X32_DESKTOP_TEST
+static ULONG getter_retries;
+#endif
 
 static LONG window_get(WORD handle, WORD field, UWORD *out)
 {
@@ -204,12 +200,28 @@ static LONG window_get(WORD handle, WORD field, UWORD *out)
     LONG rc;
 
     if (field == WF_FIRSTXYWH || field == WF_NEXTXYWH) {
-        rc = aes_wind_rect(handle, field == WF_NEXTXYWH, &rectangle);
+        do {
+            rc = aes_wind_rect(handle, field == WF_NEXTXYWH, &rectangle);
+#if CONF_WITH_X32_DESKTOP_TEST
+            if (rc == EAGAIN)
+                getter_retries++;
+#endif
+            if (rc == EAGAIN && aes_appl_yield() < 0)
+                return EACCDN;
+        } while (rc == EAGAIN);
         if (!rc)
             memcpy(out + 1, &rectangle, sizeof(rectangle));
         return rc;
     }
-    rc = aes_wind_get(handle, &info);
+    do {
+        rc = aes_wind_get(handle, &info);
+#if CONF_WITH_X32_DESKTOP_TEST
+        if (rc == EAGAIN)
+            getter_retries++;
+#endif
+        if (rc == EAGAIN && aes_appl_yield() < 0)
+            return EACCDN;
+    } while (rc == EAGAIN);
     if (rc < 0)
         return rc;
     switch (field) {
@@ -227,6 +239,46 @@ static LONG window_get(WORD handle, WORD field, UWORD *out)
     }
     return E_OK;
 }
+
+#if CONF_WITH_X32_DESKTOP_TEST
+static void test_window_getters(void)
+{
+    static BOOL done;
+    AES_MESSAGE message = { 652, 0, 0, { 0 } };
+    AES_EVENT event;
+    UWORD out[7];
+    WORD mode;
+    ULONG before;
+    LONG peer;
+    BOOL ok = TRUE;
+
+    if (done)
+        return;
+    done = TRUE;
+    peer = aes_appl_find("DESKACC");
+    if (peer < 0)
+        ok = FALSE;
+    for (mode = 0; ok && mode < 2; mode++) {
+        message.data[0] = mode ? BEG_MCTRL : BEG_UPDATE;
+        if (aes_appl_write(peer, &message) != E_OK) {
+            ok = FALSE;
+            break;
+        }
+        do {
+            if (aes_evnt_wait(AES_EVENT_MESSAGE, &event) != AES_EVENT_MESSAGE) {
+                ok = FALSE;
+                break;
+            }
+        } while (event.message.type != 653);
+        before = getter_retries;
+        if (ok)
+            ok = window_get(0, mode ? WF_FIRSTXYWH : WF_WXYWH, out) == E_OK &&
+                 out[3] > 0 && out[4] > 0 && getter_retries > before;
+    }
+    desk_test_record(ok ? "x32 desktop window getter retries PASS\r\n" :
+                          "x32 desktop window getter retries FAIL\r\n");
+}
+#endif
 
 WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
                        intptr_t *addresses, intptr_t *results)
@@ -276,6 +328,10 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
         {
             BOOL main_wait = (in[0] & (MU_KEYBD | MU_BUTTON | MU_MESAG)) == (MU_KEYBD | MU_BUTTON | MU_MESAG);
 
+            if (main_wait) {
+                desk_tree_test();
+                test_window_getters();
+            }
             if (!test_ready || main_wait) {
                 AES_OBJECT_REQUEST request = { 0 };
                 AES_OBJECT_RESULT result;
@@ -385,7 +441,7 @@ wait_event:
     case GRAF_RUBBOX:
         out[0] = rubber(in, out); return out[0];
     case GRAF_GROWBOX: case GRAF_SHRINKBOX:
-        out[0] = animate(in); return out[0];
+        out[0] = animate(in, opcode == GRAF_SHRINKBOX); return out[0];
     case GRAF_HANDLE:
         object_request.operation = AES_OBJECT_METRICS;
         rc = desk_object_call(&object_request, &object_result);
