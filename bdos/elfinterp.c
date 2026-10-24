@@ -66,7 +66,7 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
     phoff = word(header + 28);
     entsize = header[42] | ((ULONG)header[43] << 8);
     count = header[44] | ((ULONG)header[45] << 8);
-    if (!count || count > DL_MAX_PHDRS || entsize < 32 ||
+    if (!count || entsize < 32 ||
         phoff > 0x7fffffffUL || count * entsize > 0x7fffffffUL - phoff)
         return EPLFMT;
     for (i = 0; i < count; i++) {

@@ -225,15 +225,23 @@ BOOL ofd_hold(OFD *fd)
 }
 #endif
 
-/* Used by immediate unlink and final-reference reclaim. Updating the head
- * after each successful FAT update preserves progress if disk I/O is retried. */
+/* Keep the current cluster and successor until both FAT copies are durable.
+ * flush() invalidates its buffer before I/O, so a retry must rewrite the
+ * pending entry instead of reading a possibly already cleared FAT link. */
 static void free_file_chain(DFD *file, DMD *media)
 {
-    CLNO next;
+    BCB *b;
     while (file->o_strtcl && !endofchain(file->o_strtcl)) {
-        next = getrealcl(file->o_strtcl, media);
+        if (!(file->o_flag & O_RECLAIM_PENDING)) {
+            file->o_reclaim_next = getrealcl(file->o_strtcl, media);
+            file->o_flag |= O_RECLAIM_PENDING;
+        }
         clfix(file->o_strtcl, FREECLUSTER, media);
-        file->o_strtcl = next;
+        for (b = bufl[BI_FAT]; b; b = b->b_link)
+            if (b->b_bufdrv != -1 && b->b_dirty && b->b_dm == media)
+                flush(b);
+        file->o_strtcl = file->o_reclaim_next;
+        file->o_flag &= ~O_RECLAIM_PENDING;
     }
     file->o_strtcl = 0;
 }
@@ -519,6 +527,7 @@ long ixdel(DND *dn, FCB *f, long pos)
     DFD deleted;
     char erased = (char)ERASE_MARKER;
 
+    deleted.o_flag = 0;
     deleted.o_strtcl = le2cpu16(f->f_clust);
 
     fd = ofd_find(dn, pos);

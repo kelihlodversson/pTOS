@@ -32,6 +32,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     cp obj/ldso/test/SO*.TOS "$work/"
     cp obj/ldso/test/soapp.elf "$work/SOAPP.TOS"
     cp obj/ldso/test/probe.so "$work/GEMSYS/LIB/X32/PROBE.SO"
+    cp obj/ldso/test/STATICPH.TOS "$work/"
     cp obj/ldso/test/dyntest.elf "$work/DYNTEST.TOS"
     cp obj/ldso/test/dynpie.elf "$work/DYNPIE.TOS"
     cp obj/ldso/test/BADPR.SO obj/ldso/test/NESTD.SO "$work/GEMSYS/LIB/X32/"
@@ -47,7 +48,7 @@ cp "$firmware/OVMF_VARS_4M.fd" "$work/vars.fd"
 # create its temporary files in /var/tmp. Always use private disk/NVRAM copies.
 set -- "$work/EFI"
 if [ -d "$work/GEMSYS" ]; then
-    set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS
+    set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS

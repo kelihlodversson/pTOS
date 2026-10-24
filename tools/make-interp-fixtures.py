@@ -34,3 +34,13 @@ struct.pack_into("<H", data, 18, 40)  # Wrong machine in the interpreter.
 data = bytearray(program)
 struct.pack_into("<H", data, 16, 3)   # ET_DYN with a nested PT_INTERP.
 (root / "NESTD.SO").write_bytes(data)
+
+# Static ELF dispatch must retain the static loader's header-count policy.
+data = bytearray(pathlib.Path('x32hello.elf').read_bytes())
+oldoff = struct.unpack_from('<I', data, 28)[0]
+oldnum = struct.unpack_from('<H', data, 44)[0]
+newph = data[oldoff:oldoff + oldnum * 32] + bytes((129 - oldnum) * 32)
+struct.pack_into('<I', data, 28, len(data))
+struct.pack_into('<H', data, 44, 129)
+data.extend(newph)
+(root / 'STATICPH.TOS').write_bytes(data)

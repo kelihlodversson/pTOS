@@ -212,6 +212,30 @@ class Metadata(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
+    def test_fat_reclaim_retry_after_mirrored_write_failure(self):
+        old_cwd = Path.cwd()
+        old_prefix = os.environ.get("CONFIG_")
+        try:
+            os.chdir(ROOT)
+            os.environ["CONFIG_"] = ""
+            run([sys.executable, str(ROOT / "tools/genconfig.py"),
+                 "--kconfig", "Kconfig", "--config", "configs/pc-x86_64_defconfig",
+                 "--header", str(self.path / "autoconf.h"),
+                 "--makefile", str(self.path / "auto.conf")])
+            binary = self.path / "fat-reclaim"
+            run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
+                      "-ffunction-sections", "-fdata-sections", "-fno-builtin",
+                      "-I" + str(self.path), "-Iinclude", "-Iinclude/arch/x86_64",
+                      "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c",
+                      "-Wl,--gc-sections", "-o", str(binary)])
+            run([str(binary)])
+        finally:
+            os.chdir(old_cwd)
+            if old_prefix is None:
+                os.environ.pop("CONFIG_", None)
+            else:
+                os.environ["CONFIG_"] = old_prefix
+
     def test_bootstrap_relative_widths_and_atomic_rejection(self):
         binary = self.path / "bootstrap-host"
         run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",

@@ -165,9 +165,16 @@ static int populate(OBJECT *o, uint32_t file, uint32_t address, int handle)
                     other->address < page + 4096) direct = 0;
             }
             if (direct) {
+                uint32_t protection = PROT_READ;
+                /* Partial-page BSS must be zeroed through private COW even
+                 * for an ultimately read-only or executable segment. seal()
+                 * installs the final permissions after population/binding. */
+                if ((l->flags & DL_PF_W) ||
+                    (l->memsz > l->filesz && file_end < page + 4096))
+                    protection |= PROT_WRITE;
                 offset -= begin - page;
                 if (dl_syscall(GEMDOS_MUNMAP, bias + page, 4096, 0, 0, 0, 0) ||
-                    map_file(bias + page, 4096, PROT_READ | ((l->flags & DL_PF_W) ? PROT_WRITE : 0),
+                    map_file(bias + page, 4096, protection,
                              handle, offset) != bias + page) return 0;
             } else {
                 const unsigned char *from = (const unsigned char *)(uintptr_t)(file + offset);

@@ -385,6 +385,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         };
         unsigned int k;
 
+        child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\STATICPH.TOS",
+                     (s64)(unsigned long)"", (s64)(unsigned long)env);
+        if (child != 0) pterm(0x800 | ((int)child & 0xff));
         args[0] = sizeof(args) - 2;
         for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
             child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)bad_files[k],

@@ -167,6 +167,7 @@ typedef struct
                          * long: this mirrors FCB's own on-disk
                          * 32-bit field (see FCB's own comment),
                          * not a native-width value              */
+    CLNO o_reclaim_next; /* saved FAT successor during unlink reclamation */
 } OPT_PACKED DFD;
 
 
@@ -175,6 +176,7 @@ typedef struct
  */
 #define O_DIRTY     1   /* contents have changed, FCB on disk must be updated */
 #define O_UNLINKED  2   /* directory entry removed; reclaim at last reference */
+#define O_RECLAIM_PENDING 8 /* saved successor valid until FAT flush succeeds */
 #define O_MEDIA_LOST 4  /* backing medium invalidated; never touch its FAT */
 
 
