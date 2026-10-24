@@ -177,3 +177,10 @@ coordinates, subtree relocation, head/middle/tail deletion and ordering,
 invalid positions without mutation, single-child ordering and preservation
 of object specifications. The dynamic client also calls objc_offset with
 an unmapped pointer: only that child faults, and its parent continues.
+
+When CONF_WITH_DYNAMIC_DESK and CONF_WITH_LIBAES are enabled together,
+EmuDesk links its public objc_add/objc_order/objc_offset calls through
+DT_NEEDED libaes.so, rather than defining GEM trap wrappers for them.
+Internal desktop geometry helpers use the same extracted core. Other
+AES operations continue through the existing adapters during migration.
+Static desktops and builds without libaes retain their existing bindings.
