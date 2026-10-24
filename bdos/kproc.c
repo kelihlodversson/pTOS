@@ -67,6 +67,7 @@ struct kproc {
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
+    BOOL legacy;                /* a classic PRG: its stack is in its TPA (KPROC_LEGACY_PRG) */
     ASPACE *pending_as;  /* a program loaded from a file: the address space made for it */
                                 /* at load time, with its image in it; the launch adopts it */
     BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
@@ -578,12 +579,14 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     }
 #if !CONF_WITH_DEMAND_PAGING
     /* Without demand paging the stack is mapped now, all of it, and before the
-     * move below. */
-    if (!aspace_map_private(as, USER_STACK_TOP - stack_bytes(kproc), stack_bytes(kproc),
+     * move below.  (A classic PRG has its stack in its TPA.) */
+    if (!kproc->legacy &&
+        !aspace_map_private(as, USER_STACK_TOP - stack_bytes(kproc), stack_bytes(kproc),
                             ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
         return prepare_failed(kproc, as);
     }
-    kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
+    if (!kproc->legacy)
+        kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
 #endif
     /*
      * A built-in image gets its segments as private pages at the fixed
@@ -601,7 +604,10 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
                             : !layout_load(as, &kproc->layout))) {
         return prepare_failed(kproc, as);
     }
-    kproc->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
+    if (kproc->legacy)
+        kproc->stack_top = hitpa & ~3UL;    /* the top of the TPA: the program sets its own stack */
+    else
+        kproc->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     if (kproc->has_image)
         kproc->entry = kproc->layout.entry;
     kproc->aspace = as;
@@ -861,6 +867,58 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     kproc->user_end = (UBYTE *)(uintptr_t)hitpa;    /* the trusted bound */
     return E_OK;
 }
+
+#if KPROC_LEGACY_PRG
+void kproc_mark_legacy(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc)
+        kproc->legacy = TRUE;
+}
+
+/*
+ * Mshrink() of the TPA of a basepage the caller owns: the pages after the first
+ * `len` bytes go back to the window.  They are unmapped from every address
+ * space that has them (the process's own, and the launcher's loan) first, so
+ * that nothing keeps reaching memory that somebody else is about to be given.
+ * Rounded up to whole pages, as the stack that is just below the new end must
+ * stay.  p_hitpa of a process that has run stays what it was, as on TOS.
+ */
+LONG kproc_shrink_tpa(PD *caller, void *blk, long len)
+{
+    KPROC *kproc = kproc_find((PD *)blk), *k;
+    ULONG old, keep;
+    int i;
+
+    if (!kproc || kproc->user_start != (UBYTE *)blk)
+        return EIMBA;
+    if (procmem_owner(blk) != (const void *)caller)
+        return EACCDN;
+    old = procmem_size(blk);
+    if (len < (long)sizeof(PD))
+        return EIMBA;
+    keep = ((ULONG)len + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
+    if (keep > old)
+        return EGSBF;
+    if (keep == old)
+        return E_OK;
+    for (k = kproc_list; k; k = k->next) {
+        if (k->aspace)
+            aspace_shrink_procmem(k->aspace, (VADDR)(uintptr_t)blk, keep);
+        for (i = 0; i < KPROC_BORROWS; i++)
+            if (k->borrowed[i].bytes && k->borrowed[i].va == (VADDR)(uintptr_t)blk)
+                k->borrowed[i].bytes = keep;
+    }
+    procmem_shrink(blk, keep);
+    if (kproc->user_end > (UBYTE *)blk + keep) {
+        kproc->user_end = (UBYTE *)blk + keep;
+        if (!kproc->aspace)             /* not launched yet: the launch checks p_hitpa against the block */
+            ((PD *)blk)->p_hitpa = PTR_TO_USERPTR_UNCHECKED(kproc->user_end);
+    }
+    return E_OK;
+}
+#endif
 
 BOOL kproc_borrow(PD *launcher, void *block)
 {

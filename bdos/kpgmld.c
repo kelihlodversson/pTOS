@@ -43,6 +43,16 @@ static LONG pgfix01(UBYTE **lastcp, LONG nrelbytes, PGMINFO *pi);
  */
 static WORD pgmld_format;
 
+/* TRUE iff the program kpgmhdrld() just read is a classic GEMDOS PRG */
+BOOL kpgm_is_prg(void)
+{
+#if CONF_WITH_PRG_LOADER
+    return pgmld_format == PGMLD_PRG;
+#else
+    return FALSE;
+#endif
+}
+
 /*
  * kpgmhdrld - load program header
  *

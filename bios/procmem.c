@@ -162,6 +162,21 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     return (void *)(uintptr_t)va;
 }
 
+ULONG procmem_largest_free(void)
+{
+    ULONG i, run = 0, best = 0;
+
+    for (i = 0; i < WINDOW_PAGES; i++) {
+        if (page_used(i)) {
+            run = 0;
+            continue;
+        }
+        if (++run > best)
+            best = run;
+    }
+    return best * (ULONG)PAGE;
+}
+
 static struct alloc **find_link(const void *p)
 {
     struct alloc **link;
@@ -182,6 +197,26 @@ static void release(struct alloc **link)
     free_pages += a->pages;
     live_allocs--;
     kfree(a);
+}
+
+BOOL procmem_shrink(void *p, ULONG bytes)
+{
+    struct alloc **link = find_link(p);
+    struct alloc *a;
+    ULONG keep;
+
+    if (!link)
+        return FALSE;
+    a = *link;
+    keep = (bytes + PAGE - 1) / PAGE;
+    if (!keep)
+        keep = 1;
+    if (keep >= a->pages)
+        return TRUE;
+    set_pages((ULONG)((a->va - PROCMEM_WINDOW_BASE) / PAGE) + keep, a->pages - keep, FALSE);
+    free_pages += a->pages - keep;
+    a->pages = keep;
+    return TRUE;
 }
 
 BOOL procmem_free(void *p)

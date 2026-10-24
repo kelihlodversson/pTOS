@@ -233,6 +233,24 @@ BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
     return TRUE;
 }
 
+void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes)
+{
+    VADDR keep_end = va + ((bytes + PAGE - 1) & ~(PAGE - 1));
+    ULONG i;
+
+    for (i = 0; i < as->npins; i++) {
+        VADDR old_end, page;
+
+        if (as->pins[i].va != va || as->pins[i].bytes <= keep_end - va)
+            continue;
+        old_end = (va + as->pins[i].bytes + PAGE - 1) & ~(PAGE - 1);
+        for (page = keep_end; page < old_end; page += PAGE)
+            aspace_hw_unmap(as->root, page);
+        as->pins[i].bytes = keep_end - va;
+    }
+    flush_if_current(as);
+}
+
 /* ---- walking, validation and private memory ------------------------- */
 
 BOOL aspace_translate(const ASPACE *as, VADDR va, PADDR *phys, UWORD *prot)

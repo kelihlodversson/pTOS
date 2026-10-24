@@ -563,9 +563,10 @@ What is shared by both architectures:
     are refused; the Line-A is a fault.  A fault ends that process only
     (proc_fault()).  Disk I/O to a user buffer goes through a bounce buffer
     (blkdev_rwabs()), as DMA wants physical addresses.
-  - Programs find their stack private and far from their TPA (the stack top is
-    0x80000000 - 8): libcmini's startup keeps a stack that is not in the TPA
-    and does not shrink it (lib/libcmini, crt0 and main.c).  EmuCON for such a
+  - A program in ELF finds its stack private and far from its TPA (the stack top
+    is 0x80000000 - 8): libcmini's startup keeps a stack that is not in the TPA
+    and does not shrink it (lib/libcmini, crt0 and main.c); a classic PRG on the
+    68k is started the TOS way, below.  EmuCON for such a
     kernel is built with CLI_SSYSTEM=1 (cli/Makefile): it asks Ssystem() for
     what it read from the system variables and the cookie jar.  A program must
     not be linked below 32 KiB (m68k: the kernel's low memory is there) and no
@@ -618,9 +619,24 @@ MMU registers):
     written for, and run on the kernel stack too, unlike the classic handler
     which runs the BIOS on the stack of its caller.  Any exception frame with
     the S bit clear ends the process (any_vec() -> m68k_user_fault()).
-  - The executable format is the PRG, loaded into a TPA of the window.
-    The program's stack is private (0x7ffffff0), with a return address of 0 and
-    the basepage at 4(sp), as TOS gives it.
+  - A classic PRG keeps the TOS contract (KPROC_LEGACY_PRG, bdos/kproc.h): it is
+    loaded into a TPA of the window that is the free memory (at most 1 MiB, half
+    of the window, so that its children have room), it starts with its stack
+    pointer at the top of the TPA (a return address of 0 and the basepage at
+    4(sp), as TOS gives it) and chooses its own stack, and Mshrink() of its
+    basepage takes back what it does not need, in whole pages: they are
+    unmapped from its address space and from the loan its launcher holds, then
+    given back to the window (kproc_shrink_tpa()).  p_hitpa stays what it was.
+    A legacy startup that sets its stack from p_hitpa, shrinks and runs needs
+    nothing else.  The program is still in an address space of its own: what is
+    not its TPA, its Malloc() memory or its image is not there, and Super(),
+    Supexec(), the system variables and the hardware are as above.
+  - A program in ELF is started the way ARM and x32 programs are: with a private
+    stack (0x7ffffff0, a return address of 0 and the basepage at 4(sp)), an
+    image of its own, and a TPA that is no more than its basepage.  libcmini
+    tells the two apart by where the stack pointer is at the start, in crt0 and
+    _crtinit(): in the TPA, it is the classic start; outside it, the private
+    one.
   - Not done: the 68060 and the 68030 (#571), the floppy calls, FPU state across
     a Pexec(), and the real-hardware cache details (the cache modes of the
     tables are copyback; the 68060's branch cache is not flushed).
