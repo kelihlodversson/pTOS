@@ -113,6 +113,7 @@ LONG bconout4(WORD dev, WORD c);
 LONG kbshift(WORD flag);
 
 /* some xbios functions */
+WORD keyboard_shifted(WORD scancode);
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps);
 WORD kbrate(WORD initial, WORD repeat);
 void bioskeys(void);

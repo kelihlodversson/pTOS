@@ -1,7 +1,7 @@
 /* One ordered export list shared by the stub, image and loader resolver. */
 #ifndef AES_CLIENT_EXPORTS_H
 #define AES_CLIENT_EXPORTS_H
-#define AES_CLIENT_EXPORT_COUNT 30
+#define AES_CLIENT_EXPORT_COUNT 31
 #define AES_CLIENT_EXPORTS(X) \
     X(0, aes_appl_init) \
     X(1, aes_appl_exit) \
@@ -32,5 +32,6 @@
     X(26, aes_wind_find) \
     X(27, aes_object) \
     X(28, aes_form_do) \
-    X(29, aes_tree_validate)
+    X(29, aes_tree_validate) \
+    X(30, aes_shell)
 #endif

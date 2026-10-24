@@ -97,6 +97,11 @@ GLOBAL char *ad_stail;
 
 static BOOL gl_shgem;                   /* TRUE iff currently in graphics mode */
 
+BOOL sh_graphics_active(void)
+{
+    return gl_shgem;
+}
+
 /*
  *  Resolution settings:
  *      gl_changerez: 0=no change, 1=change ST resolution, 2=change Falcon resolution
@@ -699,7 +704,14 @@ static WORD sh_ldapp(SHELL *psh)
                 KINFO(("sh_ldapp(): no desktop in the root directory of the boot drive\n"));
                 psh->sh_isgem = FALSE;      /* EmuCON is a console program */
                 sh_chgrf(psh);
+#if ARCH_X86_64
+                {
+                    extern void start_builtin_cli(char *env);
+                    start_builtin_cli(NULL);
+                }
+#else
                 aes_run_rom_program(coma_start);
+#endif
                 ret = 0;
             }
 #else

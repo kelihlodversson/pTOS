@@ -24,6 +24,9 @@
 
 #include "emutos.h"
 #include "string.h"
+#if defined(X32_USERLAND)
+#include "aes_shell.h"
+#endif
 
 #include "xbiosbind.h"
 #include "aesext.h"
@@ -1155,14 +1158,24 @@ static WORD check_function_key(WORD thechar)
  */
 static BOOL check_alt_letter_key(WORD thechar)
 {
+#if !defined(X32_USERLAND)
     KEYTAB *keytab;
+#else
+    AES_SHELL_REQUEST request = { 0 };
+#endif
     WORD drive;
 
     if (LOBYTE(thechar))        /* not an alt key */
         return FALSE;
 
+#if defined(X32_USERLAND)
+    request.operation = AES_SHELL_KEY;
+    request.value = HIBYTE(thechar);
+    drive = aes_shell(&request);
+#else
     keytab = (KEYTAB *)Keytbl(-1, -1, -1);
     drive = keytab->shift[HIBYTE(thechar)];
+#endif
 
     /*
      * check for impossible drive characters here and just ignore them;

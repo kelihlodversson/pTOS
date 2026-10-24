@@ -3,10 +3,11 @@
  * This file is distributed under the GPL, version 2 or any later version.
  */
 #include "aes_service.h"
+#include "aes_shell.h"
 
 static LONG service(ULONG fn, UQUAD a, UQUAD b)
 {
-    register UQUAD rax __asm__("rax") = ((UQUAD)AES_SERVICE_CLASS << 32) | fn;
+    register UQUAD rax __asm__("rax") = (0x101ULL << 32) | fn;
     register UQUAD rdi __asm__("rdi") = a;
     register UQUAD rsi __asm__("rsi") = b;
     register UQUAD rdx __asm__("rdx") = 0;
@@ -25,6 +26,10 @@ LONG aes_appl_init(const char *name, AES_APP_INFO *info)
 LONG aes_appl_exit(void)
 {
     return service(AES_SERVICE_EXIT, 0, 0);
+}
+LONG aes_shell(const AES_SHELL_REQUEST *request)
+{
+    return service(AES_SERVICE_SHELL, (uintptr_t)request, 0);
 }
 LONG aes_appl_find(const char *name)
 {

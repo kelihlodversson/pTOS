@@ -107,7 +107,8 @@ LONG aes_appl_write(WORD recipient, const AES_MESSAGE *message);
 LONG aes_appl_read(AES_MESSAGE *message);
 LONG aes_evnt_poll(UWORD mask, AES_EVENT *event);
 LONG aes_wind_update(WORD code);
-/* Cooperative waits/yields are available only to loaded AES accessories.
+/* Cooperative waits/yields are available to loaded AES accessories and
+ * ordinary graphical processes launched by the AES shell.
  * WAIT accepts AES_EVENT_MESSAGE; delivery copies to the original caller. */
 LONG aes_evnt_wait(UWORD mask, AES_EVENT *event);
 LONG aes_appl_yield(void);

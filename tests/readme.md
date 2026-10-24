@@ -91,8 +91,11 @@ qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
 ```
 
 On x86-64 (QEMU with OVMF), copy `test-dir`'s contents into the directory
-that holds `EFI/BOOT/BOOTX64.EFI` and is attached as a FAT drive, boot, and
-type `runtests.tos` at the EmuCON prompt — there is no autorun.
+that holds `EFI/BOOT/BOOTX64.EFI` and is attached as a FAT drive. Build
+`pc-x86_64-desktop_defconfig` and keep `EMUDESK.PRG` and `EMUDESK.INF` from
+`test-dir` on that drive: the ring-3 desktop autoruns `RUNTESTS.TOS` through
+the same `#Z` line as on ARM and m68k. The console-only `pc-x86_64_defconfig`
+also permits manual launch from EmuCON when iterating locally.
 
 On Hatari (m68k), attach it as an ACSI disk and use `--conout 2` to capture
 the console text (a VT-52 terminal channel) directly to Hatari's own
@@ -107,13 +110,17 @@ CI runs the suite on five machines (the `regression` job in
 `.github/workflows/build.yml`: virt-arm, virt-m68k, virt-m68k with
 `-mfastcall`, pc-x86_64 and raspi2b) with `tools/run-regression-tests.sh
 <virt-arm|virt-m68k|pc-x86_64|raspi2b>`, which also works locally once the matching
-configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it), `pc-x86_64` or `rpi2-test` (the Pi 2 with the console on the UART as well: its desktop starts the suite from `emudesk.inf`, so there are no shutdown checks)) is built and
+configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it), `pc-x86_64-desktop` or `rpi2-test` (the Pi 2 with the console on the UART as well: its desktop starts the suite from `emudesk.inf`, so there are no shutdown checks)) is built and
 `make test-dir` has run. The virt machines are the `-cli` configurations so
 that they boot to EmuCON, where the script types `runtests.tos` into the
 serial console; the script ends QEMU when the harness has printed its
 verdict and fails unless that is `All tests passed.` After a pass it starts
 `poweroff.tos` (`Shutdown(SHUT_POWER)`, doc/shutdown.txt) and expects QEMU to
-switch off by itself.
+switch off by itself. On x32 the script starts the suite and each shutdown
+probe in a fresh desktop boot using INF autorun; it sends no launch keystrokes.
+Reboot and cold-boot checks require a second EFI entry, and the shutdown
+probes must still flush their open data file. Set `OVMF_CODE` and `OVMF_VARS`
+to firmware files when they are outside `/usr/share/OVMF`.
 
 See the `ptos-smoketest` skill (`.claude/skills/ptos-smoketest/SKILL.md`)
 for more emulator invocations and gotchas.

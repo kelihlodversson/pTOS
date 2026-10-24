@@ -34,6 +34,12 @@
 #include "asm.h"
 #include "miscutil.h"
 
+#if defined(X32_USERLAND)
+static DTA fs_dta;
+#else
+#define fs_dta D.g_dta
+#endif
+
 #define NM_NAMES (F9NAME-F1NAME+1)
 #define NAME_OFFSET F1NAME
 #define NM_DRIVES (FSLSTDRV-FS1STDRV+1)
@@ -41,7 +47,7 @@
 #define DRIVE_ROWS   9              /* (3 columns of buttons for the standard 26 drives) */
 
 #define LEN_FSNAME (LEN_ZFNAME+1)   /* includes leading flag byte & trailing nul */
-#define LEN_FSPATH  (LEN_ZPATH+4)   /* at least 3 bytes longer than max path */
+#define LEN_FSPATH  MAXPATHLEN     /* directory plus full 8.3 filename */
 #define LEN_FSWORK  (2*LEN_FSPATH+LEN_FSNAME)  /* total workarea length in fs_input() */
 
                             /* max number of files/directory that we can handle */
@@ -256,8 +262,8 @@ static LONG fs_add(WORD thefile, LONG fs_index)
     WORD len;
 
     g_fslist[thefile] = fs_index;
-    ad_fsnames[fs_index++] = (D.g_dta.d_attrib & FA_SUBDIR) ? 0x07 : ' ';
-    len = strlencpy(ad_fsnames+fs_index,D.g_dta.d_fname);
+    ad_fsnames[fs_index++] = (fs_dta.d_attrib & FA_SUBDIR) ? 0x07 : ' ';
+    len = strlencpy(ad_fsnames+fs_index,fs_dta.d_fname);
     fs_index += len + 1;
     return fs_index;
 }
@@ -275,7 +281,7 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
     WORD ret;
     LONG thefile, fs_index, temp;
     WORD i, j, gap;
-    char *fname, allpath[LEN_ZPATH+1];
+    char *fname, allpath[LEN_FSPATH];
     DTA *user_dta;
 
     set_mouse_to_hourglass();
@@ -288,7 +294,7 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
     set_all_files(fname);
 
     user_dta = dos_gdta();          /* remember user's DTA */
-    dos_sdta(&D.g_dta);
+    dos_sdta(&fs_dta);
     ret = dos_sfirst(allpath, FA_SUBDIR);
 
     /*
@@ -300,9 +306,9 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
         /* if it is a real file or directory then save it and set
          * the first byte to tell which
          */
-        if (D.g_dta.d_fname[0] != '.')
+        if (fs_dta.d_fname[0] != '.')
         {
-            if ((D.g_dta.d_attrib & FA_SUBDIR) || (wildcmp(pspec, D.g_dta.d_fname)))
+            if ((fs_dta.d_attrib & FA_SUBDIR) || (wildcmp(pspec, fs_dta.d_fname)))
             {
                 fs_index = fs_add(thefile, fs_index);
                 thefile++;
@@ -622,6 +628,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     ULONG bitmask;
     BYTE *ad_fpath, *ad_fname;
     BYTE *pstr;
+    BYTE folder[LEN_ZFNAME];
     GRECT pt;
     BYTE *locstr, *locold, *selname;
     /* static: the FTITLE object's te_ptext is pointed directly at mask
@@ -636,6 +643,11 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 
     /* get out quick if path is nullptr */
     if (pipath == NULL)
+        return FALSE;
+
+    /* The caller provides MAXPATHLEN bytes, also used when it replaces the
+     * mask with a full filename after this call. */
+    if (strlen(pipath) >= LEN_FSPATH)
         return FALSE;
 
     /* if path string is empty, set reasonable default */
@@ -667,6 +679,11 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     selname = locold + LEN_FSPATH;
 
     strcpy(locstr, pipath);
+    if (fs_pspec(locstr, NULL) - locstr >= LEN_ZPATH)
+    {
+        dos_free(ad_fsnames);
+        return FALSE;
+    }
     strcpy(locold,locstr);
 
     /* init strings in form */
@@ -828,7 +845,16 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
             else                            /* a folder was selected:  */
             {                               /* insert name before mask */
                 pstr = fs_pspec(locstr, NULL);
-                unfmt_str(selname+1, pstr);
+                unfmt_str(selname+1, folder);
+                /* Include the trailing separator and terminator in the
+                 * directory limit, leaving room for a selected filename. */
+                if ((pstr-locstr+strlen(folder)+1 >= LEN_ZPATH) ||
+                    (pstr-locstr+strlen(folder)+1+strlen(mask) >= LEN_FSPATH))
+                {
+                    fm_error(3);
+                    break;
+                }
+                strcpy(pstr, folder);
                 pstr += strlen(pstr);
                 *pstr++ = PATHSEP;
                 strcpy(pstr, mask);

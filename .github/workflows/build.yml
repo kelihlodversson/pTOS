@@ -245,7 +245,7 @@ jobs:
         run: |
           mkdir products
           # The PE32+ EFI application, plus the map file with its symbols.
-          for product in *.efi emutos.map cli/emucon.tos; do
+          for product in *.efi emutos.map cli/emucon.tos emudesk.prg; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -265,7 +265,7 @@ jobs:
       # way (EFI/OVMF); a future non-EFI x86-64 config would need its own
       # check instead of this one.
       - name: Install QEMU and OVMF for the boot test
-        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || startsWith(matrix.config, 'pc-x86_64-accessories')
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || startsWith(matrix.config, 'pc-x86_64-accessories') || startsWith(matrix.config, 'pc-x86_64-desktop-tests')
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qemu-system-x86 ovmf
@@ -503,6 +503,23 @@ jobs:
 
           echo "Boot test passed: reached the ring-3 EmuCON2 shell, no reset loop, no panic."
 
+      - name: Exercise the external ring-3 desktop
+        if: startsWith(matrix.config, 'pc-x86_64-desktop-tests')
+        run: |
+          make CROSS_COMPILE= -j2 x32-desktop-test x32-desktop-window-test
+          console_args=()
+          if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
+            console_args+=(--embedded-console)
+          fi
+          python3 tests/x32_desktop/run.py --output obj/x32-desktop-runtime "${console_args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && startsWith(matrix.config, 'pc-x86_64-desktop-tests')
+        with:
+          name: desktop-runtime-${{ matrix.config }}
+          path: obj/x32-desktop-runtime/
+          retention-days: 14
+
       - name: Report the failure
         if: failure()
         run: |
@@ -511,8 +528,8 @@ jobs:
   # The regression suite (tests/, `make test-dir`) run under QEMU.  The virt
   # machines are built without the AES (the *-cli configurations) so that
   # they boot to EmuCON, where tools/run-regression-tests.sh types the name
-  # of the suite into the serial console; pc-x86_64 boots to EmuCON anyway
-  # and is typed into through the QEMU monitor.  See tests/readme.md.
+  # of the suite into the serial console. The x32 and Pi desktops start it
+  # from tests/emudesk.inf's autorun line. See tests/readme.md.
   regression:
     name: regression (${{ matrix.machine }})
     needs: configurations
@@ -554,7 +571,7 @@ jobs:
             qemu: qemu-system-misc
             make_args: ''
           - machine: pc-x86_64
-            config: pc-x86_64
+            config: pc-x86_64-desktop
             arch: x86_64
             runner: ubuntu-latest
             qemu: qemu-system-x86 ovmf

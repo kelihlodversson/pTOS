@@ -24,13 +24,19 @@
 #include "gemevlib.h"
 #include "gemgsxif.h"
 #include "gemctrl.h"
+#include "gemmnlib.h"
 
 #define MESSAGE_WAIT 0x8000
 typedef struct {
     AESPD *aes;
     PD *owner;
+    PD *launch_parent;
     BOOL started;
     BOOL registration_revoked;
+    BOOL menu_registered;
+    BOOL shell_closed;
+    BOOL tearing_down;
+    char menu_label[11];
     LONG result;
     X86_64_PROCESS_CONTEXT context;
 } ACCESSORY_CONTEXT;
@@ -48,10 +54,65 @@ static ACCESSORY_CONTEXT *owned(PD *pd)
 {
     WORD i;
 
-    for (i = 2; i < NUM_PDS; i++)
+    for (i = 0; i < NUM_PDS; i++)
         if (contexts[i].owner == pd && pd)
             return &contexts[i];
     return NULL;
+}
+
+/* Only the native shell can grant an ordinary program its AES coroutine.
+ * Consume the grant on the first loaded launch: nested user Pexec calls do
+ * not inherit their parent's event/window ownership. */
+void x86_64_aes_launch_begin(PD *parent)
+{
+    if (rlr && rlr->p_pid == 0 && !contexts[0].owner && !contexts[0].tearing_down)
+        contexts[0].launch_parent = parent;
+}
+
+void x86_64_aes_launch_process(PD *pd, PD *parent)
+{
+    ACCESSORY_CONTEXT *c = &contexts[0];
+
+    if (!rlr || rlr != c->aes || !parent || c->launch_parent != parent || c->tearing_down)
+        return;
+    c->launch_parent = NULL;
+    c->owner = pd;
+    c->shell_closed = FALSE;
+    c->registration_revoked = FALSE;
+}
+
+void x86_64_aes_shell_closed(PD *pd)
+{
+    ACCESSORY_CONTEXT *c = owned(pd);
+
+    if (c && c->aes->p_pid == 0)
+        c->shell_closed = TRUE;
+}
+
+void x86_64_aes_launch_end(void)
+{
+    ACCESSORY_CONTEXT *c = &contexts[0];
+    PD *owner = c->owner;
+    BOOL tearing_down = c->tearing_down;
+
+    c->launch_parent = NULL;
+    /* Retire the user association before cleanup can yield or reuse its
+     * basepage, while keeping task-zero messages off the legacy FIFO. */
+    c->tearing_down = tearing_down || owner != NULL;
+    c->owner = NULL;
+    if (owner) {
+        /* Typed appl_exit and fault cleanup retire the registration before
+         * Pexec returns. Still perform the foreground shell transition:
+         * accessories must close their windows before wm_new resets them. */
+        if (!c->shell_closed) {
+            mn_cleanup();
+            wait_for_accs(AP_ACCLOSE);
+        }
+        x86_64_aes_window_finished(owner, c->aes);
+        x86_64_aes_objects_finished(c->aes);
+    }
+    /* Native task-zero delivery is safe again when the shell resumes. */
+    c->tearing_down = tearing_down;
 }
 
 void x86_64_aes_setup(AESPD *pd, PD *accessory)
@@ -275,8 +336,19 @@ void x86_64_aes_registration(PD *pd, BOOL active)
     if (!c)
         return;
     if (active) {
+        c->shell_closed = FALSE;
         c->aes->p_flags |= AP_OPEN;
         c->aes->p_flags &= ~AP_ACCLOSE;
+        /* Loaded typed accessories have no legacy menu_register call.
+         * Register their filename once, before wait_for_accs lets the shell
+         * publish its menu. Storage lasts for the whole AES session, even
+         * if the accessory exits or its client registration is replaced. */
+        if (c->aes->p_pid >= 2 && !c->menu_registered) {
+            c->menu_label[0] = c->menu_label[1] = ' ';
+            memcpy(c->menu_label + 2, c->aes->p_name, 8);
+            c->menu_label[10] = 0;
+            c->menu_registered = mn_register(c->aes->p_pid, c->menu_label) >= 0;
+        }
     } else {
         /* Do not erase cancellation if the callback registers again before
          * the suspended wait resumes. Only a fresh wait clears this flag. */
@@ -300,6 +372,8 @@ LONG x86_64_aes_message(AESPD *pd, const WORD *message)
 {
     ACCESSORY_CONTEXT *c = &contexts[pd->p_pid];
 
+    if (c->tearing_down)
+        return EACCDN;
     if (!c->owner)
         return (c->started || (pd->p_stat & X32_AES_DEAD)) ? EACCDN : EINVFN;
     return aes_service_kernel_message(c->owner, message);

@@ -131,14 +131,12 @@ config CONF_WITH_EASTER_EGG
 
 config CONF_EXTERNAL_DESK
 	bool "Load EmuDesk from the boot drive instead of linking it in"
-	depends on CONF_WITH_AES && !ARCH_X86_64
-	depends on ((ARCH_ARM || BUILD_TOOLCHAIN_ELF) && CONF_WITH_ELF_LOADER) || (ARCH_M68K && !BUILD_TOOLCHAIN_ELF && CONF_WITH_PRG_LOADER)
-	# the program talks to the VDI through trap #2, which a process in its
-	# own address space cannot do: the kernels with per-process address
-	# spaces refuse VDI and AES calls from user mode until they have a
-	# validated GEM entry (doc/mmu-address-space.txt; on x86-64 that is
-	# #548, for the MMU kernels it has no issue of its own yet)
-	depends on !CONF_WITH_USER_ASPACE
+	depends on CONF_WITH_AES
+	depends on ((ARCH_ARM || ARCH_X86_64 || BUILD_TOOLCHAIN_ELF) && CONF_WITH_ELF_LOADER) || (ARCH_M68K && !BUILD_TOOLCHAIN_ELF && CONF_WITH_PRG_LOADER)
+	# x32 uses the typed AES/VDI client libraries. ARM and m68k still
+	# use trap #2, unavailable from their isolated user address spaces.
+	depends on !CONF_WITH_USER_ASPACE || ARCH_X86_64
+	depends on !ARCH_X86_64 || CONF_WITH_USER_CALLBACKS
 	select CONF_WITH_SSYSTEM
 	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
 	help
@@ -160,8 +158,9 @@ config CONF_EXTERNAL_DESK
 	  Needs the loader of the program's format: ELF on ARM and with the
 	  bare m68k-elf toolchain (CONF_WITH_ELF_LOADER), PRG with the other
 	  m68k toolchains (ColdFire builds and links, but has not been run).
-	  Not offered for x86-64 (#651), nor with the MMU kernels, whose
-	  processes cannot call the VDI and the AES yet (see above).
+	  x86-64 uses an x32 executable and the typed AES/VDI libraries;
+	  pc-x86_64-desktop_defconfig selects this configuration. ARM/m68k
+	  MMU kernels still need validated GEM entry points (see above).
 
 	  On by default for the images that are loaded into RAM from a disk
 	  (Raspberry Pi, virt-arm, virt-m68k).

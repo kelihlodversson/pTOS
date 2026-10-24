@@ -183,6 +183,7 @@ void *get_addr(UWORD rstype, UWORD rsindex)
 
 
 #if CONF_WITH_COLOUR_ICONS
+#if !defined(X32_USERLAND)
 /*
  * returns pointer to a CICON that best matches the current resolution
  *
@@ -533,6 +534,8 @@ void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
  *
  * returns NULL if none
  */
+#endif /* !X32_USERLAND: snapshots retain standard palette planes */
+
 CICONBLK **get_ciconblkptr(RSHDR *hdr)
 {
     LONG *extarray;
@@ -564,6 +567,7 @@ CICONBLK **get_ciconblkptr(RSHDR *hdr)
  *
  * returns -1 iff dos_free() failed
  */
+#if !defined(X32_USERLAND)
 static WORD free_cicon_buffers(RSHDR *hdr)
 {
     CICONBLK **ciconblkptr, **p;
@@ -586,6 +590,7 @@ static WORD free_cicon_buffers(RSHDR *hdr)
 
     return rc;
 }
+#endif /* !X32_USERLAND */
 #endif
 
 
@@ -608,7 +613,7 @@ WORD rs_free(AESGLOBAL *pglobal)
 
     rs_sglobe(pglobal);
 
-#if CONF_WITH_COLOUR_ICONS
+#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND)
     if (free_cicon_buffers(rs_global->ap_rscmem))
         rc = 0;
 #endif

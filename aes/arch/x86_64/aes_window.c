@@ -39,6 +39,7 @@ typedef struct {
 /* The native manager retains text pointers. Fixed slots keep those pointers
  * valid even across cancellation, deferred cleanup and native redraws. */
 static CLIENT_WINDOW windows[NUM_WIN];
+static UWORD desktop_cursors[NUM_PDS];
 #if CONF_WITH_X32_ACCESSORY_TEST
 static PD *test_revoking;
 static PD *test_reusing;
@@ -606,7 +607,7 @@ static LONG visible_rectangle(const CLIENT_WINDOW *w, WINDOW *native, BOOL next,
 
     *cursor = next ? w->visible_next : 0;
     memset(out, 0, sizeof(*out));
-    if (!(native->w_flags & VF_ISOPEN))
+    if (native != &D.w_win[0] && !(native->w_flags & VF_ISOPEN))
         return E_OK;
     for (node = native->w_rlist; node && walked++ < NUM_ORECT; node = node->o_link) {
         rectangle = node->o_gr;
@@ -684,6 +685,18 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
     if (h < 0 || h >= NUM_WIN || !(D.w_win[h].w_flags & VF_INUSE))
         return EIHNDL;
     if (h == 0) {
+        if (r->operation == AES_WIN_VISIBLE) {
+            CLIENT_WINDOW desktop = { 0 };
+
+            desktop.visible_next = desktop_cursors[rlr->p_pid];
+            result = visible_rectangle(&desktop, &D.w_win[0], r->selector, rectangle, &cursor);
+            if (result == E_OK) {
+                if (!kproc_copy_to_user(output, rectangle, sizeof(*rectangle)))
+                    return EIMBA;
+                desktop_cursors[rlr->p_pid] = cursor;
+            }
+            return result;
+        }
         if (r->operation != AES_WIN_GET)
             return EACCDN;
         information(h, pd, info);

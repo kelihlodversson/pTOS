@@ -119,6 +119,11 @@ static WORD kb_arrowkeys;
 
 static struct keytbl current_keytbl;
 
+WORD keyboard_shifted(WORD scancode)
+{
+    return current_keytbl.shft[(UWORD)scancode & 127];
+}
+
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
 {
 #if CONF_WITH_USER_ASPACE

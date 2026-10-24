@@ -1,4 +1,4 @@
-Native x32 AES clients and kernel service (#404, #613, #626, #659)
+Native x32 AES clients and kernel service (#404, #613, #626, #659, #651)
 ==========================================================
 
 CONF_WITH_X32_AES enables typed ring-3 clients and kernel-owned application
@@ -10,8 +10,8 @@ baseline is independent of this feature.
 
 This is the shared service boundary for native applications and accessories.
 The cooperative AES scheduler and native EmuDesk are selected by
-pc-x86_64-accessories_defconfig; EmuDesk's ring-3 port remains later #548
-work. The legacy AES implementation stays in the kernel on ARM/m68k.
+pc-x86_64-accessories_defconfig. pc-x86_64-desktop_defconfig instead loads
+EmuDesk as an x32 process using the same typed boundary. The legacy AES implementation stays in the kernel on ARM/m68k.
 No raw AESPB, GEMBLK,
 AESGLOBAL or kernel code/data pointer becomes part of this x32 interface.
 Generic ring-3 GEM trap class 2 remains rejected, including opcodes 200/201.
@@ -127,9 +127,10 @@ needed because each syscall identifies the current KPROC.
         Losing waits are cancelled before return. A typed message is dequeued
         only after successful copyout. If output becomes invalid during the
         wait, return EIMBA; native input may already have been collected, while
-        the typed message stays queued. Ordinary Pexec clients and nested
-        children return EACCDN, including polls, until associated scheduling
-        exists. User callbacks cannot call it. Exit/restart cancels all waits.
+        the typed message stays queued. Programs launched by the native AES
+        shell in graphics mode receive a scoped association with AES task
+        zero. Other Pexec clients, including nested children, return EACCDN;
+        they cannot borrow the suspended parent's event/window ownership. User callbacks cannot call it. Exit/restart cancels all waits.
         Revoking registration from a callback wakes every blocking input
         wait, including waits without messages; they cancel their event
         registrations and return EACCDN, including when the callback has
@@ -209,7 +210,10 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         trap invocation, including across nested callbacks and AES dispatch.
         Mutating that window restarts its cursor.
         Each call rescans the current native list by ordinal, retaining no
-        native rectangle-node pointer across calls. Clients clip VDI to these
+        native rectangle-node pointer across calls. Handle zero also supports
+        FIRST/NEXT enumeration of the desktop's visible areas, with a separate
+        cursor per associated AES task. The native desktop has no ISOPEN flag;
+        its rectangle list remains enumerable. Clients clip VDI to these
         rectangles; window ownership does not replace workstation clipping.
 
         The x86-64 native rectangle pool reserves the worst case for all
@@ -238,6 +242,9 @@ tokens after cleanup can dispatch, before accessing the requested native
 handle. Cleanup also rechecks the native lock after each yielding close and
 before visiting another window. If deletion closes a window but loses the
 lock, EAGAIN leaves that closed handle owned and available for retry.
+Open/close may also commit before their END_UPDATE yields and returns EAGAIN.
+Callers requery the owned window's flags before repeating those transitions;
+replaying an already committed open/close would otherwise return EINVAL.
 Unregister, normal exit/fault and restart close/delete the client's windows,
 clear its retained text and discard pending redraws. A callback may revoke
 and renew registration while a window call is suspended: that call returns
@@ -404,8 +411,8 @@ Imports and SDK
 
 obj/x32/libptos-aes.a supports static linking. libptos-aes.so.1 is a link-time
 stub for .ptos.imports consumers, not a filesystem DSO to install or execute.
-It exports 30 functions, including five rectangle helpers and three object/
-dialog/resource functions described in aes-objects-x32.txt.
+It exports 31 functions, including five rectangle helpers and three object/
+dialog/resource functions described in aes-objects-x32.txt, and aes_shell.
 The single ordered list in aes_client_exports.h is used by the stub, client
 image, packer and loader. The namespace is aes:, ABI major 1/minor 0.
 
@@ -463,21 +470,21 @@ signatures do not imply x32 availability. Classifications:
     APPL_FIND          registry  aes_appl_find
     APPL_TPLAY         event     not exposed; input, callbacks or scheduling
     APPL_TRECORD       event     not exposed; input, callbacks or scheduling
-    APPL_YIELD         event     aes_appl_yield for associated accessories
+    APPL_YIELD         event     aes_appl_yield for associated tasks
     APPL_EXIT          registry  aes_appl_exit
     EVNT_KEYBD         event     aes_evnt_multi; task-owned keyboard queue
     EVNT_BUTTON        event     aes_evnt_multi; focused button events
     EVNT_MOUSE         event     aes_evnt_multi; focused rectangle events
-    EVNT_MESAG         event     aes_evnt_poll; aes_evnt_wait for accessories
+    EVNT_MESAG         event     aes_evnt_poll; aes_evnt_wait for associated tasks
     EVNT_TIMER         event     aes_evnt_multi; native AES tick scheduling
     EVNT_MULTI         event     aes_evnt_multi; typed request/result records
-    EVNT_DCLICK        event     not exposed; input, callbacks or scheduling
+    EVNT_DCLICK        event     AES_SHELL_DCLICK; validated global click rate
     MENU_BAR           desktop   AES_OBJECT_MENU; owned validated menu snapshot
     MENU_ICHECK        desktop   AES_OBJECT_STATE; CHECKED bit
     MENU_IENABLE       desktop   AES_OBJECT_STATE; DISABLED bit
     MENU_TNORMAL       desktop   AES_OBJECT_STATE; SELECTED bit
     MENU_TEXT          desktop   AES_OBJECT_SET_TEXT; bounded copied string
-    MENU_REGISTER      desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_REGISTER      desktop   loaded typed accessories register their filename once
     MENU_POPUP         desktop   not exposed; shared desktop/window/menu/shell state
     MENU_ATTACH        desktop   not exposed; shared desktop/window/menu/shell state
     MENU_ISTART        desktop   not exposed; shared desktop/window/menu/shell state
@@ -492,17 +499,17 @@ signatures do not imply x32 availability. Classifications:
     OBJC_CHANGE        mixed     AES_OBJECT_STATE; validated state/redraw
     OBJC_SYSVAR        mixed     not exposed; local data plus input/display state
     FORM_DO            mixed     aes_form_do; ring-3 event loop
-    FORM_DIAL          mixed     not exposed; local data plus input/display state
-    FORM_ALERT         mixed     not exposed; local data plus input/display state
-    FORM_ERROR         mixed     not exposed; local data plus input/display state
+    FORM_DIAL          mixed     AES_SHELL_DAMAGE; local VDI box animation
+    FORM_ALERT         mixed     desktop-local alert tree plus aes_form_do
+    FORM_ERROR         mixed     desktop-local error alert plus aes_form_do
     FORM_CENTER        mixed     AES_OBJECT_CENTER; owned tree geometry
     FORM_KEYBD         mixed     AES_OBJECT_KEY; bounded navigation/default
     FORM_BUTTON        mixed     aes_form_do client-side button handling
-    GRAF_RUBBOX        mixed     not exposed; local data plus input/display state
+    GRAF_RUBBOX        mixed     desktop-local VDI outline and typed input waits
     GRAF_DRAGBOX       mixed     not exposed; local data plus input/display state
     GRAF_MBOX          mixed     not exposed; local data plus input/display state
-    GRAF_GROWBOX       mixed     not exposed; local data plus input/display state
-    GRAF_SHRINKBOX     mixed     not exposed; local data plus input/display state
+    GRAF_GROWBOX       mixed     desktop-local VDI outline animation
+    GRAF_SHRINKBOX     mixed     desktop-local VDI outline animation
     GRAF_WATCHBOX      mixed     not exposed; local data plus input/display state
     GRAF_SLIDEBOX      mixed     not exposed; local data plus input/display state
     GRAF_HANDLE        mixed     AES_OBJECT_METRICS; scalar VDI handle/metrics
@@ -512,7 +519,7 @@ signatures do not imply x32 availability. Classifications:
     SCRP_WRITE         desktop   not exposed; shared desktop/window/menu/shell state
     SCRP_CLEAR         desktop   not exposed; shared desktop/window/menu/shell state
     FSEL_INPUT         mixed     not exposed; owned resources, file I/O and/or display
-    FSEL_EXINPUT       mixed     not exposed; owned resources, file I/O and/or display
+    FSEL_EXINPUT       mixed     desktop-local directory enumeration and owned form snapshots
     WIND_CREATE        desktop   aes_wind_create (associated task, owned resource)
     WIND_OPEN          desktop   aes_wind_open (owned window)
     WIND_CLOSE         desktop   aes_wind_close (owned window)
@@ -522,20 +529,20 @@ signatures do not imply x32 availability. Classifications:
     WIND_FIND          desktop   aes_wind_find (global handle, no authority)
     WIND_UPDATE        desktop   aes_wind_update (nonblocking coordination)
     WIND_CALC          desktop   aes_wind_calc (bounded geometry)
-    WIND_NEW           desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_NEW           desktop   AES_SHELL_RESET for the foreground shell continuation
     RSRC_LOAD          mixed     caller-local file/offset conversion, then CREATE
     RSRC_FREE          local     AES_OBJECT_DESTROY plus caller-local free
     RSRC_GADDR         local     caller-local offsets or AES_OBJECT_GET/READ
     RSRC_SADDR         local     caller-local payload edit, then replace snapshot
     RSRC_OBFIX         local     caller-local character-to-pixel conversion
     SHEL_READ          desktop   not exposed; shared desktop/window/menu/shell state
-    SHEL_WRITE         desktop   not exposed; shared desktop/window/menu/shell state
-    SHEL_GET           desktop   not exposed; shared desktop/window/menu/shell state
-    SHEL_PUT           desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_WRITE         desktop   AES_SHELL_WRITE; copied command and fixed command tail
+    SHEL_GET           desktop   AES_SHELL_GET; bounded saved-desktop buffer copy
+    SHEL_PUT           desktop   AES_SHELL_PUT; bounded saved-desktop buffer copy
     SHEL_FIND          desktop   not exposed; shared desktop/window/menu/shell state
     SHEL_ENVRN         desktop   not exposed; shared desktop/window/menu/shell state
     SHEL_RDEF          desktop   not exposed; shared desktop/window/menu/shell state
-    SHEL_WDEF          desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_WDEF          desktop   AES_SHELL_WDEF; bounded startup filename/directory
 
 Window lifecycle/rendering and persistent menu/desktop state remain kernel
 responsibilities. Resource conversion runs in the caller before CREATE; shell
@@ -578,3 +585,131 @@ with typed ring-3 accessories. The loaded-accessory lifecycle and regression
 fixture are described in x32-accessories.txt. The generic AESPB trap remains
 unavailable to ring 3; native kernel AES parameter slots retain full-width
 kernel pointers. New client exports append to the stable export list.
+
+
+External x32 desktop and shell coordination (#651)
+-------------------------------------------------
+
+pc-x86_64-desktop_defconfig enables CONF_EXTERNAL_DESK and builds emudesk.prg
+as a freestanding, statically linked x32 ELF image. It has the documented
+ENTRY_PROGRAM basepage/register/stack contract and keeps the process-entry
+stack. The native AES shell loads EMUDESK.PRG from the boot drive. Missing
+EmuDesk falls back to EMUCON.TOS. The EmuCON-only baseline stays unchanged.
+
+A trusted native dos_exec() in graphics mode grants the next loaded process
+an association with AES task zero. The grant is consumed once and checked
+against the KPROC parent. Nested user Pexec children get independent process
+records but cannot inherit the suspended parent's native event/window/tree
+ownership. Returning from the graphical process detaches the association,
+retires its retained objects/windows and performs accessory close notification
+even after a fault or typed appl_exit(). Loaded accessories retain their own
+AES tasks and receive a Desk-menu entry using their filename. Menu labels
+have session-long kernel storage, including after accessory exit. Accessories
+discard/reset window handles at AC_CLOSE; the native shell resets windows at
+application boundaries. Window operations can return EAGAIN during this
+handoff and clients must retry or discard a handle invalidated by the reset.
+
+The desktop's classic function wrappers are a local adapter, not a legacy
+AESPB syscall ABI. desk/x32/ serializes only connected source objects into
+bounded immutable snapshots; indirect specs are resolved locally and internal
+alignment flags are removed. Menus and the desktop keep owned snapshots;
+dialogs copy back edited text/state. Shared icon bitmap pointers are copied
+once per source address and byte length; editable text keeps separate storage.
+Window calls yield and retry contention, preserving arguments across callbacks
+and permanent errors. Open/close retries first check whether the requested
+transition already committed. The adapter uses the shared native grow/shrink
+animation routines.
+USERDEF receives values on the owner's
+user stack and reconstructs a caller-local PARMBLK before invoking dr_code.
+
+The x32 desktop links the existing gemfslib.c selector and gem_rsc.c resources.
+Its transport adapters call typed AES forms/drawing and user-mode GEMDOS;
+path/mask editing, drive buttons, sorted listings, scrolling and 8.3 filename
+formatting use the same implementation as the native desktop. Alert parsing,
+layout and DOS error messages are shared as well.
+
+File enumeration, file selection, resource-file materialization, alert trees,
+box outlines and geometry conversion stay in the desktop process. Mono bitmap
+standard/device formats are identical, so read-only built-in mono data does
+not need an in-place transform. Colour resource palette planes remain in
+standard format until the kernel constructs its owned snapshot.
+
+include/aes_shell.h adds aes_shell(const AES_SHELL_REQUEST *) at service
+function 12. Its 28-byte, 4-byte-aligned request has operation/value/extra,
+a zero reserved WORD, two x32 addresses, a byte count and a GRECT. Every
+operation validates unused fields as zero. There is no retained user pointer.
+This scheduling/display boundary is forbidden from user callbacks.
+
+  WRITE: foreground only. value is the existing SHW_* mode, extra is isgem
+    and bytes is isover (0..2). EXEC copies a terminated command of at most
+    128 bytes and exactly 128 tail bytes. TOS filename (<13 bytes) and directory
+    (<114 bytes) component limits protect native path concatenation. The
+    native command-tail buffer lives in kernel storage, not the bootstrap
+    basepage, which is unmapped under a ring-3 caller's address space.
+  GET/PUT: foreground only; copy at most 4192 saved-desktop bytes through data.
+  WDEF: foreground only; copy a startup filename and directory through data/
+    second, enforcing their native 13/114-byte capacities including NUL.
+  DCLICK: associated task; rate 0..4, query/set extra 0/1; return the rate.
+  KEY: associated task; return the shifted character for scancode 0..127.
+    No keyboard-table address is exposed.
+  DAMAGE: associated task; redraw the positive bounded GRECT after a dialog.
+    Both coordinates lie in -10000..10000 and dimensions in 1..10000.
+  RESET: foreground only; notify accessories, wait for their close handshake
+    and reset the native window manager. The desktop uses it before typed
+    appl_exit(), including an in-process restart after reading an INF file.
+
+All return LONG status (WRITE and DCLICK retain their native successful
+result). Invalid alignment/mapping is EIMBA, malformed/unused fields EINVAL,
+excess byte/component sizes ERANGE, and missing association/foreground
+authority EACCDN. Native synchronization can return EAGAIN. Shell copies are
+bounded and completed before their state changes; user callbacks cannot
+suspend a shell continuation. Physical display access still uses the typed
+VDI library and its process-owned workstation.
+
+Runtime coverage
+----------------
+
+    make pc-x86_64-desktop-tests_defconfig
+    make -j8
+    make x32-desktop-test
+    python3 tests/x32_desktop/run.py
+
+Supply --ovmf-code/--ovmf-vars if they are not at the standard Linux/macOS
+paths. --output selects the log/screenshot directory. The runner stages a
+fresh FAT ESP and writable firmware variables, drives actual PS/2 input,
+rejects any FAIL/fault/panic/reset and verifies:
+
+  - CPL3 and the process-entry ABI for EmuDesk, an accessory and a graphical app;
+  - real menu selection, About, disk-window icon/text drawing and USERDEF;
+  - opening an accessory from the Desk menu and closing its window gadget;
+  - a 1,900-icon snapshot sharing bitmap assets, including draw and hit testing;
+  - getters and topping retrying while an accessory holds update/mouse locks;
+  - host checks for window mutation retries, committed open/close, partial
+    delete, cursor commit, callback argument reuse and permanent errors;
+  - normal Pterm and a deliberate #UD fault with overlapping windows left open,
+    followed by successful foreground cleanup and return to the desktop;
+  - held-button selection/drag wait compatibility (classic mask 0xff -> 3);
+  - a graphical app launched from EmuDesk, bad pointer/size/command rejection,
+    saved-shell-buffer copies, private nested-child ownership and accessory IPC;
+  - the shared GEM file selector and native resources: cancellation, enabled
+    and disabled drive buttons, sorted directory listings, editable directory
+    and wildcard mask, scrollbar paging and dragging, invalid-path recovery,
+    mouse row selection, formatted filename editing and double-click loading;
+  - deep-directory limits, rejection before exceeding LEN_ZPATH, and replacing
+    the mask with a full 8.3 filename for an actual Read INF load;
+  - loading an INF file and restarting the desktop in the same process;
+  - graphical/console transitions and a fresh ring-3 desktop after EmuCON exits;
+  - a missing external desktop falling back to the EmuCON prompt.
+
+The pc-x86_64-desktop-tests-340 configuration repeats this under AES 3.4,
+including its larger window table and 3D resources. CI runs both integration
+configurations and retains serial logs plus screenshots. The existing
+regression CI job builds pc-x86_64-desktop and launches RUNTESTS.TOS through
+tests/emudesk.inf's #Z autorun line, just like an installed desktop. Poweroff,
+reboot, cold-boot and halt probes use INF autorun in separate boots as well;
+no monitor typing or early kernel test hook launches these programs. The
+accessory restart/fault/ownership suite remains separate. ARM/m68k external
+desktop builds continue using their existing trap-based adapters. The normal
+ELF shared-library loader (#660) and the libaes.so/CUIS migration (#661) are
+later work; this runtime uses the typed library and native kernel AES design
+already implemented by epic #548.

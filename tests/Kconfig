@@ -22,14 +22,27 @@ config CONF_WITH_X86_64_MEMTEST
 
 config CONF_WITH_X32_ACCESSORY_TEST
     bool "Exercise loaded x32 accessories and desktop restart at boot"
+    depends on !CONF_EXTERNAL_DESK
     depends on CONF_WITH_AES && ARCH_X86_64 && CONF_WITH_X86_64_MEMTEST
     depends on CONF_WITH_USER_CALLBACKS
     default n
     help
+      Requires the built-in desktop.
       Load the four ACC fixtures from make x32-accessory-test, verify
       cooperative message delivery, exit/fault and cancellation, and restart
       the desktop three times while checking tracked resources for leaks.
       Input regressions include real user callbacks revoking registrations
       while keyboard, mouse and timer waits are suspended.
+
+config CONF_WITH_X32_DESKTOP_TEST
+    bool "Report external x32 desktop integration checkpoints"
+    depends on ARCH_X86_64 && CONF_EXTERNAL_DESK && CONF_WITH_USER_CALLBACKS
+    depends on CONF_WITH_READ_INF && CONF_WITH_CLI
+    default n
+    help
+      Emit serial-only markers from the real desktop for the QEMU PS/2
+      integration driver, including CPL, menus, forms and USERDEF drawing.
+      Console return and missing-desktop fallback support both external
+      and embedded EmuCON.
 
 endmenu

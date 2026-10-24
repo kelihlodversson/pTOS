@@ -8,7 +8,7 @@
 LONG aes_object(const AES_OBJECT_REQUEST *request, AES_OBJECT_RESULT *result)
 {
     AES_OBJECT_RESULT unused;
-    register UQUAD rax __asm__("rax") = ((UQUAD)AES_SERVICE_CLASS << 32) | AES_SERVICE_OBJECT;
+    register UQUAD rax __asm__("rax") = (0x101ULL << 32) | AES_SERVICE_OBJECT;
     register UQUAD rdi __asm__("rdi") = (uintptr_t)request;
     register UQUAD rsi __asm__("rsi") = (uintptr_t)(result ? result : &unused);
     register UQUAD rdx __asm__("rdx") = 0;

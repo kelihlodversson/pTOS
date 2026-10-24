@@ -72,6 +72,9 @@
 #include "kprint.h"
 #include "process.h"
 #include "string.h"
+#if CONF_WITH_AES
+#include "aes_accessory.h"
+#endif
 
 extern jmp_buf errbuf;
 
@@ -300,7 +303,9 @@ void gouser_entry(WORD entry_type)
 
 #if CONF_WITH_AES
         X86_64_ROM_CANDIDATE(&target, want, accdesk_start);
+#if !CONF_EXTERNAL_DESK
         X86_64_ROM_CANDIDATE(&target, want, deskstart);
+#endif
 #endif
 
         current_launch = &launch;
@@ -353,6 +358,9 @@ void gouser_entry(WORD entry_type)
         UQUAD launcher_flags;
         int launcher_in_syscall;
 
+#if CONF_WITH_AES
+        x86_64_aes_launch_process(p, kproc_get_parent(p));
+#endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys || !kstack_phys || !user_rsp)
