@@ -214,7 +214,7 @@ int dl_find_symbol(const DL_OBJECT *o, const char *name,
                 return DL_UNSUPPORTED;
             value = sym.value;
             if (sym.shndx != 0xfff1) {
-                if (!image_at(o, value, sym.size ? sym.size : 1)
+                if (!image_at(o, value, sym.size)
                     || value > UINT32_MAX - o->bias)
                     return DL_BAD_ELF;
                 value += o->bias;
@@ -262,7 +262,7 @@ int dl_resolve_symbol(const DL_OBJECT *o, uint32_t index,
     if (sym.shndx && (!bind || visibility)) {
         value = sym.value;
         if (sym.shndx != 0xfff1) {
-            if (!image_at(o, value, sym.size ? sym.size : 1) ||
+            if (!image_at(o, value, sym.size) ||
                 value > UINT32_MAX - o->bias)
                 return DL_BAD_ELF;
             value += o->bias;

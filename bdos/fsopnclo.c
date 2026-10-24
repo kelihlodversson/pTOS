@@ -119,7 +119,7 @@ long xopen(char *name, WORD mod)
 
 
 /*
-**  makopn - make an open file for sft handle h
+**  makopn - allocate and link an OFD, optionally sharing an existing DFD
 **
 */
 static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2)
@@ -127,9 +127,13 @@ static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2)
     OFD *p;
     DFD *dfd;
     DMD *dm;                        /*  M01.01.03   */
+    BOOL was_locked = dn->d_flag & DND_LOCKED;
 
     dm = dn->d_drv;
 
+    /* Pool allocation may scavenge an otherwise unused leaf directory.
+     * Keep it and its directory OFD alive until this OFD is linked. */
+    dn->d_flag |= DND_LOCKED;
     p = MGET(OFD);                  /* MGET(OFD) only returns if it succeeds */
 
 #if CONF_WITH_FILE_PINS
@@ -166,6 +170,7 @@ static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2)
 
     p->o_dfd = dfd;                     /* for future reference ... */
 
+    if (!was_locked) dn->d_flag &= ~DND_LOCKED;
     return p;
 }
 

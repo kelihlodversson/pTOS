@@ -293,6 +293,27 @@ class Metadata(unittest.TestCase):
         self.assertEqual(rc, 0)
         return obj, memory
 
+    def test_zero_sized_symbols_at_image_boundary(self):
+        for info, visibility in [(0x10, 0), (0x11, 0), (0x01, 0), (0x11, 1), (0x11, 2), (0x11, 3)]:
+            for offset, size, expected in [(0, 0, 0), (0, 1, -1), (1, 0, -1)]:
+                with self.subTest(info=info, visibility=visibility, offset=offset, size=size):
+                    data = fixture()
+                    struct.pack_into("=IIBB", data, 212, len(data) + offset, size, info, visibility)
+                    rc, obj, memory = self.parse(data)
+                    self.assertEqual(rc, 0)
+                    rc, value = self.resolve(obj, 1, [obj])
+                    if expected == 0:
+                        self.assertEqual((rc, value), (0, obj.bias + len(data)))
+                    else:
+                        self.assertNotEqual(rc, 0)
+            # Even an empty boundary extent must not wrap its relocated VA.
+            data = fixture()
+            struct.pack_into("=IIBB", data, 212, len(data), 0, info, visibility)
+            rc, obj, memory = self.parse(data)
+            self.assertEqual(rc, 0)
+            obj.bias = 0xffffffff - len(data) + 1
+            self.assertNotEqual(self.resolve(obj, 1, [obj])[0], 0)
+
     def test_scope_interposition_and_local_binding(self):
         rc, owner, keep_owner = self.parse(fixture())
         data = fixture()

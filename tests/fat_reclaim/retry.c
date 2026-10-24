@@ -11,11 +11,16 @@ static BCB fat_buffer, directory_buffer;
 static OFD pool[4];
 static int allocated, freed, fail_directory, directory_erased;
 FTAB sft[OPNFILES];
+static DND *allocation_directory;
+static int scavenged;
 
 void *xmgetblk(WORD type)
 {
     OFD *fd = &pool[allocated++];
     (void)type;
+    /* Model the pool's directory-scavenging opportunity before linking. */
+    if (allocation_directory && !(allocation_directory->d_flag & DND_LOCKED))
+        scavenged = 1;
     memset(fd, 0, sizeof(*fd));
     return fd;
 }
@@ -75,7 +80,7 @@ void flush(BCB *b)
 }
 
 /* Drive the real unlink entry point, not just its FAT helper. */
-static int unlink_retry(int directory_failure, int lose_media)
+static int unlink_retry(int directory_failure, int lose_media, int locked)
 {
     static DMD media;
     static DND directory;
@@ -85,7 +90,9 @@ static int unlink_retry(int directory_failure, int lose_media)
     memset(&entry, 0, sizeof(entry));
     memset(&directory, 0, sizeof(directory));
     memset(&dirfile, 0, sizeof(dirfile));
-    allocated = freed = directory_erased = 0;
+    allocated = freed = directory_erased = scavenged = 0;
+    allocation_directory = &directory;
+    directory.d_flag = locked ? DND_LOCKED : 0;
     dirfile.o_dfd = &dirfile.o_disk;
     directory.d_ofd = &dirfile;
     directory.d_drv = &media;
@@ -103,6 +110,7 @@ static int unlink_retry(int directory_failure, int lose_media)
         ixdel(&directory, &entry, 0);
         return 5;
     }
+    if (scavenged || !!(directory.d_flag & DND_LOCKED) != locked) return 12;
     if (!pending_unlinks || allocated != 1 || freed) return 6;
     if (directory_failure &&
         (pending_unlinks->o_dfd->o_flag & (O_UNLINKED | O_CLOSING))) return 7;
@@ -153,10 +161,12 @@ int main(void)
         }
     }
     for (cluster = 0; cluster <= 2; cluster++) {
-        failed = unlink_retry(cluster, 0);
-        if (failed) return failed;
-        failed = unlink_retry(cluster, 1);
-        if (failed) return failed;
+        for (copy = 0; copy < 2; copy++) {
+            failed = unlink_retry(cluster, 0, copy);
+            if (failed) return failed;
+            failed = unlink_retry(cluster, 1, copy);
+            if (failed) return failed;
+        }
     }
     return 0;
 }
