@@ -332,11 +332,14 @@ static void light_phase(WORD piece, WORD cell)
 {
     UWORD m = (UWORD)linea_vars.LITEMASK;
 
-    /* the mask starts at the bottom row that is drawn: do_clip() cuts the rest */
-    if (piece > linea_vars.YMAXCL)
-        piece = linea_vars.YMAXCL;
-    if (cell > linea_vars.YMAXCL)
-        cell = linea_vars.YMAXCL;
+    /*
+     * the mask starts at the bottom row that is drawn: do_clip() cuts the
+     * rest.  The bottoms are one past their rows, YMAXCL is the last one.
+     */
+    if (piece > linea_vars.YMAXCL + 1)
+        piece = linea_vars.YMAXCL + 1;
+    if (cell > linea_vars.YMAXCL + 1)
+        cell = linea_vars.YMAXCL + 1;
     if ((linea_vars.STYLE & F_LIGHT) && ((piece - cell) & 1))
         linea_vars.LITEMASK = (WORD)((m << 1) | (m >> 15));
 }
