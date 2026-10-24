@@ -634,6 +634,16 @@ jobs:
             runner: ubuntu-latest
             qemu: qemu-system-arm
             make_args: ''
+          # Exercise the small-ROM deletion implementation on a board
+          # that can run the complete regression suite automatically.
+          - machine: virt-arm-traditional-fat
+            script_machine: virt-arm
+            config: virt-arm-cli
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
+            traditional_fat: true
           # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
           # screen of the Pi's framebuffer.  The desktop starts the suite
           # (tests/emudesk.inf) and the console is on the UART as well
@@ -694,8 +704,12 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
           MAKE_ARGS: ${{ matrix.make_args }}
+          TRADITIONAL_FAT: ${{ matrix.traditional_fat || false }}
         run: |
           make "${CONFIG}_defconfig"
+          if [ "$TRADITIONAL_FAT" = true ]; then
+            sed -i 's/^CONF_WITH_FAT_FILE_LIFETIMES=y$/# CONF_WITH_FAT_FILE_LIFETIMES is not set/' .config
+          fi
           make $MAKE_ARGS
           make $MAKE_ARGS test-dir
 

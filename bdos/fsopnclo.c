@@ -635,7 +635,7 @@ long ixdel(DND *dn, FCB *f, long pos)
         {
             if (sft[n].f_own != run)
                 return EACCDN;
-            first = fd->o_strtcl;   /* metadata may not be on disk yet */
+            first = fd->o_dfd->o_strtcl;   /* metadata may not be on disk yet */
         }
     }
     for (n = 0; n < OPNFILES; n++)
