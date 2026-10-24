@@ -149,28 +149,39 @@ static WORD rubber(const UWORD *in, UWORD *out)
     AES_INPUT_EVENT event;
     LONG result;
     WORD x, y, buttons, modifiers, width, height, nw, nh;
+    GRECT arguments;
+#if CONF_WITH_X32_DESKTOP_TEST
+    char message[100];
+#endif
 
+    /* Nested classic bindings reuse gembind's static input array. */
+    memcpy(&arguments, in, sizeof(arguments));
     graf_mkstate(&x, &y, &buttons, &modifiers);
-    width = max((WORD)(x - (WORD)in[0]), (WORD)in[2]);
-    height = max((WORD)(y - (WORD)in[1]), (WORD)in[3]);
+    width = max((WORD)(x - arguments.g_x), arguments.g_w);
+    height = max((WORD)(y - arguments.g_y), arguments.g_h);
     request.mask = AES_EVENT_BUTTON | AES_EVENT_TIMER;
     request.clicks = 1; request.button_mask = 1; request.button_state = 0;
     request.timer_ms = 20;
     while (buttons & 1) {
         graf_mouse(M_OFF, NULL);
-        outline(in[0], in[1], width, height);
+        outline(arguments.g_x, arguments.g_y, width, height);
         graf_mouse(M_ON, NULL);
         result = aes_evnt_multi(&request, &event);
         graf_mouse(M_OFF, NULL);
-        outline(in[0], in[1], width, height);
+        outline(arguments.g_x, arguments.g_y, width, height);
         graf_mouse(M_ON, NULL);
         if (result < 0)
             break;
-        nw = max((WORD)(event.mouse_x - (WORD)in[0]), (WORD)in[2]);
-        nh = max((WORD)(event.mouse_y - (WORD)in[1]), (WORD)in[3]);
+        nw = max((WORD)(event.mouse_x - arguments.g_x), arguments.g_w);
+        nh = max((WORD)(event.mouse_y - arguments.g_y), arguments.g_h);
         width = nw; height = nh; buttons = event.buttons;
     }
     out[1] = width; out[2] = height;
+#if CONF_WITH_X32_DESKTOP_TEST
+    sprintf(message, "x32 desktop rubber RESULT %d %d %d %d\r\n",
+            arguments.g_x, arguments.g_y, width, height);
+    desk_test_record(message);
+#endif
     return TRUE;
 }
 

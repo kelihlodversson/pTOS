@@ -230,6 +230,17 @@ def desktop(guest):
     guest.wait("x32 desktop window getter retries PASS")
     guest.wait("x32 desktop window top retries PASS")
     guest.wait("x32 desktop accessory READY")
+    # Exercise the classic binding's shared argument array through nested
+    # cursor calls, in both drag directions on empty desktop background.
+    for start, end in (((900, 600), (1000, 650)), ((1000, 650), (900, 600))):
+        count = guest.text().count("x32 desktop rubber RESULT") + 1
+        guest.move(*start)
+        guest.command("mouse_button 1")
+        guest.move(*end)
+        guest.command("mouse_button 0")
+        text = guest.wait(r"x32 desktop rubber RESULT -?\d+ -?\d+ -?\d+ -?\d+\r?\n", count, regex=True)
+        result = re.findall(r"x32 desktop rubber RESULT (-?\d+) (-?\d+) (-?\d+) (-?\d+)\r?\n", text)[-1]
+        assert tuple(map(int, result)) == (*start, end[0] - start[0], end[1] - start[1]), result
     guest.screenshot("desktop")
     guest.move(38, 8)
     time.sleep(0.25)
@@ -274,6 +285,7 @@ def desktop(guest):
     guest.key("ctrl-o")
     guest.wait("x32 desktop application and accessory PASS")
     guest.wait("x32 desktop rejected blocks and shell copies PASS")
+    guest.wait("x32 desktop shell tail boundary PASS")
     guest.wait("x32 desktop nested ownership PASS")
     guest.wait("x32 desktop teardown normal READY")
     guest.wait("x32 desktop teardown fault READY")
@@ -386,7 +398,7 @@ def desktop(guest):
     assert text.count("x32 desktop CPL3 PASS") == 3, text[-3000:]
     assert text.count("x32 desktop accessory READY") == 1, text[-3000:]
     assert text.count("x32 desktop accessory CLOSE") >= 3, text[-3000:]
-    print("External x32 desktop, dialogs, edited file selector, USERDEF, nested ownership, application/accessory and console return: PASS", flush=True)
+    print("External x32 desktop, rubber-band selection, bounded shell tails, dialogs, edited file selector, USERDEF, nested ownership, application/accessory and console return: PASS", flush=True)
 
 
 def main():

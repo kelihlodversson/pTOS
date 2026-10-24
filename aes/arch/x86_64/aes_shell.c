@@ -135,6 +135,7 @@ LONG x86_64_aes_shell(UQUAD address)
             return EINVAL;
         if (r.value == SHW_EXEC) {
             char *name;
+            ULONG i;
 
             if (r.extra < 0 || r.extra > 1 || (rc = path(r.data, first)) != E_OK)
                 return r.extra < 0 || r.extra > 1 ? EINVAL : rc;
@@ -148,6 +149,12 @@ LONG x86_64_aes_shell(UQUAD address)
                 return ERANGE;
             if (!kproc_copy_from_user(second, r.second, AES_SHELL_TAIL_BYTES))
                 return EIMBA;
+            /* The native loader appends its own NUL after the tail copy.
+             * A full nonterminated tail would overrun the basepage. */
+            for (i = 0; i < AES_SHELL_TAIL_BYTES && second[i]; i++)
+                ;
+            if (i == AES_SHELL_TAIL_BYTES)
+                return ERANGE;
         } else {
             if (r.data || r.second)
                 return EINVAL;

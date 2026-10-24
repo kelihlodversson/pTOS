@@ -12,6 +12,7 @@ UQUAD entry_base, entry_type, entry_stack;
 UWORD entry_cs;
 static char shell_saved[AES_SHELL_BUFFER_MAX], shell_probe[AES_SHELL_BUFFER_MAX];
 static char long_command[AES_SHELL_PATH_MAX];
+static char boundary_tail[AES_SHELL_TAIL_BYTES];
 static const char teardown_tail[128] = { 8, 't', 'e', 'a', 'r', 'd', 'o', 'w', 'n' };
 static const char fault_tail[128] = { 5, 'f', 'a', 'u', 'l', 't' };
 static const char child_tail[128] = { 5, 'c', 'h', 'i', 'l', 'd' };
@@ -161,6 +162,22 @@ static void schedule(const char *tail)
     CHECK(aes_shell(&request) > 0);
 }
 
+static void tail_boundary(PD *basepage) NORETURN;
+static void tail_boundary(PD *basepage)
+{
+    AES_APP_INFO app;
+    WORD i;
+
+    CHECK(aes_appl_init("TAILTEST", &app) == E_OK);
+    CHECK(basepage->p_cmdlin[0] == 126 && basepage->p_cmdlin[127] == 0);
+    for (i = 1; i < 127; i++)
+        CHECK(basepage->p_cmdlin[i] == 'b');
+    schedule(teardown_tail);
+    CHECK(aes_appl_exit() == E_OK);
+    record("x32 desktop shell tail boundary PASS\r\n");
+    finish(0);
+}
+
 static void teardown(BOOL fault) NORETURN;
 static void teardown(BOOL fault)
 {
@@ -224,6 +241,8 @@ void desktop_test_start(PD *basepage, LONG kind)
     if (kind == 1)
         accessory();
     CHECK(kind == 0);
+    if (basepage->p_cmdlin[0] == 126 && basepage->p_cmdlin[1] == 'b')
+        tail_boundary(basepage);
     if (basepage->p_cmdlin[1] == 't' || basepage->p_cmdlin[1] == 'f')
         teardown(basepage->p_cmdlin[1] == 'f');
     if (basepage->p_cmdlin[0] == 5 && basepage->p_cmdlin[1] == 'c')
@@ -297,7 +316,21 @@ void desktop_test_start(PD *basepage, LONG kind)
     CHECK(vdi(&pb) == E_OK);
     CHECK(aes_wind_close(h) == E_OK);
     CHECK(aes_wind_delete(h) == E_OK);
-    schedule(teardown_tail);
+    /* The longest safe tail reaches the next basepage intact. Rejecting
+     * its nonterminated variant must preserve this pending shell request. */
+    boundary_tail[0] = 126;
+    for (i = 1; i < sizeof(boundary_tail) - 1; i++)
+        boundary_tail[i] = 'b';
+    boundary_tail[sizeof(boundary_tail) - 1] = 0;
+    schedule(boundary_tail);
+    boundary_tail[sizeof(boundary_tail) - 1] = 'b';
+    shell.operation = AES_SHELL_WRITE; shell.value = shell.extra = shell.bytes = 1;
+    shell.rectangle.g_x = shell.rectangle.g_w = shell.rectangle.g_h = 0;
+    shell.data = (ULONG)(uintptr_t)"C:\\APPTEST.PRG";
+    shell.second = (ULONG)(uintptr_t)boundary_tail;
+    CHECK(aes_shell(&shell) == ERANGE);
+    shell.second = 1;
+    CHECK(aes_shell(&shell) == EIMBA);
     CHECK(aes_appl_exit() == E_OK);
     record("x32 desktop application and accessory PASS\r\n");
     finish(0);
