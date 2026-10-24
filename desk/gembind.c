@@ -23,13 +23,16 @@
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesdefs.h"
+#include "aes_windset.h"
 #include "gembind.h"
 #include "aesbind.h"
 #include "kprint.h"
 #include "string.h"
 #include <stdarg.h>
 
-#ifdef __x86_64__
+#if defined(X32_USERLAND)
+#include "deskaes.h"
+#elif defined(__x86_64__)
 #include "asm.h"        /* kernel_trap() */
 #endif
 
@@ -62,8 +65,8 @@ typedef struct gemblkstr
         UWORD           *gb_pglobal;
         UWORD           *gb_pintin;
         UWORD           *gb_pintout;
-        LONG            *gb_padrin;
-        LONG            *gb_padrout;
+        intptr_t        *gb_padrin;
+        intptr_t        *gb_padrout;
 } GEMBLK;
 
 static GEMBLK           gb;
@@ -72,12 +75,15 @@ static UWORD            control[C_SIZE];
 GLOBAL UWORD            global[G_SIZE];
 static UWORD            int_in[I_SIZE];
 static UWORD            int_out[O_SIZE];
-static LONG             addr_in[AI_SIZE];
-static LONG             addr_out[AO_SIZE];
+static intptr_t         addr_in[AI_SIZE];
+static intptr_t         addr_out[AO_SIZE];
 
 static __inline__ WORD gem(const GEMBLK *gb)
 {
-#ifdef __arm__
+#if defined(X32_USERLAND)
+    WORD retval = desk_aes_dispatch(gb->gb_pcontrol[0], gb->gb_pglobal,
+                         gb->gb_pintin, gb->gb_pintout, gb->gb_padrin, gb->gb_padrout);
+#elif defined(__arm__)
     register WORD retval __asm__("r0");
     register WORD opcode __asm__("r0") = 200; /* AES */
     register const GEMBLK *gbreg __asm__("r1") = gb;
@@ -184,7 +190,7 @@ WORD appl_write(WORD rwid, WORD length, const void *pbuff)
 {
     AP_RWID = rwid;
     AP_LENGTH = length;
-    AP_PBUFF = (LONG)pbuff;
+    AP_PBUFF = (intptr_t)pbuff;
     return gem_if(AES_CTRL_CODE(APPL_WRITE, 2, 1, 1));
 }
 */
@@ -194,7 +200,7 @@ WORD appl_read(WORD rwid, WORD length, void *pbuff)
 {
     AP_RWID = rwid;
     AP_LENGTH = length;
-    AP_PBUFF = (LONG)pbuff;
+    AP_PBUFF = (intptr_t)pbuff;
     return gem_if(AES_CTRL_CODE(APPL_READ, 2, 1, 1));
 }
 */
@@ -202,7 +208,7 @@ WORD appl_read(WORD rwid, WORD length, void *pbuff)
 /* unused
 WORD appl_find(const char *pname)
 {
-    AP_PNAME = (LONG)pname;
+    AP_PNAME = (intptr_t)pname;
     return gem_if(AES_CTRL_CODE(APPL_FIND, 0, 1, 1));
 }
 */
@@ -210,7 +216,7 @@ WORD appl_find(const char *pname)
 /* unused
 WORD appl_tplay(const EVNTREC *tbuffer, WORD tlength, WORD tscale)
 {
-    AP_TBUFFER = (LONG)tbuffer;
+    AP_TBUFFER = (intptr_t)tbuffer;
     AP_TLENGTH = tlength;
     AP_TSCALE = tscale;
     return gem_if(AES_CTRL_CODE(APPL_TPLAY, 2, 1, 1));
@@ -220,7 +226,7 @@ WORD appl_tplay(const EVNTREC *tbuffer, WORD tlength, WORD tscale)
 /* unused
 WORD appl_trecord(EVNTREC *tbuffer, WORD tlength)
 {
-    AP_TBUFFER = (LONG)tbuffer;
+    AP_TBUFFER = (intptr_t)tbuffer;
     AP_TLENGTH = tlength;
     return gem_if(AES_CTRL_CODE(APPL_TRECORD, 1, 1, 1));
 }
@@ -275,7 +281,7 @@ WORD evnt_mouse(WORD flags, WORD x, WORD y, WORD width, WORD height,
 /* unused
 WORD evnt_mesag(WORD *pbuff)
 {
-    ME_PBUFF = (LONG)pbuff;
+    ME_PBUFF = (intptr_t)pbuff;
     return gem_if(AES_CTRL_CODE(EVNT_MESAG, 0, 1, 1));
 }
 */
@@ -313,7 +319,7 @@ WORD evnt_multi(UWORD flags, UWORD bclk, UWORD bmsk, UWORD bst,
     MMO2_WIDTH = m2w;
     MMO2_HEIGHT = m2h;
 
-    MME_PBUFF = (LONG)mepbuff;
+    MME_PBUFF = (intptr_t)mepbuff;
 
     MT_LOCOUNT = tlc;
     MT_HICOUNT = thc;
@@ -345,7 +351,7 @@ WORD evnt_dclick(WORD rate, WORD setit)
  */
 WORD menu_bar(OBJECT *tree, WORD showit)
 {
-    MM_ITREE = (LONG)tree;
+    MM_ITREE = (intptr_t)tree;
     SHOW_IT = showit;
     return gem_if(AES_CTRL_CODE(MENU_BAR, 1, 1, 1));
 }
@@ -353,7 +359,7 @@ WORD menu_bar(OBJECT *tree, WORD showit)
 
 WORD menu_icheck(OBJECT *tree, WORD itemnum, WORD checkit)
 {
-    MM_ITREE = (LONG)tree;
+    MM_ITREE = (intptr_t)tree;
     ITEM_NUM = itemnum;
     CHECK_IT = checkit;
     return gem_if(AES_CTRL_CODE(MENU_ICHECK, 2, 1, 1));
@@ -362,7 +368,7 @@ WORD menu_icheck(OBJECT *tree, WORD itemnum, WORD checkit)
 
 WORD menu_ienable(OBJECT *tree, WORD itemnum, WORD enableit)
 {
-    MM_ITREE = (LONG)tree;
+    MM_ITREE = (intptr_t)tree;
     ITEM_NUM = itemnum;
     ENABLE_IT = enableit;
     return gem_if(AES_CTRL_CODE(MENU_IENABLE, 2, 1, 1));
@@ -371,7 +377,7 @@ WORD menu_ienable(OBJECT *tree, WORD itemnum, WORD enableit)
 
 WORD menu_tnormal(OBJECT *tree, WORD titlenum, WORD normalit)
 {
-    MM_ITREE = (LONG)tree;
+    MM_ITREE = (intptr_t)tree;
     TITLE_NUM = titlenum;
     NORMAL_IT = normalit;
     return gem_if(AES_CTRL_CODE(MENU_TNORMAL, 2, 1, 1));
@@ -381,9 +387,9 @@ WORD menu_tnormal(OBJECT *tree, WORD titlenum, WORD normalit)
 /* unused
 WORD menu_text(OBJECT *tree, WORD inum, const char *ptext)
 {
-    MM_ITREE = (LONG)tree;
+    MM_ITREE = (intptr_t)tree;
     ITEM_NUM = inum;
-    MM_PTEXT = (LONG) ptext;
+    MM_PTEXT = (intptr_t) ptext;
     return gem_if(AES_CTRL_CODE(MENU_TEXT, 1, 1, 2));
 }
 */
@@ -393,7 +399,7 @@ WORD menu_text(OBJECT *tree, WORD inum, const char *ptext)
 WORD menu_register(WORD pid, const char *pstr)
 {
     MM_PID = pid;
-    MM_PSTR = (LONG)pstr;
+    MM_PSTR = (intptr_t)pstr;
     return gem_if(AES_CTRL_CODE(MENU_REGISTER, 1, 1, 1));
 }
 */
@@ -404,7 +410,7 @@ WORD menu_register(WORD pid, const char *pstr)
  */
 WORD objc_add(OBJECT *tree, WORD parent, WORD child)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_PARENT = parent;
     OB_CHILD = child;
     return gem_if(AES_CTRL_CODE(OBJC_ADD, 2, 1, 1));
@@ -414,7 +420,7 @@ WORD objc_add(OBJECT *tree, WORD parent, WORD child)
 /* unused
 WORD objc_delete(OBJECT *tree, WORD delob)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_DELOB = delob;
     return gem_if(AES_CTRL_CODE(OBJC_DELETE, 1, 1, 1));
 }
@@ -424,7 +430,7 @@ WORD objc_delete(OBJECT *tree, WORD delob)
 WORD objc_draw(OBJECT *tree, WORD drawob, WORD depth, WORD xc, WORD yc,
                WORD wc, WORD hc)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_DRAWOB = drawob;
     OB_DEPTH = depth;
     OB_XCLIP = xc;
@@ -437,7 +443,7 @@ WORD objc_draw(OBJECT *tree, WORD drawob, WORD depth, WORD xc, WORD yc,
 
 WORD objc_find(OBJECT *tree, WORD startob, WORD depth, WORD mx, WORD my)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_STARTOB = startob;
     OB_DEPTH = depth;
     OB_MX = mx;
@@ -448,7 +454,7 @@ WORD objc_find(OBJECT *tree, WORD startob, WORD depth, WORD mx, WORD my)
 
 WORD objc_offset(OBJECT *tree, WORD obj, WORD *poffx, WORD *poffy)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_OBJ = obj;
     gem_if(AES_CTRL_CODE(OBJC_OFFSET, 1, 3, 1));
     *poffx = OB_XOFF;
@@ -459,7 +465,7 @@ WORD objc_offset(OBJECT *tree, WORD obj, WORD *poffx, WORD *poffy)
 
 WORD objc_order(OBJECT *tree, WORD mov_obj, WORD newpos)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_OBJ = mov_obj;
     OB_NEWPOS = newpos;
     return gem_if(AES_CTRL_CODE(OBJC_ORDER, 2, 1, 1));
@@ -469,7 +475,7 @@ WORD objc_order(OBJECT *tree, WORD mov_obj, WORD newpos)
 /* unused
 WORD objc_edit(OBJECT *tree, WORD obj, WORD inchar, WORD *idx, WORD kind)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_OBJ = obj;
     OB_CHAR = inchar;
     OB_IDX = *idx;
@@ -485,7 +491,7 @@ WORD objc_edit(OBJECT *tree, WORD obj, WORD inchar, WORD *idx, WORD kind)
 WORD objc_change(OBJECT *tree, WORD drawob, WORD depth, WORD xc, WORD yc,
                  WORD wc, WORD hc, WORD newstate, WORD redraw)
 {
-    OB_TREE = (LONG)tree;
+    OB_TREE = (intptr_t)tree;
     OB_DRAWOB = drawob;
     OB_DEPTH = depth;
     OB_XCLIP = xc;
@@ -504,7 +510,7 @@ WORD objc_change(OBJECT *tree, WORD drawob, WORD depth, WORD xc, WORD yc,
  */
 WORD form_do(OBJECT *form, WORD start)
 {
-    FM_FORM = (LONG)form;
+    FM_FORM = (intptr_t)form;
     FM_START = start;
     return gem_if(AES_CTRL_CODE(FORM_DO, 1, 1, 1));
 }
@@ -529,7 +535,7 @@ WORD form_dial(WORD dtype, WORD ix, WORD iy, WORD iw, WORD ih,
 WORD form_alert(WORD defbut, const char *astring)
 {
     FM_DEFBUT = defbut;
-    FM_ASTRING = (LONG)astring;
+    FM_ASTRING = (intptr_t)astring;
     return gem_if(AES_CTRL_CODE(FORM_ALERT, 1, 1, 1));
 }
 
@@ -549,7 +555,7 @@ WORD form_error(WORD errnum)
 
 WORD form_center(OBJECT *tree, WORD *pcx, WORD *pcy, WORD *pcw, WORD *pch)
 {
-    FM_FORM = (LONG)tree;
+    FM_FORM = (intptr_t)tree;
     gem_if(AES_CTRL_CODE(FORM_CENTER, 0, 5, 1));
     *pcx = FM_XC;
     *pcy = FM_YC;
@@ -563,7 +569,7 @@ WORD form_center(OBJECT *tree, WORD *pcx, WORD *pcy, WORD *pcw, WORD *pch)
 WORD form_keybd(OBJECT *form, WORD obj, WORD nxt_obj, WORD thechar,
                 WORD *pnxt_obj, WORD *pchar)
 {
-    FM_FORM = (LONG)form;
+    FM_FORM = (intptr_t)form;
     FM_OBJ = obj;
     FM_INXTOB = nxt_obj;
     FM_ICHAR = thechar;
@@ -578,7 +584,7 @@ WORD form_keybd(OBJECT *form, WORD obj, WORD nxt_obj, WORD thechar,
 /* unused
 WORD form_button(OBJECT *form, WORD obj, WORD clks, WORD *pnxt_obj)
 {
-    FM_FORM = (LONG)form;
+    FM_FORM = (intptr_t)form;
     FM_OBJ = obj;
     FM_CLKS = clks;
     gem_if(AES_CTRL_CODE(FORM_BUTTON, 2, 2, 1));
@@ -670,7 +676,7 @@ WORD graf_shrinkbox_grect(GRECT *from, GRECT *to)
 /* unused
 WORD graf_watchbox(OBJECT *tree, WORD obj, UWORD instate, UWORD outstate)
 {
-    GR_TREE = (LONG)tree;
+    GR_TREE = (intptr_t)tree;
     GR_OBJ = obj;
     GR_INSTATE = instate;
     GR_OUTSTATE = outstate;
@@ -680,7 +686,7 @@ WORD graf_watchbox(OBJECT *tree, WORD obj, UWORD instate, UWORD outstate)
 
 WORD graf_slidebox(OBJECT *tree, WORD parent, WORD obj, WORD isvert)
 {
-    GR_TREE = (LONG)tree;
+    GR_TREE = (intptr_t)tree;
     GR_PARENT = parent;
     GR_OBJ = obj;
     GR_ISVERT = isvert;
@@ -703,7 +709,7 @@ WORD graf_handle(WORD *pwchar, WORD *phchar, WORD *pwbox, WORD *phbox)
 WORD graf_mouse(WORD m_number, void *m_addr)
 {
     GR_MNUMBER = m_number;
-    GR_MADDR = (LONG)m_addr;
+    GR_MADDR = (intptr_t)m_addr;
     return gem_if(AES_CTRL_CODE(GRAF_MOUSE, 1, 1, 1));
 }
 
@@ -724,13 +730,13 @@ void graf_mkstate(WORD *pmx, WORD *pmy, WORD *pmstate, WORD *pkstate)
 /* unused
 WORD scrp_read(char *pscrap)
 {
-    SC_PATH = (LONG)pscrap;
+    SC_PATH = (intptr_t)pscrap;
     return gem_if(AES_CTRL_CODE(SCRP_READ, 0, 1, 1));
 }
 
 WORD scrp_write(const char *pscrap)
 {
-    SC_PATH = (LONG)pscrap;
+    SC_PATH = (intptr_t)pscrap;
     return gem_if(AES_CTRL_CODE(SCRP_WRITE, 0, 1, 1));
 }
 */
@@ -742,8 +748,8 @@ WORD scrp_write(const char *pscrap)
 /* unused
 WORD fsel_input(char *pipath, char *pisel, WORD *pbutton)
 {
-    FS_IPATH = (LONG)pipath;
-    FS_ISEL = (LONG)pisel;
+    FS_IPATH = (intptr_t)pipath;
+    FS_ISEL = (intptr_t)pisel;
     gem_if(AES_CTRL_CODE(FSEL_INPUT, 0, 2, 2));
     *pbutton = FS_BUTTON;
     return (WORD)RET_CODE;
@@ -754,9 +760,9 @@ WORD fsel_input(char *pipath, char *pisel, WORD *pbutton)
 #if CONF_WITH_DESKTOP_SHORTCUTS || CONF_WITH_READ_INF
 WORD fsel_exinput(char *pipath, char *pisel, WORD *pbutton, const char *title)
 {
-    FS_IPATH = (LONG)pipath;
-    FS_ISEL = (LONG)pisel;
-    FS_TITLE = (LONG)title;
+    FS_IPATH = (intptr_t)pipath;
+    FS_ISEL = (intptr_t)pisel;
+    FS_TITLE = (intptr_t)title;
     gem_if(AES_CTRL_CODE(FSEL_EXINPUT, 0, 2, 3));
     *pbutton = FS_BUTTON;
     return (WORD)RET_CODE;
@@ -824,7 +830,8 @@ WORD wind_get_grect(WORD w_handle, WORD w_field, GRECT *gr)
 
 WORD wind_set(WORD w_handle, WORD w_field, ...) /* WORD w2, WORD w3, WORD w4, WORD w5) */
 {
-    LONG longarg;
+    void *pointer;
+    WORD nintin = 6;
     va_list ap;
     va_start(ap, w_field);
 
@@ -835,18 +842,21 @@ WORD wind_set(WORD w_handle, WORD w_field, ...) /* WORD w2, WORD w3, WORD w4, WO
         case WF_NAME:
         case WF_INFO:
         case WF_NEWDESK:
-            longarg = va_arg(ap, LONG);
-            memcpy(&(WM_IX), &longarg, sizeof(LONG));
+            pointer = va_arg(ap, void *);
+            memcpy(&(WM_IX), &pointer, sizeof(pointer));
+            int_in[2 + AES_WINDSET_PTR_WORDS] = va_arg(ap, int);
+            int_in[3 + AES_WINDSET_PTR_WORDS] = va_arg(ap, int);
+            nintin = AES_WINDSET_PTR_NINTIN;
         break;
         default:
             WM_IX = va_arg(ap, int);
             WM_IY = va_arg(ap, int);
+            WM_IW = va_arg(ap, int);
+            WM_IH = va_arg(ap, int);
         break;
     }
-    WM_IW = va_arg(ap, int);
-    WM_IH = va_arg(ap, int);
     va_end(ap);
-    return gem_if(AES_CTRL_CODE(WIND_SET, 6, 1, 0));
+    return gem_if(AES_CTRL_CODE(WIND_SET, nintin, 1, 0));
 }
 
 
@@ -901,7 +911,7 @@ WORD wind_new(void)
  */
 WORD rsrc_load(const char *rsname)
 {
-    RS_PFNAME = (LONG)rsname;
+    RS_PFNAME = (intptr_t)rsname;
     return gem_if(AES_CTRL_CODE(RSRC_LOAD, 0, 1, 1));
 }
 
@@ -932,7 +942,7 @@ WORD rsrc_saddr(WORD rstype, WORD rsid, void *lngval)
 {
     RS_TYPE = rstype;
     RS_INDEX = rsid;
-    RS_INADDR = (LONG)lngval;
+    RS_INADDR = (intptr_t)lngval;
     return gem_if(AES_CTRL_CODE(RSRC_SADDR, 2, 1, 1));
 }
 */
@@ -940,7 +950,7 @@ WORD rsrc_saddr(WORD rstype, WORD rsid, void *lngval)
 
 WORD rsrc_obfix(OBJECT *tree, WORD obj)
 {
-    RS_TREE = (LONG)tree;
+    RS_TREE = (intptr_t)tree;
     RS_OBJ = obj;
     return gem_if(AES_CTRL_CODE(RSRC_OBFIX, 1, 1, 1));
 }
@@ -949,7 +959,7 @@ WORD rsrc_obfix(OBJECT *tree, WORD obj)
 /* unused
 WORD rsrc_rcfix(RSHDR *hdr)
 {
-    RS_HEADER = (LONG)hdr;
+    RS_HEADER = (intptr_t)hdr;
     return gem_if(AES_CTRL_CODE(RSRC_RCFIX, 0, 1, 1));
 }
 */
@@ -961,8 +971,8 @@ WORD rsrc_rcfix(RSHDR *hdr)
 /* unused
 WORD shel_read(char *pcmd, char *ptail)
 {
-    SH_PCMD = (LONG)pcmd;
-    SH_PTAIL = (LONG)ptail;
+    SH_PCMD = (intptr_t)pcmd;
+    SH_PTAIL = (intptr_t)ptail;
     return gem_if(AES_CTRL_CODE(SHEL_READ, 0, 1, 2));
 }
 */
@@ -973,15 +983,15 @@ WORD shel_write(WORD doex, WORD isgr, WORD iscr, char *pcmd, char *ptail)
     SH_DOEX = doex;
     SH_ISGR = isgr;
     SH_ISCR = iscr;
-    SH_PCMD = (LONG)pcmd;
-    SH_PTAIL = (LONG)ptail;
+    SH_PCMD = (intptr_t)pcmd;
+    SH_PTAIL = (intptr_t)ptail;
     return gem_if(AES_CTRL_CODE(SHEL_WRITE, 3, 1, 2));
 }
 
 
 WORD shel_get(void *pbuffer, WORD len)
 {
-    SH_PBUFFER = (LONG)pbuffer;
+    SH_PBUFFER = (intptr_t)pbuffer;
     SH_LEN = len;
     return gem_if(AES_CTRL_CODE(SHEL_GET, 1, 1, 1));
 }
@@ -989,7 +999,7 @@ WORD shel_get(void *pbuffer, WORD len)
 
 WORD shel_put(const void *pdata, WORD len)
 {
-    SH_PDATA = (LONG)pdata;
+    SH_PDATA = (intptr_t)pdata;
     SH_LEN = len;
     return gem_if(AES_CTRL_CODE(SHEL_PUT, 1, 1, 1));
 }
@@ -998,7 +1008,7 @@ WORD shel_put(const void *pdata, WORD len)
 /* unused
 WORD shel_find(char *ppath)
 {
-    SH_PATH = (LONG)ppath;
+    SH_PATH = (intptr_t)ppath;
     return gem_if(AES_CTRL_CODE(SHEL_FIND, 0, 1, 1));
 }
 */
@@ -1007,8 +1017,8 @@ WORD shel_find(char *ppath)
 /* unused
 WORD shel_envrn(char *ppath, const char *psrch)
 {
-    SH_PATH = (LONG)ppath;
-    SH_SRCH = (LONG)psrch;
+    SH_PATH = (intptr_t)ppath;
+    SH_SRCH = (intptr_t)psrch;
     return gem_if(AES_CTRL_CODE(SHEL_ENVRN, 0, 1, 2));
 }
 */
@@ -1017,8 +1027,8 @@ WORD shel_envrn(char *ppath, const char *psrch)
 /* unused
 WORD shel_rdef(char *lpcmd, char *lpdir)
 {
-    SH_LPCMD = (LONG)lpcmd;
-    SH_LPDIR = (LONG)lpdir;
+    SH_LPCMD = (intptr_t)lpcmd;
+    SH_LPDIR = (intptr_t)lpdir;
     return gem_if(AES_CTRL_CODE(SHEL_RDEF, 0, 1, 2));
 }
 */
@@ -1026,8 +1036,8 @@ WORD shel_rdef(char *lpcmd, char *lpdir)
 #if CONF_WITH_CLI
 WORD shel_wdef(char *lpcmd, char *lpdir)
 {
-    SH_LPCMD = (LONG)lpcmd;
-    SH_LPDIR = (LONG)lpdir;
+    SH_LPCMD = (intptr_t)lpcmd;
+    SH_LPDIR = (intptr_t)lpdir;
     return gem_if(AES_CTRL_CODE(SHEL_WDEF, 0, 1, 2));
 }
 #endif

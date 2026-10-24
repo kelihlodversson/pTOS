@@ -43,10 +43,18 @@
 #include "progimage.h"
 #include "io.h"
 #include "trap.h"
+#include "gdt.h"
+#include "pc_x86_64_memtest.h"
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
+#if CONF_WITH_X32_VDI
+#include "lineavars.h"
+#include "screen_mode.h"
+#include "font.h"
+#include "vdi_service.h"
+#endif
 
 extern void set_owner(void *addr, PD *p);
 extern void proc_free_owned(PD *p);
@@ -1202,6 +1210,156 @@ static void test_lifecycle(void)
  */
 static BOOL probe_may_fail_early;   /* under memory pressure the basepage itself may be refused */
 
+#if CONF_WITH_USER_CALLBACKS
+enum { CALLBACK_OOM_NONE, CALLBACK_OOM_ENTRY, CALLBACK_OOM_SERVICE };
+static BOOL callback_test_watching, callback_test_entered;
+static PD *callback_test_owner;
+static UWORD callback_test_child_exits, callback_test_child_rc;
+static UWORD callback_test_oom_phase, callback_test_injected, callback_test_ooms;
+
+#if CONF_WITH_X32_VDI
+static BOOL callback_motion_watching;
+static BOOL callback_irq_watching, callback_irq_armed;
+static UWORD callback_irq_entries, callback_irq_exits;
+static UWORD callback_motion_phase, callback_motion_cursors;
+static void (*callback_motion_native_cursor)(WORD, WORD);
+extern void mouse_int(UBYTE *buf);
+
+static void callback_motion_cursor(WORD x, WORD y)
+{
+    static const WORD expected_x[3] = { 107, 110, 120 };
+    static const WORD expected_y[3] = { 109, 113, 133 };
+    UQUAD flags;
+
+    __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+    CHECK(!(flags & 0x200), "motion coordinates and native cursor notification exclude IRQs");
+    CHECK(callback_motion_cursors < 3, "stale motion results do not notify the cursor");
+    if (callback_motion_cursors < 3)
+        CHECK(x == expected_x[callback_motion_cursors] && y == expected_y[callback_motion_cursors],
+              "native cursor sees current coordinates only");
+    callback_motion_cursors++;
+    callback_motion_native_cursor(x, y);
+}
+
+static void callback_motion_packet(UBYTE *packet)
+{
+    UQUAD flags;
+
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    mouse_int(packet);
+    if (flags & 0x200)
+        __asm__ volatile ("sti" ::: "memory");
+}
+
+static void callback_motion_syscall(UQUAD call, UQUAD second)
+{
+    UBYTE packet[3] = { 0xf8, 7, 9 };
+
+    if (call == ((UQUAD)VDI_SERVICE_CLASS << 32 | VDI_SERVICE_VECTOR) && second == 126) {
+        if (!callback_motion_phase) {
+            /* Workstation setup has finished. Start the first delivery at
+             * this exchange's return boundary, without a test syscall. */
+            callback_motion_native_cursor = linea_vars.user_cur;
+            linea_vars.user_cur = callback_motion_cursor;
+            linea_vars.GCURX = linea_vars.GCURY = 100;
+            vdi_service_callback_event(VDI_CALLBACK_MOTION, 100, 100);
+            callback_motion_phase = 1;
+        } else if (callback_motion_phase == 4) {
+            CHECK(linea_vars.GCURX == 120 && linea_vars.GCURY == 133,
+                  "the newest motion handler result is applied");
+            callback_motion_phase = 5;
+        }
+    } else if (call == ((UQUAD)1 << 32 | 0x10b)) {
+        if (callback_motion_phase == 1) {
+            /* Same producer as the mouse IRQ, during a live user handler. */
+            callback_motion_packet(packet);
+            callback_motion_phase = 2;
+        } else if (callback_motion_phase == 2) {
+            CHECK(linea_vars.GCURX == 107 && linea_vars.GCURY == 109,
+                  "a stale handler result cannot rewind newer IRQ coordinates");
+            packet[1] = 3;
+            packet[2] = 4;
+            callback_motion_packet(packet);
+            callback_motion_phase = 3;
+        } else if (callback_motion_phase == 3) {
+            CHECK(linea_vars.GCURX == 110 && linea_vars.GCURY == 113,
+                  "following mouse packets accumulate from the latest position");
+            callback_motion_phase = 4;
+        }
+    }
+}
+#endif
+
+void x86_64_memtest_callback_exit(PD *pd, UWORD rc)
+{
+#if CONF_WITH_X32_VDI
+    if (callback_irq_watching && pd == callback_test_owner) {
+        UQUAD flags;
+
+        __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+        CHECK(flags & 0x200, "callback termination enables IRQs before file cleanup");
+        callback_irq_exits++;
+    }
+#endif
+    if (callback_test_owner && pd != callback_test_owner &&
+        kproc_get_parent(pd) == callback_test_owner) {
+        callback_test_child_exits++;
+        callback_test_child_rc = rc;
+    }
+}
+
+static void callback_test_inject(void)
+{
+    x86_64_pmem_test_fail_after(1);
+    callback_test_oom_phase = CALLBACK_OOM_NONE;
+    callback_test_injected++;
+}
+
+void x86_64_memtest_callback_entry(UQUAD flags)
+{
+#if CONF_WITH_X32_VDI
+    if (callback_irq_watching && run == callback_test_owner) {
+        CHECK(!(flags & 0x200), "the failing callback was delivered with IRQs masked");
+        callback_irq_entries++;
+    }
+#else
+    (void)flags;
+#endif
+    if (run == callback_test_owner) {
+        callback_test_entered = TRUE;
+        if (callback_test_oom_phase == CALLBACK_OOM_ENTRY)
+            callback_test_inject();
+    }
+}
+
+void x86_64_memtest_callback_syscall(UQUAD call, UQUAD output)
+{
+#if CONF_WITH_X32_VDI
+    if (callback_motion_watching && run == callback_test_owner)
+        callback_motion_syscall(call, output);
+    if (callback_irq_watching && callback_irq_armed && run == callback_test_owner &&
+        call == ((UQUAD)VDI_SERVICE_CLASS << 32 | VDI_SERVICE_VECTOR) && output == 118) {
+        /* With no timer handler installed yet, drain old events and keep
+         * IRQs masked until sysret restores the user's IF. The next delivery
+         * then has to come from a real user-mode PIT interruption. */
+        __asm__ volatile ("cli" ::: "memory");
+        vdi_service_callback_work();
+        callback_irq_armed = FALSE;
+    }
+#endif
+    if (callback_test_entered && run == callback_test_owner &&
+        callback_test_oom_phase == CALLBACK_OOM_SERVICE && output &&
+        call == ((UQUAD)USER_CALLBACK_CLASS << 32 | USER_CALLBACK_ALTSTACK))
+        callback_test_inject();
+}
+
+void x86_64_memtest_callback_lazy_oom(void)
+{
+    if (callback_test_injected && run == callback_test_owner)
+        callback_test_ooms++;
+}
+#endif
+
 static long run_probe(char mode)
 {
     char tail[2];
@@ -1217,6 +1375,10 @@ static long run_probe(char mode)
     if (rc <= 0)
         return -1000;
     pd = (PD *)(uintptr_t)rc;
+#if CONF_WITH_USER_CALLBACKS
+    if (callback_test_watching)
+        callback_test_owner = pd;
+#endif
     if (!kproc_set_image(pd, testprobe_image())) {
         CHECK(FALSE, "probe image attaches");
         set_owner(pd, pd);
@@ -1239,6 +1401,8 @@ static long run_probe(char mode)
 /* The state a return from ring 3 must leave exactly as it found it. */
 typedef struct {
     UQUAD cr3, gs, kernel_gs;
+    UQUAD syscall_rsp, user_rsp, irq_rsp;
+    UQUAD flags;
 } CPUSTATE;
 
 static void cpustate(CPUSTATE *c)
@@ -1246,6 +1410,10 @@ static void cpustate(CPUSTATE *c)
     c->cr3 = x86_64_read_cr3();
     c->gs = x86_64_rdmsr(MSR_GS_BASE);
     c->kernel_gs = x86_64_rdmsr(MSR_KERNEL_GS_BASE);
+    c->syscall_rsp = x86_64_get_kernel_stack();
+    c->user_rsp = x86_64_get_saved_user_rsp();
+    c->irq_rsp = x86_64_get_irq_stack();
+    __asm__ volatile ("pushfq; popq %0" : "=r"(c->flags));
 }
 
 /* One ring-3 run that must exit with `want`, return to this very context
@@ -1269,6 +1437,9 @@ static void probe_expect(char mode, long want, const char *what)
           "back on the kernel page tables");
     CHECK(after.gs == before.gs && after.kernel_gs == before.kernel_gs,
           "the GS base is back in its ring-0 state");
+    CHECK(after.syscall_rsp == before.syscall_rsp && after.user_rsp == before.user_rsp &&
+          after.irq_rsp == before.irq_rsp, "syscall/user/TSS stack pointers are restored");
+    CHECK(!((after.flags ^ before.flags) & 0x200), "the launcher's interrupt-enable flag is restored");
     same(&s, what);
 }
 
@@ -1527,16 +1698,16 @@ static void test_mapping_ring3(void)
     test_mmap();
     test_file_mmap();
     probe_expect('0', 0, "file-backed ring-3 execution, COW, Fread, offset, unlink and split teardown");
-    probe_expect('S', 0, "ELF mapping syscall: bounds, ownership, partial unmap, zeroing");
-    probe_expect('T', 0, "ELF private code executes after RW to RX transition");
-    probe_expect('U', 0xffff, "ELF RX mapping refuses writes");
-    probe_expect('V', 0xffff, "ELF NX mapping refuses execution");
-    probe_expect('W', 0xffff, "ELF PROT_NONE mapping refuses reads");
-    probe_expect('X', 0, "ELF mappings reclaimed on exit");
-    probe_expect('Y', 0, "lazy anonymous first reads and kernel writes, untouched NONE, mixed Mprot");
-    probe_expect('Z', 0xffff, "first touch cannot write read-only anonymous memory");
-    probe_expect('J', 0xffff, "first touch cannot execute NX anonymous memory");
-    probe_expect('K', 0xffff, "first touch cannot read PROT_NONE anonymous memory");
+    probe_expect('5', 0, "ELF mapping syscall: bounds, ownership, partial unmap, zeroing");
+    probe_expect('[', 0, "ELF private code executes after RW to RX transition");
+    probe_expect(']', 0xffff, "ELF RX mapping refuses writes");
+    probe_expect('{', 0xffff, "ELF NX mapping refuses execution");
+    probe_expect('}', 0xffff, "ELF PROT_NONE mapping refuses reads");
+    probe_expect('|', 0, "ELF mappings reclaimed on exit");
+    probe_expect('6', 0, "lazy anonymous first reads and kernel writes, untouched NONE, mixed Mprot");
+    probe_expect('7', 0xffff, "first touch cannot write read-only anonymous memory");
+    probe_expect('8', 0xffff, "first touch cannot execute NX anonymous memory");
+    probe_expect('9', 0xffff, "first touch cannot read PROT_NONE anonymous memory");
     kcprintf("x86-64 mmap syscalls: %s\n", failures == before ? "PASS" : "FAIL");
 
 }
@@ -1679,6 +1850,215 @@ done:
     kcprintf("x86-64 unlinked file backing: %s\n", failures == before ? "PASS" : "FAIL");
 }
 
+#if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+static void test_callback_irq_failure(char mode)
+{
+    UQUAD flags;
+    ULONG ticks, spins;
+
+    __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+    callback_test_watching = callback_irq_watching = callback_irq_armed = TRUE;
+    callback_irq_entries = callback_irq_exits = 0;
+    probe_expect(mode, 0xffff, "an IRQ-delivered callback failure restores the launcher");
+    CHECK(!callback_irq_armed && callback_irq_entries == 1 && callback_irq_exits == 1,
+          "the callback failed after one actual IRQ delivery and reached termination");
+    ticks = (ULONG)hz_200;
+    for (spins = 0; spins < 10000000UL && (ULONG)hz_200 == ticks; spins++)
+        __asm__ volatile ("pause");
+    CHECK((ULONG)hz_200 != ticks, "timer IRQs progress after callback failure");
+    /* Recover after a failed assertion so later tests cannot hang with IF=0. */
+    if (flags & 0x200)
+        __asm__ volatile ("sti" ::: "memory");
+    else
+        __asm__ volatile ("cli" ::: "memory");
+    callback_test_watching = callback_irq_watching = FALSE;
+    callback_test_owner = NULL;
+}
+
+static void test_callback_motion(void)
+{
+    WORD x = linea_vars.GCURX, y = linea_vars.GCURY;
+
+    callback_test_watching = callback_motion_watching = TRUE;
+    callback_motion_phase = callback_motion_cursors = 0;
+    callback_motion_native_cursor = NULL;
+    probe_expect('R', 0, "queued mouse motion survives overlapping ring-3 handlers");
+    CHECK(callback_motion_phase == 5 && callback_motion_cursors == 3,
+          "overlapping motion packets and the final result were all observed");
+    if (callback_motion_native_cursor)
+        linea_vars.user_cur = callback_motion_native_cursor;
+    linea_vars.GCURX = x;
+    linea_vars.GCURY = y;
+    callback_test_watching = callback_motion_watching = FALSE;
+    callback_test_owner = NULL;
+}
+
+static void test_callback_foreign_failure(char mode, UWORD phase)
+{
+    callback_test_watching = TRUE;
+    callback_test_entered = FALSE;
+    callback_test_child_exits = callback_test_injected = callback_test_ooms = 0;
+    callback_test_child_rc = 0xffff;
+    callback_test_oom_phase = phase;
+    probe_expect(mode, 0xffff, "a foreign callback failure unwinds only its owner");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(callback_test_child_exits == 1 && callback_test_child_rc == 0,
+          "the invoking child independently completes and exits successfully");
+    CHECK(callback_test_injected == (phase != CALLBACK_OOM_NONE) &&
+          callback_test_ooms == (phase != CALLBACK_OOM_NONE),
+          "the intended callback lazy-page OOM path was exercised");
+    callback_test_watching = FALSE;
+    callback_test_owner = NULL;
+}
+#endif
+
+static void test_aes_imports(void)
+{
+    SNAP s;
+    char name[] = "AESBAD1.TOS";
+    long rc;
+    int i, before = failures;
+
+    snap(&s);
+    rc = Pexec(PE_LOADGO, "AESIMP.TOS", "", NULL);
+    if (rc == EFILNF) {
+        same(&s, "absent AES imported client fixture");
+        kcprintf("x86-64 AES imports: SKIP (no AESIMP.TOS)\n");
+        return;
+    }
+#if CONF_WITH_X32_AES
+    CHECK(rc == 0, "loaded application imports AES and VDI client libraries");
+    rc = Pexec(PE_LOADGO, "AESREL.TOS", "", NULL);
+    CHECK(rc == 0, "relocated imported AES client");
+    rc = Pexec(PE_LOADGO, "AESIMP.TOS", "w", NULL);
+    CHECK(rc == 0xffff, "imported AES client code is read-only");
+#else
+    CHECK(rc == EPLFMT, "optional AES imports are refused when disabled");
+#endif
+    for (i = 0; i < 7; i++) {
+        name[6] = '1' + i;
+        CHECK(Pexec(PE_LOADGO, name, "", NULL) == EPLFMT, "invalid AES import metadata is refused");
+    }
+    same(&s, "AES imported clients, malformed metadata and fault teardown");
+    if (failures == before)
+        kcprintf("x86-64 AES imports: PASS\n");
+}
+
+/* Like the other disk-loader tests, this can be absent from a minimal
+ * boot disk. The dedicated PC CI boots require the PASS marker. */
+static void test_vdi_imports(void)
+{
+    SNAP s;
+    int before = failures;
+    long rc;
+
+    snap(&s);
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
+    if (rc == EFILNF) {
+        same(&s, "absent VDI imported client fixture");
+        kcprintf("x86-64 VDI imports: SKIP (no VDIIMP.TOS)\n");
+        return;
+    }
+#if CONF_WITH_X32_VDI
+    CHECK(rc == 0, "loaded application imports the x32 VDI client");
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "w", NULL);
+    CHECK(rc == 0xffff, "imported VDI code is read-only in user mode");
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "f", NULL);
+    CHECK(rc == 0xffff, "a fault in an imported client reclaims workstations");
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
+    CHECK(rc == 0, "imported VDI remains usable after a fault");
+#else
+    CHECK(rc == EPLFMT, "the baseline refuses optional VDI imports");
+#endif
+    same(&s, "VDI imported client processes");
+    probe_expect('I', 0, "VDI imports: nested Pexec, PE_LOAD/GO, relocation and invalid metadata");
+    if (failures == before)
+        kcprintf("x86-64 VDI imports: PASS\n");
+}
+
+#if CONF_WITH_X32_VDI
+static void test_vdi_coordinate_bounds(void)
+{
+    struct _lineavars *saved;
+    const UWORD heights[] = { 32768U, 32769U, 65535U };
+    SNAP s;
+    ULONG i;
+    int before = failures;
+
+    snap(&s);
+    saved = kalloc(sizeof(*saved));
+    CHECK(saved != NULL, "snapshot line-A state for VDI coordinate test");
+    if (!saved)
+        return;
+    *saved = linea_vars;
+    /* GOP can advertise more rows than a signed renderer WORD can
+     * address. The probe sends the high coordinate expecting rejection;
+     * the valid signed boundary uses an invalid output buffer so neither
+     * case needs to read beyond the real framebuffer. */
+    for (i = 0; i < ARRAY_SIZE(heights); i++) {
+        linea_vars.V_REZ_VT = heights[i];
+        probe_expect('P', 0, "large-screen VDI coordinate bounds and visible clipped lines");
+    }
+    linea_vars = *saved;
+    kfree(saved);
+    same(&s, "coordinate bounds VDI test");
+    if (failures == before)
+        kcprintf("x86-64 VDI coordinate bounds: PASS\n");
+}
+
+static void test_vdi_padded_pitch(void)
+{
+    SCREEN_MODE_DESC mode;
+    struct _lineavars *saved;
+    SNAP s;
+    ULONG x, y, stride, visible;
+    volatile ULONG *row;
+    BOOL pitch_ok, padding_ok = TRUE;
+    int before = failures;
+
+    screen_get_current_mode_desc(&mode);
+    CHECK(mode.layout == SCREEN_LAYOUT_PACKED && mode.bits_per_pixel == 32 &&
+          mode.width >= 64, "padded-pitch test has a packed GOP screen");
+    if (mode.layout != SCREEN_LAYOUT_PACKED || mode.bits_per_pixel != 32 || mode.width < 64)
+        return;
+    snap(&s);
+    saved = kalloc(sizeof(*saved));
+    CHECK(saved != NULL, "snapshot line-A state for padded-pitch test");
+    if (!saved)
+        return;
+    *saved = linea_vars;
+
+    /* Crop the visible viewport while retaining the hardware scanline
+     * stride. This creates real row padding even on unpadded QEMU GOP.
+     * Seed it before opening: esc_init() clears the console inside the
+     * physical open, before the service could repair an incorrect pitch. */
+    stride = mode.pitch / sizeof(ULONG);
+    visible = (mode.width - 32) & ~7UL;
+    linea_vars.V_REZ_HZ = visible;
+    font_set_default();
+    for (y = 0; y < mode.height; y++) {
+        row = (volatile ULONG *)v_bas_ad + y * stride;
+        for (x = visible; x < stride; x++)
+            row[x] = 0x5a7193c5UL;
+    }
+    probe_expect('W', 0, "ring-3 VDI open, drawing and console clear preserve padded rows");
+    pitch_ok = linea_vars.v_lin_wr == mode.pitch && linea_vars.BYTES_LIN == mode.pitch;
+    for (y = 0; y < mode.height; y++) {
+        row = (volatile ULONG *)v_bas_ad + y * stride;
+        for (x = visible; x < stride; x++)
+            if (row[x] != 0x5a7193c5UL)
+                padding_ok = FALSE;
+    }
+    linea_vars = *saved;
+    kfree(saved);
+    CHECK(pitch_ok, "physical VDI open preserves the hardware pitch");
+    CHECK(padding_ok, "VDI and console output leave scanline padding untouched");
+    same(&s, "padded-pitch VDI test");
+    if (failures == before)
+        kcprintf("x86-64 VDI padded pitch: PASS\n");
+}
+#endif
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -1689,11 +2069,66 @@ static void test_ring3(void)
      * syscall boundary, and the exit code coming back */
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
+    {
+        UQUAD flags;
+
+        __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+        probe_expect('x', 0x1234, "a launcher with masked IRQs retains its interrupt state");
+        if (flags & 0x200)
+            __asm__ volatile ("sti" ::: "memory");
+    }
+    {
+        int before = failures;
+
+        probe_expect('C', 0, "typed callbacks, nested foreign OLD, revocation, alternate/normal stacks and GP/SSE/red zone");
+#if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+        test_callback_irq_failure('Y');
+        test_callback_irq_failure('~');
+        probe_expect('K', 0, "failed OLD capability allocation preserves registrations and quota");
+        test_callback_motion();
+        probe_expect('X', 0xffff, "a callback's privileged instruction ends only its owner");
+        probe_expect('S', 0xffff, "callback stack exhaustion is contained");
+        probe_expect('U', 0xffff, "an unmapped interrupted user stack cannot corrupt callback entry");
+        probe_expect('Z', 0xffff, "a corrupted callback return record is contained");
+        probe_expect('T', 0xffff, "a non-returning callback times out");
+        test_callback_foreign_failure('%', CALLBACK_OOM_NONE);
+        test_callback_foreign_failure('Q', CALLBACK_OOM_ENTRY);
+        test_callback_foreign_failure('O', CALLBACK_OOM_SERVICE);
+        probe_expect('C', 0, "callback state is usable after owner faults and timeouts");
+#endif
+        if (failures == before)
+            kcprintf("x86-64 user callbacks: PASS\n");
+    }
+    {
+        int before = failures;
+
+        probe_expect('#', 0, "AES local helpers, registration, isolated messaging/events, update ownership and cleanup");
+        if (failures == before)
+            kcprintf("x86-64 AES client: PASS\n");
+    }
+    test_aes_imports();
+    test_vdi_imports();
+    probe_expect('V', 0, "x32 VDI control layout, opcode tags and bitmap bounds");
+#if CONF_WITH_X32_VDI
+    {
+        int before = failures;
+
+        probe_expect('W', 0, "ring-3 VDI workstation, coordinate, raster and rejected-vector calls");
+        test_vdi_padded_pitch();
+        test_vdi_coordinate_bounds();
+        probe_expect('!', 0xffff, "a user fault reclaims its open VDI workstations");
+        probe_expect('W', 0, "VDI remains usable after a client's fault");
+        if (failures == before)
+            kcprintf("x86-64 VDI client: PASS\n");
+    }
+#else
+    probe_expect('W', 0, "the optional VDI services are explicitly refused in the baseline");
+#endif
 
 #if CONF_WITH_MMAP
     test_mapping_ring3();
 #else
-    probe_expect('Q', 0, "mapping calls are unavailable when disabled");
+    probe_expect('4', 0, "mapping calls are unavailable when disabled");
     kcprintf("x86-64 mmap syscalls: disabled\n");
 #endif
 
@@ -1701,11 +2136,11 @@ static void test_ring3(void)
     {
         int before = failures;
         ULONG shared_before;
-        probe_expect('R', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
-        probe_expect('I', 0, "PT_INTERP initial stack/auxv, direct and split Pexec, repeated cleanup");
+        probe_expect('3', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
+        probe_expect('2', 0, "PT_INTERP initial stack/auxv, direct and split Pexec, repeated cleanup");
         test_interpreter_failures();
         shared_before = aspace_file_cross_shares();
-        probe_expect('O', 0, "filesystem LD.SO: binding, preinit/init/fini order, repeated cleanup");
+        probe_expect('1', 0, "filesystem LD.SO: binding, preinit/init/fini order, repeated cleanup");
         CHECK(aspace_file_cross_shares() != shared_before,
               "nested dynamic programs reuse physical DSO pages across address spaces");
         CHECK(!aspace_file_pages() && !aspace_file_references(), "runtime file page cache fully reclaimed");
@@ -2189,11 +2624,13 @@ static void test_x32image(void)
     UQUAD entry = 0;
     ASPACE *as;
     SNAP s;
+    PROG_LAYOUT layout;
+    ULONG segment;
 
     snap(&s);
     CHECK(image_check(good, &entry) && entry >= USER_IMAGE_BASE &&
           entry < USER_IMAGE_BASE + USER_IMAGE_SIZE, "probe image is valid");
-#if CONF_WITH_CLI
+#if CONF_WITH_CLI && !CONF_EXTERNAL_CLI
     CHECK(image_check(emucon_image(), &entry), "EmuCON image is valid");
 #endif
 
@@ -2209,13 +2646,16 @@ static void test_x32image(void)
     mutated(good, 18, 2, 3, "other machine refused");
     mutated(good, 44, 2, 0, "no program headers refused");
     mutated(good, 24, 4, 0x500000, "entry point outside the image refused");
-    {
-        /* The embedded probe grows as tests are added. Use its data PT_LOAD
-         * address instead of assuming a fixed end of executable text. */
-        const UBYTE *p = good->data + 52 + 32 + 8;
-        ULONG data_va = (ULONG)p[0] | ((ULONG)p[1] << 8) |
-                        ((ULONG)p[2] << 16) | ((ULONG)p[3] << 24);
-        mutated(good, 24, 4, data_va, "entry point in a non-executable segment refused");
+    /* The probe grows as new ABI checks are linked in. Select a real data
+     * segment instead of assuming that text always ends before 0x405000. */
+    if (image_layout(good, &layout)) {
+        for (segment = 0; segment < layout.nseg; segment++)
+            if (!(layout.seg[segment].flags & 1))
+                break;                  /* ELF PF_X */
+        CHECK(segment < layout.nseg, "probe has a non-executable segment");
+        if (segment < layout.nseg)
+            mutated(good, 24, 4, (ULONG)layout.seg[segment].vaddr,
+                    "entry point in a non-executable segment refused");
     }
     mutated(good, 52 + 8, 4, 0x100000, "segment below the image window refused");
     mutated(good, 52 + 8, 4, 0x7ff000, "segment running past the image window refused");

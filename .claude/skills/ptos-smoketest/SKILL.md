@@ -334,9 +334,16 @@ qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_error
 # (polling, see pass-signal notes below) but interactive verification in a
 # sandboxed shell may be unreliable for environment reasons unrelated to the
 # driver -- check with strace before assuming it's broken.
-make virt-arm-cli_defconfig && make
-qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
-make virt-m68k-cli_defconfig && make
+# EmuCON is the program EMUCON.TOS (CONF_EXTERNAL_CLI), loaded from the boot
+# drive: give the machine a disk that has it -- "make test-dir" collects it
+# with the test programs, and QEMU's vvfat driver presents the directory.
+make virt-arm-cli_defconfig && make && make test-dir
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -device virtio-blk-device,drive=hd0 -d guest_errors -serial stdio
+# virt-m68k-cli: the same disk (-global/-drive/-device as above) is needed
+make virt-m68k-cli_defconfig && make && make test-dir
 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
 
@@ -414,6 +421,32 @@ Pass signals (verified on rpi1):
 
 `raspi2b` takes the same `-drive ...,if=sd` treatment with `-bios
 kernel7.img`; the size restriction and pass signals are identical.
+
+### The desktop as a program (`CONF_EXTERNAL_DESK`)
+
+The images that load from a disk (rpi1-rpi4, virt-arm, virt-m68k) and
+`atari512-extdesk` have no desktop in the kernel: the AES starts `EMUDESK.PRG`
+(`emudesk.prg` of the build tree) from the root directory of the boot drive,
+the first of `emudesk.prg, desktop.prg, emucon.tos, emucon2.tos, command.tos,
+shell.prg, shell.tos` that is there (`include/shells.h`).  "make test-dir" and
+"make test-hd" carry it; for a look at the desktop itself, put `emudesk.prg`,
+`emucon.tos` and `desk/emudesk-raspi.inf` (as `EMUDESK.INF`) on a disk:
+
+```sh
+make rpi2_defconfig && make
+mkdir dd && cp cli/emucon.tos dd/EMUCON.TOS && cp emudesk.prg dd/EMUDESK.PRG \
+  && cp desk/emudesk-raspi.inf dd/EMUDESK.INF
+./tools/mkhdisk.sh desk.img 4194304 dd/EMUCON.TOS dd/EMUDESK.PRG dd/EMUDESK.INF
+qemu-system-arm -M raspi2b -bios kernel7.img -drive file=desk.img,format=raw,if=sd \
+  -device usb-mouse -device usb-kbd -display none -serial stdio \
+  -monitor unix:/tmp/qmon.sock,server,nowait     # then: screendump shot.ppm
+```
+
+Pass signal: the menu bar and a `C:\*.*` window listing the three files.  The
+language is the `LANG` of the kernel's environment.  Without the file the AES
+runs EmuCON if that is there, and shows the "cannot find the file" alert if
+nothing is.  On Hatari, the ROM images boot from a disk given with `--acsi`
+(ST/STE) or `--ide-master` (Falcon) that has `EMUDESK.PRG`.
 
 ### Running the regression test suite (`make test-hd`)
 
@@ -676,6 +709,7 @@ build QEMU can run in place of a legacy BIOS.
 make pc-x86_64_defconfig && make
 mkdir -p esp/EFI/BOOT
 cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+cp cli/emucon.tos esp/EMUCON.TOS   # EmuCON is a program (CONF_EXTERNAL_CLI)
 cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
@@ -721,6 +755,7 @@ make menuconfig
 make
 mkdir -p esp/EFI/BOOT
 cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+cp cli/emucon.tos esp/EMUCON.TOS   # EmuCON is a program (CONF_EXTERNAL_CLI)
 cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \

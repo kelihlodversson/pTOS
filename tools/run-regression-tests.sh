@@ -11,13 +11,13 @@
 #
 #   virt-arm     virt-arm-cli_defconfig       virt-arm.elf    qemu-system-arm
 #   virt-m68k    virt-m68k-cli-elf_defconfig  virt-m68k.elf   qemu-system-m68k
-#   pc-x86_64    pc-x86_64_defconfig          pc-x86_64.efi   qemu-system-x86_64 + OVMF
+#   pc-x86_64    pc-x86_64-desktop_defconfig  pc-x86_64.efi   qemu-system-x86_64 + OVMF
 #   raspi2b      rpi2-test_defconfig          kernel7.img     qemu-system-arm
 #
 # The virt machines are configured without the AES so that they boot to
 # EmuCON, where programs are started by typing their name into the serial
-# console; pc-x86_64 boots to EmuCON in any case and is typed into through
-# the QEMU monitor (PS/2 keyboard).
+# console. The x32 and Pi desktops launch the suite using emudesk.inf's
+# autorun line. On x32, the shutdown probes also autorun in separate boots.
 #
 # Machine 1 runs runtests.tos, which must end with "All tests passed.", and
 # then Shutdown(SHUT_POWER) (poweroff.tos): the machine must switch itself off,
@@ -48,6 +48,11 @@ disk=
 disk_image=
 results=$work/results       # "name|PASS" or "name|FAIL" per line, in order
 logs=$work/logs             # the console logs, in order
+autorun=false
+[ "$machine" != raspi2b ] || autorun=true
+if [ "$machine" = pc-x86_64 ] && grep -q '^#define CONF_EXTERNAL_DESK 1' "$top/obj/autoconf.h"; then
+    autorun=true
+fi
 : >"$results"
 : >"$logs"
 
@@ -159,15 +164,15 @@ wait_exit() {
 
 # type_line <text>: type a line into the guest's console
 type_line() {
+    [ "$autorun" != true ] || return 0
     case $machine in
-    raspi2b) ;;                 # the desktop starts the suite itself (emudesk.inf)
     pc-x86_64) python3 "$tools/qemu-type.py" "$work/mon.sock" "$1" ;;
     *) printf '%s\r' "$1" >&3 ;;
     esac
 }
 
 # start_vm <label>: boot a machine on a copy of test-dir/ and get it to the
-# EmuCON prompt on C:
+# EmuCON prompt on C:, or to the desktop's INF autorun.
 start_vm() {
     label=$1
     stop_vm
@@ -176,6 +181,24 @@ start_vm() {
     disk=$work/disk-$label
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
+    if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
+        # Keep the same desktop autorun path for the suite and all shutdown
+        # probes. No monitor keystrokes or early kernel test hook starts them.
+        case $label in
+        suite | sysfont) program=RUNTESTS.TOS ;;
+        poweroff | reboot | coldboot | halt) program=$(printf '%s.TOS' "$label" | tr '[:lower:]' '[:upper:]') ;;
+        *) die "unknown autorun label $label" "never started" ;;
+        esac
+        python3 - "$disk/emudesk.inf" "$program" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+lines = p.read_text().splitlines()
+assert sum(line.startswith("#Z ") for line in lines) == 1
+p.write_bytes(("\r\n".join("#Z 00 C:\\" + sys.argv[2] + "@" if line.startswith("#Z ") else line
+                          for line in lines) + "\r\n").encode("ascii"))
+PY
+    fi
     # scalable fonts for the built-in GDOS (gdos_answer), when the host
     # has them: the default set of the release images (DejaVu Sans, Serif
     # and Sans Mono, regular and bold: the names tools/fetch-fonts.sh
@@ -264,7 +287,7 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         mkdir -p "$disk/EFI/BOOT"
         cp "$top/pc-x86_64.efi" "$disk/EFI/BOOT/BOOTX64.EFI"
         firmware=${OVMF_DIR:-/usr/share/OVMF}
-        cp "$firmware/OVMF_VARS_4M.fd" "$work/vars-$label.fd"
+        cp "${OVMF_VARS:-$firmware/OVMF_VARS_4M.fd}" "$work/vars-$label.fd"
         # vvfat mirrors a host directory asynchronously and can lose the
         # shutdown file when a reset/halt test stops QEMU. Use real sectors,
         # including unlinked-but-referenced files' allocated FAT chains.
@@ -275,14 +298,16 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         fi
         rm -f "$work/mon.sock"
         qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
-            -drive if=pflash,format=raw,readonly=on,file="$firmware/OVMF_CODE_4M.fd" \
+            -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE:-$firmware/OVMF_CODE_4M.fd}" \
             -drive if=pflash,format=raw,file="$work/vars-$label.fd" \
             -drive format=raw,file="$disk_image" \
             -serial file:"$log" -monitor unix:"$work/mon.sock",server,nowait \
             -display none >"${log%.log}.qemu" 2>&1 &
         qemu_pid=$!
-        wait_for 'C:\>' 120 || die "EmuCON never showed its prompt ($label)" "never started"
-        sleep 1
+        if [ "$autorun" != true ]; then
+            wait_for 'C:\>' 120 || die "EmuCON never showed its prompt ($label)" "never started"
+            sleep 1
+        fi
         ;;
     *)
         echo "usage: $0 <virt-arm|virt-m68k|pc-x86_64|raspi2b> [timeout-seconds]" >&2
@@ -342,8 +367,15 @@ reboot_run() {
         record "shutdown ($1)" FAIL "the program never ran"
         return
     fi
+    # With INF autorun a reset immediately starts the next probe. Wait for
+    # its EFI entry instead of allowing a reboot loop during a fixed delay.
+    banner='Type HELP for builtin commands'
+    if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
+        banner='EFI entry reached'
+    else
+        sleep 15
+    fi
     # a machine that was switched off, not restarted, takes QEMU with it
-    sleep 15
     if ! kill -0 "$qemu_pid" 2>/dev/null; then
         record "shutdown ($1)" FAIL "the machine switched off instead of restarting"
         return
@@ -354,13 +386,13 @@ reboot_run() {
         record "shutdown ($1)" FAIL "the reset did nothing, the machine halted"
         return
     fi
-    # ... and a restart brings a second EmuCON banner
+    # ... and a restart brings a second boot banner
     n=0
-    while [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ] && [ "$n" -lt 90 ]; do
+    while [ "$(grep -ac "$banner" "$log")" -lt 2 ] && [ "$n" -lt 90 ]; do
         sleep 1
         n=$((n + 1))
     done
-    if [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ]; then
+    if [ "$(grep -ac "$banner" "$log")" -lt 2 ]; then
         record "shutdown ($1)" FAIL "the machine did not start again"
         return
     fi
@@ -387,6 +419,9 @@ done
 suite_log=$log
 
 if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
+    if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
+        start_vm poweroff
+    fi
     type_line 'poweroff.tos'
     shutdown_check poweroff "powering off"
 
@@ -422,7 +457,9 @@ fi
 # for the other tests): every program and test that draws text then does it
 # with that font, and the log must say that it was made.
 
-if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]; then
+# (and only for a build that has scalable fonts: the kernel of the tree in $top)
+if [ "$machine" != raspi2b ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ] \
+   && grep -q '^#define CONF_WITH_VDI_SCALABLE_FONTS 1' "$top/obj/autoconf.h" 2>/dev/null; then
     system_font=DJVUMONO.TTF
     start_vm sysfont
     system_font=

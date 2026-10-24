@@ -17,9 +17,20 @@ esac
 mkdir -p "$work/EFI/BOOT"
 cp pc-x86_64.efi "$work/EFI/BOOT/BOOTX64.EFI"
 cp x32hello.elf "$work/X32HELLO.TOS"
+cp obj/x32/x32probe.elf "$work/X32CB.TOS"
+cp obj/x32/x32probe.elf "$work/X32VDI.TOS"
+cp obj/x32/x32probe.elf "$work/X32AES.TOS"
+if grep -q '^CONF_EXTERNAL_CLI *= *y' obj/auto.conf; then
+    cp cli/emucon.tos "$work/EMUCON.TOS"
+fi
 cp x32reloc.elf "$work/X32RELOC.TOS"
 cp x32noreloc.elf "$work/X32NOREL.TOS"
 cp x32big.elf "$work/X32BIG.TOS"
+# Include the AES/VDI import fixtures when built, so the same boot exercises
+# their admission and teardown alongside the standard shared-library path.
+if [ -f obj/x32/VDIIMP.TOS ] && [ -f obj/x32/AESIMP.TOS ]; then
+    cp obj/x32/VDI*.TOS obj/x32/AES*.TOS "$work/"
+fi
 head -c 2000 x32hello.elf > "$work/X32TRUNC.TOS"
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     mkdir -p "$work/GEMSYS/LIB/X32"
@@ -46,7 +57,13 @@ cp "$firmware/OVMF_VARS_4M.fd" "$work/vars.fd"
 
 # A raw image also works in restricted containers where QEMU fat:rw cannot
 # create its temporary files in /var/tmp. Always use private disk/NVRAM copies.
-set -- "$work/EFI"
+set -- "$work/EFI" "$work/X32CB.TOS" "$work/X32VDI.TOS" "$work/X32AES.TOS"
+if [ -f "$work/EMUCON.TOS" ]; then
+    set -- "$@" "$work/EMUCON.TOS"
+fi
+if [ -f "$work/VDIIMP.TOS" ]; then
+    set -- "$@" "$work"/VDI*.TOS "$work"/AES*.TOS
+fi
 if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
@@ -85,6 +102,10 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]
     grep -q 'x86-64 LD.SO runtime: PASS' "$log"
     grep -q 'x86-64 PT_INTERP startup: PASS' "$log"
+fi
+if [ -f "$work/VDIIMP.TOS" ]; then
+    grep -q 'x86-64 VDI imports: PASS' "$log"
+    grep -q 'x86-64 AES imports: PASS' "$log"
 fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"

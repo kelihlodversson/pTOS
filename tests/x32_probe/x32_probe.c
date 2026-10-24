@@ -6,6 +6,9 @@
  * process, once per behaviour it wants to see.  The behaviour is chosen by the
  * first character of the command tail (the basepage's p_cmdlin):
  *
+ *   0-9, []{}|  mapping and standard dynamic-linker probes (#660); kept
+ *      separate from the callback/AES/VDI command assignments
+ *
  *   e  check the entry state: basepage in RDI, entry type 0 in RSI, RSP + 8
  *      divisible by 16, CPL 3 with the user selectors, and that a GEMDOS call
  *      crosses the syscall boundary and returns a value; exits with a
@@ -74,6 +77,7 @@
  */
 
 #include "../../include/mman.h"
+#include "config.h"
 
 typedef unsigned long long u64;
 typedef long long s64;
@@ -321,6 +325,12 @@ done:
 }
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss);
+extern int vdi_contract_checks(void);
+extern int vdi_roundtrip_checks(short inherited_handle, int fault_after_open);
+extern int vdi_coordinate_bounds_checks(void);
+
+extern int aes_roundtrip_checks(const char *tail, const char *child_path);
+extern int callback_roundtrip_checks(const char *tail);
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 {
@@ -329,7 +339,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 
     switch (tail[0]) {
 #if CONF_WITH_ELF_SHARED
-    case 'O': {
+    case '1': {
         static const char empty_tail[] = { 0, 0 };
         static const char env[] = "CHECK=660\0\0";
         static const char *const bad_files[] = {
@@ -369,7 +379,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(0);
         break;
     }
-    case 'I': {
+    case '2': {
         static char args[] = "!\"hello world\" \"\" C:\\tmp";
         static const char env[] = "CHECK=660\0SECOND=value\0\0";
         static const char extended[] = "CHECK=660\0SECOND=value\0ARGV=\0custom-name\0hello world\0C:\\tmp\0\0";
@@ -421,7 +431,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             child_env = ((volatile u32 *)(unsigned long)child)[11];
             ((volatile u32 *)(unsigned long)child)[2] = 0;
             ((volatile unsigned char *)(unsigned long)child)[0x80] = 0;
-            *(volatile char *)(unsigned long)child_env = 'X';
+            *(volatile char *)(unsigned long)child_env = '|';
             if (sys4(GEMDOS, 0x4b, 4, 0, child, 0) != 37)
                 pterm(3);
             if (gemdos(0x49, child, 0) || gemdos(0x49, child_env, 0))
@@ -434,11 +444,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(0);
         break;
     }
-    case 'R':
+    case '3':
         pterm(x32_ldso_probe());
         break;
 #endif
-    case 'Q': {
+    case '4': {
         s64 rc;
         static const char empty_tail[] = { 0, 0 };
         if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0) != EINVFN ||
@@ -455,10 +465,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case '0':
         pterm(file_mapping_api());
         break;
-    case 'S':
+    case '5':
         pterm(mapping_api());
         break;
-    case 'Y': {
+    case '6': {
         s64 address = mmap_private(0, 12288, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, 0);
         volatile u32 *data = (volatile u32 *)(unsigned long)address;
         s64 handle, result;
@@ -485,30 +495,30 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(gemdos(GEMDOS_MUNMAP, address, 12288) ? 8 : 0);
         break;
     }
-    case 'Z':
-    case 'J':
-    case 'K': {
-        s64 address = mmap_private(0, 4096, tail[0] == 'K' ? PROT_NONE : PROT_READ,
+    case '7':
+    case '8':
+    case '9': {
+        s64 address = mmap_private(0, 4096, tail[0] == '9' ? PROT_NONE : PROT_READ,
                                   MAP_PRIVATE | MAP_ANONYMOUS, 0);
         volatile u32 *data = (volatile u32 *)(unsigned long)address;
         int (*fn)(void) = (int (*)(void))(unsigned long)address;
 
         if (address <= 0)
             pterm(1);
-        if (tail[0] == 'Z')
+        if (tail[0] == '7')
             *data = 1;                 /* first touch cannot write a read-only page */
-        else if (tail[0] == 'J')
+        else if (tail[0] == '8')
             bad = fn();                /* first touch cannot execute an NX page */
         else
             bad = *data;               /* first touch cannot read PROT_NONE */
         pterm(2);
         break;
     }
-    case 'T':
-    case 'U':
-    case 'V':
-    case 'W':
-    case 'X': {
+    case '[':
+    case ']':
+    case '{':
+    case '}':
+    case '|': {
         s64 address = mmap_private(0, 4096, PROT_READ | PROT_WRITE,
                                   MAP_PRIVATE | MAP_ANONYMOUS, 0);
         volatile unsigned char *code;
@@ -521,16 +531,16 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* mov $42, %eax; ret -- a real x32 user function in a new mapping */
         code[0] = 0xb8; code[1] = 42; code[2] = 0;
         code[3] = 0; code[4] = 0; code[5] = 0xc3;
-        if (tail[0] == 'X')
+        if (tail[0] == '|')
             pterm(0);                  /* exit reclaims mapping and metadata */
-        protection = tail[0] == 'W' ? PROT_NONE : PROT_READ;
-        if (tail[0] == 'T' || tail[0] == 'U')
+        protection = tail[0] == '}' ? PROT_NONE : PROT_READ;
+        if (tail[0] == '[' || tail[0] == ']')
             protection |= PROT_EXEC;
         if (sys(GEMDOS, GEMDOS_MPROT, address, 4096, protection))
             pterm(2);
-        if (tail[0] == 'U')
+        if (tail[0] == ']')
             code[0] = 0;               /* RX write must fault */
-        if (tail[0] == 'W')
+        if (tail[0] == '}')
             bad = code[0];             /* NONE read must fault */
         fn = (int (*)(void))(unsigned long)address;
         if (fn() != 42)                /* T: executes; V: NX must fault */
@@ -538,6 +548,59 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(gemdos(GEMDOS_MUNMAP, address, 4096) ? 4 : 0);
         break;
     }
+    case 'C': case 'J': case 'T': case 'S': case 'X': case 'Z': case 'U': case '%': case '&':
+    case 'Q': case 'O': case 'R': case 'K': case '+': case 'Y': case '~':
+        pterm(callback_roundtrip_checks(tail));
+        break;
+    case '#':
+    case '$':
+        pterm(aes_roundtrip_checks(tail, "X32AES.TOS"));
+        break;
+    case 'I': {
+        const char *files[] = { "VDIIMP.TOS", "VDIREL.TOS", "VDIPLT.TOS" };
+        char bad_file[] = "VDIBAD1.TOS";
+        s64 rc;
+        int i;
+
+        for (i = 0; i < 3; i++) {
+            rc = sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0);
+#if CONF_WITH_X32_VDI
+            if (rc != 0)
+                pterm(0x100 + i);
+            rc = sys4(GEMDOS, 0x4b, 3, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0);
+            if (rc <= 0)
+                pterm(0x110 + i);
+            if (sys4(GEMDOS, 0x4b, 4, 0, rc, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                pterm(0x120 + i);
+#else
+            if (rc != -66)             /* EPLFMT: optional import unavailable */
+                pterm(0x100 + i);
+#endif
+        }
+        for (i = 0; i < 7; i++) {
+            bad_file[6] = '1' + i;
+            if (sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)bad_file, (u32)(unsigned long)"", 0) != -66)
+                pterm(0x130 + i);
+        }
+        pterm(0);
+        break;
+    }
+    case 'W':
+        pterm(vdi_roundtrip_checks(0, 0));
+        break;
+    case 'P':
+        pterm(vdi_coordinate_bounds_checks());
+        break;
+    case '!':
+        pterm(vdi_roundtrip_checks(0, 1));
+        break;
+    case '@':
+        pterm(vdi_roundtrip_checks((short)((tail[1] - '0') * 100 +
+                                          (tail[2] - '0') * 10 + tail[3] - '0'), 0));
+        break;
+    case 'V':
+        pterm(vdi_contract_checks());
+        break;
     case 'e':
         if (!basepage || basepage > 0xffffffffULL ||
             *(const u32 *)(unsigned long)basepage != (u32)basepage)

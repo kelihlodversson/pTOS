@@ -162,7 +162,11 @@ typedef struct x86_64_aspace ASPACE;
  *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB), then,
  *                             for a program loaded from a file, the startup
  *                             area USER_IMAGE_SLACK long after it
- *   0x0f000000 - 0x0ffeffff   optional standard ELF interpreter (Kconfig gated)
+ *   0x0f000000 - 0x0ffbffff   optional standard ELF interpreter (Kconfig gated)
+ *   0x0ffc0000 - 0x0ffc0fff   optional read-only executable callback stubs
+ *   0x0ffd0000 - 0x0ffdffff   optional read-only executable x32 AES client
+ *   0x0ffe0000 - 0x0ffeffff   optional read-only executable x32 VDI client;
+ *                             private pages, outside image/heap windows
  *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
  *   0x10000000 - 0x7efeffff   Malloc() memory of a process, backed by private
  *                             pages as they are first touched (see below)

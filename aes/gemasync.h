@@ -13,7 +13,8 @@
 void azombie(EVB *e, UWORD ret);
 void evinsert(EVB *e, EVB **root);
 EVSPEC mwait(EVSPEC mask);
-EVSPEC iasync(WORD afunc, LONG aparm);
+EVSPEC iasync(WORD afunc, intptr_t aparm);
+EVSPEC iasync_owned(WORD afunc, intptr_t aparm);
 UWORD apret(EVSPEC mask);
 EVSPEC acancel(EVSPEC m);
 

@@ -9,6 +9,21 @@
 
 menu "VDI"
 
+config CONF_WITH_X32_VDI
+	bool "Typed VDI calls from x32 user programs"
+	depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE && CONF_WITH_KHEAP && CONF_WITH_ELF_LOADER
+	select CONF_WITH_PTOS_ABI_IMPORTS
+	default n
+	help
+	  Build the checked x32 VDI client services: private virtual
+	  workstations, polyline and clipping, memory raster operations and
+	  typed callback exchange, plus the vdi:vdi application import.
+	  CONF_WITH_USER_CALLBACKS enables process-owned ring-3 delivery;
+	  without it callback installation is safely refused.
+	  Each process gets a private read-only client image. Unsupported
+	  operations return an error. The generic ring-3 GEM trap remains disabled. This does not
+	  enable AES or the desktop and is independent of the EmuCON baseline.
+
 config CONF_WITH_VDI_BACKEND_PLANAR
 	bool "Planar (indexed bitplane) VDI backend"
 	default y if !MACHINE_RPI

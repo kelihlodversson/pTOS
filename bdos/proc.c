@@ -28,7 +28,13 @@
 #include "asm.h"
 #include "tosvars.h"
 #include "has.h"
+#if ARCH_X86_64
+#include "process.h"
+#endif
 #include "../bios/vectors.h"
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -53,7 +59,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr);
 static void init_pd_files(PD *p);
 static char *alloc_env(ULONG flags, char *v);
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail);
-static void proc_go(PD *p);
+static void proc_go(PD *p, WORD entry_type);
 
 /*
  * global variables
@@ -501,7 +507,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         if (flag == PE_GO && !prepare_launch(p))
             return ENSMEM;
 #endif
-        proc_go(p);
+        proc_go(p, 0);
         /*
          * "should not return ?": on m68k/ARM, proc_go()/gouser() (rwa.S)
          * never actually reach this line for a reentrant launch (e.g.
@@ -652,7 +658,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
     if (flag != PE_LOAD) {
-        proc_go(cur_p);
+        proc_go(cur_p, 0);
 #if CONF_WITH_USER_ASPACE
         /* Returns here, unlike without CONF_WITH_USER_ASPACE (see the PE_GO case above), once
          * the child has exited: its exit code is in the launcher's D0. */
@@ -907,7 +913,7 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
  *
  */
 
-static void proc_go(PD *p)
+static void proc_go(PD *p, WORD entry_type)
 {
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
     /* PTR_TO_USERPTR(), not the unchecked cast: `run` here is always
@@ -937,14 +943,55 @@ static void proc_go(PD *p)
 #endif
     run = (PD *)p;
 
-#ifdef __arm__
+#if ARCH_X86_64
+    gouser_entry(entry_type);
+#else
+    (void)entry_type;
+#if ARCH_ARM
     /* gouser() would store whatever r0 happens to hold over the basepage
      * proc_launch_prepare() put there for the new process to find in r0 */
     termuser();
 #else
     gouser();
 #endif
+#endif
 }
+
+#if ARCH_X86_64
+LONG proc_prepare_accessory(PD *p)
+{
+    if (!kproc_unlaunched(p))
+        return EIMBA;
+    give_back_image(p, FALSE);
+    return kproc_prepare_user(p, run) ? E_OK : ENSMEM;
+}
+
+LONG proc_start_accessory(PD *p)
+{
+    if (!kproc_unlaunched(p) || !kproc_user_root(p))
+        return EIMBA;
+    set_owner(p, p);
+    set_owner(USERPTR_TO_PTR(p->p_env), p);
+    proc_go(p, ENTRY_ACCESSORY);
+    return run->p_dreg[0];
+}
+
+void proc_discard_accessory(PD *p)
+{
+    if (!kproc_unlaunched(p))
+        return;
+    set_owner(p, p);
+    set_owner(USERPTR_TO_PTR(p->p_env), p);
+    proc_dispose_detached(p);
+}
+
+void proc_dispose_detached(PD *p)
+{
+    release_pd_files(p);
+    kproc_destroy(p);
+    ixterm(p);
+}
+#endif
 
 
 
@@ -971,6 +1018,10 @@ void xterm(UWORD rc)
 {
     PFVOID userterm;
     PD *p = run;
+
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+    x86_64_memtest_callback_exit(p, rc);
+#endif
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
@@ -1009,6 +1060,9 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 
     kcprintf("process fault: %s code=0x%lx addr=0x%lx pc=0x%lx sp=0x%lx\n",
              cause, (long)code, (long)address, (long)pc, (long)sp);
+#if CONF_WITH_USER_CALLBACKS
+    user_callback_fault();
+#endif
     if (kproc_copy_from_user(word, sp, sizeof(word)))
         kcprintf("  stack: 0x%lx 0x%lx 0x%lx 0x%lx\n",
                  (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
@@ -1021,6 +1075,11 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
  */
 WORD xtermres(long blkln, WORD rc)
 {
+#if ARCH_X86_64
+    /* An accessory is owned by the AES session and must drain on restart. */
+    if (x86_64_process_is_accessory())
+        return EACCDN;
+#endif
     xsetblk(0,run,blkln);
 
     reserve_blocks(run, &pmd);

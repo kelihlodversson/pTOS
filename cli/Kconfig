@@ -18,4 +18,32 @@ config CONF_WITH_CLI
 	  It is reachable from the desktop, and is started directly when the
 	  AES is not included.
 
+config CONF_EXTERNAL_CLI
+	bool "Load EmuCON from the boot drive instead of linking it in"
+	depends on CONF_WITH_CLI && !ARCH_COLDFIRE
+	depends on ((ARCH_ARM || ARCH_X86_64 || BUILD_TOOLCHAIN_ELF) && CONF_WITH_ELF_LOADER) || (ARCH_M68K && !BUILD_TOOLCHAIN_ELF && CONF_WITH_PRG_LOADER)
+	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL || TARGET_PC_X86_64_EFI
+	help
+	  Build EmuCON as an ordinary program, emucon.tos, and leave it out
+	  of the kernel image.  The kernel starts it with Pexec() from the
+	  root directory of the boot drive (EMUCON.TOS) when it has no AES to
+	  start: as the console of the image, and as the early console.
+
+	  The program is the standalone EmuCON of cli/Makefile, built with the
+	  translations of all the languages of po/LINGUAS; it uses the
+	  language in the LANG variable that the kernel puts in its
+	  environment.  It has to be on the boot drive: "make test-dir",
+	  "make test-hd" and the Raspberry Pi archives put it there.
+
+	  Needs the loader of the program's format: ELF on ARM, x86-64 and
+	  with the bare m68k-elf toolchain (which makes ELF files, so it
+	  needs CONF_WITH_ELF_LOADER), PRG with the other m68k toolchains.
+	  Not offered for ColdFire, which the standalone build does not
+	  support (its Line-A calls differ).
+
+	  On by default for the images that are loaded into RAM from a disk
+	  (Raspberry Pi, virt-arm, virt-m68k, x86-64).  On x86-64 the program
+	  is the x32 EmuCON (see the top level Makefile), which runs as an
+	  ordinary ring-3 process; without this option the image embeds it.
+
 endmenu

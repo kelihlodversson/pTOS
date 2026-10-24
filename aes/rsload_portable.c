@@ -395,7 +395,7 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, const struct disk_cicon
 }
 
 
-#if CONF_WITH_COLOUR_ICONS
+#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND)
 static void transform_cicons(RSHDR *hdr)
 {
     CICONBLK **ciconblkptr, **p;
@@ -824,7 +824,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         frimg[i] = native_bitblk_ptr(image, &layout, disk, spec);
         if (!frimg[i]) goto fail;
     }
-#if CONF_WITH_COLOUR_ICONS
+#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND)
     transform_cicons(hdr);
 #endif
     pglobal->ap_rscmem = hdr;

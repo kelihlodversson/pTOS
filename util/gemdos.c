@@ -39,7 +39,7 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
     if (ret < 0L)
         return -1;
 
-    *ldaddr = (LONG *) ret;
+    *ldaddr = (LONG *)(uintptr_t)(ULONG)ret;
 
     /* program length = code+data+bss lengths plus basepage length */
     temp = *ldaddr;

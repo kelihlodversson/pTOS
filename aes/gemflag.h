@@ -12,7 +12,7 @@
 
 void tchange(LONG c);
 WORD tak_flag(SPB *sy);
-void amutex(EVB *e, LONG ls);
+void amutex(EVB *e, intptr_t ls);
 void unsync(SPB *sy);
 
 #endif

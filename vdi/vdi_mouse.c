@@ -24,6 +24,9 @@
 #include "biosext.h"
 #include "lineavars.h"
 #include "vdi_inline.h"
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+#include "vdi_service.h"
+#endif
 #if CONF_WITH_AES
 #include "../aes/aesstub.h"
 #endif
@@ -385,6 +388,9 @@ static void call_user_but(WORD status)
 static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 {
     void (*func)(WORD, WORD) = user_wheel; /* prototype not quite right: status passed in d0 */
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+    vdi_service_callback_event(VDI_CALLBACK_WHEEL, wheel_number, wheel_amount);
+#endif
     func(wheel_number, wheel_amount);
 }
 #endif

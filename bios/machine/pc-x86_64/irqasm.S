@@ -123,6 +123,17 @@ x86_64_irq_common:
 
         call    C_SYM(x86_64_pc_irq_dispatch)
 
+#if CONF_WITH_USER_CALLBACKS
+        /* The PIC has been acknowledged. Only a user interruption is a
+         * safe point: a kernel IRQ may have interrupted an allocator. */
+        testb   $3, 656(%rsp)    /* frame->cs = 512 + 144 */
+        jz      1f
+        movq    672(%rsp), %rdi  /* frame->rsp = 512 + 160 */
+        movl    $1, %esi         /* User IRQ boundaries allow deferred hooks. */
+        call    C_SYM(user_callback_return_work)
+1:
+#endif
+
         fxrstor (%rsp)
         add     $512, %rsp
 

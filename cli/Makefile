@@ -6,12 +6,12 @@
 # This file is distributed under the GPL, version 2 or at your
 # option any later version.  See doc/license.txt for details.
 #
-# Builds emucon2.tos, a portable command processor. Deliberately
+# Builds emucon.tos, a portable command processor. Deliberately
 # self-contained (its own compiler/flags, no dependency on the top-level
 # Makefile or its Kconfig-driven configuration) so it stays
 # "cd cli && make"-buildable on its own.
 #
-# ARCH selects which emucon2.tos gets built -- "make" (or explicitly
+# ARCH selects which emucon.tos gets built -- "make" (or explicitly
 # "make ARCH=m68k") builds one that runs under ANY TOS, not just this
 # OS's own ROM build; "make ARCH=arm" builds one that runs under pTOS's
 # own ARM ports (raspi/virt-arm) specifically, since ARM has no other
@@ -23,7 +23,7 @@
 
 include ../version.mk
 
-TARGET = emucon2.tos
+TARGET = emucon.tos
 ARCH ?= m68k
 
 # libcmini provides the C library, GEMDOS/BIOS/XBIOS bindings, and startup
@@ -70,7 +70,14 @@ LIBCMINI_DEFCONFIG = mintelf_defconfig
 # match it or every call across the boundary into libcmini (strlen(),
 # Bconin(), ...) would use a mismatched calling convention for plain int.
 ARCH_CFLAGS = -Wa,--register-prefix-optional
+# The bare m68k-elf toolchain (M68K_ELF=y, from the top level Makefile) makes
+# an ELF file, which pTOS's ELF loader needs as a relocatable image, as on
+# ARM; the others make a PRG.
+ifeq ($(M68K_ELF),y)
+LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+else
 LDFLAGS = -s
+endif
 OBJECTS = cmdasm.o cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o version.o
 else
 # Falling through to m68k on a typo'd ARCH (e.g. "am") would still build
@@ -96,12 +103,72 @@ CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CO
 # next time a loop shape changes.
 CFLAGS = $(CPPFLAGS) -Os -Wall -Wundef -Wold-style-definition -fno-tree-loop-distribute-patterns $(ARCH_CFLAGS)
 
+#
+# NLS=1 builds a multi-language EmuCON: the messages of NLS_SOURCES are
+# translated into numeric ids by tools/bug ("translate all"), the tables of
+# all the languages of po/LINGUAS that "bug make -S" writes for just those
+# messages are linked in (ml/cli-langs.o, about 30 KB), and the program picks
+# the language named by the LANG variable of its environment at start
+# (cmdnls.c).  BUG is the tool the top level Makefile builds; the generated
+# files are in ml/, apart from the sources, which the kernel's own NLS rules
+# translate (in place) for the language of a ROM image.
+#
+NLS ?= 0
+NLS_SOURCES = cmdint cmdmain cmdparse cmdutil
+ifeq ($(NLS),1)
+BUG ?= $(abspath ../bug)
+CPPFLAGS += -DCLI_NLS -I../util
+OBJECTS := $(filter-out $(addsuffix .o,$(NLS_SOURCES)),$(OBJECTS)) \
+           $(addprefix ml/,$(addsuffix .tr.o,$(NLS_SOURCES))) ml/cli-langs.o cmdnls.o
+endif
+
 .PHONY: default all clean
 
 default: $(TARGET)
 all: default
 
 HEADERS = cmd.h
+
+# The objects live in this directory whatever the ARCH, NLS and executable
+# format (M68K_ELF): a stamp per combination throws away the ones of the other
+# when it changes (the top level Makefile builds this for the configuration of
+# the kernel, and a developer may switch between them).  A normal prerequisite,
+# not an order-only one: the stamp deletes objects make may already have found
+# up to date, and creating it must force them to be rebuilt.  Only objects go:
+# the generated sources in ml/ do not depend on any of the three, and removing
+# them while a parallel make has already looked at their times would break it.
+STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)
+$(OBJECTS) version.c: $(STAMP)
+$(STAMP):
+	-rm -f ml/*.o *.o version.c $(TARGET) .arch-*
+	touch $@
+
+ml:
+	mkdir -p $@
+
+# static pattern rules: a plain ml/%.c would also match ml/cmdmain.tr.c and
+# copy the kernel's own cmdmain.tr.c (translated for ITS ids) over it
+NLS_COPY = $(addprefix ml/,$(addsuffix .c,$(NLS_SOURCES)))
+NLS_TR   = $(addprefix ml/,$(addsuffix .tr.c,$(NLS_SOURCES)))
+
+$(NLS_COPY): ml/%.c: %.c | ml
+	cp $< $@
+
+# bug works from the top of the tree (po/, and the paths of the sources)
+ml/cli.pot: potfiles.in $(addsuffix .c,$(NLS_SOURCES)) | ml
+	cd .. && $(BUG) -f cli/potfiles.in -m cli/ml/cli.pot xgettext
+
+ml/cli-langs.c: ml/cli.pot ../po/LINGUAS $(wildcard ../po/*.po)
+	cd .. && $(BUG) -m cli/ml/cli.pot -o cli/ml/cli-langs.c -S make
+
+$(NLS_TR): ml/%.tr.c: ml/%.c ml/cli.pot
+	cd .. && $(BUG) -m cli/ml/cli.pot translate all cli/ml/$*.c
+
+ml/%.tr.o: ml/%.tr.c $(HEADERS) | $(LIBCMINI_DIR)/Makefile
+	$(CC) $(CFLAGS) -I. -c $< -o $@
+
+ml/cli-langs.o: ml/cli-langs.c | $(LIBCMINI_DIR)/Makefile
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Order-only on $(LIBCMINI_DIR)/Makefile: the .c/.S sources #include
 # libcmini headers (via cmd.h), so without this, an uninitialized submodule
@@ -128,12 +195,12 @@ $(LIBCMINI_DIR)/Makefile:
 # prerequisite on the defconfig file itself: without it, a submodule
 # bump that changes configs/$(LIBCMINI_DEFCONFIG)'s content -- without
 # touching any source file -- would leave an already-built .config/
-# libcmini.a looking up to date to Make, silently linking emucon2.tos
+# libcmini.a looking up to date to Make, silently linking emucon.tos
 # against a stale libcmini configuration.
 $(LIBCMINI_BUILDDIR)/.config: $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG) | $(LIBCMINI_DIR)/Makefile
 	@$(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG)
 
-# Only the library and the startup object emucon2.tos links, not "libs startups"
+# Only the library and the startup object emucon.tos links, not "libs startups"
 # (every multilib variant the toolchain offers).
 $(LIBCMINI_LIB): $(LIBCMINI_BUILDDIR)/.config $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S)
 	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
@@ -144,7 +211,7 @@ $(TARGET): $(LIBCMINI_CRT0) $(OBJECTS) $(LIBCMINI_LIB)
 	$(CC) -nostartfiles -nostdlib $(LIBCMINI_CRT0) $(OBJECTS) -L$(dir $(LIBCMINI_LIB)) -lcmini -lgcc $(LDFLAGS) -o $@
 
 clean:
-	-rm -f *.o version.c
+	-rm -rf ml *.o version.c .arch-*
 	-rm -f $(TARGET)
 	-rm -rf libcmini-build-m68k libcmini-build-arm
 

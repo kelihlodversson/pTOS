@@ -180,7 +180,8 @@ before releasing the bounded transient file buffers and interpreter handle.
 The initial kernel policy limits the executable to [0x00400000,0x00800000)
 (eight PT_LOAD segments maximum for each image), preserving ET_EXEC addresses; a PIE may be
 biased into this window. The interpreter is aligned in
-[0x0f000000,0x0fff0000), above Mmap and below the ancestors page, avoiding the
+[0x0f000000,0x0ffc0000), above Mmap and below the callback/AES/VDI
+client windows and ancestors page, avoiding the
 supervisor framebuffer window. Each ELF file has an 8 MiB input limit, with
 allocation failure returning ENSMEM. Temporary file buffers are freed before
 launch. Interpreter bytes count with the main image for Psetlimit core limits.

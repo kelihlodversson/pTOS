@@ -183,6 +183,7 @@ void *get_addr(UWORD rstype, UWORD rsindex)
 
 
 #if CONF_WITH_COLOUR_ICONS
+#if !defined(X32_USERLAND)
 /*
  * returns pointer to a CICON that best matches the current resolution
  *
@@ -335,7 +336,7 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
  *  code -- is the calibration constant the design calls out; the first
  *  screencap (Task 6) confirms or flips it to (1 << (planes-1-p)).
  */
-static void pack_planes(const WORD *data, void *pixels, WORD planes, WORD w, WORD h, WORD pixel_size)
+void rs_cicon_pack(const WORD *data, void *pixels, WORD planes, WORD w, WORD h, WORD pixel_size)
 {
     LONG mono_words = ((LONG)w + 15) / 16;
     UWORD *pix16 = pixels;
@@ -383,7 +384,7 @@ static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
     if (!packed)
         return FALSE;
 
-    pack_planes(cicon->col_data, packed, cicon->num_planes, w, h, pixel_size);
+    rs_cicon_pack(cicon->col_data, packed, cicon->num_planes, w, h, pixel_size);
     cicon->col_data = (WORD *)packed;
 
     if (cicon->sel_data)
@@ -392,14 +393,14 @@ static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
         {
             UWORD *selbuf = (UWORD *)packed + pixels;
 
-            pack_planes(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
+            rs_cicon_pack(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
             cicon->sel_data = (WORD *)selbuf;
         }
         else
         {
             ULONG *selbuf = (ULONG *)packed + pixels;
 
-            pack_planes(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
+            rs_cicon_pack(cicon->sel_data, selbuf, cicon->num_planes, w, h, pixel_size);
             cicon->sel_data = (WORD *)selbuf;
         }
     }
@@ -533,6 +534,8 @@ void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
  *
  * returns NULL if none
  */
+#endif /* !X32_USERLAND: snapshots retain standard palette planes */
+
 CICONBLK **get_ciconblkptr(RSHDR *hdr)
 {
     LONG *extarray;
@@ -564,6 +567,7 @@ CICONBLK **get_ciconblkptr(RSHDR *hdr)
  *
  * returns -1 iff dos_free() failed
  */
+#if !defined(X32_USERLAND)
 static WORD free_cicon_buffers(RSHDR *hdr)
 {
     CICONBLK **ciconblkptr, **p;
@@ -586,6 +590,7 @@ static WORD free_cicon_buffers(RSHDR *hdr)
 
     return rc;
 }
+#endif /* !X32_USERLAND */
 #endif
 
 
@@ -608,7 +613,7 @@ WORD rs_free(AESGLOBAL *pglobal)
 
     rs_sglobe(pglobal);
 
-#if CONF_WITH_COLOUR_ICONS
+#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND)
     if (free_cicon_buffers(rs_global->ap_rscmem))
         rc = 0;
 #endif
@@ -699,46 +704,4 @@ WORD rs_load(AESGLOBAL *pglobal, char *rsfname)
 char *rs_str(UWORD stnum)
 {
     return (char *)gettext(rs_fstr[stnum]);
-}
-
-/*
- *  The xlate_obj_array() function below is used by
- *  the generated GEM rsc code in aes/gem_rsc.c, and by the desktop
- */
-
-/* Translates the strings in an OBJECT array */
-void xlate_obj_array(OBJECT *obj_array, int nobj)
-{
-    OBJECT *obj;
-    char **str;
-
-    for (obj = obj_array; --nobj >= 0; obj++) {
-        switch(obj->ob_type)
-        {
-#if 0
-        /*
-         * at the moment, there are no G_TEXT or G_BOXTEXT items in the
-         * EmuTOS resources.  note that, if they are added, erd will have
-         * to be updated too.
-         */
-        case G_TEXT:
-        case G_BOXTEXT:
-            str = &obj->ob_spec.tedinfo->te_ptext;
-            *str = (char *)gettext(*str);
-            break;
-#endif
-        case G_FTEXT:
-        case G_FBOXTEXT:
-            str = &obj->ob_spec.tedinfo->te_ptmplt;
-            *str = (char *)gettext(*str);
-            break;
-        case G_STRING:
-        case G_BUTTON:
-        case G_TITLE:
-            obj->ob_spec.free_string = (char *)gettext(obj->ob_spec.free_string);
-            break;
-        default:
-            break;
-        }
-    }
 }

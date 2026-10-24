@@ -39,6 +39,25 @@ On x86-64 the programs are built as x32 programs (libcmini's
 `ptos_x86_64_defconfig`, with the compiler and flags of the other x32
 programs). There is no disk image target for x86-64: use `make test-dir`.
 
+The separate `make vdi-contract-test` target checks the typed x32 VDI
+layouts, opcode inventory and memory raster semantics on the host. The
+same contract tests run in ring 3 during the PC boot self-test.
+`pc-x86_64-vdi_defconfig` also exercises the callable VDI client, drawing
+with pixel readback, memory rasters, callback refusal, handle ownership and
+fault cleanup. Copy `obj/x32/x32probe.elf` to `X32VDI.TOS` in the EFI boot
+drive alongside the existing x32 loader fixtures; CI does this for both PC
+configurations. The enabled configuration must print `x86-64 VDI client:
+PASS`, and both must print `x86-64 memtest: PASS`. See
+[the VDI contract](../doc/vdi-x32.txt) for the supported calls and bounds.
+The VDI configuration also requires `x86-64 VDI padded pitch: PASS`: it
+opens a workstation with a narrower viewport over the real GOP pitch and
+checks that console clearing and ring-3 drawing preserve the sentinel
+pixels in every row's padding.
+`x86-64 VDI coordinate bounds: PASS` checks simulated screen heights of
+32768, 32769 and 65535 rows: signed WORD bounds before narrowing, 64-bit
+pixel arguments, unchanged output buffers on rejection, and visible
+low-coordinate lines with optional clipping disabled and enabled.
+
 ## Running
 
 `tests/emudesk.inf`'s `#Z` autorun line launches `C:\RUNTESTS.TOS`
@@ -72,8 +91,11 @@ qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
 ```
 
 On x86-64 (QEMU with OVMF), copy `test-dir`'s contents into the directory
-that holds `EFI/BOOT/BOOTX64.EFI` and is attached as a FAT drive, boot, and
-type `runtests.tos` at the EmuCON prompt — there is no autorun.
+that holds `EFI/BOOT/BOOTX64.EFI` and is attached as a FAT drive. Build
+`pc-x86_64-desktop_defconfig` and keep `EMUDESK.PRG` and `EMUDESK.INF` from
+`test-dir` on that drive: the ring-3 desktop autoruns `RUNTESTS.TOS` through
+the same `#Z` line as on ARM and m68k. The console-only `pc-x86_64_defconfig`
+also permits manual launch from EmuCON when iterating locally.
 
 On Hatari (m68k), attach it as an ACSI disk and use `--conout 2` to capture
 the console text (a VT-52 terminal channel) directly to Hatari's own
@@ -88,13 +110,17 @@ CI runs the suite on five machines (the `regression` job in
 `.github/workflows/build.yml`: virt-arm, virt-m68k, virt-m68k with
 `-mfastcall`, pc-x86_64 and raspi2b) with `tools/run-regression-tests.sh
 <virt-arm|virt-m68k|pc-x86_64|raspi2b>`, which also works locally once the matching
-configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it), `pc-x86_64` or `rpi2-test` (the Pi 2 with the console on the UART as well: its desktop starts the suite from `emudesk.inf`, so there are no shutdown checks)) is built and
+configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it), `pc-x86_64-desktop` or `rpi2-test` (the Pi 2 with the console on the UART as well: its desktop starts the suite from `emudesk.inf`, so there are no shutdown checks)) is built and
 `make test-dir` has run. The virt machines are the `-cli` configurations so
 that they boot to EmuCON, where the script types `runtests.tos` into the
 serial console; the script ends QEMU when the harness has printed its
 verdict and fails unless that is `All tests passed.` After a pass it starts
 `poweroff.tos` (`Shutdown(SHUT_POWER)`, doc/shutdown.txt) and expects QEMU to
-switch off by itself.
+switch off by itself. On x32 the script starts the suite and each shutdown
+probe in a fresh desktop boot using INF autorun; it sends no launch keystrokes.
+Reboot and cold-boot checks require a second EFI entry, and the shutdown
+probes must still flush their open data file. Set `OVMF_CODE` and `OVMF_VARS`
+to firmware files when they are outside `/usr/share/OVMF`.
 
 See the `ptos-smoketest` skill (`.claude/skills/ptos-smoketest/SKILL.md`)
 for more emulator invocations and gotchas.
@@ -277,3 +303,22 @@ built with `-mfastcall`, so that the code is run under that calling convention
 too) on an emulated STE in ST-LOW, ST-MEDIUM and ST-HIGH, and on a Falcon with
 a 68030 and with a 68040. It fails if a test fails, and also if `text_blit` or
 `raster_copy` skip themselves, as they have to run on every one of these.
+
+`make x32-vdi-import-test` builds the native VDI import applications and
+malformed metadata fixtures in `obj/x32/VDI*.TOS`. Copy those files to the PC
+boot drive alongside `X32VDI.TOS`. Both PC configurations require
+`x86-64 VDI imports: PASS`: the optional VDI configuration executes imported
+client calls through normal and relocated ELF loads, nested Pexec and
+PE_LOAD/GO; the baseline refuses the unavailable import. Both reject
+malformed metadata. See `doc/vdi-x32.txt` for the SDK link recipe.
+
+`make aes-contract-test` checks standalone AES layouts, shared rectangle
+helpers and all 79 legacy AES operation classifications. `make
+x32-aes-import-test` builds mixed AES/VDI imported applications and malformed
+fixtures in `obj/x32/AES*.TOS`. Copy these to the PC boot drive and copy the
+probe to `X32AES.TOS` as well as `X32VDI.TOS`. The optional
+`pc-x86_64-aes_defconfig` boot checks multi-client registration, isolated
+messaging/events, authoritative sender ids, recursive update ownership and
+explicit/normal/fault-exit cleanup. Baseline and VDI-only boots refuse the
+optional AES service/imports. CI requires both `x86-64 AES client: PASS` and
+`x86-64 AES imports: PASS`; see `doc/aes-x32.txt` for the full contract.

@@ -7,6 +7,7 @@ obj-y += bdosmain.o console.o fsbuf.o fsdir.o fsdrive.o fsfat.o fsglob.o \
 	 proc.o time.o umem.o rwa.o launch.o
 obj-$(CONF_WITH_ELF_LOADER) += elfld.o
 obj-$(CONF_WITH_USER_COPY) += uaccess.o
+obj-$(CONF_WITH_USER_CALLBACKS) += user_callback.o callback_entry.o
 
 # Ssystem() (bdos/ssystem.c) is needed by every non-m68k/ColdFire arch --
 # see the comment in osif() (bdos/bdosmain.c).

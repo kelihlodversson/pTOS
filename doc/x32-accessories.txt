@@ -1,0 +1,203 @@
+Loaded x32 accessories (#389, #407)
+===================================
+
+Configuration and entry
+-----------------------
+
+pc-x86_64-accessories_defconfig enables kernel AES/EmuDesk, the typed AES/VDI
+services and the loaded-accessory regression. For an interactive image without
+the boot regression, disable CONF_WITH_X32_ACCESSORY_TEST in menuconfig.
+The boot regression requires CONF_WITH_USER_CALLBACKS for revocation coverage.
+Accessories use the x32 ABI and the typed interfaces in aes-x32.txt and
+vdi-x32.txt. Generic ring-3 GEM trap class 2 remains refused.
+
+load_one_acc loads an ELF through PE_LOAD, returns the loader's image loan,
+and prepares a KPROC-owned address space and stacks before publishing an AES
+task. It maps the image with its segment permissions and the process's
+basepage, environment, ancestors and private stack in the normal user layout.
+A failed preparation discards all process-owned allocations and references.
+The AESPD/PD association and launch state live only in kernel metadata.
+
+gotopgm enters through the ordinary process launcher with RDI=basepage,
+RSI=ENTRY_ACCESSORY (1), and RSP+8 divisible by 16. Ordinary Pexec still uses
+ENTRY_PROGRAM (0). Both libcmini startup objects dispatch accessory entry to
+_acc_main, set _app=0, retain the kernel-provided stack and apply a positive
+_stksize through Psetlimit. The submodule pins libcmini's published fix.
+
+Scheduling and lifetime
+-------------------------
+
+Typed aes_evnt_wait(AES_EVENT_MESSAGE, ...) blocks an associated accessory;
+aes_appl_yield gives another AES task a turn. Ordinary Pexec clients and
+nested children cannot use these scheduling calls. Neither call is allowed
+inside a user callback. Polling and the existing nonblocking services remain
+available to ordinary clients. A wait rechecks registration and validates
+copyout after resuming, including after callback activity while suspended.
+
+Each coroutine saves GEMDOS run, CR3, syscall stack, saved user RSP, TSS IRQ
+stack, GS/syscall state, launch continuation, filesystem error continuation,
+interrupt enable state and FPU state. The dispatcher uses kernel mappings;
+state is restored before resuming that task's saved stack. Internal AES tasks
+have native contexts too. User message buffers never become AES queue nodes.
+Native AES AC_OPEN/AC_CLOSE messages are copied into typed accessory queues.
+A full queue yields cooperatively until space is available; the sender keeps
+a private message snapshot across task switches.
+Typed registration/message waits update the corresponding native AES flags.
+Typed application IDs remain KPROC IDs, separate from native AES task IDs.
+aes_evnt_multi also waits/polls for keyboard, focused mouse buttons/rectangles,
+timers and messages together, using the typed input records in aes-x32.txt.
+Its native EVBs and trusted request snapshots are cancelled on session drain.
+
+Pterm and fatal user faults unwind to that accessory's launch on its UDA.
+The launcher restores the parent context and frees the user's kernel stack
+after switching off it. The dead task is removed instead of requeued. Before
+desktop restart clears AES storage, drain unlinks ready/wait tasks, cancels
+events, closes handles, drops typed AES/VDI/callback state, destroys address
+spaces and releases pending stacks from a live native kernel stack. Suspended
+nested launch records are walked child first. Ptermres is refused within an
+accessory launch because its resources belong to the desktop session.
+
+The physical VDI workstation records native and typed opens explicitly.
+Accessories borrow the native desktop's physical workstation and own their
+virtual workstations; process exit must not close the desktop's workstation.
+Native kernel AES event and parameter slots preserve full-width pointers.
+WIND_SET pointer fields reserve sizeof(void*)/sizeof(WORD) words before their
+trailing scalars, retaining the classic two-word pointer layout on ARM/m68k.
+The dispatcher enables interrupts after switching to kernel mappings, normalized
+GS and its own stack, so timer and input events can wake an empty ready list.
+These internal representations do not expose kernel pointers to x32 clients.
+
+Regression
+----------
+
+Build the configuration and run make x32-accessory-test x32test
+x32-aes-import-test x32-vdi-import-test. The QEMU/OVMF job in build.yml installs
+ACCONE.ACC, ACCTWO.ACC, ACCFAULT.ACC, ACCWAIT.ACC and an invalid BADACC.ACC
+on the boot drive beside the existing x32 process fixtures. Both libcmini
+startup variants are used.
+A negative control bypassing the accessory startup dispatch is rejected.
+
+The probes capture entry registers before startup; check _app, _base, stack
+alignment/limit and ring-3 selectors; launch an ordinary ENTRY_PROGRAM child;
+call GEMDOS, typed AES and VDI; exchange messages and yield; and check private
+writable memory and MXCSR after resuming. ACCONE exits, ACCFAULT executes UD2,
+and the other two wait for native messages or restart cancellation. Their
+open files, heap blocks and virtual workstations exercise teardown.
+
+The invalid load never becomes runnable or delays accessory initialization.
+The kernel tests 48 allocation-failure budgets during preparation before
+task publication, then restarts the desktop three times. Each cleanup must
+restore physical pages, kernel heap blocks/pages, KPROC records and virtual
+reservations exactly,
+without new bad frees. A fourth session runs the visible desktop alongside
+the surviving accessories, with a pass marker after menu/desktop setup.
+tests/x32_accessory/check_boot.py validates the serial transcript, including
+the deliberate fault and the final live session.
+
+The native message test fills a typed queue with eight ordered messages before
+sending AC_CLOSE, which must yield until the receiver drains it. Native window
+title, information and desktop pointers retain their high address bits and
+trailing scalar values. A timer wakes the desktop from an empty ready list,
+where the test also checks that interrupts are enabled. Restoring each of the
+three defects independently makes its corresponding regression fail.
+
+The input fixture tests combined timer/message readiness, a delayed reply,
+empty polls, invalid scalars/pointers and page-boundary/read-only outputs.
+One-millisecond polls cross a real timer tick between the kernel's clock
+reads: timer-only and combined polls must ignore the positive timer, while
+a zero timer remains immediately ready in both polling and blocking calls.
+Repeated timer wins cancel keyboard, double-click and rectangle waits. A
+background accessory cannot poll input belonging to the focused accessory.
+tests/x32_accessory/drive_input.py injects real PS/2 keys, motion and button
+press/release through QEMU's monitor when the fixture announces its waits.
+All four sessions must pass, and restart cancels outstanding native input
+and long timer waits left by the surviving accessory.
+Before polling and blocking button checks, the fixture queues a complete
+press/release pair and verifies the saved press, capped click count and current
+released state, including motion both before and after release. Registered
+button waits must retain the completing press's coordinates and button state
+across an intervening native event return and three queued button transitions (left
+press, release, right press). A real ring-3 VDI callback unregisters its
+suspended owner during keyboard-only, rectangle-only and timer-only waits;
+all must wake with EACCDN and allow re-registration. These checks run in each
+of the four sessions.
+The rectangle case re-registers inside the callback itself, which must still
+cancel the original wait.
+
+After input checks, the fixtures exercise typed windows (#626). Two clients
+verify foreign-handle refusal; closed/live windows left by normal exit and
+fault are reclaimed. Geometry, border/work conversion, slider state, visible
+rectangles, invalid/read-only/page-boundary/overlapping buffers and native
+handle reuse are checked. Distant rectangles cannot overflow native move/union
+arithmetic; rejected moves preserve the old geometry. Title/info sources are
+changed and freed before the kernel verifies retained text and pointer width.
+Boundary growth and shrinking check both axes: dimensions 32764/32765 are
+rejected without changing geometry; 32763 produces a valid positive redraw.
+NAME/MOVER and MOVER-only windows additionally exercise their screen-dependent
+drag-width boundary for create/open/resize; NAME-only windows retain the larger
+non-mover limit.
+192 create/set-closed-geometry/delete cycles preserve the neighbor's visible
+rectangle without retaining rectangle nodes. Normal exit, fault,
+unregister and callback cleanup also leave closed windows with set geometry.
+Native replacement injection between close and delete checks both explicit
+deletion and deferred cleanup: the foreign replacement must survive.
+Deferred native arrow actions are injected while the owner is runnable; typed
+read/poll/wait/multi deliver sender 0, preserving the action across a full FIFO.
+After cancellation and context erasure, repeated native cleanup messages must
+be rejected without entering the task's legacy queue.
+Synchronization regressions inject a foreign native-lock owner, then each
+typed coordination token, after cleanup closes a window. CREATE must return
+EAGAIN without allocation; queries must return EAGAIN without copyout. Cleanup
+must leave its just-closed window and a later retired window untouched while
+the native lock is contended. Releasing the injected owner allows retry.
+A real callback unregisters/re-registers client A, then task B suspends while
+closing A's retired window. A unregisters/re-registers normally and creates a
+closed window while B is paused. B's reservation must keep the old handle
+pinned, and B's resumed cleanup must preserve A's new window.
+A real callback frees the visible-rectangle output heap block while cleanup
+closes a retired window, without revoking registration. Failed NEXT and FIRST
+calls must preserve their cursor; a valid retry receives the undelivered next
+rectangle or the previous end marker, and a successful FIRST restarts the walk.
+A second cursor regression queues a VDI callback after successful copyout.
+The real trap-return path must defer its hooks through SYSRET: the callback
+would unregister/re-register the owner, allowing the following reap hook to
+close retired windows and invoke another callback that frees the output.
+The kernel observes the completed return before user IRQs can deliver work;
+a later user boundary must run both callbacks and finish cleanup. No global
+deferral flag may suppress nested calls or a later ordinary syscall.
+Slider position/size updates cover closed and topped open windows with no
+sliders, unrelated title/mover or arrow/sizer gadgets, one slider axis, and
+both axes. Missing gadgets return EINVAL without changing state; supported
+updates change only the selected field, with 3D objects enabled and disabled.
+The rectangle-pool regression uses every user handle across two clients.
+With AES 3.40, eight horizontal strips are followed by seven vertical strips
+on the 1280x800 desktop, including the last window that exceeded the former
+160-node pool. It tops every window, walks its visible rectangles, retains
+all closed lists until deletion, restores the peer window, and repeats over
+desktop restarts. The kernel records a transient peak above the old limit.
+An eight-message FIFO stays full during four enlargements: self redraws
+coalesce and arrive after the queued opaque messages, without deadlocking.
+Horizontal and vertical moves from +30000 through zero to -30000 retain
+redraws with both empty and full queues. Delivered rectangles stay on-screen
+and cover the final visible work area; wholly off-screen opens emit none.
+Direct raw native notifications also exercise clipping at the coalescer,
+independently of the earlier clipping performed by native desktop drawing.
+The input driver sends a key to the topped ring-3 window, then clicks its
+native close gadget. WM_CLOSED arrives with kernel sender=0 and the correct
+handle; the client explicitly closes/deletes the window. A real user callback
+unregisters and immediately re-registers during a suspended window query.
+The old call returns EACCDN without copyout and retires its in-flight window.
+A second client tries to reuse a native handle while DELETE is suspended
+after freeing it; creation must return EAGAIN until the old call finishes.
+The two survivors leave live, copied-text windows for each desktop restart;
+the final session reopens them after EmuDesk's global window reset. Both
+clients paint their visible work areas through typed VDI line/color/clip calls,
+and the kernel waits until redraws finish before the desktop pass marker.
+The host input-driver regression writes READY records in fragments, including
+partial coordinates and CRLF terminators; no input is sent until the LF.
+
+Verified locally with QEMU/OVMF (1280x800 GOP), host AES/VDI contracts and
+loaded import checks. The ordinary x32 process/callback boot tests also run
+before the accessory regression. ARM rpi2 and m68k Atari builds cover shared
+event/parameter changes. Native desktop rendering remains in the kernel;
+moving EmuDesk into ring 3 is separate work in epic #548.

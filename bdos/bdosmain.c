@@ -656,13 +656,19 @@ restrt:
      * unlike every other call handled through it, its arguments don't
      * follow the table's implicit stdio/handle conventions -- so it's
      * special-cased here instead of getting its own funcs[] slot.
-     * Only where CONF_WITH_SSYSTEM is set (ARM, x86-64): real m68k TOS software already has Supexec() and
-     * direct memory access for this, and the smallest m68k ROM images
-     * (see release.mk) have no code size to spare for a second way to do
-     * it.
+     * Only where CONF_WITH_SSYSTEM is set (ARM, x86-64, and the m68k images
+     * whose desktop is a program, CONF_EXTERNAL_DESK): real m68k TOS
+     * software already has Supexec() and direct memory access for this, and
+     * the smallest m68k ROM images (see release.mk) have no code size to
+     * spare for a second way to do it.
      */
     if (fn == GEMDOS_SSYSTEM)
+#if CONF_WITH_NATIVE_ABI
         return xssystem((WORD)pw[1], pw[2], pw[3]);
+#else
+        /* mode.w, arg1.l, arg2.l: three words in a row after the mode */
+        return xssystem(pw[1], *(LONG_ALIAS *)&pw[2], *(LONG_ALIAS *)&pw[4]);
+#endif
     if (fn == GEMDOS_SYSCONF)               /* the same, and for the same reason */
         return xsysconf((WORD)pw[1]);
 #endif
