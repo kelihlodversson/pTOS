@@ -512,6 +512,28 @@ jobs:
             runner: ubuntu-latest
             qemu: qemu-system-misc
             make_args: ''
+          # every process in an address space of its own, user mode and page
+          # tables per process (#568, #570)
+          - machine: virt-m68k-aspace
+            config: virt-m68k-aspace
+            arch: m68k
+            runner: ubuntu-latest
+            qemu: qemu-system-misc
+            make_args: ''
+          - machine: virt-arm-aspace
+            script_machine: virt-arm
+            config: virt-arm-aspace
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
+          # EmuCON on the UART; no shutdown checks (QEMU's raspi2b does not switch off)
+          - machine: raspi2b-aspace
+            config: rpi2-aspace
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
           - machine: pc-x86_64
             config: pc-x86_64
             arch: x86_64

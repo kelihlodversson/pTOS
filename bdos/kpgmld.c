@@ -32,7 +32,7 @@
 static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd);
 #endif
 #if CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES
-static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi);
+static LONG pgfix01(UBYTE **lastcp, LONG nrelbytes, PGMINFO *pi);
 #endif
 
 /*
@@ -261,7 +261,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
                 break;
 
             /*  do fixups using that info  */
-            r = pgfix01(cp, r, pi);
+            r = pgfix01(&cp, r, pi);
             if (r <= 0)
                 break;
         }
@@ -292,20 +292,20 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
  * pgfix01 - do the next set of fixups
  *
  *  returns:
- *      addr of last modified longword in code segment (cp)
- *      0 if error or done
  *      stat01:
  *              >0: all offsets in bss used up, read in more
  *              =0: offset of 0 encountered, no more fixups
  *              <0: EPLFMT (load file format error)
  *
  * Arguments:
+ *  lastcp    - the last longword fixed up, which the fixups go on from;
+ *              updated, for the next chunk of relocation info
  *  nrelbytes - number of avail rel values
  *  pi        - program info pointer
  */
 
 #if CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES
-static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi)
+static LONG pgfix01(UBYTE **lastcp, LONG nrelbytes, PGMINFO *pi)
 {
     UBYTE *cp;              /*  code pointer                */
     UBYTE *rp;              /*  relocation info pointer     */
@@ -313,7 +313,7 @@ static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi)
     UBYTE *bbase;           /*  base addr of bss segment    */
     LONG  tbase;            /*  base addr of text segment   */
 
-    cp = lastcp;
+    cp = *lastcp;
     rp = (UBYTE *)pi->pi_bbase;
     n = nrelbytes;
     tbase = (LONG)pi->pi_tbase;
@@ -336,6 +336,7 @@ static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi)
         ++rp;
     }
 
+    *lastcp = cp;               /* the next chunk of relocation info goes on from here */
     return (++n == 0) ? 1 : 0;
 }
 #endif /* CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES */
@@ -413,7 +414,7 @@ LONG kpgm_relocate(PD *p, long length)
         memmove(pi->pi_bbase, rp, length);
 
         /* fixup with the reloc information available */
-        pgfix01(cp, length, pi);
+        pgfix01(&cp, length, pi);
     }
 
     /* clear the whole heap */

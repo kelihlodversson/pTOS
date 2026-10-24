@@ -639,19 +639,31 @@ static long check_frame_args(const short *pw)
         /* WLP */ "wll", /* WPL */ "wll", /* WPP */ "wll",
         /* RV  */ "",    /* RL  */ "l",   /* RLW */ "lw"
     };
+    /* the calls beyond the table that take pointers (see bdos_check_user_args()) */
+    static const struct { WORD fn; const char *w; } extra[] =
+    {
+        { GEMDOS_SSYSTEM, "wll" },      /* mode, arg1, arg2 */
+        { GEMDOS_MVALIDATE, "wlll" }    /* pid, addr, size, flags */
+    };
     long av[5];
-    const char *w;
+    const char *w = NULL;
     unsigned i, word;
     int fn = pw[0];
 
-    if (fn < 0 || (unsigned)fn > MAX_FNCALL)
+    if (fn >= 0 && (unsigned)fn <= MAX_FNCALL)
+        w = widths[funcs[fn].shape];
+    else
+        for (i = 0; i < ARRAY_SIZE(extra); i++)
+            if (extra[i].fn == fn)
+                w = extra[i].w;
+    if (!w)
         return E_OK;
     av[0] = fn;
     for (i = 1; i < ARRAY_SIZE(av); i++)
         av[i] = 0;
     word = 1;
     i = 1;
-    for (w = widths[funcs[fn].shape]; *w; w++, i++)
+    for (; *w; w++, i++)
     {
         if (*w == 'w')
             av[i] = pw[word++];
@@ -766,6 +778,47 @@ restrt:
     if (kproc_has_heap(run))
     {
         long amount;
+#if CONF_WITH_NATIVE_ABI
+        long *lw = pw;
+#else
+        /* the calls below, decoded from the words of the 68000 trap frame */
+        long lwbuf[6];
+        long *lw = lwbuf;
+
+        memset(lwbuf, 0, sizeof lwbuf);
+        switch (fn)
+        {
+        case GEMDOS_PSETLIMIT:          /* limit.w, value.l */
+            lw[1] = pw[1];
+            lw[2] = pwlong((const WORD *)pw, 2);
+            break;
+        case GEMDOS_MACCESS:            /* addr.l, size.l, mode.w */
+            lw[1] = pwlong((const WORD *)pw, 1);
+            lw[2] = pwlong((const WORD *)pw, 3);
+            lw[3] = pw[5];
+            break;
+        case GEMDOS_MVALIDATE:          /* pid.w, addr.l, size.l, flags.l */
+            lw[1] = pw[1];
+            lw[2] = pwlong((const WORD *)pw, 2);
+            lw[3] = pwlong((const WORD *)pw, 4);
+            lw[4] = pwlong((const WORD *)pw, 6);
+            break;
+        case GEMDOS_MXALLOC:            /* size.l, mode.w */
+            lw[1] = pwlong((const WORD *)pw, 1);
+            lw[2] = pw[3];
+            break;
+        case GEMDOS_MALLOC:             /* size.l */
+        case GEMDOS_MFREE:              /* addr.l */
+            lw[1] = pwlong((const WORD *)pw, 1);
+            break;
+        case GEMDOS_MSHRINK:            /* 0.w, addr.l, size.l */
+            lw[2] = pwlong((const WORD *)pw, 2);
+            lw[3] = pwlong((const WORD *)pw, 4);
+            break;
+        default:
+            break;
+        }
+#endif
 
         /* the arguments are x32 values in 64-bit syscall slots: a LONG is
          * its low 32 bits (Malloc(-1) arrives as 0xffffffff, or sign-extended),
@@ -776,39 +829,39 @@ restrt:
         switch (fn)
         {
         case GEMDOS_PSETLIMIT:
-            return kproc_psetlimit(run, (WORD)pw[1], (LONG)pw[2]);
+            return kproc_psetlimit(run, (WORD)lw[1], (LONG)lw[2]);
         case GEMDOS_MACCESS:
             /* (the addresses stay the whole 64-bit slots: bits above 32 make
              * it no x32 address, which the checks reject) */
-            return kproc_maccess(run, (VADDR)pw[1], (LONG)pw[2], (WORD)pw[3]);
+            return kproc_maccess(run, (VADDR)lw[1], (LONG)lw[2], (WORD)lw[3]);
         case GEMDOS_MVALIDATE:
-            return kproc_mvalidate(run, (WORD)pw[1], (VADDR)pw[2], (LONG)pw[3],
-                                   (UQUAD)pw[4]);
+            return kproc_mvalidate(run, (WORD)lw[1], (VADDR)lw[2], (LONG)lw[3],
+                                   (UQUAD)lw[4]);
         case GEMDOS_MXALLOC:
             /* the protection bits of the mode word: only what this memory
              * model can give is allocated (kproc_uheap_mode()) */
-            rc = kproc_uheap_mode((WORD)pw[2]);
+            rc = kproc_uheap_mode((WORD)lw[2]);
             if (rc)
                 return rc;
             /* fall through: the size is read as Malloc() does */
         case GEMDOS_MALLOC:
-            pw[1] = (LONG)pw[1];
-            amount = pw[1];
+            lw[1] = (LONG)lw[1];
+            amount = lw[1];
             if (amount == -1L)
                 return (long)kproc_uheap_largest(run);
             if (amount <= 0L)
                 return 0;
             return (long)kproc_uheap_alloc(run, (ULONG)amount);
         case GEMDOS_MFREE:
-            pw[1] = (ULONG)pw[1];
-            if (pw[1] >= USER_HEAP_BASE && pw[1] < USER_STACK_TOP)
-                return kproc_uheap_free(run, (ULONG)pw[1]);
+            lw[1] = (ULONG)lw[1];
+            if (lw[1] >= USER_HEAP_BASE && lw[1] < USER_STACK_TOP)
+                return kproc_uheap_free(run, (ULONG)lw[1]);
             break;
         case GEMDOS_MSHRINK:
-            pw[2] = (ULONG)pw[2];
-            pw[3] = (LONG)pw[3];
-            if (pw[2] >= USER_HEAP_BASE && pw[2] < USER_STACK_TOP)
-                return kproc_uheap_shrink(run, (ULONG)pw[2], pw[3]);
+            lw[2] = (ULONG)lw[2];
+            lw[3] = (LONG)lw[3];
+            if (lw[2] >= USER_HEAP_BASE && lw[2] < USER_STACK_TOP)
+                return kproc_uheap_shrink(run, (ULONG)lw[2], lw[3]);
             break;
         }
     }

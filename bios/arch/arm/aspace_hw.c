@@ -77,6 +77,16 @@ ULONG aspace_hw_root_align(void)
     return L1_BYTES / PAGE;             /* TTBR0 with TTBCR.N = 1: 8 KiB aligned */
 }
 
+BOOL aspace_hw_init(void)
+{
+    return TRUE;                        /* the kernel half is TTBR1, not in the roots */
+}
+
+void aspace_hw_init_root(PADDR root)
+{
+    (void)root;                         /* nothing is the same in every root */
+}
+
 static volatile ULONG *l1(PADDR root)
 {
     return (volatile ULONG *)pmem32_virt(root);

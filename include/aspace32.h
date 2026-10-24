@@ -35,6 +35,10 @@ typedef PADDR (*ASPACE_TABLE_ALLOC)(void *ctx);   /* a zeroed page, PMEM32_NONE 
  */
 ULONG aspace_hw_root_pages(void);               /* size of a root, in pages */
 ULONG aspace_hw_root_align(void);               /* its alignment, in pages */
+/* once, before the first root: what is shared by every root (the kernel half of an m68k tree) */
+BOOL aspace_hw_init(void);
+/* a new root, zeroed: the part that is the same in every address space */
+void aspace_hw_init_root(PADDR root);
 
 /* one 4 KiB leaf; FALSE if a table page could not be had (nothing mapped) */
 BOOL aspace_hw_map(PADDR root, VADDR va, PADDR phys, UWORD prot, UWORD flags,

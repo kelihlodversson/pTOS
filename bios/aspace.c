@@ -111,6 +111,7 @@ ASPACE *aspace_create(void)
         return NULL;
     }
     memset(pmem32_virt(root), 0, pages * PAGE);
+    aspace_hw_init_root(root);
     as->magic = ASPACE_MAGIC;
     as->root = root;
     as->root_pages = pages;
@@ -655,7 +656,7 @@ BOOL aspace_kernel_init(void)
     PADDR window;
     VADDR va;
 
-    if (!procmem_window_init(&window))
+    if (!aspace_hw_init() || !procmem_window_init(&window))
         return FALSE;
     as = aspace_create();
     if (!as)

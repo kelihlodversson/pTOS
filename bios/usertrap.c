@@ -1,9 +1,9 @@
 /*
  * usertrap.c - what a user process may ask of the BIOS and the XBIOS (ARM)
  *
- * The BIOS and XBIOS trap entries (vectorsasm.S) call arm_user_check() before
+ * The BIOS and XBIOS trap entries (vectorsasm.S) call bios_user_check() before
  * a call made by a process in user mode (CONF_WITH_USER_ASPACE) and
- * arm_user_result() after it.  The rules are those of bios/biosaccess.c, which
+ * bios_user_result_filter() after it.  The rules are those of bios/biosaccess.c, which
  * has them for the calls with up to four arguments in registers; what a
  * call with more, or that takes its arguments in a way only the architecture
  * knows, needs is here.  A call the kernel itself makes does not come this way.
@@ -37,10 +37,10 @@
  * and rest[0..] the fifth and later ones, as the call itself reads them off the
  * stack.  Returns E_OK, or the error the caller gets instead of the call.
  */
-long arm_user_check(WORD fn, const long *a, const long *rest, int xbios);
-long arm_user_result(long r, WORD fn, int xbios);
+long bios_user_check(WORD fn, const long *a, const long *rest, int xbios);
+long bios_user_result_filter(long r, WORD fn, int xbios);
 
-long arm_user_check(WORD fn, const long *a, const long *rest, int xbios)
+long bios_user_check(WORD fn, const long *a, const long *rest, int xbios)
 {
     if (!xbios) {
         if (fn == BIOS_RWABS) {
@@ -72,7 +72,7 @@ long arm_user_check(WORD fn, const long *a, const long *rest, int xbios)
 }
 
 /* the result r of call fn, as the process may see it (kernel addresses are 0) */
-long arm_user_result(long r, WORD fn, int xbios)
+long bios_user_result_filter(long r, WORD fn, int xbios)
 {
     return xbios ? xbios_user_result(fn, r) : bios_user_result(fn, r);
 }

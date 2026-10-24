@@ -136,9 +136,16 @@ vme_page:
         jcc     vme_pages_done
         move.l  d4,d5
         or.l    #PDT_RESIDENT+PTE_GLOBAL,d5
+#if CONF_WITH_PROCESS_ASPACES
+        // all of it, the window included (the pages are the same ones): the
+        // kernel half is not for a process, and the memory of a process is
+        // mapped in its own tables
+        or.l    #PTE_SUPER,d5
+#else
         tst.l   d4
         jne     vme_page_set
         or.l    #PTE_SUPER,d5
+#endif
 vme_page_set:
         move.l  d5,(a4)+
         add.l   #4096,d4

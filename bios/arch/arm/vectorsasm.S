@@ -218,7 +218,7 @@ C_SYM(xbiostrap):
         mov     r1, sp          // arguments 1-4
         add     r2, sp, #16     // the fifth and later ones, as the call reads them
         mov     r3, r9          // XBIOS?
-        bl      C_SYM(arm_user_check)
+        bl      C_SYM(bios_user_check)
         mov     ip, r0
         pop     {r0-r3}
         cmp     ip, #0
@@ -234,7 +234,7 @@ C_SYM(xbiostrap):
         beq     2f
         mov     r1, r11         // what a user process is told of the result
         mov     r2, r9
-        bl      C_SYM(arm_user_result)
+        bl      C_SYM(bios_user_result_filter)
 #endif
 
 2:

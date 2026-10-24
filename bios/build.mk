@@ -54,7 +54,7 @@ obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi_cf.o
 
 obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o cpudetect.o
-obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),usertrap.o)
+obj-$(CONF_WITH_PROCESS_ASPACES) += usertrap.o $(if $(ARCH_M68K),m68kusertrap.o userfault.o)
 
 # tosvars.c is arch-neutral C (see its own header comment), needed by
 # every non-m68k/ColdFire arch alike -- x86-64 gets its own obj-y line
@@ -70,7 +70,7 @@ obj-$(ARCH_X86_64) += tosvars.o aciaemu.o
 # layout of a loaded program (bios/aspace.c and the page-table backend of the
 # architecture).  x86-64 has its own, in bios/machine/pc-x86_64/.
 obj-$(CONF_WITH_PROCESS_ASPACES) += pmem32.o kheap.o procmem.o aspace.o progimage.o
-obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),aspace_hw.o)
+obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),aspace_hw.o) $(if $(ARCH_M68K),aspace_hw.o)
 
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.

@@ -169,6 +169,7 @@ config CONF_WITH_KCALL
 config CONF_WITH_SSYSTEM
 	bool
 	default y if ARCH_ARM || ARCH_X86_64
+	default y if CONF_WITH_USER_ASPACE
 	help
 	  Ssystem() (GEMDOS 0x154, bdos/ssystem.c) is written in C and
 	  dispatched from osif(); on the other architectures it is handled by
