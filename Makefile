@@ -125,6 +125,7 @@ optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 ifneq ($(CONF_WITH_AES),y)
 optional-dirs-$(CONF_WITH_X32_AES) += aes
+optional-dirs-$(CONF_WITH_CUIS) += aes
 endif
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
@@ -588,6 +589,9 @@ all: $(IMAGE) $(image-extra)
 # not an executable interpreter (doc/elf-shared.txt).
 ifeq ($(CONF_WITH_ELF_SHARED),y)
 include lib/ldso/build.mk
+endif
+ifeq ($(CONF_WITH_LIBAES),y)
+include lib/aes/build.mk
 endif
 
 # The reference values below have been gathered from major TOS versions,

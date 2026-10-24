@@ -1,0 +1,116 @@
+pTOS - userspace AES and kernel CUIS (#661)
+==========================================
+
+Migration boundary
+------------------
+
+The target is an ordinary per-process libaes.so over native Core User
+Interface Services (CUIS). There is no userspace AES daemon. Kernel CUIS
+owns shared authoritative GUI state; VDI owns drawing/hardware services.
+The initial #675 slice implements sessions and application-local rectangle
+helpers only. It does not yet supply a complete GEM AES API or replace the
+existing kernel AES. Existing x32 import clients remain available while
+operations migrate; they are not the native CUIS protocol.
+
+Inventory of the current implementation and intended ownership:
+
+AES family     Application-local libaes.so       Kernel CUIS responsibility
+----------     --------------------------       --------------------------
+appl_*         GEM API/name/message adapters    Session handles and lifecycle;
+                                                bounded authorized delivery
+ evnt_*        GEM predicates/result adapters   Atomic test/wait/wakeup, queues,
+                                                timeouts, input routing
+wind_*         Decorations, layout, local       Window identity/ownership,
+               geometry (wind_calc)             geometry, Z-order, visible regions
+menu_*         Tree layout/rendering, GEM       Active desktop menu ownership,
+               semantics, local interpretation  routed input and grabs
+form_*         Dialog state, validation,        Focus/capture and atomic waits
+               object selection/editing
+objc_*         Trees, traversal, drawing,       No owned copy of a GEM object
+               hit testing, USERDEF callbacks   tree; validate VDI/CUIS requests
+ graf_*        Geometry and interaction logic   Pointer snapshot/capture and
+                                                display coordination
+rsrc_*         File parsing, relocation,        None beyond normal safe file/VM
+               resource ownership               services
+shel_*         GEM launch/desktop adapters      Process/desktop ownership and
+                                                privileged coordination only
+scrp_*         Compatibility and file helpers   Any shared selection/ownership
+                                                policy must be explicit
+
+Current sources expose the migration points: gemaplib/gemevlib/gemasync and
+ aes_service.c combine registration, scheduling, GEM messages and waits;
+gemwmlib/gemwrect and aes_window.c combine authoritative windows with
+GEM decorations; gemoblib/gemobjop/gemobed, aes_tree.c and
+ aes_objects_kernel.c implement tree operations; gemrslib/rsload_portable
+load resources; gemfmlib/gemmnlib/gemgraf implement local interaction and
+rendering with scheduler dependencies. These dependencies must be split,
+not copied wholesale into the shared library. Native CUIS must never expose
+AESPD, EVB, WINDOW, GEM message arrays or kernel pointers.
+
+Initial implementation and deployment
+------------------------------------
+
+CONF_WITH_LIBAES is off by default and initially depends on x32 and
+CONF_WITH_ELF_SHARED. It selects the internal CONF_WITH_CUIS kernel support.
+It does not require the old AES service or a desktop just to use sessions
+and local geometry. Other architectures await their isolated address spaces
+and shared-linker support. Native m68k trap compatibility is a later slice.
+
+The build produces obj/libaes/libaes.so (SONAME libaes.so, SysV hash,
+ordinary PIC ELF32/x32), installed with the LD.SO runtime at:
+
+    obj/ldso/runtime/GEMSYS/LIB/X32/LIBAES.SO
+
+A native executable links to -laes and the dynamic CRT, and records an
+ordinary DT_NEEDED for libaes.so. No PT_PTOS_IMPORTS, fixed client image or
+kernel symbol resolution is used. The public initial interface is
+include/libaes.h: aes_session_open/query/close and the existing local
+inside/rc_constrain/rc_equal/rc_intersect/rc_union geometry helpers.
+Session state is private writable library data in each process. Normal
+finalization closes it; kernel process teardown is authoritative on faults,
+_Exit and any skipped library cleanup. Open is idempotent for one process;
+close is idempotent at the library level. Handles are never recycled during
+a boot, including close/reopen by the same process.
+
+Experimental native session ABI, version 1
+-----------------------------------------
+
+include/cuis.h defines fixed-width 32-byte request and reply structures.
+The x32 syscall class is 0x103, function CUIS_SESSION (0). Native arguments
+are request address, request byte size, reply address, reply byte size, in
+RDI/RSI/RDX/R10, with class/function in RAX as for other native services.
+Kernel-mode calls and builds without CUIS return EINVFN. This experimental
+class is separate from GEMDOS opcodes and the historic AES class 0x101.
+
+Requests contain size, version, operation, handle, flags and three reserved
+words. All flags/reserved words must be zero. Structures must be aligned to
+four bytes. Supported operations:
+
+  ATTACH (0): handle must be zero. Allocate or return the caller's session.
+  QUERY  (1): return the caller's live session, requiring its exact handle.
+  DETACH (2): revoke the caller's live session, requiring its exact handle.
+
+ATTACH and QUERY require a 32-byte writable reply. DETACH ignores the reply
+arguments. Replies contain size, version, handle, feature bits and four zero
+reserved words. Only CUIS_FEATURE_SESSION is currently advertised. No name,
+PID or kernel address is disclosed through a handle. A handle is an opaque
+identifier, not permission to act on another process's session.
+
+Unknown functions/operations return EINVFN, unsupported versions EOPNOTSUPP,
+invalid sizes/flags/reserved fields EINVAL, invalid user memory EIMBA, and
+foreign/stale/missing handles EACCDN. Allocation/handle-space exhaustion
+returns ENSMEM. All active full-width syscall values are checked before
+copying/narrowing. Requests are copied once. Failed validation or reply
+copyout does not publish a new session. Sessions are bounded to one per
+process, and no initial session operation yields or waits.
+
+Next slices
+-----------
+
+Specify native event types, bounded authorized delivery and atomic wait
+predicates before migrating evnt_*; define native window handles and redraw
+ownership before moving window/menu rendering. Reuse process scheduling,
+input, timers, copy/VM facilities and VDI. Test two active isolated GUI
+clients, focus, grabs, timeouts, redraw and failure cleanup as those features
+land. The two-session nested-client foundation test does not claim concurrent
+window/event functionality. Full libcmini integration (#673) is independent.
