@@ -15,6 +15,9 @@
 #include "endian.h"
 #include "fs.h"
 #include "fatfs.h"
+#if CONF_WITH_MMAP
+#include "fileback.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -279,6 +282,12 @@ int nextcl(OFD *p, int wrtflg)
 
     if (wrtflg && endofchain(cl2))  /* end of file, allocate new clusters */
     {
+#if CONF_WITH_MMAP
+        {
+            LONG rc = fileback_barrier();
+            if (rc < 0) return rc;
+        }
+#endif
         cl2 = findfree(cl,dm);
         if (cl2 == 0)
             return -1;

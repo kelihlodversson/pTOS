@@ -873,6 +873,7 @@ restrt:
                 /*  M01.01.07  */
                 /*  write the char in the int at pw[1]  */
             rawout:
+                ofd_reap();
 #if CONF_WITH_NATIVE_ABI
                 xwrite(h , 1L , (char *) &pw[1]);
 #else
@@ -881,6 +882,7 @@ restrt:
                 return 0; /* dummy */
 
             case 9:                 /* Cconws() */
+                ofd_reap();
                 pb2 = *((char **) &pw[1]);
                 xwrite(h,strlen(pb2),pb2);
                 return 0; /* dummy */

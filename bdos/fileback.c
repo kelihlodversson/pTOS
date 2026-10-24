@@ -18,16 +18,27 @@ struct file_backing {
 };
 static FILE_BACKING *backings;
 
-/* A failed final close retains its OFD pin for retry, not a dangling pointer.
- * A later mapping operation retries it; no new mapping reuses a retired object. */
-void fileback_reap(void)
+/* A failed final close retains its OFD pin for retry. Allocation must finish
+ * this work before scanning a FAT which may already contain a cleared entry.
+ * Let disk errors reach the caller's handler so allocation cannot continue. */
+LONG fileback_barrier(void)
 {
     FILE_BACKING **link = &backings, *b;
+    LONG rc;
     while ((b = *link)) {
-        if (!b->references && DISK_CALL(ofd_put(b->file)) == E_OK) {
-            *link = b->next; kfree(b);
+        if (!b->references) {
+            rc = ofd_put(b->file);
+            if (rc < 0) return rc;
+            *link = b->next;
+            kfree(b);
         } else link = &b->next;
     }
+    return E_OK;
+}
+
+void fileback_reap(void)
+{
+    (void)DISK_CALL(fileback_barrier());
 }
 
 LONG fileback_get(LONG handle, FILE_BACKING **out)

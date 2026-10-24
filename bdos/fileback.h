@@ -10,4 +10,5 @@ ULONG fileback_size(const FILE_BACKING *backing);
 LONG fileback_read(FILE_BACKING *backing, ULONG offset, void *buffer, ULONG size);
 void fileback_changed(void *dfd);
 void fileback_reap(void);
+LONG fileback_barrier(void);
 #endif
