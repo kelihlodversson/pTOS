@@ -8,6 +8,14 @@ the syscall ABI; the x32 syscall ABI is a separate contract.
 The launcher supplies an explicit entry type.  Startup code must not infer
 the type from p_parent, a filename, or any unspecified register value.
 
+The standard ELF interpreter path (#660), enabled by CONF_WITH_ELF_SHARED,
+has a separate implemented initial stack/auxv ABI (doc/elf-shared.txt): RSP
+is 16-byte aligned and points to argc, followed by 32-bit argv/envp/auxv.
+All general registers except RSP are initially zero, including RDX. The
+interpreter transfers to AT_ENTRY with that stack and supplies its finalizer
+callback in RDX for the application CRT to call before normal Pterm.
+Static ELF, built-in images and classic programs retain the conventions below.
+
     ENTRY_PROGRAM = 0
     ENTRY_ACCESSORY = 1
 

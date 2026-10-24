@@ -159,6 +159,15 @@ Process calls
   configurations of ARM and m68k); without a record a process has no pid, and the
   calls are EINVFN like any other call beyond the table.
 
+Anonymous mapping extensions (#660)
+-----------------------------------
+
+  CONF_WITH_MMAP initially exposes Mmap (0x17e) and Munmap (0x17f), slots
+  reserved but undefined by FreeMiNT, plus Mprot at the currently unassigned
+  0x17c as a pTOS extension. Maccess (0x17d) remains an access query.
+  These initially support private anonymous pages only; see doc/mmap.txt
+  for the native six-argument ABI, flags, permissions and error semantics.
+
 Not in this issue
 -----------------
 

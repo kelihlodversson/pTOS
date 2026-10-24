@@ -37,6 +37,11 @@ because a uniform shift of the whole image preserves their offsets.
 Accepted binaries
 -----------------
 
+This section describes the existing static loader.  Standard shared-library
+work is tracked separately in doc/elf-shared.txt (#660), initially for x32
+with isolated MMU-backed address spaces.  It is not yet a working dynamic
+execution path; ET_DYN/static PIE support here does not imply .so support.
+
 (On x86-64 the image is not placed in the TPA at all: it is read, and relocated
 by this loader if it was not linked for the image window, straight into the
 pages the process will run from, in the process's own address space or, for a

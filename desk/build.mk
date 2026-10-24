@@ -21,6 +21,9 @@ desk-prog-y := $(filter-out deskstart.o,$(desk-prog-y)) deskentry.o deskuser.o \
                deskaes.o deskwind.o desktree.o deskfsel.o gemrslib.o rsload_portable.o \
                gemfslib.o gem_rsc.o gemobjop.o gemobed.o gemgrlib.o \
                gemgraphutil.o gemfmerror.o gemfmalt.o
+ifeq ($(CONF_WITH_DYNAMIC_DESK),y)
+desk-prog-y := $(filter-out deskentry.o doprintf.o memmove.o string.o,$(desk-prog-y))
+endif
 endif
 
 else

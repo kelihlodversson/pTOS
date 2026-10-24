@@ -138,6 +138,46 @@ config CONF_WITH_USER_ASPACE
 	  requires CONF_WITH_KPROC.  The separate-address-spaces option
 	  (#402) will become the real home of this.
 
+config CONF_WITH_FILE_PINS
+	bool
+	help
+	  Retain native file backing independently of GEMDOS handles. Selected
+	  by file mappings and by their lifetime self-tests; ordinary unlink
+	  lifetime support does not require this internal kernel entry point.
+
+config CONF_WITH_MMAP
+	bool "Private anonymous and file-backed process mappings"
+	depends on CONF_WITH_USER_ASPACE && ARCH_X86_64
+	select CONF_WITH_FILE_PINS
+	default n
+	help
+	  Provide Mmap, Munmap and Mprot for private anonymous and native FAT
+	  file pages in a separate per-process window. File pages are shared
+	  read-only until a private write fault; anonymous pages stay lazy zero.
+	  Enforce W^X, lifetime and memory limits. MAP_SHARED and replacing
+	  MAP_FIXED are not supported. Initially x32 only;
+	  other backends need isolated MMU address spaces first.
+
+config CONF_WITH_ELF_SHARED
+	bool "Experimental userspace ELF shared-library linker core"
+	depends on CONF_WITH_ELF_LOADER && CONF_WITH_USER_ASPACE && ARCH_X86_64
+	select CONF_WITH_MMAP
+	default n
+	help
+	  Build the freestanding userspace linker core for standard ELF shared
+	  objects.  Requires isolated, MMU-backed process address spaces; only
+	  x32 provides the necessary backend initially.  ARM and m68k can be
+	  enabled here after their address-space implementations are merged.
+
+	  Includes a freestanding ld.so and a separate dynamic CRT/client subset.
+	  Private mapping/protection services use Mmap, Munmap and Mprot; interpreter
+	  handoff and a private argc/argv/envp/auxv stack are implemented and tested.
+	  Eager x32 relocation and dependency discovery are available in the core.
+	  DSO pages use retained file-backed private mappings and write-fault COW.
+	  A complete shared libcmini and advanced ELF features remain separate.
+	  Static ELF and classic PRG loading are unchanged.
+	  The core is built separately from the kernel, in obj/ldso/.
+
 config CONF_WITH_KHEAP
 	bool
 	default y if ARCH_X86_64

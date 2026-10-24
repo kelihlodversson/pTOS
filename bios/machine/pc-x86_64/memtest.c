@@ -48,6 +48,7 @@
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
+#include "../../../bdos/mem.h"
 #if CONF_WITH_X32_VDI
 #include "lineavars.h"
 #include "screen_mode.h"
@@ -760,6 +761,12 @@ static void test_isolation(void)
         CHECK(aspace_fault_in(a, va + 100 * PAGE, rw) &&
               aspace_private_pages(a) == before + 2,
               "a second page, far away");
+        CHECK(!aspace_protect_private(a, va, 101 * PAGE, ASPACE_PROT_USER) &&
+              aspace_protect_lazy(a, va, 101 * PAGE, ASPACE_PROT_USER) &&
+              aspace_private_pages(a) == before + 2 &&
+              aspace_translate(a, va + 100 * PAGE, NULL, &prot) &&
+              !(prot & ASPACE_PROT_WRITE) && !aspace_translate(a, va + PAGE, NULL, NULL),
+              "lazy protection skips gaps without allocating; eager protection still refuses them");
         CHECK(!aspace_fault_in(a, USER_VA_LIMIT, rw), "not above the 32-bit limit");
         CHECK(aspace_release_lazy(a, va, 200 * PAGE) &&
               aspace_private_pages(a) == before &&
@@ -785,6 +792,29 @@ static void test_isolation(void)
     }
     aspace_destroy(a);
     same(&s, "lazy pages");
+
+    /* A foreign page late in a sparse range must prevent every permission
+     * change, including changes to an earlier private page. */
+    snap(&s);
+    a = must_create("lazy protection ownership");
+    probe = x86_64_pmem_try_alloc_pages(1, 0);
+    if (a && probe != X86_64_PMEM_NONE) {
+        UQUAD va = 0x20000000ULL;
+        UWORD prot;
+
+        CHECK(aspace_fault_in(a, va, ASPACE_PROT_USER) &&
+              aspace_map_page(a, va + 2 * PAGE, probe, ASPACE_PROT_USER),
+              "private and borrowed pages around an untouched gap");
+        CHECK(!aspace_protect_lazy(a, va, 3 * PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE) &&
+              aspace_translate(a, va, NULL, &prot) && !(prot & ASPACE_PROT_WRITE),
+              "lazy protection refuses borrowed backing before changing any page");
+    } else {
+        CHECK(FALSE, "lazy protection ownership allocation");
+    }
+    aspace_destroy(a);
+    if (probe != X86_64_PMEM_NONE)
+        x86_64_pmem_free_pages(probe, 1);
+    same(&s, "lazy protection ownership");
 
     /* many create/map/destroy cycles, and failure at every allocation point */
     for (i = 0; i < 300; i++) {
@@ -1413,6 +1443,419 @@ static void probe_expect(char mode, long want, const char *what)
     same(&s, what);
 }
 
+#if CONF_WITH_MMAP
+static void free_mapping_process(PD *pd)
+{
+    if (pd) {
+        set_owner(pd, pd);
+        set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+        proc_free_owned(pd);
+    }
+}
+
+static void test_mmap(void)
+{
+    SNAP s;
+    PD *a, *b;
+    ASPACE *as, *bs;
+    UQUAD pa, pb;
+    ULONG value, private_a, private_b;
+    UWORD prot;
+    LONG rc;
+    int k, refused = 0, mapped = 0;
+
+    snap(&s);
+    a = new_basepage();
+    b = new_basepage();
+    if (a && b && kproc_prepare_user(a, run) && kproc_prepare_user(b, run)) {
+        as = kproc_user_aspace(a);
+        bs = kproc_user_aspace(b);
+        private_a = aspace_private_pages(as);
+        private_b = aspace_private_pages(bs);
+        CHECK(kproc_mmap(a, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == PTOS_MMAP_BASE,
+              "first process anonymous map");
+        CHECK(kproc_mmap(b, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == PTOS_MMAP_BASE,
+              "second process uses same virtual address");
+        CHECK(!aspace_translate(as, PTOS_MMAP_BASE, NULL, NULL) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE, NULL, NULL) &&
+              aspace_private_pages(as) == private_a && aspace_private_pages(bs) == private_b,
+              "anonymous reservations have no physical backing yet");
+        CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 1 &&
+              kproc_demand_page(b, PTOS_MMAP_BASE, 0) == 1,
+              "first legal touches back private pages");
+        CHECK(aspace_private_pages(as) == private_a + 1 &&
+              aspace_private_pages(bs) == private_b + 1,
+              "one physical page per touched mapping page");
+        pa = pb = 0;
+        CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) &&
+              aspace_translate(bs, PTOS_MMAP_BASE, &pb, NULL) && pa != pb,
+              "anonymous mappings have distinct physical pages");
+        value = 0x660;
+        CHECK(aspace_copy_to_user(as, PTOS_MMAP_BASE, &value, sizeof(value)),
+              "write first process mapping");
+        value = 1;
+        CHECK(aspace_copy_from_user(bs, &value, PTOS_MMAP_BASE, sizeof(value)) && !value,
+              "second process private data stays zero");
+        CHECK(kproc_psetlimit(a, PSETLIMIT_DATA, PAGE) == 0,
+              "set anonymous allocation limit");
+        CHECK(kproc_mmap(a, 0, PAGE, PROT_READ,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == ENSMEM &&
+              !kproc_uheap_alloc(a, PAGE), "mapping bytes count against allocation limits");
+        CHECK(kproc_psetlimit(a, PSETLIMIT_DATA, 0) == PAGE, "restore limit");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE, PAGE, PROT_READ | PROT_EXEC) == 0 &&
+              aspace_translate(as, PTOS_MMAP_BASE, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC) && !(prot & ASPACE_PROT_WRITE),
+              "Mprot applies RX permissions");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE, PAGE, PROT_WRITE | PROT_EXEC) == EACCDN,
+              "Mprot refuses WX");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE + PAGE, PAGE, PROT_READ) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + PAGE, ASPACE_PROT_WRITE) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + PAGE, 0) == 1 &&
+              aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, &prot) &&
+              (prot & ASPACE_PROT_USER) && !(prot & (ASPACE_PROT_WRITE | ASPACE_PROT_EXEC)),
+              "untouched read-only page is backed only for a legal read");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE + 2 * PAGE, PAGE, PROT_NONE) == 0 &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + 2 * PAGE, 0) == 0 &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + 2 * PAGE, ASPACE_PROT_EXEC) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
+              "PROT_NONE never allocates a page");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE + 2 * PAGE, PAGE, PROT_READ | PROT_EXEC) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL) &&
+              kproc_demand_page(a, PTOS_MMAP_BASE + 2 * PAGE, ASPACE_PROT_EXEC) == 1 &&
+              aspace_translate(as, PTOS_MMAP_BASE + 2 * PAGE, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC) && !(prot & ASPACE_PROT_WRITE),
+              "first instruction fetch honors permissions changed before first touch");
+        CHECK(kproc_munmap(a, PTOS_MMAP_BASE + PAGE, PAGE) == 0 &&
+              !aspace_translate(as, PTOS_MMAP_BASE + PAGE, NULL, NULL),
+              "middle unmap removes the page");
+        CHECK(kproc_mprot(a, PTOS_MMAP_BASE, 3 * PAGE, PROT_READ) == EIMBA &&
+              aspace_translate(as, PTOS_MMAP_BASE, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC), "Mprot across a hole is atomic");
+        CHECK(kproc_munmap(a, PTOS_MMAP_BASE, 3 * PAGE) == 0,
+              "unmap spans two remaining regions and a hole");
+        CHECK(aspace_private_pages(as) == private_a,
+              "unmap frees only pages that were backed");
+        CHECK(kproc_mmap(a, 0, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == PTOS_MMAP_BASE &&
+              aspace_private_pages(as) == private_a,
+              "full mapping window is reserved without physical pages");
+        CHECK(kproc_demand_page(a, PTOS_MMAP_LIMIT - PAGE, ASPACE_PROT_WRITE) == 1 &&
+              aspace_private_pages(as) == private_a + 1,
+              "sparse reservation backs only its last page on touch");
+        CHECK(kproc_munmap(a, PTOS_MMAP_BASE, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE) == 0 &&
+              aspace_private_pages(as) == private_a,
+              "sparse unmap skips untouched pages");
+    } else {
+        CHECK(FALSE, "mapping test process preparation");
+    }
+    free_mapping_process(a);
+    free_mapping_process(b);             /* unmap on destruction, too */
+    same(&s, "anonymous mapping isolation/cleanup");
+
+    for (k = 1; k <= 16; k++) {
+        snap(&s);
+        a = new_basepage();
+        if (a && kproc_prepare_user(a, run)) {
+            CHECK(kproc_mmap(a, 0, 3 * PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == PTOS_MMAP_BASE,
+                  "reserve mapping before first-touch failure injection");
+            x86_64_pmem_test_fail_after(k);
+            rc = kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE);
+            x86_64_pmem_test_fail_after(0);
+            CHECK(rc == 1 || rc == 2, "first-touch allocation outcome");
+            if (rc == 2) {
+                refused++;
+                CHECK(!aspace_translate(kproc_user_aspace(a), PTOS_MMAP_BASE, NULL, NULL),
+                      "failed first touch leaves no backing page");
+                CHECK(kproc_mmap(a, PTOS_MMAP_BASE, PAGE, PROT_READ,
+                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0)
+                       == EACCDN, "failed first touch retains its reservation");
+                CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 1,
+                      "first touch can be retried after allocation failure");
+            } else {
+                mapped++;
+            }
+        } else {
+            CHECK(FALSE, "failure-injection process preparation");
+        }
+        free_mapping_process(a);
+        same(&s, "anonymous first-touch failure cleanup");
+    }
+    CHECK(refused && mapped, "first-touch allocation failures and successes exercised");
+}
+
+static void test_file_mmap(void)
+{
+    static char path[] = "C:\\MMAP.TMP";
+    char block[64], value, readback;
+    PD *a = NULL, *b = NULL, *c = NULL, *parent = run;
+    ASPACE *as, *bs, *cs;
+    SNAP snapshot;
+    UQUAD pa, pb, pc;
+    DMD *media = NULL;
+    CLNO head = 0;
+    long fd = -1, fresh = -1;
+    int i, before = failures;
+
+    snap(&snapshot);
+    fd = DISK_CALL(xcreat(path, 0));
+    CHECK(fd >= NUMSTD, "create file mapping fixture");
+    if (fd < NUMSTD) goto done;
+    for (i = 0; i < 257; i++) {
+        memset(block, 'A' + i / 64, sizeof(block));
+        if (DISK_CALL(xwrite(fd, sizeof(block), block)) != sizeof(block)) break;
+    }
+    CHECK(i == 257, "write patterned file mapping fixture");
+    media = getofd(fd)->o_dmd; head = getofd(fd)->o_dfd->o_strtcl;
+    a = new_basepage(); b = new_basepage(); c = new_basepage();
+    if (!a || !b || !c || !kproc_prepare_user(a, run) ||
+        !kproc_prepare_user(b, run) || !kproc_prepare_user(c, run)) {
+        CHECK(FALSE, "prepare file mapping address spaces"); goto done;
+    }
+    as = kproc_user_aspace(a); bs = kproc_user_aspace(b); cs = kproc_user_aspace(c);
+    CHECK(kproc_mmap(a, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE &&
+          kproc_mmap(b, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE,
+          "reserve lazy private file mappings in two processes");
+    CHECK(aspace_file_pages() == 0 && kproc_demand_page(a, PTOS_MMAP_BASE, 0) == 1 &&
+          kproc_demand_page(b, PTOS_MMAP_BASE, 0) == 1, "file mappings fault lazily");
+    CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) &&
+          aspace_translate(bs, PTOS_MMAP_BASE, &pb, NULL) && pa == pb &&
+          aspace_file_pages() == 1 && aspace_file_references() == 2,
+          "clean pages share physical backing by identity and offset");
+    CHECK(DISK_CALL(xlseek(0, fd, 1)) == 257 * 64 &&
+          kproc_user_access(b, PTOS_MMAP_BASE, 1, TRUE), "fault preserves file position and logical write access");
+    getofd(fd)->o_dfd->o_flag |= O_MEDIA_LOST;
+    CHECK(kproc_demand_page(b, PTOS_MMAP_BASE + PAGE, 0) == 3 &&
+          !aspace_translate(bs, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+          aspace_file_pages() == 1 && aspace_file_references() == 2,
+          "backing I/O error leaves no partial mapping, page or cache reference");
+    getofd(fd)->o_dfd->o_flag &= ~O_MEDIA_LOST;
+    x86_64_pmem_test_fail_after(1);
+    CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 2, "injected COW allocation failure");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pc, NULL) && pc == pa &&
+          aspace_file_references() == 2, "failed COW preserves original mapping and references");
+    CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 1 &&
+          aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) && pa != pb, "write fault makes a private page");
+    value = 'Z';
+    CHECK(aspace_copy_to_user(as, PTOS_MMAP_BASE, &value, 1) &&
+          aspace_copy_from_user(bs, &readback, PTOS_MMAP_BASE, 1) && readback == 'A', "COW preserves peer contents");
+    CHECK(kproc_mprot(b, PTOS_MMAP_BASE, PAGE, PROT_READ) == 0 &&
+          kproc_demand_page(b, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 0 &&
+          kproc_mprot(b, PTOS_MMAP_BASE, PAGE, PROT_READ | PROT_WRITE) == 0 &&
+          aspace_file_cow(bs, PTOS_MMAP_BASE), "Mprot preserves COW and enforces logical permissions");
+    value = 'X';
+    CHECK(DISK_CALL(xlseek(0, fd, 0)) == 0 && DISK_CALL(xwrite(fd, 1, &value)) == 1 &&
+          kproc_mmap(c, 0, 5 * PAGE, PROT_READ, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE &&
+          kproc_demand_page(c, PTOS_MMAP_BASE, 0) == 1 &&
+          aspace_copy_from_user(cs, &readback, PTOS_MMAP_BASE, 1) && readback == 'X',
+          "new mappings do not reuse a stale cache generation after Fwrite");
+    CHECK(aspace_translate(cs, PTOS_MMAP_BASE, &pc, NULL) && pc != pb, "new generation has separate backing");
+    run = b; value = 'K';
+    CHECK(kproc_copy_to_user(PTOS_MMAP_BASE, &value, 1), "kernel buffer write triggers COW");
+    run = parent;
+    CHECK(aspace_copy_from_user(cs, &readback, PTOS_MMAP_BASE, 1) && readback == 'X', "kernel COW preserves peer");
+    CHECK(DISK_CALL(xunlink(path)) == 0 && kdos_fclose(fd) == 0, "unlink and close while mapped"); fd = -1;
+    CHECK(DISK_CALL(getrealcl(head, media)) != FREECLUSTER &&
+          kproc_demand_page(b, PTOS_MMAP_BASE + 4 * PAGE, 0) == 1 &&
+          aspace_copy_from_user(bs, &readback, PTOS_MMAP_BASE + 4 * PAGE, 1) && readback == 'E' &&
+          aspace_copy_from_user(bs, &readback, PTOS_MMAP_BASE + 4 * PAGE + 64, 1) && !readback,
+          "retained backing faults after unlink/close and zero fills final file page");
+    CHECK(kproc_munmap(b, PTOS_MMAP_BASE + 2 * PAGE, PAGE) == 0 &&
+          kproc_demand_page(b, PTOS_MMAP_BASE + 3 * PAGE, 0) == 1 &&
+          aspace_copy_from_user(bs, &readback, PTOS_MMAP_BASE + 3 * PAGE, 1) && readback == 'D',
+          "middle unmap preserves backing offsets and references");
+    fresh = DISK_CALL(xcreat(path, 0));
+    CHECK(fresh >= NUMSTD && DISK_CALL(xwrite(fresh, 1, &value)) == 1, "recreate mapped pathname");
+    {
+        UQUAD previous = aspace_enter(as);
+        kproc_shutdown_file_mappings();
+        aspace_leave(previous);
+        CHECK(!aspace_translate(as, PTOS_MMAP_BASE, NULL, NULL) && !aspace_file_pages() &&
+              DISK_CALL(getrealcl(head, media)) == FREECLUSTER,
+              "shutdown releases all file views and unlinked chains while retaining active kernel stack");
+    }
+done:
+    run = parent;
+    if (fd >= NUMSTD) kdos_fclose(fd);
+    free_mapping_process(a); free_mapping_process(b); free_mapping_process(c);
+    CHECK(aspace_file_pages() == 0 && aspace_file_references() == 0, "last mapping frees cached file pages");
+    if (head) CHECK(DISK_CALL(getrealcl(head, media)) == FREECLUSTER, "last mapping reference releases unlinked cluster chain");
+    if (fresh >= NUMSTD) kdos_fclose(fresh);
+    DISK_CALL(xunlink(path));
+    same(&snapshot, "file-backed private mappings");
+    kcprintf("x86-64 file mappings/COW: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
+static void test_mapping_ring3(void)
+{
+    int before = failures;
+
+    test_mmap();
+    test_file_mmap();
+    probe_expect('0', 0, "file-backed ring-3 execution, COW, Fread, offset, unlink and split teardown");
+    probe_expect('5', 0, "ELF mapping syscall: bounds, ownership, partial unmap, zeroing");
+    probe_expect('[', 0, "ELF private code executes after RW to RX transition");
+    probe_expect(']', 0xffff, "ELF RX mapping refuses writes");
+    probe_expect('{', 0xffff, "ELF NX mapping refuses execution");
+    probe_expect('}', 0xffff, "ELF PROT_NONE mapping refuses reads");
+    probe_expect('|', 0, "ELF mappings reclaimed on exit");
+    probe_expect('6', 0, "lazy anonymous first reads and kernel writes, untouched NONE, mixed Mprot");
+    probe_expect('7', 0xffff, "first touch cannot write read-only anonymous memory");
+    probe_expect('8', 0xffff, "first touch cannot execute NX anonymous memory");
+    probe_expect('9', 0xffff, "first touch cannot read PROT_NONE anonymous memory");
+    kcprintf("x86-64 mmap syscalls: %s\n", failures == before ? "PASS" : "FAIL");
+
+}
+
+#endif
+
+#if CONF_WITH_ELF_SHARED
+static void discard_interpreter(long address)
+{
+    PD *pd = (PD *)(uintptr_t)address;
+    void *env = USERPTR_TO_PTR(pd->p_env);
+    CHECK(Mfree(pd) == 0 && Mfree(env) == 0, "discard staged interpreter and environment");
+}
+
+static void test_interpreter_failures(void)
+{
+    static const char tail[] = { 0, 0 };
+    static const char env[] = "CHECK=660\0SECOND=value\0\0";
+    SNAP s;
+    long rc;
+    int k, failed = 0, succeeded = 0;
+
+    /* Prime filesystem caches before taking allocator snapshots. */
+    rc = Pexec(PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
+    CHECK(rc > 0, "interpreter failure-test fixture is available");
+    if (rc <= 0)
+        return;
+    discard_interpreter(rc);
+    for (k = 1; k <= 64; k++) {
+        snap(&s);
+        x86_64_pmem_test_fail_after(k);
+        rc = Pexec(PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
+        x86_64_pmem_test_fail_after(0);
+        if (rc > 0) {
+            succeeded++;
+            discard_interpreter(rc);
+        } else {
+            failed++;
+            CHECK(rc == ENSMEM, "failed interpreter allocation reports ENSMEM");
+        }
+        same(&s, "interpreter load allocation failure/discard");
+    }
+    CHECK(failed && succeeded, "interpreter allocation failures and successes exercised");
+}
+#endif
+
+static void test_backing_media_change(void)
+{
+    DMD media;
+    DND directory;
+    OFD *pin;
+    int slots[2], i, n = 0;
+
+    for (i = 0; i < OPNFILES && n < 2; i++)
+        if (!sft[i].f_own) slots[n++] = i;
+    CHECK(n == 2, "free slots for media-change reference test");
+    if (n != 2) return;
+    memset(&media, 0, sizeof(media)); memset(&directory, 0, sizeof(directory));
+    media.m_dtl = &directory;
+    pin = MGET(OFD);
+    pin->o_dfd = &pin->o_disk; pin->o_disk.o_usecnt = 1;
+    pin->o_disk.o_flag = O_UNLINKED; pin->o_disk.o_strtcl = 0x4321;
+    pin->o_refs = 1; pin->o_dmd = &media; pin->o_dnode = &directory;
+    directory.d_files = pin;
+    CHECK(ofd_hold(pin), "pin before simulated media removal");
+    for (i = 0; i < 2; i++) {
+        sft[slots[i]].f_ofd = pin; sft[slots[i]].f_own = run; sft[slots[i]].f_use = 1;
+    }
+    ofd_invalidate_drive(&media);
+    CHECK(!directory.d_files && !sft[slots[0]].f_ofd && !sft[slots[1]].f_ofd &&
+          pin->o_refs == 1 && !pin->o_dmd && !pin->o_dnode &&
+          (pin->o_dfd->o_flag & O_MEDIA_LOST), "media loss drops aliased handles once and retains pin");
+    CHECK(!ofd_hold(pin), "invalidated backing cannot acquire fresh references");
+    CHECK(ofd_put(pin) == E_OK, "media-lost pin releases without touching the replacement FAT");
+}
+
+/* The pin is the reference a file-backed mapping will hold after Fclose. */
+static void test_unlinked_backing(void)
+{
+    static char path[] = "C:\\UNLINK.TMP";
+    static char original[64];
+    static char replacement[] = "new";
+    OFD *pin = NULL;
+    DMD *dm = NULL;
+    CLNO head = 0;
+    long first = -1, second = -1, fresh = -1, rc;
+    int i, before = failures;
+    char readback[8];
+
+    memset(original, 'A', sizeof(original));
+    first = DISK_CALL(xcreat(path, 0));
+    CHECK(first >= NUMSTD, "create unlink fixture");
+    if (first < NUMSTD) goto done;
+    for (i = 0; i < 129; i++)
+        if (DISK_CALL(xwrite(first, sizeof(original), original)) != sizeof(original)) break;
+    CHECK(i == 129, "write multi-cluster unlink fixture");
+    second = DISK_CALL(xopen(path, 0));
+    CHECK(second >= NUMSTD, "independent open before unlink");
+    if (second < NUMSTD) goto done;
+    if (!ofd_hold(getofd(first))) {
+        CHECK(FALSE, "backing reference retains open object"); goto done;
+    }
+    pin = getofd(first);
+    head = pin->o_dfd->o_strtcl; dm = pin->o_dmd;
+    CHECK(getofd(second)->o_dfd == pin->o_dfd, "opens share one backing identity");
+    CHECK(DISK_CALL(xunlink(path)) == E_OK, "unlink while handles and backing pin remain");
+    CHECK(DISK_CALL(xopen(path, 0)) == EFILNF, "unlinked name disappears immediately");
+    fresh = DISK_CALL(xcreat(path, 0));
+    CHECK(fresh >= NUMSTD, "reuse deleted name while old object lives");
+    if (fresh < NUMSTD) goto done;
+    CHECK(getofd(fresh)->o_dfd != pin->o_dfd, "reused slot creates a new file identity");
+    CHECK(DISK_CALL(xwrite(fresh, 3, replacement)) == 3, "write replacement contents");
+    CHECK(DISK_CALL(xlseek(0, second, 0)) == 0 &&
+          DISK_CALL(xread(second, sizeof(readback), readback)) == sizeof(readback) &&
+          readback[0] == 'A' && readback[7] == 'A', "old handle still reads old contents");
+    CHECK(kdos_fclose(first) == E_OK, "close first handle while backing pinned"); first = -1;
+    CHECK(kdos_fclose(second) == E_OK, "close final handle while backing pinned"); second = -1;
+    CHECK(pin->o_refs == 1 && DISK_CALL(getrealcl(head, dm)) != FREECLUSTER,
+          "cluster chain survives final handle close");
+    CHECK(DISK_CALL(ixlseek(pin, pin->o_dfd->o_fileln)) >= 0 &&
+          DISK_CALL(ixwrite(pin, 1, replacement)) == 1, "unlinked backing may grow without touching new entry");
+    CHECK(DISK_CALL(ixlseek(pin, 0)) == 0 && DISK_CALL(ixread(pin, 8, readback)) == 8 &&
+          readback[0] == 'A', "pin can read after all handles close");
+    pin->o_dfd->o_flag |= O_CLOSING;
+    CHECK(DISK_CALL(ixread(pin, 1, readback)) == EACCDN &&
+          DISK_CALL(ixwrite(pin, 1, replacement)) == EACCDN &&
+          DISK_CALL(ixlseek(pin, 0)) == EACCDN && !ofd_hold(pin),
+          "closing backing refuses ordinary I/O and fresh mapping pins");
+    pin->o_dfd->o_flag &= ~O_CLOSING;
+    rc = DISK_CALL(ofd_put(pin));
+    CHECK(rc == E_OK, "release final in-memory reference");
+    if (rc == E_OK) pin = NULL;
+    CHECK(DISK_CALL(getrealcl(head, dm)) == FREECLUSTER, "last reference reclaims old cluster chain");
+    CHECK(kdos_fclose(fresh) == E_OK, "close replacement"); fresh = -1;
+    fresh = DISK_CALL(xopen(path, 0));
+    CHECK(fresh >= NUMSTD && DISK_CALL(xlseek(0, fresh, 2)) == 3 &&
+          DISK_CALL(xlseek(0, fresh, 0)) == 0 &&
+          DISK_CALL(xread(fresh, 3, readback)) == 3 && !memcmp(readback, replacement, 3),
+          "old close never overwrites replacement directory metadata");
+done:
+    if (first >= NUMSTD) kdos_fclose(first);
+    if (second >= NUMSTD) kdos_fclose(second);
+    if (fresh >= NUMSTD) kdos_fclose(fresh);
+    if (pin) DISK_CALL(ofd_put(pin));
+    DISK_CALL(xunlink(path));
+    kcprintf("x86-64 unlinked file backing: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
 static void test_callback_irq_failure(char mode)
 {
@@ -1686,6 +2129,31 @@ static void test_ring3(void)
     }
 #else
     probe_expect('W', 0, "the optional VDI services are explicitly refused in the baseline");
+#endif
+
+#if CONF_WITH_MMAP
+    test_mapping_ring3();
+#else
+    probe_expect('4', 0, "mapping calls are unavailable when disabled");
+    kcprintf("x86-64 mmap syscalls: disabled\n");
+#endif
+
+#if CONF_WITH_ELF_SHARED
+    {
+        int before = failures;
+        ULONG shared_before;
+        probe_expect('3', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
+        probe_expect('2', 0, "PT_INTERP initial stack/auxv, direct and split Pexec, repeated cleanup");
+        test_interpreter_failures();
+        shared_before = aspace_file_cross_shares();
+        probe_expect('1', 0, "filesystem LD.SO: binding, preinit/init/fini order, repeated cleanup");
+        CHECK(aspace_file_cross_shares() != shared_before,
+              "nested dynamic programs reuse physical DSO pages across address spaces");
+        CHECK(!aspace_file_pages() && !aspace_file_references(), "runtime file page cache fully reclaimed");
+        kcprintf("x86-64 LD.SO runtime: %s\n", failures == before ? "PASS" : "FAIL");
+        kcprintf("x86-64 ldso relocations: %s\n", failures == before ? "PASS" : "FAIL");
+        kcprintf("x86-64 PT_INTERP startup: %s\n", failures == before ? "PASS" : "FAIL");
+    }
 #endif
 
     /* each process gets fresh private pages: what the first leaves in its
@@ -2267,6 +2735,8 @@ void x86_64_memtest_run(void)
     test_lifecycle();
     test_x32image();
     test_move_private();
+    test_backing_media_change();
+    test_unlinked_backing();
     test_ring3();
 
     same(&s, "whole memtest");

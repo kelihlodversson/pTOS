@@ -11,6 +11,16 @@
 
 #include "bdosdefs.h"
 #if CONF_WITH_USER_ASPACE
+#if CONF_WITH_MMAP
+#include "mman.h"
+/* Kernel-owned mapping records: only this process's linker window is
+ * affected.  Full-width syscall slots are checked before narrowing. */
+LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
+                UQUAD flags, UQUAD fd, UQUAD offset);
+void kproc_shutdown_file_mappings(void);
+LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length);
+LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection);
+#endif
 #include "procmem.h"      /* ASPACE */
 #include "progimage.h"
 #endif
@@ -73,6 +83,13 @@ BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched *
  * with it by kproc_destroy(), exactly once.  kproc_create() must have
  * succeeded for pd first.
  */
+#if CONF_WITH_ELF_SHARED
+#include "../lib/ldso/image.h"
+LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
+                            const DL_IMAGE *interpreter, const UBYTE *interp_file,
+                            const char *filename);
+#endif
+BOOL kproc_standard_entry(PD *pd);
 BOOL kproc_prepare_user(PD *pd, PD *parent);
 /*
  * Makes the process a built-in x32 program: kproc_prepare_user() will also
@@ -157,11 +174,13 @@ UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
  * Mshrink() of a block's start (EIMBA: no such block, EGSBF: bigger).
  */
 BOOL kproc_has_heap(PD *pd);
-/* The page fault handler's question: `va` is in the stack or a Malloc() block of
+/* The page fault handler's question: `va` is in lazy stack, Malloc() or anonymous memory of
  * the process, whose page has not been touched yet.  0: it is not (a real fault);
  * 1: it is, and the page is backed now; 2: it is, and no physical page was left
- * (the process is to be terminated). */
-int kproc_demand_page(PD *pd, UQUAD va);
+ * (the process is to be terminated); 3: backing-file I/O failed. */
+/* access: ASPACE_PROT_WRITE for a write, ASPACE_PROT_EXEC for a fetch,
+ * zero for a read. Disallowed access returns 0 without allocating a page. */
+int kproc_demand_page(PD *pd, UQUAD va, UWORD access);
 /* Psetlimit(): modes 2 and 3 are MiNT's (total memory, Malloc()ed memory, in
  * bytes), PSETLIMIT_STACK is this port's (the stack's address space); see
  * bdos/kproc.c.  Returns the old value, or a negative error code. */

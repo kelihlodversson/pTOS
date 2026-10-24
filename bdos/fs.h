@@ -159,7 +159,7 @@ typedef struct
 typedef struct
 {
     UWORD o_flag;       /* see below                            */
-    WORD  o_usecnt;     /* count of open OFDs pointing here     */
+    WORD  o_usecnt;     /* count of live OFDs pointing here     */
                     /* the following 3 items must be as in FCB: */
     DOSTIME o_td;       /* creation time/date: little-endian!   */
     CLNO  o_strtcl;     /* starting cluster number              */
@@ -167,6 +167,7 @@ typedef struct
                          * long: this mirrors FCB's own on-disk
                          * 32-bit field (see FCB's own comment),
                          * not a native-width value              */
+    CLNO o_reclaim_next; /* saved FAT successor during unlink reclamation */
 } OPT_PACKED DFD;
 
 
@@ -174,6 +175,10 @@ typedef struct
  * bit usage in o_flag
  */
 #define O_DIRTY     1   /* contents have changed, FCB on disk must be updated */
+#define O_UNLINKED  2   /* directory entry removed; reclaim at last reference */
+#define O_CLOSING 16 /* reclamation started: public I/O and new pins refused */
+#define O_RECLAIM_PENDING 8 /* saved successor valid until FAT flush succeeds */
+#define O_MEDIA_LOST 4  /* backing medium invalidated; never touch its FAT */
 
 
 
@@ -198,9 +203,15 @@ struct _ofd
     UWORD o_curbyt;     /* byte pointer within current cluster  */
     OFD   *o_thread;    /*  multiple open thread list          */
     UWORD o_mod;        /* mode file opened in (see below)      */
+#if CONF_WITH_FILE_PINS
+    UWORD o_refs;       /* one SFT group reference plus backing-object pins */
+#endif
 
     DFD   o_disk;       /* data to be synchronised with the disk*/
 } ;
+
+/* FOLDRnnn-compatible allocation class on 32-bit pointer targets. */
+typedef char ofd_legacy_size[(sizeof(void *) != 4 || sizeof(OFD) <= 64) ? 1 : -1];
 
 /*
  * bit usage in o_mod
@@ -210,6 +221,7 @@ struct _ofd
  * note: bits 4-7 are only used if GEMDOS file-sharing/record-locking
  *       is implemented
  */
+#define UNLINK_PENDING 0x0100 /* queue owns an uncommitted name removal */
 #define INH_MODE    0x80    /* bit 7 is inheritance flag (not yet implemented) */
 #define MODE_FSM    0x70    /* bits 4-6 are file sharing mode (not yet implemented) */
 #define MODE_FAC    0x07    /* bits 0-2 are file access code: */
@@ -471,6 +483,17 @@ long xopen(char *name, WORD mod);
 /* Close a file */
 long xclose(WORD h);
 long ixclose(OFD *fd, int part);
+/* Native FAT backing references, independent of SFT handle lifetime.
+ * ofd_put can perform disk I/O: wrap in DISK_CALL outside osif. A failed
+ * release retains its reference for retry. Media-lost references only free
+ * memory; they never access the new medium. */
+#if CONF_WITH_FILE_PINS
+BOOL ofd_hold(OFD *fd);
+#endif
+OFD *ofd_find(DND *dn, long pos);
+void ofd_reap(void);
+long ofd_put(OFD *fd);
+void ofd_invalidate_drive(DMD *dm);
 
 /* remove a file */
 long xunlink(char *name);
@@ -614,6 +637,7 @@ FTAB *getpfsslot(int h);
 /* Misc. defines */
                     /* the following are used for the second arg to ixclose() */
 #define CL_DIR  0x0002      /* this is a directory file, flush, do not free */
+#define CL_KEEP 0x0008      /* flush file metadata/data, keep its OFD linked */
 #define CL_FULL 0x0004      /* even though it's a directory, full close */
 
 #endif /* FS_H */

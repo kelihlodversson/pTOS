@@ -11,10 +11,8 @@
 #include "deskaes.h"
 
 extern void *desk_basepage;
-void desk_user_start(PD *basepage, long entry_type) NORETURN;
-void desk_user_start(PD *basepage, long entry_type)
+static int desktop_run(PD *basepage)
 {
-    (void)entry_type;
 #if CONF_WITH_X32_DESKTOP_TEST
     {
         UWORD cs;
@@ -22,7 +20,7 @@ void desk_user_start(PD *basepage, long entry_type)
         __asm__ volatile ("mov %%cs,%0" : "=r"(cs));
         if ((cs & 3) != 3) {
             desk_test_record("x32 desktop CPL FAIL\r\n");
-            Pterm0();
+            return 1;
         }
         desk_test_record("x32 desktop CPL3 PASS\r\n");
     }
@@ -30,10 +28,27 @@ void desk_user_start(PD *basepage, long entry_type)
     desk_basepage = basepage;
     while (!deskmain())
         ;
-    Pterm0();
-    for (;;)
-        ;
+    return 0;
 }
+
+#if CONF_WITH_DYNAMIC_DESK
+#include "../../lib/ldso/client/ptos.h"
+int main(int argc, char **argv, char **envp);
+int main(int argc, char **argv, char **envp)
+{
+    (void)argc; (void)argv; (void)envp;
+    return desktop_run((PD *)(uintptr_t)ptos_basepage);
+}
+#else
+void desk_user_start(PD *basepage, long entry_type) NORETURN;
+void desk_user_start(PD *basepage, long entry_type)
+{
+    (void)entry_type;
+    desktop_run(basepage);
+    Pterm0();
+    for (;;) ;
+}
+#endif
 
 /* Every supported variadic call has an explicit arity. Unused registers
  * are always zero, including the no-argument calls. */

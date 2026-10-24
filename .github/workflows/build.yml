@@ -35,6 +35,93 @@ permissions:
   contents: read
 
 jobs:
+  elf-shared-core:
+    name: x32 ELF shared-library metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install host and x32 test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+          sudo apt-get install -y qemu-system-x86 ovmf dosfstools mtools
+          python3 -m venv /tmp/elf-shared-venv
+          /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
+      - name: Test metadata, corrupt inputs and Kconfig isolation
+        run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
+      - name: Build the enabled freestanding x32 core
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make pc-x86_64_defconfig
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.write_config()
+          PY
+          make CROSS_COMPILE= obj/ldso/libldso.a
+          ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
+          test -z "$(nm -u /tmp/ldso-core.o)"
+      - name: Build and boot-test enabled mapping syscalls
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make CROSS_COMPILE= -j2
+          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
+          sh tools/test-mmap-boot.sh
+      - name: Boot-test shared libraries with x32 AES, VDI and callbacks
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          for name in ("CONF_WITH_X32_VDI", "CONF_WITH_X32_AES", "CONF_WITH_USER_CALLBACKS"):
+              config.syms[name].set_value(2)
+          config.write_config()
+          PY
+          make CROSS_COMPILE= -j2
+          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
+          sh tools/test-mmap-boot.sh
+
+      - name: Exercise shared desktop and console consumers
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          for variant in pc-x86_64-desktop-tests pc-x86_64-desktop-tests-builtin-cli; do
+            make "$variant"_defconfig
+            CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.write_config()
+          PY
+            make CROSS_COMPILE= -j2
+            make CROSS_COMPILE= x32-desktop-test x32-desktop-window-test
+            readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
+            readelf -d emudesk.prg | grep 'libptos.so'
+            if [ "$variant" = pc-x86_64-desktop-tests ]; then
+              readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
+              readelf -d cli/emucon.tos | grep 'libptos.so'
+              python3 tests/x32_desktop/run.py --output obj/shared-desktop-runtime
+            else
+              ! readelf -l obj/x32/emucon.elf | grep 'INTERP'
+              python3 tests/x32_desktop/run.py --output obj/shared-desktop-builtin-cli --embedded-console --mode missing
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-x32-consumers
+          path: |
+            obj/shared-desktop-runtime/
+            obj/shared-desktop-builtin-cli/
+          if-no-files-found: ignore
+          retention-days: 14
+
+
   # The matrices are derived from configs/ instead of being written out here,
   # so that adding a configuration automatically makes it a compatibility
   # check without anyone having to remember this file.
@@ -589,7 +676,7 @@ jobs:
       - name: Install QEMU
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ${{ matrix.qemu }}
+          sudo apt-get install -y ${{ matrix.qemu }} dosfstools mtools
           # scalable fonts for the gdos_answer suite: TrueType and CFF, one
           # whose ascender is taller than its em (Loma), and a monospaced one
           # with marks of no width (Liberation Mono); fontTools makes a TrueType

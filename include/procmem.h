@@ -162,6 +162,7 @@ typedef struct x86_64_aspace ASPACE;
  *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB), then,
  *                             for a program loaded from a file, the startup
  *                             area USER_IMAGE_SLACK long after it
+ *   0x0f000000 - 0x0ffbffff   optional standard ELF interpreter (Kconfig gated)
  *   0x0ffc0000 - 0x0ffc0fff   optional read-only executable callback stubs
  *   0x0ffd0000 - 0x0ffdffff   optional read-only executable x32 AES client
  *   0x0ffe0000 - 0x0ffeffff   optional read-only executable x32 VDI client;
@@ -314,6 +315,20 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
  * not one of its private pages.
  */
 BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+/* Same ownership/atomicity checks, but absent pages are skipped. The caller
+ * owns and validates the lazy reservation and records its future permissions.
+ * Never allocates physical backing or page tables. */
+BOOL aspace_protect_lazy(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+#if CONF_WITH_MMAP
+struct file_backing;
+BOOL aspace_file_cow(const ASPACE *as, UQUAD va);
+int aspace_fault_file(ASPACE *as, UQUAD va, struct file_backing *backing, ULONG offset,
+                        UWORD prot, BOOL write);
+/* Diagnostic counters: live pages/PTEs and cross-root cache attachments. */
+ULONG aspace_file_cross_shares(void);
+ULONG aspace_file_pages(void);
+ULONG aspace_file_references(void);
+#endif
 
 /*
  * Software walk of the address space's own page tables, through the physical
