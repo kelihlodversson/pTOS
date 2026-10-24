@@ -12,7 +12,7 @@ void test_open_unlink(void)
     char original[] = "original", fresh[] = "new", buffer[16];
     ptest_begin("open_unlink (#660)");
     a = Fcreate(FIXTURE, 0);
-    if (a < 0) { ptest_fail("cannot create fixture"); ptest_pass(); return; }
+    if (a < 0) { ptest_fail("cannot create fixture"); return; }
     ptest_assert_msg(Fwrite(a, 8L, original) == 8, "write original");
     b = Fopen(FIXTURE, 0);
     ptest_assert_msg(b >= 0, "second open");
