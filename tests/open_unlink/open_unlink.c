@@ -5,6 +5,7 @@
 
 #define FIXTURE "C:\\UNLINK.TST"
 void test_open_unlink(void);
+#ifdef TEST_WITH_FAT_FILE_LIFETIMES
 void test_open_unlink(void)
 {
     long a = -1, b = -1, replacement = -1;
@@ -54,3 +55,48 @@ done:
     Fdelete(FIXTURE);
     ptest_pass();
 }
+
+#else
+/* Small-ROM deletion closes this process's handles before freeing backing. */
+void test_open_unlink(void)
+{
+    long a, b, alias, replacement;
+    char original[1024], buffer[1024];
+
+    ptest_begin("open_unlink (traditional GEMDOS)");
+    memset(original, 0x5a, sizeof(original));
+    a = Fcreate(FIXTURE, 0);
+    if (a < 0) { ptest_fail("cannot create fixture"); return; }
+    ptest_assert_msg(Fwrite(a, sizeof(original), original) == sizeof(original),
+                     "write new backing before its metadata is flushed");
+    b = Fopen(FIXTURE, 0);
+    alias = Fdup(a);
+    ptest_assert_msg(b >= 0 && alias >= 0, "independent open and duplicate");
+    ptest_assert_msg(Fdelete(FIXTURE) == 0, "delete caller's open file");
+    ptest_assert_msg(Fopen(FIXTURE, 0) == -33L, "deleted name no longer opens");
+    ptest_assert_msg(Fclose(a) == -37L, "writer closed by deletion");
+    if (b >= 0)
+        ptest_assert_msg(Fclose(b) == -37L, "independent reader closed by deletion");
+    if (alias >= 0)
+        ptest_assert_msg(Fclose(alias) == -37L, "duplicate closed by deletion");
+    replacement = Fcreate(FIXTURE, 0);
+    ptest_assert_msg(replacement >= 0, "recreate deleted name");
+    if (replacement >= 0)
+    {
+        ptest_assert_msg(Fwrite(replacement, sizeof(original), original) == sizeof(original),
+                         "write replacement backing");
+        Fclose(replacement);
+        replacement = Fopen(FIXTURE, 0);
+        ptest_assert_msg(replacement >= 0, "reopen replacement");
+        if (replacement >= 0)
+        {
+            ptest_assert_msg(Fread(replacement, sizeof(buffer), buffer) == sizeof(buffer) &&
+                             !memcmp(buffer, original, sizeof(buffer)),
+                             "replacement contents survive closing");
+            Fclose(replacement);
+        }
+    }
+    ptest_assert_msg(Fdelete(FIXTURE) == 0, "delete closed file");
+    ptest_pass();
+}
+#endif
