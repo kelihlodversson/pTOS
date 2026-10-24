@@ -22,7 +22,7 @@ static LONG query(ULONG handle)
     r.handle = handle;
     return raw(0, (uintptr_t)&r, sizeof(r), (uintptr_t)&info, sizeof(info));
 }
-#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+#define CHECK(condition) do { if (!(condition)) return 0x4000 | __LINE__; } while (0)
 static int malformed(void)
 {
     CUIS_SESSION_REQUEST r = { sizeof(r), CUIS_VERSION, CUIS_SESSION_ATTACH, 0, 0, { 0 } };
