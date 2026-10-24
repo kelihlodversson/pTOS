@@ -159,7 +159,7 @@ typedef struct
 typedef struct
 {
     UWORD o_flag;       /* see below                            */
-    WORD  o_usecnt;     /* count of open OFDs pointing here     */
+    WORD  o_usecnt;     /* count of live OFDs pointing here     */
                     /* the following 3 items must be as in FCB: */
     DOSTIME o_td;       /* creation time/date: little-endian!   */
     CLNO  o_strtcl;     /* starting cluster number              */
@@ -174,6 +174,8 @@ typedef struct
  * bit usage in o_flag
  */
 #define O_DIRTY     1   /* contents have changed, FCB on disk must be updated */
+#define O_UNLINKED  2   /* directory entry removed; reclaim at last reference */
+#define O_MEDIA_LOST 4  /* backing medium invalidated; never touch its FAT */
 
 
 
@@ -198,9 +200,13 @@ struct _ofd
     UWORD o_curbyt;     /* byte pointer within current cluster  */
     OFD   *o_thread;    /*  multiple open thread list          */
     UWORD o_mod;        /* mode file opened in (see below)      */
+    UWORD o_refs;       /* one SFT group reference plus backing-object pins */
 
     DFD   o_disk;       /* data to be synchronised with the disk*/
 } ;
+
+/* FOLDRnnn-compatible allocation class on 32-bit pointer targets. */
+typedef char ofd_legacy_size[(sizeof(void *) != 4 || sizeof(OFD) <= 64) ? 1 : -1];
 
 /*
  * bit usage in o_mod
@@ -471,6 +477,13 @@ long xopen(char *name, WORD mod);
 /* Close a file */
 long xclose(WORD h);
 long ixclose(OFD *fd, int part);
+/* Native FAT backing references, independent of SFT handle lifetime.
+ * ofd_put can perform disk I/O: wrap in DISK_CALL outside osif. A failed
+ * release retains its reference for retry. Media-lost references only free
+ * memory; they never access the new medium. */
+BOOL ofd_hold(OFD *fd);
+long ofd_put(OFD *fd);
+void ofd_invalidate_drive(DMD *dm);
 
 /* remove a file */
 long xunlink(char *name);
@@ -614,6 +627,7 @@ FTAB *getpfsslot(int h);
 /* Misc. defines */
                     /* the following are used for the second arg to ixclose() */
 #define CL_DIR  0x0002      /* this is a directory file, flush, do not free */
+#define CL_KEEP 0x0008      /* flush file metadata/data, keep its OFD linked */
 #define CL_FULL 0x0004      /* even though it's a directory, full close */
 
 #endif /* FS_H */

@@ -46,6 +46,7 @@
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
+#include "../../../bdos/mem.h"
 
 extern void set_owner(void *addr, PD *p);
 extern void proc_free_owned(PD *p);
@@ -1477,6 +1478,102 @@ static void test_interpreter_failures(void)
 }
 #endif
 
+static void test_backing_media_change(void)
+{
+    DMD media;
+    DND directory;
+    OFD *pin;
+    int slots[2], i, n = 0;
+
+    for (i = 0; i < OPNFILES && n < 2; i++)
+        if (!sft[i].f_own) slots[n++] = i;
+    CHECK(n == 2, "free slots for media-change reference test");
+    if (n != 2) return;
+    memset(&media, 0, sizeof(media)); memset(&directory, 0, sizeof(directory));
+    media.m_dtl = &directory;
+    pin = MGET(OFD);
+    pin->o_dfd = &pin->o_disk; pin->o_disk.o_usecnt = 1;
+    pin->o_disk.o_flag = O_UNLINKED; pin->o_disk.o_strtcl = 0x4321;
+    pin->o_refs = 1; pin->o_dmd = &media; pin->o_dnode = &directory;
+    directory.d_files = pin;
+    CHECK(ofd_hold(pin), "pin before simulated media removal");
+    for (i = 0; i < 2; i++) {
+        sft[slots[i]].f_ofd = pin; sft[slots[i]].f_own = run; sft[slots[i]].f_use = 1;
+    }
+    ofd_invalidate_drive(&media);
+    CHECK(!directory.d_files && !sft[slots[0]].f_ofd && !sft[slots[1]].f_ofd &&
+          pin->o_refs == 1 && !pin->o_dmd && !pin->o_dnode &&
+          (pin->o_dfd->o_flag & O_MEDIA_LOST), "media loss drops aliased handles once and retains pin");
+    CHECK(!ofd_hold(pin), "invalidated backing cannot acquire fresh references");
+    CHECK(ofd_put(pin) == E_OK, "media-lost pin releases without touching the replacement FAT");
+}
+
+/* The pin is the reference a file-backed mapping will hold after Fclose. */
+static void test_unlinked_backing(void)
+{
+    static char path[] = "C:\\UNLINK.TMP";
+    static char original[64];
+    static char replacement[] = "new";
+    OFD *pin = NULL;
+    DMD *dm = NULL;
+    CLNO head = 0;
+    long first = -1, second = -1, fresh = -1, rc;
+    int i, before = failures;
+    char readback[8];
+
+    memset(original, 'A', sizeof(original));
+    first = DISK_CALL(xcreat(path, 0));
+    CHECK(first >= NUMSTD, "create unlink fixture");
+    if (first < NUMSTD) goto done;
+    for (i = 0; i < 129; i++)
+        if (DISK_CALL(xwrite(first, sizeof(original), original)) != sizeof(original)) break;
+    CHECK(i == 129, "write multi-cluster unlink fixture");
+    second = DISK_CALL(xopen(path, 0));
+    CHECK(second >= NUMSTD, "independent open before unlink");
+    if (second < NUMSTD) goto done;
+    if (!ofd_hold(getofd(first))) {
+        CHECK(FALSE, "backing reference retains open object"); goto done;
+    }
+    pin = getofd(first);
+    head = pin->o_dfd->o_strtcl; dm = pin->o_dmd;
+    CHECK(getofd(second)->o_dfd == pin->o_dfd, "opens share one backing identity");
+    CHECK(DISK_CALL(xunlink(path)) == E_OK, "unlink while handles and backing pin remain");
+    CHECK(DISK_CALL(xopen(path, 0)) == EFILNF, "unlinked name disappears immediately");
+    fresh = DISK_CALL(xcreat(path, 0));
+    CHECK(fresh >= NUMSTD, "reuse deleted name while old object lives");
+    if (fresh < NUMSTD) goto done;
+    CHECK(getofd(fresh)->o_dfd != pin->o_dfd, "reused slot creates a new file identity");
+    CHECK(DISK_CALL(xwrite(fresh, 3, replacement)) == 3, "write replacement contents");
+    CHECK(DISK_CALL(xlseek(0, second, 0)) == 0 &&
+          DISK_CALL(xread(second, sizeof(readback), readback)) == sizeof(readback) &&
+          readback[0] == 'A' && readback[7] == 'A', "old handle still reads old contents");
+    CHECK(kdos_fclose(first) == E_OK, "close first handle while backing pinned"); first = -1;
+    CHECK(kdos_fclose(second) == E_OK, "close final handle while backing pinned"); second = -1;
+    CHECK(pin->o_refs == 1 && DISK_CALL(getrealcl(head, dm)) != FREECLUSTER,
+          "cluster chain survives final handle close");
+    CHECK(DISK_CALL(ixlseek(pin, pin->o_dfd->o_fileln)) >= 0 &&
+          DISK_CALL(ixwrite(pin, 1, replacement)) == 1, "unlinked backing may grow without touching new entry");
+    CHECK(DISK_CALL(ixlseek(pin, 0)) == 0 && DISK_CALL(ixread(pin, 8, readback)) == 8 &&
+          readback[0] == 'A', "pin can read after all handles close");
+    rc = DISK_CALL(ofd_put(pin));
+    CHECK(rc == E_OK, "release final in-memory reference");
+    if (rc == E_OK) pin = NULL;
+    CHECK(DISK_CALL(getrealcl(head, dm)) == FREECLUSTER, "last reference reclaims old cluster chain");
+    CHECK(kdos_fclose(fresh) == E_OK, "close replacement"); fresh = -1;
+    fresh = DISK_CALL(xopen(path, 0));
+    CHECK(fresh >= NUMSTD && DISK_CALL(xlseek(0, fresh, 2)) == 3 &&
+          DISK_CALL(xlseek(0, fresh, 0)) == 0 &&
+          DISK_CALL(xread(fresh, 3, readback)) == 3 && !memcmp(readback, replacement, 3),
+          "old close never overwrites replacement directory metadata");
+done:
+    if (first >= NUMSTD) kdos_fclose(first);
+    if (second >= NUMSTD) kdos_fclose(second);
+    if (fresh >= NUMSTD) kdos_fclose(fresh);
+    if (pin) DISK_CALL(ofd_put(pin));
+    DISK_CALL(xunlink(path));
+    kcprintf("x86-64 unlinked file backing: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -2082,6 +2179,8 @@ void x86_64_memtest_run(void)
     test_lifecycle();
     test_x32image();
     test_move_private();
+    test_backing_media_change();
+    test_unlinked_backing();
     test_ring3();
 
     same(&s, "whole memtest");

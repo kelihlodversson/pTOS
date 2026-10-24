@@ -333,6 +333,7 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
     DFD *dfd;
     FCB *b;
     DND *dn;
+    OFD *open_link;
     int h,cl,plen;
     long rc;
     PFSCOOKIE newfc;
@@ -403,7 +404,9 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
         f2->f_clust = le2cpu16(dfd->o_strtcl);
     }
     f2->f_fileln = 0;
+    open_link = f->o_link;
     memcpy(f, f0, sizeof(OFD));
+    f->o_link = open_link;       /* preserve other open/backing references */
     /* the memcpy also copied f->o_dfd, which now points at f0's embedded
      * DFD; nextcl() already marked that DFD O_DIRTY, so ixclose() below
      * sees the flag and writes the parent directory entry. */

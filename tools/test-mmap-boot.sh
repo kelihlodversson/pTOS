@@ -76,6 +76,7 @@ if [ -f "$log" ]; then cat "$log"; fi
 [ "$rc" -eq 124 ] || { echo "QEMU exited unexpectedly: $rc"; exit 1; }
 [ "$(grep -c 'EFI entry reached' "$log" || true)" -eq 1 ]
 ! grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"
+grep -q 'x86-64 unlinked file backing: PASS' "$log"
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     grep -q 'x86-64 ldso relocations: PASS' "$log"

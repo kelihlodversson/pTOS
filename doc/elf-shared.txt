@@ -386,14 +386,17 @@ Next backing model: file-backed MAP_PRIVATE
 
 Read-only physical sharing will use file-backed MAP_PRIVATE mappings, not
 anonymous-page content hashing or full-page deduplication. This is planned;
-the current implementation still accepts anonymous mappings only.
+the current implementation still accepts anonymous mappings only. Native FAT
+now retains open-file backing independently of directory-entry lifetime.
 
 The kernel must retain a backing object independently of the user's file
 handle. Cached pages are keyed by stable filesystem object identity, content
 generation and page offset; pathname, file length and FAT timestamps alone
 are insufficient. Mutation, truncation, unlink/replacement and media changes
 must invalidate future cache lookups without freeing pages held by existing
-mappings. Drivers without a sufficient identity/lifetime contract must refuse
+mappings. Unlink removes the directory entry immediately, while handles and
+backing pins retain the old object and its cluster chain. The final in-memory
+reference releases the chain; recreating the same name creates a new identity. Drivers without a sufficient identity/lifetime contract must refuse
 file mappings until they provide one.
 
 Clean private file pages may share read-only physical backing. A write fault
@@ -409,6 +412,34 @@ for BSS and partial-page zeroing as needed. It must not first copy the entire
 image into anonymous memory and rely on later content comparison to recover
 sharing. File descriptors may be closed after mapping; backing and page
 references remain until the final mapping is released.
+
+
+Native FAT backing lifetime
+---------------------------
+
+OFD references now comprise one reference for all SFT aliases of a descriptor,
+plus explicit backing pins acquired with ofd_hold and released with ofd_put.
+Independent opens retain separate OFDs sharing one DFD. The base OFD storing
+that DFD survives until the final OFD reference is gone. An OFD remains in its
+directory's open-file list while pinned, preventing directory-cache scavenging.
+The 64-byte OFD allocation limit on 32-bit pointer targets is checked at build.
+
+Unlink sets O_UNLINKED on the shared DFD after erasing the name. Old handles
+remain usable, including extension, but never write metadata into the erased
+or reused directory slot. A new open ignores unlinked DFDs even if its directory
+slot is reused. FAT reclamation occurs on the last OFD/pin release. Release may
+perform disk I/O; kernel callers outside osif must use DISK_CALL and retain a
+failed release for retry. Normal handle teardown keeps its SFT reference until
+that work completes. These are live-session lifetime guarantees, not a FAT
+journal or recovery of unlinked files after an unexpected reset.
+
+Media changes remove handles and detach retained backing pins from the old
+DMD/DND tree. Such a pin cannot be acquired again or read from the new medium;
+its final release only frees memory, never the replacement medium's FAT.
+Boot tests cover multiple opens, unlink/recreate, use after final Fclose,
+cluster reclamation at last pin release, metadata isolation and aliased-handle
+media invalidation. The portable open_unlink regression covers user-visible
+native FAT behavior independently of ELF shared support.
 
 
 Dynamic CRT and client helper

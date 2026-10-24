@@ -575,24 +575,7 @@ static void freetree(DND *d)
  */
 static void offree(DMD *d)
 {
-    int i;
-    OFD *f;
-
-    for (i = 0; i < OPNFILES; i++)
-    {
-        /* a higher-half OFD pointer is negative as a signed long */
-        f = sft[i].f_ofd;
-        if (f && !IS_BIOS_HANDLE(f))
-        {
-            if (f->o_dmd == d)
-            {
-                xmfreblk(f);
-                sft[i].f_ofd = NULL;
-                sft[i].f_own = NULL;
-                sft[i].f_use = 0;
-            }
-        }
-    }
+    ofd_invalidate_drive(d);
 }
 
 
