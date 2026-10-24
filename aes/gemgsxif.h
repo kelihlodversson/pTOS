@@ -27,6 +27,7 @@ void gsx_1code(WORD code, WORD value);
 
 void gsx_wsclose(void);
 void gsx_wsclear(void);
+WORD gsx_screen_rez(void);
 
 void ratinit(void);
 void ratexit(void);
