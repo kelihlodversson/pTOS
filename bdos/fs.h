@@ -200,7 +200,9 @@ struct _ofd
     UWORD o_curbyt;     /* byte pointer within current cluster  */
     OFD   *o_thread;    /*  multiple open thread list          */
     UWORD o_mod;        /* mode file opened in (see below)      */
+#if CONF_WITH_FILE_PINS
     UWORD o_refs;       /* one SFT group reference plus backing-object pins */
+#endif
 
     DFD   o_disk;       /* data to be synchronised with the disk*/
 } ;
@@ -484,6 +486,7 @@ long ixclose(OFD *fd, int part);
 #if CONF_WITH_FILE_PINS
 BOOL ofd_hold(OFD *fd);
 #endif
+OFD *ofd_find(DND *dn, long pos);
 long ofd_put(OFD *fd);
 void ofd_invalidate_drive(DMD *dm);
 

@@ -129,7 +129,9 @@ static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2)
 
     p = MGET(OFD);                  /* MGET(OFD) only returns if it succeeds */
 
+#if CONF_WITH_FILE_PINS
     p->o_refs = 1;
+#endif
     p->o_mod = mod;                 /*  set mode                    */
     p->o_dmd = dm;                  /*  link OFD to media           */
     sft[h-NUMSTD].f_ofd = p;
@@ -176,6 +178,16 @@ static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2)
 **  NOTES:
 **          make a pointer to the ith entry of sft
 */
+/* Locate the live identity of a directory entry, excluding deleted names. */
+OFD *ofd_find(DND *dn, long pos)
+{
+    OFD *fd;
+    for (fd = dn->d_files; fd; fd = fd->o_link)
+        if (fd->o_dirbyt == pos && !(fd->o_dfd->o_flag & O_UNLINKED))
+            return fd;
+    return NULL;
+}
+
 long opnfil(FCB *f, DND *dn, int mod)
 {
     OFD *shared;
@@ -191,9 +203,7 @@ long opnfil(FCB *f, DND *dn, int mod)
         return ENHNDL;
 
     /* Reject reference overflow before allocating or publishing a slot. */
-    for (shared = dn->d_files; shared; shared = shared->o_link)
-        if (shared->o_dirbyt == dn->d_ofd->o_bytnum - 32 &&
-            !(shared->o_dfd->o_flag & O_UNLINKED)) break;
+    shared = ofd_find(dn, dn->d_ofd->o_bytnum - 32);
     if (shared && shared->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
     sft[i].f_own = run;
     sft[i].f_use = 1;
@@ -233,8 +243,10 @@ long ofd_put(OFD *fd)
     DFD *dfd = fd->o_dfd;
     OFD **link;
 
+#if CONF_WITH_FILE_PINS
     if (!fd->o_refs) return EINTRN;
     if (fd->o_refs > 1) { fd->o_refs--; return E_OK; }
+#endif
     if (dfd->o_usecnt == 1 && (dfd->o_flag & O_UNLINKED) &&
         !(dfd->o_flag & O_MEDIA_LOST)) {
         free_file_chain(dfd, fd->o_dmd);
@@ -244,7 +256,9 @@ long ofd_put(OFD *fd)
         for (link = &fd->o_dnode->d_files; *link && *link != fd; link = &(*link)->o_link) ;
         if (*link) *link = fd->o_link;
     }
+#if CONF_WITH_FILE_PINS
     fd->o_refs = 0;
+#endif
     dfd->o_usecnt--;
     if (dfd != &fd->o_disk) xmfreblk(fd);
     if (!dfd->o_usecnt)
@@ -507,11 +521,8 @@ long ixdel(DND *dn, FCB *f, long pos)
 
     deleted.o_strtcl = le2cpu16(f->f_clust);
 
-    for (fd = dn->d_files; fd; fd = fd->o_link)
-        if (fd->o_dirbyt == pos && !(fd->o_dfd->o_flag & O_UNLINKED)) {
-            live = fd->o_dfd;
-            break;
-        }
+    fd = ofd_find(dn, pos);
+    if (fd) live = fd->o_dfd;
     fd = dn->d_ofd;
     ixlseek(fd, pos);
     ixwrite(fd, 1, &erased);

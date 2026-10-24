@@ -604,8 +604,7 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     clust = le2cpu16(f->f_clust);
     fileln = le2cpu32(f->f_fileln);
     if (!(att & FA_SUBDIR)) {
-        for (source = dn1->d_files; source; source = source->o_link)
-            if (source->o_dirbyt == posp && !(source->o_dfd->o_flag & O_UNLINKED)) break;
+        source = ofd_find(dn1, posp);
         if (source && source->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
     }
 
