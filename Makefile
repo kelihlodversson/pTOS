@@ -1067,8 +1067,11 @@ aes-contract-test: $(AUTOCONF_H)
 	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_TREE_HOST_TEST \
 	  tests/aes_contract/tree_contract.c aes/aes_tree.c -o obj/aes-tree-contract-test
 	./obj/aes-tree-contract-test
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Iaes \
+	  tests/aes_contract/graph_geometry.c aes/gemgraphutil.c -o obj/aes-graph-contract-test
+	./obj/aes-graph-contract-test
 
-TOCLEAN += obj/aes-contract-test obj/aes-tree-contract-test
+TOCLEAN += obj/aes-contract-test obj/aes-tree-contract-test obj/aes-graph-contract-test
 
 TOCLEAN += obj/vdi-contract-test
 

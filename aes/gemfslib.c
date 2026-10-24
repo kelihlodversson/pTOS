@@ -844,18 +844,22 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
             }
             else                            /* a folder was selected:  */
             {                               /* insert name before mask */
+                WORD folderlen, dirlen;
+
                 pstr = fs_pspec(locstr, NULL);
                 unfmt_str(selname+1, folder);
+                folderlen = strlen(folder);
+                dirlen = (pstr-locstr) + folderlen + 1;
                 /* Include the trailing separator and terminator in the
                  * directory limit, leaving room for a selected filename. */
-                if ((pstr-locstr+strlen(folder)+1 >= LEN_ZPATH) ||
-                    (pstr-locstr+strlen(folder)+1+strlen(mask) >= LEN_FSPATH))
+                if ((dirlen >= LEN_ZPATH) ||
+                    (dirlen+strlen(mask) >= LEN_FSPATH))
                 {
                     fm_error(3);
                     break;
                 }
                 strcpy(pstr, folder);
-                pstr += strlen(pstr);
+                pstr += folderlen;
                 *pstr++ = PATHSEP;
                 strcpy(pstr, mask);
                 newlist = TRUE;

@@ -472,6 +472,7 @@ signatures do not imply x32 availability. Classifications:
     APPL_TRECORD       event     not exposed; input, callbacks or scheduling
     APPL_YIELD         event     aes_appl_yield for associated tasks
     APPL_EXIT          registry  aes_appl_exit
+    APPL_GETINFO       registry  not exposed; AES_APP_INFO describes typed capabilities
     EVNT_KEYBD         event     aes_evnt_multi; task-owned keyboard queue
     EVNT_BUTTON        event     aes_evnt_multi; focused button events
     EVNT_MOUSE         event     aes_evnt_multi; focused rectangle events
