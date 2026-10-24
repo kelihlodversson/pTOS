@@ -108,6 +108,9 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
     case APPL_FIND:
         ret = ap_find((char *)AP_PNAME);
         break;
+    case APPL_GETINFO:
+        ret = ap_getinfo(int_in[0], &int_out[1], &int_out[2], &int_out[3], &int_out[4]);
+        break;
     case APPL_TPLAY:
         ap_tplay((EVNTREC *)AP_TBUFFER, AP_TLENGTH, AP_TSCALE);
         break;

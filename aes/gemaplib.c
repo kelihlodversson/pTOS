@@ -128,8 +128,36 @@ WORD ap_find(char *pname)
     if (!pname)
         return -1;
 
+    /* Atari AESes reserve this pseudo-application to advertise appl_getinfo(). */
+    if (strcmp(pname, "?AGI") == 0)
+        return 0;
+
     p = fpdnm(pname, 0);
     return p ? p->p_pid : -1;
+}
+
+
+/*
+ * Return the application environment capabilities which pTOS supports.
+ * Unsupported queries must fail so callers do not act on invented values.
+ */
+WORD ap_getinfo(WORD type, WORD *out1, WORD *out2, WORD *out3, WORD *out4)
+{
+    *out1 = 0;
+    *out2 = 0;
+    *out3 = 0;
+    *out4 = 0;
+
+    if (type != 2)                  /* AES_SYSTEM */
+        return FALSE;
+
+    *out1 = gsx_screen_rez() + 2;   /* graphics device */
+    *out2 = gl_ws.ws_ncolors > 16 ? 16 : gl_ws.ws_ncolors;
+#if CONF_WITH_COLOUR_ICONS
+    *out3 = TRUE;                   /* AES_SYSTEM: colour icons supported */
+    *out4 = TRUE;                   /* AES_SYSTEM: extended RSC format supported */
+#endif
+    return TRUE;
 }
 
 

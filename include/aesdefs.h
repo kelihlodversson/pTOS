@@ -24,6 +24,7 @@
 #define APPL_TRECORD    15
 #define APPL_YIELD      17      /* PC-GEM function */
 #define APPL_EXIT       19
+#define APPL_GETINFO     130
 
 /* Event Manager */
 #define EVNT_KEYBD      20
