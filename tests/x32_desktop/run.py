@@ -26,7 +26,8 @@ class Guest:
         esp = self.root / "esp"
         (esp / "EFI" / "BOOT").mkdir(parents=True)
         shutil.copy("pc-x86_64.efi", esp / "EFI" / "BOOT" / "BOOTX64.EFI")
-        shutil.copy("cli/emucon.tos", esp / "EMUCON.TOS")
+        if not args.embedded_console:
+            shutil.copy("cli/emucon.tos", esp / "EMUCON.TOS")
         if not missing:
             for source, target in (("emudesk.prg", "EMUDESK.PRG"),
                                    ("obj/x32/GEMTEST.PRG", "APPTEST.PRG"),
@@ -414,6 +415,8 @@ def main():
     parser.add_argument("--ovmf-vars", default=firmware("vars"))
     parser.add_argument("--output", type=Path, default=Path("obj/x32-desktop-runtime"))
     parser.add_argument("--timeout", type=float, default=300)
+    parser.add_argument("--embedded-console", action="store_true",
+                        help="omit EMUCON.TOS and require the embedded x32 console")
     parser.add_argument("--mode", choices=("desktop", "missing", "both"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:
@@ -425,7 +428,9 @@ def main():
             if mode == "desktop":
                 desktop(guest)
             else:
-                guest.wait("C:\\>", timeout=25)
+                text = guest.wait("C:\\>", timeout=25)
+                if args.embedded_console:
+                    assert "EmuCON: starting the x32 image in ring 3" in text
                 assert "x32 desktop CPL3 PASS" not in guest.text()
                 print("Missing external desktop falls back to EmuCON: PASS", flush=True)
         finally:

@@ -507,7 +507,11 @@ jobs:
         if: startsWith(matrix.config, 'pc-x86_64-desktop-tests')
         run: |
           make CROSS_COMPILE= -j2 x32-desktop-test x32-desktop-window-test
-          python3 tests/x32_desktop/run.py --output obj/x32-desktop-runtime
+          console_args=()
+          if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
+            console_args+=(--embedded-console)
+          fi
+          python3 tests/x32_desktop/run.py --output obj/x32-desktop-runtime "${console_args[@]}"
 
       - uses: actions/upload-artifact@v4
         if: always() && startsWith(matrix.config, 'pc-x86_64-desktop-tests')
