@@ -22,6 +22,8 @@
         .globl  C_SYM(biostrap)       // call BIOS from C
         .globl  C_SYM(xbiostrap)      // call XBIOS from C
         .globl  C_SYM(xbios_unimpl)
+        .globl  C_SYM(arm_svc_unhandled)
+        .extern C_SYM(any_vec)
 
         .globl  C_SYM(check_read_byte)
         .globl  C_SYM(int_vbl)
@@ -123,6 +125,31 @@ no_vdi:
 C_SYM(default_etv_critic):
         // error code is already in r0 -- simply return
         bx      lr
+
+/*
+ * The default handler of the SVC numbers nobody installed one for
+ * (tos_vec_svc[], vectors.c).  arm_dispatch_svc jumps here with the registers
+ * of the caller as they were, so a frame is built the way the abort handlers
+ * build theirs before any_vec() reads one: with the registers of the caller
+ * left to say anything, a process that made an unknown SVC with r1 = 0 sent
+ * the kernel through a null frame.  The vector number is that of the TOS trap
+ * (0x80 + 4 * n); any_vec() ends a process in user mode, and is a panic
+ * otherwise.
+ */
+C_SYM(arm_svc_unhandled):
+        srsfd   sp!, #0x13
+        sub     sp, sp, #4*15
+        stmia   sp, {r0-r14}^
+        ldr     r0, [lr, #-4]
+        and     r0, r0, #0xf
+        mov     r0, r0, lsl #2
+        add     r0, r0, #0x80
+        mov     r1, sp
+        mov     r2, #0
+        mov     r3, #0
+        ldr     ip, =C_SYM(any_vec)
+        blx     ip
+        b       .
 
 // ==== Trap 13 - BIOS entry point ==========================================
 

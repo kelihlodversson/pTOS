@@ -1744,7 +1744,8 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
-              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
+              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG))
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
 # AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.

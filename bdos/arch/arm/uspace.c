@@ -107,6 +107,9 @@ void gouser(void)
     uspace_resume = &buf;
     if (setjmp(buf) == 0) {
         aspace_hw_switch(root);
+        /* the code of an ELF image was written through the data side (the loader reads the
+         * file into the pages of the new space): publish it before the first fetch */
+        aspace_hw_code_changed();
         arm_enter_user(entry, user_sp, (ULONG)(uintptr_t)p, (ULONG)kstack_top);
     }
     uspace_resume = saved_resume;

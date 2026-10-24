@@ -160,18 +160,26 @@ static PADDR carve(PADDR root, ULONG size, ASPACE_TABLE_ALLOC alloc, void *ctx)
 void aspace_hw_init_root(PADDR root)
 {
     volatile ULONG *r = table(root);
-    PADDR ptr;
+    PADDR ptr, pt;
     ULONG i;
 
     /* the kernel's half: the same pointer tables everywhere */
     for (i = USER_ROOT; i < ROOT_ENTRIES; i++)
         r[i] = table(kernel_root)[i];
 
-    /* the kernel's low memory: the first pointer table, cut from this page,
-     * points to the shared page table */
+    /* the kernel's low memory: the first pointer table and the first page
+     * table (the 64 pages from 0, of which the first eight are the kernel's
+     * and supervisor-only) are cut from this page.  The page table is a copy
+     * of the template: the descriptors of the kernel's pages are the same in
+     * every root, but the rest of it is the process's own, for the pages it
+     * maps from 0x8000 on (a shared one would put a private page into every
+     * address space, and free it with the first). */
     ptr = carve(root, 512, NULL, NULL);
+    pt = carve(root, 256, NULL, NULL);
     r[0] = (ULONG)ptr | UDT_RESIDENT;
-    table(ptr)[0] = (ULONG)low_page_table | UDT_RESIDENT;
+    table(ptr)[0] = (ULONG)pt | UDT_RESIDENT;
+    for (i = 0; i < PT_ENTRIES; i++)
+        table(pt)[i] = table(low_page_table)[i];
 }
 
 /* the page descriptor for a page */

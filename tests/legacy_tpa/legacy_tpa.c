@@ -6,8 +6,9 @@
  * its stack pointer is somewhere in the TPA (the startup code chose it, as it
  * always did), and Mshrink() takes back what the program does not need.  (A
  * program in ELF has a private stack and no such TPA, and an ARM or x86-64
- * program is always one.)  This runs as a PRG; elsewhere it passes without
- * testing anything.
+ * program is always one.)  This tests a harness that is a PRG (TEST_IS_PRG:
+ * the m68k toolchains that make one; the bare m68k-elf makes an ELF); elsewhere
+ * it passes without testing anything.
  *
  * Copyright (C) 2026 The pTOS development team
  *
@@ -27,7 +28,7 @@ void test_legacy_tpa(void)
 {
     ptest_begin("legacy_tpa");
 
-#if defined(__m68k__) && defined(TEST_WITH_USER_ASPACE)
+#if defined(__m68k__) && defined(TEST_WITH_USER_ASPACE) && defined(TEST_IS_PRG)
     {
         BASEPAGE *bp = _base;
         long sp_now, in_use;

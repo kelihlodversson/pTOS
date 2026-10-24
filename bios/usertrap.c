@@ -31,6 +31,8 @@
 #define XBIOS_FLOPWR    9
 #define XBIOS_FLOPFMT   10
 #define XBIOS_FLOPVER   19
+#define XBIOS_DMAREAD   0x2A
+#define XBIOS_DMAWRITE  0x2B
 
 /*
  * fn is the function, a[0..3] its first four arguments (the registers r1-r4)
@@ -66,6 +68,9 @@ long bios_user_check(WORD fn, const long *a, const long *rest, int xbios)
     case XBIOS_FLOPFMT:
     case XBIOS_FLOPVER:             /* ...and there is no floppy on these machines */
         return EACCDN;
+    case XBIOS_DMAREAD:             /* these go to the disk driver with the address of the */
+    case XBIOS_DMAWRITE:            /* caller, where Rwabs() has a bounce buffer for the DMA of */
+        return EACCDN;              /* a virtio disk: refused until they have one */
     default:
         return xbios_check_user_args(fn, a);
     }

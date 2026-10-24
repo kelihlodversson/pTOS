@@ -24,6 +24,7 @@
         .globl  C_SYM(enter)
         .globl  C_SYM(bdos_trap2)
         .globl  C_SYM(m68k_enter_user)
+        .extern C_SYM(fputype)
 
         .extern C_SYM(m68k_gemdos_dispatch)
         .extern C_SYM(old_trap2)
@@ -101,6 +102,16 @@ C_SYM(m68k_enter_user):
         clr.w   -(sp)                   // format 0, vector 0
         move.l  d0,-(sp)                // pc
         clr.w   -(sp)                   // sr: user mode, interrupts enabled
+        tst.l   C_SYM(fputype)
+        jeq     no_fpu_reset
+        /* the process starts with an FPU as after a reset, not with what the
+         * process that ran before left in it */
+        clr.l   -(sp)
+        clr.l   -(sp)
+        clr.l   -(sp)
+        FRESTORE_SP_PLUS                // a NULL frame: pops its longword
+        lea     8(sp),sp                // (the extra longs of the 68060)
+no_fpu_reset:
         moveq   #0,d0
         moveq   #0,d1
         moveq   #0,d2

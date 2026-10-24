@@ -45,6 +45,17 @@ struct {
     ULONG entry, user_sp, kstack_top;
 } uenter;
 
+/* the FPU state of a process (uspaceasm.S): the FSAVE frame (the longest, of
+ * the 68881/2, is 216 bytes), fpcr/fpsr/fpiar, fp0-fp7 */
+struct fpuctx {
+    UBYTE frame[216];
+    ULONG ctl[3];
+    UBYTE regs[96];
+};
+extern void m68k_fpu_save(struct fpuctx *ctx);
+extern void m68k_fpu_restore(const struct fpuctx *ctx);
+extern LONG fputype;                            /* 0: no FPU (bios/bios.c) */
+
 /* the frame of a GEMDOS call (uspaceasm.S), lowest address first */
 struct uframe {
     ULONG usp;
@@ -117,6 +128,7 @@ void gouser(void)
     ULONG user_sp = (ULONG)kproc_user_stack(p);
     jmp_buf buf;
     jmp_buf *saved_resume = uspace_resume;
+    struct fpuctx fpu;
     uintptr_t kstack_top;
     PADDR kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
 
@@ -134,10 +146,17 @@ void gouser(void)
      * launcher `run` again.
      */
     uspace_resume = &buf;
+    /* the FPU of the launcher is what the child will not see, and what the
+     * launcher gets back when it ends */
+    if (fputype)
+        m68k_fpu_save(&fpu);
     if (setjmp(buf) == 0) {
         ULONG *sp;
 
         aspace_hw_switch(root);
+        /* the code of an ELF image was written through the data side (the loader reads
+         * the file into the pages of the new space): publish it before the first fetch */
+        aspace_hw_code_changed();
         /* what a program finds on its stack: a return address, and the basepage */
         user_sp -= 8;
         sp = (ULONG *)user_sp;
@@ -149,6 +168,8 @@ void gouser(void)
         m68k_enter_user();
     }
     uspace_resume = saved_resume;
+    if (fputype)
+        m68k_fpu_restore(&fpu);
     kstack_free(kstack_phys);
     {
         ASPACE_ROOT launcher = kproc_user_root(run);

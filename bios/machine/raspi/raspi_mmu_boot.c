@@ -256,7 +256,11 @@ ULONG raspi_mmu_bootstrap(void)
             l2[p].Value1 = 1;
             l2[p].BBit   = 1;
             l2[p].CBit   = 1;
+#if CONF_WITH_PROCESS_ASPACES
+            l2[p].AP     = AP_SYSTEM_ACCESS;    /* the kernel half is not for user mode, section or page */
+#else
             l2[p].AP     = AP_ALL_ACCESS;
+#endif
             l2[p].TEX    = 0;
             l2[p].APXBit = APX_RW_ACCESS;
             l2[p].SBit   = 1;

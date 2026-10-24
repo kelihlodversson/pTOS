@@ -63,10 +63,14 @@ C_SYM(enter):
         ldmia   sp, {sp, lr}^
         add     sp, sp, #8
         ldmfd   sp!, {r0-r12}           // all of them: nothing of the kernel's stays in a register
+        mov     ip, #0                  // (but r12: arm_dispatch_svc loaded the address of this
+                                        // entry into it, which is the caller's to see no more than
+                                        // any other kernel address; r12 is scratch across a call)
         add     sp, sp, #4
         rfefd   sp!
 
 1:      ldmfd   sp!, {r0-r12}
+        mov     ip, #0
         add     sp, sp, #4
         mvn     r0, #31                 // EINVFN (-32)
         rfefd   sp!

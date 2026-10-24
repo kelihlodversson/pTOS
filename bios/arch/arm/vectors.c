@@ -52,7 +52,8 @@ typedef struct {
     ULONG spsr;
 } exception_frame_t;
 
-static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
+void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
+extern void arm_svc_unhandled(void);   /* vectorsasm.S */
 
 #if CONF_WITH_HIGHER_HALF
 /*
@@ -104,7 +105,7 @@ void init_exc_vec(void)
     proc_lives = 0;
     tos_vec_prefetch = tos_vec_data = tos_vec_undef = tos_vec_linea = (PFVOID)any_vec;
     for (i = 0; i < (int)ARRAY_SIZE(tos_vec_svc); i++)
-        tos_vec_svc[i] = (PFVOID)any_vec;
+        tos_vec_svc[i] = (PFVOID)arm_svc_unhandled;
 }
 
 void init_user_vec(UWORD first_boot)
@@ -215,7 +216,7 @@ void int_timerc(void)
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
 #endif
 
-static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)
+void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)
 {
     int i;
 
