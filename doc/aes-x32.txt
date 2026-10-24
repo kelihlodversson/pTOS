@@ -242,6 +242,9 @@ tokens after cleanup can dispatch, before accessing the requested native
 handle. Cleanup also rechecks the native lock after each yielding close and
 before visiting another window. If deletion closes a window but loses the
 lock, EAGAIN leaves that closed handle owned and available for retry.
+Open/close may also commit before their END_UPDATE yields and returns EAGAIN.
+Callers requery the owned window's flags before repeating those transitions;
+replaying an already committed open/close would otherwise return EINVAL.
 Unregister, normal exit/fault and restart close/delete the client's windows,
 clear its retained text and discard pending redraws. A callback may revoke
 and renew registration while a window call is suspended: that call returns
@@ -612,7 +615,10 @@ bounded immutable snapshots; indirect specs are resolved locally and internal
 alignment flags are removed. Menus and the desktop keep owned snapshots;
 dialogs copy back edited text/state. Shared icon bitmap pointers are copied
 once per source address and byte length; editable text keeps separate storage.
-Window getters yield and retry when another task owns update/mouse coordination.
+Window calls yield and retry contention, preserving arguments across callbacks
+and permanent errors. Open/close retries first check whether the requested
+transition already committed. The adapter uses the shared native grow/shrink
+animation routines.
 USERDEF receives values on the owner's
 user stack and reconstructs a caller-local PARMBLK before invoking dr_code.
 
@@ -677,7 +683,9 @@ rejects any FAIL/fault/panic/reset and verifies:
   - real menu selection, About, disk-window icon/text drawing and USERDEF;
   - opening an accessory from the Desk menu and closing its window gadget;
   - a 1,900-icon snapshot sharing bitmap assets, including draw and hit testing;
-  - getters retrying while an accessory holds update and mouse locks;
+  - getters and topping retrying while an accessory holds update/mouse locks;
+  - host checks for window mutation retries, committed open/close, partial
+    delete, cursor commit, callback argument reuse and permanent errors;
   - normal Pterm and a deliberate #UD fault with overlapping windows left open,
     followed by successful foreground cleanup and return to the desktop;
   - held-button selection/drag wait compatibility (classic mask 0xff -> 3);

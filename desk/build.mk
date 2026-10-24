@@ -18,7 +18,7 @@ desk-prog-y += $(if $(ARCH_M68K),pexec.o memset.o stringasm.o optimopt.o)
 desk-prog-y += $(if $(ARCH_ARM),miscasm.o)
 ifdef ARCH_X86_64
 desk-prog-y := $(filter-out deskstart.o,$(desk-prog-y)) deskentry.o deskuser.o \
-               deskaes.o desktree.o deskfsel.o gemrslib.o rsload_portable.o \
+               deskaes.o deskwind.o desktree.o deskfsel.o gemrslib.o rsload_portable.o \
                gemfslib.o gem_rsc.o gemobjop.o gemobed.o gemgrlib.o \
                gemgraphutil.o gemfmerror.o gemfmalt.o
 endif

@@ -506,7 +506,7 @@ jobs:
       - name: Exercise the external ring-3 desktop
         if: startsWith(matrix.config, 'pc-x86_64-desktop-tests')
         run: |
-          make CROSS_COMPILE= -j2 x32-desktop-test
+          make CROSS_COMPILE= -j2 x32-desktop-test x32-desktop-window-test
           python3 tests/x32_desktop/run.py --output obj/x32-desktop-runtime
 
       - uses: actions/upload-artifact@v4

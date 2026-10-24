@@ -189,97 +189,6 @@ static WORD animate(const UWORD *in, BOOL shrink)
     return TRUE;
 }
 
-#if CONF_WITH_X32_DESKTOP_TEST
-static ULONG getter_retries;
-#endif
-
-static LONG window_get(WORD handle, WORD field, UWORD *out)
-{
-    AES_WINDOW_INFO info;
-    GRECT rectangle;
-    LONG rc;
-
-    if (field == WF_FIRSTXYWH || field == WF_NEXTXYWH) {
-        do {
-            rc = aes_wind_rect(handle, field == WF_NEXTXYWH, &rectangle);
-#if CONF_WITH_X32_DESKTOP_TEST
-            if (rc == EAGAIN)
-                getter_retries++;
-#endif
-            if (rc == EAGAIN && aes_appl_yield() < 0)
-                return EACCDN;
-        } while (rc == EAGAIN);
-        if (!rc)
-            memcpy(out + 1, &rectangle, sizeof(rectangle));
-        return rc;
-    }
-    do {
-        rc = aes_wind_get(handle, &info);
-#if CONF_WITH_X32_DESKTOP_TEST
-        if (rc == EAGAIN)
-            getter_retries++;
-#endif
-        if (rc == EAGAIN && aes_appl_yield() < 0)
-            return EACCDN;
-    } while (rc == EAGAIN);
-    if (rc < 0)
-        return rc;
-    switch (field) {
-    case WF_KIND: out[1] = info.kind; break;
-    case WF_WXYWH: memcpy(out + 1, &info.work, sizeof(GRECT)); break;
-    case WF_CXYWH: memcpy(out + 1, &info.current, sizeof(GRECT)); break;
-    case WF_PXYWH: memcpy(out + 1, &info.previous, sizeof(GRECT)); break;
-    case WF_FXYWH: memcpy(out + 1, &info.full, sizeof(GRECT)); break;
-    case WF_TOP: out[1] = info.top; break;
-    case WF_HSLIDE: out[1] = info.hslide; break;
-    case WF_VSLIDE: out[1] = info.vslide; break;
-    case WF_HSLSIZ: out[1] = info.hslsiz; break;
-    case WF_VSLSIZ: out[1] = info.vslsiz; break;
-    default: return EINVFN;
-    }
-    return E_OK;
-}
-
-#if CONF_WITH_X32_DESKTOP_TEST
-static void test_window_getters(void)
-{
-    static BOOL done;
-    AES_MESSAGE message = { 652, 0, 0, { 0 } };
-    AES_EVENT event;
-    UWORD out[7];
-    WORD mode;
-    ULONG before;
-    LONG peer;
-    BOOL ok = TRUE;
-
-    if (done)
-        return;
-    done = TRUE;
-    peer = aes_appl_find("DESKACC");
-    if (peer < 0)
-        ok = FALSE;
-    for (mode = 0; ok && mode < 2; mode++) {
-        message.data[0] = mode ? BEG_MCTRL : BEG_UPDATE;
-        if (aes_appl_write(peer, &message) != E_OK) {
-            ok = FALSE;
-            break;
-        }
-        do {
-            if (aes_evnt_wait(AES_EVENT_MESSAGE, &event) != AES_EVENT_MESSAGE) {
-                ok = FALSE;
-                break;
-            }
-        } while (event.message.type != 653);
-        before = getter_retries;
-        if (ok)
-            ok = window_get(0, mode ? WF_FIRSTXYWH : WF_WXYWH, out) == E_OK &&
-                 out[3] > 0 && out[4] > 0 && getter_retries > before;
-    }
-    desk_test_record(ok ? "x32 desktop window getter retries PASS\r\n" :
-                          "x32 desktop window getter retries FAIL\r\n");
-}
-#endif
-
 WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
                        intptr_t *addresses, intptr_t *results)
 {
@@ -330,7 +239,7 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *in, UWORD *out,
 
             if (main_wait) {
                 desk_tree_test();
-                test_window_getters();
+                desk_window_test();
             }
             if (!test_ready || main_wait) {
                 AES_OBJECT_REQUEST request = { 0 };
@@ -462,47 +371,23 @@ wait_event:
         out[1] = button;
         return out[0];
     }
-    case WIND_CREATE:
-        memcpy(&rectangle, in + 1, sizeof(GRECT));
-        rc = aes_wind_create(in[0], &rectangle);
-        out[0] = rc < 0 ? -1 : rc; return out[0];
-    case WIND_OPEN:
-        memcpy(&rectangle, in + 1, sizeof(GRECT));
-        rc = aes_wind_open(in[0], &rectangle);
-        if (!rc)
+    case WIND_SET:
+        if (in[1] == WF_NEWDESK) {
+            memcpy(&pointer, in + 2, sizeof(pointer));
+            out[0] = desk_tree_retain(pointer, in[4], FALSE, pointer != NULL);
+            return out[0];
+        }
+        FALLTHROUGH;
+    case WIND_CREATE: case WIND_OPEN: case WIND_CLOSE: case WIND_DELETE:
+    case WIND_GET: case WIND_FIND: case WIND_UPDATE: case WIND_CALC:
+        rc = desk_window(opcode, in, out);
+        if (opcode == WIND_CREATE || opcode == WIND_FIND) {
+            out[0] = opcode == WIND_CREATE && rc < 0 ? -1 : rc;
+            return out[0];
+        }
+        if (opcode == WIND_OPEN && !rc)
             desk_test_record("x32 desktop window OPEN\r\n");
         break;
-    case WIND_CLOSE: rc = aes_wind_close(in[0]); break;
-    case WIND_DELETE: rc = aes_wind_delete(in[0]); break;
-    case WIND_GET: rc = window_get(in[0], in[1], out); break;
-    case WIND_SET:
-        memcpy(&rectangle, in + 2, sizeof(GRECT));
-        memcpy(&pointer, in + 2, sizeof(pointer));
-        switch (in[1]) {
-        case WF_CXYWH: rc = aes_wind_set_rect(in[0], &rectangle); break;
-        case WF_TOP: rc = aes_wind_top(in[0]); break;
-        case WF_NAME: case WF_INFO:
-            rc = aes_wind_set_text(in[0], in[1] == WF_INFO, pointer); break;
-        case WF_HSLIDE: case WF_VSLIDE:
-            rc = aes_wind_slider(in[0], in[1] == WF_VSLIDE, in[2]); break;
-        case WF_HSLSIZ: case WF_VSLSIZ:
-            rc = aes_wind_slider(in[0], in[1] == WF_VSLSIZ ? AES_WINDOW_VSLSIZ : AES_WINDOW_HSLSIZ, in[2]); break;
-        case WF_NEWDESK:
-            out[0] = desk_tree_retain(pointer, in[4], FALSE, pointer != NULL); return out[0];
-        }
-        break;
-    case WIND_FIND:
-        out[0] = aes_wind_find(in[0], in[1]); return out[0];
-    case WIND_UPDATE:
-        do {
-            rc = aes_wind_update(in[0]);
-            if (rc == EAGAIN && aes_appl_yield() < 0)
-                break;
-        } while (rc == EAGAIN);
-        break;
-    case WIND_CALC:
-        memcpy(&rectangle, in + 2, sizeof(GRECT));
-        rc = aes_wind_calc(in[0], in[1], &rectangle, (GRECT *)(out + 1)); break;
     case WIND_NEW:
         sr.operation = AES_SHELL_RESET;
         rc = registered ? shell(&sr) : E_OK;

@@ -1050,6 +1050,14 @@ vdi-contract-test: $(AUTOCONF_H)
 	./obj/vdi-contract-test
 	python3 tests/vdi_contract/check_inventory.py
 
+.PHONY: x32-desktop-window-test
+x32-desktop-window-test: $(AUTOCONF_H)
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Idesk/x32 -DDESK_WINDOW_HOST_TEST \
+	  tests/x32_desktop/window_adapter.c desk/x32/deskwind.c util/rectfunc.c -o obj/desktop-window-test
+	./obj/desktop-window-test
+
+TOCLEAN += obj/desktop-window-test
+
 .PHONY: aes-contract-test
 aes-contract-test: $(AUTOCONF_H)
 	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_CONTRACT_HOST_TEST \

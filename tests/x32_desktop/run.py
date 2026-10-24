@@ -69,7 +69,7 @@ class Guest:
     def text(self):
         text = self.log.read_text(errors="replace")
         assert not any(marker in text for marker in ("panic:", " FAIL", "resource snapshot rejected")), text[-5000:]
-        faults = re.findall(r"^process fault: (.*)$", text, re.MULTILINE)
+        faults = re.findall(r"^process fault: (.*)\n", text, re.MULTILINE)
         expected = text.count("x32 desktop teardown fault READY")
         # The early logger and console both report the same expected #UD.
         assert len(set(faults)) <= expected and len(faults) <= 2 * expected, text[-5000:]
@@ -228,6 +228,7 @@ def desktop(guest):
     guest.wait("x32 desktop CPL3 PASS")
     guest.wait("x32 desktop shared icon snapshot PASS")
     guest.wait("x32 desktop window getter retries PASS")
+    guest.wait("x32 desktop window top retries PASS")
     guest.wait("x32 desktop accessory READY")
     guest.screenshot("desktop")
     guest.move(38, 8)
