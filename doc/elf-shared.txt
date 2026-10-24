@@ -381,6 +381,36 @@ A load failure exits 127 before application entry. Missing libraries and
 symbols print the dependency context; bootstrap failures exit directly.
 
 
+Next backing model: file-backed MAP_PRIVATE
+------------------------------------------
+
+Read-only physical sharing will use file-backed MAP_PRIVATE mappings, not
+anonymous-page content hashing or full-page deduplication. This is planned;
+the current implementation still accepts anonymous mappings only.
+
+The kernel must retain a backing object independently of the user's file
+handle. Cached pages are keyed by stable filesystem object identity, content
+generation and page offset; pathname, file length and FAT timestamps alone
+are insufficient. Mutation, truncation, unlink/replacement and media changes
+must invalidate future cache lookups without freeing pages held by existing
+mappings. Drivers without a sufficient identity/lifetime contract must refuse
+file mappings until they provide one.
+
+Clean private file pages may share read-only physical backing. A write fault
+on a logically writable private mapping creates a private copy before retrying
+that instruction; relocation writes use the same path. Mprot changes logical
+permissions without making shared backing writable. Kernel writes to user
+buffers must trigger the same copy-on-write behavior. PROT_NONE, W^X, partial
+Munmap, allocation limits, failure rollback and last-reference teardown retain
+their existing guarantees. Anonymous zero-fill mappings stay lazy.
+
+LD.SO will map eligible PT_LOAD file pages directly, retaining anonymous pages
+for BSS and partial-page zeroing as needed. It must not first copy the entire
+image into anonymous memory and rely on later content comparison to recover
+sharing. File descriptors may be closed after mapping; backing and page
+references remain until the final mapping is released.
+
+
 Dynamic CRT and client helper
 -----------------------------
 
@@ -426,7 +456,7 @@ The boot probe uses a separate libuse.so and independently compiled main,
 checks getenv in a dependency constructor, main arguments, 32-handler capacity,
 LIFO ordering, registration during exit, return from main, exit from the DSO,
 _Exit bypass, and resource
-cleanup for both ET_EXEC and PIE. Four lifecycle PASS messages prove that the
+cleanup for both ET_EXEC and PIE. Eight lifecycle PASS messages, including nested parent/child runs, prove that the
 normal paths actually reach the final dependency destructor.
 
 

@@ -5,6 +5,7 @@
 #undef strlen
 #undef strcmp
 extern void client_exit(void);
+extern int64_t client_pexec(const char *path, const char *tail, const char *env);
 int lifecycle;
 static int late_registered, late_calls;
 static void handler(void)
@@ -44,6 +45,14 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 30; i++) if (atexit(extra_handler)) return 99;
     if (!atexit(extra_handler) || !atexit(0)) return 100;
     lifecycle = 3;
+    if (!strcmp(argv[1], "nest")) {
+        static const char tail[] = { 6, 'r', 'e', 't', 'u', 'r', 'n', 0 };
+        static const char env[] = "CHECK=660\0\0";
+        uint32_t basepage = ptos_basepage;
+        if (client_pexec(argv[0], tail, env) != 77 || lifecycle != 3 ||
+            ptos_basepage != basepage || strcmp(getenv("CHECK"), "660")) _Exit(103);
+        return 77;
+    }
     if (!strcmp(argv[1], "_Exit")) _Exit(89);
     if (!strcmp(argv[1], "exit")) client_exit();
     if (strcmp(argv[1], "return")) return 89;

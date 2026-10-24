@@ -276,6 +276,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             static const char return_tail[] = { 6, 'r', 'e', 't', 'u', 'r', 'n', 0 };
             static const char exit_tail[] = { 4, 'e', 'x', 'i', 't', 0 };
             static const char raw_tail[] = { 5, '_', 'E', 'x', 'i', 't', 0 };
+            static const char nested_tail[] = { 4, 'n', 'e', 's', 't', 0 };
             const char *path = cycle ? "C:\\CLIENTP.TOS" : "C:\\CLIENT.TOS";
             s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
                              (s64)(unsigned long)return_tail, (s64)(unsigned long)env);
@@ -286,6 +287,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
                          (s64)(unsigned long)raw_tail, (s64)(unsigned long)env);
             if (child != 89) pterm(0x600 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)nested_tail, (s64)(unsigned long)env);
+            if (child != 77) pterm(0x700 | ((int)child & 0xff));
         }
         pterm(0);
         break;

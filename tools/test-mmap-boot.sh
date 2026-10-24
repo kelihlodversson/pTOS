@@ -79,7 +79,7 @@ if [ -f "$log" ]; then cat "$log"; fi
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     grep -q 'x86-64 ldso relocations: PASS' "$log"
-    [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 4 ]
+    [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]
     grep -q 'x86-64 LD.SO runtime: PASS' "$log"
     grep -q 'x86-64 PT_INTERP startup: PASS' "$log"
 fi
