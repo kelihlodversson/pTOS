@@ -107,7 +107,10 @@ jobs:
               readelf -d cli/emucon.tos | grep 'libptos.so'
               python3 tests/x32_desktop/run.py --output obj/shared-desktop-runtime
             else
-              ! readelf -l obj/x32/emucon.elf | grep 'INTERP'
+              if readelf -l obj/x32/emucon.elf | grep 'INTERP'; then
+                echo 'Embedded EmuCON must retain its static entry path' >&2
+                exit 1
+              fi
               python3 tests/x32_desktop/run.py --output obj/shared-desktop-builtin-cli --embedded-console --mode missing
             fi
           done

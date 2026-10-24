@@ -93,7 +93,10 @@ cat "$log.qemu"
 if [ -f "$log" ]; then cat "$log"; fi
 [ "$rc" -eq 124 ] || { echo "QEMU exited unexpectedly: $rc"; exit 1; }
 [ "$(grep -c 'EFI entry reached' "$log" || true)" -eq 1 ]
-! grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"
+if grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"; then
+    echo 'Boot log contains a panic or failed test' >&2
+    exit 1
+fi
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi
@@ -109,5 +112,8 @@ if [ -f "$work/VDIIMP.TOS" ]; then
 fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"
-! sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'
+if sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'; then
+    echo 'Process fault after memory tests completed' >&2
+    exit 1
+fi
 echo "Private Mmap/Munmap/Mprot boot tests passed ($expected)."
