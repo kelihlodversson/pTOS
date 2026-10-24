@@ -7,7 +7,7 @@
 
 static LONG service(ULONG fn, UQUAD a, UQUAD b)
 {
-    register UQUAD rax __asm__("rax") = ((UQUAD)AES_SERVICE_CLASS << 32) | fn;
+    register UQUAD rax __asm__("rax") = (0x101ULL << 32) | fn;
     register UQUAD rdi __asm__("rdi") = a;
     register UQUAD rsi __asm__("rsi") = b;
     register UQUAD rdx __asm__("rdx") = 0;

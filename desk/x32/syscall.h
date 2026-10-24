@@ -4,7 +4,7 @@
 static __inline__ long desk_syscall(unsigned trap, unsigned fn,
                                     long a, long b, long c, long d)
 {
-    register unsigned long long rax __asm__("rax") = ((unsigned long long)trap << 32) | fn;
+    register unsigned long long rax __asm__("rax") = (trap << 32) | fn;
     register long long rdi __asm__("rdi") = a;
     register long long rsi __asm__("rsi") = b;
     register long long rdx __asm__("rdx") = c;

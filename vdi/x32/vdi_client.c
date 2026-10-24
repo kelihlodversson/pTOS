@@ -10,7 +10,7 @@
 
 static QUAD syscall4(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
-    register UQUAD rax __asm__("rax") = ((UQUAD)cls << 32) | fn;
+    register UQUAD rax __asm__("rax") = (cls << 32) | fn;
     register UQUAD rdi __asm__("rdi") = a;
     register UQUAD rsi __asm__("rsi") = b;
     register UQUAD rdx __asm__("rdx") = c;
