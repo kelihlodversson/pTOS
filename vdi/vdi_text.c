@@ -322,29 +322,6 @@ static void move_along(WORD d)
 }
 
 /*
- * Lightened text uses a mask that is rotated for each row of the screen.
- * Turned by 90 or 270 degrees, a piece's rows are those of the cell shifted
- * by 'd' (the width of what lies between their bottoms): for the mask to
- * go on from the cell's, it is rotated by that much (the masks of fonts
- * have a period of two rows, so only the parity counts).
- */
-static void light_phase(WORD piece, WORD cell)
-{
-    UWORD m = (UWORD)linea_vars.LITEMASK;
-
-    /*
-     * the mask starts at the bottom row that is drawn: do_clip() cuts the
-     * rest.  The bottoms are one past their rows, YMAXCL is the last one.
-     */
-    if (piece > linea_vars.YMAXCL + 1)
-        piece = linea_vars.YMAXCL + 1;
-    if (cell > linea_vars.YMAXCL + 1)
-        cell = linea_vars.YMAXCL + 1;
-    if ((linea_vars.STYLE & F_LIGHT) && ((piece - cell) & 1))
-        linea_vars.LITEMASK = (WORD)((m << 1) | (m >> 15));
-}
-
-/*
  * In the overhang pass, instead of a character's cell (set up by load_char(),
  * and in 'temp' of the font): the cells of ink that leave it (none if the
  * font has no 'off'), and the move on to where the next character goes, which
@@ -358,7 +335,6 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
     WORD left, right;
     const UBYTE *fbase = linea_vars.FBASE;
     WORD fwidth = linea_vars.FWIDTH;
-    WORD lite = linea_vars.LITEMASK;
     BOOL turned = linea_vars.CHUP == 900 || linea_vars.CHUP == 2700;
 
     if ((linea_vars.STYLE & F_THICKEN) && !mono)
@@ -387,6 +363,14 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
      */
     if (linea_vars.STYLE & F_SKEW)
         left = right = 0;
+    /*
+     * the light mask is rotated for each row of the screen, from the
+     * bottom of what is drawn: turned by 90 or 270 degrees a piece would
+     * have to start it where the cell's would be at that row, which
+     * depends on the clipping, the bold and the outline.  Not drawn.
+     */
+    if ((linea_vars.STYLE & F_LIGHT) && turned)
+        left = right = 0;
     if (left > 0 || right > 0)
     {
         linea_vars.FBASE = form;
@@ -406,11 +390,7 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
             linea_vars.SOURCEY = 0;
             linea_vars.DELX = left;
             move_along(-left);
-            if (turned)
-                light_phase(linea_vars.CHUP == 900 ? y + left : y,
-                            linea_vars.CHUP == 900 ? y : y + delx);
             text_blt();
-            linea_vars.LITEMASK = lite;
             linea_vars.DESTX = x;
             linea_vars.DESTY = y;
         }
@@ -421,11 +401,7 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
             linea_vars.SOURCEY = 0;
             linea_vars.DELX = right;
             move_along(delx);
-            if (turned)
-                light_phase(linea_vars.CHUP == 900 ? y - delx : y + delx + right,
-                            linea_vars.CHUP == 900 ? y : y + delx);
             text_blt();
-            linea_vars.LITEMASK = lite;
             linea_vars.DESTX = x;
             linea_vars.DESTY = y;
         }
