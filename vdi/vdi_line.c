@@ -667,9 +667,8 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
         for (y = rect->y1; y <= rect->y2; y++, b.addr += yinc) {
             int patind = patmsk & y;   /* starting pattern */
             int plane;
-            UWORD color;
 
-            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, b.addr++) {
+            for (plane = 0; plane < vplanes; plane++, b.addr++) {
                 UWORD *work = b.addr;
                 UWORD pattern = attr->patptr[patind];
                 int n;

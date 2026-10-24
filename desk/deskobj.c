@@ -81,6 +81,11 @@ static WORD sob_malloc(void)
     if (limit < num_obs)
         num_obs = limit;
 
+#if defined(X32_USERLAND)
+    /* The typed AES snapshot has a bounded object table. */
+    if (num_obs > 2048 - WOBS_START)
+        num_obs = 2048 - WOBS_START;
+#endif
     num_obs += WOBS_START;      /* allow for root, desktop, windows */
     mem = num_obs * (sizeof(OBJECT)+sizeof(SCREENINFO));
 

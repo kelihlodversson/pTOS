@@ -88,12 +88,15 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           sudo apt-get install qemu-system-x86 ovmf
 
-  PC (x86-64, built-in EmuCON)
+  PC (x86-64, EmuCON)
       On x86-64 EmuCON is not linked into the 64-bit kernel: "make" also
       builds it as an x32 ELF executable (obj/x32/emucon.elf, from the
       shared cli/ sources, in their standalone-console mode, with the small
-      runtime in cli/x32/) and embeds it in the EFI image, which runs it as
-      an ordinary ring-3 process.  The boot self-test's probe program
+      runtime in cli/x32/).  By default (CONF_EXTERNAL_CLI) it is copied to
+      cli/emucon.tos and has to be on the boot drive, as EMUCON.TOS in the
+      root directory of the EFI system partition; the kernel loads it from
+      there and runs it as an ordinary ring-3 process.  Without the option
+      the EFI image embeds it instead.  The boot self-test's probe program
       (tests/x32_probe/) is built and embedded the same way.  The compiler
       therefore needs the same x32 support described for the test program
       below; on Debian/Ubuntu that is the gcc-multilib package.  It uses
@@ -367,6 +370,9 @@ atari512            ptos512k.img, ROM padded to 512 KB (at 0x00e00000),
                     multi-language
 atari512-fastcall   the same built with -mfastcall (needs the -mfastcall
                     toolchain, see above), for the TT and the Falcon
+atari512-extdesk    the same with EmuDesk as a program (CONF_EXTERNAL_DESK):
+                    the ROM has no desktop and the AES loads EMUDESK.PRG
+                    from the boot drive ("make test-hd" puts it there)
 cartridge           ptoscart.img and ptos.stc, diagnostic cartridge
 prg                 ptos.prg, a RAM TOS, multi-language
 floppy              ptosus.st, a bootable floppy holding a RAM TOS
@@ -389,6 +395,90 @@ firebee-prg         ptos.prg, a RAM TOS for the FireBee
 m548x-dbug          ptos-m548x-dbug.s19, for dBUG on ColdFire boards
 m548x-bas           ptos-m548x-bas.s19, for BaS_gcc on ColdFire boards
 m548x-prg           ptos.prg, a RAM TOS for ColdFire boards with BaS_gcc
+
+EmuCON as a program (CONF_EXTERNAL_CLI)
+---------------------------------------
+
+On the images that are loaded into RAM from a disk (rpi1-rpi4, virt-arm,
+virt-m68k) EmuCON is not linked into the kernel: "make" also builds
+emucon.tos, the standalone EmuCON of cli/Makefile (with the translations of
+all languages, see "The LANG variable" in doc/nls.txt), and the kernel starts it with Pexec() from the root directory of the boot
+drive, as EMUCON.TOS, when there is no AES to start (the CLI configurations),
+for the early console (Esc at the welcome screen), and for the Console item
+of the desktop.  If the file is not there the kernel says so on the console.
+
+The file has to be on the boot drive.  "make test-dir" and "make test-hd"
+put it there (the CLI regression runs boot QEMU on such a disk),
+release-raspi-resources puts it on the card, and for any other disk it is
+copied by hand.  Without a disk -- QEMU -kernel alone -- these images boot
+and stop at "EmuCON: no shell in the root directory of the boot drive" (see
+"Which program is the shell" below).
+
+The option is in "make menuconfig" under EmuCON.  It is off by default for
+the ROM images (Atari, Amiga), which keep EmuCON in the ROM; it can be turned
+on there too, and EmuCON is then loaded from the boot drive as well.  It needs
+the loader of the program's format (CONF_WITH_ELF_LOADER on ARM,
+CONF_WITH_PRG_LOADER on m68k).  ColdFire is not supported: the standalone
+build makes plain m68k code, whose Line-A calls (cmdasm.S) are not those of
+ColdFire, so the ColdFire images keep EmuCON in the ROM.
+On x86-64 the program is the x32 EmuCON (obj/x32/emucon.elf, see "PC (x86-64,
+built-in EmuCON)" below), copied to cli/emucon.tos and run as an ordinary
+ring-3 process; it goes on the EFI system partition next to EFI/BOOT, as
+EMUCON.TOS.  Without the option the image embeds it.
+
+EmuDesk as a program (CONF_EXTERNAL_DESK)
+-----------------------------------------
+
+The desktop can be a program too.  With CONF_EXTERNAL_DESK (on by default for
+rpi1-rpi4, virt-arm and virt-m68k; "make menuconfig", under EmuDesk desktop)
+EmuDesk is not linked into the kernel: "make" also builds emudesk.prg, and the
+AES starts it with Pexec() from the root directory of the boot drive, as
+EMUDESK.PRG, instead of the desktop that is in the image.  EMUDESK.INF, its
+settings, is read from there as before.  The file is the objects of desk/, the
+helpers of util/ that they call, and a small runtime (desk/deskrt.c) that
+gives the program what the kernel's own desktop reads from the variables of
+the AES, the VDI and the BIOS: the sizes of the screen and of the character
+cells from the AES and the VDI (on a virtual workstation of its own), and the
+rest -- the boot flags, whether the resolution can change, the caches, ... --
+from Ssystem() (S_DESKINFO and S_DESKSET, bdos/ssystem.h).  Ssystem() is part
+of the m68k kernel when this option is on; the other m68k images do not have
+it.  The language is the LANG variable of the environment, as for EmuCON.
+
+On ARM it is built for the Pi 1, the oldest CPU, so that the same file works
+on every Raspberry Pi card.  "make test-dir", "make test-hd" and
+release-raspi-resources put it on the boot drive (RASPI_EMUDESK=<file> for the
+last, in the same way as RASPI_EMUCON).
+
+On x86-64, pc-x86_64-desktop_defconfig builds EmuDesk as an ordinary x32
+ring-3 ELF executable. Put emudesk.prg on the boot drive as EMUDESK.PRG,
+alongside EMUCON.TOS and EFI/BOOT/BOOTX64.EFI. Its resource pointers stay in
+user memory; its adapter uses typed AES snapshots/events/windows, a private
+VDI workstation and bounded shell/settings calls. Raw GEM trap class 2 is
+still refused from ring 3. See doc/aes-x32.txt for the service contracts and
+the repeatable QEMU desktop/accessory/application integration test.
+
+The option needs the loader of the program's format (CONF_WITH_ELF_LOADER on
+ARM/x32, CONF_WITH_PRG_LOADER on m68k). It is not offered with ARM/m68k MMU
+kernels (CONF_WITH_USER_ASPACE), whose processes still need a validated GEM
+entry (doc/mmu-address-space.txt).
+
+Which program is the shell
+--------------------------
+
+A kernel that has no built-in shell -- the desktop and the command line are
+programs -- looks for one in the root directory of the boot drive and starts
+the first of these that is there, in this order:
+
+  with an AES      emudesk.prg, desktop.prg, emucon.tos, emucon2.tos,
+                   command.tos, shell.prg, shell.tos
+  without an AES   emucon.tos, emucon2.tos, command.tos, shell.tos
+
+(the programs of the first list that only make sense with an AES are not
+looked for without one).  A kernel with a built-in EmuCON but an external
+desktop looks for emudesk.prg and desktop.prg only, and runs the built-in
+EmuCON if neither is there.  The Console item of the desktop uses the second
+list.  If nothing is found the kernel says so on the console (include/shells.h
+has the lists).
 
 Raspberry Pi
 ------------

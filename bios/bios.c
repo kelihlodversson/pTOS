@@ -22,6 +22,7 @@
 #include "emutos.h"
 #include "biosext.h"
 #include "bios.h"
+#include "shells.h"
 #include "../bdos/bdosstub.h"
 #include "../vdi/vdistub.h"
 #include "bdosbind.h"
@@ -94,7 +95,7 @@ extern void x86_64_memtest_run(void);
 #define DBGBIOS 0               /* If you want to enable debug wrappers */
 #define ENABLE_RESET_RESIDENT 0 /* enable to run "reset-resident" code (see below) */
 
-#define ENV_SIZE    12          /* sufficient for standard PATH=^X:\^^ (^=nul byte) */
+#define ENV_SIZE    24          /* sufficient for PATH=^X:\^LANG=xx^^ (^=nul byte) */
 #define DEF_PATH    "A:\\"      /* default value for path */
 
 static char default_env[ENV_SIZE];  /* default environment area */
@@ -109,11 +110,13 @@ void stonx_kprintf_init(void);      /* defined in kprintasm.S */
 extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 #endif
 
-#if CONF_WITH_CLI
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+static void start_external_cli(char *env);
+#elif CONF_WITH_CLI
 #if CONF_WITH_USER_ASPACE
 #include "progimage.h"
 extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);    /* bdos/kproc.c */
-static void start_builtin_cli(char *env);
+void start_builtin_cli(char *env);
 extern void set_owner(void *addr, PD *p);           /* bdos/mem.c */
 extern void proc_free_owned(PD *p);               /* bdos/proc.c */
 #else
@@ -155,6 +158,9 @@ WORD boot_status;               /* see kprint.h for bit flags */
 
 /* Boot flags */
 UBYTE bootflags;
+
+/* the drive that is booted from unless another is selected (tosvars.h) */
+WORD default_bootdev;
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
@@ -285,7 +291,38 @@ static void vecs_init(void)
 
 extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
-#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+/*
+ * The shell of an image without the AES is a program, loaded from the root
+ * directory of the boot drive like any other: EmuCON (cli/Makefile), or the
+ * first of the others that shells.h lists that is there.  It is no part of
+ * this image.  It returns here when the user leaves it.
+ */
+static LONG try_shell(const char *path, void *env)
+{
+    return Pexec(PE_LOADGO, path, "", (char *)env);
+}
+
+static void start_external_cli(char *env)
+{
+    char path[SHELL_PATH_SIZE], drives[12];
+    const char *const *n;
+    LONG rc = shell_start(shell_names_cli, try_shell, env, path);
+
+    if (rc == EFILNF || rc == EPTHNF)
+    {
+        shell_drives(drives);
+        kcprintf("EmuCON: this system has no built-in shell, and none was found in the root directory of %s (", drives);
+        for (n = shell_names_cli; *n; n++)
+            kcprintf("%s%s", n == shell_names_cli ? "" : ", ", *n);
+        kcprintf(")\n");
+    }
+    else if (rc < 0)
+        kcprintf("EmuCON: cannot start %s (error %ld)\n", path, (long)rc);
+}
+#endif
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI && !CONF_EXTERNAL_CLI
 /*
  * Runs the built-in EmuCON, an x32 program embedded in this image
  * (cli/arch/x86_64/emucon_image.c), as an ordinary ring-3 process: a
@@ -296,7 +333,7 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
  * ENTRY_PROGRAM (doc/process-entry.txt), talks to the kernel only through
  * `syscall`, and returns here, with its exit code, when it calls Pterm().
  */
-static void start_builtin_cli(char *env)
+void start_builtin_cli(char *env)
 {
     PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
     long rc;
@@ -758,7 +795,7 @@ static void bios_init(void)
     /* set start of user interface */
 #if CONF_WITH_AES
     exec_os = ui_start;
-#elif CONF_WITH_CLI && !CONF_WITH_USER_ASPACE
+#elif CONF_WITH_CLI && !CONF_WITH_USER_ASPACE && !CONF_EXTERNAL_CLI
     exec_os = coma_start;
 #else
     /* Without the AES and with per-process address spaces, EmuCON is a
@@ -855,14 +892,40 @@ err:
 #endif /* DETECT_NATIVE_FEATURES */
 
 /*
- * Build the default environment string: "PATH=^X:\^^" [where ^=nul]
+ * The language of the system for the LANG variable of the environment (doc/
+ * nls.txt): its ISO 639 code.  pTOS names English "us" and Greek "gr".
+ */
+static const char *env_language(void)
+{
+#if CONF_WITH_NLS
+    const char *lang = get_lang_name();
+#else
+    const char *lang = CONF_LANG;
+#endif
+
+    if (strcmp(lang, "us") == 0)
+        return "en";
+    if (strcmp(lang, "gr") == 0)
+        return "el";
+    return lang;
+}
+
+/*
+ * Build the default environment string: "LANG=xx^PATH=^X:\^^" [where ^=nul]
+ *
+ * PATH is last, in the TOS way (the name and the value are two strings):
+ * a program startup that turns that into the usual NAME=value moves the value
+ * one byte down and leaves a nul behind, which ends what follows too early.
  */
 static void init_default_environment(void)
 {
-    char *p;
+    char *p = default_env;
 
-    strcpy(default_env,PATH_ENV);
-    p = default_env + sizeof(PATH_ENV); /* point to first byte of path string */
+    strcpy(p,"LANG=");
+    strcat(p,env_language());
+    p += strlen(p) + 1;
+    strcpy(p,PATH_ENV);
+    p += sizeof(PATH_ENV);              /* point to first byte of path string */
     strcpy(p,DEF_PATH);
     *p += bootdev;                      /* fix up drive letter */
     p += sizeof(DEF_PATH);
@@ -1063,8 +1126,9 @@ void biosmain(void)
      * this allows a boot device that was selected via the welcome
      * screen to persist across warm boots.
      */
+    default_bootdev = blkdev_avail(DEFAULT_BOOTDEV) ? DEFAULT_BOOTDEV : FLOPPY_BOOTDEV;
     if (FIRST_BOOT)
-        bootdev = blkdev_avail(DEFAULT_BOOTDEV) ? DEFAULT_BOOTDEV : FLOPPY_BOOTDEV;
+        bootdev = default_bootdev;
 
 #if INITINFO_DURATION == 0
     show_initinfo = FALSE;
@@ -1111,7 +1175,9 @@ void biosmain(void)
 
 #if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
-#if CONF_WITH_USER_ASPACE
+#if CONF_EXTERNAL_CLI
+        start_external_cli(default_env);
+#elif CONF_WITH_USER_ASPACE
         start_builtin_cli(default_env);
 #else
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
@@ -1143,11 +1209,22 @@ void biosmain(void)
          */
         PD *pd;
         pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
+#if ARCH_X86_64
+        {
+            extern void mark_kernel_code_pd(PD *pd);
+            mark_kernel_code_pd(pd);
+        }
+#endif
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GO, "", (char *)pd, default_env);
     }
-#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+    else {
+        /* the default shell of an image without the AES: the program */
+        start_external_cli(default_env);
+    }
+#elif CONF_WITH_USER_ASPACE && CONF_WITH_CLI
     else {
         /* the default shell of an x86-64 image without the AES */
         start_builtin_cli(default_env);

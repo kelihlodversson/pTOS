@@ -7,6 +7,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "config.h"
 #include "asmdefs.h"
 
         .text
@@ -90,18 +91,24 @@ C_SYM(x86_64_syscall_entry):
          * clear at any C function boundary, and this can interrupt code
          * that left it set. */
         cld
+        /* Preserve the interrupted user's complete x87/SSE state across
+         * kernel work, including a nested callback and its syscalls. */
+        subq    $512, %rsp
+        fxsave  (%rsp)
         /* syscall entered with IF masked, so an IRQ cannot land while this
          * stub still uses the caller's stack. The kernel stack and complete
          * register frame are safe now; allow timer, PS/2 and COM1 IRQs while
          * the dispatcher may block in Bconin(). */
         sti
 
-        mov     %rsp, %rdi
+        leaq    512(%rsp), %rdi
         movl    $1, %esi        /* from_ring3: only a real `syscall` reaches here */
         call    C_SYM(x86_64_trap_dispatch)
         /* Do not let an IRQ use the caller's stack while restoring the
          * syscall frame and returning through sysretq. */
         cli
+        fxrstor (%rsp)
+        addq    $512, %rsp
 
         /*
          * `sysretq` itself never validates %rcx (the target RIP). `syscall`

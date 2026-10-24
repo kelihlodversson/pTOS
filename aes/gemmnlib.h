@@ -33,6 +33,9 @@ void mn_cleanup(void);
 void mn_init(void);
 WORD mn_register(WORD pid, char *pstr);
 void mn_getownid(AESPD **owner,WORD *id,WORD item);
+#if CONF_WITH_X32_ACCESSORY_TEST
+BOOL mn_test_disabled_waiting(void);
+#endif
 
 
 #endif

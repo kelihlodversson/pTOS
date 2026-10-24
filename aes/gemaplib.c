@@ -17,6 +17,10 @@
 */
 
 #include "emutos.h"
+#if ARCH_X86_64
+#include "aes_accessory.h"
+#include "gemerror.h"
+#endif
 #include "struct.h"
 #include "aesdefs.h"
 #include "aesvars.h"
@@ -73,6 +77,23 @@ WORD ap_init(void)
 WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff)
 {
     QPB     m;
+#if ARCH_X86_64
+    LONG rc;
+    WORD message[8];
+
+    if (code == MU_SDMSG && length == 16) {
+        /* A native caller may use a shared AES message buffer, which
+         * another task can overwrite while we wait for queue space. */
+        memcpy(message, pbuff, sizeof(message));
+        do {
+            rc = x86_64_aes_message(p, message);
+            if (rc == EAGAIN)
+                dsptch();
+        } while (rc == EAGAIN);
+        if (rc != EINVFN)
+            return rc == E_OK;
+    }
+#endif
 
     /*
      * do quick version if it is standard 16-byte read and the
@@ -87,9 +108,9 @@ WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff)
 
     m.qpb_ppd = p;
     m.qpb_cnt = length;
-    m.qpb_buf = (LONG)pbuff;
+    m.qpb_buf = (intptr_t)pbuff;
 
-    return ev_block(code, (LONG)&m);
+    return ev_block(code, (intptr_t)&m);
 }
 
 

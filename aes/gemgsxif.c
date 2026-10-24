@@ -124,7 +124,7 @@ void gsx_mfree(void)
 
 void gsx_mret(LONG *pmaddr, LONG *pmlen)
 {
-     *pmaddr = (LONG)gl_tmp.fd_addr;
+     *pmaddr = (LONG)(uintptr_t)gl_tmp.fd_addr;
      *pmlen = gl_mlen;
 }
 
@@ -347,7 +347,7 @@ static void bb_set(BOOL save, GRECT *r)
 
         /* issue warning message for backup only, not for subsequent restore */
         if (save)
-            KINFO(("Menu/alert buffer too small: need at least %ld bytes\n",size));
+            KINFO(("Menu/alert buffer too small: need at least %ld bytes\n",(long)size));
     }
 
     gsx_fix_screen(&gl_src);

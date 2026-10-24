@@ -37,6 +37,9 @@
 #include "gemdosif.h"
 
 #include "asm.h"
+#if ARCH_X86_64
+#include "aes_accessory.h"
+#endif
 
 #define KEYMASK 0xffff0000L             /* for comparing data to KEYSTOP */
 #define KEYSTOP 0x2b1c0000L             /* control-backslash */
@@ -246,6 +249,9 @@ static void schedule(void)
         /* check if there is something to run */
         if (rlr || fpcnt)
             break;
+#if CONF_WITH_X32_ACCESSORY_TEST
+        x86_64_aes_test_idle();
+#endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU
         stop_until_interrupt();
 #endif
@@ -276,6 +282,11 @@ void disp(void)
     KDEBUG(("disp() to \"%8.8s\"\n", rlr->p_name));
 
     /* based on the state of the process p, do something */
+#if ARCH_X86_64
+    if (p->p_stat & X32_AES_DEAD)
+        ;
+    else
+#endif
     if (p->p_stat & WAITIN)
         mwait_act(p);
     else

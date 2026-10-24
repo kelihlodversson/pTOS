@@ -20,6 +20,10 @@
 #include "emutos.h"
 #include "obdefs.h"
 #include "gemobjop.h"
+#include "aesdefs.h"
+#include "gemoblib.h"
+#include "gemgraf.h"
+#include "string.h"
 
 
 BYTE ob_sst(OBJECT *tree, WORD obj, OBSPEC *pspec, WORD *pstate, WORD *ptype,
@@ -159,4 +163,80 @@ WORD get_par(OBJECT *tree, WORD obj)
     }
 
     return next;
+}
+
+/*
+ *  Routine to find the x,y offset of a particular object relative
+ *  to the physical screen.  This involves accumulating the offsets
+ *  of all the object's parents up to and including the root.
+ */
+void ob_offset(OBJECT *tree, WORD obj, WORD *pxoff, WORD *pyoff)
+{
+    OBJECT *treeptr = tree;
+
+    *pxoff = *pyoff = 0;
+    do
+    {
+        *pxoff += (treeptr+obj)->ob_x;  /* add in current object's offsets */
+        *pyoff += (treeptr+obj)->ob_y;
+        obj = get_par(tree, obj);       /* then get parent */
+    } while (obj != NIL);
+}
+
+
+/*
+ *  ob_relxywh: fill GRECT with x/y/w/h from object (relative x/y)
+ */
+void ob_relxywh(OBJECT *tree, WORD obj, GRECT *pt)
+{
+    OBJECT *objptr = tree + obj;
+
+    memcpy(pt, &objptr->ob_x, sizeof(GRECT));
+}
+
+
+/*
+ *  ob_actxywh: fill GRECT with x/y/w/h of object (absolute x/y)
+ */
+void ob_actxywh(OBJECT *tree, WORD obj, GRECT *pt)
+{
+#if CONF_WITH_3D_OBJECTS
+    OBSPEC spec;
+    WORD state, type, flags, border, adjust;
+
+    ob_offset(tree, obj, &pt->g_x, &pt->g_y);
+    ob_sst(tree, obj, &spec, &state, &type, &flags, pt, &border);
+
+    /* if 3D object, adjust position & size */
+    if (flags & FL3DOBJ)
+    {
+        adjust = -ADJ3DSTD;
+        if (state & OUTLINED)
+            adjust -= ADJ3DOUT;
+        gr_inside(pt, adjust);
+        if ((state & SHADOWED) && (border < 0))
+        {
+            adjust = border * ADJ3DSHA;
+            pt->g_w -= adjust;
+            pt->g_h -= adjust;
+        }
+    }
+#else
+    OBJECT *objptr = tree + obj;
+
+    ob_offset(tree, obj, &pt->g_x, &pt->g_y);
+    pt->g_w = objptr->ob_width;
+    pt->g_h = objptr->ob_height;
+#endif
+}
+
+
+/*
+ * ob_setxywh: copy values from GRECT into object
+ */
+void ob_setxywh(OBJECT *tree, WORD obj, GRECT *pt)
+{
+    OBJECT *objptr = tree + obj;
+
+    memcpy(&objptr->ob_x, pt, sizeof(GRECT));
 }

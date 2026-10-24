@@ -84,3 +84,6 @@ __pycache__/
 /.superpowers/
 /task-*-report.md
 /tests/*/*.tos
+
+# EmuCON as a program (CONF_EXTERNAL_CLI)
+/emucon.tos

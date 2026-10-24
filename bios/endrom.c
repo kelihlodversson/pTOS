@@ -29,6 +29,8 @@ const GEM_MUPB ui_mupb =
     _end_os_stram,  /* End of the static ST-RAM used by the OS */
 #if CONF_WITH_AES
     ui_start        /* AES entry point */
+#elif CONF_WITH_CLI && CONF_EXTERNAL_CLI
+    NULL            /* EmuCON is the program EMUCON.TOS, not an entry point */
 #elif CONF_WITH_CLI
 #if CONF_WITH_USER_ASPACE
     NULL            /* EmuCON is a separate x32 image, not a ROM entry point */

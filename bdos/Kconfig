@@ -71,15 +71,21 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  imports" section for the .ptos.imports/.ptos.bind ELF metadata format
 	  and bdos/elfld.c's resolution mechanism this enables.
 
-	  No namespace export table is registered yet: an earlier iteration
-	  exported every GEMDOS (TRAP #1) call this way, but the classic
-	  trap1()/TRAP #1 interface already serves GEMDOS well enough that the
-	  added indirection was not worth it there. This mechanism is kept
-	  ready for a future namespace (most plausibly "aes" or "vdi", once
-	  part of one of those moves to userspace) to register one -- see
-	  bdos/ptosabi.h. Until then, turning this on builds bdos/elfld.c's
-	  resolution code with nothing for it to actually resolve against, so
-	  leave it off unless you are developing that future namespace.
+	  CONF_WITH_X32_VDI selects this and registers vdi:vdi, ABI 1.0, for
+	  x32 programs. That entry executes in a read-only user client image
+	  mapped privately into each process, with narrow syscalls for hardware
+	  access. No LP64 kernel code or data address is bound into x32 code.
+	  CONF_WITH_X32_AES adds the typed aes: client exports. Other
+	  namespaces, including the retired gemdos imports, are refused.
+
+config CONF_WITH_USER_CALLBACKS
+	bool "Typed callbacks on x32 user stacks"
+	depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE && CONF_WITH_KHEAP
+	default y if CONF_WITH_X32_VDI
+	help
+	  Process-owned callback registrations, authenticated return/chaining
+	  stubs, alternate stacks and bounded nested ring-3 delivery. The
+	  legacy m68k and ARM callback conventions are unchanged.
 
 config CONF_WITH_KPROC
 	bool "Kernel-private process records" if !ARCH_X86_64
@@ -160,7 +166,9 @@ config CONF_WITH_SSYSTEM
 	  Ssystem() (GEMDOS 0x154, bdos/ssystem.c) is written in C and
 	  dispatched from osif(); on the other architectures it is handled by
 	  the assembly trap entry.  Not user-selectable: it follows the
-	  architecture.
+	  architecture, and the options that need it (the desktop as a
+	  program, CONF_EXTERNAL_DESK, which asks the kernel what it used to
+	  read from its variables) select it on m68k.
 
 config CONF_WITH_GEMDOS_SHUTDOWN
 	bool "Shutdown() GEMDOS call"

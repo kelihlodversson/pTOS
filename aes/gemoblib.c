@@ -35,6 +35,9 @@
 #include "gemoblib.h"
 
 #include "string.h"
+#if ARCH_X86_64
+#include "aes_objects_kernel.h"
+#endif
 
 
 #if CONF_WITH_3D_OBJECTS
@@ -105,7 +108,7 @@ static WORD xor_color(WORD color)
 /*
  * Return TRUE iff it's ok to toggle an object's SELECTED state via XOR
  */
-static BOOL xor_is_ok(WORD obtype, WORD obflags, LONG obspec)
+static BOOL xor_is_ok(WORD obtype, WORD obflags, OBSPEC obspec)
 {
     WORD colour_word;
 
@@ -127,11 +130,11 @@ static BOOL xor_is_ok(WORD obtype, WORD obflags, LONG obspec)
     case G_FBOXTEXT:
     case G_TEXT:
     case G_FTEXT:
-        colour_word = ((TEDINFO *)obspec)->te_color;
+        colour_word = obspec.tedinfo->te_color;
         break;
     case G_BOX:
     case G_BOXCHAR:
-        colour_word = LOWORD(obspec);
+        colour_word = LOWORD(obspec.index);
         break;
     default:    /* G_USERDEF, G_ICON, G_CICON */
         return TRUE;
@@ -279,83 +282,6 @@ static void add_3d_effect(GRECT *pt, WORD obstate, WORD th, WORD color)
 #endif
 
 /*
- *  Routine to find the x,y offset of a particular object relative
- *  to the physical screen.  This involves accumulating the offsets
- *  of all the object's parents up to and including the root.
- */
-void ob_offset(OBJECT *tree, WORD obj, WORD *pxoff, WORD *pyoff)
-{
-    OBJECT *treeptr = tree;
-
-    *pxoff = *pyoff = 0;
-    do
-    {
-        *pxoff += (treeptr+obj)->ob_x;  /* add in current object's offsets */
-        *pyoff += (treeptr+obj)->ob_y;
-        obj = get_par(tree, obj);       /* then get parent */
-    } while (obj != NIL);
-}
-
-
-/*
- *  ob_relxywh: fill GRECT with x/y/w/h from object (relative x/y)
- */
-void ob_relxywh(OBJECT *tree, WORD obj, GRECT *pt)
-{
-    OBJECT *objptr = tree + obj;
-
-    memcpy(pt, &objptr->ob_x, sizeof(GRECT));
-}
-
-
-/*
- *  ob_actxywh: fill GRECT with x/y/w/h of object (absolute x/y)
- */
-void ob_actxywh(OBJECT *tree, WORD obj, GRECT *pt)
-{
-#if CONF_WITH_3D_OBJECTS
-    OBSPEC spec;
-    WORD state, type, flags, border, adjust;
-
-    ob_offset(tree, obj, &pt->g_x, &pt->g_y);
-    ob_sst(tree, obj, &spec, &state, &type, &flags, pt, &border);
-
-    /* if 3D object, adjust position & size */
-    if (flags & FL3DOBJ)
-    {
-        adjust = -ADJ3DSTD;
-        if (state & OUTLINED)
-            adjust -= ADJ3DOUT;
-        gr_inside(pt, adjust);
-        if ((state & SHADOWED) && (border < 0))
-        {
-            adjust = border * ADJ3DSHA;
-            pt->g_w -= adjust;
-            pt->g_h -= adjust;
-        }
-    }
-#else
-    OBJECT *objptr = tree + obj;
-
-    ob_offset(tree, obj, &pt->g_x, &pt->g_y);
-    pt->g_w = objptr->ob_width;
-    pt->g_h = objptr->ob_height;
-#endif
-}
-
-
-/*
- * ob_setxywh: copy values from GRECT into object
- */
-void ob_setxywh(OBJECT *tree, WORD obj, GRECT *pt)
-{
-    OBJECT *objptr = tree + obj;
-
-    memcpy(&objptr->ob_x, pt, sizeof(GRECT));
-}
-
-
-/*
  *  Routine to take an unformatted raw string and, based on a
  *  template string, build a formatted string.
  */
@@ -492,6 +418,10 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     BOOL movetext, changecol;
 #endif
 
+#if ARCH_X86_64
+    if (x86_64_aes_tree_cancelled(tree))
+        return;
+#endif
     ch = ob_sst(tree, obj, &spec, &state, &obtype, &flags, &t, &th);
 
     if ((flags & HIDETREE) || (spec.index == -1L))
@@ -527,7 +457,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     else
     {
         movetext = FALSE;
-        changecol = !xor_is_ok(obtype, flags, spec.index);
+        changecol = !xor_is_ok(obtype, flags, spec);
     }
 #endif
 
@@ -967,7 +897,22 @@ void ob_draw(OBJECT *tree, WORD obj, WORD depth)
     WORD pobj;
     WORD last = NIL;
     WORD sx, sy;
+#if ARCH_X86_64
+    AES_TREE_STATE *guard = x86_64_aes_tree_pin(tree);
+    GRECT saved, bounded;
+#endif
 
+#if ARCH_X86_64
+    if (guard) {
+        gsx_gclip(&saved);
+        bounded = saved.g_w && saved.g_h ? saved : gl_rscreen;
+        if (!rc_intersect(&gl_rscreen, &bounded)) {
+            x86_64_aes_tree_unpin(guard);
+            return;
+        }
+        gsx_sclip(&bounded);
+    }
+#endif
     if (obj != ROOT)
         last = tree[obj].ob_next;
     pobj = get_par(tree, obj);
@@ -980,6 +925,11 @@ void ob_draw(OBJECT *tree, WORD obj, WORD depth)
     gsx_moff();
     everyobj(tree, obj, last, just_draw, sx, sy, depth);
     gsx_mon();
+#if ARCH_X86_64
+    if (guard)
+        gsx_sclip(&saved);
+    x86_64_aes_tree_unpin(guard);
+#endif
 }
 
 
@@ -1256,7 +1206,7 @@ BOOL ob_order(OBJECT *tree, WORD mov_obj, WORD new_pos)
  *  Routine to change the state of an object and redraw that
  *  object using the current clip rectangle.
  */
-void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
+static void ob_change_native(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
 {
     WORD flags, obtype, th;
     GRECT t;
@@ -1300,7 +1250,7 @@ void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
          */
         if ((new_state ^ curr_state) & SELECTED)
         {
-            BOOL ok = xor_is_ok(obtype,flags, spec.index);
+            BOOL ok = xor_is_ok(obtype,flags, spec);
             if (ok || ((obtype == G_IMAGE) && !(new_state & SELECTED)))
             {
                 bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,
@@ -1323,6 +1273,29 @@ void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
         just_draw(tree, obj, t.g_x, t.g_y);
 
     gsx_mon();
+}
+
+void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
+{
+#if ARCH_X86_64
+    AES_TREE_STATE *guard = x86_64_aes_tree_pin(tree);
+    GRECT saved, bounded;
+
+    if (guard) {
+        gsx_gclip(&saved);
+        bounded = saved.g_w && saved.g_h ? saved : gl_rscreen;
+        if (!rc_intersect(&gl_rscreen, &bounded))
+            redraw = FALSE;
+        else
+            gsx_sclip(&bounded);
+    }
+#endif
+    ob_change_native(tree, obj, new_state, redraw);
+#if ARCH_X86_64
+    if (guard)
+        gsx_sclip(&saved);
+    x86_64_aes_tree_unpin(guard);
+#endif
 }
 
 
