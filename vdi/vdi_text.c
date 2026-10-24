@@ -372,11 +372,12 @@ static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD 
     if (linea_vars.WRT_MODE == WM_XOR && (linea_vars.STYLE & (F_THICKEN | F_OUTLINE | F_SKEW)))
         left = right = 0;
     /*
-     * the true colour backends undo the clipping of skewed and outlined
-     * text (see tc_text_blit()): a piece that starts left of the screen
-     * would write into the line before.  That ink is left as the cells have it.
+     * the true colour backends do not keep skewed text inside the clip
+     * (see tc_text_blit() and the transparent loops of text_blt()): a
+     * piece at the edge of the screen would write into the line before or
+     * after.  That ink is left as the cells have it.
      */
-    if ((linea_vars.STYLE & (F_SKEW | F_OUTLINE)) == (F_SKEW | F_OUTLINE))
+    if (linea_vars.STYLE & F_SKEW)
         left = right = 0;
     if (left > 0 || right > 0)
     {
