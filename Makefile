@@ -123,6 +123,9 @@ core-dirs-y = bios bdos fs util
 # Optional directories may be disabled for reduced features.
 optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
+ifneq ($(CONF_WITH_AES),y)
+optional-dirs-$(CONF_WITH_X32_AES) += aes
+endif
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
 
@@ -427,6 +430,11 @@ ifdef ARCH_ARM
 # The ARM linker script cannot produce a raw binary directly.
 EMUTOS_IMG = emutos.elf
 LDFLAGS += -Wl,-build-id=none
+# This kernel image deliberately shares one load segment for code and data;
+# the Raspberry Pi image is extracted as a flat binary. Newer linkers warn
+# about its RWX segment. Keep older toolchains, which lack this option, usable.
+LDFLAGS += $(shell $(CROSS_COMPILE)ld --help 2>/dev/null | \
+                  grep -q -- '--no-warn-rwx-segments' && echo -Wl,--no-warn-rwx-segments)
 else
 EMUTOS_IMG = emutos.img
 endif
@@ -541,6 +549,27 @@ image-default = pc-x86_64.efi
 endif
 
 IMAGE = $(if $(IMAGE_NAME),$(IMAGE_NAME),$(image-default))
+
+#
+# EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
+# EmuCON, and the file goes on the boot drive next to the image (test-dir,
+# test-hd.img, the Raspberry Pi archives).  The kernel starts it from the
+# root directory as EMUCON.TOS (bios/bios.c).
+#
+ifeq ($(CONF_EXTERNAL_CLI),y)
+EMUCON_TOS = cli/emucon.tos
+image-extra += $(EMUCON_TOS)
+else
+EMUCON_TOS =
+endif
+
+# EmuDesk as a program (CONF_EXTERNAL_DESK), see desk/program.mk
+ifeq ($(CONF_EXTERNAL_DESK),y)
+EMUDESK_PRG = emudesk.prg
+image-extra += $(EMUDESK_PRG)
+else
+EMUDESK_PRG =
+endif
 
 TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym *.efi
 
@@ -792,9 +821,9 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # harmless where the default already matches, and is what lets the
 # Homebrew "x86_64-elf-" toolchain build this program; see
 # doc/install.txt.
-X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
+X32_CFLAGS = -mx32 -ffreestanding -Wa,--noexecstack -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
-X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none \
+X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
 X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
@@ -840,13 +869,116 @@ TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
 #
 X32_CLI_CFLAGS = $(X32_CFLAGS) -fno-tree-loop-distribute-patterns \
                  -fno-builtin -fno-stack-protector -std=gnu90 -Os -Wall -Wundef
-X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
+X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 \
                   -Wl,-e,_start
 
 obj/x32:
 	mkdir -p $@
+
+# The native VDI entry is a user library. It never exports a ring-0 address
+# and never passes a general VDIPB across the syscall boundary.
+X32_VDI_OBJ = obj/x32/vdi_client.o obj/x32/vdi_user.o obj/x32/vdi_user_raster.o obj/x32/vdi_user_draw.o
+obj/x32/vdi_client.o: vdi/x32/vdi_client.c include/vdi_service.h include/vdi_user.h include/vdipb.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/vdi_user.o: vdi/vdi_user.c include/vdi_user.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/vdi_user_raster.o: vdi/vdi_user_raster.c include/vdi_service.h include/vdi_user.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/vdi_user_draw.o: vdi/vdi_user_draw.c include/vdi_service.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/libptos-vdi.a: $(X32_VDI_OBJ)
+	$(X32_CROSS_COMPILE)ar rcs $@ $^
+.PHONY: x32-vdi
+x32-vdi: obj/x32/libptos-vdi.a
+
+# A link-time stub for .ptos.imports consumers; never loaded as a DSO.
+obj/x32/libptos-vdi.so.1: vdi/x32/vdi_import_stub.S | obj/x32
+	$(X32_CC) $(X32_CFLAGS) -nostdlib -shared -Wl,-shared,-m,elf32_x86_64 \
+	  -Wl,--build-id=none -Wl,-soname,libptos-vdi.so.1 -o $@ $<
+
+obj/x32/vdi_image.ld: vdi/x32/vdi_image.ld.S include/x32vdi_image.h | obj/x32
+	$(X32_CC) -E -P -x c -Iinclude $< -o $@
+obj/x32/vdi_client.elf: $(X32_VDI_OBJ) obj/x32/vdi_image.ld
+	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
+	  -Wl,--build-id=none,-z,noexecstack -Wl,-T,obj/x32/vdi_image.ld -o $@ $(X32_VDI_OBJ)
+obj/x32/vdi_client.bin: obj/x32/vdi_client.elf
+	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
+obj/vdi_image.o: obj/x32/vdi_client.bin
+
+x32-vdi: obj/x32/libptos-vdi.so.1
+
+# The same imported client at two application link addresses. The second
+# exercises relocation into the image window and PE_LOAD into a user heap.
+obj/x32/vdi-import-reloc.elf: X32_IMPORT_LINK_BASE = -Wl,-Ttext-segment=0x20000000
+obj/x32/vdi-import-plt.elf: X32_IMPORT_FLAGS = -DVDI_IMPORT_PLT
+obj/x32/vdi-import.elf obj/x32/vdi-import-reloc.elf obj/x32/vdi-import-plt.elf: \
+  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S \
+  tests/vdi_contract/vdi_roundtrip.c obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DVDI_IMPORT_TEST $(X32_IMPORT_FLAGS) -Iinclude -Iobj \
+	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
+	  -Wl,-z,max-page-size=0x1000,-z,noseparate-code -Wl,-e,_start \
+	  $(X32_IMPORT_LINK_BASE) \
+	  -o $@ $(filter %.c %.S,$^) -Lobj/x32 -l:libptos-vdi.so.1
+
+obj/x32/VDIIMP.TOS: obj/x32/vdi-import.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+obj/x32/VDIREL.TOS: obj/x32/vdi-import-reloc.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+.PHONY: x32-vdi-import-test
+obj/x32/VDIPLT.TOS: obj/x32/vdi-import-plt.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+x32-vdi-import-test: obj/x32/VDIIMP.TOS obj/x32/VDIREL.TOS obj/x32/VDIPLT.TOS
+	python3 tests/x32_vdi_import/check_imports.py obj/x32
+
+# Native AES client stubs and the existing application-local rectangle helpers.
+X32_AES_OBJ = obj/x32/aes_client.o obj/x32/aes_rectfunc.o obj/x32/aes_object_client.o obj/x32/aes_tree.o
+obj/x32/aes_object_client.o: aes/x32/aes_object_client.c include/aes_objects.h include/aes_service.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/aes_tree.o: aes/aes_tree.c include/aes_objects.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/aes_client.o: aes/x32/aes_client.c include/aes_client.h include/aes_service.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/aes_rectfunc.o: util/rectfunc.c include/grect.h include/rectfunc.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/libptos-aes.a: $(X32_AES_OBJ)
+	$(X32_CROSS_COMPILE)ar rcs $@ $^
+obj/x32/libptos-aes.so.1: aes/x32/aes_import_stub.S include/aes_client_exports.h | obj/x32
+	$(X32_CC) $(X32_CFLAGS) -Iinclude -nostdlib -shared -Wl,-shared,-m,elf32_x86_64 \
+	  -Wl,--build-id=none -Wl,-soname,libptos-aes.so.1 -o $@ $<
+obj/x32/aes_image.ld: aes/x32/aes_image.ld.S include/x32aes_image.h include/aes_client_exports.h | obj/x32
+	$(X32_CC) -E -P -x c -Iinclude $< -o $@
+obj/x32/aes_client.elf: $(X32_AES_OBJ) obj/x32/aes_image.ld
+	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
+	  -Wl,--build-id=none,-z,noexecstack -Wl,-T,obj/x32/aes_image.ld -o $@ $(X32_AES_OBJ)
+obj/x32/aes_client.bin: obj/x32/aes_client.elf
+	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
+obj/aes_image.o: obj/x32/aes_client.bin
+.PHONY: x32-aes
+x32-aes: obj/x32/libptos-aes.a obj/x32/libptos-aes.so.1
+# Loaded AES applications import both native client namespaces.
+obj/x32/aes-import-reloc.elf: X32_AES_IMPORT_BASE = -Wl,-Ttext-segment=0x20000000
+obj/x32/aes-import.elf obj/x32/aes-import-reloc.elf: \
+  tests/aes_contract/aes_import.c tests/aes_contract/aes_roundtrip.c \
+  tests/aes_contract/aes_contract.c tests/x32_probe/x32_probe_start.S \
+  obj/x32/libptos-aes.so.1 obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DAES_IMPORT_TEST -Iinclude -Iobj \
+	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
+	  -Wl,-z,max-page-size=0x1000,-z,noseparate-code -Wl,-e,_start \
+	  $(X32_AES_IMPORT_BASE) -o $@ $(filter %.c %.S,$^) -Lobj/x32 \
+	  -l:libptos-aes.so.1 -l:libptos-vdi.so.1
+obj/x32/AESIMP.TOS: obj/x32/aes-import.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+obj/x32/AESREL.TOS: obj/x32/aes-import-reloc.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+.PHONY: x32-aes-import-test
+x32-aes-import-test: obj/x32/AESIMP.TOS obj/x32/AESREL.TOS
+	python3 tests/aes_contract/check_imports.py obj/x32
+
+-include $(X32_AES_OBJ:.o=.d)
+
+-include $(X32_VDI_OBJ:.o=.d)
 
 
 ifeq ($(CONF_WITH_CLI),y)
@@ -884,12 +1016,64 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $^
+obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+                    tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
+                    include/user_callback.h \
+                    tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
+                    tests/aes_contract/aes_contract.c tests/aes_contract/aes_roundtrip.c \
+                    include/aes_client.h include/aes_service.h include/rectfunc.h include/grect.h \
+                    include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
+                    obj/x32/libptos-vdi.a obj/x32/libptos-aes.a $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -o $@ \
+	  $(filter %.c %.S,$^) obj/x32/libptos-vdi.a obj/x32/libptos-aes.a
 
 obj/x32probe_image.o: obj/x32/x32probe.elf
 endif
 endif
+
+
+ifdef ARCH_X86_64
+.PHONY: x32-desktop-test
+x32-desktop-test: obj/x32/GEMTEST.PRG obj/x32/DESKACC.ACC
+
+obj/x32/GEMTEST.PRG: tests/x32_desktop/process.c tests/x32_desktop/entry.S util/arch/x86_64/memmove.c obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -Idesk/x32 -Iinclude/arch/x86_64 $(X32_CLI_LDFLAGS) -o $@ $(filter %.c %.S %.a,$^)
+
+obj/x32/DESKACC.ACC: obj/x32/GEMTEST.PRG
+	cp $< $@
+endif
+
+.PHONY: vdi-contract-test
+vdi-contract-test: $(AUTOCONF_H)
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DX32_USERLAND -DVDI_CONTRACT_HOST_TEST \
+	  tests/vdi_contract/vdi_contract.c vdi/vdi_user.c vdi/vdi_user_raster.c vdi/vdi_user_draw.c -o obj/vdi-contract-test
+	./obj/vdi-contract-test
+	python3 tests/vdi_contract/check_inventory.py
+
+.PHONY: x32-desktop-window-test
+x32-desktop-window-test: $(AUTOCONF_H)
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Idesk/x32 -DDESK_WINDOW_HOST_TEST \
+	  tests/x32_desktop/window_adapter.c desk/x32/deskwind.c util/rectfunc.c -o obj/desktop-window-test
+	./obj/desktop-window-test
+
+TOCLEAN += obj/desktop-window-test
+
+.PHONY: aes-contract-test
+aes-contract-test: $(AUTOCONF_H)
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_CONTRACT_HOST_TEST \
+	  tests/aes_contract/aes_contract.c util/rectfunc.c -o obj/aes-contract-test
+	./obj/aes-contract-test
+	python3 tests/aes_contract/check_inventory.py
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_TREE_HOST_TEST \
+	  tests/aes_contract/tree_contract.c aes/aes_tree.c -o obj/aes-tree-contract-test
+	./obj/aes-tree-contract-test
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Iaes \
+	  tests/aes_contract/graph_geometry.c aes/gemgraphutil.c -o obj/aes-graph-contract-test
+	./obj/aes-graph-contract-test
+
+TOCLEAN += obj/aes-contract-test obj/aes-tree-contract-test obj/aes-graph-contract-test
+
+TOCLEAN += obj/vdi-contract-test
 
 #
 # Amiga images
@@ -993,7 +1177,7 @@ mkflop: tools/mkflop.c
 
 # post-link tool packing an ELF's load relocations for bdos/elfld.c, see
 # doc/elfload.txt; not needed to build EmuTOS itself, built on demand
-ptos-elf-pack: tools/ptos-elf-pack.c
+ptos-elf-pack: tools/ptos-elf-pack.c include/aes_client_exports.h
 	$(NATIVECC) $< -o $@
 
 erd: tools/erd.c
@@ -1444,7 +1628,7 @@ vdi/%_cf.S: vdi/%_preprocessed.s
 # Standalone EmuCON, built by cli/Makefile
 #
 
-TOCLEAN += cli/version.c cli/*.o cli/*.tos
+TOCLEAN += cli/version.c cli/*.o cli/*.tos cli/.arch-*
 
 #
 # The targets for building a release are in a separate file
@@ -1505,6 +1689,112 @@ LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
 LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
 
+# Build libcmini from the submodule.  The defconfig is arch-specific; for
+# m68k we use mintelf_defconfig, which produces ELF-compatible objects
+# that also work as a.out with --emit-relocs.  ABI details that are
+# specific to pTOS (e.g. the ARM float ABI) live in libcmini's own
+# defconfig/build, not here: this Makefile only picks which defconfig to
+# load.
+ifdef ARCH_ARM
+LIBCMINI_DEFCONFIG = ptos_arm_defconfig
+else ifdef ARCH_X86_64
+LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
+else
+LIBCMINI_DEFCONFIG = mintelf_defconfig
+endif
+
+# libcmini's build/ directory is a single flat path (build/./libcmini.a)
+# that isn't parameterized by architecture or defconfig, so switching
+# between e.g. ptos_arm_defconfig and mintelf_defconfig across two builds
+# would otherwise leave a stale libcmini.a from the *previous* arch sitting
+# at a path Make considers up to date -- Make's staleness check has no way
+# to know the desired configuration changed, since that's not expressed as
+# a file it tracks.
+#
+# LIBCMINI_STAMP makes that configuration state an explicit, trackable
+# file: it depends on the always-out-of-date FORCE target, so its recipe
+# runs on every invocation and actually compares the desired defconfig
+# against the one last applied, cleaning and reconfiguring only on a real
+# mismatch. The stamp file's mtime -- and therefore whether it forces
+# $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
+# real mismatch, not on every invocation.
+#
+# The comparison is against the defconfig *file's content*, not just its
+# name: comparing names alone would miss a defconfig whose content changed
+# underneath an unchanged selection (e.g. a submodule bump that edits
+# configs/ptos_arm_defconfig without touching any sources/*.c or
+# sources/arch/$(ARCH)/*.S -- $(LIBCMINI_LIB)'s own prerequisites, so
+# nothing else would notice either). Reproduced directly: with the name
+# comparison alone, editing that file's content and rebuilding without
+# touching LIBCMINI_DEFCONFIG left lib/libcmini/.config -- and therefore
+# libcmini.a -- silently built from the stale content.
+.PHONY: FORCE
+FORCE:
+
+# lib/libcmini is a git submodule: a plain "git clone" without
+# --recurse-submodules (or before "git submodule update --init") leaves
+# $(LIBCMINI_DIR) present but empty, and every rule below that invokes
+# "$(MAKE) -C $(LIBCMINI_DIR)" would then fail with a generic nested-make
+# error ("No rule to make target ...") that gives no hint what's actually
+# wrong. Gate on the submodule's own Makefile so the real problem is
+# reported once, up front, instead.
+$(LIBCMINI_DIR)/Makefile:
+	@echo "$@ not found -- run 'git submodule update --init' first" >&2
+	@exit 1
+
+$(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
+	@mkdir -p $(dir $@)
+	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
+	have=$$(cat $@ 2>/dev/null || true); \
+	if [ "$$want" != "$$have" ]; then \
+	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
+	    $(LIBCMINI_MAKE) clean; \
+	    $(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG); \
+	    printf '%s' "$$want" > $@; \
+	fi
+
+# Only the one library and the one startup object the test programs link are
+# requested, not libcmini's "libs startups": those build every multilib
+# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
+# of which the test programs use.
+$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
+	@echo '  LIBCMINI'
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
+
+$(LIBCMINI_CRT0): $(LIBCMINI_LIB)
+
+#
+# EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
+# EmuCON, against the libcmini that is built here, and the file goes on the
+# boot drive next to the image (see the top of this file).
+#
+ifeq ($(CONF_EXTERNAL_CLI),y)
+ifdef ARCH_X86_64
+# the x32 EmuCON, built with the rest of the x32 programs (above)
+# FORCE, and a copy only when it differs: "make -C cli" may have left a
+# standalone ARM or m68k executable there, which a timestamp test cannot tell
+# from a good one.  The stamps go so that build starts over, too.
+$(EMUCON_TOS): FORCE obj/x32/emucon.elf
+	@cmp -s obj/x32/emucon.elf $@ || { rm -f cli/.arch-*; cp obj/x32/emucon.elf $@; }
+else
+# FORCE: cli/emucon.tos is also what "make -C cli" leaves there for another
+# ARCH or NLS, so the sub-make always gets to compare the build identity (the
+# stamp) and its own dependencies; the file's time only changes when it builds.
+$(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
+	@echo '  EMUCON'
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
+endif
+endif
+
+#
+# EmuDesk as a program (CONF_EXTERNAL_DESK): emudesk.prg, built here from the
+# objects of desk/build.mk's desk-prog-y (desk/program.mk), goes on the boot
+# drive next to the image as EMUDESK.PRG.
+#
+ifeq ($(CONF_EXTERNAL_DESK),y)
+include desk/program.mk
+endif
+
 ifdef CONF_WITH_REGRESSION_TESTS
 
 # Auto-discover test suites: each tests/<name>/<name>.c provides test_<name>().
@@ -1549,9 +1839,9 @@ ifndef CONF_WITH_GEMDOS_SHUTDOWN
 TEST_SUITES := $(filter-out shutdown_args,$(TEST_SUITES))
 endif
 
-# x32_hello and x32_probe are standalone _start programs built for the x86-64
-# boot test, not ptest suites, so they must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello x32_probe,$(TEST_SUITES))
+# Standalone boot probes and the host/x32 contract checks are not ptest
+# suites, so they must never be linked into runtests.tos.
+TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import aes_contract user_callback,$(TEST_SUITES))
 
 # raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
 # processes until #548 (and tools/pBench/gem.c, their bindings, has none for
@@ -1654,79 +1944,6 @@ $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 
-# Build libcmini from the submodule.  The defconfig is arch-specific; for
-# m68k we use mintelf_defconfig, which produces ELF-compatible objects
-# that also work as a.out with --emit-relocs.  ABI details that are
-# specific to pTOS (e.g. the ARM float ABI) live in libcmini's own
-# defconfig/build, not here: this Makefile only picks which defconfig to
-# load.
-ifdef ARCH_ARM
-LIBCMINI_DEFCONFIG = ptos_arm_defconfig
-else ifdef ARCH_X86_64
-LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
-else
-LIBCMINI_DEFCONFIG = mintelf_defconfig
-endif
-
-# libcmini's build/ directory is a single flat path (build/./libcmini.a)
-# that isn't parameterized by architecture or defconfig, so switching
-# between e.g. ptos_arm_defconfig and mintelf_defconfig across two builds
-# would otherwise leave a stale libcmini.a from the *previous* arch sitting
-# at a path Make considers up to date -- Make's staleness check has no way
-# to know the desired configuration changed, since that's not expressed as
-# a file it tracks.
-#
-# LIBCMINI_STAMP makes that configuration state an explicit, trackable
-# file: it depends on the always-out-of-date FORCE target, so its recipe
-# runs on every invocation and actually compares the desired defconfig
-# against the one last applied, cleaning and reconfiguring only on a real
-# mismatch. The stamp file's mtime -- and therefore whether it forces
-# $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
-# real mismatch, not on every invocation.
-#
-# The comparison is against the defconfig *file's content*, not just its
-# name: comparing names alone would miss a defconfig whose content changed
-# underneath an unchanged selection (e.g. a submodule bump that edits
-# configs/ptos_arm_defconfig without touching any sources/*.c or
-# sources/arch/$(ARCH)/*.S -- $(LIBCMINI_LIB)'s own prerequisites, so
-# nothing else would notice either). Reproduced directly: with the name
-# comparison alone, editing that file's content and rebuilding without
-# touching LIBCMINI_DEFCONFIG left lib/libcmini/.config -- and therefore
-# libcmini.a -- silently built from the stale content.
-.PHONY: FORCE
-FORCE:
-
-# lib/libcmini is a git submodule: a plain "git clone" without
-# --recurse-submodules (or before "git submodule update --init") leaves
-# $(LIBCMINI_DIR) present but empty, and every rule below that invokes
-# "$(MAKE) -C $(LIBCMINI_DIR)" would then fail with a generic nested-make
-# error ("No rule to make target ...") that gives no hint what's actually
-# wrong. Gate on the submodule's own Makefile so the real problem is
-# reported once, up front, instead.
-$(LIBCMINI_DIR)/Makefile:
-	@echo "$@ not found -- run 'git submodule update --init' first" >&2
-	@exit 1
-
-$(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
-	@mkdir -p $(dir $@)
-	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
-	have=$$(cat $@ 2>/dev/null || true); \
-	if [ "$$want" != "$$have" ]; then \
-	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
-	    $(LIBCMINI_MAKE) clean; \
-	    $(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG); \
-	    printf '%s' "$$want" > $@; \
-	fi
-
-# Only the one library and the one startup object the test programs link are
-# requested, not libcmini's "libs startups": those build every multilib
-# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
-# of which the test programs use.
-$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
-	@echo '  LIBCMINI'
-	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
-
-$(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
 # $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) ...): those carry kernel-only
@@ -1753,6 +1970,31 @@ endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+# Loaded accessory ABI/lifecycle consumers (#389/#407). Full and minimal
+# startup objects both come from the pinned libcmini dependency.
+obj/x32/ACCONE.ACC: ACC_TEST_ROLE = 1
+obj/x32/ACCTWO.ACC: ACC_TEST_ROLE = 2
+obj/x32/ACCFAULT.ACC: ACC_TEST_ROLE = 3
+obj/x32/ACCWAIT.ACC: ACC_TEST_ROLE = 4
+obj/x32/ACCONE.ACC: ACC_TEST_CRT = $(LIBCMINI_OBJDIR)/crt0.o
+obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: ACC_TEST_CRT = $(LIBCMINI_CRT0)
+$(LIBCMINI_OBJDIR)/crt0.o: $(LIBCMINI_LIB)
+	$(LIBCMINI_MAKE) $@
+obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: \
+  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/objects.c tests/x32_accessory/entry.S \
+  $(LIBCMINI_LIB) $(LIBCMINI_CRT0) $(LIBCMINI_OBJDIR)/crt0.o \
+  obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -I$(LIBCMINI_INC) -Iinclude -Iobj \
+	  -DACC_ROLE=$(ACC_TEST_ROLE) -DACC_NAME='"$(basename $(notdir $@))"' \
+	  $(X32_LDFLAGS) -Wl,-e,acc_probe_entry -o $@ \
+  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/objects.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
+	  -Lobj/x32 -lptos-aes -lptos-vdi $(LIBCMINI_LIB)
+.PHONY: x32-accessory-test
+x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC obj/x32/BADACC.ACC
+	python3 tests/x32_accessory/test_drive_input.py
+obj/x32/BADACC.ACC: | obj/x32
+	printf 'invalid executable\n' > $@
 
 # poweroff.tos, reboot.tos, coldboot.tos and halt.tos: Shutdown() with each
 # mode, programs of their own because the machine does not come back (see
@@ -1928,7 +2170,7 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
+TEST_HD_FILES = runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -1944,7 +2186,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2027,6 +2269,8 @@ distclean: clean
 
 $(OBJECTS) $(EXTRA_OBJ): $(AUTOCONF_H)
 $(OBJECTS) $(EXTRA_OBJ): | $(GEN_SRC)
+$(DESK_OBJ): $(AUTOCONF_H)
+$(DESK_OBJ): | $(GEN_SRC)
 
 #
 # Header dependencies, generated by the compiler along with the objects

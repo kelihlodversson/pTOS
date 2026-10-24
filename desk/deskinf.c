@@ -42,6 +42,7 @@
 #include "deskrsrc.h"
 #include "desksupp.h"
 #include "deskinf.h"
+#include "deskrt.h"
 #include "deskins.h"
 #include "deskfun.h"
 #include "biosdefs.h"
@@ -197,7 +198,7 @@ static char *fmt_size(ULONG size, BOOL wide, char *psize)
      */
     if (wide)
     {
-        sprintf(psize, " %10lu", size);
+        sprintf(psize, " %10lu", (unsigned long)size);
         return psize+11;
     }
 
@@ -337,7 +338,7 @@ WORD dr_code(PARMBLK *pparms)
     gsx_gclip(&oc);
     gsx_sclip((GRECT *)&pparms->pb_xc);
     state = dr_fnode(pparms->pb_prevstate, pparms->pb_currstate,
-            pparms->pb_x, pparms->pb_y, pparms->pb_w, pparms->pb_h, (FNODE *)pparms->pb_parm);
+            pparms->pb_x, pparms->pb_y, pparms->pb_w, pparms->pb_h, (FNODE *)(uintptr_t)pparms->pb_parm);
     gsx_sclip(&oc);
 
     return state;
@@ -427,7 +428,7 @@ void inf_numset(OBJECT *tree, WORD obj, ULONG value)
      * we fill the te_ptext field with asterisks to indicate overflow.
      * otherwise, we just copy the buffer to te_ptext
      */
-    if (sprintf(numstr, "%*lu", len, value) > len)
+    if (sprintf(numstr, "%*lu", len, (unsigned long)value) > len)
         memset(ted->te_ptext, '*', len);
     else
         strcpy(ted->te_ptext, numstr);
@@ -915,7 +916,7 @@ BOOL inf_backgrounds(void)
         /* check for desktop background change */
         if (G.g_screen[DROOT].ob_spec.index != curdesk)
         {
-            set_aes_background(curdesk & 0xff);
+            desk_set_background(curdesk & 0xff);
             G.g_patcol[index].desktop = curdesk & 0xff;
             G.g_screen[DROOT].ob_spec.index = curdesk;
             do_wredraw(DESKWH, &G.g_desk);
@@ -1132,7 +1133,7 @@ void inf_conf(void)
     /* set up available memory line */
     n = sprintf(G.g_work, "%ld %s", dos_avail_stram()/1024L, _("KB"));
 #if CONF_WITH_ALT_RAM
-    if (has_alt_ram)
+    if (desk_has_alt_ram())
         n += sprintf(G.g_work+n, " + %ld %s", dos_avail_altram()/1024L, _("KB"));
 #endif
     memset(G.g_work+n, ' ', 40);    /* enough spaces to fill object's text field */

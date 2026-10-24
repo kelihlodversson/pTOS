@@ -20,6 +20,7 @@ WORD sh_write(WORD doex, WORD isgem, WORD isover, const char *pcmd, const char *
 void sh_get(void *pbuffer, WORD len);
 void sh_put(const void *pdata, WORD len);
 void sh_tographic(void);
+BOOL sh_graphics_active(void);
 
 char *sh_name(char *ppath);
 void sh_envrn(char **ppath, const char *psrch);

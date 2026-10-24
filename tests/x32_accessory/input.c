@@ -1,0 +1,251 @@
+/* Typed input consumer, run as a loaded ring-3 accessory. */
+#include <mint/mintbind.h>
+#include "aes_client.h"
+#include "gemerror.h"
+#include "vdipb.h"
+
+int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle);
+
+static volatile WORD revoke_calls;
+static volatile LONG revoke_result;
+static volatile LONG renew_result;
+static AES_APP_INFO callback_info;
+
+static void revoke_registration(WORD status)
+{
+    UWORD cs;
+
+    if (status < 613 || status > 615)
+        return;
+    __asm__ volatile ("mov %%cs,%0" : "=r"(cs));
+    revoke_result = (cs & 3) == 3 ? aes_appl_exit() : EINVAL;
+    if (status == 614 && revoke_result == E_OK)
+        renew_result = aes_appl_init("ACCTWO", &callback_info);
+    revoke_calls++;
+}
+
+#define CHECK(c) do { if (!(c)) { (void)Cconws("accessory input FAIL: " #c "\r\n"); return 99; } } while (0)
+
+static LONG raw_events(UQUAD input, UQUAD output, UQUAD extra)
+{
+    register UQUAD rax __asm__("rax") = (0x101ULL << 32) | 9;
+    register UQUAD rdi __asm__("rdi") = input;
+    register UQUAD rsi __asm__("rsi") = output;
+    register UQUAD rdx __asm__("rdx") = extra;
+    register UQUAD r10 __asm__("r10") = 0;
+
+    __asm__ volatile ("syscall" : "+r"(rax)
+                      : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10)
+                      : "rcx", "r11", "memory", "cc");
+    return (LONG)rax;
+}
+
+int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
+{
+    AES_EVENT_REQUEST request = { 0 };
+    AES_INPUT_EVENT event;
+    static const AES_INPUT_EVENT immutable = { 0 };
+    AES_MESSAGE message = { 613, 0, 0, { 548 } };
+    AES_APP_INFO renewed;
+    VDICONTROL control = { 0 };
+    VDIPB pb = { &control, NULL, NULL, NULL, NULL };
+    VDI_BUTTON_CALLBACK *old_button;
+    const UWORD revoked_masks[3] = {
+        AES_EVENT_KEYBOARD, AES_EVENT_MOUSE1, AES_EVENT_TIMER
+    };
+    union { AES_EVENT_REQUEST request; AES_INPUT_EVENT event; } alias;
+    LONG allocation, peer;
+    UBYTE *edge;
+    WORD i, x, y;
+
+    CHECK(info->features & AES_FEATURE_INPUT);
+    if (role == 4) {
+        /* These conditions are true globally, but this task is unfocused. */
+        request.mask = AES_EVENT_ALL & ~(AES_EVENT_TIMER | AES_EVENT_MESSAGE);
+        request.flags = AES_EVENT_POLL;
+        request.clicks = 1; request.button_mask = 3;
+        request.mouse1.rectangle.g_w = request.mouse1.rectangle.g_h = 32767;
+        request.mouse2.outside = 1;
+        request.mouse2.rectangle.g_w = request.mouse2.rectangle.g_h = 1;
+        CHECK(aes_evnt_multi(&request, &event) == 0);
+        CHECK(!event.events && !event.key && !event.clicks && !event.message.type);
+        return 0;
+    }
+    if (role != 2)
+        return 0;
+    request.mask = AES_EVENT_TIMER;
+    CHECK(aes_evnt_multi((AES_EVENT_REQUEST *)1, &event) == EIMBA);
+    CHECK(aes_evnt_multi(&request, (AES_INPUT_EVENT *)1) == EIMBA);
+    CHECK(aes_evnt_multi(&request, (AES_INPUT_EVENT *)&immutable) == EIMBA);
+    CHECK(raw_events(0x100000000ULL + (uintptr_t)&request,
+                     (uintptr_t)&event, 0) == EIMBA);
+    CHECK(raw_events((uintptr_t)&request, 0xffff800000000000ULL, 0) == EIMBA);
+    CHECK(raw_events((uintptr_t)&request, (uintptr_t)&event, 1) == EINVAL);
+    allocation = Malloc(4096);
+    CHECK(allocation > 0);
+    edge = (UBYTE *)(uintptr_t)(ULONG)allocation;
+    CHECK(aes_evnt_multi((AES_EVENT_REQUEST *)(edge + 4092), &event) == EIMBA);
+    CHECK(aes_evnt_multi(&request, (AES_INPUT_EVENT *)(edge + 4092)) == EIMBA);
+    CHECK(Mfree(edge) == E_OK);
+    request.mask = 0;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.mask = 0x40;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.mask = AES_EVENT_TIMER; request.flags = 2;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.flags = 0; request.reserved = 1;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.reserved = 0; request.timer_ms = 0x80000000UL;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.timer_ms = 0; request.mask = AES_EVENT_BUTTON;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.clicks = 256; request.button_mask = 1;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.clicks = 1; request.button_state = 2;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.button_state = 0; request.button_mask = 4;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.mask = AES_EVENT_MOUSE1;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.mouse1.rectangle.g_w = request.mouse1.rectangle.g_h = 1;
+    request.mouse1.outside = 2;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+    request.mouse1.outside = 0; request.mouse1.rectangle.g_x = 32767;
+    CHECK(aes_evnt_multi(&request, &event) == EINVAL);
+
+    request.mask = AES_EVENT_MESSAGE | AES_EVENT_TIMER;
+    CHECK(aes_appl_write(info->id, &message) == E_OK);
+    CHECK(aes_evnt_multi(&request, (AES_INPUT_EVENT *)&immutable) == EIMBA);
+    CHECK(aes_evnt_multi(&request, &event) == (AES_EVENT_MESSAGE | AES_EVENT_TIMER));
+    CHECK(event.events == (AES_EVENT_MESSAGE | AES_EVENT_TIMER));
+    CHECK(event.message.type == 613 && event.message.sender == info->id &&
+          event.message.data[0] == 548 && !event.reserved && !event.message.reserved);
+    alias.request = request;
+    CHECK(aes_evnt_multi(&alias.request, &alias.event) == AES_EVENT_TIMER);
+    CHECK(!alias.event.message.type && !alias.event.key && !alias.event.clicks);
+
+    request.flags = AES_EVENT_POLL; request.timer_ms = 20;
+    CHECK(aes_evnt_multi(&request, &event) == 0);
+    CHECK(!event.events && !event.message.type);
+    /* The kernel fixture forces a real timer tick between the deadline
+     * clock reads. A positive timer must still be ignored by every poll. */
+    request.mask = AES_EVENT_TIMER; request.timer_ms = 1;
+    CHECK(aes_evnt_multi(&request, &event) == 0 && !event.events);
+    request.mask |= AES_EVENT_MESSAGE;
+    CHECK(aes_evnt_multi(&request, &event) == 0 && !event.events);
+    CHECK(aes_appl_write(info->id, &message) == E_OK);
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_MESSAGE);
+    CHECK(event.events == AES_EVENT_MESSAGE && event.message.type == 613);
+    request.timer_ms = 0;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
+    CHECK(event.events == AES_EVENT_TIMER && !event.message.type);
+    request.mask = AES_EVENT_TIMER;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
+    request.flags = 0; request.timer_ms = 1;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
+    (void)Cconws("x32 input poll timer: PASS\r\n");
+    request.timer_ms = 20;
+    request.flags = 0; request.mask = AES_EVENT_ALL;
+    request.clicks = 2; request.button_mask = 1; request.button_state = 1;
+    request.mouse1.rectangle.g_x = 0;
+    request.mouse2.outside = 1;
+    request.mouse2.rectangle.g_w = request.mouse2.rectangle.g_h = 32767;
+    for (i = 0; i < 16; i++) {
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
+        CHECK(!event.key && !event.clicks && !event.message.type);
+    }
+    request.mask = AES_EVENT_BUTTON;
+    for (i = 0; i < 2; i++) {
+        /* The kernel fixture queues a three-click press, motion, release
+         * and more motion before forker(), for both poll and blocking wait. */
+        request.flags = i ? 0 : AES_EVENT_POLL;
+        request.clicks = 2; request.button_state = 1;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 2 && event.buttons == 1);
+        CHECK(event.mouse_x == 101 && event.mouse_y == 121);
+        request.flags = AES_EVENT_POLL;
+        request.clicks = 1; request.button_state = 0;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 1 && !(event.buttons & 1));
+        CHECK(event.mouse_x == 121 && event.mouse_y == 141);
+    }
+    (void)Cconws("x32 input queued button: PASS\r\n");
+    for (i = 0; i < 2; i++) {
+        /* The native fixture completes the registered wait, then returns
+         * another task's event or queues a third (right-press) transition
+         * before this accessory resumes. The first press must survive. */
+        request.flags = 0; request.button_state = 1;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 1 && event.buttons == 1);
+        CHECK(event.mouse_x == 101 && event.mouse_y == 121);
+        request.flags = AES_EVENT_POLL; request.button_state = 0;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 1 && event.buttons == (i ? 2 : 0));
+        CHECK(event.mouse_x == (i ? 121 : 111) &&
+              event.mouse_y == (i ? 141 : 131));
+    }
+    /* Release the synthetic right button before the real PS/2 tests. */
+    request.flags = 0; request.button_mask = 3;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+    CHECK(event.clicks == 1 && !event.buttons);
+    request.button_mask = 1;
+    (void)Cconws("x32 input button snapshot: PASS\r\n");
+    request.flags = 0;
+    peer = aes_appl_find("ACCWAIT");
+    CHECK(peer > 0);
+    CHECK(aes_appl_write((WORD)peer, &message) == E_OK);
+    request.mask = AES_EVENT_MESSAGE | AES_EVENT_TIMER; request.timer_ms = 2000;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_MESSAGE);
+    CHECK(event.message.type == 614 && event.message.sender == peer);
+    request.mask = AES_EVENT_KEYBOARD | AES_EVENT_TIMER | AES_EVENT_MESSAGE;
+    request.timer_ms = 2000;
+    (void)Cconws("x32 input keyboard: READY\r\n");
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_KEYBOARD);
+    CHECK(event.key == 0x1e61 && !event.message.type && !event.reserved);
+
+    request.mask = AES_EVENT_MOUSE1 | AES_EVENT_TIMER;
+    x = event.mouse_x; y = event.mouse_y;
+    request.mouse1.outside = 1;
+    request.mouse1.rectangle.g_x = x - 2; request.mouse1.rectangle.g_y = y - 2;
+    request.mouse1.rectangle.g_w = request.mouse1.rectangle.g_h = 5;
+    (void)Cconws("x32 input mouse: READY\r\n");
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_MOUSE1);
+    CHECK(event.mouse_x < x - 2 || event.mouse_x >= x + 3 ||
+          event.mouse_y < y - 2 || event.mouse_y >= y + 3);
+
+    request.mask = AES_EVENT_BUTTON | AES_EVENT_TIMER; request.clicks = 1;
+    request.button_state = 1;
+    (void)Cconws("x32 input button: READY\r\n");
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+    CHECK(event.clicks == 1 && (event.buttons & 1));
+    request.button_state = 0;
+    (void)Cconws("x32 input release: READY\r\n");
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+    CHECK(event.clicks == 1 && !(event.buttons & 1));
+
+    control.code = 125; control.handle = handle;
+    control.args.button.new_handler = revoke_registration;
+    CHECK(vdi(&pb) == E_OK);
+    old_button = control.args.button.old_handler;
+    request.timer_ms = 60000;
+    request.mouse1.outside = 0;
+    request.mouse1.rectangle.g_x = request.mouse1.rectangle.g_y = 32760;
+    request.mouse1.rectangle.g_w = request.mouse1.rectangle.g_h = 1;
+    for (i = 0; i < 3; i++) {
+        /* No message bit: a foreign kernel caller delivers the registered
+         * ring-3 callback while this task is suspended in its input syscall. */
+        request.mask = revoked_masks[i];
+        CHECK(aes_evnt_multi(&request, &event) == EACCDN);
+        CHECK(revoke_calls == i + 1 && revoke_result == E_OK);
+        if (i == 1) {
+            CHECK(renew_result == E_OK && callback_info.id == info->id);
+            CHECK(callback_info.features & AES_FEATURE_INPUT);
+        }
+        CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
+    }
+    control.args.button.new_handler = old_button;
+    CHECK(vdi(&pb) == E_OK);
+    (void)Cconws("x32 input revocation: PASS\r\n");
+    (void)Cconws("x32 input events: PASS\r\n");
+    return 0;
+}

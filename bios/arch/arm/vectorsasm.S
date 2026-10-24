@@ -129,7 +129,10 @@ C_SYM(default_etv_critic):
 C_SYM(biostrap):
         // funcion number is in r0 and arguments in r1-rN
         // For normal eabi C functions, only ther first 4 args are in registers,
-        // so we push r4-r11 to the stack.
+        // so we push r4-r11 to the stack.  r1-r3 are saved too: the C handler
+        // is free to clobber them, and the caller is promised nothing but r0
+        // changes (a trap wrapper tells its compiler that only the registers
+        // it did not pass anything in are lost).
 
         // save caller return address and SPSR on stack
         srsfd sp!, #0x13
@@ -138,7 +141,8 @@ C_SYM(biostrap):
         // argument registers pushed next, which the handler reads off the
         // stack as its fifth and later arguments
         FPU_PUSH_SCRATCH ip
-        push {r4}
+        push {r1-r4}      // argument registers: a caller may keep using them
+        sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
         mov r11, r0
         mov r0, r1
@@ -165,7 +169,8 @@ C_SYM(xbiostrap):
         // argument registers pushed next, which the handler reads off the
         // stack as its fifth and later arguments
         FPU_PUSH_SCRATCH ip
-        push {r4}
+        push {r1-r4}      // argument registers: a caller may keep using them
+        sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
         mov r11, r0
         mov r0, r1
@@ -193,7 +198,9 @@ C_SYM(xbiostrap):
 
 2:
         pop   {r5-r11}       // restore stacked argument registers
-        pop   {r4}           // restore r4
+        add   sp, sp, #4     // ... the padding
+        pop   {r1-r4}        // ... and r1-r4: only r0 (the result) is changed,
+                             // as GEMDOS does (the library wrappers rely on it)
         FPU_POP_SCRATCH ip
         // return to caller with saved state on stack
         rfefd   sp!

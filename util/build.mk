@@ -4,8 +4,13 @@
 
 obj-y += doprintf.o intmath.o langs.o memmove.o string.o nls.o \
 	 setjmp.o cookie.o miscutil.o
-obj-$(ARCH_M68K) += miscasm.o
+obj-$(ARCH_M68K) += miscasm.o pexec.o
 obj-$(ARCH_ARM) += miscasm.o
+
+# the shell a kernel without one of its own looks for
+ifneq ($(CONF_EXTERNAL_CLI)$(CONF_EXTERNAL_DESK),)
+obj-y += shells.o
+endif
 
 obj-$(CONF_WITH_VIRTIO) += virtio.o
 

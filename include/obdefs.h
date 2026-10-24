@@ -138,13 +138,7 @@
 #define ADJ3DSHA    2           /* pixel adjustment for 3D SHADOWED objects */
 #define ADJBUTNV    4           /* pixel adjustment for non-3D vertically aligned buttons */
 
-typedef struct
-{
-        WORD    g_x;
-        WORD    g_y;
-        WORD    g_w;
-        WORD    g_h;
-} GRECT;
+#include "grect.h"
 
 typedef struct _ORECT
 {
@@ -216,7 +210,7 @@ struct _PARMBLK;
 typedef struct
 {
         WORD    (*ub_code)(struct _PARMBLK *parmblock);
-        LONG    ub_parm;
+        intptr_t ub_parm;        /* native parameter may carry a pointer */
 } USERBLK;
 
 typedef struct _object OBJECT;
@@ -229,7 +223,7 @@ typedef struct _PARMBLK
         WORD    pb_currstate;
         WORD    pb_x, pb_y, pb_w, pb_h;
         WORD    pb_xc, pb_yc, pb_wc, pb_hc;
-        LONG    pb_parm;
+        intptr_t pb_parm;
 } PARMBLK;
 
 typedef struct

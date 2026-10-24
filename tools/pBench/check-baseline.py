@@ -16,9 +16,14 @@
 # the geometric mean over the tests is the Display score of GEM Bench.
 #
 # The change is significant when the mean is off by more than MEAN_LIMIT, or
-# any single test by more than TEST_LIMIT.  These are far above the noise of
-# Hatari (below 0.25% between runs of the same image), and small enough that a
-# slowdown of one drawing primitive shows.  A Markdown report goes to --report
+# any single test by more than TEST_LIMIT.  The mean limit is far above the
+# noise of Hatari (below 0.25% between runs of the same image).  The limit for
+# one test is wider: Hatari is exact for one image, but a change that moves
+# code (a different compiler, an unrelated routine more or less in the ROM)
+# changes how the drawing routines fall on the cache lines of the emulated
+# 68030, which moves single tests by up to about 10% in either direction while
+# the mean stays within 2% (a test at -9% and another at +10% in the same run).
+# 15% is above that and still shows a slowdown of one drawing primitive.  A Markdown report goes to --report
 # (and is what the workflow posts on the pull request).
 #
 # Exit status: 1 if anything got significantly slower (or a result is
@@ -33,7 +38,7 @@ import sys
 
 LINE = re.compile(r'^(\D.*?)\s+(\d+)\.(\d{3}) s\s+(.*?)\s*$')
 MEAN_LIMIT = 3.0        # percent
-TEST_LIMIT = 8.0        # percent
+TEST_LIMIT = 15.0       # percent
 
 
 def read(path):

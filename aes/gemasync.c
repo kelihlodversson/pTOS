@@ -127,7 +127,7 @@ EVSPEC mwait(EVSPEC mask)
 }
 
 
-EVSPEC iasync(WORD afunc, LONG aparm)
+static EVSPEC async_event(WORD afunc, intptr_t aparm, WORD flags)
 {
     EVB *e;
 
@@ -137,6 +137,7 @@ EVSPEC iasync(WORD afunc, LONG aparm)
 
     eul = e->e_nextp;
     bzero(e, sizeof(EVB));
+    e->e_flag = flags;
 
     /* add to list of events being waited for */
     e->e_nextp = rlr->p_evlist;
@@ -176,6 +177,18 @@ EVSPEC iasync(WORD afunc, LONG aparm)
     }
 
     return e->e_mask;
+}
+
+EVSPEC iasync(WORD afunc, intptr_t aparm)
+{
+    return async_event(afunc, aparm, 0);
+}
+
+/* Typed input clients must not satisfy a mouse wait using another task's
+ * current input state. Later delivery follows the existing focused lists. */
+EVSPEC iasync_owned(WORD afunc, intptr_t aparm)
+{
+    return async_event(afunc, aparm, EVFOCUS);
 }
 
 

@@ -87,7 +87,7 @@ WORD tak_flag(SPB *sy)
 }
 
 
-void amutex(EVB *e, LONG ls)
+void amutex(EVB *e, intptr_t ls)
 {
     SPB *sy;
 

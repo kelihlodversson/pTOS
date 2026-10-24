@@ -105,6 +105,10 @@ Information
                             S_CONSOLE_DIM (0xfffe)    pTOS only                            DONE earlier
                             S_MEMINFO (0xfffd)        pTOS only: page size, physical      DONE (group 4): same protocol as
                                                       and free pages, process records     S_CONSOLE_DIM (size, struct grows)
+                            S_DESKINFO (0xfffc)       pTOS only: what EmuDesk read      DONE (#643): same protocol; the boot flags,
+                                                      from kernel variables             caches, VIDEL, TT shifter, ... of CONF_EXTERNAL_DESK
+                            S_DESKSET (0xfffb)        pTOS only: critical error alert,  DONE (#643): arg1 the item, arg2 the value
+                                                      AES background, CPU caches
 
 Cookies (readable with Ssystem(S_GETCOOKIE))
 --------------------------------------------

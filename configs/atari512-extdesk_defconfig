@@ -1,0 +1,9 @@
+# atari512_defconfig with EmuDesk as a program (CONF_EXTERNAL_DESK): the 512 KB
+# ROM image for the TT and the Falcon without the desktop, which the AES
+# loads from the boot drive as EMUDESK.PRG.  "make test-hd" puts it there; CI
+# runs the Hatari tests on it.
+TARGET_512=y
+# Single-country, as atari512_defconfig (the multi-language image no longer
+# fits in 512K)
+BUILD_UNIQUE_COUNTRY=y
+CONF_EXTERNAL_DESK=y

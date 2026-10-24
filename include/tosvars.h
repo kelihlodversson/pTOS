@@ -56,6 +56,7 @@ extern volatile WORD flock;
 extern WORD nflops;
 extern LONG drvbits;
 extern WORD bootdev;
+extern WORD default_bootdev;     /* bootdev before the welcome screen: C: if there is one, else A: */
 extern WORD fverify;
 extern WORD seekrate;
 extern WORD dumpflg;

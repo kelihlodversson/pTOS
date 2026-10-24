@@ -96,7 +96,20 @@ typedef struct window
     ORECT *w_rnext;             /* used for search first, search next */
 } WINDOW;
 
-#define NUM_ORECT (NUM_WIN * 10)        /* is this enough???    */
+#if ARCH_X86_64
+/* Each list starts with one rectangle and is cut by at most NUM_WIN-1
+ * windows. Their edges divide each axis into at most 2*NUM_WIN-1 bands.
+ * Disjoint pieces each contain a grid cell, so one list cannot exceed
+ * the square of that bound. Include every handle: closed windows may
+ * retain old lists. Rebuilding frees a window's previous list before
+ * replacing it; lower lists are cut only by windows already rebuilt.
+ * Four spare nodes cover mkpiece() allocating before returning its parent.
+ * Reserve this bound up front, including transient splits and any stacking
+ * order, so untrusted geometry cannot exhaust the fixed native allocator. */
+#define NUM_ORECT (NUM_WIN * (2 * NUM_WIN - 1) * (2 * NUM_WIN - 1) + 4)
+#else
+#define NUM_ORECT (NUM_WIN * 10)
+#endif
 
 #define WS_FULL 0
 #define WS_CURR 1
