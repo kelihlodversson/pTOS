@@ -993,11 +993,16 @@ ifeq ($(CONF_WITH_CLI),y)
 X32_CLI_OBJ = $(addprefix obj/x32/, cmdmain.o cmdedit.o cmdexec.o cmdint.o \
               cmdparse.o cmdutil.o cmdgetwh.o x32rt.o x32crt.o \
               doprintf.o string.o version.o)
+ifeq ($(CONF_WITH_DYNAMIC_CLI),y)
+X32_CLI_OBJ := $(filter-out obj/x32/x32crt.o obj/x32/doprintf.o obj/x32/string.o,$(X32_CLI_OBJ))
+$(X32_CLI_OBJ): X32_CLI_CFLAGS += $(LDSO_APP_CFLAGS)
+endif
+$(X32_CLI_OBJ): $(AUTOCONF_H)
 
 # EmuCON's own sources use cmd.h's standalone definitions and the cli/x32
 # headers; util/ and the generated version use the kernel's.
 X32_CLI_INC = -DSTANDALONE_CONSOLE -DX32_USERLAND -Icli/x32 -Icli/x32/include \
-              -Iinclude -Icli
+              -Iinclude -Iobj -Icli
 X32_UTIL_INC = -Iinclude/arch/x86_64 -Iinclude -Iobj -Iutil
 obj/x32/doprintf.o obj/x32/string.o obj/x32/version.o: X32_CLI_INC = $(X32_UTIL_INC)
 
@@ -1012,8 +1017,13 @@ obj/x32/%.o: util/%.c $(AUTOCONF_H) | obj/x32
 obj/x32/version.o: obj/version.c | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
 
+ifeq ($(CONF_WITH_DYNAMIC_CLI),y)
+obj/x32/emucon.elf: $(X32_CLI_OBJ) obj/ldso/dyncrt.o obj/ldso/libptos.so
+	$(X32_CC) $(LDSO_APP_LDFLAGS) -o $@ $(filter %.o,$^) -Lobj/ldso -lptos
+else
 obj/x32/emucon.elf: $(X32_CLI_OBJ)
 	$(X32_CC) $(X32_CLI_LDFLAGS) -o $@ $^
+endif
 
 -include $(X32_CLI_OBJ:.o=.d)
 
@@ -2178,7 +2188,7 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
+TEST_HD_FILES = $(LDSO_RUNTIME_DIR) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2194,7 +2204,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(LDSO_RUNTIME_FILES) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2208,11 +2218,11 @@ test-hd: test-hd.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(LDSO_RUNTIME_FILES) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)
-	@cp $(TEST_HD_FILES) $(TEST_DIR)/
+	@cp -R $(TEST_HD_FILES) $(TEST_DIR)/
 	@cp -R $(TEST_DESTDIR) $(TEST_FONT_STAGE) $(TEST_DIR)/
 
 ifdef ARCH_ARM

@@ -19,8 +19,8 @@ x32 format policy is selected separately in arch/x32/image_abi.c.
 bdos/elfinterp.c opens the named interpreter, and lib/ldso/startup.c constructs
 the private initial stack. lib/ldso/runtime.c loads dependencies, binds all
 objects eagerly, seals permissions and runs constructors/finalizers.
-A separate dynamic CRT and shared client helper reuse selected libcmini
-functions. File-backed MAP_PRIVATE shares clean DSO pages and makes relocation/data
+A separate dynamic CRT and shared client helper reuse libcmini environment
+handling and pTOS string/memory/formatting utilities. File-backed MAP_PRIVATE shares clean DSO pages and makes relocation/data
 writes private through COW. A complete shared libcmini remains to be implemented.
 
 Lazy private anonymous mapping services are implemented separately as Mmap,
@@ -540,3 +540,33 @@ binding, lifecycle ordering, permissions and repeated successful/failed loads.
 File-backed/COW boot tests additionally compare physical backing across
 processes, inject allocation failures, verify kernel writes and file-generation
 invalidation, and fault/read/execute after fd close and rename/unlink.
+
+Standalone x32 consumers
+------------------------
+
+With CONF_WITH_ELF_SHARED enabled, the external EmuCON console and external
+EmuDesk desktop use dyncrt.o and libptos.so. Their hidden Kconfig selections
+are CONF_WITH_DYNAMIC_CLI and CONF_WITH_DYNAMIC_DESK. Each executable has
+PT_INTERP /GEMSYS/LIB/X32/LD.SO and DT_NEEDED libptos.so. Startup obtains the
+basepage from AT_PTOS_BASEPAGE through the shared client initializer before
+application constructors/main run. Normal main return uses the shared exit
+path, including handlers registered during library finalization.
+
+libptos.so supplies common string, memory and formatting helpers as well as
+startup/exit and the initial C client subset. Their clean pages can be shared
+between desktop and console processes; mutable formatting/runtime state is
+private through COW. Desktop-specific code and the AES/VDI client archives,
+and console-specific code and its arena allocator, remain in the executables.
+This is not the complete shared libcmini tracked by #673/libcmini#21.
+
+make stages LD.SO and LIBPTOS.SO under obj/ldso/runtime/GEMSYS/LIB/X32.
+Install that GEMSYS tree on the boot drive beside EMUCON.TOS/EMUDESK.PRG;
+make test-dir and make test-hd include it automatically. The runtime libraries
+are required even for fallback to the external console when the desktop is
+missing. Shared-library support remains opt-in; without it these consumers
+retain their static ELF paths. Embedded EmuCON always retains its original
+static entry contract, including when the external desktop is dynamic.
+
+The shared-library CI boots the real dynamic console and drives the dynamic
+desktop through tests/x32_desktop/run.py. It also tests missing-desktop fallback
+to both a dynamic external console and an embedded static console.

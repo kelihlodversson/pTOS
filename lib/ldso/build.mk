@@ -115,23 +115,35 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/ldso/test/runtime-fixtures.stamp
 endif
 
-# Separate dynamic CRT/client subset. Reuse libcmini sources without changing
-# its legacy CRT or building its complete API as a shared library.
+# Separate dynamic CRT/client subset. Reuse libcmini environment handling and
+# pTOS utilities without changing the legacy CRT or claiming a complete libc.
 LDSO_CLIENT_CFLAGS = $(LDSO_CFLAGS) -fno-builtin -Ilib/ldso/client \
                      -Ilib/libcmini/include -Ilib/libcmini/sources
-LDSO_CLIENT_MINI = lib/libcmini/sources/strlen.c lib/libcmini/sources/strcmp.c \
-                  lib/libcmini/sources/strncmp.c lib/libcmini/sources/getenv.c
+LDSO_CLIENT_MINI = lib/libcmini/sources/getenv.c
+LDSO_UTIL_CFLAGS = $(LDSO_CFLAGS) -fno-builtin -fno-tree-loop-distribute-patterns \
+                  -Iinclude -Iobj -Iutil
+obj/ldso/sharedutil.o: lib/ldso/client/sharedutil.c util/string.c $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_UTIL_CFLAGS) -c $< -o $@
+obj/ldso/sharedprint.o: util/doprintf.c $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_UTIL_CFLAGS) -c $< -o $@
+LDSO_MEMORY-$(ARCH_X86_64) = util/arch/x86_64/memmove.c
+obj/ldso/sharedmemory.o: $(LDSO_MEMORY-y) $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_UTIL_CFLAGS) -c $< -o $@
 LDSO_DYNCRT-$(ARCH_X86_64) = lib/ldso/arch/x32/dyncrt.S
 obj/ldso/dyncrt.o: $(LDSO_DYNCRT-y) $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LDSO_CFLAGS) -c $< -o $@
 obj/ldso/libptos.so: lib/ldso/client/client.c lib/ldso/client/ptos.h \
                     lib/ldso/client/exports.map $(LDSO_CLIENT_MINI) lib/ldso/arch/x32/syscall.c \
+                    obj/ldso/sharedutil.o obj/ldso/sharedprint.o obj/ldso/sharedmemory.o \
                     lib/ldso/runtime.h lib/ldso/startup.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LDSO_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-soname,libptos.so,-init,__ptos_client_init \
-	  -Wl,--version-script,lib/ldso/client/exports.map -o $@ $(filter %.c,$^)
+	  -Wl,--version-script,lib/ldso/client/exports.map -o $@ $(filter %.c %.o,$^)
 all: obj/ldso/dyncrt.o obj/ldso/libptos.so
 
 obj/ldso/test/libuse.so: tests/ldso_client/library.c obj/ldso/libptos.so lib/ldso/client/ptos.h
@@ -148,3 +160,21 @@ obj/ldso/test/client.elf obj/ldso/test/clientpie.elf: tests/ldso_client/program.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/ldso/test/client.elf obj/ldso/test/clientpie.elf
 endif
+
+# Native consumers use the ordinary ELF interpreter and shared runtime.
+LDSO_APP_CFLAGS = -fPIC
+LDSO_APP_LDFLAGS = $(LDSO_CFLAGS-y) $(LDSO_LDFLAGS) -nostdlib -no-pie \
+                  -Wl,--hash-style=sysv,-z,now,-z,noexecstack,-e,_start \
+                  -Wl,--dynamic-linker,/GEMSYS/LIB/X32/LD.SO \
+                  -Wl,-Ttext-segment=0x400000
+LDSO_RUNTIME_DIR = obj/ldso/runtime/GEMSYS
+LDSO_RUNTIME_FILES = $(LDSO_RUNTIME_DIR)/LIB/X32/LD.SO $(LDSO_RUNTIME_DIR)/LIB/X32/LIBPTOS.SO
+$(LDSO_RUNTIME_DIR)/LIB/X32/LD.SO: obj/ldso/ld.so
+	@mkdir -p $(@D)
+	cp $< $@
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBPTOS.SO: obj/ldso/libptos.so
+	@mkdir -p $(@D)
+	cp $< $@
+$(LDSO_RUNTIME_DIR): $(LDSO_RUNTIME_FILES)
+	@true
+all: $(LDSO_RUNTIME_FILES)

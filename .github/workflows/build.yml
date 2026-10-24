@@ -86,6 +86,42 @@ jobs:
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
           sh tools/test-mmap-boot.sh
 
+      - name: Exercise shared desktop and console consumers
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          for variant in pc-x86_64-desktop-tests pc-x86_64-desktop-tests-builtin-cli; do
+            make "$variant"_defconfig
+            CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.write_config()
+          PY
+            make CROSS_COMPILE= -j2
+            make CROSS_COMPILE= x32-desktop-test x32-desktop-window-test
+            readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
+            readelf -d emudesk.prg | grep 'libptos.so'
+            if [ "$variant" = pc-x86_64-desktop-tests ]; then
+              readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
+              readelf -d cli/emucon.tos | grep 'libptos.so'
+              python3 tests/x32_desktop/run.py --output obj/shared-desktop-runtime
+            else
+              ! readelf -l obj/x32/emucon.elf | grep 'INTERP'
+              python3 tests/x32_desktop/run.py --output obj/shared-desktop-builtin-cli --embedded-console --mode missing
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-x32-consumers
+          path: |
+            obj/shared-desktop-runtime/
+            obj/shared-desktop-builtin-cli/
+          if-no-files-found: ignore
+          retention-days: 14
+
+
   # The matrices are derived from configs/ instead of being written out here,
   # so that adding a configuration automatically makes it a compatibility
   # check without anyone having to remember this file.

@@ -993,6 +993,30 @@ class Metadata(unittest.TestCase):
         self.lib.dl_graph_close(C.byref(graph), C.byref(ops), None)
         self.assertEqual(released, [3, 2])
 
+    def test_dynamic_consumers_keep_embedded_console_static(self):
+        import kconfiglib
+        old_cwd = Path.cwd()
+        old_prefix = os.environ.get("CONFIG_")
+        try:
+            os.chdir(ROOT)
+            os.environ["CONFIG_"] = ""
+            config = kconfiglib.Kconfig(warn=False)
+            config.load_config("configs/pc-x86_64-desktop-tests_defconfig")
+            for name in ("CONF_WITH_DYNAMIC_CLI", "CONF_WITH_DYNAMIC_DESK"):
+                self.assertEqual(config.syms[name].tri_value, 0)
+            config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+            for name in ("CONF_WITH_DYNAMIC_CLI", "CONF_WITH_DYNAMIC_DESK"):
+                self.assertEqual(config.syms[name].tri_value, 2)
+            config.syms["CONF_EXTERNAL_CLI"].set_value(0)
+            self.assertEqual(config.syms["CONF_WITH_DYNAMIC_CLI"].tri_value, 0)
+            self.assertEqual(config.syms["CONF_WITH_DYNAMIC_DESK"].tri_value, 2)
+        finally:
+            os.chdir(old_cwd)
+            if old_prefix is None:
+                os.environ.pop("CONFIG_", None)
+            else:
+                os.environ["CONFIG_"] = old_prefix
+
     def test_kconfig_platform_gate(self):
         import kconfiglib
 
