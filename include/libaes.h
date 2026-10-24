@@ -3,7 +3,7 @@
 #define LIBAES_H
 #include "cuis.h"
 #include "rectfunc.h"
-LONG aes_session_open(CUIS_SESSION_INFO *info);
-LONG aes_session_query(CUIS_SESSION_INFO *info);
-LONG aes_session_close(void);
+LONG aes_session_open(void);
+LONG aes_session_query(LONG handle);
+LONG aes_session_close(LONG handle);
 #endif

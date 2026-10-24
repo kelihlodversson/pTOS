@@ -360,7 +360,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
     case CUIS_SERVICE_CLASS:
 #if CONF_WITH_CUIS
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
-            cuis_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10) : EINVFN);
+            cuis_service(fn, frame->rdi) : EINVFN);
 #else
         frame->rax = (UQUAD)(QUAD)EINVFN;
 #endif

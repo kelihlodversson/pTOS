@@ -3,38 +3,25 @@
 #include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
-static ULONG session;
+static LONG session = -1;
 
-static LONG request(ULONG operation, CUIS_SESSION_INFO *info)
+LONG aes_session_open(void)
 {
-    CUIS_SESSION_REQUEST r = { sizeof(r), CUIS_VERSION, operation, 0, 0, { 0 } };
-    CUIS_SESSION_INFO result;
-    LONG rc;
-    r.handle = operation == CUIS_SESSION_ATTACH ? 0 : session;
-    rc = cuis_call(&r, operation == CUIS_SESSION_DETACH ? NULL : &result);
-    if (rc == E_OK) {
-        if (operation == CUIS_SESSION_DETACH) session = 0;
-        else {
-            session = result.handle;
-            if (info) *info = result;
-        }
-    }
+    LONG handle = cuis_call(CUIS_SESSION_START, 0);
+    if (handle >= 0) session = handle;
+    return handle;
+}
+LONG aes_session_query(LONG handle)
+{
+    return cuis_call(CUIS_SESSION_QUERY, handle);
+}
+LONG aes_session_close(LONG handle)
+{
+    LONG rc = cuis_call(CUIS_SESSION_END, handle);
+    if (rc == E_OK && session == handle) session = -1;
     return rc;
-}
-LONG aes_session_open(CUIS_SESSION_INFO *info)
-{
-    return request(CUIS_SESSION_ATTACH, info);
-}
-LONG aes_session_query(CUIS_SESSION_INFO *info)
-{
-    return request(CUIS_SESSION_QUERY, info);
-}
-LONG aes_session_close(void)
-{
-    if (!session) return E_OK;
-    return request(CUIS_SESSION_DETACH, NULL);
 }
 __attribute__((destructor)) static void session_fini(void)
 {
-    (void)aes_session_close();
+    if (session >= 0) (void)aes_session_close(session);
 }
