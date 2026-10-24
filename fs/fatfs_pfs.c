@@ -606,12 +606,7 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     if (!(att & FA_SUBDIR)) {
         for (source = dn1->d_files; source; source = source->o_link)
             if (source->o_dirbyt == posp && !(source->o_dfd->o_flag & O_UNLINKED)) break;
-        if (source) {
-            dfd = source->o_dfd;
-            if (dfd->o_usecnt == 0x7fff) return ENSMEM;
-            filetime = le2cpu16(dfd->o_td.time); filedate = le2cpu16(dfd->o_td.date);
-            clust = dfd->o_strtcl; fileln = dfd->o_fileln;
-        }
+        if (source && source->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
     }
 
     dmd2 = dn2->d_drv;
@@ -667,10 +662,12 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
             }
         }
         dfd = fd2->o_dfd;
-        dfd->o_td.time = cpu2le16(filetime);
-        dfd->o_td.date = cpu2le16(filedate);
-        dfd->o_strtcl = clust;
-        dfd->o_fileln = fileln;
+        if (!source) {
+            dfd->o_td.time = cpu2le16(filetime);
+            dfd->o_td.date = cpu2le16(filedate);
+            dfd->o_strtcl = clust;
+            dfd->o_fileln = fileln;
+        }
 
         fdparent = fd2->o_dirfil;
         if (att&FA_SUBDIR) {

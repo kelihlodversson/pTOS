@@ -481,7 +481,9 @@ long ixclose(OFD *fd, int part);
  * ofd_put can perform disk I/O: wrap in DISK_CALL outside osif. A failed
  * release retains its reference for retry. Media-lost references only free
  * memory; they never access the new medium. */
+#if CONF_WITH_FILE_PINS
 BOOL ofd_hold(OFD *fd);
+#endif
 long ofd_put(OFD *fd);
 void ofd_invalidate_drive(DMD *dm);
 

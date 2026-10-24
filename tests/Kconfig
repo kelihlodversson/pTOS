@@ -11,6 +11,7 @@ config CONF_WITH_REGRESSION_TESTS
 config CONF_WITH_X86_64_MEMTEST
     bool "Run the x86-64 memory-management self-test at boot"
     depends on MACHINE_PC_X86_64
+    select CONF_WITH_FILE_PINS
     default y
     help
       At every boot, exercise the tracked process allocations, the

@@ -73,7 +73,7 @@
  * forward prototypes
  */
 long opnfil(FCB *f, DND *dn, int mod);
-static long makopn(FCB *f, DND *dn, int h, int mod);
+static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2);
 static long sftdel(FTAB *sftp);
 
 
@@ -119,10 +119,9 @@ long xopen(char *name, WORD mod)
 **  makopn - make an open file for sft handle h
 **
 */
-static long makopn(FCB *f, DND *dn, int h, int mod)
+static long makopn(FCB *f, DND *dn, int h, int mod, OFD *p2)
 {
     OFD *p;
-    OFD *p2;
     DFD *dfd;
     DMD *dm;                        /*  M01.01.03   */
 
@@ -134,21 +133,11 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
     p->o_mod = mod;                 /*  set mode                    */
     p->o_dmd = dm;                  /*  link OFD to media           */
     sft[h-NUMSTD].f_ofd = p;
-    /* the following 2 assignments are unnecessary, since MGET zeroes the OFD */
-    p->o_curcl = 0;                 /*  init file pointer info      */
-    p->o_curbyt = 0;                /*  "                           */
+    /* MGET zeroes the initial file cursor. */
     p->o_dnode = dn;                /*  link to directory           */
     p->o_dirfil = dn->d_ofd;        /*  link to dir's ofd           */
     p->o_dirbyt = dn->d_ofd->o_bytnum - 32; /*  offset of fcb in dir*/
 
-    for (p2 = dn->d_files; p2; p2 = p2->o_link)
-        if (p2->o_dirbyt == p->o_dirbyt && !(p2->o_dfd->o_flag & O_UNLINKED))
-            break;              /* same dir, same dcnt */
-
-    if (p2 && p2->o_dfd->o_usecnt == 0x7fff) {
-        sft[h-NUMSTD].f_ofd = NULL; sft[h-NUMSTD].f_own = NULL; sft[h-NUMSTD].f_use = 0;
-        xmfreblk(p); return ENSMEM;
-    }
     p->o_link = dn->d_files;
     dn->d_files = p;
     /*
@@ -189,6 +178,7 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
 */
 long opnfil(FCB *f, DND *dn, int mod)
 {
+    OFD *shared;
     int i;
     int h;
 
@@ -200,16 +190,22 @@ long opnfil(FCB *f, DND *dn, int mod)
     if (i == OPNFILES)
         return ENHNDL;
 
+    /* Reject reference overflow before allocating or publishing a slot. */
+    for (shared = dn->d_files; shared; shared = shared->o_link)
+        if (shared->o_dirbyt == dn->d_ofd->o_bytnum - 32 &&
+            !(shared->o_dfd->o_flag & O_UNLINKED)) break;
+    if (shared && shared->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
     sft[i].f_own = run;
     sft[i].f_use = 1;
     h = i + NUMSTD;
 
-    return makopn(f, dn, h, mod);
+    return makopn(f, dn, h, mod, shared);
 }
 
 
 /* OFD stays in its directory list until both handles and backing-object
  * pins are gone. DFD stays in the base OFD until the last OFD is gone. */
+#if CONF_WITH_FILE_PINS
 BOOL ofd_hold(OFD *fd)
 {
     if (!fd || !fd->o_refs || fd->o_refs == 0xffff ||
@@ -217,25 +213,31 @@ BOOL ofd_hold(OFD *fd)
     fd->o_refs++;
     return TRUE;
 }
+#endif
+
+/* Used by immediate unlink and final-reference reclaim. Updating the head
+ * after each successful FAT update preserves progress if disk I/O is retried. */
+static void free_file_chain(DFD *file, DMD *media)
+{
+    CLNO next;
+    while (file->o_strtcl && !endofchain(file->o_strtcl)) {
+        next = getrealcl(file->o_strtcl, media);
+        clfix(file->o_strtcl, FREECLUSTER, media);
+        file->o_strtcl = next;
+    }
+    file->o_strtcl = 0;
+}
 
 long ofd_put(OFD *fd)
 {
     DFD *dfd = fd->o_dfd;
     OFD **link;
-    CLNO next;
 
     if (!fd->o_refs) return EINTRN;
     if (fd->o_refs > 1) { fd->o_refs--; return E_OK; }
     if (dfd->o_usecnt == 1 && (dfd->o_flag & O_UNLINKED) &&
         !(dfd->o_flag & O_MEDIA_LOST)) {
-        /* Advance only after each successful FAT update, so a retry does not
-         * walk the already released prefix of a long chain. */
-        while (dfd->o_strtcl && !endofchain(dfd->o_strtcl)) {
-            next = getrealcl(dfd->o_strtcl, fd->o_dmd);
-            clfix(dfd->o_strtcl, FREECLUSTER, fd->o_dmd);
-            dfd->o_strtcl = next;
-        }
-        dfd->o_strtcl = 0;
+        free_file_chain(dfd, fd->o_dmd);
         ixclose(fd, CL_KEEP);            /* flush while reference still live */
     }
     if (fd->o_dnode) {
@@ -500,8 +502,10 @@ long ixdel(DND *dn, FCB *f, long pos)
     OFD *fd;
     DFD *live = NULL;
     DMD *dm = dn->d_drv;
-    CLNO head = le2cpu16(f->f_clust), next;
+    DFD deleted;
     char erased = (char)ERASE_MARKER;
+
+    deleted.o_strtcl = le2cpu16(f->f_clust);
 
     for (fd = dn->d_files; fd; fd = fd->o_link)
         if (fd->o_dirbyt == pos && !(fd->o_dfd->o_flag & O_UNLINKED)) {
@@ -514,11 +518,7 @@ long ixdel(DND *dn, FCB *f, long pos)
     if (live) live->o_flag |= O_UNLINKED;
     ixclose(fd, CL_DIR);                 /* persist removal before reclaiming */
     if (!live) {
-        while (head && !endofchain(head)) {
-            next = getrealcl(head, dm);
-            clfix(head, FREECLUSTER, dm);
-            head = next;
-        }
+        free_file_chain(&deleted, dm);
         ixclose(fd, CL_DIR);
     }
     return E_OK;
