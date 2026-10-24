@@ -760,9 +760,7 @@ Native FAT file lifetimes
 -------------------------
 
 CONF_WITH_FAT_FILE_LIFETIMES controls retained native FAT file lifetimes.
-It defaults off for the 192 KB and 256 KB ROMs and on for other images.
-The 256 KB ROM includes EmuCON by default; the 192 KB ROM omits it.
-With extended lifetimes enabled,
+It defaults off for the 192 KB ROM and on for other images. With it enabled,
 deleting an open file removes its name but keeps its contents until the last
 handle or backing reference closes. Interrupted deletion and FAT reclamation
 are retained for retry, and pending clusters cannot be allocated again.

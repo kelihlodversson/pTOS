@@ -140,7 +140,7 @@ config CONF_WITH_USER_ASPACE
 
 config CONF_WITH_FAT_FILE_LIFETIMES
 	bool "Extended native FAT file lifetimes"
-	default n if TARGET_192 || TARGET_256
+	default n if TARGET_192
 	default y
 	help
 	  Keep deleted files alive until their last open handle or backing
