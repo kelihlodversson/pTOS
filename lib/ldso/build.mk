@@ -111,3 +111,37 @@ obj/ldso/test/runtime-fixtures.stamp: tools/make-ldso-fixtures.py obj/ldso/ld.so
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/ldso/test/runtime-fixtures.stamp
 endif
+
+# Separate dynamic CRT/client subset. Reuse libcmini sources without changing
+# its legacy CRT or building its complete API as a shared library.
+LDSO_CLIENT_CFLAGS = $(LDSO_CFLAGS) -fno-builtin -Ilib/ldso/client \
+                     -Ilib/libcmini/include -Ilib/libcmini/sources
+LDSO_CLIENT_MINI = lib/libcmini/sources/strlen.c lib/libcmini/sources/strcmp.c \
+                  lib/libcmini/sources/strncmp.c lib/libcmini/sources/getenv.c
+LDSO_DYNCRT-$(ARCH_X86_64) = lib/ldso/arch/x32/dyncrt.S
+obj/ldso/dyncrt.o: $(LDSO_DYNCRT-y) $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_CFLAGS) -c $< -o $@
+obj/ldso/libptos.so: lib/ldso/client/client.c lib/ldso/client/ptos.h \
+                    lib/ldso/client/exports.map $(LDSO_CLIENT_MINI) lib/ldso/arch/x32/syscall.c \
+                    lib/ldso/runtime.h lib/ldso/startup.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_CLIENT_CFLAGS) -nostdlib -shared \
+	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-soname,libptos.so,-init,__ptos_client_init \
+	  -Wl,--version-script,lib/ldso/client/exports.map -o $@ $(filter %.c,$^)
+all: obj/ldso/dyncrt.o obj/ldso/libptos.so
+
+obj/ldso/test/libuse.so: tests/ldso_client/library.c obj/ldso/libptos.so lib/ldso/client/ptos.h
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_CLIENT_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-z,now,-soname,libuse.so \
+	  -o $@ $< -Lobj/ldso -lptos
+obj/ldso/test/client.elf: LDSO_CLIENT_LINK = -no-pie
+obj/ldso/test/clientpie.elf: LDSO_CLIENT_LINK = -pie
+obj/ldso/test/client.elf obj/ldso/test/clientpie.elf: tests/ldso_client/program.c obj/ldso/dyncrt.o \
+                        obj/ldso/test/libuse.so obj/ldso/libptos.so lib/ldso/client/ptos.h
+	$(CC) $(LDSO_CLIENT_CFLAGS) -nostdlib $(LDSO_CLIENT_LINK) \
+	  -Wl,--export-dynamic,--hash-style=sysv,-z,now,-e,_start,--dynamic-linker,/GEMSYS/LIB/X32/LD.SO \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/ldso/test -luse -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/ldso/test/client.elf obj/ldso/test/clientpie.elf
+endif

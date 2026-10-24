@@ -23,6 +23,9 @@ cp x32big.elf "$work/X32BIG.TOS"
 head -c 2000 x32hello.elf > "$work/X32TRUNC.TOS"
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     mkdir -p "$work/GEMSYS/LIB/X32"
+    cp obj/ldso/libptos.so obj/ldso/test/libuse.so "$work/GEMSYS/LIB/X32/"
+    cp obj/ldso/test/client.elf "$work/CLIENT.TOS"
+    cp obj/ldso/test/clientpie.elf "$work/CLIENTP.TOS"
     cp obj/ldso/ld.so "$work/GEMSYS/LIB/X32/LD.SO"
     cp obj/ldso/test/librt.so obj/ldso/test/libdyn.so "$work/GEMSYS/LIB/X32/"
     cp obj/ldso/test/BD.SO "$work/GEMSYS/LIB/X32/"
@@ -44,7 +47,7 @@ cp "$firmware/OVMF_VARS_4M.fd" "$work/vars.fd"
 # create its temporary files in /var/tmp. Always use private disk/NVRAM copies.
 set -- "$work/EFI"
 if [ -d "$work/GEMSYS" ]; then
-    set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS
+    set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
@@ -76,6 +79,7 @@ if [ -f "$log" ]; then cat "$log"; fi
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     grep -q 'x86-64 ldso relocations: PASS' "$log"
+    [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 4 ]
     grep -q 'x86-64 LD.SO runtime: PASS' "$log"
     grep -q 'x86-64 PT_INTERP startup: PASS' "$log"
 fi

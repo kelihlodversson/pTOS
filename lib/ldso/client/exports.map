@@ -1,0 +1,5 @@
+{
+    global: __ptos_start; ptos_write; ptos_basepage; environ;
+            exit; _Exit; atexit; strlen; strcmp; strncmp; getenv;
+    local: *;
+};

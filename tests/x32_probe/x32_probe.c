@@ -272,6 +272,21 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                              (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
             if (child != 77) pterm(0x100 | ((int)child & 0xff));
         }
+        for (cycle = 0; cycle < 2; cycle++) {
+            static const char return_tail[] = { 6, 'r', 'e', 't', 'u', 'r', 'n', 0 };
+            static const char exit_tail[] = { 4, 'e', 'x', 'i', 't', 0 };
+            static const char raw_tail[] = { 5, '_', 'E', 'x', 'i', 't', 0 };
+            const char *path = cycle ? "C:\\CLIENTP.TOS" : "C:\\CLIENT.TOS";
+            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                             (s64)(unsigned long)return_tail, (s64)(unsigned long)env);
+            if (child != 77) pterm(0x400 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)exit_tail, (s64)(unsigned long)env);
+            if (child != 88) pterm(0x500 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)raw_tail, (s64)(unsigned long)env);
+            if (child != 89) pterm(0x600 | ((int)child & 0xff));
+        }
         pterm(0);
         break;
     }

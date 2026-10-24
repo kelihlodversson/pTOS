@@ -19,8 +19,9 @@ x32 format policy is selected separately in arch/x32/image_abi.c.
 bdos/elfinterp.c opens the named interpreter, and lib/ldso/startup.c constructs
 the private initial stack. lib/ldso/runtime.c loads dependencies, binds all
 objects eagerly, seals permissions and runs constructors/finalizers.
-Read-only physical-page sharing and integration with a general dynamic CRT
-and libcmini remain to be implemented.
+A separate dynamic CRT and shared client helper reuse selected libcmini
+functions. Read-only physical-page sharing and a complete shared libcmini
+remain to be implemented.
 
 Lazy private anonymous mapping services are implemented separately as Mmap,
 Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
@@ -380,6 +381,55 @@ A load failure exits 127 before application entry. Missing libraries and
 symbols print the dependency context; bootstrap failures exit directly.
 
 
+Dynamic CRT and client helper
+-----------------------------
+
+obj/ldso/dyncrt.o is a separate standard-ELF startup object; do not combine it
+with libcmini's existing crt0/minicrt0, which expect a legacy basepage entry.
+It preserves the original stack and passes RDX, the loader's finalizer, to
+__ptos_start in libptos.so. The helper calls ordinary
+main(int argc, char **argv, char **envp), then exit(main_result).
+
+Install obj/ldso/libptos.so in the same GEMSYS\LIB\X32 directory as LD.SO.
+It is an initial client-helper subset, not a complete shared libcmini. It
+compiles libcmini's strlen, strcmp, strncmp and getenv directly from the pinned
+submodule as PIC; legacy libcmini source/startup/build behavior is unchanged.
+The helper supplies environ, ptos_basepage, ptos_write, atexit, exit and _Exit;
+lib/ldso/client/ptos.h declares the additional interface. ptos_write returns
+Fwrite's byte count or negative GEMDOS error, without errno translation.
+Other libcmini APIs, including allocation and stdio, are not supplied here.
+
+Its DT_INIT establishes environ and the basepage from startup vectors before
+dependent library constructors. Main-executable PREINIT_ARRAY still runs first;
+those callbacks receive argc/argv/envp directly and must not assume the helper
+has initialized environ yet. The CRT installs the finalizer on entry, so exit
+before CRT entry cannot promise loader finalization. The helper keeps at most 32 pending
+atexit callbacks. Normal exit pops them in reverse registration order, then
+invokes the loader callback, then Pterm. Callbacks may register another callback while exiting.
+A repeated exit during exit processing terminates immediately; _Exit always
+bypasses both callback lists. The helper does not implement C++ __cxa_atexit,
+thread-local state, exception unwinding or buffered-stream cleanup.
+
+For example, build an application using the subset with an x32 toolchain:
+
+    gcc -mx32 -fPIC -fno-builtin -nostdlib -no-pie \
+        -Ilib/ldso/client -Ilib/libcmini/include \
+        -Wl,--hash-style=sysv,-z,now,-e,_start \
+        -Wl,--dynamic-linker,/GEMSYS/LIB/X32/LD.SO \
+        obj/ldso/dyncrt.o app.c -Lobj/ldso -lptos -o app.elf
+
+Use -pie in place of -no-pie for PIE. Compile all additional client DSOs as PIC,
+with SysV hashing, a strict 8.3 SONAME, and explicit DT_NEEDED dependencies.
+Do not link the static libcmini archive alongside the client helper: duplicate
+runtime globals and exit implementations would create inconsistent state.
+The boot probe uses a separate libuse.so and independently compiled main,
+checks getenv in a dependency constructor, main arguments, 32-handler capacity,
+LIFO ordering, registration during exit, return from main, exit from the DSO,
+_Exit bypass, and resource
+cleanup for both ET_EXEC and PIE. Four lifecycle PASS messages prove that the
+normal paths actually reach the final dependency destructor.
+
+
 Implementation and validation milestones
 ---------------------------------------
 
@@ -398,9 +448,10 @@ Implementation and validation milestones
    rollback are implemented. Self-relocating LD.SO and its trusted-directory
    file mapper run an ET_EXEC consumer of separate libdyn.so/librt.so files
    under QEMU, including executable symbol interposition.
-5. Preinitializers, constructors, finalizers and the RDX callback are tested
-   through a minimal independent CRT. Remaining: real shared libcmini or
-   client-helper component and integration with a general dynamic CRT.
+5. Preinitializers, constructors, finalizers and the RDX callback are tested.
+   A separate reusable dynamic CRT and shared client-helper component run
+   ET_EXEC/PIE C programs using libcmini string/environment functions.
+   Remaining: complete shared libcmini and its broader runtime services.
 6. Reference-counted read-only page sharing, two-process isolation, W^X and
    permission-fault probes, plus corrupted ELF, missing libraries/symbols,
    cycles, invalid relocations, rollback and repeated-load leak tests in CI.
