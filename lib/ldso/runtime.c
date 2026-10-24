@@ -59,6 +59,12 @@ static uint32_t map(uint32_t size)
                              MAP_PRIVATE | MAP_ANONYMOUS, UINT64_MAX, 0);
     return at > 0 ? (uint32_t)at : 0;
 }
+static uint32_t map_file(uint32_t at, uint32_t size, uint32_t prot, int handle, uint32_t offset)
+{
+    int64_t result = dl_syscall(GEMDOS_MMAP, at, size, prot,
+        MAP_PRIVATE | (at ? MAP_FIXED_NOREPLACE : 0), handle, offset);
+    return result > 0 ? (uint32_t)result : 0;
+}
 static void unmap(uint32_t address, uint32_t size)
 {
     if (address) dl_syscall(GEMDOS_MUNMAP, address, size, 0, 0, 0, 0);
@@ -114,7 +120,7 @@ static int loaded(OBJECT *o, const unsigned char *ph, uint32_t count, uint32_t b
 
 /* Strict 8.3 names give a unique entry in the one trusted FAT directory.
  * Requiring an exact SONAME rejects case-folded aliases. Each process uses
- * its first immutable file snapshot, never rereads that name after loading.
+ * its first retained mapping and never reopens that name during discovery.
  * Hash collisions between different canonical names are rejected below. */
 static uint64_t canonical(const char *name, char *out)
 {
@@ -137,23 +143,53 @@ static uint64_t canonical(const char *name, char *out)
     return dot && extension && key > 1 ? key : 0;
 }
 
-static int read_file(int handle, unsigned char *to, uint32_t size)
+/* Map each unambiguous segment page from the retained file. Shared boundary
+ * pages or non-page-congruent layouts use anonymous copies instead. Extra file
+ * bytes outside a segment's logical extent may occupy its rounded file page,
+ * as in ordinary ELF mappings; only actual BSS requires zeroing. */
+static int populate(OBJECT *o, uint32_t file, uint32_t address, int handle)
 {
-    uint32_t done = 0;
-    while (done < size) {
-        int64_t n = dl_syscall(0x3f, handle, size - done, (uintptr_t)(to + done), 0, 0, 0);
-        if (n <= 0 || n > size - done) return 0;
-        done += n;
+    uint32_t i, j, page, bias = address - o->plan.base;
+    for (i = 0; i < o->plan.nload; i++) {
+        DL_LOAD *l = &o->plan.loads[i];
+        uint32_t file_end = l->address + l->filesz;
+        for (page = l->address & ~4095U; l->filesz && page < file_end; page += 4096) {
+            uint32_t begin = page > l->address ? page : l->address;
+            uint32_t end = page + 4096 < file_end ? page + 4096 : file_end;
+            uint32_t at, offset = l->offset + begin - l->address;
+            int direct = (l->offset & 4095) == (l->address & 4095) &&
+                         l->offset >= (l->address & 4095);
+            for (j = 0; direct && j < o->plan.nload; j++) {
+                DL_LOAD *other = &o->plan.loads[j];
+                if (j != i && other->memsz && page < other->address + other->memsz &&
+                    other->address < page + 4096) direct = 0;
+            }
+            if (direct) {
+                offset -= begin - page;
+                if (dl_syscall(GEMDOS_MUNMAP, bias + page, 4096, 0, 0, 0, 0) ||
+                    map_file(bias + page, 4096, PROT_READ | ((l->flags & DL_PF_W) ? PROT_WRITE : 0),
+                             handle, offset) != bias + page) return 0;
+            } else {
+                const unsigned char *from = (const unsigned char *)(uintptr_t)(file + offset);
+                unsigned char *to = (unsigned char *)(uintptr_t)(bias + begin);
+                for (at = begin; at < end; at++) *to++ = *from++;
+            }
+        }
+        if (l->memsz > l->filesz && (file_end & 4095)) {
+            uint32_t end = (file_end + 4095) & ~4095U;
+            if (end > l->address + l->memsz) end = l->address + l->memsz;
+            for (page = file_end; page < end; page++)
+                *(unsigned char *)(uintptr_t)(bias + page) = 0;
+        }
     }
-    return 1;
+    return dl_image_view(&o->plan, (const unsigned char *)(uintptr_t)address, bias, &o->object) == DL_OK;
 }
 static int acquire(void *context, const char *name, DL_MAPPING *mapping)
 {
     OBJECT *o;
     char path[40], canon[13] = { 0 };
-    unsigned char check[4096];
     uint64_t identity = canonical(name, canon);
-    uint32_t i, j, file = 0, size = 0, done, address, reserve;
+    uint32_t i, j, file = 0, size = 0, address, reserve;
     int64_t handle = -1, length;
     int rc = DL_BAD_ELF;
     (void)context;
@@ -171,20 +207,8 @@ static int acquire(void *context, const char *name, DL_MAPPING *mapping)
     if (handle < 0) return DL_NOT_FOUND;
     length = dl_syscall(0x42, 0, handle, 2, 0, 0, 0);
     if (length < 52 || length > FILE_LIMIT) goto done;
-    size = length; file = map(size);
+    size = length; file = map_file(0, size, PROT_READ, handle, 0);
     if (!file) { rc = DL_NO_SPACE; goto done; }
-    if (dl_syscall(0x42, 0, handle, 0, 0, 0, 0) < 0 ||
-        !read_file(handle, (unsigned char *)(uintptr_t)file, size) ||
-        dl_syscall(0x42, 0, handle, 2, 0, 0, 0) != size ||
-        dl_syscall(0x42, 0, handle, 0, 0, 0, 0) < 0) goto done;
-    /* Reject changes observed while taking the snapshot, including equal-size
-     * replacement. No file contents or writable pages are shared between processes. */
-    for (done = 0; done < size; done += i) {
-        i = size - done < sizeof(check) ? size - done : sizeof(check);
-        if (!read_file(handle, check, i)) goto done;
-        for (j = 0; j < i; j++) if (check[j] != ((const unsigned char *)(uintptr_t)file)[done + j]) goto done;
-    }
-    if (dl_syscall(0x42, 0, handle, 2, 0, 0, 0) != size) goto done;
     o = &objects[used_objects];
     if (dl_image_read(&o->plan, (const unsigned char *)(uintptr_t)file, size,
                         DL_IMAGE_DSO, &dl_x32_image_abi) || o->plan.base > PTOS_MMAP_BASE ||
@@ -194,9 +218,7 @@ static int acquire(void *context, const char *name, DL_MAPPING *mapping)
     if (!o->reservation) { rc = DL_NO_SPACE; goto done; }
     address = o->plan.base + ((o->reservation - o->plan.base + o->plan.align - 1) & ~(o->plan.align - 1));
     if ((uint64_t)address + o->plan.size > (uint64_t)o->reservation + reserve ||
-        dl_image_copy(&o->plan, (const unsigned char *)(uintptr_t)file, size,
-                        (unsigned char *)(uintptr_t)address, o->plan.size,
-                        address - o->plan.base, &o->object) ||
+        !populate(o, file, address, handle) ||
         !o->object.has_soname || !equal(dl_string(&o->object, o->object.soname), name)) {
         unmap(o->reservation, o->reservation_size); o->reservation = 0; goto done;
     }

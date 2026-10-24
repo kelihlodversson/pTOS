@@ -544,7 +544,7 @@ jobs:
       - name: Install QEMU
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ${{ matrix.qemu }}
+          sudo apt-get install -y ${{ matrix.qemu }} dosfstools mtools
           # scalable fonts for the gdos_answer suite: TrueType and CFF, one
           # whose ascender is taller than its em (Loma), and a monospaced one
           # with marks of no width (Liberation Mono); fontTools makes a TrueType

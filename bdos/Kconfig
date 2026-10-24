@@ -133,14 +133,15 @@ config CONF_WITH_USER_ASPACE
 	  (#402) will become the real home of this.
 
 config CONF_WITH_MMAP
-	bool "Private anonymous process mappings"
+	bool "Private anonymous and file-backed process mappings"
 	depends on CONF_WITH_USER_ASPACE && ARCH_X86_64
 	default n
 	help
-	  Provide Mmap, Munmap and Mprot for private, anonymous pages in a
-	  separate per-process mapping window.  Enforce W^X and process memory
-	  limits; mappings are reclaimed on exit.  File-backed/shared mappings
-	  and replacing MAP_FIXED are not supported yet.  Initially x32 only;
+	  Provide Mmap, Munmap and Mprot for private anonymous and native FAT
+	  file pages in a separate per-process window. File pages are shared
+	  read-only until a private write fault; anonymous pages stay lazy zero.
+	  Enforce W^X, lifetime and memory limits. MAP_SHARED and replacing
+	  MAP_FIXED are not supported. Initially x32 only;
 	  other backends need isolated MMU address spaces first.
 
 config CONF_WITH_ELF_SHARED
@@ -154,11 +155,12 @@ config CONF_WITH_ELF_SHARED
 	  x32 provides the necessary backend initially.  ARM and m68k can be
 	  enabled here after their address-space implementations are merged.
 
-	  This is groundwork for #660, not a working ld.so yet.  Private
-	  mapping/protection services use Mmap, Munmap and Mprot; interpreter
+	  Includes a freestanding ld.so and a separate dynamic CRT/client subset.
+	  Private mapping/protection services use Mmap, Munmap and Mprot; interpreter
 	  handoff and a private argc/argv/envp/auxv stack are implemented and tested.
 	  Eager x32 relocation and dependency discovery are available in the core.
-	  A self-relocating ld.so, dependency file I/O and shared code pages remain.
+	  DSO pages use retained file-backed private mappings and write-fault COW.
+	  A complete shared libcmini and advanced ELF features remain separate.
 	  Static ELF and classic PRG loading are unchanged.
 	  The core is built separately from the kernel, in obj/ldso/.
 

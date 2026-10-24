@@ -20,13 +20,13 @@ bdos/elfinterp.c opens the named interpreter, and lib/ldso/startup.c constructs
 the private initial stack. lib/ldso/runtime.c loads dependencies, binds all
 objects eagerly, seals permissions and runs constructors/finalizers.
 A separate dynamic CRT and shared client helper reuse selected libcmini
-functions. Read-only physical-page sharing and a complete shared libcmini
-remain to be implemented.
+functions. File-backed MAP_PRIVATE shares clean DSO pages and makes relocation/data
+writes private through COW. A complete shared libcmini remains to be implemented.
 
 Lazy private anonymous mapping services are implemented separately as Mmap,
 Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
 selects that option. These services enforce W^X, accounting and process
-ownership; they do not yet provide file-backed shared code pages.
+ownership; they also support native FAT file-backed COW mappings.
 
 CONF_WITH_ELF_SHARED is an experimental, off-by-default Kconfig option.  It
 builds this core into obj/ldso/libldso.a, separately from the kernel.  It
@@ -201,8 +201,9 @@ Memory services and permissions
 Mmap, Munmap and Mprot now expose private anonymous mappings and checked
 permission changes (doc/mmap.txt). Existing file calls can fill RW pages
 before Mprot makes text RX. Malloc/Mxalloc are separate private heap services.
-File-backed mappings and read-only physical-page sharing remain to be
-implemented. The interpreter uses private anonymous mappings for its DSOs.
+File-backed MAP_PRIVATE and reference-counted clean-page sharing are
+implemented. The interpreter uses file mappings for eligible DSO pages and
+lazy anonymous pages for BSS and incompatible shared boundary pages.
 For standard PT_INTERP processes, Mprot also permits changes to the main
 image/interpreter segment pages recorded in kernel-owned layouts, enabling
 RELRO sealing. Stack, basepage and image holes remain ineligible; W^X applies. ELF32
@@ -247,19 +248,15 @@ file bytes. It returns a dynamic-object view; failure requires discarding
 the mapping. It does not allocate or seal memory. The ring-3 harness supplies
 Mmap/Mprot/Munmap, protects gaps with PROT_NONE, seals text RX/data RW-NX and
 applies whole-page PT_GNU_RELRO after eager binding (rounding its end down to
-avoid protecting writable data beyond RELRO). It currently reserves only
-page-aligned images; larger p_align reservation and trusted file I/O remain
-runtime-mapper work. No ELF admission path in this userspace core changes
+avoid protecting writable data beyond RELRO). The embedded harness reserves page-aligned images; the filesystem runtime
+also preserves larger p_align using padding around its reservation. No ELF admission path in this userspace core changes
 the existing kernel static-ELF or PRG loader.
 
-Read-only code-page sharing needs reference-counted backing pages keyed by
-stable file identity, offset and contents/version, with a defined policy for
-files modified while mapped.  aspace_map_page() currently borrows a page;
-it does not implement such a cache or its lifetime.  Private mappings are
-needed first, then shared physical read-only mappings must be proved between
-two distinct process address spaces.  Never share writable relocation state.
-Process teardown drops references, freeing a backing page exactly once when
-the last mapping is gone.  No address-space backend means no shared libraries.
+File-backed code-page sharing uses reference-counted backing keyed by native
+file identity, cache generation and offset. aspace_map_page is the low-level
+PTE primitive; the file-page cache retains backing objects separately and
+never makes shared physical pages writable. Tests prove physical equality
+between processes and private copies after both CPU and kernel writes.
 
 
 Userspace link engine, search and lifetime
@@ -301,8 +298,8 @@ The graph also supplies a deterministic initialization schedule: iterative
 DFS postorder, visiting children in DT_NEEDED order and skipping edges to
 active ancestors. Each object appears once; acyclic dependencies precede
 their dependents. Within cycles this traversal rule fixes the order, since
-no order can put every member before its dependents. Constructor execution
-and finalizer tracking remain a separate implementation step.
+no order can put every member before its dependents. The runtime executes that schedule and tracks initialized objects for
+reverse finalization.
 
 The resolver's global scope is the executable, followed by its
 dependency closure in deterministic breadth-first DT_NEEDED order.  The
@@ -360,58 +357,61 @@ any and requires no libc or pre-relocated pointers.
 
 The initial FAT profile accepts strict ASCII 8.3 names (letters, digits, '_',
 '-', one dot), with exact case-sensitive DT_SONAME equal to DT_NEEDED. This
-rejects alternate-case aliases. Identity is the canonical directory-entry name
-within this single directory, backed by the first immutable private snapshot
-for that process, rather than an inode number. Hash collisions are rejected.
-The dependency graph reuses an exact name without reopening it. FAT has no
-hard links; other filesystem/long-name alias policies need a separate extension.
-Each file is bounded to 8 MiB, read completely, checked for size changes and
-compared against a second complete read before use. An observed change aborts
-loading; later replacement does not change the retained snapshot. This is not
-an atomic filesystem snapshot or a cross-process object cache.
+rejects alternate-case aliases. The userspace graph uses canonical names in
+this one directory; kernel page-cache identity is the retained native DFD,
+independent of names and protected against directory-slot reuse. Name-hash
+collisions are rejected. The graph reuses an exact name without reopening it.
+FAT has no hard links; long-name/foreign-filesystem identity policies need a
+separate extension. Each ELF file is bounded to 8 MiB and admitted through a
+read-only file mapping. This is not an atomic filesystem snapshot: later
+Fwrite invalidates new cache generations, while already mapped private views
+need not reflect subsequent writes. Unlink/replacement retains the old file
+identity and cluster chain until the last mapping/handle reference is gone.
 
 Private reservations preserve p_align, including padding. Gaps/padding become
 PROT_NONE, segment permissions become R/RW/RX, and RELRO becomes R before any
-constructor. All dependency mappings are private, including read-only pages.
+constructor. All dependency mappings have private semantics; clean file pages may share
+physical backing until a private write fault.
 Executable preinitializers run first; graph DFS postorder initializes each
 object once (DT_INIT then INIT_ARRAY). Finalization reverses that order,
 FINI_ARRAY in reverse then DT_FINI. Hook arrays and executable targets are
 validated before calling user code. Raw Pterm only performs kernel cleanup.
-A load failure exits 127 before application entry. Missing libraries and
+A loader-detected format, binding or dependency failure exits 127 before
+application entry; backing I/O faults terminate through the kernel fault path. Missing libraries and
 symbols print the dependency context; bootstrap failures exit directly.
 
 
-Next backing model: file-backed MAP_PRIVATE
-------------------------------------------
+File-backed MAP_PRIVATE and COW
+-------------------------------
 
-Read-only physical sharing will use file-backed MAP_PRIVATE mappings, not
-anonymous-page content hashing or full-page deduplication. This is planned;
-the current implementation still accepts anonymous mappings only. Native FAT
-now retains open-file backing independently of directory-entry lifetime.
+Read-only physical sharing uses file-backed MAP_PRIVATE, not content hashing
+or page comparison. bdos/fileback.c owns retained native file identity/cache
+generations and disk reads. The address-space backend indexes physical pages
+by (backing object, offset), counts PTE references and copies on private write.
+No cache page survives its final mapped PTE. The current kernel serializes
+these operations; SMP needs locking before concurrent cache mutation.
 
-The kernel must retain a backing object independently of the user's file
-handle. Cached pages are keyed by stable filesystem object identity, content
-generation and page offset; pathname, file length and FAT timestamps alone
-are insufficient. Mutation, truncation, unlink/replacement and media changes
-must invalidate future cache lookups without freeing pages held by existing
-mappings. Unlink removes the directory entry immediately, while handles and
-backing pins retain the old object and its cluster chain. The final in-memory
-reference releases the chain; recreating the same name creates a new identity. Drivers without a sufficient identity/lifetime contract must refuse
-file mappings until they provide one.
+The kernel retains backing independently of the user's fd. Native Fwrite
+invalidates future cache generations; old private views need not reflect later
+file changes. Unlink removes only the name, and open/mapped references keep
+the old cluster chain until the last reference. Cross-directory file rename
+moves the retained DFD identity and every live OFD to the new directory entry.
+Directory rename with live descendants is refused instead of discarding their
+referenced directory cache. Unsupported foreign drivers cannot supply mappings.
 
-Clean private file pages may share read-only physical backing. A write fault
-on a logically writable private mapping creates a private copy before retrying
-that instruction; relocation writes use the same path. Mprot changes logical
-permissions without making shared backing writable. Kernel writes to user
-buffers must trigger the same copy-on-write behavior. PROT_NONE, W^X, partial
-Munmap, allocation limits, failure rollback and last-reference teardown retain
-their existing guarantees. Anonymous zero-fill mappings stay lazy.
+Mprot preserves COW while changing logical permissions; CPU and kernel-buffer
+writes both privatize shared pages. Protection failure is rejected before any
+mapping changes. Anonymous zero-fill mappings remain lazy. See doc/mmap.txt
+for bounds, EOF, mutation, I/O-fault and deferred-release behavior.
 
-LD.SO will map eligible PT_LOAD file pages directly, retaining anonymous pages
-for BSS and partial-page zeroing as needed. It must not first copy the entire
-image into anonymous memory and rely on later content comparison to recover
-sharing. File descriptors may be closed after mapping; backing and page
-references remain until the final mapping is released.
+LD.SO reserves an anonymous span preserving p_align, then maps page-congruent
+PT_LOAD file pages directly at their reserved addresses with non-replacing
+fixed mappings. Shared segment-boundary pages and noncongruent layouts use
+anonymous copies. BSS is lazy zero-fill; a partial file page needing BSS zeroing
+becomes private through COW. Rounded file pages may contain file bytes outside
+the segment's logical extent, as with ordinary ELF file mappings. Relocation
+writes use COW; final permissions seal R/RW/RX and RELRO before constructors.
+Main executable/interpreter startup pages remain private for now.
 
 
 Native FAT backing lifetime
@@ -487,8 +487,8 @@ The boot probe uses a separate libuse.so and independently compiled main,
 checks getenv in a dependency constructor, main arguments, 32-handler capacity,
 LIFO ordering, registration during exit, return from main, exit from the DSO,
 _Exit bypass, and resource
-cleanup for both ET_EXEC and PIE. Eight lifecycle PASS messages, including nested parent/child runs, prove that the
-normal paths actually reach the final dependency destructor.
+cleanup for both ET_EXEC and PIE. Eight lifecycle PASS messages, including
+nested parent/child runs, prove that the normal paths actually reach the final dependency destructor.
 
 
 Implementation and validation milestones
@@ -499,7 +499,7 @@ Implementation and validation milestones
 2. Private anonymous Mmap/Munmap/Mprot services are implemented, with
    permission faults, limits, isolation, failure cleanup and CI boot tests.
    ELF32 load admission, private image population, RELRO sealing and runtime
-   file snapshots are implemented. File backing remains. Split dynamic-image
+   retained file mappings and COW are implemented. Split dynamic-image
    ownership is implemented.
 3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes are
    implemented for direct and split Pexec. Static ELF/PIE, built-in images
@@ -513,8 +513,8 @@ Implementation and validation milestones
    A separate reusable dynamic CRT and shared client-helper component run
    ET_EXEC/PIE C programs using libcmini string/environment functions.
    Remaining: complete shared libcmini and its broader runtime services.
-6. Reference-counted read-only page sharing, two-process isolation, W^X and
-   permission-fault probes, plus corrupted ELF, missing libraries/symbols,
+6. Reference-counted clean file-page sharing, COW, two-process isolation, W^X
+   and permission-fault probes are implemented, plus corrupted ELF, missing libraries/symbols,
    cycles, invalid relocations, rollback and repeated-load leak tests in CI.
 7. ARM/m68k backends only after their isolated-address-space prerequisites
    merge.  Verify m68k -fpic/-fPIC and emitted relocations then; PIE is not
@@ -536,4 +536,6 @@ tools/test-mmap-boot.sh also requires the ring-3 relocation PASS marker.
 Kernel interpreter startup is covered by a separate PT_INTERP PASS marker.
 A separate LD.SO runtime PASS marker covers filesystem dependency loading,
 binding, lifecycle ordering, permissions and repeated successful/failed loads.
-Physical-page sharing remains unimplemented.
+File-backed/COW boot tests additionally compare physical backing across
+processes, inject allocation failures, verify kernel writes and file-generation
+invalidation, and fault/read/execute after fd close and rename/unlink.

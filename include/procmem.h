@@ -315,6 +315,16 @@ BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
  * owns and validates the lazy reservation and records its future permissions.
  * Never allocates physical backing or page tables. */
 BOOL aspace_protect_lazy(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+#if CONF_WITH_MMAP
+struct file_backing;
+BOOL aspace_file_cow(const ASPACE *as, UQUAD va);
+int aspace_fault_file(ASPACE *as, UQUAD va, struct file_backing *backing, ULONG offset,
+                        UWORD prot, BOOL write);
+/* Diagnostic counters: live pages/PTEs and cross-root cache attachments. */
+ULONG aspace_file_cross_shares(void);
+ULONG aspace_file_pages(void);
+ULONG aspace_file_references(void);
+#endif
 
 /*
  * Software walk of the address space's own page tables, through the physical

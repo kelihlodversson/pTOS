@@ -154,7 +154,7 @@ static int mapping_api(void)
     if (mmap_private(0, 4096, PROT_READ, flags, 4096) != EINVAL ||
         mmap_private(0, 4096, PROT_READ, flags, 0x100000000ULL) != EINVAL)
         bad |= 2;
-    if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE, 0) != -307 ||
+    if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE, 0) != -37 ||
         mmap_private(0, 4096, PROT_READ, MAP_SHARED | MAP_ANONYMOUS, 0) != -307 ||
         mmap_private(0, 4096, PROT_READ, flags | MAP_FIXED, 0) != -307)
         bad |= 4;
@@ -244,6 +244,81 @@ static int walk_ancestors(u64 basepage)
 #if CONF_WITH_ELF_SHARED
 extern int x32_ldso_probe(void);
 #endif
+
+static int file_mapping_api(void)
+{
+    static unsigned char file[4128], readback[6];
+    static const unsigned char code[] = { 0xb8, 0x45, 0, 0, 0, 0xc3 };
+    static const char path[] = "C:\\COW.TMP", moved[] = "C:\\COWDIR\\COW.TMP";
+    static const char directory[] = "C:\\COWDIR", fresh[] = "new";
+    s64 fd = -1, replacement = -1, a = 0, b = 0, tail = 0, executable = 0;
+    volatile unsigned char *left, *right;
+    int (*function)(void);
+    unsigned int i;
+    int bad = 0;
+#define FILE_CHECK(condition, failure) do { if (!(condition)) { bad = failure; goto done; } } while (0)
+    for (i = 0; i < sizeof(file); i++) file[i] = i < 4096 ? 'A' : 'B';
+    for (i = 0; i < sizeof(code); i++) file[i] = code[i];
+    fd = gemdos(0x3c, (s64)(unsigned long)path, 0);
+    FILE_CHECK(fd >= 0, 1);
+    FILE_CHECK(sys(GEMDOS, 0x40, fd, sizeof(file), (s64)(unsigned long)file) == sizeof(file), 2);
+    FILE_CHECK(sys6(GEMDOS, GEMDOS_MMAP, 0, 4096, PROT_READ, MAP_PRIVATE, fd, 1) == EINVAL &&
+               sys6(GEMDOS, GEMDOS_MMAP, 0, 12288, PROT_READ, MAP_PRIVATE, fd, 0) == EIMBA, 3);
+    a = sys6(GEMDOS, GEMDOS_MMAP, 0, 8192, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, 0);
+    b = sys6(GEMDOS, GEMDOS_MMAP, 0, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    FILE_CHECK(a > 0 && b > 0, 4);
+    left = (volatile unsigned char *)(unsigned long)a;
+    right = (volatile unsigned char *)(unsigned long)b;
+    function = (int (*)(void))(unsigned long)a;
+    FILE_CHECK(function() == 0x45 && right[0] == 0xb8, 5);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, fd, 1) == sizeof(file), 6);
+    FILE_CHECK(sys(GEMDOS, 0x17d, b, 1, 0) == 0 && sys(GEMDOS, 0x17d, a, 1, 0) < 0, 7);
+    FILE_CHECK(sys(GEMDOS, GEMDOS_MPROT, a, 8192, PROT_READ | PROT_WRITE) == 0, 8);
+    left[0] = 'Z';                         /* hardware write fault performs COW */
+    FILE_CHECK(right[0] == 0xb8, 9);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, fd, 0) == 0 &&
+               sys(GEMDOS, 0x3f, fd, 1, b + 1) == 1 && right[1] == 0xb8 && left[0] == 'Z', 10);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, fd, 0) == 0 &&
+               sys(GEMDOS, 0x3f, fd, sizeof(readback), (s64)(unsigned long)readback) == sizeof(readback) &&
+               readback[0] == 0xb8 && readback[1] == 0x45, 11);
+    tail = sys6(GEMDOS, GEMDOS_MMAP, 0, 4096, PROT_READ, MAP_PRIVATE, fd, 4096);
+    FILE_CHECK(tail > 0 && *(volatile unsigned char *)(unsigned long)tail == 'B', 12);
+    executable = sys6(GEMDOS, GEMDOS_MMAP, 0, 4096, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, 0);
+    FILE_CHECK(executable > 0, 25);
+    FILE_CHECK(gemdos(0x39, (s64)(unsigned long)directory, 0) == 0, 20);
+    {
+        s64 result = sys(GEMDOS, 0x56, 0, (s64)(unsigned long)path, (s64)(unsigned long)moved);
+        FILE_CHECK(result == 0, 0x100 | ((int)-result & 255));
+    }
+    {
+        s64 result = gemdos(0x41, (s64)(unsigned long)moved, 0);
+        FILE_CHECK(result == 0, 0x200 | ((int)-result & 255));
+    }
+    FILE_CHECK(gemdos(0x3e, fd, 0) == 0, 23);
+    fd = -1;
+    function = (int (*)(void))(unsigned long)executable;
+    FILE_CHECK(function() == 0x45, 24);    /* first execute after rename/unlink/close */
+    replacement = gemdos(0x3c, (s64)(unsigned long)path, 0);
+    FILE_CHECK(replacement >= 0 && sys(GEMDOS, 0x40, replacement, 3, (s64)(unsigned long)fresh) == 3, 14);
+    FILE_CHECK(right[4096] == 'B' && right[4128] == 0, 15);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, replacement, 0) == 0 &&
+               sys(GEMDOS, 0x3f, replacement, 3, b + 4096) == 3 && right[4096] == 'n' &&
+               left[4096] == 'B', 16);
+    FILE_CHECK(gemdos(GEMDOS_MUNMAP, b, 4096) == 0 &&
+               sys(GEMDOS, GEMDOS_MPROT, b + 4096, 4096, PROT_READ) == 0 && right[4096] == 'n', 17);
+done:
+    if (a > 0) gemdos(GEMDOS_MUNMAP, a, 8192);
+    if (b > 0) gemdos(GEMDOS_MUNMAP, b, 8192);
+    if (tail > 0) gemdos(GEMDOS_MUNMAP, tail, 4096);
+    if (executable > 0) gemdos(GEMDOS_MUNMAP, executable, 4096);
+    if (fd >= 0) gemdos(0x3e, fd, 0);
+    if (replacement >= 0) gemdos(0x3e, replacement, 0);
+    gemdos(0x41, (s64)(unsigned long)path, 0);
+    gemdos(0x41, (s64)(unsigned long)moved, 0);
+    gemdos(0x3a, (s64)(unsigned long)directory, 0);
+#undef FILE_CHECK
+    return bad;
+}
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss);
 
@@ -374,6 +449,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(0);
         break;
     }
+    case '0':
+        pterm(file_mapping_api());
+        break;
     case 'S':
         pterm(mapping_api());
         break;

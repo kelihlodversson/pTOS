@@ -44,9 +44,12 @@ enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
 
 typedef struct kproc KPROC;
 #if CONF_WITH_MMAP
+#include "fileback.h"
 typedef struct mmap_region {
     ULONG address, length;
     UWORD prot;
+    FILE_BACKING *backing;
+    ULONG offset;
     struct mmap_region *next;
 } MMAP_REGION;
 #endif
@@ -258,6 +261,7 @@ void kproc_destroy(PD *pd)
                 MMAP_REGION *region = kproc->mappings;
 
                 kproc->mappings = region->next;
+                fileback_put(region->backing);
                 kfree(region);        /* backing pages died with the aspace */
             }
 #endif
@@ -1236,7 +1240,7 @@ static MMAP_REGION **mapping_slot(KPROC *kproc, UQUAD *address,
 }
 
 LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
-                UQUAD flags, UQUAD offset)
+                UQUAD flags, UQUAD fd, UQUAD offset)
 {
     KPROC *kproc = kproc_find(pd);
     MMAP_REGION **link, *region;
@@ -1246,12 +1250,11 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
 
     if (!kproc || !kproc->aspace)
         return EACCDN;
-    /* Anonymous private memory only. Do not silently emulate unsupported
-     * file/shared mappings or MAP_FIXED's destructive replacement rule. */
+    /* Private anonymous or file-backed reservations; never MAP_SHARED. */
     if ((flags & ~(UQUAD)(MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE)) ||
-        (flags & (MAP_PRIVATE | MAP_ANONYMOUS)) != (MAP_PRIVATE | MAP_ANONYMOUS))
+        !(flags & MAP_PRIVATE))
         return EOPNOTSUPP;
-    if (offset)
+    if ((flags & MAP_ANONYMOUS) ? offset != 0 : (offset > 0x7fffffffUL || (offset & (USER_PAGE_SIZE - 1))))
         return EINVAL;
     if (address > 0xffffffffULL)
         return EIMBA;
@@ -1277,6 +1280,19 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     region = kalloc(sizeof(*region));
     if (!region)
         return ENSMEM;
+    region->backing = NULL; region->offset = 0;
+    if (!(flags & MAP_ANONYMOUS)) {
+        if (fd >= NUMHANDLES) { kfree(region); return EIHNDL; }
+        rc = fileback_get((LONG)fd, &region->backing);
+        if (rc) { kfree(region); return rc; }
+        /* Initially restrict reservations to the file's rounded extent. */
+        if (offset >= fileback_size(region->backing) ||
+            length > ((UQUAD)fileback_size(region->backing) + USER_PAGE_SIZE - 1) /
+                        USER_PAGE_SIZE * USER_PAGE_SIZE - offset) {
+            fileback_put(region->backing); kfree(region); return EIMBA;
+        }
+        region->offset = (ULONG)offset;
+    }
     region->address = (ULONG)address;
     region->length = (ULONG)length;
     region->prot = prot;
@@ -1284,6 +1300,27 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     *link = region;
     kproc->mapping_bytes += length;
     return (LONG)address;
+}
+
+/* Shutdown never returns to user code. Drop file views before flushing the
+ * filesystem so unlinked chains do not become orphans on a normal reset.
+ * Keep address spaces and kernel stacks intact while the syscall finishes. */
+void kproc_shutdown_file_mappings(void)
+{
+    KPROC *kproc;
+    for (kproc = kproc_list; kproc; kproc = kproc->next) {
+        MMAP_REGION **link = &kproc->mappings, *region;
+        while ((region = *link)) {
+            if (!region->backing || !kproc->aspace ||
+                !aspace_release_lazy(kproc->aspace, region->address, region->length)) {
+                link = &region->next; continue;
+            }
+            *link = region->next;
+            kproc->mapping_bytes -= region->length;
+            fileback_put(region->backing); kfree(region);
+        }
+    }
+    fileback_reap();
 }
 
 LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
@@ -1324,17 +1361,22 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
             tail->address = (ULONG)last;
             tail->length = (ULONG)(region_end - last);
             tail->prot = region->prot;
+            tail->backing = region->backing;
+            tail->offset = region->offset + (ULONG)(last - region->address);
             tail->next = region->next;
         }
         if (!aspace_release_lazy(kproc->aspace, first, last - first)) {
             kfree(tail);
             return EINTRN;              /* ledger and ownership disagree */
         }
+        if (tail) fileback_hold(tail->backing);
         kproc->mapping_bytes -= last - first;
         if (first == region->address && last == region_end) {
             *link = region->next;
+            fileback_put(region->backing);
             kfree(region);
         } else if (first == region->address) {
+            region->offset += (ULONG)(last - region->address);
             region->address = (ULONG)last;
             region->length = (ULONG)(region_end - last);
             link = &region->next;
@@ -1352,6 +1394,8 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
 static void mapping_split(MMAP_REGION *region, UQUAD at, MMAP_REGION *tail)
 {
     *tail = *region;
+    fileback_hold(tail->backing);
+    tail->offset += (ULONG)(at - region->address);
     tail->address = (ULONG)at;
     tail->length = region->length - (ULONG)(at - region->address);
     region->length = (ULONG)(at - region->address);
@@ -1459,9 +1503,11 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
         MMAP_REGION *next = region->next;
 
         if ((UQUAD)region->address + region->length == next->address &&
-            region->prot == next->prot) {
+            region->prot == next->prot && region->backing == next->backing &&
+            (!region->backing || (UQUAD)region->offset + region->length == next->offset)) {
             region->length += next->length;
             region->next = next->next;
+            fileback_put(next->backing);
             kfree(next);
         } else {
             region = next;
@@ -1576,13 +1622,23 @@ static BOOL lazy_area(const KPROC *kproc, UQUAD va, UWORD *prot)
 }
 
 /* backs the page of a lazy area; the stack remembers how far down it has been */
-static BOOL back_page(KPROC *kproc, UQUAD va)
+static int back_page(KPROC *kproc, UQUAD va, UWORD access)
 {
     UWORD prot;
 
-    if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER) ||
-        !aspace_fault_in(kproc->aspace, va, prot))
-        return FALSE;
+    if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER)) return 0;
+#if CONF_WITH_MMAP
+    {
+        MMAP_REGION *region;
+        for (region = kproc->mappings; region; region = region->next)
+            if (region->backing && va >= region->address &&
+                va < (UQUAD)region->address + region->length)
+                return aspace_fault_file(kproc->aspace, va, region->backing,
+                    region->offset + (ULONG)((va & ~(USER_PAGE_SIZE - 1)) - region->address),
+                    prot, (access & ASPACE_PROT_WRITE) != 0);
+    }
+#endif
+    if (!aspace_fault_in(kproc->aspace, va, prot)) return 2;
     va &= ~(USER_PAGE_SIZE - 1);
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP &&
         (!kproc->stack_low || va < kproc->stack_low))
@@ -1598,7 +1654,14 @@ int kproc_demand_page(PD *pd, UQUAD va, UWORD access)
     if (!kproc || !kproc->aspace || !lazy_area(kproc, va, &prot) ||
         !(prot & ASPACE_PROT_USER) || (access & ~prot))
         return 0;
-    return back_page(kproc, va) ? 1 : 2;
+    if (aspace_translate(kproc->aspace, va, NULL, NULL)) {
+#if CONF_WITH_MMAP
+        if ((access & ASPACE_PROT_WRITE) && aspace_file_cow(kproc->aspace, va))
+            return back_page(kproc, va, access);
+#endif
+        return 0;
+    }
+    return back_page(kproc, va, access);
 }
 
 /* A kernel call needs a page of a lazy area and no physical page is left: the
@@ -1621,8 +1684,14 @@ static BOOL range_allowed(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
         UWORD prot;
 
         if (aspace_translate(kproc->aspace, page, NULL, &prot)) {
-            if (!(prot & ASPACE_PROT_USER) || (write && !(prot & ASPACE_PROT_WRITE)))
+            if (!(prot & ASPACE_PROT_USER)) return FALSE;
+            if (write && !(prot & ASPACE_PROT_WRITE)) {
+#if CONF_WITH_MMAP
+                if (aspace_file_cow(kproc->aspace, page) && lazy_area(kproc, page, &prot) &&
+                    (prot & ASPACE_PROT_USER) && (prot & ASPACE_PROT_WRITE)) continue;
+#endif
                 return FALSE;
+            }
         } else if (!lazy_area(kproc, page, &prot) ||
                    !(prot & ASPACE_PROT_USER) || (write && !(prot & ASPACE_PROT_WRITE))) {
             return FALSE;
@@ -1642,10 +1711,17 @@ static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
 
     if (!range_allowed(kproc, address, size, write))
         return FALSE;
-    for (page = first; page <= last; page += USER_PAGE_SIZE)
-        if (!aspace_translate(kproc->aspace, page, NULL, NULL) &&
-            !back_page(kproc, page))
+    for (page = first; page <= last; page += USER_PAGE_SIZE) {
+        UWORD prot;
+        int rc;
+        if (aspace_translate(kproc->aspace, page, NULL, &prot) &&
+            (!write || (prot & ASPACE_PROT_WRITE))) continue;
+        rc = back_page(kproc, page, write ? ASPACE_PROT_WRITE : 0);
+        if (rc != 1) {
+            if (rc == 3) { kcprintf("process: file mapping I/O error\n"); xterm((UWORD)-1); }
             lazy_oom();
+        }
+    }
     return TRUE;
 }
 

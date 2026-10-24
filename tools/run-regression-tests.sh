@@ -5,8 +5,9 @@
 # Usage: run-regression-tests.sh <virt-arm|virt-m68k|pc-x86_64|raspi2b> [timeout-seconds]
 #
 # Expects the matching configuration to be built and `make test-dir` to have
-# collected the test programs into test-dir/ (QEMU's FAT driver presents a copy
-# of the directory as the disk, so no image and no mtools are needed):
+# collected test programs into test-dir/. The virt boards use QEMU's FAT
+# directory driver. x32 uses a real FAT disk image (dosfstools and mtools)
+# so unlink lifetimes and shutdown writes are checked on block storage:
 #
 #   virt-arm     virt-arm-cli_defconfig       virt-arm.elf    qemu-system-arm
 #   virt-m68k    virt-m68k-cli-elf_defconfig  virt-m68k.elf   qemu-system-m68k
@@ -44,6 +45,7 @@ qemu_pid=
 qemu_status=0
 log=
 disk=
+disk_image=
 results=$work/results       # "name|PASS" or "name|FAIL" per line, in order
 logs=$work/logs             # the console logs, in order
 : >"$results"
@@ -263,11 +265,19 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         cp "$top/pc-x86_64.efi" "$disk/EFI/BOOT/BOOTX64.EFI"
         firmware=${OVMF_DIR:-/usr/share/OVMF}
         cp "$firmware/OVMF_VARS_4M.fd" "$work/vars-$label.fd"
+        # vvfat mirrors a host directory asynchronously and can lose the
+        # shutdown file when a reset/halt test stops QEMU. Use real sectors,
+        # including unlinked-but-referenced files' allocated FAT chains.
+        disk_image=$work/disk-$label.img
+        if ! "$tools/mkhdisk.sh" "$disk_image" 33554432 "$disk"/* >"$work/image-$label.log" 2>&1; then
+            cat "$work/image-$label.log" >&2
+            die "cannot create regression disk" "disk creation failed"
+        fi
         rm -f "$work/mon.sock"
         qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
             -drive if=pflash,format=raw,readonly=on,file="$firmware/OVMF_CODE_4M.fd" \
             -drive if=pflash,format=raw,file="$work/vars-$label.fd" \
-            -drive format=raw,file=fat:rw:"$disk" \
+            -drive format=raw,file="$disk_image" \
             -serial file:"$log" -monitor unix:"$work/mon.sock",server,nowait \
             -display none >"${log%.log}.qemu" 2>&1 &
         qemu_pid=$!
@@ -284,13 +294,20 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
 # data_file_ok: after QEMU has gone, SHUTDOWN.DAT (shutdown_prog.c) must be on
 # the disk, 512 bytes, byte i being i * 7 + 3
 data_file_ok() {
-    python3 - "$disk" <<'PY'
-import os, sys
-d = sys.argv[1]
-names = {n.upper(): n for n in os.listdir(d)}
-if "SHUTDOWN.DAT" not in names:
-    sys.exit(1)
-data = open(os.path.join(d, names["SHUTDOWN.DAT"]), "rb").read()
+    python3 - "$disk" "$disk_image" <<'PY'
+import os, subprocess, sys
+if sys.argv[2]:
+    try:
+        data = subprocess.check_output(["mtype", "-i", sys.argv[2] + "@@1048576",
+                                        "::SHUTDOWN.DAT"], stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        sys.exit(1)
+else:
+    d = sys.argv[1]
+    names = {n.upper(): n for n in os.listdir(d)}
+    if "SHUTDOWN.DAT" not in names:
+        sys.exit(1)
+    data = open(os.path.join(d, names["SHUTDOWN.DAT"]), "rb").read()
 sys.exit(0 if data == bytes((i * 7 + 3) & 255 for i in range(512)) else 1)
 PY
 }

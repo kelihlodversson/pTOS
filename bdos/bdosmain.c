@@ -640,10 +640,9 @@ restrt:
     switch (fn)
     {
     case GEMDOS_MMAP:
-        /* The native ABI supplies six scalar slots. Anonymous mappings
-         * do not use fd (pw[5]); offset is still required to be zero. */
+        /* All six native scalar slots reach the mapping service. */
         return kproc_mmap(run, (UQUAD)pw[1], (UQUAD)pw[2], (UQUAD)pw[3],
-                          (UQUAD)pw[4], (UQUAD)pw[6]);
+                          (UQUAD)pw[4], (UQUAD)pw[5], (UQUAD)pw[6]);
     case GEMDOS_MUNMAP:
         return kproc_munmap(run, (UQUAD)pw[1], (UQUAD)pw[2]);
     case GEMDOS_MPROT:

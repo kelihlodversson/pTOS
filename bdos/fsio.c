@@ -21,6 +21,9 @@
 #endif
 #include "tosvars.h"
 #include "intmath.h"
+#if CONF_WITH_MMAP
+#include "fileback.h"
+#endif
 
 
 #define CNTMAX  0x7FFFul  /* 16-bit MAXINT */
@@ -604,5 +607,8 @@ long xwrite(WORD h, long len, void *ubufr)
 
 long ixwrite(OFD *p, long len, void *ubufr)
 {
+#if CONF_WITH_MMAP
+    if (len > 0) fileback_changed(p->o_dfd);
+#endif
     return(xrw(1,p,len,ubufr));
 }

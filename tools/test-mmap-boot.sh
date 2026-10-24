@@ -78,6 +78,7 @@ if [ -f "$log" ]; then cat "$log"; fi
 ! grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
 grep -q "x86-64 mmap syscalls: $expected" "$log"
+if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     grep -q 'x86-64 ldso relocations: PASS' "$log"
     [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]
@@ -87,4 +88,4 @@ fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"
 ! sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'
-echo "Anonymous Mmap/Munmap/Mprot boot tests passed ($expected)."
+echo "Private Mmap/Munmap/Mprot boot tests passed ($expected)."

@@ -6,8 +6,8 @@
 
 /* One successfully acquired mapping, with a validated dl_read_dynamic view.
  * Identity is a stable mapper object identity, never a load address. The
- * mapper documents filesystem alias/replacement rules and retains immutable
- * snapshots; inode-capable filesystems should use stable file identities.
+ * mapper documents filesystem alias/replacement rules and keeps metadata
+ * stable during discovery; inode-capable filesystems use stable identities.
  * Its view and cookie remain valid until release, including across acquires. */
 typedef struct {
     DL_OBJECT object;

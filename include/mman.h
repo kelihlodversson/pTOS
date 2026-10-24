@@ -1,5 +1,5 @@
 /*
- * mman.h - native GEMDOS anonymous mapping ABI (#660)
+ * mman.h - native GEMDOS private mapping ABI (#660)
  *
  * Copyright (C) 2026 The pTOS development team.
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -33,12 +33,17 @@
  * Munmap(address, length) -> E_OK or error
  * Mprot(address, length, protection) -> E_OK or error
  *
- * Initially MAP_PRIVATE|MAP_ANONYMOUS only; fd ignored, offset must be 0.
+ * MAP_PRIVATE|MAP_ANONYMOUS ignores fd and requires offset 0.
+ * MAP_PRIVATE without ANONYMOUS maps readable native FAT files: offset
+ * must be page aligned and the range must fit the rounded file extent.
+ * Mappings retain the open backing independently of Fclose/unlink. Clean
+ * pages share backing; private writes copy before modifying a page.
  * MAP_FIXED is unsupported; MAP_FIXED_NOREPLACE never replaces a mapping.
  * An ordinary address is a hint. Lengths are rounded up to pages. Munmap
  * and Mprot require page-aligned addresses. Mprot supports NONE, R, RW, RX;
  * hardware read access is implied by WRITE/EXEC. W+X is refused.
- * Mappings are zero-filled and reclaimed on process exit.
+ * Anonymous pages and the final file-page tail are zero-filled. All
+ * mappings are reclaimed on process exit. MAP_SHARED remains unsupported.
  * These are GEMDOS error returns, not libc's MAP_FAILED/errno convention.
  */
 

@@ -316,11 +316,11 @@ void gouser(void)
 /*
  * A page fault on a page that is not there (bios/arch/x86_64/panic.c asks
  * before it treats the fault as fatal): if it is a page of the running process's
- * stack, Malloc() or anonymous memory, back it with the reservation's access and
+ * stack, Malloc(), anonymous or private file memory, back/COW it with its access and
  * resume.  The process's address space must be the one in use; a fault at a user
  * address while the kernel runs for the process (a buffer it did not validate)
  * is answered the same way.  0: not a lazy page; 1: backed; 2: it is one and no
- * physical page is left.
+ * physical page is left; 3: file-backing I/O error.
  */
 int x86_64_demand_page(UQUAD address, UQUAD error_code)
 {

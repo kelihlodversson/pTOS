@@ -16,7 +16,8 @@
 /* Kernel-owned mapping records: only this process's linker window is
  * affected.  Full-width syscall slots are checked before narrowing. */
 LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
-                UQUAD flags, UQUAD offset);
+                UQUAD flags, UQUAD fd, UQUAD offset);
+void kproc_shutdown_file_mappings(void);
 LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length);
 LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection);
 #endif
@@ -157,7 +158,7 @@ BOOL kproc_has_heap(PD *pd);
 /* The page fault handler's question: `va` is in lazy stack, Malloc() or anonymous memory of
  * the process, whose page has not been touched yet.  0: it is not (a real fault);
  * 1: it is, and the page is backed now; 2: it is, and no physical page was left
- * (the process is to be terminated). */
+ * (the process is to be terminated); 3: backing-file I/O failed. */
 /* access: ASPACE_PROT_WRITE for a write, ASPACE_PROT_EXEC for a fetch,
  * zero for a read. Disallowed access returns 0 without allocating a page. */
 int kproc_demand_page(PD *pd, UQUAD va, UWORD access);

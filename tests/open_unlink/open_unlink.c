@@ -26,6 +26,10 @@ void test_open_unlink(void)
     if (replacement < 0) goto done;
     ptest_assert_msg(Fwrite(replacement, 3L, fresh) == 3, "write replacement");
     ptest_assert_msg(Dcreate("C:\\ULDIR") == 0, "mkdir while original backing is open");
+    ptest_assert_msg(Frename(0, FIXTURE, "C:\\ULDIR\\MOVED.TST") == 0 &&
+                     Fseek(0L, replacement, 2) == 3, "cross-directory rename retains open identity");
+    ptest_assert_msg(Frename(0, "C:\\ULDIR\\MOVED.TST", FIXTURE) == 0,
+                     "rename live file back into reused directory slot");
     Ddelete("C:\\ULDIR");
     missing = Fopen(FIXTURE, 0);
     ptest_assert_msg(missing >= 0 && Fseek(0L, missing, 2) == 3,

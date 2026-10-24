@@ -145,6 +145,10 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
         if (p2->o_dirbyt == p->o_dirbyt && !(p2->o_dfd->o_flag & O_UNLINKED))
             break;              /* same dir, same dcnt */
 
+    if (p2 && p2->o_dfd->o_usecnt == 0x7fff) {
+        sft[h-NUMSTD].f_ofd = NULL; sft[h-NUMSTD].f_own = NULL; sft[h-NUMSTD].f_use = 0;
+        xmfreblk(p); return ENSMEM;
+    }
     p->o_link = dn->d_files;
     dn->d_files = p;
     /*

@@ -20,6 +20,9 @@
 #include "biosext.h"
 #include "kprint.h"
 #include "shutdown.h"
+#if CONF_WITH_MMAP
+#include "kproc.h"
+#endif
 
 /* set when a Shutdown() has started; a second one is refused */
 static BOOL shutting_down;
@@ -72,6 +75,9 @@ long xshutdown(LONG mode)
 
     /* every open file of every process, then the buffers */
     close_files();
+#if CONF_WITH_MMAP
+    kproc_shutdown_file_mappings();
+#endif
     sync_buffers();
     flop_shutdown();
 

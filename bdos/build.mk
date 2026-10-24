@@ -32,3 +32,5 @@ obj/elfimageabi.o: $(ELFIMAGE_ABI-y) lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
 obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
+
+obj-$(CONF_WITH_MMAP) += fileback.o
