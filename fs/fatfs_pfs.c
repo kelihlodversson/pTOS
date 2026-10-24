@@ -373,6 +373,7 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
         return EACCDN;
     }
 
+    dn->d_strtcl = f0->o_dfd->o_strtcl; /* cache the newly allocated identity */
     f2 = dirinit(dn);                   /* pointer to dirty dir block */
 
     /* write identifier */
@@ -403,15 +404,13 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
         f2->f_clust = le2cpu16(dfd->o_strtcl);
     }
     f2->f_fileln = 0;
-    memcpy(f, f0, sizeof(OFD));
-    /* the memcpy also copied f->o_dfd, which now points at f0's embedded
-     * DFD; nextcl() already marked that DFD O_DIRTY, so ixclose() below
-     * sees the flag and writes the parent directory entry. */
-    ixclose(f,CL_DIR | CL_FULL);    /* force flush and write */
-    xmfreblk(f);
-    sft[h-NUMSTD].f_own = 0;
-    sft[h-NUMSTD].f_ofd = 0;
-    return E_OK;
+    /* Synchronize the new directory's metadata through the temporary open
+     * file without borrowing the directory-owned OFD/DFD or its lifetime. */
+    memcpy(&f->o_dfd->o_td, &f0->o_dfd->o_td, 10);
+    f->o_dfd->o_flag |= O_DIRTY;
+    ixclose(f, CL_DIR | CL_KEEP);
+    f0->o_dfd->o_flag &= ~O_DIRTY;
+    return xclose(h);
 }
 
 static LONG fat_remove(PFSCOOKIE *dir, const char *name)
@@ -529,10 +528,22 @@ static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_at
     return E_OK;
 }
 
+/* Cached directories with live descendants cannot be discarded by rename.
+ * File rename preserves backing identity below; directory reparenting needs
+ * its own cache operation rather than freednd() on a referenced subtree. */
+static BOOL fat_open_descendants(const DND *dn)
+{
+    const DND *child;
+    if (dn->d_files) return TRUE;
+    for (child = dn->d_left; child; child = child->d_right)
+        if (fat_open_descendants(child)) return TRUE;
+    return FALSE;
+}
+
 static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
                        PFSCOOKIE *newdir, const char *newname)
 {
-    OFD *fd;
+    OFD *fd, *source = NULL;
     DFD *dfd;
     FCB *f;
     DND *dn1 = COOKIE_TO_DND(olddir);
@@ -547,7 +558,7 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     CLNO clust;
     LONG fileln, rc;
     PFSCOOKIE newfc;
-    BOOL was_locked;
+    BOOL was_locked, destination_locked;
 
     posp = 0L;
     was_locked = dn1->d_flag & DND_LOCKED;
@@ -562,7 +573,10 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     strtcl1 = dn1->d_parent ? dn1->d_strtcl : ROOT_PSEUDO_CLUSTER;
 
     posp = 0L;
+    destination_locked = dn2->d_flag & DND_LOCKED;
+    dn2->d_flag |= DND_LOCKED;
     f = scan(dn1,s1,FA_NORM|FA_SUBDIR,&posp);
+    if (!destination_locked) dn2->d_flag &= ~DND_LOCKED;
     if (!f)
         return EFILNF;
 
@@ -573,10 +587,21 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     posp -= 32;
 
     att = f->f_attrib;
+    if (att & FA_SUBDIR) {
+        char name[LEN_ZFNAME];
+        DND *cached;
+        unpackit(s1, name);
+        cached = getdnd(name, dn1);
+        if (cached && fat_open_descendants(cached)) return EACCDN;
+    }
     filetime = le2cpu16(f->f_td.time);
     filedate = le2cpu16(f->f_td.date);
     clust = le2cpu16(f->f_clust);
     fileln = le2cpu32(f->f_fileln);
+    if (!(att & FA_SUBDIR)) {
+        source = ofd_find(dn1, posp);
+        if (source && source->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
+    }
 
     dmd2 = dn2->d_drv;
     strtcl2 = dn2->d_parent ? dn2->d_strtcl : ROOT_PSEUDO_CLUSTER;
@@ -616,11 +641,27 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
             return EACCDN;
         }
 
+        if (source) {
+            OFD **link = &dn1->d_files, *live;
+            /* Rename moves the existing identity, including open/mapped
+             * backing references, rather than making a second owner of
+             * the same cluster chain. The temporary destination was empty. */
+            fd2->o_dfd = source->o_dfd;
+            fd2->o_dfd->o_usecnt++;
+            while ((live = *link)) {
+                if (live->o_dfd != fd2->o_dfd) { link = &live->o_link; continue; }
+                *link = live->o_link;
+                live->o_dnode = dn2; live->o_dirfil = fd2->o_dirfil; live->o_dirbyt = fd2->o_dirbyt;
+                live->o_link = dn2->d_files; dn2->d_files = live;
+            }
+        }
         dfd = fd2->o_dfd;
-        dfd->o_td.time = cpu2le16(filetime);
-        dfd->o_td.date = cpu2le16(filedate);
-        dfd->o_strtcl = clust;
-        dfd->o_fileln = fileln;
+        if (!source) {
+            dfd->o_td.time = cpu2le16(filetime);
+            dfd->o_td.date = cpu2le16(filedate);
+            dfd->o_strtcl = clust;
+            dfd->o_fileln = fileln;
+        }
 
         fdparent = fd2->o_dirfil;
         if (att&FA_SUBDIR) {

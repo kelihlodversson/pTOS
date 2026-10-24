@@ -37,6 +37,15 @@ because a uniform shift of the whole image preserves their offsets.
 Accepted binaries
 -----------------
 
+This section describes the static loader.  CONF_WITH_ELF_SHARED enables a
+separate, implemented dynamic execution path: the kernel starts the PT_INTERP
+interpreter, and the userspace LD.SO loads and links shared libraries.  This
+experimental option is off by default and initially available only on x32
+with isolated MMU-backed address spaces; see doc/elf-shared.txt (#660) for
+its supported ELF features, build instructions and runtime installation.
+ET_DYN/static PIE support in the static loader does not itself enable shared
+libraries.
+
 (On x86-64 the image is not placed in the TPA at all: it is read, and relocated
 by this loader if it was not linked for the image window, straight into the
 pages the process will run from, in the process's own address space or, for a

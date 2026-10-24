@@ -16,8 +16,22 @@ obj-$(CONF_WITH_KCALL) += kcall.o
 
 # the file calls of kernel code (the scalable fonts' font files; Fopen() & co.
 # of x86-64 kernel code)
-ifneq ($(CONF_WITH_KCALL)$(CONF_WITH_VDI_SCALABLE_FONTS),)
+ifneq ($(CONF_WITH_KCALL)$(CONF_WITH_VDI_SCALABLE_FONTS)$(CONF_WITH_ELF_SHARED),)
 obj-y += kfile.o
 endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
+
+# The kernel shares only load-plan validation and stack construction with
+# ld.so, never its metadata resolver, relocation engine or dependency graph.
+obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o elfstartup.o
+
+obj/elfimage.o: lib/ldso/image_plan.c lib/ldso/image.h $(AUTOCONF_H)
+	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
+ELFIMAGE_ABI-$(ARCH_X86_64) = lib/ldso/arch/x32/image_abi.c
+obj/elfimageabi.o: $(ELFIMAGE_ABI-y) lib/ldso/image.h $(AUTOCONF_H)
+	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
+obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)
+	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
+
+obj-$(CONF_WITH_MMAP) += fileback.o

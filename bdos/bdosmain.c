@@ -575,24 +575,7 @@ static void freetree(DND *d)
  */
 static void offree(DMD *d)
 {
-    int i;
-    OFD *f;
-
-    for (i = 0; i < OPNFILES; i++)
-    {
-        /* a higher-half OFD pointer is negative as a signed long */
-        f = sft[i].f_ofd;
-        if (f && !IS_BIOS_HANDLE(f))
-        {
-            if (f->o_dmd == d)
-            {
-                xmfreblk(f);
-                sft[i].f_ofd = NULL;
-                sft[i].f_own = NULL;
-                sft[i].f_use = 0;
-            }
-        }
-    }
+    ofd_invalidate_drive(d);
 }
 
 
@@ -652,6 +635,20 @@ long osif(short *pw)
 
 restrt:
     fn = pw[0];
+
+#if CONF_WITH_MMAP
+    switch (fn)
+    {
+    case GEMDOS_MMAP:
+        /* All six native scalar slots reach the mapping service. */
+        return kproc_mmap(run, (UQUAD)pw[1], (UQUAD)pw[2], (UQUAD)pw[3],
+                          (UQUAD)pw[4], (UQUAD)pw[5], (UQUAD)pw[6]);
+    case GEMDOS_MUNMAP:
+        return kproc_munmap(run, (UQUAD)pw[1], (UQUAD)pw[2]);
+    case GEMDOS_MPROT:
+        return kproc_mprot(run, (UQUAD)pw[1], (UQUAD)pw[2], (UQUAD)pw[3]);
+    }
+#endif
 
 #if CONF_WITH_SSYSTEM
     /*
@@ -839,6 +836,11 @@ restrt:
         return rc;
     }
 
+    /* Finish interrupted directory removal before another filesystem call
+     * can reuse its directory slot or released clusters. Keep process exit
+     * and memory services usable even if the disk remains unavailable. */
+    if ((fn >= 0x36 && fn < 0x48) || (fn >= 0x4e && fn <= 0x57))
+        ofd_reap();
     f = &funcs[fn];
     typ = f->stdio_typ;
 
@@ -871,6 +873,7 @@ restrt:
                 /*  M01.01.07  */
                 /*  write the char in the int at pw[1]  */
             rawout:
+                ofd_reap();
 #if CONF_WITH_NATIVE_ABI
                 xwrite(h , 1L , (char *) &pw[1]);
 #else
@@ -879,6 +882,7 @@ restrt:
                 return 0; /* dummy */
 
             case 9:                 /* Cconws() */
+                ofd_reap();
                 pb2 = *((char **) &pw[1]);
                 xwrite(h,strlen(pb2),pb2);
                 return 0; /* dummy */

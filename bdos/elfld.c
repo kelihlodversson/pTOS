@@ -387,6 +387,10 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
         if (r < 0L)
             return r;
 
+#if !CONF_WITH_ELF_SHARED
+        if (ph.p_type == 3)             /* PT_INTERP is never a static fallback */
+            return EPLFMT;
+#endif
         if (ph.p_type != PT_LOAD)
             continue;
 

@@ -245,12 +245,11 @@ short strlencpy(char *dest, const char *src)
  */
 char *strchr(const char *s, int c)
 {
-    while(*s)
+    do
     {
-        if (*s == c)
+        if (*s == (char)c)
             return (char*)s;
-        s++;
-    }
+    } while (*s++);
     return NULL;
 }
 

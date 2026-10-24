@@ -115,5 +115,3 @@ void gr_inside(GRECT *pt, WORD th)
     pt->g_w -= ( 2 * th );
     pt->g_h -= ( 2 * th );
 }
-
-
