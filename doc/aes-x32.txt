@@ -612,6 +612,13 @@ bounded immutable snapshots; indirect specs are resolved locally and internal
 alignment flags are removed. Menus and the desktop keep owned snapshots;
 dialogs copy back edited text/state. USERDEF receives values on the owner's
 user stack and reconstructs a caller-local PARMBLK before invoking dr_code.
+
+The x32 desktop links the existing gemfslib.c selector and gem_rsc.c resources.
+Its transport adapters call typed AES forms/drawing and user-mode GEMDOS;
+path/mask editing, drive buttons, sorted listings, scrolling and 8.3 filename
+formatting use the same implementation as the native desktop. Alert parsing,
+layout and DOS error messages are shared as well.
+
 File enumeration, file selection, resource-file materialization, alert trees,
 box outlines and geometry conversion stay in the desktop process. Mono bitmap
 standard/device formats are identical, so read-only built-in mono data does
@@ -669,8 +676,10 @@ rejects any FAIL/fault/panic/reset and verifies:
   - held-button selection/drag wait compatibility (classic mask 0xff -> 3);
   - a graphical app launched from EmuDesk, bad pointer/size/command rejection,
     saved-shell-buffer copies, private nested-child ownership and accessory IPC;
-  - file-selector cancellation, directory navigation, filtered multi-page
-    listings, mouse row selection, filename editing and double-click loading;
+  - the shared GEM file selector and native resources: cancellation, enabled
+    and disabled drive buttons, sorted directory listings, editable directory
+    and wildcard mask, scrollbar paging and dragging, invalid-path recovery,
+    mouse row selection, formatted filename editing and double-click loading;
   - loading an INF file and restarting the desktop in the same process;
   - graphical/console transitions and a fresh ring-3 desktop after EmuCON exits;
   - a missing external desktop falling back to the EmuCON prompt.

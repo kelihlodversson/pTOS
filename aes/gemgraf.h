@@ -13,6 +13,8 @@
 #include "gsxdefs.h"
 #include "obdefs.h"
 
+void gsx_xline(WORD ptscount, WORD *ppoints);
+void gsx_bxpts(GRECT *pt);
 WORD gsx_chkclip(GRECT *pt);
 void gsx_cline(UWORD x1, UWORD y1, UWORD x2, UWORD y2);
 void gsx_xbox(GRECT *pt);

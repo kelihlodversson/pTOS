@@ -225,7 +225,7 @@ int sprintf(char *RESTRICT str, const char *RESTRICT fmt, ...)
 
 /*
  * WORD strlencpy(char *dest, const char *src)
- * as strcpy but returns the length ot the string instead.
+ * as strcpy but returns the length of the string instead.
  */
 short strlencpy(char *dest, const char *src)
 {
@@ -234,6 +234,7 @@ short strlencpy(char *dest, const char *src)
     {
         *(dest++)=src[len++];
     }
+    *dest = '\0';
     return len;
 }
 

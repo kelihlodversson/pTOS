@@ -62,7 +62,6 @@ static AES_TREE_STATE *ml_tree_guard;
 #endif
 static GRECT    ml_ctrl;
 static AESPD    *ml_pmown;
-static char     alert_str[256]; /* must be long enough for longest alert in gem.rsc */
 
 /*
  * The following arrays are used by eralert() to generate values to
@@ -399,24 +398,6 @@ WORD fm_dial(WORD fmd_type, GRECT *pi, GRECT *pt)
 
 
 /*
- * issue form_alert(), with optional drive letter
- */
-WORD fm_show(WORD string, WORD *pwd, WORD level)
-{
-    char *ad_alert;
-
-    ad_alert = rs_str(string);
-    if (pwd)
-    {
-        sprintf(alert_str, ad_alert, *pwd);
-        ad_alert = alert_str;
-    }
-
-    return fm_alert(level, ad_alert);
-}
-
-
-/*
  * eralert() is called by the graphics critical alert handler
  * in gemdosif.S when a DOS error occurs.  it issues an alert
  * selected by the lookup tables ml_alrt[] & ml_pwlv[].
@@ -445,43 +426,4 @@ WORD eralert(WORD n, WORD d)
     /* retry requested, we'll be busy again */
     set_mouse_to_hourglass();   /* set mouse to hourglass */
     return TRUE;
-}
-
-
-WORD fm_error(WORD n)             /* n = dos error number */
-{
-    WORD    ret, string;
-
-    if (n > 63)
-        return FALSE;
-
-    switch (n)
-    {
-    case 2:
-    case 18:
-    case 3:
-        string = AL18ERR;
-        break;
-    case 4:
-        string = AL04ERR;
-        break;
-    case 5:
-        string = AL05ERR;
-        break;
-    case 15:
-        string = AL15ERR;
-        break;
-    case 8:
-    case 10:
-    case 11:
-        string = AL08ERR;
-        break;
-    default:
-        string = ALXXERR;
-        break;
-    }
-
-    ret = fm_show(string, ((string == ALXXERR) ? &n : 0), 1);
-
-    return (ret != 1);
 }

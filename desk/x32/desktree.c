@@ -218,13 +218,28 @@ BOOL desk_tree_create(DESK_TREE *snapshot, OBJECT *source)
             at = o->spec = reserve(&b, sizeof(*p));
             p = (AES_OBJECT_TEXT *)(b.data + at);
             p->text_capacity = s->te_txtlen > 0 ? s->te_txtlen : strlen(s->te_ptext) + 1;
+            /* Noneditable native resource labels may point at a longer
+             * dynamic string (the file selector mask uses this). */
+            if (!(o->flags & EDITABLE) && p->text_capacity < strlen(s->te_ptext) + 1)
+                p->text_capacity = strlen(s->te_ptext) + 1;
             p->template_capacity = s->te_tmplen > 0 ? s->te_tmplen : strlen(s->te_ptmplt) + 1;
-            p->text = string(&b, s->te_ptext, p->text_capacity);
+            if (!(o->flags & EDITABLE) && p->text_capacity > AES_TREE_MAX_TED_TEXT) {
+                /* Only the visible label is copied; retain the full mask in
+                 * the shared selector's caller-owned state. */
+                p->text_capacity = AES_TREE_MAX_TED_TEXT;
+                p->text = reserve(&b, p->text_capacity);
+                if (p->text)
+                    strlcpy((char *)b.data + p->text, s->te_ptext, p->text_capacity);
+            } else
+                p->text = string(&b, s->te_ptext, p->text_capacity);
             p->template = string(&b, s->te_ptmplt, p->template_capacity);
             p->validation_capacity = p->template_capacity;
+            if (!s->te_pvalid[0] && !(o->flags & EDITABLE) && p->validation_capacity < 2)
+                p->validation_capacity = 2;
             if (p->validation_capacity < strlen(s->te_pvalid) + 1)
                 p->validation_capacity = strlen(s->te_pvalid) + 1;
-            p->validation = string(&b, s->te_pvalid, p->validation_capacity);
+            p->validation = string(&b, !s->te_pvalid[0] && !(o->flags & EDITABLE) ?
+                                   "X" : s->te_pvalid, p->validation_capacity);
             p->font = s->te_font; p->justification = s->te_just;
             p->colour = s->te_color; p->thickness = s->te_thickness;
             break;
@@ -350,7 +365,8 @@ void desk_tree_read(DESK_TREE *snapshot)
         spec = snapshot->source[i].ob_spec;
         if (snapshot->source[i].ob_flags & INDIRECT)
             spec = *spec.indirect;
-        if ((o[i].type & 0xff) == G_FTEXT || (o[i].type & 0xff) == G_FBOXTEXT) {
+        if ((o[i].flags & EDITABLE) &&
+            ((o[i].type & 0xff) == G_FTEXT || (o[i].type & 0xff) == G_FBOXTEXT)) {
             AES_OBJECT_TEXT *t = (AES_OBJECT_TEXT *)(snapshot->blob + o[i].spec);
 
             strlcpy(spec.tedinfo->te_ptext, (char *)snapshot->blob + t->text, t->text_capacity);

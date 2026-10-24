@@ -36,9 +36,12 @@ class Guest:
             shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")
             files = esp / "INFS"
             (files / "SUB").mkdir(parents=True)
-            for number in range(14):
+            for number in reversed(range(14)):
                 shutil.copy("desk/emudesk-raspi.inf", files / ("FILE%02d.INF" % number))
             (files / "NOISE.TXT").write_text("This must not appear in an INF listing.\n")
+        second = self.root / "second"
+        second.mkdir()
+        shutil.copy("desk/emudesk-raspi.inf", second / "SECOND.INF")
         variables = self.root / "vars.fd"
         shutil.copy(args.ovmf_vars, variables)
         self.log = self.output / "boot.log"
@@ -49,6 +52,7 @@ class Guest:
             "-drive", "if=pflash,format=raw,readonly=on,file=" + args.ovmf_code,
             "-drive", "if=pflash,format=raw,file=" + str(variables),
             "-drive", "format=raw,file=fat:rw:" + str(esp),
+            "-drive", "format=raw,file=fat:rw:" + str(second),
             "-serial", "file:" + str(self.log), "-display", "none",
             "-monitor", "unix:" + str(self.monitor) + ",server=on,wait=off",
         ], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -58,7 +62,8 @@ class Guest:
 
     def text(self):
         text = self.log.read_text(errors="replace")
-        assert not any(marker in text for marker in ("panic:", "process fault:", " FAIL")), text[-5000:]
+        assert not any(marker in text for marker in ("panic:", "process fault:", " FAIL", "resource snapshot rejected")), text[-5000:]
+        assert not re.search(r"VDI \d+ error -?\d+", text), text[-5000:]
         assert text.count("EFI entry reached") <= 1, "guest reset during integration test"
         assert self.process.poll() is None, "QEMU exited before the desktop test completed"
         return text
@@ -100,6 +105,14 @@ class Guest:
         self.command("mouse_button 1")
         self.command("mouse_button 0")
 
+    def short_click(self):
+        # Native TOUCHEXIT repeats while held. Keep a parent click brief,
+        # independently of the monitor's response-draining timeout.
+        self.connection.sendall(b"mouse_button 1\n")
+        time.sleep(0.02)
+        self.connection.sendall(b"mouse_button 0\n")
+        self.command("", delay=0.2)
+
     def double_click(self):
         for state in (1, 0, 1, 0):
             self.command("mouse_button %d" % state, delay=0.01)
@@ -120,7 +133,9 @@ class Guest:
 
     def selector(self, count):
         text = self.wait("x32 desktop selector WAIT", count)
-        frame = text.split("x32 desktop selector READY ")[count].split("x32 desktop selector WAIT")[0]
+        # TOUCHEXIT arrows can repeat while held, as in native GEM. Inspect
+        # the last complete frame after releasing the button.
+        frame = text.rsplit("x32 desktop selector WAIT", 1)[0].rsplit("x32 desktop selector READY ", 1)[1]
         controls = {int(n): (int(x), int(y)) for n, x, y in
                     re.findall(r"x32 desktop selector CONTROL (\d+) (\d+) (\d+)\r?\n", frame)}
         rows = {name: (int(x), int(y)) for name, x, y in
@@ -129,15 +144,34 @@ class Guest:
         name = re.search(r"x32 desktop selector NAME (.*?)\r?\n", frame).group(1)
         return {"controls": controls, "rows": rows, "path": path, "name": name}
 
-    def selector_click(self, point):
+    def selector_click(self, point, short=False):
         count = self.text().count("x32 desktop selector WAIT") + 1
         self.move(*point)
+        if short:
+            self.short_click()
+        else:
+            self.click()
+        return self.selector(count)
+
+    def selector_path(self, frame, path, error=False):
+        count = self.text().count("x32 desktop selector WAIT") + 1
+        alerts = self.text().count("x32 desktop alert READY")
+        self.move(*frame["controls"][3])
         self.click()
+        self.key("esc")
+        keys = {":": "shift-semicolon", "\\": "backslash", "*": "shift-8", ".": "dot"}
+        for char in path.lower():
+            self.key(keys.get(char, char))
+        self.key("ret")
+        if error:
+            self.wait("x32 desktop alert READY", alerts + 1)
+            self.screenshot("selector-path-error")
+            self.key("ret")
         return self.selector(count)
 
     def cancel_selector(self, frame):
         count = self.text().count("x32 desktop form PASS") + 1
-        self.move(*frame["controls"][8])
+        self.move(*frame["controls"][52])
         self.click()
         self.wait("x32 desktop form PASS", count)
         time.sleep(0.3)
@@ -227,21 +261,52 @@ def desktop(guest):
     guest.cancel_selector(frame)
     frame = guest.select_inf()
     assert frame["path"] == "C:\\*.INF" and "INFS" in frame["rows"]
+    # The native drive grid retains enabled and disabled drive behavior.
+    count = guest.text().count("x32 desktop selector WAIT")
+    guest.move(*frame["controls"][7])  # A is absent and disabled.
+    guest.click()
+    assert guest.text().count("x32 desktop selector WAIT") == count
+    frame = guest.selector_click(frame["controls"][10])  # D
+    assert frame["path"] == "D:\\*.INF" and list(frame["rows"]) == ["SECOND.INF"]
+    frame = guest.selector_click(frame["controls"][9])  # C
+    assert frame["path"] == "C:\\*.INF"
+
     frame = guest.selector_click(frame["rows"]["INFS"])
     assert frame["path"] == "C:\\INFS\\*.INF"
     assert "SUB" in frame["rows"] and "NOISE.TXT" not in frame["rows"]
-    first_page = set(frame["rows"])
-    selected_name = sorted(name for name in first_page if name.endswith(".INF"))[0]
-    frame = guest.selector_click(frame["controls"][6])  # Next page
-    second_page = set(frame["rows"])
-    assert not first_page.intersection(second_page)
-    assert first_page.union(second_page) == {"SUB"}.union("FILE%02d.INF" % number for number in range(14))
+    first_page = list(frame["rows"])
+    assert first_page == ["SUB"] + ["FILE%02d.INF" % n for n in range(8)]
+    selected_name = "FILE00.INF"
+    # Native scrollbar page down/up, including the overlapping last page.
+    bar_x, _ = frame["controls"][39]
+    down_y = frame["controls"][38][1] - 16
+    frame = guest.selector_click((bar_x, down_y))
+    assert list(frame["rows"]) == ["FILE%02d.INF" % n for n in range(5, 14)]
     guest.screenshot("selector-next-page")
-    frame = guest.selector_click(frame["controls"][5])  # Previous page
-    assert set(frame["rows"]) == first_page
+    up_y = frame["controls"][37][1] + 16
+    frame = guest.selector_click((bar_x, up_y))
+    assert list(frame["rows"]) == first_page
+    # Drag the original elevator to the bottom and page back to the top.
+    count = guest.text().count("x32 desktop selector WAIT") + 1
+    guest.move(*frame["controls"][40])
+    guest.command("mouse_button 1")
+    guest.wait("x32 desktop selector scroll READY")
+    guest.move(bar_x, down_y)
+    guest.command("mouse_button 0")
+    frame = guest.selector(count)
+    assert list(frame["rows"])[-1] == "FILE13.INF"
+    guest.screenshot("selector-dragged-scrollbar")
+    frame = guest.selector_click((bar_x, up_y))
+    assert list(frame["rows"]) == first_page
+    frame = guest.selector_path(frame, "C:\\INFS\\*.TXT")
+    assert list(frame["rows"]) == ["SUB", "NOISE.TXT"]
+    frame = guest.selector_path(frame, "C:\\INFS\\*.INF")
+    assert list(frame["rows"]) == first_page
+    frame = guest.selector_path(frame, "C:\\MISSING\\*.INF", error=True)
+    assert frame["path"] == "C:\\INFS\\*.INF" and list(frame["rows"]) == first_page
     frame = guest.selector_click(frame["rows"]["SUB"])
     assert frame["path"] == "C:\\INFS\\SUB\\*.INF" and not frame["rows"]
-    frame = guest.selector_click(frame["controls"][4])  # Parent
+    frame = guest.selector_click(frame["controls"][34], short=True)  # Native parent gadget
     assert frame["path"] == "C:\\INFS\\*.INF"
     frame = guest.selector_click(frame["rows"][selected_name])
     assert frame["name"] == selected_name

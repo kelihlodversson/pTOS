@@ -7,6 +7,9 @@
 #include "aes_shell.h"
 #include "deskaes.h"
 #include "gemrslib.h"
+#include "gemobed.h"
+#include "gemfmlib.h"
+#include "gemfmalt.h"
 #include "gemerror.h"
 #include "string.h"
 #include "bdosbind.h"
@@ -194,83 +197,6 @@ static WORD animate(const UWORD *in)
     return TRUE;
 }
 
-static WORD alert(WORD default_button, const char *text)
-{
-    OBJECT tree[12];
-    char lines[5][81], buttons[3][41];
-    const char *p;
-    WORD nlines = 0, nbuttons = 0, i, length, width = 12, child = 1;
-    WORD x, y, w, h, answer;
-
-    memset(tree, 0, sizeof(tree));
-    p = strchr(text, ']');
-    if (!p || p[1] != '[')
-        return FALSE;
-    p += 2;
-    do {
-        length = 0;
-        while (*p && *p != '|' && *p != ']') {
-            if (length < 80)
-                lines[nlines][length++] = *p;
-            p++;
-        }
-        lines[nlines][length] = 0;
-        width = max(width, length + 4);
-        nlines++;
-    } while (*p == '|' && ++p && nlines < 5);
-    if (*p != ']' || p[1] != '[')
-        return FALSE;
-    p += 2;
-    do {
-        length = 0;
-        while (*p && *p != '|' && *p != ']') {
-            if (length < 40)
-                buttons[nbuttons][length++] = *p;
-            p++;
-        }
-        buttons[nbuttons++][length] = 0;
-    } while (*p == '|' && ++p && nbuttons < 3);
-    if (!nbuttons)
-        return FALSE;
-    length = 0;
-    for (i = 0; i < nbuttons; i++)
-        length += strlen(buttons[i]) + 4;
-    width = max(width, length + 2);
-    tree[0].ob_type = G_BOX;
-    tree[0].ob_spec.index = 0x00021100L;
-    tree[0].ob_next = tree[0].ob_head = tree[0].ob_tail = -1;
-    tree[0].ob_width = min(width * gl_wchar, gl_width - 16);
-    tree[0].ob_height = (nlines + 4) * gl_hchar;
-    for (i = 0; i < nlines; i++, child++) {
-        tree[child].ob_type = G_STRING;
-        tree[child].ob_spec.free_string = lines[i];
-        tree[child].ob_x = 2 * gl_wchar; tree[child].ob_y = (i + 1) * gl_hchar;
-        tree[child].ob_width = strlen(lines[i]) * gl_wchar;
-        tree[child].ob_height = gl_hchar;
-        tree[child].ob_head = tree[child].ob_tail = -1;
-        append(tree, 0, child);
-    }
-    x = (tree[0].ob_width - length * gl_wchar) / 2;
-    for (i = 0; i < nbuttons; i++, child++) {
-        tree[child].ob_type = G_BUTTON;
-        tree[child].ob_spec.free_string = buttons[i];
-        tree[child].ob_flags = SELECTABLE | EXIT | (default_button == i + 1 ? DEFAULT : 0);
-        tree[child].ob_x = x; tree[child].ob_y = (nlines + 2) * gl_hchar;
-        tree[child].ob_width = (strlen(buttons[i]) + 2) * gl_wchar;
-        tree[child].ob_height = gl_hchar;
-        tree[child].ob_head = tree[child].ob_tail = -1;
-        x += tree[child].ob_width + 2 * gl_wchar;
-        append(tree, 0, child);
-    }
-    tree[child - 1].ob_flags |= LASTOB;
-    form_center(tree, &x, &y, &w, &h);
-    form_dial(FMD_START, 0, 0, 0, 0, x, y, w, h);
-    objc_draw(tree, 0, MAX_DEPTH, x, y, w, h);
-    answer = form_do(tree, 0) & 0x7fff;
-    form_dial(FMD_FINISH, 0, 0, 0, 0, x, y, w, h);
-    return answer > nlines ? answer - nlines : 0;
-}
-
 static LONG window_get(WORD handle, WORD field, UWORD *out)
 {
     AES_WINDOW_INFO info;
@@ -433,9 +359,7 @@ wait_event:
         out[1] = object_result.rectangle.g_x; out[2] = object_result.rectangle.g_y;
         break;
     case FORM_CENTER:
-        tree[0].ob_x = (gl_width - tree[0].ob_width) / 2;
-        tree[0].ob_y = (gl_height - tree[0].ob_height) / 2;
-        memcpy(out + 1, &tree[0].ob_x, sizeof(GRECT)); rc = E_OK; break;
+        ob_center(tree, (GRECT *)(out + 1)); rc = E_OK; break;
     case FORM_DO:
         if (!desk_tree_create(&snapshot, tree))
             break;
@@ -455,9 +379,9 @@ wait_event:
             rc = E_OK;
         break;
     case FORM_ALERT:
-        out[0] = alert(in[0], (char *)addresses[0]); return out[0];
+        out[0] = fm_alert(in[0], (char *)addresses[0]); return out[0];
     case FORM_ERROR:
-        out[0] = alert(1, "[3][The operation could not be completed.][OK]"); return out[0];
+        out[0] = fm_error(in[0]); return out[0];
     case GRAF_RUBBOX:
         out[0] = rubber(in, out); return out[0];
     case GRAF_GROWBOX: case GRAF_SHRINKBOX:

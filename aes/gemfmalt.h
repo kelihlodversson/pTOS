@@ -10,6 +10,7 @@
 #ifndef GEMFMALT_H
 #define GEMFMALT_H
 
+OBJECT *fm_alert_tree(WORD defbut, char *palstr, GRECT *rectangle);
 WORD fm_alert(WORD defbut, char *palstr);
 
 #endif

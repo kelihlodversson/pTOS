@@ -34,6 +34,12 @@
 #include "asm.h"
 #include "miscutil.h"
 
+#if defined(X32_USERLAND)
+static DTA fs_dta;
+#else
+#define fs_dta D.g_dta
+#endif
+
 #define NM_NAMES (F9NAME-F1NAME+1)
 #define NAME_OFFSET F1NAME
 #define NM_DRIVES (FSLSTDRV-FS1STDRV+1)
@@ -256,8 +262,8 @@ static LONG fs_add(WORD thefile, LONG fs_index)
     WORD len;
 
     g_fslist[thefile] = fs_index;
-    ad_fsnames[fs_index++] = (D.g_dta.d_attrib & FA_SUBDIR) ? 0x07 : ' ';
-    len = strlencpy(ad_fsnames+fs_index,D.g_dta.d_fname);
+    ad_fsnames[fs_index++] = (fs_dta.d_attrib & FA_SUBDIR) ? 0x07 : ' ';
+    len = strlencpy(ad_fsnames+fs_index,fs_dta.d_fname);
     fs_index += len + 1;
     return fs_index;
 }
@@ -288,7 +294,7 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
     set_all_files(fname);
 
     user_dta = dos_gdta();          /* remember user's DTA */
-    dos_sdta(&D.g_dta);
+    dos_sdta(&fs_dta);
     ret = dos_sfirst(allpath, FA_SUBDIR);
 
     /*
@@ -300,9 +306,9 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
         /* if it is a real file or directory then save it and set
          * the first byte to tell which
          */
-        if (D.g_dta.d_fname[0] != '.')
+        if (fs_dta.d_fname[0] != '.')
         {
-            if ((D.g_dta.d_attrib & FA_SUBDIR) || (wildcmp(pspec, D.g_dta.d_fname)))
+            if ((fs_dta.d_attrib & FA_SUBDIR) || (wildcmp(pspec, fs_dta.d_fname)))
             {
                 fs_index = fs_add(thefile, fs_index);
                 thefile++;

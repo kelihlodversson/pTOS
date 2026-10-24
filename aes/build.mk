@@ -10,7 +10,7 @@ obj-$(ARCH_ARM) += gemdosifc.o
 obj-$(ARCH_X86_64) += aes_accessory.o aes_window.o aes_objects_kernel.o aes_tree.o aes_shell.o
 
 obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
-	 gemfmalt.o gemfmlib.o gemfslib.o gemgraf.o gemgrlib.o gemgsxif.o \
+	 gemfmalt.o gemfmerror.o gemfmlib.o gemfslib.o gemgraf.o gemgraphutil.o gemgrlib.o gemgsxif.o \
 	 geminit.o geminput.o gemmnlib.o gemobed.o gemobjop.o gemoblib.o \
 	 gempd.o gemqueue.o gemrslib.o gemsclib.o gemshlib.o gemsuper.o \
 	 gemwmlib.o gemwrect.o gsx2.o gem_rsc.o mforms.o

@@ -411,6 +411,20 @@ void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
     desk_vdi(8, 1, tb_nc, 0);                /* v_gtext() */
 }
 
+#if defined(X32_USERLAND)
+void gsx_1code(WORD code, WORD value)
+{
+    intin[0] = value;
+    desk_vdi(code, 0, 1, 0);
+}
+
+void v_pline(WORD count, WORD *points)
+{
+    memmove(ptsin, points, count * 2 * sizeof(WORD));
+    desk_vdi(6, count, 0, 0);
+}
+#endif
+
 /* the MFDB of a raster form of wb bytes per row and h rows, or of the screen */
 static void fix_mfdb(FDB *pfd, void *addr, WORD wb, WORD h)
 {
