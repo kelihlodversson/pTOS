@@ -254,6 +254,27 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 
     switch (tail[0]) {
 #if CONF_WITH_ELF_SHARED
+    case 'O': {
+        static const char empty_tail[] = { 0, 0 };
+        static const char env[] = "CHECK=660\0\0";
+        static const char *const bad_files[] = {
+            "C:\\SOMISS.TOS", "C:\\SOSYM.TOS", "C:\\SOBOOT.TOS"
+        };
+        unsigned int k;
+        int cycle;
+        for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
+            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)bad_files[k],
+                             (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
+            if (child != 127) pterm(0x200 | (k << 8) | ((int)child & 0xff));
+        }
+        for (cycle = 0; cycle < 2; cycle++) {
+            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\SOAPP.TOS",
+                             (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
+            if (child != 77) pterm(0x100 | ((int)child & 0xff));
+        }
+        pterm(0);
+        break;
+    }
     case 'I': {
         static char args[] = "!\"hello world\" \"\" C:\\tmp";
         static const char env[] = "CHECK=660\0SECOND=value\0\0";

@@ -42,6 +42,7 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         case 9: entry = v[1]; break;
         case 31: execfn = v[1]; break;
         case 0x5000: basepage = v[1]; break;
+        case 0x5001: if (v[1] >= 26) return 5; break;
         default: return 5;
         }
     }

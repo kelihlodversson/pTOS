@@ -78,6 +78,7 @@ struct kproc {
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
 #if CONF_WITH_ELF_SHARED
+    PROG_LAYOUT interpreter_layout;
     BOOL standard_entry;
     UQUAD interp_entry, initial_rsp, interp_bytes;
 #endif
@@ -861,7 +862,7 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     int status;
 
     if (!kproc || kproc->has_image || kproc->pending_as || kproc->aspace ||
-        program->nload > PROG_MAX_SEGMENTS ||
+        program->nload > PROG_MAX_SEGMENTS || interpreter->nload > PROG_MAX_SEGMENTS ||
         (program->type == 3 && program->base > USER_IMAGE_BASE) ||
         interpreter->base > INTERPRETER_BASE)
         return EPLFMT;
@@ -886,6 +887,7 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     info.base = ibias;
     info.pagesz = USER_PAGE_SIZE;
     info.basepage = (ULONG)(uintptr_t)pd;
+    info.bootdrive = bootdev;
     status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
                         (const unsigned char *)pd->p_cmdlin, sizeof(pd->p_cmdlin), kproc->env_start,
                         (ULONG)(kproc->env_end - kproc->env_start), &info, &rsp, &used);
@@ -927,8 +929,14 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
         s->flags = program->loads[i].flags;
         s->src = NULL;                 /* already in the child's private pages */
     }
-    for (i = 0; i < interpreter->nload; i++)
-        kproc->interp_bytes += interpreter->loads[i].memsz;
+    kproc->interpreter_layout.nseg = interpreter->nload;
+    for (i = 0; i < interpreter->nload; i++) {
+        PROG_SEGMENT *s = &kproc->interpreter_layout.seg[i];
+        s->vaddr = interpreter->loads[i].address + ibias;
+        s->memsz = interpreter->loads[i].memsz;
+        s->flags = interpreter->loads[i].flags;
+        kproc->interp_bytes += s->memsz;
+    }
     kproc->has_image = kproc->standard_entry = TRUE;
     kproc->interp_entry = interpreter->entry + ibias;
     kproc->initial_rsp = rsp;
@@ -1350,6 +1358,33 @@ static void mapping_split(MMAP_REGION *region, UQUAD at, MMAP_REGION *tail)
     region->next = tail;
 }
 
+#if CONF_WITH_ELF_SHARED
+/* Dynamic image permissions are owned by kernel layouts, not writable PD
+ * fields. Only actual segment pages are eligible; holes and other images
+ * cannot be claimed by extending the requested range. */
+static BOOL standard_image_range(const KPROC *kproc, UQUAD address, UQUAD length)
+{
+    UQUAD page;
+    ULONG which, i;
+    if (!kproc->standard_entry || address > USER_VA_LIMIT || length > USER_VA_LIMIT - address)
+        return FALSE;
+    for (page = address; page < address + length; page += USER_PAGE_SIZE) {
+        BOOL found = FALSE;
+        for (which = 0; which < 2; which++) {
+            const PROG_LAYOUT *layout = which ? &kproc->interpreter_layout : &kproc->layout;
+            for (i = 0; i < layout->nseg; i++) {
+                UQUAD first = layout->seg[i].vaddr & ~(USER_PAGE_SIZE - 1);
+                UQUAD end = (layout->seg[i].vaddr + layout->seg[i].memsz + USER_PAGE_SIZE - 1)
+                            & ~(USER_PAGE_SIZE - 1);
+                if (page >= first && page < end) found = TRUE;
+            }
+        }
+        if (!found) return FALSE;
+    }
+    return TRUE;
+}
+#endif
+
 LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
 {
     KPROC *kproc = kproc_find(pd);
@@ -1366,11 +1401,16 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
     rc = mapping_length(&length);
     if (rc)
         return rc;
-    if (!mapping_range(address, length))
-        return EIMBA;
     rc = mapping_protection(protection, &prot);
     if (rc)
         return rc;
+    if (!mapping_range(address, length)) {
+#if CONF_WITH_ELF_SHARED
+        if (standard_image_range(kproc, address, length))
+            return aspace_protect_private(kproc->aspace, address, length, prot) ? E_OK : EINTRN;
+#endif
+        return EIMBA;
+    }
     end = address + length;
     /* Check full coverage first, including pages not physically backed. */
     for (region = kproc->mappings; region && at < end; region = region->next) {

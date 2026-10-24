@@ -5,8 +5,9 @@
 #include "dynamic.h"
 
 /* One successfully acquired mapping, with a validated dl_read_dynamic view.
- * Identity is a stable file identity,
- * not a pathname or load address; the mapper must detect file replacement.
+ * Identity is a stable mapper object identity, never a load address. The
+ * mapper documents filesystem alias/replacement rules and retains immutable
+ * snapshots; inode-capable filesystems should use stable file identities.
  * Its view and cookie remain valid until release, including across acquires. */
 typedef struct {
     DL_OBJECT object;

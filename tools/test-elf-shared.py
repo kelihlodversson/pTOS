@@ -73,7 +73,7 @@ class Image(C.Structure):
 
 
 class StartInfo(C.Structure):
-    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage")]
+    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive")]
 
 
 class Mapping(C.Structure):
@@ -211,6 +211,14 @@ class Metadata(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
+
+    def test_bootstrap_relative_widths_and_atomic_rejection(self):
+        binary = self.path / "bootstrap-host"
+        run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
+                  "-I" + str(ROOT / "lib/ldso"),
+                  str(ROOT / "tests/ldso_runtime/bootstrap_host.c"),
+                  str(ROOT / "lib/ldso/arch/x32/bootstrap.c"), "-o", str(binary)])
+        run([str(binary)])
 
     def parse(self, data, base=0, bias=0x1000000, dynamic=0, size=64):
         obj = Object()
@@ -487,7 +495,7 @@ class Metadata(unittest.TestCase):
                 capacity=131072, filename=b'C:\\DYNTEST.TOS'):
         tail = bytes([len(args)]) + args if tail is None else tail
         memory = C.create_string_buffer(capacity)
-        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000)
+        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2)
         rsp, used = C.c_uint32(123), C.c_uint32(456)
         rc = self.lib.dl_start_stack(memory, capacity, 0x80000000,
             C.create_string_buffer(filename), len(filename) + 1,
@@ -530,6 +538,7 @@ class Metadata(unittest.TestCase):
         self.assertEqual((aux[3], aux[4], aux[5], aux[6], aux[7], aux[9], aux[0x5000]),
                          (info.phdr, 32, info.phnum, 4096, info.base, info.entry, info.basepage))
         self.assertEqual(string(aux[31]), filename)
+        self.assertEqual(aux[0x5001], 2)
         return rc, (argv, envp, aux)
 
     def test_standard_initial_stack_short_tail(self):

@@ -1501,6 +1501,8 @@ static void test_ring3(void)
         probe_expect('R', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
         probe_expect('I', 0, "PT_INTERP initial stack/auxv, direct and split Pexec, repeated cleanup");
         test_interpreter_failures();
+        probe_expect('O', 0, "filesystem LD.SO: binding, preinit/init/fini order, repeated cleanup");
+        kcprintf("x86-64 LD.SO runtime: %s\n", failures == before ? "PASS" : "FAIL");
         kcprintf("x86-64 ldso relocations: %s\n", failures == before ? "PASS" : "FAIL");
         kcprintf("x86-64 PT_INTERP startup: %s\n", failures == before ? "PASS" : "FAIL");
     }

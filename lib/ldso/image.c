@@ -31,9 +31,7 @@ int dl_image_copy(const DL_IMAGE *p, const unsigned char *file, uint32_t length,
                     unsigned char *image, uint32_t capacity, uint32_t bias,
                     DL_OBJECT *object)
 {
-    DL_OBJECT o;
     uint32_t i;
-    int rc;
 
     if (!object)
         return DL_BAD_ELF;
@@ -49,6 +47,18 @@ int dl_image_copy(const DL_IMAGE *p, const unsigned char *file, uint32_t length,
     for (i = 0; i < p->nload; i++)
         copy(image + p->loads[i].address - p->base,
                 file + p->loads[i].offset, p->loads[i].filesz);
+    return dl_image_view(p, image, bias, object);
+}
+
+int dl_image_view(const DL_IMAGE *p, const unsigned char *image, uint32_t bias, DL_OBJECT *object)
+{
+    DL_OBJECT o;
+    int rc;
+    if (!object) return DL_BAD_ELF;
+    zero(object, sizeof(*object));
+    if (!p || !image || !p->align || bias % p->align ||
+        (p->type == 2 && bias) ||
+        (uint64_t)p->base + bias + p->size > UINT32_MAX) return DL_BAD_ELF;
     rc = dl_read_dynamic(&o, image, p->size, p->base, bias, p->dynamic, p->dynamic_size);
     if (rc)
         return rc;

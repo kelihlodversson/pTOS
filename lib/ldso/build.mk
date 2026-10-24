@@ -82,3 +82,32 @@ obj/ldso/test/dynpie.elf: tests/interp_probe/program.S obj/ldso/test/libtest.so
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/ldso/test/dynpie.elf
 endif
+
+# Standalone interpreter, independent of libc and the kernel link engine.
+LDSO_START-$(ARCH_X86_64) = lib/ldso/arch/x32/start.S lib/ldso/arch/x32/bootstrap.c lib/ldso/arch/x32/syscall.c
+obj/ldso/ld.so: lib/ldso/runtime.c $(LDSO_START-y) obj/ldso/libldso.a \
+                lib/ldso/runtime.h lib/ldso/exports.map $(X32_PROBE_LDSO_HEADERS) lib/ldso/startup.h
+	$(CC) $(LDSO_CFLAGS) -fvisibility=hidden -nostdlib -shared \
+	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-e,_start,--version-script,lib/ldso/exports.map \
+	  -o $@ $(filter %.c %.S,$^) $(filter %.a,$^)
+all: obj/ldso/ld.so
+
+obj/ldso/test/librt.so: tests/ldso_runtime/leaf.c
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,librt.so $< -o $@
+obj/ldso/test/libdyn.so: tests/ldso_runtime/library.c obj/ldso/test/librt.so
+	$(CC) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,libdyn.so $< -Lobj/ldso/test -lrt -o $@
+obj/ldso/test/soapp.elf: tests/ldso_runtime/start.S tests/ldso_runtime/program.c lib/ldso/arch/x32/syscall.c obj/ldso/test/libdyn.so
+	$(CC) $(LDSO_CFLAGS) -nostdlib -no-pie \
+	  -Wl,--export-dynamic,--hash-style=sysv,-e,_start,--dynamic-linker,/GEMSYS/LIB/X32/LD.SO \
+	  -o $@ $(filter %.c %.S,$^) -Lobj/ldso/test -ldyn -Wl,-rpath-link,obj/ldso/test
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/ldso/test/soapp.elf
+endif
+
+obj/ldso/test/runtime-fixtures.stamp: tools/make-ldso-fixtures.py obj/ldso/ld.so obj/ldso/test/soapp.elf
+	python3 tools/make-ldso-fixtures.py obj/ldso
+	@touch $@
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/ldso/test/runtime-fixtures.stamp
+endif

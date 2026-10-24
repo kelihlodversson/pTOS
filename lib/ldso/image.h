@@ -68,4 +68,8 @@ int dl_image_copy(const DL_IMAGE *plan, const unsigned char *file, uint32_t leng
                     unsigned char *image, uint32_t capacity, uint32_t bias,
                     DL_OBJECT *object);
 
+/* Read a validated, already populated private image (kernel-owned startup). */
+int dl_image_view(const DL_IMAGE *plan, const unsigned char *image, uint32_t bias,
+                    DL_OBJECT *object);
+
 #endif

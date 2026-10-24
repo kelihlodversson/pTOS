@@ -5,8 +5,8 @@ Status and scope
 ----------------
 
 This is the design and initial implementation work for a userspace ELF
-runtime linker. Kernel PT_INTERP handoff is implemented and verified with a
-minimal interpreter. A general self-relocating LD.SO is not implemented yet.
+runtime linker. Kernel PT_INTERP handoff and a freestanding self-relocating
+LD.SO are implemented and verified with filesystem-loaded DSOs under QEMU.
 The implemented core reads ELF32 dynamic metadata, performs SysV-hash
 lookup and ordered-scope symbol resolution, discovers the dependency graph,
 and eagerly applies RELA relocations. The architecture-neutral planner is
@@ -17,8 +17,10 @@ lib/ldso/image_plan.c validates ELF32 load plans; lib/ldso/image.c populates
 private userspace images;
 x32 format policy is selected separately in arch/x32/image_abi.c.
 bdos/elfinterp.c opens the named interpreter, and lib/ldso/startup.c constructs
-the private initial stack. Runtime-linker dependency file I/O, self relocation
-and the full constructor/finalizer lifecycle remain to be implemented.
+the private initial stack. lib/ldso/runtime.c loads dependencies, binds all
+objects eagerly, seals permissions and runs constructors/finalizers.
+Read-only physical-page sharing and integration with a general dynamic CRT
+and libcmini remain to be implemented.
 
 Lazy private anonymous mapping services are implemented separately as Mmap,
 Munmap and Mprot, under CONF_WITH_MMAP (see doc/mmap.txt). The linker feature
@@ -152,6 +154,7 @@ Required auxiliary entries:
     AT_PAGESZ  address-space backend's page size (4096 initially)
     AT_EXECFN  pointer to the copied executable pathname
     AT_PTOS_BASEPAGE (0x5000)  child's own public GEMDOS basepage
+    AT_PTOS_BOOTDRIVE (0x5001) kernel boot filesystem drive, A=0 through Z=25
     AT_NULL    terminator
 
 The executable's headers must be in readable user memory; map or copy them
@@ -161,7 +164,9 @@ Kernel bookkeeping, not a mutable basepage, owns entries and mapping handles.
 The kernel clears all general registers except RSP on standard ELF entry;
 RDI/RSI do not carry the legacy function-call entry contract. The interpreter
 must transfer to AT_ENTRY on the original standard stack, supplying the normal
-runtime-linker finalizer callback in RDX (zero in the current probe).
+runtime-linker finalizer callback in RDX. LD.SO supplies dl_runtime_fini;
+the minimal ABI probe supplies zero. A normal CRT calls this callback before
+Pterm, after application exit processing. Repeated calls are harmless.
 
 Pexec(PE_LOAD/PE_GO/PE_GOTHENFREE) retains kernel-owned executable/interpreter
 entries and private mappings through split load/launch. Dynamic images stay
@@ -172,7 +177,7 @@ release ownership exactly once. File operations catch disk-error longjmps
 before releasing the bounded transient file buffers and interpreter handle.
 
 The initial kernel policy limits the executable to [0x00400000,0x00800000)
-(eight PT_LOAD segments maximum), preserving ET_EXEC addresses; a PIE may be
+(eight PT_LOAD segments maximum for each image), preserving ET_EXEC addresses; a PIE may be
 biased into this window. The interpreter is aligned in
 [0x0f000000,0x0fff0000), above Mmap and below the ancestors page, avoiding the
 supervisor framebuffer window. Each ELF file has an 8 MiB input limit, with
@@ -195,8 +200,11 @@ Memory services and permissions
 Mmap, Munmap and Mprot now expose private anonymous mappings and checked
 permission changes (doc/mmap.txt). Existing file calls can fill RW pages
 before Mprot makes text RX. Malloc/Mxalloc are separate private heap services.
-File-backed mappings, read-only page sharing and the interpreter's executable
-and library reservation/file-I/O policy remain to be implemented. ELF32
+File-backed mappings and read-only physical-page sharing remain to be
+implemented. The interpreter uses private anonymous mappings for its DSOs.
+For standard PT_INTERP processes, Mprot also permits changes to the main
+image/interpreter segment pages recorded in kernel-owned layouts, enabling
+RELRO sealing. Stack, basepage and image holes remain ineligible; W^X applies. ELF32
 admission is in lib/ldso/image_plan.c; userspace population is in image.c.
 
 The mapping window is [0x01000000, 0x0f000000), outside USER_IMAGE_*, the
@@ -338,6 +346,40 @@ be silently advertised as honoured.  The main program and interpreter can
 be installed independently of their dependent DSOs.
 
 
+Initial runtime filesystem profile
+----------------------------------
+
+The build produces obj/ldso/ld.so; install it as GEMSYS\LIB\X32\LD.SO
+on the kernel boot drive. Dependencies are searched only in that directory,
+using AT_PTOS_BOOTDRIVE, never the current drive, directory or environment.
+The main executable must supply PT_PHDR so LD.SO can derive its load bias
+from AT_PHDR. Interpreter link base is zero; bootstrap accepts only symbol-free
+RELATIVE and RELATIVE64 self relocations, validates all writes before applying
+any and requires no libc or pre-relocated pointers.
+
+The initial FAT profile accepts strict ASCII 8.3 names (letters, digits, '_',
+'-', one dot), with exact case-sensitive DT_SONAME equal to DT_NEEDED. This
+rejects alternate-case aliases. Identity is the canonical directory-entry name
+within this single directory, backed by the first immutable private snapshot
+for that process, rather than an inode number. Hash collisions are rejected.
+The dependency graph reuses an exact name without reopening it. FAT has no
+hard links; other filesystem/long-name alias policies need a separate extension.
+Each file is bounded to 8 MiB, read completely, checked for size changes and
+compared against a second complete read before use. An observed change aborts
+loading; later replacement does not change the retained snapshot. This is not
+an atomic filesystem snapshot or a cross-process object cache.
+
+Private reservations preserve p_align, including padding. Gaps/padding become
+PROT_NONE, segment permissions become R/RW/RX, and RELRO becomes R before any
+constructor. All dependency mappings are private, including read-only pages.
+Executable preinitializers run first; graph DFS postorder initializes each
+object once (DT_INIT then INIT_ARRAY). Finalization reverses that order,
+FINI_ARRAY in reverse then DT_FINI. Hook arrays and executable targets are
+validated before calling user code. Raw Pterm only performs kernel cleanup.
+A load failure exits 127 before application entry. Missing libraries and
+symbols print the dependency context; bootstrap failures exit directly.
+
+
 Implementation and validation milestones
 ---------------------------------------
 
@@ -345,19 +387,20 @@ Implementation and validation milestones
    metadata/SysV lookup core, tests using actual ET_EXEC/PIC ET_DYN output.
 2. Private anonymous Mmap/Munmap/Mprot services are implemented, with
    permission faults, limits, isolation, failure cleanup and CI boot tests.
-   ELF32 load admission, private image population and a RELRO sealing probe
-   are also implemented. File backing, runtime reservation/file-I/O policy
-   remain. Split dynamic-image ownership is implemented.
+   ELF32 load admission, private image population, RELRO sealing and runtime
+   file snapshots are implemented. File backing remains. Split dynamic-image
+   ownership is implemented.
 3. PT_INTERP mapping, private initial stack/auxv and startup ABI probes are
    implemented for direct and split Pexec. Static ELF/PIE, built-in images
    and m68k PRG paths retain their existing loading conventions.
 4. Ordered scope and eager x32 relocations are implemented and tested in
    ring 3. Bounded dependency discovery, BFS scope, cycle scheduling and
-   rollback are implemented. Remaining: self-relocating interpreter and
-   trusted-directory file mapper;
-   run an ET_EXEC consumer of a separately built libtest.so under QEMU.
-5. Constructors/finalizers and a real shared libcmini or client-helper
-   component, with an independently built compatible dynamic CRT.
+   rollback are implemented. Self-relocating LD.SO and its trusted-directory
+   file mapper run an ET_EXEC consumer of separate libdyn.so/librt.so files
+   under QEMU, including executable symbol interposition.
+5. Preinitializers, constructors, finalizers and the RDX callback are tested
+   through a minimal independent CRT. Remaining: real shared libcmini or
+   client-helper component and integration with a general dynamic CRT.
 6. Reference-counted read-only page sharing, two-process isolation, W^X and
    permission-fault probes, plus corrupted ELF, missing libraries/symbols,
    cycles, invalid relocations, rollback and repeated-load leak tests in CI.
@@ -379,4 +422,6 @@ Disabling the option leaves ordinary static builds unchanged.  An archive
 build alone is not proof of runtime behavior. With shared support enabled,
 tools/test-mmap-boot.sh also requires the ring-3 relocation PASS marker.
 Kernel interpreter startup is covered by a separate PT_INTERP PASS marker.
-Self-relocating LD.SO and physical-page sharing remain unimplemented.
+A separate LD.SO runtime PASS marker covers filesystem dependency loading,
+binding, lifecycle ordering, permissions and repeated successful/failed loads.
+Physical-page sharing remains unimplemented.

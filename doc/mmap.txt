@@ -79,7 +79,15 @@ Mprot
 The address must be page-aligned, length nonzero and rounded to pages, and
 the whole range must be covered by the caller's mapping reservations.
 Adjacent reservations are accepted; a hole or any address outside the mapping
-window is EIMBA. Validate the entire range before changing a single page.
+window is EIMBA, except for the standard ELF image case below. Validate the
+entire range before changing a single page.
+
+With CONF_WITH_ELF_SHARED, a standard PT_INTERP process may also protect
+pages belonging to its main executable/interpreter PT_LOAD segments. Kernel
+layouts establish ownership independently of the public basepage; the whole
+range must be segment pages, excluding gaps, stack and basepage. These pages
+are already privately backed. This allows LD.SO to seal RELRO after relocation;
+it does not allow Munmap to remove kernel-loaded images.
 
 Protection flags are NONE=0, READ=1, WRITE=2 and EXEC=4. Initially effective
 access is NONE, R, RW or RX; the x32 MMU implies read access when WRITE or
@@ -139,7 +147,7 @@ runner when boot-testing that configuration.
 
 Anonymous mappings enable a userspace loader to Fopen/Fseek/Fread into RW
 memory and then make text RX with Mprot. They do not yet implement file-backed
-code-page caching/sharing, interpreter startup, ELF relocation, TLS or dynamic
-symbol resolution. Shared read-only code needs a separate reference-counted
+code-page caching/sharing or TLS. The separate CONF_WITH_ELF_SHARED
+interpreter uses these services for ELF relocation and symbol resolution. Shared read-only code needs a separate reference-counted
 backing implementation. ARM/m68k backends remain gated until their isolated
 address-space work merges; their syscall transport must also carry six values.
