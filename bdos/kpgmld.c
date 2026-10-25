@@ -331,14 +331,25 @@ static LONG pgfix01(UBYTE **lastcp, LONG nrelbytes, PGMINFO *pi)
 
     while(n-- && (*rp != 0))
     {
+        /* the distance to the end of text and data is checked before cp
+         * moves, so that a long run of escapes cannot wrap it around */
+        ULONG rem, step;
+
+        if (cp > bbase)
+            return EPLFMT;
+        rem = (ULONG)(bbase - cp);
         if (*rp == 1)
+        {
+            if (rem < 0xfe)
+                return EPLFMT;
             cp += 0xfe;
+        }
         else
         {
-            cp += *rp;  /* add the byte at rp to cp, don't sign ext */
-
-            if (cp >= bbase)
+            step = *rp;     /* the byte at rp, not sign extended */
+            if (rem < step + 4)             /* room for the longword written */
                 return EPLFMT;
+            cp += step;
             if (((LONG)cp) & 1)
                 return EPLFMT;
             *((long *)cp) += tbase;

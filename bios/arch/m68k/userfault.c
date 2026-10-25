@@ -50,8 +50,12 @@ void m68k_user_fault(void)
     UWORD fv = *(const UWORD *)(f + 6);
     ULONG address = pc;
 
-    /* the 68040 access error (format 7) and address error give the address of the access */
-    if ((fv >> 12) == 7 || (fv >> 12) == 2)
+    /* the 68040 access error (format 7) has the fault address at offset 20
+     * (offset 8 is the effective address, which can be another page); the
+     * address of a format 2 frame is at offset 8 */
+    if ((fv >> 12) == 7)
+        address = *(const ULONG *)(f + 20);
+    else if ((fv >> 12) == 2)
         address = *(const ULONG *)(f + 8);
     proc_fault(cause_of(proc_enum), (UQUAD)proc_enum, address, pc, (UQUAD)(ULONG)proc_usp);
 }

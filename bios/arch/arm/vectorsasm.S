@@ -233,9 +233,9 @@ C_SYM(xbiostrap):
         // Another difference is that arguments are in registers, so we don't
         // need to fiddle with the stack pointer for that.
 
-        cmp     r11,r5           // Higher than highest number?
-        movhi   r0,#0           // Return 0 when out of range
-        bhi     2f
+        cmp     r11,r5           // Not below the number of entries?
+        movhs   r0,#0           // Return 0 when out of range
+        bhs     2f
 
 #if CONF_WITH_USER_ASPACE
         cmp     r10, #0
