@@ -31,7 +31,7 @@ static int pointer_checks(void)
     CHECK(cuis_pointer_service(a, 0, 0, 0, 0) == 0);
     CHECK(cuis_event_service(a, CUIS_EVENT_POINTER, 0) == 0);
     CHECK(cuis_event_service(a, 0, 0) == EINVAL);
-    CHECK(cuis_event_service(a, 8, 0) == EINVAL);
+    CHECK(cuis_event_service(a, 16, 0) == EINVAL);
     CHECK(cuis_event_service(a, 0x100000002ULL, 0) == EINVAL);
     CHECK(cuis_event_service(a, CUIS_EVENT_KEY, 0) == EACCDN);
     CHECK(point_at(12, 13, 1)); /* Trusted click focuses, even a non-front hit. */

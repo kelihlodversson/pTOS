@@ -528,6 +528,60 @@ queued legacy motion/cursor notifications and advance a generation checked
 before applying an in-flight native motion callback's result. IRQ fixtures
 cover guarded motion and reject an older callback completion after CUIS input.
 
+Bounded peer messages
+---------------------
+CUIS transports opaque peer data separately from trusted input and redraws:
+
+ 21 MESSAGE_SEND  RDI=destination session, RSI/RDX/R10/R8=ULONG words 0-3
+ 22 MESSAGE_READ  RDI=owned session, RSI=LONG *sender,
+                  RDX/R10/R8/R9=ULONG *words 0-3 (four separate outputs)
+ 23 MESSAGE_ALLOW RDI=owned receiver session, RSI=sender session
+ 24 MESSAGE_DENY  RDI=owned receiver session, RSI=sender session
+ 25 MESSAGE_WAIT  RDI=owned session, RSI=sign-extended LONG timeout_ms
+
+libaes exports aes_message_send(destination, a, b, c, d),
+aes_message_read(session, sender, a, b, c, d),
+aes_message_allow(session, sender), aes_message_deny(session, sender), and
+aes_message_wait(session, timeout_ms). No request/reply structure is used.
+Payload words are unsigned 32-bit values; full-width send slots with upper
+bits set return EINVAL. CUIS does not decode GEM message IDs or payloads.
+
+A registered receiver explicitly allows a currently registered sender before
+that peer can send. Each receiver has 16 grants. ALLOW is idempotent and
+returns ENSMEM if the grant table is full; DENY is idempotent and can remove a
+stale handle. Self-posts require no grant and remain available after self
+DENY. Grants authorize untrusted peer data only: a message cannot fabricate
+CUIS keyboard, pointer, focus or redraw notifications. The receiver must
+interpret the payload according to its application protocol. Sender identity
+is assigned by the kernel, never supplied by the sender. Session handles are
+never reused. Peer discovery/bootstrap and GEM appl_* adaptation remain later
+library work; this slice assumes the receiver knows a peer's session handle.
+
+SEND returns E_OK on acceptance, EAGAIN when the destination's 16-message
+FIFO is full, EACCDN for an absent destination, unregistered caller or denied
+sender, or EINVAL for malformed slots. It never blocks, allocates or evicts an
+accepted message. Authorization is checked before reporting queue capacity.
+Successful messages from all authorized peers share FIFO acceptance order.
+
+READ returns 1 after copying the kernel sender and all four payload words,
+0 when empty, or a negative error. All outputs are validated/backed before
+copyout, and a failed copy leaves the oldest message queued. Empty reads
+ignore output pointers. Reading another session is forbidden. DENY affects
+future sends only; messages already accepted remain readable. Sender exit
+removes its grants in surviving sessions but preserves accepted messages
+with the historical sender handle. Receiver exit discards its queue and
+grants; no message holds a process/window pointer or file reference.
+
+CUIS_EVENT_MESSAGE (8) extends EVENT_WAIT: any queued message for the window
+owner makes it ready, independently of focus. As with other event bits, a
+successful wait returns 1 and consumes nothing. MESSAGE_WAIT uses the same
+atomic predicate/sleep, timeout and owned-update rules without requiring a
+window or focus. Existing event masks retain their behavior. Native waits
+still sleep for IRQs rather than scheduling another client; scheduler
+integration is a separate milestone. Host tests model a peer posting at the
+sleep boundary; native boot tests verify scalar transport, copyout recovery,
+queue bounds, ownership/grants, readiness and timeouts in isolated spaces.
+
 Final configuration cutover
 ---------------------------
 Once external libaes is complete, Kconfig must make CUIS and in-kernel AES

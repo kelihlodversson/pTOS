@@ -29,4 +29,9 @@ LONG aes_key_read(LONG window, ULONG *key);
 LONG aes_key_wait(LONG window, LONG timeout_ms);
 LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state);
 LONG aes_event_wait(LONG window, ULONG events, LONG timeout_ms);
+LONG aes_message_send(LONG destination, ULONG a, ULONG b, ULONG c, ULONG d);
+LONG aes_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, ULONG *d);
+LONG aes_message_allow(LONG session, LONG sender);
+LONG aes_message_wait(LONG session, LONG timeout_ms);
+LONG aes_message_deny(LONG session, LONG sender);
 #endif

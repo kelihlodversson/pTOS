@@ -11,7 +11,9 @@ static union {
 static ULONG allocations, frees;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
-static LONG copied[4];
+static LONG copied[5];
+static PD *input_message_sender;
+static LONG input_message_destination;
 static BOOL fail_copy;
 static BOOL input_irqs = TRUE, input_bad_idle;
 static ULONG input_ticks, input_sleeps, input_inject_after;
@@ -50,6 +52,13 @@ void cuis_input_idle(void)
     input_sleeps++;
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
+    if (input_message_sender) {
+        PD *saved = run;
+        run = input_message_sender;
+        input_message_sender = NULL;
+        cuis_message_service(CUIS_MESSAGE_SEND, input_message_destination, 11, 22, 33, 44, 0);
+        run = saved;
+    }
     if (input_drop_focus) { input_drop_focus = FALSE; set_focus(NULL); }
     input_irqs = FALSE;
 }
@@ -65,7 +74,7 @@ BOOL kproc_validate_user_write(UQUAD address, ULONG size)
         input_drop_on_validate = FALSE;
         set_focus(NULL);
     }
-    return size == sizeof(LONG) && address >= 0x1000 && address <= 0x100c &&
+    return size == sizeof(LONG) && address >= 0x1000 && address <= 0x1010 &&
            !(address & 3);
 }
 BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
@@ -93,6 +102,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "focus.c"
 #include "input.c"
 #include "pointer.c"
+#include "messages.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -149,5 +159,7 @@ int main(void)
     rc = input_checks();
     if (rc) return rc;
     rc = pointer_checks();
-    return rc ? rc : window_limit_checks();
+    if (rc) return rc;
+    rc = window_limit_checks();
+    return rc ? rc : message_checks();
 }

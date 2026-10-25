@@ -133,7 +133,7 @@ static int pointer_checks(void)
     CHECK(aes_event_wait(window, CUIS_EVENT_KEY, 0) == EACCDN);
     CHECK(aes_event_wait(window, CUIS_EVENT_POINTER | CUIS_EVENT_KEY, 0) == 0);
     CHECK(aes_event_wait(window, 0, 0) == EINVAL);
-    CHECK(aes_event_wait(window, 8, 0) == EINVAL);
+    CHECK(aes_event_wait(window, 16, 0) == EINVAL);
     CHECK(aes_event_wait(window, CUIS_EVENT_POINTER, -2) == EINVAL);
     CHECK(aes_event_wait(window, CUIS_EVENT_POINTER, 1) == 0);
 #if CONF_WITH_X86_64_MEMTEST
@@ -149,6 +149,50 @@ static int pointer_checks(void)
     CHECK(aes_pointer_read(window, &x, &y, &buttons, &state) == 0);
 #endif
     CHECK(aes_window_destroy(window) == E_OK);
+    return 0;
+}
+static LONG raw_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, UQUAD d)
+{
+    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_MESSAGE_READ;
+    register UQUAD di __asm__("rdi") = (QUAD)session, si __asm__("rsi") = (uintptr_t)sender;
+    register UQUAD dx __asm__("rdx") = (uintptr_t)a, r10 __asm__("r10") = (uintptr_t)b;
+    register UQUAD r8 __asm__("r8") = (uintptr_t)c, r9 __asm__("r9") = d;
+    __asm__ volatile ("syscall" : "+a"(ax)
+        : "r"(di), "r"(si), "r"(dx), "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}
+static int message_checks(LONG session, LONG window)
+{
+    LONG sender = -1;
+    ULONG a, b, c, d, i;
+    CHECK(aes_message_read(session, NULL, NULL, NULL, NULL, NULL) == 0);
+    CHECK(aes_message_wait(session, 0) == 0);
+    CHECK(aes_message_wait(session, -2) == EINVAL);
+    CHECK(aes_message_allow(session, -1) == EINVAL);
+    CHECK(aes_message_send(-1, 0, 0, 0, 0) == EINVAL);
+    CHECK(aes_message_allow(session, session) == E_OK);
+    for (i = 0; i < 16; i++) CHECK(aes_message_send(session, i, 0xffffffffUL, 3, 4) == E_OK);
+    CHECK(aes_message_send(session, 99, 0, 0, 0) == EAGAIN);
+    CHECK(aes_event_wait(window, CUIS_EVENT_MESSAGE | CUIS_EVENT_KEY, 0) == 1);
+    CHECK(aes_message_wait(session, -1) == 1);
+    CHECK(aes_message_read(session, &sender, &a, &b, &c, NULL) == EIMBA && sender == -1);
+    CHECK(raw_message_read(session, &sender, &a, &b, &c,
+                           (1ULL << 32) | (uintptr_t)&d) == EIMBA && sender == -1);
+    CHECK(aes_message_read(session, &sender, &a, &b, &c, (ULONG *)(uintptr_t)raw) == EIMBA && sender == -1);
+    for (i = 0; i < 16; i++) {
+        CHECK(aes_message_read(session, &sender, &a, &b, &c, &d) == 1);
+        CHECK(sender == session && a == i && b == 0xffffffffUL && c == 3 && d == 4);
+    }
+    CHECK(aes_message_read(session, NULL, NULL, NULL, NULL, NULL) == 0);
+    CHECK(aes_event_wait(window, CUIS_EVENT_MESSAGE, 1) == 0);
+    CHECK(aes_message_wait(session, 1) == 0);
+    CHECK(aes_update_begin(window) == E_OK);
+    CHECK(aes_message_wait(session, 1) == EACCDN);
+    CHECK(aes_message_send(session, 7, 0, 0, 0) == E_OK);
+    CHECK(aes_message_wait(session, -1) == 1);
+    CHECK(aes_update_end(window) == E_OK);
+    CHECK(aes_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == 7);
     return 0;
 }
 int main(int argc, char **argv, char **envp)
@@ -179,6 +223,8 @@ int main(int argc, char **argv, char **envp)
         }
         CHECK(aes_session_query(owner) == EACCDN);
         CHECK(aes_session_close(owner) == EACCDN);
+        CHECK(aes_message_read(owner, NULL, NULL, NULL, NULL, NULL) == EACCDN);
+        CHECK(aes_message_send(owner, 1, 2, 3, 4) == EACCDN);
         CHECK(aes_key_read(parent_window, (ULONG *)0) == EACCDN);
         CHECK(aes_key_wait(parent_window, 0) == EACCDN);
         CHECK(aes_event_wait(parent_window, CUIS_EVENT_POINTER, 0) == EACCDN);
@@ -186,6 +232,12 @@ int main(int argc, char **argv, char **envp)
     }
     handle = aes_session_open();
     CHECK(handle >= 0 && aes_session_open() == handle);
+    if (argc == 2) {
+        CHECK(aes_message_send(owner, 1, 2, 3, 4) == EACCDN);
+        CHECK(aes_message_allow(owner, handle) == EACCDN);
+        CHECK(aes_message_allow(handle, owner) == E_OK);
+        CHECK(aes_message_deny(handle, owner) == E_OK);
+    }
     CHECK(raw(CUIS_SESSION_START, ~0ULL) == handle);
     CHECK(raw(CUIS_SESSION_QUERY, (1ULL << 32) | (ULONG)handle) == EINVAL);
     CHECK(raw(CUIS_SESSION_END, (1ULL << 32) | (ULONG)handle) == EINVAL);
@@ -264,6 +316,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(aes_window_redraw(window) == 0);
         CHECK(aes_window_configure(window, -10, 20, 100, 80) == E_OK);
     }
+    rc = message_checks(handle, window);
+    if (rc) return rc;
     rc = key_checks(window);
     if (rc) return rc;
     rc = pointer_checks();
@@ -291,7 +345,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_update_begin(window) == E_OK);
     /* Leave the reopened session to library finalization. */
     {
-        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 CUIS keyboard: PASS\r\nx32 CUIS pointer/events: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
+        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 CUIS keyboard: PASS\r\nx32 CUIS pointer/events: PASS\r\nx32 CUIS messages: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
         CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
     }
     return 77;
