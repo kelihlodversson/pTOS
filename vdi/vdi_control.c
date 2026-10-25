@@ -573,6 +573,11 @@ void vdi_v_opnwk(Vwk * vwk)
     Vwk **p;
     WORD newrez;
 
+#if CONF_WITH_CUIS && CONF_WITH_X32_VDI
+    /* A retained native display still owns timer/mouse hooks. Uninstall
+     * them before resetting the physical workstation or installing again. */
+    vdi_service_prepare_physical_open();
+#endif
     /*
      * Programs can request a video mode switch by passing the desired
      * mode + 2 in INTIN[0].
@@ -651,7 +656,10 @@ void vdi_v_opnwk(Vwk * vwk)
 #endif
     timer_init();
     vdimouse_init();            /* initialize mouse */
-    esc_init(vwk);              /* enter graphics mode */
+#if CONF_WITH_CUIS && CONF_WITH_X32_VDI
+    if (!vdi_service_preserve_console())
+#endif
+        esc_init(vwk);          /* explicit kernel transition to graphics */
 
     /* Just like TOS 2.06, make the physical workstation the current workstation for Line-A. */
     linea_vars.CUR_WORK = vwk;
@@ -686,7 +694,10 @@ void vdi_v_clswk(Vwk * vwk)
 #endif
     timer_exit();
     vdimouse_exit();                    /* deinitialize mouse */
-    esc_exit(vwk);                      /* back to console mode */
+#if CONF_WITH_CUIS && CONF_WITH_X32_VDI
+    if (!vdi_service_preserve_console())
+#endif
+        esc_exit(vwk);          /* explicit kernel transition to console */
 }
 
 

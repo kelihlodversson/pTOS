@@ -13,6 +13,12 @@ static BOOL fail_allocation;
 static ULONG fail_at_allocation;
 static LONG copied[4];
 static BOOL fail_copy;
+static UWORD display_width = 1024, display_height = 768;
+void screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
+{
+    mode->width = display_width;
+    mode->height = display_height;
+}
 BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 {
     return size == sizeof(LONG) && address >= 0x1000 && address <= 0x100c &&

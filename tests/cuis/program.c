@@ -3,6 +3,8 @@
 #include "gemerror.h"
 #include "ptos.h"
 int libaes_object_checks(void);
+int libaes_drawing_checks(void);
+int libaes_drawing_exit_handle(void);
 typedef char object_x32_size[(sizeof(OBJECT) == 24) ? 1 : -1];
 extern int64_t client_pexec(const char *path, const char *tail, const char *env);
 
@@ -37,7 +39,7 @@ static int update_checks(LONG window)
     LONG x, y, width, height, occluder;
     CHECK(aes_update_begin(window) == E_OK);
     CHECK(aes_window_clip(window, 0, &x, &y, &width, &height) == 1);
-    CHECK(x == -20 && y == 30 && width == 120 && height == 90);
+    CHECK(x == 0 && y == 30 && width == 100 && height == 90);
     x = 777;
     CHECK(aes_window_clip(window, 0, &x, &y, &width, (LONG *)0) == EIMBA);
     CHECK(x == 777);
@@ -54,14 +56,12 @@ static int update_checks(LONG window)
     CHECK(occluder >= 0 && aes_window_show(occluder) == E_OK);
     CHECK(aes_update_begin(window) == E_OK);
     CHECK(aes_window_clip(window, 0, &x, &y, &width, &height) == 1);
-    CHECK(x == -20 && y == 30 && width == 120 && height == 10);
+    CHECK(x == 0 && y == 30 && width == 100 && height == 10);
     CHECK(aes_window_clip(window, 1, &x, &y, &width, &height) == 1);
-    CHECK(x == -20 && y == 50 && width == 120 && height == 70);
+    CHECK(x == 0 && y == 50 && width == 100 && height == 70);
     CHECK(aes_window_clip(window, 2, &x, &y, &width, &height) == 1);
-    CHECK(x == -20 && y == 40 && width == 20 && height == 10);
-    CHECK(aes_window_clip(window, 3, &x, &y, &width, &height) == 1);
     CHECK(x == 20 && y == 40 && width == 80 && height == 10);
-    CHECK(aes_window_clip(window, 4, &x, &y, &width, &height) == 0);
+    CHECK(aes_window_clip(window, 3, &x, &y, &width, &height) == 0);
     CHECK(aes_update_end(window) == E_OK);
     CHECK(aes_window_destroy(occluder) == E_OK);
     return 0;
@@ -105,6 +105,8 @@ int main(int argc, char **argv, char **envp)
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
     if (argc == 2 && argv[1][0] == 'u') {
         LONG x, y, w, h;
+        rc = libaes_drawing_exit_handle();
+        if (rc) return rc;
         CHECK(aes_window_create(0, 0, 1, 1) == EAGAIN);
         CHECK(aes_update_end(parent_window) == EACCDN);
         CHECK(aes_window_clip(parent_window, 0, &x, &y, &w, &h) == EACCDN);
@@ -136,6 +138,8 @@ int main(int argc, char **argv, char **envp)
     if (rc) return rc;
     if (argc == 2) {
         CHECK(aes_update_begin(window) == E_OK);
+        rc = libaes_drawing_exit_handle();
+        if (rc) return rc;
         for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_REDRAW; function++)
             CHECK(raw(function, parent_window) == EACCDN);
         CHECK(aes_window_destroy(parent_window) == EACCDN);
@@ -162,6 +166,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(aes_window_redraw(window) == 0);
         CHECK(aes_window_configure(window, -10, 20, 100, 80) == E_OK);
     }
+    rc = libaes_drawing_checks();
+    if (rc) return rc;
     CHECK(aes_update_begin(window) == E_OK);
     tail[1] = 'u';
     CHECK(client_pexec(argv[0], tail, "") == 77);

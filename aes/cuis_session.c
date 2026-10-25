@@ -2,6 +2,7 @@
 #include "emutos.h"
 #include "cuis.h"
 #include "cuis_region.h"
+#include "screen_mode.h"
 #include "gemerror.h"
 #include "kheap.h"
 #include "../bdos/kproc.h"
@@ -47,16 +48,28 @@ static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
     CUIS_RECT *a, *b, *swap;
     CUIS_WINDOW *cover;
     ULONG count = 1;
-    LONG result;
+    LONG result, right, bottom;
+    SCREEN_MODE_DESC mode;
 
     if (update_owner) return EAGAIN;
     if (!window->visible) return EINVAL;
+    screen_get_current_mode_desc(&mode);
+    if (!mode.width || !mode.height) return EINVFN;
     a = kalloc(CUIS_CLIP_LIMIT * sizeof(*a));
     if (!a) return ENSMEM;
     b = kalloc(CUIS_CLIP_LIMIT * sizeof(*b));
     if (!b) { kfree(a); return ENSMEM; }
-    a[0].x = window->x; a[0].y = window->y;
-    a[0].width = window->width; a[0].height = window->height;
+    a[0].x = window->x > 0 ? window->x : 0;
+    a[0].y = window->y > 0 ? window->y : 0;
+    right = window->x + window->width;
+    bottom = window->y + window->height;
+    if (right > mode.width) right = mode.width;
+    if (bottom > mode.height) bottom = mode.height;
+    if (right <= a[0].x || bottom <= a[0].y) count = 0;
+    else {
+        a[0].width = right - a[0].x;
+        a[0].height = bottom - a[0].y;
+    }
     for (cover = window_front; cover != window && count; cover = cover->znext) {
         CUIS_RECT occluder;
         occluder.x = cover->x; occluder.y = cover->y;
@@ -305,4 +318,19 @@ LONG cuis_clip_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
         !kproc_copy_to_user(width, &rect->width, sizeof(LONG)) ||
         !kproc_copy_to_user(height, &rect->height, sizeof(LONG))) return EIMBA;
     return 1;
+}
+
+/* 0 retains legacy native VDI behavior; 1 requires the immutable owned
+ * snapshot. A different update owner blocks native screen writes. */
+LONG cuis_vdi_policy(void)
+{
+    if (update_owner) return update_owner->owner == run ? 1 : EAGAIN;
+    return *find_owner(run) ? EACCDN : 0;
+}
+BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
+{
+    if (!update_owner || update_owner->owner != run || index >= update_count)
+        return FALSE;
+    *rect = update_clips[index];
+    return TRUE;
 }
