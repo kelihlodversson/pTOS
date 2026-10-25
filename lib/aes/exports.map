@@ -5,5 +5,6 @@
             aes_window_create; aes_window_configure; aes_window_destroy;
             aes_window_show; aes_window_hide; aes_window_raise;
             aes_window_lower; aes_window_redraw;
+            aes_update_begin; aes_update_end; aes_window_clip;
     local: *;
 };

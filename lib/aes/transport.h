@@ -3,4 +3,5 @@
 #include "cuis.h"
 LONG cuis_call(ULONG function, LONG handle);
 LONG cuis_call5(ULONG function, LONG a, LONG b, LONG c, LONG d, LONG e);
+LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f);
 #endif

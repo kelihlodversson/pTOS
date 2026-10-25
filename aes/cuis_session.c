@@ -1,6 +1,7 @@
 /* Process-owned native GUI sessions; never interpret GEM/AES wire formats. */
 #include "emutos.h"
 #include "cuis.h"
+#include "cuis_region.h"
 #include "gemerror.h"
 #include "kheap.h"
 #include "../bdos/kproc.h"
@@ -27,6 +28,51 @@ static ULONG next_handle;
 static ULONG next_window_handle;
 /* Front to back, containing only visible windows from all sessions. */
 static CUIS_WINDOW *window_front;
+static CUIS_CLIENT *update_owner;
+static CUIS_WINDOW *update_window;
+static CUIS_RECT *update_clips;
+static ULONG update_count;
+
+static void end_update(void)
+{
+    if (update_clips) kfree(update_clips);
+    update_clips = NULL;
+    update_count = 0;
+    update_owner = NULL;
+    update_window = NULL;
+}
+
+static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
+{
+    CUIS_RECT *a, *b, *swap;
+    CUIS_WINDOW *cover;
+    ULONG count = 1;
+    LONG result;
+
+    if (update_owner) return EAGAIN;
+    if (!window->visible) return EINVAL;
+    a = kalloc(CUIS_CLIP_LIMIT * sizeof(*a));
+    if (!a) return ENSMEM;
+    b = kalloc(CUIS_CLIP_LIMIT * sizeof(*b));
+    if (!b) { kfree(a); return ENSMEM; }
+    a[0].x = window->x; a[0].y = window->y;
+    a[0].width = window->width; a[0].height = window->height;
+    for (cover = window_front; cover != window && count; cover = cover->znext) {
+        CUIS_RECT occluder;
+        occluder.x = cover->x; occluder.y = cover->y;
+        occluder.width = cover->width; occluder.height = cover->height;
+        result = cuis_region_subtract(a, count, &occluder, b, CUIS_CLIP_LIMIT);
+        if (result < 0) { kfree(a); kfree(b); return result; }
+        count = (ULONG)result;
+        swap = a; a = b; b = swap;
+    }
+    kfree(b);
+    update_owner = client;
+    update_window = window;
+    update_clips = a;
+    update_count = count;
+    return E_OK;
+}
 
 static void damage_windows(void)
 {
@@ -66,6 +112,7 @@ void cuis_process_exit(PD *owner)
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
     if (client) {
         CUIS_WINDOW *window;
+        if (update_owner == client) end_update();
         while ((window = client->windows) != NULL) {
             client->windows = window->next;
             hide_window(window);
@@ -77,6 +124,7 @@ void cuis_process_exit(PD *owner)
 }
 
 #if CONF_WITH_X86_64_MEMTEST
+BOOL cuis_update_active(void) { return update_owner != NULL; }
 ULONG cuis_visible_window_count(void)
 {
     CUIS_WINDOW *window;
@@ -152,11 +200,12 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     CUIS_CLIENT *client;
     CUIS_WINDOW **link, **back, *window;
 
-    if (function < CUIS_WINDOW_CREATE || function > CUIS_WINDOW_REDRAW)
+    if (function < CUIS_WINDOW_CREATE || function > CUIS_UPDATE_END)
         return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
     if (function == CUIS_WINDOW_CREATE) {
+        if (update_owner) return EAGAIN;
         if (!valid_geometry(a, b, c, d)) return EINVAL;
         if (client->window_count >= CUIS_WINDOWS_PER_SESSION ||
             next_window_handle > 0x7fffffffUL) return ENSMEM;
@@ -178,6 +227,13 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
          link = &(*link)->next) ;
     window = *link;
     if (!window) return EACCDN;
+    if (function == CUIS_UPDATE_BEGIN) return begin_update(client, window);
+    if (function == CUIS_UPDATE_END) {
+        if (update_owner != client || update_window != window) return EACCDN;
+        end_update();
+        return E_OK;
+    }
+    if (update_owner && function != CUIS_WINDOW_REDRAW) return EAGAIN;
     switch (function) {
     case CUIS_WINDOW_DESTROY:
         hide_window(window);
@@ -227,4 +283,26 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         return 1;
     }
     return E_OK;
+}
+
+/* Indexed copyout has no mutable cursor: failed copyout can be retried without
+ * dropping a region. Validate every destination before writing any output. */
+LONG cuis_clip_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
+                       UQUAD width, UQUAD height)
+{
+    CUIS_RECT *rect;
+    if (handle > 0x7fffffffULL || index > 0xffffffffULL) return EINVAL;
+    if (!update_owner || update_owner->owner != run ||
+        update_window->handle != handle) return EACCDN;
+    if (index >= update_count) return 0;
+    if (!kproc_validate_user_write(x, sizeof(LONG)) ||
+        !kproc_validate_user_write(y, sizeof(LONG)) ||
+        !kproc_validate_user_write(width, sizeof(LONG)) ||
+        !kproc_validate_user_write(height, sizeof(LONG))) return EIMBA;
+    rect = &update_clips[(ULONG)index];
+    if (!kproc_copy_to_user(x, &rect->x, sizeof(LONG)) ||
+        !kproc_copy_to_user(y, &rect->y, sizeof(LONG)) ||
+        !kproc_copy_to_user(width, &rect->width, sizeof(LONG)) ||
+        !kproc_copy_to_user(height, &rect->height, sizeof(LONG))) return EIMBA;
+    return 1;
 }

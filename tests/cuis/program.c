@@ -20,6 +20,52 @@ static LONG raw(ULONG function, UQUAD handle)
     return (LONG)ax;
 }
 #define CHECK(condition) do { if (!(condition)) return 0x4000 | __LINE__; } while (0)
+/* Poison high address bits without letting the x32 C pointer ABI truncate. */
+static LONG raw_clip(LONG window, UQUAD index, LONG *x, LONG *y, LONG *w, UQUAD height)
+{
+    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_WINDOW_CLIP;
+    register UQUAD di __asm__("rdi") = (QUAD)window, si __asm__("rsi") = index;
+    register UQUAD dx __asm__("rdx") = (uintptr_t)x, r10 __asm__("r10") = (uintptr_t)y;
+    register UQUAD r8 __asm__("r8") = (uintptr_t)w, r9 __asm__("r9") = height;
+    __asm__ volatile ("syscall" : "+a"(ax)
+        : "r"(di), "r"(si), "r"(dx), "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}
+static int update_checks(LONG window)
+{
+    LONG x, y, width, height, occluder;
+    CHECK(aes_update_begin(window) == E_OK);
+    CHECK(aes_window_clip(window, 0, &x, &y, &width, &height) == 1);
+    CHECK(x == -20 && y == 30 && width == 120 && height == 90);
+    x = 777;
+    CHECK(aes_window_clip(window, 0, &x, &y, &width, (LONG *)0) == EIMBA);
+    CHECK(x == 777);
+    CHECK(raw_clip(window, 0, &x, &y, &width, (1ULL << 32) | (uintptr_t)&height) == EIMBA);
+    CHECK(x == 777);
+    CHECK(aes_window_clip(window, 0, &x, &y, &width, (LONG *)(uintptr_t)raw) == EIMBA);
+    CHECK(raw_clip(window, 1ULL << 32, &x, &y, &width, (uintptr_t)&height) == EINVAL);
+    CHECK(aes_window_clip(window, 0, &x, &y, &width, &height) == 1);
+    CHECK(aes_window_clip(window, 1, (LONG *)0, (LONG *)0, (LONG *)0, (LONG *)0) == 0);
+    CHECK(aes_update_begin(window) == EAGAIN);
+    CHECK(aes_window_hide(window) == EAGAIN);
+    CHECK(aes_update_end(window) == E_OK);
+    occluder = aes_window_create(0, 40, 20, 10);
+    CHECK(occluder >= 0 && aes_window_show(occluder) == E_OK);
+    CHECK(aes_update_begin(window) == E_OK);
+    CHECK(aes_window_clip(window, 0, &x, &y, &width, &height) == 1);
+    CHECK(x == -20 && y == 30 && width == 120 && height == 10);
+    CHECK(aes_window_clip(window, 1, &x, &y, &width, &height) == 1);
+    CHECK(x == -20 && y == 50 && width == 120 && height == 70);
+    CHECK(aes_window_clip(window, 2, &x, &y, &width, &height) == 1);
+    CHECK(x == -20 && y == 40 && width == 20 && height == 10);
+    CHECK(aes_window_clip(window, 3, &x, &y, &width, &height) == 1);
+    CHECK(x == 20 && y == 40 && width == 80 && height == 10);
+    CHECK(aes_window_clip(window, 4, &x, &y, &width, &height) == 0);
+    CHECK(aes_update_end(window) == E_OK);
+    CHECK(aes_window_destroy(occluder) == E_OK);
+    return 0;
+}
 int main(int argc, char **argv, char **envp)
 {
     GRECT first = { 0, 0, 20, 20 }, second = { 10, 10, 20, 20 };
@@ -57,6 +103,13 @@ int main(int argc, char **argv, char **envp)
     CHECK(raw(CUIS_SESSION_END, ~0ULL) == EINVAL);
     CHECK(aes_session_query(-1) == EINVAL);
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
+    if (argc == 2 && argv[1][0] == 'u') {
+        LONG x, y, w, h;
+        CHECK(aes_window_create(0, 0, 1, 1) == EAGAIN);
+        CHECK(aes_update_end(parent_window) == EACCDN);
+        CHECK(aes_window_clip(parent_window, 0, &x, &y, &w, &h) == EACCDN);
+        return 77;
+    }
     window = aes_window_create(-10, 20, 100, 80);
     CHECK(window >= 0);
     CHECK(aes_window_redraw(window) == 0);
@@ -79,7 +132,10 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_window_create(0x7fffffffL, 0, 1, 1) == EINVAL);
     CHECK(rc_intersect(&first, &second) && second.g_x == 10 && second.g_y == 10 &&
           second.g_w == 10 && second.g_h == 10 && inside(19, 19, &second));
+    rc = update_checks(window);
+    if (rc) return rc;
     if (argc == 2) {
+        CHECK(aes_update_begin(window) == E_OK);
         for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_REDRAW; function++)
             CHECK(raw(function, parent_window) == EACCDN);
         CHECK(aes_window_destroy(parent_window) == EACCDN);
@@ -100,10 +156,16 @@ int main(int argc, char **argv, char **envp)
         tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : i == 2 ? 'f' : 'o';
         CHECK(client_pexec(argv[0], tail, "") == (i >= 2 ? 0xffff : 77));
         CHECK(aes_session_query(handle) == E_OK);
+        CHECK(aes_update_begin(window) == E_OK);
+        CHECK(aes_update_end(window) == E_OK);
         CHECK(aes_window_redraw(window) == 1);
         CHECK(aes_window_redraw(window) == 0);
         CHECK(aes_window_configure(window, -10, 20, 100, 80) == E_OK);
     }
+    CHECK(aes_update_begin(window) == E_OK);
+    tail[1] = 'u';
+    CHECK(client_pexec(argv[0], tail, "") == 77);
+    CHECK(aes_update_end(window) == E_OK);
     CHECK(aes_window_destroy(window) == E_OK);
     CHECK(aes_window_destroy(window) == EACCDN);
     window = aes_window_create(0, 0, 10, 10);
@@ -117,9 +179,10 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_window_destroy(window) == EACCDN);
     window = aes_window_create(0, 0, 10, 10);
     CHECK(window >= 0 && aes_window_show(window) == E_OK);
+    CHECK(aes_update_begin(window) == E_OK);
     /* Leave the reopened session to library finalization. */
     {
-        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
+        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
         CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
     }
     return 77;

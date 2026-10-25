@@ -3,14 +3,34 @@
 
 static PD first, second;
 PD *run = &first;
-static union { CUIS_CLIENT client; CUIS_WINDOW window; } pool[256];
+static union {
+    CUIS_CLIENT client;
+    CUIS_WINDOW window;
+    CUIS_RECT clips[CUIS_CLIP_LIMIT];
+} pool[256];
 static ULONG allocations, frees;
 static BOOL fail_allocation;
+static ULONG fail_at_allocation;
+static LONG copied[4];
+static BOOL fail_copy;
+BOOL kproc_validate_user_write(UQUAD address, ULONG size)
+{
+    return size == sizeof(LONG) && address >= 0x1000 && address <= 0x100c &&
+           !(address & 3);
+}
+BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
+{
+    if (fail_copy || !kproc_validate_user_write(address, size)) return FALSE;
+    copied[(address - 0x1000) / 4] = *(const LONG *)source;
+    return TRUE;
+}
 
 void *kalloc(ULONG bytes)
 {
-    if ((bytes != sizeof(CUIS_CLIENT) && bytes != sizeof(CUIS_WINDOW)) ||
-        fail_allocation || allocations == 256)
+    if ((bytes != sizeof(CUIS_CLIENT) && bytes != sizeof(CUIS_WINDOW) &&
+         bytes != CUIS_CLIP_LIMIT * sizeof(CUIS_RECT)) ||
+        fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
+        allocations == 256)
         return NULL;
     return &pool[allocations++];
 }
@@ -19,6 +39,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
 #include "windows.c"
 #include "visibility.c"
+#include "regions.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -65,5 +86,7 @@ int main(void)
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM && !cuis_session_count());
     CHECK(allocations == frees);
     rc = window_checks();
-    return rc ? rc : visibility_checks();
+    if (rc) return rc;
+    rc = visibility_checks();
+    return rc ? rc : region_checks();
 }
