@@ -92,7 +92,9 @@ int dl_image_read(DL_IMAGE *out, const unsigned char *file, uint32_t length,
         file[0] != 0x7f || file[1] != 'E' || file[2] != 'L' || file[3] != 'F' ||
         file[4] != 1 || file[5] != endian || file[6] != 1 ||
         number(file + 18, 2, endian) != abi->machine ||
-        number(file + 20, 4, endian) != 1 || number(file + 36, 4, endian) ||
+        number(file + 20, 4, endian) != 1 ||
+        (number(file + 36, 4, endian) & ~abi->eflags_allowed) ||
+        (number(file + 36, 4, endian) & abi->eflags_required) != abi->eflags_required ||
         number(file + 40, 2, endian) != 52 || number(file + 42, 2, endian) != 32)
         return DL_BAD_ELF;
     p.type = number(file + 16, 2, endian);

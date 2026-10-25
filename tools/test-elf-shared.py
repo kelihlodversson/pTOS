@@ -55,11 +55,12 @@ class Write(C.Structure):
 
 
 class Backend(C.Structure):
-    _fields_ = [("kind", C.c_void_p), ("value", C.c_void_p)]
+    _fields_ = [("kind", C.c_void_p), ("value", C.c_void_p), ("rel", C.c_uint32)]
 
 
 class ImageAbi(C.Structure):
-    _fields_ = [(n, C.c_uint32) for n in ("machine", "endian", "page_size", "max_span")]
+    _fields_ = [(n, C.c_uint32) for n in ("machine", "endian", "page_size", "max_span",
+                                                  "eflags_required", "eflags_allowed")]
 
 
 class Load(C.Structure):
@@ -201,12 +202,12 @@ class Metadata(unittest.TestCase):
         cls.lib.dl_image_copy.restype = C.c_int
         cls.lib.dl_image_range.argtypes = [C.POINTER(Image), C.c_uint32, C.c_uint32, C.c_uint32]
         cls.lib.dl_image_range.restype = C.c_int
-        cls.image_abi = ImageAbi.in_dll(cls.lib, "dl_x32_image_abi")
+        cls.image_abi = ImageAbi.in_dll(cls.lib, "dl_image_abi")
         cls.lib.dl_start_stack.argtypes = [C.c_void_p, C.c_uint32, C.c_uint32,
             C.c_void_p, C.c_uint32, C.c_void_p, C.c_uint32, C.c_void_p, C.c_uint32,
             C.POINTER(StartInfo), C.POINTER(C.c_uint32), C.POINTER(C.c_uint32)]
         cls.lib.dl_start_stack.restype = C.c_int
-        cls.backend = Backend.in_dll(cls.lib, "dl_x32_reloc_backend")
+        cls.backend = Backend.in_dll(cls.lib, "dl_reloc_backend")
 
     @classmethod
     def tearDownClass(cls):

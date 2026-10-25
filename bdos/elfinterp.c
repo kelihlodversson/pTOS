@@ -82,7 +82,7 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
     if (rc)
         goto done;
     if (dl_image_read(&main_plan, program, main_size,
-                        DL_IMAGE_EXECUTABLE, &dl_x32_image_abi)) {
+                        DL_IMAGE_EXECUTABLE, &dl_image_abi)) {
         rc = EPLFMT;
         goto done;
     }
@@ -111,7 +111,7 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
     if (rc)
         goto done;
     if (dl_image_read(&interp_plan, interpreter, interp_size,
-                        DL_IMAGE_INTERPRETER, &dl_x32_image_abi)) {
+                        DL_IMAGE_INTERPRETER, &dl_image_abi)) {
         rc = EPLFMT;
         goto done;
     }

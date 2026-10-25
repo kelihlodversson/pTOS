@@ -34,7 +34,10 @@ void test_ssystem_info(void)
     long rc;
     char name[8];
     char big[128];
-    struct { unsigned long page_size, phys_pages, free_pages, processes; } mi;
+    struct {
+        unsigned long page_size, phys_pages, free_pages, processes;
+        unsigned long shared_pages, shared_refs, shared_cross;
+    } mi;
 
     ptest_begin("ssystem_info");
 

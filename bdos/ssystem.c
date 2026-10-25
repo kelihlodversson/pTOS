@@ -549,6 +549,13 @@ static LONG ssystem_meminfo(long arg1, LONG arg2)
 #else
     info.processes = 0xffffffffUL;      /* not counted: there are no records */
 #endif
+#if CONF_WITH_MMAP
+    info.shared_pages = aspace_file_pages();
+    info.shared_refs = aspace_file_references();
+    info.shared_cross = aspace_file_cross_shares();
+#else
+    info.shared_pages = info.shared_refs = info.shared_cross = 0xffffffffUL;
+#endif
 
     n = arg2 < (LONG)sizeof(info) ? arg2 : (LONG)sizeof(info);
     svar_copy((void *)arg1, &info, n);

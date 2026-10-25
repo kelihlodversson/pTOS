@@ -31,6 +31,7 @@ obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o elfstartup.o
 obj/elfimage.o: lib/ldso/image_plan.c lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
 ELFIMAGE_ABI-$(ARCH_X86_64) = lib/ldso/arch/x32/image_abi.c
+ELFIMAGE_ABI-$(ARCH_ARM) = lib/ldso/arch/arm/image_abi.c
 obj/elfimageabi.o: $(ELFIMAGE_ABI-y) lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
 obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)
