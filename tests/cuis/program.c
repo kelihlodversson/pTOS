@@ -1,4 +1,5 @@
 /* Real standard-ELF clients, with overlapping lifetimes in distinct spaces. */
+#include "config.h"
 #include "libaes.h"
 #include "gemerror.h"
 #include "ptos.h"
@@ -66,6 +67,43 @@ static int update_checks(LONG window)
     CHECK(aes_window_destroy(occluder) == E_OK);
     return 0;
 }
+#if CONF_WITH_X86_64_MEMTEST
+static LONG raw_key_read(LONG window, UQUAD output)
+{
+    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_KEY_READ;
+    register UQUAD di __asm__("rdi") = (QUAD)window, si __asm__("rsi") = output;
+    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di), "r"(si)
+        : "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}
+#endif
+static int key_checks(LONG window)
+{
+#if CONF_WITH_X86_64_MEMTEST
+    ULONG key;
+#endif
+    CHECK(aes_window_unfocus(window) == E_OK && aes_window_focus(window) == E_OK);
+    CHECK(aes_key_read(window, (ULONG *)0) == 0);
+    CHECK(aes_key_wait(window, 0) == 0);
+    CHECK(aes_key_wait(window, -2) == EINVAL);
+    CHECK(aes_key_wait(window, 1) == 0);
+    CHECK(aes_update_begin(window) == E_OK);
+    CHECK(aes_key_wait(window, 10) == EACCDN);
+    CHECK(aes_key_wait(window, 0) == 0);
+    CHECK(aes_update_end(window) == E_OK);
+#if CONF_WITH_X86_64_MEMTEST
+    /* The boot fixture produces one translated keyboard event from the next
+     * real PIT IRQ only after this call reaches its atomic sleep path. */
+    CHECK(aes_key_wait(window, -1) == 1);
+    CHECK(aes_key_wait(window, 0) == 1);
+    CHECK(aes_key_read(window, (ULONG *)0) == EIMBA);
+    CHECK(aes_key_read(window, (ULONG *)(uintptr_t)raw_key_read) == EIMBA);
+    CHECK(raw_key_read(window, (1ULL << 32) | (uintptr_t)&key) == EIMBA);
+    CHECK(aes_key_read(window, &key) == 1 && ((key >> 16) & 0xff) == 0x25);
+    CHECK(raw_key_read(window, ~0ULL) == 0);
+#endif
+    return 0;
+}
 int main(int argc, char **argv, char **envp)
 {
     GRECT first = { 0, 0, 20, 20 }, second = { 10, 10, 20, 20 };
@@ -94,6 +132,8 @@ int main(int argc, char **argv, char **envp)
         }
         CHECK(aes_session_query(owner) == EACCDN);
         CHECK(aes_session_close(owner) == EACCDN);
+        CHECK(aes_key_read(parent_window, (ULONG *)0) == EACCDN);
+        CHECK(aes_key_wait(parent_window, 0) == EACCDN);
     }
     handle = aes_session_open();
     CHECK(handle >= 0 && aes_session_open() == handle);
@@ -175,6 +215,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(aes_window_redraw(window) == 0);
         CHECK(aes_window_configure(window, -10, 20, 100, 80) == E_OK);
     }
+    rc = key_checks(window);
+    if (rc) return rc;
     rc = libaes_drawing_checks();
     if (rc) return rc;
     CHECK(aes_update_begin(window) == E_OK);
@@ -198,7 +240,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_update_begin(window) == E_OK);
     /* Leave the reopened session to library finalization. */
     {
-        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
+        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 CUIS keyboard: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
         CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
     }
     return 77;

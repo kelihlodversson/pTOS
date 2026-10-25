@@ -410,3 +410,60 @@ until a successful request. This slice establishes the authoritative target
 for subsequent bounded input queues and atomic waits; it does not yet route
 hardware input, change legacy AES focus or add event delivery. All kernel
 focus state and paths remain under the external libaes CUIS configuration.
+
+Focused keyboard queues and atomic waits
+---------------------------------------
+CUIS adds flat keyboard calls using only RDI and RSI:
+
+ 17 KEY_READ  RDI=owned window, RSI=ULONG *key
+ 18 KEY_WAIT  RDI=owned window, RSI=sign-extended LONG timeout_ms
+
+libaes exports aes_key_read(window, key) and aes_key_wait(window, timeout_ms).
+READ returns 1 after copying one key, 0 if empty, or a negative GEMDOS error.
+WAIT returns 1 when a key is pending without consuming it, 0 on timeout, or
+a negative error. Zero milliseconds polls; -1 waits indefinitely. Other
+negative or noncanonical timeout values return EINVAL. Unused registers
+are ignored. Unknown/stale/foreign handles and unfocused windows return
+EACCDN; malformed full-width handles return EINVAL.
+
+Each window has a fixed 16-key FIFO. The existing BIOS keyboard translation
+feeds the focused window through an IRQ-safe, allocation-free producer.
+Values retain the BIOS representation: translated character in the low
+word, scan code in bits 16-23, modifier state in the high byte. Interpretation
+belongs in libaes. There is no CUIS syscall for posting synthetic keyboard
+input. Consumed keys do not also enter the legacy BIOS input queue. A full
+focused queue drops the newest key and still consumes it, preventing overflow
+from exposing another application's input to legacy consumers. With no CUIS
+focus, normal BIOS input behavior is retained.
+
+Focus transfer clears both the old and newly focused window's queues;
+release, hide, destruction and exit cannot leave stale input for a later
+focus owner. Repeating a request for the already-focused front window keeps
+its queued input. Publication/removal of the focus pointer and queue updates
+use the selected interrupt backend, so keyboard IRQs cannot retain a pointer
+to a freed window. IRQ code neither traverses client lists nor allocates.
+
+READ validates and backs writable output memory before its short queue
+transaction, then rechecks focus. Copyout failure leaves the oldest key
+queued for retry. Empty reads do not inspect the output pointer. WAIT checks
+focus, queue and deadline with interrupts masked, then uses the x32 atomic
+STI/HLT/CLI sequence to sleep and recheck. Pending input cannot land between
+an empty check and sleep without waking the caller. Entry interrupt state
+is restored on return. Positive timeouts use the 200 Hz monotonic tick with
+a guard for the current partial tick, avoiding early expiry; deadlines use
+unsigned differences so counter wraparound is supported. A queued key takes
+priority over timeout at a wake boundary.
+
+An empty blocking wait while the caller owns a display update returns
+EACCDN; zero-time polls and already-pending input remain available. This
+prevents sleeping indefinitely with the drawing update held. Focus loss
+observed after wake returns EACCDN. These waits sleep for interrupt-driven
+keyboard input in the current native execution model; they do not schedule
+another application or implement pointer/message/multi-source waits. Those
+remain later epic work. No legacy AES scheduler or userspace daemon is added.
+
+All kernel input state, BIOS hooks and the selected interrupt/wait backend
+compile only with CONF_WITH_CUIS, selected by external CONF_WITH_LIBAES.
+Kernel memtests inject one translated key from a real timer IRQ after the
+wait reaches its sleep path and verify it does not enter the BIOS queue;
+no user-callable test injection interface is exposed.

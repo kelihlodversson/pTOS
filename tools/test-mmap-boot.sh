@@ -121,6 +121,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then
         grep -q 'x32 CUIS VDI enforcement: PASS' "$log"
     fi
+    grep -q 'x32 CUIS keyboard: PASS' "$log"
     grep -q 'x32 CUIS focus: PASS' "$log"
     grep -q 'x32 CUIS clipping: PASS' "$log"
     grep -q 'x32 CUIS visibility: PASS' "$log"

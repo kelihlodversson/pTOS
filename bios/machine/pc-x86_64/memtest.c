@@ -51,12 +51,36 @@
 #include "../../../bdos/mem.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
+#include "ikbd.h"
+#include "iorec.h"
 #endif
 #if CONF_WITH_X32_VDI
 #include "lineavars.h"
 #include "screen_mode.h"
 #include "font.h"
 #include "vdi_service.h"
+#endif
+
+#if CONF_WITH_CUIS
+static BOOL cuis_input_watching, cuis_input_armed, cuis_input_legacy_clean;
+static ULONG cuis_input_injections;
+void x86_64_memtest_cuis_wait(void)
+{
+    if (cuis_input_watching && !cuis_input_injections) cuis_input_armed = TRUE;
+}
+void x86_64_memtest_cuis_tick(void)
+{
+    if (cuis_input_watching && cuis_input_armed) {
+        WORD tail = ikbdiorec.tail;
+        cuis_input_armed = FALSE;
+        cuis_input_injections++;
+        /* Deliver through the real translated keyboard producer in an IRQ,
+         * not a user-callable CUIS injection or a syscall polling hook. */
+        kbd_int(0x25);
+        kbd_int(0xa5);
+        if (ikbdiorec.tail != tail) cuis_input_legacy_clean = FALSE;
+    }
+}
 #endif
 
 extern void set_owner(void *addr, PD *p);
@@ -2190,7 +2214,15 @@ static void test_ring3(void)
         }
         vdi_service_test_watch(marker);
 #endif
+        cuis_input_watching = TRUE;
+        cuis_input_legacy_clean = TRUE;
+        cuis_input_armed = FALSE;
+        cuis_input_injections = 0;
         probe_expect(':', 0, "libaes/CUIS: nested owners, private state, geometry and fault cleanup");
+        cuis_input_watching = FALSE;
+        CHECK(cuis_input_legacy_clean, "focused keyboard input did not leak to the BIOS queue");
+        CHECK(cuis_input_injections == 1 && !cuis_input_armed,
+              "CUIS keyboard wait woke from a translated key in a real timer IRQ");
 #if CONF_WITH_X32_VDI
         CHECK(vdi_service_test_reopen(), "kernel physical reopen preserves the timer chain");
         ticks = (ULONG)hz_200;
