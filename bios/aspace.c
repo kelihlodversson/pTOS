@@ -572,7 +572,9 @@ BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot)
         return FALSE;
     }
     as->nowned++;
-    flush_if_current(as);
+    if (prot & ASPACE_PROT_EXEC)
+        aspace_hw_code_changed();       /* the zeros went in through the data side: a page */
+    flush_if_current(as);               /* that held code before must not run it again */
     return TRUE;
 }
 
@@ -644,6 +646,8 @@ int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
         p->references++;
         file_page_refs++;
         as->nowned++;
+        if (prot & ASPACE_PROT_EXEC)
+            aspace_hw_code_changed();   /* (it may have been filled through a mapping that cannot execute) */
         flush_if_current(as);
         return 1;
     }

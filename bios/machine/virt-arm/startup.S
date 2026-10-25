@@ -579,9 +579,11 @@ C_SYM(arm_dispatch_prefetch_abort):
     mov r0, #0x08
     mov r1, sp
     sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
+    FPU_PUSH_SCRATCH ip    /* the FPU registers the handler may change: the process runs again */
     ldr ip, =C_SYM(tos_vec_prefetch)
     ldr ip, [ip]
     blx ip
+    FPU_POP_SCRATCH ip
     add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
     nop                            /* (nothing may touch a banked register right after) */
@@ -600,9 +602,11 @@ C_SYM(arm_dispatch_data_abort):
     mov r0, #0x0c
     mov r1, sp
     sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
+    FPU_PUSH_SCRATCH ip    /* the FPU registers the handler may change: the process runs again */
     ldr ip, =C_SYM(tos_vec_data)
     ldr ip, [ip]
     blx ip
+    FPU_POP_SCRATCH ip
     add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
     nop                            /* (nothing may touch a banked register right after) */

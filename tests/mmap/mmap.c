@@ -74,6 +74,23 @@ static long sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
         : "r" (r1), "r" (r2), "r" (r3), "r" (r4), "r" (r5), "r" (r6)
         : "r12", "lr", "memory", "cc");
     return r0;
+#elif defined(__x86_64__)
+    /* the x32 transport (bios/arch/x86_64/trap.h): RAX = (class 1 << 32) | function, the
+     * arguments in RDI, RSI, RDX, R10, R8 and R9, each an unsigned 32-bit value */
+    register unsigned long long rax __asm__("rax") = (1ULL << 32) | (unsigned long long)(unsigned long)fn;
+    register unsigned long long rdi __asm__("rdi") = (unsigned long)a1;
+    register unsigned long long rsi __asm__("rsi") = (unsigned long)a2;
+    register unsigned long long rdx __asm__("rdx") = (unsigned long)a3;
+    register unsigned long long r10 __asm__("r10") = (unsigned long)a4;
+    register unsigned long long r8 __asm__("r8") = (unsigned long)a5;
+    register unsigned long long r9 __asm__("r9") = (unsigned long)a6;
+
+    __asm__ volatile (
+        "syscall"
+        : "+r" (rax)
+        : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10), "r" (r8), "r" (r9)
+        : "rcx", "r11", "memory");
+    return (long)(int)rax;
 #else
     return EINVFN;
 #endif
@@ -180,6 +197,56 @@ static void test_anonymous(void)
             }
         munmap(n, 3 * PAGE);
     }
+}
+
+/*
+ * Stores of each width into pages nobody has touched: the first store faults,
+ * and the CPU may have to finish it itself (the 68040 keeps the write in the
+ * frame of the fault).  Every offset in a longword, and a longword across the
+ * boundary of two untouched pages.
+ */
+static void test_first_stores(void)
+{
+    volatile unsigned char *b;
+    long m, i;
+#if defined(__mc68000__)
+    long k;
+#endif
+
+    m = mmap_anon(0L, 8 * PAGE, PROT_READ | PROT_WRITE);
+    ptest_assert_msg(m > 0, "Mmap(for the first stores) failed");
+    if (m <= 0)
+        return;
+    b = (volatile unsigned char *)m;
+
+    for (i = 0; i < 4; i++)             /* bytes: one page each, offsets 0-3 */
+        b[i * PAGE + i] = (unsigned char)(0x11 * (i + 1));
+    for (i = 0; i < 4; i++)
+        ptest_assert_msg(b[i * PAGE + i] == (unsigned char)(0x11 * (i + 1)) && b[i * PAGE + i + 1] == 0,
+                         "a byte stored into a new page is wrong");
+    for (i = 0; i < 2; i++)             /* words at offsets 0 and 2 */
+        *(volatile unsigned short *)(b + (4 + i) * PAGE + i * 2) = (unsigned short)(0xa1b2 + i);
+    for (i = 0; i < 2; i++)
+        ptest_assert_msg(*(volatile unsigned short *)(b + (4 + i) * PAGE + i * 2) == (unsigned short)(0xa1b2 + i) &&
+                         b[(4 + i) * PAGE + i * 2 + 2] == 0, "a word stored into a new page is wrong");
+    *(volatile unsigned long *)(b + 6 * PAGE + 4) = 0x01020304UL;
+    ptest_assert_msg(*(volatile unsigned long *)(b + 6 * PAGE + 4) == 0x01020304UL && b[6 * PAGE + 3] == 0 &&
+                     b[6 * PAGE + 8] == 0, "a longword stored into a new page is wrong");
+#if defined(__mc68000__)
+    /* the 68020 and later store a longword at any address: across two new pages */
+    for (k = 1; k < 4; k++)
+    {
+        volatile unsigned char *edge = b + 7 * PAGE - 4 + k;
+        long j;
+
+        for (j = -8; j < 8; j++)        /* (what the last round left) */
+            b[7 * PAGE + j] = 0;
+        *(volatile unsigned long *)(b + 7 * PAGE - 4 + k) = 0x0a0b0c0dUL + (unsigned long)k;
+        ptest_assert_msg(*(volatile unsigned long *)edge == 0x0a0b0c0dUL + (unsigned long)k &&
+                         edge[-1] == 0 && edge[4] == 0, "a longword stored across two new pages is wrong");
+    }
+#endif
+    munmap(m, 8 * PAGE);
 }
 
 static void test_reservations(void)
@@ -330,6 +397,7 @@ void test_mmap(void)
         munmap(probe, PAGE);
 
     test_anonymous();
+    test_first_stores();
     test_reservations();
     test_file();
     test_lazy_stack();

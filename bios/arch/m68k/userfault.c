@@ -93,12 +93,34 @@ extern PD *run;                         /* bdos/proc.c */
  * A write the 68040 still owes (a write-back of the frame): done now that the
  * page is there, for a user address only.  FALSE if it cannot be.
  */
-static BOOL write_back(UWORD status, ULONG address, ULONG data)
+static BOOL write_back(UWORD status, ULONG address, ULONG data, BOOL lane_aligned)
 {
     if (!(status & WB_VALID))
         return TRUE;
     if ((status & WB_TM) != 1 || address >= USER_VA_LIMIT)
         return FALSE;
+    /*
+     * The data of write-back 1 sits in the byte lanes its address selects (a
+     * byte at offset 1 in bits 23-16, a word at offset 2 in bits 15-0); the
+     * others are right-justified.  A long at an odd address is split into several
+     * bus cycles by the CPU, in a way not decoded here: the process ends.
+     */
+    if (lane_aligned) {
+        switch (status & WB_SIZE) {
+        case 0x20:
+            data >>= (3 - (address & 3)) * 8;
+            break;
+        case 0x40:
+            if (address & 1)
+                return FALSE;
+            data >>= (2 - (address & 2)) * 8;
+            break;
+        case 0x00:
+            if (address & 3)
+                return FALSE;
+            break;
+        }
+    }
     switch (status & WB_SIZE) {
     case 0x00:
         return kproc_copy_to_user(address, &data, 4);
@@ -151,11 +173,11 @@ int m68k_user_busfault(void)
     if (answer != 1)
         return 0;
     if (!write_back(*(const UWORD *)(f + F7_WB1S), *(const ULONG *)(f + F7_WB1A),
-                    *(const ULONG *)(f + F7_WB1D)) ||
+                    *(const ULONG *)(f + F7_WB1D), TRUE) ||
         !write_back(*(const UWORD *)(f + F7_WB2S), *(const ULONG *)(f + F7_WB2A),
-                    *(const ULONG *)(f + F7_WB2D)) ||
+                    *(const ULONG *)(f + F7_WB2D), FALSE) ||
         !write_back(*(const UWORD *)(f + F7_WB3S), *(const ULONG *)(f + F7_WB3A),
-                    *(const ULONG *)(f + F7_WB3D)))
+                    *(const ULONG *)(f + F7_WB3D), FALSE))
         return 0;
     return 1;
 }
