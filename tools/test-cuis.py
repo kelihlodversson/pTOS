@@ -19,9 +19,11 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
     config.syms["CONF_WITH_LIBAES"].set_value(2)
     assert (config.syms["CONF_WITH_CUIS"].str_value == "y") == available
+    assert (config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y") == available
     config.syms["CONF_WITH_ELF_SHARED"].set_value(0)
     assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
+    assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "n"
 
 with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     work = Path(temp)

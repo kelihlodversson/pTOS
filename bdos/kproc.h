@@ -91,7 +91,7 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
 #endif
 BOOL kproc_standard_entry(PD *pd);
 BOOL kproc_prepare_user(PD *pd, PD *parent);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
 void kproc_add_child_usage(PD *pd, ULONG milliseconds);
 void kproc_commit_async(PD *pd);
 BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller);

@@ -30,7 +30,7 @@
 #include "has.h"
 #if ARCH_X86_64
 #include "process.h"
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
 #endif
@@ -127,6 +127,21 @@ BOOL take_kernel_code_pd(PD *p)
     return TRUE;
 }
 #endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_NATIVE_SCHED
+static BOOL schedule_launch(PD *p)
+{
+    /* ROM entry points and explicit accessory starts retain their existing
+     * launch path. A nested Pexec already has a stable group controller. */
+    return kernel_code_pd != p && !ksched_active();
+}
+
+static LONG run_scheduled(PD *p, BOOL take_ownership)
+{
+    LONG result, rc = ksched_exec(p, take_ownership, &result);
+    return rc < 0 ? rc : result;
+}
+#endif
 
 #if CONF_WITH_PROCMEM
 static void release_pd_files(PD *r);
@@ -416,6 +431,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     ULONG hdrflags;
     LONG rc;
     LONG max;
+#if CONF_WITH_NATIVE_SCHED
+    LONG scheduled_result;
+#endif
     long needed;
     FH fh;
 
@@ -477,7 +495,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
 
         return (long)p;
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     case PE_ASYNC_GO_FREE:
         if (!ksched_spawn_allowed()) return EINVFN;
         p = (PD *)tail;
@@ -503,6 +521,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
         give_back_image(p, FALSE);      /* (a PE_GO that failed before may have asked) */
+#if CONF_WITH_NATIVE_SCHED
+        if (schedule_launch(p)) return run_scheduled(p, TRUE);
+#endif
         if (!prepare_launch(p))
             return ENSMEM;
 #endif
@@ -520,6 +541,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
         give_back_image(p, flag == PE_GO);
+#if CONF_WITH_NATIVE_SCHED
+        if (schedule_launch(p)) return run_scheduled(p, FALSE);
+#endif
         if (flag == PE_GO && !prepare_launch(p))
             return ENSMEM;
 #endif
@@ -598,7 +622,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * or the parent
      */
     owner = (flag == PE_LOADGO
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
              || flag == PE_ASYNC_LOADGO
 #endif
             ) ? p : run;
@@ -654,13 +678,14 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * more I/O errors cannot occur, so it is safe now to finish initializing
      * the new process.
      */
-    /* Anything that can still fail for lack of memory is done before
-     * init_pd_files(): that takes references on inherited files and
-     * directories, which an ENSMEM return here would otherwise leak. */
+    /* Direct launches prepare before taking inherited file/directory
+     * references. Managed launches allocate the group before preparation;
+     * their later failure path disposes these references explicitly. */
 #if CONF_WITH_USER_ASPACE
     if (flag != PE_LOAD
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
         && flag != PE_ASYNC_LOADGO
+        && !schedule_launch(cur_p)
 #endif
         && !prepare_launch(cur_p)) {
         kproc_destroy(cur_p);
@@ -681,7 +706,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     if (flag == PE_ASYNC_LOADGO) {
         rc = ksched_spawn(cur_p);
         if (rc < 0) proc_discard_accessory(cur_p);
@@ -689,6 +714,13 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     }
 #endif
     if (flag != PE_LOAD) {
+#if CONF_WITH_NATIVE_SCHED
+        if (schedule_launch(cur_p)) {
+            rc = ksched_exec(cur_p, TRUE, &scheduled_result);
+            if (rc < 0) proc_discard_accessory(cur_p);
+            return rc < 0 ? rc : scheduled_result;
+        }
+#endif
         proc_go(cur_p, 0);
 #if CONF_WITH_USER_ASPACE
         /* Returns here, unlike without CONF_WITH_USER_ASPACE (see the PE_GO case above), once
@@ -989,18 +1021,20 @@ static void proc_go(PD *p, WORD entry_type)
 }
 
 #if ARCH_X86_64
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
 LONG proc_prepare_scheduled(PD *p)
 {
     if (!kproc_unlaunched(p)) return EIMBA;
     give_back_image(p, FALSE);
     return kproc_prepare_user(p, run) ? E_OK : ENSMEM;
 }
-LONG proc_start_scheduled(PD *p)
+LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {
     if (!kproc_unlaunched(p) || !kproc_user_root(p)) return EIMBA;
-    set_owner(p, p);
-    set_owner(USERPTR_TO_PTR(p->p_env), p);
+    if (take_ownership) {
+        set_owner(p, p);
+        set_owner(USERPTR_TO_PTR(p->p_env), p);
+    }
     proc_go(p, ENTRY_PROGRAM);
     return run->p_dreg[0];
 }
@@ -1073,7 +1107,7 @@ void xterm(UWORD rc)
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     ksched_exiting(p, rc);
 #endif
 
@@ -1111,7 +1145,7 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 
     kcprintf("process fault: %s code=0x%lx addr=0x%lx pc=0x%lx sp=0x%lx\n",
              cause, (long)code, (long)address, (long)pc, (long)sp);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     ksched_fault(run, 11); /* Keep a specific CPU/paging signal if already recorded. */
 #endif
 #if CONF_WITH_USER_CALLBACKS

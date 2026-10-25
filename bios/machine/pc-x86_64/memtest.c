@@ -2176,9 +2176,10 @@ static void test_async_processes(void)
 {
     PD *program;
     LONG rc, result;
+    void *environment_block;
     static const char environment[] = { 0, 0 };
     char tail[] = { 1, 'p', 0 };
-    UWORD i;
+    UWORD i, j;
     static const char roles[] = "pozvf";
     SNAP s;
     int before = failures;
@@ -2186,24 +2187,50 @@ static void test_async_processes(void)
     for (i = 0; i < 5; i++) {
         snap(&s);
         tail[1] = roles[i];
-        rc = Pexec(PE_LOAD, "C:\\ASYNC.TOS", tail, environment);
-        CHECK(rc > 0, "load standard async process fixture");
-        if (rc <= 0) break;
-        program = (PD *)(uintptr_t)rc;
-        rc = proc_prepare_scheduled(program);
-        CHECK(rc == E_OK, "prepare async fixture");
-        if (rc == E_OK) {
-            rc = ksched_run(&program, 1, &result);
-            CHECK(rc == E_OK, "run managed async parent");
-            if (rc == E_OK) {
-                program = NULL;
-                if (result != (i == 3 ? 77 : i == 4 ? 0xffff : 0)) kcprintf("async fixture %u returned %ld\n", (unsigned)i, (long)result);
-                CHECK(result == (i == 3 ? 77 : i == 4 ? 0xffff : 0), "MiNT async launch, yield, child waits and orphan cleanup");
+        if (!i) {
+            result = Pexec(PE_LOADGO, "C:\\ASYNC.TOS", tail, environment);
+        } else {
+            rc = Pexec(PE_LOAD, "C:\\ASYNC.TOS", tail, environment);
+            CHECK(rc > 0, "load ordinary async process fixture");
+            if (rc <= 0) break;
+            program = (PD *)(uintptr_t)rc;
+            environment_block = USERPTR_TO_PTR(program->p_env);
+            result = Pexec(i == 2 ? PE_GO : PE_GOTHENFREE, NULL, (char *)program, NULL);
+            if (i == 2) {
+                CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
+                      "PE_GO keeps caller ownership after managed descendants exit");
+                CHECK(Mfree(environment_block) == E_OK && Mfree(program) == E_OK,
+                      "PE_GO retained environment and basepage remain freeable");
             }
         }
-        if (program) proc_discard_accessory(program);
+        if (result != (i == 3 ? 77 : i == 4 ? 0xffff : 0))
+            kcprintf("async fixture %u returned %ld\n", (unsigned)i, (long)result);
+        CHECK(result == (i == 3 ? 77 : i == 4 ? 0xffff : 0),
+              "ordinary Pexec bootstraps async launch, waits and orphan cleanup");
         CHECK(cuis_session_count() == sessions, "async clients' sessions are reclaimed");
-        same(&s, "async child records, task stacks, zombies and directory references reclaimed");
+        same(&s, "ordinary launch, child records, stacks, zombies and directory references reclaimed");
+    }
+    for (i = 0; i < 2; i++) {
+        for (j = 1; j <= 2; j++) {
+            snap(&s);
+            rc = Pexec(PE_LOAD, "C:\\X32HELLO.TOS", "", environment);
+            CHECK(rc > 0, "load group allocation failure fixture");
+            if (rc <= 0) break;
+            program = (PD *)(uintptr_t)rc;
+            environment_block = USERPTR_TO_PTR(program->p_env);
+            {
+                x86_64_pmem_test_fail_after(j);
+                rc = Pexec(i ? PE_GOTHENFREE : PE_GO, NULL, (char *)program, NULL);
+                x86_64_pmem_test_fail_after(0);
+                CHECK(rc == ENSMEM && !ksched_active() && kproc_unlaunched(program),
+                      "failed group allocation leaves an unlaunched caller-owned program");
+                CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
+                      "Pexec does not transfer ownership before group allocation succeeds");
+            }
+            CHECK(Mfree(environment_block) == E_OK && Mfree(program) == E_OK,
+                  "failed ordinary launch leaves both retained blocks freeable");
+            same(&s, "ordinary launch group allocation failure unwinds completely");
+        }
     }
     kcprintf("x86-64 async process calls: %s\n", failures == before ? "PASS" : "FAIL");
 }

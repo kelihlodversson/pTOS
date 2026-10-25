@@ -608,12 +608,15 @@ copyout recovery, queue bounds, ownership, readiness and timeouts.
 
 Kernel-managed native task scheduling
 -------------------------------------
-CONF_WITH_CUIS also selects the native kernel scheduler. It reuses the
+CONF_WITH_CUIS selects the hidden CONF_WITH_NATIVE_SCHED option. Generic
+process scheduling and MiNT process calls use that option, while GUI
+services retain CONF_WITH_CUIS guards. Initially Kconfig limits the native
+scheduler backend to x32 with separate address spaces. It reuses the
 existing process-context save/restore implementation, without AESPD/EVB/UDA
 state or the legacy AES dispatcher. No userspace daemon or application-facing
 CUIS scheduling syscall is introduced. Standard asynchronous calls within
-managed groups are described below. Ordinary shell/controller integration
-and full GEM appl_*/evnt_* adapters remain separate work.
+managed groups and ordinary launch integration are described below. Full
+GEM appl_*/evnt_* adapters remain separate work.
 
 The kernel-only ksched_run() accepts up to eight distinct, already prepared,
 unlaunched processes and runs the group until all tasks finish. Allocation
@@ -654,7 +657,7 @@ migrates; no new application API is required.
 
 Standard asynchronous process calls in managed groups
 ---------------------------------------------------
-With CONF_WITH_CUIS, managed x32 clients can use ordinary MiNT GEMDOS calls:
+With CONF_WITH_NATIVE_SCHED, managed x32 clients use ordinary MiNT GEMDOS calls:
 
  Pexec(100, path, tail, env)  load and asynchronously launch; return child PID
  Pexec(106, name, bp, env)    asynchronously launch/free a caller-owned loaded
@@ -666,11 +669,25 @@ With CONF_WITH_CUIS, managed x32 clients can use ordinary MiNT GEMDOS calls:
 
 These are standard process interfaces, not new libaes APIs. Pexec modes
 0/3/4/6 retain their synchronous/load behavior. Pexec(100/106) require a
-managed caller; elsewhere they return EINVFN. Entering groups from the
-ordinary shell/controller is still separate work. Mode 104 is EINVFN: its
+managed caller; elsewhere they return EINVFN. Ordinary native Pexec(0/4/6)
+starts a single-root group when none is active, so launched shells and
+applications can use async calls without custom setup. ROM/kernel-code and
+explicit accessory entry paths keep their existing launch behavior; nested
+synchronous Pexec stays in the active task. Mode 104 is EINVFN: its
 FreeMiNT shared-address-space/thread semantics must not be presented as an
 isolated process launch. No fork, signals API, stopped jobs or preemption is
-added. Syield outside a managed task is a successful no-op.
+added. Syield outside a managed task is a successful no-op. Preemption,
+Pfork and other architecture backends are follow-up #713.
+
+Ordinary group startup allocates its task array and bootstrap stack before
+transferring retained basepage/environment ownership or entering user mode.
+Pexec(4) keeps caller ownership and its existing image-return semantics;
+Pexec(6) transfers ownership only at task entry. A startup allocation failure
+leaves retained blocks freeable, and Pexec(0) cleans up its failed launch.
+The controller waits until every descendant exits, even if the root program
+has already terminated. The original root's full synchronous exit status
+is returned, independently of later orphan exits. Boot tests cover all three
+entry modes, retained blocks and failures of both group allocations.
 
 The original group slots stay reserved until group completion. Remaining
 slots admit dynamic children, including zombies, up to the eight-slot group
