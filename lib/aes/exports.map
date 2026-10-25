@@ -7,5 +7,6 @@
             aes_window_lower; aes_window_redraw;
             aes_update_begin; aes_update_end; aes_window_clip;
             aes_window_focus; aes_window_focused; aes_window_unfocus;
+            aes_key_read; aes_key_wait;
     local: *;
 };

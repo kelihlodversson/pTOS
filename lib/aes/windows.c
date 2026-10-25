@@ -66,3 +66,12 @@ LONG aes_window_unfocus(LONG window)
 {
     return cuis_call(CUIS_FOCUS_RELEASE, window);
 }
+
+LONG aes_key_read(LONG window, ULONG *key)
+{
+    return cuis_call6(CUIS_KEY_READ, (QUAD)window, (uintptr_t)key, 0, 0, 0, 0);
+}
+LONG aes_key_wait(LONG window, LONG timeout_ms)
+{
+    return cuis_call5(CUIS_KEY_WAIT, window, timeout_ms, 0, 0, 0);
+}

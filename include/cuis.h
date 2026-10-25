@@ -21,6 +21,8 @@
 #define CUIS_FOCUS_REQUEST 14UL
 #define CUIS_FOCUS_QUERY 15UL
 #define CUIS_FOCUS_RELEASE 16UL
+#define CUIS_KEY_READ 17UL
+#define CUIS_KEY_WAIT 18UL
 /* Bound each session's kernel allocations independently of available RAM. */
 #define CUIS_WINDOWS_PER_SESSION 64UL
 #endif

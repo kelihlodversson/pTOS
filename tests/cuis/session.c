@@ -13,6 +13,29 @@ static BOOL fail_allocation;
 static ULONG fail_at_allocation;
 static LONG copied[4];
 static BOOL fail_copy;
+static BOOL input_irqs = TRUE, input_bad_idle;
+static ULONG input_ticks, input_sleeps, input_inject_after;
+static BOOL input_drop_focus, input_drop_on_validate;
+UQUAD cuis_input_lock(void)
+{
+    UQUAD flags = input_irqs ? 0x200 : 0;
+    input_irqs = FALSE;
+    return flags;
+}
+void cuis_input_unlock(UQUAD flags) { input_irqs = (flags & 0x200) != 0; }
+ULONG cuis_input_ticks(void) { return input_ticks; }
+void cuis_input_test_wait(void) { }
+void cuis_input_idle(void)
+{
+    if (input_irqs) input_bad_idle = TRUE;
+    input_irqs = TRUE;
+    input_ticks++;
+    input_sleeps++;
+    if (input_inject_after && input_sleeps == input_inject_after)
+        cuis_keyboard_event(0xff123456UL);
+    if (input_drop_focus) { input_drop_focus = FALSE; set_focus(NULL); }
+    input_irqs = FALSE;
+}
 static UWORD display_width = 1024, display_height = 768;
 void screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 {
@@ -21,6 +44,10 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 }
 BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 {
+    if (input_drop_on_validate) {
+        input_drop_on_validate = FALSE;
+        set_focus(NULL);
+    }
     return size == sizeof(LONG) && address >= 0x1000 && address <= 0x100c &&
            !(address & 3);
 }
@@ -47,6 +74,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "visibility.c"
 #include "regions.c"
 #include "focus.c"
+#include "input.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -97,5 +125,7 @@ int main(void)
     rc = visibility_checks();
     if (rc) return rc;
     rc = region_checks();
-    return rc ? rc : focus_checks();
+    if (rc) return rc;
+    rc = focus_checks();
+    return rc ? rc : input_checks();
 }

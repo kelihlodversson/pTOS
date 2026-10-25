@@ -2,7 +2,7 @@
 # aes/build.mk - objects making up the AES
 #
 
-obj-$(CONF_WITH_CUIS) += cuis_session.o cuis_region.o
+obj-$(CONF_WITH_CUIS) += cuis_session.o cuis_region.o cuis_input_wait.o
 
 obj-$(CONF_WITH_X32_AES) += aes_service.o aes_image.o
 

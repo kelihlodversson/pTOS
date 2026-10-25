@@ -25,6 +25,9 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#if CONF_WITH_CUIS
+#include "../aes/cuis.h"
+#endif
 #include "country.h"
 #include "acia.h"
 #include "tosvars.h"
@@ -169,6 +172,9 @@ static void push_ikbdiorec(ULONG value)
 {
     short tail;
 
+#if CONF_WITH_CUIS
+    if (cuis_keyboard_event(value)) return;
+#endif
     KDEBUG(("KBD iorec: Pushing value 0x%08lx\n", value));
 
     tail = ikbdiorec.tail + 4;

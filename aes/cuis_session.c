@@ -2,6 +2,7 @@
 #include "emutos.h"
 #include "cuis.h"
 #include "cuis_region.h"
+#include "cuis_input.h"
 #include "screen_mode.h"
 #include "gemerror.h"
 #include "kheap.h"
@@ -9,12 +10,15 @@
 
 extern PD *run;
 
+#define CUIS_KEY_CAPACITY 16U
 typedef struct cuis_window {
     struct cuis_window *next;
     struct cuis_window *znext;
     ULONG handle;
     LONG x, y, width, height;
     BOOL visible, redraw;
+    ULONG keys[CUIS_KEY_CAPACITY];
+    UWORD key_head, key_count;
 } CUIS_WINDOW;
 
 typedef struct cuis_client {
@@ -95,6 +99,32 @@ static void damage_windows(void)
         window->redraw = TRUE;
 }
 
+/* IRQ keyboard delivery uses only the published focus pointer and its
+ * resident bounded queue. Remove that pointer before a window can be freed. */
+static void set_focus(CUIS_WINDOW *window)
+{
+    UQUAD flags = cuis_input_lock();
+    if (focus_window != window) {
+        if (focus_window) focus_window->key_head = focus_window->key_count = 0;
+        if (window) window->key_head = window->key_count = 0;
+        focus_window = window;
+    }
+    cuis_input_unlock(flags);
+}
+
+BOOL cuis_keyboard_event(ULONG key)
+{
+    UQUAD flags = cuis_input_lock();
+    CUIS_WINDOW *window = focus_window;
+    if (window && window->key_count < CUIS_KEY_CAPACITY) {
+        window->keys[(window->key_head + window->key_count) % CUIS_KEY_CAPACITY] = key;
+        window->key_count++;
+    }
+    cuis_input_unlock(flags);
+    /* A full focused queue drops the newest key, never leaks it to BIOS. */
+    return window != NULL;
+}
+
 static void unlink_visible(CUIS_WINDOW *window)
 {
     CUIS_WINDOW **link;
@@ -110,7 +140,7 @@ static void hide_window(CUIS_WINDOW *window)
     unlink_visible(window);
     window->visible = FALSE;
     window->redraw = FALSE;
-    if (focus_window == window) focus_window = window_front;
+    if (focus_window == window) set_focus(window_front);
     damage_windows();
 }
 
@@ -232,6 +262,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         window->znext = NULL;
         window->visible = FALSE;
         window->redraw = FALSE;
+        window->key_head = window->key_count = 0;
         window->x = (LONG)a; window->y = (LONG)b;
         window->width = (LONG)c; window->height = (LONG)d;
         window->next = client->windows;
@@ -297,13 +328,13 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         if (!window->visible) return EINVAL;
         if (window != window_front) return EACCDN;
         if (focus_window != window) {
-            focus_window = window;
+            set_focus(window);
             damage_windows();
         }
         break;
     case CUIS_FOCUS_RELEASE:
         if (focus_window == window) {
-            focus_window = NULL;
+            set_focus(NULL);
             damage_windows();
         }
         break;
@@ -352,4 +383,65 @@ BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
         return FALSE;
     *rect = update_clips[index];
     return TRUE;
+}
+
+/* Flat calls; only the trusted producer can submit keyboard events. */
+LONG cuis_input_service(ULONG function, UQUAD handle, UQUAD argument)
+{
+    CUIS_CLIENT *client;
+    CUIS_WINDOW *window;
+    UQUAD flags;
+    ULONG key, start, duration = 0;
+    LONG timeout;
+
+    if (function != CUIS_KEY_READ && function != CUIS_KEY_WAIT) return EINVFN;
+    if (handle > 0x7fffffffULL) return EINVAL;
+    client = *find_owner(run);
+    if (!client) return EACCDN;
+    for (window = client->windows; window && window->handle != handle;
+         window = window->next) ;
+    if (!window) return EACCDN;
+    if (function == CUIS_KEY_READ) {
+        flags = cuis_input_lock();
+        if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
+        if (!window->key_count) { cuis_input_unlock(flags); return 0; }
+        cuis_input_unlock(flags);
+        /* Back lazy/COW output memory before the short queue transaction. */
+        if (!kproc_validate_user_write(argument, sizeof(key))) return EIMBA;
+        flags = cuis_input_lock();
+        if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
+        if (!window->key_count) { cuis_input_unlock(flags); return 0; }
+        key = window->keys[window->key_head];
+        if (!kproc_copy_to_user(argument, &key, sizeof(key))) {
+            cuis_input_unlock(flags);
+            return EIMBA;
+        }
+        window->key_head = (window->key_head + 1) % CUIS_KEY_CAPACITY;
+        window->key_count--;
+        cuis_input_unlock(flags);
+        return 1;
+    }
+    timeout = (LONG)argument;
+    if (argument != (UQUAD)(QUAD)timeout || timeout < -1) return EINVAL;
+    /* Include the current partial tick so a positive timeout cannot expire
+     * early just because the next 200 Hz tick was already imminent. */
+    if (timeout > 0) duration = (ULONG)timeout / 5 + ((ULONG)timeout % 5 != 0) + 1;
+    flags = cuis_input_lock();
+    start = cuis_input_ticks();
+    for (;;) {
+        if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
+        if (window->key_count) { cuis_input_unlock(flags); return 1; }
+        if (timeout >= 0 && (ULONG)(cuis_input_ticks() - start) >= duration) {
+            cuis_input_unlock(flags);
+            return 0;
+        }
+        if (update_owner && update_owner->owner == run) {
+            cuis_input_unlock(flags);
+            return EACCDN;
+        }
+#if CONF_WITH_X86_64_MEMTEST
+        if (timeout == -1) cuis_input_test_wait();
+#endif
+        cuis_input_idle();
+    }
 }
