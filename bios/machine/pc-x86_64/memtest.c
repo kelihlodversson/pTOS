@@ -2181,6 +2181,7 @@ static void test_ring3(void)
 #if CONF_WITH_X32_VDI
         SCREEN_MODE_DESC mode;
         volatile ULONG *marker = NULL;
+        ULONG ticks, spins;
         CHECK(vdi_service_test_reset(), "first native open starts with an idle physical display");
         screen_get_current_mode_desc(&mode);
         if (mode.layout == SCREEN_LAYOUT_PACKED && mode.bits_per_pixel == 32 &&
@@ -2191,6 +2192,12 @@ static void test_ring3(void)
 #endif
         probe_expect(':', 0, "libaes/CUIS: nested owners, private state, geometry and fault cleanup");
 #if CONF_WITH_X32_VDI
+        CHECK(vdi_service_test_reopen(), "kernel physical reopen preserves the timer chain");
+        ticks = (ULONG)hz_200;
+        for (spins = 0; spins < 10000000UL && (ULONG)hz_200 == ticks; spins++)
+            __asm__ volatile ("pause");
+        CHECK((ULONG)hz_200 != ticks, "timer IRQs progress after native-to-kernel display handoff");
+        vdi_service_prepare_physical_open(); /* release the kernel reopen fixture */
         CHECK(marker && vdi_service_test_preserved(),
               "native first-open, last-close and fault cleanup preserve display pixels");
         vdi_service_test_watch(NULL);

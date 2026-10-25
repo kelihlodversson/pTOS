@@ -199,6 +199,25 @@ static void invoke(VDICONTROL *control, WORD *intin, WORD *ptsin,
     linea_vars.local_pb = saved;
 }
 
+#if CONF_WITH_CUIS
+/* Kernel/AES physical reinitialization retires the previous display without
+ * an intermediate console clear. v_clswk also frees old virtual handles and
+ * invalidates their service ownership before the new v_opnwk starts. */
+void vdi_service_prepare_physical_open(void)
+{
+    VDICONTROL control = { 0 };
+    WORD input = 0, integers[45], points[12];
+    BOOL saved_transition;
+    if (!physical_active) return;
+    saved_transition = service_transition;
+    service_transition = TRUE;
+    control.code = 2;
+    control.handle = 1;
+    invoke(&control, &input, points, integers, points);
+    service_transition = saved_transition;
+}
+#endif
+
 static void physical_open(void)
 {
 #if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
@@ -263,19 +282,41 @@ static void physical_close_if_idle(void)
  * idle display at a kernel-controlled boundary, without console transitions. */
 BOOL vdi_service_test_reset(void)
 {
-    VDICONTROL control = { 0 };
-    WORD input = 0, integers[45], points[12];
     int i;
     if (!physical_active) return TRUE;
     if (!physical_owned) return FALSE;
     for (i = 2; i <= NUM_VDI_HANDLES; i++)
         if (owners[i]) return FALSE;
-    control.code = 2;
-    control.handle = 1;
-    service_transition = TRUE;
-    invoke(&control, &input, points, integers, points);
-    service_transition = FALSE;
+    vdi_service_prepare_physical_open();
     return TRUE;
+}
+
+/* Exercise the actual kernel v_opnwk path after native clients have left
+ * the display retained. Preserve console pixels only for this fixture. */
+BOOL vdi_service_test_reopen(void)
+{
+    VDICONTROL control = { 0 };
+    WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
+    WORD integers[45], points[12];
+    void (*installed)(int), (*chain)(int);
+    ULONG saved_pixel;
+    BOOL result;
+    int i;
+    if (!physical_active || !physical_owned) return FALSE;
+    for (i = 2; i <= NUM_VDI_HANDLES; i++)
+        if (owners[i]) return FALSE;
+    installed = (void (*)(int))Setexc(0x100, -1L);
+    chain = linea_vars.tim_chain;
+    control.code = 1;
+    control.nintin = 11;
+    saved_pixel = lifecycle_before();
+    service_transition = TRUE;
+    invoke(&control, input, points, integers, points);
+    result = linea_vars.tim_chain == chain && chain != installed &&
+             (void (*)(int))Setexc(0x100, -1L) == installed;
+    service_transition = FALSE;
+    lifecycle_after(saved_pixel);
+    return result;
 }
 #endif
 

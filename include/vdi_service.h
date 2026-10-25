@@ -89,8 +89,10 @@ void vdi_service_process_exit(PD *pd);
 void vdi_service_physical_state(BOOL opened);
 #if CONF_WITH_CUIS
 BOOL vdi_service_preserve_console(void);
+void vdi_service_prepare_physical_open(void);
 #if CONF_WITH_X86_64_MEMTEST
 BOOL vdi_service_test_reset(void);
+BOOL vdi_service_test_reopen(void);
 void vdi_service_test_watch(volatile ULONG *pixel);
 BOOL vdi_service_test_preserved(void);
 #endif

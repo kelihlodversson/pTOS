@@ -573,6 +573,11 @@ void vdi_v_opnwk(Vwk * vwk)
     Vwk **p;
     WORD newrez;
 
+#if CONF_WITH_CUIS && CONF_WITH_X32_VDI
+    /* A retained native display still owns timer/mouse hooks. Uninstall
+     * them before resetting the physical workstation or installing again. */
+    vdi_service_prepare_physical_open();
+#endif
     /*
      * Programs can request a video mode switch by passing the desired
      * mode + 2 in INTIN[0].

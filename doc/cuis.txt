@@ -360,7 +360,14 @@ when the last client closes, fails to open a virtual handle, exits or faults.
 Client cleanup still frees every owned virtual workstation and callback.
 
 The kernel display/legacy AES path retains responsibility for explicit
-physical-workstation and console transitions. A native screenshot client can
+physical-workstation and console transitions. Before reopening an active
+physical workstation, a production handoff closes the old workstation
+without an intermediate console clear. This removes timer/mouse hooks and
+invalidates old virtual handles before installing new hooks, preventing
+the timer from chaining to itself. Native clients must reopen virtual
+handles after a kernel physical-display reinitialization.
+
+A native screenshot client can
 open a virtual workstation and read the whole screen during another client's
 update without clearing the display or switching console mode. Kernel-only
 memtest fixtures can explicitly reset an idle service-owned physical
