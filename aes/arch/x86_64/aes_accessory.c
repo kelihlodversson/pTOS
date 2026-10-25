@@ -127,6 +127,11 @@ void x86_64_aes_setup(AESPD *pd, PD *accessory)
         pd->p_flags = 0;
     x86_64_process_save(&c->context);
     x86_64_process_restore(&c->context);
+#if CONF_WITH_NATIVE_SCHED
+    /* A new AES coroutine is independent of the task setting it up. Keep
+     * the caller's identity above, but enter the accessory as unmanaged. */
+    if (accessory) c->context.native_task = 0;
+#endif
 }
 
 void x86_64_aes_save(void)

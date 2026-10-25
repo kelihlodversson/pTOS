@@ -12,7 +12,7 @@
 #include "fs.h"
 #include "gemerror.h"
 #include "kproc.h"
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
 #if CONF_WITH_CUIS
@@ -102,7 +102,7 @@ struct kproc {
     UBYTE *user_end;
     ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     PD *async_parent;           /* stable controller for exit, not logical PPID */
 #endif
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
@@ -181,7 +181,7 @@ static WORD new_pid(void)
             if (k->pid == pid)
                 break;
         if (!k
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
             && !ksched_pid_reserved(pid)
 #endif
         ) return pid;
@@ -342,7 +342,7 @@ WORD kproc_pid(PD *pd)
 WORD kproc_parent_pid(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     WORD pid;
     if (ksched_parent_pid(pd, &pid)) return pid;
 #endif
@@ -576,7 +576,7 @@ static BOOL prepare_failed(KPROC *kproc, ASPACE *as)
     return FALSE;
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
 void kproc_add_child_usage(PD *pd, ULONG milliseconds)
 {
     KPROC *kproc = kproc_find(pd);
@@ -667,7 +667,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
                                    kproc->has_image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
                                                 : ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
         !aspace_map_procmem(as, (UQUAD)(uintptr_t)
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
                                    (kproc->async_parent ? kproc->async_parent : parent),
 #else
                                    parent,
@@ -1823,7 +1823,7 @@ static void lazy_oom(void)
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     x86_64_memtest_callback_lazy_oom();
 #endif
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     ksched_fault(run, 9); /* SIGKILL, as for a user-mode paging failure */
 #endif
 #if CONF_WITH_USER_CALLBACKS
@@ -1880,7 +1880,7 @@ static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
         if (rc != 1) {
             if (rc == 3) {
                 kcprintf("process: file mapping I/O error\n");
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
                 ksched_fault(run, 10); /* SIGBUS */
 #endif
                 xterm((UWORD)-1);

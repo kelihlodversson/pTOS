@@ -287,7 +287,7 @@ static long pexec_ok(const long *pw)
     long rc;
 
     if (mode == 4 || mode == 6
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
         || mode == PE_ASYNC_GO_FREE
 #endif
     ) {
@@ -300,7 +300,7 @@ static long pexec_ok(const long *pw)
         return E_OK;
     }
     if (mode == 0 || mode == 3
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
         || mode == PE_ASYNC_LOADGO
 #endif
     ) {

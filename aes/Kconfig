@@ -11,6 +11,8 @@ menu "AES"
 
 config CONF_WITH_CUIS
     bool
+    depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    select CONF_WITH_NATIVE_SCHED
 
 config CONF_WITH_LIBAES
     bool "Experimental userspace libaes.so and CUIS foundation"

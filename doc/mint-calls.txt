@@ -175,7 +175,7 @@ Private mapping extensions (#660)
 Not in this issue
 -----------------
 
-Pfork/signals, general multitasking outside managed CUIS groups, MiNT file
+Pfork/signals, preemptive multitasking, MiNT file
 systems and device drivers
 (Dcntl, XFS), networking.
 
@@ -192,9 +192,11 @@ Groups and their PRs
 
 Managed x32 asynchronous process calls (#711)
 --------------------------------------------
-Under external libaes/CUIS, kernel-managed native task groups support
+With CONF_WITH_NATIVE_SCHED (initially selected by external libaes/CUIS),
+kernel-managed native task groups support
 Pexec(100/106), Syield (0xff), Pwait (0x109), Pwait3 (0x11c), and Pwaitpid
-(0x13a). Ordinary synchronous Pexec is unchanged. Async launch outside a
+(0x13a). Ordinary native Pexec(0/4/6) bootstraps a group when needed,
+retaining its synchronous return and ownership semantics. Async launch outside a
 managed group, Pexec(104)'s shared-address-space mode, process-group wait
 selectors, and signal/job-control APIs remain unsupported. See doc/cuis.txt
 for precise ownership, wait flags/status/usage, PID reservation, orphan

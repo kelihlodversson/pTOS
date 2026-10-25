@@ -20,7 +20,7 @@
 #include "kproc.h"
 #include "bdosstub.h"
 #include "mintproc.h"
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
 
@@ -147,7 +147,7 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     *handled = TRUE;
     switch (fn)
     {
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     case GEMDOS_SYIELD: return ksched_yield();
     case GEMDOS_PWAIT: return ksched_wait(-1, 2, 0);
     case GEMDOS_PWAIT3: return ksched_wait(-1, ARG_W(1), ARG_P(2));
