@@ -2182,6 +2182,8 @@ static void test_cuis_scheduler(void)
     UWORD mode, i;
     SNAP s;
     int before = failures;
+    ULONG sessions = cuis_session_count(), windows = cuis_window_count();
+    BOOL focused = cuis_focus_active(), pointing = cuis_pointer_attached();
 
     for (mode = 0; mode < 3; mode++) {
         snap(&s);
@@ -2210,6 +2212,7 @@ static void test_cuis_scheduler(void)
             }
             run = root;
             CHECK(ksched_run(programs, 0, results) == EINVAL, "scheduler rejects empty groups");
+            CHECK(ksched_run(programs, KSCHED_LIMIT + 1, results) == EINVAL, "scheduler enforces its task bound");
             {
                 PD *duplicate[2] = { programs[0], programs[0] };
                 CHECK(ksched_run(duplicate, 2, results) == EINVAL, "scheduler rejects duplicate programs");
@@ -2231,6 +2234,9 @@ static void test_cuis_scheduler(void)
         }
         for (i = 0; i < 2; i++) if (programs[i]) proc_discard_accessory(programs[i]);
         CHECK(run == root, "scheduler restores its launcher's process context");
+        CHECK(cuis_session_count() == sessions && cuis_window_count() == windows &&
+              cuis_focus_active() == focused && cuis_pointer_attached() == pointing,
+              "scheduler exits retire sessions, windows, focus and pointer targets");
         same(&s, "CUIS scheduler task stacks, sessions and process resources reclaimed");
     }
     kcprintf("x86-64 CUIS scheduler: %s\n", failures == before ? "PASS" : "FAIL");
