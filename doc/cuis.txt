@@ -611,8 +611,9 @@ Kernel-managed native task scheduling
 CONF_WITH_CUIS also selects the native kernel scheduler. It reuses the
 existing process-context save/restore implementation, without AESPD/EVB/UDA
 state or the legacy AES dispatcher. No userspace daemon or application-facing
-CUIS scheduling syscall is introduced. Normal GEM/MiNT asynchronous launch
-and full GEM appl_*/evnt_* adapters remain separate integration work.
+CUIS scheduling syscall is introduced. Standard asynchronous calls within
+managed groups are described below. Ordinary shell/controller integration
+and full GEM appl_*/evnt_* adapters remain separate work.
 
 The kernel-only ksched_run() accepts up to eight distinct, already prepared,
 unlaunched processes and runs the group until all tasks finish. Allocation
@@ -621,8 +622,9 @@ consumes them and returns each exit status. Every task gets a private kernel
 bootstrap stack, separate from its process's syscall stack; both outlive
 suspended continuations and are reclaimed only from another live stack.
 The synchronous group launcher stays alive until every task exits, so its
-children never retain a freed parent. No detached/orphan process semantics
-are added by this primitive.
+children never retain a freed parent. Dynamic children use the standard
+process calls described below; the kernel group controller stays alive until
+every descendant finishes.
 
 CUIS keyboard, combined event and session-message waits publish a bounded
 kernel-state predicate while IRQs are masked and suspend the current task.
@@ -639,8 +641,8 @@ stacks, saved user RSP, GS syscall state, launch nesting, disk-error recovery
 buffer, FPU/SSE state and IRQ state. A nested synchronous Pexec stays in the
 same task and may itself block in CUIS; child exit/fault returns through its
 normal launch continuation. Scheduling is cooperative at blocking CUIS
-waits. Busy clients are not preempted, and no public async Pexec mode, waitpid
-or process-reparenting behavior is claimed yet.
+waits, child waits and explicit Syield calls. Busy clients are not preempted
+and still require cooperative scheduling points.
 
 Boot fixtures run two isolated standard-ELF/libaes clients through 64 message
 exchanges, with private data/library state and SSE checks. They also exercise
@@ -649,6 +651,75 @@ exit, _Exit, faults, group bounds/duplicate rejection, allocation failure
 before launch and exact allocator/resource reclamation. Test-only kernel
 bootstrap messages supply known peer handles until application discovery
 migrates; no new application API is required.
+
+Standard asynchronous process calls in managed groups
+---------------------------------------------------
+With CONF_WITH_CUIS, managed x32 clients can use ordinary MiNT GEMDOS calls:
+
+ Pexec(100, path, tail, env)  load and asynchronously launch; return child PID
+ Pexec(106, name, bp, env)    asynchronously launch/free a caller-owned loaded
+                            basepage; return child PID (name/env unused)
+ Syield()            0x0ff  cooperatively run another ready task, return E_OK
+ Pwait()             0x109  Pwaitpid(-1, 2, NULL)
+ Pwait3(flags, usage) 0x11c  Pwaitpid(-1, flags, usage)
+ Pwaitpid(pid, flags, usage) 0x13a
+
+These are standard process interfaces, not new libaes APIs. Pexec modes
+0/3/4/6 retain their synchronous/load behavior. Pexec(100/106) require a
+managed caller; elsewhere they return EINVFN. Entering groups from the
+ordinary shell/controller is still separate work. Mode 104 is EINVFN: its
+FreeMiNT shared-address-space/thread semantics must not be presented as an
+isolated process launch. No fork, signals API, stopped jobs or preemption is
+added. Syield outside a managed task is a successful no-op.
+
+The original group slots stay reserved until group completion. Remaining
+slots admit dynamic children, including zombies, up to the eight-slot group
+bound. A full group returns EAGAIN; allocation failure returns ENSMEM. Mode
+100 unwinds a failed load/launch completely. Mode 106 transfers ownership
+only after successful preparation; pre-publication failure leaves its
+basepage/environment with the caller. As with existing image-adoption
+failures, a preparation failure may invalidate the loaded image, but retained
+blocks remain freeable. A successful launch revokes the loader's mappings
+of the child's basepage/environment before returning, so it cannot rewrite
+those blocks or free them while the child runs.
+
+Pwaitpid currently accepts a positive child PID or -1 for any direct child.
+Process-group selectors (0 and values below -1) return EINVFN until process
+groups exist. Flag bit 0 is WNOHANG: return 0 when matching children exist but
+none has exited. Bit 1 is accepted; there are no stopped children to report.
+Unknown flag bits return EINVAL. With no matching unreaped child, return
+EFILNF, as documented for MiNT. A blocking wait suspends only this task.
+
+On success, the PID occupies bits 16-31 and native MiNT status occupies bits
+0-15: normal Pterm status is narrowed to its low eight bits; CPU/process
+faults report the terminating signal number in bits 8-15. This is MiNT's raw
+format, not the POSIX byte order used by a libc wrapper. Optional usage is
+two 32-bit LONGs (user/kernel milliseconds), using the existing approximate
+process-usage accounting, with system time zero. Invalid output returns
+EIMBA without consuming the zombie, and successful copy/reaping happens once.
+Reaped child usage is charged to the waiting parent. No pointer is inspected
+when there is no status to return.
+
+A child PID remains reserved after KPROC destruction until reaping or orphan
+cleanup, preventing PID reuse from aliasing an unread status. Logical parent
+identity is separate from its kernel launch continuation: Pgetppid reports
+the spawning process while it lives, then the long-lived group controller.
+Only a read-only ancestor snapshot retains historical parent information;
+the child's supervisor exit mapping pins the controller, not the original
+parent. Parent exit clears ownership of live children and zombies. Orphans
+continue running and are automatically reclaimed on exit. The group returns
+only after all runnable/blocked descendants finish; no freed parent basepage
+is used as an exit continuation.
+
+Boot fixtures exercise asynchronous return, Pgetppid, explicit yield,
+blocking/nonblocking/any-child waits, one-time reaping, normal/raw/fault
+status, invalid and read-only usage outputs, loaded-basepage ownership and
+mapping revocation (Maccess), group exhaustion with freeable unlaunched
+blocks, slot reuse, nested or raw-image launch, normal/raw/fault parent exit, and abandoned
+zombies. With native VDI callbacks enabled, a parent invokes its blocked
+child's callback, survives the child's UD2 fault, then reaps SIGILL after
+the child's deferred termination. Every cycle checks process/task memory,
+file/directory references and CUIS sessions.
 
 Final configuration cutover
 ---------------------------

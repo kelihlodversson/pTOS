@@ -13,6 +13,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "config.h"
 #include "portab.h"
 #include "io.h"
 #include "earlycon.h"
@@ -150,6 +151,11 @@ extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
 /* bdos/arch/x86_64/rwa.c */
 extern int x86_64_demand_page(UQUAD address, UQUAD error_code);
 
+#if CONF_WITH_CUIS
+#include "ksched.h"
+extern PD *run;
+#endif
+
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
     /*
@@ -162,6 +168,9 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 
         if (answer == 1)
             return;
+#if CONF_WITH_CUIS
+        if (answer == 2 || answer == 3) ksched_fault(run, answer == 3 ? 10 : 9);
+#endif
         if (answer == 3)
             proc_fault("file mapping I/O error", frame->error_code,
                        x86_64_read_cr2(), frame->rip, frame->rsp);
@@ -179,9 +188,16 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
      * swap GS, and ring 3 runs with the "no user context" GS state.)
      */
     if ((frame->cs & 3) == 3 && frame->vector != 2 /* NMI */ &&
-        frame->vector != 8 /* #DF */ && frame->vector != 18 /* #MC */)
+        frame->vector != 8 /* #DF */ && frame->vector != 18 /* #MC */) {
+#if CONF_WITH_CUIS
+        ksched_fault(run, frame->vector == 6 ? 4 :
+            (frame->vector == 1 || frame->vector == 3) ? 5 :
+            (frame->vector == 0 || frame->vector == 16 || frame->vector == 19) ? 8 :
+            frame->vector == 17 ? 10 : 11);
+#endif
         proc_fault(vector_names[frame->vector], frame->error_code,
                    frame->vector == 14 ? x86_64_read_cr2() : 0, frame->rip, frame->rsp);
+    }
 
     earlycon_puts("\npanic: exception ");
     earlycon_puthex(frame->vector);

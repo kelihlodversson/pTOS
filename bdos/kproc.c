@@ -13,6 +13,9 @@
 #include "gemerror.h"
 #include "kproc.h"
 #if CONF_WITH_CUIS
+#include "ksched.h"
+#endif
+#if CONF_WITH_CUIS
 #include "../aes/cuis.h"
 #endif
 #include "mem.h"
@@ -99,6 +102,9 @@ struct kproc {
     UBYTE *user_end;
     ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
+#if CONF_WITH_CUIS
+    PD *async_parent;           /* stable controller for exit, not logical PPID */
+#endif
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
 #if CONF_WITH_ELF_SHARED
@@ -174,8 +180,11 @@ static WORD new_pid(void)
         for (k = kproc_list; k; k = k->next)
             if (k->pid == pid)
                 break;
-        if (!k)
-            return pid;
+        if (!k
+#if CONF_WITH_CUIS
+            && !ksched_pid_reserved(pid)
+#endif
+        ) return pid;
     }
 }
 
@@ -333,6 +342,10 @@ WORD kproc_pid(PD *pd)
 WORD kproc_parent_pid(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
+#if CONF_WITH_CUIS
+    WORD pid;
+    if (ksched_parent_pid(pd, &pid)) return pid;
+#endif
 
     return (kproc && kproc->parent) ? kproc_pid(kproc->parent) : 0;
 }
@@ -563,6 +576,35 @@ static BOOL prepare_failed(KPROC *kproc, ASPACE *as)
     return FALSE;
 }
 
+#if CONF_WITH_CUIS
+void kproc_add_child_usage(PD *pd, ULONG milliseconds)
+{
+    KPROC *kproc = kproc_find(pd);
+    if (kproc) kproc->child_ticks += milliseconds / (1000UL / CLOCKS_PER_SEC);
+}
+
+void kproc_commit_async(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+    /* Preparation has validated these allocation identities. Revoke the
+     * loader's mappings before it can run alongside the child or rewrite
+     * the child's basepage/environment after ownership is transferred. */
+    kproc->creator = NULL;
+    procmem_set_owner(kproc->env_start, pd);
+    procmem_set_owner(kproc->user_start, pd);
+    kproc_unborrow(kproc->env_start);
+    kproc_unborrow(kproc->user_start);
+}
+
+BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller)
+{
+    KPROC *kproc = kproc_find(pd);
+    if (!kproc || kproc->started || kproc->aspace) return FALSE;
+    kproc->async_parent = controller;
+    return kproc_prepare_user(pd, parent);
+}
+#endif
+
 BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
@@ -624,7 +666,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         !aspace_map_procmem(as, tpa, hitpa - tpa,
                                    kproc->has_image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
                                                 : ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
-        !aspace_map_procmem(as, (UQUAD)(uintptr_t)parent, sizeof(PD),
+        !aspace_map_procmem(as, (UQUAD)(uintptr_t)
+#if CONF_WITH_CUIS
+                                   (kproc->async_parent ? kproc->async_parent : parent),
+#else
+                                   parent,
+#endif
+                                   sizeof(PD),
                                    ASPACE_PROT_WRITE)) {
         return prepare_failed(kproc, as);
     }
@@ -1775,6 +1823,9 @@ static void lazy_oom(void)
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     x86_64_memtest_callback_lazy_oom();
 #endif
+#if CONF_WITH_CUIS
+    ksched_fault(run, 9); /* SIGKILL, as for a user-mode paging failure */
+#endif
 #if CONF_WITH_USER_CALLBACKS
     user_callback_fault();
 #endif
@@ -1827,7 +1878,13 @@ static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
             (!write || (prot & ASPACE_PROT_WRITE))) continue;
         rc = back_page(kproc, page, write ? ASPACE_PROT_WRITE : 0);
         if (rc != 1) {
-            if (rc == 3) { kcprintf("process: file mapping I/O error\n"); xterm((UWORD)-1); }
+            if (rc == 3) {
+                kcprintf("process: file mapping I/O error\n");
+#if CONF_WITH_CUIS
+                ksched_fault(run, 10); /* SIGBUS */
+#endif
+                xterm((UWORD)-1);
+            }
             lazy_oom();
         }
     }

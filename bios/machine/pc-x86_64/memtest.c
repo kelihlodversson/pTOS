@@ -2172,6 +2172,42 @@ static void test_vdi_padded_pitch(void)
 #endif
 
 #if CONF_WITH_CUIS
+static void test_async_processes(void)
+{
+    PD *program;
+    LONG rc, result;
+    static const char environment[] = { 0, 0 };
+    char tail[] = { 1, 'p', 0 };
+    UWORD i;
+    static const char roles[] = "pozvf";
+    SNAP s;
+    int before = failures;
+    ULONG sessions = cuis_session_count();
+    for (i = 0; i < 5; i++) {
+        snap(&s);
+        tail[1] = roles[i];
+        rc = Pexec(PE_LOAD, "C:\\ASYNC.TOS", tail, environment);
+        CHECK(rc > 0, "load standard async process fixture");
+        if (rc <= 0) break;
+        program = (PD *)(uintptr_t)rc;
+        rc = proc_prepare_scheduled(program);
+        CHECK(rc == E_OK, "prepare async fixture");
+        if (rc == E_OK) {
+            rc = ksched_run(&program, 1, &result);
+            CHECK(rc == E_OK, "run managed async parent");
+            if (rc == E_OK) {
+                program = NULL;
+                if (result != (i == 3 ? 77 : i == 4 ? 0xffff : 0)) kcprintf("async fixture %u returned %ld\n", (unsigned)i, (long)result);
+                CHECK(result == (i == 3 ? 77 : i == 4 ? 0xffff : 0), "MiNT async launch, yield, child waits and orphan cleanup");
+            }
+        }
+        if (program) proc_discard_accessory(program);
+        CHECK(cuis_session_count() == sessions, "async clients' sessions are reclaimed");
+        same(&s, "async child records, task stacks, zombies and directory references reclaimed");
+    }
+    kcprintf("x86-64 async process calls: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
 static void test_cuis_scheduler(void)
 {
     PD *programs[2], *root = run;
@@ -2397,6 +2433,7 @@ static void test_ring3(void)
         kcprintf("x86-64 CUIS sessions: %s\n", failures == before ? "PASS" : "FAIL");
     }
     test_cuis_scheduler();
+    test_async_processes();
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");
 #endif
