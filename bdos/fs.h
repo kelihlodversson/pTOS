@@ -167,13 +167,18 @@ typedef struct
                          * long: this mirrors FCB's own on-disk
                          * 32-bit field (see FCB's own comment),
                          * not a native-width value              */
+#if CONF_WITH_FAT_FILE_LIFETIMES
     CLNO o_reclaim_next; /* saved FAT successor during unlink reclamation */
+#endif
 } OPT_PACKED DFD;
 
 
 /*
  * bit usage in o_flag
  */
+#if !CONF_WITH_FAT_FILE_LIFETIMES
+#define O_INHERITED 32 /* identity shared with another process; deletion refused */
+#endif
 #define O_DIRTY     1   /* contents have changed, FCB on disk must be updated */
 #define O_UNLINKED  2   /* directory entry removed; reclaim at last reference */
 #define O_CLOSING 16 /* reclamation started: public I/O and new pins refused */
@@ -491,8 +496,13 @@ long ixclose(OFD *fd, int part);
 BOOL ofd_hold(OFD *fd);
 #endif
 OFD *ofd_find(DND *dn, long pos);
+#if CONF_WITH_FAT_FILE_LIFETIMES
 void ofd_reap(void);
 BOOL ofd_cluster_pending(DND *dn, CLNO cluster);
+#else
+#define ofd_reap() ((void)0)
+#define ofd_cluster_pending(dn, cluster) FALSE
+#endif
 long ofd_put(OFD *fd);
 void ofd_invalidate_drive(DMD *dm);
 

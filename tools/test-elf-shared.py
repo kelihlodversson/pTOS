@@ -235,6 +235,19 @@ class Metadata(unittest.TestCase):
                           "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c",
                           "-Wl,--gc-sections", "-o", str(binary)])
                 run([str(binary)])
+                if not pins:
+                    config.write_text(text + "\nCONF_WITH_FAT_FILE_LIFETIMES=n\n")
+                    run([sys.executable, str(ROOT / "tools/genconfig.py"),
+                         "--kconfig", "Kconfig", "--config", str(config),
+                         "--header", str(self.path / "autoconf.h"),
+                         "--makefile", str(self.path / "auto.conf")])
+                binary = self.path / "mkdir-full"
+                run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
+                          "-ffunction-sections", "-fdata-sections", "-fno-builtin",
+                          "-I" + str(self.path), "-Iinclude", "-Iinclude/arch/x86_64",
+                          "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/mkdir_full.c",
+                          "-Wl,--gc-sections", "-o", str(binary)])
+                run([str(binary)])
             binary = self.path / "backing-reclaim"
             run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                       "-ffunction-sections", "-fdata-sections", "-fno-builtin",
