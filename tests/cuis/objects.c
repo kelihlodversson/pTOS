@@ -27,6 +27,13 @@ int libaes_object_checks(void)
     fixture(tree);
     CHECK(objc_offset(tree, 0, &x, &y) == 1 && x == 10 && y == 20);
     CHECK(objc_offset(tree, 4, &x, &y) == 1 && x == 28 && y == 47);
+    CHECK(objc_offset(tree, 1, &tree[1].ob_x, &tree[1].ob_y) == 1);
+    CHECK(tree[1].ob_x == 15 && tree[1].ob_y == 26);
+    fixture(tree);
+    CHECK(objc_offset(tree, 4, &tree[0].ob_x, &tree[0].ob_y) == 1);
+    CHECK(tree[0].ob_x == 28 && tree[0].ob_y == 47);
+    fixture(tree);
+    CHECK(objc_offset(tree, 4, &x, &x) == 1 && x == 47);
     CHECK(objc_delete(tree, 2) == 1);
     CHECK(tree[0].ob_head == 1 && tree[0].ob_tail == 3 && tree[1].ob_next == 3);
     CHECK(tree[2].ob_head == 4 && tree[2].ob_tail == 5 && tree[5].ob_next == 2);

@@ -21,7 +21,11 @@ WORD objc_order(OBJECT *tree, WORD object, WORD position)
 }
 WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y)
 {
+    WORD local_x, local_y;
+
     if (object < ROOT) return 0;
-    ob_offset(tree, object, x, y);
+    ob_offset(tree, object, &local_x, &local_y);
+    *x = local_x;
+    *y = local_y;
     return 1;
 }
