@@ -6,7 +6,8 @@ import sys
 
 path = Path(sys.argv[1])
 image = bytearray(path.read_bytes())
-assert image[:4] == b'\x7fELF' and image[4] == 1 and image[5] in (1, 2), 'not an ELF32 object'
+if not (image[:4] == b'\x7fELF' and image[4] == 1 and image[5] in (1, 2)):
+    raise AssertionError('not an ELF32 object of a known byte order')    # (not an assert statement: python -O would skip it)
 end = '<' if image[5] == 1 else '>'      # the byte order of the object (EI_DATA)
 phoff = struct.unpack_from(end + 'I', image, 28)[0]
 phnum = struct.unpack_from(end + 'H', image, 44)[0]

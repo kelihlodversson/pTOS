@@ -43,7 +43,7 @@ static void meminfo(unsigned long *free_pages, unsigned long *processes)
 /* ptest_assert_msg() with the result in the message: "<what> (<rc>)" */
 static void expect(int ok, const char *what, long rc)
 {
-    static char text[96];
+    static char text[160];
     unsigned long v = rc < 0 ? 0UL - (unsigned long)rc : (unsigned long)rc;   /* (defined for LONG_MIN too) */
     char digits[24];
     int n = 0, m = 0;
@@ -53,7 +53,9 @@ static void expect(int ok, const char *what, long rc)
         ptest_assert(1);
         return;
     }
-    while (what[n] && n < 80)
+    /* what is cut where 31 bytes remain for " (", a sign, at most 20 digits (a 64-bit long),
+     * ")" and the end: the longest tail is 25 */
+    while (what[n] && n < (int)sizeof(text) - 32)
     {
         text[n] = what[n];
         n++;
