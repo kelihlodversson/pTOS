@@ -186,3 +186,34 @@ DT_NEEDED libaes.so, rather than defining GEM trap wrappers for them.
 Internal desktop geometry helpers use the same extracted core. Other
 AES operations continue through the existing adapters during migration.
 Static desktops and builds without libaes retain their existing bindings.
+
+Native window metadata (external libaes only)
+-------------------------------------------
+CUIS class 0x103 now reserves these flat-register calls:
+
+  3 CREATE     RDI=x, RSI=y, RDX=width, R10=height
+  4 CONFIGURE  RDI=window, RSI=x, RDX=y, R10=width, R8=height
+  5 DESTROY    RDI=window
+
+CREATE returns a non-negative window handle or a negative GEMDOS error.
+CONFIGURE and DESTROY return zero or a negative GEMDOS error. Unused slots
+are ignored. The current process must have an open CUIS session; a session
+handle is not repeated in these calls. Window and session handles occupy
+separate namespaces. libaes exports aes_window_create/configure/destroy;
+these native calls do not yet implement the GEM wind_* API.
+
+Window handles are never recycled during a boot. Only the owning process
+may configure or destroy a window. A missing session, unknown/stale handle
+or foreign window returns EACCDN; malformed active register slots return
+EINVAL. A maximum of 64 windows per session bounds kernel allocations;
+quota, allocation and handle exhaustion return ENSMEM without consuming a
+handle. Closing a session or exiting/faulting frees all its windows.
+
+Geometry arguments are sign-extended 32-bit integers. Origins may be negative;
+extents must be positive and the exclusive right/bottom edges must fit in a
+signed 32-bit integer. Invalid configuration leaves the old geometry intact.
+These windows are metadata only: creation does not show a window, draw or
+change focus. Visibility, Z-order, clipping, redraw and event delivery remain
+subsequent epic work. No legacy AES window state is changed by these calls.
+All new kernel paths compile only with CONF_WITH_CUIS, selected by the
+external CONF_WITH_LIBAES feature.

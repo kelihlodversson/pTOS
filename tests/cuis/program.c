@@ -23,9 +23,10 @@ static LONG raw(ULONG function, UQUAD handle)
 int main(int argc, char **argv, char **envp)
 {
     GRECT first = { 0, 0, 20, 20 }, second = { 10, 10, 20, 20 };
-    LONG handle;
-    ULONG owner = 0;
-    char tail[] = { 9, 'c', '0', '0', '0', '0', '0', '0', '0', '0', 0 };
+    LONG handle, window;
+    ULONG owner = 0, parent_window = 0;
+    char tail[] = { 17, 'c', '0', '0', '0', '0', '0', '0', '0', '0',
+                    '0', '0', '0', '0', '0', '0', '0', '0', 0 };
     static const char digits[] = "0123456789abcdef";
     int i, rc;
     (void)envp;
@@ -40,6 +41,11 @@ int main(int argc, char **argv, char **envp)
             CHECK((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
             owner = (owner << 4) | (c <= '9' ? c - '0' : c - 'a' + 10);
         }
+        for (i = 9; i <= 16; i++) {
+            char c = argv[1][i];
+            CHECK((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+            parent_window = (parent_window << 4) | (c <= '9' ? c - '0' : c - 'a' + 10);
+        }
         CHECK(aes_session_query(owner) == EACCDN);
         CHECK(aes_session_close(owner) == EACCDN);
     }
@@ -51,9 +57,17 @@ int main(int argc, char **argv, char **envp)
     CHECK(raw(CUIS_SESSION_END, ~0ULL) == EINVAL);
     CHECK(aes_session_query(-1) == EINVAL);
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
+    window = aes_window_create(-10, 20, 100, 80);
+    CHECK(window >= 0);
+    CHECK(aes_window_configure(window, -20, 30, 120, 90) == E_OK);
+    CHECK(aes_window_configure(window, 1, 2, 3, 0) == EINVAL);
+    CHECK(aes_window_destroy(-1) == EINVAL);
+    CHECK(aes_window_create(0x7fffffffL, 0, 1, 1) == EINVAL);
     CHECK(rc_intersect(&first, &second) && second.g_x == 10 && second.g_y == 10 &&
           second.g_w == 10 && second.g_h == 10 && inside(19, 19, &second));
     if (argc == 2) {
+        CHECK(aes_window_destroy(parent_window) == EACCDN);
+        CHECK(aes_window_configure(parent_window, 0, 0, 1, 1) == EACCDN);
         CHECK((ULONG)handle != owner && aes_session_query(owner) == EACCDN);
         if (argv[1][0] == 'o') {
             WORD x, y;
@@ -65,16 +79,25 @@ int main(int argc, char **argv, char **envp)
         return 77;             /* libaes destructor closes the child session */
     }
     for (i = 0; i < 8; i++) tail[2 + i] = digits[((ULONG)handle >> ((7 - i) * 4)) & 15];
+    for (i = 0; i < 8; i++) tail[10 + i] = digits[((ULONG)window >> ((7 - i) * 4)) & 15];
     for (i = 0; i < 4; i++) {
         tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : i == 2 ? 'f' : 'o';
         CHECK(client_pexec(argv[0], tail, "") == (i >= 2 ? 0xffff : 77));
         CHECK(aes_session_query(handle) == E_OK);
+        CHECK(aes_window_configure(window, -10, 20, 100, 80) == E_OK);
     }
+    CHECK(aes_window_destroy(window) == E_OK);
+    CHECK(aes_window_destroy(window) == EACCDN);
+    window = aes_window_create(0, 0, 10, 10);
+    CHECK(window >= 0);
     CHECK(aes_session_close(handle) == E_OK);
+    CHECK(aes_window_destroy(window) == EACCDN);
     CHECK(aes_session_close(handle) == EACCDN);
     CHECK(aes_session_query(handle) == EACCDN);
     CHECK(aes_session_open() > handle);
     CHECK(aes_session_query(handle) == EACCDN);
+    CHECK(aes_window_destroy(window) == EACCDN);
+    CHECK(aes_window_create(0, 0, 10, 10) > window);
     /* Leave the reopened session to library finalization. */
     {
         static const char pass[] = "x32 libaes objects: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";

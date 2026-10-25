@@ -11,4 +11,7 @@ WORD objc_add(OBJECT *tree, WORD parent, WORD child);
 WORD objc_delete(OBJECT *tree, WORD object);
 WORD objc_order(OBJECT *tree, WORD object, WORD position);
 WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y);
+LONG aes_window_create(LONG x, LONG y, LONG width, LONG height);
+LONG aes_window_configure(LONG handle, LONG x, LONG y, LONG width, LONG height);
+LONG aes_window_destroy(LONG handle);
 #endif

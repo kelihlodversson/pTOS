@@ -4,6 +4,9 @@ LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
 obj/libaes/session.o: lib/aes/session.c lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
+obj/libaes/windows.o: lib/aes/windows.c lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/transport.o: $(LIBAES_TRANSPORT-y) lib/aes/transport.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
@@ -16,7 +19,7 @@ obj/libaes/objtree.o: aes/gemobjtree.c aes/gemobjtree.h include/obdefs.h $(AUTOC
 obj/libaes/objects.o: lib/aes/objects.c aes/gemobjtree.h include/libaes.h include/obdefs.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/libaes.so: obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
+obj/libaes/libaes.so: obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
 	$(CC) $(LDSO_LDFLAGS) $(LIBAES_CFLAGS) -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so \
 	  -Wl,--version-script,lib/aes/exports.map -o $@ $(filter %.o,$^)

@@ -3,19 +3,21 @@
 
 static PD first, second;
 PD *run = &first;
-static CUIS_CLIENT pool[16];
+static union { CUIS_CLIENT client; CUIS_WINDOW window; } pool[256];
 static ULONG allocations, frees;
 static BOOL fail_allocation;
 
 void *kalloc(ULONG bytes)
 {
-    if (bytes != sizeof(CUIS_CLIENT) || fail_allocation || allocations == 16)
+    if ((bytes != sizeof(CUIS_CLIENT) && bytes != sizeof(CUIS_WINDOW)) ||
+        fail_allocation || allocations == 256)
         return NULL;
     return &pool[allocations++];
 }
 void kfree(void *memory) { (void)memory; frees++; }
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+#include "windows.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -60,5 +62,5 @@ int main(void)
     cuis_process_exit(&first);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM && !cuis_session_count());
     CHECK(allocations == frees);
-    return 0;
+    return window_checks();
 }
