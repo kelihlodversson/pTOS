@@ -37,3 +37,11 @@ obj/libaes/CUIS.TOS: tests/cuis/program.c tests/cuis/objects.c tests/cuis/drawin
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/CUIS.TOS
 endif
+
+obj/libaes/CUISCHED.TOS: tests/cuis/scheduled.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
+                         obj/libaes/libaes.so obj/ldso/libptos.so include/libaes.h include/cuis.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.S %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/CUISCHED.TOS
+endif

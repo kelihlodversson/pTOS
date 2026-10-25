@@ -3,6 +3,7 @@
 #include "cuis.h"
 #include "cuis_region.h"
 #include "cuis_input.h"
+#include "ksched.h"
 #include "screen_mode.h"
 #include "gemerror.h"
 #include "kheap.h"
@@ -580,11 +581,33 @@ BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
     return TRUE;
 }
 
+typedef struct {
+    CUIS_CLIENT *client;
+    CUIS_WINDOW *window;
+    ULONG events, start, duration;
+    LONG timeout;
+} CUIS_WAIT;
+
+/* A scheduler predicate sees kernel-owned state only, with IRQs masked. */
+static BOOL wait_ready(void *argument)
+{
+    CUIS_WAIT *wait = argument;
+    CUIS_WINDOW *window = wait->window;
+    ULONG events = wait->events;
+    if (window && (!window->visible || (events == CUIS_EVENT_KEY && focus_window != window))) return TRUE;
+    if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
+        ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
+        ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
+        ((events & CUIS_EVENT_MESSAGE) && wait->client->message_count)) return TRUE;
+    return wait->timeout >= 0 && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration;
+}
+
 static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, UQUAD argument)
 {
     LONG timeout;
     ULONG start, duration = 0;
     UQUAD flags;
+    CUIS_WAIT wait;
     timeout = (LONG)argument;
     if (argument != (UQUAD)(QUAD)timeout || timeout < -1) return EINVAL;
     /* Include the current partial tick so a positive timeout cannot expire
@@ -592,6 +615,8 @@ static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, 
     if (timeout > 0) duration = (ULONG)timeout / 5 + ((ULONG)timeout % 5 != 0) + 1;
     flags = cuis_input_lock();
     start = cuis_input_ticks();
+    wait.client = client; wait.window = window; wait.events = events;
+    wait.start = start; wait.duration = duration; wait.timeout = timeout;
     for (;;) {
         if (window && (!window->visible || (events == CUIS_EVENT_KEY && focus_window != window))) {
             cuis_input_unlock(flags); return EACCDN;
@@ -613,7 +638,7 @@ static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, 
 #if CONF_WITH_X86_64_MEMTEST
         if (timeout == -1) cuis_input_test_wait(events);
 #endif
-        cuis_input_idle();
+        if (!ksched_block(wait_ready, &wait)) cuis_input_idle();
     }
 }
 

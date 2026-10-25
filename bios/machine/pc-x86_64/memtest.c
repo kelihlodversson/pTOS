@@ -51,6 +51,8 @@
 #include "../../../bdos/mem.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
+#include "ksched.h"
+#include "process.h"
 #include "ikbd.h"
 #include "iorec.h"
 #endif
@@ -2169,6 +2171,72 @@ static void test_vdi_padded_pitch(void)
 }
 #endif
 
+#if CONF_WITH_CUIS
+static void test_cuis_scheduler(void)
+{
+    PD *programs[2], *root = run;
+    LONG results[2], handles[2], rc;
+    static const char tail_a[] = { 1, 'a', 0 };
+    static const char environment[] = { 0, 0 };
+    char tail_b[] = { 2, 'b', '0', 0 };
+    UWORD mode, i;
+    SNAP s;
+    int before = failures;
+
+    for (mode = 0; mode < 3; mode++) {
+        snap(&s);
+        programs[0] = programs[1] = NULL;
+        tail_b[2] = '0' + mode;
+        for (i = 0; i < 2; i++) {
+            rc = Pexec(PE_LOAD, "C:\\CUISCHED.TOS", i ? tail_b : tail_a, environment);
+            if (rc < 0) kcprintf("scheduler load error %ld\n", (long)rc);
+            CHECK(rc > 0, "load isolated scheduler client");
+            if (rc <= 0) break;
+            programs[i] = (PD *)(uintptr_t)rc;
+            rc = proc_prepare_scheduled(programs[i]);
+            CHECK(rc == E_OK, "prepare scheduler client's address space");
+            if (rc < 0) break;
+            run = programs[i];
+            handles[i] = cuis_service(CUIS_SESSION_START, 0);
+            run = root;
+            CHECK(handles[i] >= 0, "register scheduler test peer");
+            if (handles[i] < 0) break;
+        }
+        if (i == 2) {
+            for (i = 0; i < 2; i++) {
+                run = programs[i];
+                CHECK(cuis_message_service(CUIS_MESSAGE_SEND, handles[i], handles[1-i], 0, 0, 0, 0) == E_OK,
+                      "bootstrap a known peer without adding an application-facing API");
+            }
+            run = root;
+            CHECK(ksched_run(programs, 0, results) == EINVAL, "scheduler rejects empty groups");
+            {
+                PD *duplicate[2] = { programs[0], programs[0] };
+                CHECK(ksched_run(duplicate, 2, results) == EINVAL, "scheduler rejects duplicate programs");
+            }
+            x86_64_pmem_test_fail_after(1);
+            rc = ksched_run(programs, 2, results);
+            x86_64_pmem_test_fail_after(0);
+            CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
+                  "scheduler allocation failure preserves both unlaunched programs");
+            rc = ksched_run(programs, 2, results);
+            CHECK(rc == E_OK, "scheduler completes all managed clients");
+            if (rc == E_OK) {
+                programs[0] = programs[1] = NULL;
+                if (results[0] != 0 || results[1] != (mode == 0 ? 0 : mode == 1 ? 0xffff : 77))
+                    kcprintf("scheduler mode %u results %ld %ld\n", (unsigned)mode, (long)results[0], (long)results[1]);
+                CHECK(results[0] == 0 && results[1] == (mode == 0 ? 0 : mode == 1 ? 0xffff : 77),
+                      "message handoffs, private state, FPU, nested wait, timeouts and exit status");
+            }
+        }
+        for (i = 0; i < 2; i++) if (programs[i]) proc_discard_accessory(programs[i]);
+        CHECK(run == root, "scheduler restores its launcher's process context");
+        same(&s, "CUIS scheduler task stacks, sessions and process resources reclaimed");
+    }
+    kcprintf("x86-64 CUIS scheduler: %s\n", failures == before ? "PASS" : "FAIL");
+}
+#endif
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -2322,6 +2390,7 @@ static void test_ring3(void)
         CHECK(aspace_file_cross_shares() != shares, "nested CUIS clients reuse DSO pages");
         kcprintf("x86-64 CUIS sessions: %s\n", failures == before ? "PASS" : "FAIL");
     }
+    test_cuis_scheduler();
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");
 #endif
