@@ -7,4 +7,9 @@
 #define CUIS_SESSION_START 0UL
 #define CUIS_SESSION_QUERY 1UL
 #define CUIS_SESSION_END 2UL
+#define CUIS_WINDOW_CREATE 3UL
+#define CUIS_WINDOW_CONFIGURE 4UL
+#define CUIS_WINDOW_DESTROY 5UL
+/* Bound each session's kernel allocations independently of available RAM. */
+#define CUIS_WINDOWS_PER_SESSION 64UL
 #endif

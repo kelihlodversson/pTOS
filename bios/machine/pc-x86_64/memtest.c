@@ -2163,8 +2163,9 @@ static void test_ring3(void)
     {
         int before = failures;
         ULONG shares = aspace_file_cross_shares();
-        ULONG sessions = cuis_session_count();
+        ULONG sessions = cuis_session_count(), windows = cuis_window_count();
         probe_expect(':', 0, "libaes/CUIS: nested owners, private state, geometry and fault cleanup");
+        CHECK(cuis_window_count() == windows, "CUIS windows reclaimed after normal, raw and fault exits");
         CHECK(cuis_session_count() == sessions, "CUIS sessions reclaimed after normal, raw and fault exits");
         CHECK(aspace_file_cross_shares() != shares, "nested CUIS clients reuse DSO pages");
         kcprintf("x86-64 CUIS sessions: %s\n", failures == before ? "PASS" : "FAIL");
