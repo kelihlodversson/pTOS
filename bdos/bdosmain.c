@@ -856,16 +856,20 @@ restrt:
             lw[1] = (ULONG)lw[1];
             if (lw[1] >= USER_HEAP_BASE && lw[1] < USER_STACK_TOP)
                 return kproc_uheap_free(run, (ULONG)lw[1]);
+#ifndef __x86_64__                      /* (its user space is all of the 32-bit x32 range) */
             if ((ULONG)lw[1] >= USER_VA_LIMIT)
                 return EIMBA;           /* kernel memory is not the process's to free */
+#endif
             break;
         case GEMDOS_MSHRINK:
             lw[2] = (ULONG)lw[2];
             lw[3] = (LONG)lw[3];
             if (lw[2] >= USER_HEAP_BASE && lw[2] < USER_STACK_TOP)
                 return kproc_uheap_shrink(run, (ULONG)lw[2], lw[3]);
+#ifndef __x86_64__
             if ((ULONG)lw[2] >= USER_VA_LIMIT)
                 return EIMBA;
+#endif
             break;
         }
     }
