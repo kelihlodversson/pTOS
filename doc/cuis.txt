@@ -150,7 +150,9 @@ These are ordinary C functions and need no CUIS session. No tree, object
 specification or output pointer crosses a syscall boundary. Resource loading,
 rendering and hit testing with display metrics are subsequent slices.
 
-The algorithms in aes/gemobjtree.c are also used by legacy kernel AES.
+With CONF_WITH_LIBAES enabled, the algorithms in aes/gemobjtree.c are
+also used by kernel AES. With the feature disabled, the original kernel
+implementations and object list are retained unchanged.
 Parent/sibling links retain GEM conventions: a parent's head and tail name
 its first/last child, the last child's next points to the parent, the root's
 next is NIL, and an empty child list has head/tail NIL. Deleting an object

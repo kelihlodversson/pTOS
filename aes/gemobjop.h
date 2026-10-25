@@ -10,13 +10,12 @@
 #ifndef GEMOBJOP_H
 #define GEMOBJOP_H
 
-#include "gemobjtree.h"
-
 typedef void (*EVERYOBJ_CALLBACK)(OBJECT *tree, WORD obj, WORD sx, WORD sy);
 
 BYTE ob_sst(OBJECT *tree, WORD obj, OBSPEC *pspec, WORD *pstate, WORD *ptype,
             WORD *pflags, GRECT *pt, WORD *pth);
 void everyobj(OBJECT *tree, WORD this, WORD last, EVERYOBJ_CALLBACK routine,
               WORD startx, WORD starty, WORD maxdep);
+WORD get_par(OBJECT *tree, WORD obj);
 
 #endif

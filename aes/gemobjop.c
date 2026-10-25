@@ -141,10 +141,51 @@ sibling:
 }
 
 
+#if !CONF_WITH_LIBAES
+/*
+ * Routine that will find the parent of a given object.  The
+ * idea is to walk to the end of our siblings and return
+ * our parent.  If object is the root then return NIL as parent.
+ */
+WORD get_par(OBJECT *tree, WORD obj)
+{
+    WORD next;
+
+    if (obj == ROOT)
+        return NIL;
+
+    while(1)
+    {
+        next = tree[obj].ob_next;
+        /* if the next object's tail points to us, it must be our parent */
+        if (tree[next].ob_tail == obj)
+            break;
+        obj = next;
+    }
+
+    return next;
+}
+
+/*
+ *  Routine to find the x,y offset of a particular object relative
+ *  to the physical screen.  This involves accumulating the offsets
+ *  of all the object's parents up to and including the root.
+ */
+void ob_offset(OBJECT *tree, WORD obj, WORD *pxoff, WORD *pyoff)
+{
+    OBJECT *treeptr = tree;
+
+    *pxoff = *pyoff = 0;
+    do
+    {
+        *pxoff += (treeptr+obj)->ob_x;  /* add in current object's offsets */
+        *pyoff += (treeptr+obj)->ob_y;
+        obj = get_par(tree, obj);       /* then get parent */
+    } while (obj != NIL);
+}
 
 
-
-
+#endif
 
 /*
  *  ob_relxywh: fill GRECT with x/y/w/h from object (relative x/y)
