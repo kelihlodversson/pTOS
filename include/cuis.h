@@ -23,6 +23,13 @@
 #define CUIS_FOCUS_RELEASE 16UL
 #define CUIS_KEY_READ 17UL
 #define CUIS_KEY_WAIT 18UL
+#define CUIS_POINTER_READ 19UL
+#define CUIS_EVENT_WAIT 20UL
+#define CUIS_EVENT_KEY 1UL
+#define CUIS_EVENT_POINTER 2UL
+#define CUIS_EVENT_REDRAW 4UL
+#define CUIS_POINTER_CHANGED 3UL
+#define CUIS_POINTER_INSIDE 4UL
 /* Bound each session's kernel allocations independently of available RAM. */
 #define CUIS_WINDOWS_PER_SESSION 64UL
 #endif

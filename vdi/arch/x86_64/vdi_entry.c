@@ -37,6 +37,9 @@
 #include "lineavars.h"
 #include "string.h"
 #include "kprint.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#endif
 #if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
 #include "vdi_service.h"
 #endif
@@ -124,6 +127,27 @@ void mouse_int(UBYTE *buf)
     void (*user_but)(WORD) = linea_vars.user_but;
     void (*user_cur)(WORD,WORD) = linea_vars.user_cur;
 
+#if CONF_WITH_CUIS
+    if ((buf[0] & 0xf8) == 0xf8) {
+        LONG x, y;
+        pressed = (buf[0] & 2) >> 1 | (buf[0] & 1) << 1;
+        if (cuis_pointer_packet((SBYTE)buf[1], (SBYTE)buf[2], (ULONG)pressed, &x, &y)) {
+            previous = linea_vars.cur_ms_stat & 3;
+            pressed |= linea_vars.MOUSE_BT & ~3;
+            linea_vars.MOUSE_BT = pressed;
+            linea_vars.cur_ms_stat = pressed | ((previous ^ pressed) << 6);
+            /* Keep the cursor, but do not publish CUIS-owned input through
+             * legacy button/motion vectors or native VDI input callbacks. */
+            if (linea_vars.mouse_flag) return;
+            if (x != linea_vars.GCURX || y != linea_vars.GCURY) {
+                linea_vars.cur_ms_stat |= 1 << 5;
+                linea_vars.GCURX = (WORD)x; linea_vars.GCURY = (WORD)y;
+                user_cur((WORD)x, (WORD)y);
+            }
+            return;
+        }
+    }
+#endif
     if(linea_vars.mouse_flag) // If we are in a show/hide operation
     {
         return;              // just exit.

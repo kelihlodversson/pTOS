@@ -104,6 +104,53 @@ static int key_checks(LONG window)
 #endif
     return 0;
 }
+#if CONF_WITH_X86_64_MEMTEST
+static LONG raw_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, UQUAD state)
+{
+    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_POINTER_READ;
+    register UQUAD di __asm__("rdi") = (QUAD)window, si __asm__("rsi") = (uintptr_t)x;
+    register UQUAD dx __asm__("rdx") = (uintptr_t)y, r10 __asm__("r10") = (uintptr_t)buttons;
+    register UQUAD r8 __asm__("r8") = state;
+    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di), "r"(si), "r"(dx), "r"(r10), "r"(r8)
+        : "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}
+#endif
+static int pointer_checks(void)
+{
+    LONG window, x, y, rc;
+    ULONG buttons, state, i;
+    window = aes_window_create(0, 0, 0x7fffffffL, 0x7fffffffL);
+    CHECK(window >= 0 && aes_window_show(window) == E_OK);
+    for (i = 0; i < 17; i++) {
+        rc = aes_pointer_read(window, &x, &y, &buttons, &state);
+        CHECK(rc >= 0);
+        if (!rc) break;
+    }
+    CHECK(rc == 0);
+    CHECK(aes_event_wait(window, CUIS_EVENT_REDRAW | CUIS_EVENT_POINTER, 0) == 1);
+    CHECK(aes_window_redraw(window) == 1);
+    CHECK(aes_event_wait(window, CUIS_EVENT_KEY, 0) == EACCDN);
+    CHECK(aes_event_wait(window, CUIS_EVENT_POINTER | CUIS_EVENT_KEY, 0) == 0);
+    CHECK(aes_event_wait(window, 0, 0) == EINVAL);
+    CHECK(aes_event_wait(window, 8, 0) == EINVAL);
+    CHECK(aes_event_wait(window, CUIS_EVENT_POINTER, -2) == EINVAL);
+    CHECK(aes_event_wait(window, CUIS_EVENT_POINTER, 1) == 0);
+#if CONF_WITH_X86_64_MEMTEST
+    /* A real IRQ delivers a press and release before this waiter resumes. */
+    CHECK(aes_event_wait(window, CUIS_EVENT_KEY | CUIS_EVENT_POINTER, -1) == 1);
+    CHECK(aes_window_focused(window) == 1);
+    CHECK(aes_pointer_read(window, &x, &y, &buttons, (ULONG *)0) == EIMBA);
+    CHECK(raw_pointer_read(window, &x, &y, &buttons, (1ULL << 32) | (uintptr_t)&state) == EIMBA);
+    CHECK(aes_pointer_read(window, &x, &y, &buttons, &state) == 1);
+    CHECK(buttons == 1 && (state & CUIS_POINTER_CHANGED) == 1 && (state & CUIS_POINTER_INSIDE));
+    CHECK(aes_pointer_read(window, &x, &y, &buttons, &state) == 1);
+    CHECK(buttons == 0 && (state & CUIS_POINTER_CHANGED) == 1);
+    CHECK(aes_pointer_read(window, &x, &y, &buttons, &state) == 0);
+#endif
+    CHECK(aes_window_destroy(window) == E_OK);
+    return 0;
+}
 int main(int argc, char **argv, char **envp)
 {
     GRECT first = { 0, 0, 20, 20 }, second = { 10, 10, 20, 20 };
@@ -134,6 +181,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(aes_session_close(owner) == EACCDN);
         CHECK(aes_key_read(parent_window, (ULONG *)0) == EACCDN);
         CHECK(aes_key_wait(parent_window, 0) == EACCDN);
+        CHECK(aes_event_wait(parent_window, CUIS_EVENT_POINTER, 0) == EACCDN);
+        CHECK(aes_pointer_read(parent_window, (LONG *)0, (LONG *)0, (ULONG *)0, (ULONG *)0) == EACCDN);
     }
     handle = aes_session_open();
     CHECK(handle >= 0 && aes_session_open() == handle);
@@ -217,6 +266,8 @@ int main(int argc, char **argv, char **envp)
     }
     rc = key_checks(window);
     if (rc) return rc;
+    rc = pointer_checks();
+    if (rc) return rc;
     rc = libaes_drawing_checks();
     if (rc) return rc;
     CHECK(aes_update_begin(window) == E_OK);
@@ -240,7 +291,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_update_begin(window) == E_OK);
     /* Leave the reopened session to library finalization. */
     {
-        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 CUIS keyboard: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
+        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 CUIS keyboard: PASS\r\nx32 CUIS pointer/events: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
         CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
     }
     return 77;

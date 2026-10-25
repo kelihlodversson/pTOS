@@ -1,13 +1,13 @@
 /* Exercise the production scalar CUIS service and allocation failures. */
 #include "../../aes/cuis_session.c"
 
-static PD first, second;
+static PD first, second, third, fourth, fifth;
 PD *run = &first;
 static union {
     CUIS_CLIENT client;
     CUIS_WINDOW window;
     CUIS_RECT clips[CUIS_CLIP_LIMIT];
-} pool[256];
+} pool[1024];
 static ULONG allocations, frees;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
@@ -24,7 +24,24 @@ UQUAD cuis_input_lock(void)
 }
 void cuis_input_unlock(UQUAD flags) { input_irqs = (flags & 0x200) != 0; }
 ULONG cuis_input_ticks(void) { return input_ticks; }
-void cuis_input_test_wait(void) { }
+static BOOL input_pointer_source;
+static LONG input_pointer_x, input_pointer_y, input_pointer_max_x = 1023, input_pointer_max_y = 767;
+static ULONG input_pointer_buttons, legacy_pointer_calls;
+BOOL cuis_input_standard_pointer(void) { return input_pointer_source; }
+BOOL cuis_input_pointer_state(LONG *x, LONG *y, ULONG *buttons)
+{
+    if (!input_pointer_source) return FALSE;
+    *x = input_pointer_x; *y = input_pointer_y; *buttons = input_pointer_buttons;
+    return TRUE;
+}
+void cuis_input_clip_pointer(LONG *x, LONG *y)
+{
+    *x = *x < 0 ? 0 : *x > input_pointer_max_x ? input_pointer_max_x : *x;
+    *y = *y < 0 ? 0 : *y > input_pointer_max_y ? input_pointer_max_y : *y;
+}
+void cuis_input_call_pointer(SBYTE *packet) { (void)packet; legacy_pointer_calls++; }
+
+void cuis_input_test_wait(ULONG events) { (void)events; }
 void cuis_input_idle(void)
 {
     if (input_irqs) input_bad_idle = TRUE;
@@ -63,18 +80,19 @@ void *kalloc(ULONG bytes)
     if ((bytes != sizeof(CUIS_CLIENT) && bytes != sizeof(CUIS_WINDOW) &&
          bytes != CUIS_CLIP_LIMIT * sizeof(CUIS_RECT)) ||
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
-        allocations == 256)
+        allocations == 1024)
         return NULL;
     return &pool[allocations++];
 }
 void kfree(void *memory) { (void)memory; frees++; }
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
-#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+#define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "windows.c"
 #include "visibility.c"
 #include "regions.c"
 #include "focus.c"
 #include "input.c"
+#include "pointer.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -127,5 +145,9 @@ int main(void)
     rc = region_checks();
     if (rc) return rc;
     rc = focus_checks();
-    return rc ? rc : input_checks();
+    if (rc) return rc;
+    rc = input_checks();
+    if (rc) return rc;
+    rc = pointer_checks();
+    return rc ? rc : window_limit_checks();
 }

@@ -458,12 +458,79 @@ An empty blocking wait while the caller owns a display update returns
 EACCDN; zero-time polls and already-pending input remain available. This
 prevents sleeping indefinitely with the drawing update held. Focus loss
 observed after wake returns EACCDN. These waits sleep for interrupt-driven
-keyboard input in the current native execution model; they do not schedule
-another application or implement pointer/message/multi-source waits. Those
-remain later epic work. No legacy AES scheduler or userspace daemon is added.
+input in the current native execution model; they do not schedule another
+application. Message delivery and scheduling blocked GUI clients remain later
+epic work. No legacy AES scheduler or userspace daemon is added.
 
 All kernel input state, BIOS hooks and the selected interrupt/wait backend
 compile only with CONF_WITH_CUIS, selected by external CONF_WITH_LIBAES.
 Kernel memtests inject one translated key from a real timer IRQ after the
 wait reaches its sleep path and verify it does not enter the BIOS queue;
 no user-callable test injection interface is exposed.
+
+Pointer routing and combined waits
+----------------------------------
+CUIS extends the flat register ABI with:
+
+ 19 POINTER_READ RDI=owned window, RSI=LONG *x, RDX=LONG *y,
+                 R10=ULONG *buttons, R8=ULONG *state
+ 20 EVENT_WAIT   RDI=owned window, RSI=event mask,
+                 RDX=sign-extended LONG timeout_ms
+
+libaes exports aes_pointer_read(window, x, y, buttons, state) and
+aes_event_wait(window, events, timeout_ms). POINTER_READ returns 1 for one
+snapshot, 0 when empty, or a negative GEMDOS error. Coordinates are absolute
+screen pixels. Buttons use bit 0 for left and bit 1 for right; state bits 0-1
+identify changed buttons and CUIS_POINTER_INSIDE (bit 2) identifies the
+window currently hit by the pointer. Capture can deliver outside snapshots.
+All four outputs are validated before copying; failed copyout retains the
+snapshot. Empty reads do not inspect output pointers.
+
+A trusted relative mouse packet is clamped to the physical display and live
+VDI viewport. Hit testing uses the topmost shown window and half-open bounds.
+Pressing a CUIS window focuses it without raising it and implicitly captures
+all pointer input until every button is released. A legacy drag begun outside
+CUIS remains legacy through release. Hiding, destroying or exiting a capture
+owner suppresses the remaining gesture until release, preventing orphan
+button releases from reaching another recipient. Enter/leave snapshots also
+track window visibility, geometry and Z-order changes. CUIS-owned input keeps
+the visible VDI cursor moving without publishing legacy motion/button or
+native VDI input callbacks. Input outside CUIS retains existing behavior.
+
+Each window has a resident 16-snapshot FIFO. Consecutive pure motion snapshots
+with matching buttons and inside state coalesce. Button edges and inside
+transitions remain ordered. Overflow discards the old FIFO, reports ERANGE
+once, and retains a current-state snapshot with no asserted button changes;
+callers must resynchronize their gesture state after ERANGE. The per-session
+64-window limit remains; a global 256-window limit bounds allocation-free IRQ
+hit testing and focus redraw work. Creation beyond either limit returns
+ENSMEM. No userspace synthetic-input entry point is added.
+
+EVENT_WAIT accepts any nonempty combination of CUIS_EVENT_KEY (1),
+CUIS_EVENT_POINTER (2), and CUIS_EVENT_REDRAW (4). It returns 1 if any requested
+source is pending, 0 on timeout, or a negative error; it consumes nothing and
+returns no event mask. Callers poll their requested sources after waking.
+Pointer overflow counts as pending; redraw remains pending until REDRAW is
+read. KEY-only waits require focus; mixed waits can observe pointer/redraw in
+a background window, while keyboard readiness still requires focus. Windows
+must be shown. Unknown mask bits and malformed timeouts return EINVAL.
+Timeout and owned-update restrictions match KEY_WAIT. Predicate checks and
+sleep use the same IRQ exclusion, avoiding lost wakeups between sources.
+
+Host tests exercise ownership, capture, enter/leave, coalescing, overflow,
+copyout failures, cancellation, legacy drags and global bounds. Kernel tests
+inject press/release packets from a real timer IRQ after an empty mixed wait
+has reached sleep, and check cursor movement, legacy callback isolation and
+owner teardown in both display-backed and headless configurations.
+
+Final configuration cutover
+---------------------------
+Once external libaes is complete, Kconfig must make CUIS and in-kernel AES
+mutually exclusive. In-kernel AES must also depend on !CONF_WITH_USER_ASPACE
+on every architecture. Protected GUI kernels use libaes over CUIS; kernels
+without separate address spaces can retain the traditional in-kernel AES.
+Remove the superseded kernel AES entry paths and AES-specific user-object,
+AESPB/tree validation and snapshot machinery at that cutover. Native CUIS
+syscalls continue checking ownership, scalar arguments and user buffers.
+Transitional combinations retain their validation until replacement libaes
+behavior and boot/desktop coverage allow those entry paths to be disabled.
