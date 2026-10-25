@@ -316,7 +316,11 @@ so the text path draws it with all its writing modes, effects, rotation
 and clipping (vdi/vdi_sfont.c).  Rendered sizes are kept up to
 CONF_VDI_FONT_CACHE KB (1 MB by default); the one used longest ago that
 no workstation has selected goes first.  Ink that reaches past a
-character's advance width is cut off (#607).
+character's advance width (an italic f, the foot of a j, anything slanted
+by vst_skew(), a combining mark) is kept in cells of its own, which are
+output after the characters of the string, transparently, from where each
+character is: the advances and extents are still the advances, and a
+character that follows does not cover that ink in replace mode (#607).
 
 The built-in GDOS also answers the font calls SpeedoGDOS added, and those
 NVDI added to them (opcodes 190 and 229 to 255, vdi/vdi_speedo.c; #577):
