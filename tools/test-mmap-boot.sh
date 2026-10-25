@@ -118,6 +118,7 @@ if [ -f "$work/VDIIMP.TOS" ]; then
     grep -q 'x86-64 AES imports: PASS' "$log"
 fi
 if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
+    grep -q 'x32 CUIS clipping: PASS' "$log"
     grep -q 'x32 CUIS visibility: PASS' "$log"
     grep -q 'x32 libaes objects: PASS' "$log"
     grep -q 'x32 libaes/CUIS sessions: PASS' "$log"

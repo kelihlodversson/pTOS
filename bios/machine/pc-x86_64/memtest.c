@@ -2165,7 +2165,9 @@ static void test_ring3(void)
         ULONG shares = aspace_file_cross_shares();
         ULONG sessions = cuis_session_count(), windows = cuis_window_count();
         ULONG visible = cuis_visible_window_count();
+        BOOL updating = cuis_update_active();
         probe_expect(':', 0, "libaes/CUIS: nested owners, private state, geometry and fault cleanup");
+        CHECK(cuis_update_active() == updating, "CUIS update section reclaimed after exits");
         CHECK(cuis_visible_window_count() == visible, "CUIS visible stacking repaired after exits");
         CHECK(cuis_window_count() == windows, "CUIS windows reclaimed after normal, raw and fault exits");
         CHECK(cuis_session_count() == sessions, "CUIS sessions reclaimed after normal, raw and fault exits");

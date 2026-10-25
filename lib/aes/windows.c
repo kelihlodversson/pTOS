@@ -39,3 +39,17 @@ LONG aes_window_redraw(LONG handle)
 {
     return cuis_call(CUIS_WINDOW_REDRAW, handle);
 }
+
+LONG aes_update_begin(LONG window)
+{
+    return cuis_call(CUIS_UPDATE_BEGIN, window);
+}
+LONG aes_update_end(LONG window)
+{
+    return cuis_call(CUIS_UPDATE_END, window);
+}
+LONG aes_window_clip(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height)
+{
+    return cuis_call6(CUIS_WINDOW_CLIP, (QUAD)window, index,
+                      (uintptr_t)x, (uintptr_t)y, (uintptr_t)width, (uintptr_t)height);
+}

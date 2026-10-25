@@ -250,7 +250,62 @@ REDRAW is owner-local, nonblocking polling, not an event wait. It clears
 only that window's pending indication; subsequent changes set it again.
 The syscall runs synchronously in the existing serialized kernel service
 path, without allocating queue entries. It does not authorize framebuffer
-writes. Visible-region clipping, display/update coordination and atomic
-event waits must be implemented before using this metadata to render
-concurrent clients. No pixels, legacy AES windows or input focus are changed
+writes. The snapshot/update calls below provide metadata coordination. Physical
+display clipping, VDI enforcement and atomic event waits remain necessary
+for complete concurrent rendering support. No pixels, legacy AES windows or input focus are changed
 by this slice. A full GEM wind_* adapter also remains subsequent work.
+
+Visible-region snapshots and update sections
+-------------------------------------------
+The next CUIS calls retain the flat scalar ABI:
+
+ 11 UPDATE_BEGIN  RDI=window
+ 12 UPDATE_END    RDI=window
+ 13 WINDOW_CLIP   RDI=window, RSI=index,
+                  RDX=LONG *x, R10=LONG *y, R8=LONG *width, R9=LONG *height
+
+libaes exports aes_update_begin(window), aes_update_end(window), and
+aes_window_clip(window, index, x, y, width, height). BEGIN/END return zero
+or a negative error. CLIP returns 1 for a rectangle, 0 at/past the end,
+or a negative error. There is no cursor, request block or negotiation.
+
+BEGIN requires an owned visible window and captures its rectangle minus
+all visible windows above it. Output rectangles are disjoint, have positive
+extents, and remain in the same native coordinate space. Touching edges do
+not occlude. A fully covered window has an empty snapshot. The snapshot
+uses at most 256 rectangles, with two bounded work buffers during capture;
+allocation or intermediate fragmentation overflow returns ENSMEM without
+acquiring the update section or altering window state/redraw flags.
+
+There is one nonblocking update section across CUIS sessions. A successful
+BEGIN freezes geometry/stacking operations until END. While held, all
+window mutations (including creation and otherwise-idempotent operations)
+return EAGAIN after the normal ownership checks. Another BEGIN, including
+a nested BEGIN, also returns EAGAIN. REDRAW polling remains permitted. A
+matching owner/window END releases the snapshot and update section;
+wrong-owner/window END returns EACCDN. This is not a recursive lock or an
+atomic event wait. Callers must finish promptly and retry busy operations.
+
+CLIP requires the matching active owner and window. The index is an unsigned
+32-bit scalar; full-width malformed handles/indices return EINVAL. Outputs
+are native 32-bit LONGs, copied through the existing per-process memory
+validation/copy facilities. Every output destination is validated before
+any value is copied; invalid, supervisor, read-only or high-bit addresses
+return EIMBA. Outputs are written in x,y,width,height order if they alias.
+At/past the end, no output pointers are inspected or written. Copy failures
+never advance a cursor: retry the same index. Output order is deterministic
+for a held snapshot but callers should not depend on a particular tiling.
+
+Session close and process exit/fault release an owned update section before
+freeing windows. Other processes may still terminate: their windows are
+removed and surviving windows marked for redraw. The held snapshot stays
+immutable; removing an occluder can only make it a conservative subset of
+the newly exposed area. Pending redraws survive END so that exposure is not
+lost. Subsequent BEGIN captures the expanded region.
+
+This coordinates CUIS metadata only. It does not clip against the physical
+display, authorize framebuffer access, constrain existing VDI calls or lock
+the legacy AES window manager. Display bounds, VDI enforcement/rendering,
+input/focus and atomic event waits remain subsequent epic work. The new
+kernel source and dispatch paths are enabled only by CONF_WITH_CUIS, selected
+by the external CONF_WITH_LIBAES feature.
