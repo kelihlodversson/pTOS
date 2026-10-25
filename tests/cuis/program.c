@@ -4,6 +4,7 @@
 #include "ptos.h"
 int libaes_object_checks(void);
 int libaes_drawing_checks(void);
+int libaes_drawing_exit_handle(void);
 typedef char object_x32_size[(sizeof(OBJECT) == 24) ? 1 : -1];
 extern int64_t client_pexec(const char *path, const char *tail, const char *env);
 
@@ -104,6 +105,8 @@ int main(int argc, char **argv, char **envp)
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
     if (argc == 2 && argv[1][0] == 'u') {
         LONG x, y, w, h;
+        rc = libaes_drawing_exit_handle();
+        if (rc) return rc;
         CHECK(aes_window_create(0, 0, 1, 1) == EAGAIN);
         CHECK(aes_update_end(parent_window) == EACCDN);
         CHECK(aes_window_clip(parent_window, 0, &x, &y, &w, &h) == EACCDN);
@@ -135,6 +138,8 @@ int main(int argc, char **argv, char **envp)
     if (rc) return rc;
     if (argc == 2) {
         CHECK(aes_update_begin(window) == E_OK);
+        rc = libaes_drawing_exit_handle();
+        if (rc) return rc;
         for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_REDRAW; function++)
             CHECK(raw(function, parent_window) == EACCDN);
         CHECK(aes_window_destroy(parent_window) == EACCDN);

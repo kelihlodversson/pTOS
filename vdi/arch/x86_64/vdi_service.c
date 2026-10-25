@@ -140,6 +140,38 @@ extern PD *run;
 
 static PD *owners[NUM_VDI_HANDLES + 1];
 static BOOL physical_owned, physical_active;
+#if CONF_WITH_CUIS
+static BOOL service_transition;
+BOOL vdi_service_preserve_console(void) { return service_transition; }
+#if CONF_WITH_X86_64_MEMTEST
+static volatile ULONG *lifecycle_pixel;
+static ULONG lifecycle_opens, lifecycle_idle_closes;
+static BOOL lifecycle_unchanged;
+void vdi_service_test_watch(volatile ULONG *pixel)
+{
+    lifecycle_pixel = pixel;
+    lifecycle_opens = lifecycle_idle_closes = 0;
+    lifecycle_unchanged = TRUE;
+}
+BOOL vdi_service_test_preserved(void)
+{
+    return lifecycle_unchanged && lifecycle_opens && lifecycle_idle_closes;
+}
+static ULONG lifecycle_before(void)
+{
+    ULONG saved = lifecycle_pixel ? *lifecycle_pixel : 0;
+    if (lifecycle_pixel) *lifecycle_pixel = 0x005a7193UL;
+    return saved;
+}
+static void lifecycle_after(ULONG saved)
+{
+    if (lifecycle_pixel) {
+        if (*lifecycle_pixel != 0x005a7193UL) lifecycle_unchanged = FALSE;
+        *lifecycle_pixel = saved;
+    }
+}
+#endif
+#endif
 
 /* Native AES can open the physical workstation between typed clients.
  * Record that transition rather than inferring it from a stale handle table. */
@@ -169,6 +201,9 @@ static void invoke(VDICONTROL *control, WORD *intin, WORD *ptsin,
 
 static void physical_open(void)
 {
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+    ULONG saved_pixel;
+#endif
     VDICONTROL control = { 0 };
     WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
     WORD integers[45], points[12];
@@ -177,12 +212,30 @@ static void physical_open(void)
         return;
     control.code = 1;
     control.nintin = 11;
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+    saved_pixel = lifecycle_before();
+    lifecycle_opens++;
+#endif
+#if CONF_WITH_CUIS
+    service_transition = TRUE;
+#endif
     invoke(&control, input, points, integers, points);
+#if CONF_WITH_CUIS
+    service_transition = FALSE;
+#endif
     physical_owned = physical_active = TRUE;
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+    lifecycle_after(saved_pixel);
+#endif
 }
 
 static void physical_close_if_idle(void)
 {
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+    ULONG saved_pixel = lifecycle_before();
+    lifecycle_idle_closes++;
+#endif
+#if !CONF_WITH_CUIS
     VDICONTROL control = { 0 };
     WORD input = 0, integers[45], points[12];
     int i;
@@ -196,7 +249,35 @@ static void physical_close_if_idle(void)
     control.handle = 1;
     invoke(&control, &input, points, integers, points);
     physical_active = FALSE;
+#else
+    /* Display lifetime belongs to kernel display coordination, not the
+     * last virtual handle, allocation failure or terminating client. */
+#endif
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+    lifecycle_after(saved_pixel);
+#endif
 }
+
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+/* Fixtures deliberately change Line-A dimensions. Reset only a service-owned
+ * idle display at a kernel-controlled boundary, without console transitions. */
+BOOL vdi_service_test_reset(void)
+{
+    VDICONTROL control = { 0 };
+    WORD input = 0, integers[45], points[12];
+    int i;
+    if (!physical_active) return TRUE;
+    if (!physical_owned) return FALSE;
+    for (i = 2; i <= NUM_VDI_HANDLES; i++)
+        if (owners[i]) return FALSE;
+    control.code = 2;
+    control.handle = 1;
+    service_transition = TRUE;
+    invoke(&control, &input, points, integers, points);
+    service_transition = FALSE;
+    return TRUE;
+}
+#endif
 
 static BOOL owned(UQUAD handle)
 {

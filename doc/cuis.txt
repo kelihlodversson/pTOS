@@ -349,3 +349,21 @@ is permitted independently of that binding's supported operations.
 
 All new VDI policy, clipping and copy paths are under CONF_WITH_CUIS. With
 external libaes disabled, the original native VDI paths remain in use.
+
+Native workstation lifetime under external libaes
+------------------------------------------------
+Native OPEN/CLOSE operate on process-owned virtual workstations. If native
+VDI needs to initialize the physical workstation, it preserves the console
+and framebuffer instead of implicitly entering graphics mode and clearing
+the screen. Once initialized, that physical workstation stays available
+when the last client closes, fails to open a virtual handle, exits or faults.
+Client cleanup still frees every owned virtual workstation and callback.
+
+The kernel display/legacy AES path retains responsibility for explicit
+physical-workstation and console transitions. A native screenshot client can
+open a virtual workstation and read the whole screen during another client's
+update without clearing the display or switching console mode. Kernel-only
+memtest fixtures can explicitly reset an idle service-owned physical
+workstation when changing synthetic display dimensions; those resets also
+preserve the console. With external libaes disabled, physical workstation
+lifetime and console transitions retain their original behavior.

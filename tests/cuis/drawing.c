@@ -88,6 +88,20 @@ static int copy_checks(WORD handle)
     return 0;
 }
 #endif
+int libaes_drawing_exit_handle(void);
+int libaes_drawing_exit_handle(void)
+{
+#if CONF_WITH_X32_VDI
+    VDI_SERVICE_WORKSTATION workstation;
+    WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 }, output[2];
+    if (service(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&workstation, 0, 0) != E_OK)
+        return 0x7001;
+    if (pixel(workstation.handle, 0, 0, output) != E_OK) return 0x7002;
+    /* Normal, _Exit and fault paths must reclaim this virtual handle without
+     * closing the global display. This also opens during a foreign update. */
+#endif
+    return 0;
+}
 int libaes_drawing_checks(void);
 int libaes_drawing_checks(void)
 {
@@ -157,6 +171,13 @@ int libaes_drawing_checks(void)
     CHECK(aes_window_show(audit) == E_OK && aes_update_begin(audit) == E_OK);
     CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
+    /* Last close and the next client open must not clear the display, even
+     * while an update is held. Whole-screen screenshot reads remain usable. */
+    CHECK(service(VDI_SERVICE_CLOSE, handle, 0, 0, 0) == E_OK);
+    CHECK(service(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&workstation, 0, 0) == E_OK);
+    handle = workstation.handle;
+    CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
+    CHECK(pixel(handle, 47, 47, output) == E_OK && output[1] != black);
     CHECK(aes_update_end(audit) == E_OK);
     CHECK(aes_window_destroy(audit) == E_OK && aes_window_destroy(target) == E_OK);
     CHECK(aes_window_destroy(cover) == E_OK);
