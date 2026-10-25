@@ -234,7 +234,8 @@ Unused registers are ignored; ownership and full-width handle validation
 are identical to the earlier window calls. SHOW on an already-visible
 window and HIDE on a hidden one are no-ops. RAISE/LOWER on a hidden window
 return EINVAL. Raising the front window or lowering the back window is a
-no-op. New windows start hidden with no pending redraw.
+no-op. CONFIGURE with identical validated geometry is also a no-op and
+preserves pending redraws. New windows start hidden with no pending redraw.
 
 CUIS maintains one front-to-back list across registered processes, separate
 from the legacy AES window manager. Showing, hiding, moving, resizing,

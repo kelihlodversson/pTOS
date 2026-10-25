@@ -71,6 +71,9 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_window_raise(window) == E_OK);
     CHECK(aes_window_redraw(window) == 1);
     CHECK(aes_window_configure(window, -20, 30, 120, 90) == E_OK);
+    CHECK(aes_window_redraw(window) == 1);
+    CHECK(aes_window_configure(window, -20, 30, 120, 90) == E_OK);
+    CHECK(aes_window_redraw(window) == 0);
     CHECK(aes_window_configure(window, 1, 2, 3, 0) == EINVAL);
     CHECK(aes_window_destroy(-1) == EINVAL);
     CHECK(aes_window_create(0x7fffffffL, 0, 1, 1) == EINVAL);

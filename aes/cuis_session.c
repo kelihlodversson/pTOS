@@ -187,6 +187,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         break;
     case CUIS_WINDOW_CONFIGURE:
         if (!valid_geometry(b, c, d, e)) return EINVAL;
+        if (window->x == (LONG)b && window->y == (LONG)c &&
+            window->width == (LONG)d && window->height == (LONG)e) break;
         window->x = (LONG)b; window->y = (LONG)c;
         window->width = (LONG)d; window->height = (LONG)e;
         if (window->visible) damage_windows();
