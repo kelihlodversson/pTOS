@@ -477,6 +477,19 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
 
         return (long)p;
+#if CONF_WITH_CUIS
+    case PE_ASYNC_GO_FREE:
+        if (!ksched_spawn_allowed()) return EINVFN;
+        p = (PD *)tail;
+        rc = check_launch(p);
+        if (rc) return rc;
+        if (!kproc_create(p)) return ENSMEM;
+        give_back_image(p, FALSE);
+        return ksched_spawn(p);
+    case PE_ASYNC_LOADGO:
+        if (!ksched_spawn_allowed()) return EINVFN;
+        break;
+#endif
     case PE_GOTHENFREE:
         p = (PD *) tail;
 #if CONF_WITH_USER_ASPACE
@@ -584,7 +597,11 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* memory ownership - the owner is either the new process being created,
      * or the parent
      */
-    owner = (flag == PE_LOADGO) ? p : run;
+    owner = (flag == PE_LOADGO
+#if CONF_WITH_CUIS
+             || flag == PE_ASYNC_LOADGO
+#endif
+            ) ? p : run;
     set_owner(p, owner);
     set_owner(env_ptr, owner);
 
@@ -641,7 +658,11 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * init_pd_files(): that takes references on inherited files and
      * directories, which an ENSMEM return here would otherwise leak. */
 #if CONF_WITH_USER_ASPACE
-    if (flag != PE_LOAD && !prepare_launch(cur_p)) {
+    if (flag != PE_LOAD
+#if CONF_WITH_CUIS
+        && flag != PE_ASYNC_LOADGO
+#endif
+        && !prepare_launch(cur_p)) {
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
@@ -660,6 +681,13 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
+#if CONF_WITH_CUIS
+    if (flag == PE_ASYNC_LOADGO) {
+        rc = ksched_spawn(cur_p);
+        if (rc < 0) proc_discard_accessory(cur_p);
+        return rc;
+    }
+#endif
     if (flag != PE_LOAD) {
         proc_go(cur_p, 0);
 #if CONF_WITH_USER_ASPACE
@@ -1045,6 +1073,9 @@ void xterm(UWORD rc)
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
+#if CONF_WITH_CUIS
+    ksched_exiting(p, rc);
+#endif
 
 #if CONF_WITH_KPROC
     /* not run->p_parent: that field is in the process's own writable
@@ -1086,6 +1117,9 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
     if (kproc_copy_from_user(word, sp, sizeof(word)))
         kcprintf("  stack: 0x%lx 0x%lx 0x%lx 0x%lx\n",
                  (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
+#if CONF_WITH_CUIS
+    ksched_fault(run, 11); /* SIGSEGV fallback for a non-CPU process fault. */
+#endif
     xterm((UWORD)-1);
 }
 #endif

@@ -286,7 +286,11 @@ static long pexec_ok(const long *pw)
     WORD mode = (WORD)pw[1];
     long rc;
 
-    if (mode == 4 || mode == 6) {
+    if (mode == 4 || mode == 6
+#if CONF_WITH_CUIS
+        || mode == PE_ASYNC_GO_FREE
+#endif
+    ) {
         ULONG bp;
 
         /* the basepage is found in the kernel's records (x86-64) and never
@@ -295,7 +299,11 @@ static long pexec_ok(const long *pw)
             return EIMBA;
         return E_OK;
     }
-    if (mode == 0 || mode == 3) {
+    if (mode == 0 || mode == 3
+#if CONF_WITH_CUIS
+        || mode == PE_ASYNC_LOADGO
+#endif
+    ) {
         rc = str_ok(pw[2], UA_PATH_MAX);
         if (rc)
             return rc;

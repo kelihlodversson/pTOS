@@ -45,3 +45,10 @@ obj/libaes/CUISCHED.TOS: tests/cuis/scheduled.c tests/ldso_client/nested.S obj/l
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/CUISCHED.TOS
 endif
+
+obj/libaes/ASYNC.TOS: tests/cuis/async.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/libaes.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/ASYNC.TOS
+endif

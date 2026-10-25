@@ -42,6 +42,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp obj/libaes/libaes.so "$work/GEMSYS/LIB/X32/LIBAES.SO"
         cp obj/libaes/CUIS.TOS "$work/CUIS.TOS"
         cp obj/libaes/CUISCHED.TOS "$work/CUISCHED.TOS"
+        cp obj/libaes/ASYNC.TOS "$work/ASYNC.TOS"
     fi
     cp obj/ldso/test/librt.so obj/ldso/test/libdyn.so "$work/GEMSYS/LIB/X32/"
     cp obj/ldso/test/BD.SO "$work/GEMSYS/LIB/X32/"
@@ -73,7 +74,7 @@ if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/CUIS.TOS" ]; then
-    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS"
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
@@ -122,6 +123,9 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then
         grep -q 'x32 CUIS VDI enforcement: PASS' "$log"
     fi
+    grep -q 'x32 async launch/wait: PASS' "$log"
+    grep -q 'x32 async orphan: PASS' "$log"
+    grep -q 'x86-64 async process calls: PASS' "$log"
     grep -q 'x86-64 CUIS scheduler: PASS' "$log"
     grep -q 'x32 CUIS messages: PASS' "$log"
     grep -q 'x32 CUIS pointer/events: PASS' "$log"

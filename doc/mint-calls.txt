@@ -175,7 +175,8 @@ Private mapping extensions (#660)
 Not in this issue
 -----------------
 
-Pfork/Pwait/signals (real multitasking), MiNT file systems and device drivers
+Pfork/signals, general multitasking outside managed CUIS groups, MiNT file
+systems and device drivers
 (Dcntl, XFS), networking.
 
 Groups and their PRs
@@ -188,3 +189,16 @@ Groups and their PRs
   5  the process calls                                  DONE (#481)
 
   Sconfig() is EINVFN and needs no group.
+
+Managed x32 asynchronous process calls (#711)
+--------------------------------------------
+Under external libaes/CUIS, kernel-managed native task groups support
+Pexec(100/106), Syield (0xff), Pwait (0x109), Pwait3 (0x11c), and Pwaitpid
+(0x13a). Ordinary synchronous Pexec is unchanged. Async launch outside a
+managed group, Pexec(104)'s shared-address-space mode, process-group wait
+selectors, and signal/job-control APIs remain unsupported. See doc/cuis.txt
+for precise ownership, wait flags/status/usage, PID reservation, orphan
+cleanup and scheduling limits. References: FreeMiNT sys/k_exec.c,
+sys/k_exit.c and doc/programmer/man/man2/Pwait3.2. Raw MiNT wait status puts
+normal exit in the low byte and a terminating signal in the next byte;
+POSIX libc wrappers perform their normal conversion.

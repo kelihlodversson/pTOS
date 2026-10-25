@@ -20,6 +20,9 @@
 #include "kproc.h"
 #include "bdosstub.h"
 #include "mintproc.h"
+#if CONF_WITH_CUIS
+#include "ksched.h"
+#endif
 
 /* what Dgetpath() may write (bdos/uaccess.c UA_PATHBUF) */
 #define DGETCWD_BUF     128
@@ -144,6 +147,12 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     *handled = TRUE;
     switch (fn)
     {
+#if CONF_WITH_CUIS
+    case 0xff: return ksched_yield();
+    case 0x109: return ksched_wait(-1, 2, 0);
+    case 0x11c: return ksched_wait(-1, ARG_W(1), ARG_P(2));
+    case 0x13a: return ksched_wait(ARG_W(1), ARG_W(2), ARG_P(3));
+#endif
     case GEMDOS_PGETPID:
         return kproc_pid(run);
     case GEMDOS_PGETPPID:
