@@ -73,5 +73,7 @@ int main(void)
     live = FALSE; /* Authoritative kernel teardown invalidates stale library state. */
     CHECK(appl_yield() == 0 && evnt_timer(0) == 0);
     CHECK(appl_init() == 7 && appl_exit() == 1 && closes == 2);
+    pid = 32767;
+    CHECK(appl_init() == 32767 && gl_apid == 32767 && appl_exit() == 1 && closes == 3);
     return 0;
 }

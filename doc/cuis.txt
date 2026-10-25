@@ -762,7 +762,7 @@ PID as a positive short application ID (1..32767), or -1 on failure. Opaque
 CUIS handles remain private and are never truncated to produce application
 IDs. Repeated initialization reuses the process registration. The caller's
 15-word global array is initialized with AES global-layout ABI 0x0400,
-unbounded multi-application count -1 and its application ID; other slots are
+multitasking sentinel -1 and its application ID; other slots are
 zero until their facilities migrate. This ABI value does not claim complete
 AES 4 functionality. appl_getinfo currently returns 0 and clears its output
 words for every query, advertising no unimplemented extensions. Optional

@@ -42,7 +42,7 @@ short mt_appl_init(short *global)
     application_session = handle;
     application_id = (short)pid;
     global[0] = 0x0400; /* AES global-array ABI, not a claim of complete AES coverage. */
-    global[1] = -1; /* Multiple processes; no fixed application count. */
+    global[1] = -1; /* GEM multitasking sentinel. */
     global[2] = application_id;
     sync_global(global);
     return application_id;
