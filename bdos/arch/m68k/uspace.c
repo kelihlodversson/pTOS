@@ -64,7 +64,7 @@ struct uframe {
 };
 
 #define SUPER       0x20
-#define ARG_WORDS   10                  /* fn, and the most a call takes: WLLL, 7 words */
+#define ARG_WORDS   13                  /* fn, and the most a call takes: Mmap(), 6 longs */
 
 /*
  * Copies the words the caller put on its stack for a call into pw, as many
@@ -151,17 +151,20 @@ void gouser(void)
     if (fputype)
         m68k_fpu_save(&fpu);
     if (setjmp(buf) == 0) {
-        ULONG *sp;
+        ULONG initial[2];
 
         aspace_hw_switch(root);
         /* the code of an ELF image was written through the data side (the loader reads
          * the file into the pages of the new space): publish it before the first fetch */
         aspace_hw_code_changed();
-        /* what a program finds on its stack: a return address, and the basepage */
+        /* what a program finds on its stack: a return address, and the basepage.
+         * Written through the kernel's copy, which backs the page of a lazy stack
+         * (a store from here would be a fault of the kernel) */
         user_sp -= 8;
-        sp = (ULONG *)user_sp;
-        sp[0] = 0;
-        sp[1] = (ULONG)(uintptr_t)p;
+        initial[0] = 0;
+        initial[1] = (ULONG)(uintptr_t)p;
+        if (!kproc_copy_to_user(user_sp, initial, sizeof(initial)))
+            panic("cannot write the first words of the stack of a process\n");
         uenter.entry = entry;
         uenter.user_sp = user_sp;
         uenter.kstack_top = (ULONG)kstack_top;

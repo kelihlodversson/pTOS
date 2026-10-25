@@ -702,16 +702,26 @@ restrt:
     fn = pw[0];
 
 #if CONF_WITH_MMAP
+    /*
+     * The native arguments are unsigned, full-width values: a slot is
+     * widened as unsigned, so that a 32-bit value with its top bit set is not
+     * sign-extended into a "high half".  The m68k frame is packed (a WORD
+     * function, then LONGs); the other ports have a slot per argument.
+     */
+#if CONF_WITH_NATIVE_ABI
+#define MMAP_ARG(n)     ((UQUAD)(unsigned long)pw[n])
+#else
+#define MMAP_ARG(n)     ((UQUAD)(ULONG)pwlong((const WORD *)pw, 2 * (n) - 1))
+#endif
     switch (fn)
     {
     case GEMDOS_MMAP:
-        /* All six native scalar slots reach the mapping service. */
-        return kproc_mmap(run, (UQUAD)pw[1], (UQUAD)pw[2], (UQUAD)pw[3],
-                          (UQUAD)pw[4], (UQUAD)pw[5], (UQUAD)pw[6]);
+        return kproc_mmap(run, MMAP_ARG(1), MMAP_ARG(2), MMAP_ARG(3),
+                          MMAP_ARG(4), MMAP_ARG(5), MMAP_ARG(6));
     case GEMDOS_MUNMAP:
-        return kproc_munmap(run, (UQUAD)pw[1], (UQUAD)pw[2]);
+        return kproc_munmap(run, MMAP_ARG(1), MMAP_ARG(2));
     case GEMDOS_MPROT:
-        return kproc_mprot(run, (UQUAD)pw[1], (UQUAD)pw[2], (UQUAD)pw[3]);
+        return kproc_mprot(run, MMAP_ARG(1), MMAP_ARG(2), MMAP_ARG(3));
     }
 #endif
 

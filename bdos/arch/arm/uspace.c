@@ -74,6 +74,35 @@ void arm_gemdos_dispatch(struct uframe *f)
         f->r[0] = (ULONG)osif(pw);
 }
 
+#if CONF_WITH_DEMAND_PAGING
+/*
+ * A data or prefetch abort in the process that is running (bios/arch/arm/vectors.c
+ * asks before it ends the process): if it is a translation or permission fault
+ * on a page of a lazy area -- stack, Malloc(), Mmap() memory -- or a write to a
+ * file page that is shared until then, back or copy it with the access the
+ * instruction made.  0: not a lazy page; 1: done, the instruction runs again;
+ * 2: it is one and no physical page is left; 3: I/O error of a file mapping.
+ */
+int arm_demand_page(ULONG address, ULONG fsr, int fetch);
+
+int arm_demand_page(ULONG address, ULONG fsr, int fetch)
+{
+    ULONG status = (fsr & 0xf) | ((fsr >> 6) & 0x10);
+    ASPACE_ROOT root = kproc_user_root(run);
+
+    /* 0b00101 / 0b00111: translation fault (section / page), 0b01101 / 0b01111:
+     * permission fault; anything else (alignment, external abort, domain) is
+     * the process's own error */
+    if (status != 0x05 && status != 0x07 && status != 0x0d && status != 0x0f)
+        return 0;
+    if (address >= USER_VA_LIMIT || !root || root != aspace_hw_current())
+        return 0;
+    return kproc_demand_page(run, address,
+                             fetch ? ASPACE_PROT_EXEC
+                                   : ((fsr & 0x800) ? ASPACE_PROT_WRITE : 0));
+}
+#endif
+
 /*
  * The resume point of each launch that waits: one jmp_buf per level of
  * Pexec() in progress, innermost first.

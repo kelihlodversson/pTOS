@@ -2,9 +2,11 @@ Native private mappings
 =======================
 
 CONF_WITH_MMAP provides Mmap, Munmap and Mprot. It requires isolated MMU
-address spaces and is initially available only on x32. CONF_WITH_ELF_SHARED
-selects it; it can also be enabled independently. All three calls return
-EINVFN when the feature is disabled. There is no flat-address-space fallback.
+address spaces with demand paging (CONF_WITH_USER_ASPACE and
+CONF_WITH_DEMAND_PAGING): x32, and the 32-bit ARM and 68040 backends of
+CONF_WITH_PROCESS_ASPACES. CONF_WITH_ELF_SHARED selects it; it can also be
+enabled independently. All three calls return EINVFN when the feature is
+disabled. There is no flat-address-space fallback.
 
 Opcodes and native calling convention
 ------------------------------------
@@ -25,6 +27,12 @@ On x32, RAX is (1 << 32) | function. Arguments go in RDI, RSI, RDX, R10,
 R8 and R9. RAX returns the result, as for other native GEMDOS calls. Existing
 calls still examine only the slots they use; BIOS/XBIOS argument blocks are
 unchanged. No Ssystem mode or pointer-to-arguments wrapper is involved.
+
+On ARM the function is in r0 and the arguments in r1-r6 (svc 1), the result
+in r0. On the 68040 the arguments are on the stack of trap #1 as for every
+GEMDOS call, packed: a WORD function, then the six LONGs in order (26 bytes),
+the result in d0. A slot is widened as unsigned, so that a 32-bit value with its
+top bit set is not sign-extended into a "high half".
 
 All active arguments are unsigned 32-bit x32 values, carried in full-width
 slots and checked before narrowing. Mmap's fd is ignored for anonymous
@@ -94,9 +102,13 @@ Protection flags are NONE=0, READ=1, WRITE=2 and EXEC=4. Initially effective
 access is NONE, R, RW or RX; the x32 MMU implies read access when WRITE or
 EXEC is requested. NONE removes user access and execution; it does not free
 the backing pages. Unknown protection bits return EINVAL. WRITE|EXEC is
-EACCDN, for both Mmap and Mprot. No page is simultaneously writable and
-executable. The backend invalidates stale MMU translations when changing
-permissions. Untouched pages stay unbacked: kernel-private reservation records
+EACCDN, for both Mmap and Mprot, so a request never asks for a page that is
+both. Where the MMU has an execute-disable bit (x32, ARM) no page is then
+simultaneously writable and executable. The 68040 has none: every readable page
+there is executable (doc/mmu-address-space.txt), so the refusal of WRITE|EXEC is
+a rule of the interface and not hardware-enforced W^X, and a writable mapping can
+be executed; callers must not rely on protection that backend cannot give. The
+backend invalidates stale MMU translations when changing permissions. Untouched pages stay unbacked: kernel-private reservation records
 hold their new permissions for future faults. Present private pages are
 updated immediately. Boundary-split metadata is allocated before any
 permission changes; allocation failure leaves all permissions unchanged.
@@ -189,5 +201,18 @@ and seals segment permissions/RELRO after eager relocation. Code pages can
 remain physically shared across live programs; relocated writable pages become
 private on first write. The main executable and interpreter are still mapped
 privately by the kernel startup path. TLS and MAP_SHARED remain unsupported.
-ARM/m68k backends remain gated until their isolated-address-space work merges;
-their syscall transport must also carry all six values.
+The 32-bit backends (ARM, 68040) share one implementation of the lazy and
+file-backed pages, in bios/aspace.c: a file page is a leaf whose physical page
+has a record of the backing (the hardware backends keep no flag for it), and is
+never mapped writable until a write fault copies it. Their page faults reach
+kproc_demand_page() the way the x32 one does: an ARM translation or permission
+fault of a data or prefetch abort (the access is read from the FSR: the write
+bit, or a prefetch), and the 68040 access error of format 7, which runs the
+faulting read again and does the writes the CPU still owes (the write-backs of
+the frame) once the page is there. The 68060 (format 4) and the 68030 (format
+B) are not understood yet: a fault on a lazy page there ends the process.
+Executable pages are published to instruction fetch (aspace_hw_code_changed())
+when they are filled or made executable. tests/mmap exercises the calls from
+user mode on virt-arm, raspi2b and virt-m68k with address spaces; the
+two-process page sharing of the x32 boot self-test has no 32-bit counterpart
+yet.

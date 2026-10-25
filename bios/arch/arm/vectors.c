@@ -214,6 +214,8 @@ void int_timerc(void)
 #if CONF_WITH_USER_ASPACE
 /* bdos/proc.c: ends the process that is running, and resumes its launcher */
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
+/* bdos/arch/arm/uspace.c: lazy pages (see there for the answers) */
+extern int arm_demand_page(ULONG address, ULONG fsr, int fetch);
 #endif
 
 void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)
@@ -239,6 +241,23 @@ void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG f
         default: cause = "exception"; break;
         }
         __asm__ volatile ("cpsie i" : : : "memory");
+#if CONF_WITH_DEMAND_PAGING
+        /* a page of its lazy memory that is not there (or a write to a private
+         * copy of a file page): back it, and the instruction runs again */
+        if ((vector_addr >> 2) == 2 || (vector_addr >> 2) == 3)
+        {
+            int answer = arm_demand_page(far, fsr, (vector_addr >> 2) == 2);
+
+            if (answer == 1)
+                return;
+            if (answer == 2)
+                proc_fault("no physical page left", fsr, far,
+                           (UQUAD)(ULONG)stack_frame->user_pc, (UQUAD)stack_frame->user_sp);
+            if (answer == 3)
+                proc_fault("file mapping I/O error", fsr, far,
+                           (UQUAD)(ULONG)stack_frame->user_pc, (UQUAD)stack_frame->user_sp);
+        }
+#endif
         proc_fault(cause, fsr, far, (UQUAD)(ULONG)stack_frame->user_pc,
                    (UQUAD)stack_frame->user_sp);
     }

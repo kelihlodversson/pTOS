@@ -650,10 +650,10 @@ C_SYM(arm_dispatch_undef):
     blx ip                 // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 instruction, u32 pc)
     FPU_POP_SCRATCH ip
 
-    add    sp, sp, #4
-
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^   /* restore user registers */
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!             /* load pc and CPSR from stack */
 
     .globl C_SYM(arm_dispatch_svc)
@@ -710,6 +710,7 @@ C_SYM(arm_dispatch_prefetch_abort):
     mov r0, #0x08   // VEC_BUS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
     sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
+    FPU_PUSH_SCRATCH ip    /* the FPU registers the handler may change: the process runs again */
 #if CONF_WITH_HIGHER_HALF
     ldr ip, =C_SYM(tos_vec_prefetch)
     ldr ip, [ip]    // load handler address
@@ -717,11 +718,12 @@ C_SYM(arm_dispatch_prefetch_abort):
     ldr ip, [r0]    // load handler address
 #endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
+    FPU_POP_SCRATCH ip
 
-    add    sp, sp, #4
-
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^   /* restore user registers */
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!             /* load pc and CPSR from stack */
 
     .globl C_SYM(arm_dispatch_data_abort)
@@ -739,6 +741,7 @@ C_SYM(arm_dispatch_data_abort):
     mov r0, #0x0c   // VEC_ADDRESS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
     sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
+    FPU_PUSH_SCRATCH ip    /* the FPU registers the handler may change: the process runs again */
 #if CONF_WITH_HIGHER_HALF
     ldr ip, =C_SYM(tos_vec_data)
     ldr ip, [ip]    // load handler address
@@ -746,11 +749,12 @@ C_SYM(arm_dispatch_data_abort):
     ldr ip, [r0]    // load handler address
 #endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
+    FPU_POP_SCRATCH ip
 
-    add    sp, sp, #4
-
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^   /* restore user registers */
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!             /* load pc and CPSR from stack */
 
     .extern C_SYM(raspi_int_handler)

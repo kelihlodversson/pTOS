@@ -63,3 +63,4 @@ CONF_REQUIRE_PMMU=y
 
 # Every process in an address space of its own.
 CONF_WITH_PROCESS_ASPACES=y
+CONF_WITH_MMAP=y

@@ -37,10 +37,19 @@ void test_legacy_tpa(void)
         ptest_assert_msg(sp_now > (long)bp && sp_now <= (long)bp->p_hitpa,
                          "the stack is not in the TPA");
 
-        /* the program keeps what it uses (the stack is just below its new end) */
-        in_use = (sp_now - (long)bp + 4096L) & ~4095L;
-        ptest_assert_msg(Mshrink(bp, in_use) == 0, "Mshrink() to the size in use failed");
-        ptest_assert_msg(Mshrink(bp, in_use) == 0, "Mshrink() to the same size again failed");
+        /* the program keeps what it uses: the stack, and the frames of its callers
+         * above it, which end at the old top of the TPA (a margin of two pages; if
+         * that is no smaller than the TPA, there is nothing to take back) */
+        in_use = (sp_now - (long)bp + 8192L) & ~4095L;
+        if (in_use < (long)bp->p_hitpa - (long)bp)
+        {
+            long rc = Mshrink(bp, in_use);
+
+            /* (EGSBF: the TPA is smaller than p_hitpa says already, the startup code
+             * having taken back what it did not need) */
+            ptest_assert_msg(rc == 0 || rc == EGSBF, "Mshrink() to the size in use failed");
+            ptest_assert_msg(Mshrink(bp, in_use) == rc, "Mshrink() to the same size again failed");
+        }
 
         /* what is not the program's own TPA, or cannot grow, is refused */
         ptest_assert_msg(Mshrink(bp, 0x10000000L) == EGSBF, "Mshrink() growing the TPA was not refused");
