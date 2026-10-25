@@ -942,7 +942,8 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
                             const char *filename)
 {
     KPROC *kproc = kproc_find(pd);
-    ULONG bias = 0, ibias, i, rsp = 0, used = 0, fnsize = 0;
+    ULONG bias = 0, ibias, i, fnsize = 0;
+    uint32_t rsp = 0, used = 0;        /* (the types of dl_start_stack(): not always ULONG) */
     UQUAD stack_first;
     UBYTE *stack;
     DL_START_INFO info;

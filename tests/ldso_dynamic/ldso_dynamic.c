@@ -44,8 +44,8 @@ static void meminfo(unsigned long *free_pages, unsigned long *processes)
 static void expect(int ok, const char *what, long rc)
 {
     static char text[96];
-    unsigned long v = rc < 0 ? (unsigned long)-rc : (unsigned long)rc;
-    char digits[12];
+    unsigned long v = rc < 0 ? 0UL - (unsigned long)rc : (unsigned long)rc;   /* (defined for LONG_MIN too) */
+    char digits[24];
     int n = 0, m = 0;
 
     if (ok)

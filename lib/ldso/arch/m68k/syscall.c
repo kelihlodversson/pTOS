@@ -43,17 +43,23 @@ int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
             w[n++] = (uint16_t)(v >> 16);
         w[n++] = (uint16_t)v;
     }
-    __asm__ volatile (
-        "lea 26(%1),%%a0\n\t"
-        "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t"
-        "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t"
-        "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t"
-        "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t" "move.w -(%%a0),-(%%sp)\n\t"
-        "move.w -(%%a0),-(%%sp)\n\t"
-        "trap #1\n\t"
-        "lea 26(%%sp),%%sp"
-        : "=d" (d0)
-        : "a" (w)
-        : "a0", "memory", "cc");
+    /* push the n words of the frame, the last first, call, and take the frame off again;
+     * d0 is written by the call, after the inputs are used up, but one of them is used
+     * after it: the output is early-clobber so that none of them is d0 */
+    {
+        const uint16_t *end = w + n;
+        uint32_t count = n - 1;         /* dbra counts down to -1 */
+        uint32_t bytes = n * 2;
+
+        __asm__ volatile (
+            "move.l %1,%%a0\n"
+            "1:\tmove.w -(%%a0),-(%%sp)\n\t"
+            "dbra %2,1b\n\t"
+            "trap #1\n\t"
+            "adda.l %3,%%sp"
+            : "=&d" (d0), "+r" (end), "+d" (count)
+            : "r" (bytes)
+            : "a0", "memory", "cc");
+    }
     return (int64_t)(int32_t)d0;
 }
