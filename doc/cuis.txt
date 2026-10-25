@@ -213,7 +213,44 @@ Geometry arguments are sign-extended 32-bit integers. Origins may be negative;
 extents must be positive and the exclusive right/bottom edges must fit in a
 signed 32-bit integer. Invalid configuration leaves the old geometry intact.
 These windows are metadata only: creation does not show a window, draw or
-change focus. Visibility, Z-order, clipping, redraw and event delivery remain
-subsequent epic work. No legacy AES window state is changed by these calls.
+change focus. Visibility, Z-order and redraw polling are described below;
+clipping, rendering coordination and event delivery remain subsequent work. No legacy AES window state is changed by these calls.
 All new kernel paths compile only with CONF_WITH_CUIS, selected by the
 external CONF_WITH_LIBAES feature.
+
+Visibility, stacking and redraw polling
+--------------------------------------
+Additional calls in CUIS class 0x103 each take the window handle in RDI:
+
+  6 SHOW     insert a hidden window at the front
+  7 HIDE     remove a visible window
+  8 RAISE    move a visible window to the front
+  9 LOWER    move a visible window to the back
+ 10 REDRAW   consume a pending redraw indication (1 pending, 0 none)
+
+All return a negative GEMDOS error on failure. SHOW/HIDE/RAISE/LOWER return
+zero on success. libaes exports aes_window_show/hide/raise/lower/redraw.
+Unused registers are ignored; ownership and full-width handle validation
+are identical to the earlier window calls. SHOW on an already-visible
+window and HIDE on a hidden one are no-ops. RAISE/LOWER on a hidden window
+return EINVAL. Raising the front window or lowering the back window is a
+no-op. CONFIGURE with identical validated geometry is also a no-op and
+preserves pending redraws. New windows start hidden with no pending redraw.
+
+CUIS maintains one front-to-back list across registered processes, separate
+from the legacy AES window manager. Showing, hiding, moving, resizing,
+reordering or destroying a visible window conservatively marks every
+remaining visible CUIS window for a full redraw. Showing also marks the
+newly visible window. Hidden windows retain no redraw indication; their
+next SHOW schedules one. Repeated changes coalesce. Invalid operations
+leave both order and pending redraws intact. Closing a session or exiting
+removes all its visible windows and marks surviving windows for redraw.
+
+REDRAW is owner-local, nonblocking polling, not an event wait. It clears
+only that window's pending indication; subsequent changes set it again.
+The syscall runs synchronously in the existing serialized kernel service
+path, without allocating queue entries. It does not authorize framebuffer
+writes. Visible-region clipping, display/update coordination and atomic
+event waits must be implemented before using this metadata to render
+concurrent clients. No pixels, legacy AES windows or input focus are changed
+by this slice. A full GEM wind_* adapter also remains subsequent work.

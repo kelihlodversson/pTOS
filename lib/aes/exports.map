@@ -3,5 +3,7 @@
             inside; rc_constrain; rc_equal; rc_intersect; rc_union;
             objc_add; objc_delete; objc_order; objc_offset;
             aes_window_create; aes_window_configure; aes_window_destroy;
+            aes_window_show; aes_window_hide; aes_window_raise;
+            aes_window_lower; aes_window_redraw;
     local: *;
 };

@@ -18,9 +18,11 @@ void kfree(void *memory) { (void)memory; frees++; }
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
 #include "windows.c"
+#include "visibility.c"
 int main(void)
 {
     LONG owner, other, reopened;
+    int rc;
     CHECK(cuis_service(99, ~0ULL) == EINVFN);
     CHECK(cuis_service(CUIS_SESSION_QUERY, 0) == EACCDN);
     CHECK(cuis_service(CUIS_SESSION_END, 0) == EACCDN);
@@ -62,5 +64,6 @@ int main(void)
     cuis_process_exit(&first);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM && !cuis_session_count());
     CHECK(allocations == frees);
-    return window_checks();
+    rc = window_checks();
+    return rc ? rc : visibility_checks();
 }
