@@ -1826,6 +1826,9 @@ static void lazy_oom(void)
 #if CONF_WITH_USER_CALLBACKS
     user_callback_fault();
 #endif
+#if CONF_WITH_CUIS
+    ksched_fault(run, 9); /* SIGKILL, as for a user-mode paging failure */
+#endif
     xterm((UWORD)-1);
 }
 
@@ -1875,7 +1878,13 @@ static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
             (!write || (prot & ASPACE_PROT_WRITE))) continue;
         rc = back_page(kproc, page, write ? ASPACE_PROT_WRITE : 0);
         if (rc != 1) {
-            if (rc == 3) { kcprintf("process: file mapping I/O error\n"); xterm((UWORD)-1); }
+            if (rc == 3) {
+                kcprintf("process: file mapping I/O error\n");
+#if CONF_WITH_CUIS
+                ksched_fault(run, 10); /* SIGBUS */
+#endif
+                xterm((UWORD)-1);
+            }
             lazy_oom();
         }
     }
