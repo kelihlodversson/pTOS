@@ -209,8 +209,11 @@ kproc_demand_page() the way the x32 one does: an ARM translation or permission
 fault of a data or prefetch abort (the access is read from the FSR: the write
 bit, or a prefetch), and the 68040 access error of format 7, which runs the
 faulting read again and does the writes the CPU still owes (the write-backs of
-the frame) once the page is there. The 68060 (format 4) and the 68030 (format
-B) are not understood yet: a fault on a lazy page there ends the process.
+the frame) once the page is there. The 68060 access error (format 4: the fault
+address at offset 8, the fault status long word at 12, whose R/W field says write
+or read-modify-write) is handled the same way, with no write-backs, since the CPU
+is precise. That one is read from FreeMiNT's handler and the Motorola manual, and
+has not run: QEMU's 68060 has no MMU. The 68030 has no address-space backend yet.
 Executable pages are published to instruction fetch (aspace_hw_code_changed())
 when they are filled or made executable. tests/mmap exercises the calls from
 user mode on virt-arm, raspi2b and virt-m68k with address spaces; the
