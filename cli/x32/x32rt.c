@@ -12,6 +12,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
+#include "config.h"
 #include <stddef.h>
 #include <mint/osbind.h>
 #include <mint/basepage.h>
@@ -24,6 +25,13 @@ typedef char p_env_offset_is_0x2c[(__builtin_offsetof(struct basepage, p_env) ==
 
 int main(void);
 
+#if CONF_WITH_DYNAMIC_CLI
+#include "../../lib/ldso/client/ptos.h"
+__attribute__((constructor)) static void console_init(void)
+{
+    _base = (struct basepage *)(uintptr_t)ptos_basepage;
+}
+#else
 /* Entered from x32crt.S with the process-entry contract's registers. */
 void x32_start(struct basepage *bp, long entry_type) __attribute__((noreturn));
 
@@ -39,6 +47,8 @@ void x32_start(struct basepage *bp, long entry_type)
         ;
 }
 
+#endif
+
 /* ---- memory functions ---------------------------------------------- */
 
 /*
@@ -46,6 +56,7 @@ void x32_start(struct basepage *bp, long entry_type)
  * -fno-builtin so the compiler cannot turn them back into calls to
  * themselves.
  */
+#if !CONF_WITH_DYNAMIC_CLI
 void *memset(void *p, int c, size_t n)
 {
     unsigned char *d = p;
@@ -81,6 +92,8 @@ void *memmove(void *dst, const void *src, size_t n)
     }
     return dst;
 }
+
+#endif
 
 /* ---- heap -----------------------------------------------------------
  *

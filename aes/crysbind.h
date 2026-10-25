@@ -108,7 +108,11 @@
 
                                         /* max sizes for arrays         */
 #define C_SIZE 4
+#if ARCH_X86_64
+#define G_SIZE 32 /* native AESGLOBAL has full-width kernel pointers */
+#else
 #define G_SIZE 15
+#endif
 #define I_SIZE 16
 #define O_SIZE 7
 #define AI_SIZE 4                       /* for fsel_boxinput() compatibility */

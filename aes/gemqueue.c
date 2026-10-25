@@ -82,7 +82,7 @@ static void doq(WORD donq, AESPD *p, QPB *m)
 }
 
 
-void aqueue(WORD isqwrite, EVB *e, LONG lm)
+void aqueue(WORD isqwrite, EVB *e, intptr_t lm)
 {
     AESPD   *p;
     QPB     *m;

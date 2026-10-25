@@ -91,11 +91,14 @@ void ui_start(PD *p)
     newsize = p->p_tlen + p->p_dlen + p->p_blen + sizeof(PD);
     Mshrink(p, newsize);
 
-    /* ad_stail: address of the cmdline buffer within our own basepage
-     * (aes/arch/arm/gemstart.S's own equivalent). p_cmdlin is a real
-     * embedded array field (bdosdefs.h), not a USERPTR_T one, so no
-     * widen/narrow is needed to get a real pointer to it. */
-    ad_stail = p->p_cmdlin;
+    /* This buffer is also written by shell services under a client's CR3.
+     * The bootstrap basepage is not mapped there; kernel storage is. */
+    {
+        static char shell_tail[PDCLSIZE];
+
+        memcpy(shell_tail, p->p_cmdlin, sizeof(shell_tail));
+        ad_stail = shell_tail;
+    }
 
     /*
      * ARM/m68k's own ui_start() calls Super(0) here to switch from user

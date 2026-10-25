@@ -94,6 +94,7 @@ struct uda                  /* user stack data area */
 #define COMPLETE 0x0002         /* event completed */
 #define EVDELAY  0x0004         /* event is delay event */
 #define EVMOUT   0x0008         /* event flag for mouse wait outside of rect*/
+#define EVFOCUS  0x0010         /* immediate mouse checks require ownership */
 
 struct evb                  /* event block */
 {
@@ -101,7 +102,7 @@ struct evb                  /* event block */
         EVB     *e_link;        /* link to next block on event chain */
         EVB     *e_pred;        /* link to prev block on event chain */
         AESPD   *e_pd;          /* owner AESPD (data for fork) */
-        LONG    e_parm;         /* parm for request -> event comm */
+        intptr_t e_parm;         /* parm for request -> event comm */
         WORD    e_flag;
         EVSPEC  e_mask;         /* mask for event notification */
         LONG    e_return;
@@ -160,7 +161,7 @@ struct qpb                  /* queue parameter block */
 {
         AESPD   *qpb_ppd;
         WORD    qpb_cnt;
-        LONG    qpb_buf;
+        intptr_t qpb_buf;
 } ;
 
 struct spb                  /* sync parameter block */

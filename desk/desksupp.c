@@ -450,7 +450,7 @@ WORD do_diropen(WNODE *pw, WORD new_win, WORD curr_icon,
     /* set new name and info lines for window */
     win_sname(pw);
     win_sinfo(pw, FALSE);
-    wind_set(pw->w_id, WF_NAME, pw->w_name, 0, 0);
+    wind_set(pw->w_id, WF_NAME, (void *)pw->w_name, 0, 0);
 
     /* do actual wind_open  */
     do_wopen(new_win, pw->w_id, curr_icon, pt);
@@ -1686,7 +1686,7 @@ void refresh_window(WNODE *pw, BOOL force_mediach)
         if (drive == 'A' || drive == 'B')
         {
             KDEBUG(("Forcing media change for drive %c\n", drive));
-            Rwabs(READSEC, (LONG)NULL, MEDIACHANGE, 0, drive - 'A', 0);
+            Rwabs(READSEC, (long)0, MEDIACHANGE, 0, drive - 'A', 0);
         }
     }
 

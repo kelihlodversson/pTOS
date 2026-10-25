@@ -34,6 +34,13 @@ endif
 DESK_MULTILIBFLAGS = $(subst $(CPUFLAGS),$(DESK_CPUFLAGS),$(MULTILIBFLAGS))
 
 DESK_CFLAGS = $(subst $(CPUFLAGS),$(DESK_CPUFLAGS),$(CFLAGS)) -ffunction-sections -fdata-sections $(if $(ARCH_ARM),-mword-relocations)
+ifdef ARCH_X86_64
+DESK_CFLAGS = $(X32_CLI_CFLAGS) $(if $(CONF_WITH_DYNAMIC_DESK),$(LDSO_APP_CFLAGS)) -DX32_USERLAND -Idesk/x32 -Iinclude -Iobj -Idesk -Iaes -Iutil -Iinclude/arch/x86_64 -ffunction-sections -fdata-sections
+$(DESK_OBJDIR)/%.o: desk/x32/%.c $(AUTOCONF_H) | $(DESK_OBJDIR)
+	$(X32_CC) $(DESK_CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+$(DESK_OBJDIR)/%.o: desk/x32/%.S | $(DESK_OBJDIR)
+	$(X32_CC) $(DESK_SFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+endif
 DESK_CFILE_FLAGS = $(strip $(DESK_CFLAGS) $($(current_dir)_copts))
 DESK_SFILE_FLAGS = $(strip $(DESK_CFLAGS) $($(current_dir)_sopts))
 
@@ -89,8 +96,18 @@ else ifdef BUILD_TOOLCHAIN_ELF
 DESK_LDFLAGS = -Wl,-q -Wl,-Ttext=0
 endif
 
+ifdef ARCH_X86_64
+ifeq ($(CONF_WITH_DYNAMIC_DESK),y)
+$(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-aes.a obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/ldso/libptos.so
+	$(X32_CC) $(LDSO_APP_LDFLAGS) -Wl,--gc-sections -o $@ $(filter %.o %.a,$^) -Lobj/ldso -lptos
+else
+$(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-aes.a obj/x32/libptos-vdi.a
+	$(X32_CC) $(X32_CLI_LDFLAGS) -Wl,--gc-sections -o $@ $^
+endif
+else
 $(DESK_PRG): $(DESK_OBJ)
 	@echo '  LD     $@'
 	@$(CC) $(DESK_MULTILIBFLAGS) -nostartfiles -nostdlib $(DESK_LDFLAGS) -Wl,-e,$(DESK_ENTRY) -Wl,--gc-sections $(DESK_OBJ) $(LIBS) -o $@
+endif
 
 -include $(DESK_OBJ:.o=.d)

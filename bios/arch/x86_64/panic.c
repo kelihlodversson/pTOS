@@ -148,21 +148,23 @@ static NORETURN void hang(void)
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
                        UQUAD sp) NORETURN;
 /* bdos/arch/x86_64/rwa.c */
-extern int x86_64_demand_page(UQUAD address);
+extern int x86_64_demand_page(UQUAD address, UQUAD error_code);
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
     /*
-     * The one fault that is no fault: a process touches a page of its stack or
-     * of its Malloc() memory that has no physical page yet (error code bit 0
-     * clear: not present; bit 4 clear: not an instruction fetch).  Back it and
-     * resume the instruction.
+     * Service lazy faults and write faults on private COW file pages, never
+     * reserved-bit violations. Reservation permissions and the file-page PTE
+     * marker must authorize the operation before any allocation or I/O.
      */
-    if (frame->vector == 14 && !(frame->error_code & 0x11)) {
-        int answer = x86_64_demand_page(x86_64_read_cr2());
+    if (frame->vector == 14 && !(frame->error_code & 0x08)) {
+        int answer = x86_64_demand_page(x86_64_read_cr2(), frame->error_code);
 
         if (answer == 1)
             return;
+        if (answer == 3)
+            proc_fault("file mapping I/O error", frame->error_code,
+                       x86_64_read_cr2(), frame->rip, frame->rsp);
         if (answer == 2)                /* a lazy page and none left: the process ends, */
             proc_fault("no physical page left", frame->error_code, /* ring 3 or not */
                        x86_64_read_cr2(), frame->rip, frame->rsp);

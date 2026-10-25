@@ -1,0 +1,193 @@
+Native private mappings
+=======================
+
+CONF_WITH_MMAP provides Mmap, Munmap and Mprot. It requires isolated MMU
+address spaces and is initially available only on x32. CONF_WITH_ELF_SHARED
+selects it; it can also be enabled independently. All three calls return
+EINVFN when the feature is disabled. There is no flat-address-space fallback.
+
+Opcodes and native calling convention
+------------------------------------
+
+    Mprot(address, length, protection)              GEMDOS 0x17c
+    Maccess(address, length, mode)                  GEMDOS 0x17d (existing)
+    Mmap(address, length, protection, flags,
+         fd, offset)                               GEMDOS 0x17e
+    Munmap(address, length)                        GEMDOS 0x17f
+
+FreeMiNT's sys/syscalls.master reserves 0x17e for mmap and 0x17f for munmap,
+without implementing or specifying their arguments. 0x17c is currently
+unassigned there: Mprot at that number is a pTOS extension, not a claim of
+an existing FreeMiNT ABI. Maccess retains its existing read/write-access
+query semantics; it never changes permissions.
+
+On x32, RAX is (1 << 32) | function. Arguments go in RDI, RSI, RDX, R10,
+R8 and R9. RAX returns the result, as for other native GEMDOS calls. Existing
+calls still examine only the slots they use; BIOS/XBIOS argument blocks are
+unchanged. No Ssystem mode or pointer-to-arguments wrapper is involved.
+
+All active arguments are unsigned 32-bit x32 values, carried in full-width
+slots and checked before narrowing. Mmap's fd is ignored for anonymous
+mappings (conventionally -1); its offset must be zero. In particular a high
+half in a pointer, length, protection or flag is not silently truncated.
+These are GEMDOS return values, not libc's MAP_FAILED/errno wrapper convention.
+Flag values and opcode constants are published in include/mman.h.
+
+Mmap
+----
+
+MAP_PRIVATE | MAP_ANONYMOUS reserves zero-fill memory (MAP_ANON is an alias).
+MAP_PRIVATE without ANONYMOUS maps a readable native FAT file using fd/offset.
+The conventional values are PRIVATE=0x02, ANONYMOUS=0x20. MAP_SHARED, missing
+PRIVATE and all unknown flags return EOPNOTSUPP (-307).
+Replacing MAP_FIXED (0x10) is explicitly unsupported; it must not be silently
+treated as a non-replacing fixed request.
+
+address is an advisory hint, rounded down to a page. If it is outside the
+mapping window or unavailable, first fit is used instead. The optional
+MAP_FIXED_NOREPLACE (0x100000) requests that exact page-aligned address;
+collision returns EACCDN without replacing or changing any mapping. A fixed
+request outside the window returns EIMBA; an unaligned one returns EINVAL.
+
+length must be nonzero and is rounded up to whole pages (4096 initially;
+query Sysconf(SC_PAGE_SIZE)). Arithmetic is bounded before rounding. Mappings
+live in [0x01000000, 0x0f000000), separately from program images, ancestor
+basepages, Malloc memory, stacks, guards and kernel mappings. Every process
+owns its reservations and private views. Clean file pages may share physical
+backing; private writes are never visible through a peer's mapping. All returned addresses are positive
+signed GEMDOS longs. Out-of-window/oversized ranges return EIMBA, zero length
+EINVAL; exhausted address space, reservation metadata or process limits
+return ENSMEM.
+
+Anonymous mappings are lazy, private and zero-filled. Mmap reserves virtual
+address space and kernel metadata, without allocating backing pages or page
+tables. Each page receives a zeroed private physical page on its first legal
+read, write or instruction fetch, including kernel access to a validated user
+buffer. Disallowed access never allocates a page. PROT_NONE reservations cost
+no backing memory until access is enabled and a page is touched. As with lazy
+Malloc/stack memory, physical exhaustion on a legal first touch terminates
+the touching process while preserving the kernel's memory reserve. Mmap can
+therefore reserve more virtual memory than free physical RAM.
+
+The full reservation counts against both Psetlimit's data (3) and total/core
+(2) allocation budgets immediately, together with Malloc memory. Reservations
+and backing pages are reclaimed by Munmap or process teardown, including
+fault termination. No ownership comes from user-writable basepage fields.
+
+Mprot
+-----
+
+The address must be page-aligned, length nonzero and rounded to pages, and
+the whole range must be covered by the caller's mapping reservations.
+Adjacent reservations are accepted; a hole or any address outside the mapping
+window is EIMBA, except for the standard ELF image case below. Validate the
+entire range before changing a single page.
+
+With CONF_WITH_ELF_SHARED, a standard PT_INTERP process may also protect
+pages belonging to its main executable/interpreter PT_LOAD segments. Kernel
+layouts establish ownership independently of the public basepage; the whole
+range must be segment pages, excluding gaps, stack and basepage. These pages
+are already privately backed. This allows LD.SO to seal RELRO after relocation;
+it does not allow Munmap to remove kernel-loaded images.
+
+Protection flags are NONE=0, READ=1, WRITE=2 and EXEC=4. Initially effective
+access is NONE, R, RW or RX; the x32 MMU implies read access when WRITE or
+EXEC is requested. NONE removes user access and execution; it does not free
+the backing pages. Unknown protection bits return EINVAL. WRITE|EXEC is
+EACCDN, for both Mmap and Mprot. No page is simultaneously writable and
+executable. The backend invalidates stale MMU translations when changing
+permissions. Untouched pages stay unbacked: kernel-private reservation records
+hold their new permissions for future faults. Present private pages are
+updated immediately. Boundary-split metadata is allocated before any
+permission changes; allocation failure leaves all permissions unchanged.
+Adjacent reservations with identical permissions are coalesced. A successful
+operation returns E_OK.
+
+
+File-backed private mappings
+----------------------------
+
+fd must identify a readable native FAT file, including an unlinked file whose
+handle is still open. Invalid/full-width handles return EIHNDL, write-only
+handles EACCDN, unsupported foreign drivers EOPNOTSUPP. offset must be page
+aligned, nonnegative and within native signed 32-bit file offsets. Initially
+the rounded mapping extent must fit the rounded file extent; mappings beyond
+that extent or of empty files return EIMBA. Bytes after EOF in the final page
+are zero. Reservations charge the same full-length memory budgets as anonymous
+mappings; Mmap itself does not read or allocate file pages.
+
+Clean pages are keyed by retained DFD identity, cache generation and file page
+offset. They share read-only physical backing even when a reservation permits
+WRITE. A write fault allocates and fills a private page before replacing the
+old PTE; failure leaves the old mapping/refcount intact and terminates the
+faulting process. Mprot updates logical permissions without enabling writes
+on shared backing. Kernel buffer writes use the same COW path. Maccess reports
+logical accessibility without faulting in or privatizing pages.
+
+The cache retains no idle pages: the final mapped reference frees each clean
+page. Reservation/backing pins retain the underlying OFD independently of
+Fclose. Unlink removes the name immediately and defers FAT-chain reclamation
+until the last handle/backing reference; recreation gets a new identity.
+Normal Shutdown drops file mappings before the final filesystem flush, so
+unlinked backing is reclaimed on a normal reset/halt as well as on Pterm.
+A failed final disk release retains its pin for retry on subsequent mapping
+operations. Media-lost backing can serve already cached pages, but an uncached
+page faults with an I/O error; it never reads from the replacement medium.
+
+Native Fwrite invalidates future cache lookup generations. Existing private
+views may retain cached old contents or read newer contents on later faults;
+there is no atomic file snapshot or promised coherence with later file writes.
+Private COW writes never alter the file. Raw disk writes and foreign filesystem
+coherence require their own backing/invalidation contracts. File-I/O faults
+terminate the process rather than treating a disk error as a kernel page fault.
+
+Munmap
+------
+
+The address must be page-aligned and length nonzero, rounded up to pages.
+Only the caller's dedicated mapping window is accepted; image, heap,
+basepage, stack and supervisor mappings cannot be removed through this call.
+Unmapped holes are ignored and E_OK is returned. The range can span several
+reservations and holes, or remove the beginning, end or middle of one mapping.
+A middle removal splits its reservation. Metadata for that split is allocated
+before removing any page; failure leaves the original mapping intact.
+
+Backed pages are returned once and untouched pages are skipped; accounting
+is reduced by reservation bytes actually removed. Reuse gets freshly zeroed
+pages on first touch. Empty lower page tables may be retained by the address space until process exit, as with other
+private mappings; they are never leaked across process destruction.
+
+Validation and remaining work
+-----------------------------
+
+The x32 boot self-test exercises these calls from real ring-3 code, including
+the sixth argument, high-bit rejection, collisions, advisory hints, partial
+unmaps, adjacent-range protection, rollback across holes, Maccess/Fread
+permission checks, zeroing on reuse, process exit and MMU permission faults.
+It also checks reservations without backing, sparse touches, permissions
+changed before first touch, refusal of borrowed pages during sparse protection,
+distinct physical pages at identical virtual addresses in two processes,
+full-reservation allocation limits and injected first-touch physical-allocation
+failures, with allocator/record/page counts checked after destruction.
+
+Build pc-x86_64 with CONF_WITH_MMAP and CONF_WITH_X86_64_MEMTEST, then:
+
+    make CROSS_COMPILE= -j4
+    make CROSS_COMPILE= x32test
+    sh tools/test-mmap-boot.sh
+
+The runner requires QEMU, OVMF, dosfstools and mtools. It uses private raw
+disk/NVRAM copies and requires both "x86-64 mmap syscalls: PASS" and the
+whole memory-test PASS, a single EFI entry and a working EmuCON prompt.
+OVMF_DIR and QEMU_DATA_DIR can select locally installed emulator files;
+MMAP_BOOT_LOG preserves its console log. The normal disabled-feature x32
+boot also checks that all three calls return EINVFN; pass --disabled to the
+runner when boot-testing that configuration.
+
+LD.SO uses file-backed private mappings for DSO pages, keeps anonymous BSS,
+and seals segment permissions/RELRO after eager relocation. Code pages can
+remain physically shared across live programs; relocated writable pages become
+private on first write. The main executable and interpreter are still mapped
+privately by the kernel startup path. TLS and MAP_SHARED remain unsupported.
+ARM/m68k backends remain gated until their isolated-address-space work merges;
+their syscall transport must also carry all six values.

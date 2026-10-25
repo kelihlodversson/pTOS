@@ -73,9 +73,11 @@
  * forward prototypes
  */
 long opnfil(FCB *f, DND *dn, int mod);
-static long makopn(FCB *f, DND *dn, int h, int mod);
-static FTAB *sftofdsrch(OFD *ofd);
-static void sftdel(FTAB *sftp);
+static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2);
+#if CONF_WITH_FAT_FILE_LIFETIMES
+static OFD *pending_unlinks;
+#endif
+static long sftdel(FTAB *sftp);
 
 
 /*
@@ -88,6 +90,7 @@ static void sftdel(FTAB *sftp);
 long xcreat(char *name, UBYTE attr)
 {
     int a = attr & ~FA_SUBDIR;
+    ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_create(name, (UWORD)a);
 #else
@@ -108,6 +111,7 @@ long xcreat(char *name, UBYTE attr)
 long xopen(char *name, WORD mod)
 {
     int m = mod & VALID_FOPEN_BITS;
+    ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_open(name, m);
 #else
@@ -117,33 +121,32 @@ long xopen(char *name, WORD mod)
 
 
 /*
-**  makopn - make an open file for sft handle h
+**  makopn - allocate and link an OFD, optionally sharing an existing DFD
 **
 */
-static long makopn(FCB *f, DND *dn, int h, int mod)
+static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2)
 {
     OFD *p;
-    OFD *p2;
     DFD *dfd;
     DMD *dm;                        /*  M01.01.03   */
+    BOOL was_locked = dn->d_flag & DND_LOCKED;
 
     dm = dn->d_drv;
 
+    /* Pool allocation may scavenge an otherwise unused leaf directory.
+     * Keep it and its directory OFD alive until this OFD is linked. */
+    dn->d_flag |= DND_LOCKED;
     p = MGET(OFD);                  /* MGET(OFD) only returns if it succeeds */
 
+#if CONF_WITH_FILE_PINS
+    p->o_refs = 1;
+#endif
     p->o_mod = mod;                 /*  set mode                    */
     p->o_dmd = dm;                  /*  link OFD to media           */
-    sft[h-NUMSTD].f_ofd = p;
-    /* the following 2 assignments are unnecessary, since MGET zeroes the OFD */
-    p->o_curcl = 0;                 /*  init file pointer info      */
-    p->o_curbyt = 0;                /*  "                           */
+    /* MGET zeroes the initial file cursor. */
     p->o_dnode = dn;                /*  link to directory           */
     p->o_dirfil = dn->d_ofd;        /*  link to dir's ofd           */
     p->o_dirbyt = dn->d_ofd->o_bytnum - 32; /*  offset of fcb in dir*/
-
-    for (p2 = dn->d_files; p2; p2 = p2->o_link)
-        if (p2->o_dirbyt == p->o_dirbyt)
-            break;              /* same dir, same dcnt */
 
     p->o_link = dn->d_files;
     dn->d_files = p;
@@ -156,8 +159,6 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
     {
         dfd = p2->o_dfd;
         dfd->o_usecnt++;                /* more than one user of DFD! */
-        /* not used yet... TBA *********/
-        p2->o_thread = p;
     }
     else
     {
@@ -171,7 +172,8 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
 
     p->o_dfd = dfd;                     /* for future reference ... */
 
-    return h;
+    if (!was_locked) dn->d_flag &= ~DND_LOCKED;
+    return p;
 }
 
 
@@ -183,8 +185,19 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
 **  NOTES:
 **          make a pointer to the ith entry of sft
 */
+/* Locate the live identity of a directory entry, excluding deleted names. */
+OFD *ofd_find(DND *dn, long pos)
+{
+    OFD *fd;
+    for (fd = dn->d_files; fd; fd = fd->o_link)
+        if (fd->o_dirbyt == pos && !(fd->o_dfd->o_flag & O_UNLINKED))
+            return fd;
+    return NULL;
+}
+
 long opnfil(FCB *f, DND *dn, int mod)
 {
+    OFD *shared;
     int i;
     int h;
 
@@ -196,84 +209,173 @@ long opnfil(FCB *f, DND *dn, int mod)
     if (i == OPNFILES)
         return ENHNDL;
 
+    /* Reject reference overflow before allocating or publishing a slot. */
+    shared = ofd_find(dn, dn->d_ofd->o_bytnum - 32);
+    if (shared && shared->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
     sft[i].f_own = run;
     sft[i].f_use = 1;
     h = i + NUMSTD;
 
-    return makopn(f, dn, h, mod);
+    sft[i].f_ofd = makopn(f, dn, mod, shared);
+    return h;
 }
 
 
-/*
-**  sftofdsrch - search the sft for an entry with the specified OFD
-**  returns:
-**      ptr to the matching sft, or
-**      NULL
-*/
-static FTAB *sftofdsrch(OFD *ofd)
+/* OFD stays in its directory list until both handles and backing-object
+ * pins are gone. DFD stays in the base OFD until the last OFD is gone. */
+#if CONF_WITH_FILE_PINS
+BOOL ofd_hold(OFD *fd)
 {
-    FTAB *sftp;     /* scan ptr for sft */
-    int i;
-
-    for (i = 0, sftp = sft; i < OPNFILES; i++, sftp++)
-        if (sftp->f_ofd == ofd)
-            return sftp;
-
-    return NULL;
+    if (!fd || !fd->o_refs || fd->o_refs == 0xffff ||
+        (fd->o_dfd->o_flag & (O_MEDIA_LOST | O_CLOSING))) return FALSE;
+    fd->o_refs++;
+    return TRUE;
 }
-
-
-/*
-**  sftdel - delete an entry from the sft
-**      delete the entry from the sft.  If no other entries in the sft
-**      have the same ofd, free up the OFD, also.
-*/
-static void sftdel(FTAB *sftp)
-{
-    FTAB *s;
-    OFD *ofd;
-    DFD *d;
-
-    /*  clear out the entry  */
-
-    ofd = (s=sftp)->f_ofd;
-
-    s->f_ofd = 0;
-    s->f_own = 0;
-    s->f_use = 0;
-#if CONF_WITH_PLUGGABLE_FS
-    /*
-     * this slot is only ever a legacy (non-pluggable) handle by the
-     * time sftdel() runs on it - see the CONF_WITH_PLUGGABLE_FS branch
-     * near the top of xclose() - but establish the invariant "free slot
-     * implies f_pfs.fs == NULL" here regardless, so opnfil()/makopn()
-     * (which know nothing about f_pfs) can never hand out a slot with a
-     * stale non-NULL f_pfs.fs left over from an earlier pluggable use.
-     */
-    s->f_pfs.fs = 0;
 #endif
 
-    /*
-     * if there are no other sft entries with same OFD, delete the OFD
-     * (subject to the complication of multiple OFDs pointing to the same file)
-     */
-    if (sftofdsrch(ofd) == NULL)
-    {
-        d = ofd->o_dfd;
-        if (d->o_usecnt > 0)        /* paranoia */
-            d->o_usecnt--;
-
-        if (d != &ofd->o_disk)      /* not the 'base OFD', */
-            xmfreblk(ofd);          /*  so OK to delete it */
-
-        if (d->o_usecnt == 0)       /* no more users of this file */
-        {
-            ofd = (OFD *)((char *)d - offsetof(OFD, o_disk));
-            xmfreblk(ofd);          /* delete the 'base OFD' */
+#if CONF_WITH_FAT_FILE_LIFETIMES
+/* Keep the current cluster and successor until both FAT copies are durable.
+ * flush() invalidates its buffer before I/O, so a retry must rewrite the
+ * pending entry instead of reading a possibly already cleared FAT link. */
+static void free_file_chain(DFD *file, DMD *media)
+{
+    BCB *b;
+    while (file->o_strtcl && !endofchain(file->o_strtcl)) {
+        if (!(file->o_flag & O_RECLAIM_PENDING)) {
+            file->o_reclaim_next = getrealcl(file->o_strtcl, media);
+            file->o_flag |= O_RECLAIM_PENDING;
         }
+        clfix(file->o_strtcl, FREECLUSTER, media);
+        for (b = bufl[BI_FAT]; b; b = b->b_link)
+            if (b->b_bufdrv != -1 && b->b_dirty && b->b_dm == media)
+                flush(b);
+        file->o_strtcl = file->o_reclaim_next;
+        file->o_flag &= ~O_RECLAIM_PENDING;
     }
+    file->o_strtcl = 0;
 }
 
+/* Every live native file stays on its directory's list, including failed
+ * closes and retired mapping pins. A partially flushed free must not be
+ * allocated again until its owner has committed both FAT copies. */
+BOOL ofd_cluster_pending(DND *dn, CLNO cluster)
+{
+    OFD *fd;
+    if (!dn) return FALSE;
+    for (fd = dn->d_files; fd; fd = fd->o_link)
+        if ((fd->o_dfd->o_flag & O_RECLAIM_PENDING) &&
+            fd->o_dfd->o_strtcl == cluster)
+            return TRUE;
+    return ofd_cluster_pending(dn->d_left, cluster) ||
+           ofd_cluster_pending(dn->d_right, cluster);
+}
+
+#endif
+
+long ofd_put(OFD *fd)
+{
+    DFD *dfd = fd->o_dfd;
+    OFD **link;
+
+#if CONF_WITH_FILE_PINS
+    if (!fd->o_refs) return EINTRN;
+    if (fd->o_refs > 1) { fd->o_refs--; return E_OK; }
+#endif
+#if CONF_WITH_FAT_FILE_LIFETIMES
+    if (dfd->o_usecnt == 1 && (dfd->o_flag & O_UNLINKED) &&
+        !(dfd->o_flag & O_MEDIA_LOST)) {
+        dfd->o_flag |= O_CLOSING;
+        free_file_chain(dfd, fd->o_dmd);
+        ixclose(fd, CL_KEEP);            /* flush while reference still live */
+    }
+#endif
+    if (fd->o_dnode) {
+        for (link = &fd->o_dnode->d_files; *link && *link != fd; link = &(*link)->o_link) ;
+        if (*link) *link = fd->o_link;
+    }
+#if CONF_WITH_FILE_PINS
+    fd->o_refs = 0;
+#endif
+    dfd->o_usecnt--;
+    if (dfd != &fd->o_disk) xmfreblk(fd);
+    if (!dfd->o_usecnt)
+        xmfreblk((OFD *)((char *)dfd - offsetof(OFD, o_disk)));
+    return E_OK;
+}
+
+/* A handle group owns one OFD reference regardless of Fdup/Fforce aliases.
+ * Keep the slot live until ofd_put's disk work completes, including longjmp. */
+static long sftdel(FTAB *slot)
+{
+    long rc;
+    int i;
+    for (i = 0; i < OPNFILES; i++)
+        if (&sft[i] != slot && sft[i].f_ofd == slot->f_ofd) break;
+    if (i == OPNFILES) {
+        rc = ofd_put(slot->f_ofd);
+        if (rc < 0) return rc;
+    }
+    slot->f_ofd = NULL; slot->f_own = NULL; slot->f_use = 0;
+#if CONF_WITH_PLUGGABLE_FS
+    slot->f_pfs.fs = NULL;
+#endif
+    return E_OK;
+}
+
+/* Media-change invalidates file handles, but backing pins must remain safe
+ * to release after the DMD/DND tree has gone. Never reclaim the new medium. */
+static void invalidate_file(OFD *fd)
+{
+    int i;
+    BOOL handles = FALSE;
+    fd->o_dfd->o_flag |= O_MEDIA_LOST;
+    fd->o_dmd = NULL; fd->o_dnode = NULL; fd->o_dirfil = NULL;
+    for (i = 0; i < OPNFILES; i++)
+        if (sft[i].f_ofd == fd) {
+            sft[i].f_ofd = NULL; sft[i].f_own = NULL; sft[i].f_use = 0;
+            handles = TRUE;
+        }
+    if (handles) ofd_put(fd);
+}
+
+static void invalidate_directory_files(DND *dn)
+{
+    OFD *fd, *next;
+    if (dn->d_left) invalidate_directory_files(dn->d_left);
+    if (dn->d_right) invalidate_directory_files(dn->d_right);
+    for (fd = dn->d_files; fd; fd = next) {
+        next = fd->o_link;
+        invalidate_file(fd);
+    }
+    dn->d_files = NULL;
+}
+
+void ofd_invalidate_drive(DMD *dm)
+{
+    OFD *fd;
+#if CONF_WITH_FAT_FILE_LIFETIMES
+    OFD **link = &pending_unlinks;
+#endif
+    int i;
+    if (dm->m_dtl) invalidate_directory_files(dm->m_dtl);
+    /* A close may have detached an OFD before a later flush failed. */
+    for (i = 0; i < OPNFILES; i++) {
+        fd = sft[i].f_ofd;
+#if CONF_WITH_PLUGGABLE_FS
+        if (sft[i].f_pfs.fs) continue;
+#endif
+        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dmd == dm)
+            invalidate_file(fd);
+    }
+#if CONF_WITH_FAT_FILE_LIFETIMES
+    while ((fd = *link)) {
+        if (fd->o_dfd->o_flag & O_MEDIA_LOST) {
+            *link = fd->o_thread;
+            ofd_put(fd);                 /* memory only, never new disk I/O */
+        } else link = &fd->o_thread;
+    }
+#endif
+}
 
 /*
  *  xclose - Close a file.
@@ -293,6 +395,7 @@ long xclose(WORD h)
     OFD *fd;
     long rc;
 
+    ofd_reap();
     if (h < 0)
         return E_OK;    /* always a good close on a character device */
 
@@ -356,10 +459,12 @@ long xclose(WORD h)
     if (!(fd = getofd(h)))
         return EIHNDL;
 
-    rc = ixclose(fd,0);
+    rc = ixclose(fd,CL_KEEP);
 
-    if (!(--sft[h-NUMSTD].f_use))
-        sftdel(&sft[h-NUMSTD]);
+    if (sft[h-NUMSTD].f_use == 1)
+        return sftdel(&sft[h-NUMSTD]);
+    else
+        sft[h-NUMSTD].f_use--;
 
     return rc;
 }
@@ -396,7 +501,7 @@ long ixclose(OFD *fd, int part)
      * end so that the buffer is marked as dirty and is subsequently
      * written.
      */
-    if (dfd->o_flag & O_DIRTY)
+    if ((dfd->o_flag & O_DIRTY) && !(dfd->o_flag & O_UNLINKED))
     {
         FCB *fcb;
         UBYTE attr;
@@ -460,6 +565,7 @@ long ixclose(OFD *fd, int part)
  */
 long xunlink(char *name)
 {
+    ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_unlink(name);
 #else
@@ -468,23 +574,49 @@ long xunlink(char *name)
 }
 
 
-/*
-**  ixdel - internal delete file.
-**
-**  Traverse the list of files open for this directory node.
-**  If a file is found that has the same position in the directory as the one
-**  we are to delete, then scan the system file table to see if this process is
-**  then owner.  If so, then close it, otherwise abort.
-**
-**  NOTE:       both 'for' loops scan for the entire length of their
-**              respective data structures, and do not drop out of the loop on
-**              the first occurrence of a match.
-**      Used by
-**              ixcreat()
-**              xunlink()
-**              xrmdir()
-**
-*/
+#if CONF_WITH_FAT_FILE_LIFETIMES
+/* A queue-owned OFD pins the directory, medium and shared file identity
+ * before any directory write. It survives disk-error longjmps, including
+ * deletion of files that had no public handles. */
+void ofd_reap(void)
+{
+    while (pending_unlinks) {
+        OFD *fd = pending_unlinks;
+        OFD *next = fd->o_thread;
+        DFD *file = fd->o_dfd;
+        char erased = (char)ERASE_MARKER;
+        if (!(file->o_flag & O_MEDIA_LOST) && (fd->o_mod & UNLINK_PENDING)) {
+            ixlseek(fd->o_dirfil, fd->o_dirbyt);
+            ixwrite(fd->o_dirfil, 1, &erased);
+            ixclose(fd->o_dirfil, CL_DIR);
+            /* Only a persisted name removal permits chain reclamation. */
+            file->o_flag |= O_UNLINKED;
+            fd->o_mod &= ~UNLINK_PENDING;
+        }
+        ofd_put(fd);
+        pending_unlinks = next;
+    }
+}
+
+long ixdel(DND *dn, FCB *f, long pos)
+{
+    FCB saved = *f;
+    OFD *live, *fd;
+    ofd_reap();
+    live = ofd_find(dn, pos);
+    if (live && live->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
+    fd = makopn(&saved, dn, RO_MODE, live);
+    fd->o_dirbyt = pos;
+    fd->o_mod |= UNLINK_PENDING;
+    fd->o_thread = pending_unlinks;
+    pending_unlinks = fd;
+    ofd_reap();
+    return E_OK;
+}
+
+#else
+
+/* Traditional GEMDOS deletion for ROMs without retained file lifetimes. */
 long ixdel(DND *dn, FCB *f, long pos)
 {
     OFD *fd;
@@ -492,23 +624,50 @@ long ixdel(DND *dn, FCB *f, long pos)
     int n2;
     int n;
     char c;
+    CLNO first = le2cpu16(f->f_clust);
 
-    for (fd = dn->d_files; fd; fd = fd->o_link)
-        if (fd->o_dirbyt == pos)
-            for (n = 0; n < OPNFILES; n++)
-                if (sft[n].f_ofd == fd)
+    /* Check every owner before closing anything. A close can invalidate
+     * the directory buffer holding f, so save the first cluster above. */
+    for (n = 0; n < OPNFILES; n++)
+    {
+        fd = sft[n].f_ofd;
+        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
+        {
+            if (sft[n].f_own != run || (fd->o_dfd->o_flag & O_INHERITED))
+                return EACCDN;
+            first = fd->o_dfd->o_strtcl;   /* metadata may not be on disk yet */
+        }
+    }
+    for (n = 0; n < OPNFILES; n++)
+    {
+        fd = sft[n].f_ofd;
+        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
+        {
+            long rc;
+            int h;
+            /* Reset standard-handle mappings as well, before a new file
+             * can reuse this SFT slot. */
+            for (h = 0; h < NUMSTD; h++)
+                if (PD_UFT(run)[h] == n + NUMSTD)
                 {
-                    if (sft[n].f_own == run)
-                        ixclose(fd,0);
-                    else
-                        return EACCDN;
+                    rc = xclose(h);
+                    if (rc < 0)
+                        return rc;
                 }
+            while (sft[n].f_own)
+            {
+                rc = xclose(n + NUMSTD);
+                if (rc < 0)
+                    return rc;
+            }
+        }
+    }
 
     /*
      * Traverse this file's chain of allocated clusters, freeing them.
      */
     dm = dn->d_drv;
-    n = le2cpu16(f->f_clust);
+    n = first;
 
     while (n && !endofchain(n))
     {
@@ -534,6 +693,7 @@ long ixdel(DND *dn, FCB *f, long pos)
     return E_OK;
 }
 
+#endif
 
 /*
 **  contains_illegal_characters - check for illegal filename chars in specified string

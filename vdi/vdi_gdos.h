@@ -64,9 +64,15 @@ LONG vdi_sfont_face(WORD index);
 
 /*
  * Look for the fonts again if the scan at boot found none (the drive was
- * not there, say): nobody can have a font of the empty list to lose
+ * not there, say): nobody can have a font of the empty list to lose.  With
+ * CONF_VDI_FONT_RESCAN, also after a workstation has unloaded its fonts
+ * (vdi_sfont_unloaded()): the fonts of files that are new are added after
+ * the others, which keep their index and id.
  */
 void vdi_sfont_rescan(void);
+
+/* a workstation unloaded its fonts: the next vst_load_fonts() looks again */
+void vdi_sfont_unloaded(void);
 
 /*
  * Sizes of the scalable fonts (vdi/vdi_sfont.c): each is a Fonthead with
@@ -148,6 +154,10 @@ ULONG vdi_sfont_cache_free(void);
 
 /* the text scratch buffer of a size (an F_SFONT font), and its halves' offset */
 void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half);
+
+/* the cells of ink that leave their characters' cells in a size (see vdi_sfont.c) */
+BOOL vdi_sfont_overhang(const Fonthead *font, const UWORD **off, const UBYTE **form,
+                        UWORD *form_width);
 
 #endif /* CONF_WITH_VDI_SCALABLE_FONTS */
 

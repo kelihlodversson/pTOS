@@ -198,7 +198,7 @@ static char *fmt_size(ULONG size, BOOL wide, char *psize)
      */
     if (wide)
     {
-        sprintf(psize, " %10lu", size);
+        sprintf(psize, " %10lu", (unsigned long)size);
         return psize+11;
     }
 
@@ -338,7 +338,7 @@ WORD dr_code(PARMBLK *pparms)
     gsx_gclip(&oc);
     gsx_sclip((GRECT *)&pparms->pb_xc);
     state = dr_fnode(pparms->pb_prevstate, pparms->pb_currstate,
-            pparms->pb_x, pparms->pb_y, pparms->pb_w, pparms->pb_h, (FNODE *)pparms->pb_parm);
+            pparms->pb_x, pparms->pb_y, pparms->pb_w, pparms->pb_h, (FNODE *)(uintptr_t)pparms->pb_parm);
     gsx_sclip(&oc);
 
     return state;
@@ -428,7 +428,7 @@ void inf_numset(OBJECT *tree, WORD obj, ULONG value)
      * we fill the te_ptext field with asterisks to indicate overflow.
      * otherwise, we just copy the buffer to te_ptext
      */
-    if (sprintf(numstr, "%*lu", len, value) > len)
+    if (sprintf(numstr, "%*lu", len, (unsigned long)value) > len)
         memset(ted->te_ptext, '*', len);
     else
         strcpy(ted->te_ptext, numstr);

@@ -18,6 +18,9 @@
 #include "portab.h"
 #include "fs.h"
 #include "proc.h"
+#if CONF_WITH_ELF_SHARED
+#include "elfinterp.h"
+#endif
 #include "gemerror.h"
 #include "pghdr.h"
 #include "string.h"
@@ -134,13 +137,19 @@ fail:
  * h - file handle opened by kpgmhdrld
  * hd - the program header read by kpgmhdrld
  */
-LONG kpgmld(PD *p, FH h, PGMHDR01 *hd)
+LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename)
 {
     LONG r;
 
+    (void)filename;
     switch (pgmld_format) {
 #if CONF_WITH_ELF_LOADER
     case PGMLD_ELF:
+#if CONF_WITH_ELF_SHARED
+        r = elf_interp_load(h, p, filename);
+        if (r != 1)
+            break;
+#endif
         r = elf_pgmld(h, p);
         break;
 #endif

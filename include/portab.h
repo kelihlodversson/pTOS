@@ -155,8 +155,8 @@ typedef void PRG_ENTRY(void) /* NORETURN */;
 
 #define MAKE_UWORD(hi,lo) (((UWORD)(UBYTE)(hi) << 8) | (UBYTE)(lo))
 #define MAKE_ULONG(hi,lo) (((ULONG)(UWORD)(hi) << 16) | (UWORD)(lo))
-#define LOWORD(x) ((UWORD)(ULONG)(x))
-#define HIWORD(x) ((UWORD)((ULONG)(x) >> 16))
+#define LOWORD(x) ((UWORD)(uintptr_t)(x))
+#define HIWORD(x) ((UWORD)((uintptr_t)(x) >> 16))
 #define LOBYTE(x) ((UBYTE)(UWORD)(x))
 #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
 #define IS_ODD(x) ((x) & 1)

@@ -468,7 +468,7 @@ void win_bldview(WNODE *pwin, GRECT *r)
             obj->ob_type = G_USERDEF;
             obj->ob_spec.userblk = ub;
             ub->ub_code = dr_code;
-            ub->ub_parm = (LONG)pstart;
+            ub->ub_parm = (intptr_t)pstart;
             win_icalc(pstart, pwin);
             break;
         case V_ICON:
@@ -924,5 +924,5 @@ void win_sinfo(WNODE *pwin, BOOL check_selected)
     }
 
     sprintf(pwin->w_info, alert, select_size, select_count);
-    wind_set(pwin->w_id, WF_INFO, pwin->w_info, 0, 0);
+    wind_set(pwin->w_id, WF_INFO, (void *)pwin->w_info, 0, 0);
 }

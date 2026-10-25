@@ -10,6 +10,6 @@
 #ifndef GEMQUEUE_H
 #define GEMQUEUE_H
 
-void aqueue(WORD isqwrite, EVB *e, LONG lm);
+void aqueue(WORD isqwrite, EVB *e, intptr_t lm);
 
 #endif

@@ -27,6 +27,9 @@
 #include "gempd.h"
 
 #include "string.h"
+#if ARCH_X86_64
+#include "aes_accessory.h"
+#endif
 
 /* returns the AESPD for the given index */
 AESPD *pd_index(WORD i)
@@ -121,6 +124,10 @@ AESPD *pstart(PFVOID pcode, char *pfilespec, LONG ldaddr)
 
     /* set pcode to be the return address when this process runs */
     psetup(px, pcode);
+
+#if ARCH_X86_64
+    x86_64_aes_setup(px, pcode == gotopgm ? (PD *)(uintptr_t)(ULONG)ldaddr : NULL);
+#endif
 
     /* link him up: put it on top of the drl list */
     px->p_stat &= ~WAITIN;

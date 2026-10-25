@@ -20,6 +20,9 @@
 #include "biosext.h"
 #include "kprint.h"
 #include "shutdown.h"
+#if CONF_WITH_MMAP
+#include "kproc.h"
+#endif
 
 /* set when a Shutdown() has started; a second one is refused */
 static BOOL shutting_down;
@@ -56,6 +59,7 @@ static void sync_buffers(void)
     BCB *volatile b;
     volatile int i;
 
+    if (!setjmp(errbuf)) ofd_reap();
     for (i = 0; i < 2; i++)
         for (b = bufl[i]; b; b = b->b_link)
             if (b->b_bufdrv >= 0 && b->b_dirty && !setjmp(errbuf))
@@ -72,6 +76,9 @@ long xshutdown(LONG mode)
 
     /* every open file of every process, then the buffers */
     close_files();
+#if CONF_WITH_MMAP
+    kproc_shutdown_file_mappings();
+#endif
     sync_buffers();
     flop_shutdown();
 

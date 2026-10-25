@@ -127,7 +127,7 @@ void gsx_mfree(void)
 
 void gsx_mret(LONG *pmaddr, LONG *pmlen)
 {
-     *pmaddr = (LONG)gl_tmp.fd_addr;
+     *pmaddr = (LONG)(uintptr_t)gl_tmp.fd_addr;
      *pmlen = gl_mlen;
 }
 
@@ -159,7 +159,7 @@ void gsx_1code(WORD code, WORD value)
 
 
 
-static WORD screen_rez(void)
+WORD gsx_screen_rez(void)
 {
     if (HAS_VIDEL)
         return FALCON_REZ;
@@ -180,7 +180,7 @@ static void gsx_wsopen(void)
      * we need to use the special pseudo-screen rez, and put the actual
      * videl mode into intout[45] (!).
      */
-    *p++ = screen_rez() + 2;
+    *p++ = gsx_screen_rez() + 2;
     for (i = 1; i < 10; i++)
         *p++ = 1;
     *p = 2;                         /* device coordinate space */
@@ -355,7 +355,7 @@ static void bb_set(BOOL save, GRECT *r)
 
         /* issue warning message for backup only, not for subsequent restore */
         if (save)
-            KINFO(("Menu/alert buffer too small: need at least %ld bytes\n",size));
+            KINFO(("Menu/alert buffer too small: need at least %ld bytes\n",(long)size));
     }
 
     gsx_fix_screen(&gl_src);

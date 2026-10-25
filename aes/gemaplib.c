@@ -17,6 +17,10 @@
 */
 
 #include "emutos.h"
+#if ARCH_X86_64
+#include "aes_accessory.h"
+#include "gemerror.h"
+#endif
 #include "struct.h"
 #include "aesdefs.h"
 #include "aesvars.h"
@@ -73,6 +77,23 @@ WORD ap_init(void)
 WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff)
 {
     QPB     m;
+#if ARCH_X86_64
+    LONG rc;
+    WORD message[8];
+
+    if (code == MU_SDMSG && length == 16) {
+        /* A native caller may use a shared AES message buffer, which
+         * another task can overwrite while we wait for queue space. */
+        memcpy(message, pbuff, sizeof(message));
+        do {
+            rc = x86_64_aes_message(p, message);
+            if (rc == EAGAIN)
+                dsptch();
+        } while (rc == EAGAIN);
+        if (rc != EINVFN)
+            return rc == E_OK;
+    }
+#endif
 
     /*
      * do quick version if it is standard 16-byte read and the
@@ -87,9 +108,9 @@ WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff)
 
     m.qpb_ppd = p;
     m.qpb_cnt = length;
-    m.qpb_buf = (LONG)pbuff;
+    m.qpb_buf = (intptr_t)pbuff;
 
-    return ev_block(code, (LONG)&m);
+    return ev_block(code, (intptr_t)&m);
 }
 
 
@@ -107,8 +128,36 @@ WORD ap_find(char *pname)
     if (!pname)
         return -1;
 
+    /* Atari AESes reserve this pseudo-application to advertise appl_getinfo(). */
+    if (strcmp(pname, "?AGI") == 0)
+        return 0;
+
     p = fpdnm(pname, 0);
     return p ? p->p_pid : -1;
+}
+
+
+/*
+ * Return the application environment capabilities which pTOS supports.
+ * Unsupported queries must fail so callers do not act on invented values.
+ */
+WORD ap_getinfo(WORD type, WORD *out1, WORD *out2, WORD *out3, WORD *out4)
+{
+    *out1 = 0;
+    *out2 = 0;
+    *out3 = 0;
+    *out4 = 0;
+
+    if (type != 2)                  /* AES_SYSTEM */
+        return FALSE;
+
+    *out1 = gsx_screen_rez() + 2;   /* graphics device */
+    *out2 = gl_ws.ws_ncolors > 16 ? 16 : gl_ws.ws_ncolors;
+#if CONF_WITH_COLOUR_ICONS
+    *out3 = TRUE;                   /* AES_SYSTEM: colour icons supported */
+    *out4 = TRUE;                   /* AES_SYSTEM: extended RSC format supported */
+#endif
+    return TRUE;
 }
 
 
