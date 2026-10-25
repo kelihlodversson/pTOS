@@ -83,6 +83,7 @@ extern PD *run;                         /* bdos/proc.c */
 #define F7_WB1A     40
 #define F7_WB1D     44
 
+#define SSW_MA      0x0800              /* misaligned: it crosses a page */
 #define SSW_READ    0x0100              /* the access was a read */
 #define SSW_TM      0x0007              /* its function code */
 #define WB_VALID    0x0080
@@ -157,13 +158,34 @@ int m68k_user_busfault(void)
     UWORD ssw = *(const UWORD *)(f + F7_SSW);
     ULONG address = *(const ULONG *)(f + F7_FADDR);
     ASPACE_ROOT root = kproc_user_root(run);
+    UWORD access;
     int answer;
 
     if ((fv >> 12) != 7 || address >= USER_VA_LIMIT || !root || root != aspace_hw_current())
         return 0;
-    answer = kproc_demand_page(run, address,
-                               (ssw & SSW_READ) ? (((ssw & SSW_TM) == 2) ? ASPACE_PROT_EXEC : 0)
-                                                : ASPACE_PROT_WRITE);
+    access = (ssw & SSW_READ) ? (((ssw & SSW_TM) == 2) ? ASPACE_PROT_EXEC : 0) : ASPACE_PROT_WRITE;
+    answer = kproc_demand_page(run, address, access);
+    if (ssw & SSW_MA) {
+        /*
+         * A misaligned access that crosses a page: the address of the frame can be
+         * that of the first byte, in a page that is there, while the page that
+         * failed is the next one.  Every page it touches is asked, and what is
+         * there already is no failure; the access runs again and, if it
+         * needs another page, faults again.
+         */
+        static const UBYTE sizes[4] = { 4, 1, 2, 16 };
+        ULONG last = address + sizes[(ssw >> 5) & 3] - 1, page;
+
+        if (last < address || last >= USER_VA_LIMIT)
+            return 0;
+        for (page = (address & ~(ULONG)(USER_PAGE_SIZE - 1)) + USER_PAGE_SIZE;
+             answer <= 1 && page <= last; page += USER_PAGE_SIZE) {
+            int more = kproc_demand_page(run, page, access);
+
+            if (more > answer)
+                answer = more;
+        }
+    }
     if (answer == 2)
         proc_fault("no physical page left", (UQUAD)ssw, address, *(const ULONG *)(f + 2),
                    (UQUAD)(ULONG)proc_usp);

@@ -202,16 +202,12 @@ static void test_anonymous(void)
 /*
  * Stores of each width into pages nobody has touched: the first store faults,
  * and the CPU may have to finish it itself (the 68040 keeps the write in the
- * frame of the fault).  Every offset in a longword, and a longword across the
- * boundary of two untouched pages.
+ * frame of the fault).  Every offset in a longword.
  */
 static void test_first_stores(void)
 {
     volatile unsigned char *b;
     long m, i;
-#if defined(__mc68000__)
-    long k;
-#endif
 
     m = mmap_anon(0L, 8 * PAGE, PROT_READ | PROT_WRITE);
     ptest_assert_msg(m > 0, "Mmap(for the first stores) failed");
@@ -232,22 +228,48 @@ static void test_first_stores(void)
     *(volatile unsigned long *)(b + 6 * PAGE + 4) = 0x01020304UL;
     ptest_assert_msg(*(volatile unsigned long *)(b + 6 * PAGE + 4) == 0x01020304UL && b[6 * PAGE + 3] == 0 &&
                      b[6 * PAGE + 8] == 0, "a longword stored into a new page is wrong");
-#if defined(__mc68000__)
-    /* the 68020 and later store a longword at any address: across two new pages */
-    for (k = 1; k < 4; k++)
-    {
-        volatile unsigned char *edge = b + 7 * PAGE - 4 + k;
-        long j;
-
-        for (j = -8; j < 8; j++)        /* (what the last round left) */
-            b[7 * PAGE + j] = 0;
-        *(volatile unsigned long *)(b + 7 * PAGE - 4 + k) = 0x0a0b0c0dUL + (unsigned long)k;
-        ptest_assert_msg(*(volatile unsigned long *)edge == 0x0a0b0c0dUL + (unsigned long)k &&
-                         edge[-1] == 0 && edge[4] == 0, "a longword stored across two new pages is wrong");
-    }
-#endif
     munmap(m, 8 * PAGE);
 }
+
+#if defined(__mc68000__)
+/*
+ * A longword at an odd address across the boundary of two pages, as the very
+ * first access: a store when neither page is there, a load when only the first
+ * is (the second must come in, though the CPU may report the first).  Each
+ * round has a mapping of its own.
+ */
+static void test_crossing_accesses(void)
+{
+    long m, k;
+
+    for (k = 1; k < 4; k++)
+    {
+        volatile unsigned char *b;
+        unsigned long v;
+
+        m = mmap_anon(0L, 2 * PAGE, PROT_READ | PROT_WRITE);
+        ptest_assert_msg(m > 0, "Mmap(for a crossing store) failed");
+        if (m <= 0)
+            return;
+        b = (volatile unsigned char *)m;
+        *(volatile unsigned long *)(b + PAGE - 4 + k) = 0x0a0b0c0dUL + (unsigned long)k;
+        ptest_assert_msg(*(volatile unsigned long *)(b + PAGE - 4 + k) == 0x0a0b0c0dUL + (unsigned long)k &&
+                         b[PAGE - 5 + k] == 0 && b[PAGE + k] == 0,
+                         "a longword stored across two new pages is wrong");
+        munmap(m, 2 * PAGE);
+
+        m = mmap_anon(0L, 2 * PAGE, PROT_READ | PROT_WRITE);
+        ptest_assert_msg(m > 0, "Mmap(for a crossing load) failed");
+        if (m <= 0)
+            return;
+        b = (volatile unsigned char *)m;
+        b[0] = 1;                       /* the first page is there, the second is not */
+        v = *(volatile unsigned long *)(b + PAGE - 4 + k);
+        ptest_assert_msg(v == 0UL, "a longword read across a new page is wrong");
+        munmap(m, 2 * PAGE);
+    }
+}
+#endif
 
 static void test_reservations(void)
 {
@@ -398,6 +420,9 @@ void test_mmap(void)
 
     test_anonymous();
     test_first_stores();
+#if defined(__mc68000__)
+    test_crossing_accesses();
+#endif
     test_reservations();
     test_file();
     test_lazy_stack();
