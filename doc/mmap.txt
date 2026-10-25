@@ -8,6 +8,18 @@ CONF_WITH_PROCESS_ASPACES. CONF_WITH_ELF_SHARED selects it; it can also be
 enabled independently. All three calls return EINVFN when the feature is
 disabled. There is no flat-address-space fallback.
 
+Availability
+------------
+
+    x32 (pc-x86_64)      CONF_WITH_MMAP=y, or CONF_WITH_ELF_SHARED
+    ARM                  virt-arm-aspace, rpi2-aspace
+    68040                virt-m68k-aspace
+
+Each needs CONF_WITH_USER_ASPACE and CONF_WITH_DEMAND_PAGING.  On a machine
+that has neither (the flat-address-space ones: the Atari ST/TT/Falcon ROMs,
+the Amiga, ColdFire, the other ARM and virt-m68k images) the three calls
+return EINVFN.  A program can tell which it has by the first call.
+
 Opcodes and native calling convention
 ------------------------------------
 
@@ -34,8 +46,9 @@ GEMDOS call, packed: a WORD function, then the six LONGs in order (26 bytes),
 the result in d0. A slot is widened as unsigned, so that a 32-bit value with its
 top bit set is not sign-extended into a "high half".
 
-All active arguments are unsigned 32-bit x32 values, carried in full-width
-slots and checked before narrowing. Mmap's fd is ignored for anonymous
+All active arguments are unsigned 32-bit values (user addresses of the 32-bit
+ports, x32 included), carried in full-width slots where the port has them and
+checked before narrowing. Mmap's fd is ignored for anonymous
 mappings (conventionally -1); its offset must be zero. In particular a high
 half in a pointer, length, protection or flag is not silently truncated.
 These are GEMDOS return values, not libc's MAP_FAILED/errno wrapper convention.
@@ -201,6 +214,10 @@ and seals segment permissions/RELRO after eager relocation. Code pages can
 remain physically shared across live programs; relocated writable pages become
 private on first write. The main executable and interpreter are still mapped
 privately by the kernel startup path. TLS and MAP_SHARED remain unsupported.
+Run the tests for the 32-bit backends with tools/run-regression-tests.sh
+virt-arm, raspi2b-aspace or virt-m68k-aspace (suite "mmap"); the x32 ones are
+run as described above.
+
 The 32-bit backends (ARM, 68040) share one implementation of the lazy and
 file-backed pages, in bios/aspace.c: a file page is a leaf whose physical page
 has a record of the backing (the hardware backends keep no flag for it), and is
