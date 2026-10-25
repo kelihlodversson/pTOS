@@ -31,7 +31,7 @@ ownership; they also support native FAT file-backed COW mappings.
 CONF_WITH_ELF_SHARED is an experimental, off-by-default Kconfig option.  It
 builds this core into obj/ldso/libldso.a, separately from the kernel.  It
 requires CONF_WITH_ELF_LOADER, CONF_WITH_USER_ASPACE, demand paging, and
-either x32 (ARCH_X86_64) or ARM (see "ARM" below).  Both the architecture and
+x32 (ARCH_X86_64), ARM or the 68040 (see "ARM" and "m68k" below).  Both the architecture and
 the address-space prerequisite are intentional: standard shared libraries must
 never fall back to a flat address space.
 
@@ -628,4 +628,62 @@ its own.  Three more programs fail on purpose (a missing library, a cut-short
 one, a missing interpreter); each must be refused, with no process record or
 page left behind.  tools/test-elf-shared.py relocates real ARM objects (DT_REL)
 on the host when an arm-none-eabi- compiler is there.
+
+
+m68k (#694)
+-----------
+
+The m68k backend is lib/ldso/arch/m68k, for the address-space configurations
+(virt-m68k-aspace, 68040).
+
+The compiler.  The MiNT compilers (m68k-atari-mintelf-, -mint-) cannot make
+position-independent code: -fPIC is refused ("not supported on this target"),
+and -mpcrel leaves every reference to another object as a PC-relative text
+relocation (DT_TEXTREL), which cannot be shared and which the linker refuses.
+The runtime linker and the libraries and programs that use it are therefore
+built with GNU/Linux's m68k-linux-gnu-gcc, whose -fPIC uses a GOT and a PLT
+(Ubuntu: gcc-m68k-linux-gnu; LDSO_M68K_PREFIX names another).  Nothing of the
+GNU/Linux system is used: -ffreestanding -nostdlib, no libc, only libgcc.  The
+kernel and the rest are built as before; CI installs the compiler with the
+m68k toolchain (.github/actions/setup-toolchain).
+
+Objects are ELF32 EM_68K, big endian, e_flags 0 (the 68020 and later), linked
+with -z max-page-size=4096 and --build-id=none.  A program is a fixed-address
+ET_EXEC at 0x400000 or above, a page up from the headers
+(-Wl,-Ttext-segment=0x401000), with PT_INTERP /GEMSYS/LIB/M68K/LD.SO; its
+libraries are looked up in \GEMSYS\LIB\M68K\ of the boot drive.  Programs
+and libraries are PIC with --hash-style=sysv, and --no-as-needed where a
+library must be recorded even if nothing refers to it.  The linker makes a
+PT_GNU_RELRO, which LD.SO seals.
+
+A standard entry gets the initial stack of the ELF ABI (argc at the stack
+pointer); the kernel does not push the return address and basepage a PRG gets.
+d1 holds the finalizer (0 from the kernel; LD.SO passes its own on).  The
+tables are DT_RELA.  Supported types:
+
+    R_68K_32         S + A, modulo 2**32
+    R_68K_GLOB_DAT   S
+    R_68K_JMP_SLOT   S
+    R_68K_RELATIVE   B + A
+
+The PC-relative ones (PC32, PC16, PC8) are text relocations and are refused,
+as are the 16 and 8-bit absolute ones, GOT32 and the rest, before the program
+starts.
+
+The system call is trap #1, and the frame on the stack is packed by the widths
+of the parameters of the call (a WORD one word, a LONG two): lib/ldso/arch/m68k/
+syscall.c names the shape of each call the interpreter and its tests make; the
+mapping calls are LONGs throughout.
+
+Limits.  Only programs in ELF are dynamic: a PRG is not.  The ELF header
+fields the kernel and the interpreter read are taken in the byte order of the
+file.  The 68040 is the only CPU with an address-space backend so far.  A
+tool installed into a user directory (not by the package) needs
+LD_LIBRARY_PATH to the libraries of its binutils.
+
+Tests.  As for ARM: tests/ldso_dynamic launches tests/ldso_runtime/program.c
+with its libraries (start_m68k.S is its entry), it launches a second copy of
+itself and the pages of the libraries must be shared while the data are not,
+and three programs fail on purpose and leave nothing behind.
+tools/test-elf-shared.py checks the formulas of the backend.
 

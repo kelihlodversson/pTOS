@@ -1085,6 +1085,41 @@ class Metadata(unittest.TestCase):
             self.assertEqual(info[0], width)
         self.assertEqual(kind(38, C.byref(info)), -2)                        # an x32 type
 
+    def test_m68k_relocation_formulas(self):
+        """m68k (#694): DT_RELA, big endian objects, S + A modulo 2**32, the PC-relative types refused."""
+        lib = self.path / "m68k-formulas.so"
+        run(CC + ["-std=c90", "-pedantic", "-Wall", "-Wextra", "-Werror", "-O2", "-fPIC", "-shared",
+                  "-I" + str(ROOT / "lib/ldso"), str(ROOT / "lib/ldso/arch/m68k/reloc.c"),
+                  str(ROOT / "lib/ldso/arch/m68k/image_abi.c"), "-o", str(lib)])
+        so = C.CDLL(str(lib))
+        backend = Backend.in_dll(so, "dl_reloc_backend")
+        abi = ImageAbi.in_dll(so, "dl_image_abi")
+        self.assertEqual((backend.rel, abi.machine, abi.endian, abi.eflags_required, abi.eflags_allowed),
+                         (0, 4, 2, 0, 0))
+        kind = C.CFUNCTYPE(C.c_int, C.c_uint32, C.POINTER(C.c_uint32 * 2))(backend.kind)
+        value = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_uint32, C.c_uint32, C.c_int32, C.c_uint32,
+                            C.POINTER(C.c_uint64))(backend.value)
+
+        def compute(kind_type, bias, symbol, addend):
+            out = C.c_uint64(0xdeadbeefdeadbeef)
+            rc = value(kind_type, bias, symbol, addend, 0x1000, C.byref(out))
+            return rc, out.value
+
+        R32, GLOB_DAT, JMP_SLOT, RELATIVE = 1, 20, 21, 22
+        self.assertEqual(compute(R32, 0, 0x02000100, -4), (0, 0x020000fc))
+        self.assertEqual(compute(R32, 0, 0xfffffffc, 8), (0, 4))
+        self.assertEqual(compute(GLOB_DAT, 0, 0x1234, 0x77), (0, 0x1234))
+        self.assertEqual(compute(JMP_SLOT, 0, 0x1234, 0x77), (0, 0x1234))
+        self.assertEqual(compute(RELATIVE, 0x2000000, 0, 0x1000), (0, 0x2001000))
+        self.assertEqual(compute(RELATIVE, 0xffffff00, 0, 0x1000)[0], -5)
+        for refused in (4, 5, 6, 2, 3, 7):            # PC32/PC16/PC8, 16, 8, GOT32
+            self.assertEqual(compute(refused, 0, 0, 0)[0], -2, refused)
+        self.assertEqual(compute(0, 0, 0, 0), (0, 0))
+        info = (C.c_uint32 * 2)()
+        self.assertEqual(kind(R32, C.byref(info)), 0)
+        self.assertEqual(info[0], 4)
+        self.assertEqual(kind(8, C.byref(info)), -2)
+
     @unittest.skipUnless(shutil.which("arm-none-eabi-gcc"), "needs an ARM cross compiler")
     def test_real_arm_objects(self):
         """DT_REL tables of the ARM linker (#693): implicit addends, the ARM formulas."""
@@ -1215,7 +1250,7 @@ class Metadata(unittest.TestCase):
                 os.environ["CONFIG_"] = old_prefix
 
     def test_kconfig_aspace_backends(self):
-        """ARM has the linker backend (#693); m68k has Mmap but not yet the linker."""
+        """ARM (#693) and m68k (#694) have the linker backend."""
         import kconfiglib
 
         old_cwd = Path.cwd()
@@ -1223,7 +1258,7 @@ class Metadata(unittest.TestCase):
         try:
             os.chdir(ROOT)
             os.environ["CONFIG_"] = ""
-            for name in ("virt-arm-aspace", "rpi2-aspace"):
+            for name in ("virt-arm-aspace", "rpi2-aspace", "virt-m68k-aspace"):
                 with self.subTest(config=name):
                     config = kconfiglib.Kconfig(warn=False)
                     config.load_config(str(ROOT / "configs" / (name + "_defconfig")))
@@ -1237,9 +1272,7 @@ class Metadata(unittest.TestCase):
                 config = kconfiglib.Kconfig(warn=False)
                 config.load_config(str(ROOT / "configs" / "virt-m68k-aspace_defconfig"))
                 self.assertEqual(config.syms["CONF_WITH_MMAP"].tri_value, 2)
-                option = config.syms["CONF_WITH_ELF_SHARED"]
-                option.set_value(2)
-                self.assertEqual(option.tri_value, 0)
+                self.assertEqual(config.syms["CONF_WITH_ELF_SHARED"].tri_value, 2)
         finally:
             os.chdir(old_cwd)
             if old_prefix is None:
