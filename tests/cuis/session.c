@@ -45,6 +45,11 @@ void cuis_input_clip_pointer(LONG *x, LONG *y)
 void cuis_input_call_pointer(SBYTE *packet) { (void)packet; legacy_pointer_calls++; }
 
 void cuis_input_test_wait(ULONG events) { (void)events; }
+BOOL ksched_block(BOOL (*ready)(void *), void *argument)
+{
+    (void)ready; (void)argument;
+    return FALSE;
+}
 void cuis_input_idle(void)
 {
     if (input_irqs) input_bad_idle = TRUE;

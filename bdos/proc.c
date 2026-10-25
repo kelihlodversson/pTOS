@@ -30,6 +30,9 @@
 #include "has.h"
 #if ARCH_X86_64
 #include "process.h"
+#if CONF_WITH_CUIS
+#include "ksched.h"
+#endif
 #endif
 #include "../bios/vectors.h"
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
@@ -958,6 +961,23 @@ static void proc_go(PD *p, WORD entry_type)
 }
 
 #if ARCH_X86_64
+#if CONF_WITH_CUIS
+LONG proc_prepare_scheduled(PD *p)
+{
+    if (!kproc_unlaunched(p)) return EIMBA;
+    give_back_image(p, FALSE);
+    return kproc_prepare_user(p, run) ? E_OK : ENSMEM;
+}
+LONG proc_start_scheduled(PD *p)
+{
+    if (!kproc_unlaunched(p) || !kproc_user_root(p)) return EIMBA;
+    set_owner(p, p);
+    set_owner(USERPTR_TO_PTR(p->p_env), p);
+    proc_go(p, ENTRY_PROGRAM);
+    return run->p_dreg[0];
+}
+#endif
+
 LONG proc_prepare_accessory(PD *p)
 {
     if (!kproc_unlaunched(p))

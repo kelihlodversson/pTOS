@@ -488,10 +488,10 @@ priority over timeout at a wake boundary.
 An empty blocking wait while the caller owns a display update returns
 EACCDN; zero-time polls and already-pending input remain available. This
 prevents sleeping indefinitely with the drawing update held. Focus loss
-observed after wake returns EACCDN. These waits sleep for interrupt-driven
-input in the current native execution model; they do not schedule another
-application. Message delivery and scheduling blocked GUI clients remain later
-epic work. No legacy AES scheduler or userspace daemon is added.
+observed after wake returns EACCDN. Managed kernel tasks block only the caller and
+let another runnable client execute. Outside a managed group, waits retain
+the native IRQ sleep path. No legacy AES scheduler or userspace daemon is
+added; asynchronous public process-launch integration remains later work.
 
 All kernel input state, BIOS hooks and the selected interrupt/wait backend
 compile only with CONF_WITH_CUIS, selected by external CONF_WITH_LIBAES.
@@ -600,11 +600,55 @@ CUIS_EVENT_MESSAGE (8) extends EVENT_WAIT: any queued message for the window
 owner makes it ready, independently of focus. A successful wait returns 1 and
 consumes nothing. MESSAGE_WAIT uses the same atomic predicate/sleep, timeout
 and owned-update rules without requiring a window or focus. Existing event
-masks retain their behavior. Native waits still sleep for IRQs rather than
-scheduling another client; scheduler integration is a separate milestone.
+masks retain their behavior. Managed tasks yield to the kernel scheduler; unmanaged callers retain the
+IRQ sleep path. Public asynchronous launch integration remains later work.
 Host tests model a peer posting at the sleep boundary; native boot tests
 verify scalar transport, cross-process delivery without a handshake,
 copyout recovery, queue bounds, ownership, readiness and timeouts.
+
+Kernel-managed native task scheduling
+-------------------------------------
+CONF_WITH_CUIS also selects the native kernel scheduler. It reuses the
+existing process-context save/restore implementation, without AESPD/EVB/UDA
+state or the legacy AES dispatcher. No userspace daemon or application-facing
+CUIS scheduling syscall is introduced. Normal GEM/MiNT asynchronous launch
+and full GEM appl_*/evnt_* adapters remain separate integration work.
+
+The kernel-only ksched_run() accepts up to eight distinct, already prepared,
+unlaunched processes and runs the group until all tasks finish. Allocation
+failure before launch leaves all programs with the caller. A successful run
+consumes them and returns each exit status. Every task gets a private kernel
+bootstrap stack, separate from its process's syscall stack; both outlive
+suspended continuations and are reclaimed only from another live stack.
+The synchronous group launcher stays alive until every task exits, so its
+children never retain a freed parent. No detached/orphan process semantics
+are added by this primitive.
+
+CUIS keyboard, combined event and session-message waits publish a bounded
+kernel-state predicate while IRQs are masked and suspend the current task.
+The scheduler scans at most eight predicates in round-robin order and runs
+another ready task. Message/input/redraw readiness, focus or visibility loss,
+and timeout expiry all resume the waiter, which rechecks its original
+conditions. If every task is blocked, the root context uses STI/HLT/CLI after
+the predicate scan, avoiding a lost IRQ between checking and sleeping.
+Unmanaged waits keep the existing atomic IRQ sleep path. Pending events,
+zero-time polls and owned-update restrictions keep their previous behavior.
+
+Context transfer preserves the active process, page tables, syscall and IRQ
+stacks, saved user RSP, GS syscall state, launch nesting, disk-error recovery
+buffer, FPU/SSE state and IRQ state. A nested synchronous Pexec stays in the
+same task and may itself block in CUIS; child exit/fault returns through its
+normal launch continuation. Scheduling is cooperative at blocking CUIS
+waits. Busy clients are not preempted, and no public async Pexec mode, waitpid
+or process-reparenting behavior is claimed yet.
+
+Boot fixtures run two isolated standard-ELF/libaes clients through 64 message
+exchanges, with private data/library state and SSE checks. They also exercise
+focus-loss wakeup, all-blocked timeouts, a nested child's timed wait, normal
+exit, _Exit, faults, group bounds/duplicate rejection, allocation failure
+before launch and exact allocator/resource reclamation. Test-only kernel
+bootstrap messages supply known peer handles until application discovery
+migrates; no new application API is required.
 
 Final configuration cutover
 ---------------------------
