@@ -55,6 +55,7 @@ int main(int argc, char **argv, char **envp)
     if (argv[1][0] == 'c') {
         char mode = argv[1][1];
         parent = (LONG)unhex(argv[1]+10);
+        CHECK(call(0x3d, (uintptr_t)argv[0], 0, 0, 0) >= 0); /* exit must close this */
         if (mode == 'd') {
             CHECK(call(0x10c, 0, 0, 0, 0) != parent);
             CHECK(aes_message_send((LONG)unhex(argv[1]+2), 1, 2, 3, 4) == EACCDN);
@@ -72,10 +73,12 @@ int main(int argc, char **argv, char **envp)
         CHECK(aes_message_wait(session, 5) == 0);
         return 0x1234;
     }
-    if (argv[1][0] == 'o' || argv[1][0] == 'z') {
-        tail(command, argv[1][0] == 'o' ? 'd' : '1', session, me);
+    if (argv[1][0] == 'o' || argv[1][0] == 'z' || argv[1][0] == 'v' || argv[1][0] == 'f') {
+        tail(command, argv[1][0] == 'z' ? '1' : 'd', session, me);
         CHECK(spawn(argv[0], command) > 0);
         if (argv[1][0] == 'z') CHECK(call(0xff, 0, 0, 0, 0) == 0);
+        if (argv[1][0] == 'v') _Exit(77);
+        if (argv[1][0] == 'f') __asm__ volatile ("ud2");
         return 0; /* Orphan a new child or an unreaped zombie. */
     }
     CHECK(waitpid(-1, 1, ~0ULL) == EFILNF);
@@ -133,6 +136,19 @@ int main(int argc, char **argv, char **envp)
         pid = spawn(argv[0], command); CHECK(pid > 0);
         CHECK(((ULONG)waitpid(pid, 0, 0) >> 16) == (ULONG)pid);
         CHECK(aes_message_read(session, &sender, &a, &b, &c, &d) == 1);
+    }
+    {
+        static const char empty_tail[] = { 0, 0 };
+        static const char nested_tail[] = { 1, 'o', 0 };
+        /* The legacy static image path moves PE_LOAD pages out of the
+         * caller's heap; it must work alongside PT_INTERP launch. */
+        base = call(0x4b, 3, (uintptr_t)"C:\\X32HELLO.TOS", (uintptr_t)empty_tail, (uintptr_t)environment);
+        CHECK(base > 0);
+        pid = call(0x4b, 106, 0, (ULONG)base, 0);
+        CHECK(pid > 0 && waitpid(pid, 0, 0) == (LONG)((ULONG)pid << 16));
+        CHECK(call(0x4b, 0, (uintptr_t)argv[0], (uintptr_t)nested_tail, (uintptr_t)environment) == 0);
+        CHECK(call(0xff, 0, 0, 0, 0) == E_OK);
+        CHECK(aes_message_wait(session, 10) == 0);
     }
     CHECK(call(0x109, 0, 0, 0, 0) == EFILNF);
     {

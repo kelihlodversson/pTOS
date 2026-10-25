@@ -124,7 +124,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
         grep -q 'x32 CUIS VDI enforcement: PASS' "$log"
     fi
     grep -q 'x32 async launch/wait: PASS' "$log"
-    grep -q 'x32 async orphan: PASS' "$log"
+    test "$(grep -c 'x32 async orphan: PASS' "$log")" -ge 4
     grep -q 'x86-64 async process calls: PASS' "$log"
     grep -q 'x86-64 CUIS scheduler: PASS' "$log"
     grep -q 'x32 CUIS messages: PASS' "$log"

@@ -5,9 +5,9 @@
  * and the current directory as a string.  Only a process with a kernel record
  * (CONF_WITH_KPROC) has a pid; pTOS has no users (every id is 0, the one user is
  * root), no groups and a cooperative scheduler, which the answers say.  What it
- * cannot honour is left to osif()'s EINVFN (Dlock: there is no other process to
- * lock out; Pnice, Pumask: there is no scheduler to nice and no permission bits
- * to mask).  See doc/mint-calls.txt.
+ * cannot honour is left to osif()'s EINVFN (Dlock: volume locking is not
+ * implemented; Pnice, Pumask: there is no priority scheduling or permission
+ * mask).  See doc/mint-calls.txt.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -148,10 +148,10 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     switch (fn)
     {
 #if CONF_WITH_CUIS
-    case 0xff: return ksched_yield();
-    case 0x109: return ksched_wait(-1, 2, 0);
-    case 0x11c: return ksched_wait(-1, ARG_W(1), ARG_P(2));
-    case 0x13a: return ksched_wait(ARG_W(1), ARG_W(2), ARG_P(3));
+    case GEMDOS_SYIELD: return ksched_yield();
+    case GEMDOS_PWAIT: return ksched_wait(-1, 2, 0);
+    case GEMDOS_PWAIT3: return ksched_wait(-1, ARG_W(1), ARG_P(2));
+    case GEMDOS_PWAITPID: return ksched_wait(ARG_W(1), ARG_W(2), ARG_P(3));
 #endif
     case GEMDOS_PGETPID:
         return kproc_pid(run);

@@ -7,6 +7,9 @@
 #include "kheap.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_X86_64_MEMTEST
+#include "kprint.h"
+#endif
 extern PD *run;
 
 typedef enum { TASK_UNUSED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DONE, TASK_ZOMBIE } TASK_STATE;
@@ -92,6 +95,10 @@ static void task_entry(void)
     KERNEL_TASK *task = scheduler.current;
     task->result = proc_start_scheduled(task->program);
     proc_discard_accessory(task->program); /* also consumes a refused start */
+#if CONF_WITH_X86_64_MEMTEST
+    if (task->asynchronous && !task->parent && task->result)
+        kcprintf("orphan PID %d returned %ld\n", task->pid, (long)task->result);
+#endif
     task->program = NULL;
     task->state = task->asynchronous && task->parent ? TASK_ZOMBIE : TASK_DONE;
     x86_64_process_save(&task->context);

@@ -2179,12 +2179,13 @@ static void test_async_processes(void)
     static const char environment[] = { 0, 0 };
     char tail[] = { 1, 'p', 0 };
     UWORD i;
+    static const char roles[] = "pozvf";
     SNAP s;
     int before = failures;
     ULONG sessions = cuis_session_count();
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 5; i++) {
         snap(&s);
-        tail[1] = i == 0 ? 'p' : i == 1 ? 'o' : 'z';
+        tail[1] = roles[i];
         rc = Pexec(PE_LOAD, "C:\\ASYNC.TOS", tail, environment);
         CHECK(rc > 0, "load standard async process fixture");
         if (rc <= 0) break;
@@ -2196,8 +2197,8 @@ static void test_async_processes(void)
             CHECK(rc == E_OK, "run managed async parent");
             if (rc == E_OK) {
                 program = NULL;
-                if (result) kcprintf("async fixture %u returned %ld\n", (unsigned)i, (long)result);
-                CHECK(result == 0, "MiNT async launch, yield, child waits and orphan cleanup");
+                if (result != (i == 3 ? 77 : i == 4 ? 0xffff : 0)) kcprintf("async fixture %u returned %ld\n", (unsigned)i, (long)result);
+                CHECK(result == (i == 3 ? 77 : i == 4 ? 0xffff : 0), "MiNT async launch, yield, child waits and orphan cleanup");
             }
         }
         if (program) proc_discard_accessory(program);

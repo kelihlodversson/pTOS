@@ -133,8 +133,8 @@ Process calls
 
   call                       no.       decision
   Pgetpid                    0x10b     DONE (group 5): the pid of the process record, 1..32767, never reused
-                                       while it lives; 0 for a context with no record (the kernel's own)
-  Pgetppid                   0x10c     DONE: the launcher's pid, 0 if it was the kernel
+                                       while it lives (or an unread managed-child status remains); 0 for the kernel
+  Pgetppid                   0x10c     DONE: the logical parent pid, 0 for a kernel controller; see managed groups below
   Pgetuid, Pgeteuid,         0x10f     DONE: 0, there are no users (every process is root's)
   Pgetgid, Pgetegid          0x114
                              0x138/9
