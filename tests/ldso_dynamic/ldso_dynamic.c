@@ -40,16 +40,50 @@ static void meminfo(unsigned long *free_pages, unsigned long *processes)
 
 /* programs that cannot start: a library that is not there, one that is cut short,
  * an interpreter that is not there.  Nothing may be left of them. */
+/* ptest_assert_msg() with the result in the message: "<what> (<rc>)" */
+static void expect(int ok, const char *what, long rc)
+{
+    static char text[160];
+    unsigned long v = rc < 0 ? 0UL - (unsigned long)rc : (unsigned long)rc;   /* (defined for LONG_MIN too) */
+    char digits[24];
+    int n = 0, m = 0;
+
+    if (ok)
+    {
+        ptest_assert(1);
+        return;
+    }
+    /* what is cut where 31 bytes remain for " (", a sign, at most 20 digits (a 64-bit long),
+     * ")" and the end: the longest tail is 25 */
+    while (what[n] && n < (int)sizeof(text) - 32)
+    {
+        text[n] = what[n];
+        n++;
+    }
+    text[n++] = ' ';
+    text[n++] = '(';
+    if (rc < 0)
+        text[n++] = '-';
+    do
+        digits[m++] = (char)('0' + v % 10);
+    while (v /= 10);
+    while (m)
+        text[n++] = digits[--m];
+    text[n++] = ')';
+    text[n] = 0;
+    ptest_assert_msg(0, text);
+}
+
 static void failing_round(void)
 {
     long rc;
 
     rc = Pexec(0, "C:\\NEEDMISS.ELF", "", 0L);
-    ptest_assert_msg(rc == EXIT_NO_LIBRARY, "a program needing a missing library was not refused");
+    expect(rc == EXIT_NO_LIBRARY, "a program needing a missing library was not refused", rc);
     rc = Pexec(0, "C:\\NEEDBAD.ELF", "", 0L);
-    ptest_assert_msg(rc == EXIT_NO_LIBRARY, "a program needing a cut-short library was not refused");
+    expect(rc == EXIT_NO_LIBRARY, "a program needing a cut-short library was not refused", rc);
     rc = Pexec(0, "C:\\NOINTRP.ELF", "", 0L);
-    ptest_assert_msg(rc < 0, "a program with no interpreter was started");
+    expect(rc < 0, "a program with no interpreter was started", rc);
 }
 
 static void test_failures(void)

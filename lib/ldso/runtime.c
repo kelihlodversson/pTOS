@@ -38,6 +38,13 @@ static uint32_t word(const unsigned char *p)
     for (i = 0; i < 4; i++) ((unsigned char *)&value)[i] = p[i];
     return value;
 }
+static uint32_t half(const unsigned char *p)
+{
+    uint16_t value;
+    unsigned char *to = (unsigned char *)&value;
+    to[0] = p[0]; to[1] = p[1];
+    return value;
+}
 static int equal(const char *a, const char *b)
 {
     while (*a && *a == *b) { a++; b++; }
@@ -370,7 +377,7 @@ uint32_t dl_runtime(const uint32_t *stack)
     if (i == 32 || !phdr || !phnum || phnum > DL_MAX_PHDRS || !base || !entry || bootdrive >= 26) return fail();
     if (bias == UINT32_MAX || !loaded(&objects[0], (const unsigned char *)(uintptr_t)phdr, phnum, bias)) return fail();
     header = (const unsigned char *)(uintptr_t)base;
-    if (!loaded(&self, header + word(header + 28), header[44] | ((uint32_t)header[45] << 8), base)) return fail();
+    if (!loaded(&self, header + word(header + 28), half(header + 44), base)) return fail();
     /* A relocated backend function table is used below; bootstrap must have
      * completed before these pointers can be called. */
     root.object = objects[0].object; root.identity = 1; root.cookie = &objects[0];

@@ -1928,7 +1928,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
-              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(ARCH_ARM),-DTEST_WITH_ELF_SHARED)) \
+              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K)),-DTEST_WITH_ELF_SHARED)) \
               $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 

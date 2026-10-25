@@ -160,11 +160,13 @@ void gouser(void)
         /* what a program finds on its stack: a return address, and the basepage.
          * Written through the kernel's copy, which backs the page of a lazy stack
          * (a store from here would be a fault of the kernel) */
-        user_sp -= 8;
-        initial[0] = 0;
-        initial[1] = (ULONG)(uintptr_t)p;
-        if (!kproc_copy_to_user(user_sp, initial, sizeof(initial)))
-            panic("cannot write the first words of the stack of a process\n");
+        if (!kproc_standard_entry(p)) {
+            user_sp -= 8;
+            initial[0] = 0;
+            initial[1] = (ULONG)(uintptr_t)p;
+            if (!kproc_copy_to_user(user_sp, initial, sizeof(initial)))
+                panic("cannot write the first words of the stack of a process\n");
+        }       /* (a standard entry has the initial stack of the ELF ABI, built by the kernel) */
         uenter.entry = entry;
         uenter.user_sp = user_sp;
         uenter.kstack_top = (ULONG)kstack_top;

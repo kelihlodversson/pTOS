@@ -53,10 +53,19 @@ runs:
     # documentation in the archives to DOS line endings, and zip is what
     # packs each archive.  Both happen to be on the runner images already;
     # they are named here so that this action really is the whole list.
+    #
+    # gcc-m68k-linux-gnu is the one compiler that makes position-independent
+    # m68k code (-fPIC with a GOT and a PLT; the MiNT compilers refuse it): the
+    # runtime linker and its test libraries of the address-space configurations
+    # (CONF_WITH_ELF_SHARED, lib/ldso/build.mk) are built with it.  It needs no
+    # libc; the kernel and everything else is still built with the toolchain
+    # above.
     - name: Install the m68k build tools
       if: inputs.arch == 'm68k'
       shell: bash
-      run: sudo apt-get install -y dos2unix zip
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y dos2unix zip gcc-m68k-linux-gnu
 
     - name: Cache the m68k toolchain
       if: inputs.arch == 'm68k'
