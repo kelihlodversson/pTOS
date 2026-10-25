@@ -10,5 +10,6 @@ void cuis_process_exit(PD *owner);
 #if CONF_WITH_X86_64_MEMTEST
 ULONG cuis_session_count(void);
 ULONG cuis_window_count(void);
+ULONG cuis_visible_window_count(void);
 #endif
 #endif

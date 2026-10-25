@@ -14,4 +14,9 @@ WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y);
 LONG aes_window_create(LONG x, LONG y, LONG width, LONG height);
 LONG aes_window_configure(LONG handle, LONG x, LONG y, LONG width, LONG height);
 LONG aes_window_destroy(LONG handle);
+LONG aes_window_show(LONG handle);
+LONG aes_window_hide(LONG handle);
+LONG aes_window_raise(LONG handle);
+LONG aes_window_lower(LONG handle);
+LONG aes_window_redraw(LONG handle);
 #endif
