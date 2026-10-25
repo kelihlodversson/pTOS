@@ -62,7 +62,7 @@ void m68k_user_fault(void)
      * address of a format 2 frame is at offset 8 */
     if ((fv >> 12) == 7)
         address = *(const ULONG *)(f + 20);
-    else if ((fv >> 12) == 2)
+    else if ((fv >> 12) == 2 || (fv >> 12) == 4)   /* (68060 access error: format 4) */
         address = *(const ULONG *)(f + 8);
     proc_fault(cause_of(proc_enum), (UQUAD)proc_enum, address, pc, (UQUAD)(ULONG)proc_usp);
 }
@@ -90,6 +90,15 @@ extern PD *run;                         /* bdos/proc.c */
 #define WB_VALID    0x0080
 #define WB_SIZE     0x0060              /* 0 long, 1 byte, 2 word, 3 line */
 #define WB_TM       0x0007
+
+/* the 68060 access error frame (format 4): the fault address at 8, the fault status long word at 12 */
+#define F4_FADDR    8
+#define F4_FSLW     12
+
+#define FSLW_MA     0x08000000UL        /* misaligned: it crosses a page */
+#define FSLW_LK     0x02000000UL        /* locked: a read-modify-write cycle */
+#define FSLW_WRITE  0x00800000UL        /* R/W is 01 (write) or 11 (read-modify-write); 10 is a read */
+#define FSLW_SIZE   0x00600000UL        /* 0 long, 1 byte, 2 word, 3 line, as the 68040's */
 
 /*
  * A write the 68040 still owes (a write-back of the frame): done now that the
@@ -156,19 +165,43 @@ int m68k_user_busfault(void)
 {
     const UBYTE *f = (const UBYTE *)user_fault_frame;
     UWORD fv = *(const UWORD *)(f + 6);
-    UWORD ssw = *(const UWORD *)(f + F7_SSW);
-    ULONG address = *(const ULONG *)(f + F7_FADDR);
+    ULONG address, size;
     ASPACE_ROOT root = kproc_user_root(run);
+    BOOL write, misaligned, writebacks;
+    UWORD ssw = 0;
     UWORD access;
     int answer;
 
-    if ((fv >> 12) != 7 || address >= USER_VA_LIMIT || !root || root != aspace_hw_current())
+    if ((fv >> 12) == 7) {              /* 68040 */
+        static const UBYTE sizes[4] = { 4, 1, 2, 16 };
+
+        ssw = *(const UWORD *)(f + F7_SSW);
+        address = *(const ULONG *)(f + F7_FADDR);
+        /* a locked access (TAS, CAS) reports a read, and writes */
+        write = !(ssw & SSW_READ) || (ssw & SSW_LK);
+        misaligned = (ssw & SSW_MA) != 0;
+        size = sizes[(ssw >> 5) & 3];
+        writebacks = TRUE;
+    } else if ((fv >> 12) == 4) {       /* 68060: precise, the instruction runs again; no write-backs */
+        static const UBYTE sizes[4] = { 4, 1, 2, 16 };
+        ULONG fslw = *(const ULONG *)(f + F4_FSLW);
+
+        address = *(const ULONG *)(f + F4_FADDR);
+        write = (fslw & (FSLW_WRITE | FSLW_LK)) != 0;
+        misaligned = (fslw & FSLW_MA) != 0;
+        size = sizes[(fslw & FSLW_SIZE) >> 21];
+        ssw = (UWORD)(fslw >> 16);
+        writebacks = FALSE;
+    } else {
         return 0;
-    /* a locked access (TAS, CAS) reports a read, and writes */
-    access = ((ssw & SSW_READ) && !(ssw & SSW_LK)) ? (((ssw & SSW_TM) == 2) ? ASPACE_PROT_EXEC : 0)
-                                                    : ASPACE_PROT_WRITE;
+    }
+    if (address >= USER_VA_LIMIT || !root || root != aspace_hw_current())
+        return 0;
+    /* (an instruction fetch asks no more than a read: nothing here is executable
+     * for its own sake on a CPU without an execute-disable bit) */
+    access = write ? ASPACE_PROT_WRITE : ((fv >> 12) == 7 && (ssw & SSW_TM) == 2 ? ASPACE_PROT_EXEC : 0);
     answer = kproc_demand_page(run, address, access);
-    if (ssw & SSW_MA) {
+    if (misaligned) {
         /*
          * A misaligned access that crosses a page: the address of the frame can be
          * that of the first byte, in a page that is there, while the page that
@@ -176,8 +209,7 @@ int m68k_user_busfault(void)
          * there already is no failure; the access runs again and, if it
          * needs another page, faults again.
          */
-        static const UBYTE sizes[4] = { 4, 1, 2, 16 };
-        ULONG last = address + sizes[(ssw >> 5) & 3] - 1, page;
+        ULONG last = address + size - 1, page;
 
         if (last < address || last >= USER_VA_LIMIT)
             return 0;
@@ -197,12 +229,13 @@ int m68k_user_busfault(void)
                    (UQUAD)(ULONG)proc_usp);
     if (answer != 1)
         return 0;
-    if (!write_back(*(const UWORD *)(f + F7_WB1S), *(const ULONG *)(f + F7_WB1A),
+    if (writebacks &&
+        (!write_back(*(const UWORD *)(f + F7_WB1S), *(const ULONG *)(f + F7_WB1A),
                     *(const ULONG *)(f + F7_WB1D), TRUE) ||
         !write_back(*(const UWORD *)(f + F7_WB2S), *(const ULONG *)(f + F7_WB2A),
                     *(const ULONG *)(f + F7_WB2D), FALSE) ||
         !write_back(*(const UWORD *)(f + F7_WB3S), *(const ULONG *)(f + F7_WB3A),
-                    *(const ULONG *)(f + F7_WB3D), FALSE))
+                    *(const ULONG *)(f + F7_WB3D), FALSE)))
         return 0;
     return 1;
 }
