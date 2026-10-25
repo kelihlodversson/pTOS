@@ -1,5 +1,11 @@
 /* x32 syscall transport; the shared session/geometry code is portable. */
 #include "../../transport.h"
+LONG aes_process_call(ULONG function)
+{
+    register UQUAD ax __asm__("rax") = (1ULL << 32) | function;
+    __asm__ volatile ("syscall" : "+a"(ax) :: "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}
 LONG cuis_call(ULONG function, LONG handle)
 {
     register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | function;

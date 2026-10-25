@@ -746,6 +746,51 @@ child's callback, survives the child's UD2 fault, then reaps SIGILL after
 the child's deferred termination. Every cycle checks process/task memory,
 file/directory references and CUIS sessions.
 
+Public GEM lifecycle and timer bindings (#717)
+-----------------------------------------------
+The ordinary shared library exports appl_init, appl_exit, appl_yield,
+evnt_timer and appl_getinfo, with matching mt_* forms, aes_global[15],
+gl_apid and gl_ap_version. include/gem.h declares this implemented subset;
+the same application fixture also compiles against GEMlib's normal headers.
+This is the first public adapter slice, not a complete GEM AES replacement.
+Named discovery, appl_read/write, combined events and window/input adapters
+are subsequent work. Existing aes_session_*/aes_window_*/aes_message_* exports
+remain transitional test/migration interfaces, not application requirements.
+
+appl_init implicitly opens the process's CUIS session and returns its kernel
+PID as a positive short application ID (1..32767), or -1 on failure. Opaque
+CUIS handles remain private and are never truncated to produce application
+IDs. Repeated initialization reuses the process registration. The caller's
+15-word global array is initialized with AES global-layout ABI 0x0400,
+unbounded multi-application count -1 and its application ID; other slots are
+zero until their facilities migrate. This ABI value does not claim complete
+AES 4 functionality. appl_getinfo currently returns 0 and clears its output
+words for every query, advertising no unimplemented extensions. Optional
+MultiAES/MagiC/XaAES query results follow implementation and behavioral tests.
+
+The mt_* forms use the supplied AES global array and the same process-owned
+registration. Successful exit clears that array and the library's exported
+globals, closes the session and returns 1. Invalid/stale state or transport
+failure returns 0; negative transport errors never escape Boolean GEM APIs.
+Ordinary finalization closes implicit sessions, while kernel teardown remains
+authoritative for faults and _Exit. No new application setup is required.
+
+CUIS_SESSION_DELAY (function 24) takes the owned session handle and an
+unsigned 32-bit millisecond interval in flat registers; E_OK or a negative
+error is its scalar result. It waits for time alone, without a window,
+focus, or input/message consumption. A positive interval is rounded up to
+200-Hz ticks with a guard tick, including tick-counter wrap; all intervals
+through 0xffffffff ms are accepted. Zero yields once. Positive delays while
+owning a display update return EACCDN, matching other blocking CUIS waits.
+The library maps successful delay/yield to 1 and failure to 0. These native
+calls add neither feature negotiation nor versioned request structures.
+
+Host tests cover failure mapping, opaque-handle/application-ID separation,
+caller globals, delay width/rounding/wrap, ownership, IRQ restoration and
+queued messages. Real dynamic parent/child fixtures use the public GEM
+calls, verify private globals, preserve a queued message across a timer,
+and reclaim implicit sessions through finalization and _Exit.
+
 Final configuration cutover
 ---------------------------
 Once external libaes is complete, Kconfig must make CUIS and in-kernel AES

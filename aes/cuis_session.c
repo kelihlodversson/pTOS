@@ -642,6 +642,27 @@ static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, 
     }
 }
 
+/* A timer has no input/message predicate, and never consumes queued events.
+ * All unsigned 32-bit millisecond intervals fit the wrap-safe tick span. */
+LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds)
+{
+    CUIS_CLIENT *client = *find_owner(run);
+    CUIS_WAIT wait;
+    UQUAD flags;
+    if (handle > 0x7fffffffULL || milliseconds > 0xffffffffULL) return EINVAL;
+    if (!client || client->handle != handle) return EACCDN;
+    if (!milliseconds) return ksched_yield();
+    if (update_owner && update_owner->owner == run) return EACCDN;
+    flags = cuis_input_lock();
+    wait.client = client; wait.window = NULL; wait.events = 0;
+    wait.start = cuis_input_ticks(); wait.timeout = 0;
+    wait.duration = (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1);
+    while (!wait_ready(&wait))
+        if (!ksched_block(wait_ready, &wait)) cuis_input_idle();
+    cuis_input_unlock(flags);
+    return E_OK;
+}
+
 /* Flat calls; only the trusted producer can submit keyboard events. */
 LONG cuis_input_service(ULONG function, UQUAD handle, UQUAD argument)
 {

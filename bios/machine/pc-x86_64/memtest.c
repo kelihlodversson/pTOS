@@ -2459,6 +2459,16 @@ static void test_ring3(void)
     }
     test_cuis_scheduler();
     test_async_processes();
+    {
+        SNAP s;
+        LONG result;
+        ULONG sessions = cuis_session_count();
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEM.TOS", "", NULL);
+        CHECK(result == 0, "standard GEM lifecycle, private globals and windowless timers");
+        CHECK(cuis_session_count() == sessions, "implicit GEM sessions reclaimed on exit and _Exit");
+        same(&s, "GEM API processes and their async children reclaimed");
+    }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");
 #endif

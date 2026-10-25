@@ -18,6 +18,7 @@ static BOOL fail_copy;
 static UQUAD fail_copy_address;
 static BOOL input_irqs = TRUE, input_bad_idle;
 static ULONG input_ticks, input_sleeps, input_inject_after;
+static ULONG delay_tick_step = 1, delay_yields;
 static BOOL input_drop_focus, input_drop_on_validate;
 UQUAD cuis_input_lock(void)
 {
@@ -50,11 +51,12 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     (void)ready; (void)argument;
     return FALSE;
 }
+LONG ksched_yield(void) { delay_yields++; return E_OK; }
 void cuis_input_idle(void)
 {
     if (input_irqs) input_bad_idle = TRUE;
     input_irqs = TRUE;
-    input_ticks++;
+    input_ticks += delay_tick_step;
     input_sleeps++;
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
@@ -109,6 +111,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "input.c"
 #include "pointer.c"
 #include "messages.c"
+#include "delay.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -167,5 +170,7 @@ int main(void)
     rc = pointer_checks();
     if (rc) return rc;
     rc = window_limit_checks();
-    return rc ? rc : message_checks();
+    if (rc) return rc;
+    rc = message_checks();
+    return rc ? rc : delay_checks();
 }

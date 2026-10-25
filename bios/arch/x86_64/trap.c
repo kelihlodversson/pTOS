@@ -360,7 +360,8 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
     case CUIS_SERVICE_CLASS:
 #if CONF_WITH_CUIS
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
-            (fn >= CUIS_MESSAGE_SEND && fn <= CUIS_MESSAGE_WAIT ?
+            (fn == CUIS_SESSION_DELAY ? cuis_delay_service(frame->rdi, frame->rsi) :
+             fn >= CUIS_MESSAGE_SEND && fn <= CUIS_MESSAGE_WAIT ?
                  cuis_message_service(fn, frame->rdi, frame->rsi, frame->rdx,
                                       frame->r10, frame->r8, frame->r9) :
              fn == CUIS_POINTER_READ ? cuis_pointer_service(frame->rdi,

@@ -46,4 +46,11 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "lib/aes/objects.c", "aes/gemobjtree.c", "-o", str(work / "objects")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "objects")], check=True)
-print("CUIS sessions, local GEM object contracts and Kconfig tests passed.")
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
+                "-fno-builtin", "-I" + temp, "-Iinclude", "-Ilib/aes",
+                "tests/cuis/application.c", "lib/aes/application.c", "lib/aes/session.c",
+                "-o", str(work / "application")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "application")], check=True)
+print("CUIS sessions/delays, GEM lifecycle/object contracts and Kconfig tests passed.")
