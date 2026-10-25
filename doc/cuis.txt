@@ -12,6 +12,37 @@ helpers. #679 adds caller-local object-tree editing and coordinate calculation. 
 existing kernel AES. Existing x32 import clients remain available while
 operations migrate; they are not the native CUIS protocol.
 
+GEM source compatibility is the public contract. Applications use standard
+GEM headers, function names, signatures, structures, constants and return
+conventions (appl_*, evnt_*, wind_*, menu_*, form_*, objc_*, graf_*, rsrc_*,
+shel_* and scrp_*). The aes_session_*, aes_window_*, aes_message_* and similar
+CUIS wrappers currently exported for migration tests are transitional
+implementation helpers, not a replacement application API. Move these behind
+the library boundary as the standard adapters migrate; applications must not
+need CUIS handles, sender grants or other pTOS-specific setup calls.
+
+Preserve GEM behavior as well as syntax: application IDs and discovery,
+message layouts/lengths/ordering, blocking and nonblocking reads, event masks
+and multi-event results, click/rectangle/timer predicates, focus and window
+messages, redraw iteration/update locking, and resource/object ownership.
+Map private CUIS handles/errors to the documented GEM IDs/results; do not
+truncate native handles into WORD application IDs or leak negative CUIS
+errors through APIs whose GEM convention is Boolean. The initial four-word
+transport is a foundation, not a permanent 16-byte limit on appl_write/read.
+
+Inventory meaningful MultiAES, MagiC and XaAES extensions against tos.hyp and
+GEMlib headers, with a per-feature support/semantics/test matrix. Implement
+applicable extensions through the familiar API, including mt_* entry points
+where provided by the chosen GEM binding. Report unsupported features using
+the documented AES conventions and capability queries; never claim support
+through appl_getinfo before it exists. These GEM compatibility queries are
+library behavior, not version negotiation in the CUIS syscall protocol.
+Compile representative existing GEM source against the normal headers and
+link to libaes, then exercise its behavior in isolated x32 clients before
+claiming the migration complete. Kernel primitives must permit these
+semantics; hiding a conflicting protocol behind a renamed wrapper is not
+sufficient.
+
 Inventory of the current implementation and intended ownership:
 
 AES family     Application-local libaes.so       Kernel CUIS responsibility
@@ -63,7 +94,7 @@ ordinary PIC ELF32/x32), installed with the LD.SO runtime at:
 
 A native executable links to -laes and the dynamic CRT, and records an
 ordinary DT_NEEDED for libaes.so. No PT_PTOS_IMPORTS, fixed client image or
-kernel symbol resolution is used. The public initial interface is
+kernel symbol resolution is used. The transitional test interface is
 include/libaes.h: aes_session_open/query/close and the existing local
 inside/rc_constrain/rc_equal/rc_intersect/rc_union geometry helpers.
 The library remembers its session in private writable data for normal
@@ -527,6 +558,53 @@ deferred cursor movement when the outer guard ends. CUIS packets invalidate
 queued legacy motion/cursor notifications and advance a generation checked
 before applying an in-flight native motion callback's result. IRQ fixtures
 cover guarded motion and reject an older callback completion after CUIS input.
+
+Bounded peer messages
+---------------------
+CUIS transports opaque peer data separately from trusted input and redraws:
+
+ 21 MESSAGE_SEND  RDI=destination session, RSI/RDX/R10/R8=ULONG words 0-3
+ 22 MESSAGE_READ  RDI=owned session, RSI=LONG *sender,
+                  RDX/R10/R8/R9=ULONG *words 0-3 (four separate outputs)
+ 23 MESSAGE_WAIT  RDI=owned session, RSI=sign-extended LONG timeout_ms
+
+Transitional libaes test wrappers are aes_message_send(destination, a, b,
+c, d), aes_message_read(session, sender, a, b, c, d), and
+aes_message_wait(session, timeout_ms). These are transport helpers, not the
+GEM application API; normal applications use appl_write/read and
+evnt_mesag/multi after their library adapters migrate. No request/reply
+structure or receiver grant handshake is used. Any registered client can
+send to another registered client, as normal GEM messaging requires.
+
+Payload words are unsigned 32-bit values; send slots with upper bits set
+return EINVAL. CUIS does not decode GEM message IDs or payloads. A peer
+message cannot fabricate trusted CUIS keyboard, pointer, focus or redraw
+notifications. Sender identity is assigned by the kernel, never supplied by
+the sender. Session handles are never reused. Peer discovery, mapping to GEM
+application IDs and GEM message adaptation remain later library work.
+
+SEND returns E_OK on acceptance, EAGAIN when the destination's 16-message
+FIFO is full, EACCDN for an absent destination or unregistered caller, or
+EINVAL for malformed slots. It never blocks, allocates or evicts an accepted
+message. Messages from all peers share FIFO acceptance order. These scalar
+results are private transport conventions, not appl_write return values.
+
+READ returns 1 after copying the kernel sender and all four payload words,
+0 when empty, or a negative error. All outputs are validated/backed before
+copyout, and a failed copy leaves the oldest message queued. Empty reads
+ignore output pointers. Reading another session is forbidden. Sender exit
+preserves accepted messages with the historical sender handle. Receiver exit
+discards its queue; no message holds a process/window pointer or file reference.
+
+CUIS_EVENT_MESSAGE (8) extends EVENT_WAIT: any queued message for the window
+owner makes it ready, independently of focus. A successful wait returns 1 and
+consumes nothing. MESSAGE_WAIT uses the same atomic predicate/sleep, timeout
+and owned-update rules without requiring a window or focus. Existing event
+masks retain their behavior. Native waits still sleep for IRQs rather than
+scheduling another client; scheduler integration is a separate milestone.
+Host tests model a peer posting at the sleep boundary; native boot tests
+verify scalar transport, cross-process delivery without a handshake,
+copyout recovery, queue bounds, ownership, readiness and timeouts.
 
 Final configuration cutover
 ---------------------------

@@ -16,6 +16,7 @@ LONG cuis_input_service(ULONG function, UQUAD handle, UQUAD argument);
 BOOL cuis_pointer_packet(WORD dx, WORD dy, ULONG buttons, LONG *x, LONG *y);
 void cuis_mouse_packet(SBYTE *packet);
 LONG cuis_pointer_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed);
+LONG cuis_message_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f);
 LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout);
 void cuis_process_exit(PD *owner);
 #if CONF_WITH_X86_64_MEMTEST

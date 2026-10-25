@@ -85,3 +85,17 @@ LONG aes_event_wait(LONG window, ULONG events, LONG timeout_ms)
 {
     return cuis_call6(CUIS_EVENT_WAIT, (QUAD)window, events, (QUAD)timeout_ms, 0, 0, 0);
 }
+
+LONG aes_message_send(LONG destination, ULONG a, ULONG b, ULONG c, ULONG d)
+{
+    return cuis_call6(CUIS_MESSAGE_SEND, (QUAD)destination, a, b, c, d, 0);
+}
+LONG aes_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, ULONG *d)
+{
+    return cuis_call6(CUIS_MESSAGE_READ, (QUAD)session, (uintptr_t)sender,
+                      (uintptr_t)a, (uintptr_t)b, (uintptr_t)c, (uintptr_t)d);
+}
+LONG aes_message_wait(LONG session, LONG timeout_ms)
+{
+    return cuis_call5(CUIS_MESSAGE_WAIT, session, timeout_ms, 0, 0, 0);
+}

@@ -9,5 +9,6 @@
             aes_window_focus; aes_window_focused; aes_window_unfocus;
             aes_key_read; aes_key_wait;
             aes_pointer_read; aes_event_wait;
+            aes_message_send; aes_message_read; aes_message_wait;
     local: *;
 };
