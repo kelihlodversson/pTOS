@@ -266,7 +266,7 @@ obj/ldso/runtime/NOINTRP.ELF: obj/ldso/test/nointrp.elf
 $(LDSO_RUNTIME_DIR)/LIB/ARM/LIBBAD.SO: obj/ldso/test/libbad.so
 	@mkdir -p $(@D)
 	head -c 100 $< > $@
-all: $(LDSO_RUNTIME_FILES)
 endif
+all: $(LDSO_RUNTIME_FILES)
 $(LDSO_RUNTIME_DIR): $(LDSO_RUNTIME_FILES)
 	@true

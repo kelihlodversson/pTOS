@@ -1051,6 +1051,40 @@ class Metadata(unittest.TestCase):
         self.lib.dl_graph_close(C.byref(graph), C.byref(ops), None)
         self.assertEqual(released, [3, 2])
 
+    def test_arm_relocation_formulas(self):
+        """The ARM arithmetic: ABS32 wraps (a negative addend), REL32 is a signed distance."""
+        armlib = self.path / "arm-formulas.so"
+        run(CC + ["-std=c90", "-pedantic", "-Wall", "-Wextra", "-Werror", "-O2", "-fPIC", "-shared",
+                  "-I" + str(ROOT / "lib/ldso"), str(ROOT / "lib/ldso/arch/arm/reloc.c"),
+                  "-o", str(armlib)])
+        backend = Backend.in_dll(C.CDLL(str(armlib)), "dl_reloc_backend")
+        kind = C.CFUNCTYPE(C.c_int, C.c_uint32, C.POINTER(C.c_uint32 * 2))(backend.kind)
+        value = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_uint32, C.c_uint32, C.c_int32, C.c_uint32,
+                            C.POINTER(C.c_uint64))(backend.value)
+
+        def compute(kind_type, bias, symbol, addend, place=0x1000):
+            out = C.c_uint64(0xdeadbeefdeadbeef)
+            rc = value(kind_type, bias, symbol, addend, place, C.byref(out))
+            return rc, out.value
+
+        ABS32, REL32, GLOB_DAT, JUMP_SLOT, RELATIVE = 2, 3, 21, 22, 23
+        self.assertEqual(compute(ABS32, 0, 0x02000100, -4), (0, 0x020000fc))
+        self.assertEqual(compute(ABS32, 0, 0x100, 0x20), (0, 0x120))
+        self.assertEqual(compute(ABS32, 0, 0xfffffffc, 8), (0, 4))         # modulo 2**32
+        self.assertEqual(compute(REL32, 0, 0x02000100, 8, place=0x02000200), (0, (0x02000108 - 0x02000200) & 0xffffffff))
+        self.assertEqual(compute(REL32, 0, 0, 0, place=0x80000001)[0], -5)  # out of range
+        self.assertEqual(compute(GLOB_DAT, 0, 0x1234, 0x77), (0, 0x1234))   # S, not S + A
+        self.assertEqual(compute(JUMP_SLOT, 0, 0x1234, 0x77), (0, 0x1234))
+        self.assertEqual(compute(RELATIVE, 0x2000000, 0, 0x1000), (0, 0x2001000))
+        self.assertEqual(compute(RELATIVE, 0xffffff00, 0, 0x1000)[0], -5)   # past the address space
+        self.assertEqual(compute(20, 0, 0, 0)[0], -2)                        # R_ARM_COPY
+        self.assertEqual(compute(0, 0, 0, 0), (0, 0))                        # NONE
+        info = (C.c_uint32 * 2)()
+        for kind_type, width in ((ABS32, 4), (RELATIVE, 4), (JUMP_SLOT, 4)):
+            self.assertEqual(kind(kind_type, C.byref(info)), 0)
+            self.assertEqual(info[0], width)
+        self.assertEqual(kind(38, C.byref(info)), -2)                        # an x32 type
+
     @unittest.skipUnless(shutil.which("arm-none-eabi-gcc"), "needs an ARM cross compiler")
     def test_real_arm_objects(self):
         """DT_REL tables of the ARM linker (#693): implicit addends, the ARM formulas."""

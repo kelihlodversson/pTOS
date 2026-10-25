@@ -38,8 +38,10 @@ static int arm_value(uint32_t type, uint32_t bias, uint32_t symbol,
     case R_ARM_GLOB_DAT: case R_ARM_JUMP_SLOT:
         *out = symbol;                  /* S: the slot holds a stub address to start with */
         return DL_OK;
+    case R_ARM_ABS32:                   /* modulo 2**32, as the ABI has it: the addend may be negative */
+        *out = (uint32_t)(symbol + (uint32_t)addend);
+        return DL_OK;
     case R_ARM_RELATIVE: v = (int64_t)bias + (int64_t)(uint32_t)addend; break;
-    case R_ARM_ABS32: v = (int64_t)symbol + (int64_t)(uint32_t)addend; break;
     case R_ARM_REL32:
         v = (int64_t)symbol + (int64_t)addend - (int64_t)place;
         if (v < INT32_MIN || v > INT32_MAX)
