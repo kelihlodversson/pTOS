@@ -114,6 +114,23 @@ static void inline scrn_clip(IntPoint* point)
 }
 
 
+#if CONF_WITH_CUIS
+static BOOL cuis_cursor_pending;
+
+/* Guarded cursor operations may overwrite draw_flag. Publish the final
+ * position only after the outermost show/hide/redefinition has completed. */
+void vdi_cuis_cursor_flush(void)
+{
+    UQUAD flags;
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    if (cuis_cursor_pending && !linea_vars.mouse_flag) {
+        cuis_cursor_pending = FALSE;
+        linea_vars.user_cur(linea_vars.GCURX, linea_vars.GCURY);
+    }
+    if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+}
+#endif
+
 /*
  * _mouse_int - Mouse interrupt routine
  * buf: address of mouse buffer from the IKBD/ACIA-equivalent driver
@@ -138,12 +155,15 @@ void mouse_int(UBYTE *buf)
             linea_vars.cur_ms_stat = pressed | ((previous ^ pressed) << 6);
             /* Keep the cursor, but do not publish CUIS-owned input through
              * legacy button/motion vectors or native VDI input callbacks. */
-            if (linea_vars.mouse_flag) return;
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+            vdi_service_callback_supersede_motion();
+#endif
             if (x != linea_vars.GCURX || y != linea_vars.GCURY) {
                 linea_vars.cur_ms_stat |= 1 << 5;
                 linea_vars.GCURX = (WORD)x; linea_vars.GCURY = (WORD)y;
-                user_cur((WORD)x, (WORD)y);
+                cuis_cursor_pending = TRUE;
             }
+            vdi_cuis_cursor_flush();
             return;
         }
     }

@@ -126,6 +126,9 @@ static void dis_cur(void)
         linea_vars.HIDE_CNT = 0;           /* hide counter should not become negative */
     }
     linea_vars.mouse_flag -= 1;            /* re-enable mouse drawing */
+#if CONF_WITH_CUIS
+    vdi_cuis_cursor_flush();
+#endif
 }
 
 
@@ -158,6 +161,9 @@ static void hide_cur(void)
     }
 
     linea_vars.mouse_flag -= 1;            /* re-enable mouse drawing */
+#if CONF_WITH_CUIS
+    vdi_cuis_cursor_flush();
+#endif
 }
 
 
@@ -586,6 +592,9 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
     }
 
     linea_vars.mouse_flag -= 1;                    /* re-enable mouse drawing */
+#if CONF_WITH_CUIS
+    vdi_cuis_cursor_flush();
+#endif
 }
 
 

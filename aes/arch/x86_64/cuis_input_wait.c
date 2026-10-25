@@ -31,7 +31,7 @@ ULONG cuis_input_ticks(void) { return (ULONG)hz_200; }
 BOOL cuis_input_standard_pointer(void) { return kbdvecs.mousevec == mouse_int; }
 BOOL cuis_input_pointer_state(LONG *x, LONG *y, ULONG *buttons)
 {
-    if (!cuis_input_standard_pointer() || linea_vars.mouse_flag) return FALSE;
+    if (!cuis_input_standard_pointer()) return FALSE;
     *x = linea_vars.GCURX; *y = linea_vars.GCURY;
     *buttons = (ULONG)linea_vars.MOUSE_BT & 3;
     return TRUE;

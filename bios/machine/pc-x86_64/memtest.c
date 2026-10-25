@@ -56,6 +56,7 @@
 #endif
 #if CONF_WITH_X32_VDI
 #include "lineavars.h"
+#include "../../../vdi/vdi_defs.h"
 #include "screen_mode.h"
 #include "font.h"
 #include "vdi_service.h"
@@ -67,7 +68,10 @@ static ULONG cuis_input_injections, cuis_pointer_injections;
 static BOOL cuis_pointer_armed;
 #if CONF_WITH_X32_VDI
 static ULONG cuis_pointer_legacy_calls, cuis_pointer_cursor_calls;
-static BOOL cuis_pointer_callbacks_clean, cuis_pointer_cursor_updated;
+static BOOL cuis_pointer_callbacks_clean, cuis_pointer_cursor_updated, cuis_pointer_guard_clean;
+#if CONF_WITH_USER_CALLBACKS
+static BOOL cuis_pointer_stale_clean;
+#endif
 static void (*cuis_saved_cursor)(WORD, WORD);
 static void cuis_test_button(WORD buttons) { (void)buttons; cuis_pointer_legacy_calls++; }
 static ULONG cuis_test_motion(WORD x, WORD y)
@@ -94,6 +98,7 @@ void x86_64_memtest_cuis_tick(void)
 #if CONF_WITH_X32_VDI
         void (*button)(WORD) = linea_vars.user_but;
         ULONG (*motion)(WORD, WORD) = linea_vars.user_mot;
+        WORD old_x = linea_vars.GCURX, old_y = linea_vars.GCURY;
         cuis_saved_cursor = linea_vars.user_cur;
         cuis_pointer_legacy_calls = cuis_pointer_cursor_calls = 0;
         linea_vars.user_but = cuis_test_button;
@@ -102,8 +107,26 @@ void x86_64_memtest_cuis_tick(void)
 #endif
         cuis_pointer_armed = FALSE;
         cuis_pointer_injections++;
+#if CONF_WITH_X32_VDI
+#if CONF_WITH_USER_CALLBACKS
+        vdi_service_test_motion_begin();
+#endif
+        linea_vars.mouse_flag++;
+#endif
         call_mousevec(press);
         call_mousevec(release);
+#if CONF_WITH_X32_VDI
+        cuis_pointer_guard_clean = !cuis_pointer_cursor_calls &&
+            linea_vars.GCURX == (old_x < xres ? old_x + 1 : old_x) &&
+            linea_vars.GCURY == (old_y > 0 ? old_y - 1 : 0);
+        /* Show/hide may clear this after the packet. Flush must re-arm it. */
+        linea_vars.draw_flag = FALSE;
+        linea_vars.mouse_flag--;
+        vdi_cuis_cursor_flush();
+#if CONF_WITH_USER_CALLBACKS
+        cuis_pointer_stale_clean = vdi_service_test_motion_end();
+#endif
+#endif
 #if CONF_WITH_X32_VDI
         linea_vars.user_but = button;
         linea_vars.user_mot = motion;
@@ -2273,6 +2296,10 @@ static void test_ring3(void)
         CHECK(cuis_input_injections == 1 && !cuis_input_armed,
               "CUIS keyboard wait woke from a translated key in a real timer IRQ");
 #if CONF_WITH_X32_VDI
+        CHECK(cuis_pointer_guard_clean, "CUIS guarded IRQ preserves logical coordinates and defers cursor drawing");
+#if CONF_WITH_USER_CALLBACKS
+        CHECK(cuis_pointer_stale_clean, "CUIS input rejects superseded native VDI motion completion");
+#endif
         CHECK(cuis_pointer_callbacks_clean && cuis_pointer_cursor_updated,
               "CUIS pointer routing preserves the cursor and suppresses legacy input callbacks");
         CHECK(vdi_service_test_reopen(), "kernel physical reopen preserves the timer chain");

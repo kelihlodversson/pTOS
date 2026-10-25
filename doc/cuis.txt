@@ -521,7 +521,12 @@ Host tests exercise ownership, capture, enter/leave, coalescing, overflow,
 copyout failures, cancellation, legacy drags and global bounds. Kernel tests
 inject press/release packets from a real timer IRQ after an empty mixed wait
 has reached sleep, and check cursor movement, legacy callback isolation and
-owner teardown in both display-backed and headless configurations.
+owner teardown in both display-backed and headless configurations. Guarded
+show/hide/redefinition keeps logical coordinates synchronized and flushes
+deferred cursor movement when the outer guard ends. CUIS packets invalidate
+queued legacy motion/cursor notifications and advance a generation checked
+before applying an in-flight native motion callback's result. IRQ fixtures
+cover guarded motion and reject an older callback completion after CUIS input.
 
 Final configuration cutover
 ---------------------------

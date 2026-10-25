@@ -99,6 +99,13 @@ BOOL vdi_service_test_preserved(void);
 #endif
 #if CONF_WITH_USER_CALLBACKS
 void vdi_service_callback_work(void);
+#if CONF_WITH_CUIS
+void vdi_service_callback_supersede_motion(void);
+#if CONF_WITH_X86_64_MEMTEST
+void vdi_service_test_motion_begin(void);
+BOOL vdi_service_test_motion_end(void);
+#endif
+#endif
 void vdi_service_callback_event(UWORD signature, LONG a, LONG b);
 #endif
 #endif
