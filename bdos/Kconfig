@@ -188,6 +188,7 @@ config CONF_WITH_MMAP
 config CONF_WITH_ELF_SHARED
 	bool "Experimental userspace ELF shared-library linker core"
 	depends on CONF_WITH_ELF_LOADER && CONF_WITH_USER_ASPACE && ARCH_X86_64
+	depends on CONF_WITH_DEMAND_PAGING
 	select CONF_WITH_MMAP
 	default n
 	help

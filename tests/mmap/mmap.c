@@ -56,7 +56,7 @@ static long sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
         "trap #1\n\t"
         "lea 26(%%sp),%%sp"
         : "=d" (d0)
-        : "g" ((short)fn), "r" (a1), "r" (a2), "r" (a3), "r" (a4), "r" (a5), "r" (a6)
+        : "r" ((short)fn), "r" (a1), "r" (a2), "r" (a3), "r" (a4), "r" (a5), "r" (a6)
         : "d1", "d2", "a0", "a1", "a2", "memory", "cc");
     return d0;
 #elif defined(__arm__)
@@ -118,6 +118,7 @@ static int accessible(long address, long length, int mode)
 }
 
 /* stack: a frame of 16 KiB that is written on each of 32 levels (512 KiB) */
+#if !(defined(__m68k__) && defined(TEST_IS_PRG))
 static long deep(int level)
 {
     volatile char frame[16384];
@@ -129,8 +130,9 @@ static long deep(int level)
     sum = frame[0];
     if (level > 0)
         sum += deep(level - 1);
-    return sum;
+    return sum + frame[4096];           /* (read after the call: the frame stays) */
 }
+#endif
 
 static void test_anonymous(void)
 {
@@ -361,8 +363,17 @@ static void test_file(void)
 
 static void test_lazy_stack(void)
 {
-    /* the stack grows as it is used: half a MiB, 16 KiB at a time */
+#if defined(__m68k__) && defined(TEST_IS_PRG)
+    /* a classic PRG keeps its stack in its TPA and manages it itself (legacy_tpa) */
+#else
+    /* the stack grows as it is used: half a MiB, 16 KiB at a time (its limit is
+     * this port's own Psetlimit() mode; the launcher may have set a lower one) */
+    long limit = Psetlimit(0x100, -1L);
+
+    if (limit < 0x100000L)
+        ptest_assert_msg(Psetlimit(0x100, 0x100000L) >= 0, "cannot raise the stack limit");
     ptest_assert_msg(deep(31) != 0x7fffffffL, "the stack did not hold");
+#endif
 }
 
 static void test_lazy_heap(void)
