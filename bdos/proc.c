@@ -1111,15 +1111,15 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 
     kcprintf("process fault: %s code=0x%lx addr=0x%lx pc=0x%lx sp=0x%lx\n",
              cause, (long)code, (long)address, (long)pc, (long)sp);
+#if CONF_WITH_CUIS
+    ksched_fault(run, 11); /* Keep a specific CPU/paging signal if already recorded. */
+#endif
 #if CONF_WITH_USER_CALLBACKS
     user_callback_fault();
 #endif
     if (kproc_copy_from_user(word, sp, sizeof(word)))
         kcprintf("  stack: 0x%lx 0x%lx 0x%lx 0x%lx\n",
                  (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
-#if CONF_WITH_CUIS
-    ksched_fault(run, 11); /* SIGSEGV fallback for a non-CPU process fault. */
-#endif
     xterm((UWORD)-1);
 }
 #endif

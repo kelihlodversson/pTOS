@@ -1823,11 +1823,11 @@ static void lazy_oom(void)
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     x86_64_memtest_callback_lazy_oom();
 #endif
-#if CONF_WITH_USER_CALLBACKS
-    user_callback_fault();
-#endif
 #if CONF_WITH_CUIS
     ksched_fault(run, 9); /* SIGKILL, as for a user-mode paging failure */
+#endif
+#if CONF_WITH_USER_CALLBACKS
+    user_callback_fault();
 #endif
     xterm((UWORD)-1);
 }

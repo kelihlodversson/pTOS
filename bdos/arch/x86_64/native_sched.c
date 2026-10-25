@@ -86,8 +86,19 @@ void ksched_exiting(PD *pd, UWORD result)
 
 void ksched_fault(PD *pd, WORD signal)
 {
-    KERNEL_TASK *task = scheduler.current;
-    if (scheduler.active && task && task->program == pd && !task->signal) task->signal = signal;
+    UWORD i;
+    if (!scheduler.active) return;
+    /* A foreign callback changes run, but retains the invoking task's
+     * continuation. Attribute its fault to the owner, whose exit is deferred.
+     * Nested synchronous children have no task entry of their own. */
+    for (i = 0; i < KSCHED_LIMIT; i++) {
+        KERNEL_TASK *task = &scheduler.tasks[i];
+        if ((task->state == TASK_NEW || task->state == TASK_RUNNING ||
+             task->state == TASK_BLOCKED) && task->program == pd) {
+            if (!task->signal) task->signal = signal;
+            return;
+        }
+    }
 }
 
 static void task_entry(void)

@@ -122,6 +122,9 @@ fi
 if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then
         grep -q 'x32 CUIS VDI enforcement: PASS' "$log"
+        if grep -q '^CONF_WITH_USER_CALLBACKS *= *y' obj/auto.conf; then
+            grep -q 'x32 async foreign callback: PASS' "$log"
+        fi
     fi
     grep -q 'x32 async launch/wait: PASS' "$log"
     test "$(grep -c 'x32 async orphan: PASS' "$log")" -ge 4

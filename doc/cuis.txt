@@ -716,8 +716,10 @@ blocking/nonblocking/any-child waits, one-time reaping, normal/raw/fault
 status, invalid and read-only usage outputs, loaded-basepage ownership and
 mapping revocation (Maccess), group exhaustion with freeable unlaunched
 blocks, slot reuse, nested or raw-image launch, normal/raw/fault parent exit, and abandoned
-zombies. Every
-cycle checks process/task memory, file/directory references and CUIS sessions.
+zombies. With native VDI callbacks enabled, a parent invokes its blocked
+child's callback, survives the child's UD2 fault, then reaps SIGILL after
+the child's deferred termination. Every cycle checks process/task memory,
+file/directory references and CUIS sessions.
 
 Final configuration cutover
 ---------------------------
