@@ -30,9 +30,10 @@ ownership; they also support native FAT file-backed COW mappings.
 
 CONF_WITH_ELF_SHARED is an experimental, off-by-default Kconfig option.  It
 builds this core into obj/ldso/libldso.a, separately from the kernel.  It
-requires CONF_WITH_ELF_LOADER, CONF_WITH_USER_ASPACE and, initially,
-ARCH_X86_64.  Both x32 and the address-space prerequisite are intentional:
-standard shared libraries must never fall back to a flat address space.
+requires CONF_WITH_ELF_LOADER, CONF_WITH_USER_ASPACE, demand paging, and
+either x32 (ARCH_X86_64) or ARM (see "ARM" below).  Both the architecture and
+the address-space prerequisite are intentional: standard shared libraries must
+never fall back to a flat address space.
 
 Shared C code is controlled by the feature/build configuration, not by
 architecture-specific preprocessor tests.  Architecture selection belongs
@@ -575,3 +576,57 @@ static entry contract, including when the external desktop is dynamic.
 The shared-library CI boots the real dynamic console and drives the dynamic
 desktop through tests/x32_desktop/run.py. It also tests missing-desktop fallback
 to both a dynamic external console and an embedded static console.
+
+
+ARM (#693)
+----------
+
+The ARM backend is lib/ldso/arch/arm.  It is selected by Kconfig and the build
+rules (lib/ldso/build.mk); the common code has no ARM conditional.
+
+Objects are ELF32 EM_ARM, little endian, EABI version 5 with the hard-float ABI
+(e_flags 0x05000400), in ARM state; the image reader refuses any other
+e_flags.  A program is a fixed-address ET_EXEC linked at 0x400000 or above, a
+page up from the headers (-Wl,-Ttext-segment=0x401000), with PT_INTERP
+/GEMSYS/LIB/ARM/LD.SO, and the libraries it needs are looked up in
+\GEMSYS\LIB\ARM\ of the boot drive.  Programs and libraries are built with
+-fPIC and linked with --hash-style=sysv; the bare-metal GNU toolchain
+(arm-none-eabi-) does.  The libraries are compiled for ARMv6K with VFP, the
+oldest core the system runs on, so that the same files go on every card.
+
+The initial stack is the one of the standard entry, with the finalizer in r0
+as the ELF ABI has it (0 from the kernel; LD.SO passes its own on to the
+program).  LD.SO relocates itself first (lib/ldso/arch/arm/bootstrap.c: only
+R_ARM_RELATIVE, validated before any write), then links the program.
+
+The tables are DT_REL: the addend of a relocation is the word at the place
+(DL_RELOC_BACKEND.rel; the common code reads it).  Supported types:
+
+    R_ARM_ABS32      S + A
+    R_ARM_REL32      S + A - P
+    R_ARM_GLOB_DAT   S
+    R_ARM_JUMP_SLOT  S   (the slot holds the address of the stub until then)
+    R_ARM_RELATIVE   B + A
+
+Everything else (COPY, TLS, the Thumb ones) is refused before the program
+starts, as are DT_TEXTREL, GNU-hash-only objects and the like.  Binding is
+eager.  The system call is svc 1 (r0 the function, r1-r6 the arguments),
+including the six of Mmap().
+
+Limits.  The linker for bare-metal ARM cannot make a PT_GNU_RELRO (its
+emulation has none), so the GOT and the arrays of an ARM program stay
+writable; LD.SO seals RELRO wherever an object has one.  Only ARM state is
+supported; a Thumb-only library needs interworking veneers the linker does not
+make for dynamic objects here.  There is no libc client (libptos.so, the
+dynamic CRT) yet (#673); a program starts at _start and makes its own calls.
+
+Tests.  tests/ldso_dynamic launches a program with two libraries, constructors
+and destructors in their order, preinit, interposition and a library with
+partial-page BSS (tests/ldso_runtime), which launches a second copy of itself
+while it lives: Ssystem(S_MEMINFO) must show the clean library pages shared
+between the two address spaces (shared_cross), and the writable data of each
+its own.  Three more programs fail on purpose (a missing library, a cut-short
+one, a missing interpreter); each must be refused, with no process record or
+page left behind.  tools/test-elf-shared.py relocates real ARM objects (DT_REL)
+on the host when an arm-none-eabi- compiler is there.
+

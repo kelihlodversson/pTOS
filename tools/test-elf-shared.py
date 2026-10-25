@@ -9,6 +9,7 @@ import ctypes as C
 import os
 from pathlib import Path
 import shlex
+import shutil
 import struct
 import subprocess
 import sys
@@ -298,7 +299,7 @@ class Metadata(unittest.TestCase):
             self.assertEqual(address.value, 0xDEADBEEF)
         return rc, address.value
 
-    def relocate(self, obj, memory, objects=None, ranges=((2048, 256),), capacity=64):
+    def relocate(self, obj, memory, objects=None, ranges=((2048, 256),), capacity=64, backend=None):
         objects = [obj] if objects is None else objects
         scope = (C.POINTER(Object) * len(objects))(*(C.pointer(o) for o in objects))
         writable = (WriteRange * len(ranges))(*(WriteRange(*r) for r in ranges))
@@ -306,7 +307,8 @@ class Metadata(unittest.TestCase):
         written = C.c_uint32(123)
         before = bytes(memory)
         rc = self.lib.dl_relocate(C.byref(obj), memory, scope, len(objects), writable,
-                                  len(ranges), work, capacity, C.byref(written), C.byref(self.backend))
+                                  len(ranges), work, capacity, C.byref(written),
+                                  C.byref(self.backend if backend is None else backend))
         if rc:
             self.assertEqual(written.value, 0)
             self.assertEqual(bytes(memory), before, "failed relocation mutated the object")
@@ -1049,6 +1051,79 @@ class Metadata(unittest.TestCase):
         self.lib.dl_graph_close(C.byref(graph), C.byref(ops), None)
         self.assertEqual(released, [3, 2])
 
+    @unittest.skipUnless(shutil.which("arm-none-eabi-gcc"), "needs an ARM cross compiler")
+    def test_real_arm_objects(self):
+        """DT_REL tables of the ARM linker (#693): implicit addends, the ARM formulas."""
+        armlib = self.path / "arm-backend.so"
+        run(CC + ["-std=c90", "-pedantic", "-Wall", "-Wextra", "-Werror", "-O2", "-fPIC", "-shared",
+                  "-I" + str(ROOT / "lib/ldso"), str(ROOT / "lib/ldso/arch/arm/reloc.c"),
+                  str(ROOT / "lib/ldso/arch/arm/image_abi.c"), "-o", str(armlib)])
+        arm = C.CDLL(str(armlib))
+        backend = Backend.in_dll(arm, "dl_reloc_backend")
+        abi = ImageAbi.in_dll(arm, "dl_image_abi")
+        self.assertEqual((backend.rel, abi.machine, abi.eflags_required), (1, 40, 0x05000400))
+
+        arm_cc = ["arm-none-eabi-gcc", "-march=armv6k", "-marm", "-mfpu=vfp", "-mfloat-abi=hard",
+                  "-ffreestanding", "-fno-stack-protector", "-nostdlib", "-fPIC"]
+        armdir = self.path / "arm"
+        armdir.mkdir()
+        (self.path / "armprogram.c").write_text("extern int answer(void);\nextern int value;\n"
+                                                "int _start(void) { return answer() + value; }\n")
+        run(arm_cc + ["-shared", "-Wl,--hash-style=sysv,-soname,libleaf.so",
+                      str(ROOT / "tests/ldso_reloc/leaf.c"), "-o", str(armdir / "libleaf.so")])
+        run(arm_cc + ["-shared", "-Wl,--hash-style=sysv,-soname,libtest.so",
+                      str(ROOT / "tests/ldso_reloc/library.c"), "-L" + str(armdir), "-lleaf",
+                      "-o", str(armdir / "libtest.so")])
+        run(arm_cc + ["-no-pie", "-Wl,--hash-style=sysv,-z,now,-Ttext-segment=0x401000",
+                      "-Wl,--dynamic-linker,/GEMSYS/LIB/ARM/LD.SO", str(self.path / "armprogram.c"),
+                      "-L" + str(armdir), "-ltest", "-Wl,-rpath-link," + str(armdir),
+                      "-o", str(self.path / "armprogram.elf")])
+        loaded = {}
+        for filename, role, bias in (("libleaf.so", 1, 0x3000000), ("libtest.so", 1, 0x2000000),
+                                     ("armprogram.elf", 3, 0)):
+            raw = ((self.path if filename.endswith(".elf") else armdir) / filename).read_bytes()
+            headers = [struct.unpack_from("<8I", raw, struct.unpack_from("<I", raw, 28)[0] + i * 32)
+                       for i in range(struct.unpack_from("<H", raw, 44)[0])]
+            rc, plan, buffer = self.image_read(raw, role=role, abi=abi)
+            self.assertEqual(rc, 0, filename)
+            rc, obj, memory = self.image_copy(plan, buffer, bias=bias)
+            self.assertEqual(rc, 0, filename)
+            if filename != "libleaf.so":    # (which has nothing to relocate)
+                self.assertEqual(obj.reloc_seen & (64 | 128 | 256), 64 | 128 | 256, "DT_REL, DT_RELSZ, DT_RELENT")
+            self.assertEqual(obj.reloc_seen & 7, 0, "no DT_RELA")
+            loaded[filename] = (obj, memory, headers)
+            # the x32 (RELA) backend refuses a table of the other kind
+            if filename != "libleaf.so":
+                rc, _ = self.relocate(obj, memory, objects=[obj], ranges=[(h[2], h[5]) for h in headers
+                                                                       if h[0] == 1 and h[6] & 2])
+                self.assertEqual(rc, -2, "a DT_REL object was relocated as RELA")
+        scope = [loaded[n][0] for n in ("armprogram.elf", "libtest.so", "libleaf.so")]
+        leaf = self.lookup(loaded["libleaf.so"][0], b"leaf")[2]
+        value = self.lookup(loaded["libtest.so"][0], b"value")[2]
+        answer = self.lookup(loaded["libtest.so"][0], b"answer")[2]
+        for filename in ("libleaf.so", "libtest.so", "armprogram.elf"):
+            obj, memory, headers = loaded[filename]
+            writable = [(h[2], h[5]) for h in headers if h[0] == 1 and h[6] & 2]
+            before = bytes(memory)
+            rc, plan = self.relocate(obj, memory, objects=scope, ranges=writable, backend=backend)
+            self.assertEqual(rc, 0, filename)
+            values = [w.value for w in plan]
+            if filename == "libtest.so":
+                self.assertIn(leaf, values)                 # the PLT slot: S, not S + the stub address
+                self.assertIn(value, values)                # GLOB_DAT
+                self.assertTrue(any(w.value - obj.bias == struct.unpack_from("<I", before, w.offset)[0]
+                                    for w in plan if w.value != leaf and w.value != value),
+                                "R_ARM_RELATIVE: bias plus the word that was there")
+            elif filename == "armprogram.elf":
+                self.assertIn(answer, values)
+                self.assertIn(value, values)
+            for w in plan:
+                self.assertEqual(struct.unpack_from("<I", memory, w.offset)[0], w.value)
+        # a relocation outside the writable segments, and a type the backend lacks, are refused
+        obj, memory, headers = loaded["libtest.so"]
+        rc, _ = self.relocate(obj, memory, objects=scope, ranges=[(0, 4)], backend=backend)
+        self.assertNotEqual(rc, 0)
+
     def test_dynamic_consumers_keep_embedded_console_static(self):
         import kconfiglib
         old_cwd = Path.cwd()
@@ -1098,6 +1173,39 @@ class Metadata(unittest.TestCase):
                     else:
                         config.syms["CONF_WITH_MMAP"].set_value(2)
                         self.assertEqual(config.syms["CONF_WITH_MMAP"].tri_value, 0)
+        finally:
+            os.chdir(old_cwd)
+            if old_prefix is None:
+                os.environ.pop("CONFIG_", None)
+            else:
+                os.environ["CONFIG_"] = old_prefix
+
+    def test_kconfig_aspace_backends(self):
+        """ARM has the linker backend (#693); m68k has Mmap but not yet the linker."""
+        import kconfiglib
+
+        old_cwd = Path.cwd()
+        old_prefix = os.environ.get("CONFIG_")
+        try:
+            os.chdir(ROOT)
+            os.environ["CONFIG_"] = ""
+            for name in ("virt-arm-aspace", "rpi2-aspace"):
+                with self.subTest(config=name):
+                    config = kconfiglib.Kconfig(warn=False)
+                    config.load_config(str(ROOT / "configs" / (name + "_defconfig")))
+                    for sym in ("CONF_WITH_ELF_SHARED", "CONF_WITH_MMAP", "CONF_WITH_DEMAND_PAGING"):
+                        self.assertEqual(config.syms[sym].tri_value, 2, sym)
+                    # demand paging is a prerequisite of both
+                    config.syms["CONF_WITH_DEMAND_PAGING"].set_value(0)
+                    self.assertEqual(config.syms["CONF_WITH_ELF_SHARED"].tri_value, 0)
+                    self.assertEqual(config.syms["CONF_WITH_MMAP"].tri_value, 0)
+            with self.subTest(config="virt-m68k-aspace"):
+                config = kconfiglib.Kconfig(warn=False)
+                config.load_config(str(ROOT / "configs" / "virt-m68k-aspace_defconfig"))
+                self.assertEqual(config.syms["CONF_WITH_MMAP"].tri_value, 2)
+                option = config.syms["CONF_WITH_ELF_SHARED"]
+                option.set_value(2)
+                self.assertEqual(option.tri_value, 0)
         finally:
             os.chdir(old_cwd)
             if old_prefix is None:
