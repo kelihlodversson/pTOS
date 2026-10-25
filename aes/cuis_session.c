@@ -29,6 +29,7 @@ static ULONG next_handle;
 static ULONG next_window_handle;
 /* Front to back, containing only visible windows from all sessions. */
 static CUIS_WINDOW *window_front;
+static CUIS_WINDOW *focus_window;
 static CUIS_CLIENT *update_owner;
 static CUIS_WINDOW *update_window;
 static CUIS_RECT *update_clips;
@@ -109,6 +110,7 @@ static void hide_window(CUIS_WINDOW *window)
     unlink_visible(window);
     window->visible = FALSE;
     window->redraw = FALSE;
+    if (focus_window == window) focus_window = window_front;
     damage_windows();
 }
 
@@ -138,6 +140,7 @@ void cuis_process_exit(PD *owner)
 
 #if CONF_WITH_X86_64_MEMTEST
 BOOL cuis_update_active(void) { return update_owner != NULL; }
+BOOL cuis_focus_active(void) { return focus_window != NULL; }
 ULONG cuis_visible_window_count(void)
 {
     CUIS_WINDOW *window;
@@ -213,7 +216,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     CUIS_CLIENT *client;
     CUIS_WINDOW **link, **back, *window;
 
-    if (function < CUIS_WINDOW_CREATE || function > CUIS_UPDATE_END)
+    if (function < CUIS_WINDOW_CREATE || function > CUIS_FOCUS_RELEASE ||
+        function == CUIS_WINDOW_CLIP)
         return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
@@ -246,6 +250,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         end_update();
         return E_OK;
     }
+    if (function == CUIS_FOCUS_QUERY) return focus_window == window ? 1 : 0;
     if (update_owner && function != CUIS_WINDOW_REDRAW) return EAGAIN;
     switch (function) {
     case CUIS_WINDOW_DESTROY:
@@ -287,6 +292,20 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         for (back = &window_front; *back; back = &(*back)->znext) ;
         *back = window;
         damage_windows();
+        break;
+    case CUIS_FOCUS_REQUEST:
+        if (!window->visible) return EINVAL;
+        if (window != window_front) return EACCDN;
+        if (focus_window != window) {
+            focus_window = window;
+            damage_windows();
+        }
+        break;
+    case CUIS_FOCUS_RELEASE:
+        if (focus_window == window) {
+            focus_window = NULL;
+            damage_windows();
+        }
         break;
     case CUIS_WINDOW_REDRAW:
         /* Polling is nonblocking and does not grant permission to draw.

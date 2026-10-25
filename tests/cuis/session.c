@@ -46,6 +46,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "windows.c"
 #include "visibility.c"
 #include "regions.c"
+#include "focus.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -94,5 +95,7 @@ int main(void)
     rc = window_checks();
     if (rc) return rc;
     rc = visibility_checks();
-    return rc ? rc : region_checks();
+    if (rc) return rc;
+    rc = region_checks();
+    return rc ? rc : focus_checks();
 }

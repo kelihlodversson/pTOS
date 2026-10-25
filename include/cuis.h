@@ -18,6 +18,9 @@
 #define CUIS_UPDATE_BEGIN 11UL
 #define CUIS_UPDATE_END 12UL
 #define CUIS_WINDOW_CLIP 13UL
+#define CUIS_FOCUS_REQUEST 14UL
+#define CUIS_FOCUS_QUERY 15UL
+#define CUIS_FOCUS_RELEASE 16UL
 /* Bound each session's kernel allocations independently of available RAM. */
 #define CUIS_WINDOWS_PER_SESSION 64UL
 #endif

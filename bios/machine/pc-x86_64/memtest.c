@@ -2177,7 +2177,7 @@ static void test_ring3(void)
         ULONG shares = aspace_file_cross_shares();
         ULONG sessions = cuis_session_count(), windows = cuis_window_count();
         ULONG visible = cuis_visible_window_count();
-        BOOL updating = cuis_update_active();
+        BOOL updating = cuis_update_active(), focused = cuis_focus_active();
 #if CONF_WITH_X32_VDI
         SCREEN_MODE_DESC mode;
         volatile ULONG *marker = NULL;
@@ -2203,6 +2203,7 @@ static void test_ring3(void)
         vdi_service_test_watch(NULL);
         CHECK(vdi_service_test_reset(), "kernel releases idle CUIS display fixture");
 #endif
+        CHECK(cuis_focus_active() == focused, "CUIS focus reclaimed after exits");
         CHECK(cuis_update_active() == updating, "CUIS update section reclaimed after exits");
         CHECK(cuis_visible_window_count() == visible, "CUIS visible stacking repaired after exits");
         CHECK(cuis_window_count() == windows, "CUIS windows reclaimed after normal, raw and fault exits");
