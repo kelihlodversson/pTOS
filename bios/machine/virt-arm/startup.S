@@ -538,9 +538,10 @@ C_SYM(arm_dispatch_undef):
     ldr    ip, [ip]
     blx ip
     FPU_POP_SCRATCH ip
-    add    sp, sp, #4
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!
 
     .globl C_SYM(arm_dispatch_svc)
@@ -581,9 +582,10 @@ C_SYM(arm_dispatch_prefetch_abort):
     ldr ip, =C_SYM(tos_vec_prefetch)
     ldr ip, [ip]
     blx ip
-    add    sp, sp, #4
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!
 
     .globl C_SYM(arm_dispatch_data_abort)
@@ -601,9 +603,10 @@ C_SYM(arm_dispatch_data_abort):
     ldr ip, =C_SYM(tos_vec_data)
     ldr ip, [ip]
     blx ip
-    add    sp, sp, #4
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!
 
     .extern C_SYM(virt_int_handler)

@@ -30,6 +30,10 @@
 #include "procmem.h"
 #include "pmem32.h"
 #include "aspace32.h"
+#include "gemerror.h"
+#if CONF_WITH_MMAP
+#include "../bdos/fileback.h"
+#endif
 
 #define ASPACE_MAGIC    0x41535033UL            /* "ASP3" */
 #define FIRST_CAPACITY  16
@@ -118,13 +122,87 @@ ASPACE *aspace_create(void)
     return as;
 }
 
+#if CONF_WITH_MMAP
+/*
+ * Clean pages of a file mapped privately (doc/mmap.txt).  A record owns one
+ * physical page and a reference on its backing object; `references` counts the
+ * leaves that map it, in any address space, and the last one gives both up.
+ * A leaf is a file page iff its physical page has a record: the hardware
+ * backends keep no flag for it.  Such a leaf is never writable -- a write
+ * fault copies the page first (aspace_fault_file()).
+ */
+typedef struct file_page {
+    struct file_page *next;
+    FILE_BACKING *backing;
+    PADDR physical, first_root;
+    ULONG offset, references;
+} FILE_PAGE;
+
+static FILE_PAGE *file_pages;
+static ULONG file_page_count, file_page_refs, file_cross_shares;
+
+ULONG aspace_file_cross_shares(void) { return file_cross_shares; }
+ULONG aspace_file_pages(void) { return file_page_count; }
+ULONG aspace_file_references(void) { return file_page_refs; }
+
+static FILE_PAGE *file_page_find(PADDR physical)
+{
+    FILE_PAGE *p;
+
+    for (p = file_pages; p; p = p->next)
+        if (p->physical == physical)
+            return p;
+    return NULL;
+}
+
+static void file_page_put(PADDR physical)
+{
+    FILE_PAGE **link = &file_pages, *p;
+
+    while ((*link)->physical != physical)
+        link = &(*link)->next;
+    p = *link;
+    file_page_refs--;
+    if (--p->references)
+        return;
+    *link = p->next;
+    file_page_count--;
+    pmem32_free(physical, 1);
+    fileback_put(p->backing);
+    kfree(p);
+}
+
+BOOL aspace_file_cow(const ASPACE *as, VADDR va)
+{
+    PADDR phys;
+    UWORD pr, fl;
+
+    return aspace_hw_lookup(as->root, va, &phys, &pr, &fl) && file_page_find(phys);
+}
+#define IS_FILE_PAGE(phys)  (file_page_find(phys) != NULL)
+#else
+#define IS_FILE_PAGE(phys)  FALSE
+#endif
+
+/* gives back the page of a private leaf: a file page loses a reference */
+static void release_backing(PADDR phys)
+{
+#if CONF_WITH_MMAP
+    if (IS_FILE_PAGE(phys)) {
+        file_page_put(phys);
+        return;
+    }
+#endif
+    pmem32_free(phys, 1);
+}
+
 static void free_owned_leaf(VADDR va, PADDR phys, UWORD flags, void *ctx)
 {
     struct aspace *as = ctx;
 
     (void)va;
     if (flags & ASPACE_LEAF_OWNED) {
-        pmem32_free(phys, 1);
+        release_backing(phys);
         as->nowned--;
     }
 }
@@ -463,12 +541,159 @@ BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes)
 
         aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl);
         aspace_hw_unmap(as->root, va + i * PAGE);
-        pmem32_free(phys, 1);
+        release_backing(phys);
         as->nowned--;
     }
     flush_if_current(as);
     return TRUE;
 }
+
+#if ARCH_HAS_DEMAND_PAGING
+BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot)
+{
+    VADDR page = va & ~(VADDR)(PAGE - 1);
+    PADDR backing;
+
+    if (va >= USER_VA_LIMIT)
+        return FALSE;
+    if (aspace_translate(as, page, NULL, NULL))
+        return TRUE;                    /* (a racing mapping: nothing to do) */
+    /* the page, the tables it may need and the bookkeeping must leave the
+     * reserve alone */
+    if (pmem32_free_bytes() < ASPACE_RESERVE + ASPACE_COST)
+        return FALSE;
+    backing = pmem32_alloc(1, 1);
+    if (backing == PMEM32_NONE)
+        return FALSE;
+    memset(pmem32_virt(backing), 0, PAGE);
+    if (!aspace_hw_map(as->root, page, backing, prot, ASPACE_LEAF_OWNED,
+                       alloc_table_page, as)) {
+        pmem32_free(backing, 1);
+        return FALSE;
+    }
+    as->nowned++;
+    flush_if_current(as);
+    return TRUE;
+}
+
+BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
+{
+    VADDR pages, i;
+
+    if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + PAGE - 1) / PAGE;
+
+    /* all-or-nothing: a page that is there must be one of ours */
+    for (i = 0; i < pages; i++) {
+        PADDR phys;
+        UWORD pr, fl;
+
+        if (aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl) &&
+            !(fl & ASPACE_LEAF_OWNED))
+            return FALSE;
+    }
+    for (i = 0; i < pages; i++) {
+        PADDR phys;
+        UWORD pr, fl;
+
+        if (aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl)) {
+            aspace_hw_unmap(as->root, va + i * PAGE);
+            release_backing(phys);
+            as->nowned--;
+        }
+    }
+    flush_if_current(as);
+    return TRUE;
+}
+#endif
+
+#if CONF_WITH_MMAP
+/* 1: mapped/private copy ready, 2: allocation failure, 3: backing I/O error.
+ * Logical permissions are checked by the reservation owner before this call. */
+int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
+                      UWORD prot, BOOL write)
+{
+    FILE_PAGE *p;
+    PADDR physical, old = PMEM32_NONE, current;
+    UWORD pr, fl;
+    BOOL copy = write && (prot & ASPACE_PROT_WRITE);
+
+    va &= ~(VADDR)(PAGE - 1);
+    if (va >= USER_VA_LIMIT || (offset & (PAGE - 1)))
+        return 3;
+    if (aspace_hw_lookup(as->root, va, &current, &pr, &fl)) {
+        if (!copy || !IS_FILE_PAGE(current))
+            return 3;
+        old = current;
+    }
+    for (p = file_pages; p; p = p->next)
+        if (old != PMEM32_NONE ? p->physical == old
+                               : (p->backing == backing && p->offset == offset))
+            break;
+    /* A shared-page hit may still need new page tables and bookkeeping. */
+    if (pmem32_free_bytes() < ASPACE_RESERVE + ASPACE_COST)
+        return 2;
+    if (!copy && p) {
+        if (!aspace_hw_map(as->root, va, p->physical, prot & ~ASPACE_PROT_WRITE,
+                           ASPACE_LEAF_OWNED, alloc_table_page, as))
+            return 2;
+        if (p->first_root != as->root)
+            file_cross_shares++;
+        p->references++;
+        file_page_refs++;
+        as->nowned++;
+        flush_if_current(as);
+        return 1;
+    }
+    physical = pmem32_alloc(1, 1);
+    if (physical == PMEM32_NONE)
+        return 2;
+    if (p)
+        memcpy(pmem32_virt(physical), pmem32_virt(p->physical), PAGE);
+    else if (fileback_read(backing, offset, pmem32_virt(physical), PAGE) != E_OK) {
+        pmem32_free(physical, 1);
+        return 3;
+    }
+    if (!copy) {
+        p = kalloc(sizeof(*p));
+        if (!p) {
+            pmem32_free(physical, 1);
+            return 2;
+        }
+        p->backing = backing;
+        p->offset = offset;
+        p->physical = physical;
+        p->first_root = as->root;
+        p->references = 1;
+    }
+    /* Replacing an existing leaf uses the present page tables; the old one is
+     * not dropped until the complete replacement is ready. */
+    if (!aspace_hw_map(as->root, va, physical, copy ? prot : prot & ~ASPACE_PROT_WRITE,
+                       ASPACE_LEAF_OWNED, alloc_table_page, as)) {
+        if (!copy)
+            kfree(p);
+        pmem32_free(physical, 1);
+        return 2;
+    }
+    if (!copy) {
+        p->next = file_pages;
+        file_pages = p;
+        fileback_hold(backing);
+        file_page_count++;
+        file_page_refs++;
+    }
+    if (old != PMEM32_NONE)
+        file_page_put(old);
+    else
+        as->nowned++;
+    if (prot & ASPACE_PROT_EXEC)
+        aspace_hw_code_changed();       /* the page was written through the data side */
+    flush_if_current(as);
+    return 1;
+}
+#endif
 
 /* TRUE iff every page of [va, va + pages) is one of the private pages of `as` */
 static BOOL range_is_private(const struct aspace *as, VADDR va, VADDR pages)
@@ -497,6 +722,14 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD 
     pages = (bytes + PAGE - 1) / PAGE;
     if (!range_is_private(from, va, pages))
         return FALSE;
+    for (i = 0; i < pages; i++) {
+        PADDR phys;
+        UWORD pr, fl;
+
+        aspace_hw_lookup(from->root, va + i * PAGE, &phys, &pr, &fl);
+        if (IS_FILE_PAGE(phys))
+            return FALSE;               /* (a shared page does not change hands) */
+    }
     for (i = 0; i < pages; i++)
         if (aspace_translate(to, va + i * PAGE, NULL, NULL))
             return FALSE;
@@ -530,7 +763,10 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD 
     return TRUE;
 }
 
-BOOL aspace_protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
+/* A file page is never writable: it is shared until a write fault copies it.
+ * Pages that are absent are legal only for a lazy reservation, which the
+ * caller has validated and records the permissions of. */
+static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL lazy)
 {
     VADDR pages, i;
 
@@ -538,12 +774,39 @@ BOOL aspace_protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
         bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + PAGE - 1) / PAGE;
-    if (!range_is_private(as, va, pages))
-        return FALSE;
-    for (i = 0; i < pages; i++)
-        aspace_hw_update(as->root, va + i * PAGE, prot, ASPACE_LEAF_OWNED);
+    for (i = 0; i < pages; i++) {
+        PADDR phys;
+        UWORD pr, fl;
+
+        if (!aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl)) {
+            if (!lazy)
+                return FALSE;
+        } else if (!(fl & ASPACE_LEAF_OWNED))
+            return FALSE;
+    }
+    for (i = 0; i < pages; i++) {
+        PADDR phys;
+        UWORD pr, fl;
+
+        if (!aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl))
+            continue;
+        aspace_hw_update(as->root, va + i * PAGE,
+                         IS_FILE_PAGE(phys) ? (UWORD)(prot & ~ASPACE_PROT_WRITE) : prot, fl);
+    }
+    if (prot & ASPACE_PROT_EXEC)
+        aspace_hw_code_changed();       /* (code relocated through the data side) */
     flush_if_current(as);
     return TRUE;
+}
+
+BOOL aspace_protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
+{
+    return protect_private(as, va, bytes, prot, FALSE);
+}
+
+BOOL aspace_protect_lazy(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
+{
+    return protect_private(as, va, bytes, prot, TRUE);
 }
 
 /*

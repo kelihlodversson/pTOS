@@ -166,6 +166,7 @@ config CONF_WITH_PROCESS_ASPACES
 config ARCH_HAS_DEMAND_PAGING
 	bool
 	default y if ARCH_X86_64
+	default y if CONF_WITH_USER_ASPACE
 
 # The kernel is linked in the upper half of a 32-bit address space and the
 # MMU is switched on by a start that runs at the physical address

@@ -650,10 +650,10 @@ C_SYM(arm_dispatch_undef):
     blx ip                 // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 instruction, u32 pc)
     FPU_POP_SCRATCH ip
 
-    add    sp, sp, #4
-
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^   /* restore user registers */
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!             /* load pc and CPSR from stack */
 
     .globl C_SYM(arm_dispatch_svc)
@@ -718,10 +718,10 @@ C_SYM(arm_dispatch_prefetch_abort):
 #endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
 
-    add    sp, sp, #4
-
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^   /* restore user registers */
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!             /* load pc and CPSR from stack */
 
     .globl C_SYM(arm_dispatch_data_abort)
@@ -747,10 +747,10 @@ C_SYM(arm_dispatch_data_abort):
 #endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
 
-    add    sp, sp, #4
-
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^   /* restore user registers */
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!             /* load pc and CPSR from stack */
 
     .extern C_SYM(raspi_int_handler)

@@ -116,6 +116,11 @@ set_vec:
 #else
         dbra    d0, set_vec
 #endif
+#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
+        // the bus error of a process may be a page of its lazy memory
+        lea     buserr_user(pc), a0
+        move.l  a0, 8.w
+#endif
 // The RTS below is shared for other purposes.
 buggy_jit_save_registers_before_bus_error:
         rts
@@ -314,6 +319,33 @@ dump_kernel_stack:
         // may 2015, this is about 460 bytes
         lea     panic_stack,sp
         jmp     C_SYM(dopanic)
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
+/*
+ * Vector 2 in a kernel with address spaces and demand paging.  The frame of the
+ * exception is at (sp), its status register first.  A fault of the kernel is
+ * what it always was; one of a process in user mode may be a page of its memory
+ * that is not there yet, in which case the registers it had come back and the
+ * instruction runs again (m68k_user_busfault(), userfault.c).  Otherwise this
+ * is the default handler, as if the table had sent the exception there.
+ */
+buserr_user:
+        btst    #5,(sp)                 // supervisor mode?
+        jne     buserr_default
+        movem.l d0-d7/a0-a6,-(sp)
+        lea     60(sp),a0               // the exception frame (a global: no argument, for -mfastcall)
+        move.l  a0,C_SYM(user_fault_frame)
+        jsr     C_SYM(m68k_user_busfault)
+        tst.l   d0
+        jeq     buserr_unhandled
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+buserr_unhandled:
+        movem.l (sp)+,d0-d7/a0-a6
+buserr_default:
+        pea     deflt_vec_table+2(pc)   // what the first entry of the table pushes
+        jra     any_vec
+#endif
 
 #if CONF_WITH_ATARI_VIDEO
 

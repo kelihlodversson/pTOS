@@ -174,7 +174,7 @@ config CONF_WITH_FILE_PINS
 
 config CONF_WITH_MMAP
 	bool "Private anonymous and file-backed process mappings"
-	depends on CONF_WITH_USER_ASPACE && ARCH_X86_64
+	depends on CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING
 	select CONF_WITH_FILE_PINS
 	default n
 	help
@@ -182,8 +182,8 @@ config CONF_WITH_MMAP
 	  file pages in a separate per-process window. File pages are shared
 	  read-only until a private write fault; anonymous pages stay lazy zero.
 	  Enforce W^X, lifetime and memory limits. MAP_SHARED and replacing
-	  MAP_FIXED are not supported. Initially x32 only;
-	  other backends need isolated MMU address spaces first.
+	  MAP_FIXED are not supported.  Needs isolated MMU address spaces
+	  with demand paging: x32, and the 32-bit ARM and m68k backends.
 
 config CONF_WITH_ELF_SHARED
 	bool "Experimental userspace ELF shared-library linker core"
