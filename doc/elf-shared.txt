@@ -616,8 +616,7 @@ including the six of Mmap().
 Limits.  The linker for bare-metal ARM cannot make a PT_GNU_RELRO (its
 emulation has none), so the GOT and the arrays of an ARM program stay
 writable; LD.SO seals RELRO wherever an object has one.  Only ARM state is
-supported; a Thumb-only library needs interworking veneers the linker does not
-make for dynamic objects here.  There is no libc client (libptos.so, the
+supported and tested; Thumb code in a library has not been tried.  There is no libc client (libptos.so, the
 dynamic CRT) yet (#673); a program starts at _start and makes its own calls.
 
 Tests.  tests/ldso_dynamic launches a program with two libraries, constructors
