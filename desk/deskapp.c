@@ -24,6 +24,9 @@
 #include "obdefs.h"
 #include "rsdefs.h"
 #include "aesdefs.h"
+#if ARCH_X86_64
+#include "../aes/gemrslib.h"
+#endif
 #include "aesext.h"
 #include "intmath.h"
 #include "gsxdefs.h"
@@ -572,7 +575,11 @@ static WORD setup_mono_icons(void)
     ICONBLK *ibptr, *ib;
     WORD i, n, rc, w, h;
 
+#if ARCH_X86_64
+    hdr = ((AESGLOBAL *)global)->ap_rscmem;
+#else
     hdr = (RSHDR *)(AP_1RESV);
+#endif
     if (hdr->rsh_nib < NUM_GEM_IBLKS)   /* must have at least the minimum set */
     {
         KDEBUG(("too few user desktop mono icons (%d)\n",hdr->rsh_nib));

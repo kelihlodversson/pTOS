@@ -97,6 +97,11 @@ GLOBAL char *ad_stail;
 
 static BOOL gl_shgem;                   /* TRUE iff currently in graphics mode */
 
+BOOL sh_graphics_active(void)
+{
+    return gl_shgem;
+}
+
 /*
  *  Resolution settings:
  *      gl_changerez: 0=no change, 1=change ST resolution, 2=change Falcon resolution
@@ -585,7 +590,7 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
 
     /* Create a basepage with the standard Pexec() */
     pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
-    pd->p_tbase = (UBYTE *) entry;
+    pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)entry);
 #if CONF_WITH_USER_ASPACE
     mark_kernel_code_pd(pd);
 #endif
@@ -699,7 +704,14 @@ static WORD sh_ldapp(SHELL *psh)
                 KINFO(("sh_ldapp(): no desktop in the root directory of the boot drive\n"));
                 psh->sh_isgem = FALSE;      /* EmuCON is a console program */
                 sh_chgrf(psh);
+#if ARCH_X86_64
+                {
+                    extern void start_builtin_cli(char *env);
+                    start_builtin_cli(NULL);
+                }
+#else
                 aes_run_rom_program(coma_start);
+#endif
                 ret = 0;
             }
 #else
@@ -753,6 +765,12 @@ static WORD sh_ldapp(SHELL *psh)
             if (ret == EFILNF)
                 ret = no_shell_alert(shell_names_cli);
         }
+#elif ARCH_X86_64
+        {
+            extern void start_builtin_cli(char *env);
+            start_builtin_cli(NULL);
+        }
+        ret = 0;
 #else
         aes_run_rom_program(coma_start);
         ret = 0;

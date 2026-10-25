@@ -25,6 +25,9 @@
 #include "gemwmlib.h"
 #include "geminit.h"
 #include "gemwrect.h"
+#if CONF_WITH_X32_ACCESSORY_TEST
+#include "biosext.h"
+#endif
 
 
 #define TOP     0
@@ -35,6 +38,14 @@
 
 static ORECT *rul;
 static ORECT gl_mkrect;
+#if CONF_WITH_X32_ACCESSORY_TEST
+static WORD test_used, test_peak;
+
+WORD or_test_peak(void)
+{
+    return test_peak;
+}
+#endif
 
 
 void or_start(void)
@@ -42,6 +53,9 @@ void or_start(void)
     WORD i;
 
     rul = NULL;
+#if CONF_WITH_X32_ACCESSORY_TEST
+    test_used = test_peak = 0;
+#endif
     for (i = 0; i < NUM_ORECT; i++)
     {
         D.g_olist[i].o_link = rul;
@@ -55,7 +69,17 @@ ORECT *get_orect(void)
     ORECT   *po;
 
     if ((po = rul) != 0)
+    {
         rul = rul->o_link;
+#if CONF_WITH_X32_ACCESSORY_TEST
+        if (++test_used > test_peak)
+            test_peak = test_used;
+#endif
+    }
+#if CONF_WITH_X32_ACCESSORY_TEST
+    else
+        panic("accessory rectangle pool allocation failed FAIL\n");
+#endif
 
     return po;
 }
@@ -125,6 +149,9 @@ static ORECT *brkrct(ORECT *new, ORECT *r, ORECT *p)
         p->o_link = r->o_link;
         r->o_link = rul;
         rul = r;
+#if CONF_WITH_X32_ACCESSORY_TEST
+        test_used--;
+#endif
         return p;
     }
 
@@ -175,7 +202,14 @@ void newrect(OBJECT *tree, WORD wh)
     if (r0)
     {
         for (r = r0; r->o_link; r = r->o_link)
-            ;
+        {
+#if CONF_WITH_X32_ACCESSORY_TEST
+            test_used--;
+#endif
+        }
+#if CONF_WITH_X32_ACCESSORY_TEST
+        test_used--;
+#endif
         r->o_link = rul;
         rul = r0;
     }

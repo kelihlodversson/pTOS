@@ -38,6 +38,9 @@ BOOL wm_close(WORD w_handle);
 BOOL wm_delete(WORD w_handle);
 BOOL wm_get(WORD w_handle, WORD w_field, WORD *poutwds, WORD *pinwds);
 BOOL wm_set(WORD w_handle, WORD w_field, WORD *pinwds);
+#if CONF_WITH_X32_ACCESSORY_TEST
+BOOL wm_test_desktop(OBJECT *tree, WORD root);
+#endif
 
 WORD wm_find(WORD x, WORD y);
 void wm_update(WORD beg_update);

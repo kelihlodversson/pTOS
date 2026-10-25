@@ -18,6 +18,20 @@
 #include "io.h"
 #include "pgtable.h"
 #include "trap.h"
+#include "vdi_service.h"
+#include "aes_service.h"
+#if CONF_WITH_X32_ACCESSORY_TEST
+#include "aes_window.h"
+#endif
+#include "user_callback.h"
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#include "pc_x86_64_memtest.h"
+#endif
+#if CONF_WITH_USER_CALLBACKS
+#include "../../../bdos/user_callback.h"
+#include "../../../bdos/kproc.h"
+extern PD *run;
+#endif
 
 #include "../../../bdos/mem.h"
 #include "../../../include/biosdefs.h"
@@ -146,7 +160,8 @@ static x86_64_percpu_t percpu;
 #define SYSCALL_STACK_BYTES 8192
 static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
 
-static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
+                           BOOL *defer_return_work);
 
 /*
  * Set while a real ring-3 `syscall` is being serviced: its entry stub did
@@ -159,9 +174,35 @@ static volatile int syscall_gs_swapped;
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
+    /* Stack-local policy belongs to this invocation across nested callbacks,
+     * Pexec and AES dispatch. No global latch can leak to another return. */
+    BOOL defer_return_work = FALSE;
+
     if (from_ring3)
         syscall_gs_swapped = 1;
-    trap_dispatch(frame, from_ring3);
+#if CONF_WITH_USER_CALLBACKS
+    if (from_ring3) {
+        kproc_record_rsp(run, x86_64_get_saved_user_rsp());
+        if (!user_callback_syscall_allowed(frame->rax, frame->rdi)) {
+            frame->rax = (UQUAD)(QUAD)EACCDN;
+            syscall_gs_swapped = 0;
+            return;
+        }
+    }
+#endif
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+    if (from_ring3)
+        x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
+#endif
+    trap_dispatch(frame, from_ring3, &defer_return_work);
+#if CONF_WITH_USER_CALLBACKS
+    if (from_ring3)
+        user_callback_return_work(x86_64_get_saved_user_rsp(), !defer_return_work);
+#endif
+#if CONF_WITH_X32_ACCESSORY_TEST
+    if (from_ring3 && defer_return_work)
+        x86_64_aes_window_test_return(run);
+#endif
     if (from_ring3)
         syscall_gs_swapped = 0;
 }
@@ -230,10 +271,9 @@ void x86_64_syscall_abandoned(void)
 }
 
 /*
- * The argument array osif() takes, from the trap frame.  5 slots, not 4:
- * bdosmain.c's own dispatch (the p4 case, e.g. Pexec's mode/path/tail/env)
- * reads up to pw[4] -- GEMDOS's own widest call needs all 4 real argument
- * registers this convention has (trap.h), not just the first 3.
+ * The argument array osif() takes, from the trap frame.  Seven slots:
+ * the function and six scalar arguments, including Mmap's fd and offset.
+ * Existing calls continue to inspect only the arguments they use.
  *
  * `long`, not LONG: see this file's own top-of-file comment on why a
  * fixed-32-bit slot here would truncate any pointer argument (Pexec's
@@ -246,6 +286,8 @@ static void gemdos_args(long *pw, const x86_64_trap_frame_t *frame)
     pw[2] = (long)frame->rsi;
     pw[3] = (long)frame->rdx;
     pw[4] = (long)frame->r10;
+    pw[5] = (long)frame->r8;
+    pw[6] = (long)frame->r9;
 }
 
 /*
@@ -274,12 +316,17 @@ static int xbios_returns_void(ULONG fn)
         || fn == 0x25;
 }
 
-static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
+                           BOOL *defer_return_work)
 {
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;
     long cargs[4];
     long crc;
+
+#if !CONF_WITH_X32_AES
+    (void)defer_return_work;
+#endif
 
     /*
      * The raw argument registers are not inspected here: which of them a
@@ -302,8 +349,33 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 
     switch (trap_class) {
+    case USER_CALLBACK_CLASS:
+#if CONF_WITH_USER_CALLBACKS
+        frame->rax = (UQUAD)(QUAD)(from_ring3 ?
+            user_callback_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->rcx) : EINVFN);
+#else
+        frame->rax = (UQUAD)(QUAD)EINVFN;
+#endif
+        break;
+    case AES_SERVICE_CLASS:
+#if CONF_WITH_X32_AES
+        frame->rax = (UQUAD)(QUAD)(from_ring3 ?
+            aes_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10,
+                          defer_return_work) : EINVFN);
+#else
+        frame->rax = (UQUAD)(QUAD)EINVFN;
+#endif
+        break;
+    case VDI_SERVICE_CLASS:
+#if CONF_WITH_X32_VDI
+        frame->rax = (UQUAD)(QUAD)(from_ring3 ?
+            vdi_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10) : EINVFN);
+#else
+        frame->rax = (UQUAD)(QUAD)EINVFN;
+#endif
+        break;
     case X86_64_TRAP_GEMDOS: {
-        long pw[5];
+        long pw[7];
 
         /* Only a ring-3 `syscall` gets here: kernel code calls the GEMDOS
          * implementations directly (bdos/arch/x86_64/kcall.c).  The caller's
@@ -683,16 +755,38 @@ void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
         "mov %0, %%cr3\n\t"
         "mov %3, %%rdi\n\t"
         "mov %4, %%rsi\n\t"
+        "xor %%edx, %%edx\n\t"                 /* no runtime finalizer yet */
         "pushq $" XSTR(X86_64_USER_DATA_SEL) "\n\t" /* SS */
         "pushq %1\n\t"                              /* RSP */
         "pushq $0x202\n\t"                          /* RFLAGS: IF enabled */
         "pushq $" XSTR(X86_64_USER_CODE_SEL) "\n\t" /* CS */
         "pushq %2\n\t"                              /* RIP */
-        "iretq"
+        /* No operand is needed after the iret frame is complete. A zero
+         * basepage selects standard ELF entry: clear every scratch register
+         * so no kernel address survives into the interpreter. Legacy entry
+         * retains its explicit RDI/RSI contract. This function never returns. */
+        "testq %%rdi, %%rdi\n\t"
+        "jnz 1f\n\t"
+        "xor %%eax, %%eax\n\t"
+        "xor %%edi, %%edi\n\t"
+        "xor %%esi, %%esi\n\t"
+        "xor %%edx, %%edx\n\t"
+        "xor %%ebx, %%ebx\n\t"
+        "xor %%ecx, %%ecx\n\t"
+        "xor %%ebp, %%ebp\n\t"
+        "xor %%r8d, %%r8d\n\t"
+        "xor %%r9d, %%r9d\n\t"
+        "xor %%r10d, %%r10d\n\t"
+        "xor %%r11d, %%r11d\n\t"
+        "xor %%r12d, %%r12d\n\t"
+        "xor %%r13d, %%r13d\n\t"
+        "xor %%r14d, %%r14d\n\t"
+        "xor %%r15d, %%r15d\n\t"
+        "1: iretq"
         :
         : "r"(pml4_phys), "r"(user_rsp), "r"(entry_rip),
           "r"(basepage), "r"(entry_type)
-        : "rdi", "rsi", "memory"
+        : "rdi", "rsi", "rdx", "memory"
     );
     __builtin_unreachable();
 }

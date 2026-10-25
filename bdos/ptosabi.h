@@ -12,15 +12,12 @@
  * Pexec() time.  See doc/elfload.txt's "Native pTOS ABI imports" section
  * for the on-disk side of this mechanism.
  *
- * No namespace table is registered yet: an earlier iteration of this
- * mechanism exported every GEMDOS (TRAP #1) call this way, but the
- * classic trap1()/TRAP #1 interface already serves that namespace well
- * enough that the added indirection was not worth it there (see
- * doc/elfload.txt). This format and bdos/elfld.c's resolution mechanism
- * are kept as-is, ready for a future namespace (most plausibly aes: or
- * vdi:, once part of one of those moves to userspace) to register a
- * PTOSABI_TABLE the same way and add a lookup arm to
- * bdos/elfld.c's ptosabi_resolve().
+ * The optional x32 VDI namespace resolves vdi:vdi, ABI 1.0, to an entry
+ * in the process's read-only user client image. It never exports an LP64
+ * kernel function. CONF_WITH_X32_AES additionally registers the typed AES
+ * client and caller-local helpers in the aes: namespace, also ABI 1.0.
+ * Other namespaces remain unavailable. The table types below describe
+ * future namespaces; elfld.c resolves the explicit native client entries.
  */
 
 #ifndef PTOSABI_H

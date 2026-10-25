@@ -57,7 +57,7 @@ WORD desk_floppy_type(void);            /* 0 if DD, 1 if HD (the _FDC cookie) */
 #else
 #define desk_has_alt_ram()      (0)
 #endif
-#define desk_idt()              (Supexec((LONG)get_idt_cookie))
+#define desk_idt()              (Supexec((long)(uintptr_t)get_idt_cookie))
 #define desk_set_ceh(e)         (enable_ceh = (e))
 #define desk_set_background(p)  (set_aes_background(p))
 #define desk_mouse_buttons()    (linea_vars.MOUSE_BT)
@@ -66,7 +66,7 @@ WORD desk_floppy_type(void);            /* 0 if DD, 1 if HD (the _FDC cookie) */
 #define desk_has_videl()        (has_videl)
 #define desk_has_tt_shifter()   (has_tt_shifter)
 #define desk_videl_mode()       (get_videl_mode())
-#define desk_floppy_type()      (Supexec((LONG)get_floppy_type))
+#define desk_floppy_type()      (Supexec((long)(uintptr_t)get_floppy_type))
 
 #endif /* CONF_EXTERNAL_DESK */
 

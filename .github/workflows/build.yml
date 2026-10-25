@@ -35,6 +35,96 @@ permissions:
   contents: read
 
 jobs:
+  elf-shared-core:
+    name: x32 ELF shared-library metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install host and x32 test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+          sudo apt-get install -y qemu-system-x86 ovmf dosfstools mtools
+          python3 -m venv /tmp/elf-shared-venv
+          /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
+      - name: Test metadata, corrupt inputs and Kconfig isolation
+        run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
+      - name: Build the enabled freestanding x32 core
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make pc-x86_64_defconfig
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.write_config()
+          PY
+          make CROSS_COMPILE= obj/ldso/libldso.a
+          ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
+          test -z "$(nm -u /tmp/ldso-core.o)"
+      - name: Build and boot-test enabled mapping syscalls
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make CROSS_COMPILE= -j2
+          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
+          sh tools/test-mmap-boot.sh
+      - name: Boot-test shared libraries with x32 AES, VDI and callbacks
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          for name in ("CONF_WITH_X32_VDI", "CONF_WITH_X32_AES", "CONF_WITH_USER_CALLBACKS"):
+              config.syms[name].set_value(2)
+          config.write_config()
+          PY
+          make CROSS_COMPILE= -j2
+          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
+          sh tools/test-mmap-boot.sh
+
+      - name: Exercise shared desktop and console consumers
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          for variant in pc-x86_64-desktop-tests pc-x86_64-desktop-tests-builtin-cli; do
+            make "$variant"_defconfig
+            CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.write_config()
+          PY
+            make CROSS_COMPILE= -j2
+            make CROSS_COMPILE= x32-desktop-test x32-desktop-window-test
+            readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
+            readelf -d emudesk.prg | grep 'libptos.so'
+            if [ "$variant" = pc-x86_64-desktop-tests ]; then
+              readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
+              readelf -d cli/emucon.tos | grep 'libptos.so'
+              python3 tests/x32_desktop/run.py --output obj/shared-desktop-runtime
+            else
+              if readelf -l obj/x32/emucon.elf | grep 'INTERP'; then
+                echo 'Embedded EmuCON must retain its static entry path' >&2
+                exit 1
+              fi
+              python3 tests/x32_desktop/run.py --output obj/shared-desktop-builtin-cli --embedded-console --mode missing
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-x32-consumers
+          path: |
+            obj/shared-desktop-runtime/
+            obj/shared-desktop-builtin-cli/
+          if-no-files-found: ignore
+          retention-days: 14
+
+
   # The matrices are derived from configs/ instead of being written out here,
   # so that adding a configuration automatically makes it a compatibility
   # check without anyone having to remember this file.
@@ -239,11 +329,14 @@ jobs:
           make CROSS_COMPILE= 2>&1 | tee -a build.log
           tools/check-build-warnings.sh build.log
 
+      - name: Check the x32 VDI parameter contract
+        run: make CROSS_COMPILE= vdi-contract-test
+
       - name: Collect the build products
         run: |
           mkdir products
           # The PE32+ EFI application, plus the map file with its symbols.
-          for product in *.efi emutos.map cli/emucon.tos; do
+          for product in *.efi emutos.map cli/emucon.tos emudesk.prg; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -263,7 +356,7 @@ jobs:
       # pc-x86_64-eager boot this way (EFI/OVMF); a future non-EFI x86-64
       # config would need its own check instead of this one.
       - name: Install QEMU and OVMF for the boot test
-        if: startsWith(matrix.config, 'pc-x86_64')
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || startsWith(matrix.config, 'pc-x86_64-accessories') || startsWith(matrix.config, 'pc-x86_64-desktop-tests') || matrix.config == 'pc-x86_64-eager'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qemu-system-x86 ovmf
@@ -284,7 +377,7 @@ jobs:
       # succeed on it: 124 means the timeout fired (the normal case here),
       # anything else means QEMU itself exited unexpectedly.
       - name: Boot-test under QEMU/OVMF
-        if: startsWith(matrix.config, 'pc-x86_64')
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || startsWith(matrix.config, 'pc-x86_64-accessories') || matrix.config == 'pc-x86_64-eager'
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
@@ -292,8 +385,18 @@ jobs:
           cp cli/emucon.tos esp/EMUCON.TOS
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
-          make CROSS_COMPILE= x32test
+          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
+          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
+            make CROSS_COMPILE= -j2 x32-accessory-test
+            cp obj/x32/*.ACC esp/
+          fi
+          cp obj/x32/VDI*.TOS obj/x32/AES*.TOS esp/
+          cp obj/x32/x32probe.elf esp/X32AES.TOS
+          cp obj/x32/x32probe.elf esp/X32CB.TOS
           cp x32hello.elf esp/X32HELLO.TOS
+          # The optional VDI self-test loads a second client while the first
+          # still owns a workstation, to check process isolation.
+          cp obj/x32/x32probe.elf esp/X32VDI.TOS
           # the same program linked for another address, which Pexec() has to
           # move into the image window and relocate
           cp x32reloc.elf esp/X32RELOC.TOS
@@ -307,19 +410,35 @@ jobs:
           head -c 2000 x32hello.elf > esp/X32TRUNC.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
+          rm -f boot.log boot-monitor.sock
+          aes_input_pid=
+          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
+            python3 tests/x32_accessory/drive_input.py boot.log boot-monitor.sock &
+            aes_input_pid=$!
+          fi
           set +e
           timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
             -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
             -drive format=raw,file=fat:rw:esp \
-            -serial file:boot.log -display none
+            -serial file:boot.log -display none \
+            -monitor unix:boot-monitor.sock,server=on,wait=off
           qemu_exit=$?
+          aes_input_exit=0
+          if [ -n "$aes_input_pid" ]; then
+            wait "$aes_input_pid"
+            aes_input_exit=$?
+          fi
           set -e
 
           echo "::group::Serial console log"
           cat boot.log
           echo "::endgroup::"
 
+          if [ "$aes_input_exit" != 0 ]; then
+            echo "::error::typed AES PS/2 input regression failed"
+            exit 1
+          fi
           if [ "$qemu_exit" != 124 ]; then
             echo "::error::qemu-system-x86_64 exited with code $qemu_exit instead of running until the timeout killed it -- that means it never reached the shell (where it would otherwise wait for input forever)"
             exit 1
@@ -353,6 +472,30 @@ jobs:
             echo "::error::the boot-time memory-management self-test never reported PASS"
             exit 1
           fi
+          if ! grep -q 'x86-64 AES client: PASS' boot.log || ! grep -q 'x86-64 AES imports: PASS' boot.log; then
+            echo "::error::AES clients, process coordination, imports or baseline refusal did not pass"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 user callbacks: PASS' boot.log; then
+            echo "::error::typed callbacks, nesting, alternate stacks, faults or baseline refusal failed"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 VDI imports: PASS' boot.log; then
+            echo "::error::VDI import resolution, isolation or baseline refusal did not pass"
+            exit 1
+          fi
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI client: PASS' boot.log; then
+            echo "::error::the ring-3 VDI client, validation and ownership tests did not pass"
+            exit 1
+          fi
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI padded pitch: PASS' boot.log; then
+            echo "::error::VDI initialization or drawing corrupted padded framebuffer rows"
+            exit 1
+          fi
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI coordinate bounds: PASS' boot.log; then
+            echo "::error::VDI coordinate bounds or large-screen drawing checks did not pass"
+            exit 1
+          fi
 
           # The self-test also launches real ring-3 x32 processes
           # (tests/x32_probe/): entry state and selectors, a GEMDOS call
@@ -360,7 +503,8 @@ jobs:
           # Its deliberate faults print "process fault:" lines BEFORE the
           # PASS line; any such line after it is the built-in EmuCON itself
           # faulting.
-          if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
+          if ! grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config &&
+             sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
             echo "::error::the ring-3 EmuCON faulted"
             exit 1
           fi
@@ -440,6 +584,11 @@ jobs:
             exit 1
           fi
 
+          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
+            python3 tests/x32_accessory/check_boot.py boot.log
+            exit 0
+          fi
+
           # EmuCON is an x32 program run in ring 3 -- not linked into the
           # kernel -- loaded from the boot drive as EMUCON.TOS (the kernel
           # says "EmuCON: ..." when it cannot), so its banner can only come
@@ -455,6 +604,23 @@ jobs:
 
           echo "Boot test passed: reached the ring-3 EmuCON2 shell, no reset loop, no panic."
 
+      - name: Exercise the external ring-3 desktop
+        if: startsWith(matrix.config, 'pc-x86_64-desktop-tests')
+        run: |
+          make CROSS_COMPILE= -j2 x32-desktop-test x32-desktop-window-test
+          console_args=()
+          if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
+            console_args+=(--embedded-console)
+          fi
+          python3 tests/x32_desktop/run.py --output obj/x32-desktop-runtime "${console_args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && startsWith(matrix.config, 'pc-x86_64-desktop-tests')
+        with:
+          name: desktop-runtime-${{ matrix.config }}
+          path: obj/x32-desktop-runtime/
+          retention-days: 14
+
       - name: Report the failure
         if: failure()
         run: |
@@ -463,8 +629,8 @@ jobs:
   # The regression suite (tests/, `make test-dir`) run under QEMU.  The virt
   # machines are built without the AES (the *-cli configurations) so that
   # they boot to EmuCON, where tools/run-regression-tests.sh types the name
-  # of the suite into the serial console; pc-x86_64 boots to EmuCON anyway
-  # and is typed into through the QEMU monitor.  See tests/readme.md.
+  # of the suite into the serial console. The x32 and Pi desktops start it
+  # from tests/emudesk.inf's autorun line. See tests/readme.md.
   regression:
     name: regression (${{ matrix.machine }})
     needs: configurations
@@ -479,6 +645,16 @@ jobs:
             runner: ubuntu-latest
             qemu: qemu-system-arm
             make_args: ''
+          # Exercise the small-ROM deletion implementation on a board
+          # that can run the complete regression suite automatically.
+          - machine: virt-arm-traditional-fat
+            script_machine: virt-arm
+            config: virt-arm-cli
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
+            traditional_fat: true
           # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
           # screen of the Pi's framebuffer.  The desktop starts the suite
           # (tests/emudesk.inf) and the console is on the UART as well
@@ -535,7 +711,7 @@ jobs:
             qemu: qemu-system-arm
             make_args: ''
           - machine: pc-x86_64
-            config: pc-x86_64
+            config: pc-x86_64-desktop
             arch: x86_64
             runner: ubuntu-latest
             qemu: qemu-system-x86 ovmf
@@ -553,7 +729,7 @@ jobs:
       - name: Install QEMU
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ${{ matrix.qemu }}
+          sudo apt-get install -y ${{ matrix.qemu }} dosfstools mtools
           # scalable fonts for the gdos_answer suite: TrueType and CFF, one
           # whose ascender is taller than its em (Loma), and a monospaced one
           # with marks of no width (Liberation Mono); fontTools makes a TrueType
@@ -568,8 +744,12 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
           MAKE_ARGS: ${{ matrix.make_args }}
+          TRADITIONAL_FAT: ${{ matrix.traditional_fat || false }}
         run: |
           make "${CONFIG}_defconfig"
+          if [ "$TRADITIONAL_FAT" = true ]; then
+            sed -i 's/^CONF_WITH_FAT_FILE_LIFETIMES=y$/# CONF_WITH_FAT_FILE_LIFETIMES is not set/' .config
+          fi
           make $MAKE_ARGS
           make $MAKE_ARGS test-dir
 

@@ -171,6 +171,11 @@
  * come from (doc/elfload.txt); its SONAME's trailing version number is
  * read directly as the ABI major version every symbol pulled from it is
  * imported at. */
+#include "../include/aes_client_exports.h"
+#define ABI_NS_VDI 1
+#define ABI_NS_AES 2
+#define ABI_NS_LEGACY 4
+
 #define PTOS_ABI_SONAME_PREFIX  "libptos-abi.so."
 
 /* Relocation types confirmed (either from the target's ELF psABI or by
@@ -282,9 +287,8 @@ typedef struct {
 
 /* one pTOS ABI import this tool has converted a dynamic relocation into
  * (doc/elfload.txt's ".ptos.imports payload"); "name" already carries
- * the "namespace:" prefix (always "gemdos:" in this version -- see
- * find_abi_needed() and import_list_add()'s own comment on why no kernel
- * currently registers that namespace) */
+ * the explicit "vdi:" or "aes:" namespace prefix selected by the SDK
+ * dependency and the registered client function name. */
 typedef struct {
     char     *name;
     uint32_t  abi_major;
@@ -311,7 +315,7 @@ typedef struct {
 static const char *g_argv0;
 static int g_is_be;
 
-static void die(const char *fmt, ...)
+static void __attribute__((noreturn)) die(const char *fmt, ...)
 {
     va_list ap;
 
@@ -680,27 +684,20 @@ static int parse_abi_soname(const char *name, uint32_t *out_major)
     return 1;
 }
 
-/*
- * find_abi_needed - look for the SDK's libptos-abi.so.<N> dependency.
- *
- * Scans every SHT_DYNAMIC section (there is normally at most one) for
- * DT_NEEDED entries. No .dynamic section, or one with no DT_NEEDED
- * entries at all, is a plain binary that imports nothing: *out_recognized
- * is set to 0 and the function returns normally. Exactly one DT_NEEDED
- * naming "libptos-abi.so.<N>" is the only other accepted shape, setting
- * *out_recognized to 1 and *out_abi_major to N. Anything else -- more
- * than one DT_NEEDED, or one that does not match the pattern -- dies:
- * pTOS has no general purpose dynamic linker, so a real shared library
- * dependency can never be satisfied at load time (doc/elfload.txt).
- */
+/* Recognize the SDK stubs only, with no duplicate or arbitrary DSO
+ * dependencies. Symbol names select between the two explicit namespaces;
+ * their ABI major is 1. The retired gemdos stub remains unpackageable. */
 static void find_abi_needed(const unsigned char *in, uint32_t in_size,
                             uint32_t e_shoff, uint16_t e_shnum,
                             uint16_t e_shentsize, const char *in_path,
-                            int *out_recognized, uint32_t *out_abi_major)
+                            int *out_recognized, uint32_t *out_abi_major,
+                            unsigned *out_namespaces)
 {
     uint16_t i;
-    int needed_count = 0;
+    unsigned namespaces = 0;
     uint32_t major = 0;
+
+    *out_namespaces = 0;
 
     for (i = 0; i < e_shnum; i++)
     {
@@ -763,23 +760,33 @@ static void find_abi_needed(const unsigned char *in, uint32_t in_size,
             name = read_c_string(in, strtab_limit, strtab_off + d_val,
                                  "DT_NEEDED", in_path);
 
-            needed_count++;
-            if (!parse_abi_soname(name, &major))
-                die("'%s' needs '%s', which is not the pTOS ABI stub "
-                    "(expected \"%s<N>\"); pTOS has no general purpose "
-                    "dynamic linker, so this dependency can never be "
-                    "satisfied at load time", in_path, name,
-                    PTOS_ABI_SONAME_PREFIX);
+            {
+                unsigned flag;
+
+                if (!strcmp(name, "libptos-vdi.so.1")) {
+                    major = 1;
+                    flag = ABI_NS_VDI;
+                } else if (!strcmp(name, "libptos-aes.so.1")) {
+                    major = 1;
+                    flag = ABI_NS_AES;
+                } else if (parse_abi_soname(name, &major))
+                    flag = ABI_NS_LEGACY;
+                else
+                    die("'%s' needs '%s', which is not a supported pTOS ABI "
+                        "stub; pTOS has no general purpose dynamic linker",
+                        in_path, name);
+                if (namespaces & flag)
+                    die("'%s' has a duplicate pTOS ABI stub dependency", in_path);
+                namespaces |= flag;
+            }
         }
     }
 
-    if (needed_count > 1)
-        die("'%s' needs more than one shared library; only a single "
-            "\"%s<N>\" pTOS ABI stub dependency is supported",
-            in_path, PTOS_ABI_SONAME_PREFIX);
-
-    *out_recognized = (needed_count == 1);
+    if ((namespaces & ABI_NS_LEGACY) && namespaces != ABI_NS_LEGACY)
+        die("'%s' mixes the retired gemdos stub with native client libraries", in_path);
+    *out_recognized = namespaces != 0;
     *out_abi_major = major;
+    *out_namespaces = namespaces;
 }
 
 /*
@@ -912,36 +919,49 @@ static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
     return name;
 }
 
-/* append (or find an existing, identical) import; returns its index.
- * "gemdos:" is prefixed here rather than carried by the caller, since
- * this version recognises exactly one namespace (see find_abi_needed()).
- * No kernel export table currently registers that namespace (or any
- * other -- see bdos/ptosabi.h and doc/elfload.txt's "Native pTOS ABI
- * imports" section): main() refuses to emit a .ptos.imports payload for
- * these imports rather than pack one bdos/elfld.c's ptosabi_resolve()
- * would always reject at Pexec() time. A later stage registering a real
- * namespace (most plausibly "aes" or "vdi") would pass it in here
- * instead of hardcoding "gemdos", and relax that refusal for it -- this
- * conversion mechanism itself needs no other change to serve one. */
+static const char *symbol_namespace(const char *name, unsigned namespaces,
+                                     const char *in_path)
+{
+#define AES_EXPORT_NAME(index, symbol) #symbol,
+    static const char *const aes_names[] = { AES_CLIENT_EXPORTS(AES_EXPORT_NAME) };
+#undef AES_EXPORT_NAME
+    size_t i;
+
+    if ((namespaces & ABI_NS_VDI) && !strcmp(name, "vdi"))
+        return "vdi";
+    if (namespaces & ABI_NS_AES)
+        for (i = 0; i < sizeof(aes_names) / sizeof(aes_names[0]); i++)
+            if (!strcmp(name, aes_names[i]))
+                return "aes";
+    if (namespaces == ABI_NS_LEGACY)
+        return "gemdos";
+    die("'%s' imports unsupported %s symbol '%s'", in_path,
+        namespaces == ABI_NS_VDI ? "VDI" : "AES", name);
+    return NULL;
+}
+
+/* Append or find an existing import in the namespace selected by SONAME. */
 static uint32_t import_list_add(IMPORT **imports, size_t *nimports, size_t *cap,
                                 const char *sym_name, uint32_t abi_major,
-                                int kind, const char *in_path)
+                                int kind, const char *namespace_name,
+                                const char *in_path)
 {
     size_t i;
     char *full_name;
 
-    if (strlen("gemdos:") + strlen(sym_name) > PTOS_IMPORT_NAME_MAX)
-        die("'%s' imports a symbol whose full \"gemdos:%s\" name is %lu "
+    if ((strlen(namespace_name) + 1) + strlen(sym_name) > PTOS_IMPORT_NAME_MAX)
+        die("'%s' imports a symbol whose full \"%s:%s\" name is %lu "
             "bytes, past the loader's own PTOS_IMPORT_NAME_MAX (%u); "
             "refusing rather than pack a binary Pexec() would always "
-            "reject", in_path, sym_name,
-            (unsigned long)(strlen("gemdos:") + strlen(sym_name)),
+            "reject", in_path, namespace_name, sym_name,
+            (unsigned long)((strlen(namespace_name) + 1) + strlen(sym_name)),
             PTOS_IMPORT_NAME_MAX);
 
-    full_name = malloc(strlen("gemdos:") + strlen(sym_name) + 1);
+    full_name = malloc((strlen(namespace_name) + 1) + strlen(sym_name) + 1);
     if (!full_name)
         die("out of memory");
-    strcpy(full_name, "gemdos:");
+    strcpy(full_name, namespace_name);
+    strcat(full_name, ":");
     strcat(full_name, sym_name);
 
     /* kind is part of the identity, not just a payload: two undefined
@@ -1023,6 +1043,7 @@ int main(int argc, char **argv)
     uint32_t dir32_type, relative_type, jump_slot_type, glob_dat_type;
     int have_abi_needed;
     uint32_t abi_major;
+    unsigned abi_namespaces;
     IMPORT *imports;
     size_t nimports, import_cap;
     BIND *binds;
@@ -1202,7 +1223,7 @@ int main(int argc, char **argv)
         die("'%s' has an unexpected section header size", in_path);
 
     find_abi_needed(in, in_size, e_shoff, e_shnum, e_shentsize, in_path,
-                    &have_abi_needed, &abi_major);
+                    &have_abi_needed, &abi_major, &abi_namespaces);
 
     imports = NULL;
     nimports = 0;
@@ -1363,12 +1384,10 @@ int main(int argc, char **argv)
 
                 if (!have_abi_needed)
                     die("'%s' has a dynamic-symbol relocation (type %lu) "
-                        "at 0x%08lx but no \"%s<N>\" DT_NEEDED dependency; "
-                        "pTOS has no general purpose dynamic linker, so "
-                        "an unresolved dynamic reference can never be "
-                        "satisfied at load time", in_path,
-                        (unsigned long)type, (unsigned long)r_offset,
-                        PTOS_ABI_SONAME_PREFIX);
+                        "at 0x%08lx but no recognized pTOS client stub "
+                        "dependency; there is no general purpose dynamic "
+                        "linker to resolve it", in_path,
+                        (unsigned long)type, (unsigned long)r_offset);
 
                 /* the bind mechanism has no addend component in version 1
                  * (doc/elfload.txt): it writes the resolved import address
@@ -1451,7 +1470,8 @@ int main(int argc, char **argv)
                     bind_op = PTOS_BIND_DATA_ADDRESS;
 
                 import_index = import_list_add(&imports, &nimports, &import_cap,
-                                               sym_name, abi_major, kind, in_path);
+                                               sym_name, abi_major, kind,
+                                               symbol_namespace(sym_name, abi_namespaces, in_path), in_path);
                 bind_list_add(&binds, &nbinds, &bind_cap, import_index,
                              r_offset, bind_op);
 
@@ -1696,19 +1716,13 @@ int main(int argc, char **argv)
         unsigned char ihdrbuf[32];
         size_t k;
 
-        /* bdos/elfld.c's ptosabi_resolve() currently registers no namespace
-         * at all (see bdos/ptosabi.h) -- every lookup it could do against a
-         * ".ptos.imports" payload built below fails with EPLFMT, so
-         * Pexec() can never load the result. Refuse here rather than write
-         * out a file that reports success from this tool but is unloadable
-         * kernel-side; once a real namespace (aes:, vdi:, ...) is
-         * registered, gate this on whether that import's namespace is one
-         * of the supported ones instead of refusing unconditionally. */
-        die("'%s' imports %lu pTOS ABI symbol(s), but no kernel export "
-            "table is registered to resolve them against yet (see "
-            "bdos/ptosabi.h) -- the loader would reject the result at "
-            "Pexec() time, so refusing to write a misleadingly 'successful' "
-            "output instead", in_path, (unsigned long)nimports);
+        /* Native client namespaces are implemented only for x32. */
+        if (e_machine != EM_X86_64 || (abi_namespaces & ABI_NS_LEGACY))
+            die("'%s' imports an unsupported pTOS ABI namespace", in_path);
+        for (k = 0; k < nimports; k++)
+            if (imports[k].kind != PTOSABI_KIND_FUNCTION)
+                die("'%s' imports a non-function client symbol '%s'", in_path,
+                    imports[k].name);
 
         if (nimports > PTOS_IMPORT_MAX_COUNT || nbinds > PTOS_IMPORT_MAX_COUNT)
             die("'%s' has more pTOS ABI imports/binds (%lu/%lu) than the "

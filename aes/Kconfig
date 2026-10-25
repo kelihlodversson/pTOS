@@ -9,10 +9,27 @@
 
 menu "AES"
 
+config CONF_WITH_X32_AES
+	bool "Native x32 clients and kernel AES coordination service"
+	depends on ARCH_X86_64 && CONF_WITH_X32_VDI
+	default n
+	help
+	  Enable the typed client library and kernel-owned registrations,
+	  message queues, message-event polling and update ownership for x32
+	  graphical applications. Application-local rectangle helpers run in
+	  ring 3. With CONF_WITH_AES, associated graphical applications and
+	  accessories use the native scheduler, windows and owned object trees.
+	  CONF_EXTERNAL_DESK builds EmuDesk as a loaded x32 ring-3 program.
+	  Generic ring-3 GEM trap class 2 stays disabled.
+
 config CONF_WITH_AES
 	bool "Include the AES and the EmuDesk desktop"
-	depends on !ARCH_X86_64
-	default n if TARGET_CART
+	depends on !ARCH_X86_64 || CONF_WITH_X32_AES
+	# (that CONF_WITH_PROCESS_ASPACES excludes the AES is said here, not
+	# there: x86-64's AES needs CONF_WITH_USER_ASPACE, which would make
+	# the two symbols depend on each other in a circle)
+	depends on !CONF_WITH_PROCESS_ASPACES
+	default n if TARGET_CART || ARCH_X86_64
 	default y
 	help
 	  Without the AES there is no graphical desktop; EmuTOS boots
@@ -20,8 +37,9 @@ config CONF_WITH_AES
 	  This is only useful when the image size is severely restricted,
 	  such as for the diagnostic cartridge.
 
-	  Not available on x86-64: its processes run in ring 3, and the AES
-	  and EmuDesk have not been moved there yet.
+	  On x86-64 the native AES runs in the kernel; loaded applications,
+	  accessories and the optional external EmuDesk use the typed ring-3
+	  AES and VDI services.
 
 if CONF_WITH_AES
 

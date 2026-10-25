@@ -48,7 +48,7 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 
 LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h);
 BOOL kpgm_is_prg(void);
-LONG kpgmld(PD *p, FH h, PGMHDR01 *hd);
+LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename);
 
 #if CONF_WITH_ELF_LOADER
 /*

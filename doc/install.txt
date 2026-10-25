@@ -274,7 +274,11 @@ A directory that is missing or empty gives a system with the bitmap fonts
 only, and no error; if the scan found no font, the first vst_load_fonts()
 looks again (for a drive that was not there at boot).  To add fonts, copy
 the files to that directory under 8.3 names (the FAT volumes are read
-without long names) and restart; to look elsewhere, change "Directory of
+without long names) and restart, or, with "Look for new scalable fonts
+after vst_unload_fonts()" (CONF_VDI_FONT_RESCAN, on by default), let the
+program that copied them call vst_unload_fonts() and vst_load_fonts():
+the new files' fonts are then added after the existing ones, which keep
+their index and id (a deleted font stays listed until the restart); to look elsewhere, change "Directory of
 the scalable fonts" (CONF_VDI_FONT_DIR) in make menuconfig, with a drive
 letter if the directory is not on the boot drive.  The style Regular,
 Book, Roman and Normal is left out of a font's name ("DejaVu Sans", not
@@ -312,7 +316,11 @@ so the text path draws it with all its writing modes, effects, rotation
 and clipping (vdi/vdi_sfont.c).  Rendered sizes are kept up to
 CONF_VDI_FONT_CACHE KB (1 MB by default); the one used longest ago that
 no workstation has selected goes first.  Ink that reaches past a
-character's advance width is cut off (#607).
+character's advance width (an italic f, the foot of a j, anything slanted
+by vst_skew(), a combining mark) is kept in cells of its own, which are
+output after the characters of the string, transparently, from where each
+character is: the advances and extents are still the advances, and a
+character that follows does not cover that ink in replace mode (#607).
 
 The built-in GDOS also answers the font calls SpeedoGDOS added, and those
 NVDI added to them (opcodes 190 and 229 to 255, vdi/vdi_speedo.c; #577):
@@ -445,12 +453,18 @@ on every Raspberry Pi card.  "make test-dir", "make test-hd" and
 release-raspi-resources put it on the boot drive (RASPI_EMUDESK=<file> for the
 last, in the same way as RASPI_EMUCON).
 
+On x86-64, pc-x86_64-desktop_defconfig builds EmuDesk as an ordinary x32
+ring-3 ELF executable. Put emudesk.prg on the boot drive as EMUDESK.PRG,
+alongside EMUCON.TOS and EFI/BOOT/BOOTX64.EFI. Its resource pointers stay in
+user memory; its adapter uses typed AES snapshots/events/windows, a private
+VDI workstation and bounded shell/settings calls. Raw GEM trap class 2 is
+still refused from ring 3. See doc/aes-x32.txt for the service contracts and
+the repeatable QEMU desktop/accessory/application integration test.
+
 The option needs the loader of the program's format (CONF_WITH_ELF_LOADER on
-ARM, CONF_WITH_PRG_LOADER on m68k), and is not offered for x86-64
-(follow-up #651) or with the MMU kernels (CONF_WITH_USER_ASPACE),
-whose processes cannot call the VDI and the AES from user mode yet
-(doc/mmu-address-space.txt: they need a validated GEM entry; #548 is that for
-x86-64).
+ARM/x32, CONF_WITH_PRG_LOADER on m68k). It is not offered with ARM/m68k MMU
+kernels (CONF_WITH_USER_ASPACE), whose processes still need a validated GEM
+entry (doc/mmu-address-space.txt).
 
 Which program is the shell
 --------------------------
@@ -775,6 +789,26 @@ call's FSHAPE_* (check_frame_args() in bdos/bdosmain.c).  The rpi2-kproc and
 atari512-kproc configurations build with it, and CI runs the regression
 suite (tests/gemdos_pointers) on the latter.
 
+
+
+Native FAT file lifetimes
+-------------------------
+
+CONF_WITH_FAT_FILE_LIFETIMES controls retained native FAT file lifetimes.
+It defaults off for the 192 KB ROM and on for other images. With it enabled,
+deleting an open file removes its name but keeps its contents until the last
+handle or backing reference closes. Interrupted deletion and FAT reclamation
+are retained for retry, and pending clusters cannot be allocated again.
+
+With it disabled, deletion uses traditional GEMDOS semantics: another
+process's open file cannot be deleted; the caller's handles are closed before
+its clusters are freed. If a file identity has been shared with another
+process through standard-handle inheritance, deletion is conservatively
+refused until all handles to that identity close (even after the child exits).
+Close and reopen the file before deleting it. Directory-allocation and
+media-change safety remain
+enabled. CONF_WITH_FILE_PINS selects extended lifetimes automatically, so
+file mappings cannot be configured without them.
 
 
 Adding a configuration option

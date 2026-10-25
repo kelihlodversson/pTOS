@@ -15,6 +15,9 @@
 #include "endian.h"
 #include "fs.h"
 #include "fatfs.h"
+#if CONF_WITH_MMAP
+#include "fileback.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -202,7 +205,8 @@ static CLNO findfree16(DMD *dm)
          */
         for ( ; (offset < dm->m_recsiz) && (clnum < (dm->m_numcl+2)); offset += sizeof(CLNO), clnum++)
         {
-            if (*(CLNO *)(buf+offset) == 0)
+            if (*(CLNO *)(buf+offset) == 0 &&
+                !ofd_cluster_pending(dm->m_dtl, clnum))
                 return clnum;
         }
     }
@@ -235,7 +239,7 @@ static CLNO findfree(CLNO cl, DMD *dm)
         cl = 2;     /* start search at first or current cluster */
     for (i = 0; i < dm->m_numcl; i++, cl++) /* look at every cluster once */
     {
-        if (!getrealcl(cl,dm))      /* check for empty cluster */
+        if (!getrealcl(cl,dm) && !ofd_cluster_pending(dm->m_dtl, cl))
             return cl;
         if (cl == dm->m_numcl+1)    /* wrap at max cluster num */
             cl = 1;
@@ -279,6 +283,12 @@ int nextcl(OFD *p, int wrtflg)
 
     if (wrtflg && endofchain(cl2))  /* end of file, allocate new clusters */
     {
+#if CONF_WITH_MMAP
+        {
+            LONG rc = fileback_barrier();
+            if (rc < 0) return rc;
+        }
+#endif
         cl2 = findfree(cl,dm);
         if (cl2 == 0)
             return -1;

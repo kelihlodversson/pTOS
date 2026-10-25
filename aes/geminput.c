@@ -65,6 +65,10 @@ static AESPD    *gl_cowner;     /* current control rectangle owner      */
 static WORD     gl_bpend;       /* number of pending events desiring */
                                 /*  more than a single click         */
 
+/* Native pr_xrat/pr_yrat sample the pointer at the following transition.
+ * Typed button waits need the matching transition's own coordinates. */
+static ULONG    button_position, previous_button_position;
+
 /* Prototypes: */
 static void post_button(AESPD *pd, WORD new, WORD numclicks);
 static void post_mouse(AESPD *pd, WORD x, WORD y);
@@ -340,6 +344,8 @@ void bchange(LONG fdata)
     pr_mclick = mclick;
     pr_xrat = xrat;
     pr_yrat = yrat;
+    previous_button_position = button_position;
+    button_position = MAKE_ULONG(xrat, yrat);
     button = new;
     mclick = clicks;
     post_button(gl_mowner, button, clicks);
@@ -545,24 +551,47 @@ void adelay(EVB *e, LONG c)
 
 void abutton(EVB *e, LONG p)
 {
-    WORD bclicks;
+    WORD bclicks = LOBYTE(HIWORD(p));
+    WORD count;
+    BOOL previous;
 
-    if (downorup(button, p))
+    if (e->e_flag & EVFOCUS)
+    {
+        if (rlr == gl_mowner)
+        {
+            /* forker() may have drained a press/release pair before this
+             * wait was registered. Native ev_multi() checks it first too. */
+            previous = (mtrans > 1) && downorup(pr_button, p);
+            if (previous)
+                count = pr_mclick;
+            else if (downorup(button, p))
+                count = mclick;
+            else
+                count = -1;
+            if (count >= 0)
+            {
+                azombie(e, (count > bclicks) ? bclicks : count);
+                if (previous)
+                {
+                    /* azombie() snapshots current state; this completion
+                     * belongs to the matching historical transition. */
+                    e->e_return = MAKE_ULONG(pr_button, LOWORD(e->e_return));
+                    e->e_parm = previous_button_position;
+                }
+                return;
+            }
+        }
+    }
+    else if (downorup(button, p))
     {
         azombie(e, 1);      /* 'nuff said */
+        return;
     }
-    else
-    {
-        /*
-         * increment counting semaphore to show someone cares
-         * about multiple clicks
-         */
-        bclicks = LOBYTE(HIWORD(p));
-        if (bclicks > 1)
-            gl_bpend++;
-        e->e_parm = p;
-        evinsert(e, &rlr->p_cda->c_bsleep);
-    }
+    /* Increment counting semaphore for a pending multiple-click wait. */
+    if (bclicks > 1)
+        gl_bpend++;
+    e->e_parm = p;
+    evinsert(e, &rlr->p_cda->c_bsleep);
 }
 
 
@@ -580,14 +609,14 @@ void bpend_cancel(LONG parm)
 }
 
 
-void amouse(EVB *e, LONG pmo)
+void amouse(EVB *e, intptr_t pmo)
 {
     MOBLK   mob;
 
     mob = *(MOBLK *)pmo;
 
     /* if already in (or out) of rectangle, signal immediately */
-    if (in_mrect(&mob))
+    if ((!(e->e_flag & EVFOCUS) || rlr == gl_mowner) && in_mrect(&mob))
         azombie(e, 0);
     else
     {

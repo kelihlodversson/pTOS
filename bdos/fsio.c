@@ -21,6 +21,9 @@
 #endif
 #include "tosvars.h"
 #include "intmath.h"
+#if CONF_WITH_MMAP
+#include "fileback.h"
+#endif
 
 
 #define CNTMAX  0x7FFFul  /* 16-bit MAXINT */
@@ -381,6 +384,9 @@ long ixlseek(OFD *p,long n)
     DMD *dm = p->o_dmd;
     DFD *dfd = p->o_dfd;
 
+#if CONF_WITH_FAT_FILE_LIFETIMES
+    if (dfd->o_flag & O_CLOSING) return EACCDN;
+#endif
     if ((n < 0) || (n > dfd->o_fileln))
         return ERANGE;
 
@@ -531,6 +537,9 @@ long ixread(OFD *p, long len, void *ubufr)
 {
     long maxlen;
 
+#if CONF_WITH_FAT_FILE_LIFETIMES
+    if (p->o_dfd->o_flag & O_CLOSING) return EACCDN;
+#endif
     /*
      * a NULL ubufr means the caller (e.g. scan() in fsdir.c) wants a
      * direct pointer into the directory buffer rather than a copy, to
@@ -604,5 +613,11 @@ long xwrite(WORD h, long len, void *ubufr)
 
 long ixwrite(OFD *p, long len, void *ubufr)
 {
+#if CONF_WITH_FAT_FILE_LIFETIMES
+    if (p->o_dfd->o_flag & O_CLOSING) return EACCDN;
+#endif
+#if CONF_WITH_MMAP
+    if (len > 0) fileback_changed(p->o_dfd);
+#endif
     return(xrw(1,p,len,ubufr));
 }

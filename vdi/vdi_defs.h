@@ -245,7 +245,7 @@ struct Vwk_ {
     Vwk *next_work;             /* Pointer to next virtual workstation  */
     WORD num_fonts;             /* Total number of faces available  */
 #if CONF_WITH_VDI_SCALABLE_FONTS
-    BOOL sfonts_loaded;         /* built-in GDOS's scalable fonts added */
+    WORD sfonts_loaded;         /* built-in GDOS's scalable fonts added: how many this workstation has (0: none) */
     WORD *error_var;            /* vst_error(): where errors go, or NULL */
     WORD char_map;              /* vst_map_mode(): MAP_ATARI, ... */
     LONG sf_size;               /* the em size its scalable size was asked for, 1/64 pixel, */

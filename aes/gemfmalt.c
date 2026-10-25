@@ -317,26 +317,11 @@ static void fm_build(OBJECT *tree, WORD iconnum, WORD nummsg, WORD mlenmsg,
 }
 
 
-WORD fm_alert(WORD defbut, char *palstr)
+OBJECT *fm_alert_tree(WORD defbut, char *palstr, GRECT *rectangle)
 {
-    WORD i;
     WORD inm, nummsg, mlenmsg, numbut, mlenbut;
-    OBJECT *tree;
-    GRECT d, t;
+    OBJECT *tree = rs_trees[DIALERT];
     OBJECT *obj;
-#if CONF_WITH_3D_OBJECTS
-    WORD color;
-#endif
-
-    /* init tree pointer    */
-    tree = rs_trees[DIALERT];
-
-#if CONF_WITH_3D_OBJECTS
-    color = (backgrcol < gl_ws.ws_ncolors) ? backgrcol : WHITE;
-    tree[ROOT].ob_spec.index = (tree[ROOT].ob_spec.index & 0xffffff80L) | 0x70L | (color & 0x000f);
-#endif
-
-    set_mouse_to_arrow();
 
     fm_parse(tree, palstr, &inm, &nummsg, &mlenmsg, &numbut, &mlenbut);
     fm_build(tree, inm, nummsg, mlenmsg, numbut, mlenbut);
@@ -372,11 +357,27 @@ WORD fm_alert(WORD defbut, char *palstr)
     obj->ob_type = G_IMAGE;
     obj->ob_width = obj->ob_height = 32;
 
-    /* center tree on screen*/
-    ob_center(tree, &d);
+    /* center tree on screen, limiting drawing to the screen */
+    ob_center(tree, rectangle);
+    rc_intersect(&gl_rscreen, rectangle);
+    return tree;
+}
 
-    /* Fix 2003-09-25: Limit drawing to the screen! */
-    rc_intersect(&gl_rscreen, &d);
+#if !defined(X32_USERLAND)
+WORD fm_alert(WORD defbut, char *palstr)
+{
+    WORD i;
+    OBJECT *tree = rs_trees[DIALERT];
+    GRECT d, t;
+#if CONF_WITH_3D_OBJECTS
+    WORD color;
+
+    color = (backgrcol < gl_ws.ws_ncolors) ? backgrcol : WHITE;
+    tree[ROOT].ob_spec.index = (tree[ROOT].ob_spec.index & 0xffffff80L) | 0x70L | (color & 0x000f);
+#endif
+
+    set_mouse_to_arrow();
+    tree = fm_alert_tree(defbut, palstr, &d);
 
     /* save screen underneath the alert    */
     wm_update(BEG_UPDATE);
@@ -420,3 +421,4 @@ WORD fm_alert(WORD defbut, char *palstr)
     /* return selection     */
     return i - BUTOFF + 1;
 }
+#endif /* !X32_USERLAND */
