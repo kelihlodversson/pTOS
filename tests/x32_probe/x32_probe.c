@@ -6,6 +6,9 @@
  * process, once per behaviour it wants to see.  The behaviour is chosen by the
  * first character of the command tail (the basepage's p_cmdlin):
  *
+ *   0-9, []{}|  mapping and standard dynamic-linker probes (#660); kept
+ *      separate from the callback/AES/VDI command assignments
+ *
  *   e  check the entry state: basepage in RDI, entry type 0 in RSI, RSP + 8
  *      divisible by 16, CPL 3 with the user selectors, and that a GEMDOS call
  *      crosses the syscall boundary and returns a value; exits with a
@@ -65,8 +68,7 @@
  *   p  execute a privileged instruction (a general protection fault)
  *
  * The syscall convention is bios/arch/x86_64/trap.h's: RAX = (class << 32) |
- * function, arguments in RDI/RSI/RDX/R10, all four always set (the kernel
- * checks all four whatever the call's own arity).
+ * function, arguments in RDI/RSI/RDX/R10/R8/R9. Calls inspect only the slots they use.
  *
  * Copyright (C) 2026 The pTOS development team
  *
@@ -74,6 +76,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "../../include/mman.h"
 #include "config.h"
 
 typedef unsigned long long u64;
@@ -93,19 +96,26 @@ typedef unsigned int u32;
 #define USER_CODE_SEL 0x2b
 #define USER_DATA_SEL 0x23
 
-static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
+static s64 sys6(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d, s64 e, s64 f)
 {
     register u64 rax __asm__("rax") = (class << 32) | func;
     register s64 rdi __asm__("rdi") = a;
     register s64 rsi __asm__("rsi") = b;
     register s64 rdx __asm__("rdx") = c;
     register s64 r10 __asm__("r10") = d;
+    register s64 r8 __asm__("r8") = e;
+    register s64 r9 __asm__("r9") = f;
 
     __asm__ volatile ("syscall"
                       : "+r" (rax)
-                      : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
+                      : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10), "r" (r8), "r" (r9)
                       : "rcx", "r11", "memory");
     return (s64)rax;
+}
+
+static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
+{
+    return sys6(class, func, a, b, c, d, 0, 0);
 }
 
 static s64 sys(u64 class, u64 func, s64 a, s64 b, s64 c)
@@ -126,6 +136,81 @@ static void pterm(int code)
 }
 
 static volatile u32 marker;
+
+static s64 mmap_private(u64 address, u64 length, u64 protection, u64 flags, u64 offset)
+{
+    return sys6(GEMDOS, GEMDOS_MMAP, address, length, protection, flags, -1, offset);
+}
+
+static int mapping_api(void)
+{
+    const u32 flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    s64 address, second;
+    volatile u32 *data;
+    int bad = 0;
+
+    if (mmap_private(0, 0, PROT_READ, flags, 0) != EINVAL ||
+        mmap_private(0x100000000ULL, 4096, PROT_READ, flags, 0) != EIMBA ||
+        mmap_private(0, 0x100001000ULL, PROT_READ, flags, 0) != EIMBA ||
+        mmap_private(0, 4096, 0x100000001ULL, flags, 0) != EINVAL)
+        bad |= 1;
+    /* A nonzero sixth argument must reach the kernel intact. */
+    if (mmap_private(0, 4096, PROT_READ, flags, 4096) != EINVAL ||
+        mmap_private(0, 4096, PROT_READ, flags, 0x100000000ULL) != EINVAL)
+        bad |= 2;
+    if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE, 0) != -37 ||
+        mmap_private(0, 4096, PROT_READ, MAP_SHARED | MAP_ANONYMOUS, 0) != -307 ||
+        mmap_private(0, 4096, PROT_READ, flags | MAP_FIXED, 0) != -307)
+        bad |= 4;
+    if (mmap_private(PTOS_MMAP_BASE + 1, 4096, PROT_READ,
+                      flags | MAP_FIXED_NOREPLACE, 0) != EINVAL ||
+        mmap_private(0xfffff000u, 8192, PROT_READ,
+                      flags | MAP_FIXED_NOREPLACE, 0) != EIMBA)
+        bad |= 8;
+    if (mmap_private(0, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, flags, 0) != EACCDN)
+        bad |= 16;
+    address = mmap_private(0, 12288, PROT_READ | PROT_WRITE, flags, 0);
+    if (address != PTOS_MMAP_BASE)
+        return bad | 32;
+    data = (volatile u32 *)(unsigned long)address;
+    if (data[0] || data[3071])
+        bad |= 64;
+    data[0] = 0x660;
+    if (mmap_private(address, 12288, PROT_READ,
+                     flags | MAP_FIXED_NOREPLACE, 0) != EACCDN || data[0] != 0x660)
+        bad |= 128;
+    second = mmap_private(address, 4096, PROT_READ, flags, 0);
+    if (second != address + 12288 || gemdos(GEMDOS_MUNMAP, second, 4096))
+        bad |= 128;                    /* an occupied hint falls back */
+    if (sys(GEMDOS, GEMDOS_MPROT, address + 8192, 8192, PROT_READ) != EIMBA)
+        bad |= 256;
+    data[2048] = 0x660;                /* failed Mprot changed nothing */
+    if (sys(GEMDOS, GEMDOS_MPROT, address + 4096, 4096, PROT_READ))
+        bad |= 256;
+    if (sys(GEMDOS, 0x3f, -1, 4, address + 4096) != EIMBA)
+        bad |= 256;                    /* Fread checks the mapping's permissions */
+    if (sys(GEMDOS, 0x17d, address + 4096, 4, 1) != 0 ||
+        sys(GEMDOS, 0x17d, address + 4096, 4, 0) != EINVAL)
+        bad |= 256;                    /* Maccess tests; it never changes access */
+    if (gemdos(GEMDOS_MUNMAP, address + 4096, 4096) ||
+        sys(GEMDOS, GEMDOS_MPROT, address, 12288, PROT_READ) != EIMBA)
+        bad |= 512;                    /* partial unmap split the reservation */
+    second = mmap_private(address + 4096, 4096, PROT_READ | PROT_WRITE,
+                          flags | MAP_FIXED_NOREPLACE, 0);
+    if (second != address + 4096 || data[1024])
+        return bad | 1024;
+    if (sys(GEMDOS, GEMDOS_MPROT, address, 12288, PROT_READ) ||
+        gemdos(GEMDOS_MUNMAP, address, 12288) ||
+        gemdos(GEMDOS_MUNMAP, address, 12288))
+        bad |= 2048;                   /* adjacent reservations and holes */
+    if (sys(GEMDOS, GEMDOS_MPROT, 0x10000000, 4096, PROT_READ) != EIMBA ||
+        gemdos(GEMDOS_MUNMAP, 0x10000000, 4096) != EIMBA)
+        bad |= 4096;                   /* heap/stack/image are never affected */
+    second = mmap_private(0, 1, PROT_READ | PROT_WRITE, flags, 0);
+    if (second != address || data[0] || gemdos(GEMDOS_MUNMAP, second, 1))
+        bad |= 8192;                   /* lengths round up; no stale data */
+    return bad;
+}
 
 /* an address the compiler cannot see through, so that dereferencing a bad
  * one stays a runtime fault rather than a compile-time diagnostic */
@@ -160,6 +245,85 @@ static int walk_ancestors(u64 basepage)
     return 0x100 + n;
 }
 
+#if CONF_WITH_ELF_SHARED
+extern int x32_ldso_probe(void);
+#endif
+
+static int file_mapping_api(void)
+{
+    static unsigned char file[4128], readback[6];
+    static const unsigned char code[] = { 0xb8, 0x45, 0, 0, 0, 0xc3 };
+    static const char path[] = "C:\\COW.TMP", moved[] = "C:\\COWDIR\\COW.TMP";
+    static const char directory[] = "C:\\COWDIR", fresh[] = "new";
+    s64 fd = -1, replacement = -1, a = 0, b = 0, tail = 0, executable = 0;
+    volatile unsigned char *left, *right;
+    int (*function)(void);
+    unsigned int i;
+    int bad = 0;
+#define FILE_CHECK(condition, failure) do { if (!(condition)) { bad = failure; goto done; } } while (0)
+    for (i = 0; i < sizeof(file); i++) file[i] = i < 4096 ? 'A' : 'B';
+    for (i = 0; i < sizeof(code); i++) file[i] = code[i];
+    fd = gemdos(0x3c, (s64)(unsigned long)path, 0);
+    FILE_CHECK(fd >= 0, 1);
+    FILE_CHECK(sys(GEMDOS, 0x40, fd, sizeof(file), (s64)(unsigned long)file) == sizeof(file), 2);
+    FILE_CHECK(sys6(GEMDOS, GEMDOS_MMAP, 0, 4096, PROT_READ, MAP_PRIVATE, fd, 1) == EINVAL &&
+               sys6(GEMDOS, GEMDOS_MMAP, 0, 12288, PROT_READ, MAP_PRIVATE, fd, 0) == EIMBA, 3);
+    a = sys6(GEMDOS, GEMDOS_MMAP, 0, 8192, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, 0);
+    b = sys6(GEMDOS, GEMDOS_MMAP, 0, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    FILE_CHECK(a > 0 && b > 0, 4);
+    left = (volatile unsigned char *)(unsigned long)a;
+    right = (volatile unsigned char *)(unsigned long)b;
+    function = (int (*)(void))(unsigned long)a;
+    FILE_CHECK(function() == 0x45 && right[0] == 0xb8, 5);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, fd, 1) == sizeof(file), 6);
+    FILE_CHECK(sys(GEMDOS, 0x17d, b, 1, 0) == 0 && sys(GEMDOS, 0x17d, a, 1, 0) < 0, 7);
+    FILE_CHECK(sys(GEMDOS, GEMDOS_MPROT, a, 8192, PROT_READ | PROT_WRITE) == 0, 8);
+    left[0] = 'Z';                         /* hardware write fault performs COW */
+    FILE_CHECK(right[0] == 0xb8, 9);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, fd, 0) == 0 &&
+               sys(GEMDOS, 0x3f, fd, 1, b + 1) == 1 && right[1] == 0xb8 && left[0] == 'Z', 10);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, fd, 0) == 0 &&
+               sys(GEMDOS, 0x3f, fd, sizeof(readback), (s64)(unsigned long)readback) == sizeof(readback) &&
+               readback[0] == 0xb8 && readback[1] == 0x45, 11);
+    tail = sys6(GEMDOS, GEMDOS_MMAP, 0, 4096, PROT_READ, MAP_PRIVATE, fd, 4096);
+    FILE_CHECK(tail > 0 && *(volatile unsigned char *)(unsigned long)tail == 'B', 12);
+    executable = sys6(GEMDOS, GEMDOS_MMAP, 0, 4096, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, 0);
+    FILE_CHECK(executable > 0, 25);
+    FILE_CHECK(gemdos(0x39, (s64)(unsigned long)directory, 0) == 0, 20);
+    {
+        s64 result = sys(GEMDOS, 0x56, 0, (s64)(unsigned long)path, (s64)(unsigned long)moved);
+        FILE_CHECK(result == 0, 0x100 | ((int)-result & 255));
+    }
+    {
+        s64 result = gemdos(0x41, (s64)(unsigned long)moved, 0);
+        FILE_CHECK(result == 0, 0x200 | ((int)-result & 255));
+    }
+    FILE_CHECK(gemdos(0x3e, fd, 0) == 0, 23);
+    fd = -1;
+    function = (int (*)(void))(unsigned long)executable;
+    FILE_CHECK(function() == 0x45, 24);    /* first execute after rename/unlink/close */
+    replacement = gemdos(0x3c, (s64)(unsigned long)path, 0);
+    FILE_CHECK(replacement >= 0 && sys(GEMDOS, 0x40, replacement, 3, (s64)(unsigned long)fresh) == 3, 14);
+    FILE_CHECK(right[4096] == 'B' && right[4128] == 0, 15);
+    FILE_CHECK(sys(GEMDOS, 0x42, 0, replacement, 0) == 0 &&
+               sys(GEMDOS, 0x3f, replacement, 3, b + 4096) == 3 && right[4096] == 'n' &&
+               left[4096] == 'B', 16);
+    FILE_CHECK(gemdos(GEMDOS_MUNMAP, b, 4096) == 0 &&
+               sys(GEMDOS, GEMDOS_MPROT, b + 4096, 4096, PROT_READ) == 0 && right[4096] == 'n', 17);
+done:
+    if (a > 0) gemdos(GEMDOS_MUNMAP, a, 8192);
+    if (b > 0) gemdos(GEMDOS_MUNMAP, b, 8192);
+    if (tail > 0) gemdos(GEMDOS_MUNMAP, tail, 4096);
+    if (executable > 0) gemdos(GEMDOS_MUNMAP, executable, 4096);
+    if (fd >= 0) gemdos(0x3e, fd, 0);
+    if (replacement >= 0) gemdos(0x3e, replacement, 0);
+    gemdos(0x41, (s64)(unsigned long)path, 0);
+    gemdos(0x41, (s64)(unsigned long)moved, 0);
+    gemdos(0x3a, (s64)(unsigned long)directory, 0);
+#undef FILE_CHECK
+    return bad;
+}
+
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss);
 extern int vdi_contract_checks(void);
 extern int vdi_roundtrip_checks(short inherited_handle, int fault_after_open);
@@ -174,6 +338,221 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+#if CONF_WITH_ELF_SHARED
+    case '1': {
+        static const char empty_tail[] = { 0, 0 };
+        static const char env[] = "CHECK=660\0\0";
+        static const char *const bad_files[] = {
+            "C:\\SOMISS.TOS", "C:\\SOSYM.TOS", "C:\\SOBOOT.TOS"
+        };
+        static const char *const good_files[] = {
+            "C:\\SOAPP.TOS", "C:\\SOEXPH.TOS", "C:\\SOPIPH.TOS"
+        };
+        unsigned int k;
+        int cycle;
+        for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
+            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)bad_files[k],
+                             (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
+            if (child != 127) pterm(0x200 | (k << 8) | ((int)child & 0xff));
+        }
+        for (cycle = 0; cycle < 2; cycle++) {
+            for (k = 0; k < sizeof(good_files) / sizeof(good_files[0]); k++) {
+                s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)good_files[k],
+                                 (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
+                if (child != 77) pterm(0x100 | (k << 8) | ((int)child & 0xff));
+            }
+        }
+        for (cycle = 0; cycle < 2; cycle++) {
+            static const char return_tail[] = { 6, 'r', 'e', 't', 'u', 'r', 'n', 0 };
+            static const char exit_tail[] = { 4, 'e', 'x', 'i', 't', 0 };
+            static const char raw_tail[] = { 5, '_', 'E', 'x', 'i', 't', 0 };
+            static const char nested_tail[] = { 4, 'n', 'e', 's', 't', 0 };
+            const char *path = cycle ? "C:\\CLIENTP.TOS" : "C:\\CLIENT.TOS";
+            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                             (s64)(unsigned long)return_tail, (s64)(unsigned long)env);
+            if (child != 77) pterm(0x400 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)exit_tail, (s64)(unsigned long)env);
+            if (child != 88) pterm(0x500 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)raw_tail, (s64)(unsigned long)env);
+            if (child != 89) pterm(0x600 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)nested_tail, (s64)(unsigned long)env);
+            if (child != 77) pterm(0x700 | ((int)child & 0xff));
+        }
+        pterm(0);
+        break;
+    }
+    case '2': {
+        static char args[] = "!\"hello world\" \"\" C:\\tmp";
+        static const char env[] = "CHECK=660\0SECOND=value\0\0";
+        static const char extended[] = "CHECK=660\0SECOND=value\0ARGV=\0custom-name\0hello world\0C:\\tmp\0\0";
+        static const unsigned char argv_tail[] = { 127, 0 };
+        const char *path = "C:\\DYNTEST.TOS";
+        s64 child;
+        u32 child_env;
+        int cycle;
+
+        static const char *const bad_files[] = {
+            "C:\\DYNMISS.TOS", "C:\\DYNBAD.TOS", "C:\\DYNNEST.TOS",
+            "C:\\DYNDUPE.TOS", "C:\\DYNNX.TOS", "C:\\DYNTRNC.TOS"
+        };
+        unsigned int k;
+
+        child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\STATICPH.TOS",
+                     (s64)(unsigned long)"", (s64)(unsigned long)env);
+        if (child != 0) pterm(0x800 | ((int)child & 0xff));
+        args[0] = sizeof(args) - 2;
+        for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)bad_files[k],
+                         (s64)(unsigned long)args, (s64)(unsigned long)env);
+            if (child != (k == 0 ? -33 : -66))
+                pterm(0x200 | (k << 4) | ((int)child & 15));
+        }
+        child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\DYNPIE.TOS",
+                     (s64)(unsigned long)args, (s64)(unsigned long)env);
+        if (child != 37)
+            pterm(0x300 | ((int)child & 0xff));
+        /* A staged image may be discarded without ever entering userspace. */
+        child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+                     (s64)(unsigned long)args, (s64)(unsigned long)env);
+        if (child <= 0)
+            pterm(5);
+        child_env = ((volatile u32 *)(unsigned long)child)[11];
+        if (gemdos(0x49, child, 0) || gemdos(0x49, child_env, 0))
+            pterm(6);
+        for (cycle = 0; cycle < 2; cycle++) {
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
+                         (s64)(unsigned long)args, (s64)(unsigned long)env);
+            if (child != 37)
+                pterm(0x100 | ((int)child & 0xff));
+            child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+                         (s64)(unsigned long)argv_tail, (s64)(unsigned long)extended);
+            if (child <= 0)
+                pterm(2);
+            /* Editing the public entry cannot redirect a staged interpreter.
+             * Its startup vectors are private snapshots, too. */
+            child_env = ((volatile u32 *)(unsigned long)child)[11];
+            ((volatile u32 *)(unsigned long)child)[2] = 0;
+            ((volatile unsigned char *)(unsigned long)child)[0x80] = 0;
+            *(volatile char *)(unsigned long)child_env = '|';
+            if (sys4(GEMDOS, 0x4b, 4, 0, child, 0) != 37)
+                pterm(3);
+            if (gemdos(0x49, child, 0) || gemdos(0x49, child_env, 0))
+                pterm(4);
+        }
+        child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+                     (s64)(unsigned long)args, (s64)(unsigned long)env);
+        if (child <= 0 || sys4(GEMDOS, 0x4b, 6, 0, child, 0) != 37)
+            pterm(7);
+        pterm(0);
+        break;
+    }
+    case '3':
+        pterm(x32_ldso_probe());
+        break;
+#endif
+    case '4': {
+        s64 rc;
+        static const char empty_tail[] = { 0, 0 };
+        if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0) != EINVFN ||
+            sys(GEMDOS, GEMDOS_MPROT, PTOS_MMAP_BASE, 4096, PROT_READ) != EINVFN ||
+            gemdos(GEMDOS_MUNMAP, PTOS_MMAP_BASE, 4096) != EINVFN)
+            pterm(1);
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\DYNTEST.TOS",
+                  (s64)(unsigned long)empty_tail, 0);
+        if (rc != -66 && rc != -33)
+            pterm(2);                  /* PT_INTERP never enters the static fallback */
+        pterm(0);
+        break;
+    }
+    case '0':
+        pterm(file_mapping_api());
+        break;
+    case '5':
+        pterm(mapping_api());
+        break;
+    case '6': {
+        s64 address = mmap_private(0, 12288, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, 0);
+        volatile u32 *data = (volatile u32 *)(unsigned long)address;
+        s64 handle, result;
+
+        if (address <= 0)
+            pterm(1);
+        if (sys(GEMDOS, GEMDOS_MPROT, address, 4096, PROT_READ) || data[0])
+            pterm(2);                  /* a legal first read sees zero */
+        if (sys(GEMDOS, GEMDOS_MPROT, address + 4096, 4096, PROT_READ | PROT_WRITE))
+            pterm(3);
+        handle = gemdos(0x3d, (s64)(unsigned long)"C:\\X32HELLO.TOS", 0);
+        if (handle < 0)
+            pterm(4);
+        result = sys(GEMDOS, 0x3f, handle, 4, address + 4096);
+        gemdos(0x3e, handle, 0);
+        if (result != 4 || data[1024] != 0x464c457fU)
+            pterm(5);                  /* kernel writes to an untouched RW page */
+        if (sys(GEMDOS, 0x17d, address + 8192, 4, 1) != EINVAL ||
+            sys(GEMDOS, 0x3f, -1, 4, address + 8192) != EIMBA)
+            pterm(6);                  /* untouched NONE is never an allowed buffer */
+        if (sys(GEMDOS, GEMDOS_MPROT, address, 12288, PROT_READ | PROT_WRITE) ||
+            data[0] || data[1024] != 0x464c457fU || data[2048])
+            pterm(7);                  /* mixed present/absent pages keep data and permissions */
+        pterm(gemdos(GEMDOS_MUNMAP, address, 12288) ? 8 : 0);
+        break;
+    }
+    case '7':
+    case '8':
+    case '9': {
+        s64 address = mmap_private(0, 4096, tail[0] == '9' ? PROT_NONE : PROT_READ,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, 0);
+        volatile u32 *data = (volatile u32 *)(unsigned long)address;
+        int (*fn)(void) = (int (*)(void))(unsigned long)address;
+
+        if (address <= 0)
+            pterm(1);
+        if (tail[0] == '7')
+            *data = 1;                 /* first touch cannot write a read-only page */
+        else if (tail[0] == '8')
+            bad = fn();                /* first touch cannot execute an NX page */
+        else
+            bad = *data;               /* first touch cannot read PROT_NONE */
+        pterm(2);
+        break;
+    }
+    case '[':
+    case ']':
+    case '{':
+    case '}':
+    case '|': {
+        s64 address = mmap_private(0, 4096, PROT_READ | PROT_WRITE,
+                                  MAP_PRIVATE | MAP_ANONYMOUS, 0);
+        volatile unsigned char *code;
+        u32 protection;
+        int (*fn)(void);
+
+        if (address <= 0)
+            pterm(1);
+        code = (volatile unsigned char *)(unsigned long)address;
+        /* mov $42, %eax; ret -- a real x32 user function in a new mapping */
+        code[0] = 0xb8; code[1] = 42; code[2] = 0;
+        code[3] = 0; code[4] = 0; code[5] = 0xc3;
+        if (tail[0] == '|')
+            pterm(0);                  /* exit reclaims mapping and metadata */
+        protection = tail[0] == '}' ? PROT_NONE : PROT_READ;
+        if (tail[0] == '[' || tail[0] == ']')
+            protection |= PROT_EXEC;
+        if (sys(GEMDOS, GEMDOS_MPROT, address, 4096, protection))
+            pterm(2);
+        if (tail[0] == ']')
+            code[0] = 0;               /* RX write must fault */
+        if (tail[0] == '}')
+            bad = code[0];             /* NONE read must fault */
+        fn = (int (*)(void))(unsigned long)address;
+        if (fn() != 42)                /* T: executes; V: NX must fault */
+            pterm(3);
+        pterm(gemdos(GEMDOS_MUNMAP, address, 4096) ? 4 : 0);
+        break;
+    }
     case 'C': case 'J': case 'T': case 'S': case 'X': case 'Z': case 'U': case '%': case '&':
     case 'Q': case 'O': case 'R': case 'K': case '+': case 'Y': case '~':
         pterm(callback_roundtrip_checks(tail));

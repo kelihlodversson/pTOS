@@ -22,9 +22,13 @@
 #include "string.h"
 #include "kheap.h"
 #include "procmem.h"
+#include "gemerror.h"
 #include "pgtable.h"
 #include "pmem.h"
 #include "pc_x86_64_memory.h"
+#if CONF_WITH_MMAP
+#include "../../../bdos/fileback.h"
+#endif
 
 #define ASPACE_MAGIC    0x41535041434531ULL     /* "ASPACE1" */
 #define FIRST_CAPACITY  16
@@ -39,7 +43,7 @@ struct x86_64_aspace {
         UQUAD va, bytes;
     } *pins;
     ULONG npins, pin_capacity;
-    ULONG nowned;               /* private backing pages: ours alone, freed with us.  They are found */
+    ULONG nowned;               /* owned mappings, including COW file-page references. Found */
                                 /* by X86_64_PTE_OWNED in the leaf entry, not listed */
 };
 
@@ -49,6 +53,50 @@ struct x86_64_aspace {
 #define PTE_PS       0x80ULL
 #define PTE_NX       0x8000000000000000ULL
 #define PTE_ADDR     0xFFFFFFFFFF000ULL
+
+#if CONF_WITH_MMAP
+#define PTE_FILE 0x400ULL
+/* Every record owns one physical page and a backing-object reference.
+ * references counts mapped PTEs; the final PTE drops both page and record. */
+typedef struct file_page {
+    struct file_page *next;
+    FILE_BACKING *backing;
+    UQUAD physical, first_root;
+    ULONG offset, references;
+} FILE_PAGE;
+static FILE_PAGE *file_pages;
+static ULONG file_page_count, file_page_refs, file_cross_shares;
+
+ULONG aspace_file_cross_shares(void) { return file_cross_shares; }
+ULONG aspace_file_pages(void) { return file_page_count; }
+ULONG aspace_file_references(void) { return file_page_refs; }
+
+static void file_page_put(UQUAD physical)
+{
+    FILE_PAGE **link = &file_pages, *p;
+    while ((*link)->physical != physical) link = &(*link)->next;
+    p = *link; file_page_refs--;
+    if (--p->references) return;
+    *link = p->next; file_page_count--;
+    x86_64_pmem_free_pages(physical, 1);
+    fileback_put(p->backing); kfree(p);
+}
+BOOL aspace_file_cow(const ASPACE *as, UQUAD va)
+{
+    UQUAD *pte = x86_64_user_pte(as->pml4_phys, va);
+    return pte && (*pte & (PTE_PRESENT | PTE_FILE)) == (PTE_PRESENT | PTE_FILE);
+}
+#else
+#define PTE_FILE 0
+#endif
+
+static void release_backing(UQUAD entry)
+{
+#if CONF_WITH_MMAP
+    if (entry & PTE_FILE) { file_page_put(entry & PTE_ADDR); return; }
+#endif
+    x86_64_pmem_free_pages(entry & PTE_ADDR, 1);
+}
 
 /* Grows the vector and records a page; false (and nothing recorded) if the
  * vector could not grow. */
@@ -167,7 +215,7 @@ static void free_owned_pages(struct x86_64_aspace *as)
                 l1 = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (l2[i2] & PTE_ADDR));
                 for (i1 = 0; i1 < 512; i1++)
                     if ((l1[i1] & PTE_PRESENT) && (l1[i1] & X86_64_PTE_OWNED)) {
-                        x86_64_pmem_free_pages(l1[i1] & PTE_ADDR, 1);
+                        release_backing(l1[i1]);
                         l1[i1] = 0;
                         as->nowned--;
                     }
@@ -503,6 +551,66 @@ BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     return FALSE;
 }
 
+#if CONF_WITH_MMAP
+/* 1: mapped/private copy ready, 2: allocation failure, 3: backing I/O error.
+ * Logical permissions are checked by the reservation owner before this call. */
+int aspace_fault_file(ASPACE *as, UQUAD va, FILE_BACKING *backing, ULONG offset,
+                        UWORD prot, BOOL write)
+{
+    FILE_PAGE *p;
+    UQUAD physical, old = 0, *pte;
+    BOOL copy = write && (prot & ASPACE_PROT_WRITE);
+    va &= ~(X86_64_PAGE_SIZE - 1);
+    if (va >= USER_VA_LIMIT || (offset & (X86_64_PAGE_SIZE - 1))) return 3;
+    pte = x86_64_user_pte(as->pml4_phys, va);
+    if (pte && (*pte & PTE_PRESENT)) {
+        if (!copy || !(*pte & PTE_FILE)) return 3;
+        old = *pte & PTE_ADDR;
+    }
+    for (p = file_pages; p; p = p->next)
+        if ((old && p->physical == old) ||
+            (!old && p->backing == backing && p->offset == offset)) break;
+    /* A shared-page hit may still need new page tables and bookkeeping. */
+    if (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST) return 2;
+    if (!copy && p) {
+        if (!aspace_map_page(as, va, p->physical, prot & ~ASPACE_PROT_WRITE)) return 2;
+        *x86_64_user_pte(as->pml4_phys, va) |= X86_64_PTE_OWNED | PTE_FILE;
+        if (p->first_root != as->pml4_phys) file_cross_shares++;
+        p->references++; file_page_refs++; as->nowned++;
+        return 1;
+    }
+    physical = x86_64_pmem_try_alloc_pages(1, 0);
+    if (physical == X86_64_PMEM_NONE) return 2;
+    if (p) memcpy((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + physical),
+                    (const void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + p->physical), X86_64_PAGE_SIZE);
+    else if (fileback_read(backing, offset,
+                (void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + physical), X86_64_PAGE_SIZE) != E_OK) {
+        x86_64_pmem_free_pages(physical, 1); return 3;
+    }
+    if (!copy) {
+        p = kalloc(sizeof(*p));
+        if (!p) { x86_64_pmem_free_pages(physical, 1); return 2; }
+        p->backing = backing; p->offset = offset; p->physical = physical; p->first_root = as->pml4_phys; p->references = 1;
+    }
+    /* Replacing an existing leaf uses the present page tables; no old entry
+     * is dropped until the complete replacement is ready. */
+    if (!aspace_map_page(as, va, physical, copy ? prot : prot & ~ASPACE_PROT_WRITE)) {
+        if (!copy) kfree(p);
+        x86_64_pmem_free_pages(physical, 1); return 2;
+    }
+    pte = x86_64_user_pte(as->pml4_phys, va);
+    *pte |= X86_64_PTE_OWNED;
+    if (!copy) {
+        *pte |= PTE_FILE; p->next = file_pages; file_pages = p;
+        fileback_hold(backing); file_page_count++; file_page_refs++;
+    }
+    if (old) file_page_put(old);
+    else as->nowned++;
+    if (x86_64_read_cr3() == as->pml4_phys) x86_64_write_cr3(as->pml4_phys);
+    return 1;
+}
+#endif
+
 BOOL aspace_unmap_private(ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD pages, i;
@@ -521,10 +629,10 @@ BOOL aspace_unmap_private(ASPACE *as, UQUAD va, UQUAD bytes)
     }
     for (i = 0; i < pages; i++) {
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
-        UQUAD phys = *pte & PTE_ADDR;
+        UQUAD entry = *pte;
 
         *pte = 0;
-        x86_64_pmem_free_pages(phys, 1);
+        release_backing(entry);
         as->nowned--;
     }
     if (x86_64_read_cr3() == as->pml4_phys)
@@ -578,7 +686,7 @@ BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
 
         if (pte && (*pte & PTE_PRESENT)) {
-            x86_64_pmem_free_pages(*pte & PTE_ADDR, 1);
+            release_backing(*pte);
             *pte = 0;
             as->nowned--;
         }
@@ -596,7 +704,7 @@ static BOOL range_is_private(const struct x86_64_aspace *as, UQUAD va, UQUAD pag
     for (i = 0; i < pages; i++) {
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
 
-        if (!pte || !(*pte & PTE_PRESENT) || !(*pte & X86_64_PTE_OWNED))
+        if (!pte || !(*pte & PTE_PRESENT) || !(*pte & X86_64_PTE_OWNED) || (*pte & PTE_FILE))
             return FALSE;
     }
     return TRUE;
@@ -649,7 +757,7 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
     return TRUE;
 }
 
-BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL lazy)
 {
     UQUAD pages, i;
 
@@ -657,15 +765,31 @@ BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
         bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
-    if (!range_is_private(as, va, pages))
-        return FALSE;
+    /* Missing pages are legal only for a caller-validated lazy reservation.
+     * Validate ownership of every present page before updating any PTE. */
     for (i = 0; i < pages; i++) {
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
-        UQUAD e = (*pte & (PTE_ADDR | X86_64_PTE_OWNED)) | PTE_PRESENT;
+
+        if (!pte || !(*pte & PTE_PRESENT)) {
+            /* A missing leaf PTE can also mean a foreign large-page
+             * mapping; only genuinely absent pages count as lazy holes. */
+            if (!lazy || aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
+                return FALSE;
+        } else if (!(*pte & X86_64_PTE_OWNED)) {
+            return FALSE;
+        }
+    }
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        UQUAD e;
+
+        if (!pte || !(*pte & PTE_PRESENT))
+            continue;
+        e = (*pte & (PTE_ADDR | X86_64_PTE_OWNED | PTE_FILE)) | PTE_PRESENT;
 
         if (prot & ASPACE_PROT_USER)
             e |= PTE_USER;
-        if (prot & ASPACE_PROT_WRITE)
+        if ((prot & ASPACE_PROT_WRITE) && !(*pte & PTE_FILE))
             e |= PTE_WRITABLE;
         if (!(prot & ASPACE_PROT_EXEC))
             e |= PTE_NX;
@@ -674,6 +798,16 @@ BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);
     return TRUE;
+}
+
+BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    return protect_private(as, va, bytes, prot, FALSE);
+}
+
+BOOL aspace_protect_lazy(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    return protect_private(as, va, bytes, prot, TRUE);
 }
 
 /*

@@ -101,7 +101,7 @@ extern UQUAD x86_64_read_cr3(void);
 extern UQUAD x86_64_kernel_pml4_phys(void);
 
 void enter(void);
-int x86_64_demand_page(UQUAD address);     /* called from bios/arch/x86_64/panic.c */
+int x86_64_demand_page(UQUAD address, UQUAD error_code);     /* called from bios/arch/x86_64/panic.c */
 void bdos_trap2(void);
 void gouser(void);
 void termuser(void) NORETURN;
@@ -350,6 +350,7 @@ void gouser_entry(WORD entry_type)
          * not in the user-writable basepage (the TPA is no stack).  The entry
          * contract of doc/process-entry.txt: RSP + 8 divisible by 16. */
         UQUAD user_rsp = kproc_user_stack(p);
+        BOOL standard_entry = kproc_standard_entry(p);
         X86_64_PROCESS_LAUNCH launch;
         UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
         UQUAD launcher_stack = x86_64_get_kernel_stack();
@@ -365,7 +366,7 @@ void gouser_entry(WORD entry_type)
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys || !kstack_phys || !user_rsp)
             panic("x86-64: process launched without an address space, stack or kernel stack\n");
-        if ((user_rsp & 15) != 8)
+        if ((user_rsp & 15) != (standard_entry ? 0 : 8))
             panic("x86-64: process stack not aligned for entry\n");
 
         /*
@@ -395,7 +396,7 @@ void gouser_entry(WORD entry_type)
         launcher_in_syscall = x86_64_gs_to_user();
         if (setjmp(launch.resume) == 0)
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
-                              (UQUAD)(uintptr_t)p, entry_type);
+                              standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);
         current_launch = launch.previous;
         /* Pterm() was a system call, still on the child's stack with the
          * kernel GS base swapped in: normalise that first, then restore the
@@ -424,19 +425,21 @@ void gouser_entry(WORD entry_type)
 /*
  * A page fault on a page that is not there (bios/arch/x86_64/panic.c asks
  * before it treats the fault as fatal): if it is a page of the running process's
- * stack or Malloc() memory, which are backed when first touched, back it and
+ * stack, Malloc(), anonymous or private file memory, back/COW it with its access and
  * resume.  The process's address space must be the one in use; a fault at a user
  * address while the kernel runs for the process (a buffer it did not validate)
  * is answered the same way.  0: not a lazy page; 1: backed; 2: it is one and no
- * physical page is left.
+ * physical page is left; 3: file-backing I/O error.
  */
-int x86_64_demand_page(UQUAD address)
+int x86_64_demand_page(UQUAD address, UQUAD error_code)
 {
     UQUAD pml4 = kproc_user_root(run);
 
     if (address >= USER_VA_LIMIT || !pml4 || pml4 != x86_64_read_cr3())
         return 0;
-    return kproc_demand_page(run, address);
+    return kproc_demand_page(run, address,
+                ((error_code & 2) ? ASPACE_PROT_WRITE : 0) |
+                ((error_code & 16) ? ASPACE_PROT_EXEC : 0));
 }
 
 void termuser(void)

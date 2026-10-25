@@ -271,10 +271,9 @@ void x86_64_syscall_abandoned(void)
 }
 
 /*
- * The argument array osif() takes, from the trap frame.  5 slots, not 4:
- * bdosmain.c's own dispatch (the p4 case, e.g. Pexec's mode/path/tail/env)
- * reads up to pw[4] -- GEMDOS's own widest call needs all 4 real argument
- * registers this convention has (trap.h), not just the first 3.
+ * The argument array osif() takes, from the trap frame.  Seven slots:
+ * the function and six scalar arguments, including Mmap's fd and offset.
+ * Existing calls continue to inspect only the arguments they use.
  *
  * `long`, not LONG: see this file's own top-of-file comment on why a
  * fixed-32-bit slot here would truncate any pointer argument (Pexec's
@@ -287,6 +286,8 @@ static void gemdos_args(long *pw, const x86_64_trap_frame_t *frame)
     pw[2] = (long)frame->rsi;
     pw[3] = (long)frame->rdx;
     pw[4] = (long)frame->r10;
+    pw[5] = (long)frame->r8;
+    pw[6] = (long)frame->r9;
 }
 
 /*
@@ -370,7 +371,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
 #endif
         break;
     case X86_64_TRAP_GEMDOS: {
-        long pw[5];
+        long pw[7];
 
         /* Only a ring-3 `syscall` gets here: kernel code calls the GEMDOS
          * implementations directly (bdos/arch/x86_64/kcall.c).  The caller's
@@ -745,16 +746,38 @@ void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
         "mov %0, %%cr3\n\t"
         "mov %3, %%rdi\n\t"
         "mov %4, %%rsi\n\t"
+        "xor %%edx, %%edx\n\t"                 /* no runtime finalizer yet */
         "pushq $" XSTR(X86_64_USER_DATA_SEL) "\n\t" /* SS */
         "pushq %1\n\t"                              /* RSP */
         "pushq $0x202\n\t"                          /* RFLAGS: IF enabled */
         "pushq $" XSTR(X86_64_USER_CODE_SEL) "\n\t" /* CS */
         "pushq %2\n\t"                              /* RIP */
-        "iretq"
+        /* No operand is needed after the iret frame is complete. A zero
+         * basepage selects standard ELF entry: clear every scratch register
+         * so no kernel address survives into the interpreter. Legacy entry
+         * retains its explicit RDI/RSI contract. This function never returns. */
+        "testq %%rdi, %%rdi\n\t"
+        "jnz 1f\n\t"
+        "xor %%eax, %%eax\n\t"
+        "xor %%edi, %%edi\n\t"
+        "xor %%esi, %%esi\n\t"
+        "xor %%edx, %%edx\n\t"
+        "xor %%ebx, %%ebx\n\t"
+        "xor %%ecx, %%ecx\n\t"
+        "xor %%ebp, %%ebp\n\t"
+        "xor %%r8d, %%r8d\n\t"
+        "xor %%r9d, %%r9d\n\t"
+        "xor %%r10d, %%r10d\n\t"
+        "xor %%r11d, %%r11d\n\t"
+        "xor %%r12d, %%r12d\n\t"
+        "xor %%r13d, %%r13d\n\t"
+        "xor %%r14d, %%r14d\n\t"
+        "xor %%r15d, %%r15d\n\t"
+        "1: iretq"
         :
         : "r"(pml4_phys), "r"(user_rsp), "r"(entry_rip),
           "r"(basepage), "r"(entry_type)
-        : "rdi", "rsi", "memory"
+        : "rdi", "rsi", "rdx", "memory"
     );
     __builtin_unreachable();
 }

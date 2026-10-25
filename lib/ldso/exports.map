@@ -1,0 +1,2 @@
+/* Interpreter implementation symbols never enter application lookup scope. */
+{ local: *; };

@@ -208,4 +208,3 @@ void desk_window_test(void)
                           "x32 desktop window getter retries FAIL\r\n");
 }
 #endif
-

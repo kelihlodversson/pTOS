@@ -46,6 +46,9 @@ class Guest:
             for number in reversed(range(14)):
                 shutil.copy("desk/emudesk-raspi.inf", files / ("FILE%02d.INF" % number))
             (files / "NOISE.TXT").write_text("This must not appear in an INF listing.\n")
+        shared_runtime = "CONF_WITH_ELF_SHARED = y" in Path("obj/auto.conf").read_text()
+        if shared_runtime:
+            shutil.copytree("obj/ldso/runtime/GEMSYS", esp / "GEMSYS", dirs_exist_ok=True)
         second = self.root / "second"
         second.mkdir()
         shutil.copy("desk/emudesk-raspi.inf", second / "SECOND.INF")
@@ -54,12 +57,23 @@ class Guest:
         self.log = self.output / "boot.log"
         self.monitor = self.root / "monitor.sock"
         self.log.write_text("")
+        disks = ["format=raw,file=fat:rw:" + str(esp), "format=raw,file=fat:rw:" + str(second)]
+        if shared_runtime:
+            # File-backed shared pages need a stable FAT identity and chain;
+            # use real sectors for the shared-runtime integration run.
+            disks = []
+            for name, source in (("system", esp), ("second", second)):
+                image = self.root / (name + ".img")
+                subprocess.run(["tools/mkhdisk.sh", str(image), "33554432"] +
+                               [str(path) for path in sorted(source.iterdir())],
+                               check=True, stdout=subprocess.DEVNULL)
+                disks.append("format=raw,file=" + str(image))
         self.process = subprocess.Popen([
             args.qemu, "-machine", "pc", "-m", "256", "-cpu", "qemu64,+pdpe1gb",
             "-drive", "if=pflash,format=raw,readonly=on,file=" + args.ovmf_code,
             "-drive", "if=pflash,format=raw,file=" + str(variables),
-            "-drive", "format=raw,file=fat:rw:" + str(esp),
-            "-drive", "format=raw,file=fat:rw:" + str(second),
+            "-drive", disks[0],
+            "-drive", disks[1],
             "-serial", "file:" + str(self.log), "-display", "none",
             "-monitor", "unix:" + str(self.monitor) + ",server=on,wait=off",
         ], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
