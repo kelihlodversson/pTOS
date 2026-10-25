@@ -471,7 +471,8 @@ it:
   - The ELF loader rewrites e_entry for p_vaddr != p_paddr in the segment
     that holds it (as for virt-arm); the bootinfo list is placed after the
     highest *physical* address of the image.
-=======
+
+
 Raspberry Pi, as built by #567 (CONF_WITH_HIGHER_HALF)
 .......................................................
 
@@ -519,6 +520,126 @@ What differs from virt-arm:
     caches off, as they are at power on, then starts as the first boot did.
   - The kernel half is not supervisor-only yet, for the same reason as on
     virt-arm (#568).
+
+
+Per-process address spaces, as built by #568 (ARM) and #570 (m68k)
+...................................................................
+
+CONF_WITH_PROCESS_ASPACES (Kconfig.machine) turns on CONF_WITH_USER_ASPACE
+on the 32-bit MMU machines, with the generic layer the x32 kernel has:
+every process in user mode, in a table of its own, with the kernel half
+supervisor-only.  It needs the higher-half kernel and a command line that is
+a program (CONF_EXTERNAL_CLI): the AES and the desktop still run from the
+kernel image in the kernel's own address space, so the option is off with
+CONF_WITH_AES.  The configurations are virt-arm-aspace_defconfig,
+rpi2-aspace_defconfig and virt-m68k-aspace_defconfig, tested by CI as the
+regression machines virt-arm-aspace, raspi2b-aspace and virt-m68k-aspace
+(tools/run-regression-tests.sh).
+
+What is shared by both architectures:
+
+  - bios/pmem32.c is a bitmap page allocator for the RAM after the kernel
+    image and the pool of the GEMDOS memory descriptors (the pool is a quarter
+    of the RAM, 1 to 8 MiB, in the window; bios/biosmem.c).  Everything a
+    process owns -- its pages, its page tables, its kernel stack -- and the
+    kernel heap (bios/kheap.c) come from it.  The pool of the memory
+    descriptors is in the kernel half now: no address in the lower half is
+    the kernel's, and the TPA of a process is a block of procmem's window,
+    0x00200000, 2 MiB (bios/procmem.c), that is mapped into its address space.
+  - bios/aspace.c is the address space: it owns the root and the table pages
+    the backend asks for, maps private pages (freed with the space) and
+    borrowed ones (procmem blocks), and destroys all of it together.  What an
+    architecture provides is include/aspace32.h; bios/progimage.c validates
+    and maps the layout of a program (segments in USER_IMAGE_BASE..+4 MiB,
+    none sharing a page).
+  - Each process has a kernel stack of 4 pages.  Exceptions from user mode,
+    GEMDOS, BIOS and XBIOS calls run on it, and gouser() (Pexec()) waits on the
+    stack of the launcher with a setjmp(); the process that ends, by Pterm()
+    or by a fault, returns to it by longjmp() (bdos/arch/<arch>/uspace.c).
+    The kernel calls GEMDOS functions directly (CONF_WITH_KCALL, bdos/kcall.c).
+  - A call from user mode is checked (bdos/uaccess.c, bios/biosaccess.c,
+    bios/usertrap.c) against the pages of the caller before it runs.
+    Super() is refused except Super(1); Supexec() and TRAP #2 (the AES and VDI)
+    are refused; the Line-A is a fault.  A fault ends that process only
+    (proc_fault()).  Disk I/O to a user buffer goes through a bounce buffer
+    (blkdev_rwabs()), as DMA wants physical addresses.
+  - A program in ELF finds its stack private and far from its TPA (the stack top
+    is 0x80000000 - 8): libcmini's startup keeps a stack that is not in the TPA
+    and does not shrink it (lib/libcmini, crt0 and main.c); a classic PRG on the
+    68k is started the TOS way, below.  EmuCON for such a
+    kernel is built with CLI_SSYSTEM=1 (cli/Makefile): it asks Ssystem() for
+    what it read from the system variables and the cookie jar.  A program must
+    not be linked below 32 KiB (m68k: the kernel's low memory is there) and no
+    two of its segments may share a page.
+
+ARM (virt-arm, Raspberry Pi 2 and up; the Pi 1 builds, ARMv6):
+
+  - TTBCR.N = 1; TTBR1 is the kernel half, supervisor-only (AP privileged
+    access only), the same for the whole uptime; TTBR0 is the root of the
+    process, 8 KiB aligned to 8 KiB (bios/arch/arm/aspace_hw.c).  The second
+    level is Linux-style: a 4 KiB page holds the hardware tables of two
+    neighbouring megabytes and, in the other half, a software word per page
+    (the OWNED flag).
+  - Every process runs with ASID 0; a switch (Pexec(), Pterm()) loads TTBR0
+    and invalidates by ASID, the global entries of the kernel half stay.
+  - The GEMDOS trap is SVC 1 (bdos/arch/arm/uspaceasm.S): the frame of the
+    caller -- the registers and the FPU state -- is saved on the kernel stack,
+    and returned from with all the registers restored, so nothing of the kernel
+    is left in them.  Faults in user mode take the way of any_vec() to
+    proc_fault().  BIOS and XBIOS calls (vectorsasm.S) check their arguments
+    with bios_user_check().
+  - The Raspberry Pi additionally builds both tables at boot as for #567
+    (RASPI_TTBR_MODE) and a reset loads the boot table again
+    (machine_reset_prepare()).
+
+m68k (virt-m68k, 68040; the 68060 is the same tree, untested as QEMU's has no
+MMU registers):
+
+  - The tree is the three levels of the 68040 with 4 KiB pages
+    (bios/arch/m68k/aspace_hw.c).  The root is 128 entries of 32 MiB; URP and
+    SRP both point to the root of the running process.  Entries 64-127 (the
+    kernel half) are copied from the boot tree into every root, so they are
+    the same pointer tables everywhere, and entries 0-63 are the process's
+    own.  The tables are 512 and 256 bytes and are cut from the pages the
+    core hands out (the first from the page of the root).
+  - The kernel's low memory -- the vectors, the system variables, the BIOS
+    stack and the variables of .low_stram, 32 KiB -- is at address 0 in every
+    root, supervisor-only, through one page table that all the roots share.
+  - A switch writes URP and SRP and does PFLUSHAN; the kernel's pages are
+    global (G).  The caches are written back and invalidated (CPUSHA) when
+    code was written, and the tree is flushed with PFLUSHA before a reset
+    (machine_reset_prepare() loads the boot tree: the start code of a reset
+    runs at the physical address).
+  - The trap #1 entry (bdos/arch/m68k/uspaceasm.S) saves d0-d7/a0-a6 and USP on
+    the kernel stack, copies the words of the call from the user stack (what is
+    not readable reads as 0, so that the kernel never touches an unmapped
+    address), and gives osif() the packed frame the 68000 would.  Trap #13 and
+    #14 (vectors.S, bios/arch/m68k/m68kusertrap.c) decode the packed words of
+    the calls that take pointers into the long arguments the checks are
+    written for, and run on the kernel stack too, unlike the classic handler
+    which runs the BIOS on the stack of its caller.  Any exception frame with
+    the S bit clear ends the process (any_vec() -> m68k_user_fault()).
+  - A classic PRG keeps the TOS contract (KPROC_LEGACY_PRG, bdos/kproc.h): it is
+    loaded into a TPA of the window that is the free memory (at most 1 MiB, half
+    of the window, so that its children have room), it starts with its stack
+    pointer at the top of the TPA (a return address of 0 and the basepage at
+    4(sp), as TOS gives it) and chooses its own stack, and Mshrink() of its
+    basepage takes back what it does not need, in whole pages: they are
+    unmapped from its address space and from the loan its launcher holds, then
+    given back to the window (kproc_shrink_tpa()).  p_hitpa stays what it was.
+    A legacy startup that sets its stack from p_hitpa, shrinks and runs needs
+    nothing else.  The program is still in an address space of its own: what is
+    not its TPA, its Malloc() memory or its image is not there, and Super(),
+    Supexec(), the system variables and the hardware are as above.
+  - A program in ELF is started the way ARM and x32 programs are: with a private
+    stack (0x7ffffff0, a return address of 0 and the basepage at 4(sp)), an
+    image of its own, and a TPA that is no more than its basepage.  libcmini
+    tells the two apart by where the stack pointer is at the start, in crt0 and
+    _crtinit(): in the TPA, it is the classic start; outside it, the private
+    one.
+  - Not done: the 68060 and the 68030 (#571), the floppy calls, FPU state across
+    a Pexec(), and the real-hardware cache details (the cache modes of the
+    tables are copyback; the 68060's branch cache is not flushed).
 
 
 Kernel pointers and LONG results

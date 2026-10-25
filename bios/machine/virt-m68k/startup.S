@@ -275,6 +275,9 @@ bi_done:
         lea     PHYS(C_SYM(virt_mmu_early)),a0
         jsr     (a0)
         move.l  d0,d1
+#if CONF_WITH_PROCESS_ASPACES
+        move.l  d0,PHYS(C_SYM(boot_root))       // the tree the MMU was switched on with: a reset needs it back
+#endif
         jmp     (high_start).l
 high_start:
 #else
@@ -295,6 +298,11 @@ clear_bss:
         jra     clear_bss
 clear_bss_done:
 
+#if CONF_WITH_PROCESS_ASPACES
+        // the top of the RAM that is left, as an address in the window: with an
+        // address space for every process there is no pool at virtual 0
+        add.l   #VIRT_WINDOW_VBASE,d1
+#endif
         move.l  d1,C_SYM(phystop)       // the RAM size found above
 
         // The classic meminit code is not used here, so decide first boot
@@ -318,5 +326,7 @@ not_first_boot:
 
         .data
         .even
+        .globl  C_SYM(boot_root)
+C_SYM(boot_root): .dc.l 0               // (CONF_WITH_PROCESS_ASPACES, see above)
 ram_size_valid: .dc.l   0
 ram_size_saved: .dc.l   0

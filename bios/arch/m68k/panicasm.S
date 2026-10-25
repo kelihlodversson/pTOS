@@ -104,6 +104,9 @@ C_SYM(kill_program):
  */
 C_SYM(warm_reset):
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)    // the tree that maps the low alias of the start
+#endif
         jmp     C_SYM(main)
 
 /* void cold_reset(void)
@@ -135,6 +138,9 @@ C_SYM(cold_reset):
         jmp     (a0)
 #else
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)
+#endif
         // We don't know how to cold reset, so just warm reset this OS
         jmp     C_SYM(main)
 #endif

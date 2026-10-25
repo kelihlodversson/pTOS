@@ -52,7 +52,8 @@ typedef struct {
     ULONG spsr;
 } exception_frame_t;
 
-static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
+void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
+extern void arm_svc_unhandled(void);   /* vectorsasm.S */
 
 #if CONF_WITH_HIGHER_HALF
 /*
@@ -104,7 +105,7 @@ void init_exc_vec(void)
     proc_lives = 0;
     tos_vec_prefetch = tos_vec_data = tos_vec_undef = tos_vec_linea = (PFVOID)any_vec;
     for (i = 0; i < (int)ARRAY_SIZE(tos_vec_svc); i++)
-        tos_vec_svc[i] = (PFVOID)any_vec;
+        tos_vec_svc[i] = (PFVOID)arm_svc_unhandled;
 }
 
 void init_user_vec(UWORD first_boot)
@@ -210,9 +211,38 @@ void int_timerc(void)
 
 // A side effect of that we are using a dispatch routine to calculate the correct
 // vector number, the r0 register should contain the (simulated) vector address.
-static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)
+#if CONF_WITH_USER_ASPACE
+/* bdos/proc.c: ends the process that is running, and resumes its launcher */
+extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
+#endif
+
+void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)
 {
     int i;
+
+#if CONF_WITH_USER_ASPACE
+    /*
+     * A fault in a process in user mode is the process's own: it ends, and
+     * its launcher goes on, instead of the machine stopping (only a fault of
+     * the kernel is fatal).  The exception left the interrupts off, and the
+     * launcher may be the kernel, which has nothing else to turn them on.
+     */
+    if ((stack_frame->spsr & 0x1f) == 0x10)
+    {
+        const char *cause;
+
+        switch (vector_addr >> 2)
+        {
+        case 2:  cause = "prefetch abort"; break;
+        case 3:  cause = "data abort"; break;
+        case 4:  cause = "undefined instruction"; break;
+        default: cause = "exception"; break;
+        }
+        __asm__ volatile ("cpsie i" : : : "memory");
+        proc_fault(cause, fsr, far, (UQUAD)(ULONG)stack_frame->user_pc,
+                   (UQUAD)stack_frame->user_sp);
+    }
+#endif
     cpsr_id(); // Disable interrupts
     for(i = 0; i<12; i++)
     {

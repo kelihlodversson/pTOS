@@ -184,6 +184,8 @@ illg_vec:
 priv_vec:
         bsr.s   any_vec
         bsr.s   any_vec
+        .globl  C_SYM(linea_fault_vec)
+C_SYM(linea_fault_vec):
         bsr.s   any_vec         // vector 10
         bsr.s   any_vec
         bsr.s   any_vec
@@ -284,6 +286,16 @@ any_vec:
 #endif /* CONF_WITH_ADVANCED_CPU && !defined(__mcoldfire__) */
 
 dump_stack:
+#if CONF_WITH_USER_ASPACE && !defined(__mcoldfire__)
+        // a fault in a process in an address space of its own ends that
+        // process, and only that (the frame is at (sp); its status first)
+        btst    #5,(sp)
+        jne     dump_kernel_stack
+        move.l  sp,C_SYM(user_fault_frame)
+        move.w  #0x2000,sr              // supervisor mode, interrupts back on
+        jsr     C_SYM(m68k_user_fault)  // does not return
+dump_kernel_stack:
+#endif
         // dump 16 words from the stack
         movem.l (sp),d0-d7
 #ifdef __mcoldfire__
@@ -987,6 +999,10 @@ iil_back:
  */
 C_SYM(int_priv):
         movem.l d0/a0,-(sp)             // saving d0 and a0 while we test
+#if CONF_WITH_USER_ASPACE
+        btst    #5,8(sp)                // a process in user mode: its code may be
+        jeq     pi_back                 // read-only, so it is not patched, it is a fault
+#endif
         movea.l 10(sp),a0               // the offending address
         move.w  (a0),d0                 // the offending instruction
         andi.w  #0xffc0,d0              // isolate move from SR opcode
@@ -1397,6 +1413,9 @@ mcp_ok:
 C_SYM(biostrap):
         move.w  C_SYM(bios_ent),d1
         lea     C_SYM(bios_vecs),a0
+#if CONF_WITH_USER_ASPACE
+        moveq   #0,d0                   // BIOS
+#endif
         jra     biosxbios
 
 // ==== Trap 14 - XBIOS entry point =========================================
@@ -1404,11 +1423,47 @@ C_SYM(biostrap):
 C_SYM(xbiostrap):
         move.w  C_SYM(xbios_ent),d1
         lea     C_SYM(xbios_vecs),a0
+#if CONF_WITH_USER_ASPACE
+        moveq   #1,d0                   // XBIOS
+#endif
 
 
 // ==== Trap 13+14 handler ==================================================
 
 biosxbios:
+#if CONF_WITH_USER_ASPACE && !defined(__mcoldfire__)
+        /*
+         * A process in an address space of its own does not run the BIOS on
+         * its own stack, nor in the register save area of the kernel: the
+         * call runs on its kernel stack (m68kusertrap.c) and returns with
+         * every register but d0 as the process had it, or cleared.
+         */
+        btst    #5,(sp)                 // the high byte of the status: S
+        jne     bx_kernel
+        move.l  usp,a1
+        and.l   #0xffff,d1
+        move.l  d0,-(sp)                // XBIOS?
+        move.l  a1,-(sp)                // the user stack
+        move.l  d1,-(sp)                // the number of functions
+        move.l  a0,-(sp)                // the table
+#if CONF_WITH_MFASTCALL
+        move.l  sp,a0
+#else
+        move.l  sp,-(sp)
+#endif
+        jsr     C_SYM(m68k_user_biosxbios)
+#if !CONF_WITH_MFASTCALL
+        addq.l  #4,sp
+#endif
+        lea     16(sp),sp
+        moveq   #0,d1                   // (nothing of the kernel's is left in a register)
+        moveq   #0,d2
+        sub.l   a0,a0
+        sub.l   a1,a1
+        sub.l   a2,a2
+        rte
+bx_kernel:
+#endif
         move.l  C_SYM(savptr).w, a1
 #ifdef __mcoldfire__
         move.w  (sp)+,d0        // Format/Vector Word

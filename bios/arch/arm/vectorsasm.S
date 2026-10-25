@@ -22,6 +22,8 @@
         .globl  C_SYM(biostrap)       // call BIOS from C
         .globl  C_SYM(xbiostrap)      // call XBIOS from C
         .globl  C_SYM(xbios_unimpl)
+        .globl  C_SYM(arm_svc_unhandled)
+        .extern C_SYM(any_vec)
 
         .globl  C_SYM(check_read_byte)
         .globl  C_SYM(int_vbl)
@@ -124,6 +126,35 @@ C_SYM(default_etv_critic):
         // error code is already in r0 -- simply return
         bx      lr
 
+/*
+ * The default handler of the SVC numbers nobody installed one for
+ * (tos_vec_svc[], vectors.c).  arm_dispatch_svc jumps here with the registers
+ * of the caller as they were, so a frame is built the way the abort handlers
+ * build theirs before any_vec() reads one: with the registers of the caller
+ * left to say anything, a process that made an unknown SVC with r1 = 0 sent
+ * the kernel through a null frame.  The vector number is that of the TOS trap
+ * (0x80 + 4 * n); any_vec() ends a process in user mode, and is a panic
+ * otherwise.
+ */
+C_SYM(arm_svc_unhandled):
+        srsfd   sp!, #0x13
+        sub     sp, sp, #4*15
+        stmia   sp, {r0-r14}^
+        mrs     r0, spsr
+        tst     r0, #0x20               // Thumb: the SVC is the halfword before lr
+        ldrneh  r0, [lr, #-2]
+        ldreq   r0, [lr, #-4]
+        and     r0, r0, #0xf
+        mov     r0, r0, lsl #2
+        add     r0, r0, #0x80
+        mov     r1, sp
+        sub     sp, sp, #4              // srs (8) + frame (60) leave sp 4 mod 8: pad for the AAPCS
+        mov     r2, #0
+        mov     r3, #0
+        ldr     ip, =C_SYM(any_vec)
+        blx     ip
+        b       .
+
 // ==== Trap 13 - BIOS entry point ==========================================
 
 C_SYM(biostrap):
@@ -144,6 +175,14 @@ C_SYM(biostrap):
         push {r1-r4}      // argument registers: a caller may keep using them
         sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
+#if CONF_WITH_USER_ASPACE
+        mov r9, #0              // BIOS (1: XBIOS)
+        mrs r10, spsr           // r10: the caller is a user process
+        and r10, r10, #0x1f
+        cmp r10, #0x10
+        moveq r10, #1
+        movne r10, #0
+#endif
         mov r11, r0
         mov r0, r1
         mov r1, r2
@@ -172,6 +211,14 @@ C_SYM(xbiostrap):
         push {r1-r4}      // argument registers: a caller may keep using them
         sub  sp, sp, #4   // padding: 8 + 16 + 4 + 28 keeps sp 8-byte aligned (AAPCS)
         push {r5-r11}
+#if CONF_WITH_USER_ASPACE
+        mov r9, #1              // XBIOS (0: BIOS)
+        mrs r10, spsr           // r10: the caller is a user process
+        and r10, r10, #0x1f
+        cmp r10, #0x10
+        moveq r10, #1
+        movne r10, #0
+#endif
         mov r11, r0
         mov r0, r1
         mov r1, r2
@@ -189,14 +236,42 @@ C_SYM(xbiostrap):
         // Another difference is that arguments are in registers, so we don't
         // need to fiddle with the stack pointer for that.
 
-        cmp     r11,r5           // Higher than highest number?
-        movhi   r0,#0           // Return 0 when out of range
-        bhi     2f
+        cmp     r11,r5           // Not below the number of entries?
+        movhs   r0,#0           // Return 0 when out of range
+        bhs     2f
 
+#if CONF_WITH_USER_ASPACE
+        cmp     r10, #0
+        beq     3f              // the kernel's own call: its pointers are the kernel's
+        // a user process: look at the pointers the call is given
+        push    {r0-r3}
+        mov     r0, r11         // the function
+        mov     r1, sp          // arguments 1-4
+        add     r2, sp, #16     // the fifth and later ones, as the call reads them
+        mov     r3, r9          // XBIOS?
+        bl      C_SYM(bios_user_check)
+        mov     ip, r0
+        pop     {r0-r3}
+        cmp     ip, #0
+        movne   r0, ip          // refused: the result is the error
+        bne     2f
+3:
+#endif
         ldr     ip, [r4, +r11, LSL #2]   // get the procedure's address
         blx     ip            //
 
+#if CONF_WITH_USER_ASPACE
+        cmp     r10, #0
+        beq     2f
+        mov     r1, r11         // what a user process is told of the result
+        mov     r2, r9
+        bl      C_SYM(bios_user_result_filter)
+#endif
+
 2:
+#if CONF_WITH_USER_ASPACE
+        mov     ip, #0          // (the address of the call is not for a user process)
+#endif
         pop   {r5-r11}       // restore stacked argument registers
         add   sp, sp, #4     // ... the padding
         pop   {r1-r4}        // ... and r1-r4: only r0 (the result) is changed,

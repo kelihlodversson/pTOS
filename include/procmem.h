@@ -49,6 +49,12 @@
 
 void *procmem_alloc(ULONG bytes, UWORD flags);
 BOOL procmem_free(void *p);
+/* Gives the pages after the first `bytes` (whole pages, at least one) of a live
+ * allocation back to the window.  The caller has unmapped them from every
+ * address space (aspace_shrink_procmem()) first.  FALSE if p is no allocation. */
+BOOL procmem_shrink(void *p, ULONG bytes);
+/* The size of the largest run of free pages, in bytes */
+ULONG procmem_largest_free(void);
 
 /* Size in bytes (a whole number of pages) of the live allocation whose
  * base is exactly p; 0 if p is not the base of one. */
@@ -243,6 +249,14 @@ BOOL aspace_map_page(ASPACE *as, VADDR va, PADDR phys, UWORD prot);
  * failure stay in the address space and go away with it.
  */
 BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
+
+/*
+ * The block at va, which `as` mapped (or borrowed) whole, is shrinking to
+ * `bytes`: the pages beyond are unmapped from `as` and the record of the
+ * pin follows, so that the pin count and the mapping agree with what is left.
+ * Call it for every address space that maps the block, then procmem_shrink().
+ */
+void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes);
 
 /*
  * Borrowing: maps [va, va + bytes) of live procmem blocks into `as`

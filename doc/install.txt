@@ -614,6 +614,17 @@ tools/test-pmmu-check.sh boots it on both kinds of CPU, and
 tools/run-regression-tests.sh virt-m68k-mmu runs the regression suite on
 -cpu m68040.
 
+virt-m68k-aspace_defconfig is virt-m68k-mmu with every process in an address
+space of its own (CONF_WITH_PROCESS_ASPACES, #570): EmuCON and the programs it
+starts run in user mode with page tables of their own, and a fault ends only the
+process.  It needs -cpu m68040 and an EmuCON built for the kernel (the build does
+that: CLI_SSYSTEM, cli/Makefile).  tools/run-regression-tests.sh virt-m68k-aspace
+runs the regression suite on it.  The same option on ARM (#568) is
+virt-arm-aspace_defconfig (qemu-system-arm -M virt,highmem=off -cpu cortex-a7)
+and rpi2-aspace_defconfig (a Raspberry Pi 2 with EmuCON on the UART;
+qemu-system-arm -M raspi2b, tools/run-regression-tests.sh raspi2b-aspace).
+doc/mmu-address-space.txt describes what they do.
+
 PC (x86-64, UEFI boot)
 ----------------------
 

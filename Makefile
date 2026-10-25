@@ -1620,7 +1620,7 @@ else
 # stamp) and its own dependencies; the file's time only changes when it builds.
 $(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
 	@echo '  EMUCON'
-	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
 endif
 endif
 
@@ -1744,7 +1744,8 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
-              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
+              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG))
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
 # AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.
@@ -1921,7 +1922,11 @@ ifdef TEST_WITH_PTOS_RELOC
 # doc/elfload.txt's own bare m68k recipe does, avoids both: verified
 # directly with this toolchain (a real libcmini-linked binary linked
 # this way, packed by ptos-elf-pack, and its 90 DIR32 relocations
-# decoded correctly).
+# decoded correctly).  The base is 0x10000, above the first 32 KiB: an
+# address space of its own on the m68k keeps the kernel's low memory there,
+# supervisor-only (doc/mmu-address-space.txt), and a program cannot be linked
+# into it, and the data and the bss are on pages of their own (no two segments of a
+# process share a page).
 obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
@@ -1962,7 +1967,7 @@ relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x2000 -e _start \
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
 	  $(TEST_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 endif

@@ -86,9 +86,10 @@ long xbios_check_user_args(WORD fn, const long *a)
             return E_OK;
         }
     case 0x05:                      /* Setscreen(log, phys, rez, mode) */
-        /* a positive log or phys address becomes the screen the kernel and
-         * the VDI draw on */
-        if ((LONG)a[0] > 0 || (LONG)a[1] > 0)
+        /* a log or phys address becomes the screen the kernel and the VDI
+         * draw on: only "no change" (0 or -1) is allowed, not an address
+         * of the kernel half any more than one of the process */
+        if ((a[0] != 0 && !IS_MINUS1(a[0])) || (a[1] != 0 && !IS_MINUS1(a[1])))
             return EACCDN;
         return E_OK;
     case 0x06:                      /* Setpalette(pal): read at the next VBL */

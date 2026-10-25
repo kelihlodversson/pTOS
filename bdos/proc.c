@@ -562,7 +562,25 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* allocate the basepage depending on memory policy */
     needed = hdr.h01_tlen + hdr.h01_dlen + hdr.h01_blen + sizeof(PD);
-    p = (PD *)alloc_tpa(hdr.h01_flags,needed,&max);
+    p = NULL;
+#if KPROC_LEGACY_PRG
+    /*
+     * A classic PRG gets what TOS gave it: a TPA of the free memory (here at
+     * most half of the window, so that the rest stays for its children), which
+     * it shrinks with Mshrink() once it has set its stack.
+     */
+    if (kpgm_is_prg()) {
+        LONG all = (LONG)procmem_largest_free();
+
+        if (all > (LONG)KPROC_LEGACY_TPA_MAX)
+            all = KPROC_LEGACY_TPA_MAX;
+        all -= 16;                  /* (alloc_tpa() adds some) */
+        if (all > needed)
+            p = (PD *)alloc_tpa(hdr.h01_flags, all, &max);
+    }
+#endif
+    if (p == NULL)
+        p = (PD *)alloc_tpa(hdr.h01_flags,needed,&max);
 
     /* if failed, free env_ptr and return */
     if (p == NULL) {
@@ -590,6 +608,10 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* set the flags (must be done after init_pd) */
     p->p_flags = hdr.h01_flags;
+#if KPROC_LEGACY_PRG
+    if (kpgm_is_prg())
+        kproc_mark_legacy(p);
+#endif
 
     /* use static variable to avoid the obscure longjmp warning */
     cur_p = p;
@@ -937,7 +959,7 @@ static void proc_go(PD *p)
 #endif
     run = (PD *)p;
 
-#ifdef __arm__
+#if defined(__arm__) && !CONF_WITH_USER_ASPACE
     /* gouser() would store whatever r0 happens to hold over the basepage
      * proc_launch_prepare() put there for the new process to find in r0 */
     termuser();

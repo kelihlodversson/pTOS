@@ -15,6 +15,19 @@
 #include "progimage.h"
 #endif
 
+/*
+ * A classic PRG on the 68k keeps the TOS contract (doc/mmu-address-space.txt):
+ * its TPA is the free memory (up to KPROC_LEGACY_TPA_MAX), it starts with its
+ * stack pointer at the top of the TPA and manages it itself, and Mshrink()
+ * gives the rest back.  Programs in ELF have a private stack and no such TPA.
+ */
+#if CONF_WITH_USER_ASPACE && defined(__m68k__) && CONF_WITH_PRG_LOADER
+#define KPROC_LEGACY_PRG 1
+#define KPROC_LEGACY_TPA_MAX  0x100000L    /* half of the window of procmem */
+#else
+#define KPROC_LEGACY_PRG 0
+#endif
+
 typedef struct dta_info DTAINFO;
 
 BOOL kproc_create(PD *pd);
@@ -173,6 +186,10 @@ VADDR kproc_uheap_alloc(PD *pd, ULONG bytes);
 ULONG kproc_uheap_largest(PD *pd);
 LONG kproc_uheap_free(PD *pd, VADDR va);
 LONG kproc_uheap_shrink(PD *pd, VADDR va, long len);
+#if KPROC_LEGACY_PRG
+void kproc_mark_legacy(PD *pd);
+LONG kproc_shrink_tpa(PD *caller, void *blk, long len);
+#endif
 VADDR kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
 ASPACE_ROOT kproc_user_root(PD *pd);          /* 0 if not prepared */
 ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */

@@ -133,6 +133,9 @@ C_SYM(main):
     bl  C_SYM(flush_data_cache_all)
     ldr r4, =C_SYM(phystop)
     ldr r11, [r4]
+#if CONF_WITH_PROCESS_ASPACES
+    sub r11, r11, #(VIRT_WINDOW_VBASE & 0xff000000)     /* phystop is in the window */
+#endif
     add r11, r11, #0x100000     /* the RAM window */
     ldr r4, =C_SYM(arm_boot_regs)
     ldmia r4, {r8-r10}
@@ -209,7 +212,13 @@ virt_arm_post_mmu:
      * switch to C_SYM(stktop) below.  The physical alias of the start of the
      * RAM is not needed any more, except for a reset.
      */
+#if CONF_WITH_PROCESS_ASPACES
+    ldr sp, =VIRT_WINDOW_VBASE  /* no pool: the kernel is all there is in the window */
+    add sp, sp, r11
+    sub sp, sp, #0x10000
+#else
     sub sp, r11, #0x10000
+#endif
     ldr r4, =hello_msg_virt
     bl  print_string
 
@@ -257,6 +266,17 @@ virt_arm_post_mmu:
      */
     ldr r0, =C_SYM(phystop)
     sub r1, r11, #0x100000
+#if CONF_WITH_PROCESS_ASPACES
+    ldr r2, =VIRT_WINDOW_VBASE  /* the top of the RAM in the window */
+    add r1, r1, r2
+    ldr r0, =C_SYM(boot_ttbr0)  /* the table the MMU was switched on with: for a reset */
+    ldr r2, =VIRT_RAM_BASE
+    add r2, r2, r11
+    sub r2, r2, #0x100000
+    add r2, r2, #0x4000         /* behind the 16 KiB of the kernel half */
+    str r2, [r0]
+    ldr r0, =C_SYM(phystop)
+#endif
     str r1, [r0]
 
     /*
@@ -280,7 +300,12 @@ virt_arm_post_mmu:
     sub r0, r10, r0
     cmp r0, r11
     movhs r10, #0
+#if CONF_WITH_PROCESS_ASPACES
+    ldrlo r2, =VIRT_WINDOW_VBASE
+    addlo r10, r0, r2           /* the window address of the same bytes */
+#else
     movlo r10, r0
+#endif
 3:
     ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r8-r10}
@@ -506,12 +531,14 @@ C_SYM(arm_dispatch_undef):
     moveq  r0, #0x28
     movne  r0, #0x10
     mov    r1, sp
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
     FPU_PUSH_SCRATCH ip             /* below the frame r1 points to (keeps the flags) */
     ldreq  ip, =C_SYM(tos_vec_linea)
     ldrne  ip, =C_SYM(tos_vec_undef)
     ldr    ip, [ip]
     blx ip
     FPU_POP_SCRATCH ip
+    add    sp, sp, #4
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
@@ -528,7 +555,10 @@ C_SYM(arm_dispatch_svc):
     // still masked, as the exception left it), as every argument register is
     // live.
     str r3, [sp, #-4]!
-    ldr ip, [lr, #-4]
+    mrs ip, spsr
+    tst ip, #0x20          // Thumb: the SVC is the halfword before lr
+    ldrneh ip, [lr, #-2]
+    ldreq ip, [lr, #-4]
     and ip, ip, #0xF
     ldr r3, =C_SYM(tos_vec_svc)
     ldr ip, [r3, ip, lsl #2]
@@ -547,9 +577,11 @@ C_SYM(arm_dispatch_prefetch_abort):
     mrc p15, 0, r3, c6, c0,  2
     mov r0, #0x08
     mov r1, sp
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
     ldr ip, =C_SYM(tos_vec_prefetch)
     ldr ip, [ip]
     blx ip
+    add    sp, sp, #4
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
@@ -561,13 +593,15 @@ C_SYM(arm_dispatch_data_abort):
     cps    #0x13
     sub    sp, #4*15
     stmia  sp, {r0-r14}^
-    mrc p15, 0, r2, c6, c0,  0
-    mrc p15, 0, r3, c5, c0,  0
+    mrc p15, 0, r2, c5, c0,  0      /* DFSR, then DFAR: the order of any_vec() */
+    mrc p15, 0, r3, c6, c0,  0
     mov r0, #0x0c
     mov r1, sp
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
     ldr ip, =C_SYM(tos_vec_data)
     ldr ip, [ip]
     blx ip
+    add    sp, sp, #4
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
@@ -609,3 +643,8 @@ C_SYM(start_in_hyp): .word 0
 .balign 4
 .global C_SYM(arm_boot_regs)
 C_SYM(arm_boot_regs): .ds.l 3
+/* the physical address of the table of the lower half that the MMU was
+ * switched on with (identity mapping of the start of the RAM), which a
+ * reset needs back (CONF_WITH_PROCESS_ASPACES) */
+.global C_SYM(boot_ttbr0)
+C_SYM(boot_ttbr0): .ds.l 1

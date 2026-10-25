@@ -52,9 +52,19 @@
 // ==== Definitions ==========================================================
 
         .globl  C_SYM(int_linea)              // entry for linea exception
+        .extern C_SYM(linea_fault_vec)
 
 // ==== Line-A handler ===============================
 C_SYM(int_linea):
+#if CONF_WITH_USER_ASPACE && !defined(__mcoldfire__)
+        /* a process in an address space of its own has no drawing in the
+         * kernel to call: it is a fault like any other line 1010 opcode
+         * without a handler, and ends the process */
+        btst    #5,(sp)
+        jne     linea_super
+        jra     C_SYM(linea_fault_vec)
+linea_super:
+#endif
         /* save d0/d1/a0/a2 as they are needed for sprite undraw/draw */
 #ifdef __mcoldfire__
         lea     linea_save,a1
