@@ -169,9 +169,7 @@ static int message_checks(LONG session, LONG window)
     CHECK(aes_message_read(session, NULL, NULL, NULL, NULL, NULL) == 0);
     CHECK(aes_message_wait(session, 0) == 0);
     CHECK(aes_message_wait(session, -2) == EINVAL);
-    CHECK(aes_message_allow(session, -1) == EINVAL);
     CHECK(aes_message_send(-1, 0, 0, 0, 0) == EINVAL);
-    CHECK(aes_message_allow(session, session) == E_OK);
     for (i = 0; i < 16; i++) CHECK(aes_message_send(session, i, 0xffffffffUL, 3, 4) == E_OK);
     CHECK(aes_message_send(session, 99, 0, 0, 0) == EAGAIN);
     CHECK(aes_event_wait(window, CUIS_EVENT_MESSAGE | CUIS_EVENT_KEY, 0) == 1);
@@ -233,10 +231,8 @@ int main(int argc, char **argv, char **envp)
     handle = aes_session_open();
     CHECK(handle >= 0 && aes_session_open() == handle);
     if (argc == 2) {
-        CHECK(aes_message_send(owner, 1, 2, 3, 4) == EACCDN);
-        CHECK(aes_message_allow(owner, handle) == EACCDN);
-        CHECK(aes_message_allow(handle, owner) == E_OK);
-        CHECK(aes_message_deny(handle, owner) == E_OK);
+        /* GEM appl_write needs no receiver handshake or permission API. */
+        CHECK(aes_message_send(owner, 1, 2, 3, 4) == E_OK);
     }
     CHECK(raw(CUIS_SESSION_START, ~0ULL) == handle);
     CHECK(raw(CUIS_SESSION_QUERY, (1ULL << 32) | (ULONG)handle) == EINVAL);
@@ -308,6 +304,13 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 4; i++) {
         tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : i == 2 ? 'f' : 'o';
         CHECK(client_pexec(argv[0], tail, "") == (i >= 2 ? 0xffff : 77));
+        {
+            LONG sender;
+            ULONG a, b, c, d;
+            CHECK(aes_message_read(handle, &sender, &a, &b, &c, &d) == 1);
+            CHECK(sender > handle && a == 1 && b == 2 && c == 3 && d == 4);
+            CHECK(aes_message_read(handle, NULL, NULL, NULL, NULL, NULL) == 0);
+        }
         CHECK(aes_session_query(handle) == E_OK);
         CHECK(aes_window_focused(window) == 1);
         CHECK(aes_update_begin(window) == E_OK);
@@ -328,6 +331,12 @@ int main(int argc, char **argv, char **envp)
     tail[1] = 'u';
     CHECK(client_pexec(argv[0], tail, "") == 77);
     CHECK(aes_update_end(window) == E_OK);
+    {
+        LONG sender;
+        ULONG a, b, c, d;
+        CHECK(aes_message_read(handle, &sender, &a, &b, &c, &d) == 1);
+        CHECK(sender > handle && a == 1 && b == 2 && c == 3 && d == 4);
+    }
     CHECK(aes_window_destroy(window) == E_OK);
     CHECK(aes_window_destroy(window) == EACCDN);
     window = aes_window_create(0, 0, 10, 10);

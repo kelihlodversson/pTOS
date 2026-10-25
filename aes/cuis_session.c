@@ -11,7 +11,6 @@
 extern PD *run;
 
 #define CUIS_MESSAGE_CAPACITY 16U
-#define CUIS_MESSAGE_GRANTS 16U
 #define CUIS_KEY_CAPACITY 16U
 #define CUIS_POINTER_CAPACITY 16U
 #define CUIS_WINDOW_LIMIT 256UL
@@ -45,8 +44,6 @@ typedef struct cuis_client {
     ULONG window_count;
     CUIS_MESSAGE messages[CUIS_MESSAGE_CAPACITY];
     UWORD message_head, message_count;
-    ULONG grants[CUIS_MESSAGE_GRANTS];
-    UWORD grant_count;
 } CUIS_CLIENT;
 static CUIS_CLIENT *clients;
 static ULONG next_handle;
@@ -334,16 +331,6 @@ void cuis_process_exit(PD *owner)
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
     if (client) {
         CUIS_WINDOW *window;
-        CUIS_CLIENT *peer;
-        UWORD i;
-        /* Handles are never recycled. Remove expired grants without removing
-         * already accepted messages, whose sender remains historical identity. */
-        for (peer = clients; peer; peer = peer->next)
-            for (i = 0; i < peer->grant_count; i++)
-                if (peer->grants[i] == client->handle) {
-                    peer->grants[i] = peer->grants[--peer->grant_count];
-                    break;
-                }
         if (update_owner == client) end_update();
         while ((window = client->windows) != NULL) {
             client->windows = window->next;
@@ -401,7 +388,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         if (!client) return ENSMEM;
         client->windows = NULL;
         client->window_count = 0;
-        client->message_head = client->message_count = client->grant_count = 0;
+        client->message_head = client->message_count = 0;
         client->owner = run;
         client->handle = next_handle++;
         client->next = clients;
@@ -730,7 +717,6 @@ LONG cuis_message_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
 {
     CUIS_CLIENT *client, *peer;
     CUIS_MESSAGE message;
-    UWORD i;
     UQUAD flags;
 
     if (function < CUIS_MESSAGE_SEND || function > CUIS_MESSAGE_WAIT) return EINVFN;
@@ -742,8 +728,6 @@ LONG cuis_message_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
             d > 0xffffffffULL || e > 0xffffffffULL) return EINVAL;
         for (peer = clients; peer && peer->handle != a; peer = peer->next) ;
         if (!peer) return EACCDN;
-        for (i = 0; i < peer->grant_count && peer->grants[i] != client->handle; i++) ;
-        if (peer != client && i == peer->grant_count) return EACCDN;
         flags = cuis_input_lock();
         if (peer->message_count == CUIS_MESSAGE_CAPACITY) {
             cuis_input_unlock(flags); return EAGAIN;
@@ -781,16 +765,5 @@ LONG cuis_message_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         cuis_input_unlock(flags);
         return 1;
     }
-    if (b > 0x7fffffffULL) return EINVAL;
-    for (i = 0; i < client->grant_count && client->grants[i] != b; i++) ;
-    if (function == CUIS_MESSAGE_DENY) {
-        if (i < client->grant_count) client->grants[i] = client->grants[--client->grant_count];
-        return E_OK;
-    }
-    for (peer = clients; peer && peer->handle != b; peer = peer->next) ;
-    if (!peer) return EACCDN;
-    if (peer == client || i < client->grant_count) return E_OK;
-    if (client->grant_count == CUIS_MESSAGE_GRANTS) return ENSMEM;
-    client->grants[client->grant_count++] = (ULONG)b;
-    return E_OK;
+    return EINVFN;
 }

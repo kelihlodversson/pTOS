@@ -95,15 +95,6 @@ LONG aes_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, 
     return cuis_call6(CUIS_MESSAGE_READ, (QUAD)session, (uintptr_t)sender,
                       (uintptr_t)a, (uintptr_t)b, (uintptr_t)c, (uintptr_t)d);
 }
-LONG aes_message_allow(LONG session, LONG sender)
-{
-    return cuis_call5(CUIS_MESSAGE_ALLOW, session, sender, 0, 0, 0);
-}
-LONG aes_message_deny(LONG session, LONG sender)
-{
-    return cuis_call5(CUIS_MESSAGE_DENY, session, sender, 0, 0, 0);
-}
-
 LONG aes_message_wait(LONG session, LONG timeout_ms)
 {
     return cuis_call5(CUIS_MESSAGE_WAIT, session, timeout_ms, 0, 0, 0);
