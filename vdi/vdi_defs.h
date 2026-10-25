@@ -437,6 +437,9 @@ extern void (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provi
 void vdimouse_exit(void);
 void timer_exit(void);
 void esc_exit(Vwk *);
+#if CONF_WITH_CUIS
+void vdi_cuis_cursor_flush(void);
+#endif
 void mouse_int(UBYTE *buf);   /* mouse interrupt vector */
 void wheel_int(UBYTE *buf);   /* wheel interrupt routine */
 void mov_cur(WORD new_x, WORD new_y);      /* user button vector */

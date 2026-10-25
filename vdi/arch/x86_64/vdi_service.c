@@ -81,15 +81,71 @@ static struct {
     BOOL pending;
 } events[VDI_CALLBACK_COUNT];
 
+#if CONF_WITH_CUIS
+static UQUAD motion_generation;
+
+/* Called with IRQs masked by the trusted CUIS packet producer. Invalidate
+ * both queued legacy motion and a user handler currently in flight. */
+void vdi_service_callback_supersede_motion(void)
+{
+    motion_generation++;
+    events[VDI_CALLBACK_MOTION].pending = FALSE;
+    events[VDI_CALLBACK_CURSOR].pending = FALSE;
+}
+#endif
+
 /* IRQ-safe, bounded coalescing. No user code, allocation or process switch. */
 void vdi_service_callback_event(UWORD signature, LONG a, LONG b)
 {
     if (signature < VDI_CALLBACK_COUNT) {
+#if CONF_WITH_CUIS
+        if (signature == VDI_CALLBACK_MOTION) motion_generation++;
+#endif
         events[signature].a = a;
         events[signature].b = b;
         events[signature].pending = TRUE;
     }
 }
+
+#if CONF_WITH_CUIS
+static void callback_motion_result(ULONG result, UQUAD generation)
+{
+    UQUAD flags;
+    WORD x = (WORD)HIWORD(result), y = (WORD)LOWORD(result);
+
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    if (generation == motion_generation && !events[VDI_CALLBACK_MOTION].pending) {
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (x >= linea_vars.V_REZ_HZ) x = linea_vars.V_REZ_HZ - 1;
+        if (y >= linea_vars.V_REZ_VT) y = linea_vars.V_REZ_VT - 1;
+        linea_vars.GCURX = x;
+        linea_vars.GCURY = y;
+        linea_vars.user_cur(x, y);
+        vdi_service_callback_event(VDI_CALLBACK_CURSOR, x, y);
+    }
+    if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+}
+
+#if CONF_WITH_X86_64_MEMTEST
+static UQUAD test_motion_generation;
+void vdi_service_test_motion_begin(void)
+{
+    vdi_service_callback_event(VDI_CALLBACK_MOTION, 0, 0);
+    vdi_service_callback_event(VDI_CALLBACK_CURSOR, 0, 0);
+    test_motion_generation = motion_generation;
+}
+BOOL vdi_service_test_motion_end(void)
+{
+    WORD x = linea_vars.GCURX, y = linea_vars.GCURY;
+    BOOL clean = !events[VDI_CALLBACK_MOTION].pending && !events[VDI_CALLBACK_CURSOR].pending;
+    /* Complete the old handler after a CUIS packet superseded it. */
+    callback_motion_result(MAKE_ULONG(x + 1, y + 1), test_motion_generation);
+    return clean && linea_vars.GCURX == x && linea_vars.GCURY == y &&
+           !events[VDI_CALLBACK_CURSOR].pending;
+}
+#endif
+#endif
 
 void vdi_service_callback_work(void)
 {
@@ -97,6 +153,9 @@ void vdi_service_callback_work(void)
     ULONG result;
     LONG a, b;
     UWORD signature;
+#if CONF_WITH_CUIS
+    UQUAD generation;
+#endif
 
     /* One bounded pass per user boundary. */
     for (signature = 0; signature < VDI_CALLBACK_COUNT; signature++) {
@@ -109,10 +168,16 @@ void vdi_service_callback_work(void)
         a = events[signature].a;
         b = events[signature].b;
         events[signature].pending = FALSE;
+#if CONF_WITH_CUIS
+        generation = motion_generation;
+#endif
         if (flags & 0x200)
             __asm__ volatile ("sti" ::: "memory");
         if (user_callback_invoke(callbacks[signature], callback_signatures[signature], a, b, &result) == E_OK &&
             signature == VDI_CALLBACK_MOTION) {
+#if CONF_WITH_CUIS
+            callback_motion_result(result, generation);
+#else
             WORD x = (WORD)HIWORD(result), y = (WORD)LOWORD(result);
 
             /* IRQs continue tracking motion during the user handler. Its
@@ -131,6 +196,7 @@ void vdi_service_callback_work(void)
             }
             if (flags & 0x200)
                 __asm__ volatile ("sti" ::: "memory");
+#endif
         }
     }
 }

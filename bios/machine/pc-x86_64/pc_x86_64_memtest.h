@@ -14,7 +14,7 @@ void x86_64_memtest_callback_syscall(UQUAD call, UQUAD output);
 void x86_64_memtest_callback_exit(PD *pd, UWORD rc);
 #endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_CUIS
-void x86_64_memtest_cuis_wait(void);
+void x86_64_memtest_cuis_wait(ULONG events);
 void x86_64_memtest_cuis_tick(void);
 #endif
 #endif

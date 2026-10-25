@@ -8,5 +8,6 @@
             aes_update_begin; aes_update_end; aes_window_clip;
             aes_window_focus; aes_window_focused; aes_window_unfocus;
             aes_key_read; aes_key_wait;
+            aes_pointer_read; aes_event_wait;
     local: *;
 };

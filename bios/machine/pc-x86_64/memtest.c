@@ -56,6 +56,7 @@
 #endif
 #if CONF_WITH_X32_VDI
 #include "lineavars.h"
+#include "../../../vdi/vdi_defs.h"
 #include "screen_mode.h"
 #include "font.h"
 #include "vdi_service.h"
@@ -63,13 +64,77 @@
 
 #if CONF_WITH_CUIS
 static BOOL cuis_input_watching, cuis_input_armed, cuis_input_legacy_clean;
-static ULONG cuis_input_injections;
-void x86_64_memtest_cuis_wait(void)
+static ULONG cuis_input_injections, cuis_pointer_injections;
+static BOOL cuis_pointer_armed;
+#if CONF_WITH_X32_VDI
+static ULONG cuis_pointer_legacy_calls, cuis_pointer_cursor_calls;
+static BOOL cuis_pointer_callbacks_clean, cuis_pointer_cursor_updated, cuis_pointer_guard_clean;
+#if CONF_WITH_USER_CALLBACKS
+static BOOL cuis_pointer_stale_clean;
+#endif
+static void (*cuis_saved_cursor)(WORD, WORD);
+static void cuis_test_button(WORD buttons) { (void)buttons; cuis_pointer_legacy_calls++; }
+static ULONG cuis_test_motion(WORD x, WORD y)
 {
-    if (cuis_input_watching && !cuis_input_injections) cuis_input_armed = TRUE;
+    cuis_pointer_legacy_calls++;
+    return MAKE_ULONG(x, y);
+}
+static void cuis_test_cursor(WORD x, WORD y)
+{
+    cuis_pointer_cursor_calls++;
+    cuis_saved_cursor(x, y);
+}
+#endif
+void x86_64_memtest_cuis_wait(ULONG events)
+{
+    if (!cuis_input_watching) return;
+    if ((events & CUIS_EVENT_POINTER) && !cuis_pointer_injections) cuis_pointer_armed = TRUE;
+    else if ((events & CUIS_EVENT_KEY) && !cuis_input_injections) cuis_input_armed = TRUE;
 }
 void x86_64_memtest_cuis_tick(void)
 {
+    if (cuis_input_watching && cuis_pointer_armed) {
+        SBYTE press[3] = { (SBYTE)0xfa, 1, -1 }, release[3] = { (SBYTE)0xf8, 0, 0 };
+#if CONF_WITH_X32_VDI
+        void (*button)(WORD) = linea_vars.user_but;
+        ULONG (*motion)(WORD, WORD) = linea_vars.user_mot;
+        WORD old_x = linea_vars.GCURX, old_y = linea_vars.GCURY;
+        cuis_saved_cursor = linea_vars.user_cur;
+        cuis_pointer_legacy_calls = cuis_pointer_cursor_calls = 0;
+        linea_vars.user_but = cuis_test_button;
+        linea_vars.user_mot = cuis_test_motion;
+        linea_vars.user_cur = cuis_test_cursor;
+#endif
+        cuis_pointer_armed = FALSE;
+        cuis_pointer_injections++;
+#if CONF_WITH_X32_VDI
+#if CONF_WITH_USER_CALLBACKS
+        vdi_service_test_motion_begin();
+#endif
+        linea_vars.mouse_flag++;
+#endif
+        call_mousevec(press);
+        call_mousevec(release);
+#if CONF_WITH_X32_VDI
+        cuis_pointer_guard_clean = !cuis_pointer_cursor_calls &&
+            linea_vars.GCURX == (old_x < xres ? old_x + 1 : old_x) &&
+            linea_vars.GCURY == (old_y > 0 ? old_y - 1 : 0);
+        /* Show/hide may clear this after the packet. Flush must re-arm it. */
+        linea_vars.draw_flag = FALSE;
+        linea_vars.mouse_flag--;
+        vdi_cuis_cursor_flush();
+#if CONF_WITH_USER_CALLBACKS
+        cuis_pointer_stale_clean = vdi_service_test_motion_end();
+#endif
+#endif
+#if CONF_WITH_X32_VDI
+        linea_vars.user_but = button;
+        linea_vars.user_mot = motion;
+        linea_vars.user_cur = cuis_saved_cursor;
+        cuis_pointer_callbacks_clean = !cuis_pointer_legacy_calls;
+        cuis_pointer_cursor_updated = cuis_pointer_cursor_calls != 0;
+#endif
+    }
     if (cuis_input_watching && cuis_input_armed) {
         WORD tail = ikbdiorec.tail;
         cuis_input_armed = FALSE;
@@ -2202,6 +2267,7 @@ static void test_ring3(void)
         ULONG sessions = cuis_session_count(), windows = cuis_window_count();
         ULONG visible = cuis_visible_window_count();
         BOOL updating = cuis_update_active(), focused = cuis_focus_active();
+        BOOL pointing = cuis_pointer_attached();
 #if CONF_WITH_X32_VDI
         SCREEN_MODE_DESC mode;
         volatile ULONG *marker = NULL;
@@ -2217,13 +2283,25 @@ static void test_ring3(void)
         cuis_input_watching = TRUE;
         cuis_input_legacy_clean = TRUE;
         cuis_input_armed = FALSE;
-        cuis_input_injections = 0;
+        cuis_input_injections = cuis_pointer_injections = 0;
+        cuis_pointer_armed = FALSE;
+#if CONF_WITH_X32_VDI
+        cuis_pointer_callbacks_clean = cuis_pointer_cursor_updated = FALSE;
+#endif
         probe_expect(':', 0, "libaes/CUIS: nested owners, private state, geometry and fault cleanup");
         cuis_input_watching = FALSE;
+        CHECK(cuis_pointer_injections == 1 && !cuis_pointer_armed,
+              "CUIS pointer wait woke from a real IRQ packet and retained button edges");
         CHECK(cuis_input_legacy_clean, "focused keyboard input did not leak to the BIOS queue");
         CHECK(cuis_input_injections == 1 && !cuis_input_armed,
               "CUIS keyboard wait woke from a translated key in a real timer IRQ");
 #if CONF_WITH_X32_VDI
+        CHECK(cuis_pointer_guard_clean, "CUIS guarded IRQ preserves logical coordinates and defers cursor drawing");
+#if CONF_WITH_USER_CALLBACKS
+        CHECK(cuis_pointer_stale_clean, "CUIS input rejects superseded native VDI motion completion");
+#endif
+        CHECK(cuis_pointer_callbacks_clean && cuis_pointer_cursor_updated,
+              "CUIS pointer routing preserves the cursor and suppresses legacy input callbacks");
         CHECK(vdi_service_test_reopen(), "kernel physical reopen preserves the timer chain");
         ticks = (ULONG)hz_200;
         for (spins = 0; spins < 10000000UL && (ULONG)hz_200 == ticks; spins++)
@@ -2235,6 +2313,7 @@ static void test_ring3(void)
         vdi_service_test_watch(NULL);
         CHECK(vdi_service_test_reset(), "kernel releases idle CUIS display fixture");
 #endif
+        CHECK(cuis_pointer_attached() == pointing, "CUIS pointer targets reclaimed after exits");
         CHECK(cuis_focus_active() == focused, "CUIS focus reclaimed after exits");
         CHECK(cuis_update_active() == updating, "CUIS update section reclaimed after exits");
         CHECK(cuis_visible_window_count() == visible, "CUIS visible stacking repaired after exits");

@@ -126,7 +126,10 @@ void ikbd_writew(WORD w);
 void push_ascii_ikbdiorec(UBYTE ascii);
 #endif
 
-#if CONF_WITH_NATIVE_ABI
+#if CONF_WITH_CUIS
+void cuis_mouse_packet(SBYTE *packet);
+#define call_mousevec cuis_mouse_packet
+#elif CONF_WITH_NATIVE_ABI
 #define call_mousevec ((void (*)(SBYTE *))kbdvecs.mousevec)
 #else /*__arm__*/
 /* the following is in aciavecs.S */
