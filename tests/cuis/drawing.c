@@ -32,6 +32,16 @@ static LONG bar(WORD handle)
     request.ptsin[2] = request.ptsin[3] = 63;
     return service(VDI_SERVICE_DRAW, handle, (uintptr_t)&request, (uintptr_t)&result, 0);
 }
+static LONG gdp_bar(WORD handle)
+{
+    VDI_SERVICE_DRAW_REQUEST request = { 0 };
+    VDI_SERVICE_DRAW_RESULT result;
+    request.code = 11;
+    request.subcode = 1;
+    request.nptsin = 2;
+    request.ptsin[2] = request.ptsin[3] = 63;
+    return service(VDI_SERVICE_DRAW, handle, (uintptr_t)&request, (uintptr_t)&result, 0);
+}
 static LONG pixel(WORD handle, WORD x, WORD y, WORD *output)
 {
     return service(VDI_SERVICE_PIXEL, handle, x, y, (uintptr_t)output);
@@ -114,7 +124,11 @@ int libaes_drawing_checks(void)
     CHECK(service(VDI_SERVICE_COLOR, handle, 0, 0, 0) == 0);
     CHECK(service(VDI_SERVICE_LINE, handle, 2, (uintptr_t)line, 0) == E_OK);
     CHECK(attribute(handle, 25, 0) == E_OK);  /* white */
-    CHECK(bar(handle) == E_OK);
+    CHECK(gdp_bar(handle) == E_OK); /* default perimeter expands input points */
+    CHECK(pixel(handle, 10, 10, output) == E_OK && output[1] != black);
+    CHECK(pixel(handle, 40, 40, output) == E_OK && output[1] != black);
+    CHECK(pixel(handle, 10, 20, output) == E_OK && output[1] != black);
+    CHECK(pixel(handle, 35, 20, output) == E_OK && output[1] != black);
     CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
     CHECK(service(VDI_SERVICE_SCREEN_COPY, handle, 0, 0, 0) == EIMBA);

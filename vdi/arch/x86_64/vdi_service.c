@@ -420,6 +420,19 @@ static LONG pixel_call(UQUAD handle, UQUAD x, UQUAD y, UQUAD address)
     return kproc_copy_to_user(address, output, sizeof(output)) ? E_OK : EIMBA;
 }
 
+#if CONF_WITH_CUIS
+/* GDP bars expand two input points into a five-point perimeter in place.
+ * Keep original geometry untouched across disjoint clip passes and provide
+ * enough space for both that expansion and the largest checked polyline. */
+static void invoke_region(VDICONTROL *control, WORD *input, const WORD *points,
+                           WORD *output, WORD *outpoints)
+{
+    WORD scratch[VDI_SERVICE_MAX_POINTS * 2];
+    memcpy(scratch, points, (ULONG)control->nptsin * 2 * sizeof(WORD));
+    invoke(control, input, scratch, output, outpoints);
+}
+#endif
+
 /* Drawing always intersects the virtual clip with the physical screen,
  * including when the client has disabled its optional clip rectangle. */
 static void bounded_invoke(VDICONTROL *control, WORD *input, WORD *points,
@@ -453,14 +466,18 @@ static void bounded_invoke(VDICONTROL *control, WORD *input, WORD *points,
                 bounded.ymn_clip = (WORD)top; bounded.ymx_clip = (WORD)bottom;
                 *VDI_CLIP(vwk) = bounded;
                 vwk->clip = TRUE;
-                invoke(control, input, points, output, outpoints);
+                invoke_region(control, input, points, output, outpoints);
             }
         } else
 #endif
         {
             *VDI_CLIP(vwk) = clip;
             vwk->clip = TRUE;
+#if CONF_WITH_CUIS
+            invoke_region(control, input, points, output, outpoints);
+#else
             invoke(control, input, points, output, outpoints);
+#endif
         }
     }
     *VDI_CLIP(vwk) = saved;
