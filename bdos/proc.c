@@ -30,9 +30,9 @@
 #include "has.h"
 #if ARCH_X86_64
 #include "process.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
-#endif
 #endif
 #include "../bios/vectors.h"
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
@@ -1020,7 +1020,6 @@ static void proc_go(PD *p, WORD entry_type)
 #endif
 }
 
-#if ARCH_X86_64
 #if CONF_WITH_NATIVE_SCHED
 LONG proc_prepare_scheduled(PD *p)
 {
@@ -1040,6 +1039,7 @@ LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 }
 #endif
 
+#if ARCH_X86_64
 LONG proc_prepare_accessory(PD *p)
 {
     if (!kproc_unlaunched(p))

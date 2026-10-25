@@ -2218,15 +2218,13 @@ static void test_async_processes(void)
             if (rc <= 0) break;
             program = (PD *)(uintptr_t)rc;
             environment_block = USERPTR_TO_PTR(program->p_env);
-            {
-                x86_64_pmem_test_fail_after(j);
-                rc = Pexec(i ? PE_GOTHENFREE : PE_GO, NULL, (char *)program, NULL);
-                x86_64_pmem_test_fail_after(0);
-                CHECK(rc == ENSMEM && !ksched_active() && kproc_unlaunched(program),
-                      "failed group allocation leaves an unlaunched caller-owned program");
-                CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
-                      "Pexec does not transfer ownership before group allocation succeeds");
-            }
+            x86_64_pmem_test_fail_after(j);
+            rc = Pexec(i ? PE_GOTHENFREE : PE_GO, NULL, (char *)program, NULL);
+            x86_64_pmem_test_fail_after(0);
+            CHECK(rc == ENSMEM && !ksched_active() && kproc_unlaunched(program),
+                  "failed group allocation leaves an unlaunched caller-owned program");
+            CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
+                  "Pexec does not transfer ownership before group allocation succeeds");
             CHECK(Mfree(environment_block) == E_OK && Mfree(program) == E_OK,
                   "failed ordinary launch leaves both retained blocks freeable");
             same(&s, "ordinary launch group allocation failure unwinds completely");
