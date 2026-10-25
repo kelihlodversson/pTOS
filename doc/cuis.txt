@@ -8,7 +8,7 @@ The target is an ordinary per-process libaes.so over native Core User
 Interface Services (CUIS). There is no userspace AES daemon. Kernel CUIS
 owns shared authoritative GUI state; VDI owns drawing/hardware services.
 The initial #675 slice implements sessions and application-local rectangle
-helpers only. It does not yet supply a complete GEM AES API or replace the
+helpers. #679 adds caller-local object-tree editing and coordinate calculation. It does not yet supply a complete GEM AES API or replace the
 existing kernel AES. Existing x32 import clients remain available while
 operations migrate; they are not the native CUIS protocol.
 
@@ -140,3 +140,49 @@ The boot test checks shared DSO-page reuse, allocator/session counts after
 teardown, and the CUIS PASS markers. It also exercises high handle bits,
 negative handles, ignored unused registers and local rectangle helpers.
 The disabled-feature memory self-test explicitly requires EINVFN.
+
+Caller-local GEM object operations (#679)
+----------------------------------------
+
+libaes.so exports objc_add(), objc_delete(), objc_order() and objc_offset()
+over the application's own native OBJECT array (24-byte entries on x32).
+These are ordinary C functions and need no CUIS session. No tree, object
+specification or output pointer crosses a syscall boundary. Resource loading,
+rendering and hit testing with display metrics are subsequent slices.
+
+With CONF_WITH_LIBAES enabled, the algorithms in aes/gemobjtree.c are
+also used by kernel AES. With the feature disabled, the original kernel
+implementations and object list are retained unchanged.
+Parent/sibling links retain GEM conventions: a parent's head and tail name
+its first/last child, the last child's next points to the parent, the root's
+next is NIL, and an empty child list has head/tail NIL. Deleting an object
+unlinks its subtree without destroying its contents; adding attaches it at
+the end of the destination parent's children. A detached object's next field
+is not reset by deletion; objc_add assigns its new parent link.
+
+objc_order uses zero-based sibling positions; NIL (-1) means the end.
+Invalid positions return zero before modifying links. Reordering an only
+child preserves both the parent's head/tail and the child's parent link.
+Root deletion/reordering fails. objc_offset accumulates the object's and
+its ancestors' relative coordinates into the caller's WORD outputs. These
+functions return one on success, zero on rejected operations, following the
+GEM C API rather than the CUIS syscall error convention.
+
+As with ordinary GEM C functions, the caller supplies a valid array and tree
+links. Local routines do not copy or register it in the kernel. An invalid
+pointer faults in user mode, and process teardown releases that client's
+CUIS session. The kernel diagnostic wrapper for legacy ob_delete remains
+outside the pure shared core.
+
+The host and real ring-3 tests share tests/cuis/objects.c. They cover nested
+coordinates, subtree relocation, head/middle/tail deletion and ordering,
+invalid positions without mutation, single-child ordering and preservation
+of object specifications. The dynamic client also calls objc_offset with
+an unmapped pointer: only that child faults, and its parent continues.
+
+When CONF_WITH_DYNAMIC_DESK and CONF_WITH_LIBAES are enabled together,
+EmuDesk links its public objc_add/objc_order/objc_offset calls through
+DT_NEEDED libaes.so, rather than defining GEM trap wrappers for them.
+Internal desktop geometry helpers use the same extracted core. Other
+AES operations continue through the existing adapters during migration.
+Static desktops and builds without libaes retain their existing bindings.

@@ -28,6 +28,9 @@
 #include "geminit.h"
 #include "gemgsxif.h"
 #include "gemobjop.h"
+#if CONF_WITH_LIBAES
+#include "gemobjtree.h"
+#endif
 #include "gemgraf.h"
 #include "optimopt.h"
 #include "rectfunc.h"
@@ -1069,6 +1072,17 @@ WORD ob_find(OBJECT *tree, WORD currobj, WORD depth, WORD mx, WORD my)
 }
 
 
+#if CONF_WITH_LIBAES
+/* The external-library feature selects the pure shared core. Keep the
+ * legacy kernel diagnostic here, outside that application-local code. */
+WORD ob_delete(OBJECT *tree, WORD obj)
+{
+    WORD result = ob_delete_local(tree, obj);
+    if (!result && obj != ROOT)
+        KINFO(("objc_delete() failed: object %d not found\n", obj));
+    return result;
+}
+#else
 /*
  *  Routine to add a child object to a parent object.  The child
  *  is added at the end of the parent's current sibling list.
@@ -1201,6 +1215,8 @@ BOOL ob_order(OBJECT *tree, WORD mov_obj, WORD new_pos)
     return TRUE;
 }
 
+
+#endif
 
 /*
  *  Routine to change the state of an object and redraw that

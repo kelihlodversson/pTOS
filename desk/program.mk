@@ -98,8 +98,9 @@ endif
 
 ifdef ARCH_X86_64
 ifeq ($(CONF_WITH_DYNAMIC_DESK),y)
-$(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-aes.a obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/ldso/libptos.so
-	$(X32_CC) $(LDSO_APP_LDFLAGS) -Wl,--gc-sections -o $@ $(filter %.o %.a,$^) -Lobj/ldso -lptos
+DESK_LIBAES = $(if $(CONF_WITH_LIBAES),obj/libaes/libaes.so)
+$(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-aes.a obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/ldso/libptos.so $(DESK_LIBAES)
+	$(X32_CC) $(LDSO_APP_LDFLAGS) -Wl,--gc-sections -o $@ $(filter %.o %.a,$^) $(if $(CONF_WITH_LIBAES),-Lobj/libaes -laes) -Lobj/ldso -lptos
 else
 $(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-aes.a obj/x32/libptos-vdi.a
 	$(X32_CC) $(X32_CLI_LDFLAGS) -Wl,--gc-sections -o $@ $^

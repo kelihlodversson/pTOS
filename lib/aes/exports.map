@@ -1,5 +1,6 @@
 {
     global: aes_session_open; aes_session_query; aes_session_close;
             inside; rc_constrain; rc_equal; rc_intersect; rc_union;
+            objc_add; objc_delete; objc_order; objc_offset;
     local: *;
 };

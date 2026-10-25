@@ -85,10 +85,12 @@ void ob_change(OBJECT *tree, WORD object, UWORD state, WORD redraw)
         ob_draw(tree, object, MAX_DEPTH);
 }
 
+#if !CONF_WITH_LIBAES
 void ob_add(OBJECT *tree, WORD parent, WORD child)
 {
     objc_add(tree, parent, child);
 }
+#endif
 
 WORD fm_do(OBJECT *tree, WORD start)
 {

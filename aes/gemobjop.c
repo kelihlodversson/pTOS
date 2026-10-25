@@ -141,6 +141,7 @@ sibling:
 }
 
 
+#if !CONF_WITH_LIBAES
 /*
  * Routine that will find the parent of a given object.  The
  * idea is to walk to the end of our siblings and return
@@ -183,6 +184,8 @@ void ob_offset(OBJECT *tree, WORD obj, WORD *pxoff, WORD *pyoff)
     } while (obj != NIL);
 }
 
+
+#endif
 
 /*
  *  ob_relxywh: fill GRECT with x/y/w/h from object (relative x/y)

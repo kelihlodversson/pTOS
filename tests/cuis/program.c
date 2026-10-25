@@ -2,6 +2,8 @@
 #include "libaes.h"
 #include "gemerror.h"
 #include "ptos.h"
+int libaes_object_checks(void);
+typedef char object_x32_size[(sizeof(OBJECT) == 24) ? 1 : -1];
 extern int64_t client_pexec(const char *path, const char *tail, const char *env);
 
 /* Deliberately poison unused slots. Session calls must never inspect them. */
@@ -25,8 +27,10 @@ int main(int argc, char **argv, char **envp)
     ULONG owner = 0;
     char tail[] = { 9, 'c', '0', '0', '0', '0', '0', '0', '0', '0', 0 };
     static const char digits[] = "0123456789abcdef";
-    int i;
+    int i, rc;
     (void)envp;
+    rc = libaes_object_checks();
+    if (rc) return rc;
     CHECK(argc == 1 || argc == 2);
     CHECK(raw(99, ~0ULL) == EINVFN);
     CHECK(aes_session_query(0) == EACCDN);
@@ -51,14 +55,19 @@ int main(int argc, char **argv, char **envp)
           second.g_w == 10 && second.g_h == 10 && inside(19, 19, &second));
     if (argc == 2) {
         CHECK((ULONG)handle != owner && aes_session_query(owner) == EACCDN);
+        if (argv[1][0] == 'o') {
+            WORD x, y;
+            objc_offset((OBJECT *)0, 1, &x, &y);
+            return 0x3000;
+        }
         if (argv[1][0] == 'f') __asm__ volatile ("ud2");
         if (argv[1][0] == 'l') _Exit(77);
         return 77;             /* libaes destructor closes the child session */
     }
     for (i = 0; i < 8; i++) tail[2 + i] = digits[((ULONG)handle >> ((7 - i) * 4)) & 15];
-    for (i = 0; i < 3; i++) {
-        tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : 'f';
-        CHECK(client_pexec(argv[0], tail, "") == (i == 2 ? 0xffff : 77));
+    for (i = 0; i < 4; i++) {
+        tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : i == 2 ? 'f' : 'o';
+        CHECK(client_pexec(argv[0], tail, "") == (i >= 2 ? 0xffff : 77));
         CHECK(aes_session_query(handle) == E_OK);
     }
     CHECK(aes_session_close(handle) == E_OK);
@@ -68,7 +77,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_session_query(handle) == EACCDN);
     /* Leave the reopened session to library finalization. */
     {
-        static const char pass[] = "x32 libaes/CUIS sessions: PASS\r\n";
+        static const char pass[] = "x32 libaes objects: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
         CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
     }
     return 77;
