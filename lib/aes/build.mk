@@ -30,7 +30,7 @@ LDSO_RUNTIME_FILES += $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 $(LDSO_RUNTIME_DIR): $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 all: $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 
-obj/libaes/CUIS.TOS: tests/cuis/program.c tests/cuis/objects.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
+obj/libaes/CUIS.TOS: tests/cuis/program.c tests/cuis/objects.c tests/cuis/drawing.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
                      obj/libaes/libaes.so obj/ldso/libptos.so include/libaes.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.S %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos

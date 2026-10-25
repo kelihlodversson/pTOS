@@ -303,9 +303,49 @@ immutable; removing an occluder can only make it a conservative subset of
 the newly exposed area. Pending redraws survive END so that exposure is not
 lost. Subsequent BEGIN captures the expanded region.
 
-This coordinates CUIS metadata only. It does not clip against the physical
-display, authorize framebuffer access, constrain existing VDI calls or lock
-the legacy AES window manager. Display bounds, VDI enforcement/rendering,
-input/focus and atomic event waits remain subsequent epic work. The new
-kernel source and dispatch paths are enabled only by CONF_WITH_CUIS, selected
-by the external CONF_WITH_LIBAES feature.
+The snapshot/update calls provide the metadata used by the display/VDI
+integration below. They do not lock the legacy AES window manager or grant
+direct framebuffer access. Input/focus and atomic event waits remain later
+epic work. The kernel source and dispatch paths are enabled only by
+CONF_WITH_CUIS, selected by the external CONF_WITH_LIBAES feature.
+
+Physical display and native VDI integration
+-------------------------------------------
+UPDATE_BEGIN now intersects the window with the current physical display
+before subtracting higher windows. Native clip outputs therefore contain
+only physical display coordinates, even for negative origins and windows
+extending past an edge. A fully off-screen window has an empty snapshot.
+An unavailable/zero-sized display returns EINVFN without acquiring an
+update section. The VDI renderer additionally applies its signed-coordinate
+limits and the optional workstation clip to every screen write.
+
+Opening a CUIS session opts that process into region enforcement by the
+existing checked x32 VDI service (when CONF_WITH_X32_VDI is enabled). Lines,
+text, bars and filled rectangles require an active update section owned by
+the process; without one they return EACCDN. Drawing intersects the snapshot
+with the physical screen and workstation clip and renders once per disjoint
+region. Empty intersections draw nothing. Workstation clipping state and
+the associated Line-A globals are restored afterward. Attribute setters
+remain usable without an update. Another process's update section causes
+native screen writes to return EAGAIN, including writes by non-CUIS clients.
+
+Whole-screen reads remain allowed for every app, including screenshot apps:
+VDI pixel reads do not require a CUIS session/update and are not restricted
+to a window or its unoccluded area. Normal physical-coordinate and output
+memory validation still apply. A screenshot may read while another client
+holds an update section. Screen-copy source pixels are likewise unrestricted.
+Screen-to-screen copies by CUIS clients require an owned update and clip
+only the destination. Rows and disjoint row segments are processed in
+memmove order so overlapping copies do not overwrite later source pixels.
+Workstation clipping still restricts destination writes and is restored.
+
+Non-CUIS native VDI clients retain their previous drawing behavior when no
+update section is active. These changes do not retrofit the legacy AES
+service or its direct kernel drawing, and are not a sandbox for all legacy
+interfaces. The external desktop still uses its legacy session path while
+GEM window/form/menu migration continues. Screen-to-memory raster binding
+coverage follows the existing VDI implementation; whole-screen read access
+is permitted independently of that binding's supported operations.
+
+All new VDI policy, clipping and copy paths are under CONF_WITH_CUIS. With
+external libaes disabled, the original native VDI paths remain in use.

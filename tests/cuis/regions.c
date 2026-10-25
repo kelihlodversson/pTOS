@@ -64,6 +64,7 @@ static int region_checks(void)
     a = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 10, 10, 0);
     CHECK(session >= 0 && a >= 0);
     CHECK(CLIP(a, 0) == EACCDN);
+    CHECK(cuis_vdi_policy() == EACCDN);
     CHECK(W(CUIS_UPDATE_BEGIN, a) == EINVAL);
     CHECK(W(CUIS_WINDOW_SHOW, a) == E_OK);
     fail_allocation = TRUE;
@@ -80,7 +81,7 @@ static int region_checks(void)
     CHECK(b >= 0 && W(CUIS_WINDOW_SHOW, b) == E_OK);
     run = &first;
     CHECK(W(CUIS_UPDATE_BEGIN, a) == E_OK && cuis_update_active());
-    CHECK(update_count == 4);
+    CHECK(update_count == 4 && cuis_vdi_policy() == 1);
     CHECK(CLIP(a, 0) == 1 && copied[0] == 0 && copied[1] == 0 && copied[2] == 10 && copied[3] == 2);
     CHECK(cuis_clip_service(a, 0, 0x1000, 0x1004, 0x1008, 0) == EIMBA);
     copied[0] = 999;
@@ -99,12 +100,14 @@ static int region_checks(void)
     CHECK(cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0) == EAGAIN);
     run = &second;
     CHECK(CLIP(a, 0) == EACCDN);
+    CHECK(cuis_vdi_policy() == EAGAIN);
     CHECK(W(CUIS_UPDATE_END, a) == EACCDN);
     CHECK(W(CUIS_UPDATE_BEGIN, b) == EAGAIN);
     CHECK(W(CUIS_WINDOW_DESTROY, b) == EAGAIN);
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, b, 0, 0, 1, 1) == EAGAIN);
     /* Exiting an occluder may expose more, but the held snapshot stays safe. */
     cuis_process_exit(&second);
+    CHECK(cuis_vdi_policy() == EAGAIN);
     run = &first;
     CHECK(update_count == 4 && CLIP(a, 0) == 1 && copied[3] == 2);
     CHECK(update_window->redraw);
@@ -127,7 +130,7 @@ static int region_checks(void)
     CHECK(W(CUIS_WINDOW_HIDE, b) == E_OK);
     CHECK(W(CUIS_UPDATE_BEGIN, a) == E_OK && update_count == 1);
     CHECK(cuis_clip_service(a, 0, 0x1000, 0x1000, 0x1000, 0x1000) == 1);
-    CHECK(copied[0] == 10);
+    CHECK(copied[0] == 5);
     cuis_process_exit(&first);
     CHECK(!cuis_update_active() && allocations == frees);
 
@@ -148,6 +151,26 @@ static int region_checks(void)
     CHECK(W(CUIS_UPDATE_BEGIN, b) == E_OK);
     cuis_process_exit(&first);
     CHECK(!cuis_update_active() && !window_front && allocations == frees);
+    CHECK(cuis_vdi_policy() == 0);
+    CHECK(cuis_service(CUIS_SESSION_START, 0) >= 0);
+    a = cuis_window_service(CUIS_WINDOW_CREATE, -10LL, -20LL, 30, 40, 0);
+    CHECK(a >= 0 && W(CUIS_WINDOW_SHOW, a) == E_OK);
+    CHECK(W(CUIS_UPDATE_BEGIN, a) == E_OK);
+    CHECK(CLIP(a, 0) == 1 && copied[0] == 0 && copied[1] == 0 && copied[2] == 20 && copied[3] == 20);
+    CHECK(W(CUIS_UPDATE_END, a) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 1020, 760, 30, 40) == E_OK);
+    CHECK(W(CUIS_UPDATE_BEGIN, a) == E_OK);
+    CHECK(CLIP(a, 0) == 1 && copied[0] == 1020 && copied[1] == 760 && copied[2] == 4 && copied[3] == 8);
+    CHECK(W(CUIS_UPDATE_END, a) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 1024, 0, 1, 1) == E_OK);
+    CHECK(W(CUIS_UPDATE_BEGIN, a) == E_OK);
+    CHECK(CLIP(a, 0) == 0);
+    CHECK(W(CUIS_UPDATE_END, a) == E_OK);
+    display_width = 0;
+    CHECK(W(CUIS_UPDATE_BEGIN, a) == EINVFN && !cuis_update_active());
+    display_width = 1024;
+    cuis_process_exit(&first);
+    CHECK(allocations == frees);
     return 0;
 }
 #undef CLIP

@@ -15,6 +15,9 @@
 #include "gsxdefs.h"
 #include "procmem.h"
 #include "../../../bdos/kproc.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#endif
 #if CONF_WITH_USER_CALLBACKS
 #include "../../../bdos/user_callback.h"
 
@@ -260,6 +263,11 @@ static LONG open_workstation(UQUAD input, UQUAD output)
     return E_OK;
 }
 
+#if CONF_WITH_CUIS
+static void bounded_invoke(VDICONTROL *control, WORD *input, WORD *points,
+                            WORD *output, WORD *outpoints);
+#endif
+
 static LONG coordinate_call(ULONG fn, UQUAD handle, UQUAD value, UQUAD address)
 {
     VDICONTROL control = { 0 };
@@ -297,6 +305,11 @@ static LONG coordinate_call(ULONG fn, UQUAD handle, UQUAD value, UQUAD address)
         if (points[i] < -MAX_COORDINATE || points[i] > MAX_COORDINATE)
             return EINVAL;
     if (fn == VDI_SERVICE_LINE) {
+#if CONF_WITH_CUIS
+        LONG policy = cuis_vdi_policy();
+        if (policy < 0) return policy;
+        bounded_invoke(&control, &input, points, output, outpoints);
+#else
         Vwk *vwk = get_vwk_by_handle(control.handle);
         VwkClip saved = *VDI_CLIP(vwk);
         VwkClip bounded = {
@@ -330,6 +343,7 @@ static LONG coordinate_call(ULONG fn, UQUAD handle, UQUAD value, UQUAD address)
         linea_vars.XMAXCL = saved.xmx_clip;
         linea_vars.YMINCL = saved.ymn_clip;
         linea_vars.YMAXCL = saved.ymx_clip;
+#endif
     } else {
         invoke(&control, &input, points, output, outpoints);
     }
@@ -424,9 +438,30 @@ static void bounded_invoke(VDICONTROL *control, WORD *input, WORD *points,
         clip.ymx_clip = min(clip.ymx_clip, saved.ymx_clip);
     }
     if (clip.xmn_clip <= clip.xmx_clip && clip.ymn_clip <= clip.ymx_clip) {
-        *VDI_CLIP(vwk) = clip;
-        vwk->clip = TRUE;
-        invoke(control, input, points, output, outpoints);
+#if CONF_WITH_CUIS
+        if (cuis_vdi_policy() == 1) {
+            CUIS_RECT region;
+            ULONG index;
+            for (index = 0; cuis_vdi_clip(index, &region); index++) {
+                VwkClip bounded;
+                LONG right = min((LONG)clip.xmx_clip, region.x + region.width - 1);
+                LONG bottom = min((LONG)clip.ymx_clip, region.y + region.height - 1);
+                LONG left = max((LONG)clip.xmn_clip, region.x);
+                LONG top = max((LONG)clip.ymn_clip, region.y);
+                if (left > right || top > bottom) continue;
+                bounded.xmn_clip = (WORD)left; bounded.xmx_clip = (WORD)right;
+                bounded.ymn_clip = (WORD)top; bounded.ymx_clip = (WORD)bottom;
+                *VDI_CLIP(vwk) = bounded;
+                vwk->clip = TRUE;
+                invoke(control, input, points, output, outpoints);
+            }
+        } else
+#endif
+        {
+            *VDI_CLIP(vwk) = clip;
+            vwk->clip = TRUE;
+            invoke(control, input, points, output, outpoints);
+        }
     }
     *VDI_CLIP(vwk) = saved;
     vwk->clip = enabled;
@@ -459,12 +494,82 @@ static LONG draw_call(WORD handle, UQUAD input, UQUAD output)
     control.handle = handle;
     control.nintin = request.nintin;
     control.nptsin = request.nptsin;
-    if (request.code == 8 || request.code == 11 || request.code == 114)
+    if (request.code == 8 || request.code == 11 || request.code == 114) {
+#if CONF_WITH_CUIS
+        rc = cuis_vdi_policy();
+        if (rc < 0) return rc;
+#endif
         bounded_invoke(&control, request.intin, request.ptsin, result.intout, result.ptsout);
-    else
+    } else
         invoke(&control, request.intin, request.ptsin, result.intout, result.ptsout);
     return kproc_copy_to_user(output, &result, sizeof(result)) ? E_OK : EIMBA;
 }
+
+#if CONF_WITH_CUIS
+/* A screen copy may read any source pixel. Split destination rows in memmove
+ * order so overlapping source/destination ranges remain correct even across
+ * disjoint CUIS clip pieces. Native VDI handles overlap within each segment. */
+static void cuis_screen_copy(VDICONTROL *control, WORD *mode, const WORD *xy,
+                              WORD *integers, WORD *points)
+{
+    CUIS_RECT regions[CUIS_CLIP_LIMIT], region;
+    ULONG count = 0, i, j;
+    Vwk *vwk = get_vwk_by_handle(control->handle);
+    VwkClip saved = *VDI_CLIP(vwk), clip;
+    WORD enabled = vwk->clip, row_xy[8];
+    LONG row, step, end, left, right, y;
+    BOOL reverse = xy[4] > xy[0];
+
+    /* Sorting by x once orders disjoint row segments for horizontal overlap. */
+    for (i = 0; cuis_vdi_clip(i, &region); i++) {
+        j = count;
+        while (j && (reverse ? regions[j - 1].x < region.x : regions[j - 1].x > region.x)) {
+            regions[j] = regions[j - 1];
+            j--;
+        }
+        regions[j] = region;
+        count++;
+    }
+    if (!count) return;
+    step = xy[5] > xy[1] ? -1 : 1;
+    row = step < 0 ? xy[7] - xy[5] : 0;
+    end = step < 0 ? -1 : xy[7] - xy[5] + 1;
+    for (; row != end; row += step) {
+        y = xy[5] + row;
+        if (enabled && (y < saved.ymn_clip || y > saved.ymx_clip)) continue;
+        for (i = 0; i < count; i++) {
+            region = regions[i];
+            if (y < region.y || y >= region.y + region.height) continue;
+            left = max((LONG)xy[4], region.x);
+            right = min((LONG)xy[6], region.x + region.width - 1);
+            if (enabled) {
+                left = max(left, (LONG)saved.xmn_clip);
+                right = min(right, (LONG)saved.xmx_clip);
+            }
+            if (left > right) continue;
+            /* Restrict the native copy itself, rather than relying on source
+             * clipping, which would wrongly reject screenshot-style reads. */
+            row_xy[0] = (WORD)(xy[0] + left - xy[4]);
+            row_xy[2] = (WORD)(xy[0] + right - xy[4]);
+            row_xy[1] = row_xy[3] = (WORD)(xy[1] + row);
+            row_xy[4] = (WORD)left; row_xy[6] = (WORD)right;
+            row_xy[5] = row_xy[7] = (WORD)y;
+            clip.xmn_clip = (WORD)left; clip.xmx_clip = (WORD)right;
+            clip.ymn_clip = clip.ymx_clip = (WORD)y;
+            *VDI_CLIP(vwk) = clip;
+            vwk->clip = TRUE;
+            invoke(control, mode, row_xy, integers, points);
+        }
+    }
+    *VDI_CLIP(vwk) = saved;
+    vwk->clip = enabled;
+    linea_vars.CLIP = enabled;
+    linea_vars.XMINCL = saved.xmn_clip;
+    linea_vars.XMAXCL = saved.xmx_clip;
+    linea_vars.YMINCL = saved.ymn_clip;
+    linea_vars.YMAXCL = saved.ymx_clip;
+}
+#endif
 
 static LONG screen_copy(WORD handle, UQUAD input)
 {
@@ -473,6 +578,10 @@ static LONG screen_copy(WORD handle, UQUAD input)
     FDB screen = { 0 };
     WORD integers[45], points[12];
     LONG i;
+#if CONF_WITH_CUIS
+    LONG policy = cuis_vdi_policy();
+    if (policy < 0) return policy;
+#endif
 
     if ((input & 1) || !kproc_copy_from_user(&request, input, sizeof(request)))
         return EIMBA;
@@ -494,7 +603,12 @@ static LONG screen_copy(WORD handle, UQUAD input)
     control.nintin = 1;
     control.nptsin = 4;
     control.ptr1 = control.ptr2 = &screen;
-    bounded_invoke(&control, &request.mode, request.xy, integers, points);
+#if CONF_WITH_CUIS
+    if (policy == 1)
+        cuis_screen_copy(&control, &request.mode, request.xy, integers, points);
+    else
+#endif
+        bounded_invoke(&control, &request.mode, request.xy, integers, points);
     return E_OK;
 }
 
