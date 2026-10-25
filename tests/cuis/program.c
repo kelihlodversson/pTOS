@@ -109,6 +109,7 @@ int main(int argc, char **argv, char **envp)
         if (rc) return rc;
         CHECK(aes_window_create(0, 0, 1, 1) == EAGAIN);
         CHECK(aes_update_end(parent_window) == EACCDN);
+        CHECK(aes_window_focused(parent_window) == EACCDN);
         CHECK(aes_window_clip(parent_window, 0, &x, &y, &w, &h) == EACCDN);
         return 77;
     }
@@ -136,8 +137,15 @@ int main(int argc, char **argv, char **envp)
           second.g_w == 10 && second.g_h == 10 && inside(19, 19, &second));
     rc = update_checks(window);
     if (rc) return rc;
+    CHECK(aes_window_focus(window) == E_OK);
+    CHECK(aes_window_focused(window) == 1);
+    CHECK(aes_window_unfocus(window) == E_OK && aes_window_focused(window) == 0);
+    CHECK(aes_window_focus(window) == E_OK);
     if (argc == 2) {
         CHECK(aes_update_begin(window) == E_OK);
+        CHECK(aes_window_focused(window) == 1);
+        CHECK(aes_window_unfocus(window) == EAGAIN);
+        CHECK(aes_window_focus(parent_window) == EACCDN);
         rc = libaes_drawing_exit_handle();
         if (rc) return rc;
         for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_REDRAW; function++)
@@ -160,6 +168,7 @@ int main(int argc, char **argv, char **envp)
         tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : i == 2 ? 'f' : 'o';
         CHECK(client_pexec(argv[0], tail, "") == (i >= 2 ? 0xffff : 77));
         CHECK(aes_session_query(handle) == E_OK);
+        CHECK(aes_window_focused(window) == 1);
         CHECK(aes_update_begin(window) == E_OK);
         CHECK(aes_update_end(window) == E_OK);
         CHECK(aes_window_redraw(window) == 1);
@@ -185,10 +194,11 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_window_destroy(window) == EACCDN);
     window = aes_window_create(0, 0, 10, 10);
     CHECK(window >= 0 && aes_window_show(window) == E_OK);
+    CHECK(aes_window_focus(window) == E_OK);
     CHECK(aes_update_begin(window) == E_OK);
     /* Leave the reopened session to library finalization. */
     {
-        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
+        static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
         CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
     }
     return 77;

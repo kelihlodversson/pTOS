@@ -22,4 +22,7 @@ LONG aes_window_redraw(LONG handle);
 LONG aes_update_begin(LONG window);
 LONG aes_update_end(LONG window);
 LONG aes_window_clip(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height);
+LONG aes_window_focus(LONG window);
+LONG aes_window_focused(LONG window);
+LONG aes_window_unfocus(LONG window);
 #endif

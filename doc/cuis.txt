@@ -374,3 +374,39 @@ memtest fixtures can explicitly reset an idle service-owned physical
 workstation when changing synthetic display dimensions; those resets also
 preserve the console. With external libaes disabled, physical workstation
 lifetime and console transitions retain their original behavior.
+
+Focus ownership foundation
+--------------------------
+CUIS adds three flat calls, each taking an owned window handle in RDI:
+
+ 14 FOCUS_REQUEST  return zero on success or a negative GEMDOS error
+ 15 FOCUS_QUERY    return 1 if focused, 0 if not, or a negative error
+ 16 FOCUS_RELEASE  return zero on success or a negative error
+
+libaes exports aes_window_focus, aes_window_focused and aes_window_unfocus.
+Unused register slots are ignored. Malformed full-width handles return
+EINVAL; absent sessions and unknown/stale/foreign handles return EACCDN.
+A hidden window cannot request focus (EINVAL). Only the currently frontmost
+visible CUIS window may claim focus; a request for another visible window returns
+EACCDN. No foreign focus handle is exposed by QUERY.
+
+Showing, raising and lowering windows do not automatically transfer focus.
+Focus and stacking remain distinct: an already-focused visible window can
+remain focused after being lowered. Repeating a focus request for the focused
+front window is a no-op. Releasing a non-focused owned window is also a no-op;
+releasing the focused window clears focus without selecting a fallback. Actual focus changes mark all visible CUIS
+windows for redraw so future decorations can reflect the change.
+
+Hiding/destroying a focused window transfers focus to the remaining front
+visible window, or clears it if none remains. The same rule applies while
+closing sessions and reclaiming normal, raw-exit or faulted processes. A
+focus pointer is always removed before its window is freed. Removing an
+unfocused window does not change focus.
+
+Focus request/release are mutations and return EAGAIN while an update section
+is held, including otherwise-idempotent requests. QUERY remains available.
+New windows start without focus, and a boot with no focus stays that way
+until a successful request. This slice establishes the authoritative target
+for subsequent bounded input queues and atomic waits; it does not yet route
+hardware input, change legacy AES focus or add event delivery. All kernel
+focus state and paths remain under the external libaes CUIS configuration.
