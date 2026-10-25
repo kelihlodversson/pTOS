@@ -43,7 +43,12 @@ void test_legacy_tpa(void)
         in_use = (sp_now - (long)bp + 8192L) & ~4095L;
         if (in_use < (long)bp->p_hitpa - (long)bp)
         {
-            ptest_assert_msg(Mshrink(bp, in_use) == 0, "Mshrink() to the size in use failed");
+            long rc = Mshrink(bp, in_use);
+
+            ptest_assert_msg(rc == 0, rc == EGSBF ? "Mshrink() to the size in use failed (EGSBF)"
+                                    : rc == (-40L) ? "Mshrink() to the size in use failed (EIMBA)"
+                                    : rc == (-36L) ? "Mshrink() to the size in use failed (EACCDN)"
+                                    : "Mshrink() to the size in use failed");
             ptest_assert_msg(Mshrink(bp, in_use) == 0, "Mshrink() to the same size again failed");
         }
 
