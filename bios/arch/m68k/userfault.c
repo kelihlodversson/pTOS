@@ -84,6 +84,7 @@ extern PD *run;                         /* bdos/proc.c */
 #define F7_WB1D     44
 
 #define SSW_MA      0x0800              /* misaligned: it crosses a page */
+#define SSW_LK      0x0200              /* locked: a read-modify-write cycle */
 #define SSW_READ    0x0100              /* the access was a read */
 #define SSW_TM      0x0007              /* its function code */
 #define WB_VALID    0x0080
@@ -163,7 +164,9 @@ int m68k_user_busfault(void)
 
     if ((fv >> 12) != 7 || address >= USER_VA_LIMIT || !root || root != aspace_hw_current())
         return 0;
-    access = (ssw & SSW_READ) ? (((ssw & SSW_TM) == 2) ? ASPACE_PROT_EXEC : 0) : ASPACE_PROT_WRITE;
+    /* a locked access (TAS, CAS) reports a read, and writes */
+    access = ((ssw & SSW_READ) && !(ssw & SSW_LK)) ? (((ssw & SSW_TM) == 2) ? ASPACE_PROT_EXEC : 0)
+                                                    : ASPACE_PROT_WRITE;
     answer = kproc_demand_page(run, address, access);
     if (ssw & SSW_MA) {
         /*

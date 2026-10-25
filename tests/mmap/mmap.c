@@ -335,6 +335,16 @@ static void test_file(void)
                 ptest_fail("a file mapping does not show the file");
                 break;
             }
+#if defined(__mc68000__)
+        /* a locked read-modify-write on a clean page is a write: the page is copied */
+        {
+            volatile unsigned char *q = p + PAGE + 5;
+            unsigned char before = page[1][5];
+
+            __asm__ volatile ("tas %0" : "+m" (*q) : : "cc");
+            ptest_assert_msg(*q == (unsigned char)(before | 0x80), "TAS on a clean file page is wrong");
+        }
+#endif
         /* writing to it makes the page private: the file stays as it is */
         p[10] = (unsigned char)(page[0][10] ^ 0xff);
         ptest_assert_msg(p[10] == (unsigned char)(page[0][10] ^ 0xff), "a private file page cannot be written");

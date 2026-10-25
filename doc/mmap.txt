@@ -102,9 +102,13 @@ Protection flags are NONE=0, READ=1, WRITE=2 and EXEC=4. Initially effective
 access is NONE, R, RW or RX; the x32 MMU implies read access when WRITE or
 EXEC is requested. NONE removes user access and execution; it does not free
 the backing pages. Unknown protection bits return EINVAL. WRITE|EXEC is
-EACCDN, for both Mmap and Mprot. No page is simultaneously writable and
-executable. The backend invalidates stale MMU translations when changing
-permissions. Untouched pages stay unbacked: kernel-private reservation records
+EACCDN, for both Mmap and Mprot, so a request never asks for a page that is
+both. Where the MMU has an execute-disable bit (x32, ARM) no page is then
+simultaneously writable and executable. The 68040 has none: every readable page
+there is executable (doc/mmu-address-space.txt), so the refusal of WRITE|EXEC is
+a rule of the interface and not hardware-enforced W^X, and a writable mapping can
+be executed; callers must not rely on protection that backend cannot give. The
+backend invalidates stale MMU translations when changing permissions. Untouched pages stay unbacked: kernel-private reservation records
 hold their new permissions for future faults. Present private pages are
 updated immediately. Boundary-split metadata is allocated before any
 permission changes; allocation failure leaves all permissions unchanged.
