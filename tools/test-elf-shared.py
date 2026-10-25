@@ -1108,8 +1108,10 @@ class Metadata(unittest.TestCase):
         R32, GLOB_DAT, JMP_SLOT, RELATIVE = 1, 20, 21, 22
         self.assertEqual(compute(R32, 0, 0x02000100, -4), (0, 0x020000fc))
         self.assertEqual(compute(R32, 0, 0xfffffffc, 8), (0, 4))
-        self.assertEqual(compute(GLOB_DAT, 0, 0x1234, 0x77), (0, 0x1234))
-        self.assertEqual(compute(JMP_SLOT, 0, 0x1234, 0x77), (0, 0x1234))
+        self.assertEqual(compute(GLOB_DAT, 0, 0x1234, 0x77), (0, 0x12ab))   # S + A
+        self.assertEqual(compute(GLOB_DAT, 0, 0x1234, 0), (0, 0x1234))
+        self.assertEqual(compute(JMP_SLOT, 0, 0x1234, 0x77), (0, 0x12ab))
+        self.assertEqual(compute(JMP_SLOT, 0, 0x1234, -4), (0, 0x1230))
         self.assertEqual(compute(RELATIVE, 0x2000000, 0, 0x1000), (0, 0x2001000))
         self.assertEqual(compute(RELATIVE, 0xffffff00, 0, 0x1000)[0], -5)
         for refused in (4, 5, 6, 2, 3, 7):            # PC32/PC16/PC8, 16, 8, GOT32

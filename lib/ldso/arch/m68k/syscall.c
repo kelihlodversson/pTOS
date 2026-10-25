@@ -29,7 +29,7 @@ static const char *shape(uint32_t fn)
 int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
                     uint64_t d, uint64_t e, uint64_t f)
 {
-    register uint32_t d0 __asm__("d0");
+    uint32_t result;
     uint16_t w[13] = { 0 };             /* fn, and the most a call takes: six longs */
     const uint64_t args[6] = { a, b, c, d, e, f };
     const char *s = shape(fn);
@@ -43,9 +43,10 @@ int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
             w[n++] = (uint16_t)(v >> 16);
         w[n++] = (uint16_t)v;
     }
-    /* push the n words of the frame, the last first, call, and take the frame off again;
-     * d0 is written by the call, after the inputs are used up, but one of them is used
-     * after it: the output is early-clobber so that none of them is d0 */
+    /* Push the n words of the frame, the last first, call, take the frame off again,
+     * and copy the result out of d0.  d0 is clobbered, so that no operand is in it
+     * (a "d" constraint does not put an output in d0, whatever a register variable
+     * says), and the result is written last, after the operands are used up. */
     {
         const uint16_t *end = w + n;
         uint32_t count = n - 1;         /* dbra counts down to -1 */
@@ -56,10 +57,11 @@ int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
             "1:\tmove.w -(%%a0),-(%%sp)\n\t"
             "dbra %2,1b\n\t"
             "trap #1\n\t"
-            "adda.l %3,%%sp"
-            : "=&d" (d0), "+r" (end), "+d" (count)
+            "adda.l %3,%%sp\n\t"
+            "move.l %%d0,%0"
+            : "=d" (result), "+r" (end), "+d" (count)
             : "r" (bytes)
-            : "a0", "memory", "cc");
+            : "a0", "d0", "memory", "cc");
     }
-    return (int64_t)(int32_t)d0;
+    return (int64_t)(int32_t)result;
 }

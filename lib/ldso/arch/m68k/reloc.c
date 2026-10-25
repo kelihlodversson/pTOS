@@ -35,10 +35,9 @@ static int m68k_value(uint32_t type, uint32_t bias, uint32_t symbol,
     (void)place;
     switch (type) {
     case R_68K_NONE: *out = 0; return DL_OK;
-    case R_68K_GLOB_DAT: case R_68K_JMP_SLOT:
-        *out = symbol;                  /* S */
-        return DL_OK;
-    case R_68K_32:                      /* S + A, modulo 2**32 */
+    case R_68K_32: case R_68K_GLOB_DAT: case R_68K_JMP_SLOT:
+        /* S + A, modulo 2**32.  (The linkers write 0 as the addend of a GOT or PLT
+         * entry; one that does not means what the relocation says.) */
         *out = (uint32_t)(symbol + (uint32_t)addend);
         return DL_OK;
     case R_68K_RELATIVE: v = (int64_t)bias + (int64_t)addend; break;

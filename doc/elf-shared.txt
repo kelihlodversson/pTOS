@@ -662,8 +662,8 @@ d1 holds the finalizer (0 from the kernel; LD.SO passes its own on).  The
 tables are DT_RELA.  Supported types:
 
     R_68K_32         S + A, modulo 2**32
-    R_68K_GLOB_DAT   S
-    R_68K_JMP_SLOT   S
+    R_68K_GLOB_DAT   S + A, modulo 2**32 (the linkers write 0 as the addend)
+    R_68K_JMP_SLOT   S + A, likewise
     R_68K_RELATIVE   B + A
 
 The PC-relative ones (PC32, PC16, PC8) are text relocations and are refused,
