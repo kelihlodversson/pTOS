@@ -286,6 +286,134 @@ static inline void justify_step(JUSTINFO *justified, WORD ch)
     }
 }
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/*
+ * The ink of a scalable font's glyphs that leaves their cells (an italic f, the
+ * tail of a j, a slanted letter) is not in the cells, which are as wide as the
+ * advances: it is in cells of its own (vdi_sfont_overhang()), two to a
+ * character, the part left of its cell and the part right of it.  Replace
+ * mode, in which a cell's background is drawn too, would have a character
+ * cover the ink of the one before it, so that ink is output after all the
+ * characters, transparently, in a pass of its own (see output_text()): the
+ * string is gone through again, from where it started and with the same
+ * spacing, and these cells are output where the characters' cells are, the
+ * left part before it and the right part after it.
+ */
+static BOOL over_pass;                  /* output_run(): only the ink outside the cells */
+static BOOL overhang_seen;              /* a run was in a font with such ink */
+
+/* move the destination 'd' pixels along the baseline */
+static void move_along(WORD d)
+{
+    switch(linea_vars.CHUP) {
+    default:
+        linea_vars.DESTX += d;
+        break;
+    case 900:
+        linea_vars.DESTY -= d;
+        break;
+    case 1800:
+        linea_vars.DESTX -= d;
+        break;
+    case 2700:
+        linea_vars.DESTY += d;
+        break;
+    }
+}
+
+/*
+ * In the overhang pass, instead of a character's cell (set up by load_char(),
+ * and in 'temp' of the font): the cells of ink that leave it (none if the
+ * font has no 'off'), and the move on to where the next character goes, which
+ * is what text_blt() makes of the cell's width and the style
+ */
+static void draw_overhang(WORD temp, const UWORD *off, const UBYTE *form, UWORD form_width)
+{
+    WORD x = linea_vars.DESTX, y = linea_vars.DESTY;
+    WORD delx = linea_vars.DELX, adv = delx;
+    WORD mono = linea_vars.MONO;
+    WORD left, right;
+    const UBYTE *fbase = linea_vars.FBASE;
+    WORD fwidth = linea_vars.FWIDTH;
+    BOOL turned = linea_vars.CHUP == 900 || linea_vars.CHUP == 2700;
+
+    if ((linea_vars.STYLE & F_THICKEN) && !mono)
+        adv += linea_vars.WEIGHT;
+    if (linea_vars.STYLE & F_OUTLINE)
+        adv += OUTLINE_THICKNESS * 2;
+
+    left = right = 0;
+    if (off)
+    {
+        left = off[2 * temp + 1] - off[2 * temp];
+        right = off[2 * temp + 2] - off[2 * temp + 1];
+    }
+    /*
+     * XOR toggles a pixel each time it is drawn: the cell and a piece, each
+     * thickened, outlined or slanted by itself, overlap, and would toggle the
+     * same pixels twice.  That ink is left as the cells have it.
+     */
+    if (linea_vars.WRT_MODE == WM_XOR && (linea_vars.STYLE & (F_THICKEN | F_OUTLINE | F_SKEW)))
+        left = right = 0;
+    /*
+     * the true colour backends do not keep skewed text inside the clip
+     * (see tc_text_blit() and the transparent loops of text_blt()): a
+     * piece at the edge of the screen would write into the line before or
+     * after.  That ink is left as the cells have it.
+     */
+    if (linea_vars.STYLE & F_SKEW)
+        left = right = 0;
+    /*
+     * the light mask is rotated for each row of the screen, from the
+     * bottom of what is drawn: turned by 90 or 270 degrees a piece would
+     * have to start it where the cell's would be at that row, which
+     * depends on the clipping, the bold and the outline.  Not drawn.
+     */
+    if ((linea_vars.STYLE & F_LIGHT) && turned)
+        left = right = 0;
+    if (left > 0 || right > 0)
+    {
+        linea_vars.FBASE = form;
+        linea_vars.FWIDTH = form_width;
+        /*
+         * A piece is not a cell of a fixed-pitch font, whose bold stays in
+         * it (the last columns of the source are not drawn, as thickening
+         * puts them in the cell's): it is thickened as the cell of any
+         * other font is, and so is one column wide.  Each piece is drawn
+         * from the top of the form, whatever clipping the one before
+         * moved the source by (do_clip() does that to SOURCEX and SOURCEY).
+         */
+        linea_vars.MONO = 0;
+        if (left > 0)
+        {
+            linea_vars.SOURCEX = off[2 * temp];
+            linea_vars.SOURCEY = 0;
+            linea_vars.DELX = left;
+            move_along(-left);
+            text_blt();
+            linea_vars.DESTX = x;
+            linea_vars.DESTY = y;
+        }
+        if (right > 0)
+        {
+            /* where the cell ends, which its thickening or outline does not move */
+            linea_vars.SOURCEX = off[2 * temp + 1];
+            linea_vars.SOURCEY = 0;
+            linea_vars.DELX = right;
+            move_along(delx);
+            text_blt();
+            linea_vars.DESTX = x;
+            linea_vars.DESTY = y;
+        }
+        linea_vars.MONO = mono;
+        linea_vars.FBASE = fbase;
+        linea_vars.FWIDTH = fwidth;
+        linea_vars.DELX = delx;
+    }
+    move_along(adv);
+}
+#endif
+
 /*
  * output specified text string, in one of the workstation's fonts
  *
@@ -320,6 +448,11 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
 #if CONF_WITH_BLITTER
     WORD (*blitter_string)(const Fonthead *, WORD, const WORD *, JUSTINFO *);
 #endif
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    const UWORD *over_off = NULL;       /* the cells of ink outside the cells */
+    const UBYTE *over_form = NULL;
+    UWORD over_width = 0;
+#endif
 
     if (count <= 0)     /* quick out for unlikely occurrence */
         return;
@@ -337,6 +470,15 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
     linea_vars.WRT_MODE = vwk->wrt_mode;
 
     linea_vars.CLIP = vwk->clip;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /*
+     * the ink outside the cells can be off the screen where the cells are
+     * not (a j at the left edge): the bounds of the workstation are the
+     * screen's if it does not clip, so this clips it to the screen
+     */
+    if (over_pass)
+        linea_vars.CLIP = TRUE;
+#endif
     linea_vars.XMINCL = vwk->xmn_clip;
     linea_vars.YMINCL = vwk->ymn_clip;
     linea_vars.XMAXCL = vwk->xmx_clip;
@@ -348,7 +490,11 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
 #if CONF_WITH_VDI_SCALABLE_FONTS
     /* a scalable font's glyphs can be bigger than the default buffer holds */
     if (fnt_ptr->flags & F_SFONT)
+    {
         vdi_sfont_scratch(fnt_ptr, &linea_vars.SCRTCHP, &linea_vars.SCRPT2);
+        if (!linea_vars.SCALE && vdi_sfont_overhang(fnt_ptr, &over_off, &over_form, &over_width))
+            overhang_seen = TRUE;
+    }
 #endif
 
     if (vwk->style & F_THICKEN)
@@ -482,6 +628,9 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
     /*
      * call special direct screen blit routine if applicable
      */
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (!over_pass)
+#endif
     if (ok_for_direct_blit(vwk, fnt_ptr, width, justified))
     {
         direct_screen_blit(count, str);
@@ -496,6 +645,9 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
 #if CONF_WITH_BLITTER
     /* the blitter's way of outputting several characters at once, if any */
     blitter_string = NULL;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (!over_pass)
+#endif
     if (ok_for_blitter_string(vwk))
 #if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
         blitter_string = (vwk->style & F_THICKEN) ? blitter_bold_string : blitter_text_string;
@@ -526,6 +678,10 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
     adv_extra = clip_extra = xmn = xmx = xlim = 0;
     line_out = run_mode = FALSE;
     skip_clipped = vwk->clip && !vwk->chup && !vwk->scaled;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (over_pass)
+        skip_clipped = FALSE;           /* ink of a character outside the window can be in it */
+#endif
     if (skip_clipped && justified
      && (justified->chary || justified->rmchary
       || justified->wordy || justified->rmwordy))
@@ -669,6 +825,11 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
                 }
             }
 #endif
+#if CONF_WITH_VDI_SCALABLE_FONTS
+            if (over_pass)
+                draw_overhang(temp, over_off, over_form, over_width);
+            else
+#endif
             text_blt();
         }
 
@@ -694,6 +855,10 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
         }
     }
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (over_pass)
+        return;                         /* the underline is drawn with the characters */
+#endif
     if ((vwk->style & F_UNDER) && !more) {
         Line * line = (Line*)PTSIN;
         line->x1 = startx;
@@ -1266,7 +1431,7 @@ static BOOL runs_overlap(Vwk *vwk)
  * 'width' is as for output_run(): the width it is aligned for, if not
  * negative
  */
-static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
+static void output_text_pass(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
 {
 #if CONF_WITH_VDI_SCALABLE_FONTS
     if (text_in_runs(vwk))
@@ -1306,6 +1471,53 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
 #endif
 
     output_run(vwk, vwk->cur_font, count, str, width, ALIGN_UNSET, justified, FALSE, FALSE, NULL);
+}
+
+/*
+ * output a text string, in the workstation's character map: the characters,
+ * and in a scalable font, once they are all there, the ink of them that
+ * leaves their cells, drawn from the same point and with the same spacing
+ * (see draw_overhang())
+ */
+static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
+{
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if ((vwk->cur_font->flags & F_SFONT) && !vwk->scaled && count > 0)
+    {
+        WORD x = PTSIN[0], y = PTSIN[1], mode = vwk->wrt_mode;
+        WORD kept[4];
+        JUSTINFO just;
+
+        if (justified)
+            just = *justified;
+        overhang_seen = FALSE;
+        output_text_pass(vwk, count, str, width, justified);
+        if (!overhang_seen || mode == WM_ERASE)     /* erase would blank the next glyph's ink */
+            return;
+
+        /* the underline has taken the point, and what follows it in ptsin */
+        kept[0] = PTSIN[0];
+        kept[1] = PTSIN[1];
+        kept[2] = PTSIN[2];
+        kept[3] = PTSIN[3];
+        PTSIN[0] = x;
+        PTSIN[1] = y;
+        if (justified)
+            *justified = just;
+        over_pass = TRUE;
+        if (mode == WM_REPLACE)
+            vwk->wrt_mode = WM_TRANS;   /* not a background over the characters */
+        output_text_pass(vwk, count, str, width, justified);
+        vwk->wrt_mode = mode;
+        over_pass = FALSE;
+        PTSIN[0] = kept[0];
+        PTSIN[1] = kept[1];
+        PTSIN[2] = kept[2];
+        PTSIN[3] = kept[3];
+        return;
+    }
+#endif
+    output_text_pass(vwk, count, str, width, justified);
 }
 
 void vdi_v_gtext(Vwk * vwk)

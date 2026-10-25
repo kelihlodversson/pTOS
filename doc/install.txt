@@ -316,7 +316,11 @@ so the text path draws it with all its writing modes, effects, rotation
 and clipping (vdi/vdi_sfont.c).  Rendered sizes are kept up to
 CONF_VDI_FONT_CACHE KB (1 MB by default); the one used longest ago that
 no workstation has selected goes first.  Ink that reaches past a
-character's advance width is cut off (#607).
+character's advance width (an italic f, the foot of a j, anything slanted
+by vst_skew(), a combining mark) is kept in cells of its own, which are
+output after the characters of the string, transparently, from where each
+character is: the advances and extents are still the advances, and a
+character that follows does not cover that ink in replace mode (#607).
 
 The built-in GDOS also answers the font calls SpeedoGDOS added, and those
 NVDI added to them (opcodes 190 and 229 to 255, vdi/vdi_speedo.c; #577):
@@ -754,6 +758,26 @@ length).  It is mandatory on x86-64 and optional on ARM, where without
 per-process address spaces it only rejects null pointers and bad lengths; it
 is not offered on m68k yet.  The rpi2-kproc configuration builds with it.
 
+
+
+Native FAT file lifetimes
+-------------------------
+
+CONF_WITH_FAT_FILE_LIFETIMES controls retained native FAT file lifetimes.
+It defaults off for the 192 KB ROM and on for other images. With it enabled,
+deleting an open file removes its name but keeps its contents until the last
+handle or backing reference closes. Interrupted deletion and FAT reclamation
+are retained for retry, and pending clusters cannot be allocated again.
+
+With it disabled, deletion uses traditional GEMDOS semantics: another
+process's open file cannot be deleted; the caller's handles are closed before
+its clusters are freed. If a file identity has been shared with another
+process through standard-handle inheritance, deletion is conservatively
+refused until all handles to that identity close (even after the child exits).
+Close and reopen the file before deleting it. Directory-allocation and
+media-change safety remain
+enabled. CONF_WITH_FILE_PINS selects extended lifetimes automatically, so
+file mappings cannot be configured without them.
 
 
 Adding a configuration option

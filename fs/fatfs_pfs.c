@@ -332,7 +332,7 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
     OFD *fd,*f0;
     DFD *dfd;
     FCB *b;
-    DND *dn;
+    DND *dn, *parent;
     int h,cl,plen;
     long rc;
     PFSCOOKIE newfc;
@@ -343,6 +343,7 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
     h = (int)newfc.index;
 
     f = getofd(h);
+    parent = f->o_dnode;
 
     /* build a DND in the tree */
     fd = f->o_dirfil;
@@ -352,23 +353,24 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
 
     /* is the total path length too long? */    /* M01.01.1107.01 */
     plen = namlen( b->f_name );
-    for (dn = f->o_dnode; dn; dn = dn->d_parent)
+    for (dn = parent; dn; dn = dn->d_parent)
         plen += namlen(dn->d_name);
     if (plen >= (LEN_ZPATH-3))
     {
-        ixdel(f->o_dnode, b, f->o_dirbyt);
+        ixdel(parent, b, f->o_dirbyt);
         return EACCDN;
     }
 
     /* note: makdnd() and makofd() only return if they succeed */
-    dn = makdnd(f->o_dnode,b);
+    dn = makdnd(parent,b);
     f0 = makofd(dn);            /* makofd() also updates dn->d_ofd */
 
     /* initialize dir cluster */
     if (nextcl(f0,1))
     {
-        ixdel(f->o_dnode, b, f->o_dirbyt);      /* M01.01.1103.01 */
-        f->o_dnode->d_left = NULL;              /* M01.01.1103.01 */
+        ixdel(parent, b, f->o_dirbyt);      /* M01.01.1103.01 */
+        /* ixdel may have released f: use the cached containing directory. */
+        parent->d_left = NULL;              /* M01.01.1103.01 */
         freednd(dn);                            /* M01.01.1031.02 */
         return EACCDN;
     }

@@ -138,8 +138,22 @@ config CONF_WITH_USER_ASPACE
 	  requires CONF_WITH_KPROC.  The separate-address-spaces option
 	  (#402) will become the real home of this.
 
+config CONF_WITH_FAT_FILE_LIFETIMES
+	bool "Extended native FAT file lifetimes"
+	default n if TARGET_192
+	default y
+	help
+	  Keep deleted files alive until their last open handle or backing
+	  reference is released. Retain and retry interrupted name removal
+	  and FAT-chain reclamation without reallocating pending clusters.
+	  Disable for small ROMs to use traditional GEMDOS deletion: files
+	  open by another process cannot be deleted, and this process's open
+	  files are closed before their clusters are freed. File mappings
+	  require the extended implementation.
+
 config CONF_WITH_FILE_PINS
 	bool
+	select CONF_WITH_FAT_FILE_LIFETIMES
 	help
 	  Retain native file backing independently of GEMDOS handles. Selected
 	  by file mappings and by their lifetime self-tests; ordinary unlink
