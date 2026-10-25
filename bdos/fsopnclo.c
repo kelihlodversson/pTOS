@@ -74,7 +74,9 @@
  */
 long opnfil(FCB *f, DND *dn, int mod);
 static OFD *makopn(FCB *f, DND *dn, int mod, OFD *p2);
+#if CONF_WITH_FAT_FILE_LIFETIMES
 static OFD *pending_unlinks;
+#endif
 static long sftdel(FTAB *sftp);
 
 
@@ -231,6 +233,7 @@ BOOL ofd_hold(OFD *fd)
 }
 #endif
 
+#if CONF_WITH_FAT_FILE_LIFETIMES
 /* Keep the current cluster and successor until both FAT copies are durable.
  * flush() invalidates its buffer before I/O, so a retry must rewrite the
  * pending entry instead of reading a possibly already cleared FAT link. */
@@ -267,6 +270,8 @@ BOOL ofd_cluster_pending(DND *dn, CLNO cluster)
            ofd_cluster_pending(dn->d_right, cluster);
 }
 
+#endif
+
 long ofd_put(OFD *fd)
 {
     DFD *dfd = fd->o_dfd;
@@ -276,12 +281,14 @@ long ofd_put(OFD *fd)
     if (!fd->o_refs) return EINTRN;
     if (fd->o_refs > 1) { fd->o_refs--; return E_OK; }
 #endif
+#if CONF_WITH_FAT_FILE_LIFETIMES
     if (dfd->o_usecnt == 1 && (dfd->o_flag & O_UNLINKED) &&
         !(dfd->o_flag & O_MEDIA_LOST)) {
         dfd->o_flag |= O_CLOSING;
         free_file_chain(dfd, fd->o_dmd);
         ixclose(fd, CL_KEEP);            /* flush while reference still live */
     }
+#endif
     if (fd->o_dnode) {
         for (link = &fd->o_dnode->d_files; *link && *link != fd; link = &(*link)->o_link) ;
         if (*link) *link = fd->o_link;
@@ -345,7 +352,10 @@ static void invalidate_directory_files(DND *dn)
 
 void ofd_invalidate_drive(DMD *dm)
 {
-    OFD **link = &pending_unlinks, *fd;
+    OFD *fd;
+#if CONF_WITH_FAT_FILE_LIFETIMES
+    OFD **link = &pending_unlinks;
+#endif
     int i;
     if (dm->m_dtl) invalidate_directory_files(dm->m_dtl);
     /* A close may have detached an OFD before a later flush failed. */
@@ -357,12 +367,14 @@ void ofd_invalidate_drive(DMD *dm)
         if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dmd == dm)
             invalidate_file(fd);
     }
+#if CONF_WITH_FAT_FILE_LIFETIMES
     while ((fd = *link)) {
         if (fd->o_dfd->o_flag & O_MEDIA_LOST) {
             *link = fd->o_thread;
             ofd_put(fd);                 /* memory only, never new disk I/O */
         } else link = &fd->o_thread;
     }
+#endif
 }
 
 /*
@@ -562,6 +574,7 @@ long xunlink(char *name)
 }
 
 
+#if CONF_WITH_FAT_FILE_LIFETIMES
 /* A queue-owned OFD pins the directory, medium and shared file identity
  * before any directory write. It survives disk-error longjmps, including
  * deletion of files that had no public handles. */
@@ -601,6 +614,86 @@ long ixdel(DND *dn, FCB *f, long pos)
     return E_OK;
 }
 
+#else
+
+/* Traditional GEMDOS deletion for ROMs without retained file lifetimes. */
+long ixdel(DND *dn, FCB *f, long pos)
+{
+    OFD *fd;
+    DMD *dm;
+    int n2;
+    int n;
+    char c;
+    CLNO first = le2cpu16(f->f_clust);
+
+    /* Check every owner before closing anything. A close can invalidate
+     * the directory buffer holding f, so save the first cluster above. */
+    for (n = 0; n < OPNFILES; n++)
+    {
+        fd = sft[n].f_ofd;
+        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
+        {
+            if (sft[n].f_own != run || (fd->o_dfd->o_flag & O_INHERITED))
+                return EACCDN;
+            first = fd->o_dfd->o_strtcl;   /* metadata may not be on disk yet */
+        }
+    }
+    for (n = 0; n < OPNFILES; n++)
+    {
+        fd = sft[n].f_ofd;
+        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
+        {
+            long rc;
+            int h;
+            /* Reset standard-handle mappings as well, before a new file
+             * can reuse this SFT slot. */
+            for (h = 0; h < NUMSTD; h++)
+                if (PD_UFT(run)[h] == n + NUMSTD)
+                {
+                    rc = xclose(h);
+                    if (rc < 0)
+                        return rc;
+                }
+            while (sft[n].f_own)
+            {
+                rc = xclose(n + NUMSTD);
+                if (rc < 0)
+                    return rc;
+            }
+        }
+    }
+
+    /*
+     * Traverse this file's chain of allocated clusters, freeing them.
+     */
+    dm = dn->d_drv;
+    n = first;
+
+    while (n && !endofchain(n))
+    {
+        n2 = getrealcl(n,dm);
+        clfix(n,FREECLUSTER,dm);
+        n = n2;
+    }
+
+    /*
+     * Mark the directory entry as erased.
+     */
+    fd = dn->d_ofd;
+    ixlseek(fd,pos);
+    c = (char)ERASE_MARKER;
+    ixwrite(fd,1L,&c);
+    ixclose(fd,CL_DIR);
+
+    /*
+     * NOTE that the preceding routines that do physical disk operations
+     * will 'longjmp' on failure at the BIOS level, thereby allowing us to
+     * simply return with E_OK.
+     */
+    return E_OK;
+}
+
+#endif
 
 /*
 **  contains_illegal_characters - check for illegal filename chars in specified string
