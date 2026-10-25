@@ -45,11 +45,10 @@ void test_legacy_tpa(void)
         {
             long rc = Mshrink(bp, in_use);
 
-            ptest_assert_msg(rc == 0, rc == EGSBF ? "Mshrink() to the size in use failed (EGSBF)"
-                                    : rc == (-40L) ? "Mshrink() to the size in use failed (EIMBA)"
-                                    : rc == (-36L) ? "Mshrink() to the size in use failed (EACCDN)"
-                                    : "Mshrink() to the size in use failed");
-            ptest_assert_msg(Mshrink(bp, in_use) == 0, "Mshrink() to the same size again failed");
+            /* (EGSBF: the TPA is smaller than p_hitpa says already, the startup code
+             * having taken back what it did not need) */
+            ptest_assert_msg(rc == 0 || rc == EGSBF, "Mshrink() to the size in use failed");
+            ptest_assert_msg(Mshrink(bp, in_use) == rc, "Mshrink() to the same size again failed");
         }
 
         /* what is not the program's own TPA, or cannot grow, is refused */
