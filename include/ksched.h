@@ -14,6 +14,10 @@ LONG ksched_run(PD * const *programs, UWORD count, LONG *results);
  * Success consumes the launch and returns its full synchronous exit status. */
 LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result);
 BOOL ksched_active(void);
+/* Saved with kernel process contexts, including legacy AES coroutines.
+ * Zero is unmanaged; identities are never reused, even across groups. */
+UQUAD ksched_context_id(void);
+void ksched_context_restore(UQUAD identity);
 /* Called with IRQs masked. Predicates run with IRQs masked and must not
  * allocate, block or access user memory. FALSE means no managed task. */
 BOOL ksched_block(BOOL (*ready)(void *), void *argument);

@@ -17,6 +17,7 @@ typedef struct {
     PD *program, *parent;
     WORD pid, signal;
     BOOL asynchronous, take_ownership;
+    UQUAD identity;
     UQUAD stack_phys, stack_top;
     X86_64_PROCESS_CONTEXT context;
     jmp_buf resume;
@@ -34,10 +35,36 @@ static struct {
     jmp_buf resume;
     UQUAD flags;
 } scheduler;
+static UQUAD next_identity;
 extern void native_sched_enter(UQUAD top, void (*entry)(void)) NORETURN;
 
-BOOL ksched_spawn_allowed(void) { return scheduler.active && scheduler.current != NULL; }
+BOOL ksched_spawn_allowed(void)
+{
+    return scheduler.active && scheduler.current && scheduler.current->state == TASK_RUNNING;
+}
 BOOL ksched_active(void) { return scheduler.active; }
+
+UQUAD ksched_context_id(void)
+{
+    KERNEL_TASK *task = scheduler.current;
+    return scheduler.active && task &&
+           (task->state == TASK_RUNNING || task->state == TASK_BLOCKED) ? task->identity : 0;
+}
+
+void ksched_context_restore(UQUAD identity)
+{
+    UWORD i;
+    scheduler.current = NULL;
+    if (!scheduler.active || !identity) return;
+    for (i = 0; i < KSCHED_LIMIT; i++) {
+        KERNEL_TASK *task = &scheduler.tasks[i];
+        if (task->identity == identity &&
+            (task->state == TASK_RUNNING || task->state == TASK_BLOCKED)) {
+            scheduler.current = task;
+            return;
+        }
+    }
+}
 
 BOOL ksched_pid_reserved(WORD pid)
 {
@@ -120,7 +147,7 @@ static void task_entry(void)
 BOOL ksched_block(BOOL (*ready)(void *), void *argument)
 {
     KERNEL_TASK *task = scheduler.current;
-    if (!scheduler.active || !task) return FALSE;
+    if (!ksched_spawn_allowed()) return FALSE;
     task->ready = ready;
     task->argument = argument;
     task->state = TASK_BLOCKED;
@@ -146,6 +173,7 @@ LONG ksched_spawn(PD *pd)
     UWORD i;
     KERNEL_TASK *task;
     if (!ksched_spawn_allowed()) return EINVFN;
+    if (next_identity == ~0ULL) return EAGAIN;
     if (!kproc_unlaunched(pd) || kproc_user_root(pd)) return EIMBA;
     for (i = 0; i < KSCHED_LIMIT; i++)
         if (scheduler.tasks[i].program == pd) return EACCDN;
@@ -167,6 +195,7 @@ LONG ksched_spawn(PD *pd)
     task->program = pd;
     task->parent = run;
     task->asynchronous = TRUE;
+    task->identity = ++next_identity;
     task->take_ownership = TRUE;
     kproc_commit_async(pd);
     task->state = TASK_NEW;
@@ -237,6 +266,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
     UWORD i, j;
     if (scheduler.active) return EAGAIN;
     if (!count || count > KSCHED_LIMIT) return EINVAL;
+    if (next_identity > ~0ULL - count) return EAGAIN;
     for (i = 0; i < count; i++) {
         if (!kproc_unlaunched(programs[i]) || (!prepare && !kproc_user_root(programs[i]))) return EIMBA;
         for (j = 0; j < i; j++) if (programs[i] == programs[j]) return EINVAL;
@@ -248,6 +278,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         KERNEL_TASK *task = &scheduler.tasks[i];
         task->program = programs[i];
         task->pid = kproc_pid(programs[i]);
+        task->identity = ++next_identity;
         task->take_ownership = take_ownership;
         task->state = TASK_NEW;
         task->stack_phys = kstack_alloc(&task->stack_top);

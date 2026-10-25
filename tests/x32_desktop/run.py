@@ -305,6 +305,9 @@ def desktop(guest):
     guest.wait("x32 desktop IDLE", idle + 1)
     guest.key("ctrl-o")
     guest.wait("x32 desktop application and accessory PASS")
+    if "CONF_WITH_NATIVE_SCHED = y" in Path("obj/auto.conf").read_text():
+        guest.wait("x32 desktop unmanaged accessory scheduling PASS")
+        guest.wait("x32 desktop managed scheduling restore PASS")
     guest.wait("x32 desktop rejected blocks and shell copies PASS")
     guest.wait("x32 desktop shell tail boundary PASS")
     guest.wait("x32 desktop nested ownership PASS")

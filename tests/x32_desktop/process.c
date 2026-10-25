@@ -49,6 +49,18 @@ static void fail(WORD line)
 }
 #define CHECK(condition) do { if (!(condition)) fail(__LINE__); } while (0)
 
+#if CONF_WITH_NATIVE_SCHED
+static const char yield_tail[] = { 1, 'y', 0 };
+static const char unmanaged_tail[] = { 1, 'u', 0 };
+
+static void managed_child(void)
+{
+    LONG pid = desk_syscall(1, 0x4b, 100, (long)"C:\\APPTEST.PRG", (long)yield_tail, 0);
+    CHECK(pid > 0);
+    CHECK(desk_syscall(1, 0x13a, pid, 0, 0, 0) == (LONG)(((ULONG)pid << 16) | 73));
+}
+#endif
+
 static void accessory(void) NORETURN;
 static void accessory(void)
 {
@@ -102,6 +114,17 @@ static void accessory(void)
             opened = FALSE;
             record("x32 desktop accessory window CLOSED\r\n");
         } else if (event.message.type == 40 || event.message.type == 650) {
+#if CONF_WITH_NATIVE_SCHED
+            if (event.message.type == 650) {
+                /* The foreground managed task is suspended in legacy AES.
+                 * Neither this coroutine nor its synchronous child owns it. */
+                CHECK(desk_syscall(1, 0xff, 0, 0, 0, 0) == E_OK);
+                CHECK(desk_syscall(1, 0x4b, 100, (long)"C:\\APPTEST.PRG", (long)yield_tail, 0) == EINVFN);
+                CHECK(desk_syscall(1, 0x109, 0, 0, 0, 0) == EFILNF);
+                CHECK(desk_syscall(1, 0x4b, 0, (long)"C:\\APPTEST.PRG", (long)unmanaged_tail, 0) == 29);
+                record("x32 desktop unmanaged accessory scheduling PASS\r\n");
+            }
+#endif
             if (!h) {
                 do {
                     h = aes_wind_create(AES_WINDOW_NAME_GADGET | AES_WINDOW_MOVER | AES_WINDOW_CLOSER, &rectangle);
@@ -147,6 +170,9 @@ static void nested(void)
     CHECK(aes_wind_get(0, &window) == EACCDN);
     CHECK(aes_evnt_multi(&request, &event) == EACCDN);
     CHECK(aes_appl_exit() == E_OK);
+#if CONF_WITH_NATIVE_SCHED
+    managed_child(); /* A nested synchronous launch retains its parent's task. */
+#endif
     record("x32 desktop nested ownership PASS\r\n");
     finish(0);
 }
@@ -241,6 +267,17 @@ void desktop_test_start(PD *basepage, LONG kind)
     if (kind == 1)
         accessory();
     CHECK(kind == 0);
+#if CONF_WITH_NATIVE_SCHED
+    if (basepage->p_cmdlin[0] == 1 && basepage->p_cmdlin[1] == 'y') {
+        CHECK(desk_syscall(1, 0xff, 0, 0, 0, 0) == E_OK);
+        finish(73);
+    }
+    if (basepage->p_cmdlin[0] == 1 && basepage->p_cmdlin[1] == 'u') {
+        CHECK(desk_syscall(1, 0xff, 0, 0, 0, 0) == E_OK);
+        CHECK(desk_syscall(1, 0x4b, 100, (long)"C:\\APPTEST.PRG", (long)yield_tail, 0) == EINVFN);
+        finish(29);
+    }
+#endif
     if (basepage->p_cmdlin[0] == 126 && basepage->p_cmdlin[1] == 'b')
         tail_boundary(basepage);
     if (basepage->p_cmdlin[1] == 't' || basepage->p_cmdlin[1] == 'f')
@@ -310,6 +347,10 @@ void desktop_test_start(PD *basepage, LONG kind)
         CHECK(rc == AES_EVENT_MESSAGE);
     } while (event.message.type != 651);
     CHECK(event.message.sender == peer);
+#if CONF_WITH_NATIVE_SCHED
+    managed_child(); /* AES restored the foreground task after the accessory. */
+    record("x32 desktop managed scheduling restore PASS\r\n");
+#endif
     control.code = 100; control.nintin = 11; control.handle = 1;
     CHECK(vdi(&pb) == E_OK && control.handle > 0);
     control.code = 101; control.nintin = 0;

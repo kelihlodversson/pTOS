@@ -641,7 +641,15 @@ zero-time polls and owned-update restrictions keep their previous behavior.
 
 Context transfer preserves the active process, page tables, syscall and IRQ
 stacks, saved user RSP, GS syscall state, launch nesting, disk-error recovery
-buffer, FPU/SSE state and IRQ state. A nested synchronous Pexec stays in the
+buffer, FPU/SSE state, IRQ state and managed-task identity. Legacy AES saves
+and restores that identity with its coroutine contexts; new accessory
+coroutines are unmanaged even while a foreground group is active. Their
+Syield is a no-op and async launch is rejected, including from their nested
+synchronous children. Returning to a managed foreground restores its task.
+Identities are never reused across task slots or groups, so an obsolete
+context cannot attach to a later task. Desktop boot tests exercise both the
+unmanaged accessory path and managed launch/wait after AES returns.
+A nested synchronous Pexec stays in the
 same task and may itself block in CUIS; child exit/fault returns through its
 normal launch continuation. Scheduling is cooperative at blocking CUIS
 waits, child waits and explicit Syield calls. Busy clients are not preempted
