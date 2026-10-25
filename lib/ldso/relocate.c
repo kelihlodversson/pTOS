@@ -10,6 +10,8 @@ typedef struct {
     int32_t addend;
 } DL_RELA;
 
+#define DL_REL_SIZE 8                    /* offset and info: the addend is in the place */
+
 static void copy_bytes(void *dst, const void *src, uint32_t bytes)
 {
     unsigned char *d = dst;
@@ -40,6 +42,7 @@ static int metadata(const DL_OBJECT *o, uint32_t va, uint32_t size)
            overlap(va, size, o->symtab, o->nchain * sizeof(DL_SYMBOL)) ||
            overlap(va, size, o->hash, 8 + (o->nbucket + o->nchain) * 4) ||
            overlap(va, size, o->rela, o->relasz) ||
+           overlap(va, size, o->rel, o->relsz) ||
            overlap(va, size, o->jmprel, o->pltrelsz);
 }
 
@@ -58,7 +61,7 @@ int dl_relocate(const DL_OBJECT *o, unsigned char *image,
                 const DL_RELOC_BACKEND *backend)
 {
     uint32_t i, j, table, start, size, pos, used = 0, symbol, place;
-    uint32_t total;
+    uint32_t total, entry, main_va, main_size, main_ent, seen, other, pltrel;
     uint64_t value;
     DL_RELA rel;
     DL_RELOC_KIND kind;
@@ -71,29 +74,37 @@ int dl_relocate(const DL_OBJECT *o, unsigned char *image,
         return DL_BAD_ELF;
     if (range_count > DL_MAX_WRITE_RANGES)
         return DL_UNSUPPORTED;
-    if (o->features || (o->flags & ~8U) || (o->flags1 & ~0x08000001U) ||
-        (o->reloc_seen & (64 | 128 | 256)))
+    if (o->features || (o->flags & ~8U) || (o->flags1 & ~0x08000001U))
         return DL_UNSUPPORTED;
-    /* RELA triplets and PLT metadata must be complete. RELAENT alone is
-     * allowed for PLT-only output, whose encoding DT_PLTREL identifies. */
-    if (((o->reloc_seen & 3) && (o->reloc_seen & 7) != 7) ||
-        ((o->reloc_seen & 4) && o->relaent != sizeof(DL_RELA)) ||
+    /* The table kind is the architecture's: the other one must not be there. */
+    entry = backend->rel ? DL_REL_SIZE : sizeof(DL_RELA);
+    main_va = backend->rel ? o->rel : o->rela;
+    main_size = backend->rel ? o->relsz : o->relasz;
+    main_ent = backend->rel ? o->relent : o->relaent;
+    seen = backend->rel ? (o->reloc_seen >> 6) & 7 : o->reloc_seen & 7;
+    other = backend->rel ? o->reloc_seen & 7 : (o->reloc_seen >> 6) & 7;
+    pltrel = backend->rel ? 17 : 7;         /* DT_REL, DT_RELA */
+    if (other)
+        return DL_UNSUPPORTED;
+    /* The table triplets and PLT metadata must be complete.  The entry size
+     * alone is allowed for PLT-only output, whose encoding DT_PLTREL identifies. */
+    if ((seen & 3 && seen != 7) || ((seen & 4) && main_ent != entry) ||
         ((o->reloc_seen & 56) && (o->reloc_seen & 56) != 56))
         return DL_BAD_ELF;
-    if ((o->reloc_seen & 56) && o->pltrel != 7)  /* DT_RELA */
+    if ((o->reloc_seen & 56) && o->pltrel != pltrel)
         return DL_UNSUPPORTED;
-    if (o->relasz % sizeof(DL_RELA) || o->pltrelsz % sizeof(DL_RELA) ||
-        (o->relasz && !at(o, o->rela, o->relasz)) ||
+    if (main_size % entry || o->pltrelsz % entry ||
+        (main_size && !at(o, main_va, main_size)) ||
         (o->pltrelsz && !at(o, o->jmprel, o->pltrelsz)))
         return DL_BAD_ELF;
-    total = o->relasz / sizeof(DL_RELA);
-    if (overlap(o->rela, o->relasz, o->jmprel, o->pltrelsz)) {
-        if (o->jmprel < o->rela || o->pltrelsz > o->relasz ||
-            o->jmprel - o->rela > o->relasz - o->pltrelsz ||
-            (o->jmprel - o->rela) % sizeof(DL_RELA))
+    total = main_size / entry;
+    if (overlap(main_va, main_size, o->jmprel, o->pltrelsz)) {
+        if (o->jmprel < main_va || o->pltrelsz > main_size ||
+            o->jmprel - main_va > main_size - o->pltrelsz ||
+            (o->jmprel - main_va) % entry)
             return DL_BAD_ELF;
     } else {
-        total += o->pltrelsz / sizeof(DL_RELA);
+        total += o->pltrelsz / entry;
     }
     if (total > DL_MAX_RELOCATIONS)
         return DL_UNSUPPORTED;
@@ -111,13 +122,13 @@ int dl_relocate(const DL_OBJECT *o, unsigned char *image,
             return DL_BAD_ELF;
 
     for (table = 0; table < 2; table++) {
-        start = table ? o->jmprel : o->rela;
-        size = table ? o->pltrelsz : o->relasz;
-        for (pos = 0; pos < size; pos += sizeof(DL_RELA)) {
-            if (!table && overlap(start + pos, sizeof(DL_RELA),
-                                    o->jmprel, o->pltrelsz))
+        start = table ? o->jmprel : main_va;
+        size = table ? o->pltrelsz : main_size;
+        for (pos = 0; pos < size; pos += entry) {
+            if (!table && overlap(start + pos, entry, o->jmprel, o->pltrelsz))
                 continue;              /* PLT subset handled once below */
-            copy_bytes(&rel, at(o, start + pos, sizeof(rel)), sizeof(rel));
+            rel.addend = 0;
+            copy_bytes(&rel, at(o, start + pos, entry), entry);
             rc = backend->kind(rel.info & 255, &kind);
             if (rc)
                 return rc;
@@ -141,6 +152,8 @@ int dl_relocate(const DL_OBJECT *o, unsigned char *image,
                 return DL_BAD_ELF;
             if ((kind.flags & DL_RELOC_RELATIVE) && (rel.info >> 8))
                 return DL_BAD_ELF;
+            if (backend->rel)           /* the addend is what the place holds */
+                copy_bytes(&rel.addend, at(o, rel.offset, 4), 4);
             symbol = 0;
             if (kind.flags & DL_RELOC_SYMBOL) {
                 rc = dl_resolve_symbol(o, rel.info >> 8, scope, scope_count, &symbol);

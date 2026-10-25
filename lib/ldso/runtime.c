@@ -5,6 +5,7 @@
  */
 #include "runtime.h"
 #include "../../include/mman.h"
+#include "libdir.h"           /* DL_LIBDIR: the directory of the architecture (lib/ldso/arch/) */
 
 #define FILE_LIMIT 0x00800000U
 #define MAX_HOOKS 4096U
@@ -209,7 +210,7 @@ static int acquire(void *context, const char *name, DL_MAPPING *mapping)
         if (objects[i].identity == identity && !equal(objects[i].canonical, canon))
             return DL_BAD_ELF;
     path[0] = 'A' + bootdrive; path[1] = ':';
-    for (i = 0; "\\GEMSYS\\LIB\\X32\\"[i]; i++) path[i + 2] = "\\GEMSYS\\LIB\\X32\\"[i];
+    for (i = 0; DL_LIBDIR[i]; i++) path[i + 2] = DL_LIBDIR[i];
     for (j = 0; ; j++) { path[i + 2 + j] = name[j]; if (!name[j]) break; }
     handle = dl_syscall(0x3d, (uintptr_t)path, 0, 0, 0, 0, 0);
     if (handle < 0) return DL_NOT_FOUND;
@@ -219,7 +220,7 @@ static int acquire(void *context, const char *name, DL_MAPPING *mapping)
     if (!file) { rc = DL_NO_SPACE; goto done; }
     o = &objects[used_objects];
     if (dl_image_read(&o->plan, (const unsigned char *)(uintptr_t)file, size,
-                        DL_IMAGE_DSO, &dl_x32_image_abi) || o->plan.base > PTOS_MMAP_BASE ||
+                        DL_IMAGE_DSO, &dl_image_abi) || o->plan.base > PTOS_MMAP_BASE ||
         (uint64_t)o->plan.size + o->plan.align - 4096 > PTOS_MMAP_LIMIT - PTOS_MMAP_BASE) goto done;
     reserve = o->plan.size + o->plan.align - 4096;
     o->reservation = map(reserve); o->reservation_size = reserve;
@@ -380,7 +381,7 @@ uint32_t dl_runtime(const uint32_t *stack)
         error_name = i ? dl_string(&o->object, o->object.soname) : "main executable";
         if (dl_relocate(&o->object, (unsigned char *)o->object.image, graph.scope, graph.count,
                         o->writable, o->nwritable, work, DL_MAX_RELOCATIONS, &written,
-                        &dl_x32_reloc_backend)) goto error;
+                        &dl_reloc_backend)) goto error;
     }
     for (i = 0; i < graph.count; i++) {
         OBJECT *o = graph.nodes[i].mapping.cookie;

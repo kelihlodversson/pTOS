@@ -2,7 +2,8 @@
  * physmem.c - how much physical memory there is, for Sysconf()
  *
  * The default: the machine's memory top (phystop) in pages, and no knowledge of
- * what is free, because the memory pools of the TPA are not a count of pages.
+ * what is free, because the memory pools of the TPA are not a count of pages
+ * (but with address spaces of their own the page allocator counts them).
  * A machine that has a page allocator says more in
  * bios/machine/<name>/physmem.c, the same two functions.
  *
@@ -31,5 +32,10 @@ LONG phys_pages_total(void)
 
 LONG phys_pages_free(void)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    /* the pages the allocator of the address spaces can still hand out */
+    return (LONG)(pmem32_free_bytes() / 4096UL);
+#else
     return -1;
+#endif
 }

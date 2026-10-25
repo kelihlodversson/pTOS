@@ -1,4 +1,4 @@
-/* Userspace eager ELF32 RELA relocation planning (#660). */
+/* Userspace eager ELF32 RELA and REL relocation planning (#660). */
 #ifndef LDSO_RELOCATE_H
 #define LDSO_RELOCATE_H
 
@@ -23,13 +23,18 @@ typedef struct {
     uint32_t width, flags;
 } DL_RELOC_KIND;
 
+/* rel selects the encoding of the architecture's tables: 0, DT_RELA with an
+ * explicit addend (12 bytes per entry), or 1, DT_REL where the addend is the
+ * word already at the place (8 bytes per entry, as on ARM); in both value()
+ * gets the addend as an argument. */
 typedef struct {
     int (*kind)(uint32_t type, DL_RELOC_KIND *kind);
     int (*value)(uint32_t type, uint32_t bias, uint32_t symbol,
                  int32_t addend, uint32_t place, uint64_t *value);
+    uint32_t rel;
 } DL_RELOC_BACKEND;
 
-extern const DL_RELOC_BACKEND dl_x32_reloc_backend;
+extern const DL_RELOC_BACKEND dl_reloc_backend;
 
 /* Eagerly process DT_RELA and DT_JMPREL without section headers or libc.
  * image must be the mutable backing of object->image. ranges must come from

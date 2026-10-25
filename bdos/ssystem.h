@@ -126,6 +126,12 @@ struct mem_info {
     ULONG free_pages;   /* of which free */
     ULONG processes;    /* process records, the caller's and its launchers' included;
                          * 0xffffffff where there are none (no CONF_WITH_KPROC) */
+    ULONG shared_pages; /* clean pages of mapped files kept for sharing (Mmap(), doc/mmap.txt);
+                         * 0xffffffff without CONF_WITH_MMAP */
+    ULONG shared_refs;  /* the mappings of them, in all address spaces: more than the pages
+                         * where two processes share one */
+    ULONG shared_cross; /* since boot, how often a process mapped a page another address space
+                         * had brought in */
 };
 
 /*

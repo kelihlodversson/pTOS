@@ -1030,9 +1030,9 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     kproc->interp_entry = interpreter->entry + ibias;
     kproc->initial_rsp = rsp;
     kproc->stack_low = stack_first;
-    pd->p_tbase = info.entry;
+    pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)info.entry);
     pd->p_tlen = program->size;
-    pd->p_dbase = pd->p_bbase = kproc->layout.end;
+    pd->p_dbase = pd->p_bbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)kproc->layout.end);
     pd->p_dlen = pd->p_blen = 0;
     rc = E_OK;
 done:

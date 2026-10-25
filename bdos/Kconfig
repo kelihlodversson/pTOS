@@ -187,15 +187,16 @@ config CONF_WITH_MMAP
 
 config CONF_WITH_ELF_SHARED
 	bool "Experimental userspace ELF shared-library linker core"
-	depends on CONF_WITH_ELF_LOADER && CONF_WITH_USER_ASPACE && ARCH_X86_64
+	depends on CONF_WITH_ELF_LOADER && CONF_WITH_USER_ASPACE
+	depends on ARCH_X86_64 || ARCH_ARM
 	depends on CONF_WITH_DEMAND_PAGING
 	select CONF_WITH_MMAP
 	default n
 	help
 	  Build the freestanding userspace linker core for standard ELF shared
-	  objects.  Requires isolated, MMU-backed process address spaces; only
-	  x32 provides the necessary backend initially.  ARM and m68k can be
-	  enabled here after their address-space implementations are merged.
+	  objects.  Requires isolated, MMU-backed process address spaces: x32
+	  and ARM (hard-float EABI, ARM state) have the backends; m68k can be
+	  enabled here once its backend exists.
 
 	  Includes a freestanding ld.so and a separate dynamic CRT/client subset.
 	  Private mapping/protection services use Mmap, Munmap and Mprot; interpreter
