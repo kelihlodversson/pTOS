@@ -12,6 +12,9 @@
 #include "fs.h"
 #include "gemerror.h"
 #include "kproc.h"
+#if CONF_WITH_CUIS
+#include "../aes/cuis.h"
+#endif
 #include "mem.h"
 #include "bdosstub.h"
 #include "biosext.h"
@@ -256,6 +259,9 @@ void kproc_destroy(PD *pd)
             KPROC *kproc = *link;
             KPROC *launcher = kproc->parent ? kproc_find(kproc->parent) : NULL;
 
+#if CONF_WITH_CUIS
+            cuis_process_exit(pd);
+#endif
 #if CONF_WITH_X32_AES
             aes_service_process_exit(pd);
 #endif

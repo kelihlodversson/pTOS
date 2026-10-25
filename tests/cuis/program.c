@@ -1,0 +1,75 @@
+/* Real standard-ELF clients, with overlapping lifetimes in distinct spaces. */
+#include "libaes.h"
+#include "gemerror.h"
+#include "ptos.h"
+extern int64_t client_pexec(const char *path, const char *tail, const char *env);
+
+/* Deliberately poison unused slots. Session calls must never inspect them. */
+static LONG raw(ULONG function, UQUAD handle)
+{
+    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | function;
+    register UQUAD di __asm__("rdi") = handle;
+    register UQUAD si __asm__("rsi") = ~0ULL, dx __asm__("rdx") = ~0ULL;
+    register UQUAD r10 __asm__("r10") = ~0ULL, r8 __asm__("r8") = ~0ULL;
+    register UQUAD r9 __asm__("r9") = ~0ULL;
+    __asm__ volatile ("syscall" : "+a"(ax)
+        : "r"(di), "r"(si), "r"(dx), "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}
+#define CHECK(condition) do { if (!(condition)) return 0x4000 | __LINE__; } while (0)
+int main(int argc, char **argv, char **envp)
+{
+    GRECT first = { 0, 0, 20, 20 }, second = { 10, 10, 20, 20 };
+    LONG handle;
+    ULONG owner = 0;
+    char tail[] = { 9, 'c', '0', '0', '0', '0', '0', '0', '0', '0', 0 };
+    static const char digits[] = "0123456789abcdef";
+    int i;
+    (void)envp;
+    CHECK(argc == 1 || argc == 2);
+    CHECK(raw(99, ~0ULL) == EINVFN);
+    CHECK(aes_session_query(0) == EACCDN);
+    if (argc == 2) {
+        for (i = 1; i <= 8; i++) {
+            char c = argv[1][i];
+            CHECK((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+            owner = (owner << 4) | (c <= '9' ? c - '0' : c - 'a' + 10);
+        }
+        CHECK(aes_session_query(owner) == EACCDN);
+        CHECK(aes_session_close(owner) == EACCDN);
+    }
+    handle = aes_session_open();
+    CHECK(handle >= 0 && aes_session_open() == handle);
+    CHECK(raw(CUIS_SESSION_START, ~0ULL) == handle);
+    CHECK(raw(CUIS_SESSION_QUERY, (1ULL << 32) | (ULONG)handle) == EINVAL);
+    CHECK(raw(CUIS_SESSION_END, (1ULL << 32) | (ULONG)handle) == EINVAL);
+    CHECK(raw(CUIS_SESSION_END, ~0ULL) == EINVAL);
+    CHECK(aes_session_query(-1) == EINVAL);
+    CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
+    CHECK(rc_intersect(&first, &second) && second.g_x == 10 && second.g_y == 10 &&
+          second.g_w == 10 && second.g_h == 10 && inside(19, 19, &second));
+    if (argc == 2) {
+        CHECK((ULONG)handle != owner && aes_session_query(owner) == EACCDN);
+        if (argv[1][0] == 'f') __asm__ volatile ("ud2");
+        if (argv[1][0] == 'l') _Exit(77);
+        return 77;             /* libaes destructor closes the child session */
+    }
+    for (i = 0; i < 8; i++) tail[2 + i] = digits[((ULONG)handle >> ((7 - i) * 4)) & 15];
+    for (i = 0; i < 3; i++) {
+        tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : 'f';
+        CHECK(client_pexec(argv[0], tail, "") == (i == 2 ? 0xffff : 77));
+        CHECK(aes_session_query(handle) == E_OK);
+    }
+    CHECK(aes_session_close(handle) == E_OK);
+    CHECK(aes_session_close(handle) == EACCDN);
+    CHECK(aes_session_query(handle) == EACCDN);
+    CHECK(aes_session_open() > handle);
+    CHECK(aes_session_query(handle) == EACCDN);
+    /* Leave the reopened session to library finalization. */
+    {
+        static const char pass[] = "x32 libaes/CUIS sessions: PASS\r\n";
+        CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
+    }
+    return 77;
+}

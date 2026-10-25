@@ -38,6 +38,10 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     cp obj/ldso/test/client.elf "$work/CLIENT.TOS"
     cp obj/ldso/test/clientpie.elf "$work/CLIENTP.TOS"
     cp obj/ldso/ld.so "$work/GEMSYS/LIB/X32/LD.SO"
+    if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
+        cp obj/libaes/libaes.so "$work/GEMSYS/LIB/X32/LIBAES.SO"
+        cp obj/libaes/CUIS.TOS "$work/CUIS.TOS"
+    fi
     cp obj/ldso/test/librt.so obj/ldso/test/libdyn.so "$work/GEMSYS/LIB/X32/"
     cp obj/ldso/test/BD.SO "$work/GEMSYS/LIB/X32/"
     cp obj/ldso/test/SO*.TOS "$work/"
@@ -66,6 +70,9 @@ if [ -f "$work/VDIIMP.TOS" ]; then
 fi
 if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
+fi
+if [ -f "$work/CUIS.TOS" ]; then
+    set -- "$@" "$work/CUIS.TOS"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
@@ -109,6 +116,10 @@ fi
 if [ -f "$work/VDIIMP.TOS" ]; then
     grep -q 'x86-64 VDI imports: PASS' "$log"
     grep -q 'x86-64 AES imports: PASS' "$log"
+fi
+if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
+    grep -q 'x32 libaes/CUIS sessions: PASS' "$log"
+    grep -q 'x86-64 CUIS sessions: PASS' "$log"
 fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"

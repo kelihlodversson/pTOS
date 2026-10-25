@@ -20,6 +20,10 @@
 #include "trap.h"
 #include "vdi_service.h"
 #include "aes_service.h"
+#include "cuis.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#endif
 #if CONF_WITH_X32_ACCESSORY_TEST
 #include "aes_window.h"
 #endif
@@ -349,6 +353,14 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
 #if CONF_WITH_USER_CALLBACKS
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
             user_callback_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->rcx) : EINVFN);
+#else
+        frame->rax = (UQUAD)(QUAD)EINVFN;
+#endif
+        break;
+    case CUIS_SERVICE_CLASS:
+#if CONF_WITH_CUIS
+        frame->rax = (UQUAD)(QUAD)(from_ring3 ?
+            cuis_service(fn, frame->rdi) : EINVFN);
 #else
         frame->rax = (UQUAD)(QUAD)EINVFN;
 #endif

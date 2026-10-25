@@ -1,0 +1,142 @@
+pTOS - userspace AES and kernel CUIS (#661)
+==========================================
+
+Migration boundary
+------------------
+
+The target is an ordinary per-process libaes.so over native Core User
+Interface Services (CUIS). There is no userspace AES daemon. Kernel CUIS
+owns shared authoritative GUI state; VDI owns drawing/hardware services.
+The initial #675 slice implements sessions and application-local rectangle
+helpers only. It does not yet supply a complete GEM AES API or replace the
+existing kernel AES. Existing x32 import clients remain available while
+operations migrate; they are not the native CUIS protocol.
+
+Inventory of the current implementation and intended ownership:
+
+AES family     Application-local libaes.so       Kernel CUIS responsibility
+----------     --------------------------       --------------------------
+appl_*         GEM API/name/message adapters    Session handles and lifecycle;
+                                                bounded authorized delivery
+evnt_*        GEM predicates/result adapters   Atomic test/wait/wakeup, queues,
+                                                timeouts, input routing
+wind_*         Decorations, layout, local       Window identity/ownership,
+               geometry (wind_calc)             geometry, Z-order, visible regions
+menu_*         Tree layout/rendering, GEM       Active desktop menu ownership,
+               semantics, local interpretation  routed input and grabs
+form_*         Dialog state, validation,        Focus/capture and atomic waits
+               object selection/editing
+objc_*         Trees, traversal, drawing,       No owned copy of a GEM object
+               hit testing, USERDEF callbacks   tree; validate VDI/CUIS requests
+graf_*        Geometry and interaction logic   Pointer snapshot/capture and
+                                                display coordination
+rsrc_*         File parsing, relocation,        None beyond normal safe file/VM
+               resource ownership               services
+shel_*         GEM launch/desktop adapters      Process/desktop ownership and
+                                                privileged coordination only
+scrp_*         Compatibility and file helpers   Any shared selection/ownership
+                                                policy must be explicit
+
+Current sources expose the migration points: gemaplib/gemevlib/gemasync and
+aes_service.c combine registration, scheduling, GEM messages and waits;
+gemwmlib/gemwrect and aes_window.c combine authoritative windows with
+GEM decorations; gemoblib/gemobjop/gemobed, aes_tree.c and
+aes_objects_kernel.c implement tree operations; gemrslib/rsload_portable
+load resources; gemfmlib/gemmnlib/gemgraf implement local interaction and
+rendering with scheduler dependencies. These dependencies must be split,
+not copied wholesale into the shared library. Native CUIS must never expose
+AESPD, EVB, WINDOW, GEM message arrays or kernel pointers.
+
+Initial implementation and deployment
+------------------------------------
+
+CONF_WITH_LIBAES is off by default and initially depends on x32 and
+CONF_WITH_ELF_SHARED. It selects the internal CONF_WITH_CUIS kernel support.
+It does not require the old AES service or a desktop just to use sessions
+and local geometry. Other architectures await their isolated address spaces
+and shared-linker support. Native m68k trap compatibility is a later slice.
+
+The build produces obj/libaes/libaes.so (SONAME libaes.so, SysV hash,
+ordinary PIC ELF32/x32), installed with the LD.SO runtime at:
+
+    obj/ldso/runtime/GEMSYS/LIB/X32/LIBAES.SO
+
+A native executable links to -laes and the dynamic CRT, and records an
+ordinary DT_NEEDED for libaes.so. No PT_PTOS_IMPORTS, fixed client image or
+kernel symbol resolution is used. The public initial interface is
+include/libaes.h: aes_session_open/query/close and the existing local
+inside/rc_constrain/rc_equal/rc_intersect/rc_union geometry helpers.
+The library remembers its session in private writable data for normal
+finalization. Kernel process teardown is authoritative on faults, _Exit
+and any skipped library cleanup. Starting a session is idempotent for one
+process. Handles never recycle during a boot, including end/restart by the
+same process.
+
+Native scalar session syscalls
+------------------------------
+
+include/cuis.h defines the x32 syscall class 0x103 and individual function
+numbers. RAX contains (0x103ULL << 32) | function. Arguments are passed
+flat in registers using the normal native RDI/RSI/RDX/R10/R8/R9 convention;
+the result is returned in RAX. The session calls use only RDI, for a handle,
+or no arguments at all. Unused registers are ignored. Kernel-mode calls and
+builds without CUIS return EINVFN.
+
+    Function  Call                    Success result
+    --------  ----                    --------------
+    0         session_start()         Non-negative session handle
+    1         session_query(handle)   0 if the caller owns this live handle
+    2         session_end(handle)     0 after revoking the caller's session
+
+All calls return a negative GEMDOS error code on failure. The corresponding
+libaes.so functions are aes_session_open(), aes_session_query(handle) and
+aes_session_close(handle), with the same scalar results. There are no
+parameter blocks, reply structures, version fields or feature negotiation.
+
+Handles range from 0 through 0x7fffffff; zero is a valid handle. Session
+start returns an existing handle if the caller is already registered, or
+allocates one session. The allocator stops at the signed 32-bit limit so
+success can never be mistaken for a negative error. Sessions are bounded
+to one per process; no session call yields or waits.
+
+The kernel validates the full-width handle slot before narrowing it.
+Out-of-range handles return EINVAL; foreign, stale or missing handles
+return EACCDN. Unknown function numbers return EINVFN, and allocation or
+handle-space exhaustion returns ENSMEM. A failed allocation publishes no
+session and consumes no handle. The current kernel process establishes
+ownership; a handle grants no authority over another process's session.
+
+Next slices
+-----------
+
+Specify native event types, bounded authorized delivery and atomic wait
+predicates before migrating evnt_*; define native window handles and redraw
+ownership before moving window/menu rendering. Reuse process scheduling,
+input, timers, copy/VM facilities and VDI. Test two active isolated GUI
+clients, focus, grabs, timeouts, redraw and failure cleanup as those features
+land. The two-session nested-client foundation test does not claim concurrent
+window/event functionality. Full libcmini integration (#673) is independent.
+
+Validation
+----------
+
+    python3 tools/test-cuis.py
+
+This compiles the production session service for host tests of scalar
+arguments, allocation failures, two owners, foreign/stale handles, valid
+zero handles, idempotent start, process cleanup and signed handle exhaustion. Kconfig tests
+require x32 plus the shared linker and keep ARM/m68k disabled.
+
+For the real syscall and dynamic-linker path, configure pc-x86_64 with
+CONF_WITH_ELF_SHARED, CONF_WITH_LIBAES and CONF_WITH_X86_64_MEMTEST, then:
+
+    make CROSS_COMPILE= -j4
+    sh tools/test-mmap-boot.sh
+
+CUIS.TOS is a normal PT_INTERP executable with DT_NEEDED libaes.so and
+libptos.so. A parent keeps its session while children register independently,
+reject its handle and exit normally, via _Exit, or by a user exception.
+The boot test checks shared DSO-page reuse, allocator/session counts after
+teardown, and the CUIS PASS markers. It also exercises high handle bits,
+negative handles, ignored unused registers and local rectangle helpers.
+The disabled-feature memory self-test explicitly requires EINVFN.

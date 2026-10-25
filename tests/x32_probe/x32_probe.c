@@ -338,6 +338,19 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+#if CONF_WITH_LIBAES
+    case ':': {
+        static const char empty[] = { 0, 0 };
+        s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\CUIS.TOS",
+                         (s64)(unsigned long)empty, (s64)(unsigned long)empty);
+        pterm(child == 77 ? 0 : 0x100 | ((int)child & 0xff));
+        break;
+    }
+#else
+    case ':':
+        pterm(sys4(0x103, 0, 0, 0, 0, 0) == EINVFN ? 0 : 1);
+        break;
+#endif
 #if CONF_WITH_ELF_SHARED
     case '1': {
         static const char empty_tail[] = { 0, 0 };

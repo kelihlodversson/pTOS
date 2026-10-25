@@ -2,6 +2,8 @@
 # aes/build.mk - objects making up the AES
 #
 
+obj-$(CONF_WITH_CUIS) += cuis_session.o
+
 obj-$(CONF_WITH_X32_AES) += aes_service.o aes_image.o
 
 ifeq ($(CONF_WITH_AES),y)
