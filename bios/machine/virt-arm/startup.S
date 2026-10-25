@@ -531,12 +531,14 @@ C_SYM(arm_dispatch_undef):
     moveq  r0, #0x28
     movne  r0, #0x10
     mov    r1, sp
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
     FPU_PUSH_SCRATCH ip             /* below the frame r1 points to (keeps the flags) */
     ldreq  ip, =C_SYM(tos_vec_linea)
     ldrne  ip, =C_SYM(tos_vec_undef)
     ldr    ip, [ip]
     blx ip
     FPU_POP_SCRATCH ip
+    add    sp, sp, #4
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
@@ -553,7 +555,10 @@ C_SYM(arm_dispatch_svc):
     // still masked, as the exception left it), as every argument register is
     // live.
     str r3, [sp, #-4]!
-    ldr ip, [lr, #-4]
+    mrs ip, spsr
+    tst ip, #0x20          // Thumb: the SVC is the halfword before lr
+    ldrneh ip, [lr, #-2]
+    ldreq ip, [lr, #-4]
     and ip, ip, #0xF
     ldr r3, =C_SYM(tos_vec_svc)
     ldr ip, [r3, ip, lsl #2]
@@ -572,9 +577,11 @@ C_SYM(arm_dispatch_prefetch_abort):
     mrc p15, 0, r3, c6, c0,  2
     mov r0, #0x08
     mov r1, sp
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
     ldr ip, =C_SYM(tos_vec_prefetch)
     ldr ip, [ip]
     blx ip
+    add    sp, sp, #4
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
@@ -590,9 +597,11 @@ C_SYM(arm_dispatch_data_abort):
     mrc p15, 0, r3, c6, c0,  0
     mov r0, #0x0c
     mov r1, sp
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
     ldr ip, =C_SYM(tos_vec_data)
     ldr ip, [ip]
     blx ip
+    add    sp, sp, #4
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^
     rfefd  sp!

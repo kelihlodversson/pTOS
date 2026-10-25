@@ -636,6 +636,7 @@ C_SYM(arm_dispatch_undef):
     moveq  r0, #0x28       // VEC_LINEA - we use e7f...f. as the lineA emulation
     movne  r0, #0x10       // VEC_ILLEGAL - other illegal instructions will simulate an illegal instruction vector
     mov    r1, sp          // Stack pointer points to the exception frame
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
 #if CONF_WITH_HIGHER_HALF
     // the handlers are variables (bios/arch/arm/vectors.c): r0 is only the vector number
     FPU_PUSH_SCRATCH ip    // the FPU registers the handler may change, below the frame (keeps the flags)
@@ -648,6 +649,8 @@ C_SYM(arm_dispatch_undef):
 #endif
     blx ip                 // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 instruction, u32 pc)
     FPU_POP_SCRATCH ip
+
+    add    sp, sp, #4
 
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^   /* restore user registers */
@@ -670,7 +673,10 @@ C_SYM(arm_dispatch_svc):
     // still masked, as the exception left it), as every argument register is
     // live.
     str r3, [sp, #-4]!
-    ldr ip, [lr, #-4]      // load svc instruction from code
+    mrs ip, spsr
+    tst ip, #0x20          // Thumb: the SVC is the halfword before lr
+    ldrneh ip, [lr, #-2]
+    ldreq ip, [lr, #-4]      // load svc instruction from code
     and ip, ip, #0xF       // mask out low nybble of instruction (we emulate trap #0 - #15)
     ldr r3, =C_SYM(tos_vec_svc)
     ldr ip, [r3, ip, lsl #2]
@@ -678,7 +684,10 @@ C_SYM(arm_dispatch_svc):
     cpsie i
 #else
     cpsie i
-    ldr ip, [lr, #-4]      // load svc instruction from code
+    mrs ip, spsr
+    tst ip, #0x20          // Thumb: the SVC is the halfword before lr
+    ldrneh ip, [lr, #-2]
+    ldreq ip, [lr, #-4]      // load svc instruction from code
     and ip, ip, #0xF       // mask out low nybble of instruction (we emulate trap #0 - #15)
     lsl ip, ip, #0x2       // multiply index by 4
     ldr ip, [ip, #+0x80]   // load handler address at 80 + ip
@@ -700,6 +709,7 @@ C_SYM(arm_dispatch_prefetch_abort):
 
     mov r0, #0x08   // VEC_BUS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
 #if CONF_WITH_HIGHER_HALF
     ldr ip, =C_SYM(tos_vec_prefetch)
     ldr ip, [ip]    // load handler address
@@ -707,6 +717,8 @@ C_SYM(arm_dispatch_prefetch_abort):
     ldr ip, [r0]    // load handler address
 #endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
+
+    add    sp, sp, #4
 
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^   /* restore user registers */
@@ -726,6 +738,7 @@ C_SYM(arm_dispatch_data_abort):
 
     mov r0, #0x0c   // VEC_ADDRESS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
 #if CONF_WITH_HIGHER_HALF
     ldr ip, =C_SYM(tos_vec_data)
     ldr ip, [ip]    // load handler address
@@ -733,6 +746,8 @@ C_SYM(arm_dispatch_data_abort):
     ldr ip, [r0]    // load handler address
 #endif
     blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
+
+    add    sp, sp, #4
 
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^   /* restore user registers */

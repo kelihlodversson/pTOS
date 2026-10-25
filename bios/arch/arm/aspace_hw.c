@@ -285,9 +285,20 @@ PADDR aspace_hw_current(void)
 
 void aspace_hw_switch(PADDR root)
 {
+    static BOOL left_boot_root;
+
     DSB();
     __asm__ volatile ("mcr p15, 0, %0, c2, c0, 0" : : "r" ((ULONG)root | TTBR_MODE) : "memory");
     ISB();
+    if (!left_boot_root) {
+        /* the boot tables map the lower half globally: those entries are not
+         * those of ASID 0, so retiring them takes the whole TLB */
+        ULONG zero = 0;
+
+        left_boot_root = TRUE;
+        __asm__ volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (zero) : "memory");  /* TLBIALL */
+        DSB();
+    }
     invalidate_asid();
 }
 

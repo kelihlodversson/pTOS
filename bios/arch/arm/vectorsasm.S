@@ -140,7 +140,10 @@ C_SYM(arm_svc_unhandled):
         srsfd   sp!, #0x13
         sub     sp, sp, #4*15
         stmia   sp, {r0-r14}^
-        ldr     r0, [lr, #-4]
+        mrs     r0, spsr
+        tst     r0, #0x20               // Thumb: the SVC is the halfword before lr
+        ldrneh  r0, [lr, #-2]
+        ldreq   r0, [lr, #-4]
         and     r0, r0, #0xf
         mov     r0, r0, lsl #2
         add     r0, r0, #0x80
