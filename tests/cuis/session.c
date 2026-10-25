@@ -15,6 +15,7 @@ static LONG copied[5];
 static PD *input_message_sender;
 static LONG input_message_destination;
 static BOOL fail_copy;
+static UQUAD fail_copy_address;
 static BOOL input_irqs = TRUE, input_bad_idle;
 static ULONG input_ticks, input_sleeps, input_inject_after;
 static BOOL input_drop_focus, input_drop_on_validate;
@@ -79,7 +80,7 @@ BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 }
 BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
 {
-    if (fail_copy || !kproc_validate_user_write(address, size)) return FALSE;
+    if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
     copied[(address - 0x1000) / 4] = *(const LONG *)source;
     return TRUE;
 }

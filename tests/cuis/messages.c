@@ -14,6 +14,9 @@ static int message_checks(void)
     CHECK(MS(0, 1) == EACCDN);
     a = cuis_service(CUIS_SESSION_START, 0);
     CHECK(a >= 0);
+    CHECK(MG(CUIS_MESSAGE_WAIT, a, 0) == 0); /* No window or focus exists. */
+    CHECK(MS(a, 42) == E_OK && MG(CUIS_MESSAGE_WAIT, a, -1LL) == 1);
+    CHECK(MR(a) == 1 && copied[0] == a && copied[1] == 42);
     window = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 10, 10, 0);
     CHECK(window >= 0 && MW(CUIS_WINDOW_SHOW, window) == E_OK);
     CHECK(M(CUIS_MESSAGE_READ, a, 0, 0, 0, 0, 0) == 0);
@@ -40,6 +43,9 @@ static int message_checks(void)
     fail_copy = TRUE;
     CHECK(MR(a) == EIMBA);
     fail_copy = FALSE;
+    fail_copy_address = 0x1010;
+    CHECK(MR(a) == EIMBA && copied[0] == b && copied[1] == 0);
+    fail_copy_address = 0;
     CHECK(MG(CUIS_MESSAGE_DENY, a, b) == E_OK);
     run = &second;
     CHECK(MS(a, 99) == EACCDN); /* Revocation takes precedence over capacity. */
@@ -85,6 +91,7 @@ static int message_checks(void)
     CHECK(MG(CUIS_MESSAGE_ALLOW, a, handles[CUIS_MESSAGE_GRANTS]) == E_OK);
     for (i = 0; i <= CUIS_MESSAGE_GRANTS; i++) cuis_process_exit(&grant_owners[i]);
     CHECK(!(*find_owner(&first))->grant_count);
+    CHECK(MG(CUIS_MESSAGE_DENY, a, a) == E_OK);
     CHECK(MS(a, 1) == E_OK); /* Self-posts need no grant. Exit discards the queue. */
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(!clients && allocations == frees);
