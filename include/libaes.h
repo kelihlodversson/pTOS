@@ -9,6 +9,12 @@
 LONG aes_session_open(void);
 LONG aes_session_query(LONG handle);
 LONG aes_session_close(LONG handle);
+WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my);
+WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, WORD *global);
+WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, WORD *global);
+WORD mt_objc_delete(OBJECT *tree, WORD object, WORD *global);
+WORD mt_objc_order(OBJECT *tree, WORD object, WORD position, WORD *global);
+WORD mt_objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y, WORD *global);
 WORD objc_add(OBJECT *tree, WORD parent, WORD child);
 WORD objc_delete(OBJECT *tree, WORD object);
 WORD objc_order(OBJECT *tree, WORD object, WORD position);

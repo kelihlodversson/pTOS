@@ -8,6 +8,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#define OS_DISABLED DISABLED
+#define OS_SHADOWED SHADOWED
+#define OF_LASTOB LASTOB
+#define OF_HIDETREE HIDETREE
 #define AES_GLOBMAX 15
 #define AES_PROCESS 4
 #define AES_INQUIRE 6
@@ -53,6 +57,12 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short *buttons, short *modifiers, short *key, short *click_count, short *global_aes);
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers);
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
+WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my);
+WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, WORD *global);
+WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, WORD *global);
+WORD mt_objc_delete(OBJECT *tree, WORD object, WORD *global);
+WORD mt_objc_order(OBJECT *tree, WORD object, WORD position, WORD *global);
+WORD mt_objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y, WORD *global);
 WORD objc_add(OBJECT *tree, WORD parent, WORD child);
 WORD objc_delete(OBJECT *tree, WORD object);
 WORD objc_order(OBJECT *tree, WORD object, WORD position);

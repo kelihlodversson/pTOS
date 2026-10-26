@@ -181,6 +181,18 @@ These are ordinary C functions and need no CUIS session. No tree, object
 specification or output pointer crosses a syscall boundary. Resource loading,
 rendering and hit testing with display metrics are subsequent slices.
 
+The #730 slice adds objc_find() and mt_objc_find(), plus mt_* forms of the
+editing/offset calls above, with standard GEM signatures. Hit testing uses
+logical object rectangles in screen coordinates, includes the starting object
+at depth zero, excludes hidden subtrees, and searches later siblings first.
+Right/bottom edges are exclusive. A non-root start includes its ancestor
+offsets. No hit (or a negative start/depth) returns -1. The search is iterative
+and does not invoke USERDEF callbacks or dereference object specifications.
+These local mt_* calls ignore the global array and need no registration.
+Trees must have valid GEM parent/sibling links; invalid pointers fault in
+userspace. Render-dependent 3D enlargement is not included yet, so 3D hit
+areas will be completed with the object rendering migration.
+
 With CONF_WITH_LIBAES enabled, the algorithms in aes/gemobjtree.c are
 also used by kernel AES. With the feature disabled, the original kernel
 implementations and object list are retained unchanged.
