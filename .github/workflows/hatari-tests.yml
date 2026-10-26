@@ -15,6 +15,11 @@
 # the 68030 MMU on from its first instruction (#726): it is tested on the
 # emulated 68030 only.
 #
+# falcon-aspace is the same ROM with an address space for every process
+# (#727): its shell is the test harness (SHELL.TOS on the disk of "make
+# test-hd-shell"), which runs in user mode with page tables of its own and
+# includes the isolation suite.  It has no VDI, so no blitter suites: mode f030a.
+#
 
 name: Hatari tests
 
@@ -36,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu]
+        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu, falcon-aspace]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,10 +59,15 @@ jobs:
         run: |
           make "${{ matrix.config }}_defconfig"
           make
-          make test-hd
           mkdir products
+          if [ "${{ matrix.config }}" = falcon-aspace ]; then
+              make test-hd-shell      # (the harness is the shell: no console to type into)
+              cp test-hd-shell.img products/test-hd.img
+          else
+              make test-hd
+              cp test-hd.img products/
+          fi
           cp ptos512k.img products/system.img
-          cp test-hd.img products/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -75,15 +85,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu]
-        mode: [low, med, high, f030, f040]
+        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu, falcon-aspace]
+        mode: [low, med, high, f030, f040, f030a]
         # falcon-mmu is the Falcon ROM with the kernel in the upper half and
-        # the 68030 MMU on from its first instruction (#726): a 68030 only
+        # the 68030 MMU on from its first instruction (#726): a 68030 only;
+        # falcon-aspace is that with an address space for every process, and
+        # runs in its own mode (f030a, #727)
         exclude:
           - {config: falcon-mmu, mode: low}
           - {config: falcon-mmu, mode: med}
           - {config: falcon-mmu, mode: high}
           - {config: falcon-mmu, mode: f040}
+          - {config: falcon-mmu, mode: f030a}
+          - {config: falcon-aspace, mode: low}
+          - {config: falcon-aspace, mode: med}
+          - {config: falcon-aspace, mode: high}
+          - {config: falcon-aspace, mode: f030}
+          - {config: falcon-aspace, mode: f040}
+          - {config: atari512, mode: f030a}
+          - {config: atari512-fastcall, mode: f030a}
+          - {config: atari512-kproc, mode: f030a}
+          - {config: atari512-extdesk, mode: f030a}
     steps:
       - uses: actions/checkout@v4
 

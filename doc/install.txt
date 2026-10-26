@@ -665,8 +665,13 @@ The TOS low memory and the pool the programs are loaded into stay at their
 physical addresses, as on every Atari.  It needs a 68030 with an MMU, not a
 68EC030 and not a 68040 or 68060 (they have another MMU; #728): under Hatari,
 --machine falcon --cpulevel 3 --mmu on, as tools/run-hatari-tests.py's f030
-mode runs it.  No process has an address space of its own yet (#727).
-doc/mmu-address-space.txt describes the start.
+mode runs it.  It has no address space of its own for a process: that is
+falcon-aspace_defconfig (#727), the same ROM with CONF_WITH_PROCESS_ASPACES.  It
+has no desktop (the shell is the program EMUCON.TOS of the boot drive, or
+SHELL.TOS), and "make test-hd-shell" makes the test disk whose shell is the
+test harness, which tools/run-hatari-tests.py --mode f030a runs under Hatari
+the way CI does.  doc/mmu-address-space.txt describes the start and the
+address spaces.
 
 PC (x86-64, UEFI boot)
 ----------------------

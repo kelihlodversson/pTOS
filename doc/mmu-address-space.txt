@@ -445,7 +445,7 @@ from virt-m68k below:
     scsidriv handle).  A program that tests such a result for an error code
     will take it for one.  Dosound() takes -1 as the query, not any negative
     address, for the same reason.  #727 brings the rules, with the address
-    spaces they are for.  Static Alt-RAM (CONF_WITH_STATIC_ALT_RAM) is not
+    spaces they are for (#727: falcon-aspace; its section follows).  Static Alt-RAM (CONF_WITH_STATIC_ALT_RAM) is not
     offered with this option: the pool layout of the window has no place
     for it.
   - Hatari's 68030 (WinUAE core, --mmu on) runs it: the regression suite
@@ -457,6 +457,64 @@ from virt-m68k below:
     emulator as the manual says.  Not checked there: the S bit and the cache
     inhibit bit, which Hatari does not make visible to the suite; the first is
     for #727's isolation tests.
+
+Falcon (68030) with an address space for every process, as built by #727
+.........................................................................
+
+falcon-aspace_defconfig is falcon-mmu plus CONF_WITH_PROCESS_ASPACES: the
+backend is bios/arch/m68k/aspace_hw030.c, the counterpart of aspace_hw.c of
+the 68040, with the shape of the plan above.  What is particular to it:
+
+  - The tree of the ROM is the boot tree and the kernel half.  With the option
+    every page of it is supervisor-only (atari_mmu.S); aspace_hw_init_root()
+    copies its upper 64 entries (the window, 0x80000000 up, and the I/O area
+    at 0xff000000) into the root of every address space, so the kernel is the
+    same, ROM-resident, in all of them, and the lower 64 are the process's
+    own.  The first 32 KiB, the TOS low memory, are in every root as
+    supervisor-only pages at their physical addresses; nothing else of the
+    RAM is reachable at its physical address any more (the pool of the flat
+    image, virt_to_phys() for an address below 0x8000 only).
+  - The memory of the kernel and of the programs is all in the window:
+    phystop is an address of it (memory.S adds the base), the pool is the
+    first part of it and the page allocator (pmem32) has the rest, up to
+    the top of the ST-RAM.  TT-RAM is not used (it is not in the allocator's
+    range).  CONF_WITH_CARTRIDGE is not offered: a cartridge program runs in
+    supervisor mode at the addresses of the ROM port, which no tree maps.
+  - Descriptors are long ones with S (the page is the kernel's) and WP, and
+    have the used and the modified bit set when they are made: the MMU never
+    writes back into a table, which would leave the copy of the descriptor in
+    the data cache stale.  The software bit "private page" is bit 0 of the
+    page address, which the MMU ignores for 4 KiB pages.
+  - A switch is a PMOVE to CRP, PFLUSHA and clearing both caches.  The 030's
+    caches are addressed logically, so the same memory is cached under every
+    address it is reached by: the window for the kernel, the address of the
+    process for the process.  The data cache is therefore cleared on every
+    return from a GEMDOS call (bdos/arch/m68k/uspaceasm.S), because the
+    kernel writes the buffers of a call through the window; loading code and
+    changing a mapping clear both (aspace_hw_code_changed(), aspace_hw_flush()).
+  - A bus error is a format A or B frame (bios/arch/m68k/userfault.c).  A fault
+    of a data cycle gives its address and size in the frame; the page is
+    backed and the RTE runs the cycle again.  A fault of the instruction pipe
+    has no address that is worked out: the pages of the next eight bytes after
+    the program counter are asked for.  A fault in a read-modify-write cycle
+    (TAS, CAS) is not served and ends the process, as FreeMiNT does not serve
+    it either (the CPU is not relied on to run the whole cycle again): a
+    first touch of lazy memory with TAS is a fault of the process.  The
+    mmap suite skips its TAS on a clean file page there (TEST_NO_RMW_FAULTS).
+  - There is no desktop and no VDI for a process (as on the other address-space
+    configurations), so the shell is the program EMUCON.TOS or, as the tests
+    have it, SHELL.TOS of the boot drive; Srealloc() and the other GEMDOS calls
+    the kernel makes are plain calls (bdos/kcall.c).
+  - A reset needs the low alias of the ROM, which the trees of the processes do
+    not map: machine_reset_prepare() loads the static tree again first.
+  - The ROM has no initialised data: .data would be in the ROM image, and a
+    static with an initialiser written at run time is a bus error in the first
+    process that is created (bios/procmem.c had one).
+  - tools/run-hatari-tests.py --mode f030a runs the suite under Hatari's 68030
+    (--mmu on) with the harness as the shell (make test-hd-shell): the
+    isolation suite, mmap, process_calls and the loaders pass; the hatari-tests
+    job is falcon-aspace.  The 68030 itself is checked on Hatari's WinUAE
+    core only (#737 covers the correctness fixes of newer ones).
 
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................
@@ -706,7 +764,7 @@ MMU registers):
     tells the two apart by where the stack pointer is at the start, in crt0 and
     _crtinit(): in the TPA, it is the classic start; outside it, the private
     one.
-  - Not done: the 68060 and the 68030 (#571), the floppy calls, FPU state across
+  - Not done: the 68060 (#707), the floppy calls, FPU state across
     a Pexec(), and the real-hardware cache details (the cache modes of the
     tables are copyback; the 68060's branch cache is not flushed).
 
@@ -746,4 +804,5 @@ Decided in review
      VDI and AES calls from user mode are refused, as on x32, until #548
      gives them a validated entry.
   3. The MMU configurations use at most 1 GiB of RAM.
-  4. The 68030 is done as planned above, in #571.
+  4. The 68030 is done as planned above: the boot tree in #726, the address
+     spaces in #727 (falcon-aspace).

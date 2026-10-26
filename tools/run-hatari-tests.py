@@ -14,6 +14,12 @@
 #   --tos IMAGE   the pTOS ROM image (ptos512k.img, ...)
 #   --disk FILE   the test disk made by "make test-hd"
 #   --mode MODE   low, med or high: an STE with 4 MB in that ST screen mode;
+#                 f030a: the Falcon of f030 for the image with an address
+#                 space for every process (falcon-aspace, #727), which has no
+#                 desktop and no VDI: the disk is the one of "make
+#                 test-hd-shell", whose shell is the test harness, so the
+#                 tests start by themselves, and the two blitter suites are
+#                 not expected;
 #                 f030 or f040: a Falcon with a 68030 or a 68040 and 14 MB,
 #                 in the screen mode pTOS starts it in (640x480, 16 colours),
 #                 with the MMU emulated (--mmu on), so that the page tables
@@ -47,7 +53,7 @@ def main():
     ap.add_argument('--tos', required=True)
     ap.add_argument('--disk', required=True)
     ap.add_argument('--mode', required=True,
-                    choices=['low', 'med', 'high', 'f030', 'f040'])
+                    choices=['low', 'med', 'high', 'f030', 'f040', 'f030a'])
     ap.add_argument('--timeout', type=int, default=600)
     a = ap.parse_args()
 
@@ -55,9 +61,9 @@ def main():
     disk = os.path.join(work, 'test-hd.img')    # Hatari locks the file
     shutil.copy(a.disk, disk)
     log = os.path.join(work, 'console.txt')
-    if a.mode in ('f030', 'f040'):
+    if a.mode in ('f030', 'f040', 'f030a'):
         cmd = ['hatari', '--tos', a.tos, '--machine', 'falcon',
-               '--cpulevel', '3' if a.mode == 'f030' else '4',
+               '--cpulevel', '4' if a.mode == 'f040' else '3',
                '--memsize', '14', '--dsp', 'none', '--sound', 'off',
                '--mmu', 'on', '--monitor', 'vga', '--ide-master', disk]
     else:
@@ -97,6 +103,8 @@ def main():
         print('run-hatari-tests: %s tests failed' % summary.group(2),
               file=sys.stderr)
         return 1
+    if a.mode == 'f030a':       # no VDI, so no blitter suites
+        return 0
     skipped = [l for l in text.splitlines()
                if 'SKIP' in l and any(t in l for t in MUST_RUN)]
     if skipped:

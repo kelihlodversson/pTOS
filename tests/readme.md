@@ -310,7 +310,10 @@ tables pTOS builds for the caches are walked, not only written; the 68030 and
 fails, and also if `text_blit` or
 `raster_copy` skip themselves, as they have to run on every one of these.
 The `falcon-mmu` image (#726: the Falcon ROM that runs in the upper half, with
-the 68030 MMU on from its first instruction) is run on the 68030 only.
+the 68030 MMU on from its first instruction) is run on the 68030 only, and so
+is `falcon-aspace` (#727: the same with an address space for every process; it
+has no VDI, so no blitter suites, and its shell is the test harness: `make
+test-hd-shell` makes its disk, `run-hatari-tests.py --mode f030a` runs it).
 
 `make x32-vdi-import-test` builds the native VDI import applications and
 malformed metadata fixtures in `obj/x32/VDI*.TOS`. Copy those files to the PC
