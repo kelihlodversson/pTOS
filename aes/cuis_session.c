@@ -481,6 +481,9 @@ void cuis_process_exit(PD *owner)
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
     if (client) {
         CUIS_WINDOW *window;
+        UQUAD flags = cuis_input_lock();
+        client->input_wait = NULL;
+        cuis_input_unlock(flags);
         if (update_owner == client) end_update();
         if (display_owner == client) { clear_display_regions(client); display_owner = NULL; display_depth = 0; }
         while ((window = client->windows) != NULL) {
@@ -527,6 +530,7 @@ ULONG cuis_session_count(void)
 LONG cuis_service(ULONG function, UQUAD handle)
 {
     CUIS_CLIENT *client;
+    UQUAD flags;
 
     switch (function) {
     case CUIS_SESSION_START:
@@ -552,8 +556,10 @@ LONG cuis_service(ULONG function, UQUAD handle)
         memset(client->input_result, 0, sizeof(client->input_result));
         client->owner = run;
         client->handle = next_handle++;
+        flags = cuis_input_lock();
         client->next = clients;
         clients = client;
+        cuis_input_unlock(flags);
         return (LONG)client->handle;
     case CUIS_SESSION_QUERY:
     case CUIS_SESSION_END:
@@ -1135,8 +1141,9 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
 
 static BOOL session_wait_ready(void *argument) { return session_ready(argument) != 0; }
 
-/* Readiness is non-consuming, and one start tick survives all wakeups. No
- * GEM event masks or header formats cross this native scalar interface. */
+/* Stream/notice checks do not consume data. Input completion captures a
+ * key and predicate snapshot; one timer start survives all wakeups. No GEM
+ * event masks or header formats cross this native scalar interface. */
 LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds)
 {
     CUIS_CLIENT *client = *find_owner(run);
@@ -1161,7 +1168,7 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1) : 0;
     if ((events & CUIS_READY_TIMER) && !milliseconds && !(session_ready(&wait) & ~CUIS_READY_TIMER)) {
         /* A zero timer poll also gives cooperative peers one opportunity,
-         * unless a message was already ready at the initial check. */
+         * unless a requested source was already ready at the initial check. */
         cuis_input_unlock(flags);
         ksched_yield();
         flags = cuis_input_lock();

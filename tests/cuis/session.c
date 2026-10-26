@@ -107,13 +107,14 @@ void cuis_input_idle(void)
         stream_change_after = 0;
     }
     if (input_packet_mode) {
-        if (input_packet_mode <= 2) {
-            if (input_sleeps == 1 || (input_packet_mode == 1 && input_sleeps == 3))
+        if (input_packet_mode <= 2 || input_packet_mode == 4) {
+            if (input_sleeps == 1 || ((input_packet_mode == 1 || input_packet_mode == 4) && input_sleeps == 3))
                 cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 1, NULL, NULL);
             if (input_sleeps == 2 || (input_packet_mode == 1 && input_sleeps == 4)) {
                 cuis_pointer_packet(0, 0, 0, NULL, NULL);
                 if (input_packet_mode == 2 || input_sleeps == 4) input_packet_mode = 0;
             }
+            if (input_packet_mode == 4 && input_sleeps == 4) input_packet_mode = 0;
         } else {
             cuis_pointer_packet((WORD)(110 - pointer_x), (WORD)(110 - pointer_y), 0, NULL, NULL);
             cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 0, NULL, NULL);
@@ -198,6 +199,7 @@ void *kalloc(ULONG bytes)
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
         allocations == 1024)
         return NULL;
+    if (bytes == sizeof(CUIS_CLIENT)) memset(&pool[allocations], 0xa5, bytes);
     return &pool[allocations++];
 }
 void kfree(void *memory) { (void)memory; frees++; }

@@ -14,6 +14,7 @@ static int input_event_checks(void)
     window = cuis_window_service(CUIS_WINDOW_CREATE,0,0,300,300,0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
+    CHECK(IR(session) == E_OK && !copied[0] && !copied[1] && !copied[2] && !copied[3] && !copied[4]);
     CHECK(cuis_keyboard_event(0x001e0061));
     before = delay_yields;
     CHECK(IW(session,CUIS_READY_KEY|CUIS_READY_TIMER,0) == (CUIS_READY_KEY|CUIS_READY_TIMER));
@@ -22,6 +23,10 @@ static int input_event_checks(void)
     CHECK(IR(session) == EIMBA); fail_copy_address = 0;
     CHECK(IR(session) == E_OK && copied[0] == 0x001e0061);
     CHECK(cuis_input_config(CUIS_INPUT_RESULT,other,0,0,0,0,0) == EACCDN);
+    input_sleeps = 0; input_inject_after = 1;
+    CHECK(IW(session,CUIS_READY_KEY,0) == CUIS_READY_KEY && input_sleeps == 1);
+    input_inject_after = 0;
+    CHECK(IR(session) == E_OK && (ULONG)copied[0] == 0xff123456UL);
     CHECK(IX(session,0,0,0,0,300,300) == E_OK && IX(session,1,1,400,400,10,10) == E_OK);
     CHECK(IW(session,CUIS_READY_RECT1|CUIS_READY_RECT2|CUIS_READY_TIMER,0) ==
           (CUIS_READY_RECT1|CUIS_READY_RECT2|CUIS_READY_TIMER));
@@ -47,6 +52,13 @@ static int input_event_checks(void)
     CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && !input_packet_mode);
     CHECK(IR(session) == E_OK && copied[1] == 2 && (copied[4] & 3) == 1);
     CHECK(!pointer_buttons && input_sleeps >= 91 && input_sleeps <= 95);
+    input_sleeps = 0; input_packet_mode = 4;
+    CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && pointer_buttons == 1);
+    CHECK(IR(session) == E_OK && copied[1] == 2);
+    before = input_sleeps;
+    CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && input_sleeps == before);
+    CHECK(IR(session) == E_OK && copied[1] == 2);
+    CHECK(cuis_pointer_packet(0,0,0,NULL,NULL));
     /* A single click still completes after the click interval, rather than
      * waiting forever for a requested double click. Tick wrap is harmless. */
     input_ticks = 0xfffffffeUL; input_sleeps = 0; input_packet_mode = 2;
