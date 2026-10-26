@@ -969,9 +969,9 @@ GEM plain-window lifecycle and geometry (#732)
 libaes exports wind_create/open/close/delete/get/set/calc and their standard
 mt_* forms. This is the metadata/lifecycle foundation for kind == 0 windows;
 nonzero decoration kinds fail explicitly. It does not yet draw even the plain
-frame, synthesize WM_REDRAW/WM_TOPPED messages, or adapt
-focus, keyboard/button/rectangle events. Desktop handle 0, foreign-window
-queries, WF_TOP/WF_BOTTOM, titles, sliders and other
+frame, paint decorations or adapt keyboard/button/rectangle events.
+Window messages/focus and stack/owner queries are added by #738 below. Desktop handle 0, foreign-window
+geometry queries, titles, sliders and other
 fields remain unsupported (return 0 without changing outputs). Update locking and rectangle enumeration are added by #734 below. No additional
 appl_getinfo capabilities are advertised by these slices.
 
@@ -1117,3 +1117,101 @@ coverage against a pixel-grid oracle including shadows, complete coverage,
 offscreen clipping, owner mutations during nested updates, blocking of another
 process until the final end, and raw/session-exit cleanup. The fixture uses
 standard GEM source calls and also builds against unmodified GEMlib headers.
+
+
+GEM window messages, topping and focus (#738)
+--------------------------------------------
+
+Plain libaes windows now receive standard WM_REDRAW (20) and WM_TOPPED (21)
+through appl_read/APR_NOWAIT, evnt_mesag and evnt_multi(MU_MESAG), including
+mt_* forms. Messages contain eight GEM shorts: AES sender 0, extra length 0,
+and the global short window identifier in word 3. Redraw bounds in words 4-7
+conservatively cover the current work area (nonnegative extents); applications
+still use wind_update and FIRST/NEXT to paint only visible rectangles. Topping
+requests leave words 4-7 zero. Repeated notices for the same window/kind can
+coalesce. Ordinary application pipe bytes keep their FIFO order and original
+contents; converted system messages append to that same byte stream and can
+be read in parts just like other GEM messages.
+
+Opening a standard window makes it frontmost and gives it keyboard focus.
+WF_TOP raises an owned open window and gives it focus, including an already
+frontmost window; WF_BOTTOM lowers it and gives the new top window focus if
+necessary. Hide/delete/normal/raw/fault exit of the focused window falls back
+to the next visible window. Existing native test/migration windows keep their
+previous explicit-focus behavior unless opted into client-managed activation.
+
+Clicking a visible part of a background standard window sends WM_TOPPED; it
+neither raises nor focuses the window automatically. Its application decides
+whether to honor the request with wind_set(WF_TOP). The activating press and
+matching release are consumed as a topping gesture rather than delivered as
+ordinary button input. Existing pointer capture/release suppression remains
+in force when that window hides or exits. Input is routed to the current focus
+until the application actually tops the requested window.
+
+wind_get(WF_TOP) ignores the input handle and returns top ID, owner AES/PID,
+next ID below, and zero. WF_BOTTOM returns the bottom visible window ID,
+excluding the desktop, with other outputs zero. An empty stack returns ID 0.
+WF_OWNER accepts a live global ID (including another app's window) and returns
+owner AES/PID, open status, ID above and ID below; closed windows report no
+neighbors. Queries are read-only; they do not grant permission to mutate a
+foreign window. Invalid/deleted IDs return GEM failure without changing
+outputs. Native metadata is range-checked before conversion to GEM shorts;
+invalid identifiers/PIDs or non-Boolean open status fail without truncation.
+Foreign geometry and desktop handle-0 metadata remain later work.
+No additional appl_getinfo extension bits are advertised in this slice.
+
+Window close/move/size/full gadget requests, WM_NEWTOP and optional AES4
+WM_ONTOP/WM_UNTOPPED notifications are not synthesized here. Decoration
+interactions and their applicable GEM/MultiAES semantics migrate with the
+renderer/input adapters. A programmatic geometry change or close does not
+fabricate a user request to perform that same operation.
+
+Native additions, all under CONF_WITH_CUIS:
+
+  38 WINDOW_POLICY(native_window, managed_activation) -> E_OK / error.
+     Canonical 0/1 enables generic coalesced window notices and application-
+     managed activation requests. This is routing policy, not protocol
+     version/feature negotiation. libaes enables it on its own plain windows.
+
+  39 NOTICE_PEEK(session, native_window*, identifier*) -> kind / 0 / error.
+     Generic kinds are REDRAW=1 and ACTIVATE=2; activation takes precedence
+     over redraw for the same window. Outputs are LONGs. Peeking never pops.
+     Hidden/destroyed windows retain no pending native notices.
+
+  40 NOTICE_PUBLISH(session, native_window, kind, source, length) -> E_OK/error.
+     Atomically appends 1-32 captured opaque bytes to the caller's own pipe
+     and acknowledges the specified owned pending notice. No GEM header or
+     format is interpreted in the kernel. Sender metadata remains the current
+     process PID independently of user-generated payload fields. A full pipe
+     returns EAGAIN without consuming the notice; source-copy/allocation or
+     ownership failure likewise leaves it pending. Source access can fault,
+     so client identity is checked again before publication. Notice flag
+     updates and pipe publication use the same short IRQ exclusion.
+
+  41 STACK_QUERY(position, id*, owner_pid*, below_id*) -> E_OK / error.
+     Position 0 selects the front, 1 the back. Requires a registered caller;
+     all three outputs are validated LONGs, with zero for an empty stack.
+
+  42 WINDOW_INFO(identifier, owner_pid*, visible*, above_id*, below_id*)
+     -> E_OK / error. Returns registered global window metadata as LONGs.
+     Read-only stack/owner queries remain available during display updates.
+
+SESSION_WAIT adds READY_NOTICE=4 to the existing stream/timer readiness bits.
+This source is non-consuming and windowless. libaes pumps notices before a
+message read and after a notice wakeup, constructing GEM payloads locally.
+The native pipe append/ack keeps failed public copyout recoverable: converted
+bytes remain queued until a successful read. A full pipe is already large
+enough to satisfy every supported appl_read length, so callers can drain bytes
+without dropping the pending notice. Blocking reads wait for either sufficient
+stream bytes or notices; nonblocking reads pump once then return normally.
+Timer-only waits never pump notices. Combined message/timer waits use one
+native deadline and retain simultaneous readiness; an already pending notice
+also prevents the unnecessary zero-timer yield.
+
+Host tests cover high native handles, message layout, full-pipe backpressure,
+source/destination failures, retained notices, simultaneous timer readiness,
+background-click activation without premature focus, stack queries, display-
+lock ownership and focus fallback. GEMFOC.TOS exercises isolated apps using
+standard GEM source: redraw delivery, top/bottom operations, foreign owner
+queries and close/raw-exit fallback. Existing GEMWIN/GEMUPD fixtures now accept
+real redraw messages while waiting for their application control messages.

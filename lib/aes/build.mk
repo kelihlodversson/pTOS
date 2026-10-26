@@ -83,16 +83,23 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMEVNT.TOS
 endif
 
-obj/libaes/GEMWIN.TOS: tests/cuis/gem_windows.c tests/cuis/window_api.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMWIN.TOS: tests/cuis/control_message.h tests/cuis/gem_windows.c tests/cuis/window_api.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter-out tests/cuis/window_api.c,$(filter %.c %.o,$^)) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMWIN.TOS
 endif
 
-obj/libaes/GEMUPD.TOS: tests/cuis/gem_update.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMUPD.TOS: tests/cuis/control_message.h tests/cuis/gem_update.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMUPD.TOS
+endif
+
+obj/libaes/GEMFOC.TOS: tests/cuis/gem_focus.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/GEMFOC.TOS
 endif

@@ -165,8 +165,16 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
 {
     if (!registered(global) || (id != APR_NOWAIT && id != application_id) ||
         length < 0 || (length && !buffer)) return 0;
-    return cuis_call6(CUIS_STREAM_READ, application_session, (uintptr_t)buffer, length,
-                      id != APR_NOWAIT, 0, 0) == length ? 1 : 0;
+    if (!length) return 1;
+    for (;;) {
+        LONG result;
+        if (aes_window_messages(application_session, global) < 0) return 0;
+        result = cuis_call6(CUIS_STREAM_READ, application_session, (uintptr_t)buffer, length, 0, 0, 0);
+        if (result == length) return 1;
+        if (result != EAGAIN || id == APR_NOWAIT) return 0;
+        if (cuis_call6(CUIS_SESSION_WAIT, application_session, length,
+                       CUIS_READY_STREAM | CUIS_READY_NOTICE, 0, 0, 0) <= 0) return 0;
+    }
 }
 short appl_read(short id, short length, void *buffer) { return mt_appl_read(id, length, buffer, aes_global); }
 short mt_evnt_mesag(short message[8], short *global)

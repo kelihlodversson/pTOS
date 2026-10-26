@@ -31,7 +31,7 @@ static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
 static BOOL input_drop_focus, input_drop_on_validate;
-static BOOL region_exit_on_output;
+static BOOL region_exit_on_output, notice_withdraw_on_copy;
 static PD *display_release_owner;
 static BOOL display_release_exit;
 UQUAD cuis_input_lock(void)
@@ -158,6 +158,15 @@ BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
 BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
 {
     if (fail_copy || address < 0x10000 || address > 0x18000 || size > 0x18000 - address) return FALSE;
+    if (notice_withdraw_on_copy) {
+        CUIS_WINDOW *window;
+        UQUAD flags;
+        notice_withdraw_on_copy = FALSE;
+        if (!input_irqs) input_bad_idle = TRUE;
+        flags = cuis_input_lock();
+        for (window = (*find_owner(run))->windows; window; window = window->next) window->notices = 0;
+        cuis_input_unlock(flags);
+    }
     memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
 }
 const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
@@ -190,6 +199,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "streams.c"
 #include "combined.c"
 #include "display.c"
+#include "notices.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -256,5 +266,7 @@ int main(void)
     rc = stream_checks();
     if (rc) return rc;
     rc = combined_checks();
-    return rc ? rc : display_checks();
+    if (rc) return rc;
+    rc = display_checks();
+    return rc ? rc : notice_checks();
 }

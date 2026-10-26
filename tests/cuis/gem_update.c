@@ -36,6 +36,7 @@ static int rectangles(short window, short cover)
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && w > 0 && h > 0);
     return 0;
 }
+#include "control_message.h"
 int main(int argc, char **argv, char **envp)
 {
     short id, window, cover, message[8], global[15], x, y, w, h;
@@ -55,7 +56,7 @@ int main(int argc, char **argv, char **envp)
         if (argv[1][0] == 'o') {
             window = wind_create(0, 0, 0, 100, 100);
             VERIFY(window > 0 && wind_open(window, 5, 5, 10, 10) == 1);
-            VERIFY(appl_write(parent, 16, message) == 1 && evnt_mesag(message) == 1);
+            VERIFY(appl_write(parent, 16, message) == 1 && control_message(message) == 1);
             _Exit(37);
         }
         VERIFY(appl_write(parent, 16, message) == 1);
@@ -88,20 +89,20 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_set(window, WF_CURRXYWH, 0, 0, 20, 20) == 1);
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMUPD.TOS", (uintptr_t)tail, (uintptr_t)environment);
     VERIFY(child > 0 && appl_yield() == 1);
-    VERIFY(evnt_mesag(message) == 1 && message[0] == 900);
-    VERIFY(evnt_mesag(message) == 1 && message[0] == 901);
+    VERIFY(control_message(message) == 1 && message[0] == 900);
+    VERIFY(control_message(message) == 1 && message[0] == 901);
     VERIFY(mt_wind_update(END_UPDATE, global) == 1 && appl_yield() == 1);
-    VERIFY(appl_read(APR_NOWAIT, 16, message) == 0);
+    while (appl_read(APR_NOWAIT, 16, message) == 1) VERIFY(message[0] == WM_REDRAW);
     VERIFY(wind_update(END_UPDATE) == 1);
     status = process(0x13a, child, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
-    VERIFY(evnt_mesag(message) == 1 && message[0] == 902);
+    VERIFY(control_message(message) == 1 && message[0] == 902);
     VERIFY(wind_update(BEG_UPDATE | NO_BLOCK) == 1);
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && w == 18 && h == 18);
     VERIFY(wind_update(END_UPDATE) == 1);
     tail[1] = 'o';
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMUPD.TOS", (uintptr_t)tail, (uintptr_t)environment);
-    VERIFY(child > 0 && evnt_mesag(message) == 1 && message[0] == 900);
+    VERIFY(child > 0 && control_message(message) == 1 && message[0] == 900);
     VERIFY(wind_update(BEG_UPDATE) == 1);
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && y == 1 && h == 4);
     VERIFY(appl_write((short)child, 16, message) == 1);

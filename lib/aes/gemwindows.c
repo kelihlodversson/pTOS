@@ -70,7 +70,8 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     if (native < 0) return -1;
     identifier = cuis_call6(CUIS_WINDOW_IDENTIFY, native, 0, 0, 0, 0, 0);
     if (identifier <= 0 || identifier > 32767 ||
-        cuis_call6(CUIS_WINDOW_OUTSET, native, 2, 2, 0, 0, 0) != E_OK) {
+        cuis_call6(CUIS_WINDOW_OUTSET, native, 2, 2, 0, 0, 0) != E_OK ||
+        cuis_call6(CUIS_WINDOW_POLICY, native, 1, 0, 0, 0, 0) != E_OK) {
         (void)cuis_call6(CUIS_WINDOW_DESTROY, native, 0, 0, 0, 0, 0);
         return -1;
     }
@@ -170,10 +171,64 @@ static short visible_work(struct gem_window *window, BOOL first, GRECT *out, sho
     }
 }
 
+LONG aes_window_messages(LONG session, short *global)
+{
+    LONG native, identifier, kind, result;
+    short message[8], i, j;
+    struct gem_window *window;
+    GRECT work;
+    /* Bound pumping even if input continuously invalidates the display. */
+    for (i = 0; i < 2 * GEM_WINDOW_LIMIT; i++) {
+        kind = cuis_call6(CUIS_NOTICE_PEEK, session, (uintptr_t)&native, (uintptr_t)&identifier, 0, 0, 0);
+        if (kind <= 0) return kind;
+        for (j = 0; j < GEM_WINDOW_LIMIT; j++)
+            if (windows[j].id == identifier && windows[j].native == native) break;
+        if (j == GEM_WINDOW_LIMIT) return EACCDN;
+        window = &windows[j];
+        for (j = 0; j < 8; j++) message[j] = 0;
+        message[3] = window->id;
+        if (kind == CUIS_NOTICE_REDRAW) {
+            message[0] = WM_REDRAW;
+            mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
+                          window->current.g_w, window->current.g_h,
+                          &work.g_x, &work.g_y, &work.g_w, &work.g_h, global);
+            message[4] = work.g_x; message[5] = work.g_y;
+            message[6] = work.g_w > 0 ? work.g_w : 0;
+            message[7] = work.g_h > 0 ? work.g_h : 0;
+        } else if (kind == CUIS_NOTICE_ACTIVATE) message[0] = WM_TOPPED;
+        else return EINVFN;
+        result = cuis_call6(CUIS_NOTICE_PUBLISH, session, native, kind, (uintptr_t)message, sizeof(message), 0);
+        /* A full pipe already has enough data to satisfy every legal read.
+         * Leave the notice pending and let the caller free pipe capacity. */
+        if (result == EAGAIN) return E_OK;
+        if (result < 0) return result;
+    }
+    return E_OK;
+}
+
 short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, short *global)
 {
-    struct gem_window *window = lookup(id, global);
+    struct gem_window *window;
     GRECT r;
+    LONG values[4] = { 0, 0, 0, 0 }, result;
+    short i;
+    if (field == WF_TOP || field == WF_BOTTOM || field == WF_OWNER) {
+        if (aes_application_session(global) < 0) return 0;
+        if (field == WF_OWNER)
+            result = cuis_call6(CUIS_WINDOW_INFO, id, (uintptr_t)&values[0], (uintptr_t)&values[1],
+                                (uintptr_t)&values[2], (uintptr_t)&values[3], 0);
+        else
+            result = cuis_call6(CUIS_STACK_QUERY, field == WF_BOTTOM, (uintptr_t)&values[0],
+                                (uintptr_t)&values[1], (uintptr_t)&values[2], 0, 0);
+        if (result != E_OK) return 0;
+        for (i = 0; i < 4; i++) if (values[i] < 0 || values[i] > 32767) return 0;
+        if (field == WF_OWNER && values[1] > 1) return 0;
+        if (field == WF_BOTTOM) values[1] = values[2] = 0;
+        r.g_x = (short)values[0]; r.g_y = (short)values[1];
+        r.g_w = (short)values[2]; r.g_h = (short)values[3];
+        output(&r, a, b, c, d); return 1;
+    }
+    window = lookup(id, global);
     if (!window) return 0;
     switch (field) {
     case WF_FIRSTXYWH:
@@ -214,7 +269,10 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
         window->current.g_w = c; window->current.g_h = d;
         return 1;
     }
-    return 0; /* Focus/stacking and decorated fields migrate together later. */
+    if ((field == WF_TOP || field == WF_BOTTOM) && window->open)
+        return cuis_call6(field == WF_TOP ? CUIS_WINDOW_RAISE : CUIS_WINDOW_LOWER,
+                          window->native, 0, 0, 0, 0, 0) == E_OK ? 1 : 0;
+    return 0; /* Decorated fields migrate with the frame renderer. */
 }
 short wind_set(short id, short field, short a, short b, short c, short d)
 {

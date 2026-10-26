@@ -65,6 +65,15 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short *buttons, short *modifiers, short *key, short *click_count, short *global_aes);
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers);
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
+#ifndef WM_REDRAW
+#define WM_REDRAW 20
+#endif
+#ifndef WM_TOPPED
+#define WM_TOPPED 21
+#endif
+#ifndef WF_OWNER
+#define WF_OWNER 20
+#endif
 #ifndef END_UPDATE
 #define END_UPDATE 0
 #endif

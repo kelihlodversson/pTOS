@@ -2500,6 +2500,16 @@ static void test_ring3(void)
         }
         CHECK(cuis_session_count() == sessions, "GEM update sessions reclaimed");
         same(&s, "GEM update clients and temporary regions reclaimed");
+        snap(&s);
+        {
+            ULONG windows = cuis_window_count();
+            result = Pexec(PE_LOADGO, "C:\\GEMFOC.TOS", "", NULL);
+            if (result) kcprintf("GEM focus fixture returned %ld\n", (long)result);
+            CHECK(result == 0, "standard GEM redraw messages, stacking and isolated owner queries");
+            CHECK(cuis_window_count() == windows && !cuis_focus_active(), "GEM message windows and focus reclaimed");
+        }
+        CHECK(cuis_session_count() == sessions, "GEM window message sessions reclaimed");
+        same(&s, "GEM notices, application pipes and focus clients reclaimed");
     }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");

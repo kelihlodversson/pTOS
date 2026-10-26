@@ -21,6 +21,8 @@ static ULONG window_calls, display_nesting;
 static LONG display_error, region_error;
 static LONG region_values[3][4];
 static ULONG region_count;
+static LONG stack_values[4];
+static LONG notice_kind, notice_native, notice_id, publish_failure, notice_on_wait;
 static LONG window_transport(ULONG fn, UQUAD a)
 {
     short i;
@@ -62,6 +64,23 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_STACK_QUERY || fn == CUIS_WINDOW_INFO) {
+        *(LONG *)(uintptr_t)b = stack_values[0]; *(LONG *)(uintptr_t)c = stack_values[1];
+        *(LONG *)(uintptr_t)d = stack_values[2];
+        if (fn == CUIS_WINDOW_INFO) *(LONG *)(uintptr_t)e = stack_values[3];
+        return E_OK;
+    }
+    if (fn == CUIS_NOTICE_PEEK) {
+        if (notice_kind) { *(LONG *)(uintptr_t)b = notice_native; *(LONG *)(uintptr_t)c = notice_id; }
+        return notice_kind;
+    }
+    if (fn == CUIS_NOTICE_PUBLISH) {
+        if (publish_failure) return publish_failure;
+        if (b != (UQUAD)notice_native || c != (UQUAD)notice_kind) return EACCDN;
+        if (pipe_count + e > sizeof(pipe_data)) return EAGAIN;
+        __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)d, e);
+        pipe_count += e; notice_kind = 0; return E_OK;
+    }
     if (fn == CUIS_WINDOW_REGION) {
         if (region_error) return region_error;
         if (b >= region_count) return 0;
@@ -77,7 +96,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         else display_nesting--;
         return E_OK;
     }
-    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET))
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY))
         return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
         __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
@@ -89,6 +108,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = 0;
         wait_calls++; waited_mask = c; waited_interval = d;
+        if (notice_on_wait) { notice_kind = notice_on_wait; notice_on_wait = 0; }
+        if ((c & CUIS_READY_NOTICE) && notice_kind) ready |= CUIS_READY_NOTICE;
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
         if (c & CUIS_READY_TIMER) ready |= CUIS_READY_TIMER;
@@ -152,7 +173,7 @@ static int event_checks(void)
     CHECK(appl_write(7, 16, message) == 1);
     CHECK(mt_evnt_multi(MU_MESAG, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         output, ~0UL, NULL, NULL, NULL, NULL, NULL, NULL, global) == MU_MESAG);
-    CHECK(!pipe_count && waited_mask == CUIS_READY_STREAM);
+    CHECK(!pipe_count && waited_mask == (CUIS_READY_STREAM | CUIS_READY_NOTICE));
     return 0;
 }
 #undef MULTI
@@ -216,6 +237,55 @@ static int display_api_checks(void)
     display_error = 0; region_count = 0;
     return 0;
 }
+static int window_message_checks(void)
+{
+    short id, message[8], x, y, buttons, mods, key, clicks;
+    ULONG before;
+    id = wind_create(0, 0, 0, 100, 100);
+    CHECK(id > 0 && wind_open(id, 10, 20, 30, 40) == 1);
+    notice_native = native_windows[id - 1]; notice_id = id;
+    notice_kind = CUIS_NOTICE_REDRAW; publish_failure = ENSMEM;
+    CHECK(evnt_mesag(message) == 0 && notice_kind == CUIS_NOTICE_REDRAW && !pipe_count);
+    publish_failure = 0; read_error = EIMBA;
+    CHECK(evnt_mesag(message) == 0 && !notice_kind && pipe_count == 16);
+    read_error = 0;
+    CHECK(appl_read(APR_NOWAIT, 16, message) == 1 && message[0] == WM_REDRAW && !message[1] && !message[2]);
+    CHECK(message[3] == id && message[4] == 11 && message[5] == 21 && message[6] == 28 && message[7] == 38);
+    notice_on_wait = CUIS_NOTICE_ACTIVATE; before = wait_calls;
+    CHECK(evnt_multi(MU_MESAG | MU_TIMER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, message, 0,
+                     &x, &y, &buttons, &mods, &key, &clicks) == (MU_MESAG | MU_TIMER));
+    CHECK(wait_calls == before + 1 && message[0] == WM_TOPPED && message[3] == id && !message[4]);
+    notice_kind = CUIS_NOTICE_REDRAW;
+    CHECK(evnt_multi(MU_TIMER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0,
+                     &x, &y, &buttons, &mods, &key, &clicks) == MU_TIMER && notice_kind);
+    __builtin_memset(pipe_data, 7, sizeof(pipe_data)); pipe_count = sizeof(pipe_data);
+    CHECK(appl_read(APR_NOWAIT, 16, message) == 1 && notice_kind && pipe_count == 48);
+    CHECK(appl_read(APR_NOWAIT, 16, message) == 1 && !notice_kind && pipe_count == 48);
+    pipe_count = 0;
+    CHECK(wind_set(id, WF_TOP, 0, 0, 0, 0) == 1 && wind_set(id, WF_BOTTOM, 0, 0, 0, 0) == 1);
+    CHECK(wind_close(id) == 1 && wind_set(id, WF_TOP, 0, 0, 0, 0) == 0 && wind_delete(id) == 1);
+    return 0;
+}
+static int metadata_checks(void)
+{
+    short a = 91, b = 92, c = 93, d = 94;
+    stack_values[0] = 1; stack_values[1] = 32767; stack_values[2] = 2;
+    CHECK(wind_get(0, WF_TOP, &a, &b, &c, &d) == 1 && a == 1 && b == 32767 && c == 2 && !d);
+    a = 91; b = 92; c = 93; d = 94;
+    stack_values[1] = 32768;
+    CHECK(wind_get(0, WF_TOP, &a, &b, &c, &d) == 0 && a == 91 && b == 92 && c == 93 && d == 94);
+    stack_values[1] = 7; stack_values[0] = 65537;
+    CHECK(wind_get(0, WF_BOTTOM, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[0] = -1; stack_values[1] = 1;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[0] = 7; stack_values[1] = 2;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[1] = 1; stack_values[3] = 32768;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[3] = 3;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 1 && a == 7 && b == 1 && c == 2 && d == 3);
+    return 0;
+}
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
@@ -256,14 +326,14 @@ int main(void)
     CHECK(appl_write(7, -1, message) == 0 && appl_read(7, -1, result) == 0);
     CHECK(appl_write(7, 0, NULL) == 1 && appl_read(7, 0, NULL) == 1);
     CHECK(mt_appl_write(7, 16, message, other) == 1 && pipe_block == 1);
-    CHECK(mt_evnt_mesag(result, other) == 1 && pipe_block == 1);
+    CHECK(mt_evnt_mesag(result, other) == 1 && pipe_block == 0);
     CHECK(!__builtin_memcmp(result, message, sizeof(message)));
     CHECK(appl_write(7, 16, message) == 1 && appl_read(APR_NOWAIT, 16, result) == 1 && pipe_block == 0);
     failure = EACCDN;
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

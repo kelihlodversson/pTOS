@@ -12,6 +12,7 @@ static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
+#include "control_message.h"
 int main(int argc, char **argv, char **envp)
 {
     short id, window, message[8], globals[15], x = 99, y, w, h;
@@ -27,12 +28,12 @@ int main(int argc, char **argv, char **envp)
         VERIFY(parent > 0 && parent != id);
         message[0] = 899; message[1] = id;
         message[2] = message[3] = message[4] = message[5] = message[6] = message[7] = 0;
-        VERIFY(appl_write(parent, 16, message) == 1 && evnt_mesag(message) == 1);
+        VERIFY(appl_write(parent, 16, message) == 1 && control_message(message) == 1);
         VERIFY(wind_get(message[3], WF_CURRXYWH, &x, &y, &w, &h) == 0);
         window = wind_create(0, 0, 0, 100, 100);
         VERIFY(window > 0 && window != message[3] && wind_open(window, 5, 6, 30, 40) == 1);
         message[1] = id; message[3] = window;
-        VERIFY(appl_write(parent, 16, message) == 1 && evnt_mesag(message) == 1);
+        VERIFY(appl_write(parent, 16, message) == 1 && control_message(message) == 1);
         _Exit(37); /* Kernel cleanup must reclaim the open window. */
     }
     result = gem_window_checks(globals); if (result) return result;
@@ -40,10 +41,10 @@ int main(int argc, char **argv, char **envp)
     VERIFY(window > 0 && wind_open(window, 10, 20, 100, 80) == 1);
     VERIFY(appl_init() == id && wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1);
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMWIN.TOS", (uintptr_t)tail, (uintptr_t)environment);
-    VERIFY(child > 0 && evnt_mesag(message) == 1 && message[0] == 899);
+    VERIFY(child > 0 && control_message(message) == 1 && message[0] == 899);
     message[0] = 900; message[1] = id; message[2] = 0; message[3] = window;
     message[4] = message[5] = message[6] = message[7] = 0;
-    VERIFY(appl_write((short)child, 16, message) == 1 && evnt_mesag(message) == 1);
+    VERIFY(appl_write((short)child, 16, message) == 1 && control_message(message) == 1);
     VERIFY(message[3] != window && wind_delete(message[3]) == 0);
     VERIFY(appl_write((short)child, 16, message) == 1);
     status = process(0x13a, child, 0, 0, 0);

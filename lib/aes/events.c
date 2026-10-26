@@ -52,11 +52,14 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
         ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL)) return 0;
     session = aes_application_session(global);
     if (session < 0) return 0;
-    if (events & MU_MESAG) mask |= CUIS_READY_STREAM;
+    if ((events & MU_MESAG) && aes_window_messages(session, global) < 0) return 0;
+    if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, mask, interval, 0, 0);
-    if (ready <= 0 || ((ULONG)ready & ~mask) || snapshot(session, state) != E_OK) return 0;
-    if (ready & CUIS_READY_STREAM) {
+    if (ready <= 0 || ((ULONG)ready & ~mask)) return 0;
+    if ((ready & CUIS_READY_NOTICE) && aes_window_messages(session, global) < 0) return 0;
+    if (snapshot(session, state) != E_OK) return 0;
+    if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE)) {
         if (cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0) != 16) return 0;
         result |= MU_MESAG;
     }
