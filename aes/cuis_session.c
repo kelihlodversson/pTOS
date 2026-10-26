@@ -103,6 +103,8 @@ static CUIS_CLIENT *update_owner;
 static CUIS_WINDOW *update_window;
 static CUIS_RECT *update_clips;
 static ULONG update_count;
+static CUIS_CLIENT *mouse_owner;
+static ULONG mouse_depth;
 static CUIS_CLIENT *display_owner;
 static ULONG display_depth;
 static CUIS_RECT display_clip;
@@ -192,7 +194,7 @@ static BOOL set_focus(CUIS_WINDOW *window)
     if (changed) {
         if (focus_window) {
             focus_window->key_head = focus_window->key_count = 0;
-            if (!window || window->client != focus_window->client) {
+            if ((!window || window->client != focus_window->client) && focus_window->client != mouse_owner) {
                 focus_window->client->edge_count = 0;
                 focus_window->client->recent_count = 0;
             }
@@ -237,14 +239,13 @@ static void expire_button_wait(CUIS_INPUT_WAIT *wait)
         wait->ready |= CUIS_READY_BUTTON;
 }
 
-static void pointer_enqueue(CUIS_WINDOW *window, ULONG changed, BOOL inside)
+/* Keep session history even for windowless modal dialogs. Only trusted
+ * routing calls this producer; opaque application messages never enter it. */
+static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
 {
     CUIS_POINTER *event;
-    CUIS_CLIENT *client;
     LONG x, y;
     ULONG buttons, modifiers;
-    if (!window) return;
-    client = window->client;
     if (changed) { client->recent_count = 1; client->recent_buttons = pointer_buttons; }
     expire_button_wait(client->input_wait);
     if (changed && (!client->input_wait || !(client->input_wait->events & CUIS_READY_BUTTON) ||
@@ -258,6 +259,12 @@ static void pointer_enqueue(CUIS_WINDOW *window, ULONG changed, BOOL inside)
         event->x = pointer_x; event->y = pointer_y;
         event->buttons = pointer_buttons; event->state = modifiers;
     }
+}
+static void pointer_enqueue(CUIS_WINDOW *window, ULONG changed, BOOL inside)
+{
+    CUIS_POINTER *event;
+    if (!window) return;
+    button_enqueue(window->client, changed);
     if (window->pointer_count) {
         event = &window->pointer[(window->pointer_head + window->pointer_count - 1) % CUIS_POINTER_CAPACITY];
         if (!changed && !(event->state & CUIS_POINTER_CHANGED) &&
@@ -284,6 +291,19 @@ static BOOL route_pointer(ULONG changed)
     BOOL consumed;
     if (!pointer_initialized || pointer_suppressed || pointer_legacy_drag) return FALSE;
     hit = pointer_hit();
+    if (mouse_owner) {
+        /* A global mouse grab never raises/focuses a hit window. Native
+         * window queues can follow an owned visible window, but the session
+         * predicates/history also work when the dialog has no windows. */
+        for (target = mouse_owner->windows; target && !target->visible; target = target->next) ;
+        if (focus_window && focus_window->client == mouse_owner) target = focus_window;
+        if (pointer_hover && pointer_hover != target) pointer_enqueue(pointer_hover, 0, FALSE);
+        pointer_hover = target;
+        if (target) pointer_enqueue(target, changed, target == hit);
+        else button_enqueue(mouse_owner, changed);
+        if (!pointer_buttons) pointer_capture = NULL;
+        return TRUE;
+    }
     if (!pointer_capture && (changed & pointer_buttons)) {
         if (hit) {
             pointer_capture = hit;
@@ -413,11 +433,11 @@ static void hide_window(CUIS_WINDOW *window)
     window->notices = 0;
     window->pointer_head = window->pointer_count = 0;
     window->pointer_overflow = FALSE;
-    window->client->edge_count = window->client->recent_count = 0;
+    if (window->client != mouse_owner) window->client->edge_count = window->client->recent_count = 0;
     if (pointer_capture == window) {
         pointer_capture = NULL;
         pointer_activation_drag = FALSE;
-        pointer_suppressed = pointer_buttons != 0;
+        pointer_suppressed = !mouse_owner && pointer_buttons != 0;
     }
     if (pointer_hover == window) pointer_hover = NULL;
     if (focus_window == window) set_focus(window_front);
@@ -490,6 +510,60 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     }
 }
 
+/* Call with IRQs excluded; a foreign held drag cannot be taken over. */
+static BOOL mouse_available(void *argument)
+{
+    CUIS_CLIENT *client = argument;
+    return !mouse_owner && (!pointer_buttons ||
+        (pointer_capture && pointer_capture->client == client && !pointer_activation_drag));
+}
+
+static void end_mouse(void)
+{
+    mouse_owner->edge_count = mouse_owner->recent_count = 0;
+    mouse_owner = NULL; mouse_depth = 0;
+    pointer_capture = pointer_hover = NULL;
+    pointer_activation_drag = FALSE;
+    /* Never deliver a release without the press that belonged to the grab. */
+    pointer_suppressed = pointer_buttons != 0;
+    route_pointer(0);
+    sample_input_waits();
+}
+
+LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
+{
+    CUIS_CLIENT *client;
+    UQUAD flags;
+    if (handle > 0x7fffffffULL || acquire > 1 || block > 1 || (!acquire && block)) return EINVAL;
+    refresh_pointer_bounds();
+    flags = cuis_input_lock();
+    for (;;) {
+        client = *find_owner(run);
+        if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
+        if (!acquire) {
+            if (mouse_owner != client) { cuis_input_unlock(flags); return EACCDN; }
+            if (!--mouse_depth) end_mouse();
+            cuis_input_unlock(flags); return E_OK;
+        }
+        if (mouse_owner == client) {
+            if (mouse_depth == 0xffffffffUL) { cuis_input_unlock(flags); return ERANGE; }
+            mouse_depth++;
+            cuis_input_unlock(flags); return E_OK;
+        }
+        if (mouse_available(client)) {
+            mouse_owner = client; mouse_depth = 1;
+            pointer_capture = NULL;
+            route_pointer(0);
+            sample_input_waits();
+            cuis_input_unlock(flags); return E_OK;
+        }
+        if (!block) { cuis_input_unlock(flags); return EAGAIN; }
+        /* Keep the availability test and waiter publication under the same
+         * IRQ mask, just like DISPLAY_LOCK; no lock spans task execution. */
+        if (!ksched_block(mouse_available, client)) cuis_input_idle();
+    }
+}
+
 void cuis_process_exit(PD *owner)
 {
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
@@ -497,6 +571,7 @@ void cuis_process_exit(PD *owner)
         CUIS_WINDOW *window;
         UQUAD flags = cuis_input_lock();
         client->input_wait = NULL;
+        if (mouse_owner == client) end_mouse();
         cuis_input_unlock(flags);
         if (update_owner == client) end_update();
         if (display_owner == client) { clear_display_regions(client); display_owner = NULL; display_depth = 0; }
@@ -515,6 +590,7 @@ void cuis_process_exit(PD *owner)
 
 #if CONF_WITH_X86_64_MEMTEST
 BOOL cuis_update_active(void) { return update_owner != NULL || display_owner != NULL; }
+BOOL cuis_mouse_active(void) { return mouse_owner != NULL; }
 BOOL cuis_focus_active(void) { return focus_window != NULL; }
 BOOL cuis_pointer_attached(void) { return pointer_hover != NULL || pointer_capture != NULL; }
 ULONG cuis_visible_window_count(void)
@@ -1065,7 +1141,8 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     cuis_input_snapshot(&x, &y, &buttons, &modifiers);
     if (pointer_initialized) { x = pointer_x; y = pointer_y; buttons = pointer_buttons; }
     owned = !pointer_suppressed && !pointer_legacy_drag && !pointer_activation_drag &&
-        (pointer_capture ? client_window(client, pointer_capture) : client_window(client, focus_window));
+        (mouse_owner ? mouse_owner == client :
+         pointer_capture ? client_window(client, pointer_capture) : client_window(client, focus_window));
     if (owned) {
         for (i = 0; i < 2; i++) {
             bit = i ? CUIS_READY_RECT2 : CUIS_READY_RECT1;
