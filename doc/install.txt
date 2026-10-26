@@ -183,6 +183,23 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       read/write/execute segment, which is what keeps the program down
       to the one PT_LOAD segment bdos/elfld.c maps.
 
+  Shared libraries and the runtime linker (CONF_WITH_ELF_SHARED)
+      The address-space configurations that have it build the interpreter
+      LD.SO, and libraries and test programs for it, in obj/ldso/ in addition
+      to the kernel.  That userspace is freestanding (no libc) and needs:
+
+        x32     the native gcc with -mx32 (gcc-multilib on Ubuntu), as for the
+                x32 test program above
+        ARM     arm-none-eabi-gcc, the one of the kernel; the userland is built
+                for ARMv6K with VFP, whatever the kernel is built for
+        m68k    m68k-linux-gnu-gcc (Ubuntu: gcc-m68k-linux-gnu) IN ADDITION to
+                the m68k toolchain of the kernel: the MiNT compilers cannot
+                make position-independent code.  LDSO_M68K_PREFIX names another
+                prefix.  Without sudo, see .claude/skills/toolchain-install
+
+      The build stops with the name of the missing compiler.  doc/elf-shared.txt
+      has the format, the paths and the relocation types of each.
+
 If your toolchain is installed under a name other than the one that goes
 with the choice above, fill in "Cross compiler prefix override" in the same
 menu.  It renames the executables only; the flags keep following the
