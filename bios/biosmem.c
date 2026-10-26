@@ -23,6 +23,8 @@
 #if CONF_WITH_HIGHER_HALF
 #ifdef MACHINE_RPI
 #include "raspi_memory.h"
+#elif CONF_ATARI_HIGHER_HALF
+#include "atari_mmu.h"
 #else
 #include "virt_mmu.h"
 #endif

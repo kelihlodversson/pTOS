@@ -11,6 +11,10 @@
 # atari512-fastcall is the same image built with -mfastcall, which is the
 # only place its code is tested under that calling convention at run time.
 #
+# falcon-mmu is the Falcon ROM with the kernel in the upper half, running with
+# the 68030 MMU on from its first instruction (#726): it is tested on the
+# emulated 68030 only.
+#
 
 name: Hatari tests
 
@@ -32,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk]
+        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,8 +75,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk]
+        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu]
         mode: [low, med, high, f030, f040]
+        # falcon-mmu is the Falcon ROM with the kernel in the upper half and
+        # the 68030 MMU on from its first instruction (#726): a 68030 only
+        exclude:
+          - {config: falcon-mmu, mode: low}
+          - {config: falcon-mmu, mode: med}
+          - {config: falcon-mmu, mode: high}
+          - {config: falcon-mmu, mode: f040}
     steps:
       - uses: actions/checkout@v4
 

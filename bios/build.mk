@@ -88,6 +88,9 @@ obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
 # when it needs the PMMU (bios/machine/virt-m68k/)
 obj-$(CONF_WITH_HIGHER_HALF) += $(if $(MACHINE_VIRT_M68K),virt_mmu.o virt_mmu_early.o)
 
+# the Atari ROM that runs in the upper half (bios/arch/m68k/atari_mmu.S)
+obj-$(CONF_ATARI_HIGHER_HALF) += atari_mmu.o atari_window.o
+
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
 obj-$(ARCH_X86_64) += pgtable.o relocate.o gdt.o idt.o isr.o panic.o trap.o trapasm.o pe_reloc.o port_io.o
