@@ -1,6 +1,6 @@
 /* Public GEM AES bindings for the implemented libaes subset.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later.
- * Rendering and decoration adapters follow in later slices. */
+ * Further resource, image and decoration adapters follow in later slices. */
 #ifndef PTOS_GEM_H
 #define PTOS_GEM_H
 #include "obdefs.h"
@@ -19,6 +19,24 @@ extern "C" {
 #endif
 #ifndef OF_HIDETREE
 #define OF_HIDETREE HIDETREE
+#endif
+#ifndef OS_SELECTED
+#define OS_SELECTED SELECTED
+#endif
+#ifndef OS_OUTLINED
+#define OS_OUTLINED OUTLINED
+#endif
+#ifndef OS_CHECKED
+#define OS_CHECKED CHECKED
+#endif
+#ifndef OF_SELECTABLE
+#define OF_SELECTABLE SELECTABLE
+#endif
+#ifndef OF_EXIT
+#define OF_EXIT EXIT
+#endif
+#ifndef OF_DEFAULT
+#define OF_DEFAULT DEFAULT
 #endif
 #define AES_GLOBMAX 15
 #define AES_PROCESS 4

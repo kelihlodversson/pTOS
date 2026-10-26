@@ -19,7 +19,7 @@ obj/libaes/session.o: lib/aes/session.c lib/aes/transport.h include/libaes.h inc
 obj/libaes/windows.o: lib/aes/windows.c lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/transport.o: $(LIBAES_TRANSPORT-y) lib/aes/transport.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/transport.o: $(LIBAES_TRANSPORT-y) lib/aes/transport.h include/vdi_service.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/rectfunc.o: util/rectfunc.c include/rectfunc.h include/grect.h $(AUTOCONF_H)
@@ -119,4 +119,14 @@ obj/libaes/GEMMCTL.TOS: tests/cuis/control_message.h tests/cuis/gem_mouse.c obj/
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMMCTL.TOS
+endif
+
+obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h include/vdi_service.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
+obj/libaes/GEMDRAW.TOS: tests/cuis/gem_draw.c tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/GEMDRAW.TOS
 endif

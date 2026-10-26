@@ -1,5 +1,6 @@
 /* x32 syscall transport; the shared session/geometry code is portable. */
 #include "../../transport.h"
+#include "vdi_service.h"
 LONG aes_process_call(ULONG function)
 {
     register UQUAD ax __asm__("rax") = (1ULL << 32) | function;
@@ -43,7 +44,7 @@ LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQU
 
 LONG aes_graphics_call(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
-    register UQUAD ax __asm__("rax") = (0x100ULL << 32) | function;
+    register UQUAD ax __asm__("rax") = ((UQUAD)VDI_SERVICE_CLASS << 32) | function;
     register UQUAD fourth __asm__("r10") = d;
     __asm__ volatile ("syscall" : "+a"(ax) : "D"(a), "S"(b), "d"(c), "r"(fourth)
         : "rcx", "r11", "memory", "cc");

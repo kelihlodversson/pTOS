@@ -97,7 +97,7 @@ static void font(PAINTER *p, WORD which)
 static LONG length(const char *text)
 {
     LONG n = 0;
-    while (text[n] && n < 32767) n++;
+    while (n < 32767 && text[n]) n++;
     return n;
 }
 static void text(PAINTER *p, const char *string, LONG x, LONG y, LONG w, LONG h,
@@ -158,18 +158,23 @@ static void paint(PAINTER *p, OBJECT *tree, WORD object, LONG x, LONG y, UWORD p
 {
     OBJECT *o = &tree[object];
     WORD type = o->ob_type & 255, th = 0, color, pattern, border_color, text_color, mode;
-    LONG w = o->ob_width, h = o->ob_height, inset;
+    LONG w = o->ob_width, h = o->ob_height, inset, outset;
     UWORD state = o->ob_state, colors = 0x1100;
-    OBSPEC spec = specification(o);
+    OBSPEC spec;
     const char *string = NULL;
     char formatted[257], character[2];
     TEDINFO *ted = NULL;
-    if (spec.index == -1 || w <= 0 || h <= 0) return;
+    if ((o->ob_flags & HIDETREE) || w <= 0 || h <= 0) return;
+    spec = specification(o);
+    if (spec.index == -1) return;
     if (type == G_BOX || type == G_IBOX || type == G_BOXCHAR) {
         colors = (UWORD)spec.index; th = (SBYTE)((ULONG)spec.index >> 16);
     } else if (type == G_BUTTON) th = -1 - !!(o->ob_flags & EXIT) - !!(o->ob_flags & DEFAULT);
     else if (type == G_TITLE) th = 1;
     else if (text_type(type)) { ted = spec.tedinfo; colors = ted->te_color; th = ted->te_thickness; }
+    outset = state & OUTLINED ? 3 : 3*(th < 0 ? -th : th);
+    if (x-outset > p->right || y-outset > p->lower ||
+        x+w+outset <= p->left || y+h+outset <= p->upper) return;
     inset = th > 0 ? th : 0;
     if (toggle && type != G_USERDEF) {
         fill(p,x+inset,y+inset,w-2*inset,h-2*inset,MD_XOR,BLACK,IP_SOLID);
@@ -246,14 +251,15 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
                    WORD *global, BOOL change, UWORD old)
 {
     PAINTER p = { 0 };
+    LONG session = aes_application_session(global);
     VDI_SERVICE_WORKSTATION ws;
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     VDI_SERVICE_DRAW_RESULT result;
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, clip[4], x, y;
     BOOL opened = FALSE, success = FALSE;
-    if (aes_application_session(global) < 0 || !walk(NULL,tree,start,depth,0,0)) return 0;
+    if (session < 0 || !walk(NULL,tree,start,depth,0,0)) return 0;
     if (cw <= 0 || ch <= 0) return 1;
-    if (!mt_wind_update(BEG_UPDATE,global)) return 0;
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
     opened = TRUE; p.handle = ws.handle; p.ok = TRUE;
     p.left = cx < 0 ? 0 : cx; p.upper = cy < 0 ? 0 : cy;
@@ -273,7 +279,9 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     success = p.ok;
 done:
     if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) success = FALSE;
-    if (!mt_wind_update(END_UPDATE,global)) success = FALSE;
+    /* A USERDEF callback may change the caller's global array. Release the
+     * captured session, rather than depending on mutable GEM globals. */
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) success = FALSE;
     return success ? 1 : 0;
 }
 WORD mt_objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h, WORD *global)
@@ -294,7 +302,7 @@ WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WO
     old = tree[object].ob_state;
     if (old == (UWORD)state) return 1;
     tree[object].ob_state = state;
-    if (redraw && !render(tree,object,0,x,y,w,h,global,TRUE,old)) {
+    if (redraw && !(tree[object].ob_flags & HIDETREE) && !render(tree,object,0,x,y,w,h,global,TRUE,old)) {
         tree[object].ob_state = old;
         return 0;
     }

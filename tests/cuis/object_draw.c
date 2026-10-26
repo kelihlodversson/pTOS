@@ -10,12 +10,16 @@ static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count;
 static struct { WORD mode, color, interior, clip[4]; } workstation[32];
 static PARMBLK callback_parameters;
+static BOOL draw_error;
+static BOOL invalidate_global;
+static ULONG callbacks;
 LONG aes_application_session(short *global) { return global && !session_error ? 7 : EACCDN; }
-short mt_wind_update(short code, short *global)
+LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
-    if (aes_application_session(global) < 0) return 0;
-    nesting += code == BEG_UPDATE ? 1 : -1;
-    return 1;
+    (void)c; (void)d; (void)e; (void)f;
+    if (fn != CUIS_DISPLAY_LOCK || a != 7) return EACCDN;
+    nesting += b ? 1 : -1;
+    return E_OK;
 }
 LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -38,6 +42,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn == VDI_SERVICE_LINE || fn == VDI_SERVICE_COLOR) return E_OK;
     if (fn != VDI_SERVICE_DRAW) return EINVFN;
+    if (draw_error) return EACCDN;
     calls++;
     if (r->code == 38 || r->code == 12) {
         out->ptsout[0] = out->ptsout[2] = 8;
@@ -60,7 +65,8 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 }
 static WORD callback(PARMBLK *parameters)
 {
-    callback_parameters = *parameters;
+    callbacks++; callback_parameters = *parameters;
+    if (invalidate_global) session_error = EACCDN;
     return 0;
 }
 int main(void)
@@ -94,6 +100,12 @@ int main(void)
     VERIFY(objc_change(tree,1,0,0,0,160,120,SELECTED,1) == 0 && !tree[1].ob_state);
     session_error = 0; graphics_error = EINVFN;
     VERIFY(objc_draw(tree,0,1,0,0,160,120) == 0 && !nesting); graphics_error = 0;
+    before = opens;
+    VERIFY(mt_objc_change(tree,3,0,0,0,160,120,SELECTED,1,NULL) == 1 && opens == before);
+    tree[3].ob_state = 0;
+    draw_error = TRUE; before = opens;
+    VERIFY(objc_draw(tree,0,1,0,0,160,120) == 0 && opens == before+1 && opens == closes && !nesting);
+    draw_error = FALSE;
     tree[3].ob_flags = 0; before = opens;
     VERIFY(objc_draw(tree,0,1,0,0,160,120) == 0 && opens == before);
     tree[3].ob_flags = HIDETREE;
@@ -113,8 +125,12 @@ int main(void)
     VERIFY(objc_draw(tree,1,0,20,20,10,10) == 1 && callback_parameters.pb_tree == tree);
     VERIFY(callback_parameters.pb_obj == 1 && callback_parameters.pb_x == 15 && callback_parameters.pb_y == 18 &&
            callback_parameters.pb_xc == 20 && callback_parameters.pb_wc == 10 && callback_parameters.pb_parm == 123);
-    VERIFY(mt_objc_change(tree,1,0,20,20,10,10,DISABLED,1,aes_global) == 1);
+    invalidate_global = TRUE;
+    VERIFY(mt_objc_change(tree,1,0,20,20,10,10,DISABLED,1,aes_global) == 1 && !nesting);
+    session_error = 0; invalidate_global = FALSE;
     VERIFY(callback_parameters.pb_prevstate == 0 && callback_parameters.pb_currstate == DISABLED);
+    before = callbacks;
+    VERIFY(objc_draw(tree,1,0,100,100,10,10) == 1 && callbacks == (ULONG)before);
     before = opens;
     VERIFY(objc_draw(tree,0,-1,0,0,160,120) == 0 && objc_draw(tree,0,MAX_DEPTH+1,0,0,160,120) == 0);
     VERIFY(objc_draw(tree,0,1,0,0,0,120) == 1 && opens == before);

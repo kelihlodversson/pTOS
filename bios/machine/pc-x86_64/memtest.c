@@ -2522,6 +2522,12 @@ static void test_ring3(void)
         CHECK(result == 0, "standard GEM mouse-control nesting, contention and cleanup");
         CHECK(cuis_session_count() == sessions && !cuis_mouse_active(), "GEM mouse owners and sessions reclaimed");
         same(&s, "GEM mouse grab clients, windows and process resources reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMDRAW.TOS", "", NULL);
+        if (result) kcprintf("GEM object drawing fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "userspace GEM object drawing, state changes and callbacks");
+        CHECK(cuis_session_count() == sessions && !cuis_update_active(), "GEM renderer sessions and updates reclaimed");
+        same(&s, "GEM renderer workstations and callback process resources reclaimed");
     }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");

@@ -5,7 +5,8 @@ set -eu
 top=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$top"
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-mmap.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+capture=
+trap '[ -z "$capture" ] || kill "$capture" 2>/dev/null || true; rm -rf "$work"' EXIT HUP INT TERM
 log=${MMAP_BOOT_LOG:-$work/boot.log}
 firmware=${OVMF_DIR:-/usr/share/OVMF}
 case ${1:-} in
@@ -49,6 +50,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp obj/libaes/GEMFOC.TOS "$work/GEMFOC.TOS"
         cp obj/libaes/GEMINP.TOS "$work/GEMINP.TOS"
         cp obj/libaes/GEMMCTL.TOS "$work/GEMMCTL.TOS"
+        cp obj/libaes/GEMDRAW.TOS "$work/GEMDRAW.TOS"
         cp obj/libaes/GEMUPD.TOS "$work/GEMUPD.TOS"
         cp obj/libaes/GEMWIN.TOS "$work/GEMWIN.TOS"
         cp obj/libaes/GEMEVNT.TOS "$work/GEMEVNT.TOS"
@@ -84,7 +86,7 @@ if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/CUIS.TOS" ]; then
-    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS"
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
@@ -99,6 +101,13 @@ set -- qemu-system-x86_64
 if [ -n "${QEMU_DATA_DIR:-}" ]; then
     set -- "$@" -L "$QEMU_DATA_DIR"
 fi
+if [ -n "${MMAP_BOOT_SCREENSHOT:-}" ]; then
+    set -- "$@" -qmp "unix:$work/qmp.sock,server=on,wait=off"
+    : > "$log"
+    python3 tools/capture-gem-screen.py "$work/qmp.sock" "$log" "$MMAP_BOOT_SCREENSHOT" \
+        "${MMAP_BOOT_TIMEOUT:-45}" > "$log.capture" 2>&1 &
+    capture=$!
+fi
 set +e
 timeout "${MMAP_BOOT_TIMEOUT:-45}" "$@" -machine pc -m 256 \
     -cpu qemu64,+pdpe1gb -nic none \
@@ -108,6 +117,14 @@ timeout "${MMAP_BOOT_TIMEOUT:-45}" "$@" -machine pc -m 256 \
     -serial file:"$log" -display none > "$log.qemu" 2>&1
 rc=$?
 set -e
+if [ -n "$capture" ]; then
+    if ! wait "$capture"; then
+        cat "$log.capture"
+        exit 1
+    fi
+    cat "$log.capture"
+    capture=
+fi
 cat "$log.qemu"
 if [ -f "$log" ]; then cat "$log"; fi
 [ "$rc" -eq 124 ] || { echo "QEMU exited unexpectedly: $rc"; exit 1; }
@@ -142,6 +159,11 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM window messages/focus: PASS' "$log"
     grep -q 'x32 GEM input events: PASS' "$log"
     grep -q 'x32 GEM mouse control: PASS' "$log"
+    if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then
+        grep -q 'x32 GEM object drawing: PASS' "$log"
+    else
+        grep -q 'x32 GEM object drawing: unavailable' "$log"
+    fi
     grep -q 'x32 GEM update/regions: PASS' "$log"
     grep -q 'x32 GEM window lifecycle: PASS' "$log"
     grep -q 'x32 GEM combined events: PASS' "$log"
