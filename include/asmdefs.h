@@ -68,6 +68,8 @@
 #define PMOVE_TO_TTR1(addr) .dc.l 0xf0390c00,addr   /* 68030 */
 
 #define PMOVE_A0_TC         .dc.l 0xf0104000        /* 68030 (except 68ec030) */
+#define PMOVE_A0_CRP        .dc.l 0xf0104c00        /* 68030 (except 68ec030) */
+#define PFLUSHA             .dc.w 0xf000,0x2400     /* 68030 */
 #define PMOVE_A0_TTR0       .dc.l 0xf0100800        /* 68030 */
 #define PMOVE_A0_TTR1       .dc.l 0xf0100c00        /* 68030 */
 

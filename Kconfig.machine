@@ -180,6 +180,7 @@ config CONF_WITH_HIGHER_HALF
 	bool
 	default y if MACHINE_VIRT_ARM
 	default y if MACHINE_VIRT_M68K && CONF_REQUIRE_PMMU
+	default y if CONF_ATARI_HIGHER_HALF
 	default y if MACHINE_RPI && CONF_WITH_ARM_PMMU
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
@@ -296,6 +297,7 @@ config CONF_WITH_MMU_TEXT_PROTECT
 config CONF_WITH_68030_PMMU
 	bool "Install a PMMU tree on 68030"
 	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE
+	depends on !CONF_ATARI_HIGHER_HALF
 	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 	help
@@ -305,11 +307,38 @@ config CONF_WITH_68030_PMMU
 config CONF_WITH_68040_PMMU
 	bool "Install a PMMU tree on 68040 (experimental)"
 	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE
+	depends on !CONF_ATARI_HIGHER_HALF
 	default n
 	help
 	  This provides improved performance by allowing the data cache to
 	  be enabled.  It also allows FreeMiNT to be run on a 68040 without
 	  using set_mmu.prg.  This is currently experimental.
+
+# The Falcon ROM that runs with the 68030 MMU on from its first instruction
+# (#726, #571; doc/mmu-address-space.txt).  The tree is a static one in the
+# ROM, so the MMU can be switched on before the RAM is configured.
+config CONF_ATARI_HIGHER_HALF
+	bool "Atari ROM with the kernel in the upper half (68030 MMU, experimental)"
+	depends on MACHINE_ATARI && (TARGET_512 || TARGET_1024)
+	depends on CONF_WITH_ADVANCED_CPU
+	depends on BUILD_TOOLCHAIN_IS_ELF
+	depends on !CONF_WITH_STATIC_ALT_RAM
+	default n
+	help
+	  Link the ROM into the physical-memory window at 0x80000000 (the
+	  ROM is at 0x80e00000, the RAM from 0x80000000) and run it with the
+	  MMU of a 68030 on from the first instruction.  The tree is static
+	  and lives in the ROM, so it is there before the RAM is configured:
+	  the window and the low addresses (where the TOS low memory, the
+	  pool programs are loaded into and the ROM are, as on every Atari)
+	  map the same physical memory, the I/O area is supervisor-only and
+	  not cached, and nothing else is mapped.
+
+	  The image needs a 68030 with its MMU (not a 68EC030, and not a
+	  68040 or 68060, which have a different MMU): it is for the Falcon
+	  and for emulators of it with the MMU on (Hatari: --machine falcon
+	  --cpulevel 3 --mmu on).  It replaces CONF_WITH_68030_PMMU, whose
+	  tree only keeps the I/O area out of the data cache.
 
 config CONF_REQUIRE_PMMU
 	bool "Refuse to start on a CPU without a usable PMMU"

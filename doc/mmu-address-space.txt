@@ -402,6 +402,62 @@ end state above, until #568 gives each process a table of its own:
     which a string of the kernel image has now.
 
 
+Falcon (68030), as built by #726 (CONF_ATARI_HIGHER_HALF)
+..........................................................
+
+falcon-mmu_defconfig is a 512 KB ROM that runs in the window with the 68030
+MMU on from its first instruction.  What is different from the plan above and
+from virt-m68k below:
+
+  - The tree is a static one in the ROM (bios/arch/m68k/atari_mmu.S), loaded
+    by the first instructions of startup.S, before the RAM is configured:
+    on a Falcon the memory controller is set up by the ROM (memory.S), so
+    there is no RAM to build a tree in yet.  The descriptors have U and M
+    set already, so the MMU never writes one back into the ROM.  The shape
+    is the plan's (4 KiB pages, TC PS = 12, IS = 0, TIA = 7, TIB = 7, TIC = 6,
+    long-format descriptors, CRP only) but most of it is early termination: a
+    descriptor of the root (32 MiB) or of the second level (256 KiB) maps its
+    whole range, and only the first 256 KiB are split into pages, for the
+    supervisor-only first page.  The per-process trees of #727 are built in
+    RAM later and replace the user half; this one is the boot tree (and the
+    one a software reset comes back to).
+  - The ROM is linked at 0x80e00000 and loaded at 0x00e00000 (LMA = VMA -
+    0x80000000).  Its header, which Hatari and the hardware read, is
+    physical: the reset vector and os_beg are the physical addresses.  .data
+    and .bss are in the window, right after the TOS low memory, which is at
+    its fixed addresses as on virt-m68k.
+  - The window maps the physical memory from 0, ST-RAM, ROM and TT-RAM
+    (0x80000000-0x9fffffff); the same memory is at its physical addresses, which
+    is where the pool the programs live in, the screen and the DMA buffers
+    are.  The I/O area (0x00f00000-0x00ffffff and the alias 0xff000000 up that
+    code reaches it at, 0xffff8000 and so on) is supervisor-only and not
+    cached.  The old tree of bios/pmmu030.c, the TT0/TT1 of processor_init()
+    and the 68040 tree are not installed in this configuration.
+  - A DMA address and the video base are physical: set_dma_addr() and
+    atari_setphys() translate the address of a buffer of the kernel image
+    (virt_to_phys(), include/atari_mmu.h).
+  - The image is for the 68030 only: the 68040 and 68060 have another MMU
+    (#728), and the ROM does not check for the CPU before it uses the MMU.
+  - As on virt-m68k-mmu, nothing hides the kernel's addresses from a program
+    yet: without CONF_WITH_PROCESS_ASPACES the rules of doc/kernel-pointers.txt
+    do not apply, and what is in .bss or the ROM is a negative LONG when it is
+    handed out (the records of Iorec() and Bconmap(-2), the BPB, an
+    scsidriv handle).  A program that tests such a result for an error code
+    will take it for one.  Dosound() takes -1 as the query, not any negative
+    address, for the same reason.  #727 brings the rules, with the address
+    spaces they are for.  Static Alt-RAM (CONF_WITH_STATIC_ALT_RAM) is not
+    offered with this option: the pool layout of the window has no place
+    for it.
+  - Hatari's 68030 (WinUAE core, --mmu on) runs it: the regression suite
+    passes there (tools/run-hatari-tests.py f030, the hatari-tests.yml job
+    falcon-mmu).  So the loading of CRP and TC with the code running through
+    the low alias of the ROM, early termination at the root and the second
+    level, long-format descriptors with the used and modified bits preset in a
+    ROM, and the logical caches (cleared before the MMU is on) work in the
+    emulator as the manual says.  Not checked there: the S bit and the cache
+    inhibit bit, which Hatari does not make visible to the suite; the first is
+    for #727's isolation tests.
+
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................
 

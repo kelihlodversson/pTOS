@@ -656,6 +656,18 @@ and rpi2-aspace_defconfig (a Raspberry Pi 2 with EmuCON on the UART;
 qemu-system-arm -M raspi2b, tools/run-regression-tests.sh raspi2b-aspace).
 doc/mmu-address-space.txt describes what they do.
 
+falcon-mmu_defconfig is the first Atari configuration of the MMU work of #549
+(#571, #726): the 512 KB ROM of the Falcon with CONF_ATARI_HIGHER_HALF.  It is a
+higher-half kernel: linked at 0x80000000 (the ROM runs at 0x80e00000), with the
+68030 MMU switched on by the first instruction of the ROM, through a static
+tree in the ROM (bios/arch/m68k/atari_mmu.S), before the RAM is configured.
+The TOS low memory and the pool the programs are loaded into stay at their
+physical addresses, as on every Atari.  It needs a 68030 with an MMU, not a
+68EC030 and not a 68040 or 68060 (they have another MMU; #728): under Hatari,
+--machine falcon --cpulevel 3 --mmu on, as tools/run-hatari-tests.py's f030
+mode runs it.  No process has an address space of its own yet (#727).
+doc/mmu-address-space.txt describes the start.
+
 PC (x86-64, UEFI boot)
 ----------------------
 

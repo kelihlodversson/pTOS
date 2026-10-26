@@ -34,6 +34,9 @@
 #include "biosext.h"
 #include "bios.h"
 #include "bdosbind.h"
+#if CONF_ATARI_HIGHER_HALF
+#include "atari_mmu.h"
+#endif
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
@@ -1092,6 +1095,10 @@ static const UBYTE *atari_physbase(void)
 
 static void atari_setphys(const UBYTE *addr)
 {
+#if CONF_ATARI_HIGHER_HALF
+    /* the video hardware takes the physical address */
+    addr = (const UBYTE *)(uintptr_t)virt_to_phys(addr);
+#endif
     *(volatile UBYTE *) VIDEOBASE_ADDR_HI = ((ULONG) addr) >> 16;
     *(volatile UBYTE *) VIDEOBASE_ADDR_MID = ((ULONG) addr) >> 8;
 

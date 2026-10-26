@@ -309,6 +309,8 @@ tables pTOS builds for the caches are walked, not only written; the 68030 and
 68040 address-space work of #571 is tested the same way). It fails if a test
 fails, and also if `text_blit` or
 `raster_copy` skip themselves, as they have to run on every one of these.
+The `falcon-mmu` image (#726: the Falcon ROM that runs in the upper half, with
+the 68030 MMU on from its first instruction) is run on the 68030 only.
 
 `make x32-vdi-import-test` builds the native VDI import applications and
 malformed metadata fixtures in `obj/x32/VDI*.TOS`. Copy those files to the PC

@@ -12,6 +12,14 @@
 
 // ==== Defines ==============================================================
 
+#if CONF_ATARI_HIGHER_HALF
+        // The ROM is linked in the window (emutos.ld) but runs, until the MMU
+        // is on, at the physical address it is at: PHYS() has the address of a
+        // symbol of the window converted.
+        .equ    window_base, 0x80000000
+# define PHYS(sym)      (sym - window_base).l
+#endif
+
         .equ    cart_base, 0x00fa0000  // Base of ROM port cartridge
         .equ    cart_magic, 0xfa52235f // diagnostic cartridge magic number
 
@@ -31,6 +39,10 @@
         .extern C_SYM(resvalid)
         .extern C_SYM(resvector)
         .extern C_SYM(stktop)
+#if CONF_ATARI_HIGHER_HALF
+        .extern C_SYM(atari_mmu_crp)
+        .extern C_SYM(atari_mmu_tc)
+#endif
 
         // Memory
         .extern meminit       // initialize the memory and its controller
@@ -81,13 +93,21 @@ os_entry:
 os_version:
     .dc.w   TOS_VERSION // TOS version
 reseth:
+#if CONF_ATARI_HIGHER_HALF
+    .dc.l   C_SYM(main) - window_base       // pointer to reset handler: the physical address
+#else
     .dc.l   C_SYM(main)       // pointer to reset handler
+#endif
 // The 3-long structure here is actually the default GEM_MUPB.
 // It is supposed to be used when os_magic does not point to a valid GEM_MUPB.
 // In EmuTOS, this never happens, so os_end and os_res1 below are never used.
 // Note that the first field here has a different meaning from gm_magic.
 C_SYM(os_beg):
+#if CONF_ATARI_HIGHER_HALF
+    .dc.l   C_SYM(os_header) - window_base  // base of OS = _sysbase: where the ROM is
+#else
     .dc.l   C_SYM(os_header)  // base of OS = _sysbase
+#endif
 os_end:
     .dc.l   __endvdibss // end of VDI BSS
 os_res1:
@@ -343,6 +363,33 @@ _realmain:
         // but it matters for software reset
         move    #0x2700,sr
 
+#if CONF_ATARI_HIGHER_HALF
+        // The 68030 MMU, first thing, with the static tree of atari_mmu.S: it
+        // needs no RAM.  Entered at the physical address after a reset of the
+        // machine, with the MMU off, and at the window by a software reset
+        // (warm_reset(): jmp main) with the MMU on; both reach the low alias
+        // of the code, where it is, and where the tree maps it too.
+        lea     hh_low(pc),a0
+        move.l  a0,d0
+        bclr    #31,d0
+        move.l  d0,a0
+        jmp     (a0)
+hh_low:
+        move.l  #0x00000808,d0          // clear and disable the caches (they are
+        MOVEC_D0_CACR                   //  addressed logically)
+        lea     PHYS(zero),a0
+        PMOVE_A0_TC                     // translation off, if it is on
+        PMOVE_A0_TTR0                   // and the transparent windows
+        PMOVE_A0_TTR1
+        lea     PHYS(C_SYM(atari_mmu_crp)),a0
+        PMOVE_A0_CRP
+        PFLUSHA
+        lea     PHYS(C_SYM(atari_mmu_tc)),a0
+        PMOVE_A0_TC                     // on: the next instruction is fetched through it
+        jmp     (hh_high).l             // into the window
+hh_high:
+#endif
+
 #if CONF_WITH_TT_MMU
         // TT TOS does the following even before reset; it is
         // apparently required for correct floppy functioning
@@ -480,7 +527,7 @@ cache_done:
 /*
  * disable the MMU
  */
-#if !defined(__mcoldfire__) && !defined(MACHINE_LISA)
+#if !defined(__mcoldfire__) && !defined(MACHINE_LISA) && !CONF_ATARI_HIGHER_HALF
         move.l  #not_68030,0x2c    // PMOVE is lineF on non-68030 systems
         lea     zero,a0
         PMOVE_A0_TTR0              // first we initialise the TTRs (ACRs on a 68ec030)

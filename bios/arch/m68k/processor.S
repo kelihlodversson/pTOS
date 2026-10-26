@@ -378,7 +378,17 @@ pi_chk030:
 
 // We're running on a 68030 or a 68ec030
 
-#if CONF_WITH_68030_PMMU
+#if CONF_ATARI_HIGHER_HALF
+
+// The MMU is on since the first instruction (atari_mmu.S), with a tree that
+// keeps the i/o area out of the data cache: enable both caches, on a full
+// 68030 (the image does not start on anything else, and a 68ec030 has no
+// tree to avoid caching the i/o area with)
+
+        move.l  #0x00003919,d0      // we set WA, DBE, CD/ED, IBE and CI/EI
+        jra     init_cacr
+
+#elif CONF_WITH_68030_PMMU
 
 // User would like a PMMU tree, so see if it's possible
 
