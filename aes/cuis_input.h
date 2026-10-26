@@ -9,6 +9,9 @@ void cuis_input_idle(void);
 ULONG cuis_input_ticks(void);
 BOOL cuis_input_standard_pointer(void);
 BOOL cuis_input_pointer_state(LONG *x, LONG *y, ULONG *buttons);
+/* IRQs masked; platform state without callbacks or event consumption.
+ * The core reconciles initialized custom-vector CUIS position/buttons. */
+void cuis_input_snapshot(LONG *x, LONG *y, ULONG *buttons, ULONG *modifiers);
 void cuis_input_clip_pointer(LONG *x, LONG *y);
 void cuis_input_call_pointer(SBYTE *packet);
 #if CONF_WITH_X86_64_MEMTEST

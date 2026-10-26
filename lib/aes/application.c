@@ -3,6 +3,7 @@
 #include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
+#include "application.h"
 
 short aes_global[AES_GLOBMAX] = { 0, 0, -1 };
 short gl_apid = -1, gl_ap_version;
@@ -28,6 +29,11 @@ static BOOL registered(short *global)
 {
     return global && application_session >= 0 && application_id > 0 &&
            global[2] == application_id && aes_session_query(application_session) == E_OK;
+}
+
+LONG aes_application_session(short *global)
+{
+    return registered(global) ? application_session : EACCDN;
 }
 
 static void application_label(const char *name, char label[8])

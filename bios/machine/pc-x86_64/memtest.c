@@ -2474,6 +2474,12 @@ static void test_ring3(void)
         CHECK(result == 0, "standard GEM discovery, byte pipes, backpressure and receiver exit");
         CHECK(cuis_session_count() == sessions, "GEM discovery and message sessions reclaimed");
         same(&s, "GEM message queues, blocked snapshots and peer processes reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMEVNT.TOS", "", NULL);
+        if (result) kcprintf("GEM events fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "standard GEM combined waits, zero polls, snapshots and copyout errors");
+        CHECK(cuis_session_count() == sessions, "GEM event sessions reclaimed after normal/fault exits");
+        same(&s, "GEM event waiters, pipe bytes and child processes reclaimed");
     }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");

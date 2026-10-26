@@ -1,7 +1,10 @@
 # Ordinary shared ELF, distinct from the historic fixed-image import stubs.
 LIBAES_CFLAGS = $(LDSO_CFLAGS) -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
-obj/libaes/application.o: lib/aes/application.c include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/application.o: lib/aes/application.c lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
+obj/libaes/events.o: lib/aes/events.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/session.o: lib/aes/session.c lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
@@ -22,7 +25,7 @@ obj/libaes/objtree.o: aes/gemobjtree.c aes/gemobjtree.h include/obdefs.h $(AUTOC
 obj/libaes/objects.o: lib/aes/objects.c aes/gemobjtree.h include/libaes.h include/obdefs.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/libaes.so: obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
+obj/libaes/libaes.so: obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
 	$(CC) $(LDSO_LDFLAGS) $(LIBAES_CFLAGS) -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so \
 	  -Wl,--version-script,lib/aes/exports.map -o $@ $(filter %.o,$^)
@@ -68,4 +71,11 @@ obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/li
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMMSG.TOS
+endif
+
+obj/libaes/GEMEVNT.TOS: tests/cuis/gem_events.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/GEMEVNT.TOS
 endif

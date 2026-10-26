@@ -4,6 +4,7 @@
 #include "tosvars.h"
 #include "lineavars.h"
 #include "../../../bios/bios.h"
+#include "../../../bios/ikbd.h"
 #include "../../../vdi/vdi_defs.h"
 #if CONF_WITH_X86_64_MEMTEST
 #include "../../../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
@@ -29,6 +30,12 @@ void cuis_input_idle(void)
 ULONG cuis_input_ticks(void) { return (ULONG)hz_200; }
 
 BOOL cuis_input_standard_pointer(void) { return kbdvecs.mousevec == mouse_int; }
+void cuis_input_snapshot(LONG *x, LONG *y, ULONG *buttons, ULONG *modifiers)
+{
+    *x = linea_vars.GCURX; *y = linea_vars.GCURY;
+    *buttons = (ULONG)linea_vars.MOUSE_BT & 3;
+    *modifiers = shifty & 15;
+}
 BOOL cuis_input_pointer_state(LONG *x, LONG *y, ULONG *buttons)
 {
     if (!cuis_input_standard_pointer()) return FALSE;
