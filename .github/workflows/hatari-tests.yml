@@ -78,12 +78,11 @@ jobs:
   test:
     name: Test ${{ matrix.config }}, ${{ matrix.mode }}
     needs: build
-    # Hatari comes from the distribution's packages, which the 22.04 of the
-    # build's runner has an old version of.
+    # Hatari comes from the distribution's packages, and every mode uses the
+    # same one: 2.6 of Ubuntu 26.04, run in a container.  The 2.4.1 of the
+    # 24.04 runner hangs the 68030 address-space runs (#727, #737).
     runs-on: ubuntu-24.04
-    # The 68030 of Hatari 2.4.1, the 24.04 package, hangs the address-space
-    # runs (#727, #737); 26.04 has 2.6, so that mode runs in its container
-    container: ${{ matrix.mode == 'f030a' && 'ubuntu:26.04' || null }}
+    container: ubuntu:26.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
