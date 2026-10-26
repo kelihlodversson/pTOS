@@ -1251,17 +1251,20 @@ high-byte extensions (including 0x200) are not advertised and fail with 0.
 A matching current state or queued transition completes the quick check;
 a completed multi-click count is retained while the matching state is held,
 including across later requests with smaller count limits.
-otherwise a pending multiple-click wait starts its click window on the first
+Otherwise a pending multiple-click wait starts its click window on the first
 matching transition. Additional matches extend the original window by three
 200-Hz ticks, with a bounded count. Expiry is checked before admitting a
 new press, so a delayed waiter cannot extend an already expired window.
 Once a button result is ready, later edges enter history for the next wait.
-The wait returns the actual count, capped
-by the requested maximum, after the interval, including a single click when
+The wait returns the actual count, capped by the requested maximum, after
+the interval, including a single click when
 a double click was requested. The matching position/button/modifier snapshot
 is retained when a release follows. A bounded 16-edge per-session history
 retains press/release pairs arriving between calls independently of the raw
-native per-window pointer queues; overflow discards oldest edges. Ownership
+native per-window pointer queues. A history scan consumes through the first
+matching edge only, leaving subsequent transitions for later waits in FIFO
+order, including alternating press/release waits. Overflow discards oldest
+edges. Ownership
 loss/hide clears old history. Zero requested clicks return count zero.
 
 evnt_dclick queries/sets the global standard rate index 0..4, corresponding

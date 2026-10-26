@@ -6,7 +6,7 @@
 static int input_event_checks(void)
 {
     LONG session, other, window;
-    ULONG before, mode;
+    ULONG before, mode, edge;
     run = &first; session = cuis_service(CUIS_SESSION_START, 0);
     run = &second; other = cuis_service(CUIS_SESSION_START, 0); run = &first;
     input_pointer_source = FALSE; pointer_suppressed = pointer_legacy_drag = FALSE;
@@ -46,7 +46,29 @@ static int input_event_checks(void)
     CHECK(IB(session,1,1,1,0) == E_OK);
     CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON);
     CHECK(IR(session) == E_OK && copied[1] == 1 && (copied[4] & 3) == 1 && !pointer_buttons);
-    CHECK(!(*find_owner(run))->edge_count);
+    CHECK((*find_owner(run))->edge_count == 1);
+    CHECK(IB(session,1,1,0,0) == E_OK);
+    CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && !(*find_owner(run))->edge_count);
+    /* Multiple queued clicks are returned in FIFO order, without discarding
+     * the release or a later press after the first matching edge. */
+    for (mode = 0; mode < 2; mode++) {
+        before = delay_yields;
+        for (edge = 0; edge < 4; edge++)
+            CHECK(cuis_pointer_packet((WORD)(30 + edge - pointer_x),0,!(edge & 1),NULL,NULL));
+        for (edge = 0; edge < (mode ? 4 : 2); edge++) {
+            CHECK(IB(session,1,1,mode ? !(edge & 1) : 1,0) == E_OK);
+            CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,0) == (CUIS_READY_BUTTON|CUIS_READY_TIMER));
+            CHECK(IR(session) == E_OK && copied[1] == 1 && copied[2] == (LONG)(30 + (mode ? edge : 2 * edge)));
+            CHECK((copied[4] & 3) == (LONG)(mode ? !(edge & 1) : 1));
+            CHECK((*find_owner(run))->edge_count == 3 - (mode ? edge : 2 * edge));
+        }
+        if (!mode) {
+            CHECK(IB(session,1,1,0,0) == E_OK);
+            CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,0) == (CUIS_READY_BUTTON|CUIS_READY_TIMER));
+            CHECK(IR(session) == E_OK && copied[2] == 33 && !(copied[4] & 3));
+        }
+        CHECK(!(*find_owner(run))->edge_count && delay_yields == before);
+    }
     CHECK(IB(session,2,1,1,0) == E_OK);
     input_sleeps = 0; input_packet_mode = 1;
     CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && !input_packet_mode);
@@ -83,8 +105,11 @@ static int input_event_checks(void)
         CHECK((*find_owner(run))->edge_count != 0);
         CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && input_sleeps == 1);
         CHECK(IR(session) == E_OK && copied[1] == 1 && copied[2] == 20 && (copied[4] & 3) == 1);
-        CHECK(!(*find_owner(run))->edge_count && !pointer_buttons);
+        CHECK((*find_owner(run))->edge_count == 1 && !pointer_buttons);
+        CHECK(IB(session,1,1,0,0) == E_OK);
+        CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && !(*find_owner(run))->edge_count);
     }
+    CHECK(IB(session,2,1,1,0) == E_OK);
     /* Another source cancels click accumulation without delaying its timer. */
     input_sleeps = 0; input_packet_mode = 2;
     CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_TIMER && input_sleeps == 3);

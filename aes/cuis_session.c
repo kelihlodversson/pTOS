@@ -1075,8 +1075,9 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     if (initial && (wait->events & CUIS_READY_BUTTON)) {
         /* GEM's quick check retains a press/release pair that arrived before
          * the wait was registered. A bounded private history is independent
-         * of the transitional per-window native pointer queues. */
-        while (client->edge_count) {
+         * of the transitional per-window native pointer queues. Stop after
+         * the first matching edge so subsequent waits retain FIFO history. */
+        while (client->edge_count && !(wait->ready & CUIS_READY_BUTTON)) {
             edge = &client->button_edges[client->edge_head];
             if (owned && (((edge->buttons & filter->mask) == (filter->state & filter->mask)) != filter->invert)) {
                 wait->ready |= CUIS_READY_BUTTON;
