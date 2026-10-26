@@ -6,7 +6,7 @@
 #include "vdi_service.h"
 #include "transport.h"
 #include "application.h"
-#include "../../aes/gemobjtree.h"
+#include "../../aes/shared/gemobjtree.h"
 #include "../../aes/gemobjop.h"
 #include "../../aes/gemoblib.h"
 #include "../../aes/gemgraf.h"
@@ -20,7 +20,7 @@
 #include "rectfunc.h"
 
 #include "render_context.h"
-#include "../../aes/gemrender.h"
+#include "../../aes/shared/gemrender.h"
 
 /* Save/restore around nested USERDEF calls. */
 PAINTER *aes_painter;

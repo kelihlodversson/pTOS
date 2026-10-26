@@ -35,15 +35,15 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-ffunction-sections", "-fdata-sections", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Ibdos",
-                "-Iaes", "tests/cuis/session.c", "aes/cuis_region.c", "-Wl,--gc-sections",
+                "-Iaes", "-Iaes/shared", "tests/cuis/session.c", "aes/cuis_region.c", "-Wl,--gc-sections",
                 "-o", str(work / "sessions")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "sessions")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
-                "-fno-builtin", "-I" + temp, "-Iinclude", "-Iaes",
+                "-fno-builtin", "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared",
                 "-DLIBAES_OBJECT_HOST_TEST", "tests/cuis/objects.c",
-                "lib/aes/objects.c", "aes/gemobjtree.c", "-o", str(work / "objects")]
+                "lib/aes/objects.c", "aes/shared/gemobjtree.c", "-o", str(work / "objects")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "objects")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
@@ -58,15 +58,15 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
         target = str(work / (name + ".o"))
         command = shlex.split(os.environ.get("HOSTCC", "cc"))
         command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
-                    "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes",
+                    "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes", "-Iaes/shared",
                     '-DAES_RENDER_BINDINGS="render_bindings.h"',
-                    "-ffunction-sections", "-fdata-sections", "-c", "aes/" + name + ".c", "-o", target]
+                    "-ffunction-sections", "-fdata-sections", "-c", "aes/shared/" + name + ".c", "-o", target]
         subprocess.run(command, check=True)
         shared_draw.append(target)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
-                "-I" + temp, "-Iinclude", "-Iaes", "-Ilib/aes", "tests/cuis/object_draw.c",
-                "lib/aes/draw.c", "lib/aes/objects.c", "aes/gemobjtree.c", "aes/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
+                "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "tests/cuis/object_draw.c",
+                "lib/aes/draw.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
                 "-Dsprintf=aes_draw_test_sprintf", "-ffunction-sections", "-fdata-sections",
                 "-Wl,--gc-sections", "-o", str(work / "draw")]
     subprocess.run(command, check=True)

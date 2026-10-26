@@ -25,7 +25,7 @@
 #include "rsdefs.h"
 #include "aesdefs.h"
 #if ARCH_X86_64
-#include "../aes/gemrslib.h"
+#include "../aes/shared/gemrslib.h"
 #endif
 #include "aesext.h"
 #include "intmath.h"

@@ -16,15 +16,15 @@ obj/libaes/draw_memory.o: $(LIBAES_MEMORY-y) $(AUTOCONF_H)
 	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
 # Compile shared C units normally, binding their GSX state to a private context.
 LIBAES_RENDER_OBJECTS = obj/libaes/gemrender.o obj/libaes/gemrender_graphics.o obj/libaes/gemgraphutil.o
-$(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/%.c aes/gemrender.h aes/gemrender_binding.h lib/aes/render_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
+$(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemrender.h aes/shared/gemrender_binding.h lib/aes/render_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
-	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -DAES_RENDER_BINDINGS='"render_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/gemobjwalk.o: aes/gemobjwalk.c aes/gemrender.h $(AUTOCONF_H)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_RENDER_BINDINGS='"render_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/gemobjwalk.o: aes/shared/gemobjwalk.c aes/shared/gemrender.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
-	$(CC) $(LIBAES_CFLAGS) -Iaes -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/draw.o: lib/aes/draw.c aes/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
+	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/draw.o: lib/aes/draw.c aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
-	$(CC) $(LIBAES_CFLAGS) -Iaes -ffunction-sections -fdata-sections -c $< -o $@
+	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/events.o: lib/aes/events.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
@@ -40,10 +40,10 @@ obj/libaes/transport.o: $(LIBAES_TRANSPORT-y) lib/aes/transport.h include/vdi_se
 obj/libaes/rectfunc.o: util/rectfunc.c include/rectfunc.h include/grect.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/objtree.o: aes/gemobjtree.c aes/gemobjtree.h include/obdefs.h $(AUTOCONF_H)
+obj/libaes/objtree.o: aes/shared/gemobjtree.c aes/shared/gemobjtree.h include/obdefs.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
-	$(CC) $(LIBAES_CFLAGS) -Iaes -c $< -o $@
-obj/libaes/objects.o: lib/aes/objects.c aes/gemobjtree.h include/libaes.h include/obdefs.h $(AUTOCONF_H)
+	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
+obj/libaes/objects.o: lib/aes/objects.c aes/shared/gemobjtree.h include/libaes.h include/obdefs.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/libaes.so: $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map

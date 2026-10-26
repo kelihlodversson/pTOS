@@ -195,7 +195,7 @@ Trees must have valid GEM parent/sibling links; invalid pointers fault in
 userspace. Render-dependent 3D enlargement is not included yet, so 3D hit
 areas will be completed with the object rendering migration.
 
-With CONF_WITH_LIBAES enabled, the algorithms in aes/gemobjtree.c are
+With CONF_WITH_LIBAES enabled, the algorithms in aes/shared/gemobjtree.c are
 also used by kernel AES. With the feature disabled, the original kernel
 implementations and object list are retained unchanged.
 Parent/sibling links retain GEM conventions: a parent's head and tail name
@@ -1389,7 +1389,9 @@ signatures and Boolean results. OBJECT arrays, INDIRECT specs, strings,
 TEDINFO and USERBLK records remain in the calling application's address
 space. The shared library reuses the original aes/ object painter,
 traversal, state changes and GSX text/border/layout routines as separately
-compiled C units. The same sources build into native AES and libaes; internal
+compiled C units in aes/shared/. Shared resource loaders and object-tree
+helpers live there too. The same drawing sources build into native AES and
+libaes; internal
 headers declare their interfaces and bind libaes to a private drawing context.
 Only the low-level VDI transport and drawing context have userspace bindings; the kernel receives only existing bounded VDI primitive
 requests and never an object-tree or callback pointer. No new production

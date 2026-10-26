@@ -5,10 +5,7 @@
  * Include this header after the declarations used by the renderer. */
 #ifdef AES_RENDER_BINDINGS
 #include AES_RENDER_BINDINGS
-#else
-#include "struct.h"
-#include "gemlib.h"
-#include "geminit.h"
+
 #endif
 #ifndef OB_RENDER_3D
 #define OB_RENDER_3D CONF_WITH_3D_OBJECTS

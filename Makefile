@@ -138,7 +138,7 @@ dirs = $(core_dirs) $(optional_dirs)
 arch_subdirs = $(addprefix machine/,$(MACHINE)) $(addprefix arch/,$(ARCH))
 arch_dirs = $(foreach d,$(dirs),$(addprefix $(d)/,$(arch_subdirs)))
 
-vpath %.c $(arch_dirs) $(dirs)
+vpath %.c $(arch_dirs) $(dirs) aes/shared
 vpath %.S $(arch_dirs) $(dirs)
 
 #
@@ -369,7 +369,8 @@ endif
 # where the generated autoconf.h lives.
 current_dir = $(filter-out .,$(word 1,$(subst /, ,$(dir $<))))
 include_dirs = $(addprefix include/,$(arch_subdirs)) include obj \
-               $(if $(current_dir),$(addprefix $(current_dir)/,$(arch_subdirs)) $(current_dir))
+               $(if $(current_dir),$(addprefix $(current_dir)/,$(arch_subdirs)) $(current_dir)) \
+               $(if $(filter aes desk,$(current_dir)),aes/shared)
 INC = $(addprefix -I,$(include_dirs))
 
 # Automatic header dependency generation, one .d file per object.
@@ -1090,8 +1091,8 @@ aes-contract-test: $(AUTOCONF_H)
 	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_TREE_HOST_TEST \
 	  tests/aes_contract/tree_contract.c aes/aes_tree.c -o obj/aes-tree-contract-test
 	./obj/aes-tree-contract-test
-	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Iaes \
-	  tests/aes_contract/graph_geometry.c aes/gemgraphutil.c -o obj/aes-graph-contract-test
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Iaes -Iaes/shared \
+	  tests/aes_contract/graph_geometry.c aes/shared/gemgraphutil.c -o obj/aes-graph-contract-test
 	./obj/aes-graph-contract-test
 
 TOCLEAN += obj/aes-contract-test obj/aes-tree-contract-test obj/aes-graph-contract-test
