@@ -143,6 +143,13 @@ LONG m68k_user_biosxbios(struct bxargs *args)
 #if CONF_ATARI_HIGHER_HALF
     if (args->xbios && !atari_xbios_allowed(fn))
         return EACCDN;
+    /* a mode or resolution change sizes the screen the video hardware scans out
+     * (which bypasses the MMU), and the kernel's buffer for it is of the default
+     * one: only the queries are for a program (Vsetmode(-1), Setscreen(rez -1)) */
+    if (args->xbios && fn == 0x58 && pw[1] != -1)
+        return EACCDN;
+    if (args->xbios && fn == 0x05 && (WORD)a[2] != -1)
+        return EACCDN;
 #endif
     rc = bios_user_check(fn, a, rest, (int)args->xbios);
     if (rc != E_OK)

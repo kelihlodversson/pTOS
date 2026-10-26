@@ -78,12 +78,6 @@ long bios_user_check(WORD fn, const long *a, const long *rest, int xbios)
 
             if (!a[1] && dev >= 0 && dev < NUMFLOPPIES)
                 return E_OK;        /* TOS: a null buffer updates the media-change state */
-#if CONF_ATARI_HIGHER_HALF
-            /* the floppy driver gives the address of the buffer to the DMA, and a
-             * user address is not a physical one: no bounce buffer here (#727) */
-            if (dev >= 0 && dev < NUMFLOPPIES)
-                return EACCDN;
-#endif
             if (!blkdev_rwabs_buffer_size(rw, cnt, dev, &bytes))
                 return ERANGE;
             return user_buf_check(a[1], (long)bytes, (rw & RW_RW) == RW_READ);
