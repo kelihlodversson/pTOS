@@ -132,6 +132,7 @@ static int input_event_checks(void)
 static int input_capture_checks(void)
 {
     LONG session, a, b;
+    ULONG before;
     CUIS_WINDOW *wa, *wb;
     run = &first;
     session = cuis_service(CUIS_SESSION_START, 0);
@@ -154,6 +155,21 @@ static int input_capture_checks(void)
     CHECK(IR(session) == E_OK && copied[1] == 1 && copied[2] == 210 && copied[3] == 210 && !(copied[4] & 3));
     CHECK(!pointer_capture && pointer_hover == wb && focus_window == wb);
     CHECK(!(*find_owner(&first))->edge_count && !(*find_owner(&second))->edge_count);
+    /* A captured release queued before registration remains A's input,
+     * despite B owning focus by the time A performs its history scan. */
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,a,0,0,0,0) == E_OK);
+    CHECK(point_at(10,10,1) && pointer_capture == wa && !pointer_activation_drag);
+    run = &second;
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,b,0,0,0,0) == E_OK);
+    CHECK(focus_window == wb && pointer_capture == wa);
+    CHECK(point_at(210,210,0) && !pointer_capture);
+    CHECK((*find_owner(&first))->edge_count == 1 && !(*find_owner(&second))->edge_count);
+    run = &first;
+    before = delay_yields; input_sleeps = 0;
+    CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,0) == (CUIS_READY_BUTTON|CUIS_READY_TIMER));
+    CHECK(!input_sleeps && delay_yields == before && focus_window == wb);
+    CHECK(IR(session) == E_OK && copied[1] == 1 && copied[2] == 210 && copied[3] == 210 && !(copied[4] & 3));
+    CHECK(!(*find_owner(&first))->edge_count);
     /* A background activation drag is still only a WM_TOPPED gesture:
      * its release must not satisfy the background owner's button wait. */
     CHECK(point_at(10,10,1) && pointer_capture == wa && pointer_activation_drag);

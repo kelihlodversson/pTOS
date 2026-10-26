@@ -1266,9 +1266,12 @@ is retained when a release follows. A bounded 16-edge per-session history
 retains press/release pairs arriving between calls independently of the raw
 native per-window pointer queues. A history scan consumes through the first
 matching edge only, leaving subsequent transitions for later waits in FIFO
-order, including alternating press/release waits. Overflow discards oldest
-edges. Ownership
-loss/hide clears old history. Zero requested clicks return count zero.
+order, including alternating press/release waits. Trusted queued edges are
+matched independently of current focus: a captured release arriving after a
+focus handoff remains available to its original owner when it next waits.
+Live predicates still require current mouse ownership. Overflow discards
+oldest edges; ownership loss/hide clears old history. Zero requested clicks
+return count zero.
 
 evnt_dclick queries/sets the global standard rate index 0..4, corresponding
 to 450, 330, 275, 220 and 165 ms; the initial rate is zero. A running click
