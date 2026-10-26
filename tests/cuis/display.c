@@ -60,7 +60,20 @@ static int display_checks(void)
     CHECK(REGION(b, 0) == EACCDN);
     CHECK(cuis_region_service(a, 0x100000000ULL, 0, 0, 0, 0) == EINVAL);
     cuis_process_exit(&second);
-    CHECK(REGION(a, 3) == 1); /* NEXT retains the snapshot across occluder exit. */
+    before = allocations - frees;
+    /* A failed FIRST must not replace the four-piece list with the now
+     * unobscured single rectangle while the library keeps its old cursor. */
+    CHECK(cuis_region_service(a, 0, 0, 0x1004, 0x1008, 0x100c) == EIMBA);
+    CHECK(REGION(a, 3) == 1 && allocations - frees == before);
+    fail_copy = TRUE;
+    CHECK(REGION(a, 0) == EIMBA);
+    fail_copy = FALSE;
+    CHECK(REGION(a, 3) == 1 && allocations - frees == before);
+    fail_copy_address = 0x1008; /* Earlier LONG outputs have already copied. */
+    CHECK(REGION(a, 0) == EIMBA);
+    fail_copy_address = 0;
+    CHECK(REGION(a, 3) == 1 && allocations - frees == before);
+    CHECK(!(*find_owner(run))->windows->pending_regions);
     CHECK(REGION(a, 0) == 1 && copied[2] == 20 && copied[3] == 20);
     CHECK(REGION(a, 1) == 0);
     CHECK(cuis_display_lock(first_session, 0, 0) == E_OK);
@@ -80,6 +93,15 @@ static int display_checks(void)
     CHECK(!*find_owner(&first) && display_owner == *find_owner(&second));
     cuis_process_exit(&second);
     CHECK(!display_owner && !display_depth && !cuis_update_active());
+    /* A fatal output fault must reclaim both the cached and pending lists. */
+    run = &first;
+    first_session = cuis_service(CUIS_SESSION_START, 0);
+    a = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 20, 20, 0);
+    CHECK(a >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, a, 0, 0, 0, 0) == E_OK);
+    CHECK(cuis_display_lock(first_session, 1, 1) == E_OK && REGION(a, 0) == 1);
+    region_exit_on_output = TRUE;
+    CHECK(REGION(a, 0) == EIMBA);
+    CHECK(!*find_owner(run) && !display_owner && !display_depth);
     CHECK(allocations == frees);
     return 0;
 }

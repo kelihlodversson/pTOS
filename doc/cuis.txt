@@ -1097,6 +1097,10 @@ Additional flat CUIS calls (all under CONF_WITH_CUIS):
      unlock, window destruction or owner exit. Without the lock, temporary
      arrays are freed before any faulting output access. Cached arrays are
      attached to windows before output access, so a user fault reclaims them.
+     A replacement snapshot commits only after successful output. Validation
+     or copy failure discards its candidate and retains the old snapshot for
+     the unchanged GEM cursor. Owner/session/window/candidate identities are
+     rechecked after output access, which can tear down the process.
      No kernel-side iterator or unowned window metadata is exposed.
 
   37 WINDOW_OUTSET(native_window, right, bottom) -> E_OK / negative error.

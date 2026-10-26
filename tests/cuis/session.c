@@ -31,6 +31,7 @@ static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
 static BOOL input_drop_focus, input_drop_on_validate;
+static BOOL region_exit_on_output;
 static PD *display_release_owner;
 static BOOL display_release_exit;
 UQUAD cuis_input_lock(void)
@@ -131,6 +132,11 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 }
 BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 {
+    if (region_exit_on_output) {
+        region_exit_on_output = FALSE;
+        cuis_process_exit(run);
+        return FALSE;
+    }
     if (input_drop_on_validate) {
         input_drop_on_validate = FALSE;
         set_focus(NULL);

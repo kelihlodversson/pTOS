@@ -33,7 +33,7 @@ typedef struct cuis_window {
     LONG x, y, width, height;
     BOOL visible, redraw;
     UWORD outset_right, outset_bottom;
-    CUIS_RECT *display_regions;
+    CUIS_RECT *display_regions, *pending_regions;
     ULONG display_region_count;
     BOOL display_regions_valid;
     ULONG keys[CUIS_KEY_CAPACITY];
@@ -363,6 +363,8 @@ static void clear_display_regions(CUIS_CLIENT *client)
     CUIS_WINDOW *window;
     for (window = client->windows; window; window = window->next) {
         if (window->display_regions) kfree(window->display_regions);
+        if (window->pending_regions) kfree(window->pending_regions);
+        window->pending_regions = NULL;
         window->display_regions = NULL;
         window->display_regions_valid = FALSE;
     }
@@ -598,7 +600,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         if (!window->identifier) { kfree(window); return ENSMEM; }
         window->handle = next_window_handle++;
         window->znext = NULL;
-        window->display_regions = NULL; window->display_regions_valid = FALSE;
+        window->display_regions = window->pending_regions = NULL; window->display_regions_valid = FALSE;
         window->display_region_count = 0;
         window->outset_right = window->outset_bottom = 0;
         window->visible = FALSE;
@@ -631,6 +633,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         function != CUIS_WINDOW_REDRAW) return EAGAIN;
     switch (function) {
     case CUIS_WINDOW_DESTROY:
+        if (window->pending_regions) kfree(window->pending_regions);
         if (window->display_regions) kfree(window->display_regions);
         hide_window(window);
         *link = window->next;
@@ -740,32 +743,63 @@ LONG cuis_clip_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
     return 1;
 }
 
+/* User-output access can tear down the process/window. Resolve identities
+ * again before committing or discarding the fault-cleanup-owned candidate. */
+static LONG finish_region_refresh(PD *owner, ULONG session, ULONG handle,
+                                   CUIS_RECT *candidate, ULONG count, BOOL commit)
+{
+    CUIS_CLIENT *client = *find_owner(owner);
+    CUIS_WINDOW *window;
+    if (!client || client->handle != session) return EACCDN;
+    for (window = client->windows; window && window->handle != handle; window = window->next) ;
+    if (!window || window->pending_regions != candidate) return EACCDN;
+    if (commit && display_owner == client) {
+        if (window->display_regions) kfree(window->display_regions);
+        window->display_regions = window->pending_regions;
+        window->display_region_count = count;
+        window->display_regions_valid = TRUE;
+        window->pending_regions = NULL;
+        return E_OK;
+    }
+    if (window->pending_regions) kfree(window->pending_regions);
+    window->pending_regions = NULL;
+    return commit ? EACCDN : E_OK;
+}
+
 LONG cuis_region_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
                          UQUAD width, UQUAD height)
 {
     CUIS_CLIENT *client;
     CUIS_WINDOW *window;
-    CUIS_RECT *rects, rect;
-    ULONG count;
+    CUIS_RECT *rects = NULL, rect;
+    ULONG count = 0, session;
     LONG result;
+    PD *owner = run;
+    BOOL refresh = FALSE;
     if (handle > 0x7fffffffULL || index > 0xffffffffULL) return EINVAL;
     client = *find_owner(run);
     if (!client) return EACCDN;
     for (window = client->windows; window && window->handle != handle; window = window->next) ;
     if (!window) return EACCDN;
+    session = client->handle;
+    if (window->pending_regions) return EAGAIN;
     if (display_owner == client) {
         /* FIRST refreshes, NEXT retains its snapshot even if an occluding
          * peer exits. Per-window caches also allow interleaved GEM loops. */
         if (!index || !window->display_regions_valid) {
             result = visible_regions(window, &rects, &count);
             if (result < 0) return result;
-            if (window->display_regions) kfree(window->display_regions);
-            window->display_regions = rects;
-            window->display_region_count = count;
-            window->display_regions_valid = TRUE;
+            window->pending_regions = rects;
+            refresh = TRUE;
+            if (index >= count) {
+                result = finish_region_refresh(owner, session, (ULONG)handle, rects, count, TRUE);
+                return result < 0 ? result : 0;
+            }
+            rect = rects[(ULONG)index];
+        } else {
+            if (index >= window->display_region_count) return 0;
+            rect = window->display_regions[(ULONG)index];
         }
-        if (index >= window->display_region_count) return 0;
-        rect = window->display_regions[(ULONG)index];
     } else {
         result = visible_regions(window, &rects, &count);
         if (result < 0) return result;
@@ -774,9 +808,16 @@ LONG cuis_region_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
         kfree(rects);
     }
     if (!kproc_validate_user_write(x, sizeof(LONG)) || !kproc_validate_user_write(y, sizeof(LONG)) ||
-        !kproc_validate_user_write(width, sizeof(LONG)) || !kproc_validate_user_write(height, sizeof(LONG))) return EIMBA;
-    if (!kproc_copy_to_user(x, &rect.x, sizeof(LONG)) || !kproc_copy_to_user(y, &rect.y, sizeof(LONG)) ||
-        !kproc_copy_to_user(width, &rect.width, sizeof(LONG)) || !kproc_copy_to_user(height, &rect.height, sizeof(LONG))) return EIMBA;
+        !kproc_validate_user_write(width, sizeof(LONG)) || !kproc_validate_user_write(height, sizeof(LONG)) ||
+        !kproc_copy_to_user(x, &rect.x, sizeof(LONG)) || !kproc_copy_to_user(y, &rect.y, sizeof(LONG)) ||
+        !kproc_copy_to_user(width, &rect.width, sizeof(LONG)) || !kproc_copy_to_user(height, &rect.height, sizeof(LONG))) {
+        if (refresh) (void)finish_region_refresh(owner, session, (ULONG)handle, rects, count, FALSE);
+        return EIMBA;
+    }
+    if (refresh) {
+        result = finish_region_refresh(owner, session, (ULONG)handle, rects, count, TRUE);
+        if (result < 0) return result;
+    }
     return 1;
 }
 
