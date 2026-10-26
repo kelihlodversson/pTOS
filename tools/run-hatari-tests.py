@@ -19,7 +19,7 @@
 #                 with the MMU emulated (--mmu on), so that the page tables
 #                 pTOS builds for the caches (CONF_WITH_68030_PMMU,
 #                 CONF_WITH_68040_PMMU) are walked and not just written
-#   --timeout SEC give up after this long (default 600)
+#   --timeout SEC give up after this long (default 600; CI passes 900)
 #
 # The harness prints what each test did on the console, which Hatari's
 # --conout 2 sends to its standard output; the run is over when the summary
