@@ -736,6 +736,74 @@ typedef struct {
     BOOL write;
 } CUIS_STREAM_WAIT;
 
+typedef struct {
+    CUIS_CLIENT *client;
+    ULONG events, minimum, start, duration;
+} CUIS_SESSION_WAIT_STATE;
+
+static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
+{
+    LONG result = 0;
+    if ((wait->events & CUIS_READY_STREAM) && wait->client->stream_bytes >= wait->minimum)
+        result |= CUIS_READY_STREAM;
+    if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
+        result |= CUIS_READY_TIMER;
+    return result;
+}
+
+static BOOL session_wait_ready(void *argument) { return session_ready(argument) != 0; }
+
+/* Readiness is non-consuming, and one start tick survives all wakeups. No
+ * GEM event masks or header formats cross this native scalar interface. */
+LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds)
+{
+    CUIS_CLIENT *client = *find_owner(run);
+    CUIS_SESSION_WAIT_STATE wait;
+    UQUAD flags;
+    LONG ready;
+    if (handle > 0x7fffffffULL || !events || events > (CUIS_READY_STREAM | CUIS_READY_TIMER) ||
+        ((events & CUIS_READY_STREAM) && (!minimum || minimum > CUIS_STREAM_MAX)) ||
+        ((events & CUIS_READY_TIMER) && milliseconds > 0xffffffffULL)) return EINVAL;
+    if (!client || handle != client->handle) return EACCDN;
+    flags = cuis_input_lock();
+    wait.client = client; wait.events = (ULONG)events; wait.minimum = (ULONG)minimum;
+    wait.start = cuis_input_ticks();
+    wait.duration = (events & CUIS_READY_TIMER) && milliseconds ?
+        (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1) : 0;
+    if ((events & CUIS_READY_TIMER) && !milliseconds && !(session_ready(&wait) & CUIS_READY_STREAM)) {
+        /* A zero timer poll also gives cooperative peers one opportunity,
+         * unless a message was already ready at the initial check. */
+        cuis_input_unlock(flags);
+        ksched_yield();
+        flags = cuis_input_lock();
+    }
+    for (;;) {
+        ready = session_ready(&wait);
+        if (ready) { cuis_input_unlock(flags); return ready; }
+        if (update_owner == client) { cuis_input_unlock(flags); return EACCDN; }
+        if (!ksched_block(session_wait_ready, &wait)) cuis_input_idle();
+    }
+}
+
+LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD modifiers)
+{
+    CUIS_CLIENT *client = *find_owner(run);
+    LONG sx, sy;
+    ULONG sb, sm;
+    UQUAD flags;
+    BOOL copied;
+    if (handle > 0x7fffffffULL) return EINVAL;
+    if (!client || handle != client->handle) return EACCDN;
+    if (!kproc_validate_user_write(x, sizeof(LONG)) || !kproc_validate_user_write(y, sizeof(LONG)) ||
+        !kproc_validate_user_write(buttons, sizeof(ULONG)) || !kproc_validate_user_write(modifiers, sizeof(ULONG))) return EIMBA;
+    flags = cuis_input_lock();
+    cuis_input_snapshot(&sx, &sy, &sb, &sm);
+    copied = kproc_copy_to_user(x, &sx, sizeof(sx)) && kproc_copy_to_user(y, &sy, sizeof(sy)) &&
+             kproc_copy_to_user(buttons, &sb, sizeof(sb)) && kproc_copy_to_user(modifiers, &sm, sizeof(sm));
+    cuis_input_unlock(flags);
+    return copied ? E_OK : EIMBA;
+}
+
 static BOOL stream_ready(void *argument)
 {
     CUIS_STREAM_WAIT *wait = argument;

@@ -10,6 +10,10 @@ static ULONG starts, closes, yields, delays;
 static UQUAD interval;
 static UBYTE pipe_data[64];
 static ULONG pipe_count, pipe_block;
+static LONG wait_error, state_error, read_error;
+static LONG state_values[4] = { 17, 23, 2, 5 };
+static ULONG wait_calls;
+static UQUAD waited_interval, waited_mask;
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -41,6 +45,20 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a, "GEMTEST ", 8) ? EFILNF : handle;
     if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
     if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
+    if (fn == CUIS_SESSION_WAIT) {
+        LONG ready = 0;
+        wait_calls++; waited_mask = c; waited_interval = d;
+        if (wait_error) return wait_error;
+        if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
+        if (c & CUIS_READY_TIMER) ready |= CUIS_READY_TIMER;
+        return ready;
+    }
+    if (fn == CUIS_INPUT_STATE) {
+        if (state_error) return state_error;
+        *(LONG *)(uintptr_t)b = state_values[0]; *(LONG *)(uintptr_t)c = state_values[1];
+        *(LONG *)(uintptr_t)d = state_values[2]; *(LONG *)(uintptr_t)e = state_values[3];
+        return E_OK;
+    }
     if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ) {
         if (failure) return failure;
         pipe_block = (ULONG)d;
@@ -50,6 +68,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
             if (c) __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)b, (ULONG)c);
             pipe_count += (ULONG)c;
         } else {
+            if (read_error) return read_error;
             if (pipe_count < c) return EAGAIN;
             if (c) __builtin_memcpy((void *)(uintptr_t)b, pipe_data, (ULONG)c);
             pipe_count -= (ULONG)c;
@@ -61,6 +80,41 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     delays++; interval = b;
     return failure;
 }
+
+#define MULTI(mask, time, msg) evnt_multi(mask, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, msg, time, &x, &y, &buttons, &mods, &key, &clicks)
+static int event_checks(void)
+{
+    short x = 99, y = 99, buttons = 99, mods = 99, key = 99, clicks = 99;
+    short message[8] = { 1, 7, 0, 4, 5, 6, 7, 8 }, output[8], global[15];
+    ULONG before;
+    CHECK(mt_appl_init(global) == 7);
+    CHECK(graf_mkstate(&x, &y, &buttons, &mods) == 1 && x == 17 && y == 23 && buttons == 2 && mods == 5);
+    CHECK(mt_graf_mkstate(NULL, NULL, NULL, NULL, global) == 1);
+    state_values[0] = 40000; state_values[1] = -40000;
+    CHECK(graf_mkstate(&x, &y, &buttons, &mods) == 1 && x == 32767 && y == -32768);
+    state_values[0] = 17; state_values[1] = 23;
+    CHECK(MULTI(MU_TIMER, 0, NULL) == MU_TIMER && waited_mask == CUIS_READY_TIMER && key == 0 && clicks == 0);
+    CHECK(appl_write(7, 16, message) == 1);
+    before = wait_calls;
+    CHECK(MULTI(MU_KEYBD | MU_MESAG, 0, output) == 0 && wait_calls == before && pipe_count == 16);
+    CHECK(MULTI(0, 0, output) == 0 && MULTI(MU_MESAG, 0, NULL) == 0 && pipe_count == 16);
+    CHECK(MULTI(MU_TIMER, 0xffffffffUL, NULL) == MU_TIMER && waited_interval == 0xffffffffULL && pipe_count == 16);
+    if (sizeof(unsigned long) > 4) CHECK(MULTI(MU_TIMER, (unsigned long)(1ULL << 32), NULL) == 0);
+    wait_error = EACCDN; CHECK(MULTI(MU_MESAG | MU_TIMER, 0, output) == 0 && pipe_count == 16); wait_error = 0;
+    state_error = EIMBA; x = 123;
+    CHECK(MULTI(MU_MESAG | MU_TIMER, 0, output) == 0 && pipe_count == 16 && x == 123);
+    state_error = 0; read_error = EIMBA;
+    CHECK(MULTI(MU_MESAG | MU_TIMER, 0, output) == 0 && pipe_count == 16 && x == 123);
+    read_error = 0;
+    CHECK(MULTI(MU_MESAG | MU_TIMER, 0, output) == (MU_MESAG | MU_TIMER) && !pipe_count);
+    CHECK(!__builtin_memcmp(message, output, 16) && x == 17 && y == 23 && buttons == 2 && mods == 5 && !key && !clicks);
+    CHECK(appl_write(7, 16, message) == 1);
+    CHECK(mt_evnt_multi(MU_MESAG, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        output, ~0UL, NULL, NULL, NULL, NULL, NULL, NULL, global) == MU_MESAG);
+    CHECK(!pipe_count && waited_mask == CUIS_READY_STREAM);
+    return 0;
+}
+#undef MULTI
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
@@ -104,6 +158,7 @@ int main(void)
     failure = EACCDN;
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
+    CHECK(event_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     close_result = EACCDN;

@@ -26,7 +26,7 @@ static BOOL input_irqs = TRUE, input_bad_idle;
 static ULONG input_ticks, input_sleeps, input_inject_after;
 static ULONG delay_tick_step = 1, delay_yields;
 static UBYTE stream_input[32768], stream_output[32768];
-static BOOL stream_kill_peer, stream_drain_peer, stream_send_peer;
+static BOOL stream_kill_peer, stream_drain_peer, stream_send_peer, stream_yield_peer;
 static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
@@ -42,6 +42,12 @@ ULONG cuis_input_ticks(void) { return input_ticks; }
 static BOOL input_pointer_source;
 static LONG input_pointer_x, input_pointer_y, input_pointer_max_x = 1023, input_pointer_max_y = 767;
 static ULONG input_pointer_buttons, legacy_pointer_calls;
+static ULONG input_modifiers;
+void cuis_input_snapshot(LONG *x, LONG *y, ULONG *buttons, ULONG *modifiers)
+{
+    *x = input_pointer_x; *y = input_pointer_y;
+    *buttons = input_pointer_buttons; *modifiers = input_modifiers;
+}
 BOOL cuis_input_standard_pointer(void) { return input_pointer_source; }
 BOOL cuis_input_pointer_state(LONG *x, LONG *y, ULONG *buttons)
 {
@@ -62,7 +68,17 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     (void)ready; (void)argument;
     return FALSE;
 }
-LONG ksched_yield(void) { delay_yields++; return E_OK; }
+LONG ksched_yield(void)
+{
+    delay_yields++;
+    if (stream_yield_peer) {
+        PD *saved = run;
+        stream_yield_peer = FALSE; run = stream_peer;
+        cuis_stream_service(CUIS_STREAM_WRITE, stream_peer_handle, 0x10000, 16, 0, 0);
+        run = saved;
+    }
+    return E_OK;
+}
 void cuis_input_idle(void)
 {
     if (input_irqs) input_bad_idle = TRUE;
@@ -155,6 +171,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "messages.c"
 #include "delay.c"
 #include "streams.c"
+#include "combined.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -217,5 +234,7 @@ int main(void)
     rc = message_checks();
     if (rc) return rc;
     rc = delay_checks();
-    return rc ? rc : stream_checks();
+    if (rc) return rc;
+    rc = stream_checks();
+    return rc ? rc : combined_checks();
 }

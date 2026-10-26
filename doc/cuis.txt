@@ -753,8 +753,8 @@ evnt_timer and appl_getinfo, with matching mt_* forms, aes_global[15],
 gl_apid and gl_ap_version. include/gem.h declares this implemented subset;
 the same application fixture also compiles against GEMlib's normal headers.
 This is the first public adapter slice, not a complete GEM AES replacement.
-Discovery and application pipes are described below. Combined events and
-window/input adapters remain subsequent work. Existing aes_session_*/aes_window_*/aes_message_* exports
+Discovery and application pipes are described below. Message/timer combinations are described below; window/input event adapters
+remain subsequent work. Existing aes_session_*/aes_window_*/aes_message_* exports
 remain transitional test/migration interfaces, not application requirements.
 
 appl_init implicitly opens the process's CUIS session and returns its kernel
@@ -860,7 +860,8 @@ Invalid arguments/ownership and missing peers return ordinary negative
 errors. block is 0 (EAGAIN when not ready) or 1 (wait). These services and
 process-basename storage compile only with CONF_WITH_CUIS. The previous
 four-word opaque queue remains transitional; the public GEM pipe does not
-inherit its fixed size. Combined event integration remains later work.
+inherit its fixed size. Message/timer combined waits are described below; input/window integration
+remains subsequent work.
 
 Host tests cover lookup/ownership, capacity and allocation failures,
 wrapped reads and copy failures, partial/cross-writer reads, captured input
@@ -869,6 +870,68 @@ Real dynamic GEM clients cover named and PID discovery, full-range and
 split transfers, blocking backpressure, registration close/reopen, sender
 exit and a receiver reopening while a pending write still targets its old
 handle. Allocator/session/process snapshots verify complete reclamation.
+
+GEM combined message/timer waits and state reads (#722)
+-------------------------------------------------------
+evnt_multi and mt_evnt_multi retain the complete standard GEM signatures.
+This slice implements MU_MESAG (0x10), MU_TIMER (0x20) and their combination.
+The result is the GEM mask of every ready requested source, including both
+bits together; it is never a native negative error. Unsupported keyboard,
+button, rectangle and extension masks, and an empty mask, return 0 before
+waiting, consuming message bytes or changing caller outputs. Their proper
+adapters follow window/input integration; requested events are not silently
+dropped. Unrequested button/rectangle parameters and timer arguments are
+ignored, as are message pointers when MU_MESAG was not requested.
+
+A message requires at least 16 bytes in the application pipe. A partial
+header cannot wake it, and the transitional four-word queue is a different
+source. Native readiness consumes nothing; the library copies exactly the
+16-byte GEM header only when ready, retaining any excess for appl_read.
+Failed message copyout returns 0 and leaves all bytes unread. A timer-only
+wait never consumes messages, including when its ignored message pointer is
+invalid. Combined waits preserve one deadline across IRQs and scheduler
+wakeups and use unsigned millisecond intervals through 0xffffffff, with
+ceil-to-tick rounding, a guard tick and modulo tick-counter wrap.
+
+With a zero timer, an already ready message returns both bits immediately.
+Otherwise the zero poll yields once to cooperative peers, then checks all
+requested sources again; a message produced during that yield is included
+alongside MU_TIMER. A positive timer can expire alone, a message can arrive
+first, or both can be ready at the same atomic kernel check. Blocking an
+empty wait while owning a display update returns EACCDN; ready and zero
+operations retain the existing behavior.
+
+graf_mkstate and mt_graf_mkstate return a read-only logical mouse/button/
+modifier snapshot for a registered caller. The same state fills successful
+evnt_multi outputs, with key return and click count zero because those
+input events are not implemented in this slice. Coordinates use signed
+GEM shorts (saturated at their range), buttons are left/right bits 0..1,
+and modifiers are the standard right-shift/left-shift/control/alt bits 0..3.
+NULL scalar output pointers are accepted. No window/focus is required;
+state reads neither invoke callbacks nor consume pointer/keyboard events.
+Invalid non-NULL scalar output pointers are ordinary userspace faults;
+kernel teardown remains authoritative for cleanup.
+
+CUIS_SESSION_WAIT (32) takes (owned_session, minimum_bytes, ready_mask,
+unsigned_milliseconds) in flat registers and returns CUIS_READY_STREAM (1),
+CUIS_READY_TIMER (2), their union, or a negative error. Masks must select
+at least one source. minimum_bytes is 1..32767 when selecting the stream;
+otherwise it is ignored. The interval is validated only when selecting the
+timer. This is generic byte readiness/deadline handling, not a kernel GEM
+mask or event parameter-block interpreter. CUIS_INPUT_STATE (33) takes the
+owned session and four LONG output addresses for x, y, buttons and modifiers,
+returning E_OK or a negative error. It backs all outputs before sampling one
+logical state under IRQ exclusion. Kernel additions remain CUIS-configured;
+there are no versioned blocks, feature negotiation or new public CUIS setup.
+
+Host tests cover all source combinations, simultaneous/early readiness,
+partial headers, opaque-queue separation, zero-yield arrival, full intervals,
+wrap and unchanged deadlines, IRQ restoration, update ownership, snapshots,
+mask/result mapping and copyout failures without consumption. Real dynamic
+GEM clients cover ordinary and mt_* calls, header/excess reads, unsupported
+masks, read-only message buffers, timed peer producers, zero-yield delivery
+and scalar-output user faults with exact resource reclamation. Normal GEMlib
+headers compile the same fixture; other AES/event families remain staged.
 
 Final configuration cutover
 ---------------------------

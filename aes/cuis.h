@@ -22,6 +22,8 @@ LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds);
 LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c);
 LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD length,
                          UQUAD block, UQUAD sender);
+LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds);
+LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD modifiers);
 void cuis_process_exit(PD *owner);
 #if CONF_WITH_X86_64_MEMTEST
 ULONG cuis_session_count(void);

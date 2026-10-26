@@ -49,8 +49,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-fno-builtin", "-I" + temp, "-Iinclude", "-Ilib/aes",
-                "tests/cuis/application.c", "lib/aes/application.c", "lib/aes/session.c",
+                "tests/cuis/application.c", "lib/aes/application.c", "lib/aes/events.c", "lib/aes/session.c",
                 "-o", str(work / "application")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "application")], check=True)
-print("CUIS sessions/delays, GEM lifecycle/object contracts and Kconfig tests passed.")
+print("CUIS sessions/streams/events, GEM API/object contracts and Kconfig tests passed.")
