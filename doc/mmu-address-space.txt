@@ -501,6 +501,13 @@ the 68040, with the shape of the plan above.  What is particular to it:
     it either (the CPU is not relied on to run the whole cycle again): a
     first touch of lazy memory with TAS is a fault of the process.  The
     mmap suite skips its TAS on a clean file page there (TEST_NO_RMW_FAULTS).
+    A misaligned access across the boundary of two lazy pages is served the
+    same way (both pages are backed, the RTE runs the access again), but
+    Hatari's 68030 does not run it reliably: in a few runs out of two or
+    three a bus error comes back with the context of the next interrupt and
+    the kernel panics.  The mmap suite does not run test_crossing_accesses()
+    there (TEST_NO_CROSSING); #737 checks it with a newer core, and the
+    hardware has not been tried.
   - There is no desktop and no VDI for a process (as on the other address-space
     configurations), so the shell is the program EMUCON.TOS or, as the tests
     have it, SHELL.TOS of the boot drive; Srealloc() and the other GEMDOS calls

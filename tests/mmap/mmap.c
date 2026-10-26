@@ -233,7 +233,7 @@ static void test_first_stores(void)
     munmap(m, 8 * PAGE);
 }
 
-#if defined(__mc68000__)
+#if defined(__mc68000__) && !defined(TEST_NO_CROSSING)
 /*
  * A longword at an odd address across the boundary of two pages, as the very
  * first access: a store when neither page is there, a load when only the first
@@ -443,7 +443,10 @@ void test_mmap(void)
 
     test_anonymous();
     test_first_stores();
-#if defined(__mc68000__)
+#if defined(__mc68000__) && !defined(TEST_NO_CROSSING)
+    /* (not on the Falcon, under Hatari's 68030: a misaligned access across two lazy
+     * pages sometimes ends in a bus error that the emulator delivers inside the next
+     * interrupt, a panic of the kernel; to be checked with a newer WinUAE core, #737) */
     test_crossing_accesses();
 #endif
     test_reservations();
