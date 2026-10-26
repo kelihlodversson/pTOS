@@ -128,6 +128,45 @@ static int input_event_checks(void)
     CHECK(allocations == frees && !input_bad_idle && input_irqs);
     return 0;
 }
+/* The drag owner retains its release even when focus changes mid-drag. */
+static int input_capture_checks(void)
+{
+    LONG session, a, b;
+    CUIS_WINDOW *wa, *wb;
+    run = &first;
+    session = cuis_service(CUIS_SESSION_START, 0);
+    a = cuis_window_service(CUIS_WINDOW_CREATE,0,0,100,100,0);
+    CHECK(a >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,a,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,a,0,0,0,0) == E_OK);
+    wa = (*find_owner(run))->windows;
+    CHECK(point_at(10,10,1) && pointer_capture == wa && !pointer_activation_drag);
+    run = &second;
+    CHECK(cuis_service(CUIS_SESSION_START,0) >= 0);
+    b = cuis_window_service(CUIS_WINDOW_CREATE,200,200,100,100,0);
+    CHECK(b >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,b,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,b,0,0,0,0) == E_OK);
+    wb = (*find_owner(run))->windows;
+    CHECK(focus_window == wb && pointer_capture == wa);
+    run = &first;
+    CHECK(IB(session,1,1,0,0) == E_OK);
+    input_sleeps = 0; input_packet_mode = 8;
+    CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_BUTTON && input_sleeps == 1);
+    CHECK(IR(session) == E_OK && copied[1] == 1 && copied[2] == 210 && copied[3] == 210 && !(copied[4] & 3));
+    CHECK(!pointer_capture && pointer_hover == wb && focus_window == wb);
+    CHECK(!(*find_owner(&first))->edge_count && !(*find_owner(&second))->edge_count);
+    /* A background activation drag is still only a WM_TOPPED gesture:
+     * its release must not satisfy the background owner's button wait. */
+    CHECK(point_at(10,10,1) && pointer_capture == wa && pointer_activation_drag);
+    CHECK(focus_window == wb && (wa->notices & CUIS_NOTICE_ACTIVATE));
+    input_sleeps = 0; input_packet_mode = 8;
+    CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_TIMER && input_sleeps == 3);
+    CHECK(IR(session) == E_OK && !copied[1]);
+    CHECK(!pointer_capture && !pointer_activation_drag && focus_window == wb);
+    CHECK(!(*find_owner(&first))->edge_count);
+    cuis_process_exit(&first); cuis_process_exit(&second);
+    CHECK(allocations == frees && !input_bad_idle && input_irqs);
+    return 0;
+}
 #undef IW
 #undef IR
 #undef IB

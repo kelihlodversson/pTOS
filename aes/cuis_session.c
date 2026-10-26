@@ -309,6 +309,9 @@ static BOOL route_pointer(ULONG changed)
     pointer_hover = target;
     pointer_enqueue(target, changed, target == hit);
     if (pointer_capture && !pointer_buttons) {
+        /* A focus change during the drag must not steal its release. The
+         * activation-gesture branch above deliberately bypasses sampling. */
+        sample_input_waits();
         pointer_capture = NULL;
         if (pointer_hover != hit) {
             pointer_enqueue(pointer_hover, 0, pointer_hover == hit);

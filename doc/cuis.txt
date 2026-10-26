@@ -1234,8 +1234,11 @@ has focus; they can remain blocked while another application owns focus.
 Native BIOS scan/ASCII keys become GEM words with scan code in bits 8-15 and
 ASCII in bits 0-7. Keys are consumed only when requested and ready. Pointer
 waits follow the focused application or existing pointer capture; background
-activation gestures remain WM_TOPPED requests, not button input. No untrusted
-application can inject hardware input. Applications without focused windows
+activation gestures remain WM_TOPPED requests, not button input. A drag's
+release predicates are sampled before capture is cleared, so another client's
+focus change cannot steal the captured release. Activation-gesture releases
+bypass that sampling. No untrusted application can inject hardware input.
+Applications without focused windows
 can still use message/timer waits and graf_mkstate.
 
 A rectangle is half-open on its right/bottom boundaries. MO_ENTER waits for

@@ -107,7 +107,10 @@ void cuis_input_idle(void)
         stream_change_after = 0;
     }
     if (input_packet_mode) {
-        if (input_packet_mode == 5 || input_packet_mode == 6) {
+        if (input_packet_mode == 8) {
+            cuis_pointer_packet((WORD)(210 - pointer_x), (WORD)(210 - pointer_y), 0, NULL, NULL);
+            input_packet_mode = 0;
+        } else if (input_packet_mode == 5 || input_packet_mode == 6) {
             cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 1, NULL, NULL);
             cuis_pointer_packet(0, 0, 0, NULL, NULL);
             if (input_packet_mode == 6) input_ticks += 100;
@@ -295,5 +298,7 @@ int main(void)
     rc = display_checks();
     if (rc) return rc;
     rc = notice_checks();
-    return rc ? rc : input_event_checks();
+    if (rc) return rc;
+    rc = input_event_checks();
+    return rc ? rc : input_capture_checks();
 }
