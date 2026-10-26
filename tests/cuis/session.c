@@ -190,6 +190,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "streams.c"
 #include "combined.c"
 #include "display.c"
+#include "notices.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -256,5 +257,7 @@ int main(void)
     rc = stream_checks();
     if (rc) return rc;
     rc = combined_checks();
-    return rc ? rc : display_checks();
+    if (rc) return rc;
+    rc = display_checks();
+    return rc ? rc : notice_checks();
 }
