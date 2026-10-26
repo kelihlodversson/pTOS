@@ -48,10 +48,17 @@ static int combined_checks(void)
     input_irqs = TRUE; delay_tick_step = 858993460UL; input_sleeps = 0;
     CHECK(CW(a, 0, 2, 0xffffffffULL) == CUIS_READY_TIMER && input_sleeps == 1);
     delay_tick_step = 1;
-    input_pointer_source = FALSE; /* State reads also work without a window/vector. */
+    input_pointer_source = TRUE;
     input_pointer_x = 401; input_pointer_y = 209; input_pointer_buttons = 3; input_modifiers = 15;
     CHECK(cuis_state_service(a, 0x1000, 0x1004, 0x1008, 0x100c) == E_OK);
     CHECK(copied[0] == 401 && copied[1] == 209 && copied[2] == 3 && copied[3] == 15);
+    {
+        BOOL initialized = pointer_initialized;
+        pointer_initialized = FALSE; input_pointer_source = FALSE;
+        CHECK(cuis_state_service(a, 0x1000, 0x1004, 0x1008, 0x100c) == E_OK);
+        CHECK(copied[0] == 401 && copied[1] == 209 && copied[2] == 3);
+        pointer_initialized = initialized;
+    }
     CHECK(cuis_state_service(b, 0x1000, 0x1004, 0x1008, 0x100c) == EACCDN);
     CHECK(cuis_state_service(1ULL << 32, 0, 0, 0, 0) == EINVAL);
     CHECK(cuis_state_service(a, 0x1000, 0, 0x1008, 0x100c) == EIMBA);
@@ -66,6 +73,18 @@ static int combined_checks(void)
     CHECK(CW(a, 16, 1, 0) == EACCDN && CW(a, 0, 2, 1) == EACCDN);
     CHECK(CW(a, 0, 2, 0) == CUIS_READY_TIMER && CS(a, 16) == 16);
     CHECK(CW(a, 16, 1, 0) == CUIS_READY_STREAM);
+    /* A custom vector leaves the backend's Line-A fields untouched when
+     * CUIS consumes a packet. State queries must use its logical state. */
+    (void)cuis_pointer_packet((WORD)(5 - pointer_x), (WORD)(5 - pointer_y), 0, NULL, NULL);
+    CHECK(cuis_pointer_packet(1, 1, 1, NULL, NULL));
+    CHECK(cuis_state_service(a, 0x1000, 0x1004, 0x1008, 0x100c) == E_OK);
+    CHECK(copied[0] == 6 && copied[1] == 6 && copied[2] == 1 && copied[3] == 15);
+    CHECK(input_pointer_x == 401 && input_pointer_y == 209 && input_pointer_buttons == 3);
+    input_pointer_source = TRUE; input_pointer_x = 17; input_pointer_y = 23; input_pointer_buttons = 2;
+    CHECK(cuis_state_service(a, 0x1000, 0x1004, 0x1008, 0x100c) == E_OK);
+    CHECK(copied[0] == 17 && copied[1] == 23 && copied[2] == 2);
+    input_pointer_source = FALSE;
+    (void)cuis_pointer_packet(0, 0, 0, NULL, NULL);
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(allocations == frees && !input_bad_idle && input_irqs);
     return 0;

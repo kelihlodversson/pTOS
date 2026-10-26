@@ -798,6 +798,11 @@ LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD mod
         !kproc_validate_user_write(buttons, sizeof(ULONG)) || !kproc_validate_user_write(modifiers, sizeof(ULONG))) return EIMBA;
     flags = cuis_input_lock();
     cuis_input_snapshot(&sx, &sy, &sb, &sm);
+    /* The standard vector synchronizes Line-A, including native VDI cursor
+     * changes. Custom-vector packets consumed by CUIS never reach it. */
+    if (!cuis_input_standard_pointer() && pointer_initialized) {
+        sx = pointer_x; sy = pointer_y; sb = pointer_buttons;
+    }
     copied = kproc_copy_to_user(x, &sx, sizeof(sx)) && kproc_copy_to_user(y, &sy, sizeof(sy)) &&
              kproc_copy_to_user(buttons, &sb, sizeof(sb)) && kproc_copy_to_user(modifiers, &sm, sizeof(sm));
     cuis_input_unlock(flags);

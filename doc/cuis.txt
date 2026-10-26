@@ -909,6 +909,9 @@ GEM shorts (saturated at their range), buttons are left/right bits 0..1,
 and modifiers are the standard right-shift/left-shift/control/alt bits 0..3.
 NULL scalar output pointers are accepted. No window/focus is required;
 state reads neither invoke callbacks nor consume pointer/keyboard events.
+Standard-vector snapshots follow synchronized Line-A state; custom-vector
+snapshots use CUIS's initialized logical position/buttons, falling back to
+Line-A before initialization. This includes packets consumed only by CUIS.
 Invalid non-NULL scalar output pointers are ordinary userspace faults;
 kernel teardown remains authoritative for cleanup.
 
