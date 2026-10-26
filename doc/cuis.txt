@@ -888,7 +888,9 @@ handle. Allocator/session/process snapshots verify complete reclamation.
 GEM combined message/timer waits and state reads (#722)
 -------------------------------------------------------
 evnt_multi and mt_evnt_multi retain the complete standard GEM signatures.
-This slice implements MU_MESAG (0x10), MU_TIMER (0x20) and their combination.
+This initially implemented MU_MESAG (0x10), MU_TIMER (0x20) and their
+combination. The #741 input adapters below extend this to all six classic
+GEM event sources. The following describes the original message/timer subset.
 The result is the GEM mask of every ready requested source, including both
 bits together; it is never a native negative error. Unsupported keyboard,
 button, rectangle and extension masks, and an empty mask, return 0 before
@@ -1215,3 +1217,106 @@ lock ownership and focus fallback. GEMFOC.TOS exercises isolated apps using
 standard GEM source: redraw delivery, top/bottom operations, foreign owner
 queries and close/raw-exit fallback. Existing GEMWIN/GEMUPD fixtures now accept
 real redraw messages while waiting for their application control messages.
+
+
+GEM keyboard, button and mouse rectangle events (#741)
+-----------------------------------------------------
+evnt_keybd, evnt_button, evnt_mouse and evnt_dclick now have standard and
+mt_* bindings. evnt_multi/mt_evnt_multi support every combination of the six
+classic masks: MU_KEYBD, MU_BUTTON, MU_M1, MU_M2, MU_MESAG and MU_TIMER.
+An empty mask or an unknown extension mask fails with GEM 0 before any wait
+or consumption. Unrequested parameters remain ignored. No new appl_getinfo
+extension bits are advertised. Wheel/extended-key event masks and mouse-control
+grabs (wind_update BEG_MCTRL/END_MCTRL) remain separate work.
+
+Keyboard waits belong to the application, following whichever of its windows
+has focus; they can remain blocked while another application owns focus.
+Native BIOS scan/ASCII keys become GEM words with scan code in bits 8-15 and
+ASCII in bits 0-7. Keys are consumed only when requested and ready. Pointer
+waits follow the focused application or existing pointer capture; background
+activation gestures remain WM_TOPPED requests, not button input. A drag's
+release predicates are sampled before capture is cleared, so another client's
+focus change cannot steal the captured release. Activation-gesture releases
+bypass that sampling. No untrusted application can inject hardware input.
+Applications without focused windows
+can still use message/timer waits and graf_mkstate.
+
+A rectangle is half-open on its right/bottom boundaries. MO_ENTER waits for
+inside, MO_LEAVE for outside; the predicate is also tested immediately, so no
+new movement is needed if it already holds. Zero/negative extents are empty.
+Both rectangles are tested independently and can complete together. Trusted
+packet processing latches a matching crossing during an active wait even
+when another packet reverses it before userspace runs.
+
+Button equality is ((buttons ^ state) & mask) == 0. Clicks' low byte limits
+the returned count; bit 0x100 reverses equality, as in classic GEM. Other
+high-byte extensions (including 0x200) are not advertised and fail with 0.
+A matching current state or queued transition completes the quick check;
+a completed multi-click count is retained while the matching state is held,
+including across later requests with smaller count limits.
+Otherwise a pending multiple-click wait starts its click window on the first
+matching transition. Additional matches extend the original window by three
+200-Hz ticks, with a bounded count. Expiry is checked before admitting a
+new press, so a delayed waiter cannot extend an already expired window.
+Once a button result is ready, later edges enter history for the next wait.
+The wait returns the actual count, capped by the requested maximum, after
+the interval, including a single click when
+a double click was requested. The matching position/button/modifier snapshot
+is retained when a release follows. A bounded 16-edge per-session history
+retains press/release pairs arriving between calls independently of the raw
+native per-window pointer queues. A history scan consumes through the first
+matching edge only, leaving subsequent transitions for later waits in FIFO
+order, including alternating press/release waits. Trusted queued edges are
+matched independently of current focus: a captured release arriving after a
+focus handoff remains available to its original owner when it next waits.
+Live predicates still require current mouse ownership. Overflow discards
+oldest edges; ownership loss/hide clears old history. Zero requested clicks
+return count zero.
+
+evnt_dclick queries/sets the global standard rate index 0..4, corresponding
+to 450, 330, 275, 220 and 165 ms; the initial rate is zero. A running click
+window retains its original interval. Invalid set/rate parameters fail with
+0 without changing it. All six event sources use a single native wait;
+keyboard/message/timer completion cancels unfinished button accumulation.
+Timer deadlines are never restarted by pointer traffic. Input already ready
+also avoids the unnecessary zero-timer cooperative yield. Results include
+all requested sources ready at completion; unrequested key/count outputs are
+zero and optional scalar outputs may be NULL.
+
+Native additions, all built only under CONF_WITH_CUIS:
+
+  43 INPUT_RECT(session, slot_flags, x, y, width, height) -> E_OK / error.
+     Flat signed LONG geometry. Slot_flags bit zero selects rectangle 0/1,
+     bit one selects outside rather than inside. Other bits are rejected.
+
+  44 INPUT_BUTTON(session, mask, state, maximum_count, invert, unused=0)
+     -> E_OK / error. Mask/state are unsigned 16-bit, count 0..255, invert
+     canonical 0/1. Configuration belongs to the calling session.
+
+  45 INPUT_RESULT(session, key*, count*, x*, y*, state*) -> E_OK / error.
+     Five separate validated LONG outputs from the latest input-enabled wait.
+     Key retains native BIOS encoding; state contains button bits 0..15 and
+     modifier bits 16..31. No request/reply structures cross the ABI. Re-reading
+     is non-consuming, including after failed copyout; a later input wait
+     replaces the snapshot. A completed wait transfers a ready key from its
+     focused window queue into this session snapshot under IRQ exclusion.
+
+  46 INPUT_INTERVAL(session, milliseconds, set, 0, 0, 0) -> interval / error.
+     Generic global click interval, 1..5000 ms, canonical set=0/1. Query ignores
+     the milliseconds argument. Public GEM rate indices remain in libaes.
+
+SESSION_WAIT (32) additionally accepts native READY_KEY=8, READY_BUTTON=16,
+READY_RECT1=32 and READY_RECT2=64. Stream minimum and timer interval validation
+still apply only when selecting those sources. Configuration, initial checks,
+IRQ event latching and the scheduler's test-and-sleep use IRQ exclusion; no
+allocation or user-memory access occurs in that critical path. Active wait
+pointers refer to resident syscall stacks and are cleared on completion/error;
+process teardown removes the session before it can outlive that stack.
+
+Host tests exercise full native handles, routing/ownership, historical presses,
+reversed crossings, click timing and wrap, timer cancellation, all six sources,
+GEM key encoding, signed geometry, optional outputs, copy failures, rate sharing
+and teardown. GEMINP.TOS exercises normal shared-library GEM source in ring 3,
+including immediate button/rectangle predicates, simultaneous message/input/
+timer results and key timeouts. Hardware key delivery and delayed pointer
+transitions are tested against the production CUIS core on the host.

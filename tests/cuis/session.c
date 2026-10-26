@@ -30,6 +30,7 @@ static BOOL stream_kill_peer, stream_drain_peer, stream_send_peer, stream_yield_
 static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
+static ULONG input_packet_mode;
 static BOOL input_drop_focus, input_drop_on_validate;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
 static PD *display_release_owner;
@@ -104,6 +105,31 @@ void cuis_input_idle(void)
             run = saved;
         }
         stream_change_after = 0;
+    }
+    if (input_packet_mode) {
+        if (input_packet_mode == 8) {
+            cuis_pointer_packet((WORD)(210 - pointer_x), (WORD)(210 - pointer_y), 0, NULL, NULL);
+            input_packet_mode = 0;
+        } else if (input_packet_mode == 5 || input_packet_mode == 6) {
+            cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 1, NULL, NULL);
+            cuis_pointer_packet(0, 0, 0, NULL, NULL);
+            if (input_packet_mode == 6) input_ticks += 100;
+            cuis_pointer_packet(10, 0, 1, NULL, NULL);
+            cuis_pointer_packet(0, 0, 0, NULL, NULL);
+            input_packet_mode = 0;
+        } else if (input_packet_mode <= 2 || input_packet_mode == 4) {
+            if (input_sleeps == 1 || ((input_packet_mode == 1 || input_packet_mode == 4) && input_sleeps == 3))
+                cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 1, NULL, NULL);
+            if (input_sleeps == 2 || (input_packet_mode == 1 && input_sleeps == 4)) {
+                cuis_pointer_packet(0, 0, 0, NULL, NULL);
+                if (input_packet_mode == 2 || input_sleeps == 4) input_packet_mode = 0;
+            }
+            if (input_packet_mode == 4 && input_sleeps == 4) input_packet_mode = 0;
+        } else {
+            cuis_pointer_packet((WORD)(110 - pointer_x), (WORD)(110 - pointer_y), 0, NULL, NULL);
+            cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 0, NULL, NULL);
+            input_packet_mode = 0;
+        }
     }
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
@@ -183,6 +209,7 @@ void *kalloc(ULONG bytes)
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
         allocations == 1024)
         return NULL;
+    if (bytes == sizeof(CUIS_CLIENT)) memset(&pool[allocations], 0xa5, bytes);
     return &pool[allocations++];
 }
 void kfree(void *memory) { (void)memory; frees++; }
@@ -200,6 +227,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "combined.c"
 #include "display.c"
 #include "notices.c"
+#include "input_events.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -268,5 +296,9 @@ int main(void)
     rc = combined_checks();
     if (rc) return rc;
     rc = display_checks();
-    return rc ? rc : notice_checks();
+    if (rc) return rc;
+    rc = notice_checks();
+    if (rc) return rc;
+    rc = input_event_checks();
+    return rc ? rc : input_capture_checks();
 }

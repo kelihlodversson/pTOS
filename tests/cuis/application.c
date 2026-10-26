@@ -13,6 +13,9 @@ static ULONG pipe_count, pipe_block;
 static LONG wait_error, state_error, read_error;
 static LONG state_values[4] = { 17, 23, 2, 5 };
 static ULONG wait_calls;
+static LONG input_ready, input_key = 0x001e0061, input_count = 2;
+static UQUAD input_arguments[5];
+static ULONG input_configuration, click_interval = 450;
 static UQUAD waited_interval, waited_mask;
 static LONG native_windows[64], next_native = 2147483000L;
 static ULONG window_error_fn;
@@ -64,6 +67,23 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_INPUT_BUTTON || fn == CUIS_INPUT_RECT) {
+        input_configuration = fn;
+        input_arguments[0] = b; input_arguments[1] = c; input_arguments[2] = d;
+        input_arguments[3] = e; input_arguments[4] = f;
+        return failure;
+    }
+    if (fn == CUIS_INPUT_INTERVAL) {
+        if (c) click_interval = (ULONG)b;
+        return (LONG)click_interval;
+    }
+    if (fn == CUIS_INPUT_RESULT) {
+        if (state_error) return state_error;
+        *(LONG *)(uintptr_t)b = input_key; *(LONG *)(uintptr_t)c = input_count;
+        *(LONG *)(uintptr_t)d = state_values[0]; *(LONG *)(uintptr_t)e = state_values[1];
+        *(LONG *)(uintptr_t)f = state_values[2] | (state_values[3] << 16);
+        return E_OK;
+    }
     if (fn == CUIS_STACK_QUERY || fn == CUIS_WINDOW_INFO) {
         *(LONG *)(uintptr_t)b = stack_values[0]; *(LONG *)(uintptr_t)c = stack_values[1];
         *(LONG *)(uintptr_t)d = stack_values[2];
@@ -106,7 +126,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
     if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
     if (fn == CUIS_SESSION_WAIT) {
-        LONG ready = 0;
+        LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
         if (notice_on_wait) { notice_kind = notice_on_wait; notice_on_wait = 0; }
         if ((c & CUIS_READY_NOTICE) && notice_kind) ready |= CUIS_READY_NOTICE;
@@ -158,7 +178,7 @@ static int event_checks(void)
     CHECK(MULTI(MU_TIMER, 0, NULL) == MU_TIMER && waited_mask == CUIS_READY_TIMER && key == 0 && clicks == 0);
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(MU_KEYBD | MU_MESAG, 0, output) == 0 && wait_calls == before && pipe_count == 16);
+    CHECK(MULTI(0x40 | MU_MESAG, 0, output) == 0 && wait_calls == before && pipe_count == 16);
     CHECK(MULTI(0, 0, output) == 0 && MULTI(MU_MESAG, 0, NULL) == 0 && pipe_count == 16);
     CHECK(MULTI(MU_TIMER, 0xffffffffUL, NULL) == MU_TIMER && waited_interval == 0xffffffffULL && pipe_count == 16);
     if (sizeof(unsigned long) > 4) CHECK(MULTI(MU_TIMER, (unsigned long)(1ULL << 32), NULL) == 0);
@@ -174,6 +194,42 @@ static int event_checks(void)
     CHECK(mt_evnt_multi(MU_MESAG, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         output, ~0UL, NULL, NULL, NULL, NULL, NULL, NULL, global) == MU_MESAG);
     CHECK(!pipe_count && waited_mask == (CUIS_READY_STREAM | CUIS_READY_NOTICE));
+    return 0;
+}
+static int input_api_checks(void)
+{
+    short x, y, buttons, mods, key, clicks, global[15], message[8] = { 0 };
+    ULONG before;
+    CHECK(mt_appl_init(global) == 7);
+    input_ready = CUIS_READY_KEY;
+    CHECK(evnt_keybd() == 0x1e61 && mt_evnt_keybd(global) == 0x1e61);
+    input_key = 0x00ff00ff;
+    CHECK((UWORD)evnt_keybd() == 0xffff); input_key = 0x001e0061;
+    input_ready = CUIS_READY_BUTTON;
+    CHECK(evnt_button(0x102, 3, 1, &x, &y, &buttons, &mods) == 2);
+    CHECK(input_configuration == CUIS_INPUT_BUTTON && input_arguments[0] == 3 &&
+          input_arguments[1] == 1 && input_arguments[2] == 2 && input_arguments[3] == 1);
+    CHECK(mt_evnt_button(1, 1, 0, NULL, NULL, NULL, NULL, global) == 2);
+    input_ready = CUIS_READY_RECT1;
+    CHECK(evnt_mouse(1, -3, -5, 7, 9, &x, &y, &buttons, &mods) == 1);
+    CHECK(input_configuration == CUIS_INPUT_RECT && input_arguments[0] == 2 &&
+          input_arguments[1] == (UQUAD)(QUAD)-3 && input_arguments[2] == (UQUAD)(QUAD)-5);
+    CHECK(mt_evnt_mouse(0, 0, 0, 1, 1, NULL, NULL, NULL, NULL, global) == 1);
+    CHECK(evnt_dclick(4, 1) == 4 && mt_evnt_dclick(-1, 0, global) == 4 && evnt_dclick(0, 1) == 0);
+    input_ready = CUIS_READY_INPUT;
+    CHECK(appl_write(7, 16, message) == 1);
+    before = wait_calls;
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == CUIS_READY_ALL);
+    CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
+    CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
+    state_error = EIMBA; x = 123;
+    CHECK(MULTI(MU_KEYBD | MU_TIMER, 0, NULL) == 0 && x == 123); state_error = 0;
+    before = wait_calls;
+    CHECK(evnt_mouse(2,0,0,1,1,NULL,NULL,NULL,NULL) == 0 && wait_calls == before);
+    CHECK(evnt_button(0x201,1,1,NULL,NULL,NULL,NULL) == 0 && wait_calls == before);
+    failure = EACCDN;
+    CHECK(evnt_button(1,1,1,NULL,NULL,NULL,NULL) == 0 && wait_calls == before);
+    failure = 0; input_ready = 0;
     return 0;
 }
 #undef MULTI
@@ -332,7 +388,7 @@ int main(void)
     failure = EACCDN;
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
-    CHECK(event_checks() == 0);
+    CHECK(event_checks() == 0 && input_api_checks() == 0);
     CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;

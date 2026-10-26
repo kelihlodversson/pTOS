@@ -80,7 +80,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(appl_write(id, 16, message) == 1);
     for (i = 0; i < 6; i++) state[i] = 99;
     received[0] = 123;
-    VERIFY(multi(MU_KEYBD | MU_MESAG, 0, received, state, NULL) == 0 && received[0] == 123 && state[0] == 99);
+    VERIFY(multi(0x40 | MU_MESAG, 0, received, state, NULL) == 0 && received[0] == 123 && state[0] == 99);
     VERIFY(multi(0, 0, received, state, NULL) == 0 && appl_read(-1, 16, received) == 1);
     VERIFY(appl_write(id, 15, message) == 1);
     received[0] = 123;
