@@ -29,3 +29,61 @@ WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y)
     *y = local_y;
     return 1;
 }
+
+static BOOL object_contains(const OBJECT *object, WORD x, WORD y, WORD mx, WORD my)
+{
+    return !(object->ob_flags & HIDETREE) && mx >= x && my >= y &&
+           mx < (LONG)x + object->ob_width && my < (LONG)y + object->ob_height;
+}
+
+/* Scan siblings forward once and descend into the last matching child:
+ * later siblings are drawn on top. No recursion or per-object scratch space.
+ * Coordinates are logical object bounds; rendering effects are not hit areas. */
+WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my)
+{
+    WORD object = start, child, found, x, y, child_x, child_y;
+
+    if (start < ROOT || depth < 0) return NIL;
+    ob_offset(tree, start, &x, &y);
+    if (!object_contains(&tree[object], x, y, mx, my)) return NIL;
+    while (depth && tree[object].ob_head != NIL) {
+        found = NIL;
+        for (child = tree[object].ob_head; child != object; child = tree[child].ob_next) {
+            child_x = x + tree[child].ob_x;
+            child_y = y + tree[child].ob_y;
+            if (object_contains(&tree[child], child_x, child_y, mx, my)) found = child;
+        }
+        if (found == NIL) break;
+        object = found;
+        x += tree[object].ob_x;
+        y += tree[object].ob_y;
+        depth--;
+    }
+    return object;
+}
+
+WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, WORD *global)
+{
+    (void)global;
+    return objc_add(tree, parent, child);
+}
+WORD mt_objc_delete(OBJECT *tree, WORD object, WORD *global)
+{
+    (void)global;
+    return objc_delete(tree, object);
+}
+WORD mt_objc_order(OBJECT *tree, WORD object, WORD position, WORD *global)
+{
+    (void)global;
+    return objc_order(tree, object, position);
+}
+WORD mt_objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y, WORD *global)
+{
+    (void)global;
+    return objc_offset(tree, object, x, y);
+}
+WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, WORD *global)
+{
+    (void)global;
+    return objc_find(tree, start, depth, mx, my);
+}
