@@ -1,7 +1,8 @@
 #
 # Regression tests under Hatari: runtests.tos (tests/, doc in tests/readme.md)
 # on the test disk, on an emulated STE in the three ST screen modes and on an
-# emulated Falcon with a 68030 and with a 68040.  The two blitter suites
+# emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725).
+# The two blitter suites
 # (text_blit and raster_copy) compare the blitter with the CPU path pixel by
 # pixel, and have to run, not skip themselves, on every one of them; the
 # Falcon is the one with a data cache (the blitter paths flush and invalidate
@@ -66,7 +67,7 @@ jobs:
     # Hatari comes from the distribution's packages, which the 22.04 of the
     # build's runner has an old version of.
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -86,11 +87,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends hatari
           hatari --version || true     # (it exits with 1)
 
-      # About four minutes; ten is for one that hangs, well below the job's
-      # 20 minutes, which would cancel the reporting too
+      # Four to ten minutes (the Falcon modes run with the MMU on, which makes
+      # the 68040 one the slowest); fifteen is for one that hangs, well below
+      # the job's 30 minutes, which would cancel the reporting too
       - name: Run the tests under Hatari
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           python3 tools/run-hatari-tests.py --tos products/system.img \
             --disk products/test-hd.img --mode "${{ matrix.mode }}" \
-            --timeout 600
+            --timeout 900

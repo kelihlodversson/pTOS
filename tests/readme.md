@@ -304,7 +304,10 @@ request to `master` or an epic branch (`tools/run-hatari-tests.py` runs one
 machine): the ROM image of `atari512` and of `atari512-fastcall` (the same
 built with `-mfastcall`, so that the code is run under that calling convention
 too) on an emulated STE in ST-LOW, ST-MEDIUM and ST-HIGH, and on a Falcon with
-a 68030 and with a 68040. It fails if a test fails, and also if `text_blit` or
+a 68030 and with a 68040, both with the MMU emulated (`--mmu on`: the page
+tables pTOS builds for the caches are walked, not only written; the 68030 and
+68040 address-space work of #571 is tested the same way). It fails if a test
+fails, and also if `text_blit` or
 `raster_copy` skip themselves, as they have to run on every one of these.
 
 `make x32-vdi-import-test` builds the native VDI import applications and
