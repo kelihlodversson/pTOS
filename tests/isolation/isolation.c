@@ -179,13 +179,17 @@ static void check_private_pages(void)
     for (i = 0; i < 4; i++)
     {
         rc = probe('c', where[i], magic[i]);
-        expect(rc != BROKEN, "a process read the private memory of another", rc);
+        expect(rc == SURVIVED || rc == FAULT, "a read of an address of another process ended in a strange way", rc);
         rc = probe('s', where[i], 0x22222222UL);
-        expect(rc == SURVIVED || rc == FAULT, "a store to an address of another process ended in a strange way", rc);
+        if (i == 3)     /* the basepage of the parent is not in the child at all */
+            expect(rc == FAULT, "a process wrote the basepage of another", rc);
+        else
+            expect(rc == SURVIVED || rc == FAULT, "a store to an address of another process ended in a strange way", rc);
     }
     ptest_assert_msg(image_marker == 0x11111111UL, "a process changed the image of another");
     ptest_assert_msg(on_stack == 0x33333333UL, "a process changed the stack of another");
     ptest_assert_msg(*heap == 0x44444444UL, "a process changed the heap of another");
+    ptest_assert_msg(*(volatile unsigned long *)bp == magic[3], "a process changed the basepage of another");
     Mfree(heap);
 }
 
