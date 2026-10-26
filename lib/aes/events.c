@@ -1,4 +1,4 @@
-/* Standard GEM message/timer combinations; input masks migrate separately. */
+/* Standard GEM application input, message and timer events. */
 #include "gem.h"
 #include "gemerror.h"
 #include "transport.h"
@@ -41,32 +41,55 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short message[], unsigned long interval, short *mx, short *my,
                     short *buttons, short *modifiers, short *key, short *click_count, short *global)
 {
-    LONG session, ready, result = 0, state[4];
+    LONG session, ready, result = 0, state[4], input[5];
     ULONG mask = 0;
-    (void)clicks; (void)button_mask; (void)button_state;
-    (void)m1_leave; (void)m1_x; (void)m1_y; (void)m1_w; (void)m1_h;
-    (void)m2_leave; (void)m2_x; (void)m2_y; (void)m2_w; (void)m2_h;
-    /* Fail before waiting or consuming bytes, rather than silently ignoring
-     * keyboard/button/rectangle requests whose semantics have not migrated. */
-    if (!events || (events & ~(MU_MESAG | MU_TIMER)) ||
-        ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL)) return 0;
+    if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
+        ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL) ||
+        ((events & MU_BUTTON) && ((UWORD)clicks & 0xfe00)) ||
+        ((events & MU_M1) && (m1_leave < 0 || m1_leave > 1)) ||
+        ((events & MU_M2) && (m2_leave < 0 || m2_leave > 1))) return 0;
     session = aes_application_session(global);
     if (session < 0) return 0;
+    if (events & MU_KEYBD) mask |= CUIS_READY_KEY;
+    if (events & MU_BUTTON) {
+        if (cuis_call6(CUIS_INPUT_BUTTON, session, (UWORD)button_mask, (UWORD)button_state,
+                       clicks & 255, ((UWORD)clicks >> 8) & 1, 0) < 0) return 0;
+        mask |= CUIS_READY_BUTTON;
+    }
+    if (events & MU_M1) {
+        if (cuis_call6(CUIS_INPUT_RECT, session, m1_leave * 2, (QUAD)m1_x, (QUAD)m1_y,
+                       (QUAD)m1_w, (QUAD)m1_h) < 0) return 0;
+        mask |= CUIS_READY_RECT1;
+    }
+    if (events & MU_M2) {
+        if (cuis_call6(CUIS_INPUT_RECT, session, 1 + m2_leave * 2, (QUAD)m2_x, (QUAD)m2_y,
+                       (QUAD)m2_w, (QUAD)m2_h) < 0) return 0;
+        mask |= CUIS_READY_RECT2;
+    }
     if ((events & MU_MESAG) && aes_window_messages(session, global) < 0) return 0;
     if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~mask)) return 0;
     if ((ready & CUIS_READY_NOTICE) && aes_window_messages(session, global) < 0) return 0;
-    if (snapshot(session, state) != E_OK) return 0;
+    if (mask & CUIS_READY_INPUT) {
+        if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
+                       (uintptr_t)&input[2], (uintptr_t)&input[3], (uintptr_t)&input[4]) != E_OK) return 0;
+        state[0] = input[2]; state[1] = input[3];
+        state[2] = (ULONG)input[4] & 0xffff; state[3] = (ULONG)input[4] >> 16;
+    } else if (snapshot(session, state) != E_OK) return 0;
     if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE)) {
         if (cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0) != 16) return 0;
         result |= MU_MESAG;
     }
     if (ready & CUIS_READY_TIMER) result |= MU_TIMER;
     output_state(state, mx, my, buttons, modifiers);
-    if (key) *key = 0;
-    if (click_count) *click_count = 0;
+    if (ready & CUIS_READY_KEY) result |= MU_KEYBD;
+    if (ready & CUIS_READY_BUTTON) result |= MU_BUTTON;
+    if (ready & CUIS_READY_RECT1) result |= MU_M1;
+    if (ready & CUIS_READY_RECT2) result |= MU_M2;
+    if (key) *key = ready & CUIS_READY_KEY ? (short)(((ULONG)input[0] >> 8 & 0xff00) | (input[0] & 255)) : 0;
+    if (click_count) *click_count = ready & CUIS_READY_BUTTON ? (short)input[1] : 0;
     return (short)result;
 }
 short evnt_multi(short events, short clicks, short button_mask, short button_state,
@@ -79,3 +102,48 @@ short evnt_multi(short events, short clicks, short button_mask, short button_sta
                          m1_leave, m1_x, m1_y, m1_w, m1_h, m2_leave, m2_x, m2_y, m2_w, m2_h,
                          message, interval, mx, my, buttons, modifiers, key, click_count, aes_global);
 }
+
+short mt_evnt_keybd(short *global)
+{
+    short key = 0;
+    mt_evnt_multi(MU_KEYBD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                  NULL, 0, NULL, NULL, NULL, NULL, &key, NULL, global);
+    return key;
+}
+short evnt_keybd(void) { return mt_evnt_keybd(aes_global); }
+
+short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my,
+                     short *buttons, short *modifiers, short *global)
+{
+    short count = 0;
+    mt_evnt_multi(MU_BUTTON, clicks, mask, state, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                  NULL, 0, mx, my, buttons, modifiers, NULL, &count, global);
+    return count;
+}
+short evnt_button(short clicks, short mask, short state, short *mx, short *my,
+                  short *buttons, short *modifiers)
+{
+    return mt_evnt_button(clicks, mask, state, mx, my, buttons, modifiers, aes_global);
+}
+short mt_evnt_mouse(short leave, short x, short y, short width, short height,
+                    short *mx, short *my, short *buttons, short *modifiers, short *global)
+{
+    return mt_evnt_multi(MU_M1, 0, 0, 0, leave, x, y, width, height, 0, 0, 0, 0, 0,
+                         NULL, 0, mx, my, buttons, modifiers, NULL, NULL, global) == MU_M1;
+}
+short evnt_mouse(short leave, short x, short y, short width, short height,
+                 short *mx, short *my, short *buttons, short *modifiers)
+{
+    return mt_evnt_mouse(leave, x, y, width, height, mx, my, buttons, modifiers, aes_global);
+}
+short mt_evnt_dclick(short rate, short set, short *global)
+{
+    static const ULONG intervals[5] = { 450, 330, 275, 220, 165 };
+    LONG session = aes_application_session(global), value;
+    short i;
+    if (session < 0 || set < 0 || set > 1 || (set && (rate < 0 || rate > 4))) return 0;
+    value = cuis_call6(CUIS_INPUT_INTERVAL, session, set ? intervals[rate] : 0, set, 0, 0, 0);
+    for (i = 0; i < 5; i++) if (value == (LONG)intervals[i]) return i;
+    return 0;
+}
+short evnt_dclick(short rate, short set) { return mt_evnt_dclick(rate, set, aes_global); }

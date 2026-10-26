@@ -103,3 +103,10 @@ obj/libaes/GEMFOC.TOS: tests/cuis/gem_focus.c obj/ldso/dyncrt.o obj/libaes/libae
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMFOC.TOS
 endif
+
+obj/libaes/GEMINP.TOS: tests/cuis/gem_input.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/GEMINP.TOS
+endif

@@ -2510,6 +2510,12 @@ static void test_ring3(void)
         }
         CHECK(cuis_session_count() == sessions, "GEM window message sessions reclaimed");
         same(&s, "GEM notices, application pipes and focus clients reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMINP.TOS", "", NULL);
+        if (result) kcprintf("GEM input fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "standard GEM button, rectangle and combined input events");
+        CHECK(cuis_session_count() == sessions && !cuis_focus_active(), "GEM input session and focus reclaimed");
+        same(&s, "GEM input predicates, windows and client reclaimed");
     }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");
