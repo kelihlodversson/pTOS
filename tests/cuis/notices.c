@@ -50,6 +50,7 @@ static int notice_checks(void)
     CHECK(cuis_pointer_packet(0, 0, 1, NULL, NULL));
     CHECK(focus_window == wb && window_front == wb && wa->notices == CUIS_NOTICE_ACTIVATE && !wa->pointer_count);
     CHECK(cuis_pointer_packet(0, 0, 0, NULL, NULL) && !pointer_activation_drag && !pointer_capture);
+    CHECK(cuis_keyboard_event(0x1234) && wb->key_count == 1 && !wa->key_count);
     damage_windows();
     CHECK(wa->notices == (CUIS_NOTICE_ACTIVATE | CUIS_NOTICE_REDRAW) && NP(sa) == CUIS_NOTICE_ACTIVATE);
     (*find_owner(run))->stream_bytes = CUIS_STREAM_BYTES;
@@ -58,6 +59,7 @@ static int notice_checks(void)
     CHECK(PUB(sa, a, CUIS_NOTICE_ACTIVATE) == E_OK && wa->notices == CUIS_NOTICE_REDRAW);
     CHECK(PUB(sa, a, CUIS_NOTICE_REDRAW) == E_OK && !wa->notices);
     CHECK(cuis_window_service(CUIS_WINDOW_RAISE, a, 0, 0, 0, 0) == E_OK && focus_window == wa && window_front == wa);
+    CHECK(!wb->key_count && cuis_keyboard_event(0x5678) && wa->key_count == 1);
     CHECK(cuis_window_service(CUIS_WINDOW_LOWER, a, 0, 0, 0, 0) == E_OK && focus_window == wb && window_front == wb);
     run = &second;
     CHECK(cuis_display_lock(sb, 1, 1) == E_OK);
