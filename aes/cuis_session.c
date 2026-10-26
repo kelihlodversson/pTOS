@@ -152,10 +152,12 @@ static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
 static void damage_windows(void)
 {
     CUIS_WINDOW *window;
+    UQUAD flags = cuis_input_lock();
     for (window = window_front; window; window = window->znext) {
         window->redraw = TRUE;
         if (window->managed_activation) window->notices |= CUIS_NOTICE_REDRAW;
     }
+    cuis_input_unlock(flags);
 }
 
 /* IRQ keyboard delivery uses only the published focus pointer and its
@@ -676,8 +678,10 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         break;
     case CUIS_WINDOW_POLICY:
         if (b > 1) return EINVAL;
+        flags = cuis_input_lock();
         window->managed_activation = (BOOL)b;
         window->notices = b && window->visible ? CUIS_NOTICE_REDRAW : 0;
+        cuis_input_unlock(flags);
         break;
     case CUIS_WINDOW_OUTSET:
         if (b > 0xffffULL || c > 0xffffULL ||
@@ -702,13 +706,15 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         hide_window(window);
         break;
     case CUIS_WINDOW_RAISE:
-        window->notices &= ~CUIS_NOTICE_ACTIVATE;
         if (!window->visible) return EINVAL;
+        flags = cuis_input_lock();
+        window->notices &= ~CUIS_NOTICE_ACTIVATE;
         if (window == window_front) {
-            if (window->managed_activation && set_focus(window)) damage_windows();
+            changed = window->managed_activation && set_focus(window);
+            cuis_input_unlock(flags);
+            if (changed) damage_windows();
             break;
         }
-        flags = cuis_input_lock();
         unlink_visible(window);
         window->znext = window_front;
         window_front = window;
