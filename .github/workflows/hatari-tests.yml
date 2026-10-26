@@ -16,6 +16,10 @@ name: Hatari tests
 on:
   pull_request:
     branches: [master, "epic/**"]
+  # every configuration in every screen mode, which a pull request does not
+  # run (see the matrix of the test job)
+  schedule:
+    - cron: '23 3 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -70,8 +74,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [atari512, atari512-fastcall, atari512-extdesk]
-        mode: [low, med, high, f030, f040]
+        # What a pull request runs is chosen from what depends on the mode
+        # and on the kernel (doc/ci.txt); master's nightly run and a manual
+        # one go through every combination.
+        include: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+          && '[{"config":"atari512","mode":"low"},{"config":"atari512","mode":"med"},{"config":"atari512","mode":"high"},{"config":"atari512","mode":"f030"},{"config":"atari512","mode":"f040"},{"config":"atari512-fastcall","mode":"low"},{"config":"atari512-fastcall","mode":"f040"},{"config":"atari512-extdesk","mode":"low"}]'
+          || '[{"config":"atari512","mode":"low"},{"config":"atari512","mode":"med"},{"config":"atari512","mode":"high"},{"config":"atari512","mode":"f030"},{"config":"atari512","mode":"f040"},{"config":"atari512-fastcall","mode":"low"},{"config":"atari512-fastcall","mode":"med"},{"config":"atari512-fastcall","mode":"high"},{"config":"atari512-fastcall","mode":"f030"},{"config":"atari512-fastcall","mode":"f040"},{"config":"atari512-extdesk","mode":"low"},{"config":"atari512-extdesk","mode":"med"},{"config":"atari512-extdesk","mode":"high"},{"config":"atari512-extdesk","mode":"f030"},{"config":"atari512-extdesk","mode":"f040"}]') }}
     steps:
       - uses: actions/checkout@v4
 

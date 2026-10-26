@@ -23,6 +23,10 @@ on:
     branches: [master, "epic/**"]
   pull_request:
     branches: [master, "epic/**"]
+  # every configuration, including those .github/pr-skip-configs leaves out of
+  # a pull request, once a night
+  schedule:
+    - cron: '41 2 * * *'
   workflow_dispatch:
 
 # Superseded runs of a pull request are of no interest.  Runs on master are
@@ -140,6 +144,8 @@ jobs:
 
       - name: Split the configurations by architecture
         id: enumerate
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           # ["rpi1","rpi2"] from a space separated list, [] when it is empty.
           # Written out by hand rather than with jq, so that this job needs
@@ -153,11 +159,22 @@ jobs:
             printf '[%s]' "$out"
           }
 
+          # A pull request does not build the configurations that
+          # .github/pr-skip-configs lists (each covered by another job, see
+          # doc/ci.txt); master, the nightly run and a manual one build all.
+          skipped=
+          if [ "$EVENT" = pull_request ]; then
+            skipped=$(sed -e 's/#.*//' -e 's/[[:space:]].*//' .github/pr-skip-configs | grep .)
+          fi
+
           m68k=
           arm=
           x86_64=
           for config in configs/*_defconfig; do
             name=$(basename "$config" _defconfig)
+            if echo "$skipped" | grep -qx "$name"; then
+              continue
+            fi
             # MACHINE_RPI or MACHINE_VIRT_ARM is what selects the ARM
             # architecture, MACHINE_PC_X86_64 the x86-64 one; everything
             # else in configs/ is m68k or ColdFire.
@@ -183,6 +200,10 @@ jobs:
             echo "arm:$arm"
             echo
             echo "x86_64:$x86_64"
+            if [ -n "$skipped" ]; then
+              echo
+              echo "Left out of a pull request (.github/pr-skip-configs): $(echo $skipped)"
+            fi
           } >>"$GITHUB_STEP_SUMMARY"
 
   m68k:
@@ -706,11 +727,16 @@ jobs:
           MAKE_ARGS: ${{ matrix.make_args }}
           TRADITIONAL_FAT: ${{ matrix.traditional_fat || false }}
         run: |
-          make "${CONFIG}_defconfig"
+          set -o pipefail   # tee below must not hide a failing make
+          # The kernel of these configurations has no build job of its own on
+          # a pull request (.github/pr-skip-configs), so the warning check
+          # of those jobs is made here.
+          make "${CONFIG}_defconfig" 2>&1 | tee build.log
           if [ "$TRADITIONAL_FAT" = true ]; then
             sed -i 's/^CONF_WITH_FAT_FILE_LIFETIMES=y$/# CONF_WITH_FAT_FILE_LIFETIMES is not set/' .config
           fi
-          make $MAKE_ARGS
+          make $MAKE_ARGS 2>&1 | tee -a build.log
+          tools/check-build-warnings.sh build.log
           make $MAKE_ARGS test-dir
 
       - name: Run the regression suite
