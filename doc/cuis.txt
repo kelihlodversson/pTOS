@@ -1388,9 +1388,10 @@ objc_draw/mt_objc_draw and objc_change/mt_objc_change use their standard GEM
 signatures and Boolean results. OBJECT arrays, INDIRECT specs, strings,
 TEDINFO and USERBLK records remain in the calling application's address
 space. The shared library reuses the original aes/ object painter,
-traversal, state changes and GSX text/border/layout routines through shared
-source fragments. Only the low-level VDI transport and drawing context have
-userspace bindings; the kernel receives only existing bounded VDI primitive
+traversal, state changes and GSX text/border/layout routines as separately
+compiled C units. The same sources build into native AES and libaes; internal
+headers declare their interfaces and bind libaes to a private drawing context.
+Only the low-level VDI transport and drawing context have userspace bindings; the kernel receives only existing bounded VDI primitive
 requests and never an object-tree or callback pointer. No new production
 kernel service or configuration option is needed.
 

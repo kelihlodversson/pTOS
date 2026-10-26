@@ -1,6 +1,134 @@
-/* Shared original AES implementation; included by native AES and libaes.
+/* Shared original AES drawing code.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "emutos.h"
+#include "obdefs.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "funcdef.h"
+#include "gemgsxif.h"
+#include "gemobjop.h"
+#include "gemgraf.h"
+#include "optimopt.h"
+#include "rectfunc.h"
+#include "intmath.h"
+#include "gemoblib.h"
+#include "string.h"
+#include "gsx2.h"
+#include "gemrender.h"
+
+void gsx_sclip(const GRECT *pt)
+{
+    gl_clip = *pt;
+
+    if (gl_clip.g_w && gl_clip.g_h)
+    {
+        ptsin[0] = gl_clip.g_x;
+        ptsin[1] = gl_clip.g_y;
+        ptsin[2] = gl_clip.g_x + gl_clip.g_w - 1;
+        ptsin[3] = gl_clip.g_y + gl_clip.g_h - 1;
+        vs_clip( TRUE, ptsin);
+    }
+    else
+        vs_clip( FALSE, ptsin);
+}
+
+
+/*
+ *  Routine to get the current clip setting
+ */
+void gsx_gclip(GRECT *pt)
+{
+    *pt = gl_clip;
+}
+
+
+/*
+ *  Routine to return TRUE iff the specified rectangle intersects the
+ *  current clip rectangle ... or clipping is off (?)
+ */
+WORD gsx_chkclip(GRECT *pt)
+{
+    /* if clipping is on */
+    if (gl_clip.g_w && gl_clip.g_h)
+    {
+        if ((pt->g_y + pt->g_h) < gl_clip.g_y)
+            return FALSE;                   /* all above    */
+        if ((pt->g_x + pt->g_w) < gl_clip.g_x)
+            return FALSE;                   /* all left     */
+        if ((gl_clip.g_y + gl_clip.g_h) <= pt->g_y)
+            return FALSE;                   /* all below    */
+        if ((gl_clip.g_x + gl_clip.g_w) <= pt->g_x)
+            return FALSE;                   /* all right    */
+    }
+
+    return TRUE;
+}
+
+void gsx_cline(UWORD x1, UWORD y1, UWORD x2, UWORD y2)
+{
+    WORD pxy[4] = { x1, y1, x2, y2 };
+
+    gsx_moff();
+    v_pline(2, pxy);
+    gsx_mon();
+}
+
+
+/*
+ *  Routine to set the text, writing mode, and color attributes
+ */
+void gsx_attr(UWORD text, UWORD mode, UWORD color)
+{
+    WORD    tmp;
+
+    tmp = intin[0];
+    contrl.nptsin = 0;
+    contrl.nintin = 1;
+    contrl.handle = gl_handle;
+    if (mode != gl_mode)
+    {
+        contrl.code = SET_WRITING_MODE;
+        intin[0] = gl_mode = mode;
+        gsx2();
+    }
+
+    contrl.code = 0;
+    if (text)
+    {
+        if (color != gl_tcolor)
+        {
+            contrl.code = SET_TEXT_COLOR;
+            gl_tcolor = color;
+        }
+    }
+    else
+    {
+        if (color != gl_lcolor)
+        {
+            contrl.code = SET_LINE_COLOR;
+            gl_lcolor = color;
+        }
+    }
+
+    if (contrl.code)
+    {
+        intin[0] = color;
+        gsx2();
+    }
+    intin[0] = tmp;
+}
+
+
+/*
+ *  Routine to draw a box using the current attributes
+ */
+static void gsx_box(GRECT *pt)
+{
+    gsx_bxpts(pt);
+    v_pline(5, ptsin);
+}
+
 void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh)
 {
     gsx_attr(TRUE, mode, gl_tcolor);
@@ -183,4 +311,25 @@ void gr_crack(UWORD color, WORD *pbc, WORD *ptc, WORD *pip, WORD *pic, WORD *pmd
 
     /* 4 bit encoded inside color */
     *pic = color & 0x000f;
+}
+
+void gr_box(WORD x, WORD y, WORD w, WORD h, WORD th)
+{
+    GRECT   t, n;
+
+    r_set(&t, x, y, w, h);
+    if (th != 0)
+    {
+        if (th < 0)
+            th--;
+        gsx_moff();
+        do
+        {
+            th += (th > 0) ? -1 : 1;
+            rc_copy(&t, &n);
+            gr_inside(&n, th);
+            gsx_box(&n);
+        } while (th != 0);
+        gsx_mon();
+    }
 }

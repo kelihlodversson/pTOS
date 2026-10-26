@@ -19,21 +19,11 @@
 #include "string.h"
 #include "rectfunc.h"
 
-typedef struct painter {
-    WORD handle;
-    BOOL ok;
-    WS workstation;
-    GRECT clip;
-    WORD wchar, hchar, wschar, hschar, wbox, hbox;
-    WORD mode, text_color, line_color, interior, pattern, font;
-    WORD char_width, char_top, small_width, small_top;
-    VDICONTROL control;
-    WORD input[128], points[20], output[45], outpoints[12];
-    struct { char g_rawstr[MAX_LEN], g_tmpstr[MAX_LEN], g_fmtstr[MAX_LEN]; } scratch;
-} PAINTER;
-/* Per-process, temporarily rebound around a draw. Nested USERDEF drawings
- * save and restore this pointer, retaining independent GSX caches and buffers. */
-static PAINTER *active;
+#include "render_context.h"
+#include "../../aes/gemrender.h"
+
+/* Save/restore around nested USERDEF calls. */
+PAINTER *aes_painter;
 
 
 /* Only these low-level GSX bindings differ from the native renderer. They
@@ -41,28 +31,28 @@ static PAINTER *active;
 static void invoke(VDI_SERVICE_DRAW_REQUEST *request)
 {
     VDI_SERVICE_DRAW_RESULT result = { 0 };
-    if (!active->ok) return;
-    active->ok = aes_graphics_call(VDI_SERVICE_DRAW,active->handle,(uintptr_t)request,(uintptr_t)&result,0) == E_OK;
-    if (active->ok) {
-        memcpy(active->output,result.intout,sizeof(result.intout));
-        memcpy(active->outpoints,result.ptsout,sizeof(result.ptsout));
+    if (!aes_painter->ok) return;
+    aes_painter->ok = aes_graphics_call(VDI_SERVICE_DRAW,aes_painter->handle,(uintptr_t)request,(uintptr_t)&result,0) == E_OK;
+    if (aes_painter->ok) {
+        memcpy(aes_painter->output,result.intout,sizeof(result.intout));
+        memcpy(aes_painter->outpoints,result.ptsout,sizeof(result.ptsout));
     }
 }
 void gsx2(void)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     WORD i;
-    if (!active->ok) return;
-    if (active->control.code == SET_LINE_COLOR) {
-        active->ok = aes_graphics_call(VDI_SERVICE_COLOR,active->handle,(UWORD)active->input[0],0,0) >= 0;
+    if (!aes_painter->ok) return;
+    if (aes_painter->control.code == SET_LINE_COLOR) {
+        aes_painter->ok = aes_graphics_call(VDI_SERVICE_COLOR,aes_painter->handle,(UWORD)aes_painter->input[0],0,0) >= 0;
         return;
     }
-    if (active->control.nintin < 0 || active->control.nintin > 128 || active->control.nptsin < 0 || active->control.nptsin > 2) {
-        active->ok = FALSE; return;
+    if (aes_painter->control.nintin < 0 || aes_painter->control.nintin > 128 || aes_painter->control.nptsin < 0 || aes_painter->control.nptsin > 2) {
+        aes_painter->ok = FALSE; return;
     }
-    request.code = active->control.code; request.nintin = active->control.nintin; request.nptsin = active->control.nptsin;
-    for (i = 0; i < active->control.nintin; i++) request.intin[i] = active->input[i];
-    for (i = 0; i < active->control.nptsin*2; i++) request.ptsin[i] = active->points[i];
+    request.code = aes_painter->control.code; request.nintin = aes_painter->control.nintin; request.nptsin = aes_painter->control.nptsin;
+    for (i = 0; i < aes_painter->control.nintin; i++) request.intin[i] = aes_painter->input[i];
+    for (i = 0; i < aes_painter->control.nptsin*2; i++) request.ptsin[i] = aes_painter->points[i];
     /* Native VDI clamps style zero to one; preserve that result within the
      * typed service's canonical range (solid/hollow fills ignore the style). */
     if (request.code == SET_FILL_STYLE && request.intin[0] == 0) request.intin[0] = 1;
@@ -72,17 +62,17 @@ void gsx2(void)
 }
 void gsx_1code(WORD code, WORD value)
 {
-    active->control.code = code; active->control.nintin = 1; active->control.nptsin = 0;
-    active->input[0] = value;
+    aes_painter->control.code = code; aes_painter->control.nintin = 1; aes_painter->control.nptsin = 0;
+    aes_painter->input[0] = value;
     gsx2();
 }
 void v_pline(WORD count, WORD *points)
 {
-    if (active->ok) active->ok = aes_graphics_call(VDI_SERVICE_LINE,active->handle,count,(uintptr_t)points,0) == E_OK;
+    if (aes_painter->ok) aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,count,(uintptr_t)points,0) == E_OK;
 }
 void vs_clip(WORD enabled, WORD *points)
 {
-    if (active->ok) active->ok = aes_graphics_call(VDI_SERVICE_CLIP,active->handle,enabled,(uintptr_t)points,0) == E_OK;
+    if (aes_painter->ok) aes_painter->ok = aes_graphics_call(VDI_SERVICE_CLIP,aes_painter->handle,enabled,(uintptr_t)points,0) == E_OK;
 }
 void vr_recfl(WORD *points)
 {
@@ -96,7 +86,7 @@ void vst_height(WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     request.code = SET_CHAR_HEIGHT; request.nptsin = 1; request.ptsin[1] = height;
     invoke(&request);
-    if (active->ok) { *charw = active->outpoints[0]; *charh = active->outpoints[1]; *cellw = active->outpoints[2]; *cellh = active->outpoints[3]; }
+    if (aes_painter->ok) { *charw = aes_painter->outpoints[0]; *charh = aes_painter->outpoints[1]; *cellw = aes_painter->outpoints[2]; *cellh = aes_painter->outpoints[3]; }
 }
 /* Cursor lifetime belongs to the display service; these legacy nesting calls
  * do not issue global cursor commands from an application's private painter. */
@@ -106,59 +96,18 @@ void gsx_mon(void) { }
 void gsx_blt(void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, WORD rule, WORD fg, WORD bg)
 {
     (void)address; (void)sx; (void)sy; (void)dx; (void)dy; (void)w; (void)h; (void)rule; (void)fg; (void)bg;
-    active->ok = FALSE;
+    aes_painter->ok = FALSE;
 }
 void gr_gicon(WORD state, ICONBLK *icon, CICON *color)
 {
-    (void)state; (void)icon; (void)color; active->ok = FALSE;
+    (void)state; (void)icon; (void)color; aes_painter->ok = FALSE;
 }
 
-#define gl_handle (active->handle)
-#define gl_ws (active->workstation)
-#define gl_clip (active->clip)
-#define gl_wchar (active->wchar)
-#define gl_hchar (active->hchar)
-#define gl_wschar (active->wschar)
-#define gl_hschar (active->hschar)
-#define gl_wbox (active->wbox)
-#define gl_hbox (active->hbox)
-#define gl_mode (active->mode)
-#define gl_tcolor (active->text_color)
-#define gl_lcolor (active->line_color)
-#define gl_fis (active->interior)
-#define gl_patt (active->pattern)
-#define gl_font (active->font)
-#define gl_wptschar (active->char_width)
-#define gl_hptschar (active->char_top)
-#define gl_wsptschar (active->small_width)
-#define gl_hsptschar (active->small_top)
-#define contrl (active->control)
-#define intin (active->input)
-#define ptsin (active->points)
-#define intout (active->output)
-#define ptsout (active->outpoints)
-#define D (active->scratch)
-
-/* The original implementations, also included by their native AES units. */
-#include "../../aes/gemgclip.inc"
-#include "../../aes/gemgraphutil.c"
-#include "../../aes/gemgline.inc"
-#include "../../aes/gemgtext.inc"
-#include "../../aes/gemgbox.inc"
-#include "../../aes/gemobwalk.inc"
-#define OB_RENDER_3D 0
-#define OB_RENDER_NICELINES 0
-#define OB_RENDER_COLOUR_ICONS 0
-#define OB_RENDER_EXTENDED 0
-#define OB_RENDER_CANCELLED(tree) (!active->ok)
-#include "../../aes/gemobdraw.inc"
-#include "../../aes/gemobchange.inc"
-#undef intin
-#undef ptsin
-#undef intout
-#undef ptsout
-#undef contrl
-#undef D
+BOOL ob_render_cancelled(OBJECT *tree)
+{
+    (void)tree;
+    return !aes_painter->ok;
+}
 
 static LONG bounded_length(const char *string, LONG limit)
 {
@@ -201,7 +150,7 @@ static BOOL preflight(OBJECT *tree, WORD object, WORD depth)
 static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD cw, WORD ch,
                    WORD *global, BOOL change, UWORD state)
 {
-    PAINTER p = { 0 }, *saved = active;
+    PAINTER p = { 0 }, *saved = aes_painter;
     LONG session = aes_application_session(global), right, bottom;
     VDI_SERVICE_WORKSTATION ws;
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
@@ -214,7 +163,7 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
-    opened = TRUE; active = &p; p.handle = ws.handle; p.ok = TRUE;
+    opened = TRUE; aes_painter = &p; p.handle = ws.handle; p.ok = TRUE;
     memcpy(&p.workstation,ws.intout,sizeof(ws.intout));
     memcpy((WORD *)&p.workstation+45,ws.ptsout,sizeof(ws.ptsout));
     p.mode = p.text_color = p.line_color = p.interior = p.pattern = p.font = -1;
@@ -231,22 +180,22 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     request.code = INQ_TEXT_ATTRIBUTES;
     invoke(&request);
     if (!p.ok) goto done;
-    gl_wptschar = p.outpoints[0]; gl_hptschar = p.outpoints[1]; gl_wchar = p.outpoints[2]; gl_hchar = p.outpoints[3];
+    p.char_width = p.outpoints[0]; p.char_top = p.outpoints[1]; p.wchar = p.outpoints[2]; p.hchar = p.outpoints[3];
     /* Same normal/small font setup as gsx_start(), without kernel globals. */
-    gl_ws.ws_chmaxh = gl_hptschar;
-    vst_height(gl_ws.ws_chminh,&gl_wsptschar,&gl_hsptschar,&gl_wschar,&gl_hschar);
-    vst_height(gl_ws.ws_chmaxh,&dummy,&dummy,&dummy,&dummy);
-    if (!p.ok || gl_wchar <= 0 || gl_hchar <= 0 || gl_wschar <= 0 || gl_hschar <= 0) goto done;
-    if (change) ob_change_native(tree,start,state,TRUE);
+    p.workstation.ws_chmaxh = p.char_top;
+    vst_height(p.workstation.ws_chminh,&p.small_width,&p.small_top,&p.wschar,&p.hschar);
+    vst_height(p.workstation.ws_chmaxh,&dummy,&dummy,&dummy,&dummy);
+    if (!p.ok || p.wchar <= 0 || p.hchar <= 0 || p.wschar <= 0 || p.hschar <= 0) goto done;
+    if (change) ob_render_change(tree,start,state,TRUE);
     else {
         parent = get_par(tree,start);
         if (parent != NIL) ob_offset(tree,parent,&x,&y); else x = y = 0;
-        everyobj(tree,start,start == ROOT ? NIL : tree[start].ob_next,just_draw,x,y,depth);
+        everyobj(tree,start,start == ROOT ? NIL : tree[start].ob_next,ob_render_object,x,y,depth);
     }
     success = p.ok;
 done:
     if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) success = FALSE;
-    active = saved;
+    aes_painter = saved;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) success = FALSE;
     return success ? 1 : 0;
 }

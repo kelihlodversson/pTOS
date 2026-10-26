@@ -88,7 +88,6 @@ static WORD     gl_hsptschar;   /* height of character (small font) */
  *  Routine to set the clip rectangle.  If the w,h of the clip is 0,
  *  then no clip should be set.  Otherwise, set the appropriate clip.
  */
-#include "gemgclip.inc"
 
 
 /*
@@ -113,7 +112,6 @@ void gsx_pline(WORD offx, WORD offy, WORD cnt, const Point *pts)
 /*
  *  Routine to draw a clipped polyline, hiding the mouse as you do it
  */
-#include "gemgline.inc"
 
 
 /*
@@ -225,7 +223,6 @@ void gsx_start(void)
 /*
  *  Routine to do a filled bit blit (a rectangle)
  */
-#include "gemgtext.inc"
 
 
 static void gr_gblt(WORD *pimage, GRECT *pi, WORD col1, WORD col2)
@@ -398,9 +395,3 @@ void gr_gicon(WORD state, ICONBLK *ib, CICON *cicon)
     /* draw the label */
     gr_gtext(TE_CNTR, SMALL, ib->ib_ptext, pt);
 }
-
-
-/*
- * Routine to draw a box of a certain thickness using the current attribute settings
- */
-#include "gemgbox.inc"

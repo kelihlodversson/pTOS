@@ -7,6 +7,7 @@
 #include "aesext.h"
 #include "gemgraf.h"
 #include "gemgsxif.h"
+#include "gemrender.h"
 
 void gsx_xline(WORD ptscount, WORD *ppoints)
 {

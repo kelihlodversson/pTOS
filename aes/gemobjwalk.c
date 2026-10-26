@@ -1,6 +1,22 @@
-/* Shared original AES implementation; included by native AES and libaes.
+/* Shared original AES drawing code.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "emutos.h"
+#include "obdefs.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "funcdef.h"
+#include "gemgsxif.h"
+#include "gemobjop.h"
+#include "gemgraf.h"
+#include "optimopt.h"
+#include "rectfunc.h"
+#include "intmath.h"
+#include "gemoblib.h"
+#include "string.h"
+#include "gsx2.h"
+#include "gemrender.h"
+
 BYTE ob_sst(OBJECT *tree, WORD obj, OBSPEC *pspec, WORD *pstate, WORD *ptype,
             WORD *pflags, GRECT *pt, WORD *pth)
 {

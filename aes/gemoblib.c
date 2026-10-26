@@ -38,15 +38,21 @@
 #include "gemoblib.h"
 
 #include "string.h"
+#include "gemrender.h"
 #if ARCH_X86_64
 #include "aes_objects_kernel.h"
-#define OB_RENDER_CANCELLED(tree) x86_64_aes_tree_cancelled(tree)
-#else
-#define OB_RENDER_CANCELLED(tree) FALSE
 #endif
 
 
-#include "gemobdraw.inc"
+BOOL ob_render_cancelled(OBJECT *tree)
+{
+#if ARCH_X86_64
+    return x86_64_aes_tree_cancelled(tree);
+#else
+    (void)tree;
+    return FALSE;
+#endif
+}
 
 
 /*
@@ -83,7 +89,7 @@ void ob_draw(OBJECT *tree, WORD obj, WORD depth)
         sx = sy = 0;
 
     gsx_moff();
-    everyobj(tree, obj, last, just_draw, sx, sy, depth);
+    everyobj(tree, obj, last, ob_render_object, sx, sy, depth);
     gsx_mon();
 #if ARCH_X86_64
     if (guard)
@@ -375,11 +381,6 @@ BOOL ob_order(OBJECT *tree, WORD mov_obj, WORD new_pos)
 
 #endif
 
-/*
- *  Routine to change the state of an object and redraw that
- *  object using the current clip rectangle.
- */
-#include "gemobchange.inc"
 
 void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
 {
@@ -396,117 +397,13 @@ void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
             gsx_sclip(&bounded);
     }
 #endif
-    ob_change_native(tree, obj, new_state, redraw);
+    ob_render_change(tree, obj, new_state, redraw);
 #if ARCH_X86_64
     if (guard)
         gsx_sclip(&saved);
     x86_64_aes_tree_unpin(guard);
 #endif
 }
-
-
-#if CONF_WITH_3D_OBJECTS
-/*
- *  Initialise variables related to 3D objects
- */
-void init_3d(void)
-{
-    indtxtmove = 0;         /* indicators: don't move text */
-    indcolchange = 1;       /* ... but change colour       */
-
-    acttxtmove = 1;         /* activators: move text       */
-    actcolchange = 0;       /* ... but don't change colour */
-
-    /* initialise button colours according to size of palette */
-    if (gl_ws.ws_ncolors <= LWHITE)
-    {
-        actbutcol = indbutcol = backgrcol = WHITE;
-    }
-    else
-    {
-        actbutcol = indbutcol = backgrcol = LWHITE;
-    }
-}
-
-
-/*
- *  Implements objc_sysvar(): set/get variables to control 3D object display
- */
-WORD ob_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
-{
-    /*
-     * handle setting the variables
-     */
-    if (mode)
-    {
-        switch(which) {
-        case LK3DIND:
-            if (in1 != -1)
-                indtxtmove = in1;
-            if (in2 != -1)
-                indcolchange = in2;
-            break;
-        case LK3DACT:
-            if (in1 != -1)
-                acttxtmove = in1;
-            if (in2 != -1)
-                actcolchange = in2;
-            break;
-        case INDBUTCOL:
-            if (in1 >= gl_ws.ws_ncolors)
-                return 0;
-            indbutcol = in1;
-            break;
-        case ACTBUTCOL:
-            if (in1 >= gl_ws.ws_ncolors)
-                return 0;
-            actbutcol = in1;
-            break;
-        case BACKGRCOL:
-            if (in1 >= gl_ws.ws_ncolors)
-                return 0;
-            backgrcol = in1;
-            break;
-        default:
-            return 0;
-            break;
-        }
-        return 1;
-    }
-
-    /*
-     * handle getting the variables
-     */
-    switch(which) {
-    case LK3DIND:
-        *out1 = indtxtmove;
-        *out2 = indcolchange;
-        break;
-    case LK3DACT:
-        *out1 = acttxtmove;
-        *out2 = actcolchange;
-        break;
-    case INDBUTCOL:
-        *out1 = indbutcol;
-        break;
-    case ACTBUTCOL:
-        *out1 = actbutcol;
-        break;
-    case BACKGRCOL:
-        *out1 = backgrcol;
-        break;
-    case AD3DVALUE:
-        *out1 = ADJ3DSTD;
-        *out2 = ADJ3DSTD;
-        break;
-    default:
-        return 0;
-        break;
-    }
-
-    return 1;
-}
-#endif
 
 
 UWORD ob_fs(OBJECT *tree, WORD obj, WORD *pflag)

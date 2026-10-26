@@ -53,10 +53,20 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-o", str(work / "application")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "application")], check=True)
+    shared_draw = []
+    for name in ("gemrender", "gemrender_graphics", "gemgraphutil"):
+        target = str(work / (name + ".o"))
+        command = shlex.split(os.environ.get("HOSTCC", "cc"))
+        command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                    "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes",
+                    '-DAES_RENDER_BINDINGS="render_bindings.h"',
+                    "-ffunction-sections", "-fdata-sections", "-c", "aes/" + name + ".c", "-o", target]
+        subprocess.run(command, check=True)
+        shared_draw.append(target)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iaes", "-Ilib/aes", "tests/cuis/object_draw.c",
-                "lib/aes/draw.c", "lib/aes/objects.c", "aes/gemobjtree.c", "util/string.c", "util/rectfunc.c",
+                "lib/aes/draw.c", "lib/aes/objects.c", "aes/gemobjtree.c", "aes/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
                 "-Dsprintf=aes_draw_test_sprintf", "-ffunction-sections", "-fdata-sections",
                 "-Wl,--gc-sections", "-o", str(work / "draw")]
     subprocess.run(command, check=True)

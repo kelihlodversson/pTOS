@@ -1,12 +1,22 @@
-/* Shared original AES implementation; included by native AES and libaes.
+/* Shared original AES drawing code.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
-#ifndef OB_RENDER_3D
-#define OB_RENDER_3D CONF_WITH_3D_OBJECTS
-#define OB_RENDER_NICELINES CONF_WITH_NICELINES
-#define OB_RENDER_COLOUR_ICONS CONF_WITH_COLOUR_ICONS
-#define OB_RENDER_EXTENDED CONF_WITH_EXTENDED_OBJECTS
-#endif
+#include "emutos.h"
+#include "obdefs.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "funcdef.h"
+#include "gemgsxif.h"
+#include "gemobjop.h"
+#include "gemgraf.h"
+#include "optimopt.h"
+#include "rectfunc.h"
+#include "intmath.h"
+#include "gemoblib.h"
+#include "string.h"
+#include "gsx2.h"
+#include "gemrender.h"
+
 #if OB_RENDER_3D
 /*
  * 3D globals set and returned by objc_sysvar()
@@ -367,7 +377,7 @@ static BOOL is_dashes(char *s, WORD len)
 /*
  *  Routine to draw an object from an object tree.
  */
-static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
+void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
 {
     WORD bcol = BLACK, tcol = BLACK, ipat = IP_HOLLOW, icol = WHITE, tmode = MD_REPLACE, th;
     WORD state, obtype, len, flags;
@@ -385,7 +395,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     BOOL movetext, changecol;
 #endif
 
-    if (OB_RENDER_CANCELLED(tree))
+    if (ob_render_cancelled(tree))
         return;
     ch = ob_sst(tree, obj, &spec, &state, &obtype, &flags, &t, &th);
 
@@ -851,4 +861,177 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     if (flags & FL3DOBJ)
         add_3d_effect(&effect_grect, state, effect_th, icol);
 #endif
-} /* just_draw */
+} /* ob_render_object */
+
+void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
+{
+    WORD flags, obtype, th;
+    GRECT t;
+    UWORD curr_state;
+    OBSPEC spec;
+    OBJECT *objptr;
+
+    ob_sst(tree, obj, &spec, (WORD*)&curr_state, &obtype, &flags, &t, &th);
+
+    if ((curr_state == new_state) || (spec.index == -1L))
+        return;
+
+    objptr = tree + obj;
+    objptr->ob_state = new_state;
+
+    /* if no redraw, we're done */
+    if (!redraw)
+        return;
+
+    ob_offset(tree, obj, &t.g_x, &t.g_y);
+
+    gsx_moff();
+
+    if (th < 0)
+        th = 0;
+
+    switch(obtype)
+    {
+    case G_USERDEF: /* just call the user's drawing routine */
+        ob_user(tree, obj, &t, spec, curr_state, new_state);
+        redraw = FALSE;
+        break;
+    case G_ICON:    /* never use XOR for icons */
+        break;
+    default:        /* others: handle change of SELECTED state */
+#if OB_RENDER_3D
+        /*
+         * if we can toggle selection via XOR, we use XOR and don't redraw.
+         * if we have a G_IMAGE object that we're deselecting, we use XOR
+         * but force a redraw (xor_is_ok() returns FALSE for G_IMAGE).
+         */
+        if ((new_state ^ curr_state) & SELECTED)
+        {
+            BOOL ok = xor_is_ok(obtype,flags, spec);
+            if (ok || ((obtype == G_IMAGE) && !(new_state & SELECTED)))
+            {
+                bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,
+                        t.g_w-(2*th), t.g_h-(2*th));
+                redraw = !ok;
+            }
+        }
+#else
+        /* no 3D support: always use XOR if SELECTED state has changed */
+        if ((new_state ^ curr_state) & SELECTED)
+        {
+            bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,
+                    t.g_w-(2*th), t.g_h-(2*th));
+            redraw = FALSE;
+        }
+#endif
+    }
+
+    if (redraw)
+        ob_render_object(tree, obj, t.g_x, t.g_y);
+
+    gsx_mon();
+}
+
+#if OB_RENDER_3D
+/*
+ *  Initialise variables related to 3D objects
+ */
+void init_3d(void)
+{
+    indtxtmove = 0;         /* indicators: don't move text */
+    indcolchange = 1;       /* ... but change colour       */
+
+    acttxtmove = 1;         /* activators: move text       */
+    actcolchange = 0;       /* ... but don't change colour */
+
+    /* initialise button colours according to size of palette */
+    if (gl_ws.ws_ncolors <= LWHITE)
+    {
+        actbutcol = indbutcol = backgrcol = WHITE;
+    }
+    else
+    {
+        actbutcol = indbutcol = backgrcol = LWHITE;
+    }
+}
+
+
+/*
+ *  Implements objc_sysvar(): set/get variables to control 3D object display
+ */
+WORD ob_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
+{
+    /*
+     * handle setting the variables
+     */
+    if (mode)
+    {
+        switch(which) {
+        case LK3DIND:
+            if (in1 != -1)
+                indtxtmove = in1;
+            if (in2 != -1)
+                indcolchange = in2;
+            break;
+        case LK3DACT:
+            if (in1 != -1)
+                acttxtmove = in1;
+            if (in2 != -1)
+                actcolchange = in2;
+            break;
+        case INDBUTCOL:
+            if (in1 >= gl_ws.ws_ncolors)
+                return 0;
+            indbutcol = in1;
+            break;
+        case ACTBUTCOL:
+            if (in1 >= gl_ws.ws_ncolors)
+                return 0;
+            actbutcol = in1;
+            break;
+        case BACKGRCOL:
+            if (in1 >= gl_ws.ws_ncolors)
+                return 0;
+            backgrcol = in1;
+            break;
+        default:
+            return 0;
+            break;
+        }
+        return 1;
+    }
+
+    /*
+     * handle getting the variables
+     */
+    switch(which) {
+    case LK3DIND:
+        *out1 = indtxtmove;
+        *out2 = indcolchange;
+        break;
+    case LK3DACT:
+        *out1 = acttxtmove;
+        *out2 = actcolchange;
+        break;
+    case INDBUTCOL:
+        *out1 = indbutcol;
+        break;
+    case ACTBUTCOL:
+        *out1 = actbutcol;
+        break;
+    case BACKGRCOL:
+        *out1 = backgrcol;
+        break;
+    case AD3DVALUE:
+        *out1 = ADJ3DSTD;
+        *out2 = ADJ3DSTD;
+        break;
+    default:
+        return 0;
+        break;
+    }
+
+    return 1;
+}
+#endif
+

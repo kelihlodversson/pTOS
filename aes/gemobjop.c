@@ -26,9 +26,6 @@
 #include "string.h"
 
 
-#include "gemobwalk.inc"
-
-
 #if !CONF_WITH_LIBAES
 /*
  * Routine that will find the parent of a given object.  The
