@@ -32,6 +32,10 @@ typedef struct cuis_window {
     UWORD identifier; /* Globally unique among live windows; reusable after destruction. */
     LONG x, y, width, height;
     BOOL visible, redraw;
+    UWORD outset_right, outset_bottom;
+    CUIS_RECT *display_regions, *pending_regions;
+    ULONG display_region_count;
+    BOOL display_regions_valid;
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
     CUIS_POINTER pointer[CUIS_POINTER_CAPACITY];
@@ -74,6 +78,9 @@ static CUIS_CLIENT *update_owner;
 static CUIS_WINDOW *update_window;
 static CUIS_RECT *update_clips;
 static ULONG update_count;
+static CUIS_CLIENT *display_owner;
+static ULONG display_depth;
+static CUIS_RECT display_clip;
 
 static void end_update(void)
 {
@@ -84,7 +91,7 @@ static void end_update(void)
     update_window = NULL;
 }
 
-static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
+static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total)
 {
     CUIS_RECT *a, *b, *swap;
     CUIS_WINDOW *cover;
@@ -92,8 +99,8 @@ static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
     LONG result, right, bottom;
     SCREEN_MODE_DESC mode;
 
-    if (update_owner) return EAGAIN;
-    if (!window->visible) return EINVAL;
+    *rects = NULL; *total = 0;
+    if (!window->visible) return E_OK;
     screen_get_current_mode_desc(&mode);
     if (!mode.width || !mode.height) return EINVFN;
     a = kalloc(CUIS_CLIP_LIMIT * sizeof(*a));
@@ -102,8 +109,8 @@ static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
     if (!b) { kfree(a); return ENSMEM; }
     a[0].x = window->x > 0 ? window->x : 0;
     a[0].y = window->y > 0 ? window->y : 0;
-    right = window->x + window->width;
-    bottom = window->y + window->height;
+    right = window->x + window->width + window->outset_right;
+    bottom = window->y + window->height + window->outset_bottom;
     if (right > mode.width) right = mode.width;
     if (bottom > mode.height) bottom = mode.height;
     if (right <= a[0].x || bottom <= a[0].y) count = 0;
@@ -114,17 +121,29 @@ static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
     for (cover = window_front; cover != window && count; cover = cover->znext) {
         CUIS_RECT occluder;
         occluder.x = cover->x; occluder.y = cover->y;
-        occluder.width = cover->width; occluder.height = cover->height;
+        occluder.width = cover->width + cover->outset_right;
+        occluder.height = cover->height + cover->outset_bottom;
         result = cuis_region_subtract(a, count, &occluder, b, CUIS_CLIP_LIMIT);
         if (result < 0) { kfree(a); kfree(b); return result; }
         count = (ULONG)result;
         swap = a; a = b; b = swap;
     }
     kfree(b);
+    if (!count) { kfree(a); a = NULL; }
+    *rects = a;
+    *total = count;
+    return E_OK;
+}
+
+static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
+{
+    LONG result;
+    if (update_owner || display_owner) return EAGAIN;
+    if (!window->visible) return EINVAL;
+    result = visible_regions(window, &update_clips, &update_count);
+    if (result < 0) return result;
     update_owner = client;
     update_window = window;
-    update_clips = a;
-    update_count = count;
     return E_OK;
 }
 
@@ -340,12 +359,69 @@ static CUIS_CLIENT **find_owner(PD *owner)
     return link;
 }
 
+static void clear_display_regions(CUIS_CLIENT *client)
+{
+    CUIS_WINDOW *window;
+    for (window = client->windows; window; window = window->next) {
+        if (window->display_regions) kfree(window->display_regions);
+        if (window->pending_regions) kfree(window->pending_regions);
+        window->pending_regions = NULL;
+        window->display_regions = NULL;
+        window->display_regions_valid = FALSE;
+    }
+}
+
+static BOOL display_available(void *argument)
+{
+    (void)argument;
+    return !display_owner && !update_owner;
+}
+
+LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
+{
+    CUIS_CLIENT *client;
+    SCREEN_MODE_DESC mode;
+    UQUAD flags;
+    if (handle > 0x7fffffffULL || acquire > 1 || block > 1 || (!acquire && block)) return EINVAL;
+    flags = cuis_input_lock();
+    for (;;) {
+        client = *find_owner(run);
+        if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
+        if (!acquire) {
+            if (display_owner != client) { cuis_input_unlock(flags); return EACCDN; }
+            if (!--display_depth) { clear_display_regions(client); display_owner = NULL; }
+            cuis_input_unlock(flags); return E_OK;
+        }
+        if (display_owner == client) {
+            if (display_depth == 0xffffffffUL) { cuis_input_unlock(flags); return ERANGE; }
+            display_depth++;
+            cuis_input_unlock(flags); return E_OK;
+        }
+        if (!display_owner && !update_owner) {
+            screen_get_current_mode_desc(&mode);
+            if (!mode.width || !mode.height) { cuis_input_unlock(flags); return EINVFN; }
+            display_clip.x = display_clip.y = 0;
+            display_clip.width = mode.width; display_clip.height = mode.height;
+            display_depth = 1; display_owner = client;
+            cuis_input_unlock(flags); return E_OK;
+        }
+        /* Waiting for a per-window section owned by this caller deadlocks. */
+        if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
+        /* This is an IRQ mask, not a held mutex. ksched_block requires
+         * masked IRQs and restores the selected task's saved context; idle
+         * uses STI/HLT/CLI. Unlocking here would race the availability check
+         * against waiter publication (or HLT) and lose a release wakeup. */
+        if (!ksched_block(display_available, NULL)) cuis_input_idle();
+    }
+}
+
 void cuis_process_exit(PD *owner)
 {
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
     if (client) {
         CUIS_WINDOW *window;
         if (update_owner == client) end_update();
+        if (display_owner == client) { clear_display_regions(client); display_owner = NULL; display_depth = 0; }
         while ((window = client->windows) != NULL) {
             client->windows = window->next;
             hide_window(window);
@@ -360,7 +436,7 @@ void cuis_process_exit(PD *owner)
 }
 
 #if CONF_WITH_X86_64_MEMTEST
-BOOL cuis_update_active(void) { return update_owner != NULL; }
+BOOL cuis_update_active(void) { return update_owner != NULL || display_owner != NULL; }
 BOOL cuis_focus_active(void) { return focus_window != NULL; }
 BOOL cuis_pointer_attached(void) { return pointer_hover != NULL || pointer_capture != NULL; }
 ULONG cuis_visible_window_count(void)
@@ -513,12 +589,13 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     BOOL changed;
 
     if ((function < CUIS_WINDOW_CREATE || function > CUIS_FOCUS_RELEASE ||
-         function == CUIS_WINDOW_CLIP) && function != CUIS_WINDOW_IDENTIFY)
+         function == CUIS_WINDOW_CLIP) && function != CUIS_WINDOW_IDENTIFY &&
+        function != CUIS_WINDOW_OUTSET)
         return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
     if (function == CUIS_WINDOW_CREATE) {
-        if (update_owner) return EAGAIN;
+        if (update_owner || (display_owner && display_owner != client)) return EAGAIN;
         if (!valid_geometry(a, b, c, d)) return EINVAL;
         if (window_total >= CUIS_WINDOW_LIMIT || client->window_count >= CUIS_WINDOWS_PER_SESSION ||
             next_window_handle > 0x7fffffffUL) return ENSMEM;
@@ -528,6 +605,9 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         if (!window->identifier) { kfree(window); return ENSMEM; }
         window->handle = next_window_handle++;
         window->znext = NULL;
+        window->display_regions = window->pending_regions = NULL; window->display_regions_valid = FALSE;
+        window->display_region_count = 0;
+        window->outset_right = window->outset_bottom = 0;
         window->visible = FALSE;
         window->redraw = FALSE;
         window->key_head = window->key_count = 0;
@@ -554,9 +634,12 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         return E_OK;
     }
     if (function == CUIS_FOCUS_QUERY) return focus_window == window ? 1 : 0;
-    if (update_owner && function != CUIS_WINDOW_REDRAW) return EAGAIN;
+    if ((update_owner || (display_owner && display_owner != client)) &&
+        function != CUIS_WINDOW_REDRAW) return EAGAIN;
     switch (function) {
     case CUIS_WINDOW_DESTROY:
+        if (window->pending_regions) kfree(window->pending_regions);
+        if (window->display_regions) kfree(window->display_regions);
         hide_window(window);
         *link = window->next;
         client->window_count--;
@@ -564,7 +647,10 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         kfree(window);
         break;
     case CUIS_WINDOW_CONFIGURE:
-        if (!valid_geometry(b, c, d, e)) return EINVAL;
+        if (!valid_geometry(b, c, d, e) ||
+            d + window->outset_right > 0x7fffffffULL || e + window->outset_bottom > 0x7fffffffULL ||
+            (QUAD)b + (QUAD)d + window->outset_right > 0x7fffffffLL ||
+            (QUAD)c + (QUAD)e + window->outset_bottom > 0x7fffffffLL) return EINVAL;
         if (window->x == (LONG)b && window->y == (LONG)c &&
             window->width == (LONG)d && window->height == (LONG)e) break;
         flags = cuis_input_lock();
@@ -572,6 +658,14 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         window->width = (LONG)d; window->height = (LONG)e;
         route_pointer(0);
         cuis_input_unlock(flags);
+        if (window->visible) damage_windows();
+        break;
+    case CUIS_WINDOW_OUTSET:
+        if (b > 0xffffULL || c > 0xffffULL ||
+            (QUAD)window->width + (QUAD)b > 0x7fffffffLL || (QUAD)window->height + (QUAD)c > 0x7fffffffLL ||
+            (QUAD)window->x + window->width + (QUAD)b > 0x7fffffffLL ||
+            (QUAD)window->y + window->height + (QUAD)c > 0x7fffffffLL) return EINVAL;
+        window->outset_right = (UWORD)b; window->outset_bottom = (UWORD)c;
         if (window->visible) damage_windows();
         break;
     case CUIS_WINDOW_SHOW:
@@ -654,15 +748,99 @@ LONG cuis_clip_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
     return 1;
 }
 
+/* User-output access can tear down the process/window. Resolve identities
+ * again before committing or discarding the fault-cleanup-owned candidate. */
+static LONG finish_region_refresh(PD *owner, ULONG session, ULONG handle,
+                                   CUIS_RECT *candidate, ULONG count, BOOL commit)
+{
+    CUIS_CLIENT *client = *find_owner(owner);
+    CUIS_WINDOW *window;
+    if (!client || client->handle != session) return EACCDN;
+    for (window = client->windows; window && window->handle != handle; window = window->next) ;
+    if (!window || window->pending_regions != candidate) return EACCDN;
+    if (commit && display_owner == client) {
+        if (window->display_regions) kfree(window->display_regions);
+        window->display_regions = window->pending_regions;
+        window->display_region_count = count;
+        window->display_regions_valid = TRUE;
+        window->pending_regions = NULL;
+        return E_OK;
+    }
+    if (window->pending_regions) kfree(window->pending_regions);
+    window->pending_regions = NULL;
+    return commit ? EACCDN : E_OK;
+}
+
+LONG cuis_region_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
+                         UQUAD width, UQUAD height)
+{
+    CUIS_CLIENT *client;
+    CUIS_WINDOW *window;
+    CUIS_RECT *rects = NULL, rect;
+    ULONG count = 0, session;
+    LONG result;
+    PD *owner = run;
+    BOOL refresh = FALSE;
+    if (handle > 0x7fffffffULL || index > 0xffffffffULL) return EINVAL;
+    client = *find_owner(run);
+    if (!client) return EACCDN;
+    for (window = client->windows; window && window->handle != handle; window = window->next) ;
+    if (!window) return EACCDN;
+    session = client->handle;
+    if (window->pending_regions) return EAGAIN;
+    if (display_owner == client) {
+        /* FIRST refreshes, NEXT retains its snapshot even if an occluding
+         * peer exits. Per-window caches also allow interleaved GEM loops. */
+        if (!index || !window->display_regions_valid) {
+            result = visible_regions(window, &rects, &count);
+            if (result < 0) return result;
+            window->pending_regions = rects;
+            refresh = TRUE;
+            if (index >= count) {
+                result = finish_region_refresh(owner, session, (ULONG)handle, rects, count, TRUE);
+                return result < 0 ? result : 0;
+            }
+            rect = rects[(ULONG)index];
+        } else {
+            if (index >= window->display_region_count) return 0;
+            rect = window->display_regions[(ULONG)index];
+        }
+    } else {
+        result = visible_regions(window, &rects, &count);
+        if (result < 0) return result;
+        if (index >= count) { if (rects) kfree(rects); return 0; }
+        rect = rects[(ULONG)index];
+        kfree(rects);
+    }
+    if (!kproc_validate_user_write(x, sizeof(LONG)) || !kproc_validate_user_write(y, sizeof(LONG)) ||
+        !kproc_validate_user_write(width, sizeof(LONG)) || !kproc_validate_user_write(height, sizeof(LONG)) ||
+        !kproc_copy_to_user(x, &rect.x, sizeof(LONG)) || !kproc_copy_to_user(y, &rect.y, sizeof(LONG)) ||
+        !kproc_copy_to_user(width, &rect.width, sizeof(LONG)) || !kproc_copy_to_user(height, &rect.height, sizeof(LONG))) {
+        if (refresh) (void)finish_region_refresh(owner, session, (ULONG)handle, rects, count, FALSE);
+        return EIMBA;
+    }
+    if (refresh) {
+        result = finish_region_refresh(owner, session, (ULONG)handle, rects, count, TRUE);
+        if (result < 0) return result;
+    }
+    return 1;
+}
+
 /* 0 retains legacy native VDI behavior; 1 requires the immutable owned
  * snapshot. A different update owner blocks native screen writes. */
 LONG cuis_vdi_policy(void)
 {
+    if (display_owner) return display_owner->owner == run ? 1 : EAGAIN;
     if (update_owner) return update_owner->owner == run ? 1 : EAGAIN;
     return *find_owner(run) ? EACCDN : 0;
 }
 BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
 {
+    if (display_owner) {
+        if (display_owner->owner != run || index) return FALSE;
+        *rect = display_clip;
+        return TRUE;
+    }
     if (!update_owner || update_owner->owner != run || index >= update_count)
         return FALSE;
     *rect = update_clips[index];

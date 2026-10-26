@@ -65,6 +65,29 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short *buttons, short *modifiers, short *key, short *click_count, short *global_aes);
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers);
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
+#ifndef END_UPDATE
+#define END_UPDATE 0
+#endif
+#ifndef BEG_UPDATE
+#define BEG_UPDATE 1
+#endif
+#ifndef END_MCTRL
+#define END_MCTRL 2
+#endif
+#ifndef BEG_MCTRL
+#define BEG_MCTRL 3
+#endif
+#ifndef NO_BLOCK
+#define NO_BLOCK 0x0100
+#endif
+#ifndef WF_FIRSTXYWH
+#define WF_FIRSTXYWH 11
+#endif
+#ifndef WF_NEXTXYWH
+#define WF_NEXTXYWH 12
+#endif
+short wind_update(short code);
+short mt_wind_update(short code, short *global);
 #ifndef WC_BORDER
 #define WC_BORDER 0
 #endif

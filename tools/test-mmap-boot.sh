@@ -46,6 +46,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp obj/libaes/GEM.TOS "$work/GEM.TOS"
         cp obj/libaes/GEMMSG.TOS "$work/GEMMSG.TOS"
         cp obj/libaes/GEMMSG.TOS "$work/GEMPEER.TOS"
+        cp obj/libaes/GEMUPD.TOS "$work/GEMUPD.TOS"
         cp obj/libaes/GEMWIN.TOS "$work/GEMWIN.TOS"
         cp obj/libaes/GEMEVNT.TOS "$work/GEMEVNT.TOS"
         cp obj/libaes/GEMEVNT.TOS "$work/GEMEVPE.TOS"
@@ -80,7 +81,7 @@ if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/CUIS.TOS" ]; then
-    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS"
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
@@ -135,6 +136,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 async launch/wait: PASS' "$log"
     grep -q 'x32 GEM lifecycle/timers: PASS' "$log"
     grep -q 'x32 GEM discovery/messages: PASS' "$log"
+    grep -q 'x32 GEM update/regions: PASS' "$log"
     grep -q 'x32 GEM window lifecycle: PASS' "$log"
     grep -q 'x32 GEM combined events: PASS' "$log"
     test "$(grep -c 'x32 async orphan: PASS' "$log")" -ge 4

@@ -31,6 +31,9 @@ static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
 static BOOL input_drop_focus, input_drop_on_validate;
+static BOOL region_exit_on_output;
+static PD *display_release_owner;
+static BOOL display_release_exit;
 UQUAD cuis_input_lock(void)
 {
     UQUAD flags = input_irqs ? 0x200 : 0;
@@ -66,6 +69,7 @@ void cuis_input_test_wait(ULONG events) { (void)events; }
 BOOL ksched_block(BOOL (*ready)(void *), void *argument)
 {
     (void)ready; (void)argument;
+    if (input_irqs) input_bad_idle = TRUE;
     return FALSE;
 }
 LONG ksched_yield(void)
@@ -110,6 +114,14 @@ void cuis_input_idle(void)
         cuis_message_service(CUIS_MESSAGE_SEND, input_message_destination, 11, 22, 33, 44, 0);
         run = saved;
     }
+    if (display_release_owner) {
+        PD *saved = run;
+        run = display_release_owner;
+        display_release_owner = NULL;
+        if (display_release_exit) { display_release_exit = FALSE; cuis_process_exit(run); }
+        else cuis_display_lock((*find_owner(run))->handle, 0, 0);
+        run = saved;
+    }
     if (input_drop_focus) { input_drop_focus = FALSE; set_focus(NULL); }
     input_irqs = FALSE;
 }
@@ -121,6 +133,11 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 }
 BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 {
+    if (region_exit_on_output) {
+        region_exit_on_output = FALSE;
+        cuis_process_exit(run);
+        return FALSE;
+    }
     if (input_drop_on_validate) {
         input_drop_on_validate = FALSE;
         set_focus(NULL);
@@ -172,6 +189,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "delay.c"
 #include "streams.c"
 #include "combined.c"
+#include "display.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -236,5 +254,7 @@ int main(void)
     rc = delay_checks();
     if (rc) return rc;
     rc = stream_checks();
-    return rc ? rc : combined_checks();
+    if (rc) return rc;
+    rc = combined_checks();
+    return rc ? rc : display_checks();
 }

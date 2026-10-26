@@ -969,11 +969,11 @@ GEM plain-window lifecycle and geometry (#732)
 libaes exports wind_create/open/close/delete/get/set/calc and their standard
 mt_* forms. This is the metadata/lifecycle foundation for kind == 0 windows;
 nonzero decoration kinds fail explicitly. It does not yet draw even the plain
-frame, synthesize WM_REDRAW/WM_TOPPED messages, acquire update locks, or adapt
+frame, synthesize WM_REDRAW/WM_TOPPED messages, or adapt
 focus, keyboard/button/rectangle events. Desktop handle 0, foreign-window
-queries, WF_TOP/WF_BOTTOM, rectangle enumeration, titles, sliders and other
-fields remain unsupported (return 0 without changing outputs). No additional
-appl_getinfo capabilities are advertised by this slice.
+queries, WF_TOP/WF_BOTTOM, titles, sliders and other
+fields remain unsupported (return 0 without changing outputs). Update locking and rectangle enumeration are added by #734 below. No additional
+appl_getinfo capabilities are advertised by these slices.
 
 Application code uses positive short GEM window identifiers, not CUIS handles.
 CUIS_WINDOW_IDENTIFY (function 34) takes the owned native window handle in the
@@ -1025,3 +1025,95 @@ quota exhaustion, session invalidation and standard source signatures. The
 GEMWIN.TOS fixture checks actual flat syscalls, shared-library state, isolated
 identifiers and raw-exit cleanup. Its standard window contract also compiles
 against unmodified GEMlib headers.
+
+
+GEM update locking and visible work rectangles (#734)
+----------------------------------------------------
+
+wind_update/mt_wind_update support END_UPDATE (0), BEG_UPDATE (1), and the
+standard NO_BLOCK (0x100) modifier on BEG_UPDATE. A successful begin returns
+1, a busy nonblocking begin or other failure returns 0. Locks nest per
+registered process, including across different mt_* global arrays: only the
+final matching end releases ownership. Unmatched/foreign ends fail. Mouse
+control (BEG_MCTRL/END_MCTRL) and unknown codes return 0 until the input-grab
+slice; they are not treated as screen update locks.
+
+The screen semaphore freezes competing native window mutations and screen
+writes, rather than tying an application to a single window. Standard window
+mutations acquire/release it internally and nest inside an explicit update
+section, as GEM permits. Ordinary begins block cooperatively; NO_BLOCK does
+not dispatch or sleep. Timer/input/message waits are allowed while owning the
+GEM semaphore, as required for modal interaction; applications remain
+responsible for avoiding circular waits between peers. The older native
+per-window snapshot lock retains its stricter no-blocking-wait rule.
+Session close, normal/raw/fault exits release all nesting levels. Preemption
+and other architecture backends remain future work under #713.
+
+An owner holds the whole-screen update section and may paint dialog/menu
+areas outside its windows. Native VDI writes remain clipped to the captured
+screen bounds; other processes cannot write until release. Read/copy access
+to the entire screen remains available to all apps, including screenshot
+apps. Existing per-window snapshot updates remain separate and mutually
+exclusive with this global section; migration/test helpers must not mix the
+two lock families. Traditional in-kernel AES migration remains incomplete;
+its final exclusion from CUIS kernels is still required at the epic cutover.
+
+wind_get(WF_FIRSTXYWH) restarts a per-window iterator, and WF_NEXTXYWH advances
+it independently of iterators for other windows. Each successful result is
+intersected with the window's GEM work area and the screen, excluding all
+higher windows' visual footprints. Nonempty rectangles do not overlap. A
+closed/offscreen/fully covered window, or the end of the list, returns GEM
+success 1 with width and height zero; x/y at end are not a sentinel contract.
+Native allocation/copy/ownership failures return GEM failure 0 without
+advancing the cursor or changing caller outputs. A new FIRST can retry.
+NEXT before FIRST or after exhaustion returns an empty rectangle. Hold
+BEG_UPDATE through the FIRST/NEXT loop to prevent changes by other apps;
+restart FIRST after changing window geometry/visibility/stacking yourself.
+
+Plain GEM windows reserve a two-pixel right/bottom shadow, matching existing
+AES w_getsize(WS_TRUE)/newrect behavior. This footprint participates in
+occlusion even though frame/shadow painting is still a subsequent rendering
+slice. Work/border geometry returned by wind_get/wind_calc and native pointer
+hit bounds exclude this visual outset. The kernel interprets only generic
+native geometry; libaes sets the GEM shadow policy when creating a window.
+
+Additional flat CUIS calls (all under CONF_WITH_CUIS):
+
+  35 DISPLAY_LOCK(session, acquire, block) -> E_OK / negative error.
+     acquire and block are canonical 0/1; release requires block=0. Ownership
+     is checked against the current process, depth overflow fails, and exit
+     clears ownership before freeing windows. An owned legacy snapshot cannot
+     be waited upon by its own process. Unused register arguments are ignored.
+
+  36 WINDOW_REGION(native_window, index, x*, y*, width*, height*) -> 1/0/error.
+     Produces indexed visible border/visual-footprint rectangles for owned
+     windows. Validated output elements are LONGs, not a request structure.
+     It also works without a global lock, but stability across calls requires
+     the caller to hold DISPLAY_LOCK. Read-only enumeration remains available
+     while another app owns an update section and never grants draw permission.
+     While the caller owns DISPLAY_LOCK, index zero refreshes a per-window
+     snapshot and later indices retain it even if an occluding peer exits.
+     Empty lists retain no array while still being marked valid.
+     Cached arrays are bounded by window/clip quotas and reclaimed on final
+     unlock, window destruction or owner exit. Without the lock, temporary
+     arrays are freed before any faulting output access. Cached arrays are
+     attached to windows before output access, so a user fault reclaims them.
+     A replacement snapshot commits only after successful output. Validation
+     or copy failure discards its candidate and retains the old snapshot for
+     the unchanged GEM cursor. Owner/session/window/candidate identities are
+     rechecked after output access, which can tear down the process.
+     No kernel-side iterator or unowned window metadata is exposed.
+
+  37 WINDOW_OUTSET(native_window, right, bottom) -> E_OK / negative error.
+     Sets generic unsigned 16-bit visual outsets, initially zero. Only the
+     owner may change them; geometry/extent overflow is rejected before
+     mutation. Outsets affect occlusion and VDI region clips, not pointer hit
+     bounds or the stored window geometry. Unused scalar slots are ignored.
+
+Host tests exercise nesting, contention, IRQ-safe blocking, exit handoff,
+malformed arguments, VDI permission/clip bounds, region allocation/copy errors,
+independent/restarted cursors and work clipping. GEMUPD.TOS checks rectangle
+coverage against a pixel-grid oracle including shadows, complete coverage,
+offscreen clipping, owner mutations during nested updates, blocking of another
+process until the final end, and raw/session-exit cleanup. The fixture uses
+standard GEM source calls and also builds against unmodified GEMlib headers.
