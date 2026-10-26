@@ -88,8 +88,8 @@ void vst_height(WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
     invoke(&request);
     if (aes_painter->ok) { *charw = aes_painter->outpoints[0]; *charh = aes_painter->outpoints[1]; *cellw = aes_painter->outpoints[2]; *cellh = aes_painter->outpoints[3]; }
 }
-/* Cursor lifetime belongs to the display service; these legacy nesting calls
- * do not issue global cursor commands from an application's private painter. */
+/* The VDI service protects each framebuffer write with balanced cursor
+ * removal/recomposition. USERDEF VDI writes receive the same protection. */
 void gsx_moff(void) { }
 void gsx_mon(void) { }
 /* Image/icon adapters follow separately. Preflight rejects those types. */

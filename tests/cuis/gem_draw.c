@@ -88,7 +88,7 @@ int main(int argc, char **argv, char **envp)
     (void)argv; (void)envp;
     VERIFY(appl_init() > 0 && mt_appl_init(global) > 0);
     object(&box,G_BOX,0,0,100,100); box.ob_spec.index = 0x1170;
-    if (argc > 1) {
+    if (argc > 1 && argv[1][0] == 'f') {
         box.ob_type = G_USERDEF; box.ob_spec.userblk = &user;
         user.ub_code = fault_callback; user.ub_parm = 0;
         (void)objc_draw(&box,0,0,0,0,100,100);
@@ -100,6 +100,14 @@ int main(int argc, char **argv, char **envp)
             static const char marker[] = "x32 GEM object drawing: unavailable\r\n";
             ptos_write(1,marker,sizeof(marker)-1);
         }
+        return 0;
+    }
+    if (argc > 1 && argv[1][0] == 'c') {
+        box.ob_spec.index = 0x1172;
+        VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
+        VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1);
+        VERIFY(objc_change(&box,0,0,0,0,100,100,0,1) == 1);
+        VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);

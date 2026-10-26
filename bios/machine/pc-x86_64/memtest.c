@@ -243,6 +243,48 @@ static ASPACE *must_create(const char *what)
 
 /* ---- physical page allocator ------------------------------------- */
 
+#if CONF_WITH_LIBAES && CONF_WITH_X32_VDI
+/* Exercise cursor composition with actual ring-3 VDI writes and the normal
+ * native mouse-movement/VBL path; no user-facing cursor test API is needed. */
+static WORD renderer_vdi(WORD code, WORD value)
+{
+    VDICONTROL control = { 0 };
+    WORD input = value, points[12] = { 50,50 }, output[45] = { 0 };
+    VDIPB saved = linea_vars.local_pb;
+    VDIPB pb = { &control, &input, points, output, points };
+    control.code = code; control.handle = 1;
+    if (code == 105) control.nptsin = 1;
+    else control.nintin = 1;
+    GSX_ENTRY(0x73,&pb);
+    linea_vars.local_pb = saved;
+    return output[1];
+}
+static void test_renderer_cursor(void)
+{
+    WORD hidden = linea_vars.HIDE_CNT, x = linea_vars.GCURX, y = linea_vars.GCURY;
+    char tail[3] = { 1,'c',0 };
+    LONG result;
+    renderer_vdi(123,1);
+    linea_vars.GCURX = 50; linea_vars.GCURY = 50;
+    renderer_vdi(122,0);
+    CHECK(linea_vars.HIDE_CNT == 0, "renderer cursor test starts visible");
+    result = Pexec(PE_LOADGO,"C:\\GEMDRAW.TOS",tail,NULL);
+    CHECK(result == 0 && linea_vars.HIDE_CNT == 0, "object painting preserves visible cursor state");
+    linea_vars.GCURX = 120; linea_vars.GCURY = 120;
+    linea_vars.user_cur(120,120);
+    if (vblqueue[0]) vblqueue[0]();
+    CHECK(renderer_vdi(105,0) == 2, "cursor movement restores repainted object pixels");
+    renderer_vdi(123,1); renderer_vdi(123,1);
+    CHECK(linea_vars.HIDE_CNT == 2, "renderer cursor test starts with nested hides");
+    result = Pexec(PE_LOADGO,"C:\\GEMDRAW.TOS",tail,NULL);
+    CHECK(result == 0 && linea_vars.HIDE_CNT == 2, "object painting preserves nested cursor hides");
+    /* Both test passes have removed the cursor at this point. */
+    linea_vars.GCURX = x; linea_vars.GCURY = y;
+    linea_vars.HIDE_CNT = hidden ? hidden : 1;
+    if (!hidden) renderer_vdi(122,1);
+}
+#endif
+
 static void test_pmem(void)
 {
     SNAP s;
@@ -2528,6 +2570,12 @@ static void test_ring3(void)
         CHECK(result == 0, "userspace GEM object drawing, state changes and callbacks");
         CHECK(cuis_session_count() == sessions && !cuis_update_active(), "GEM renderer sessions and updates reclaimed");
         same(&s, "GEM renderer workstations and callback process resources reclaimed");
+#if CONF_WITH_X32_VDI
+        snap(&s);
+        test_renderer_cursor();
+        CHECK(cuis_session_count() == sessions && !cuis_update_active(), "cursor repaint sessions and updates reclaimed");
+        same(&s, "cursor repaint workstations and process resources reclaimed");
+#endif
     }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");

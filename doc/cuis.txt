@@ -1422,16 +1422,18 @@ logical hit bounds; 3D hit expansion remains deferred with 3D rendering.
 Drawing reuses an existing per-window update section without upgrading or
 releasing it. Otherwise it obtains a nested standard display update section.
 Each draw opens a private virtual VDI workstation, preserving application
-workstation attributes. The kernel's existing CUIS draw policy still enforces display
-ownership; applications use FIRST/NEXT visible-region clips when drawing
-their windows. Screenshots remain readable across the whole screen. The
-private workstation and implicit update level are released on normal/error
-returns. A captured session handle releases the update even if USERDEF
-changes the GEM global array. Process-exit cleanup reclaims workstations and
-ownership after a user fault. A headless kernel without the VDI service
-returns GEM 0 cleanly. Legacy GSX cursor hide/show nesting hooks have no
-userspace cursor-control binding yet; cursor visibility remains with the
-display service in this slice.
+workstation attributes. The kernel's existing CUIS draw policy still
+enforces display ownership; applications use FIRST/NEXT visible-region clips
+when drawing their windows. Screenshots remain readable across the whole
+screen. The private workstation and implicit update level are released on
+normal/error returns. A captured session handle releases the update even if
+USERDEF changes the GEM global array. Process-exit cleanup reclaims
+workstations and ownership after a user fault. A headless kernel without the
+VDI service returns GEM 0 cleanly. The VDI service removes a visible cursor
+before each framebuffer write and recomposes it afterward using a non-
+resetting show. Already-hidden cursor nesting is preserved. This also
+protects USERDEF VDI drawing; the shared GSX cursor hooks need no
+application-controlled global cursor commands.
 
 objc_change ignores its reserved argument, updates caller-local state, and
 redraws only that object when requested. No-redraw and hidden-object state
@@ -1459,7 +1461,10 @@ VDI pixels in ring 3, nested USERDEF drawing, and a child callback fault followe
 by successful update acquisition. It also paints a classic GEM demo panel.
 The main fixture builds against unmodified GEMlib headers; a separate typed
 pixel-probe object keeps private VDI headers out of the GEM application source.
-Resource snapshots verify workstation/session/update/process reclamation.
+The kernel harness also runs repainting beneath a visible software cursor,
+then moves it through the normal cursor/VBL path and checks the restored
+pixels. A second pass preserves a nested hide count of two. Resource
+snapshots verify workstation/session/update/process reclamation.
 
 To capture the actual QEMU framebuffer, enable external libaes, X32_VDI and
 X86_64_MEMTEST, build the kernel and x32test/import fixtures, then run the boot
