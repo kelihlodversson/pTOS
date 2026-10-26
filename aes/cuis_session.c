@@ -29,6 +29,7 @@ typedef struct cuis_window {
     struct cuis_window *next;
     struct cuis_window *znext;
     ULONG handle;
+    UWORD identifier; /* Globally unique among live windows; reusable after destruction. */
     LONG x, y, width, height;
     BOOL visible, redraw;
     ULONG keys[CUIS_KEY_CAPACITY];
@@ -487,6 +488,22 @@ static BOOL valid_geometry(UQUAD x, UQUAD y, UQUAD width, UQUAD height)
            (QUAD)y + (QUAD)height <= 0x7fffffffLL;
 }
 
+static UWORD window_identifier(void)
+{
+    UBYTE used[CUIS_WINDOW_LIMIT + 1] = { 0 };
+    CUIS_CLIENT *client;
+    CUIS_WINDOW *window;
+    UWORD id;
+    for (client = clients; client; client = client->next)
+        for (window = client->windows; window; window = window->next) {
+            if (!window->identifier || window->identifier > CUIS_WINDOW_LIMIT) return 0;
+            used[window->identifier] = 1;
+        }
+    for (id = 1; id <= CUIS_WINDOW_LIMIT; id++)
+        if (!used[id]) return id;
+    return 0; /* The global quota is checked before allocating a window. */
+}
+
 LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
                          UQUAD d, UQUAD e)
 {
@@ -495,8 +512,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     UQUAD flags;
     BOOL changed;
 
-    if (function < CUIS_WINDOW_CREATE || function > CUIS_FOCUS_RELEASE ||
-        function == CUIS_WINDOW_CLIP)
+    if ((function < CUIS_WINDOW_CREATE || function > CUIS_FOCUS_RELEASE ||
+         function == CUIS_WINDOW_CLIP) && function != CUIS_WINDOW_IDENTIFY)
         return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
@@ -507,6 +524,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
             next_window_handle > 0x7fffffffUL) return ENSMEM;
         window = kalloc(sizeof(*window));
         if (!window) return ENSMEM;
+        window->identifier = window_identifier();
+        if (!window->identifier) { kfree(window); return ENSMEM; }
         window->handle = next_window_handle++;
         window->znext = NULL;
         window->visible = FALSE;
@@ -527,6 +546,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
          link = &(*link)->next) ;
     window = *link;
     if (!window) return EACCDN;
+    if (function == CUIS_WINDOW_IDENTIFY) return window->identifier;
     if (function == CUIS_UPDATE_BEGIN) return begin_update(client, window);
     if (function == CUIS_UPDATE_END) {
         if (update_owner != client || update_window != window) return EACCDN;

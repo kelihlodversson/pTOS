@@ -2480,6 +2480,16 @@ static void test_ring3(void)
         CHECK(result == 0, "standard GEM combined waits, zero polls, snapshots and copyout errors");
         CHECK(cuis_session_count() == sessions, "GEM event sessions reclaimed after normal/fault exits");
         same(&s, "GEM event waiters, pipe bytes and child processes reclaimed");
+        snap(&s);
+        {
+            ULONG windows = cuis_window_count();
+            result = Pexec(PE_LOADGO, "C:\\GEMWIN.TOS", "", NULL);
+            if (result) kcprintf("GEM windows fixture returned %ld\n", (long)result);
+            CHECK(result == 0, "standard GEM window lifecycle, geometry and isolated identifiers");
+            CHECK(cuis_window_count() == windows, "GEM windows reclaimed after session close and raw exit");
+        }
+        CHECK(cuis_session_count() == sessions, "GEM window sessions reclaimed");
+        same(&s, "GEM window clients and metadata reclaimed");
     }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");
