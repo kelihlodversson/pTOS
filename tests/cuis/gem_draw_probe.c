@@ -1,4 +1,5 @@
 #include "vdi_service.h"
+#include "libaes.h"
 #include "gem_draw_probe.h"
 static LONG service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -21,4 +22,21 @@ int gem_probe_pixel(WORD handle, WORD x, WORD y)
 {
     WORD output[2];
     return service(VDI_SERVICE_PIXEL,handle,x,y,(uintptr_t)output) == 0 ? output[1] : -1;
+}
+
+/* Transitional native per-window update API, isolated from GEM headers. */
+LONG gem_probe_update_begin(void)
+{
+    LONG window = aes_window_create(8,8,40,40), rc;
+    if (window < 0) return window;
+    rc = aes_window_show(window);
+    if (rc == 0) rc = aes_update_begin(window);
+    return rc < 0 ? rc : window;
+}
+LONG gem_probe_update_end(LONG window)
+{
+    LONG rc = aes_update_end(window);
+    if (rc == 0) rc = aes_window_hide(window);
+    if (rc == 0) rc = aes_window_destroy(window);
+    return rc;
 }

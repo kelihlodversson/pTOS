@@ -82,7 +82,7 @@ int main(int argc, char **argv, char **envp)
     USERBLK user;
     WORD handle, width, height, pixels[400];
     short x,y,global[15];
-    LONG child, status;
+    LONG child, status, update;
     char tail[3] = { 1,'f',0 };
     static const char environment[] = { 0,0 };
     (void)argv; (void)envp;
@@ -102,6 +102,17 @@ int main(int argc, char **argv, char **envp)
         }
         return 0;
     }
+    VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
+    update = gem_probe_update_begin(); VERIFY(update >= 0);
+    box.ob_spec.index = 0x1172;
+    VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
+    VERIFY(gem_probe_pixel(handle,10,10) == 2 && gem_probe_pixel(handle,4,4) == 0);
+    VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1);
+    VERIFY(gem_probe_pixel(handle,10,10) != 2 && gem_probe_pixel(handle,4,4) == 0);
+    VERIFY(objc_change(&box,0,0,0,0,100,100,0,1) == 1);
+    VERIFY(gem_probe_pixel(handle,10,10) == 2 && gem_probe_pixel(handle,4,4) == 0);
+    VERIFY(gem_probe_update_end(update) == 0);
+    box.ob_spec.index = 0x1170;
     VERIFY(wind_update(BEG_UPDATE) == 1);
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1 && gem_probe_pixel(handle,26,26) == 0);
     object(&box,G_BOX,20,20,20,20); box.ob_spec.index = 0x1172;

@@ -151,7 +151,7 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
                    WORD *global, BOOL change, UWORD state)
 {
     PAINTER p = { 0 }, *saved = aes_painter;
-    LONG session = aes_application_session(global), right, bottom;
+    LONG session = aes_application_session(global), right, bottom, lock;
     VDI_SERVICE_WORKSTATION ws;
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, parent, x, y, dummy;
@@ -161,7 +161,11 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
         if (change) tree[start].ob_state = state;
         return 1;
     }
-    if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
+    lock = cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0);
+    /* A blocking acquisition returns EAGAIN only when this caller already
+     * owns a per-window section. Borrow its immutable clip without upgrading
+     * to whole-screen ownership or changing its lifetime. */
+    if (lock != E_OK && lock != EAGAIN) return 0;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
     opened = TRUE; aes_painter = &p; p.handle = ws.handle; p.ok = TRUE;
     memcpy(&p.workstation,ws.intout,sizeof(ws.intout));
@@ -196,7 +200,7 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
 done:
     if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) success = FALSE;
     aes_painter = saved;
-    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) success = FALSE;
+    if (lock == E_OK && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) success = FALSE;
     return success ? 1 : 0;
 }
 WORD mt_objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h, WORD *global)

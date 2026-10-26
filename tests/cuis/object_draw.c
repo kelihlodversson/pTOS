@@ -10,7 +10,8 @@ static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count;
 static struct { WORD mode, color, interior, clip[4]; } workstation[32];
 static PARMBLK callback_parameters;
-static BOOL draw_error;
+static BOOL draw_error, window_update;
+static int releases;
 static BOOL invalidate_global;
 static ULONG callbacks;
 LONG aes_application_session(short *global) { return global && !session_error ? 7 : EACCDN; }
@@ -18,6 +19,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
     if (fn != CUIS_DISPLAY_LOCK || a != 7) return EACCDN;
+    if (!b) releases++;
+    if (window_update) return b ? EAGAIN : EACCDN;
     nesting += b ? 1 : -1;
     return E_OK;
 }
@@ -37,7 +40,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         if (opens >= 32) return ENSMEM;
         return E_OK;
     }
-    if (a <= 0 || a >= 32 || !nesting) return EACCDN;
+    if (a <= 0 || a >= 32 || (!nesting && !window_update)) return EACCDN;
     if (fn == VDI_SERVICE_CLIP) {
         __builtin_memcpy(workstation[a].clip,(void *)(uintptr_t)c,8);
         return E_OK;
@@ -101,6 +104,15 @@ int main(void)
     VERIFY(objc_change(tree,2,0,0,0,160,120,SELECTED,1) == 1 && image[32][32] == (before ^ 15));
     VERIFY(objc_change(tree,2,0,0,0,160,120,CHECKED,1) == 1 && image[32][32] == before);
     tree[2].ob_state = 0;
+    window_update = TRUE; before = releases;
+    VERIFY(objc_draw(tree,1,0,0,0,160,120) == 1 && !nesting && releases == before);
+    VERIFY(objc_change(tree,1,0,0,0,160,120,SELECTED,1) == 1 && !nesting && releases == before);
+    VERIFY(objc_change(tree,1,0,0,0,160,120,0,1) == 1 && !nesting && releases == before);
+    graphics_error = EINVFN;
+    VERIFY(objc_draw(tree,1,0,0,0,160,120) == 0 && releases == before);
+    graphics_error = 0; draw_error = TRUE;
+    VERIFY(objc_change(tree,1,0,0,0,160,120,SELECTED,1) == 0 && !tree[1].ob_state && releases == before);
+    draw_error = FALSE; window_update = FALSE;
     before = opens;
     VERIFY(mt_objc_change(tree,1,0,0,0,160,120,DISABLED,0,NULL) == 1 && opens == before);
     tree[1].ob_state = 0;
