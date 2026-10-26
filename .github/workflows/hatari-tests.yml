@@ -81,6 +81,9 @@ jobs:
     # Hatari comes from the distribution's packages, which the 22.04 of the
     # build's runner has an old version of.
     runs-on: ubuntu-24.04
+    # The 68030 of Hatari 2.4.1, the 24.04 package, hangs the address-space
+    # runs (#727, #737); 26.04 has 2.6, so that mode runs in its container
+    container: ${{ matrix.mode == 'f030a' && 'ubuntu:26.04' || null }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -116,8 +119,10 @@ jobs:
 
       - name: Install Hatari
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hatari
+          SUDO=$(command -v sudo || true)      # (the container is root, without sudo)
+          export DEBIAN_FRONTEND=noninteractive
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends hatari python3
           hatari --version || true     # (it exits with 1)
 
       # Four to ten minutes (the Falcon modes run with the MMU on, which makes
