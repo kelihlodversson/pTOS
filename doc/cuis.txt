@@ -1386,60 +1386,67 @@ Userspace classic object drawing (#745)
 --------------------------------------
 objc_draw/mt_objc_draw and objc_change/mt_objc_change use their standard GEM
 signatures and Boolean results. OBJECT arrays, INDIRECT specs, strings,
-TEDINFO and USERBLK records remain in the calling application's address space.
-The shared library reuses the original aes/ object painter, traversal, state
-changes and GSX text/border/layout routines through shared source fragments.
-Only the low-level VDI transport and drawing context have userspace bindings; the kernel receives only existing
-bounded VDI primitive requests and never an object-tree or callback pointer.
-No new production kernel service or configuration option is needed.
+TEDINFO and USERBLK records remain in the calling application's address
+space. The shared library reuses the original aes/ object painter,
+traversal, state changes and GSX text/border/layout routines through shared
+source fragments. Only the low-level VDI transport and drawing context have
+userspace bindings; the kernel receives only existing bounded VDI primitive
+requests and never an object-tree or callback pointer. No new production
+kernel service or configuration option is needed.
 
-This first drawing slice supports classic G_BOX, G_IBOX, G_BOXCHAR, G_BUTTON,
-G_STRING, G_TITLE, G_TEXT, G_BOXTEXT, G_FTEXT, G_FBOXTEXT and G_USERDEF objects.
-It implements signed border thickness, box color/pattern words, default/exit
-button borders, IBM/small fonts, text justification, formatted underscores,
-and SELECTED/CROSSED/CHECKED/DISABLED/OUTLINED/SHADOWED states. The original text routines use bounded buffers: free text is limited to 127
-characters, and formatted text and templates to 80 characters in this slice. Formatting recognizes the '@' empty-text marker without
-modifying caller text. Images, mono/color icons and 3D flags return GEM 0
-until their rendering adapters are available. No extension capability bits
-are advertised. A preflight checks the requested visible subtree before
-painting, so an unsupported visible descendant does not leave a partly drawn
-tree; HIDETREE descendants are ignored.
+This first drawing slice supports classic G_BOX, G_IBOX, G_BOXCHAR,
+G_BUTTON, G_STRING, G_TITLE, G_TEXT, G_BOXTEXT, G_FTEXT, G_FBOXTEXT and
+G_USERDEF objects. It implements signed border thickness, box color/pattern
+words, default/exit button borders, IBM/small fonts, text justification,
+formatted underscores, and
+SELECTED/CROSSED/CHECKED/DISABLED/OUTLINED/SHADOWED states. The original
+text routines use bounded buffers: free text is limited to 127 characters,
+and formatted text and templates to 80 characters in this slice. Formatting
+recognizes the '@' empty-text marker without modifying caller text. Images,
+mono/color icons and 3D flags return GEM 0 until their rendering adapters
+are available. No extension capability bits are advertised. A preflight
+checks the requested visible subtree before painting, so an unsupported
+visible descendant does not leave a partly drawn tree; HIDETREE descendants
+are ignored.
 
-Drawing starts at the requested object using its absolute tree offset, visits
-children in sibling order through the requested depth (0..MAX_DEPTH), skips
-hidden subtrees, and clips to the supplied GEM rectangle and screen bounds.
-Child objects are not implicitly clipped to their parent's logical rectangle.
-An empty clip succeeds without painting. objc_find retains logical hit bounds;
-3D hit expansion remains deferred with 3D rendering.
+Drawing starts at the requested object using its absolute tree offset,
+visits children in sibling order through the requested depth (0..MAX_DEPTH),
+skips hidden subtrees, and clips to the supplied GEM rectangle and screen
+bounds. Child objects are not implicitly clipped to their parent's logical
+rectangle. An empty clip succeeds without painting. objc_find retains
+logical hit bounds; 3D hit expansion remains deferred with 3D rendering.
 
-Each draw obtains a nested standard display update section and opens a private
-virtual VDI workstation, preserving the application's workstation attributes.
-The kernel's existing CUIS draw policy still enforces display ownership;
-applications use FIRST/NEXT visible-region clips when drawing their windows.
-Screenshots remain readable across the whole screen. The private workstation
-and implicit update level are released on normal/error returns. A captured
-session handle releases the update even if USERDEF changes the GEM global
-array. Process-exit cleanup reclaims workstations and ownership after a user
-fault. A headless kernel without the VDI service returns GEM 0 cleanly.
+Each draw obtains a nested standard display update section and opens a
+private virtual VDI workstation, preserving the application's workstation
+attributes. The kernel's existing CUIS draw policy still enforces display
+ownership; applications use FIRST/NEXT visible-region clips when drawing
+their windows. Screenshots remain readable across the whole screen. The
+private workstation and implicit update level are released on normal/error
+returns. A captured session handle releases the update even if USERDEF
+changes the GEM global array. Process-exit cleanup reclaims workstations and
+ownership after a user fault. A headless kernel without the VDI service
+returns GEM 0 cleanly. Legacy GSX cursor hide/show nesting hooks have no
+userspace cursor-control binding yet; cursor visibility remains with the
+display service in this slice.
 
 objc_change ignores its reserved argument, updates caller-local state, and
 redraws only that object when requested. No-redraw and hidden-object state
-changes require no VDI access. The original classic AES state-change routine uses a clipped XOR of the
-interior whenever SELECTED changes, including combined state transitions;
-otherwise it repaints the object. Deselection restores preceding pixels,
-including transparent objects.
-A failed redraw restores the old state; drawing errors cannot undo pixels that
-were already painted. Unchanged state is a successful no-op.
+changes require no VDI access. The original classic AES state-change routine
+uses a clipped XOR of the interior whenever SELECTED changes, including
+combined state transitions; otherwise it repaints the object. Deselection
+restores preceding pixels, including transparent objects. A failed redraw
+restores the old state; drawing errors cannot undo pixels that were already
+painted. Unchanged state is a successful no-op.
 
 USERDEF runs as an ordinary user-mode call with the standard PARMBLK tree,
 object, previous/current state, absolute geometry, clipped rectangle and
-ub_parm. Its returned remaining-state mask controls AES overlays. Nested object
-drawing uses a separate local painter/workstation and nests the update lock.
-objc_draw skips callbacks outside the visual clip; objc_change follows the
-original direct callback behavior with the current clip in PARMBLK. Hidden
-callbacks are not invoked. Invalid
-caller pointers or callback faults are ordinary user faults, with kernel
-process cleanup; no in-kernel object validation or callback trampoline is added.
+ub_parm. Its returned remaining-state mask controls AES overlays. Nested
+object drawing uses a separate local painter/workstation and nests the
+update lock. objc_draw skips callbacks outside the visual clip; objc_change
+follows the original direct callback behavior with the current clip in
+PARMBLK. Hidden callbacks are not invoked. Invalid caller pointers or
+callback faults are ordinary user faults, with kernel process cleanup; no
+in-kernel object validation or callback trampoline is added.
 
 Host tests use a pixel oracle for clipping, traversal/depth, hidden and indirect
 objects, selection round trips, formatted text, callback parameters, mutated
