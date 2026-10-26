@@ -49,8 +49,8 @@ static int display_checks(void)
     run = &first;
     input_sleeps = 0;
     CHECK(cuis_display_lock(first_session, 1, 1) == E_OK && input_sleeps == 1 && !input_bad_idle);
-    before = allocations - frees;
     CHECK(REGION(a, 0) == 1 && copied[0] == 0 && copied[1] == 0 && copied[2] == 20 && copied[3] == 5);
+    before = allocations - frees;
     CHECK(REGION(a, 4) == 0 && allocations - frees == before);
     fail_copy = TRUE;
     CHECK(REGION(a, 0) == EIMBA && allocations - frees == before);
@@ -59,7 +59,16 @@ static int display_checks(void)
     fail_allocation = FALSE;
     CHECK(REGION(b, 0) == EACCDN);
     CHECK(cuis_region_service(a, 0x100000000ULL, 0, 0, 0, 0) == EINVAL);
+    cuis_process_exit(&second);
+    CHECK(REGION(a, 3) == 1); /* NEXT retains the snapshot across occluder exit. */
+    CHECK(REGION(a, 0) == 1 && copied[2] == 20 && copied[3] == 20);
+    CHECK(REGION(a, 1) == 0);
     CHECK(cuis_display_lock(first_session, 0, 0) == E_OK);
+    run = &second;
+    second_session = cuis_service(CUIS_SESSION_START, 0);
+    b = cuis_window_service(CUIS_WINDOW_CREATE, 5, 5, 10, 10, 0);
+    CHECK(b >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, b, 0, 0, 0, 0) == E_OK);
+    run = &first;
     CHECK(cuis_window_service(CUIS_WINDOW_HIDE, a, 0, 0, 0, 0) == E_OK);
     CHECK(REGION(a, 0) == 0);
     CHECK(cuis_display_lock(first_session, 1, 0) == E_OK);

@@ -52,6 +52,12 @@ int main(int argc, char **argv, char **envp)
         VERIFY(parent > 0 && parent != id);
         message[0] = 900; message[1] = id;
         message[2] = message[3] = message[4] = message[5] = message[6] = message[7] = 0;
+        if (argv[1][0] == 'o') {
+            window = wind_create(0, 0, 0, 100, 100);
+            VERIFY(window > 0 && wind_open(window, 5, 5, 10, 10) == 1);
+            VERIFY(appl_write(parent, 16, message) == 1 && evnt_mesag(message) == 1);
+            _Exit(37);
+        }
         VERIFY(appl_write(parent, 16, message) == 1);
         VERIFY(wind_update(BEG_UPDATE | NO_BLOCK) == 0);
         message[0] = 901; VERIFY(appl_write(parent, 16, message) == 1);
@@ -91,6 +97,21 @@ int main(int argc, char **argv, char **envp)
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     VERIFY(evnt_mesag(message) == 1 && message[0] == 902);
     VERIFY(wind_update(BEG_UPDATE | NO_BLOCK) == 1);
+    VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && w == 18 && h == 18);
+    VERIFY(wind_update(END_UPDATE) == 1);
+    tail[1] = 'o';
+    child = process(0x4b, 100, (uintptr_t)"C:\\GEMUPD.TOS", (uintptr_t)tail, (uintptr_t)environment);
+    VERIFY(child > 0 && evnt_mesag(message) == 1 && message[0] == 900);
+    VERIFY(wind_update(BEG_UPDATE) == 1);
+    VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && y == 1 && h == 4);
+    VERIFY(appl_write((short)child, 16, message) == 1);
+    status = process(0x13a, child, 0, 0, 0);
+    VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
+    /* The existing list survives peer cleanup; FIRST later refreshes it. */
+    VERIFY(wind_get(window, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && w && h);
+    VERIFY(wind_get(window, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && w && h);
+    VERIFY(wind_get(window, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && w && h);
+    VERIFY(wind_get(window, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && w == 18 && h == 18);
     VERIFY(appl_exit() == 1); /* Session teardown also releases an explicit lock. */
     VERIFY(appl_init() == id && wind_update(BEG_UPDATE | NO_BLOCK) == 1);

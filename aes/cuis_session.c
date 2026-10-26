@@ -33,6 +33,9 @@ typedef struct cuis_window {
     LONG x, y, width, height;
     BOOL visible, redraw;
     UWORD outset_right, outset_bottom;
+    CUIS_RECT *display_regions;
+    ULONG display_region_count;
+    BOOL display_regions_valid;
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
     CUIS_POINTER pointer[CUIS_POINTER_CAPACITY];
@@ -355,6 +358,16 @@ static CUIS_CLIENT **find_owner(PD *owner)
     return link;
 }
 
+static void clear_display_regions(CUIS_CLIENT *client)
+{
+    CUIS_WINDOW *window;
+    for (window = client->windows; window; window = window->next) {
+        if (window->display_regions) kfree(window->display_regions);
+        window->display_regions = NULL;
+        window->display_regions_valid = FALSE;
+    }
+}
+
 static BOOL display_available(void *argument)
 {
     (void)argument;
@@ -373,7 +386,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
         if (!acquire) {
             if (display_owner != client) { cuis_input_unlock(flags); return EACCDN; }
-            if (!--display_depth) display_owner = NULL;
+            if (!--display_depth) { clear_display_regions(client); display_owner = NULL; }
             cuis_input_unlock(flags); return E_OK;
         }
         if (display_owner == client) {
@@ -401,7 +414,7 @@ void cuis_process_exit(PD *owner)
     if (client) {
         CUIS_WINDOW *window;
         if (update_owner == client) end_update();
-        if (display_owner == client) { display_owner = NULL; display_depth = 0; }
+        if (display_owner == client) { clear_display_regions(client); display_owner = NULL; display_depth = 0; }
         while ((window = client->windows) != NULL) {
             client->windows = window->next;
             hide_window(window);
@@ -585,6 +598,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         if (!window->identifier) { kfree(window); return ENSMEM; }
         window->handle = next_window_handle++;
         window->znext = NULL;
+        window->display_regions = NULL; window->display_regions_valid = FALSE;
+        window->display_region_count = 0;
         window->outset_right = window->outset_bottom = 0;
         window->visible = FALSE;
         window->redraw = FALSE;
@@ -616,6 +631,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         function != CUIS_WINDOW_REDRAW) return EAGAIN;
     switch (function) {
     case CUIS_WINDOW_DESTROY:
+        if (window->display_regions) kfree(window->display_regions);
         hide_window(window);
         *link = window->next;
         client->window_count--;
@@ -737,11 +753,26 @@ LONG cuis_region_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
     if (!client) return EACCDN;
     for (window = client->windows; window && window->handle != handle; window = window->next) ;
     if (!window) return EACCDN;
-    result = visible_regions(window, &rects, &count);
-    if (result < 0) return result;
-    if (index >= count) { if (rects) kfree(rects); return 0; }
-    rect = rects[(ULONG)index];
-    kfree(rects);
+    if (display_owner == client) {
+        /* FIRST refreshes, NEXT retains its snapshot even if an occluding
+         * peer exits. Per-window caches also allow interleaved GEM loops. */
+        if (!index || !window->display_regions_valid) {
+            result = visible_regions(window, &rects, &count);
+            if (result < 0) return result;
+            if (window->display_regions) kfree(window->display_regions);
+            window->display_regions = rects;
+            window->display_region_count = count;
+            window->display_regions_valid = TRUE;
+        }
+        if (index >= window->display_region_count) return 0;
+        rect = window->display_regions[(ULONG)index];
+    } else {
+        result = visible_regions(window, &rects, &count);
+        if (result < 0) return result;
+        if (index >= count) { if (rects) kfree(rects); return 0; }
+        rect = rects[(ULONG)index];
+        kfree(rects);
+    }
     if (!kproc_validate_user_write(x, sizeof(LONG)) || !kproc_validate_user_write(y, sizeof(LONG)) ||
         !kproc_validate_user_write(width, sizeof(LONG)) || !kproc_validate_user_write(height, sizeof(LONG))) return EIMBA;
     if (!kproc_copy_to_user(x, &rect.x, sizeof(LONG)) || !kproc_copy_to_user(y, &rect.y, sizeof(LONG)) ||
