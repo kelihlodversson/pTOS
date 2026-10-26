@@ -40,15 +40,15 @@ How it was audited
    if either skips itself); the others (tests/readme.md) are OS-level.
 
 3. History.  The Actions history of the pull requests: 190 runs of build.yml,
-   245 of hatari-tests.yml, 63 of pbench.yml.  A build job of a configuration
+   245 of hatari-tests.yml, 315 of pbench.yml.  A build job of a configuration
    has failed alone (no other build job failing in the same run) in none of
    those; build jobs fail in groups (14 of them together five times: shared
    code that does not compile), so one of the group would have said as much.
    What failed alone: "Release archives" (10 times, for instance a ROM image
    over its size in a country that no per-configuration job builds), the x32 desktop
    tests (pc-x86_64-desktop-tests*), the regression suites of pc-x86_64 and
-   raspi2b, and the Build jobs of hatari-tests.yml (they build the tests, which
-   no other job does).  The Hatari tests failed with a mode of their own once
+   raspi2b, and the Build jobs of hatari-tests.yml and pbench.yml (they build the
+   tests and pBench, which no other job does: 12 and 13 times).  The Hatari tests failed with a mode of their own once
    (f040 in all three configurations at the same time) and once with
    atari512-fastcall in low only.
 
