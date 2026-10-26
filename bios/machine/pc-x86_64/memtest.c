@@ -2468,6 +2468,12 @@ static void test_ring3(void)
         CHECK(result == 0, "standard GEM lifecycle, private globals and windowless timers");
         CHECK(cuis_session_count() == sessions, "implicit GEM sessions reclaimed on exit and _Exit");
         same(&s, "GEM API processes and their async children reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMMSG.TOS", "", NULL);
+        if (result) kcprintf("GEM messages fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "standard GEM discovery, byte pipes, backpressure and receiver exit");
+        CHECK(cuis_session_count() == sessions, "GEM discovery and message sessions reclaimed");
+        same(&s, "GEM message queues, blocked snapshots and peer processes reclaimed");
     }
 #else
     probe_expect(':', 0, "CUIS services are unavailable when disabled");

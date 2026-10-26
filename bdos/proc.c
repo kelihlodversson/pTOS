@@ -674,6 +674,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return rc;
     }
 
+#if CONF_WITH_CUIS
+    kproc_set_executable_name(cur_p, path);
+#endif
     /* at this point the program has been correctly loaded in memory, and
      * more I/O errors cannot occur, so it is safe now to finish initializing
      * the new process.

@@ -7,6 +7,7 @@
 #include "screen_mode.h"
 #include "gemerror.h"
 #include "kheap.h"
+#include "string.h"
 #include "../bdos/kproc.h"
 
 extern PD *run;
@@ -15,6 +16,11 @@ extern PD *run;
 #define CUIS_KEY_CAPACITY 16U
 #define CUIS_POINTER_CAPACITY 16U
 #define CUIS_WINDOW_LIMIT 256UL
+#define CUIS_STREAM_BYTES 65536UL
+typedef struct {
+    LONG sender_pid;
+    UBYTE data[1];
+} CUIS_PACKET;
 typedef struct {
     LONG x, y;
     ULONG buttons, state;
@@ -45,6 +51,12 @@ typedef struct cuis_client {
     ULONG window_count;
     CUIS_MESSAGE messages[CUIS_MESSAGE_CAPACITY];
     UWORD message_head, message_count;
+    UBYTE label[CUIS_LABEL_MAX];
+    ULONG label_length;
+    LONG pid;
+    CUIS_PACKET *pending_write;
+    UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
+    ULONG stream_head, stream_bytes;
 } CUIS_CLIENT;
 static CUIS_CLIENT *clients;
 static ULONG next_handle;
@@ -340,6 +352,8 @@ void cuis_process_exit(PD *owner)
             kfree(window);
         }
         *link = client->next;
+        if (client->stream_data) kfree(client->stream_data);
+        if (client->pending_write) kfree(client->pending_write);
         kfree(client);
     }
 }
@@ -390,6 +404,10 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->windows = NULL;
         client->window_count = 0;
         client->message_head = client->message_count = 0;
+        client->label_length = 0;
+        client->pid = kproc_pid(run);
+        client->pending_write = NULL; client->stream_data = NULL;
+        client->stream_head = client->stream_bytes = 0;
         client->owner = run;
         client->handle = next_handle++;
         client->next = clients;
@@ -405,6 +423,56 @@ LONG cuis_service(ULONG function, UQUAD handle)
     default:
         return EINVFN;
     }
+}
+
+static CUIS_CLIENT *find_handle(UQUAD handle)
+{
+    CUIS_CLIENT *client;
+    for (client = clients; client && client->handle != handle; client = client->next) ;
+    return client;
+}
+
+/* Labels are opaque bytes. Filename/GEM naming policy belongs to libaes. */
+LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c)
+{
+    CUIS_CLIENT *client = *find_owner(run), *peer, *found = NULL;
+    UBYTE label[CUIS_LABEL_MAX];
+    ULONG n;
+    const char *name;
+    if (!client) return EACCDN;
+    if (function == CUIS_LABEL_FIND) {
+        if (!b || b > CUIS_LABEL_MAX) return EINVAL;
+        if (!kproc_copy_from_user(label, a, (ULONG)b)) return EIMBA;
+        for (peer = clients; peer; peer = peer->next)
+            if (peer->label_length == b && !memcmp(peer->label, label, (ULONG)b) &&
+                (!found || peer->handle < found->handle)) found = peer;
+        return found ? (LONG)found->handle : EFILNF;
+    }
+    if (function == CUIS_PEER_BY_PID) {
+        if (!a || a > 32767) return EINVAL;
+        for (peer = clients; peer && peer->pid != (LONG)a; peer = peer->next) ;
+        return peer ? (LONG)peer->handle : EFILNF;
+    }
+    if (a > 0x7fffffffULL) return EINVAL;
+    if (function == CUIS_PEER_PID) {
+        peer = find_handle(a);
+        return peer ? peer->pid : EFILNF;
+    }
+    if (a != client->handle) return EACCDN;
+    if (function == CUIS_SESSION_NAME) {
+        name = kproc_executable_name(run);
+        for (n = 0; name[n]; n++) ;
+        if (c > 0xffffffffULL || c < n + 1) return ERANGE;
+        return kproc_copy_to_user(b, name, n + 1) ? (LONG)n : EIMBA;
+    }
+    if (function == CUIS_SESSION_LABEL) {
+        if (c > CUIS_LABEL_MAX) return EINVAL;
+        if (c && !kproc_copy_from_user(label, b, (ULONG)c)) return EIMBA;
+        if (c) memcpy(client->label, label, (ULONG)c);
+        client->label_length = (ULONG)c;
+        return E_OK;
+    }
+    return EINVFN;
 }
 
 /* Geometry slots contain sign-extended LONGs, not truncated machine words.
@@ -661,6 +729,118 @@ LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds)
         if (!ksched_block(wait_ready, &wait)) cuis_input_idle();
     cuis_input_unlock(flags);
     return E_OK;
+}
+
+typedef struct {
+    ULONG handle, length;
+    BOOL write;
+} CUIS_STREAM_WAIT;
+
+static BOOL stream_ready(void *argument)
+{
+    CUIS_STREAM_WAIT *wait = argument;
+    CUIS_CLIENT *peer = find_handle(wait->handle);
+    /* A waiting writer retains only the non-reused handle, never a pointer
+     * into a receiver which can exit while the writer is suspended. */
+    return !peer || (wait->write ?
+        CUIS_STREAM_BYTES - peer->stream_bytes >= wait->length :
+        peer->stream_bytes >= wait->length);
+}
+
+/* Exact byte-stream transfers. A parallel sender-ID ring preserves trusted
+ * metadata for partial reads without imposing packet boundaries on payloads. */
+LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD length,
+                         UQUAD block, UQUAD sender)
+{
+    CUIS_CLIENT *client = *find_owner(run), *peer;
+    CUIS_PACKET *packet;
+    CUIS_STREAM_WAIT wait;
+    UQUAD flags;
+    ULONG bytes, at, i;
+    UWORD *senders;
+    LONG result, pid;
+    if (function != CUIS_STREAM_READ && function != CUIS_STREAM_WRITE) return EINVFN;
+    if (handle > 0x7fffffffULL || length > CUIS_STREAM_MAX || block > 1) return EINVAL;
+    if (!client) return EACCDN;
+    if (function == CUIS_STREAM_READ && handle != client->handle) return EACCDN;
+    peer = find_handle(handle);
+    if (!peer) return EACCDN;
+    if (!length) return 0;
+    wait.handle = (ULONG)handle; wait.length = (ULONG)length;
+    wait.write = function == CUIS_STREAM_WRITE;
+    if (wait.write) {
+        if (client->pending_write) return EACCDN;
+        packet = kalloc(sizeof(*packet) + (ULONG)length - 1);
+        if (!packet) return ENSMEM;
+        packet->sender_pid = client->pid;
+        /* Teardown also owns the snapshot if backing its input terminates
+         * the writer, or a future cancellation abandons this continuation. */
+        client->pending_write = packet;
+        if (!kproc_copy_from_user(packet->data, buffer, (ULONG)length)) {
+            client->pending_write = NULL; kfree(packet); return EIMBA;
+        }
+    }
+    if (wait.write) {
+        peer = find_handle(handle);
+        if (peer && !peer->stream_data)
+            peer->stream_data = kalloc(CUIS_STREAM_BYTES * (1 + sizeof(UWORD)));
+        if (!peer || !peer->stream_data) {
+            packet = client->pending_write; client->pending_write = NULL;
+            kfree(packet); return peer ? ENSMEM : EACCDN;
+        }
+    }
+    flags = cuis_input_lock();
+    for (;;) {
+        peer = find_handle(handle);
+        if (!peer) { result = EACCDN; break; }
+        if (stream_ready(&wait)) {
+            if (wait.write) {
+                packet = client->pending_write;
+                at = (peer->stream_head + peer->stream_bytes) % CUIS_STREAM_BYTES;
+                bytes = CUIS_STREAM_BYTES - at;
+                if (bytes > length) bytes = (ULONG)length;
+                memcpy(peer->stream_data + at, packet->data, bytes);
+                if (bytes < length) memcpy(peer->stream_data, packet->data + bytes, (ULONG)length - bytes);
+                senders = (UWORD *)(peer->stream_data + CUIS_STREAM_BYTES);
+                for (i = 0; i < length; i++) senders[(at + i) % CUIS_STREAM_BYTES] = (UWORD)packet->sender_pid;
+                client->pending_write = NULL;
+                peer->stream_bytes += (ULONG)length;
+                cuis_input_unlock(flags);
+                kfree(packet);
+                return (LONG)length;
+            }
+            /* Back the whole output before the non-yielding copy/commit.
+             * Failed copyout leaves all bytes and sender metadata unread. */
+            cuis_input_unlock(flags);
+            if (!kproc_validate_user_write(buffer, (ULONG)length) ||
+                (sender && !kproc_validate_user_write(sender, sizeof(LONG)))) return EIMBA;
+            flags = cuis_input_lock();
+            if (!stream_ready(&wait)) continue;
+            senders = (UWORD *)(client->stream_data + CUIS_STREAM_BYTES);
+            pid = senders[client->stream_head];
+            bytes = CUIS_STREAM_BYTES - client->stream_head;
+            if (bytes > length) bytes = (ULONG)length;
+            if (!kproc_copy_to_user(buffer, client->stream_data + client->stream_head, bytes) ||
+                (bytes < length && !kproc_copy_to_user(buffer + bytes, client->stream_data, (ULONG)length - bytes)) ||
+                (sender && !kproc_copy_to_user(sender, &pid, sizeof(pid)))) {
+                cuis_input_unlock(flags); return EIMBA;
+            }
+            client->stream_head = (client->stream_head + (ULONG)length) % CUIS_STREAM_BYTES;
+            client->stream_bytes -= (ULONG)length;
+            cuis_input_unlock(flags);
+            return (LONG)length;
+        }
+        if (!block) { result = EAGAIN; break; }
+        if (update_owner == client) { result = EACCDN; break; }
+        if (!ksched_block(stream_ready, &wait)) cuis_input_idle();
+    }
+    cuis_input_unlock(flags);
+    if (wait.write) {
+        packet = client->pending_write;
+        client->pending_write = NULL;
+        kfree(packet);
+    }
+    return result;
 }
 
 /* Flat calls; only the trusted producer can submit keyboard events. */

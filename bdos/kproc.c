@@ -73,6 +73,9 @@ typedef struct mmap_region {
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
 struct kproc {
+#if CONF_WITH_CUIS
+    char executable_name[33]; /* Bounded basename; GUI normalization stays in userspace. */
+#endif
 #if CONF_WITH_USER_CALLBACKS
     USER_CALLBACK_STATE *callbacks;
     UQUAD resume_rsp;
@@ -338,6 +341,24 @@ WORD kproc_pid(PD *pd)
 
     return kproc ? kproc->pid : 0;
 }
+
+#if CONF_WITH_CUIS
+void kproc_set_executable_name(PD *pd, const char *path)
+{
+    KPROC *k = kproc_find(pd);
+    const char *base = path, *p;
+    UWORD i;
+    if (!k) return;
+    for (p = path; *p; p++) if (*p == '\\' || *p == '/' || *p == ':') base = p + 1;
+    for (i = 0; i < 32 && base[i]; i++) k->executable_name[i] = base[i];
+    k->executable_name[i] = 0;
+}
+const char *kproc_executable_name(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+    return k ? k->executable_name : "";
+}
+#endif
 
 WORD kproc_parent_pid(PD *pd)
 {

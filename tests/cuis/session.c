@@ -1,4 +1,7 @@
 /* Exercise the production scalar CUIS service and allocation failures. */
+#include "emutos.h"
+#include "bdosdefs.h"
+const char *kproc_executable_name(PD *pd);
 #include "../../aes/cuis_session.c"
 
 static PD first, second, third, fourth, fifth;
@@ -7,7 +10,10 @@ static union {
     CUIS_CLIENT client;
     CUIS_WINDOW window;
     CUIS_RECT clips[CUIS_CLIP_LIMIT];
+    UBYTE packet[sizeof(CUIS_PACKET) + CUIS_STREAM_MAX];
 } pool[1024];
+static UBYTE stream_rings[8][CUIS_STREAM_BYTES * (1 + sizeof(UWORD))] __attribute__((aligned(16)));
+static ULONG stream_ring_count;
 static ULONG allocations, frees;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
@@ -19,6 +25,11 @@ static UQUAD fail_copy_address;
 static BOOL input_irqs = TRUE, input_bad_idle;
 static ULONG input_ticks, input_sleeps, input_inject_after;
 static ULONG delay_tick_step = 1, delay_yields;
+static UBYTE stream_input[32768], stream_output[32768];
+static BOOL stream_kill_peer, stream_drain_peer, stream_send_peer;
+static ULONG stream_change_after;
+static PD *stream_peer;
+static LONG stream_peer_handle;
 static BOOL input_drop_focus, input_drop_on_validate;
 UQUAD cuis_input_lock(void)
 {
@@ -58,6 +69,22 @@ void cuis_input_idle(void)
     input_irqs = TRUE;
     input_ticks += delay_tick_step;
     input_sleeps++;
+    if (stream_change_after && input_sleeps == stream_change_after) {
+        PD *saved = run;
+        if (stream_kill_peer) cuis_process_exit(stream_peer);
+        if (stream_drain_peer) {
+            stream_input[0] = 99; /* Modify the sender's input while its write is blocked. */
+            run = stream_peer;
+            cuis_stream_service(CUIS_STREAM_READ, stream_peer_handle, 0x20000, 16, 0, 0);
+            run = saved;
+        }
+        if (stream_send_peer) {
+            run = stream_peer;
+            cuis_stream_service(CUIS_STREAM_WRITE, stream_peer_handle, 0x10000, 16, 0, 0);
+            run = saved;
+        }
+        stream_change_after = 0;
+    }
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
     if (input_message_sender) {
@@ -82,20 +109,35 @@ BOOL kproc_validate_user_write(UQUAD address, ULONG size)
         input_drop_on_validate = FALSE;
         set_focus(NULL);
     }
+    if (address >= 0x20000 && address <= 0x28000 && size <= 0x28000 - address) return TRUE;
     return size == sizeof(LONG) && address >= 0x1000 && address <= 0x1010 &&
            !(address & 3);
 }
 BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
 {
     if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
+    if (address >= 0x20000) {
+        memcpy(stream_output + address - 0x20000, source, size); return TRUE;
+    }
     copied[(address - 0x1000) / 4] = *(const LONG *)source;
     return TRUE;
 }
+BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
+{
+    if (fail_copy || address < 0x10000 || address > 0x18000 || size > 0x18000 - address) return FALSE;
+    memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
+}
+const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
 
 void *kalloc(ULONG bytes)
 {
+    if (bytes == sizeof(stream_rings[0])) {
+        if (fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) || stream_ring_count == 8) return NULL;
+        allocations++; return stream_rings[stream_ring_count++];
+    }
     if ((bytes != sizeof(CUIS_CLIENT) && bytes != sizeof(CUIS_WINDOW) &&
-         bytes != CUIS_CLIP_LIMIT * sizeof(CUIS_RECT)) ||
+         bytes != CUIS_CLIP_LIMIT * sizeof(CUIS_RECT) &&
+         (bytes < sizeof(CUIS_PACKET) || bytes > sizeof(CUIS_PACKET) + CUIS_STREAM_MAX)) ||
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
         allocations == 1024)
         return NULL;
@@ -112,6 +154,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "pointer.c"
 #include "messages.c"
 #include "delay.c"
+#include "streams.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -172,5 +215,7 @@ int main(void)
     rc = window_limit_checks();
     if (rc) return rc;
     rc = message_checks();
-    return rc ? rc : delay_checks();
+    if (rc) return rc;
+    rc = delay_checks();
+    return rc ? rc : stream_checks();
 }
