@@ -2,7 +2,7 @@
 #define REGION(h,i) cuis_region_service(h,i,0x1000,0x1004,0x1008,0x100c)
 static int display_checks(void)
 {
-    LONG a, b, first_session, second_session;
+    LONG a, b, cover, first_session, second_session;
     ULONG before;
     CUIS_RECT clip;
     next_handle = next_window_handle = 0;
@@ -27,7 +27,16 @@ static int display_checks(void)
     CHECK(REGION(a, 0) == 1 && copied[2] == 22 && copied[3] == 22);
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 0, 0, 0x7fffffff, 20) == EINVAL);
     CHECK(cuis_window_service(CUIS_WINDOW_OUTSET, a, 0, 0, 0, 0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 2000, 2000, 20, 20) == E_OK);
+    CHECK(REGION(a, 0) == 0);
+    CHECK(!(*find_owner(run))->windows->display_regions && (*find_owner(run))->windows->display_regions_valid);
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 0, 0, 20, 20) == E_OK);
+    cover = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 20, 20, 0);
+    CHECK(cover >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, cover, 0, 0, 0, 0) == E_OK);
+    before = allocations - frees;
+    CHECK(REGION(a, 0) == 0 && allocations - frees == before);
+    CHECK(!(*find_owner(run))->windows->next->display_regions && (*find_owner(run))->windows->next->display_regions_valid);
+    CHECK(cuis_window_service(CUIS_WINDOW_DESTROY, cover, 0, 0, 0, 0) == E_OK);
     run = &second;
     second_session = cuis_service(CUIS_SESSION_START, 0);
     CHECK(cuis_display_lock(first_session, 1, 0) == EACCDN);

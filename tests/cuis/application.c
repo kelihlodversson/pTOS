@@ -62,7 +62,6 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
-    (void)c; (void)d; (void)e; (void)f;
     if (fn == CUIS_WINDOW_REGION) {
         if (region_error) return region_error;
         if (b >= region_count) return 0;

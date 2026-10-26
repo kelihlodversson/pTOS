@@ -129,6 +129,7 @@ static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total
         swap = a; a = b; b = swap;
     }
     kfree(b);
+    if (!count) { kfree(a); a = NULL; }
     *rects = a;
     *total = count;
     return E_OK;
@@ -406,6 +407,10 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         }
         /* Waiting for a per-window section owned by this caller deadlocks. */
         if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
+        /* This is an IRQ mask, not a held mutex. ksched_block requires
+         * masked IRQs and restores the selected task's saved context; idle
+         * uses STI/HLT/CLI. Unlocking here would race the availability check
+         * against waiter publication (or HLT) and lose a release wakeup. */
         if (!ksched_block(display_available, NULL)) cuis_input_idle();
     }
 }

@@ -69,6 +69,7 @@ void cuis_input_test_wait(ULONG events) { (void)events; }
 BOOL ksched_block(BOOL (*ready)(void *), void *argument)
 {
     (void)ready; (void)argument;
+    if (input_irqs) input_bad_idle = TRUE;
     return FALSE;
 }
 LONG ksched_yield(void)

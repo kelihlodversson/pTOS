@@ -135,14 +135,14 @@ static short local_wind_delete(short id, short *global)
 }
 short wind_delete(short id) { return mt_wind_delete(id, aes_global); }
 
-static short visible_work(struct gem_window *window, BOOL first, GRECT *out)
+static short visible_work(struct gem_window *window, BOOL first, GRECT *out, short *global)
 {
     LONG state[4], result, left, top, right, bottom, edge;
     ULONG index = first ? 0 : window->region_index;
     GRECT work;
-    mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
+    if (!mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
                   window->current.g_w, window->current.g_h,
-                  &work.g_x, &work.g_y, &work.g_w, &work.g_h, NULL);
+                  &work.g_x, &work.g_y, &work.g_w, &work.g_h, global)) return 0;
     for (;;) {
         if (index == 0xffffffffUL) result = 0;
         else result = cuis_call6(CUIS_WINDOW_REGION, window->native, index,
@@ -178,7 +178,7 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     switch (field) {
     case WF_FIRSTXYWH:
     case WF_NEXTXYWH:
-        if (!visible_work(window, field == WF_FIRSTXYWH, &r)) return 0;
+        if (!visible_work(window, field == WF_FIRSTXYWH, &r, global)) return 0;
         break;
     case WF_KIND:
         r.g_x = r.g_y = r.g_w = r.g_h = 0;
