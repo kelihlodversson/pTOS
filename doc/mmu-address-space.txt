@@ -536,6 +536,19 @@ rpi2-aspace_defconfig and virt-m68k-aspace_defconfig, tested by CI as the
 regression machines virt-arm-aspace, raspi2b-aspace and virt-m68k-aspace
 (tools/run-regression-tests.sh).
 
+The isolation suite (tests/isolation/, #572) is the ARM and m68k counterpart of
+x32's ring-3 probe, and runs in those three regression machines.  A program,
+ISOPROBE.TOS, makes one forbidden access per launch and the suite checks what
+becomes of it: a read, a write or a jump to the kernel half, to the low
+memory and to an unmapped address, and a privileged instruction, each end the
+process with a fault (exit code 0xffff) and leave no process record or memory
+behind; the private pages of the parent (image, stack, heap, basepage) are
+neither seen nor changed from the child; and the calls that take a pointer
+refuse one into the kernel with the documented error (GEMDOS and Rwabs()
+EIMBA; Setpalette(), Getmpb(), Iorec(), Kbdvbase(), Dosound(), Setexc() and
+Super() EACCDN).  Checked by hand: with the kernel half of virt-arm made
+accessible to user mode the suite fails on the first read of it.
+
 What is shared by both architectures:
 
   - bios/pmem32.c is a bitmap page allocator for the RAM after the kernel
