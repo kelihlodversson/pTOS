@@ -17,7 +17,10 @@ static UQUAD waited_interval, waited_mask;
 static LONG native_windows[64], next_native = 2147483000L;
 static ULONG window_error_fn;
 static LONG window_error;
-static ULONG window_calls;
+static ULONG window_calls, display_nesting;
+static LONG display_error, region_error;
+static LONG region_values[3][4];
+static ULONG region_count;
 static LONG window_transport(ULONG fn, UQUAD a)
 {
     short i;
@@ -51,6 +54,7 @@ LONG cuis_call(ULONG fn, LONG id)
     if (fn == CUIS_SESSION_QUERY) return E_OK;
     if (fn == CUIS_SESSION_END) {
         if (close_result) return close_result;
+        display_nesting = 0;
         __builtin_memset(native_windows, 0, sizeof(native_windows));
         live = FALSE; closes++; return E_OK;
     }
@@ -59,7 +63,22 @@ LONG cuis_call(ULONG fn, LONG id)
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
-    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || fn == CUIS_WINDOW_IDENTIFY)
+    if (fn == CUIS_WINDOW_REGION) {
+        if (region_error) return region_error;
+        if (b >= region_count) return 0;
+        *(LONG *)(uintptr_t)c = region_values[b][0]; *(LONG *)(uintptr_t)d = region_values[b][1];
+        *(LONG *)(uintptr_t)e = region_values[b][2]; *(LONG *)(uintptr_t)f = region_values[b][3];
+        return 1;
+    }
+    if (fn == CUIS_DISPLAY_LOCK) {
+        if (display_error) return display_error;
+        if (a != (UQUAD)handle || !live) return EACCDN;
+        if (b) display_nesting++;
+        else if (!display_nesting) return EACCDN;
+        else display_nesting--;
+        return E_OK;
+    }
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET))
         return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
         __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
@@ -165,6 +184,39 @@ static int window_failures(void)
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
     return 0;
 }
+static int display_api_checks(void)
+{
+    short id, other, x = 99, y, w, h;
+    CHECK(wind_update(END_UPDATE) == 0);
+    CHECK(wind_update(BEG_MCTRL) == 0 && wind_update(END_MCTRL) == 0 && wind_update(-1) == 0);
+    CHECK(wind_update(BEG_UPDATE | NO_BLOCK) == 1 && wind_update(BEG_UPDATE) == 1);
+    CHECK(display_nesting == 2);
+    id = wind_create(0, 0, 0, 100, 100);
+    other = wind_create(0, 0, 0, 100, 100);
+    CHECK(id > 0 && other > 0 && display_nesting == 2);
+    CHECK(wind_open(id, 0, 0, 20, 20) == 1 && wind_open(other, 0, 0, 20, 20) == 1);
+    CHECK(display_nesting == 2 && wind_update(END_UPDATE) == 1 && display_nesting == 1);
+    region_values[0][0] = 0; region_values[0][1] = 0; region_values[0][2] = 1; region_values[0][3] = 20;
+    region_values[1][0] = 0; region_values[1][1] = 0; region_values[1][2] = 10; region_values[1][3] = 10;
+    region_values[2][0] = 10; region_values[2][1] = 0; region_values[2][2] = 10; region_values[2][3] = 20;
+    region_count = 3;
+    CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1 && y == 1 && w == 9 && h == 9);
+    CHECK(wind_get(other, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1);
+    region_error = EIMBA; x = 99;
+    CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 0 && x == 99);
+    region_error = 0;
+    CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && x == 10 && y == 1 && w == 9 && h == 18);
+    CHECK(wind_get(other, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && x == 10);
+    CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
+    CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
+    CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1);
+    CHECK(wind_delete(id) == 1 && wind_delete(other) == 1 && display_nesting == 1);
+    CHECK(wind_update(END_UPDATE) == 1 && !display_nesting);
+    display_error = EAGAIN;
+    CHECK(wind_update(BEG_UPDATE | NO_BLOCK) == 0 && wind_create(0, 0, 0, 20, 20) == -1);
+    display_error = 0; region_count = 0;
+    return 0;
+}
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
@@ -212,7 +264,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

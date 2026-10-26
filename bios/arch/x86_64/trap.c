@@ -360,7 +360,10 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
     case CUIS_SERVICE_CLASS:
 #if CONF_WITH_CUIS
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
-            (fn == CUIS_SESSION_WAIT ? cuis_session_wait(frame->rdi, frame->rsi, frame->rdx, frame->r10) :
+            (fn == CUIS_DISPLAY_LOCK ? cuis_display_lock(frame->rdi, frame->rsi, frame->rdx) :
+             fn == CUIS_WINDOW_REGION ? cuis_region_service(frame->rdi, frame->rsi, frame->rdx,
+                 frame->r10, frame->r8, frame->r9) :
+             fn == CUIS_SESSION_WAIT ? cuis_session_wait(frame->rdi, frame->rsi, frame->rdx, frame->r10) :
              fn == CUIS_INPUT_STATE ? cuis_state_service(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ) ?
                  cuis_stream_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :

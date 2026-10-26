@@ -89,3 +89,10 @@ obj/libaes/GEMWIN.TOS: tests/cuis/gem_windows.c tests/cuis/window_api.c obj/ldso
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMWIN.TOS
 endif
+
+obj/libaes/GEMUPD.TOS: tests/cuis/gem_update.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/GEMUPD.TOS
+endif

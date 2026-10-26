@@ -10,6 +10,7 @@ static struct gem_window {
     short id;
     LONG native;
     BOOL open;
+    ULONG region_index;
     GRECT current, previous, full;
 } windows[GEM_WINDOW_LIMIT];
 
@@ -55,7 +56,7 @@ short wind_calc(short type, short kind, short x, short y, short w, short h,
     return mt_wind_calc(type, kind, x, y, w, h, ox, oy, ow, oh, aes_global);
 }
 
-short mt_wind_create(short kind, short x, short y, short w, short h, short *global)
+static short local_wind_create(short kind, short x, short y, short w, short h, short *global)
 {
     struct gem_window *window;
     short i;
@@ -68,13 +69,15 @@ short mt_wind_create(short kind, short x, short y, short w, short h, short *glob
     native = cuis_call6(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0, 0);
     if (native < 0) return -1;
     identifier = cuis_call6(CUIS_WINDOW_IDENTIFY, native, 0, 0, 0, 0, 0);
-    if (identifier <= 0 || identifier > 32767) {
+    if (identifier <= 0 || identifier > 32767 ||
+        cuis_call6(CUIS_WINDOW_OUTSET, native, 2, 2, 0, 0, 0) != E_OK) {
         (void)cuis_call6(CUIS_WINDOW_DESTROY, native, 0, 0, 0, 0, 0);
         return -1;
     }
     window = &windows[i];
     window->native = native;
     window->open = FALSE;
+    window->region_index = 0xffffffffUL;
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
     window->previous = window->current;
@@ -93,7 +96,7 @@ static BOOL configure(struct gem_window *window, short x, short y, short w, shor
     return w > 0 && h > 0 && cuis_call6(CUIS_WINDOW_CONFIGURE, window->native,
                      (QUAD)x, (QUAD)y, w, h, 0) == E_OK;
 }
-short mt_wind_open(short id, short x, short y, short w, short h, short *global)
+static short local_wind_open(short id, short x, short y, short w, short h, short *global)
 {
     struct gem_window *window = lookup(id, global);
     if (!window || window->open || !configure(window, x, y, w, h)) return 0;
@@ -102,13 +105,14 @@ short mt_wind_open(short id, short x, short y, short w, short h, short *global)
     window->current.g_w = w; window->current.g_h = h;
     window->previous = window->current;
     window->open = TRUE;
+    window->region_index = 0xffffffffUL;
     return 1;
 }
 short wind_open(short id, short x, short y, short w, short h)
 {
     return mt_wind_open(id, x, y, w, h, aes_global);
 }
-short mt_wind_close(short id, short *global)
+static short local_wind_close(short id, short *global)
 {
     struct gem_window *window = lookup(id, global);
     if (!window || !window->open ||
@@ -117,10 +121,11 @@ short mt_wind_close(short id, short *global)
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
     window->open = FALSE;
+    window->region_index = 0xffffffffUL;
     return 1;
 }
 short wind_close(short id) { return mt_wind_close(id, aes_global); }
-short mt_wind_delete(short id, short *global)
+static short local_wind_delete(short id, short *global)
 {
     struct gem_window *window = lookup(id, global);
     /* Native destruction hides an open window and reclaims its input queues. */
@@ -130,12 +135,51 @@ short mt_wind_delete(short id, short *global)
 }
 short wind_delete(short id) { return mt_wind_delete(id, aes_global); }
 
+static short visible_work(struct gem_window *window, BOOL first, GRECT *out)
+{
+    LONG state[4], result, left, top, right, bottom, edge;
+    ULONG index = first ? 0 : window->region_index;
+    GRECT work;
+    mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
+                  window->current.g_w, window->current.g_h,
+                  &work.g_x, &work.g_y, &work.g_w, &work.g_h, NULL);
+    for (;;) {
+        if (index == 0xffffffffUL) result = 0;
+        else result = cuis_call6(CUIS_WINDOW_REGION, window->native, index,
+                                 (uintptr_t)&state[0], (uintptr_t)&state[1],
+                                 (uintptr_t)&state[2], (uintptr_t)&state[3]);
+        if (result < 0) return 0;
+        if (!result) {
+            out->g_x = out->g_y = out->g_w = out->g_h = 0;
+            window->region_index = 0xffffffffUL;
+            return 1;
+        }
+        index++;
+        left = state[0] > work.g_x ? state[0] : work.g_x;
+        top = state[1] > work.g_y ? state[1] : work.g_y;
+        right = state[0] + state[2]; edge = (LONG)work.g_x + work.g_w;
+        if (right > edge) right = edge;
+        bottom = state[1] + state[3]; edge = (LONG)work.g_y + work.g_h;
+        if (bottom > edge) bottom = edge;
+        if (work.g_w > 0 && work.g_h > 0 && right > left && bottom > top) {
+            out->g_x = (short)left; out->g_y = (short)top;
+            out->g_w = (short)(right - left); out->g_h = (short)(bottom - top);
+            window->region_index = index;
+            return 1;
+        }
+    }
+}
+
 short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, short *global)
 {
     struct gem_window *window = lookup(id, global);
     GRECT r;
     if (!window) return 0;
     switch (field) {
+    case WF_FIRSTXYWH:
+    case WF_NEXTXYWH:
+        if (!visible_work(window, field == WF_FIRSTXYWH, &r)) return 0;
+        break;
     case WF_KIND:
         r.g_x = r.g_y = r.g_w = r.g_h = 0;
         break;
@@ -158,12 +202,13 @@ short wind_get(short id, short field, short *a, short *b, short *c, short *d)
 {
     return mt_wind_get(id, field, a, b, c, d, aes_global);
 }
-short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global)
+static short local_wind_set(short id, short field, short a, short b, short c, short d, short *global)
 {
     struct gem_window *window = lookup(id, global);
     if (!window) return 0;
     if (field == WF_CURRXYWH) {
         if (!configure(window, a, b, c, d)) return 0;
+        window->region_index = 0xffffffffUL;
         window->previous = window->current;
         window->current.g_x = a; window->current.g_y = b;
         window->current.g_w = c; window->current.g_h = d;
@@ -174,4 +219,60 @@ short mt_wind_set(short id, short field, short a, short b, short c, short d, sho
 short wind_set(short id, short field, short a, short b, short c, short d)
 {
     return mt_wind_set(id, field, a, b, c, d, aes_global);
+}
+
+short mt_wind_update(short code, short *global)
+{
+    LONG session = aes_application_session(global);
+    if (session < 0) return 0;
+    if (code == END_UPDATE)
+        return cuis_call6(CUIS_DISPLAY_LOCK, session, 0, 0, 0, 0, 0) == E_OK ? 1 : 0;
+    if (code != BEG_UPDATE && code != (BEG_UPDATE | NO_BLOCK)) return 0;
+    return cuis_call6(CUIS_DISPLAY_LOCK, session, 1, !(code & NO_BLOCK), 0, 0, 0) == E_OK ? 1 : 0;
+}
+short wind_update(short code) { return mt_wind_update(code, aes_global); }
+
+short mt_wind_create(short kind, short x, short y, short w, short h, short *global)
+{
+    short result;
+    if (!mt_wind_update(BEG_UPDATE, global)) return -1;
+    result = local_wind_create(kind, x, y, w, h, global);
+    if (!mt_wind_update(END_UPDATE, global)) return -1;
+    return result;
+}
+
+short mt_wind_open(short id, short x, short y, short w, short h, short *global)
+{
+    short result;
+    if (!mt_wind_update(BEG_UPDATE, global)) return 0;
+    result = local_wind_open(id, x, y, w, h, global);
+    if (!mt_wind_update(END_UPDATE, global)) return 0;
+    return result;
+}
+
+short mt_wind_close(short id, short *global)
+{
+    short result;
+    if (!mt_wind_update(BEG_UPDATE, global)) return 0;
+    result = local_wind_close(id, global);
+    if (!mt_wind_update(END_UPDATE, global)) return 0;
+    return result;
+}
+
+short mt_wind_delete(short id, short *global)
+{
+    short result;
+    if (!mt_wind_update(BEG_UPDATE, global)) return 0;
+    result = local_wind_delete(id, global);
+    if (!mt_wind_update(END_UPDATE, global)) return 0;
+    return result;
+}
+
+short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global)
+{
+    short result;
+    if (!mt_wind_update(BEG_UPDATE, global)) return 0;
+    result = local_wind_set(id, field, a, b, c, d, global);
+    if (!mt_wind_update(END_UPDATE, global)) return 0;
+    return result;
 }
