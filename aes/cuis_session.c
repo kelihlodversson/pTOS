@@ -557,7 +557,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             sample_input_waits();
             cuis_input_unlock(flags); return E_OK;
         }
-        if (!block) { cuis_input_unlock(flags); return EAGAIN; }
+        if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
         /* Keep the availability test and waiter publication under the same
          * IRQ mask, just like DISPLAY_LOCK; no lock spans task execution. */
         if (!ksched_block(mouse_available, client)) cuis_input_idle();

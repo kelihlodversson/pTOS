@@ -25,6 +25,10 @@ static int mouse_control_checks(void)
     CHECK(cuis_keyboard_event(0x1234) && wb->key_count == 1);
     run = &second;
     CHECK(ML(b,1,0) == EAGAIN && ML(b,0,0) == EACCDN);
+    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
+    input_sleeps = 0;
+    CHECK(ML(b,1,1) == EAGAIN && !input_sleeps);
+    CHECK(cuis_window_service(CUIS_UPDATE_END,window,0,0,0,0) == E_OK);
     CHECK(cuis_display_lock(b,1,0) == E_OK && cuis_vdi_policy() == 1);
     run = &first;
     CHECK(cuis_vdi_policy() == EAGAIN); /* Grabs do not grant drawing permission. */
