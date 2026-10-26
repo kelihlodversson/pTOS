@@ -33,6 +33,9 @@ static LONG stream_peer_handle;
 static ULONG input_packet_mode;
 static BOOL input_drop_focus, input_drop_on_validate;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
+static PD *mouse_release_owner;
+static ULONG mouse_release_steps;
+static BOOL mouse_release_exit;
 static PD *display_release_owner;
 static BOOL display_release_exit;
 UQUAD cuis_input_lock(void)
@@ -140,6 +143,18 @@ void cuis_input_idle(void)
         cuis_message_service(CUIS_MESSAGE_SEND, input_message_destination, 11, 22, 33, 44, 0);
         run = saved;
     }
+    if (mouse_release_owner) {
+        PD *saved = run;
+        run = mouse_release_owner;
+        if (mouse_release_exit) {
+            mouse_release_exit = FALSE; mouse_release_owner = NULL;
+            cuis_process_exit(run);
+        } else {
+            cuis_mouse_lock((*find_owner(run))->handle, 0, 0);
+            if (!--mouse_release_steps) mouse_release_owner = NULL;
+        }
+        run = saved;
+    }
     if (display_release_owner) {
         PD *saved = run;
         run = display_release_owner;
@@ -228,6 +243,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "display.c"
 #include "notices.c"
 #include "input_events.c"
+#include "mouse_control.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -300,5 +316,7 @@ int main(void)
     rc = notice_checks();
     if (rc) return rc;
     rc = input_event_checks();
-    return rc ? rc : input_capture_checks();
+    if (rc) return rc;
+    rc = input_capture_checks();
+    return rc ? rc : mouse_control_checks();
 }

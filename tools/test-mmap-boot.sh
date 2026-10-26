@@ -48,6 +48,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp obj/libaes/GEMMSG.TOS "$work/GEMPEER.TOS"
         cp obj/libaes/GEMFOC.TOS "$work/GEMFOC.TOS"
         cp obj/libaes/GEMINP.TOS "$work/GEMINP.TOS"
+        cp obj/libaes/GEMMCTL.TOS "$work/GEMMCTL.TOS"
         cp obj/libaes/GEMUPD.TOS "$work/GEMUPD.TOS"
         cp obj/libaes/GEMWIN.TOS "$work/GEMWIN.TOS"
         cp obj/libaes/GEMEVNT.TOS "$work/GEMEVNT.TOS"
@@ -83,7 +84,7 @@ if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/CUIS.TOS" ]; then
-    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS"
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
@@ -140,6 +141,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM discovery/messages: PASS' "$log"
     grep -q 'x32 GEM window messages/focus: PASS' "$log"
     grep -q 'x32 GEM input events: PASS' "$log"
+    grep -q 'x32 GEM mouse control: PASS' "$log"
     grep -q 'x32 GEM update/regions: PASS' "$log"
     grep -q 'x32 GEM window lifecycle: PASS' "$log"
     grep -q 'x32 GEM combined events: PASS' "$log"

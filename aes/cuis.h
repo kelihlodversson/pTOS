@@ -7,6 +7,7 @@
 LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e);
 LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e);
+LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block);
 LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block);
 LONG cuis_region_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y, UQUAD width, UQUAD height);
 LONG cuis_service(ULONG function, UQUAD handle);
@@ -33,6 +34,7 @@ void cuis_process_exit(PD *owner);
 #if CONF_WITH_X86_64_MEMTEST
 ULONG cuis_session_count(void);
 BOOL cuis_update_active(void);
+BOOL cuis_mouse_active(void);
 BOOL cuis_focus_active(void);
 BOOL cuis_pointer_attached(void);
 ULONG cuis_window_count(void);

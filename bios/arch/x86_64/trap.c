@@ -366,6 +366,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
                  cuis_notice_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              (fn == CUIS_STACK_QUERY || fn == CUIS_WINDOW_INFO) ?
                  cuis_stack_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             fn == CUIS_MOUSE_LOCK ? cuis_mouse_lock(frame->rdi, frame->rsi, frame->rdx) :
              fn == CUIS_DISPLAY_LOCK ? cuis_display_lock(frame->rdi, frame->rsi, frame->rdx) :
              fn == CUIS_WINDOW_REGION ? cuis_region_service(frame->rdi, frame->rsi, frame->rdx,
                  frame->r10, frame->r8, frame->r9) :

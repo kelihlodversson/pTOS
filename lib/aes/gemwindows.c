@@ -282,11 +282,16 @@ short wind_set(short id, short field, short a, short b, short c, short d)
 short mt_wind_update(short code, short *global)
 {
     LONG session = aes_application_session(global);
+    ULONG function = CUIS_DISPLAY_LOCK;
     if (session < 0) return 0;
+    if (code == END_MCTRL || code == BEG_MCTRL || code == (BEG_MCTRL | NO_BLOCK)) {
+        function = CUIS_MOUSE_LOCK;
+        code -= END_MCTRL;
+    }
     if (code == END_UPDATE)
-        return cuis_call6(CUIS_DISPLAY_LOCK, session, 0, 0, 0, 0, 0) == E_OK ? 1 : 0;
+        return cuis_call6(function, session, 0, 0, 0, 0, 0) == E_OK ? 1 : 0;
     if (code != BEG_UPDATE && code != (BEG_UPDATE | NO_BLOCK)) return 0;
-    return cuis_call6(CUIS_DISPLAY_LOCK, session, 1, !(code & NO_BLOCK), 0, 0, 0) == E_OK ? 1 : 0;
+    return cuis_call6(function, session, 1, !(code & NO_BLOCK), 0, 0, 0) == E_OK ? 1 : 0;
 }
 short wind_update(short code) { return mt_wind_update(code, aes_global); }
 

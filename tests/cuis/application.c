@@ -21,7 +21,8 @@ static LONG native_windows[64], next_native = 2147483000L;
 static ULONG window_error_fn;
 static LONG window_error;
 static ULONG window_calls, display_nesting;
-static LONG display_error, region_error;
+static LONG display_error, region_error, mouse_error;
+static ULONG mouse_nesting, mouse_block;
 static LONG region_values[3][4];
 static ULONG region_count;
 static LONG stack_values[4];
@@ -59,7 +60,7 @@ LONG cuis_call(ULONG fn, LONG id)
     if (fn == CUIS_SESSION_QUERY) return E_OK;
     if (fn == CUIS_SESSION_END) {
         if (close_result) return close_result;
-        display_nesting = 0;
+        display_nesting = mouse_nesting = 0;
         __builtin_memset(native_windows, 0, sizeof(native_windows));
         live = FALSE; closes++; return E_OK;
     }
@@ -107,6 +108,15 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         *(LONG *)(uintptr_t)c = region_values[b][0]; *(LONG *)(uintptr_t)d = region_values[b][1];
         *(LONG *)(uintptr_t)e = region_values[b][2]; *(LONG *)(uintptr_t)f = region_values[b][3];
         return 1;
+    }
+    if (fn == CUIS_MOUSE_LOCK) {
+        mouse_block = c;
+        if (mouse_error) return mouse_error;
+        if (a != (UQUAD)handle || !live) return EACCDN;
+        if (b) mouse_nesting++;
+        else if (!mouse_nesting) return EACCDN;
+        else mouse_nesting--;
+        return E_OK;
     }
     if (fn == CUIS_DISPLAY_LOCK) {
         if (display_error) return display_error;
@@ -264,7 +274,17 @@ static int display_api_checks(void)
 {
     short id, other, x = 99, y, w, h;
     CHECK(wind_update(END_UPDATE) == 0);
-    CHECK(wind_update(BEG_MCTRL) == 0 && wind_update(END_MCTRL) == 0 && wind_update(-1) == 0);
+    CHECK(wind_update(END_MCTRL) == 0 && wind_update(-1) == 0);
+    CHECK(wind_update(BEG_MCTRL | NO_BLOCK) == 1 && !mouse_block && mouse_nesting == 1);
+    CHECK(mt_wind_update(BEG_MCTRL, aes_global) == 1 && mouse_block == 1 && mouse_nesting == 2);
+    CHECK(wind_update(END_MCTRL | NO_BLOCK) == 0 && wind_update(END_UPDATE | NO_BLOCK) == 0);
+    CHECK(mouse_nesting == 2 && !display_nesting);
+    CHECK(wind_update(END_MCTRL) == 1 && mouse_nesting == 1);
+    mouse_error = EAGAIN;
+    CHECK(wind_update(BEG_MCTRL | NO_BLOCK) == 0 && mouse_nesting == 1);
+    CHECK(wind_update(END_MCTRL) == 0 && mouse_nesting == 1);
+    mouse_error = 0;
+    CHECK(mt_wind_update(END_MCTRL,aes_global) == 1 && !mouse_nesting);
     CHECK(wind_update(BEG_UPDATE | NO_BLOCK) == 1 && wind_update(BEG_UPDATE) == 1);
     CHECK(display_nesting == 2);
     id = wind_create(0, 0, 0, 100, 100);

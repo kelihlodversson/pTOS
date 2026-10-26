@@ -1037,8 +1037,8 @@ standard NO_BLOCK (0x100) modifier on BEG_UPDATE. A successful begin returns
 1, a busy nonblocking begin or other failure returns 0. Locks nest per
 registered process, including across different mt_* global arrays: only the
 final matching end releases ownership. Unmatched/foreign ends fail. Mouse
-control (BEG_MCTRL/END_MCTRL) and unknown codes return 0 until the input-grab
-slice; they are not treated as screen update locks.
+control (BEG_MCTRL/END_MCTRL) uses independent mouse ownership (see #743 below),
+not the screen update semaphore. Unknown codes return 0.
 
 The screen semaphore freezes competing native window mutations and screen
 writes, rather than tying an application to a single window. Standard window
@@ -1226,8 +1226,8 @@ mt_* bindings. evnt_multi/mt_evnt_multi support every combination of the six
 classic masks: MU_KEYBD, MU_BUTTON, MU_M1, MU_M2, MU_MESAG and MU_TIMER.
 An empty mask or an unknown extension mask fails with GEM 0 before any wait
 or consumption. Unrequested parameters remain ignored. No new appl_getinfo
-extension bits are advertised. Wheel/extended-key event masks and mouse-control
-grabs (wind_update BEG_MCTRL/END_MCTRL) remain separate work.
+extension bits are advertised. Wheel/extended-key masks remain separate work;
+mouse-control grabs are described in #743 below.
 
 Keyboard waits belong to the application, following whichever of its windows
 has focus; they can remain blocked while another application owns focus.
@@ -1320,3 +1320,63 @@ and teardown. GEMINP.TOS exercises normal shared-library GEM source in ring 3,
 including immediate button/rectangle predicates, simultaneous message/input/
 timer results and key timeouts. Hardware key delivery and delayed pointer
 transitions are tested against the production CUIS core on the host.
+
+
+GEM mouse-control ownership (#743)
+---------------------------------
+wind_update/mt_wind_update now implement BEG_MCTRL (3), END_MCTRL (2), and
+NO_BLOCK (0x100) on begin. They return GEM 1 on success, 0 on error/busy.
+Both standard and mt_* calls share nesting per registered session, independent
+of their global array. The final matching end releases the mouse; unmatched
+or foreign ends and NO_BLOCK on end fail without changing ownership.
+
+Mouse ownership is independent of the drawing semaphore. BEG_MCTRL captures
+pointer input across the entire screen, including outside owned windows and
+for windowless dialogs. It does not grant drawing permission or change
+keyboard focus, window stacking, or geometry. Applications use BEG_UPDATE
+separately when they need to protect drawing. Ordinary message/timer/input
+waits remain available during a mouse grab; whole-screen screenshot reads
+retain their existing permissions. No additional appl_getinfo bits are
+advertised by this slice.
+
+During a grab, new pointer packets reach only the owning session's predicates
+and private button history. Native pointer queues can follow an owned visible
+window when present; no window is required by the standard GEM event bindings.
+Clicks over foreign windows do not change focus, start another client's drag,
+or send WM_TOPPED. A keyboard focus change or hiding the owner's last window
+does not cancel modal mouse ownership or discard its new button history.
+Previously routed input remains valid historical input for its original owner.
+
+A begin blocks cooperatively until the mouse semaphore is free and any
+foreign held drag ends. NO_BLOCK returns immediately with 0 instead. A caller
+may acquire its own normal captured drag without deadlocking; activation
+requests and legacy/foreign held gestures cannot be stolen. Nesting an already
+owned grab succeeds immediately, even while buttons are down. Depth overflow
+fails without wrapping. A wait blocked by contention retains IRQ exclusion
+through scheduler publication, avoiding a lost wakeup. As with existing CUIS
+waits, a legacy per-window update snapshot owner cannot block on contention.
+The global standard update semaphore remains independent.
+
+Final release and normal/raw/fault process exit release every nesting level.
+If the mouse is still down, delivery remains suppressed until the matching
+release; another application never receives an orphan release as new routed
+input. No new grab can steal that held gesture. Once released, ordinary hit
+routing resumes. Session handles are checked on every operation, so reopening
+an application cannot inherit an exited client's grab.
+
+Native call 47, MOUSE_LOCK(session, acquire, block), returns E_OK or a negative
+error. All arguments are flat scalar registers: session is a nonnegative
+31-bit owned handle; acquire/block are canonical 0/1, and block must be zero
+on release. It is compiled and dispatched only under CONF_WITH_CUIS, selected
+by external libaes on the supported backend. Native EAGAIN maps to GEM 0;
+no native handles or errors escape through public wind_update bindings.
+
+Production-core tests cover windowless input, focus and visible-window changes,
+independent draw permissions, keyboard routing, nesting, malformed/foreign
+requests, overflow, foreign-drag contention, owner exit, and held-button final
+release suppression. Public binding tests cover mt forms, NO_BLOCK and failure
+retention. GEMMCTL.TOS uses normal GEM source in isolated shared-library apps:
+a windowless parent holds two levels, a windowed child remains blocked until
+the final end, then raw-exits with a nested grab so the parent can continue.
+Session exit/re-registration also proves cleanup. Resource snapshots and the
+boot suite check that no mouse owner, window, session or allocation remains.
