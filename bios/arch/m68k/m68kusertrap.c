@@ -65,6 +65,32 @@ static const struct shape xshape[] = {
     { 0x2C, "w" },                      /* Bconmap */
 };
 
+#if CONF_ATARI_HIGHER_HALF
+/*
+ * The Atari has far more XBIOS calls than the shared checks of
+ * bios/biosaccess.c know of, and several of them hand an address to the
+ * kernel that it would use in supervisor mode: Mfpint() and Xbtimer() install
+ * an interrupt handler, VgetRGB() writes to a pointer, Keytbl() and Prtblk()
+ * read tables at one.  So a program may make only the calls below, whose
+ * arguments are numbers or are checked by xbios_check_user_args(); the rest
+ * are refused until they are checked one by one.
+ */
+static BOOL atari_xbios_allowed(WORD fn)
+{
+    switch (fn) {
+    case 0x00: case 0x02: case 0x03: case 0x04: case 0x05: case 0x06:
+    case 0x07: case 0x0C: case 0x0F: case 0x11: case 0x12: case 0x15:
+    case 0x16: case 0x17: case 0x18: case 0x19: case 0x1A: case 0x1B:
+    case 0x1C: case 0x1D: case 0x1E: case 0x20: case 0x21: case 0x23:
+    case 0x25: case 0x27: case 0x2A: case 0x2B: case 0x2C: case 0x40:
+    case 0x58: case 0x59: case 0x5A: case 0x5B: case 0x5D:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+#endif
+
 /* the arguments of the call as the longs bios/usertrap.c looks at; a[0-3] the first four, rest[0] the fifth */
 static void decode(const char *w, const WORD *pw, long *a, long *rest)
 {
@@ -114,6 +140,10 @@ LONG m68k_user_biosxbios(struct bxargs *args)
         decode(w, pw + 1, a, rest);
     if (args->xbios && fn == XB_SUPEXEC)
         return EACCDN;
+#if CONF_ATARI_HIGHER_HALF
+    if (args->xbios && !atari_xbios_allowed(fn))
+        return EACCDN;
+#endif
     rc = bios_user_check(fn, a, rest, (int)args->xbios);
     if (rc != E_OK)
         return rc;

@@ -63,11 +63,13 @@ D_BASE          = 0x7fff0000 + 0xfc00
 // and the source of the kernel half of every other one (aspace_hw030.c): all
 // of it is the kernel's, none of it is for a program
 PAGE            = D_BASE + DT_PAGE + D_USED + D_MOD + D_SUPER
+PAGE_SUPER      = PAGE                  // (the bit is added once: twice would carry out of it)
+PAGE_IO         = PAGE + D_CI
 #else
 PAGE            = D_BASE + DT_PAGE + D_USED + D_MOD
-#endif
 PAGE_SUPER      = PAGE + D_SUPER
 PAGE_IO         = PAGE + D_SUPER + D_CI
+#endif
 TABLE           = D_BASE + DT_TABLE + D_USED
 
 WINDOW          = 0x80000000

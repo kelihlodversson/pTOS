@@ -34,6 +34,7 @@ void m68k_user_fault(void) NORETURN;
 
 /* the 68030 bus error frames (format A, 32 bytes, and format B, 92 bytes) */
 #define F30_SSW     10
+#define F30_STAGEB  0x24                /* format B only: the address of the instruction pipe stage B */
 #define F30_FADDR   16                  /* the address of the data cycle that failed */
 
 #define SSW30_FC    0x8000              /* a fault on the instruction pipe, stage C */
@@ -222,12 +223,17 @@ int m68k_user_busfault(void)
             size = sizes[(ssw & SSW30_SIZ) >> 4];
             misaligned = (address & (USER_PAGE_SIZE - 1)) + size > USER_PAGE_SIZE;
         } else if (ssw & (SSW30_FC | SSW30_FB)) {
-            /* the instruction pipe: the words after the one that runs (the address the
-             * frame gives for them is not worked out; the pages of the next eight bytes
-             * are asked for) */
+            /* the instruction pipe: the words after the one that runs (format B
+             * names the address of stage B; format A does not, and the pages of the
+             * next eight bytes are asked for) */
             address = *(const ULONG *)(f + 2);
-            write = FALSE;
             size = 8;
+            if ((fv >> 12) == 0xb) {
+                /* the long frame gives the address of stage B: stage C is the word before it */
+                address = *(const ULONG *)(f + F30_STAGEB) - ((ssw & SSW30_FC) ? 2 : 0);
+                size = (ssw & SSW30_FC) ? 4 : 2;
+            }
+            write = FALSE;
             misaligned = TRUE;
             fetch = TRUE;
         } else {

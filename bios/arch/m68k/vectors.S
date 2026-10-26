@@ -1488,6 +1488,16 @@ biosxbios:
         addq.l  #4,sp
 #endif
         lea     16(sp),sp
+#if CONF_ATARI_HIGHER_HALF
+        // as at the return from a GEMDOS call (uspaceasm.S): the 68030's data
+        // cache is addressed logically, and what the call wrote into the
+        // memory of the process is not what its lines under the user address hold
+        move.l  d0,-(sp)
+        MOVEC_CACR_D0
+        or.l    #0x0800,d0              // CD: clear the data cache
+        MOVEC_D0_CACR
+        move.l  (sp)+,d0
+#endif
         moveq   #0,d1                   // (nothing of the kernel's is left in a register)
         moveq   #0,d2
         sub.l   a0,a0
