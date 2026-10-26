@@ -40,3 +40,12 @@ LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQU
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
+
+LONG aes_graphics_call(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
+{
+    register UQUAD ax __asm__("rax") = (0x100ULL << 32) | function;
+    register UQUAD fourth __asm__("r10") = d;
+    __asm__ volatile ("syscall" : "+a"(ax) : "D"(a), "S"(b), "d"(c), "r"(fourth)
+        : "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}
