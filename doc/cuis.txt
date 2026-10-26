@@ -1391,11 +1391,11 @@ space. The shared library reuses the original aes/ object painter,
 traversal, state changes and GSX text/border/layout routines as separately
 compiled C units in aes/shared/. Shared resource loaders and object-tree
 helpers live there too. The same drawing sources build into native AES and
-libaes; internal
-headers declare their interfaces and bind libaes to a private drawing context.
-Only the low-level VDI transport and drawing context have userspace bindings; the kernel receives only existing bounded VDI primitive
-requests and never an object-tree or callback pointer. No new production
-kernel service or configuration option is needed.
+libaes; internal headers declare their interfaces and bind libaes to a
+private drawing context. Only the low-level VDI transport and drawing
+context have userspace bindings; the kernel receives only existing bounded
+VDI primitive requests and never an object-tree or callback pointer. No new
+production kernel service or configuration option is needed.
 
 This first drawing slice supports classic G_BOX, G_IBOX, G_BOXCHAR,
 G_BUTTON, G_STRING, G_TITLE, G_TEXT, G_BOXTEXT, G_FTEXT, G_FBOXTEXT and
