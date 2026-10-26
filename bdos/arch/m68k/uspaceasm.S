@@ -60,6 +60,16 @@ C_SYM(enter):
         move.l  (sp)+,a0
         move.l  a0,usp
         movem.l (sp)+,d0-d7/a0-a6
+#if CONF_ATARI_HIGHER_HALF
+        // the 68030's data cache is addressed logically: what the call wrote
+        // into the memory of the process through the window is not what a
+        // line of it under the address of the process holds
+        move.l  d0,-(sp)
+        MOVEC_CACR_D0
+        or.l    #0x0800,d0              // CD: clear the data cache
+        MOVEC_D0_CACR
+        move.l  (sp)+,d0
+#endif
         rte
 
 enter_refuse:

@@ -54,7 +54,7 @@ struct alloc {
     UQUAD gen;                  /* unique per allocation, never reused */
 };
 
-static UQUAD next_gen = 1;
+static UQUAD gens;              /* generations handed out (no initialised data: the Atari image is a ROM) */
 
 static PADDR window_phys;       /* physical base of the backing block */
 static ULONG used[WORDS];       /* bit per window page: in a live allocation */
@@ -147,7 +147,7 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     a->pages = pages;
     a->owner = NULL;
     a->pins = 0;
-    a->gen = next_gen++;
+    a->gen = ++gens;
     a->next = allocs;
     allocs = a;
 
@@ -235,7 +235,7 @@ BOOL procmem_free(void *p)
 
 UQUAD procmem_next_gen(void)
 {
-    return next_gen;
+    return gens + 1;
 }
 
 ULONG procmem_free_ownerless_since(UQUAD gen)

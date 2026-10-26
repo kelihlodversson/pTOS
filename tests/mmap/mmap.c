@@ -335,8 +335,10 @@ static void test_file(void)
                 ptest_fail("a file mapping does not show the file");
                 break;
             }
-#if defined(__mc68000__)
-        /* a locked read-modify-write on a clean page is a write: the page is copied */
+#if defined(__mc68000__) && !defined(TEST_NO_RMW_FAULTS)
+        /* a locked read-modify-write on a clean page is a write: the page is copied
+         * (not on the 68030, where such a fault ends the process: the bus error
+         * frame cannot be run again for it, as in FreeMiNT) */
         {
             volatile unsigned char *q = p + PAGE + 5;
             unsigned char before = page[1][5];

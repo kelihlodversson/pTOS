@@ -1939,6 +1939,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
+              $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_NO_RMW_FAULTS) \
               $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K)),-DTEST_WITH_ELF_SHARED)) \
               $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
@@ -2244,6 +2245,23 @@ test-hd.img: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $
 
 .PHONY: test-hd
 test-hd: test-hd.img
+
+# The same disk for an image whose shell is a program (CONF_EXTERNAL_CLI) and
+# that has no console to type into (Hatari, with a Falcon whose image has no AES;
+# tools/run-hatari-tests.py --mode f030a): the test harness is the shell, as
+# SHELL.TOS in the root directory (and still RUNTESTS.TOS, which some tests
+# start themselves), and EmuCON is left off, so that the kernel starts the
+# tests by itself.
+TEST_SHELL_STAGE = obj/test-shell
+test-hd-shell.img: test-hd.img runtests.tos
+	@echo '  MKHD   $@'
+	@rm -rf $(TEST_SHELL_STAGE)
+	@mkdir -p $(TEST_SHELL_STAGE)
+	@cp runtests.tos $(TEST_SHELL_STAGE)/SHELL.TOS
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_SHELL_STAGE)/SHELL.TOS $(filter-out $(EMUCON_TOS),$(TEST_HD_FILES)) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
+
+.PHONY: test-hd-shell
+test-hd-shell: test-hd-shell.img
 
 # The same files as a plain host directory, for QEMU's virtual FAT driver
 # (-drive file=fat:rw:test-dir,format=raw,...): no disk image to build and

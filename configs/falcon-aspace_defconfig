@@ -1,0 +1,16 @@
+# 512 KB Atari ROM image for the Falcon with every process in an address space of
+# its own (#727, #571): falcon-mmu (the kernel in the upper half, the 68030 MMU on
+# from the first instruction, #726) plus CONF_WITH_PROCESS_ASPACES.  The shell is
+# the program EMUCON.TOS (or SHELL.TOS) of the boot drive, run in user mode with
+# page tables of its own; the kernel half is supervisor-only and a fault in a
+# process ends that process only.  There is no desktop yet: the VDI and the AES
+# cannot be called from user mode.  Boots under Hatari with --machine falcon
+# --cpulevel 3 --mmu on (tools/run-hatari-tests.py --mode f030a).
+TARGET_512=y
+BUILD_UNIQUE_COUNTRY=y
+CONF_ATARI_HIGHER_HALF=y
+CONF_WITH_AES=n
+CONF_WITH_ELF_LOADER=y
+CONF_EXTERNAL_CLI=y
+CONF_WITH_PROCESS_ASPACES=y
+CONF_WITH_MMAP=y

@@ -37,6 +37,11 @@
  */
 ULONG virt_to_phys(const void *va);
 
+#if CONF_WITH_PROCESS_ASPACES
+/* Before a reset (panicasm.S): the static tree is loaded again. */
+void machine_reset_prepare(void);
+#endif
+
 /* The pool address (lower half) of the byte after the kernel image, whose
  * address in the window is given: the pool starts there (bios/biosmem.c). */
 UBYTE *virt_pool_start(UBYTE *kernel_end);

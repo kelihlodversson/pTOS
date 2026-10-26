@@ -1,5 +1,5 @@
 /*
- * userfault.c - an exception in a process in its own address space (68040, 68060)
+ * userfault.c - an exception in a process in its own address space (68030, 68040, 68060)
  *
  * vectors.S's any_vec calls m68k_user_fault() on the kernel stack of a
  * process that took an exception in user mode, with the exception frame at
@@ -31,6 +31,18 @@ extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, U
 ULONG user_fault_frame;                 /* the exception frame (any_vec) */
 
 void m68k_user_fault(void) NORETURN;
+
+/* the 68030 bus error frames (format A, 32 bytes, and format B, 92 bytes) */
+#define F30_SSW     10
+#define F30_FADDR   16                  /* the address of the data cycle that failed */
+
+#define SSW30_FC    0x8000              /* a fault on the instruction pipe, stage C */
+#define SSW30_FB    0x4000              /* ... stage B */
+#define SSW30_DF    0x0100              /* a fault on a data cycle */
+#define SSW30_RM    0x0080              /* the cycle was a read-modify-write */
+#define SSW30_READ  0x0040
+#define SSW30_SIZ   0x0030              /* 0 long, 1 byte, 2 word, 3 three bytes */
+#define SSW30_FCODE 0x0007
 
 static const char *cause_of(LONG vector)
 {
@@ -64,6 +76,8 @@ void m68k_user_fault(void)
         address = *(const ULONG *)(f + 20);
     else if ((fv >> 12) == 2 || (fv >> 12) == 4)   /* (68060 access error: format 4) */
         address = *(const ULONG *)(f + 8);
+    else if (((fv >> 12) == 0xa || (fv >> 12) == 0xb) && (*(const UWORD *)(f + F30_SSW) & SSW30_DF))
+        address = *(const ULONG *)(f + F30_FADDR);    /* (68030 bus error: the data cycle that failed) */
     proc_fault(cause_of(proc_enum), (UQUAD)proc_enum, address, pc, (UQUAD)(ULONG)proc_usp);
 }
 
@@ -157,7 +171,8 @@ static BOOL write_back(UWORD status, ULONG address, ULONG data, BOOL lane_aligne
  * exception frame at user_fault_frame: if the page is one of its lazy memory (or a file page it
  * writes to), back it and return 1 -- the 68040 runs a faulting read again,
  * and the writes it still owed are done here -- else 0, and the fault is the
- * process's own (m68k_user_fault()).  Only the 68040 frame is understood.
+ * process's own (m68k_user_fault()).  The frames of the 68040, 68060 and 68030 are
+ * understood.
  */
 int m68k_user_busfault(void);
 
@@ -167,7 +182,7 @@ int m68k_user_busfault(void)
     UWORD fv = *(const UWORD *)(f + 6);
     ULONG address, size;
     ASPACE_ROOT root = kproc_user_root(run);
-    BOOL write, misaligned, writebacks;
+    BOOL write, misaligned, writebacks, fetch = FALSE;
     UWORD ssw = 0;
     UWORD access;
     int answer;
@@ -192,6 +207,33 @@ int m68k_user_busfault(void)
         size = sizes[(fslw & FSLW_SIZE) >> 21];
         ssw = (UWORD)(fslw >> 16);
         writebacks = FALSE;
+    } else if ((fv >> 12) == 0xa || (fv >> 12) == 0xb) {   /* 68030: precise, the cycle is run again by the RTE */
+        static const UBYTE sizes[4] = { 4, 1, 2, 3 };
+
+        ssw = *(const UWORD *)(f + F30_SSW);
+        /* a fault in a read-modify-write cycle (TAS, CAS) is not served: the CPU
+         * cannot be relied on to run the whole cycle again (FreeMiNT does not
+         * either): the process's own */
+        if (ssw & SSW30_RM)
+            return 0;
+        if (ssw & SSW30_DF) {
+            address = *(const ULONG *)(f + F30_FADDR);
+            write = !(ssw & SSW30_READ) || (ssw & SSW30_RM);
+            size = sizes[(ssw & SSW30_SIZ) >> 4];
+            misaligned = (address & (USER_PAGE_SIZE - 1)) + size > USER_PAGE_SIZE;
+        } else if (ssw & (SSW30_FC | SSW30_FB)) {
+            /* the instruction pipe: the words after the one that runs (the address the
+             * frame gives for them is not worked out; the pages of the next eight bytes
+             * are asked for) */
+            address = *(const ULONG *)(f + 2);
+            write = FALSE;
+            size = 8;
+            misaligned = TRUE;
+            fetch = TRUE;
+        } else {
+            return 0;
+        }
+        writebacks = FALSE;
     } else {
         return 0;
     }
@@ -199,7 +241,7 @@ int m68k_user_busfault(void)
         return 0;
     /* (an instruction fetch asks no more than a read: nothing here is executable
      * for its own sake on a CPU without an execute-disable bit) */
-    access = write ? ASPACE_PROT_WRITE : ((fv >> 12) == 7 && (ssw & SSW_TM) == 2 ? ASPACE_PROT_EXEC : 0);
+    access = write ? ASPACE_PROT_WRITE : (((fv >> 12) == 7 && (ssw & SSW_TM) == 2) || fetch ? ASPACE_PROT_EXEC : 0);
     answer = kproc_demand_page(run, address, access);
     if (misaligned) {
         /*

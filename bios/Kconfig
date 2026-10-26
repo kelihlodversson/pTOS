@@ -757,6 +757,9 @@ config CONF_RASPI_TIMER_C
 config CONF_WITH_CARTRIDGE
 	bool "ROM port cartridge support"
 	depends on CONF_ATARI_HARDWARE && !DIAGNOSTIC_CARTRIDGE
+	# a cartridge program runs in supervisor mode at the addresses of the
+	# ROM port, which a process's address space does not map
+	depends on !CONF_WITH_PROCESS_ASPACES
 	default n if MACHINE_ARANYM
 	default y
 	help

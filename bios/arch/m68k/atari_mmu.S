@@ -27,6 +27,12 @@
  *
  * Nothing else is mapped.  TT0 and TT1 are off.
  *
+ * With CONF_WITH_PROCESS_ASPACES (#727) every page above is supervisor-only,
+ * and the tree is only what the machine starts with, what a reset needs back
+ * and, in its upper half (root entries 64-127), the kernel half that
+ * aspace_hw030.c copies into the root of every address space; the user half
+ * of a process is its own.
+ *
  * Copyright (C) 2026 The pTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
@@ -52,7 +58,14 @@ D_CI            = 0x40          // page descriptors only
 D_SUPER         = 0x100
 D_BASE          = 0x7fff0000 + 0xfc00
 
+#if CONF_WITH_PROCESS_ASPACES
+// With an address space for every process (#727) this tree is the boot tree
+// and the source of the kernel half of every other one (aspace_hw030.c): all
+// of it is the kernel's, none of it is for a program
+PAGE            = D_BASE + DT_PAGE + D_USED + D_MOD + D_SUPER
+#else
 PAGE            = D_BASE + DT_PAGE + D_USED + D_MOD
+#endif
 PAGE_SUPER      = PAGE + D_SUPER
 PAGE_IO         = PAGE + D_SUPER + D_CI
 TABLE           = D_BASE + DT_TABLE + D_USED
