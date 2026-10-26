@@ -1012,7 +1012,11 @@ All ordinary results are GEM 1/0, never negative CUIS error codes.
 wind_calc is local and requires no registration. For kind zero, WC_WORK insets
 the border by one pixel on each side, and WC_BORDER reverses that calculation,
 matching classic GEM plain-window geometry. WF_WORKXYWH uses the same rule on
-the current border rectangle. Arithmetic/results retain GEM short coordinate
+the current border rectangle. In particular, after wind_close the zero border
+produces (1,1,-2,-2), matching the existing GEM AES close/draw_change/wm_calc
+path; it is not clamped to an invented zero work rectangle. A closed window
+can subsequently receive WF_CURRXYWH and reports the corresponding work area
+without becoming visible. Arithmetic/results retain GEM short coordinate
 semantics. Outputs are written only on success and may alias inputs; optional
 NULL outputs are ignored. Non-NULL invalid pointers fault in userspace.
 

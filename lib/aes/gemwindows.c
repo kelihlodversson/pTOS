@@ -143,6 +143,8 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     case WF_PREVXYWH: r = window->previous; break;
     case WF_FULLXYWH: r = window->full; break;
     case WF_WORKXYWH:
+        /* Match GEM draw_change: even a closed zero border is passed through
+         * WC_WORK, rather than clamped to a new empty-work convention. */
         r = window->current;
         if (!mt_wind_calc(WC_WORK, 0, r.g_x, r.g_y, r.g_w, r.g_h,
                           &r.g_x, &r.g_y, &r.g_w, &r.g_h, global)) return 0;

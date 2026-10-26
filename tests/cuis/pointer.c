@@ -136,6 +136,15 @@ static int window_limit_checks(void)
     }
     CHECK(window_total == CUIS_WINDOW_LIMIT && cuis_window_count() == CUIS_WINDOW_LIMIT);
     CHECK(cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0) == ENSMEM);
+    /* Even an inconsistent global count must not publish identifier zero. */
+    {
+        ULONG released = frees, handles = next_window_handle;
+        window_total--;
+        CHECK(cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0) == ENSMEM);
+        CHECK(frees == released + 1 && next_window_handle == handles);
+        CHECK(window_total == CUIS_WINDOW_LIMIT - 1 && (*find_owner(run))->window_count == 0);
+        window_total++;
+    }
     run = &first;
     CHECK(PW(CUIS_WINDOW_DESTROY, oldest) == E_OK);
     run = &fifth;

@@ -25,6 +25,16 @@ static int window_checks(void)
     CHECK(first_window == 0 && cuis_window_count() == 1);
     CHECK(cuis_window_service(CUIS_WINDOW_IDENTIFY, first_window, ~0ULL, 0, 0, 0) == 1);
     CHECK(cuis_window_service(CUIS_WINDOW_IDENTIFY, 0x100000000ULL, 0, 0, 0, 0) == EINVAL);
+    {
+        ULONG handles = next_window_handle, count = window_total, released = frees;
+        client->windows->identifier = CUIS_WINDOW_LIMIT + 1;
+        CHECK(cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0) == ENSMEM);
+        CHECK(frees == released + 1 && next_window_handle == handles && window_total == count);
+        client->windows->identifier = 0;
+        CHECK(cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0) == ENSMEM);
+        CHECK(frees == released + 2 && next_window_handle == handles && window_total == count);
+        client->windows->identifier = 1;
+    }
     CHECK(client->windows->x == -1 && client->windows->y == -2 &&
           client->windows->width == 30 && client->windows->height == 40);
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, first_window, -5LL, 6, 70, 80) == E_OK);

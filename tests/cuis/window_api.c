@@ -29,6 +29,16 @@ static int gem_window_checks(short *global)
     WINDOW_VERIFY(mt_wind_close(id, global) == 1 && wind_close(id) == 0);
     WINDOW_VERIFY(wind_get(id, WF_CURRXYWH, &x, &y, &w, &h) == 1 && !(x | y | w | h));
     WINDOW_VERIFY(wind_get(id, WF_PREVXYWH, &x, &y, &w, &h) == 1 && x == 20 && y == 30);
+    /* GEM's close path applies WC_WORK to the zero border. Do not clamp
+     * these values or substitute a new closed-window geometry convention. */
+    WINDOW_VERIFY(wind_get(id, WF_WORKXYWH, &x, &y, &w, &h) == 1);
+    WINDOW_VERIFY(x == 1 && y == 1 && w == -2 && h == -2);
+    WINDOW_VERIFY(wind_calc(WC_WORK, 0, 0, 0, 0, 0, &x, &y, &w, &h) == 1);
+    WINDOW_VERIFY(x == 1 && y == 1 && w == -2 && h == -2);
+    WINDOW_VERIFY(wind_set(id, WF_CURRXYWH, 10, 20, 60, 50) == 1);
+    WINDOW_VERIFY(wind_get(id, WF_WORKXYWH, &x, &y, &w, &h) == 1);
+    WINDOW_VERIFY(x == 11 && y == 21 && w == 58 && h == 48);
+    WINDOW_VERIFY(wind_close(id) == 0); /* Geometry does not open a window. */
     WINDOW_VERIFY(mt_wind_open(id, 1, 2, 30, 40, global) == 1 && mt_wind_delete(id, global) == 1);
     WINDOW_VERIFY(wind_delete(id) == 0 && wind_get(id, WF_KIND, &x, &y, &w, &h) == 0);
     WINDOW_VERIFY(wind_open(0, 1, 2, 3, 4) == 0 && wind_delete(-1) == 0);

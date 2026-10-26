@@ -495,8 +495,10 @@ static UWORD window_identifier(void)
     CUIS_WINDOW *window;
     UWORD id;
     for (client = clients; client; client = client->next)
-        for (window = client->windows; window; window = window->next)
+        for (window = client->windows; window; window = window->next) {
+            if (!window->identifier || window->identifier > CUIS_WINDOW_LIMIT) return 0;
             used[window->identifier] = 1;
+        }
     for (id = 1; id <= CUIS_WINDOW_LIMIT; id++)
         if (!used[id]) return id;
     return 0; /* The global quota is checked before allocating a window. */
@@ -522,8 +524,9 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
             next_window_handle > 0x7fffffffUL) return ENSMEM;
         window = kalloc(sizeof(*window));
         if (!window) return ENSMEM;
-        window->handle = next_window_handle++;
         window->identifier = window_identifier();
+        if (!window->identifier) { kfree(window); return ENSMEM; }
+        window->handle = next_window_handle++;
         window->znext = NULL;
         window->visible = FALSE;
         window->redraw = FALSE;
