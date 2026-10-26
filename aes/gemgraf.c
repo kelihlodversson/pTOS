@@ -31,6 +31,7 @@
 #include "gemgsxif.h"
 #include "optimopt.h"
 #include "gsx2.h"
+#include "gemrender.h"
 #include "rectfunc.h"
 
 
@@ -70,24 +71,18 @@ GLOBAL GRECT    gl_rmenu;       /* the menu bar */
  * the following are used to save the currently-set values for
  * various VDI attributes, in order to save unnecessary VDI calls
  */
-static WORD     gl_mode;        /* text writing mode (vswr_mode) */
-static WORD     gl_tcolor;      /* text colour (vst_color) */
-static WORD     gl_lcolor;      /* line colour (vsl_color) */
-static WORD     gl_fis;         /* interior type (vsf_interior) */
-static WORD     gl_patt;        /* style of fill pattern (vsf_style) */
-static WORD     gl_font;        /* font type (IBM/SMALL) for v_gtext */
+WORD            gl_mode;        /* text writing mode (vswr_mode) */
+WORD            gl_tcolor;      /* text colour (vst_color) */
+WORD            gl_lcolor;      /* line colour (vsl_color) */
+WORD            gl_fis;         /* interior type (vsf_interior) */
+WORD            gl_patt;        /* style of fill pattern (vsf_style) */
+WORD            gl_font;        /* font type (IBM/SMALL) for v_gtext */
 
-static WORD     gl_wptschar;    /* width of character (normal font) */
-static WORD     gl_hptschar;    /* height of character (normal font) */
+WORD            gl_wptschar;    /* width of character (normal font) */
+WORD            gl_hptschar;    /* height of character (normal font) */
 
-static WORD     gl_wsptschar;   /* width of character (small font) */
-static WORD     gl_hsptschar;   /* height of character (small font) */
-
-
-/*
- *  Routine to set the clip rectangle.  If the w,h of the clip is 0,
- *  then no clip should be set.  Otherwise, set the appropriate clip.
- */
+WORD            gl_wsptschar;   /* width of character (small font) */
+WORD            gl_hsptschar;   /* height of character (small font) */
 
 
 /*
@@ -107,11 +102,6 @@ void gsx_pline(WORD offx, WORD offy, WORD cnt, const Point *pts)
 
     gsx_xline(cnt, ptsin);
 }
-
-
-/*
- *  Routine to draw a clipped polyline, hiding the mouse as you do it
- */
 
 
 /*
@@ -218,11 +208,6 @@ void gsx_start(void)
     r_set(&gl_rcenter, (gl_width-gl_wbox)/2, (gl_height-(2*gl_hbox))/2, gl_wbox, gl_hbox);
     r_set(&gl_rmenu, 0, 0, gl_width, gl_hbox);
 }
-
-
-/*
- *  Routine to do a filled bit blit (a rectangle)
- */
 
 
 static void gr_gblt(WORD *pimage, GRECT *pi, WORD col1, WORD col2)

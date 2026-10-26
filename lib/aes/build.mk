@@ -16,7 +16,7 @@ obj/libaes/draw_memory.o: $(LIBAES_MEMORY-y) $(AUTOCONF_H)
 	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
 # Compile shared C units normally, binding their GSX state to a private context.
 LIBAES_RENDER_OBJECTS = obj/libaes/gemrender.o obj/libaes/gemrender_graphics.o obj/libaes/gemgraphutil.o
-$(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/%.c aes/gemrender.h lib/aes/render_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
+$(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/%.c aes/gemrender.h aes/gemrender_binding.h lib/aes/render_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -DAES_RENDER_BINDINGS='"render_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemobjwalk.o: aes/gemobjwalk.c aes/gemrender.h $(AUTOCONF_H)

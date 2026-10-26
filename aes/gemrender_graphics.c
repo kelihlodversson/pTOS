@@ -16,7 +16,12 @@
 #include "string.h"
 #include "gsx2.h"
 #include "gemrender.h"
+#include "gemrender_binding.h"
 
+/*
+ *  Routine to set the clip rectangle.  If the w,h of the clip is 0,
+ *  then no clip should be set.  Otherwise, set the appropriate clip.
+ */
 void gsx_sclip(const GRECT *pt)
 {
     gl_clip = *pt;
@@ -65,6 +70,9 @@ WORD gsx_chkclip(GRECT *pt)
     return TRUE;
 }
 
+/*
+ *  Routine to draw a clipped polyline, hiding the mouse as you do it
+ */
 void gsx_cline(UWORD x1, UWORD y1, UWORD x2, UWORD y2)
 {
     WORD pxy[4] = { x1, y1, x2, y2 };
@@ -129,6 +137,9 @@ static void gsx_box(GRECT *pt)
     v_pline(5, ptsin);
 }
 
+/*
+ *  Routine to do a filled bit blit (a rectangle)
+ */
 void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh)
 {
     gsx_attr(TRUE, mode, gl_tcolor);

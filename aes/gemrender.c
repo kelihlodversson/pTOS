@@ -16,6 +16,7 @@
 #include "string.h"
 #include "gsx2.h"
 #include "gemrender.h"
+#include "gemrender_binding.h"
 
 #if OB_RENDER_3D
 /*

@@ -8,15 +8,9 @@ void ob_render_object(OBJECT *tree, WORD object, WORD x, WORD y);
 void ob_render_change(OBJECT *tree, WORD object, UWORD state, WORD redraw);
 BOOL ob_render_cancelled(OBJECT *tree);
 
-/* The library build supplies a private drawing context instead of AES globals.
- * Include this header after the declarations used by the renderer. */
-#ifdef AES_RENDER_BINDINGS
-#include AES_RENDER_BINDINGS
-#endif
-#ifndef OB_RENDER_3D
-#define OB_RENDER_3D CONF_WITH_3D_OBJECTS
-#define OB_RENDER_NICELINES CONF_WITH_NICELINES
-#define OB_RENDER_COLOUR_ICONS CONF_WITH_COLOUR_ICONS
-#define OB_RENDER_EXTENDED CONF_WITH_EXTENDED_OBJECTS
-#endif
+/* Native GSX caches, initialised by gsx_start() and used by shared painting.
+ * The userspace binding substitutes fields of its per-call context. */
+extern WORD gl_mode, gl_tcolor, gl_lcolor, gl_fis, gl_patt, gl_font;
+extern WORD gl_wptschar, gl_hptschar, gl_wsptschar, gl_hsptschar;
+
 #endif
