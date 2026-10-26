@@ -438,6 +438,16 @@ from virt-m68k below:
     (virt_to_phys(), include/atari_mmu.h).
   - The image is for the 68030 only: the 68040 and 68060 have another MMU
     (#728), and the ROM does not check for the CPU before it uses the MMU.
+  - As on virt-m68k-mmu, nothing hides the kernel's addresses from a program
+    yet: without CONF_WITH_PROCESS_ASPACES the rules of doc/kernel-pointers.txt
+    do not apply, and what is in .bss or the ROM is a negative LONG when it is
+    handed out (the records of Iorec() and Bconmap(-2), the BPB, an
+    scsidriv handle).  A program that tests such a result for an error code
+    will take it for one.  Dosound() takes -1 as the query, not any negative
+    address, for the same reason.  #727 brings the rules, with the address
+    spaces they are for.  Static Alt-RAM (CONF_WITH_STATIC_ALT_RAM) is not
+    offered with this option: the pool layout of the window has no place
+    for it.
   - Hatari's 68030 (WinUAE core, --mmu on) runs it: the regression suite
     passes there (tools/run-hatari-tests.py f030, the hatari-tests.yml job
     falcon-mmu).  So the loading of CRP and TC with the code running through

@@ -322,6 +322,7 @@ config CONF_ATARI_HIGHER_HALF
 	depends on MACHINE_ATARI && (TARGET_512 || TARGET_1024)
 	depends on CONF_WITH_ADVANCED_CPU
 	depends on BUILD_TOOLCHAIN_IS_ELF
+	depends on !CONF_WITH_STATIC_ALT_RAM
 	default n
 	help
 	  Link the ROM into the physical-memory window at 0x80000000 (the
