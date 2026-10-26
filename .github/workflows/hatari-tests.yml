@@ -1,7 +1,8 @@
 #
 # Regression tests under Hatari: runtests.tos (tests/, doc in tests/readme.md)
 # on the test disk, on an emulated STE in the three ST screen modes and on an
-# emulated Falcon with a 68030 and with a 68040.  The two blitter suites
+# emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725).
+# The two blitter suites
 # (text_blit and raster_copy) compare the blitter with the CPU path pixel by
 # pixel, and have to run, not skip themselves, on every one of them; the
 # Falcon is the one with a data cache (the blitter paths flush and invalidate

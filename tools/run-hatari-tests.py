@@ -15,7 +15,10 @@
 #   --disk FILE   the test disk made by "make test-hd"
 #   --mode MODE   low, med or high: an STE with 4 MB in that ST screen mode;
 #                 f030 or f040: a Falcon with a 68030 or a 68040 and 14 MB,
-#                 in the screen mode pTOS starts it in (640x480, 16 colours)
+#                 in the screen mode pTOS starts it in (640x480, 16 colours),
+#                 with the MMU emulated (--mmu on), so that the page tables
+#                 pTOS builds for the caches (CONF_WITH_68030_PMMU,
+#                 CONF_WITH_68040_PMMU) are walked and not just written
 #   --timeout SEC give up after this long (default 600)
 #
 # The harness prints what each test did on the console, which Hatari's
@@ -56,7 +59,7 @@ def main():
         cmd = ['hatari', '--tos', a.tos, '--machine', 'falcon',
                '--cpulevel', '3' if a.mode == 'f030' else '4',
                '--memsize', '14', '--dsp', 'none', '--sound', 'off',
-               '--monitor', 'vga', '--ide-master', disk]
+               '--mmu', 'on', '--monitor', 'vga', '--ide-master', disk]
     else:
         cmd = ['hatari', '--tos', a.tos, '--machine', 'ste', '--memsize', '4',
                '--sound', 'off', '--tos-res', a.mode,
