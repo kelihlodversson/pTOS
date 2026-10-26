@@ -753,8 +753,8 @@ evnt_timer and appl_getinfo, with matching mt_* forms, aes_global[15],
 gl_apid and gl_ap_version. include/gem.h declares this implemented subset;
 the same application fixture also compiles against GEMlib's normal headers.
 This is the first public adapter slice, not a complete GEM AES replacement.
-Named discovery, appl_read/write, combined events and window/input adapters
-are subsequent work. Existing aes_session_*/aes_window_*/aes_message_* exports
+Discovery and application pipes are described below. Combined events and
+window/input adapters remain subsequent work. Existing aes_session_*/aes_window_*/aes_message_* exports
 remain transitional test/migration interfaces, not application requirements.
 
 appl_init implicitly opens the process's CUIS session and returns its kernel
@@ -764,8 +764,8 @@ IDs. Repeated initialization reuses the process registration. The caller's
 15-word global array is initialized with AES global-layout ABI 0x0400,
 multitasking sentinel -1 and its application ID; other slots are
 zero until their facilities migrate. This ABI value does not claim complete
-AES 4 functionality. appl_getinfo currently returns 0 and clears its output
-words for every query, advertising no unimplemented extensions. Optional
+AES 4 functionality. Unsupported appl_getinfo queries return 0 and clear their output words;
+implemented discovery/polling queries are described below. Optional
 MultiAES/MagiC/XaAES query results follow implementation and behavioral tests.
 
 The mt_* forms use the supplied AES global array and the same process-owned
@@ -790,6 +790,85 @@ caller globals, delay width/rounding/wrap, ownership, IRQ restoration and
 queued messages. Real dynamic parent/child fixtures use the public GEM
 calls, verify private globals, preserve a queued message across a timer,
 and reclaim implicit sessions through finalization and _Exit.
+
+GEM discovery and application byte pipes (#719)
+-------------------------------------------------
+libaes exports appl_find, appl_read, appl_write and evnt_mesag, including
+mt_* forms with GEMlib-compatible prototypes. appl_init publishes the
+executable basename as an eight-byte, space-padded label, folding ASCII
+lowercase to uppercase and stopping at the first extension separator. The
+kernel records only a bounded, unmodified basename (up to 32 bytes) and
+opaque label bytes; GEM normalization remains in userspace. Anonymous
+basepage-only programs need not have a name. Duplicate labels resolve to
+the oldest still-registered session. Exit removes the label; reopening the
+same process uses a fresh private handle and the same PID application ID.
+
+appl_find accepts normal eight-character names (short NUL-terminated names
+are padded), NULL/upper-word-zero self lookup, and the MultiTOS 0xffff/PID
+and 0xfffe/application-ID pointer selectors. Only registered peers convert;
+missing, exited or unregistered applications return -1. Handles are resolved
+and checked before conversion to a positive short PID; they are not narrowed.
+Standard appl_getinfo AES_PROCESS (4) returns 1 with outputs 0,1,0,0:
+cooperative scheduling, PID conversion, no appl_search, no rsrc_rcfix.
+AES_INQUIRE (6) returns 1 with outputs 1,0,0,0, advertising APR_NOWAIT only.
+Other queries remain unsupported; no protocol negotiation is introduced.
+
+appl_write accepts the complete nonnegative short byte-length range
+0..32767 and waits for enough queue space for the whole write. Input bytes
+are captured before waiting. appl_read accepts the same lengths and blocks
+until exactly that many bytes are available; ap_id must be the caller's ID,
+or APR_NOWAIT (-1) to poll without consuming an insufficient prefix. Zero
+lengths succeed without inspecting the buffer. evnt_mesag reads exactly
+16 bytes; appl_read can then retrieve the excess described by the caller's
+message header. Reads may cross write boundaries. All supplied payload
+bytes are preserved, including caller-defined header words; the kernel
+neither interprets GEM message types nor rewrites opaque byte streams.
+Boolean APIs return 1 on success and 0 on error, not native negative errors.
+
+Each receiver has a lazy 65536-byte payload ring and a parallel 16-bit sender
+PID ring (192 KiB total), independent of message/write boundaries. Partial
+reads immediately free capacity. A transfer's 32767-byte maximum is below
+half the byte capacity, avoiding metadata/packet fragmentation deadlocks
+between exact reads and atomic writes. One pending write snapshot per
+sender is bounded by the same transfer limit and is attached to its session
+before user copying can fault. There are no unbounded packet lists. Native
+sender metadata comes from the kernel and survives sender exit; it describes
+the first byte read and is separate from peer-supplied GEM header contents.
+Historical sender PIDs are not authentication of a currently live process.
+Peer bytes do not manufacture trusted keyboard/pointer/redraw events.
+
+All queued storage and pending snapshots are released on session/process
+exit, including faults and _Exit. Failed input copies do not publish data;
+failed read validation/copyout, including wrapped reads, consumes nothing.
+Writer wait predicates retain only the non-reused receiver handle and
+re-resolve it after every switch. Receiver close/exit wakes blocked writers
+with an error; reopening, even under the same PID, cannot receive the old
+pending write. Blocking operations which would sleep while owning a display
+update fail with EACCDN. Ready/zero/poll operations retain their normal behavior.
+
+Native CUIS calls use flat registers and scalar lengths/handles/errors:
+
+ 25 SESSION_NAME(handle, buffer, capacity) -> basename length (NUL appended)
+ 26 SESSION_LABEL(handle, bytes, length)   -> E_OK; opaque labels up to 32 bytes
+ 27 LABEL_FIND(bytes, length)             -> peer handle
+ 28 PEER_PID(handle)                      -> registered peer PID
+ 29 PEER_BY_PID(pid)                      -> registered peer handle
+ 30 STREAM_WRITE(peer, buffer, length, block) -> exact byte count
+ 31 STREAM_READ(own, buffer, length, block, optional_sender_pid) -> exact count
+
+Invalid arguments/ownership and missing peers return ordinary negative
+errors. block is 0 (EAGAIN when not ready) or 1 (wait). These services and
+process-basename storage compile only with CONF_WITH_CUIS. The previous
+four-word opaque queue remains transitional; the public GEM pipe does not
+inherit its fixed size. Combined event integration remains later work.
+
+Host tests cover lookup/ownership, capacity and allocation failures,
+wrapped reads and copy failures, partial/cross-writer reads, captured input
+mutation, historical sender metadata, update ownership and receiver exit.
+Real dynamic GEM clients cover named and PID discovery, full-range and
+split transfers, blocking backpressure, registration close/reopen, sender
+exit and a receiver reopening while a pending write still targets its old
+handle. Allocator/session/process snapshots verify complete reclamation.
 
 Final configuration cutover
 ---------------------------

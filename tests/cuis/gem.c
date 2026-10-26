@@ -29,7 +29,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(appl_init() == id && mt_appl_init(globals) == id);
     aes_global[3] = 1234;
     GEM_TEST_CHECK(mt_appl_yield(globals) == 1 && mt_evnt_timer(1, globals) == 1);
-    GEM_TEST_CHECK(appl_getinfo(4, &a, &b, &c, &d) == 0 && !(a | b | c | d));
+    GEM_TEST_CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
     if (argc > 1) {
         if (argv[1][0] == 'x') _Exit(41);
         return 37; /* Ordinary CRT finalization closes implicit registration. */

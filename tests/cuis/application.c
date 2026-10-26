@@ -4,10 +4,12 @@
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
-static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result;
+static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static BOOL live;
 static ULONG starts, closes, yields, delays;
 static UQUAD interval;
+static UBYTE pipe_data[64];
+static ULONG pipe_count, pipe_block;
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -32,6 +34,29 @@ LONG cuis_call(ULONG fn, LONG id)
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_SESSION_NAME) {
+        __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
+    }
+    if (fn == CUIS_SESSION_LABEL) return label_result;
+    if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a, "GEMTEST ", 8) ? EFILNF : handle;
+    if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
+    if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
+    if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ) {
+        if (failure) return failure;
+        pipe_block = (ULONG)d;
+        if (a != (UQUAD)handle) return EACCDN;
+        if (fn == CUIS_STREAM_WRITE) {
+            if (pipe_count + c > sizeof(pipe_data)) return EAGAIN;
+            if (c) __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)b, (ULONG)c);
+            pipe_count += (ULONG)c;
+        } else {
+            if (pipe_count < c) return EAGAIN;
+            if (c) __builtin_memcpy((void *)(uintptr_t)b, pipe_data, (ULONG)c);
+            pipe_count -= (ULONG)c;
+            __builtin_memmove(pipe_data, pipe_data + c, pipe_count);
+        }
+        return (LONG)c;
+    }
     if (fn != CUIS_SESSION_DELAY || a != (UQUAD)handle) return EINVAL;
     delays++; interval = b;
     return failure;
@@ -39,6 +64,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
+    short message[8] = { 123, 7, 0, 4, 5, 6, 7, 8 }, result[8];
     ULONG count;
     CHECK(gl_apid == -1 && aes_global[2] == -1);
     CHECK(appl_exit() == 0 && appl_yield() == 0 && evnt_timer(0) == 0);
@@ -60,7 +86,24 @@ int main(void)
     count = delays;
     if (sizeof(unsigned long) > 4) CHECK(evnt_timer((unsigned long)(1ULL << 32)) == 0 && delays == count);
     failure = EACCDN; CHECK(evnt_timer(1) == 0); failure = 0;
-    CHECK(appl_getinfo(4, &a, &b, &c, &d) == 0 && !(a | b | c | d));
+    CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
+    CHECK(appl_getinfo(AES_PROCESS, &a, &b, &c, &d) == 1 && a == 0 && b == 1 && c == 0 && d == 0);
+    CHECK(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 0 && c == 0 && d == 0);
+    CHECK(appl_find(NULL) == 7 && appl_find("gemtest") == 7 && mt_appl_find("GEMTEST ", other) == 7);
+    CHECK(appl_find("missing") == -1 && appl_find((const char *)(uintptr_t)0xffff0007UL) == 7);
+    CHECK(appl_find((const char *)(uintptr_t)0xfffe0007UL) == 7);
+    CHECK(appl_find((const char *)(uintptr_t)0xffff0008UL) == -1);
+    CHECK(appl_read(APR_NOWAIT, 16, result) == 0 && pipe_block == 0);
+    CHECK(appl_read(8, 16, result) == 0 && appl_write(8, 16, message) == 0);
+    CHECK(appl_write(7, -1, message) == 0 && appl_read(7, -1, result) == 0);
+    CHECK(appl_write(7, 0, NULL) == 1 && appl_read(7, 0, NULL) == 1);
+    CHECK(mt_appl_write(7, 16, message, other) == 1 && pipe_block == 1);
+    CHECK(mt_evnt_mesag(result, other) == 1 && pipe_block == 1);
+    CHECK(!__builtin_memcmp(result, message, sizeof(message)));
+    CHECK(appl_write(7, 16, message) == 1 && appl_read(APR_NOWAIT, 16, result) == 1 && pipe_block == 0);
+    failure = EACCDN;
+    CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
+    failure = 0;
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     close_result = EACCDN;
@@ -75,5 +118,7 @@ int main(void)
     CHECK(appl_init() == 7 && appl_exit() == 1 && closes == 2);
     pid = 32767;
     CHECK(appl_init() == 32767 && gl_apid == 32767 && appl_exit() == 1 && closes == 3);
+    label_result = EACCDN;
+    CHECK(mt_appl_init(other) == -1 && !live && gl_apid == -1 && other[2] == -1 && closes == 4);
     return 0;
 }

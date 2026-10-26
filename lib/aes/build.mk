@@ -62,3 +62,10 @@ obj/libaes/GEM.TOS: tests/cuis/gem.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEM.TOS
 endif
+
+obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+all: obj/libaes/GEMMSG.TOS
+endif

@@ -1,5 +1,7 @@
 {
     global: appl_init; appl_exit; appl_yield; evnt_timer; appl_getinfo;
+            appl_find; appl_read; appl_write; evnt_mesag;
+            mt_appl_find; mt_appl_read; mt_appl_write; mt_evnt_mesag;
             mt_appl_init; mt_appl_exit; mt_appl_yield; mt_evnt_timer; mt_appl_getinfo;
             aes_global; gl_apid; gl_ap_version;
             aes_session_open; aes_session_query; aes_session_close;

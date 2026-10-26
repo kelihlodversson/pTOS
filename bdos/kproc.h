@@ -61,6 +61,10 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * 0 is the kernel's own context, which has none and is every boot-time basepage's
  * launcher. */
 WORD kproc_pid(PD *pd);                 /* 0: no record */
+#if CONF_WITH_CUIS
+void kproc_set_executable_name(PD *pd, const char *path);
+const char *kproc_executable_name(PD *pd);
+#endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
 SBYTE kproc_get_prio(PD *pd);
 void kproc_set_prio(PD *pd, SBYTE prio);
