@@ -65,6 +65,47 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short *buttons, short *modifiers, short *key, short *click_count, short *global_aes);
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers);
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
+#ifndef WC_BORDER
+#define WC_BORDER 0
+#endif
+#ifndef WC_WORK
+#define WC_WORK 1
+#endif
+#ifndef WF_KIND
+#define WF_KIND 1
+#endif
+#ifndef WF_WORKXYWH
+#define WF_WORKXYWH 4
+#endif
+#ifndef WF_CURRXYWH
+#define WF_CURRXYWH 5
+#endif
+#ifndef WF_PREVXYWH
+#define WF_PREVXYWH 6
+#endif
+#ifndef WF_FULLXYWH
+#define WF_FULLXYWH 7
+#endif
+#ifndef WF_TOP
+#define WF_TOP 10
+#endif
+#ifndef WF_BOTTOM
+#define WF_BOTTOM 25
+#endif
+short wind_create(short kind, short x, short y, short w, short h);
+short mt_wind_create(short kind, short x, short y, short w, short h, short *global);
+short wind_open(short id, short x, short y, short w, short h);
+short mt_wind_open(short id, short x, short y, short w, short h, short *global);
+short wind_close(short id);
+short mt_wind_close(short id, short *global);
+short wind_delete(short id);
+short mt_wind_delete(short id, short *global);
+short wind_get(short id, short field, short *a, short *b, short *c, short *d);
+short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, short *global);
+short wind_set(short id, short field, short a, short b, short c, short d);
+short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global);
+short wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh);
+short mt_wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh, short *global);
 short objc_find(OBJECT *tree, short start, short depth, short mx, short my);
 short mt_objc_find(OBJECT *tree, short start, short depth, short mx, short my, short *global);
 short mt_objc_add(OBJECT *tree, short parent, short child, short *global);

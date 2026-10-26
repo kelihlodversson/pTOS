@@ -961,3 +961,63 @@ AESPB/tree validation and snapshot machinery at that cutover. Native CUIS
 syscalls continue checking ownership, scalar arguments and user buffers.
 Transitional combinations retain their validation until replacement libaes
 behavior and boot/desktop coverage allow those entry paths to be disabled.
+
+
+GEM plain-window lifecycle and geometry (#732)
+--------------------------------------------
+
+libaes exports wind_create/open/close/delete/get/set/calc and their standard
+mt_* forms. This is the metadata/lifecycle foundation for kind == 0 windows;
+nonzero decoration kinds fail explicitly. It does not yet draw even the plain
+frame, synthesize WM_REDRAW/WM_TOPPED messages, acquire update locks, or adapt
+focus, keyboard/button/rectangle events. Desktop handle 0, foreign-window
+queries, WF_TOP/WF_BOTTOM, rectangle enumeration, titles, sliders and other
+fields remain unsupported (return 0 without changing outputs). No additional
+appl_getinfo capabilities are advertised by this slice.
+
+Application code uses positive short GEM window identifiers, not CUIS handles.
+CUIS_WINDOW_IDENTIFY (function 34) takes the owned native window handle in the
+first scalar argument and returns a positive, globally unique live-window
+identifier or a negative error. Identifiers range from 1 to the global window
+quota (256); zero is reserved. They are stable while the window exists and may
+be reused after destruction, as with ordinary GEM handles. Knowing an identifier
+never confers ownership of its underlying CUIS window. Unused registers are
+ignored; malformed/foreign/stale native handles fail ordinary ownership checks.
+All kernel additions remain under CONF_WITH_CUIS.
+
+Each library tracks up to 64 owned windows and maps the small identifier to the
+full opaque native handle. Registration is required for window lifecycle and
+queries. Repeated appl_init in the same session retains windows; successful
+appl_exit or registration of a new session clears the local map. Kernel session
+teardown reclaims all windows independently of library finalization, including
+raw process exits. A failed close/delete preserves the map for retry.
+
+wind_create returns -1 on failure, otherwise a positive GEM identifier. Its
+rectangle is saved as WF_FULLXYWH; current and previous rectangles start zero.
+Native hidden metadata uses an invisible positive-size placeholder because
+CUIS geometry requires positive extents. wind_open configures then shows the
+window and initializes both current and previous rectangles to the supplied
+border rectangle. Opening an already open window and closing a closed window
+return 0. A failed show leaves the window closed and its GEM rectangles intact;
+its hidden native geometry may have been prepared for the attempted open.
+wind_close saves the last current rectangle as previous and clears current.
+wind_delete also accepts an open window, hiding and destroying it in CUIS.
+
+wind_get supports WF_KIND (zero), WF_CURRXYWH, WF_PREVXYWH, WF_FULLXYWH and
+WF_WORKXYWH. wind_set supports WF_CURRXYWH, even while closed; only a successful
+configure advances previous/current. Open and configure require positive border
+width/height. Full geometry is retained exactly as provided at creation.
+All ordinary results are GEM 1/0, never negative CUIS error codes.
+
+wind_calc is local and requires no registration. For kind zero, WC_WORK insets
+the border by one pixel on each side, and WC_BORDER reverses that calculation,
+matching classic GEM plain-window geometry. WF_WORKXYWH uses the same rule on
+the current border rectangle. Arithmetic/results retain GEM short coordinate
+semantics. Outputs are written only on success and may alias inputs; optional
+NULL outputs are ignored. Non-NULL invalid pointers fault in userspace.
+
+Host tests cover full native handle bits, transport errors, retry/state retention,
+quota exhaustion, session invalidation and standard source signatures. The
+GEMWIN.TOS fixture checks actual flat syscalls, shared-library state, isolated
+identifiers and raw-exit cleanup. Its standard window contract also compiles
+against unmodified GEMlib headers.

@@ -130,6 +130,7 @@ static int window_limit_checks(void)
         for (j = 0; j < CUIS_WINDOWS_PER_SESSION; j++) {
             LONG h = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0);
             CHECK(h >= 0);
+            CHECK(cuis_window_service(CUIS_WINDOW_IDENTIFY, h, 0, 0, 0, 0) == (LONG)(i * CUIS_WINDOWS_PER_SESSION + j + 1));
             if (!i && !j) oldest = h;
         }
     }
@@ -138,7 +139,10 @@ static int window_limit_checks(void)
     run = &first;
     CHECK(PW(CUIS_WINDOW_DESTROY, oldest) == E_OK);
     run = &fifth;
-    CHECK(cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0) >= 0);
+    {
+        LONG replacement = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0);
+        CHECK(replacement >= 0 && cuis_window_service(CUIS_WINDOW_IDENTIFY, replacement, 0, 0, 0, 0) == 1);
+    }
     for (i = 0; i < 5; i++) cuis_process_exit(owners[i]);
     CHECK(!window_total && !cuis_window_count() && allocations == frees);
     return 0;

@@ -1,5 +1,6 @@
 {
-    global: appl_init; appl_exit; appl_yield; evnt_timer; appl_getinfo;
+    global: wind_create; wind_open; wind_close; wind_delete; wind_get; wind_set; wind_calc;
+            mt_wind_create; mt_wind_open; mt_wind_close; mt_wind_delete; mt_wind_get; mt_wind_set; mt_wind_calc; appl_init; appl_exit; appl_yield; evnt_timer; appl_getinfo;
             appl_find; appl_read; appl_write; evnt_mesag;
             mt_appl_find; mt_appl_read; mt_appl_write; mt_evnt_mesag;
             evnt_multi; mt_evnt_multi; graf_mkstate; mt_graf_mkstate;

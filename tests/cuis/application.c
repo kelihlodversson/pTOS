@@ -14,6 +14,26 @@ static LONG wait_error, state_error, read_error;
 static LONG state_values[4] = { 17, 23, 2, 5 };
 static ULONG wait_calls;
 static UQUAD waited_interval, waited_mask;
+static LONG native_windows[64], next_native = 2147483000L;
+static ULONG window_error_fn;
+static LONG window_error;
+static ULONG window_calls;
+static LONG window_transport(ULONG fn, UQUAD a)
+{
+    short i;
+    window_calls++;
+    if (fn == window_error_fn) return window_error;
+    if (fn == CUIS_WINDOW_CREATE) {
+        for (i = 0; i < 64 && native_windows[i]; i++) ;
+        if (i == 64) return ENSMEM;
+        return native_windows[i] = next_native++;
+    }
+    for (i = 0; i < 64 && native_windows[i] != (LONG)a; i++) ;
+    if (i == 64) return EACCDN;
+    if (fn == CUIS_WINDOW_IDENTIFY) return i + 1;
+    if (fn == CUIS_WINDOW_DESTROY) native_windows[i] = 0;
+    return E_OK;
+}
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -31,6 +51,7 @@ LONG cuis_call(ULONG fn, LONG id)
     if (fn == CUIS_SESSION_QUERY) return E_OK;
     if (fn == CUIS_SESSION_END) {
         if (close_result) return close_result;
+        __builtin_memset(native_windows, 0, sizeof(native_windows));
         live = FALSE; closes++; return E_OK;
     }
     return EINVFN;
@@ -38,6 +59,8 @@ LONG cuis_call(ULONG fn, LONG id)
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || fn == CUIS_WINDOW_IDENTIFY)
+        return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
         __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
     }
@@ -115,12 +138,42 @@ static int event_checks(void)
     return 0;
 }
 #undef MULTI
+#include "window_api.c"
+static int window_failures(void)
+{
+    short id, x = 99, y = 99, w = 99, h = 99;
+    window_error_fn = CUIS_WINDOW_CREATE; window_error = ENSMEM;
+    CHECK(wind_create(0, 0, 0, 10, 10) == -1);
+    window_error_fn = CUIS_WINDOW_IDENTIFY; window_error = EACCDN;
+    CHECK(wind_create(0, 0, 0, 10, 10) == -1 && native_windows[0] == 0);
+    window_error = 32768;
+    CHECK(wind_create(0, 0, 0, 10, 10) == -1 && native_windows[0] == 0);
+    window_error_fn = 0;
+    id = wind_create(0, 0, 0, 10, 10); CHECK(id > 0);
+    window_error_fn = CUIS_WINDOW_SHOW; window_error = EAGAIN;
+    CHECK(wind_open(id, 1, 2, 10, 20) == 0);
+    CHECK(wind_get(id, WF_CURRXYWH, &x, &y, &w, &h) == 1 && !(x | y | w | h));
+    window_error_fn = 0; CHECK(wind_open(id, 1, 2, 10, 20) == 1);
+    window_error_fn = CUIS_WINDOW_CONFIGURE; window_error = EAGAIN;
+    CHECK(wind_set(id, WF_CURRXYWH, 5, 6, 30, 40) == 0);
+    CHECK(wind_get(id, WF_CURRXYWH, &x, &y, &w, &h) == 1 && x == 1 && y == 2 && w == 10 && h == 20);
+    window_error_fn = CUIS_WINDOW_HIDE;
+    CHECK(wind_close(id) == 0);
+    window_error_fn = CUIS_WINDOW_DESTROY;
+    CHECK(wind_delete(id) == 0);
+    window_error_fn = 0;
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    return 0;
+}
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
     short message[8] = { 123, 7, 0, 4, 5, 6, 7, 8 }, result[8];
     ULONG count;
+    short held;
     CHECK(gl_apid == -1 && aes_global[2] == -1);
+    CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
+    CHECK(wind_get(1, WF_KIND, &a, &b, &c, &d) == 0 && a == 1 && !window_calls);
     CHECK(appl_exit() == 0 && appl_yield() == 0 && evnt_timer(0) == 0);
     CHECK(mt_appl_init(NULL) == -1);
     pid = 32768; CHECK(appl_init() == -1 && !starts && gl_apid == -1);
@@ -159,15 +212,19 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
+    held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);
     close_result = EACCDN;
     CHECK(appl_exit() == 0 && live && gl_apid == 7);
+    CHECK(wind_get(held, WF_KIND, NULL, NULL, NULL, NULL) == 1);
     close_result = 0;
     CHECK(mt_appl_exit(other) == 1 && !live && closes == 1 && other[2] == -1);
     CHECK(gl_apid == -1 && aes_global[2] == -1 && gl_ap_version == 0);
     CHECK(mt_appl_yield(other) == 0 && appl_exit() == 0);
     CHECK(appl_init() == 7 && live);
+    CHECK(wind_get(held, WF_KIND, NULL, NULL, NULL, NULL) == 0);
     live = FALSE; /* Authoritative kernel teardown invalidates stale library state. */
     CHECK(appl_yield() == 0 && evnt_timer(0) == 0);
     CHECK(appl_init() == 7 && appl_exit() == 1 && closes == 2);
