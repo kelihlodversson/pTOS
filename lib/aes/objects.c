@@ -30,46 +30,36 @@ WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y)
     return 1;
 }
 
-/* Search the last sibling first, as GEM draws later siblings on top.
- * Coordinates are logical object bounds; rendering effects are not hit areas.
- * No recursion: a caller-provided depth cannot exhaust the application stack. */
+static BOOL object_contains(const OBJECT *object, WORD x, WORD y, WORD mx, WORD my)
+{
+    return !(object->ob_flags & HIDETREE) && mx >= x && my >= y &&
+           mx < (LONG)x + object->ob_width && my < (LONG)y + object->ob_height;
+}
+
+/* Scan siblings forward once and descend into the last matching child:
+ * later siblings are drawn on top. No recursion or per-object scratch space.
+ * Coordinates are logical object bounds; rendering effects are not hit areas. */
 WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my)
 {
-    WORD object = start, found = NIL, x, y, child, previous;
-    LONG right, bottom;
+    WORD object = start, child, found, x, y, child_x, child_y;
 
     if (start < ROOT || depth < 0) return NIL;
     ob_offset(tree, start, &x, &y);
-    for (;;) {
-        right = (LONG)x + tree[object].ob_width;
-        bottom = (LONG)y + tree[object].ob_height;
-        if (!(tree[object].ob_flags & HIDETREE) &&
-            mx >= x && my >= y && mx < right && my < bottom) {
-            found = object;
-            if (!depth || tree[object].ob_tail == NIL) break;
-            object = tree[object].ob_tail;
-            x += tree[object].ob_x;
-            y += tree[object].ob_y;
-            depth--;
-        } else {
-            if (found == NIL) break;
-            /* Only siblings inside the last containing parent are candidates.
-             * Once one contains the point, its subtree wins over earlier ones. */
-            previous = NIL;
-            child = tree[found].ob_head;
-            while (child != object) {
-                previous = child;
-                child = tree[child].ob_next;
-            }
-            if (previous == NIL) break;
-            x -= tree[object].ob_x;
-            y -= tree[object].ob_y;
-            object = previous;
-            x += tree[object].ob_x;
-            y += tree[object].ob_y;
+    if (!object_contains(&tree[object], x, y, mx, my)) return NIL;
+    while (depth && tree[object].ob_head != NIL) {
+        found = NIL;
+        for (child = tree[object].ob_head; child != object; child = tree[child].ob_next) {
+            child_x = x + tree[child].ob_x;
+            child_y = y + tree[child].ob_y;
+            if (object_contains(&tree[child], child_x, child_y, mx, my)) found = child;
         }
+        if (found == NIL) break;
+        object = found;
+        x += tree[object].ob_x;
+        y += tree[object].ob_y;
+        depth--;
     }
-    return found;
+    return object;
 }
 
 WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, WORD *global)

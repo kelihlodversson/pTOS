@@ -23,7 +23,24 @@ int libaes_object_checks(void)
         { -1, 1, 1, G_IBOX, 0, 0, { 0 }, 0, 0, 100, 100 },
         { 0, -1, -1, G_BOX, OF_LASTOB, 0, { 0 }, 0, 0, 10, 10 }
     };
-    short x, y;
+    static OBJECT wide[257];
+    short x, y, i;
+    /* A wide list exercises first/last matches, overlapping siblings and
+     * hidden candidates without a backwards predecessor scan. */
+    wide[0].ob_head = 1;
+    wide[0].ob_tail = 256;
+    wide[0].ob_width = wide[0].ob_height = 100;
+    for (i = 1; i <= 256; i++) {
+        wide[i].ob_next = i == 256 ? 0 : i + 1;
+        wide[i].ob_head = wide[i].ob_tail = -1;
+        wide[i].ob_x = i == 1 ? 0 : 50;
+        wide[i].ob_width = wide[i].ob_height = 10;
+    }
+    OBJECT_CHECK(objc_find(wide, 0, 1, 1, 1) == 1);
+    OBJECT_CHECK(objc_find(wide, 0, 1, 51, 1) == 256);
+    wide[256].ob_flags = OF_HIDETREE;
+    OBJECT_CHECK(objc_find(wide, 0, 1, 51, 1) == 255);
+    OBJECT_CHECK(objc_find(wide, 0, 32767, 30, 30) == 0);
     fixture(tree);
     /* Root/subtree origins, depth and half-open edges. */
     OBJECT_CHECK(objc_find(tree, 0, 0, 10, 20) == 0);

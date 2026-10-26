@@ -184,7 +184,9 @@ rendering and hit testing with display metrics are subsequent slices.
 The #730 slice adds objc_find() and mt_objc_find(), plus mt_* forms of the
 editing/offset calls above, with standard GEM signatures. Hit testing uses
 logical object rectangles in screen coordinates, includes the starting object
-at depth zero, excludes hidden subtrees, and searches later siblings first.
+at depth zero, excludes hidden subtrees, and gives later siblings precedence.
+Each child list is scanned once before descending into its last matching
+child, keeping traversal linear without recursion or temporary arrays.
 Right/bottom edges are exclusive. A non-root start includes its ancestor
 offsets. No hit (or a negative start/depth) returns -1. The search is iterative
 and does not invoke USERDEF callbacks or dereference object specifications.

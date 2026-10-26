@@ -8,10 +8,18 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#ifndef OS_DISABLED
 #define OS_DISABLED DISABLED
+#endif
+#ifndef OS_SHADOWED
 #define OS_SHADOWED SHADOWED
+#endif
+#ifndef OF_LASTOB
 #define OF_LASTOB LASTOB
+#endif
+#ifndef OF_HIDETREE
 #define OF_HIDETREE HIDETREE
+#endif
 #define AES_GLOBMAX 15
 #define AES_PROCESS 4
 #define AES_INQUIRE 6
@@ -57,16 +65,16 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short *buttons, short *modifiers, short *key, short *click_count, short *global_aes);
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers);
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
-WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my);
-WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, WORD *global);
-WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, WORD *global);
-WORD mt_objc_delete(OBJECT *tree, WORD object, WORD *global);
-WORD mt_objc_order(OBJECT *tree, WORD object, WORD position, WORD *global);
-WORD mt_objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y, WORD *global);
-WORD objc_add(OBJECT *tree, WORD parent, WORD child);
-WORD objc_delete(OBJECT *tree, WORD object);
-WORD objc_order(OBJECT *tree, WORD object, WORD position);
-WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y);
+short objc_find(OBJECT *tree, short start, short depth, short mx, short my);
+short mt_objc_find(OBJECT *tree, short start, short depth, short mx, short my, short *global);
+short mt_objc_add(OBJECT *tree, short parent, short child, short *global);
+short mt_objc_delete(OBJECT *tree, short object, short *global);
+short mt_objc_order(OBJECT *tree, short object, short position, short *global);
+short mt_objc_offset(OBJECT *tree, short object, short *x, short *y, short *global);
+short objc_add(OBJECT *tree, short parent, short child);
+short objc_delete(OBJECT *tree, short object);
+short objc_order(OBJECT *tree, short object, short position);
+short objc_offset(OBJECT *tree, short object, short *x, short *y);
 #ifdef __cplusplus
 }
 #endif
