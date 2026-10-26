@@ -778,10 +778,14 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         window->pointer_overflow = FALSE;
         window->x = (LONG)a; window->y = (LONG)b;
         window->width = (LONG)c; window->height = (LONG)d;
+        /* Mouse-grab IRQ routing traverses this list, including hidden
+         * entries. Publish only a fully initialized node under its IRQ mask. */
+        flags = cuis_input_lock();
         window->next = client->windows;
         client->windows = window;
         client->window_count++;
         window_total++;
+        cuis_input_unlock(flags);
         return (LONG)window->handle;
     }
     if (a > 0x7fffffffULL) return EINVAL;
