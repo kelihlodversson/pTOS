@@ -45,7 +45,8 @@ void test_isolation(void);
 
 static volatile unsigned long image_marker = 0x11111111UL;
 
-static void meminfo(unsigned long *free_pages, unsigned long *processes)
+/* FALSE if the query did not give the whole structure (the counters are then 0) */
+static int meminfo(unsigned long *free_pages, unsigned long *processes)
 {
     struct {
         unsigned long page_size, phys_pages, free_pages, processes;
@@ -53,11 +54,11 @@ static void meminfo(unsigned long *free_pages, unsigned long *processes)
     } mi;
 
     *free_pages = *processes = 0;
-    if (Ssystem(-3, (long)&mi, (long)sizeof(mi)) == (long)sizeof(mi))
-    {
-        *free_pages = mi.free_pages;
-        *processes = mi.processes;
-    }
+    if (Ssystem(-3, (long)&mi, (long)sizeof(mi)) != (long)sizeof(mi))
+        return 0;
+    *free_pages = mi.free_pages;
+    *processes = mi.processes;
+    return 1;
 }
 
 /* "<what> (<rc>)" as the message of a failed check, for a result that is not what it should be */
@@ -248,7 +249,7 @@ static void check_faults_leave_nothing(void)
 
     /* the first round may fill caches that stay (the directory, the file buffers) */
     probe('r', KERNEL_HALF, 0);
-    meminfo(&free_before, &procs_before);
+    ptest_assert_msg(meminfo(&free_before, &procs_before), "Ssystem(S_MEMINFO) failed");
     for (i = 0; i < 8; i++)
     {
         rc = probe('r', KERNEL_HALF, 0);
@@ -256,7 +257,7 @@ static void check_faults_leave_nothing(void)
         rc = probe('p', 0, 0);
         expect(rc == FAULT, "a privileged instruction was not stopped", rc);
     }
-    meminfo(&free_after, &procs_after);
+    ptest_assert_msg(meminfo(&free_after, &procs_after), "Ssystem(S_MEMINFO) failed");
     ptest_assert_msg(procs_after == procs_before, "a process record is left from a process that faulted");
     ptest_assert_msg(free_after + 4 >= free_before, "memory is left from a process that faulted");
     rc = probe('0', 0, 0);
