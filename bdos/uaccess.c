@@ -67,6 +67,9 @@ static const UARG uargs[] = {
     { 0x0A, 1, UA_CONRS,  UD_RW, 0, 0 },                 /* Cconrs */
 #if CONF_WITH_USER_ASPACE
     { 0x14, 0, UA_PRIV,   0,     0, 0 },                 /* Maddalt: not for a user process */
+#if CONF_ATARI_HIGHER_HALF
+    { 0x15, 0, UA_PRIV,   0,     0, 0 },                 /* Srealloc: the screen, and the size is not range-checked (#727) */
+#endif
 #endif
     { 0x1A, 1, UA_DTAPTR, UD_W,  0, 0 },                 /* Fsetdta */
     { 0x36, 1, UA_FIXED,  UD_W,  0, UA_DFREE },          /* Dfree */

@@ -38,10 +38,13 @@ config CONF_WITH_MAGNUM
 
 config CONF_WITH_MEMORY_TEST
 	bool "Memory test on cold boot"
+	depends on !CONF_WITH_PROCESS_ASPACES
 	default n
 	help
 	  Run a RAM test during a cold boot and report any faulty memory
 	  found.  Adds to boot time, so it is off by default.
+	  Not with an address space for every process, where the end of RAM
+	  is an address of the kernel's window (the test takes its size).
 
 config CONF_WITH_TTRAM
 	bool "TT-RAM detection"
