@@ -107,7 +107,14 @@ void cuis_input_idle(void)
         stream_change_after = 0;
     }
     if (input_packet_mode) {
-        if (input_packet_mode <= 2 || input_packet_mode == 4) {
+        if (input_packet_mode == 5 || input_packet_mode == 6) {
+            cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 1, NULL, NULL);
+            cuis_pointer_packet(0, 0, 0, NULL, NULL);
+            if (input_packet_mode == 6) input_ticks += 100;
+            cuis_pointer_packet(10, 0, 1, NULL, NULL);
+            cuis_pointer_packet(0, 0, 0, NULL, NULL);
+            input_packet_mode = 0;
+        } else if (input_packet_mode <= 2 || input_packet_mode == 4) {
             if (input_sleeps == 1 || ((input_packet_mode == 1 || input_packet_mode == 4) && input_sleeps == 3))
                 cuis_pointer_packet((WORD)(10 - pointer_x), (WORD)(10 - pointer_y), 1, NULL, NULL);
             if (input_sleeps == 2 || (input_packet_mode == 1 && input_sleeps == 4)) {

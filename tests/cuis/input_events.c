@@ -6,7 +6,7 @@
 static int input_event_checks(void)
 {
     LONG session, other, window;
-    ULONG before;
+    ULONG before, mode;
     run = &first; session = cuis_service(CUIS_SESSION_START, 0);
     run = &second; other = cuis_service(CUIS_SESSION_START, 0); run = &first;
     input_pointer_source = FALSE; pointer_suppressed = pointer_legacy_drag = FALSE;
@@ -58,12 +58,33 @@ static int input_event_checks(void)
     before = input_sleeps;
     CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && input_sleeps == before);
     CHECK(IR(session) == E_OK && copied[1] == 2);
+    CHECK(IB(session,1,1,1,0) == E_OK);
+    CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && IR(session) == E_OK && copied[1] == 1);
+    CHECK(IB(session,0,1,1,0) == E_OK);
+    CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && IR(session) == E_OK && !copied[1]);
+    CHECK(IB(session,2,1,1,0) == E_OK);
+    CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && input_sleeps == before);
+    CHECK(IR(session) == E_OK && copied[1] == 2);
     CHECK(cuis_pointer_packet(0,0,0,NULL,NULL));
     /* A single click still completes after the click interval, rather than
      * waiting forever for a requested double click. Tick wrap is harmless. */
     input_ticks = 0xfffffffeUL; input_sleeps = 0; input_packet_mode = 2;
     CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON);
     CHECK(IR(session) == E_OK && copied[1] == 1 && !input_packet_mode);
+    /* Delay the waiter while multiple packets arrive within one IRQ-enabled
+     * idle. A ready result must preserve later input, including a press after
+     * an expired multi-click window. Repeat expiry across tick wrap. */
+    for (mode = 5; mode <= 7; mode++) {
+        CHECK(IB(session,mode == 5 ? 1 : 2,1,1,0) == E_OK);
+        input_ticks = mode == 7 ? 0xfffffffeUL : 1000;
+        input_sleeps = 0; input_packet_mode = mode == 5 ? 5 : 6;
+        CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && input_sleeps == 1);
+        CHECK(IR(session) == E_OK && copied[1] == 1 && copied[2] == 10 && (copied[4] & 3) == 1);
+        CHECK((*find_owner(run))->edge_count != 0);
+        CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && input_sleeps == 1);
+        CHECK(IR(session) == E_OK && copied[1] == 1 && copied[2] == 20 && (copied[4] & 3) == 1);
+        CHECK(!(*find_owner(run))->edge_count && !pointer_buttons);
+    }
     /* Another source cancels click accumulation without delaying its timer. */
     input_sleeps = 0; input_packet_mode = 2;
     CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_TIMER && input_sleeps == 3);

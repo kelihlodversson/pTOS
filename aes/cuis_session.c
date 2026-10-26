@@ -228,6 +228,15 @@ static CUIS_WINDOW *pointer_hit(void)
             return window;
     return NULL;
 }
+/* Expiry must precede admission of a packet: a delayed waiter must not
+ * count a new press as part of an already completed click window. */
+static void expire_button_wait(CUIS_INPUT_WAIT *wait)
+{
+    if (wait && wait->tracking &&
+        (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
+        wait->ready |= CUIS_READY_BUTTON;
+}
+
 static void pointer_enqueue(CUIS_WINDOW *window, ULONG changed, BOOL inside)
 {
     CUIS_POINTER *event;
@@ -237,7 +246,9 @@ static void pointer_enqueue(CUIS_WINDOW *window, ULONG changed, BOOL inside)
     if (!window) return;
     client = window->client;
     if (changed) { client->recent_count = 1; client->recent_buttons = pointer_buttons; }
-    if (changed && (!client->input_wait || !(client->input_wait->events & CUIS_READY_BUTTON))) {
+    expire_button_wait(client->input_wait);
+    if (changed && (!client->input_wait || !(client->input_wait->events & CUIS_READY_BUTTON) ||
+                    (client->input_wait->ready & CUIS_READY_BUTTON))) {
         if (client->edge_count == CUIS_POINTER_CAPACITY) {
             client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
             client->edge_count--;
@@ -1077,6 +1088,7 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
             client->edge_count--;
         }
     }
+    expire_button_wait(wait);
     if ((wait->events & CUIS_READY_BUTTON) && !(wait->ready & CUIS_READY_BUTTON)) {
         match = owned && (((buttons & filter->mask) == (filter->state & filter->mask)) != filter->invert);
         if (match && !wait->matched) {
@@ -1097,9 +1109,6 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
             if (!wait->tracking) wait->ready |= CUIS_READY_BUTTON;
         }
         wait->matched = match;
-        if (wait->tracking && (ULONG)(cuis_input_ticks() - wait->start) >=
-            wait->duration)
-            wait->ready |= CUIS_READY_BUTTON;
     }
     if (!(wait->ready & CUIS_READY_BUTTON) && !wait->tracking) {
         wait->x = x; wait->y = y; wait->buttons = buttons; wait->modifiers = modifiers;
@@ -1187,7 +1196,10 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
                     focus_window->key_head = (focus_window->key_head + 1) % CUIS_KEY_CAPACITY;
                     focus_window->key_count--;
                 }
-                if ((ready & CUIS_READY_BUTTON) && wait.input.buttons == pointer_buttons) {
+                /* A per-call cap must not reduce a completed click count.
+                 * Queued edges belong to newer input, not this snapshot. */
+                if ((ready & CUIS_READY_BUTTON) && wait.input.buttons == pointer_buttons &&
+                    !client->edge_count && wait.input.count > client->recent_count) {
                     client->recent_buttons = pointer_buttons; client->recent_count = wait.input.count;
                 }
                 client->input_result[1] = ready & CUIS_READY_BUTTON ? wait.input.count : 0;

@@ -1249,10 +1249,14 @@ Button equality is ((buttons ^ state) & mask) == 0. Clicks' low byte limits
 the returned count; bit 0x100 reverses equality, as in classic GEM. Other
 high-byte extensions (including 0x200) are not advertised and fail with 0.
 A matching current state or queued transition completes the quick check;
-a completed multi-click count is retained while the matching state is held.
+a completed multi-click count is retained while the matching state is held,
+including across later requests with smaller count limits.
 otherwise a pending multiple-click wait starts its click window on the first
 matching transition. Additional matches extend the original window by three
-200-Hz ticks, with a bounded count. The wait returns the actual count, capped
+200-Hz ticks, with a bounded count. Expiry is checked before admitting a
+new press, so a delayed waiter cannot extend an already expired window.
+Once a button result is ready, later edges enter history for the next wait.
+The wait returns the actual count, capped
 by the requested maximum, after the interval, including a single click when
 a double click was requested. The matching position/button/modifier snapshot
 is retained when a release follows. A bounded 16-edge per-session history
