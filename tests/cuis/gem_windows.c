@@ -12,12 +12,7 @@ static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
-static short control_message(short message[8])
-{
-    short result;
-    do { result = evnt_mesag(message); } while (result && message[0] == WM_REDRAW);
-    return result;
-}
+#include "control_message.h"
 int main(int argc, char **argv, char **envp)
 {
     short id, window, message[8], globals[15], x = 99, y, w, h;

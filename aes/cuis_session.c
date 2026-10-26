@@ -1255,15 +1255,19 @@ LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD 
 {
     CUIS_CLIENT *client;
     CUIS_WINDOW *window;
-    UBYTE data[32];
+    UBYTE data[32], *storage = NULL;
+    BOOL need_storage;
+    LONG result;
     ULONG kind, native, identifier, at, i;
     UWORD *senders;
     UQUAD flags;
     if (session > 0x7fffffffULL) return EINVAL;
-    client = *find_owner(run);
-    if (!client || client->handle != session) return EACCDN;
     if (function == CUIS_NOTICE_PEEK) {
-        if (!notices_ready(client)) return 0;
+        flags = cuis_input_lock();
+        client = *find_owner(run);
+        if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
+        if (!notices_ready(client)) { cuis_input_unlock(flags); return 0; }
+        cuis_input_unlock(flags);
         if (!kproc_validate_user_write(a, sizeof(LONG)) || !kproc_validate_user_write(b, sizeof(LONG))) return EIMBA;
         flags = cuis_input_lock();
         client = *find_owner(run);
@@ -1279,19 +1283,28 @@ LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD 
     }
     if (function != CUIS_NOTICE_PUBLISH) return EINVFN;
     if (a > 0x7fffffffULL || (b != CUIS_NOTICE_REDRAW && b != CUIS_NOTICE_ACTIVATE) || !d || d > sizeof(data)) return EINVAL;
-    client = *find_owner(run);
-    if (!client || client->handle != session) return EACCDN;
-    for (window = client->windows; window && window->handle != a; window = window->next) ;
-    if (!window || !(window->notices & b)) return EACCDN;
-    if (!kproc_copy_from_user(data, c, (ULONG)d)) return EIMBA;
-    client = *find_owner(run);
-    if (!client || client->handle != session) return EACCDN;
-    if (!client->stream_data) client->stream_data = kalloc(CUIS_STREAM_BYTES * (1 + sizeof(UWORD)));
-    if (!client->stream_data) return ENSMEM;
     flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
     for (window = client->windows; window && window->handle != a; window = window->next) ;
     if (!window || !(window->notices & b)) { cuis_input_unlock(flags); return EACCDN; }
-    if (CUIS_STREAM_BYTES - client->stream_bytes < d) { cuis_input_unlock(flags); return EAGAIN; }
+    need_storage = client->stream_data == NULL;
+    cuis_input_unlock(flags);
+    if (!kproc_copy_from_user(data, c, (ULONG)d)) return EIMBA;
+    if (need_storage) {
+        storage = kalloc(CUIS_STREAM_BYTES * (1 + sizeof(UWORD)));
+        if (!storage) return ENSMEM;
+    }
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != session) { result = EACCDN; goto publish_done; }
+    for (window = client->windows; window && window->handle != a; window = window->next) ;
+    if (!window || !(window->notices & b)) { result = EACCDN; goto publish_done; }
+    if (CUIS_STREAM_BYTES - client->stream_bytes < d) { result = EAGAIN; goto publish_done; }
+    if (!client->stream_data) {
+        if (!storage) { result = EACCDN; goto publish_done; }
+        client->stream_data = storage; storage = NULL;
+    }
     at = (client->stream_head + client->stream_bytes) % CUIS_STREAM_BYTES;
     senders = (UWORD *)(client->stream_data + CUIS_STREAM_BYTES);
     for (i = 0; i < d; i++) {
@@ -1301,8 +1314,11 @@ LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD 
     client->stream_bytes += (ULONG)d;
     window->notices &= ~(ULONG)b;
     if (b == CUIS_NOTICE_REDRAW) window->redraw = FALSE;
+    result = E_OK;
+publish_done:
     cuis_input_unlock(flags);
-    return E_OK;
+    if (storage) kfree(storage);
+    return result;
 }
 
 LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e)

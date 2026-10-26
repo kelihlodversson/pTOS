@@ -36,12 +36,7 @@ static int rectangles(short window, short cover)
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && w > 0 && h > 0);
     return 0;
 }
-static short control_message(short message[8])
-{
-    short result;
-    do { result = evnt_mesag(message); } while (result && message[0] == WM_REDRAW);
-    return result;
-}
+#include "control_message.h"
 int main(int argc, char **argv, char **envp)
 {
     short id, window, cover, message[8], global[15], x, y, w, h;

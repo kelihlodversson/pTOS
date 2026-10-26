@@ -21,6 +21,7 @@ static ULONG window_calls, display_nesting;
 static LONG display_error, region_error;
 static LONG region_values[3][4];
 static ULONG region_count;
+static LONG stack_values[4];
 static LONG notice_kind, notice_native, notice_id, publish_failure, notice_on_wait;
 static LONG window_transport(ULONG fn, UQUAD a)
 {
@@ -63,6 +64,12 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_STACK_QUERY || fn == CUIS_WINDOW_INFO) {
+        *(LONG *)(uintptr_t)b = stack_values[0]; *(LONG *)(uintptr_t)c = stack_values[1];
+        *(LONG *)(uintptr_t)d = stack_values[2];
+        if (fn == CUIS_WINDOW_INFO) *(LONG *)(uintptr_t)e = stack_values[3];
+        return E_OK;
+    }
     if (fn == CUIS_NOTICE_PEEK) {
         if (notice_kind) { *(LONG *)(uintptr_t)b = notice_native; *(LONG *)(uintptr_t)c = notice_id; }
         return notice_kind;
@@ -259,6 +266,26 @@ static int window_message_checks(void)
     CHECK(wind_close(id) == 1 && wind_set(id, WF_TOP, 0, 0, 0, 0) == 0 && wind_delete(id) == 1);
     return 0;
 }
+static int metadata_checks(void)
+{
+    short a = 91, b = 92, c = 93, d = 94;
+    stack_values[0] = 1; stack_values[1] = 32767; stack_values[2] = 2;
+    CHECK(wind_get(0, WF_TOP, &a, &b, &c, &d) == 1 && a == 1 && b == 32767 && c == 2 && !d);
+    a = 91; b = 92; c = 93; d = 94;
+    stack_values[1] = 32768;
+    CHECK(wind_get(0, WF_TOP, &a, &b, &c, &d) == 0 && a == 91 && b == 92 && c == 93 && d == 94);
+    stack_values[1] = 7; stack_values[0] = 65537;
+    CHECK(wind_get(0, WF_BOTTOM, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[0] = -1; stack_values[1] = 1;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[0] = 7; stack_values[1] = 2;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[1] = 1; stack_values[3] = 32768;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 0 && a == 91);
+    stack_values[3] = 3;
+    CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 1 && a == 7 && b == 1 && c == 2 && d == 3);
+    return 0;
+}
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
@@ -306,7 +333,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

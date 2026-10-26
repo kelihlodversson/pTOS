@@ -211,6 +211,7 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     struct gem_window *window;
     GRECT r;
     LONG values[4] = { 0, 0, 0, 0 }, result;
+    short i;
     if (field == WF_TOP || field == WF_BOTTOM || field == WF_OWNER) {
         if (aes_application_session(global) < 0) return 0;
         if (field == WF_OWNER)
@@ -220,6 +221,8 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
             result = cuis_call6(CUIS_STACK_QUERY, field == WF_BOTTOM, (uintptr_t)&values[0],
                                 (uintptr_t)&values[1], (uintptr_t)&values[2], 0, 0);
         if (result != E_OK) return 0;
+        for (i = 0; i < 4; i++) if (values[i] < 0 || values[i] > 32767) return 0;
+        if (field == WF_OWNER && values[1] > 1) return 0;
         if (field == WF_BOTTOM) values[1] = values[2] = 0;
         r.g_x = (short)values[0]; r.g_y = (short)values[1];
         r.g_w = (short)values[2]; r.g_h = (short)values[3];

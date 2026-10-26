@@ -42,6 +42,9 @@ static int notice_checks(void)
     CHECK(PUB(sa, a, CUIS_NOTICE_REDRAW) == E_OK && !wa->notices);
     CHECK(cuis_stream_service(CUIS_STREAM_READ, sa, 0x20000, 16, 0, 0) == 16 && stream_output[0] == 77);
     CHECK(cuis_notice_service(CUIS_NOTICE_PEEK, sa, 0, 0, 0, 0) == 0);
+    damage_windows(); notice_withdraw_on_copy = TRUE;
+    CHECK(PUB(sa, a, CUIS_NOTICE_REDRAW) == EACCDN && !input_bad_idle);
+    CHECK(!(*find_owner(run))->stream_bytes && !wa->notices);
     /* Clicking a visible part of the background requests topping, not focus. */
     input_pointer_source = FALSE; wa->pointer_head = wa->pointer_count = 0;
     pointer_initialized = TRUE; pointer_seen = TRUE; pointer_width = pointer_height = 200;

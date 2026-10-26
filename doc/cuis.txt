@@ -1155,7 +1155,9 @@ WF_OWNER accepts a live global ID (including another app's window) and returns
 owner AES/PID, open status, ID above and ID below; closed windows report no
 neighbors. Queries are read-only; they do not grant permission to mutate a
 foreign window. Invalid/deleted IDs return GEM failure without changing
-outputs. Foreign geometry and desktop handle-0 metadata remain later work.
+outputs. Native metadata is range-checked before conversion to GEM shorts;
+invalid identifiers/PIDs or non-Boolean open status fail without truncation.
+Foreign geometry and desktop handle-0 metadata remain later work.
 No additional appl_getinfo extension bits are advertised in this slice.
 
 Window close/move/size/full gadget requests, WM_NEWTOP and optional AES4
