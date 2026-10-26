@@ -1387,7 +1387,9 @@ Userspace classic object drawing (#745)
 objc_draw/mt_objc_draw and objc_change/mt_objc_change use their standard GEM
 signatures and Boolean results. OBJECT arrays, INDIRECT specs, strings,
 TEDINFO and USERBLK records remain in the calling application's address space.
-The shared library walks and paints the tree; the kernel receives only existing
+The shared library reuses the original aes/ object painter, traversal, state
+changes and GSX text/border/layout routines through shared source fragments.
+Only the low-level VDI transport and drawing context have userspace bindings; the kernel receives only existing
 bounded VDI primitive requests and never an object-tree or callback pointer.
 No new production kernel service or configuration option is needed.
 
@@ -1395,9 +1397,8 @@ This first drawing slice supports classic G_BOX, G_IBOX, G_BOXCHAR, G_BUTTON,
 G_STRING, G_TITLE, G_TEXT, G_BOXTEXT, G_FTEXT, G_FBOXTEXT and G_USERDEF objects.
 It implements signed border thickness, box color/pattern words, default/exit
 button borders, IBM/small fonts, text justification, formatted underscores,
-and SELECTED/CROSSED/CHECKED/DISABLED/OUTLINED/SHADOWED states. Free text is
-sent in bounded VDI chunks; formatted templates are limited to 256 characters
-in this slice. Formatting recognizes the '@' empty-text marker without
+and SELECTED/CROSSED/CHECKED/DISABLED/OUTLINED/SHADOWED states. The original text routines use bounded buffers: free text is limited to 127
+characters, and formatted text and templates to 80 characters in this slice. Formatting recognizes the '@' empty-text marker without
 modifying caller text. Images, mono/color icons and 3D flags return GEM 0
 until their rendering adapters are available. No extension capability bits
 are advertised. A preflight checks the requested visible subtree before
@@ -1423,9 +1424,10 @@ fault. A headless kernel without the VDI service returns GEM 0 cleanly.
 
 objc_change ignores its reserved argument, updates caller-local state, and
 redraws only that object when requested. No-redraw and hidden-object state
-changes require no VDI access. Selection-only changes use a clipped XOR of the
-interior, so a deselection restores the preceding pixels, including transparent
-objects. Other changes repaint that object's normal appearance and overlays.
+changes require no VDI access. The original classic AES state-change routine uses a clipped XOR of the
+interior whenever SELECTED changes, including combined state transitions;
+otherwise it repaints the object. Deselection restores preceding pixels,
+including transparent objects.
 A failed redraw restores the old state; drawing errors cannot undo pixels that
 were already painted. Unchanged state is a successful no-op.
 
@@ -1433,7 +1435,9 @@ USERDEF runs as an ordinary user-mode call with the standard PARMBLK tree,
 object, previous/current state, absolute geometry, clipped rectangle and
 ub_parm. Its returned remaining-state mask controls AES overlays. Nested object
 drawing uses a separate local painter/workstation and nests the update lock.
-Callbacks outside the visual clip and hidden callbacks are not invoked. Invalid
+objc_draw skips callbacks outside the visual clip; objc_change follows the
+original direct callback behavior with the current clip in PARMBLK. Hidden
+callbacks are not invoked. Invalid
 caller pointers or callback faults are ordinary user faults, with kernel
 process cleanup; no in-kernel object validation or callback trampoline is added.
 
@@ -1451,5 +1455,5 @@ X86_64_MEMTEST, build the kernel and x32test/import fixtures, then run the boot
 script with MMAP_BOOT_SCREENSHOT=/tmp/ptos-libaes-objects.png. The optional QMP
 helper waits for the demo-ready marker and writes a PNG directly from QEMU;
 no generated or reconstructed UI is used. The checked-in example is in
- doc/screenshots/libaes-objects.png. Window decorations, forms, resources,
+doc/screenshots/libaes-objects.png. Window decorations, forms, resources,
 menus, bitmap/icon drawing and 3D extensions remain subsequent slices.

@@ -111,6 +111,11 @@ int main(int argc, char **argv, char **envp)
     VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1 && gem_probe_pixel(handle,26,26) != 2);
     VERIFY(mt_objc_change(&box,0,0,0,0,100,100,0,1,global) == 1);
     for (y = 0; y < 20; y++) for (x = 0; x < 20; x++) VERIFY(gem_probe_pixel(handle,x+20,y+20) == pixels[y*20+x]);
+    box.ob_type = G_IBOX;
+    VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1);
+    VERIFY(objc_change(&box,0,0,0,0,100,100,OS_CHECKED,1) == 1);
+    VERIFY(gem_probe_pixel(handle,35,35) == pixels[315]);
+    box.ob_state = 0;
     box.ob_type = G_USERDEF; box.ob_spec.userblk = &user;
     user.ub_code = callback; user.ub_parm = 123;
     VERIFY(objc_draw(&box,0,0,20,20,10,10) == 1 && gem_probe_pixel(handle,23,23) == 3);

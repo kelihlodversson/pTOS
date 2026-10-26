@@ -31,7 +31,9 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     if (graphics_error) return graphics_error;
     if (fn == VDI_SERVICE_OPEN) {
         VDI_SERVICE_WORKSTATION *ws = (void *)(uintptr_t)b;
+        __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
+        ws->ptsout[1] = 4;
         if (opens >= 32) return ENSMEM;
         return E_OK;
     }
@@ -40,7 +42,8 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         __builtin_memcpy(workstation[a].clip,(void *)(uintptr_t)c,8);
         return E_OK;
     }
-    if (fn == VDI_SERVICE_LINE || fn == VDI_SERVICE_COLOR) return E_OK;
+    if (fn == VDI_SERVICE_COLOR) return (LONG)b; /* VDI returns the selected pen. */
+    if (fn == VDI_SERVICE_LINE) return E_OK;
     if (fn != VDI_SERVICE_DRAW) return EINVFN;
     if (draw_error) return EACCDN;
     calls++;
@@ -56,7 +59,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     } else if (r->code == 114) {
         for (y = r->ptsin[1]; y <= r->ptsin[3]; y++) for (x = r->ptsin[0]; x <= r->ptsin[2]; x++) {
             if (x < 0 || x >= 160 || y < 0 || y >= 120 || x < workstation[a].clip[0] || x > workstation[a].clip[2] ||
-                y < workstation[a].clip[1] || y > workstation[a].clip[3]) return EINVAL;
+                y < workstation[a].clip[1] || y > workstation[a].clip[3]) continue;
             if (workstation[a].mode == MD_XOR) image[y][x] ^= 15;
             else image[y][x] = workstation[a].interior == FIS_HOLLOW ? WHITE : workstation[a].color;
         }
@@ -93,6 +96,11 @@ int main(void)
     VERIFY(objc_change(tree,1,99,0,0,160,120,SELECTED,1) == 1 && tree[1].ob_state == SELECTED);
     VERIFY(image[20][20] == (RED ^ 15));
     VERIFY(objc_change(tree,1,0,0,0,160,120,0,1) == 1 && image[20][20] == RED);
+    tree[2].ob_type = G_IBOX;
+    before = image[32][32];
+    VERIFY(objc_change(tree,2,0,0,0,160,120,SELECTED,1) == 1 && image[32][32] == (before ^ 15));
+    VERIFY(objc_change(tree,2,0,0,0,160,120,CHECKED,1) == 1 && image[32][32] == before);
+    tree[2].ob_state = 0;
     before = opens;
     VERIFY(mt_objc_change(tree,1,0,0,0,160,120,DISABLED,0,NULL) == 1 && opens == before);
     tree[1].ob_state = 0;
@@ -112,6 +120,7 @@ int main(void)
     VERIFY(objc_draw(tree,0,0,0,0,160,120) == 1 && image[20][20] == WHITE);
     indirect.index = 0x1174; tree[1].ob_flags = INDIRECT; tree[1].ob_spec.indirect = &indirect;
     VERIFY(mt_objc_draw(tree,1,0,0,0,160,120,aes_global) == 1 && image[20][20] == BLUE);
+    tree[1].ob_width = 80;
     tree[1].ob_flags = 0; tree[1].ob_type = G_FTEXT; tree[1].ob_spec.tedinfo = &ted;
     ted.te_ptext = raw; ted.te_ptmplt = pattern; ted.te_font = IBM; ted.te_color = 0x1100;
     VERIFY(objc_draw(tree,1,0,0,0,160,120) == 1 && last_count == 5);
@@ -120,6 +129,7 @@ int main(void)
     VERIFY(objc_draw(tree,1,0,0,0,160,120) == 1 && last_text[0] == '_' && last_text[3] == 'A' && last_text[4] == 'B');
     __builtin_memset(big,'_',257); big[257] = 0; ted.te_ptmplt = big; before = opens;
     VERIFY(objc_draw(tree,1,0,0,0,160,120) == 0 && opens == before);
+    tree[1].ob_width = 20;
     tree[1].ob_type = G_USERDEF; tree[1].ob_spec.userblk = &user;
     user.ub_code = callback; user.ub_parm = 123;
     VERIFY(objc_draw(tree,1,0,20,20,10,10) == 1 && callback_parameters.pb_tree == tree);
@@ -134,6 +144,8 @@ int main(void)
     before = opens;
     VERIFY(objc_draw(tree,0,-1,0,0,160,120) == 0 && objc_draw(tree,0,MAX_DEPTH+1,0,0,160,120) == 0);
     VERIFY(objc_draw(tree,0,1,0,0,0,120) == 1 && opens == before);
+    VERIFY(objc_change(tree,2,0,0,0,0,0,DISABLED,1) == 1 && tree[2].ob_state == DISABLED);
+    VERIFY(objc_change(tree,2,0,200,200,10,10,CROSSED,1) == 1 && tree[2].ob_state == CROSSED);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     return 0;
 }
