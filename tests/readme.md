@@ -158,7 +158,10 @@ being treated as suites themselves. `tests/pie_load/`, for instance,
 also has `pie_probe.c`: a standalone payload `pie_load.c` launches via
 `Pexec()` to test the PIE ELF loader, built and linked separately from
 `runtests.tos` (see the Makefile's `pieprobe.tos` rule) rather than
-compiled in as a `test_<name>()` entry point.
+compiled in as a `test_<name>()` entry point.  `tests/isolation/` does the
+same with `isoprobe.c` (`ISOPROBE.TOS`), which makes the forbidden accesses
+one launch at a time; the suite is built only where `CONF_WITH_USER_ASPACE`
+is set on ARM and m68k.
 
 ```c
 #include "test.h"
