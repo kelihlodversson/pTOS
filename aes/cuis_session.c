@@ -83,6 +83,8 @@ typedef struct cuis_client {
     ULONG edge_head, edge_count, recent_count, recent_buttons;
     CUIS_INPUT_FILTER input_filter;
     CUIS_INPUT_WAIT *input_wait; /* Resident syscall stack, only while blocked. */
+    ULONG keys[CUIS_KEY_CAPACITY];
+    UWORD key_head, key_count;
     LONG input_result[5]; /* key, count, x, y, packed buttons/modifiers */
 } CUIS_CLIENT;
 static CUIS_CLIENT *clients;
@@ -104,6 +106,9 @@ static CUIS_WINDOW *update_window;
 static CUIS_RECT *update_clips;
 static ULONG update_count;
 static CUIS_CLIENT *mouse_owner;
+static CUIS_CLIENT *keyboard_owner;
+static ULONG keyboard_depth;
+static void end_keyboard(void);
 static ULONG mouse_depth;
 static CUIS_CLIENT *display_owner;
 static ULONG display_depth;
@@ -210,13 +215,18 @@ BOOL cuis_keyboard_event(ULONG key)
 {
     UQUAD flags = cuis_input_lock();
     CUIS_WINDOW *window = focus_window;
-    if (window && window->key_count < CUIS_KEY_CAPACITY) {
+    if (keyboard_owner) {
+        if (keyboard_owner->key_count < CUIS_KEY_CAPACITY) {
+            keyboard_owner->keys[(keyboard_owner->key_head + keyboard_owner->key_count) % CUIS_KEY_CAPACITY] = key;
+            keyboard_owner->key_count++;
+        }
+    } else if (window && window->key_count < CUIS_KEY_CAPACITY) {
         window->keys[(window->key_head + window->key_count) % CUIS_KEY_CAPACITY] = key;
         window->key_count++;
     }
     cuis_input_unlock(flags);
     /* A full focused queue drops the newest key, never leaks it to BIOS. */
-    return window != NULL;
+    return keyboard_owner != NULL || window != NULL;
 }
 
 /* All routing and topology commits use the same short IRQ exclusion.
@@ -484,7 +494,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
         if (!acquire) {
             if (display_owner != client) { cuis_input_unlock(flags); return EACCDN; }
-            if (!--display_depth) { clear_display_regions(client); display_owner = NULL; }
+            if (!--display_depth) { end_keyboard(); clear_display_regions(client); display_owner = NULL; }
             cuis_input_unlock(flags); return E_OK;
         }
         if (display_owner == client) {
@@ -525,8 +535,63 @@ static BOOL mouse_available(void *argument)
         (pointer_capture && pointer_capture->client == client && !pointer_activation_drag));
 }
 
+static void end_keyboard(void)
+{
+    if (keyboard_owner) keyboard_owner->key_head = keyboard_owner->key_count = 0;
+    keyboard_owner = NULL; keyboard_depth = 0;
+}
+
+LONG cuis_keyboard_lock(UQUAD handle, UQUAD acquire)
+{
+    CUIS_CLIENT *client;
+    UQUAD flags;
+    if (handle > 0x7fffffffULL || acquire > 1) return EINVAL;
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != handle || display_owner != client || mouse_owner != client) {
+        cuis_input_unlock(flags); return EACCDN;
+    }
+    if (acquire) {
+        if (keyboard_depth == 0xffffffffUL) { cuis_input_unlock(flags); return ERANGE; }
+        if (!keyboard_owner) {
+            keyboard_owner = client;
+            client->key_head = client->key_count = 0;
+            if (focus_window && focus_window->client == client)
+                focus_window->key_head = focus_window->key_count = 0;
+        }
+        keyboard_depth++;
+    } else {
+        if (keyboard_owner != client) { cuis_input_unlock(flags); return EACCDN; }
+        if (!--keyboard_depth) end_keyboard();
+    }
+    cuis_input_unlock(flags); return E_OK;
+}
+
+LONG cuis_display_redraw(UQUAD handle, UQUAD x, UQUAD y, UQUAD width, UQUAD height)
+{
+    CUIS_CLIENT *client;
+    CUIS_WINDOW *window;
+    UQUAD flags;
+    if (handle > 0x7fffffffULL || x != (UQUAD)(QUAD)(LONG)x || y != (UQUAD)(QUAD)(LONG)y ||
+        width > 32767 || height > 32767) return EINVAL;
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != handle || display_owner != client) {
+        cuis_input_unlock(flags); return EACCDN;
+    }
+    if (width && height) for (window = window_front; window; window = window->znext) {
+        if ((QUAD)window->x < (QUAD)(LONG)x + (LONG)width && (QUAD)window->x + window->width + window->outset_right > (LONG)x &&
+            (QUAD)window->y < (QUAD)(LONG)y + (LONG)height && (QUAD)window->y + window->height + window->outset_bottom > (LONG)y) {
+            window->redraw = TRUE;
+            if (window->managed_activation) window->notices |= CUIS_NOTICE_REDRAW;
+        }
+    }
+    cuis_input_unlock(flags); return E_OK;
+}
+
 static void end_mouse(void)
 {
+    end_keyboard();
     mouse_owner->edge_count = mouse_owner->recent_count = 0;
     mouse_owner = NULL; mouse_depth = 0;
     pointer_capture = pointer_hover = NULL;
@@ -1231,7 +1296,9 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if (wait->events & CUIS_READY_INPUT) {
         sample_input(wait->client, &wait->input, FALSE);
         result |= wait->input.ready;
-        if ((wait->events & CUIS_READY_KEY) && client_window(wait->client, window) && window->key_count)
+        if ((wait->events & CUIS_READY_KEY) &&
+            (keyboard_owner ? (keyboard_owner == wait->client && wait->client->key_count) :
+             (client_window(wait->client, window) && window->key_count)))
             result |= CUIS_READY_KEY;
     }
     if ((wait->events & CUIS_READY_STREAM) && wait->client->stream_bytes >= wait->minimum)
@@ -1286,9 +1353,15 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
                 }
                 client->input_result[0] = 0;
                 if (ready & CUIS_READY_KEY) {
-                    client->input_result[0] = focus_window->keys[focus_window->key_head];
-                    focus_window->key_head = (focus_window->key_head + 1) % CUIS_KEY_CAPACITY;
-                    focus_window->key_count--;
+                    if (keyboard_owner == client) {
+                        client->input_result[0] = client->keys[client->key_head];
+                        client->key_head = (client->key_head + 1) % CUIS_KEY_CAPACITY;
+                        client->key_count--;
+                    } else {
+                        client->input_result[0] = focus_window->keys[focus_window->key_head];
+                        focus_window->key_head = (focus_window->key_head + 1) % CUIS_KEY_CAPACITY;
+                        focus_window->key_count--;
+                    }
                 }
                 /* A per-call cap must not reduce a completed click count.
                  * Queued edges belong to newer input, not this snapshot. */

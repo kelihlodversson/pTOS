@@ -17,6 +17,8 @@
 #include "../../../bdos/kproc.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
+#include "kheap.h"
+#include "grect.h"
 #endif
 #if CONF_WITH_USER_CALLBACKS
 #include "../../../bdos/user_callback.h"
@@ -838,13 +840,72 @@ static LONG screen_copy(WORD handle, UQUAD input)
     return E_OK;
 }
 
+#if CONF_WITH_CUIS
+/* Opaque device-format snapshots for modal dialogs. No user MFDB or raw
+ * address reaches VDI: all raster storage is bounded kernel staging memory.
+ * Reads exclude the software cursor and are allowed across the whole screen;
+ * restores obey the caller's CUIS regions and workstation clip. */
+static LONG screen_buffer(WORD handle, UQUAD rectangle, UQUAD buffer, UQUAD restore)
+{
+    GRECT r;
+    FDB screen = { 0 }, memory = { 0 };
+    VDICONTROL control = { 0 };
+    WORD xy[8], mode = 3, integers[45], points[12];
+    ULONG stride, bytes;
+    LONG result = E_OK;
+    Vwk *vwk = get_vwk_by_handle(handle);
+    WORD enabled = vwk->clip;
+    VwkClip clip = *VDI_CLIP(vwk);
+    if (restore > 1) return EINVAL;
+    if (!kproc_copy_from_user(&r,rectangle,sizeof(r))) return EIMBA;
+    if (r.g_x < 0 || r.g_y < 0 || r.g_w <= 0 || r.g_h <= 0 || r.g_w > 32752 ||
+        (LONG)r.g_x+r.g_w > (UWORD)linea_vars.V_REZ_HZ ||
+        (LONG)r.g_y+r.g_h > (UWORD)linea_vars.V_REZ_VT) return EINVAL;
+    if (restore && cuis_vdi_policy() < 0) return EACCDN;
+    memory.fd_w = (r.g_w+15) & ~15;
+    memory.fd_h = r.g_h; memory.fd_wdwidth = memory.fd_w/16;
+    memory.fd_nplanes = linea_vars.v_planes; memory.fd_stand = 1;
+    stride = (ULONG)memory.fd_wdwidth * 2 * memory.fd_nplanes;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_truecolor_screen()) stride = (ULONG)memory.fd_w * vdi_truecolor_pixel_size();
+#endif
+    if (!stride || stride > VDI_SERVICE_MAX_BITMAP/(UWORD)r.g_h) return EINVAL;
+    bytes = stride * r.g_h;
+    if (restore ? !kproc_validate_user_range(buffer,bytes) : !kproc_validate_user_write(buffer,bytes)) return EIMBA;
+    memory.fd_addr = kalloc(bytes);
+    if (!memory.fd_addr) return ENSMEM;
+    if (restore && !kproc_copy_from_user(memory.fd_addr,buffer,bytes)) { result = EIMBA; goto done; }
+    xy[0] = xy[1] = 0; xy[2] = r.g_w-1; xy[3] = r.g_h-1;
+    xy[4] = r.g_x; xy[5] = r.g_y; xy[6] = r.g_x+r.g_w-1; xy[7] = r.g_y+r.g_h-1;
+    control.code = 109; control.handle = handle; control.nintin = 1; control.nptsin = 4;
+    if (restore) {
+        control.ptr1 = &memory; control.ptr2 = &screen;
+        bounded_invoke(&control,&mode,xy,integers,points);
+    } else {
+        WORD i, swap;
+        for (i = 0; i < 4; i++) { swap = xy[i]; xy[i] = xy[i+4]; xy[i+4] = swap; }
+        control.ptr1 = &screen; control.ptr2 = &memory;
+        vwk->clip = FALSE;
+        invoke(&control,&mode,xy,integers,points);
+        *VDI_CLIP(vwk) = clip; vwk->clip = enabled;
+        linea_vars.CLIP = enabled;
+        linea_vars.XMINCL = clip.xmn_clip; linea_vars.XMAXCL = clip.xmx_clip;
+        linea_vars.YMINCL = clip.ymn_clip; linea_vars.YMAXCL = clip.ymx_clip;
+        if (!kproc_copy_to_user(buffer,memory.fd_addr,bytes)) result = EIMBA;
+    }
+done:
+    kfree(memory.fd_addr);
+    return result;
+}
+#endif
+
 LONG vdi_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
     if (!kproc_user_aspace(run))
         return EACCDN;
     if (fn == VDI_SERVICE_OPEN)
         return open_workstation(a, b);
-    if (fn > VDI_SERVICE_SCREEN_COPY)
+    if (fn > VDI_SERVICE_SCREEN_BUFFER)
         return EINVFN;
     if (!owned(a))
         return EIHNDL;
@@ -865,6 +926,10 @@ LONG vdi_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         return pixel_call(a, b, c, d);
     case VDI_SERVICE_DRAW:
         return d ? EINVAL : draw_call((WORD)a, b, c);
+#if CONF_WITH_CUIS
+    case VDI_SERVICE_SCREEN_BUFFER:
+        return screen_buffer((WORD)a,b,c,d);
+#endif
     case VDI_SERVICE_SCREEN_COPY:
         return (c || d) ? EINVAL : screen_copy((WORD)a, b);
     default:

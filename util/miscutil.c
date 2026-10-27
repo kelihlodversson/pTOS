@@ -61,7 +61,7 @@ void set_all_files(char *target)
 #if CONF_WITH_AES
 /*
  *  The xlate_obj_array() function below is used by
- *  the generated GEM rsc code in aes/gem_rsc.c, and by the desktop
+ *  the generated GEM rsc code in aes/shared/gem_rsc.c, and by the desktop
  */
 
 /* Translates the strings in an OBJECT array */

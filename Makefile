@@ -138,6 +138,8 @@ dirs = $(core_dirs) $(optional_dirs)
 arch_subdirs = $(addprefix machine/,$(MACHINE)) $(addprefix arch/,$(ARCH))
 arch_dirs = $(foreach d,$(dirs),$(addprefix $(d)/,$(arch_subdirs)))
 
+# Prefer the relocated generated resource over an old pre-migration copy.
+vpath gem_rsc.c aes/shared
 vpath %.c $(arch_dirs) $(dirs) aes/shared
 vpath %.S $(arch_dirs) $(dirs)
 
@@ -1258,7 +1260,9 @@ endif
 DESKRSC_BASE = desk/desktop
 DESKRSCGEN_BASE = desk/desk_rsc
 GEMRSC_BASE = aes/gem
-GEMRSCGEN_BASE = aes/gem_rsc
+GEMRSCGEN_BASE = aes/shared/gem_rsc
+# Also retire artifacts left by builds before the generated source moved.
+TOCLEAN += aes/gem_rsc.c aes/gem_rsc.h obj/desk/gem_rsc.o obj/desk/gem_rsc.d
 ICONRSC_BASE = desk/icon
 ICONRSCGEN_BASE = desk/icons
 MFORMRSC_BASE = aes/mform

@@ -5,12 +5,13 @@
 #include "layout.h"
 #include "gemformkey.h"
 
-short mt_form_keybd(OBJECT *tree, short object, short proposed, short key,
-                    short *next, short *remaining, short *global)
+short aes_form_keybd_checked(OBJECT *tree, short object, short proposed, short key,
+                    short *next, short *remaining, short *global, BOOL *ok)
 {
     WORD target = proposed, character = key;
     BOOL cont;
     LAYOUT_METRICS m;
+    *ok = FALSE;
     if (!tree || object < 0 || !next || !remaining || aes_application_session(global) < 0) return 0;
     cont = fm_keybd_step(tree,object,&character,&target);
     if (!cont && !(tree[target].ob_state & SELECTED)) {
@@ -21,7 +22,14 @@ short mt_form_keybd(OBJECT *tree, short object, short proposed, short key,
                             tree[target].ob_state | SELECTED,1,global)) return 0;
     }
     *next = target; *remaining = character;
+    *ok = TRUE;
     return cont;
+}
+short mt_form_keybd(OBJECT *tree, short object, short proposed, short key,
+                    short *next, short *remaining, short *global)
+{
+    BOOL ok;
+    return aes_form_keybd_checked(tree,object,proposed,key,next,remaining,global,&ok);
 }
 short form_keybd(OBJECT *tree, short object, short proposed, short key,
                  short *next, short *remaining)

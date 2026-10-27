@@ -7,6 +7,7 @@
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
+#include "gem_forms.h"
 #include "control_message.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
 static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
@@ -16,6 +17,13 @@ static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     __asm__ volatile ("syscall" : "+a"(ax) : "D"(a), "S"(b), "d"(c), "r"(fourth)
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
+}
+void gem_form_input_stage(short stage)
+{
+    static const char form[] = "x32 GEM form input: READY\r\n";
+    static const char alert[] = "x32 GEM alert input: READY\r\n";
+    if (stage == 1) ptos_write(1,form,sizeof(form)-1);
+    else ptos_write(1,alert,sizeof(alert)-1);
 }
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
 {
@@ -224,6 +232,7 @@ int main(int argc, char **argv, char **envp)
     }
     if (gem_probe_open(&handle,&width,&height) != 0) {
         GRECT untouched = { 1,2,3,4 };
+        status = gem_form_checks(0); if (status) return status;
         status = gem_button_checks(0); if (status) return status;
         status = gem_form_key_checks(-1); if (status) return status;
         box.ob_x = 7; box.ob_y = 9;
@@ -244,6 +253,14 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    status = process(0x3d,(uintptr_t)"FORMTEST.ON",0,0,0);
+    if (status >= 0) {
+        static const char pass[] = "x32 GEM modal forms: PASS\r\n";
+        VERIFY(process(0x3e,status,0,0,0) == 0);
+        status = gem_form_interactive(); if (status) return status;
+        ptos_write(1,pass,sizeof(pass)-1);
+    }
+    status = gem_form_checks(1); if (status) return status;
     status = gem_button_checks(1); if (status) return status;
     status = gem_form_key_checks(handle); if (status) return status;
     status = gem_layout_checks(handle,width,height); if (status) return status;

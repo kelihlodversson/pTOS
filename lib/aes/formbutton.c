@@ -119,10 +119,11 @@ short graf_watchbox(OBJECT *tree, short object, short in_state, short out_state)
 {
     return mt_graf_watchbox(tree,object,in_state,out_state,aes_global);
 }
-short mt_form_button(OBJECT *tree, short object, short clicks, short *next, short *global)
+short aes_form_button_checked(OBJECT *tree, short object, short clicks, short *next, short *global, BOOL *ok)
 {
     FORM_CONTEXT c = { 0 }, *saved = aes_form_context;
     WORD cont, target;
+    *ok = FALSE;
     if (!tree || object < 0 || !next) return 0;
     /* A root cannot have radio siblings; the native algorithm needs a parent. */
     if (!object && (tree[0].ob_flags & (RBUTTON | SELECTABLE)) == (RBUTTON | SELECTABLE) &&
@@ -134,7 +135,13 @@ short mt_form_button(OBJECT *tree, short object, short clicks, short *next, shor
     cont = aes_form_button_core(tree,object,clicks,&target);
     if (!finish(&c,saved)) return 0;
     *next = target;
+    *ok = TRUE;
     return cont;
+}
+short mt_form_button(OBJECT *tree, short object, short clicks, short *next, short *global)
+{
+    BOOL ok;
+    return aes_form_button_checked(tree,object,clicks,next,global,&ok);
 }
 short form_button(OBJECT *tree, short object, short clicks, short *next)
 {

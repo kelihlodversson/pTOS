@@ -34,6 +34,7 @@
 #include "gemgsxif.h"
 #include "gemgrlib.h"
 #include "gemwatch.h"
+#include "gemformanim.h"
 #include "gemasm.h"
 #include "rectfunc.h"
 
@@ -75,10 +76,10 @@ BOOL gr_stilldn(BOOL out, WORD x, WORD y, WORD w, WORD h)
 }
 
 
-static void gr_setup(WORD color)
+void gr_setup(void)
 {
     gsx_sclip(&gl_rscreen);
-    gsx_attr(FALSE, MD_XOR, color);
+    gsx_attr(FALSE, MD_XOR, BLACK);
 }
 
 
@@ -87,70 +88,6 @@ static void gr_clamp(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
 {
     *pneww = max(xrat - xorigin + 1, wmin);
     *pnewh = max(yrat - yorigin + 1, hmin);
-}
-
-
-static void gr_scale(WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pystep)
-{
-    WORD i;
-    WORD dist;
-
-
-    gr_setup(BLACK);
-
-    dist = (xdist + ydist) / 2;
-
-    for (i = 0; dist; i++)
-        dist /= 2;
-
-    if ((*pcnt = i) != 0)
-    {
-        *pxstep = max(1, divs(xdist, i));
-        *pystep = max(1, divs(ydist, i));
-    }
-    else
-        *pxstep = *pystep = 1;
-}
-
-
-void gr_stepcalc(WORD orgw, WORD orgh, GRECT *pt, WORD *pcx, WORD *pcy,
-                 WORD *pcnt, WORD *pxstep, WORD *pystep)
-{
-    *pcx = (pt->g_w/2) - (orgw/2);
-    *pcy = (pt->g_h/2) - (orgh/2);
-
-    gr_scale(*pcx, *pcy, pcnt, pxstep, pystep);
-
-    *pcx += pt->g_x;
-    *pcy += pt->g_y;
-}
-
-
-static void gr_xor(WORD clipped, WORD cnt, WORD cx, WORD cy, WORD cw, WORD ch,
-                   WORD xstep, WORD ystep, WORD dowdht)
-{
-    GRECT tmprect;
-
-    do
-    {
-        tmprect.g_x = cx;
-        tmprect.g_y = cy;
-        tmprect.g_w = cw;
-        tmprect.g_h = ch;
-
-        if (clipped)
-            gsx_xcbox(&tmprect);
-        else
-            gsx_xbox(&tmprect);
-
-        cx -= xstep;
-        cy -= ystep;
-        if (dowdht)
-        {
-            cw += (2 * xstep);
-            ch += (2 * ystep);
-        }
-    } while(cnt--);
 }
 
 
@@ -205,7 +142,7 @@ void gr_rubwind(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
     GRECT   o;
 
     wm_update(BEG_UPDATE);
-    gr_setup(BLACK);
+    gr_setup();
 
     r_set(&o, xorigin, yorigin, 0, 0);
 
@@ -250,7 +187,7 @@ void gr_dragbox(WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
     GRECT   o;
 
     wm_update(BEG_UPDATE);
-    gr_setup(BLACK);
+    gr_setup();
 
     gr_clamp(sx+1, sy+1, 0, 0, &offx, &offy);
     r_set(&o, sx, sy, w, h);
@@ -268,74 +205,6 @@ void gr_dragbox(WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
     *pdy = o.g_y;
     wm_update(END_UPDATE);
 }
-
-
-void gr_2box(WORD flag1, WORD cnt, GRECT *pt, WORD xstep, WORD ystep, WORD flag2)
-{
-    WORD i;
-
-    gsx_moff();
-    for (i = 0; i < 2; i++)
-        gr_xor(flag1, cnt, pt->g_x, pt->g_y, pt->g_w, pt->g_h, xstep, ystep, flag2);
-    gsx_mon();
-}
-
-
-/*
- *  Draw a moving XOR box(w,h) that moves from a point whose upper
- *  left corner is at src_x, src_y to a point at dst_x, dst_y
- */
-
-void gr_movebox(WORD w, WORD h, WORD srcx, WORD srcy, WORD dstx, WORD dsty)
-{
-    WORD    signx, signy;
-    WORD    cnt;
-    WORD    xstep, ystep;
-    GRECT   t;
-
-    r_set(&t, srcx, srcy, w, h);
-
-    signx = (srcx < dstx) ? -1 : 1;
-    signy = (srcy < dsty) ? -1 : 1;
-
-    gr_scale(signx*(srcx-dstx), signy*(srcy-dsty), &cnt, &xstep, &ystep);
-
-    gr_2box(FALSE, cnt, &t, signx*xstep, signy*ystep, FALSE);
-}
-
-
-/*
- *  Draw a small box that moves from the origin x,y to a spot centered
- *  within the rectangle and then expands to match the size of the rectangle
- */
-void gr_growbox(GRECT *po, GRECT *pt)
-{
-    WORD    cx, cy;
-    WORD    cnt, xstep, ystep;
-
-    gr_stepcalc(po->g_w, po->g_h, pt, &cx, &cy, &cnt, &xstep, &ystep);
-    gr_movebox(po->g_w, po->g_h, po->g_x, po->g_y, cx, cy);
-    po->g_x = cx;
-    po->g_y = cy;
-    gr_2box(TRUE, cnt, po, xstep, ystep, TRUE);
-}
-
-
-/*
- *  Draw a box that shrinks from the rectangle given down around a small
- *  box centered within the rectangle and then moves to the origin point
- */
-void gr_shrinkbox(GRECT *po, GRECT *pt)
-{
-    WORD    cx, cy;
-    WORD    cnt, xstep, ystep;
-
-    gr_stepcalc(po->g_w, po->g_h, pt, &cx, &cy, &cnt, &xstep, &ystep);
-    gr_2box(TRUE, cnt, pt, -xstep, -ystep, TRUE);
-    gr_movebox(po->g_w, po->g_h, cx, cy, po->g_x, po->g_y);
-}
-
-
 
 
 WORD gr_slidebox(OBJECT *tree, WORD parent, WORD obj, WORD isvert)

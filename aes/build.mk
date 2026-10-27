@@ -12,8 +12,8 @@ obj-$(ARCH_ARM) += gemdosifc.o
 obj-$(ARCH_X86_64) += aes_accessory.o aes_window.o aes_objects_kernel.o aes_tree.o aes_shell.o
 
 obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
-	 gemfmalt.o gemfmerror.o gemfmlib.o gemformbutton.o gemwatch.o gemformkey.o gemfslib.o gemgraf.o gemlayout.o gemicon.o gemrender_graphics.o gemgraphutil.o gemgrlib.o gemgsxif.o \
-	 geminit.o geminput.o gemmnlib.o gemobed.o gemobjop.o gemobjwalk.o gemoblib.o gemrender.o \
+	 gemfmalt.o gemalert.o gemfmerror.o gemformerror.o gemfmlib.o gemformdo.o gemformbutton.o gemwatch.o gemformkey.o gemfslib.o gemgraf.o gemlayout.o gemicon.o gemrender_graphics.o gemgraphutil.o gemgrlib.o gemformanim.o gemgsxif.o \
+	 geminit.o geminput.o gemmnlib.o gemobed.o gemedit.o gemobjop.o gemobjwalk.o gemoblib.o gemrender.o \
 	 gempd.o gemqueue.o gemrslib.o gemsclib.o gemshlib.o gemsuper.o \
 	 gemwmlib.o gemwrect.o gsx2.o gem_rsc.o mforms.o
 obj-$(CONF_WITH_LIBAES) += gemobjtree.o

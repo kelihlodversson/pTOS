@@ -7,6 +7,8 @@
 LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e);
 LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e);
+LONG cuis_keyboard_lock(UQUAD handle, UQUAD acquire);
+LONG cuis_display_redraw(UQUAD handle, UQUAD x, UQUAD y, UQUAD width, UQUAD height);
 LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block);
 LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block);
 LONG cuis_region_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y, UQUAD width, UQUAD height);

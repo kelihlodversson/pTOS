@@ -91,6 +91,10 @@ fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
 fi
+if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+    : > "$work/FORMTEST.ON"
+    set -- "$@" "$work/FORMTEST.ON"
+fi
 tools/mkhdisk.sh "$work/disk.img" 33554432 "$@" \
     "$work/X32HELLO.TOS" "$work/X32RELOC.TOS" "$work/X32NOREL.TOS" \
     "$work/X32BIG.TOS" "$work/X32TRUNC.TOS" > "$work/disk.log" 2>&1 || {
@@ -101,7 +105,13 @@ set -- qemu-system-x86_64
 if [ -n "${QEMU_DATA_DIR:-}" ]; then
     set -- "$@" -L "$QEMU_DATA_DIR"
 fi
-if [ -n "${MMAP_BOOT_SCREENSHOT:-}" ]; then
+if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+    set -- "$@" -qmp "unix:$work/qmp.sock,server=on,wait=off"
+    : > "$log"
+    python3 tools/exercise-gem-forms.py "$work/qmp.sock" "$log" "${MMAP_BOOT_SCREENSHOT:-}" \
+        "${MMAP_BOOT_TIMEOUT:-45}" > "$log.capture" 2>&1 &
+    capture=$!
+elif [ -n "${MMAP_BOOT_SCREENSHOT:-}" ]; then
     set -- "$@" -qmp "unix:$work/qmp.sock,server=on,wait=off"
     : > "$log"
     python3 tools/capture-gem-screen.py "$work/qmp.sock" "$log" "$MMAP_BOOT_SCREENSHOT" \

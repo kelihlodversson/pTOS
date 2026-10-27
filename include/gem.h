@@ -200,6 +200,28 @@ short wind_set(short id, short field, short a, short b, short c, short d);
 short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global);
 short wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh);
 short mt_wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh, short *global);
+#ifndef ED_START
+#define ED_START 0
+#define ED_INIT 1
+#define ED_CHAR 2
+#define ED_END 3
+#endif
+#ifndef FMD_START
+#define FMD_START 0
+#define FMD_GROW 1
+#define FMD_SHRINK 2
+#define FMD_FINISH 3
+#endif
+short objc_edit(OBJECT *tree, short object, short key, short *index, short kind);
+short mt_objc_edit(OBJECT *tree, short object, short key, short *index, short kind, short *global);
+short form_do(OBJECT *tree, short start);
+short mt_form_do(OBJECT *tree, short start, short *global);
+short form_dial(short kind, short sx, short sy, short sw, short sh, short x, short y, short w, short h);
+short mt_form_dial(short kind, short sx, short sy, short sw, short sh, short x, short y, short w, short h, short *global);
+short form_alert(short default_button, const char *alert);
+short mt_form_alert(short default_button, const char *alert, short *global);
+short form_error(short error);
+short mt_form_error(short error, short *global);
 short graf_watchbox(OBJECT *tree, short object, short in_state, short out_state);
 short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_state, short *global);
 short form_button(OBJECT *tree, short object, short clicks, short *next);

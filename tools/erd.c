@@ -1362,22 +1362,40 @@ char *basename;
         return -1;
     if (write_include(fp,basename))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#ifndef AES_RESOURCE_FORMS_ONLY\n");
+#endif
     if (write_shared(fp))
         return -1;
     if (write_tedinfo(fp))
         return -1;
     if (write_iconblk(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n");
+#endif
     if (write_bitblk(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#ifndef AES_RESOURCE_FORMS_ONLY\n");
+#endif
     if (write_object(fp))
         return -1;
     if (write_tree(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n");
+#endif
     if (write_freestr(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#ifndef AES_RESOURCE_FORMS_ONLY\n");
+#endif
     if (write_c_epilogue(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n");
+#endif
 
     fclose(fp);
 
@@ -1648,7 +1666,13 @@ PRIVATE int write_include(FILE *fp,char *name)
     fprintf(fp,"#include \"aesdefs.h\"\n");
 #endif
     fprintf(fp,"#include \"%s.h\"\n",name);
+#ifdef GEM_RSC
+    fprintf(fp,"#ifdef AES_RESOURCE_STRINGS_LOCAL\n#define N_(text) text\n#else\n");
+#endif
     fprintf(fp,"#include \"nls.h\"\n\n");
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n\n");
+#endif
 
     return ferror(fp) ? -1 : 0;
 }
@@ -3151,7 +3175,7 @@ PRIVATE int init_status(char **array,int entries)
  */
 PRIVATE short get_short(SHORT *p)
 {
-    return (p->hi<<8) | p->lo;
+    return ((unsigned char)p->hi<<8) | p->lo;
 }
 
 /*
@@ -3159,7 +3183,7 @@ PRIVATE short get_short(SHORT *p)
  */
 PRIVATE unsigned short get_ushort(USHORT *p)
 {
-    return (p->hi<<8) | p->lo;
+    return ((unsigned char)p->hi<<8) | p->lo;
 }
 
 /*

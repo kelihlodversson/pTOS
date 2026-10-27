@@ -1607,3 +1607,62 @@ object output untouched on failure. Completed state changes/pixels are not
 transactionally undone. Headless callers can still obtain pure flag/focus
 results; a required repaint fails cleanly. Full form_do and text editing
 remain subsequent work.
+
+Standard GEM forms
+------------------
+
+libaes exports objc_edit, form_do, form_dial, form_alert and form_error, including
+mt_* variants, alongside the existing form_center/keybd/button and watchbox
+bindings. The original AES editor, modal loop, animations, alert layout, icons,
+error mapping and system strings are ordinary shared C units in aes/shared/.
+Classic formatted text fields retain validation, templates, insertion/deletion,
+navigation and XOR caret behavior. Editing uses a stack-owned private renderer;
+unsupported payloads, invalid editing indices and strings exceeding its bounded
+scratch space fail before editing. A failed repaint can leave completed text or
+pixel changes, as with the existing object drawing adapters.
+
+form_do acquires nested display and mouse ownership, then explicit keyboard
+capture. It works without an application window and retains the prior window
+focus. Keyboard capture is distinct from BEG_MCTRL, which remains mouse-only.
+The initial capture discards stale keys belonging to the same application's
+focused window. Nested calls preserve the caller's lock levels; final release,
+process termination or fault reclaims capture and pending modal keys. Messages
+remain queued while the modal loop waits for keyboard and button input.
+
+CUIS_KEYBOARD_LOCK (48): session, acquire (0/1). Returns zero or a negative
+error. Acquisition requires the caller to own both the full display lock and
+mouse control. The bounded session keyboard queue takes precedence over window
+focus until the final release; overflow drops new keys without forwarding them
+to BIOS. Releasing the underlying mouse/display ownership also clears capture.
+
+CUIS_DISPLAY_REDRAW (49): session, signed x, signed y, width, height. Returns
+zero or a negative error. Requires full display ownership and marks intersecting
+visible windows (including their shadows) for redraw through the ordinary notice
+path. form_dial(FMD_FINISH) uses this path; FMD_START retains the native no-op
+semantics, while GROW/SHRINK use the original XOR animation. Finish does not
+implement a screen-save stack: applications retain the standard redraw duty.
+Desktop background/menu integration remains part of the desktop migration.
+
+form_alert uses a per-call resource tree and an exact device-format screen
+snapshot, restored on both completion and failure. VDI_SERVICE_SCREEN_BUFFER
+(10, available only with CUIS) takes an owned workstation, a GRECT pointer,
+application buffer and restore flag (0/1). It returns zero or a negative error;
+there are no application MFDBs or pointers passed into the renderer. The buffer
+must hold four bytes per pixel of the rectangle rounded up to 16 pixels wide;
+requests exceeding one MiB of actual device storage are rejected. Reads are
+allowed across the screen and omit the software cursor. Restores obey the
+current CUIS and workstation clips. All native raster storage is kernel-private
+bounded staging memory, freed before return. Library snapshots are limited to
+one MiB of worst-case storage, allocated and freed through GEMDOS.
+
+The library uses the classic two-dimensional alert appearance and English system
+error strings for now; 3D objects and locale selection remain separate migration
+work. form_error keeps the standard positive DOS error-number convention and
+native return behavior, rather than returning the alert button number.
+
+Validation includes the host sanitizer suite and ordinary GEM source compiled
+against unmodified GEMlib headers. To drive the blocking modal checks through
+QEMU's actual keyboard device, run tools/test-mmap-boot.sh with
+MMAP_BOOT_FORM_INPUT=1 on a combined libaes/VDI test build. Optional
+MMAP_BOOT_SCREENSHOT captures the displayed alert in that mode. No production
+input-injection syscall is added.

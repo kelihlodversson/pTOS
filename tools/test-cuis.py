@@ -53,6 +53,11 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-o", str(work / "application")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "application")], check=True)
+    # These resource IDs/data are generated, and a clean checkout has neither
+    # gem_rsc.h nor gem_rsc.c. Generate private host fixtures from the source RSC.
+    subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) +
+                   ["-DGEM_RSC", "tools/erd.c", "-o", str(work / "grd")], check=True)
+    subprocess.run([str(work / "grd"), "aes/gem", str(work / "gem_rsc")], check=True)
     shared_draw = []
     for name in ("gemrender", "gemrender_graphics", "gemgraphutil", "gemicon"):
         target = str(work / (name + ".o"))
@@ -66,8 +71,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "tests/cuis/object_draw.c",
-                "tests/cuis/mono_objects.c", "tests/cuis/gem_layout.c", "tests/cuis/form_keys.c", "tests/cuis/gem_buttons.c", "lib/aes/formbutton.c", "aes/shared/gemformbutton.c", "aes/shared/gemwatch.c", "lib/aes/formkeys.c", "aes/shared/gemformkey.c", "lib/aes/layout.c", "aes/shared/gemlayout.c", "lib/aes/draw.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
-                '-DAES_FORM_BINDINGS="form_bindings.h"', '-DAES_FORMKEY_BINDINGS="formkey_bindings.h"', "-Dsprintf=aes_draw_test_sprintf", "-ffunction-sections", "-fdata-sections",
+                "tests/cuis/mono_objects.c", "tests/cuis/gem_layout.c", "tests/cuis/form_keys.c", "tests/cuis/gem_buttons.c", "tests/cuis/gem_forms.c", "lib/aes/forms.c", "lib/aes/alerts.c", "aes/shared/gemformdo.c", "aes/shared/gemalert.c", str(work / "gem_rsc.c"), "aes/shared/gemformerror.c", "lib/aes/formbutton.c", "aes/shared/gemformbutton.c", "aes/shared/gemwatch.c", "lib/aes/formkeys.c", "aes/shared/gemformkey.c", "lib/aes/layout.c", "aes/shared/gemlayout.c", "lib/aes/draw.c", "aes/shared/gemedit.c", "aes/shared/gemformanim.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
+                '-DAES_RESOURCE_FORMS_ONLY', '-DAES_RESOURCE_STRINGS_LOCAL', '-DAES_MODAL_BINDINGS="modal_bindings.h"', '-DAES_ALERT_BINDINGS="alert_bindings.h"', '-DAES_ERROR_BINDINGS="error_bindings.h"', '-DAES_EDIT_BINDINGS="edit_bindings.h"', '-DAES_ANIM_BINDINGS="anim_bindings.h"', '-DAES_FORM_BINDINGS="form_bindings.h"', '-DAES_FORMKEY_BINDINGS="formkey_bindings.h"', "-Dsprintf=aes_draw_test_sprintf", "-ffunction-sections", "-fdata-sections",
                 "-Wl,--gc-sections,--wrap=ob_offset", "-o", str(work / "draw")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "draw")], check=True)
