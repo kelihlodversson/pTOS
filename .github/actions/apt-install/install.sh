@@ -22,10 +22,13 @@ for arg in "$@"; do
   esac
 done
 
+# "dpkg -s" also succeeds for a package that was removed (its configuration
+# files are left) or never configured.
 installed() {
   local p
   for p in "${pkgs[@]}"; do
-    dpkg -s "$p" >/dev/null 2>&1 || return 1
+    [ "$(dpkg-query -W -f='${Status}' "$p" 2>/dev/null)" = "install ok installed" ] ||
+      return 1
   done
 }
 
@@ -53,8 +56,10 @@ if compgen -G "$dir/*.deb" >/dev/null; then
 fi
 
 sudo mkdir -p "$dir/partial"
+# Error-Mode=any: an index that failed to download is an error, not a warning
+# that "apt-get update" survives with an old index (and exit status 0).
 for attempt in 1 2 3; do
-  sudo apt-get update -qq && break
+  sudo apt-get update -qq -o APT::Update::Error-Mode=any && break
   [ "$attempt" -lt 3 ] || exit 1
   sleep 10
 done
