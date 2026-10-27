@@ -63,7 +63,9 @@ for attempt in 1 2 3; do
   [ "$attempt" -lt 3 ] || exit 1
   sleep 10
 done
-sudo apt-get install -y ${opts[@]+"${opts[@]}"} \
+# --fix-broken: a cached install that failed half way leaves unpacked packages
+# whose dependencies are missing; this repairs them too.
+sudo apt-get install -y --fix-broken ${opts[@]+"${opts[@]}"} \
   -o Dir::Cache::archives="$dir" "${pkgs[@]}"
 
 # The cache is packed by the runner's user: apt's lock file is not readable
