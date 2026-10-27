@@ -134,6 +134,9 @@ C_SYM(cold_reset):
 #elif CONF_ATARI_HARDWARE
         clr.l   C_SYM(memvalid).w      // Invalidate memvalid
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)    // the tree that maps the low alias of the ROM
+#endif
         move.l  0x004,a0        // The 2 first longs are mapped to the ROM
         jmp     (a0)
 #else

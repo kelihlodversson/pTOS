@@ -3,7 +3,8 @@
 # on the test disk, on an emulated STE in the three ST screen modes and on an
 # emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725);
 # falcon-mmu (the Falcon ROM with the kernel in the upper half, #726) runs on
-# the 68030 only.  The two blitter suites
+# the 68030 only; falcon-aspace (#727) is that with an address space for every
+# process, in its own mode, f030a.  The two blitter suites
 # (text_blit and raster_copy) compare the blitter with the CPU path pixel by
 # pixel, and have to run, not skip themselves, on every one of them; the
 # Falcon is the one with a data cache (the blitter paths flush and invalidate
@@ -59,17 +60,23 @@ jobs:
       - name: Build the systems and the test disks
         run: |
           mkdir products
-          configs="atari512 atari512-fastcall atari512-kproc falcon-mmu"
+          configs="atari512 atari512-fastcall atari512-kproc falcon-mmu falcon-aspace"
           # a pull request does not run atari512-extdesk (doc/ci.txt)
           [ "${{ github.event_name }}" = pull_request ] || configs="$configs atari512-extdesk"
           for config in $configs; do
             make distclean >/dev/null 2>&1
             make "${config}_defconfig"
             make
-            make test-hd
             mkdir "products/$config"
             cp ptos512k.img "products/$config/system.img"
-            cp test-hd.img "products/$config/"
+            if [ "$config" = falcon-aspace ]; then
+              # the harness is the shell of the system (#727): no EmuCON, no keyboard
+              make test-hd-shell
+              cp test-hd-shell.img "products/$config/test-hd.img"
+            else
+              make test-hd
+              cp test-hd.img "products/$config/"
+            fi
           done
 
       # What a pull request runs is chosen from what depends on the mode and

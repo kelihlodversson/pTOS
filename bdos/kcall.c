@@ -70,6 +70,13 @@ long kdos_mxalloc(long amount, long mode)
     return (long)xmxalloc(amount, (int)mode);
 }
 
+#if CONF_WITH_VIDEL
+long kdos_srealloc(long amount)
+{
+    return (long)srealloc(amount);
+}
+#endif
+
 long kdos_malloc(long amount)
 {
     return (long)xmalloc(amount);

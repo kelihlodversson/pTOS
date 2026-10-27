@@ -70,7 +70,7 @@ obj-$(ARCH_X86_64) += tosvars.o aciaemu.o
 # layout of a loaded program (bios/aspace.c and the page-table backend of the
 # architecture).  x86-64 has its own, in bios/machine/pc-x86_64/.
 obj-$(CONF_WITH_PROCESS_ASPACES) += pmem32.o kheap.o procmem.o aspace.o progimage.o
-obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),aspace_hw.o) $(if $(ARCH_M68K),aspace_hw.o)
+obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),aspace_hw.o) $(if $(MACHINE_VIRT_M68K),aspace_hw.o) $(if $(CONF_ATARI_HIGHER_HALF),aspace_hw030.o)
 
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.

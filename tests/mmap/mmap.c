@@ -233,7 +233,7 @@ static void test_first_stores(void)
     munmap(m, 8 * PAGE);
 }
 
-#if defined(__mc68000__)
+#if defined(__mc68000__) && !defined(TEST_NO_CROSSING)
 /*
  * A longword at an odd address across the boundary of two pages, as the very
  * first access: a store when neither page is there, a load when only the first
@@ -335,8 +335,10 @@ static void test_file(void)
                 ptest_fail("a file mapping does not show the file");
                 break;
             }
-#if defined(__mc68000__)
-        /* a locked read-modify-write on a clean page is a write: the page is copied */
+#if defined(__mc68000__) && !defined(TEST_NO_RMW_FAULTS)
+        /* a locked read-modify-write on a clean page is a write: the page is copied
+         * (not on the 68030, where such a fault ends the process: the bus error
+         * frame cannot be run again for it, as in FreeMiNT) */
         {
             volatile unsigned char *q = p + PAGE + 5;
             unsigned char before = page[1][5];
@@ -441,7 +443,10 @@ void test_mmap(void)
 
     test_anonymous();
     test_first_stores();
-#if defined(__mc68000__)
+#if defined(__mc68000__) && !defined(TEST_NO_CROSSING)
+    /* (not on the Falcon, under Hatari's 68030: a misaligned access across two lazy
+     * pages sometimes ends in a bus error that the emulator delivers inside the next
+     * interrupt, a panic of the kernel; to be checked with a newer WinUAE core, #737) */
     test_crossing_accesses();
 #endif
     test_reservations();
