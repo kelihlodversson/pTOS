@@ -4,6 +4,7 @@
 #include "mono_objects.h"
 #include "gem_layout.h"
 #include "form_keys.h"
+#include "gem_buttons.h"
 #include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
@@ -15,21 +16,87 @@ static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_
 static struct { WORD mode, color, interior, clip[4], line; } workstation[256];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
-static int releases;
+static int releases, mouse_nesting, mouse_releases;
+static BOOL input_error, mouse_error;
+static struct { WORD events, x, y, buttons; } gesture[8];
+static int gesture_count, gesture_at, bad_gesture;
+static WORD mouse_x = 50, mouse_y = 50;
 static BOOL invalidate_global, bad_layout_font, fail_layout_close;
 static ULONG callbacks;
 static OBJECT *mutation_target;
 static int mutation_kind;
 static char mutation_text[200];
-LONG aes_application_session(short *global) { return global && !session_error ? 7 : EACCDN; }
+LONG aes_application_session(short *global) { return global && global[2] >= 0 && !session_error ? 7 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_MOUSE_LOCK && a == 7) {
+        if (b && mouse_error) return EACCDN;
+        if (!b && !mouse_nesting) return EACCDN;
+        if (!b) mouse_releases++;
+        mouse_nesting += b ? 1 : -1;
+        return E_OK;
+    }
     if (fn != CUIS_DISPLAY_LOCK || a != 7) return EACCDN;
     if (!b) releases++;
     if (window_update) return b ? EAGAIN : EACCDN;
     nesting += b ? 1 : -1;
     return E_OK;
+}
+short mt_wind_update(short code, short *global)
+{
+    if (aes_application_session(global) < 0) return 0;
+    if (code == END_MCTRL) return cuis_call6(CUIS_MOUSE_LOCK,7,0,0,0,0,0) == E_OK;
+    if (code == BEG_MCTRL || code == (BEG_MCTRL|NO_BLOCK))
+        return cuis_call6(CUIS_MOUSE_LOCK,7,1,!(code & NO_BLOCK),0,0,0) == E_OK;
+    return 0;
+}
+short wind_update(short code) { return mt_wind_update(code,aes_global); }
+short mt_graf_mkstate(short *mx, short *my, short *buttons, short *mods, short *global)
+{
+    if (aes_application_session(global) < 0) return 0;
+    *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
+    return 1;
+}
+short graf_mkstate(short *mx, short *my, short *buttons, short *mods)
+{
+    return mt_graf_mkstate(mx,my,buttons,mods,aes_global);
+}
+short mt_evnt_multi(short events, short clicks, short mask, short state,
+                    short leave, short x, short y, short w, short h,
+                    short leave2, short x2, short y2, short w2, short h2,
+                    short message[], unsigned long interval, short *mx, short *my,
+                    short *buttons, short *mods, short *key, short *count, short *global)
+{
+    WORD ready, sx = mouse_x, sy = mouse_y, sb = 0;
+    BOOL inside;
+    (void)leave2; (void)x2; (void)y2; (void)w2; (void)h2; (void)message; (void)interval;
+    if (input_error || aes_application_session(global) < 0) return 0;
+    if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || state) {
+        bad_gesture++; return 0;
+    }
+    ready = MU_BUTTON;
+    if (gesture_count) {
+        if (gesture_at == gesture_count) { bad_gesture++; return 0; }
+        sx = gesture[gesture_at].x; sy = gesture[gesture_at].y;
+        sb = gesture[gesture_at].buttons; ready = gesture[gesture_at++].events;
+    }
+    inside = w > 0 && h > 0 && sx >= x && sy >= y && (LONG)sx < (LONG)x+w && (LONG)sy < (LONG)y+h;
+    if (((ready & MU_BUTTON) && sb) || ((ready & MU_M1) && (inside == leave))) {
+        bad_gesture++; return 0;
+    }
+    *mx = sx; *my = sy; *buttons = sb; *mods = 0;
+    if (key) *key = 0;
+    if (count) *count = ready & MU_BUTTON ? 1 : 0;
+    return ready;
+}
+short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my,
+                      short *buttons, short *mods, short *global)
+{
+    if (input_error || aes_application_session(global) < 0) return 0;
+    if (!mouse_nesting || clicks != 1 || mask != 1 || state) { bad_gesture++; return 0; }
+    *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
+    return 1;
 }
 LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -183,6 +250,80 @@ static int layout_failures(void)
     VERIFY(!__builtin_memcmp(&root,&saved,sizeof(root)));
     VERIFY(bounds.g_x == 1 && bounds.g_y == 2 && bounds.g_w == 3 && bounds.g_h == 4);
     VERIFY(!nesting && releases == released);
+    return 0;
+}
+static int form_interactions(void)
+{
+    OBJECT tree[4] = { { 0 } };
+    USERBLK user;
+    int i, before;
+    WORD next;
+    for (i = 0; i < 4; i++) {
+        tree[i].ob_next = tree[i].ob_head = tree[i].ob_tail = -1;
+        tree[i].ob_type = G_BOX; tree[i].ob_spec.index = 0x1172;
+        tree[i].ob_width = 40; tree[i].ob_height = 40;
+    }
+    tree[0].ob_x = tree[0].ob_y = 10;
+    for (i = 1; i < 4; i++) {
+        tree[i].ob_x = tree[i].ob_y = 10;
+        VERIFY(objc_add(tree,0,i) == 1);
+    }
+    /* Leave, re-enter, then release within the absolute child rectangle. */
+    gesture_count = 3; gesture_at = 0;
+    gesture[0].events = gesture[1].events = MU_M1;
+    gesture[0].x = gesture[0].y = 70; gesture[0].buttons = 1;
+    gesture[1].x = gesture[1].y = 30; gesture[1].buttons = 1;
+    gesture[2].events = MU_BUTTON; gesture[2].x = gesture[2].y = 30; gesture[2].buttons = 0;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 1 && tree[1].ob_state == SELECTED && gesture_at == 3);
+    VERIFY(!mouse_nesting && !nesting && opens == closes && !bad_gesture);
+    /* Simultaneous crossing and release must use the release position. */
+    tree[1].ob_state = 0; gesture_count = 1; gesture_at = 0;
+    gesture[0].events = MU_BUTTON|MU_M1; gesture[0].buttons = 0;
+    gesture[0].x = gesture[0].y = 70;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 0 && !tree[1].ob_state);
+    tree[1].ob_state = 0; gesture_count = 2; gesture_at = 0;
+    gesture[0].events = MU_M1; gesture[0].buttons = 1;
+    gesture[1].events = MU_BUTTON|MU_M1; gesture[1].buttons = 0;
+    gesture[1].x = gesture[1].y = 30;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 1 && tree[1].ob_state == SELECTED);
+    /* Nested ownership releases only the level acquired by this call. */
+    gesture_count = gesture_at = 0; mouse_nesting = 1; before = mouse_releases;
+    tree[1].ob_state = 0;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 1 && mouse_nesting == 1 && mouse_releases == before+1);
+    mouse_nesting = 0;
+    /* Callback mutation of the global array cannot strand mouse ownership. */
+    tree[1].ob_type = G_USERDEF; tree[1].ob_spec.userblk = &user;
+    user.ub_code = callback; user.ub_parm = 0; tree[1].ob_state = 0;
+    invalidate_global = TRUE;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 0 && !mouse_nesting && !nesting);
+    invalidate_global = FALSE; session_error = 0;
+    tree[1].ob_type = G_BOX; tree[1].ob_spec.index = 0x1172; tree[1].ob_state = 0;
+    input_error = TRUE;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 0 && !mouse_nesting && !nesting);
+    input_error = FALSE; tree[1].ob_state = 0; graphics_error = EINVFN;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 0 && !mouse_nesting);
+    graphics_error = 0; mouse_error = TRUE; before = opens;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 0 && opens == before && !mouse_nesting);
+    mouse_error = FALSE;
+    tree[1].ob_flags = SELECTABLE|RBUTTON;
+    tree[2].ob_flags = SELECTABLE|RBUTTON; tree[2].ob_state = SELECTED;
+    tree[3].ob_flags = SELECTABLE; tree[3].ob_state = SELECTED;
+    VERIFY(form_button(tree,1,1,&next) == 1 && !next);
+    VERIFY((tree[1].ob_state & SELECTED) && !(tree[2].ob_state & SELECTED) && (tree[3].ob_state & SELECTED));
+    tree[1].ob_flags = SELECTABLE|EXIT; tree[1].ob_state = 0;
+    VERIFY(form_button(tree,1,1,&next) == 0 && next == 1 && (tree[1].ob_state & SELECTED));
+    tree[1].ob_state = 0; tree[1].ob_flags = SELECTABLE|TOUCHEXIT;
+    VERIFY(form_button(tree,1,2,&next) == 0 && (UWORD)next == 0x8001);
+    tree[1].ob_state = DISABLED; next = 99;
+    VERIFY(form_button(tree,1,1,&next) == 0 && next == 1 && tree[1].ob_state == DISABLED);
+    tree[1].ob_state = 0; tree[1].ob_flags = EDITABLE;
+    graphics_error = EINVFN; before = opens;
+    VERIFY(form_button(tree,1,1,&next) == 1 && next == 1 && opens == before);
+    graphics_error = 0; tree[1].ob_flags = SELECTABLE; tree[1].ob_state = 0;
+    input_error = TRUE; next = 99;
+    VERIFY(form_button(tree,1,1,&next) == 0 && next == 99 && !mouse_nesting);
+    input_error = FALSE;
+    VERIFY(opens == closes && !nesting && !mouse_nesting && !bad_gesture);
     return 0;
 }
 int main(void)
@@ -354,6 +495,13 @@ int main(void)
     before = gem_form_key_checks(0);
     if (before) __builtin_printf("form keyboard failure: %x\n",before);
     VERIFY(before == 0);
+    VERIFY(form_interactions() == 0);
+    before = gem_button_checks(1);
+    if (before) __builtin_printf("GEM button failure: %x\n",before);
+    VERIFY(before == 0);
+    graphics_error = EINVFN;
+    VERIFY(gem_button_checks(0) == 0);
+    graphics_error = 0;
     VERIFY(layout_failures() == 0);
     before = gem_layout_checks(0,160,120);
     if (before) __builtin_printf("GEM layout failure: %x\n",before);

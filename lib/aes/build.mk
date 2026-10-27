@@ -58,7 +58,14 @@ obj/libaes/gemformkey.o: aes/shared/gemformkey.c aes/shared/gemformkey.h lib/aes
 obj/libaes/formkeys.o: lib/aes/formkeys.c lib/aes/layout.h lib/aes/application.h aes/shared/gemformkey.h include/gem.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/libaes.so: obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
+LIBAES_FORM_OBJECTS = obj/libaes/gemformbutton.o obj/libaes/gemwatch.o
+$(LIBAES_FORM_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemwatch.h lib/aes/form_bindings.h lib/aes/form_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_FORM_BINDINGS='"form_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/formbutton.o: lib/aes/formbutton.c lib/aes/form_context.h lib/aes/layout.h lib/aes/application.h include/gem.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/libaes.so: $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
 	$(CC) $(LDSO_LDFLAGS) $(LIBAES_CFLAGS) -nostdlib -shared \
 	  -Wl,--gc-sections,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so \
 	  -Wl,--version-script,lib/aes/exports.map -o $@ $(filter %.o,$^)
@@ -151,7 +158,7 @@ endif
 obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h include/libaes.h include/vdi_service.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/GEMDRAW.TOS: tests/cuis/gem_draw.c tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMDRAW.TOS: tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)

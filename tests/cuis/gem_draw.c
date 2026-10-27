@@ -6,6 +6,7 @@
 #include "mono_objects.h"
 #include "gem_layout.h"
 #include "form_keys.h"
+#include "gem_buttons.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
 static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -199,14 +200,16 @@ int main(int argc, char **argv, char **envp)
     (void)argv; (void)envp;
     VERIFY(appl_init() > 0 && mt_appl_init(global) > 0);
     object(&box,G_BOX,0,0,100,100); box.ob_spec.index = 0x1170;
-    if (argc > 1 && argv[1][0] == 'f') {
+    if (argc > 1 && (argv[1][0] == 'f' || argv[1][0] == 'b')) {
         box.ob_type = G_USERDEF; box.ob_spec.userblk = &user;
         user.ub_code = fault_callback; user.ub_parm = 0;
-        (void)objc_draw(&box,0,0,0,0,100,100);
+        if (argv[1][0] == 'b') (void)graf_watchbox(&box,0,OS_SELECTED,0);
+        else (void)objc_draw(&box,0,0,0,0,100,100);
         return 99;
     }
     if (gem_probe_open(&handle,&width,&height) != 0) {
         GRECT untouched = { 1,2,3,4 };
+        status = gem_button_checks(0); if (status) return status;
         status = gem_form_key_checks(-1); if (status) return status;
         box.ob_x = 7; box.ob_y = 9;
         VERIFY(rsrc_obfix(&box,0) == 0 && box.ob_x == 7 && box.ob_y == 9);
@@ -226,6 +229,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    status = gem_button_checks(1); if (status) return status;
     status = gem_form_key_checks(handle); if (status) return status;
     status = gem_layout_checks(handle,width,height); if (status) return status;
     status = mutation_checks(); if (status) return status;
@@ -264,6 +268,12 @@ int main(int argc, char **argv, char **envp)
     VERIFY(child > 0);
     status = process(0x13a,child,0,0,0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 0x0b00));
+    tail[1] = 'b';
+    child = process(0x4b,100,(uintptr_t)"C:\\GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    VERIFY(child > 0);
+    status = process(0x13a,child,0,0,0);
+    VERIFY(status == (LONG)(((ULONG)child << 16) | 0x0b00));
+    VERIFY(wind_update(BEG_MCTRL|NO_BLOCK) == 1 && wind_update(END_MCTRL) == 1);
     VERIFY(wind_update(BEG_UPDATE|NO_BLOCK) == 1);
     status = demo(width,height); if (status) return status;
     VERIFY(wind_update(END_UPDATE) == 1 && gem_probe_close(handle) == 0 && appl_exit() == 1);
