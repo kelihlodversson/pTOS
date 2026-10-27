@@ -9,6 +9,9 @@
 #ifdef AES_RSC_BINDINGS
 #include AES_RSC_BINDINGS
 #endif
+#ifndef RS_ADDR_SLOT_SIZE
+#define RS_ADDR_SLOT_SIZE sizeof(LONG)
+#endif
 
 void *get_sub(UWORD rsindex, UWORD offset, UWORD rsize)
 {
@@ -68,16 +71,16 @@ void *get_addr(UWORD rstype, UWORD rsindex)
             return &iconblk->ib_pdata;
         return &iconblk->ib_ptext;
     case R_STRING:
-        return *((void **)get_sub(rsindex, hdr->rsh_frstr, sizeof(void *)));
+        return *((void **)get_sub(rsindex, hdr->rsh_frstr, RS_ADDR_SLOT_SIZE));
     case R_IMAGEDATA:
-        return *((void **)get_sub(rsindex, hdr->rsh_frimg, sizeof(void *)));
+        return *((void **)get_sub(rsindex, hdr->rsh_frimg, RS_ADDR_SLOT_SIZE));
     case R_FRSTR:
         offset = hdr->rsh_frstr;
-        size = sizeof(void *);
+        size = RS_ADDR_SLOT_SIZE;
         break;
     case R_FRIMG:
         offset = hdr->rsh_frimg;
-        size = sizeof(void *);
+        size = RS_ADDR_SLOT_SIZE;
         break;
     default:
         return (void *)-1L;

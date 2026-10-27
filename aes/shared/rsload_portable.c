@@ -93,7 +93,9 @@ struct native_rsc_layout {
     LONG userblk, trindex, frstr, frimg;
     LONG extension, cicon_table, ciconblks, cicons, raw, total;
     LONG nuserblk;
+#ifdef AES_RSC_BINDINGS
     LONG indirect;
+#endif
 };
 
 struct disk_cicon_info {
@@ -177,7 +179,11 @@ static BOOL disk_header(struct disk_rsc *disk, const void *base, LONG available)
 
 static LONG align_long(LONG value)
 {
+#ifdef AES_RSC_BINDINGS
     return (value + (LONG)sizeof(void *) - 1L) & ~((LONG)sizeof(void *) - 1L);
+#else
+    return (value + 3L) & ~3L;
+#endif
 }
 
 static BOOL layout_add(LONG *offset, LONG length)
@@ -388,12 +394,14 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, const struct disk_cicon
     if (!layout_add(&offset, (LONG)hdr->rsh_nstring * sizeof(void *))) return FALSE;
     layout->frimg = align_long(offset);
     if (!layout_add(&offset, (LONG)hdr->rsh_nimages * sizeof(void *))) return FALSE;
+#ifdef AES_RSC_BINDINGS
     /* A native indirect spec can be wider than its four-byte disk slot.
      * Keep those pointers out of raw strings/bitmap data on wide hosts. */
     if (sizeof(OBSPEC) > sizeof(ULONG)) {
         layout->indirect = align_long(offset);
         if (!layout_add(&offset, (LONG)hdr->rsh_nobs * sizeof(OBSPEC))) return FALSE;
     }
+#endif
     layout->extension = align_long(offset);
     if (!layout_add(&offset, 3L * sizeof(LONG))) return FALSE;
     layout->cicon_table = align_long(offset);
@@ -688,7 +696,10 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     BYTE **frstr;
     void **frimg;
     ULONG spec;
-    LONG i, j, off, words, bytes;
+    LONG i, off, words, bytes;
+#ifdef AES_RSC_BINDINGS
+    LONG j;
+#endif
     USERBLK *userblk;
 
     if (!scan_disk_cicons(disk, &cicons) || !layout_ordinary(disk, &cicons, &layout))
@@ -813,6 +824,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         if (obj->ob_flags & INDIRECT)
         {
             if ((spec & 3L) || !disk_range(disk, spec, 4L)) goto fail;
+#ifdef AES_RSC_BINDINGS
             if (sizeof(OBSPEC) > sizeof(ULONG)) {
                 obj->ob_spec.indirect = (OBSPEC *)(image + layout.indirect + i*sizeof(OBSPEC));
                 /* Preserve aliases of the same disk slot, not just its value. */
@@ -825,7 +837,9 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
                         break;
                     }
                 }
-            } else obj->ob_spec.indirect = (OBSPEC *)(image + layout.raw + spec);
+            } else
+#endif
+                obj->ob_spec.indirect = (OBSPEC *)(image + layout.raw + spec);
             if (!decode_object_spec(obj->ob_spec.indirect, obj->ob_type,
                                     disk_ulong(disk, spec), image, &layout, disk)) goto fail;
         }

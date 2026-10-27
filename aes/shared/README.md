@@ -37,6 +37,6 @@ NLS tagging, while the library currently uses the original English strings.
 
 `gemrsaddr.c` is the original resource address-lookup core. `rsload_portable.c`
 is compiled normally for libaes with private allocation, file-I/O, scaling and
-context bindings; the native build retains its existing adapters. Canonical
-records use native pointer alignment, and wide-pointer hosts keep indirect
+context bindings; the native build retains its existing adapters and layout.
+Library records use native pointer alignment, and wide-pointer host tests keep indirect
 specifications in native slots rather than overwriting four-byte disk slots.

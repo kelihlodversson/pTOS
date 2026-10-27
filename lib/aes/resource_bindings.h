@@ -4,6 +4,7 @@
 #include "resource_context.h"
 #include "gemlayout.h"
 #define RSLOAD_COLOUR_ICONS 1
+#define RS_ADDR_SLOT_SIZE sizeof(void *)
 #define rs_hdr (aes_resource->native.ap_rscmem)
 #define rs_global (&aes_resource->native)
 #define rs_readit aes_resource_read
