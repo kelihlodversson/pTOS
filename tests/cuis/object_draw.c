@@ -17,7 +17,8 @@ static struct { WORD mode, color, interior, clip[4], line; } workstation[256];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
 static int releases, mouse_nesting, mouse_releases;
-static BOOL input_error, mouse_error;
+static BOOL input_error, mouse_error, foreign_display;
+static int display_waits;
 static struct { WORD events, x, y, buttons; } gesture[8];
 static int gesture_count, gesture_at, bad_gesture;
 static WORD mouse_x = 50, mouse_y = 50;
@@ -39,6 +40,11 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (fn != CUIS_DISPLAY_LOCK || a != 7) return EACCDN;
     if (!b) releases++;
+    if (b && foreign_display) {
+        if (c && mouse_nesting) return EACCDN;
+        if (c) display_waits++;
+        return EAGAIN;
+    }
     if (window_update) return b ? EAGAIN : EACCDN;
     nesting += b ? 1 : -1;
     return E_OK;
@@ -291,6 +297,21 @@ static int form_interactions(void)
     tree[1].ob_state = 0;
     VERIFY(graf_watchbox(tree,1,SELECTED,0) == 1 && mouse_nesting == 1 && mouse_releases == before+1);
     mouse_nesting = 0;
+    /* Foreign BEG_UPDATE contention cannot retain our mouse grab while
+     * waiting. Caller-owned mouse/display levels and window clips survive. */
+    tree[1].ob_state = 0; foreign_display = TRUE; before = mouse_releases;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 0 && !tree[1].ob_state);
+    VERIFY(!mouse_nesting && mouse_releases == before+1 && !display_waits);
+    tree[1].ob_flags = SELECTABLE; next = 99;
+    VERIFY(form_button(tree,1,1,&next) == 0 && next == 99 && !mouse_nesting && !display_waits);
+    mouse_nesting = 1;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 0 && mouse_nesting == 1 && !display_waits);
+    mouse_nesting = 0; foreign_display = FALSE;
+    nesting = 1; tree[1].ob_state = 0;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 1 && nesting == 1 && !mouse_nesting);
+    nesting = 0; window_update = TRUE; tree[1].ob_state = 0; before = releases;
+    VERIFY(graf_watchbox(tree,1,SELECTED,0) == 1 && window_update && releases == before && !nesting);
+    window_update = FALSE;
     /* Callback mutation of the global array cannot strand mouse ownership. */
     tree[1].ob_type = G_USERDEF; tree[1].ob_spec.userblk = &user;
     user.ub_code = callback; user.ub_parm = 0; tree[1].ob_state = 0;

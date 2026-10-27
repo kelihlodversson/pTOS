@@ -52,6 +52,8 @@ void aes_form_change(OBJECT *tree, WORD object, UWORD state, WORD redraw)
     if (!redraw) { tree[object].ob_state = state; return; }
     if (!grab() || !metrics()) return;
     top = c->full_screen ? 0 : c->metrics.hbox;
+    /* CUIS makes display acquisition fail fast while we retain mouse
+     * control, while preserving own display nesting/per-window borrowing. */
     c->ok = mt_objc_change(tree,object,0,0,top,c->metrics.width,c->metrics.height-top,
                             state,1,c->global) != 0;
 }

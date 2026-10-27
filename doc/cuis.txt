@@ -1591,7 +1591,12 @@ watch loop switches to the original full-screen drawing clip.
 A drawing/tracking path lazily acquires one nested mouse-control level,
 retained until its public call completes. Each redraw uses ordinary
 objc_change and a short drawing update; the library holds no additional
-display update across event waits. Callers may retain their own update or
+display update across event waits. CUIS rejects a blocking display request
+immediately with EACCDN when its caller owns mouse control and a foreign
+client owns drawing. This prevents display/mouse lock cycles while keeping
+EAGAIN reserved for borrowing an owned per-window section on that path.
+Nonblocking display requests retain their original EAGAIN contention result.
+Callers may retain their own update or
 mouse-control nesting. Cleanup uses a captured session even if a callback
 changes GEM globals, and nested USERDEF interactions restore their enclosing
 private context. Process-fault cleanup reclaims mouse and drawing ownership.
