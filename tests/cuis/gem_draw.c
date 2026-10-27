@@ -8,6 +8,7 @@
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
+#include "gem_resources.h"
 #include "control_message.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
 static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
@@ -201,7 +202,7 @@ int main(int argc, char **argv, char **envp)
 {
     OBJECT box = { 0 };
     USERBLK user;
-    WORD handle, width, height, pixels[400];
+    WORD handle, width, height, cellw, cellh, pixels[400];
     short x,y,global[15];
     LONG child, status, update;
     short control[8] = { 0 };
@@ -232,6 +233,7 @@ int main(int argc, char **argv, char **envp)
     }
     if (gem_probe_open(&handle,&width,&height) != 0) {
         GRECT untouched = { 1,2,3,4 };
+        status = gem_resource_checks(0,0,0); if (status) return status;
         status = gem_form_checks(0); if (status) return status;
         status = gem_button_checks(0); if (status) return status;
         status = gem_form_key_checks(-1); if (status) return status;
@@ -243,6 +245,20 @@ int main(int argc, char **argv, char **envp)
             static const char marker[] = "x32 GEM object drawing: unavailable\r\n";
             ptos_write(1,marker,sizeof(marker)-1);
         }
+        return 0;
+    }
+    if (argc > 1 && (argv[1][0] == 'r' || argv[1][0] == 'R')) {
+        OBJECT *tree;
+        short parent = (short)process(0x10c,0,0,0,0);
+        VERIFY(rsrc_load("GEMTEST.RSC") == 1 && rsrc_gaddr(R_TREE,0,&tree) == 1);
+        if (argv[1][0] == 'R') { fault_callback(NULL); return 99; }
+        tree[0].ob_x = 1234;
+        control[0] = 0x7010; control[1] = global[2];
+        VERIFY(appl_write(parent,16,control) == 1 && control_message(control) == 1 && control[0] == 0x7011);
+        VERIFY(tree[0].ob_x == 1234 && rsrc_gaddr(R_TREE,0,&tree) == 1);
+        /* appl_exit reclaims even resources not explicitly freed. */
+        VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
+        VERIFY(aes_global[5] == 0 && aes_global[6] == 0 && aes_global[7] == 0 && aes_global[8] == 0);
         return 0;
     }
     if (argc > 1 && argv[1][0] == 'c') {
@@ -260,6 +276,18 @@ int main(int argc, char **argv, char **envp)
         status = gem_form_interactive(); if (status) return status;
         ptos_write(1,pass,sizeof(pass)-1);
     }
+    VERIFY(gem_probe_cell(handle,&cellw,&cellh) == 0);
+    tail[1] = 'r';
+    child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7010);
+    status = gem_resource_checks(1,cellw,cellh); if (status) return status;
+    control[0] = 0x7011;
+    VERIFY(appl_write((short)child,16,control) == 1);
+    VERIFY(process(0x13a,child,0,0,0) == (LONG)((ULONG)child<<16));
+    tail[1] = 'R';
+    child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    VERIFY(child > 0 && process(0x13a,child,0,0,0) == (LONG)(((ULONG)child<<16)|0xb00));
+    tail[1] = 'f';
     status = gem_form_checks(1); if (status) return status;
     status = gem_button_checks(1); if (status) return status;
     status = gem_form_key_checks(handle); if (status) return status;

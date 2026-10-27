@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 extern char **environ;
+unsigned long __ptos_getauxval(unsigned long type);
 extern uint32_t ptos_basepage;
 int32_t ptos_write(int handle, const void *buffer, uint32_t length);
 int atexit(void (*function)(void));

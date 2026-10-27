@@ -51,6 +51,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp obj/libaes/GEMINP.TOS "$work/GEMINP.TOS"
         cp obj/libaes/GEMMCTL.TOS "$work/GEMMCTL.TOS"
         cp obj/libaes/GEMDRAW.TOS "$work/GEMDRAW.TOS"
+        cp obj/libaes/GEMTEST.RSC "$work/GEMTEST.RSC"
         cp obj/libaes/GEMUPD.TOS "$work/GEMUPD.TOS"
         cp obj/libaes/GEMWIN.TOS "$work/GEMWIN.TOS"
         cp obj/libaes/GEMEVNT.TOS "$work/GEMEVNT.TOS"
@@ -86,7 +87,7 @@ if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/CUIS.TOS" ]; then
-    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS"
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS" "$work/GEMTEST.RSC"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS

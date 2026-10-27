@@ -43,6 +43,7 @@ static LONG window_transport(ULONG fn, UQUAD a)
     if (fn == CUIS_WINDOW_DESTROY) native_windows[i] = 0;
     return E_OK;
 }
+void aes_resources_reset(void) { }
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;

@@ -228,6 +228,33 @@ short form_button(OBJECT *tree, short object, short clicks, short *next);
 short mt_form_button(OBJECT *tree, short object, short clicks, short *next, short *global);
 short form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining);
 short mt_form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining, short *global);
+#ifndef R_TREE
+#define R_TREE 0
+#define R_OBJECT 1
+#define R_TEDINFO 2
+#define R_ICONBLK 3
+#define R_BITBLK 4
+#define R_STRING 5
+#define R_IMAGEDATA 6
+#define R_OBSPEC 7
+#define R_TEPTEXT 8
+#define R_TEPTMPLT 9
+#define R_TEPVALID 10
+#define R_IBPMASK 11
+#define R_IBPDATA 12
+#define R_IBPTEXT 13
+#define R_BIPDATA 14
+#define R_FRSTR 15
+#define R_FRIMG 16
+#endif
+short rsrc_load(const char *name);
+short mt_rsrc_load(const char *name, short *global);
+short rsrc_free(void);
+short mt_rsrc_free(short *global);
+short rsrc_gaddr(short type, short index, void *address);
+short mt_rsrc_gaddr(short type, short index, void *address, short *global);
+short rsrc_saddr(short type, short index, void *address);
+short mt_rsrc_saddr(short type, short index, void *address, short *global);
 short rsrc_obfix(OBJECT *tree, short object);
 short mt_rsrc_obfix(OBJECT *tree, short object, short *global);
 short form_center(OBJECT *tree, short *x, short *y, short *w, short *h);
