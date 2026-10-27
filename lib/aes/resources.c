@@ -14,19 +14,39 @@ extern char *getenv(const char *name);
 RESOURCE_CONTEXT *aes_resource;
 static RESOURCE_CONTEXT *resources;
 static RESOURCE_CONTEXT *retired_resources;
+/* Reserve cleanup linkage before allocation can need a failed-free retry.
+ * The union keeps returned storage aligned for pointers and 64-bit fields. */
+typedef union resource_allocation {
+    union resource_allocation *next;
+    UQUAD alignment;
+} RESOURCE_ALLOCATION;
+static RESOURCE_ALLOCATION *discarded_allocations;
 static LONG pending_close = -1;
 static char application_directory[RESOURCE_PATH];
 
 void *aes_resource_alloc(LONG bytes)
 {
     UQUAD address;
+    RESOURCE_ALLOCATION *allocation;
     if (bytes <= 0 || bytes > 65535) return NULL;
-    address = aes_memory_call(0x48,(ULONG)bytes);
-    return (QUAD)address > 0 ? (void *)(uintptr_t)address : NULL;
+    address = aes_memory_call(0x48,(ULONG)bytes+sizeof(*allocation));
+    if ((QUAD)address <= 0) return NULL;
+    allocation = (RESOURCE_ALLOCATION *)(uintptr_t)address;
+    return allocation+1;
 }
 WORD aes_resource_release(void *memory)
 {
-    return (WORD)aes_memory_call(0x49,(uintptr_t)memory);
+    return (WORD)aes_memory_call(0x49,(uintptr_t)((RESOURCE_ALLOCATION *)memory-1));
+}
+WORD aes_resource_discard(void *memory)
+{
+    WORD result = aes_resource_release(memory);
+    if (result != E_OK) {
+        RESOURCE_ALLOCATION *allocation = (RESOURCE_ALLOCATION *)memory-1;
+        allocation->next = discarded_allocations;
+        discarded_allocations = allocation;
+    }
+    return result;
 }
 /* Retired ownership is never considered by selected(). Keep the record
  * until both the image and the record itself have actually been released. */
@@ -46,6 +66,12 @@ static void retire_resource(RESOURCE_CONTEXT *resource)
 static void retry_resource_releases(void)
 {
     RESOURCE_CONTEXT **link = &retired_resources, *resource, *next;
+    RESOURCE_ALLOCATION **allocation = &discarded_allocations, *block, *following;
+    while ((block = *allocation) != NULL) {
+        following = block->next;
+        if (aes_resource_release(block+1) == E_OK) *allocation = following;
+        else allocation = &block->next;
+    }
     while ((resource = *link) != NULL) {
         next = resource->next;
         if (release_resource(resource)) *link = next;
@@ -241,7 +267,7 @@ static BOOL valid_trees(RESOURCE_CONTEXT *resource)
     }
     ok = TRUE;
 done:
-    aes_resource_release(stack);
+    aes_resource_discard(stack);
     return ok;
 }
 WORD mt_rsrc_load(const char *name, WORD *global)

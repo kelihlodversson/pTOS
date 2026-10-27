@@ -259,6 +259,22 @@ int main(int argc, char **argv)
     VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0);
     free_after = -1;
     aes_resources_reset(); VERIFY(!allocations);
+    /* Failed temporary frees retain input, validation scratch and rejected
+     * images without requiring a new allocation to record ownership. */
+    for (i = 0; i < 4; i++) {
+        free_after = i == 1 ? 1 : 0;
+        if (i == 2) disk_long(36+24+12,0xffffff00UL);
+        if (i == 3) short_read = 2;
+        VERIFY(rsrc_load("GEMTEST.RSC") == (i < 2 ? 1 : 0));
+        VERIFY(allocations == (i == 0 ? 4 : i == 1 ? 3 : i == 2 ? 3 : 2));
+        free_after = 0;
+        aes_resources_reset();
+        VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0);
+        free_after = -1; short_read = 0;
+        memcpy(disk,original,sizeof(disk));
+        aes_resources_reset(); VERIFY(!allocations && !files);
+        aes_resources_reset(); VERIFY(!allocations);
+    }
     /* Search order: app directory, caller path, drive root, then PATH. */
     available = "GOOD\\GEMTEST.RSC"; attempts = 0;
     VERIFY(rsrc_load("ELSE\\GEMTEST.RSC") == 1);

@@ -17,6 +17,7 @@ void *aes_resource_addr(UWORD type, UWORD index);
 void *aes_resource_sub(UWORD index, UWORD offset, UWORD size);
 void *aes_resource_alloc(LONG bytes);
 WORD aes_resource_release(void *memory);
+WORD aes_resource_discard(void *memory);
 LONG aes_resource_read_file(WORD handle, LONG bytes, void *memory);
 LONG aes_resource_seek(WORD handle, WORD mode, LONG offset);
 CICONBLK **aes_resource_cicons(RSHDR *header);

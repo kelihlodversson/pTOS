@@ -13,7 +13,7 @@
 #define get_sub aes_resource_sub
 #define get_ciconblkptr aes_resource_cicons
 #define dos_alloc_anyram aes_resource_alloc
-#define dos_free aes_resource_release
+#define dos_free aes_resource_discard
 #define dos_read aes_resource_read_file
 #define dos_lseek aes_resource_seek
 #define rs_obfix(tree,obj) rs_obfix_metrics(tree,obj,aes_resource->metrics.wchar,aes_resource->metrics.hchar,aes_resource->metrics.width)
