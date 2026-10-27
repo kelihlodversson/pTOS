@@ -72,6 +72,10 @@ jobs:
             image=${entry#*:}
             make distclean >/dev/null 2>&1
             make "${config}_defconfig"
+            # TEMPORARY (#761): measure -O2 with LTO on the 512 KB images
+            case $config in
+              atari512*) echo BUILD_LTO=y >> .config; make olddefconfig ;;
+            esac
             make
             make pbench.prg
             mkdir "products/$config"
