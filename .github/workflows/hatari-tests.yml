@@ -1,8 +1,10 @@
 #
 # Regression tests under Hatari: runtests.tos (tests/, doc in tests/readme.md)
 # on the test disk, on an emulated STE in the three ST screen modes and on an
-# emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725).
-# The two blitter suites
+# emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725);
+# falcon-mmu (the Falcon ROM with the kernel in the upper half, #726) runs on
+# the 68030 only; falcon-aspace (#727) is that with an address space for every
+# process, in its own mode, f030a.  The two blitter suites
 # (text_blit and raster_copy) compare the blitter with the CPU path pixel by
 # pixel, and have to run, not skip themselves, on every one of them; the
 # Falcon is the one with a data cache (the blitter paths flush and invalidate
@@ -11,21 +13,16 @@
 # atari512-fastcall is the same image built with -mfastcall, which is the
 # only place its code is tested under that calling convention at run time.
 #
-# falcon-mmu is the Falcon ROM with the kernel in the upper half, running with
-# the 68030 MMU on from its first instruction (#726): it is tested on the
-# emulated 68030 only.
-#
-# falcon-aspace is the same ROM with an address space for every process
-# (#727): its shell is the test harness (SHELL.TOS on the disk of "make
-# test-hd-shell"), which runs in user mode with page tables of its own and
-# includes the isolation suite.  It has no VDI, so no blitter suites: mode f030a.
-#
 
 name: Hatari tests
 
 on:
   pull_request:
     branches: [master, "epic/**"]
+  # every configuration in every screen mode, which a pull request does not
+  # run (see the matrix of the test job)
+  schedule:
+    - cron: '23 3 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -36,12 +33,14 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build ${{ matrix.config }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu, falcon-aspace]
+  # One job: the three systems are built (a minute or so each, with their test
+  # disk), then the tests run several at a time, one Hatari each, on the four
+  # CPUs of the runner.  The runner is an Ubuntu 26.04, for its Hatari 2.6: the
+  # 2.4.1 of the 24.04 hangs the 68030 address-space runs (#727, #737).
+  hatari:
+    name: Hatari tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,84 +51,40 @@ jobs:
           arch: m68k
 
       # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh)
-      - name: Install the disk image tools
-        run: sudo apt-get install -y --no-install-recommends dosfstools mtools
-
-      - name: Build the system and the test disk
+      - name: Install Hatari and the disk image tools
         run: |
-          make "${{ matrix.config }}_defconfig"
-          make
-          mkdir products
-          if [ "${{ matrix.config }}" = falcon-aspace ]; then
-              make test-hd-shell      # (the harness is the shell: no console to type into)
-              cp test-hd-shell.img products/test-hd.img
-          else
-              make test-hd
-              cp test-hd.img products/
-          fi
-          cp ptos512k.img products/system.img
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hatari-tests-${{ matrix.config }}
-          path: products/
-          retention-days: 7
-
-  test:
-    name: Test ${{ matrix.config }}, ${{ matrix.mode }}
-    needs: build
-    # Hatari comes from the distribution's packages, and every mode uses the
-    # same one: 2.6 of Ubuntu 26.04, run in a container.  The 2.4.1 of the
-    # 24.04 runner hangs the 68030 address-space runs (#727, #737).
-    runs-on: ubuntu-24.04
-    container: ubuntu:26.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu, falcon-aspace]
-        mode: [low, med, high, f030, f040, f030a]
-        # falcon-mmu is the Falcon ROM with the kernel in the upper half and
-        # the 68030 MMU on from its first instruction (#726): a 68030 only;
-        # falcon-aspace is that with an address space for every process, and
-        # runs in its own mode (f030a, #727)
-        exclude:
-          - {config: falcon-mmu, mode: low}
-          - {config: falcon-mmu, mode: med}
-          - {config: falcon-mmu, mode: high}
-          - {config: falcon-mmu, mode: f040}
-          - {config: falcon-mmu, mode: f030a}
-          - {config: falcon-aspace, mode: low}
-          - {config: falcon-aspace, mode: med}
-          - {config: falcon-aspace, mode: high}
-          - {config: falcon-aspace, mode: f030}
-          - {config: falcon-aspace, mode: f040}
-          - {config: atari512, mode: f030a}
-          - {config: atari512-fastcall, mode: f030a}
-          - {config: atari512-kproc, mode: f030a}
-          - {config: atari512-extdesk, mode: f030a}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: hatari-tests-${{ matrix.config }}
-          path: products
-
-      - name: Install Hatari
-        run: |
-          SUDO=$(command -v sudo || true)      # (the container is root, without sudo)
-          export DEBIAN_FRONTEND=noninteractive
-          $SUDO apt-get update
-          $SUDO apt-get install -y --no-install-recommends hatari python3
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hatari dosfstools mtools
           hatari --version || true     # (it exits with 1)
 
-      # Four to ten minutes (the Falcon modes run with the MMU on, which makes
-      # the 68040 one the slowest); fifteen is for one that hangs, well below
-      # the job's 30 minutes, which would cancel the reporting too
-      - name: Run the tests under Hatari
-        timeout-minutes: 20
+      - name: Build the systems and the test disks
         run: |
-          python3 tools/run-hatari-tests.py --tos products/system.img \
-            --disk products/test-hd.img --mode "${{ matrix.mode }}" \
-            --timeout 900
+          mkdir products
+          configs="atari512 atari512-fastcall atari512-kproc falcon-mmu falcon-aspace"
+          # a pull request does not run atari512-extdesk (doc/ci.txt)
+          [ "${{ github.event_name }}" = pull_request ] || configs="$configs atari512-extdesk"
+          for config in $configs; do
+            make distclean >/dev/null 2>&1
+            make "${config}_defconfig"
+            make
+            mkdir "products/$config"
+            cp ptos512k.img "products/$config/system.img"
+            if [ "$config" = falcon-aspace ]; then
+              # the harness is the shell of the system (#727): no EmuCON, no keyboard
+              make test-hd-shell
+              cp test-hd-shell.img "products/$config/test-hd.img"
+            else
+              make test-hd
+              cp test-hd.img "products/$config/"
+            fi
+          done
+
+      # What a pull request runs is chosen from what depends on the mode and
+      # on the kernel (doc/ci.txt); master's nightly run and a manual one go
+      # through every combination (tools/ci-hatari.sh).  A run takes three to
+      # six minutes on a quiet runner, twice that on a busy one; twenty is for one that
+      # hangs, well below the job's time.
+      - name: Run the tests under Hatari
+        env:
+          EVENT: ${{ github.event_name }}
+        run: tools/ci-hatari.sh
