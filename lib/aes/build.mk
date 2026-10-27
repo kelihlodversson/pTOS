@@ -65,7 +65,31 @@ $(LIBAES_FORM_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemwatch.h lib
 obj/libaes/formbutton.o: lib/aes/formbutton.c lib/aes/form_context.h lib/aes/layout.h lib/aes/application.h include/gem.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/libaes.so: $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
+obj/libaes/gemedit.o: aes/shared/gemedit.c lib/aes/edit_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_EDIT_BINDINGS='"edit_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/gemformdo.o: aes/shared/gemformdo.c lib/aes/modal_bindings.h lib/aes/modal_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_MODAL_BINDINGS='"modal_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/forms.o: lib/aes/forms.c lib/aes/modal_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/gemformanim.o: aes/shared/gemformanim.c lib/aes/anim_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_ANIM_BINDINGS='"anim_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/gemalert.o: aes/shared/gemalert.c lib/aes/alert_bindings.h lib/aes/alert_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_ALERT_BINDINGS='"alert_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/gemformerror.o: aes/shared/gemformerror.c lib/aes/error_bindings.h lib/aes/alert_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_ERROR_BINDINGS='"error_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/gemalertdata.o: aes/shared/gemalertdata.c $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
+obj/libaes/alerts.o: lib/aes/alerts.c lib/aes/alert_context.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/libaes.so: obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemalertdata.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
 	$(CC) $(LDSO_LDFLAGS) $(LIBAES_CFLAGS) -nostdlib -shared \
 	  -Wl,--gc-sections,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so \
 	  -Wl,--version-script,lib/aes/exports.map -o $@ $(filter %.o,$^)

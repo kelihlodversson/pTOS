@@ -20,6 +20,9 @@
 #include "rectfunc.h"
 
 #include "render_context.h"
+#include "../../aes/gemobed.h"
+#include "../../aes/gemgrlib.h"
+WORD aes_edit_core(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
 #include "../../aes/shared/gemrender.h"
 
 /* Save/restore around nested USERDEF calls. */
@@ -327,7 +330,7 @@ static BOOL preflight(OBJECT *tree, WORD object, WORD depth, WORD x, WORD y)
     return TRUE;
 }
 static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD cw, WORD ch,
-                   WORD *global, BOOL change, UWORD state)
+                   WORD *global, BOOL change, UWORD state, WORD key, WORD *index, WORD kind, void (*operation)(void *), void *argument)
 {
     PAINTER p = { 0 }, *saved = aes_painter;
     LONG session = aes_application_session(global), right, bottom, lock;
@@ -374,7 +377,9 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     vst_height(p.workstation.ws_chminh,&p.small_width,&p.small_top,&p.wschar,&p.hschar);
     vst_height(p.workstation.ws_chmaxh,&dummy,&dummy,&dummy,&dummy);
     if (!p.ok || p.wchar <= 0 || p.hchar <= 0 || p.wschar <= 0 || p.hschar <= 0) goto done;
-    if (change) ob_render_change(tree,start,state,TRUE);
+    if (operation) operation(argument);
+    else if (index) aes_edit_core(tree,start,key,index,kind);
+    else if (change) ob_render_change(tree,start,state,TRUE);
     else {
         parent = get_par(tree,start);
         if (parent != NIL) ob_offset(tree,parent,&x,&y); else x = y = 0;
@@ -390,7 +395,7 @@ done:
 WORD mt_objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h, WORD *global)
 {
     if (!tree || start < 0 || depth < 0 || depth > MAX_DEPTH) return 0;
-    return render(tree,start,depth,x,y,w,h,global,FALSE,0);
+    return render(tree,start,depth,x,y,w,h,global,FALSE,0,0,NULL,0,NULL,NULL);
 }
 WORD objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h)
 {
@@ -405,7 +410,7 @@ WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WO
     old = tree[object].ob_state;
     if (old == (UWORD)state) return 1;
     if (!redraw || (tree[object].ob_flags & HIDETREE)) { tree[object].ob_state = state; return 1; }
-    if (!render(tree,object,0,x,y,w,h,global,TRUE,(UWORD)state)) {
+    if (!render(tree,object,0,x,y,w,h,global,TRUE,(UWORD)state,0,NULL,0,NULL,NULL)) {
         tree[object].ob_state = old;
         return 0;
     }
@@ -414,4 +419,61 @@ WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WO
 WORD objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h, WORD state, WORD redraw)
 {
     return mt_objc_change(tree,object,reserved,x,y,w,h,state,redraw,aes_global);
+}
+
+/* The editor redraws into the same workstation and immutable update clip. */
+void aes_edit_draw(OBJECT *tree, WORD object, WORD depth)
+{
+    WORD parent, x = 0, y = 0;
+    parent = get_par(tree,object);
+    if (parent != NIL) ob_offset(tree,parent,&x,&y);
+    everyobj(tree,object,tree[object].ob_next,ob_render_object,x,y,depth);
+}
+
+WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, WORD *global)
+{
+    TEDINFO *ted;
+    OBSPEC spec;
+    LONG raw, template, valid, slots = 0, i;
+    WORD type, staged;
+    if (!tree || !index || kind < EDSTART || kind > EDEND) return 0;
+    if (kind == EDSTART || object <= 0) return 1;
+    type = tree[object].ob_type & 255;
+    if (type != G_FTEXT && type != G_FBOXTEXT) return 0;
+    spec = tree[object].ob_flags & INDIRECT ? *tree[object].ob_spec.indirect : tree[object].ob_spec;
+    ted = spec.tedinfo;
+    if (!ted || ted->te_txtlen < 2 || ted->te_txtlen > MAX_LEN ||
+        ted->te_tmplen < 1 || ted->te_tmplen >= MAX_LEN) return 0;
+    raw = bounded_length(ted->te_ptext,ted->te_txtlen-1);
+    template = bounded_length(ted->te_ptmplt,ted->te_tmplen-1);
+    valid = bounded_length(ted->te_pvalid,MAX_LEN-1);
+    if (raw >= ted->te_txtlen || template >= ted->te_tmplen || !valid || valid >= MAX_LEN) return 0;
+    for (i = 0; i < template; i++) if (ted->te_ptmplt[i] == '_') slots++;
+    /* find_pos() needs a template slot for every legal insertion position. */
+    if (slots < ted->te_txtlen-1 || (kind != EDINIT && (*index < 0 || *index > raw))) return 0;
+    staged = *index;
+    if (!render(tree,object,0,0,0,32767,32767,global,FALSE,0,key,&staged,kind,NULL,NULL)) return 0;
+    *index = staged;
+    return 1;
+}
+WORD objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
+{
+    return mt_objc_edit(tree,object,key,index,kind,aes_global);
+}
+
+typedef struct { WORD kind; GRECT small, large; } FORM_ANIMATION;
+static void animate_form(void *argument)
+{
+    FORM_ANIMATION *a = argument;
+    if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
+    else gr_shrinkbox(&a->small,&a->large);
+}
+WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD *global)
+{
+    OBJECT dummy = { 0 };
+    FORM_ANIMATION a;
+    dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
+    dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
+    a.kind = kind; a.small = *small; a.large = *large;
+    return render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
 }
