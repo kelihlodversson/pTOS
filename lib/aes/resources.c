@@ -13,6 +13,7 @@ extern char *getenv(const char *name);
 #define RESOURCE_PATH 128
 RESOURCE_CONTEXT *aes_resource;
 static RESOURCE_CONTEXT *resources;
+static RESOURCE_CONTEXT *retired_resources;
 static LONG pending_close = -1;
 static char application_directory[RESOURCE_PATH];
 
@@ -27,6 +28,35 @@ WORD aes_resource_release(void *memory)
 {
     return (WORD)aes_memory_call(0x49,(uintptr_t)memory);
 }
+/* Retired ownership is never considered by selected(). Keep the record
+ * until both the image and the record itself have actually been released. */
+static BOOL release_resource(RESOURCE_CONTEXT *resource)
+{
+    if (resource->native.ap_rscmem) {
+        if (aes_resource_release(resource->native.ap_rscmem) != E_OK) return FALSE;
+        resource->native.ap_rscmem = NULL;
+    }
+    return aes_resource_release(resource) == E_OK;
+}
+static void retire_resource(RESOURCE_CONTEXT *resource)
+{
+    resource->next = retired_resources;
+    retired_resources = resource;
+}
+static void retry_resource_releases(void)
+{
+    RESOURCE_CONTEXT **link = &retired_resources, *resource, *next;
+    while ((resource = *link) != NULL) {
+        next = resource->next;
+        if (release_resource(resource)) *link = next;
+        else link = &resource->next;
+    }
+}
+static void dispose_resource(RESOURCE_CONTEXT *resource)
+{
+    if (!release_resource(resource)) retire_resource(resource);
+}
+
 LONG aes_resource_read_file(WORD handle, LONG bytes, void *memory)
 {
     return (LONG)aes_gemdos_call(0x3f,(UWORD)handle,(ULONG)bytes,(uintptr_t)memory);
@@ -222,12 +252,13 @@ WORD mt_rsrc_load(const char *name, WORD *global)
     if (!name) return 0;
     session = aes_application_session(global);
     if (session < 0 || !retry_resource_close()) return 0;
+    retry_resource_releases();
     resource = aes_resource_alloc(sizeof(*resource));
     if (!resource) return 0;
     memset(resource,0,sizeof(*resource));
-    if (!aes_layout_metrics(&resource->metrics,global)) { aes_resource_release(resource); return 0; }
+    if (!aes_layout_metrics(&resource->metrics,global)) { dispose_resource(resource); return 0; }
     handle = open_resource(name);
-    if (handle < 0) { aes_resource_release(resource); return 0; }
+    if (handle < 0) { dispose_resource(resource); return 0; }
     pending_close = handle;
     aes_resource = resource;
     ok = aes_resource_read(&resource->native,(UWORD)handle) != 0;
@@ -239,8 +270,7 @@ WORD mt_rsrc_load(const char *name, WORD *global)
         resource->next = resources; resources = resource;
         publish(global,resource);
     } else {
-        if (resource->native.ap_rscmem) aes_resource_release(resource->native.ap_rscmem);
-        aes_resource_release(resource);
+        dispose_resource(resource);
     }
     aes_resource = saved;
     return ok ? 1 : 0;
@@ -253,7 +283,8 @@ WORD mt_rsrc_free(WORD *global)
     link = selected(global,FALSE); resource = *link;
     if (!resource || aes_resource_release(resource->native.ap_rscmem) != E_OK) return 0;
     *link = resource->next;
-    aes_resource_release(resource);
+    resource->native.ap_rscmem = NULL;
+    dispose_resource(resource);
     publish(global,NULL);
     return 1;
 }
@@ -264,10 +295,10 @@ void aes_resources_reset(void)
     retry_resource_close();
     while (resources) {
         next = resources->next;
-        aes_resource_release(resources->native.ap_rscmem);
-        aes_resource_release(resources);
+        retire_resource(resources);
         resources = next;
     }
+    retry_resource_releases();
 }
 static BOOL address_index(const RSHDR *header, WORD type, WORD index)
 {

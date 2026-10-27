@@ -230,6 +230,35 @@ int main(int argc, char **argv)
         VERIFY(rsrc_load("GEMTEST.RSC") == 0 && !allocations && !files);
         memcpy(disk,original,sizeof(disk)); disk_size = size;
     }
+    /* Failed reset releases retain ownership, but never remain selectable.
+     * Cover an image pinned across resets, then a metadata-only failure. */
+    for (i = 0; i < 2; i++) {
+        WORD stale[15];
+        VERIFY(rsrc_load("GEMTEST.RSC") == 1);
+        memcpy(stale,aes_global,sizeof(stale));
+        free_after = i;
+        aes_resources_reset();
+        VERIFY(allocations == 2-i && !files);
+        VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,stale) == 0 &&
+            mt_rsrc_free(stale) == 0);
+        aes_resources_reset(); VERIFY(allocations == 2-i);
+        free_after = -1;
+        if (!i) {
+            aes_resources_reset(); VERIFY(!allocations);
+            VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,stale) == 0);
+        }
+        /* A new load also retries retired metadata without selecting it. */
+        VERIFY(rsrc_load("GEMTEST.RSC") == 1 && allocations == 2);
+        aes_resources_reset(); VERIFY(!allocations);
+        VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0);
+    }
+    /* Explicit free may release the image but fail to release its record. */
+    VERIFY(rsrc_load("GEMTEST.RSC") == 1);
+    free_after = 1;
+    VERIFY(rsrc_free() == 1 && allocations == 1);
+    VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0);
+    free_after = -1;
+    aes_resources_reset(); VERIFY(!allocations);
     /* Search order: app directory, caller path, drive root, then PATH. */
     available = "GOOD\\GEMTEST.RSC"; attempts = 0;
     VERIFY(rsrc_load("ELSE\\GEMTEST.RSC") == 1);
