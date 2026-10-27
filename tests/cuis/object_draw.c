@@ -2,6 +2,7 @@
 #include "gem.h"
 #include "gemerror.h"
 #include "mono_objects.h"
+#include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("object draw failure: %d\n",__LINE__); return __LINE__; } } while (0)
