@@ -13,7 +13,8 @@
 #
 #   --tos IMAGE   the pTOS ROM image (ptos512k.img, ...)
 #   --disk FILE   the test disk made by "make test-hd"
-#   --mode MODE   low, med or high: an STE with 4 MB in that ST screen mode;
+#   --mode MODE   low, med or high: an STE with 4 MB (an ST for a ROM of TOS 1.4
+#                 or older, the 192 KB image) in that ST screen mode;
 #                 f030 or f040: a Falcon with a 68030 or a 68040 and 14 MB,
 #                 in the screen mode pTOS starts it in (640x480, 16 colours)
 #   --timeout SEC give up after this long (default 600)
@@ -24,7 +25,8 @@
 # the emulator is stopped then).  Exit status: 0 if every test passed,
 # 1 if one failed, the run timed out or did not finish, 2 if text_blit or
 # raster_copy skipped itself, which is a failure here: that they run on the
-# machine and the screen mode is the point of this.
+# machine and the screen mode is the point of this (an ST has no blitter, so
+# it is not one there).
 #
 import argparse
 import os
@@ -53,12 +55,19 @@ def main():
     shutil.copy(a.disk, disk)
     log = os.path.join(work, 'console.txt')
     if a.mode in ('f030', 'f040'):
+        machine = 'falcon'
         cmd = ['hatari', '--tos', a.tos, '--machine', 'falcon',
                '--cpulevel', '3' if a.mode == 'f030' else '4',
                '--memsize', '14', '--dsp', 'none', '--sound', 'off',
                '--monitor', 'vga', '--ide-master', disk]
     else:
-        cmd = ['hatari', '--tos', a.tos, '--machine', 'ste', '--memsize', '4',
+        # Hatari wants a ROM of TOS 1.4 or older (the 192 KB image says 1.04)
+        # in a plain ST, and waits for an answer to its alert if asked for an
+        # STE; the TOS version is the second word of the ROM
+        with open(a.tos, 'rb') as rom:
+            version = int.from_bytes(rom.read(4)[2:4], 'big')
+        machine = 'st' if version <= 0x0104 else 'ste'
+        cmd = ['hatari', '--tos', a.tos, '--machine', machine, '--memsize', '4',
                '--sound', 'off', '--tos-res', a.mode,
                '--monitor', 'mono' if a.mode == 'high' else 'rgb',
                '--acsi', disk]
@@ -94,8 +103,10 @@ def main():
         print('run-hatari-tests: %s tests failed' % summary.group(2),
               file=sys.stderr)
         return 1
+    # both draw with the blitter, which a plain ST has not
+    must_run = () if machine == 'st' else MUST_RUN
     skipped = [l for l in text.splitlines()
-               if 'SKIP' in l and any(t in l for t in MUST_RUN)]
+               if 'SKIP' in l and any(t in l for t in must_run)]
     if skipped:
         print('run-hatari-tests: skipped, but they have to run on this '
               'machine:\n  ' + '\n  '.join(skipped), file=sys.stderr)
@@ -103,7 +114,7 @@ def main():
     # the suites are found by the build, so one that vanished (or was
     # renamed) would otherwise leave this green with its coverage gone: each
     # has to have printed a group line that ends in PASS
-    missing = [t for t in MUST_RUN
+    missing = [t for t in must_run
                if not any(l.strip().startswith(t + ':') and
                           l.rstrip().endswith('PASS')
                           for l in text.splitlines())]
