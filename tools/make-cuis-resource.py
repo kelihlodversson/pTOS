@@ -2,7 +2,12 @@
 """Build a small real big-endian GEM resource used by host and x32 tests."""
 from pathlib import Path
 import struct
-import sys
+import argparse
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("output", type=Path)
+parser.add_argument("--application-directory", action="store_true")
+args = parser.parse_args()
 
 image = bytearray(36)
 
@@ -79,4 +84,6 @@ for offset,value in ((ted+12,3),(ted+18,0x1100),(ted+24,7),(ted+26,7),
     word(offset,value)
 # Retain the adjacent raw string as the second free string.
 long(strings+4,adjacent)
-Path(sys.argv[1]).write_bytes(image)
+if args.application_directory:
+    image = image.replace(b"Free one\0", b"App file\0")
+args.output.write_bytes(image)

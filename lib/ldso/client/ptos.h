@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 extern char **environ;
+/* Private auxiliary-vector access for dependent system libraries. */
 unsigned long __ptos_getauxval(unsigned long type);
 extern uint32_t ptos_basepage;
 int32_t ptos_write(int handle, const void *buffer, uint32_t length);

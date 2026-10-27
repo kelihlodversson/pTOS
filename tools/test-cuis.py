@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "tests/cuis/resources.c", "tests/cuis/gem_resources.c", "lib/aes/resources.c", "aes/shared/rsload_portable.c",
                 "aes/shared/gemrsaddr.c", "aes/shared/gemlayout.c", "util/string.c", "-Wl,--gc-sections", "-o", str(work / "resources")]
     subprocess.run(command, check=True)
-    subprocess.run([str(work / "resources"), str(fixture)], check=True)
+    subprocess.run([str(work / "resources"), str(fixture), "aes/gem.rsc"], check=True)
     # These resource IDs/data are generated, and a clean checkout has neither
     # gem_rsc.h nor gem_rsc.c. Generate private host fixtures from the source RSC.
     subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) +

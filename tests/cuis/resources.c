@@ -10,16 +10,16 @@ extern void *fopen(const char *, const char *);
 extern size_t fread(void *, size_t, size_t, void *);
 extern int fclose(void *);
 short aes_global[15] = { 0,0,1 };
-static UBYTE disk[4096], original[4096];
+static UBYTE disk[16384], original[16384];
 static LONG disk_size, position;
 static int files, allocations, alloc_after = -1, reads, short_read, close_error, seek_error, graphics_error;
-static BOOL present = TRUE;
+static BOOL present = TRUE, registration_error, invalidate_on_close;
 static void *blocks[128];
 static int free_after = -1;
 static const char *available = "C:\\START\\APP\\GEMTEST.RSC";
 static char tried[16][128];
 static int attempts;
-LONG aes_application_session(short *global) { return global && global[2] == 1 ? 7 : EACCDN; }
+LONG aes_application_session(short *global) { return global && global[2] == 1 && !registration_error ? 7 : EACCDN; }
 BOOL aes_layout_metrics(LAYOUT_METRICS *metrics, WORD *global)
 {
     if (graphics_error || aes_application_session(global) < 0) return FALSE;
@@ -67,7 +67,9 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         files++; reads = 0; position = 0; return 3;
     case 0x3e:
         if (a != 3 || !files) return (UQUAD)(QUAD)EIHNDL;
-        files--; return close_error ? (UQUAD)(QUAD)EACCDN : E_OK;
+        files--;
+        if (invalidate_on_close) registration_error = TRUE;
+        return close_error ? (UQUAD)(QUAD)EACCDN : E_OK;
     case 0x3f:
         if (a != 3 || !files) return (UQUAD)(QUAD)EIHNDL;
         bytes = b;
@@ -89,7 +91,7 @@ int main(int argc, char **argv)
     void *file, *address;
     WORD saved[15];
     int i, result, before, size;
-    VERIFY(argc == 2);
+    VERIFY(argc == 3);
     file = fopen(argv[1],"rb"); VERIFY(file != NULL);
     disk_size = fread(disk,1,sizeof(disk),file); VERIFY(fclose(file) == 0 && disk_size > 36);
     memcpy(original,disk,sizeof(disk));
@@ -114,7 +116,11 @@ int main(int argc, char **argv)
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
     close_error = 0; seek_error = 1;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
-    seek_error = 0; present = FALSE;
+    seek_error = 0; invalidate_on_close = TRUE;
+    VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
+    invalidate_on_close = registration_error = FALSE;
+    VERIFY(!memcmp(saved,aes_global,sizeof(saved)));
+    present = FALSE;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && rsrc_gaddr(R_TREE,0,&address) == 1);
     present = TRUE;
     /* Truncations, invalid references, nonterminated text and cyclic trees. */
@@ -128,6 +134,13 @@ int main(int argc, char **argv)
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before);
     memcpy(disk,original,sizeof(disk)); disk_long(36+24+12,0xffffff00UL);
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before);
+    memcpy(disk,original,sizeof(disk));
+    {
+        int ted = ((int)disk[4]<<8)|disk[5];
+        unsigned long text = ((unsigned long)disk[ted]<<24)|((unsigned long)disk[ted+1]<<16)|((unsigned long)disk[ted+2]<<8)|disk[ted+3];
+        memset(disk+text,'X',7);
+        VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before);
+    }
     memcpy(disk,original,sizeof(disk)); disk_word(36+24,1);
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before);
     memcpy(disk,original,sizeof(disk));
@@ -157,6 +170,10 @@ int main(int argc, char **argv)
         !strcmp(tried[1],"ELSE\\GEMTEST.RSC") && !strcmp(tried[2],"\\GEMTEST.RSC") &&
         !strcmp(tried[3],"BAD\\GEMTEST.RSC") && !strcmp(tried[4],"GOOD\\GEMTEST.RSC"));
     aes_resources_reset(); VERIFY(!allocations && !files && rsrc_free() == 0);
+    available = "C:\\START\\APP\\GEMORIG.RSC";
+    file = fopen(argv[2],"rb"); VERIFY(file != NULL);
+    disk_size = fread(disk,1,sizeof(disk),file); VERIFY(fclose(file) == 0);
+    VERIFY(gem_resource_original() == 0 && !allocations && !files);
     graphics_error = 1;
     VERIFY(gem_resource_checks(0,8,16) == 0 && !allocations && !files);
     return 0;

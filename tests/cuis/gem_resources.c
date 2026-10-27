@@ -20,7 +20,7 @@ int gem_resource_checks(short graphics, short wchar, short hchar)
     ICONBLK *icon;
     BITBLK *bit;
     void *address, *slot;
-    short first_global[15], stale[15], invalid[15], i;
+    short first_global[15], stale[15], invalid[15], i, current_tree[2];
     char replacement[7] = "XYZ";
     aes_global[3] = 0x1234; aes_global[4] = 0x5678;
     VERIFY(rsrc_load("GEMTEST.RSC") == graphics);
@@ -73,6 +73,13 @@ int gem_resource_checks(short graphics, short wchar, short hchar)
     invalid[2] = -1;
     VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,invalid) == 0 && mt_rsrc_free(invalid) == 0);
     VERIFY(rsrc_load("GEMTEST.RSC") == 1 && rsrc_gaddr(R_TREE,0,&second) == 1 && tree != second);
+    /* Native R_TREE follows the advertised tree-table global independently
+     * of the private resource-image global used by all the other selectors. */
+    current_tree[0] = aes_global[5]; current_tree[1] = aes_global[6];
+    aes_global[5] = first_global[5]; aes_global[6] = first_global[6];
+    VERIFY(rsrc_gaddr(R_TREE,0,&object) == 1 && object == tree);
+    VERIFY(rsrc_gaddr(R_TEDINFO,0,&address) == 1 && address == second[1].ob_spec.tedinfo);
+    aes_global[5] = current_tree[0]; aes_global[6] = current_tree[1];
     VERIFY(mt_rsrc_gaddr(R_TREE,0,&object,first_global) == 1 && object == tree);
     VERIFY(ted->te_ptext == replacement && !strcmp(second[1].ob_spec.tedinfo->te_ptext,"abc"));
     VERIFY(rsrc_free() == 1 && rsrc_free() == 0);
@@ -80,5 +87,19 @@ int gem_resource_checks(short graphics, short wchar, short hchar)
     VERIFY(mt_rsrc_gaddr(R_TREE,0,&object,first_global) == 1 && object == tree);
     VERIFY(mt_rsrc_free(first_global) == 1 && mt_rsrc_free(stale) == 0);
     VERIFY(mt_rsrc_gaddr(R_TREE,0,&object,stale) == 0);
+    return 0;
+}
+
+int gem_resource_original(void)
+{
+    OBJECT *tree[3];
+    BITBLK *icon;
+    void *text, *invalid;
+    VERIFY(rsrc_load("GEMORIG.RSC") == 1);
+    VERIFY(rsrc_gaddr(R_TREE,0,&tree[0]) == 1 && rsrc_gaddr(R_TREE,1,&tree[1]) == 1 && rsrc_gaddr(R_TREE,2,&tree[2]) == 1);
+    VERIFY(tree[0] != tree[1] && tree[1] != tree[2] && rsrc_gaddr(R_TREE,3,&invalid) == 0);
+    VERIFY(rsrc_gaddr(R_STRING,0,&text) == 1 && ((char *)text)[0] == '[');
+    VERIFY(rsrc_gaddr(R_BITBLK,0,&icon) == 1 && icon->bi_wb == 4 && icon->bi_hl == 32);
+    VERIFY(rsrc_free() == 1);
     return 0;
 }

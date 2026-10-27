@@ -131,13 +131,13 @@ static void publish(WORD *global, RESOURCE_CONTEXT *resource)
     memcpy(global+7,&value,sizeof(value));
     global[9] = resource ? resource->native.ap_rsclen : 0;
 }
-static RESOURCE_CONTEXT **selected(WORD *global)
+static RESOURCE_CONTEXT **selected(WORD *global, BOOL tree_table)
 {
     RESOURCE_CONTEXT **link;
     ULONG image = global_pointer(global,7), trees = global_pointer(global,5);
     for (link = &resources; *link; link = &(*link)->next)
-        if ((ULONG)(uintptr_t)(*link)->native.ap_rscmem == image &&
-            (ULONG)(uintptr_t)(*link)->native.ap_ptree == trees) break;
+        if (tree_table ? (ULONG)(uintptr_t)(*link)->native.ap_ptree == trees :
+            (ULONG)(uintptr_t)(*link)->native.ap_rscmem == image) break;
     return link;
 }
 
@@ -194,9 +194,11 @@ done:
 WORD mt_rsrc_load(const char *name, WORD *global)
 {
     RESOURCE_CONTEXT *resource, *saved = aes_resource;
-    LONG handle;
+    LONG handle, session;
     BOOL ok;
-    if (!name || aes_application_session(global) < 0) return 0;
+    if (!name) return 0;
+    session = aes_application_session(global);
+    if (session < 0) return 0;
     resource = aes_resource_alloc(sizeof(*resource));
     if (!resource) return 0;
     memset(resource,0,sizeof(*resource));
@@ -207,6 +209,7 @@ WORD mt_rsrc_load(const char *name, WORD *global)
     ok = aes_resource_read(&resource->native,(UWORD)handle) != 0;
     if ((LONG)aes_gemdos_call(0x3e,(UWORD)handle,0,0) != E_OK) ok = FALSE;
     if (ok) { resource->header = *resource->native.ap_rscmem; ok = valid_trees(resource); }
+    if (ok && aes_application_session(global) != session) ok = FALSE;
     if (ok) {
         aes_resource_fix();
         resource->next = resources; resources = resource;
@@ -223,7 +226,7 @@ WORD mt_rsrc_free(WORD *global)
 {
     RESOURCE_CONTEXT **link, *resource;
     if (aes_application_session(global) < 0) return 0;
-    link = selected(global); resource = *link;
+    link = selected(global,FALSE); resource = *link;
     if (!resource || aes_resource_release(resource->native.ap_rscmem) != E_OK) return 0;
     *link = resource->next;
     aes_resource_release(resource);
@@ -262,7 +265,7 @@ WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, WORD *global)
     void *value = (void *)-1L;
     if (!address) return 0;
     if (aes_application_session(global) >= 0) {
-        resource = *selected(global);
+        resource = *selected(global,type == R_TREE);
         if (resource && !memcmp(resource->native.ap_rscmem,&resource->header,sizeof(resource->header)) &&
             address_index(&resource->header,type,index)) {
             aes_resource = resource;
