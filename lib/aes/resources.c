@@ -310,6 +310,7 @@ WORD rsrc_load(const char *name) { return mt_rsrc_load(name,aes_global); }
 WORD mt_rsrc_rcfix(void *image, WORD *global)
 {
     RSHDR *header = image, *staged;
+    UBYTE *roles;
     RESOURCE_CONTEXT *resource, *p;
     OBJECT *objects;
     LONG session;
@@ -335,8 +336,12 @@ WORD mt_rsrc_rcfix(void *image, WORD *global)
     if (!aes_layout_metrics(&resource->metrics,global)) { dispose_resource(resource); return 0; }
     staged = aes_resource_alloc(header->rsh_rssize);
     if (!staged) { dispose_resource(resource); return 0; }
+    roles = aes_resource_alloc(header->rsh_rssize);
+    if (!roles) {
+        aes_resource_discard(staged); dispose_resource(resource); return 0;
+    }
     memcpy(staged,image,header->rsh_rssize);
-    ok = rs_rcfix_native(header,staged) && valid_trees(resource,TRUE);
+    ok = rs_rcfix_native(header,staged,roles) && valid_trees(resource,TRUE);
     if (ok && aes_application_session(global) != session) ok = FALSE;
     if (ok) {
         objects = (OBJECT *)((char *)staged+staged->rsh_object);
@@ -348,6 +353,7 @@ WORD mt_rsrc_rcfix(void *image, WORD *global)
         resource->next = resources; resources = resource;
         publish(global,resource);
     } else dispose_resource(resource);
+    aes_resource_discard(roles);
     aes_resource_discard(staged);
     return ok ? 1 : 0;
 }

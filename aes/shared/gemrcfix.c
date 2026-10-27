@@ -19,18 +19,27 @@ static BOOL entry(const RSHDR *h, uintptr_t offset, UWORD start, WORD count, siz
         region(h,offset,size,1);
 }
 /* Pointer payloads cannot overlap structural tables that relocation edits. */
-static BOOL payload(const RSHDR *h, uintptr_t offset, size_t bytes, size_t alignment)
+static BOOL payload(const RSHDR *h, uintptr_t offset, size_t bytes, size_t alignment,
+                    UBYTE *roles, UBYTE role)
 {
+    size_t i;
     if (!region(h,offset,bytes,alignment)) return FALSE;
 #define CLEAR(field,count,type) (!(h->count) || offset+bytes <= h->field || \
     offset >= h->field+(size_t)h->count*sizeof(type))
-    return CLEAR(rsh_object,rsh_nobs,OBJECT) && CLEAR(rsh_tedinfo,rsh_nted,TEDINFO) &&
+    if (!(CLEAR(rsh_object,rsh_nobs,OBJECT) && CLEAR(rsh_tedinfo,rsh_nted,TEDINFO) &&
         CLEAR(rsh_iconblk,rsh_nib,ICONBLK) && CLEAR(rsh_bitblk,rsh_nbb,BITBLK) &&
         CLEAR(rsh_trindex,rsh_ntree,void *) && CLEAR(rsh_frstr,rsh_nstring,void *) &&
-        CLEAR(rsh_frimg,rsh_nimages,void *);
+        CLEAR(rsh_frimg,rsh_nimages,void *))) return FALSE;
 #undef CLEAR
+    /* Unchanged payloads may alias. Relocation slots may alias only when
+     * they have compatible interpretations, never with unchanged data. */
+    for (i = 0; i < bytes; i++) {
+        if (roles[offset+i] && roles[offset+i] != role) return FALSE;
+        roles[offset+i] = role;
+    }
+    return TRUE;
 }
-static BOOL text(const RSHDR *h, uintptr_t offset, WORD capacity)
+static BOOL text(const RSHDR *h, uintptr_t offset, WORD capacity, UBYTE *roles)
 {
     const char *p;
     size_t length, used = 0;
@@ -40,7 +49,7 @@ static BOOL text(const RSHDR *h, uintptr_t offset, WORD capacity)
     length = capacity ? (size_t)capacity : h->rsh_rssize-offset;
     while (length--) {
         used++;
-        if (!*p++) return payload(h,offset,capacity ? (size_t)capacity : used,1);
+        if (!*p++) return payload(h,offset,capacity ? (size_t)capacity : used,1,roles,1);
     }
     return FALSE;
 }
@@ -48,7 +57,21 @@ static void *relocated(const RSHDR *h, uintptr_t offset)
 {
     return offset == (uintptr_t)-1 ? (void *)-1L : (char *)h+offset;
 }
-static BOOL spec(const RSHDR *h, const OBSPEC *from, OBSPEC *to, UWORD type)
+/* Values 2..6 identify compatible pointer-slot interpretations. 1 protects
+ * data that must remain unchanged, including immediate indirect box specs. */
+static UBYTE slot_role(UWORD type)
+{
+    switch (type & 0xff) {
+    case G_BOX: case G_IBOX: case G_BOXCHAR: return 1;
+    case G_STRING: case G_BUTTON: case G_TITLE: return 2;
+    case G_TEXT: case G_BOXTEXT: case G_FTEXT: case G_FBOXTEXT: return 3;
+    case G_ICON: return 4;
+    case G_IMAGE: return 5;
+    case G_USERDEF: return 6;
+    default: return 0;
+    }
+}
+static BOOL spec(const RSHDR *h, const OBSPEC *from, OBSPEC *to, UWORD type, UBYTE *roles)
 {
     uintptr_t offset;
     /* Read a complete native slot, including wide-host offset fixtures. */
@@ -65,10 +88,10 @@ static BOOL spec(const RSHDR *h, const OBSPEC *from, OBSPEC *to, UWORD type)
         if (!entry(h,offset,h->rsh_bitblk,h->rsh_nbb,sizeof(BITBLK))) return FALSE;
         break;
     case G_USERDEF:
-        if (!payload(h,offset,sizeof(USERBLK),__alignof__(USERBLK))) return FALSE;
+        if (!payload(h,offset,sizeof(USERBLK),__alignof__(USERBLK),roles,1)) return FALSE;
         break;
     case G_STRING: case G_BUTTON: case G_TITLE:
-        if (!text(h,offset,0)) return FALSE;
+        if (!text(h,offset,0,roles)) return FALSE;
         break;
     default: return FALSE; /* Colour/extended resources are a separate format. */
     }
@@ -76,7 +99,7 @@ static BOOL spec(const RSHDR *h, const OBSPEC *from, OBSPEC *to, UWORD type)
     return TRUE;
 }
 
-BOOL rs_rcfix_native(const RSHDR *h, RSHDR *out)
+BOOL rs_rcfix_native(const RSHDR *h, RSHDR *out, UBYTE *roles)
 {
     const OBJECT *objects;
     const TEDINFO *ted;
@@ -109,23 +132,25 @@ BOOL rs_rcfix_native(const RSHDR *h, RSHDR *out)
     for (i = 0; i < 7; i++) for (j = 0; j < i; j++)
         if (spans[i].start != spans[i].end && spans[j].start != spans[j].end &&
             spans[i].start < spans[j].end && spans[j].start < spans[i].end) return FALSE;
+    memset(roles,0,h->rsh_rssize);
     objects = (const OBJECT *)((const char *)h+h->rsh_object);
     target = (OBJECT *)((char *)out+h->rsh_object);
     for (i = 0; i < h->rsh_nobs; i++) {
         if (objects[i].ob_flags & INDIRECT) {
             offset = (uintptr_t)objects[i].ob_spec.indirect;
-            if (!payload(h,offset,sizeof(OBSPEC),__alignof__(OBSPEC)) ||
+            if (!slot_role(objects[i].ob_type) ||
+                !payload(h,offset,sizeof(OBSPEC),__alignof__(OBSPEC),roles,slot_role(objects[i].ob_type)) ||
                 !spec(h,(const OBSPEC *)((const char *)h+offset),
-                      (OBSPEC *)((char *)out+offset),objects[i].ob_type)) return FALSE;
+                      (OBSPEC *)((char *)out+offset),objects[i].ob_type,roles)) return FALSE;
             target[i].ob_spec.indirect = relocated(h,offset);
-        } else if (!spec(h,&objects[i].ob_spec,&target[i].ob_spec,objects[i].ob_type)) return FALSE;
+        } else if (!spec(h,&objects[i].ob_spec,&target[i].ob_spec,objects[i].ob_type,roles)) return FALSE;
     }
     ted = (const TEDINFO *)((const char *)h+h->rsh_tedinfo);
     tt = (TEDINFO *)((char *)out+h->rsh_tedinfo);
     for (i = 0; i < h->rsh_nted; i++) {
-        if (!text(h,(uintptr_t)ted[i].te_ptext,ted[i].te_txtlen) ||
-            !text(h,(uintptr_t)ted[i].te_ptmplt,ted[i].te_tmplen) ||
-            !text(h,(uintptr_t)ted[i].te_pvalid,0)) return FALSE;
+        if (!text(h,(uintptr_t)ted[i].te_ptext,ted[i].te_txtlen,roles) ||
+            !text(h,(uintptr_t)ted[i].te_ptmplt,ted[i].te_tmplen,roles) ||
+            !text(h,(uintptr_t)ted[i].te_pvalid,0,roles)) return FALSE;
         tt[i].te_ptext = relocated(h,(uintptr_t)ted[i].te_ptext);
         tt[i].te_ptmplt = relocated(h,(uintptr_t)ted[i].te_ptmplt);
         tt[i].te_pvalid = relocated(h,(uintptr_t)ted[i].te_pvalid);
@@ -135,9 +160,9 @@ BOOL rs_rcfix_native(const RSHDR *h, RSHDR *out)
     for (i = 0; i < h->rsh_nib; i++) {
         if (icon[i].ib_wicon < 0 || icon[i].ib_hicon < 0) return FALSE;
         bytes = ((size_t)icon[i].ib_wicon+15)/16*icon[i].ib_hicon*2;
-        if (!payload(h,(uintptr_t)icon[i].ib_pmask,bytes,2) ||
-            !payload(h,(uintptr_t)icon[i].ib_pdata,bytes,2) ||
-            !text(h,(uintptr_t)icon[i].ib_ptext,0)) return FALSE;
+        if (!payload(h,(uintptr_t)icon[i].ib_pmask,bytes,2,roles,1) ||
+            !payload(h,(uintptr_t)icon[i].ib_pdata,bytes,2,roles,1) ||
+            !text(h,(uintptr_t)icon[i].ib_ptext,0,roles)) return FALSE;
         ti[i].ib_pmask = relocated(h,(uintptr_t)icon[i].ib_pmask);
         ti[i].ib_pdata = relocated(h,(uintptr_t)icon[i].ib_pdata);
         ti[i].ib_ptext = relocated(h,(uintptr_t)icon[i].ib_ptext);
@@ -147,7 +172,7 @@ BOOL rs_rcfix_native(const RSHDR *h, RSHDR *out)
     for (i = 0; i < h->rsh_nbb; i++) {
         if (bit[i].bi_wb < 0 || (bit[i].bi_wb & 1) || bit[i].bi_hl < 0) return FALSE;
         bytes = (size_t)bit[i].bi_wb*bit[i].bi_hl;
-        if (!payload(h,(uintptr_t)bit[i].bi_pdata,bytes,2)) return FALSE;
+        if (!payload(h,(uintptr_t)bit[i].bi_pdata,bytes,2,roles,1)) return FALSE;
         tb[i].bi_pdata = relocated(h,(uintptr_t)bit[i].bi_pdata);
     }
     p = (void *const *)((const char *)h+h->rsh_trindex);
@@ -160,7 +185,7 @@ BOOL rs_rcfix_native(const RSHDR *h, RSHDR *out)
     p = (void *const *)((const char *)h+h->rsh_frstr);
     q = (void **)((char *)out+h->rsh_frstr);
     for (i = 0; i < h->rsh_nstring; i++) {
-        if (!text(h,(uintptr_t)p[i],0)) return FALSE;
+        if (!text(h,(uintptr_t)p[i],0,roles)) return FALSE;
         q[i] = relocated(h,(uintptr_t)p[i]);
     }
     p = (void *const *)((const char *)h+h->rsh_frimg);

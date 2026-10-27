@@ -158,6 +158,7 @@ static void native_fixture(NATIVE_RSC *r)
     r->objects[2].ob_flags = r->objects[3].ob_flags = 0x100; /* INDIRECT */
     r->objects[2].ob_spec.indirect = r->objects[3].ob_spec.indirect = (OBSPEC *)NATIVE_OFFSET(indirect);
     r->indirect.free_string = (char *)NATIVE_OFFSET(label);
+    r->objects[3].ob_type = G_TITLE; /* Compatible shared string slot. */
     r->objects[4].ob_type = G_IMAGE; r->objects[4].ob_spec.bitblk = (BITBLK *)NATIVE_OFFSET(bit);
     r->objects[5].ob_type = G_ICON; r->objects[5].ob_spec.iconblk = (ICONBLK *)NATIVE_OFFSET(icon);
     r->objects[6].ob_type = G_USERDEF; r->objects[6].ob_spec.userblk = (USERBLK *)NATIVE_OFFSET(user);
@@ -217,7 +218,7 @@ int gem_resource_native(short graphics, short wchar, short hchar)
     memcpy(&r,&raw,sizeof(r)); memcpy(aes_global,saved,sizeof(saved));
     VERIFY(mt_rsrc_rcfix(&r,aes_global) == 1 && rsrc_free() == 1);
     /* Every rejected raw image must leave both data and globals unchanged. */
-    for (i = 0; i < 14; i++) {
+    for (i = 0; i < 20; i++) {
         memcpy(&r,&raw,sizeof(r));
         switch (i) {
         case 0: r.header.rsh_nobs = -1; break;
@@ -234,6 +235,23 @@ int gem_resource_native(short graphics, short wchar, short hchar)
         case 11: r.objects[7].ob_flags = 0; break;
         case 12: r.header.rsh_frstr = r.header.rsh_trindex; break;
         case 13: r.ted.te_ptext = (char *)NATIVE_OFFSET(objects); break;
+        case 14: /* Relocation must not replace a USERDEF callback parameter. */
+        case 15:
+            r.user.ub_parm = NATIVE_OFFSET(label);
+            r.objects[2].ob_spec.indirect = r.objects[3].ob_spec.indirect =
+                (OBSPEC *)(NATIVE_OFFSET(user)+offsetof(USERBLK,ub_parm));
+            if (i == 15) { /* Protect USERBLK before encountering the slot. */
+                r.objects[1].ob_type = G_USERDEF;
+                r.objects[1].ob_spec.userblk = (USERBLK *)NATIVE_OFFSET(user);
+            }
+            break;
+        case 16: r.strings[0] = (char *)NATIVE_OFFSET(indirect); break;
+        case 17: /* Protect string data before encountering the slot. */
+            r.objects[1].ob_type = G_STRING;
+            r.objects[1].ob_spec.free_string = (char *)NATIVE_OFFSET(indirect);
+            break;
+        case 18: r.bit.bi_pdata = (void *)NATIVE_OFFSET(indirect); break;
+        case 19: r.icon.ib_pmask = (short *)NATIVE_OFFSET(indirect); break;
         }
         memcpy(&fixed,&r,sizeof(r)); memcpy(saved,aes_global,sizeof(saved));
         VERIFY(rsrc_rcfix(&r) == 0 && !memcmp(&r,&fixed,sizeof(r)) &&

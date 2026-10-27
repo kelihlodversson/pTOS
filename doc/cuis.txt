@@ -1740,13 +1740,17 @@ words are already native endian; no device-format conversion is claimed.
 
 As required by GEM, release the selected resource before calling rcfix. A live
 image cannot be fixed twice, including through another saved global array.
+Indirect pointer writes cannot overlap strings (including TEDINFO capacity),
+bitmap data or USERBLK records. Shared slots must have compatible specification
+interpretations; unchanged payloads can still share storage.
 Coordinates use the original shared character-to-pixel scaling. Fixup first
 stages and validates relocation and tree topology without changing caller
 storage; only after allocations, metrics and session checks succeed does it
 commit the result to the original image. All resulting addresses point into
 that original image, and a failure leaves data and resource globals unchanged.
-This temporary staging buffer is discarded after the call, with failed frees
-retained for later cleanup in the same way as disk-loader temporary buffers.
+The staging buffer and byte-range classification workspace are discarded after
+the call, with failed frees retained for later cleanup in the same way as
+disk-loader temporary buffers.
 
 Keep the image writable and alive until rsrc_free or session cleanup detaches
 it. rsrc_free clears the resource globals and frees only library bookkeeping;

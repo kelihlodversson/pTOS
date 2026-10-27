@@ -104,7 +104,7 @@ int main(int argc, char **argv)
     aes_resources_init();
     result = gem_resource_native(1,8,16);
     VERIFY(result == 0 && !allocations);
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 4; i++) {
         alloc_after = i;
         VERIFY(gem_resource_native_failure() == 0 && !allocations);
     }
