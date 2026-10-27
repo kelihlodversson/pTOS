@@ -44,6 +44,7 @@ config AES_STACK_SIZE
 	default 4096 if ARCH_X86_64
 	default 2048 if MACHINE_FIREBEE || MACHINE_M548X
 	default 1024 if ARCH_ARM
+	default 768 if BUILD_LTO
 	default 590
 	help
 	  Size of the private stack of each AES process.  It is used for the
@@ -73,6 +74,16 @@ config AES_STACK_SIZE
 	  room for the rest.
 
 	  A suitable value can be estimated by enabling CONF_DEBUG_AES_STACK.
+
+	  On m68k, BUILD_LTO needs more than the generic default: it inlines
+	  the VDI text blit helpers into text_blt() and the like, making the
+	  call chain's frames bigger.  The deepest AES call of pBench, with
+	  the 590 LONGs of the default, takes 488 (-O2) or 486 (-Os) LONGs
+	  without LTO, 631 or 630 with it, and 576 or 589 with it and
+	  -mfastcall, whose frames are smaller.  The two without fastcall
+	  overflow the stack, which hangs pBench in the first text drawn
+	  without the blitter.  The 768 chosen for BUILD_LTO is the 631 plus
+	  the margin that CONF_DEBUG_AES_STACK adds.
 
 config CONF_WITH_PCGEM
 	bool "PC-GEM compatible AES functions"
