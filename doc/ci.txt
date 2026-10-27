@@ -96,8 +96,8 @@ What is changed
       (Hatari's clock is the emulated one: the load does not change the
       results; tools/ci-hatari.sh).  The job runs on an ubuntu-26.04 runner,
       for its Hatari 2.6: the 2.4.1 of the 24.04 runner hangs the 68030
-      address-space runs (#727, #737).  pBench stays on the 24.04 package,
-      2.4.1, which its baselines are made with
+      address-space runs (#727, #737).  pBench runs on the same, and its baselines
+      are made with it
     pbench.yml: 1 job that builds the three systems and measures them one
       after the other; each has its own report, its own comment on the pull
       request, and a slowdown of any of them fails the job

@@ -31,11 +31,12 @@ jobs:
   # measured one after the other.  Each is its own check: it is compared with
   # its own baseline, has its own comment on the pull request, and a
   # significant slowdown of any of them fails the job at the end.  Hatari
-  # comes from the distribution's packages, which the 22.04 of an older runner
-  # has an old version of: a 24.04.
+  # comes from the distribution's packages: the runner is an Ubuntu 26.04, for
+  # its Hatari 2.6, the same as the Hatari tests run with (the baselines are
+  # made with it).
   pbench:
     name: pBench
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
       contents: read
