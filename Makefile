@@ -410,6 +410,12 @@ bdos_copts = -Ifs
 # fid-level API, needing -Ibios.
 fs_copts = -Ibdos -Ibios
 
+# emutos.ld places the variables of obj/lowstram.o in low ST-RAM by object
+# file name; LTO would move them into its own generated objects.
+ifdef BUILD_LTO
+obj/lowstram.o : CFLAGS += -fno-lto
+endif
+
 CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts) $(X86_64_PIE_OVERRIDE))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
