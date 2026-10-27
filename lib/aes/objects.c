@@ -2,7 +2,7 @@
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later.
  */
 #include "libaes.h"
-#include "../../aes/gemobjtree.h"
+#include "../../aes/shared/gemobjtree.h"
 
 WORD objc_add(OBJECT *tree, WORD parent, WORD child)
 {

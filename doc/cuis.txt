@@ -195,7 +195,7 @@ Trees must have valid GEM parent/sibling links; invalid pointers fault in
 userspace. Render-dependent 3D enlargement is not included yet, so 3D hit
 areas will be completed with the object rendering migration.
 
-With CONF_WITH_LIBAES enabled, the algorithms in aes/gemobjtree.c are
+With CONF_WITH_LIBAES enabled, the algorithms in aes/shared/gemobjtree.c are
 also used by kernel AES. With the feature disabled, the original kernel
 implementations and object list are retained unchanged.
 Parent/sibling links retain GEM conventions: a parent's head and tail name
@@ -1380,3 +1380,107 @@ a windowless parent holds two levels, a windowed child remains blocked until
 the final end, then raw-exits with a nested grab so the parent can continue.
 Session exit/re-registration also proves cleanup. Resource snapshots and the
 boot suite check that no mouse owner, window, session or allocation remains.
+
+
+Userspace classic object drawing (#745)
+--------------------------------------
+objc_draw/mt_objc_draw and objc_change/mt_objc_change use their standard GEM
+signatures and Boolean results. OBJECT arrays, INDIRECT specs, strings,
+TEDINFO and USERBLK records remain in the calling application's address
+space. The shared library reuses the original aes/ object painter,
+traversal, state changes and GSX text/border/layout routines as separately
+compiled C units in aes/shared/. Shared resource loaders and object-tree
+helpers live there too. The same drawing sources build into native AES and
+libaes; internal headers declare their interfaces and bind libaes to a
+private drawing context. Only the low-level VDI transport and drawing
+context have userspace bindings; the kernel receives only existing bounded
+VDI primitive requests and never an object-tree or callback pointer. No new
+production kernel service or configuration option is needed.
+
+This first drawing slice supports classic G_BOX, G_IBOX, G_BOXCHAR,
+G_BUTTON, G_STRING, G_TITLE, G_TEXT, G_BOXTEXT, G_FTEXT, G_FBOXTEXT and
+G_USERDEF objects. It implements signed border thickness, box color/pattern
+words, default/exit button borders, IBM/small fonts, text justification,
+formatted underscores, and
+SELECTED/CROSSED/CHECKED/DISABLED/OUTLINED/SHADOWED states. The original
+text routines use bounded buffers: free text is limited to 127 characters,
+and formatted text and templates to 80 characters in this slice. Formatting
+recognizes the '@' empty-text marker without modifying caller text. Images,
+mono/color icons and 3D flags return GEM 0 until their rendering adapters
+are available. No extension capability bits are advertised. A preflight
+checks the requested visible subtree before painting, so an unsupported
+visible descendant does not leave a partly drawn tree; HIDETREE descendants
+are ignored. Each visible payload is checked again immediately before painting,
+since USERDEF can mutate later siblings. An oversized callback-mutated payload
+fails with GEM 0 before buffer copies.
+
+Drawing starts at the requested object using its absolute tree offset,
+visits children in sibling order through the requested depth (0..MAX_DEPTH),
+skips hidden subtrees, and clips to the supplied GEM rectangle and screen
+bounds. Child objects are not implicitly clipped to their parent's logical
+rectangle. Hidden objects are rejected before reading their payload or
+INDIRECT pointer. Fills and oversized border segments are intersected with
+the painter clip before VDI submission, preserving the original edges rather
+than drawing new edges along the clip boundary. Userspace fill endpoints,
+expanded object bounds and box/outline border coordinates remain LONG until
+clipped, including maximum-WORD widths and heights. The shared border loop
+retains the WORD calling convention in native builds. Fully clipped text is
+culled before VDI submission. Partially clipped runs drop complete off-
+screen cells while preserving the original positions of the remaining
+glyphs. An empty clip succeeds without painting. objc_find retains logical
+hit bounds; 3D hit expansion remains deferred with 3D rendering.
+
+Drawing reuses an existing per-window update section without upgrading or
+releasing it. Otherwise it obtains a nested standard display update section.
+Each draw opens a private virtual VDI workstation, preserving application
+workstation attributes. The kernel's existing CUIS draw policy still
+enforces display ownership; applications use FIRST/NEXT visible-region clips
+when drawing their windows. Screenshots remain readable across the whole
+screen. The private workstation and implicit update level are released on
+normal/error returns. A captured session handle releases the update even if
+USERDEF changes the GEM global array. Process-exit cleanup reclaims
+workstations and ownership after a user fault. A headless kernel without the
+VDI service returns GEM 0 cleanly. The VDI service removes a visible cursor
+before each framebuffer write and recomposes it afterward using a non-
+resetting show. Already-hidden cursor nesting is preserved. This also
+protects USERDEF VDI drawing; the shared GSX cursor hooks need no
+application-controlled global cursor commands.
+
+objc_change ignores its reserved argument, updates caller-local state, and
+redraws only that object when requested. No-redraw and hidden-object state
+changes require no VDI access. The original classic AES state-change routine
+uses a clipped XOR of the interior whenever SELECTED changes, including
+combined state transitions; otherwise it repaints the object. Deselection
+restores preceding pixels, including transparent objects. A failed redraw
+restores the old state; drawing errors cannot undo pixels that were already
+painted. Unchanged state is a successful no-op.
+
+USERDEF runs as an ordinary user-mode call with the standard PARMBLK tree,
+object, previous/current state, absolute geometry, clipped rectangle and
+ub_parm. Its returned remaining-state mask controls AES overlays. Nested
+object drawing uses a separate local painter/workstation and nests the
+update lock. objc_draw skips callbacks outside the visual clip; objc_change
+follows the original direct callback behavior with the current clip in
+PARMBLK. Hidden callbacks are not invoked. Invalid caller pointers or
+callback faults are ordinary user faults, with kernel process cleanup; no
+in-kernel object validation or callback trampoline is added.
+
+Host tests use a pixel oracle for clipping, traversal/depth, hidden and indirect
+objects, selection round trips, formatted text, callback parameters, mutated
+globals, unsupported types and VDI error cleanup. GEMDRAW.TOS validates actual
+VDI pixels in ring 3, nested USERDEF drawing, and a child callback fault followed
+by successful update acquisition. It also paints a classic GEM demo panel.
+The main fixture builds against unmodified GEMlib headers; a separate typed
+pixel-probe object keeps private VDI headers out of the GEM application source.
+The kernel harness also runs repainting beneath a visible software cursor,
+then moves it through the normal cursor/VBL path and checks the restored
+pixels. A second pass preserves a nested hide count of two. Resource
+snapshots verify workstation/session/update/process reclamation.
+
+To capture the actual QEMU framebuffer, enable external libaes, X32_VDI and
+X86_64_MEMTEST, build the kernel and x32test/import fixtures, then run the boot
+script with MMAP_BOOT_SCREENSHOT=/tmp/ptos-libaes-objects.png. The optional QMP
+helper waits for the demo-ready marker and writes a PNG directly from QEMU;
+no generated or reconstructed UI is used. The checked-in example is in
+doc/screenshots/libaes-objects.png. Window decorations, forms, resources,
+menus, bitmap/icon drawing and 3D extensions remain subsequent slices.

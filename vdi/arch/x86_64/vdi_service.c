@@ -253,14 +253,35 @@ static void invoke(VDICONTROL *control, WORD *intin, WORD *ptsin,
                     WORD *intout, WORD *ptsout)
 {
     VDIPB saved = linea_vars.local_pb;
-    VDIPB block;
+    VDIPB block, cursor_block;
+    VDICONTROL cursor = { 0 };
+    WORD cursor_input = 1, cursor_output[45], cursor_points[12];
+    BOOL protect = !linea_vars.HIDE_CNT && (control->code == 6 ||
+        control->code == 8 || control->code == 11 || control->code == 109 ||
+        control->code == 114);
 
     block.contrl = control;
     block.intin = intin;
     block.ptsin = ptsin;
     block.intout = intout;
     block.ptsout = ptsout;
+    /* The cursor's saved background must never outlive a framebuffer write.
+     * Leave an already-hidden cursor's nesting depth untouched; for a visible
+     * cursor use a balanced hide/show with non-resetting show semantics. These
+     * calls use private buffers, preserving the client's VDI inputs/results. */
+    if (protect) {
+        cursor.code = 123; cursor.handle = control->handle;
+        cursor.nintin = 1;
+        cursor_block.contrl = &cursor; cursor_block.intin = &cursor_input;
+        cursor_block.ptsin = cursor_block.ptsout = cursor_points;
+        cursor_block.intout = cursor_output;
+        GSX_ENTRY(0x73, &cursor_block);
+    }
     GSX_ENTRY(0x73, &block);
+    if (protect) {
+        cursor.code = 122;
+        GSX_ENTRY(0x73, &cursor_block);
+    }
     /* No user pointers or pointers to this stack may outlive the call. */
     linea_vars.local_pb = saved;
 }

@@ -1,6 +1,6 @@
 /* Public GEM AES bindings for the implemented libaes subset.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later.
- * Rendering and decoration adapters follow in later slices. */
+ * Further resource, image and decoration adapters follow in later slices. */
 #ifndef PTOS_GEM_H
 #define PTOS_GEM_H
 #include "obdefs.h"
@@ -17,8 +17,32 @@ extern "C" {
 #ifndef OF_LASTOB
 #define OF_LASTOB LASTOB
 #endif
+#ifndef OF_INDIRECT
+#define OF_INDIRECT INDIRECT
+#endif
 #ifndef OF_HIDETREE
 #define OF_HIDETREE HIDETREE
+#endif
+#ifndef OS_SELECTED
+#define OS_SELECTED SELECTED
+#endif
+#ifndef OS_CROSSED
+#define OS_CROSSED CROSSED
+#endif
+#ifndef OS_OUTLINED
+#define OS_OUTLINED OUTLINED
+#endif
+#ifndef OS_CHECKED
+#define OS_CHECKED CHECKED
+#endif
+#ifndef OF_SELECTABLE
+#define OF_SELECTABLE SELECTABLE
+#endif
+#ifndef OF_EXIT
+#define OF_EXIT EXIT
+#endif
+#ifndef OF_DEFAULT
+#define OF_DEFAULT DEFAULT
 #endif
 #define AES_GLOBMAX 15
 #define AES_PROCESS 4
@@ -164,6 +188,10 @@ short wind_set(short id, short field, short a, short b, short c, short d);
 short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global);
 short wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh);
 short mt_wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh, short *global);
+short objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h);
+short mt_objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h, short *global);
+short objc_change(OBJECT *tree, short object, short reserved, short x, short y, short w, short h, short state, short redraw);
+short mt_objc_change(OBJECT *tree, short object, short reserved, short x, short y, short w, short h, short state, short redraw, short *global);
 short objc_find(OBJECT *tree, short start, short depth, short mx, short my);
 short mt_objc_find(OBJECT *tree, short start, short depth, short mx, short my, short *global);
 short mt_objc_add(OBJECT *tree, short parent, short child, short *global);

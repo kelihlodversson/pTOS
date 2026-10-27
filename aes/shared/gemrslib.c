@@ -34,7 +34,7 @@
 #include "intmath.h"
 #include "string.h"
 #include "nls.h"
-#include "../vdi/vdi_defs.h"    /* for phys_work stuff */
+#include "../../vdi/vdi_defs.h"    /* for phys_work stuff */
 
 /*
  * defines & typedefs

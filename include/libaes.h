@@ -9,6 +9,10 @@
 LONG aes_session_open(void);
 LONG aes_session_query(LONG handle);
 LONG aes_session_close(LONG handle);
+WORD objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h);
+WORD mt_objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h, WORD *global);
+WORD objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h, WORD state, WORD redraw);
+WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h, WORD state, WORD redraw, WORD *global);
 WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my);
 WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, WORD *global);
 WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, WORD *global);
