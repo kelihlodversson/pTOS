@@ -120,6 +120,36 @@ int gem_probe_pixel(WORD handle, WORD x, WORD y)
     (void)handle;
     return image[y][x];
 }
+/* Count ancestor searches independently of node visits. A flat tree should
+ * need a constant number, rather than one scan of the remaining siblings
+ * for every node. The empty clip isolates subtree admission from painting. */
+static ULONG offset_scans;
+void __real_ob_offset(OBJECT *tree, WORD object, WORD *x, WORD *y);
+void __wrap_ob_offset(OBJECT *tree, WORD object, WORD *x, WORD *y)
+{
+    offset_scans++;
+    __real_ob_offset(tree,object,x,y);
+}
+static int preflight_scaling(void)
+{
+    static OBJECT wide[4001];
+    ULONG before;
+    int count, i;
+    for (count = 32; count <= 4000; count *= 5) {
+        __builtin_memset(wide,0,sizeof(wide));
+        wide[0].ob_next = -1; wide[0].ob_head = 1; wide[0].ob_tail = count;
+        wide[0].ob_type = G_IBOX; wide[0].ob_width = 160; wide[0].ob_height = 120;
+        for (i = 1; i <= count; i++) {
+            wide[i].ob_head = wide[i].ob_tail = -1;
+            wide[i].ob_next = i == count ? 0 : i+1;
+            wide[i].ob_type = G_IBOX; wide[i].ob_width = wide[i].ob_height = 10;
+        }
+        before = offset_scans;
+        VERIFY(objc_draw(wide,0,1,0,0,0,0) == 1);
+        VERIFY(offset_scans-before <= 2);
+    }
+    return 0;
+}
 int main(void)
 {
     OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
@@ -286,6 +316,7 @@ int main(void)
         VERIFY(objc_draw(labels,0,1,0,0,160,120) == 0 && opens == closes && !nesting);
     }
     mutation_target = NULL;
+    VERIFY(preflight_scaling() == 0);
     before = gem_mono_checks(0);
     if (before) __builtin_printf("mono object failure: %x\n",before);
     VERIFY(before == 0);

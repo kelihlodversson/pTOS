@@ -316,15 +316,14 @@ BOOL aes_render_ready(OBJECT *tree, WORD object, WORD x, WORD y)
     if (aes_painter->ok && !supported(&tree[object],x,y)) aes_painter->ok = FALSE;
     return aes_painter->ok;
 }
-static BOOL preflight(OBJECT *tree, WORD object, WORD depth)
+static BOOL preflight(OBJECT *tree, WORD object, WORD depth, WORD x, WORD y)
 {
-    WORD child, x, y;
+    WORD child;
     if (tree[object].ob_flags & HIDETREE) return TRUE;
-    ob_offset(tree,object,&x,&y);
     if (!supported(&tree[object],x,y)) return FALSE;
     if (depth && tree[object].ob_head != NIL)
         for (child = tree[object].ob_head; child != object; child = tree[child].ob_next)
-            if (child < 0 || !preflight(tree,child,depth-1)) return FALSE;
+            if (child < 0 || !preflight(tree,child,depth-1,(WORD)(x+tree[child].ob_x),(WORD)(y+tree[child].ob_y))) return FALSE;
     return TRUE;
 }
 static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD cw, WORD ch,
@@ -336,7 +335,12 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, parent, x, y, dummy;
     BOOL opened = FALSE, success = FALSE;
-    if (session < 0 || !preflight(tree,start,depth)) return 0;
+    if (session < 0) return 0;
+    /* Resolve ancestors once; each descendant inherits its parent's absolute
+     * position without rescanning the sibling chain through get_par(). */
+    x = y = 0;
+    if (!(tree[start].ob_flags & HIDETREE)) ob_offset(tree,start,&x,&y);
+    if (!preflight(tree,start,depth,x,y)) return 0;
     if (cw <= 0 || ch <= 0) {
         if (change) tree[start].ob_state = state;
         return 1;

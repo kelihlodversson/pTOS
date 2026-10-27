@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "tests/cuis/object_draw.c",
                 "tests/cuis/mono_objects.c", "lib/aes/draw.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
                 "-Dsprintf=aes_draw_test_sprintf", "-ffunction-sections", "-fdata-sections",
-                "-Wl,--gc-sections", "-o", str(work / "draw")]
+                "-Wl,--gc-sections,--wrap=ob_offset", "-o", str(work / "draw")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "draw")], check=True)
 print("CUIS sessions/streams/events, GEM API/object contracts and Kconfig tests passed.")

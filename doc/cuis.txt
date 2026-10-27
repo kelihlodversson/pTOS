@@ -1431,6 +1431,8 @@ WORD before the shared legacy painter stores them; nonempty label rectangles
 must also retain representable extents for text layout. Unrepresentable sums
 return GEM 0 before painting, including geometry changed by USERDEF. This
 check uses the actual traversal coordinates immediately before painting.
+Subtree preflight resolves the starting offset once and carries parent
+coordinates through its linear walk; it does not scan ancestors per node.
 Nonzero image source offsets restrict reads to the remaining
 source rows/columns; no trailing source storage is inferred.
 
