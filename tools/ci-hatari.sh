@@ -24,6 +24,7 @@ elif [ "$EVENT" = pull_request ]; then
 else
   combos="atari512:low atari512:med atari512:high atari512:f030 atari512:f040 atari512-fastcall:low atari512-fastcall:med atari512-fastcall:high atari512-fastcall:f030 atari512-fastcall:f040 atari512-extdesk:low atari512-extdesk:med atari512-extdesk:high atari512-extdesk:f030 atari512-extdesk:f040"
 fi
+summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 mkdir logs
 run_one() {
   config=${1%%:*}
@@ -44,7 +45,7 @@ failed=
 {
   echo "| configuration | mode | result |"
   echo "| --- | --- | --- |"
-} >>"$GITHUB_STEP_SUMMARY"
+} >>"$summary"
 for combo in $combos; do
   config=${combo%%:*}
   mode=${combo#*:}
@@ -52,7 +53,7 @@ for combo in $combos; do
   echo "::group::$config, $mode: $result"
   cat "logs/$config-$mode.log"
   echo "::endgroup::"
-  echo "| $config | $mode | $result |" >>"$GITHUB_STEP_SUMMARY"
+  echo "| $config | $mode | $result |" >>"$summary"
   if [ "$result" != ok ]; then
     failed="$failed $config,$mode"
     echo "::error title=$config, $mode::the tests failed on $config in the $mode mode"
