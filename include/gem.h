@@ -17,6 +17,12 @@ extern "C" {
 #ifndef OS_SHADOWED
 #define OS_SHADOWED SHADOWED
 #endif
+#ifndef OF_TOUCHEXIT
+#define OF_TOUCHEXIT TOUCHEXIT
+#endif
+#ifndef OF_RBUTTON
+#define OF_RBUTTON RBUTTON
+#endif
 #ifndef OF_EDITABLE
 #define OF_EDITABLE EDITABLE
 #endif
@@ -194,6 +200,10 @@ short wind_set(short id, short field, short a, short b, short c, short d);
 short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global);
 short wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh);
 short mt_wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh, short *global);
+short graf_watchbox(OBJECT *tree, short object, short in_state, short out_state);
+short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_state, short *global);
+short form_button(OBJECT *tree, short object, short clicks, short *next);
+short mt_form_button(OBJECT *tree, short object, short clicks, short *next, short *global);
 short form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining);
 short mt_form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining, short *global);
 short rsrc_obfix(OBJECT *tree, short object);

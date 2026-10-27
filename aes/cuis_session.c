@@ -500,6 +500,13 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             display_depth = 1; display_owner = client;
             cuis_input_unlock(flags); return E_OK;
         }
+        /* A mouse owner must never sleep behind a foreign drawing owner:
+         * that owner can be waiting for this gesture's mouse control.
+         * EACCDN distinguishes contention from the EAGAIN borrow case below;
+         * ordinary nonblocking callers retain their existing EAGAIN result. */
+        if (block && mouse_owner == client && update_owner != client) {
+            cuis_input_unlock(flags); return EACCDN;
+        }
         /* Waiting for a per-window section owned by this caller deadlocks. */
         if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
         /* This is an IRQ mask, not a held mutex. ksched_block requires

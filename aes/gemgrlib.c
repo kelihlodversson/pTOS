@@ -33,6 +33,7 @@
 #include "geminit.h"
 #include "gemgsxif.h"
 #include "gemgrlib.h"
+#include "gemwatch.h"
 #include "gemasm.h"
 #include "rectfunc.h"
 
@@ -45,7 +46,7 @@
  *  the mouse is down.  Block until the mouse moves into or out of the
  *  specified rectangle.
  */
-static BOOL gr_stilldn(BOOL out, WORD x, WORD y, WORD w, WORD h)
+BOOL gr_stilldn(BOOL out, WORD x, WORD y, WORD w, WORD h)
 {
     WORD    rets[6];
     MOBLK   tmpmoblk;
@@ -335,25 +336,6 @@ void gr_shrinkbox(GRECT *po, GRECT *pt)
 }
 
 
-WORD gr_watchbox(OBJECT *tree, WORD obj, WORD instate, WORD outstate)
-{
-    BOOL    out;
-    WORD    state;
-    GRECT   t;
-
-    gsx_sclip(&gl_rscreen);
-    ob_actxywh(tree, obj, &t);
-
-    out = FALSE;
-    do
-    {
-        state = (out) ? outstate : instate;
-        ob_change(tree, obj, state, TRUE);
-        out = !out;
-    } while (gr_stilldn(out, t.g_x, t.g_y, t.g_w, t.g_h));
-
-    return out;
-}
 
 
 WORD gr_slidebox(OBJECT *tree, WORD parent, WORD obj, WORD isvert)

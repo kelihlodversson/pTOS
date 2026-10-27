@@ -6,6 +6,8 @@
 #include "mono_objects.h"
 #include "gem_layout.h"
 #include "form_keys.h"
+#include "gem_buttons.h"
+#include "control_message.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
 static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -194,19 +196,35 @@ int main(int argc, char **argv, char **envp)
     WORD handle, width, height, pixels[400];
     short x,y,global[15];
     LONG child, status, update;
+    short control[8] = { 0 };
     char tail[3] = { 1,'f',0 };
     static const char environment[] = { 0,0 };
     (void)argv; (void)envp;
     VERIFY(appl_init() > 0 && mt_appl_init(global) > 0);
     object(&box,G_BOX,0,0,100,100); box.ob_spec.index = 0x1170;
-    if (argc > 1 && argv[1][0] == 'f') {
+    if (argc > 1 && argv[1][0] == 'l') {
+        short parent = (short)process(0x10c,0,0,0,0);
+        VERIFY(parent > 0 && wind_update(BEG_UPDATE) == 1);
+        control[0] = 0x7001; control[1] = global[2];
+        VERIFY(appl_write(parent,16,control) == 1);
+        /* Deliberately wait for the parent's mouse while owning display. */
+        VERIFY(wind_update(BEG_MCTRL) == 1);
+        control[0] = 0x7002;
+        VERIFY(appl_write(parent,16,control) == 1);
+        VERIFY(wind_update(END_MCTRL) == 1 && wind_update(END_UPDATE) == 1 && appl_exit() == 1);
+        return 0;
+    }
+
+    if (argc > 1 && (argv[1][0] == 'f' || argv[1][0] == 'b')) {
         box.ob_type = G_USERDEF; box.ob_spec.userblk = &user;
         user.ub_code = fault_callback; user.ub_parm = 0;
-        (void)objc_draw(&box,0,0,0,0,100,100);
+        if (argv[1][0] == 'b') (void)graf_watchbox(&box,0,OS_SELECTED,0);
+        else (void)objc_draw(&box,0,0,0,0,100,100);
         return 99;
     }
     if (gem_probe_open(&handle,&width,&height) != 0) {
         GRECT untouched = { 1,2,3,4 };
+        status = gem_button_checks(0); if (status) return status;
         status = gem_form_key_checks(-1); if (status) return status;
         box.ob_x = 7; box.ob_y = 9;
         VERIFY(rsrc_obfix(&box,0) == 0 && box.ob_x == 7 && box.ob_y == 9);
@@ -226,6 +244,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    status = gem_button_checks(1); if (status) return status;
     status = gem_form_key_checks(handle); if (status) return status;
     status = gem_layout_checks(handle,width,height); if (status) return status;
     status = mutation_checks(); if (status) return status;
@@ -233,6 +252,7 @@ int main(int argc, char **argv, char **envp)
     status = geometry_checks(handle); if (status) return status;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
     update = gem_probe_update_begin(); VERIFY(update >= 0);
+    status = gem_button_checks(1); if (status) return status;
     box.ob_spec.index = 0x1172;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
     VERIFY(gem_probe_pixel(handle,10,10) == 2 && gem_probe_pixel(handle,4,4) == 0);
@@ -264,6 +284,33 @@ int main(int argc, char **argv, char **envp)
     VERIFY(child > 0);
     status = process(0x13a,child,0,0,0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 0x0b00));
+    tail[1] = 'b';
+    child = process(0x4b,100,(uintptr_t)"C:\\GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    VERIFY(child > 0);
+    status = process(0x13a,child,0,0,0);
+    VERIFY(status == (LONG)(((ULONG)child << 16) | 0x0b00));
+    VERIFY(wind_update(BEG_MCTRL|NO_BLOCK) == 1 && wind_update(END_MCTRL) == 1);
+    /* Reproduce the cross-client cycle: parent owns mouse, child owns
+     * display and blocks for mouse, then parent attempts tracking redraws. */
+    VERIFY(wind_update(BEG_MCTRL) == 1);
+    tail[1] = 'l';
+    child = process(0x4b,100,(uintptr_t)"C:\\GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7001);
+    VERIFY(wind_update(BEG_UPDATE|NO_BLOCK) == 0);
+    object(&box,G_BOX,10,10,20,20); box.ob_spec.index = 0x1172;
+    VERIFY(graf_watchbox(&box,0,OS_SELECTED,0) == 0 && !box.ob_state);
+    {
+        OBJECT pair[2] = { { 0 } };
+        short next = 99;
+        object(&pair[0],G_IBOX,0,0,100,100); pair[1] = box;
+        pair[1].ob_flags = OF_SELECTABLE|OF_EXIT;
+        VERIFY(objc_add(pair,0,1) == 1);
+        VERIFY(form_button(pair,1,1,&next) == 0 && next == 99 && !pair[1].ob_state);
+    }
+    VERIFY(wind_update(END_MCTRL) == 1 && wind_update(END_MCTRL) == 0);
+    VERIFY(control_message(control) == 1 && control[0] == 0x7002);
+    status = process(0x13a,child,0,0,0);
+    VERIFY(status == (LONG)((ULONG)child << 16));
     VERIFY(wind_update(BEG_UPDATE|NO_BLOCK) == 1);
     status = demo(width,height); if (status) return status;
     VERIFY(wind_update(END_UPDATE) == 1 && gem_probe_close(handle) == 0 && appl_exit() == 1);

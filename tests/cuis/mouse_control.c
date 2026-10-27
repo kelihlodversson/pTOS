@@ -32,11 +32,26 @@ static int mouse_control_checks(void)
     CHECK(cuis_display_lock(b,1,0) == E_OK && cuis_vdi_policy() == 1);
     run = &first;
     CHECK(cuis_vdi_policy() == EAGAIN); /* Grabs do not grant drawing permission. */
+    /* A owns mouse control, B owns BEG_UPDATE and may be waiting for A's
+     * mouse. A's redraw must fail before sleeping; use a fake display release
+     * so the old blocking implementation fails the test rather than hangs. */
+    display_release_owner = &second; input_sleeps = 0;
+    CHECK(cuis_display_lock(a,1,1) == EACCDN && !input_sleeps);
+    CHECK(mouse_owner == ca && mouse_depth == 2 && display_owner == cb && display_depth == 1);
+    CHECK(cuis_display_lock(a,1,0) == EAGAIN);
+    display_release_owner = NULL;
     run = &second; CHECK(cuis_display_lock(b,0,0) == E_OK);
     run = &first;
     own = cuis_window_service(CUIS_WINDOW_CREATE,0,0,100,100,0);
     CHECK(own >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,own,1,0,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_WINDOW_SHOW,own,0,0,0,0) == E_OK);
+    input_sleeps = 0;
+    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,own,0,0,0,0) == E_OK);
+    CHECK(cuis_display_lock(a,1,1) == EAGAIN && !input_sleeps);
+    CHECK(cuis_window_service(CUIS_UPDATE_END,own,0,0,0,0) == E_OK);
+    CHECK(cuis_display_lock(a,1,1) == E_OK && cuis_display_lock(a,1,1) == E_OK && display_depth == 2);
+    CHECK(cuis_display_lock(a,0,0) == E_OK && cuis_display_lock(a,0,0) == E_OK && mouse_depth == 2);
+
     run = &second;
     CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK && ca->edge_count == 1);
     run = &first;

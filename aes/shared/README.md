@@ -5,6 +5,8 @@ programs, or libaes. Compile these sources into each consumer; do not include
 implementation files from other C files.
 
 - `gemrender*`, `gemicon.c` and `gemgraphutil.c`: original object painting and GSX drawing.
+- `gemformbutton.c` and `gemwatch.c`: original radio/button decisions and
+  watch-box loop, with native input/drawing or private libaes bindings.
 - `gemformkey.c`: original form field search and keyboard decisions, with
   native and userspace bindings providing default-button drawing.
 - `gemlayout.c`: native resource-coordinate scaling and form centering with

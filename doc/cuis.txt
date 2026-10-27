@@ -1563,3 +1563,47 @@ or drawing failures return GEM 0 without committing the output arguments.
 The normal object painter owns workstation/update cleanup. No kernel
 service, scheduler change, capability claim or custom public API is added.
 The full form_do loop, button tracking and text editing remain later slices.
+
+
+Userspace form buttons and watch boxes (#759)
+--------------------------------------------
+graf_watchbox/mt_graf_watchbox and form_button/mt_form_button use standard
+GEM arguments, flags and continuation results. The original native watch
+loop and form-button logic are separately compiled aes/shared/gemwatch.c
+and gemformbutton.c units. Userspace bindings keep OBJECTs, radio siblings,
+USERDEF callbacks and all gesture state in the application.
+
+Watch-box drawing follows inside/outside state transitions until the buttons
+are released. It waits for button/rectangle predicates through the existing
+GEM event adapter, leaving keyboard and message input queued. When release
+and a boundary change arrive together, trusted release coordinates determine
+the final state and inside/outside result. Absolute child bounds include the
+parent offsets. As with current object drawing, 3D expansion is deferred.
+
+form_button preserves selectable toggling, EXIT continuation, editable-field
+returns, radio sibling deselection and TOUCHEXIT behavior. Exactly two clicks
+on a TOUCHEXIT object set bit 15 of the returned object ID; this signed WORD
+is a GEM object encoding, not a kernel error. Non-radio selected siblings are
+left alone. Pure flag/focus results require neither graphics nor input waits.
+Radio drawing uses the native form area below the menu bar; entering the
+watch loop switches to the original full-screen drawing clip.
+
+A drawing/tracking path lazily acquires one nested mouse-control level,
+retained until its public call completes. Each redraw uses ordinary
+objc_change and a short drawing update; the library holds no additional
+display update across event waits. CUIS rejects a blocking display request
+immediately with EACCDN when its caller owns mouse control and a foreign
+client owns drawing. This prevents display/mouse lock cycles while keeping
+EAGAIN reserved for borrowing an owned per-window section on that path.
+Nonblocking display requests retain their original EAGAIN contention result.
+Callers may retain their own update or
+mouse-control nesting. Cleanup uses a captured session even if a callback
+changes GEM globals, and nested USERDEF interactions restore their enclosing
+private context. Process-fault cleanup reclaims mouse and drawing ownership.
+No kernel service or callback trampoline is added.
+
+Graphics/input/ownership failures return GEM 0; form_button leaves its next-
+object output untouched on failure. Completed state changes/pixels are not
+transactionally undone. Headless callers can still obtain pure flag/focus
+results; a required repaint fails cleanly. Full form_do and text editing
+remain subsequent work.
