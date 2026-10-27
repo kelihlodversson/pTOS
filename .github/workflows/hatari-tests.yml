@@ -57,7 +57,10 @@ jobs:
       - name: Build the systems and the test disks
         run: |
           mkdir products
-          for config in atari512 atari512-fastcall atari512-extdesk; do
+          configs="atari512 atari512-fastcall"
+          # a pull request does not run atari512-extdesk (doc/ci.txt)
+          [ "${{ github.event_name }}" = pull_request ] || configs="$configs atari512-extdesk"
+          for config in $configs; do
             make distclean >/dev/null 2>&1
             make "${config}_defconfig"
             make

@@ -20,7 +20,7 @@ set -e -o pipefail
 if [ $# -gt 0 ]; then
   combos="$*"
 elif [ "$EVENT" = pull_request ]; then
-  combos="atari512:low atari512:med atari512:high atari512:f030 atari512:f040 atari512-fastcall:low atari512-fastcall:f040 atari512-extdesk:low"
+  combos="atari512:low atari512:high atari512:f030 atari512:f040 atari512-fastcall:f040"
 else
   combos="atari512:low atari512:med atari512:high atari512:f030 atari512:f040 atari512-fastcall:low atari512-fastcall:med atari512-fastcall:high atari512-fastcall:f030 atari512-fastcall:f040 atari512-extdesk:low atari512-extdesk:med atari512-extdesk:high atari512-extdesk:f030 atari512-extdesk:f040"
 fi
@@ -29,6 +29,7 @@ mkdir logs
 run_one() {
   config=${1%%:*}
   mode=${1#*:}
+  start=$(date +%s)
   if timeout 900 python3 tools/run-hatari-tests.py \
        --tos "products/$config/system.img" \
        --disk "products/$config/test-hd.img" \
@@ -37,23 +38,25 @@ run_one() {
   else
     echo FAILED >"logs/$config-$mode.result"
   fi
+  echo $(($(date +%s) - start)) >"logs/$config-$mode.seconds"
 }
 export -f run_one
 printf '%s\n' $combos | xargs -P "$(nproc)" -I{} bash -c 'run_one {}'
 
 failed=
 {
-  echo "| configuration | mode | result |"
-  echo "| --- | --- | --- |"
+  echo "| configuration | mode | result | seconds |"
+  echo "| --- | --- | --- | ---: |"
 } >>"$summary"
 for combo in $combos; do
   config=${combo%%:*}
   mode=${combo#*:}
   result=$(cat "logs/$config-$mode.result" 2>/dev/null || echo FAILED)
-  echo "::group::$config, $mode: $result"
+  seconds=$(cat "logs/$config-$mode.seconds" 2>/dev/null || echo "?")
+  echo "::group::$config, $mode: $result ($seconds s)"
   cat "logs/$config-$mode.log"
   echo "::endgroup::"
-  echo "| $config | $mode | $result |" >>"$summary"
+  echo "| $config | $mode | $result | $seconds |" >>"$summary"
   if [ "$result" != ok ]; then
     failed="$failed $config,$mode"
     echo "::error title=$config, $mode::the tests failed on $config in the $mode mode"

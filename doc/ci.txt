@@ -61,12 +61,15 @@ How it was audited
 What is changed
 ---------------
 
-- hatari-tests.yml: a pull request runs 8 of the 15 combinations: atari512 in
-  all five modes (it is the one that exercises the screen-mode dependent
-  suites, and the data cache of the Falcon), atari512-fastcall in low and
-  f040 (the calling convention at run time on an ST mode and on the 68040) and
-  atari512-extdesk in low (the external desktop is not mode dependent).  All
-  15 run every night and on request.
+- hatari-tests.yml: a pull request runs 5 of the 15 combinations: atari512 in
+  low, high, f030 and f040 (it is the one that exercises the screen-mode
+  dependent suites, and the data cache of the Falcon; med is the same code as
+  low with another plane count, so only low, the 16 colour ST mode, stands
+  for both) and atari512-fastcall in f040 (the calling convention at run
+  time, on the 68040).  atari512-extdesk is not run (the external desktop is
+  not mode dependent, and the 22 tests do not touch it), nor built, by a
+  pull request.  All 15 run every night and on request.  The job prints the
+  seconds of each in its summary.
 - build.yml: the configurations in .github/pr-skip-configs are not built by a
   pull request (8 jobs), with the reason for each in that file.  The ones
   whose kernel the regression jobs build (virt-arm-cli, virt-m68k-cli-elf,
@@ -184,9 +187,9 @@ Tests in an emulator:
     (virt-m68k), (virt-m68k-fastcall), (pc-x86_64)
                                keep; each is another machine, kernel or FAT
                                implementation
-    Test atari512, <mode>      all five modes: keep
-    Test atari512-fastcall     low, f040: keep; med, high, f030 nightly only
-    Test atari512-extdesk      low: keep; med, high, f030, f040 nightly only
+    Test atari512, <mode>      low, high, f030, f040: keep; med nightly only
+    Test atari512-fastcall     f040: keep; low, med, high, f030 nightly only
+    Test atari512-extdesk      nightly only
     Build atari512, -fastcall, -extdesk (hatari-tests.yml)
                                build the test disk, which no other job does;
                                keep (see "Not done")
