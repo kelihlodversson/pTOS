@@ -72,8 +72,9 @@ jobs:
 
       # What a pull request runs is chosen from what depends on the mode and
       # on the kernel (doc/ci.txt); master's nightly run and a manual one go
-      # through every combination (tools/ci-hatari.sh).  About four minutes a
-      # test; ten is for one that hangs, well below the job's time.
+      # through every combination (tools/ci-hatari.sh).  A run takes three to
+      # six minutes on a quiet runner, twice that on a busy one; twenty is for one that
+      # hangs, well below the job's time.
       - name: Run the tests under Hatari
         env:
           EVENT: ${{ github.event_name }}

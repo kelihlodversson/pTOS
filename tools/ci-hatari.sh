@@ -30,10 +30,10 @@ run_one() {
   config=${1%%:*}
   mode=${1#*:}
   start=$(date +%s)
-  if timeout 900 python3 tools/run-hatari-tests.py \
+  if timeout 1500 python3 tools/run-hatari-tests.py \
        --tos "products/$config/system.img" \
        --disk "products/$config/test-hd.img" \
-       --mode "$mode" --timeout 600 >"logs/$config-$mode.log" 2>&1; then
+       --mode "$mode" --timeout 1200 >"logs/$config-$mode.log" 2>&1; then
     echo ok >"logs/$config-$mode.result"
   else
     echo FAILED >"logs/$config-$mode.result"
