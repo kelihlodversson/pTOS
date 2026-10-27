@@ -5,6 +5,14 @@
 #include "obdefs.h"
 #include "scancode.h"
 #include "gemformkey.h"
+#ifdef AES_FORMKEY_BINDINGS
+#include AES_FORMKEY_BINDINGS
+#else
+#include "gemfmlib.h"
+#include "gemoblib.h"
+#define FM_KEYBD_NAME fm_keybd
+#define FM_SELECT_DEFAULT(tree,obj) ob_change(tree,obj,tree[obj].ob_state | SELECTED,TRUE)
+#endif
 
 /*
  *  Routine to find the next editable text field, or a field that
@@ -52,7 +60,7 @@ WORD fm_find_field(const OBJECT *tree, WORD start_obj, WORD which)
 }
 
 
-BOOL fm_keybd_step(const OBJECT *tree, WORD obj, WORD *pchar, WORD *pnew_obj)
+WORD FM_KEYBD_NAME(OBJECT *tree, WORD obj, WORD *pchar, WORD *pnew_obj)
 {
     WORD    direction;
 
@@ -80,6 +88,7 @@ BOOL fm_keybd_step(const OBJECT *tree, WORD obj, WORD *pchar, WORD *pnew_obj)
         *pnew_obj = fm_find_field(tree, obj, direction);
         if ((direction == FM_DEFLT) && (*pnew_obj != 0))
         {
+            FM_SELECT_DEFAULT(tree,*pnew_obj);
             return FALSE;
         }
     }

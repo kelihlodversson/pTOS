@@ -6,7 +6,7 @@ implementation files from other C files.
 
 - `gemrender*`, `gemicon.c` and `gemgraphutil.c`: original object painting and GSX drawing.
 - `gemformkey.c`: original form field search and keyboard decisions, with
-  native and userspace wrappers providing default-button drawing.
+  native and userspace bindings providing default-button drawing.
 - `gemlayout.c`: native resource-coordinate scaling and form centering with
   explicit workstation metrics, shared with libaes.
 - `gemobjtree*` and `gemobjwalk.c`: object-tree editing, coordinates and traversal.

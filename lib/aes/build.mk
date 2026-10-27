@@ -52,9 +52,9 @@ obj/libaes/gemlayout.o: aes/shared/gemlayout.c aes/shared/gemlayout.h $(AUTOCONF
 obj/libaes/layout.o: lib/aes/layout.c lib/aes/layout.h aes/shared/gemlayout.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/gemformkey.o: aes/shared/gemformkey.c aes/shared/gemformkey.h $(AUTOCONF_H)
+obj/libaes/gemformkey.o: aes/shared/gemformkey.c aes/shared/gemformkey.h lib/aes/formkey_bindings.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
-	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_FORMKEY_BINDINGS='"formkey_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/formkeys.o: lib/aes/formkeys.c lib/aes/layout.h lib/aes/application.h aes/shared/gemformkey.h include/gem.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@

@@ -129,13 +129,7 @@ static WORD fm_inifld(OBJECT *tree, WORD start_fld)
 }
 
 
-WORD fm_keybd(OBJECT *tree, WORD obj, WORD *pchar, WORD *pnew_obj)
-{
-    WORD cont = fm_keybd_step(tree,obj,pchar,pnew_obj);
-    if (!cont)
-        ob_change(tree,*pnew_obj,tree[*pnew_obj].ob_state | SELECTED,TRUE);
-    return cont;
-}
+
 
 WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
 {
