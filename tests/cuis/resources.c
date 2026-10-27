@@ -13,6 +13,7 @@ short aes_global[15] = { 0,0,1 };
 static UBYTE disk[16384], original[16384];
 static LONG disk_size, position;
 static int files, allocations, alloc_after = -1, reads, short_read, close_error, seek_error, graphics_error;
+static int close_keeps_handle, close_calls;
 static BOOL present = TRUE, registration_error, invalidate_on_close;
 static void *blocks[128];
 static int free_after = -1;
@@ -66,7 +67,12 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         if (!present || strcmp((void *)(uintptr_t)a,available)) return (UQUAD)(QUAD)EFILNF;
         files++; reads = 0; position = 0; return 3;
     case 0x3e:
+        close_calls++;
         if (a != 3 || !files) return (UQUAD)(QUAD)EIHNDL;
+        if (close_keeps_handle) {
+            if (close_keeps_handle > 0) close_keeps_handle--;
+            return (UQUAD)(QUAD)EACCDN;
+        }
         files--;
         if (invalidate_on_close) registration_error = TRUE;
         return close_error ? (UQUAD)(QUAD)EACCDN : E_OK;
@@ -112,9 +118,35 @@ int main(int argc, char **argv)
         short_read = i;
         VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
     }
-    short_read = 0; close_error = 1;
-    VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
-    close_error = 0; seek_error = 1;
+    short_read = 0; close_error = 1; close_calls = 0;
+    VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files && close_calls == 2);
+    /* The previous error released the handle: recovery saw EIHNDL.
+     * Also exercise an interrupted close that leaves the handle live. */
+    close_error = 0; close_keeps_handle = 1; close_calls = 0;
+    VERIFY(rsrc_load("GEMTEST.RSC") == 0 && close_calls == 2 && !files && allocations == before);
+    VERIFY(!memcmp(saved,aes_global,sizeof(saved)));
+    /* Persistent close errors retain one handle and prevent further opens. */
+    close_keeps_handle = -1; close_calls = 0;
+    VERIFY(rsrc_load("GEMTEST.RSC") == 0 && close_calls == 2 && files == 1 && allocations == before);
+    for (i = 0; i < 3; i++) {
+        int opens = attempts;
+        VERIFY(rsrc_load("GEMTEST.RSC") == 0 && attempts == opens && files == 1 && allocations == before);
+    }
+    VERIFY(!memcmp(saved,aes_global,sizeof(saved)));
+    close_keeps_handle = 0;
+    VERIFY(rsrc_load("GEMTEST.RSC") == 1 && !files);
+    VERIFY(rsrc_free() == 1 && allocations == before);
+    memcpy(aes_global,saved,sizeof(saved));
+    /* Session cleanup retries a retained handle, even after an earlier
+     * cleanup attempt failed, without discarding its ownership record. */
+    close_keeps_handle = -1;
+    VERIFY(rsrc_load("GEMTEST.RSC") == 0 && files == 1);
+    aes_resources_reset(); VERIFY(files == 1 && !allocations);
+    close_keeps_handle = 0;
+    aes_resources_reset(); VERIFY(!files && !allocations);
+    VERIFY(rsrc_load("GEMTEST.RSC") == 1);
+    memcpy(saved,aes_global,sizeof(saved)); before = allocations;
+    seek_error = 1;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
     seek_error = 0; invalidate_on_close = TRUE;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);

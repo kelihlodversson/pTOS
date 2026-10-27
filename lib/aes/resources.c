@@ -13,6 +13,7 @@ extern char *getenv(const char *name);
 #define RESOURCE_PATH 128
 RESOURCE_CONTEXT *aes_resource;
 static RESOURCE_CONTEXT *resources;
+static LONG pending_close = -1;
 static char application_directory[RESOURCE_PATH];
 
 void *aes_resource_alloc(LONG bytes)
@@ -34,6 +35,28 @@ LONG aes_resource_seek(WORD handle, WORD mode, LONG offset)
 {
     return (LONG)aes_gemdos_call(0x42,(QUAD)offset,(UWORD)handle,(UWORD)mode);
 }
+/* A failed Fclose may leave its handle live, or may already have released
+ * it. Retry without opening anything in between, and accept EIHNDL as closed.
+ * Keep a persistently failing handle for the next load/session cleanup rather
+ * than accumulating more open files on repeated failed loads. */
+static BOOL retry_resource_close(void)
+{
+    LONG result;
+    if (pending_close < 0) return TRUE;
+    result = (LONG)aes_gemdos_call(0x3e,(UWORD)pending_close,0,0);
+    if (result != E_OK && result != EIHNDL) return FALSE;
+    pending_close = -1;
+    return TRUE;
+}
+static BOOL close_resource_file(void)
+{
+    LONG result = (LONG)aes_gemdos_call(0x3e,(UWORD)pending_close,0,0);
+    if (result == E_OK || result == EIHNDL) pending_close = -1;
+    else retry_resource_close();
+    /* Recovery must not turn an unsuccessful load into a successful one. */
+    return result == E_OK;
+}
+
 CICONBLK **aes_resource_cicons(RSHDR *header)
 {
     LONG *extension;
@@ -198,16 +221,17 @@ WORD mt_rsrc_load(const char *name, WORD *global)
     BOOL ok;
     if (!name) return 0;
     session = aes_application_session(global);
-    if (session < 0) return 0;
+    if (session < 0 || !retry_resource_close()) return 0;
     resource = aes_resource_alloc(sizeof(*resource));
     if (!resource) return 0;
     memset(resource,0,sizeof(*resource));
     if (!aes_layout_metrics(&resource->metrics,global)) { aes_resource_release(resource); return 0; }
     handle = open_resource(name);
     if (handle < 0) { aes_resource_release(resource); return 0; }
+    pending_close = handle;
     aes_resource = resource;
     ok = aes_resource_read(&resource->native,(UWORD)handle) != 0;
-    if ((LONG)aes_gemdos_call(0x3e,(UWORD)handle,0,0) != E_OK) ok = FALSE;
+    if (!close_resource_file()) ok = FALSE;
     if (ok) { resource->header = *resource->native.ap_rscmem; ok = valid_trees(resource); }
     if (ok && aes_application_session(global) != session) ok = FALSE;
     if (ok) {
@@ -237,6 +261,7 @@ WORD rsrc_free(void) { return mt_rsrc_free(aes_global); }
 void aes_resources_reset(void)
 {
     RESOURCE_CONTEXT *next;
+    retry_resource_close();
     while (resources) {
         next = resources->next;
         aes_resource_release(resources->native.ap_rscmem);
