@@ -74,7 +74,7 @@ jobs:
             make "${config}_defconfig"
             # TEMPORARY (#761): measure -O2 with LTO on the 512 KB images
             case $config in
-              atari512*) sed -i '/^AES_STACK_SIZE/d' .config; printf 'BUILD_LTO=y\nAES_STACK_SIZE=1500\n' >> .config; make olddefconfig ;;
+              atari512*) sed -i '/^AES_STACK_SIZE/d' .config; echo BUILD_LTO=y >> .config; make olddefconfig ;;
             esac
             make
             make pbench.prg
