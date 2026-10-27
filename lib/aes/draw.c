@@ -267,7 +267,7 @@ WORD aes_render_free(void *memory) { return aes_resource_discard(memory); }
 CICON *aes_render_cicon(CICONBLK *block)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
-    if (!aes_painter->ok) return NULL;
+    if (!aes_painter->ok || !block->mainlist) return NULL;
     if (!aes_painter->colour_planes) {
         request.code = 102; request.nintin = 1; request.intin[0] = 1;
         invoke(&request);

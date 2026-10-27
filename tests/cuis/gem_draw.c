@@ -321,6 +321,10 @@ int main(int argc, char **argv, char **envp)
     status = mutation_checks(); if (status) return status;
     status = gem_colour_checks(handle); if (status) return status;
     status = gem_colour_resource_checks(handle); if (status) return status;
+    {
+        static const char marker[] = "x32 GEM colour icons: PASS\r\n";
+        ptos_write(1,marker,sizeof(marker)-1);
+    }
     status = gem_mono_checks(handle); if (status) return status;
     status = geometry_checks(handle); if (status) return status;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);

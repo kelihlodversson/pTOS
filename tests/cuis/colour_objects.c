@@ -6,6 +6,13 @@
 extern int memcmp(const void *, const void *, size_t);
 extern void *memcpy(void *, const void *, size_t);
 #define VERIFY(c) do { if (!(c)) return 0x7a00 | __LINE__; } while (0)
+static CICON *mutation_variant;
+static short mutate_colour(PARMBLK *pb)
+{
+    (void)pb;
+    mutation_variant->num_planes = 0;
+    return 0;
+}
 static int pen_pixel(short handle, short pen)
 {
     OBJECT image = { 0 };
@@ -52,6 +59,7 @@ int gem_colour_checks(short handle)
     CICONBLK block = { 0 }, saved;
     CICON low = { 0 }, high = { 0 }, low_saved, high_saved;
     OBJECT icon = { 0 };
+    OBSPEC indirect;
     short mono[4] = { (short)0xa000,(short)0xa000,(short)0xa000,(short)0xa000 };
     short mask[4] = { -1,-1,-1,-1 }, data[16], selected[16], data_saved[16], selected_saved[16];
     short low_data[8] = { 0 }, x, y;
@@ -80,6 +88,28 @@ int gem_colour_checks(short handle)
     VERIFY(objc_draw(&icon,0,0,0,0,100,100) == 1);
     VERIFY(gem_probe_pixel(handle,10,10) == white && gem_probe_pixel(handle,11,10) == black);
     VERIFY(gem_probe_pixel(handle,10,11) == black && gem_probe_pixel(handle,11,11) == red);
+    for (y = 0; y < 4; y++) VERIFY(mask[y] == -1 && (unsigned short)mono[y] == 0xa000);
+    VERIFY(!memcmp(data,data_saved,sizeof(data)) && !memcmp(selected,selected_saved,sizeof(selected)));
+    indirect.ciconblk = &block; icon.ob_spec.indirect = &indirect;
+    icon.ob_flags = 0x100; icon.ob_state = 0;
+    VERIFY(objc_draw(&icon,0,0,0,0,100,100) == 1 && indirect.ciconblk == &block);
+    VERIFY(gem_probe_pixel(handle,11,10) == red);
+    icon.ob_flags = 0; icon.ob_spec.ciconblk = &block;
+    {
+        OBJECT tree[3] = { { 0 } };
+        USERBLK user;
+        tree[0].ob_next = tree[0].ob_head = tree[0].ob_tail = -1;
+        tree[0].ob_type = G_IBOX; tree[0].ob_width = tree[0].ob_height = 100;
+        tree[1].ob_next = tree[1].ob_head = tree[1].ob_tail = -1;
+        tree[1].ob_type = G_USERDEF; tree[1].ob_spec.userblk = &user;
+        tree[1].ob_width = tree[1].ob_height = 1;
+        tree[2] = icon; user.ub_code = mutate_colour; user.ub_parm = 0;
+        VERIFY(objc_add(tree,0,1) == 1 && objc_add(tree,0,2) == 1);
+        mutation_variant = &high;
+        VERIFY(objc_draw(tree,0,1,0,0,100,100) == 0);
+        VERIFY(gem_probe_pixel(handle,11,10) == red);
+        high.num_planes = 4; mutation_variant = 0;
+    }
     /* Empty colour lists use the original mono painter, including selection. */
     block.mainlist = 0; icon.ob_state = 0;
     VERIFY(objc_draw(&icon,0,0,0,0,100,100) == 1);

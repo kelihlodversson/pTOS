@@ -16,13 +16,13 @@ obj/libaes/draw_memory.o: $(LIBAES_MEMORY-y) $(AUTOCONF_H)
 	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
 # Compile shared C units normally, binding their GSX state to a private context.
 LIBAES_RENDER_OBJECTS = obj/libaes/gemcicon.o obj/libaes/gemicon.o obj/libaes/gemrender.o obj/libaes/gemrender_graphics.o obj/libaes/gemgraphutil.o
-$(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemrender.h aes/shared/gemrender_binding.h lib/aes/render_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
+$(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemrender.h aes/shared/gemcicon.h aes/shared/gemrender_binding.h lib/aes/render_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_RENDER_BINDINGS='"render_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemobjwalk.o: aes/shared/gemobjwalk.c aes/shared/gemrender.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/draw.o: lib/aes/draw.c aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
+obj/libaes/draw.o: lib/aes/draw.c aes/shared/gemcicon.h include/vdi_colmap.h lib/aes/resource_context.h aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/events.o: lib/aes/events.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)

@@ -5,6 +5,7 @@
 #include "gem.h"
 #include "aesext.h"
 #include "vdipb.h"
+#include "gsxdefs.h"
 typedef struct painter {
     WORD handle, colour_planes;
     BOOL ok;
