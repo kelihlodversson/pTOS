@@ -11,6 +11,15 @@
 #ifndef OB_RENDER_COORD
 #define OB_RENDER_COORD WORD
 #endif
+#ifndef OB_RENDER_LINE_COORD
+#define OB_RENDER_LINE_COORD UWORD
+#endif
+#ifndef OB_RENDER_LINE
+#define OB_RENDER_LINE(x1,y1,x2,y2) do { \
+    WORD pxy[4] = { x1, y1, x2, y2 }; \
+    v_pline(2, pxy); \
+} while (0)
+#endif
 #ifndef OB_RENDER_READY
 #define OB_RENDER_READY(tree,object) TRUE
 #endif

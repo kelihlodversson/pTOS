@@ -73,12 +73,10 @@ WORD gsx_chkclip(GRECT *pt)
 /*
  *  Routine to draw a clipped polyline, hiding the mouse as you do it
  */
-void gsx_cline(UWORD x1, UWORD y1, UWORD x2, UWORD y2)
+void gsx_cline(OB_RENDER_LINE_COORD x1, OB_RENDER_LINE_COORD y1, OB_RENDER_LINE_COORD x2, OB_RENDER_LINE_COORD y2)
 {
-    WORD pxy[4] = { x1, y1, x2, y2 };
-
     gsx_moff();
-    v_pline(2, pxy);
+    OB_RENDER_LINE(x1,y1,x2,y2);
     gsx_mon();
 }
 
@@ -146,7 +144,7 @@ static void gsx_box(LONG x, LONG y, LONG w, LONG h)
 /*
  *  Routine to do a filled bit blit (a rectangle)
  */
-void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh)
+void bb_fill(WORD mode, WORD fis, WORD patt, OB_RENDER_COORD hx, OB_RENDER_COORD hy, OB_RENDER_COORD hw, OB_RENDER_COORD hh)
 {
     gsx_attr(TRUE, mode, gl_tcolor);
     if (fis != gl_fis)

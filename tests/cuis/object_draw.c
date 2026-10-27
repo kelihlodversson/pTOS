@@ -228,13 +228,19 @@ int main(void)
     VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[20][159] == RED);
     large.ob_width = 20; large.ob_height = 32767;
     VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[119][20] == RED);
-    for (axis = 0; axis < 2; axis++) for (style = 0; style < 3; style++) {
+    for (axis = 0; axis < 2; axis++) for (style = 0; style < 5; style++) {
         large.ob_width = axis ? 20 : 32767; large.ob_height = axis ? 32767 : 20;
-        large.ob_state = style == 2 ? OUTLINED : 0;
-        large.ob_spec.index = style == 0 ? 0x11172 : style == 1 ? 0xff1172 : 0x1172;
+        large.ob_state = style == 2 ? OUTLINED : style == 3 ? CROSSED : style == 4 ? SHADOWED : 0;
+        large.ob_spec.index = style == 0 ? 0x11172 : (style == 1 || style == 4) ? 0xff1172 : 0x1172;
         __builtin_memset(image,0,sizeof(image));
         VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[15][15] == RED);
-        if (style == 2) {
+        if (style == 3) {
+            VERIFY((axis ? image[100][10] : image[10][100]) == WHITE);
+            VERIFY((axis ? image[100][29] : image[29][100]) == WHITE);
+        } else if (style == 4) {
+            VERIFY((axis ? image[100][31] : image[31][100]) == BLACK);
+            VERIFY((axis ? image[100][33] : image[33][100]) == WHITE);
+        } else if (style == 2) {
             VERIFY((axis ? image[100][7] : image[7][100]) == BLACK);
             VERIFY((axis ? image[100][8] : image[8][100]) == WHITE);
         } else {

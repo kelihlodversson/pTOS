@@ -22,6 +22,9 @@ extern PAINTER *aes_painter;
 BOOL aes_render_ready(OBJECT *tree, WORD object);
 BOOL aes_render_extent(const GRECT *rect, WORD state, WORD thickness);
 void aes_render_border(LONG x, LONG y, LONG width, LONG height, WORD thickness);
+void aes_render_bb_fill(WORD mode, WORD fis, WORD patt, LONG x, LONG y, LONG width, LONG height);
+void aes_render_cline(LONG x1, LONG y1, LONG x2, LONG y2);
+void aes_render_line(LONG x1, LONG y1, LONG x2, LONG y2);
 void aes_render_box(LONG x, LONG y, LONG width, LONG height);
 void aes_render_fill(LONG x, LONG y, LONG width, LONG height);
 

@@ -88,13 +88,19 @@ static int geometry_checks(WORD handle)
     VERIFY(gem_probe_pixel(handle,0,10) == black && gem_probe_pixel(handle,19,20) == black);
     VERIFY(gem_probe_pixel(handle,0,20) == 0);
     large.ob_x = large.ob_y = 10; large.ob_type = G_BOX;
-    for (axis = 0; axis < 2; axis++) for (style = 0; style < 3; style++) {
+    for (axis = 0; axis < 2; axis++) for (style = 0; style < 5; style++) {
         large.ob_width = axis ? 20 : 32767; large.ob_height = axis ? 32767 : 20;
-        large.ob_state = style == 2 ? OS_OUTLINED : 0;
-        large.ob_spec.index = style == 0 ? 0x11172 : style == 1 ? 0xff1172 : 0x1172;
+        large.ob_state = style == 2 ? OS_OUTLINED : style == 3 ? OS_CROSSED : style == 4 ? OS_SHADOWED : 0;
+        large.ob_spec.index = style == 0 ? 0x11172 : (style == 1 || style == 4) ? 0xff1172 : 0x1172;
         VERIFY(objc_draw(hidden,0,0,0,0,100,100) == 1);
         VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1 && gem_probe_pixel(handle,15,15) == 2);
-        if (style == 2) {
+        if (style == 3) {
+            VERIFY(gem_probe_pixel(handle,axis ? 10 : 50,axis ? 50 : 10) == 0);
+            VERIFY(gem_probe_pixel(handle,axis ? 29 : 50,axis ? 50 : 29) == 0);
+        } else if (style == 4) {
+            VERIFY(gem_probe_pixel(handle,axis ? 31 : 50,axis ? 50 : 31) == black);
+            VERIFY(gem_probe_pixel(handle,axis ? 33 : 50,axis ? 50 : 33) == 0);
+        } else if (style == 2) {
             VERIFY(gem_probe_pixel(handle,axis ? 7 : 50,axis ? 50 : 7) == black);
             VERIFY(gem_probe_pixel(handle,axis ? 8 : 50,axis ? 50 : 8) == 0);
         } else {

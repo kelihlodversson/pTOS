@@ -29,6 +29,10 @@
 #define D (aes_painter->scratch)
 
 #define OB_RENDER_COORD LONG
+#define bb_fill aes_render_bb_fill
+#define gsx_cline aes_render_cline
+#define OB_RENDER_LINE_COORD LONG
+#define OB_RENDER_LINE aes_render_line
 #define gr_box aes_render_border
 #define OB_RENDER_BOX aes_render_box
 #define OB_RENDER_EXTENT aes_render_extent

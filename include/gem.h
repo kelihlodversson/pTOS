@@ -26,6 +26,9 @@ extern "C" {
 #ifndef OS_SELECTED
 #define OS_SELECTED SELECTED
 #endif
+#ifndef OS_CROSSED
+#define OS_CROSSED CROSSED
+#endif
 #ifndef OS_OUTLINED
 #define OS_OUTLINED OUTLINED
 #endif

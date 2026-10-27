@@ -131,6 +131,11 @@ static void draw_segment(LONG *segment)
     for (i = 0; i < 4; i++) points[i] = segment[i];
     aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,2,(uintptr_t)points,0) == E_OK;
 }
+void aes_render_line(LONG x1, LONG y1, LONG x2, LONG y2)
+{
+    LONG segment[4] = { x1,y1,x2,y2 };
+    draw_segment(segment);
+}
 BOOL aes_render_extent(const GRECT *rect, WORD state, WORD thickness)
 {
     GRECT *clip = &aes_painter->clip;
@@ -177,14 +182,15 @@ void vs_clip(WORD enabled, WORD *points)
 void aes_render_fill(LONG x, LONG y, LONG width, LONG height)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
-    if (width <= 0 || height <= 0) return;
+    LONG left = max(x,aes_painter->clip.g_x);
+    LONG top = max(y,aes_painter->clip.g_y);
+    LONG right = min(x+width-1,(LONG)aes_painter->clip.g_x+aes_painter->clip.g_w-1);
+    LONG bottom = min(y+height-1,(LONG)aes_painter->clip.g_y+aes_painter->clip.g_h-1);
+    if (width <= 0 || height <= 0 || left > right || top > bottom) return;
     request.code = FILL_RECTANGLE; request.nptsin = 2;
-    request.ptsin[0] = max(x,aes_painter->clip.g_x);
-    request.ptsin[1] = max(y,aes_painter->clip.g_y);
-    request.ptsin[2] = min(x+width-1,(LONG)aes_painter->clip.g_x+aes_painter->clip.g_w-1);
-    request.ptsin[3] = min(y+height-1,(LONG)aes_painter->clip.g_y+aes_painter->clip.g_h-1);
-    if (request.ptsin[0] <= request.ptsin[2] && request.ptsin[1] <= request.ptsin[3])
-        invoke(&request);
+    request.ptsin[0] = left; request.ptsin[1] = top;
+    request.ptsin[2] = right; request.ptsin[3] = bottom;
+    invoke(&request);
 }
 void vr_recfl(WORD *points)
 {

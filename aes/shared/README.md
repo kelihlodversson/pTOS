@@ -15,6 +15,9 @@ The shared renderer's internal headers declare its interfaces and select the
 build's drawing context. Native builds retain AES globals; libaes supplies
 `lib/aes/render_bindings.h` and its private per-call context. Shared code must
 keep application pointers and callbacks in userspace when built into libaes.
+Userspace fills, borders, crossed lines and expanded shadows retain LONG
+geometry through clipping; the native bindings keep their original WORD
+interfaces and VDI point conversion.
 
 Future reusable resource, object and graphics routines belong here too, with
 consumer-specific transport and ownership code kept outside this directory.
