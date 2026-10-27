@@ -822,8 +822,8 @@ are padded), NULL/upper-word-zero self lookup, and the MultiTOS 0xffff/PID
 and 0xfffe/application-ID pointer selectors. Only registered peers convert;
 missing, exited or unregistered applications return -1. Handles are resolved
 and checked before conversion to a positive short PID; they are not narrowed.
-Standard appl_getinfo AES_PROCESS (4) returns 1 with outputs 0,1,0,0:
-cooperative scheduling, PID conversion, no appl_search, no rsrc_rcfix.
+Standard appl_getinfo AES_PROCESS (4) returns 1 with outputs 0,1,0,1:
+cooperative scheduling, PID conversion, no appl_search, native rsrc_rcfix.
 AES_INQUIRE (6) returns 1 with outputs 1,0,0,0, advertising APR_NOWAIT only.
 Other queries remain unsupported; no protocol negotiation is introduced.
 
@@ -1693,7 +1693,7 @@ A failed load leaves the selected resource and its globals unchanged. The
 library checks counts, indices and reachable tree sibling rings, including the
 LASTOB boundary, before publishing a new image. String/image-only resources
 are accepted. Materialized resources retain the portable loader's 65535-byte
-limit; large-resource/RSX extensions and in-place rsrc_rcfix are not advertised.
+limit; large-resource/RSX extensions are not advertised.
 Loading currently requires VDI font metrics for standard character-coordinate
 scaling; resource lookup and address changes themselves require no drawing.
 
@@ -1713,3 +1713,59 @@ allocation/read/seek/close/free failures and ownership retention. Real x32 GEM
 clients exercise saved globals, isolated images, session/normal/fault cleanup,
 application-directory lookup after chdir with misleading extended ARGV[0],
 and PATH-only lookup. The same fixture compiles with unmodified GEMlib headers.
+
+
+Caller-owned native resources
+----------------------------
+
+rsrc_rcfix/mt_rsrc_rcfix implement the standard in-place resource API, not the
+big-endian disk decoder. AES_PROCESS output 4 now reports this binding. The
+caller supplies writable contiguous storage beginning with a classic RSHDR
+(version 0 or 1), followed by the native C structures, tables and data. Header
+offsets and rsh_rssize count bytes from that header; all fields use native byte
+order and normal ABI alignment/padding. Pointers needing relocation contain
+image-relative offsets in native pointer-sized slots. Use offsetof/sizeof of
+the compiled structures rather than packed Atari disk-record sizes.
+
+On x32, RSHDR is 36 bytes, OBJECT 24, TEDINFO 28, ICONBLK 36, BITBLK 16 and
+USERBLK 8. Pointer slots are four bytes; align pointer-bearing records/tables
+to four bytes, bitmap words to two, and the image itself to pointer alignment.
+Tree entries point by offset into the object array; string/image tables and
+object specifications likewise reference image data or the corresponding
+native record. INDIRECT slots contain an offset specification and may be
+shared. Direct box specifications remain immediate values. USERDEF object
+specifications reference a native USERBLK by offset, while its callback and
+parameter already contain application-native values and are preserved. Image
+words are already native endian; no device-format conversion is claimed.
+
+As required by GEM, release the selected resource before calling rcfix. A live
+image cannot be fixed twice, including through another saved global array.
+Indirect pointer writes cannot overlap strings (including TEDINFO capacity),
+bitmap data or USERBLK records. Shared slots must have compatible specification
+interpretations; unchanged payloads can still share storage.
+Coordinates use the original shared character-to-pixel scaling. Fixup first
+stages and validates relocation and tree topology without changing caller
+storage; only after allocations, metrics and session checks succeed does it
+commit the result to the original image. All resulting addresses point into
+that original image, and a failure leaves data and resource globals unchanged.
+The staging buffer and byte-range classification workspace are discarded after
+the call, with failed frees retained for later cleanup in the same way as
+disk-loader temporary buffers.
+
+Keep the image writable and alive until rsrc_free or session cleanup detaches
+it. rsrc_free clears the resource globals and frees only library bookkeeping;
+it never Mfree's the caller's image. Session cleanup also detaches caller-owned
+images without reading or freeing their contents. Reusing the image for a new
+fixup requires restoring its original offset/character-coordinate form first;
+free does not undo relocation, application edits or scaling. Saved globals
+select registered native images through the same lookup/address bindings as
+disk resources, and become stale when that registration is freed or reset.
+
+This slice accepts classic native resources up to 65535 bytes. Colour-icon
+extension blocks, RSX/large-resource headers and packed big-endian disk images
+are rejected by rcfix; use rsrc_load for disk decoding. No kernel code, CUIS
+opcode or configuration option is added. Native AES builds retain their
+existing resource paths. Tests compile a native-offset fixture with normal
+GEMlib headers, verify pointer identity, aliased specifications, scaling,
+USERDEF callbacks, saved globals and caller ownership, and exercise malformed
+input, headless metrics, allocation failures and failed cleanup retries.

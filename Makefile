@@ -378,7 +378,19 @@ INC = $(addprefix -I,$(include_dirs))
 # Automatic header dependency generation, one .d file per object.
 DEPFLAGS = -MMD -MP
 
-CFLAGS = $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) $(CSTANDARD) $(OPTFLAGS) \
+# Link-time optimization, see BUILD_LTO in Kconfig.machine; LTOFLAGS may be
+# overridden to try other -flto variants.
+ifdef BUILD_LTO
+LTOFLAGS ?= -flto=auto
+# On the ELF m68k toolchain the final LTO assembly must get the same local
+# label fix as the per-file assembly; see tools/lto-as/as.
+ifdef BUILD_TOOLCHAIN_IS_ELF
+LTO_LDPREFIX = LTO_REAL_AS=$(CROSS_COMPILE)as
+LTOFLAGS_LD = -B$(CURDIR)/tools/lto-as/
+endif
+endif
+
+CFLAGS = $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) $(CSTANDARD) $(OPTFLAGS) $(LTOFLAGS) \
          $(DEBUGFLAGS) $(OTHERFLAGS) $(WARNFLAGS) $(INC)
 CPPFLAGS = $(CFLAGS)
 
@@ -403,11 +415,17 @@ bdos_copts = -Ifs
 # fid-level API, needing -Ibios.
 fs_copts = -Ibdos -Ibios
 
+# emutos.ld places the variables of obj/lowstram.o in low ST-RAM by object
+# file name; LTO would move them into its own generated objects.
+ifdef BUILD_LTO
+obj/lowstram.o : CFLAGS += -fno-lto
+endif
+
 CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts) $(X86_64_PIE_OVERRIDE))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
 # Linker: relocation information and, for most targets, a raw binary.
-LD = $(CC) $(MULTILIBFLAGS) -nostartfiles -nostdlib
+LD = $(LTO_LDPREFIX) $(CC) $(MULTILIBFLAGS) $(OPTFLAGS) $(LTOFLAGS) $(LTOFLAGS_LD) -nostartfiles -nostdlib
 LIBS = -lgcc
 
 # FreeType, for the scalable fonts: a library of its own, linked into the
@@ -1505,7 +1523,7 @@ ifdef CONF_WITH_AES
 GEN_SRC += aes/asm_struct_gen.h
 
 aes/asm_struct_gen.h: aes/gen_asm_defines.c $(AUTOCONF_H)
-	$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@
+	$(CC) $(CFILE_FLAGS) -fno-lto -S $< -o - | grep '^#define' > $@
 endif
 
 #

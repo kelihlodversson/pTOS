@@ -50,11 +50,15 @@ jobs:
         with:
           arch: m68k
 
+      # the same packages as the Hatari tests job installs, so that the two
+      # share a cache entry (the disk image tools are not used here)
       - name: Install Hatari
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hatari
-          hatari --version || true     # (it exits with 1)
+        uses: ./.github/actions/apt-install
+        with:
+          packages: --no-install-recommends hatari dosfstools mtools
+
+      - name: Report the Hatari version
+        run: hatari --version || true     # (it exits with 1)
 
       # The key of the baselines in tools/pBench/ci-baselines is the name of
       # the configuration.  atari256 and atari512-fastcall are built with

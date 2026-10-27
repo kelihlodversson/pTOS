@@ -4,6 +4,7 @@
 #ifndef PTOS_GEM_H
 #define PTOS_GEM_H
 #include "obdefs.h"
+#include "rsdefs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -247,6 +248,8 @@ short mt_form_keybd(OBJECT *tree, short object, short proposed, short key, short
 #define R_FRSTR 15
 #define R_FRIMG 16
 #endif
+short rsrc_rcfix(void *header);
+short mt_rsrc_rcfix(void *header, short *global);
 short rsrc_load(const char *name);
 short mt_rsrc_load(const char *name, short *global);
 short rsrc_free(void);

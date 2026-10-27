@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-ffunction-sections", "-fdata-sections", "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "-Ilib/ldso/client",
                 '-DAES_RSC_BINDINGS="resource_bindings.h"', "-D__ptos_getauxval=aes_test_getauxval", "-Dgetenv=aes_test_getenv", "-Dsprintf=aes_resource_test_sprintf",
                 "tests/cuis/resources.c", "tests/cuis/gem_resources.c", "lib/aes/resources.c", "aes/shared/rsload_portable.c",
-                "aes/shared/gemrsaddr.c", "aes/shared/gemlayout.c", "util/string.c", "-Wl,--gc-sections", "-o", str(work / "resources")]
+                "aes/shared/gemrsaddr.c", "aes/shared/gemrcfix.c", "aes/shared/gemlayout.c", "util/string.c", "-Wl,--gc-sections", "-o", str(work / "resources")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "resources"), str(fixture), "aes/gem.rsc"], check=True)
     # These resource IDs/data are generated, and a clean checkout has neither

@@ -16,7 +16,7 @@ waiting for a runner: the repository has only so many at a time, and a run of
 82 jobs spent most of its wall-clock time (a median of 110 minutes for
 build.yml, for jobs of a minute each) in the queue.  The whole set of builds
 still runs on master (push), every night (schedule) and with "Run workflow"
-(workflow_dispatch); all 15 Hatari combinations run every night and on request
+(workflow_dispatch); all 18 Hatari combinations run every night and on request
 (hatari-tests.yml has no push trigger); pBench (pbench.yml) runs on pull
 requests and on request only, as it did before.
 
@@ -63,14 +63,18 @@ How it was audited
 What is changed
 ---------------
 
-- hatari-tests.yml: a pull request runs 5 of the 15 combinations: atari512 in
+- hatari-tests.yml: a pull request runs 6 of the 18 combinations: atari512 in
   low, high, f030 and f040 (it is the one that exercises the screen-mode
   dependent suites, and the data cache of the Falcon; med is the same code as
   low with another plane count, so only low, the 16 colour ST mode, stands
   for both) and atari512-fastcall in f040 (the calling convention at run
-  time, on the 68040).  atari512-extdesk is not run (the external desktop is
+  time, on the 68040) and atari192 in low (the 192 KB ROM, built with -Os,
+  LTO and -mfastcall like the other small ROMs; a TOS 1.04 ROM, so Hatari
+  runs it as a plain ST with a 68000, where text_blit and raster_copy skip
+  themselves for want of a blitter; only the ST modes, it has no Falcon
+  support).  atari512-extdesk is not run (the external desktop is
   not mode dependent, and the 22 tests do not touch it), nor built, by a
-  pull request.  All 15 run every night and on request.  The job prints the
+  pull request.  All 18 run every night and on request.  The job prints the
   seconds of each in its summary.
 - build.yml: the configurations in .github/pr-skip-configs are not built by a
   pull request (8 jobs), with the reason for each in that file.  The ones
@@ -96,7 +100,7 @@ What is changed
     build.yml, regression suites: 2 jobs, "regression arm" (virt-arm, its
       traditional FAT variant, raspi2b) and "regression m68k" (virt-m68k and
       its fastcall build), tools/ci-regression.sh
-    hatari-tests.yml: 1 job that builds the three systems and runs the tests
+    hatari-tests.yml: 1 job that builds the four systems and runs the tests
       four at a time, one Hatari each, on the four CPUs of the runner
       (Hatari's clock is the emulated one: the load does not change the
       results; tools/ci-hatari.sh).  The job runs on an ubuntu-26.04 runner,
@@ -191,8 +195,10 @@ Tests in an emulator:
                                implementation
     Test atari512, <mode>      low, high, f030, f040: keep; med nightly only
     Test atari512-fastcall     f040: keep; low, med, high, f030 nightly only
+    Test atari192              low: keep (the LTO -Os build of the small ROMs);
+                               med, high nightly only
     Test atari512-extdesk      nightly only
-    Build atari512, -fastcall, -extdesk (hatari-tests.yml)
+    Build atari512, -fastcall, -extdesk, atari192 (hatari-tests.yml)
                                build the test disk, which no other job does;
                                keep (see "Not done")
 
@@ -220,6 +226,25 @@ Packaging (build.yml):
                                ROM sizes), and "make release" itself
     Raspberry Pi SD card image keep
     All builds                 keep (the roll-up)
+
+
+Package downloads
+-----------------
+
+The runners' mirror is sometimes slow, and which job gets it is luck: in one
+run a job spent 5 min 53 s fetching the 20 MB of the x86-64 toolchain and 7
+min 7 s fetching QEMU, while the other jobs of the run did the same in 15-20
+seconds.  Combining jobs does not help against that (they would all wait for
+the same download), so the apt packages of the jobs are installed with
+.github/actions/apt-install: it sets apt's retries and timeouts (a stalled
+mirror fails over instead of crawling), keeps the downloaded .deb files in the
+Actions cache (the key has the runner image version and the package list)
+and, with the files in the cache, installs them with dpkg, without fetching
+an index or anything else.  The m68k toolchain is cached in the same way by
+setup-toolchain, by the hashes of its archives.  What is still fetched every
+time: pip packages (kconfiglib, fontTools), the Raspberry Pi firmware and the
+fonts for the SD card image.  release.yml (a tag) installs its tools as it
+did.
 
 
 Not done (needs a decision)

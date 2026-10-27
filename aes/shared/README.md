@@ -40,3 +40,8 @@ is compiled normally for libaes with private allocation, file-I/O, scaling and
 context bindings; the native build retains its existing adapters and layout.
 Library records use native pointer alignment, and wide-pointer host tests keep indirect
 specifications in native slots rather than overwriting four-byte disk slots.
+
+`gemrcfix.c` validates and relocates a classic native resource into temporary
+staging storage while keeping pointer targets in caller storage. It is a
+separate native-layout operation from `rsload_portable.c` disk decoding;
+libaes owns the transaction, metrics, registration and caller-storage lifetime.

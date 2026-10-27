@@ -91,14 +91,17 @@ obj/libaes/alerts.o: lib/aes/alerts.c lib/aes/alert_context.h $(AUTOCONF_H) aes/
 obj/libaes/form_resources.o: aes/shared/gem_rsc.c aes/shared/gem_rsc.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -DAES_RESOURCE_FORMS_ONLY -DAES_RESOURCE_STRINGS_LOCAL -ffunction-sections -fdata-sections -c $< -o $@
-LIBAES_RESOURCE_OBJECTS = obj/libaes/resource_loader.o obj/libaes/gemrsaddr.o obj/libaes/resources.o
+LIBAES_RESOURCE_OBJECTS = obj/libaes/gemrcfix.o obj/libaes/resource_loader.o obj/libaes/gemrsaddr.o obj/libaes/resources.o
 obj/libaes/resource_loader.o: aes/shared/rsload_portable.c lib/aes/resource_bindings.h lib/aes/resource_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_RSC_BINDINGS='"resource_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemrsaddr.o: aes/shared/gemrsaddr.c lib/aes/resource_bindings.h lib/aes/resource_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_RSC_BINDINGS='"resource_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/resources.o: lib/aes/resources.c lib/aes/resource_context.h lib/aes/application.h lib/aes/layout.h $(AUTOCONF_H)
+obj/libaes/gemrcfix.o: aes/shared/gemrcfix.c aes/shared/gemrcfix.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/resources.o: lib/aes/resources.c aes/shared/gemrcfix.h lib/aes/resource_context.h lib/aes/application.h lib/aes/layout.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/libaes.so: $(LIBAES_RESOURCE_OBJECTS) obj/ldso/libptos.so obj/libaes/form_resources.o obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map

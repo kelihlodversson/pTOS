@@ -103,3 +103,170 @@ int gem_resource_original(void)
     VERIFY(rsrc_free() == 1);
     return 0;
 }
+
+/* Source-generator layout: native structs, native byte order and native
+ * pointer-sized image-relative offsets. This is not a packed disk RSC. */
+typedef struct {
+    RSHDR header;
+    OBJECT objects[8];
+    TEDINFO ted;
+    ICONBLK icon;
+    BITBLK bit;
+    USERBLK user;
+    OBJECT *trees[1];
+    char *strings[2];
+    BITBLK *images[1];
+    OBSPEC indirect;
+    unsigned short bitmap, mask;
+    char text[8], template[8], valid[2], label[8];
+} NATIVE_RSC;
+static short native_callback(PARMBLK *pb) { return pb->pb_currstate; }
+#define NATIVE_OFFSET(member) ((unsigned long)offsetof(NATIVE_RSC,member))
+static void native_fixture(NATIVE_RSC *r)
+{
+    short i;
+    unsigned char *bytes = (unsigned char *)r;
+    for (i = 0; i < (short)sizeof(*r); i++) bytes[i] = 0;
+    r->header.rsh_vrsn = 1;
+    r->header.rsh_object = NATIVE_OFFSET(objects);
+    r->header.rsh_tedinfo = NATIVE_OFFSET(ted);
+    r->header.rsh_iconblk = NATIVE_OFFSET(icon);
+    r->header.rsh_bitblk = NATIVE_OFFSET(bit);
+    r->header.rsh_trindex = NATIVE_OFFSET(trees);
+    r->header.rsh_frstr = NATIVE_OFFSET(strings);
+    r->header.rsh_frimg = NATIVE_OFFSET(images);
+    r->header.rsh_string = NATIVE_OFFSET(text);
+    r->header.rsh_imdata = NATIVE_OFFSET(bitmap);
+    r->header.rsh_nobs = 8; r->header.rsh_ntree = 1;
+    r->header.rsh_nted = r->header.rsh_nib = r->header.rsh_nbb = 1;
+    r->header.rsh_nstring = 2; r->header.rsh_nimages = 1;
+    r->header.rsh_rssize = sizeof(*r);
+    for (i = 0; i < 8; i++) {
+        OBJECT *o = r->objects+i;
+        o->ob_next = i == 0 ? -1 : i == 7 ? 0 : i+1;
+        o->ob_head = o->ob_tail = -1;
+        o->ob_type = G_STRING;
+        o->ob_width = 6; o->ob_height = 1; o->ob_x = 0xfe02; o->ob_y = i;
+        o->ob_spec.free_string = (char *)NATIVE_OFFSET(label);
+    }
+    r->objects[0].ob_type = G_IBOX; r->objects[0].ob_spec.index = 0;
+    r->objects[0].ob_head = 1; r->objects[0].ob_tail = 7;
+    r->objects[0].ob_x = r->objects[0].ob_y = 0;
+    r->objects[0].ob_width = 20; r->objects[0].ob_height = 8;
+    r->objects[1].ob_type = G_FTEXT;
+    r->objects[1].ob_spec.tedinfo = (TEDINFO *)NATIVE_OFFSET(ted);
+    r->objects[2].ob_flags = r->objects[3].ob_flags = 0x100; /* INDIRECT */
+    r->objects[2].ob_spec.indirect = r->objects[3].ob_spec.indirect = (OBSPEC *)NATIVE_OFFSET(indirect);
+    r->indirect.free_string = (char *)NATIVE_OFFSET(label);
+    r->objects[3].ob_type = G_TITLE; /* Compatible shared string slot. */
+    r->objects[4].ob_type = G_IMAGE; r->objects[4].ob_spec.bitblk = (BITBLK *)NATIVE_OFFSET(bit);
+    r->objects[5].ob_type = G_ICON; r->objects[5].ob_spec.iconblk = (ICONBLK *)NATIVE_OFFSET(icon);
+    r->objects[6].ob_type = G_USERDEF; r->objects[6].ob_spec.userblk = (USERBLK *)NATIVE_OFFSET(user);
+    r->objects[7].ob_type = G_BUTTON; r->objects[7].ob_flags = 0x20; /* LASTOB */
+    r->ted.te_ptext = (char *)NATIVE_OFFSET(text);
+    r->ted.te_ptmplt = (char *)NATIVE_OFFSET(template);
+    r->ted.te_pvalid = (char *)NATIVE_OFFSET(valid);
+    r->ted.te_txtlen = r->ted.te_tmplen = 8; r->ted.te_font = 3;
+    r->icon.ib_pmask = (short *)NATIVE_OFFSET(mask);
+    r->icon.ib_pdata = (short *)NATIVE_OFFSET(bitmap);
+    r->icon.ib_ptext = (char *)NATIVE_OFFSET(label);
+    r->icon.ib_wicon = 16; r->icon.ib_hicon = 1;
+    r->bit.bi_pdata = (void *)NATIVE_OFFSET(bitmap); r->bit.bi_wb = 2; r->bit.bi_hl = 1;
+    r->user.ub_code = native_callback; r->user.ub_parm = 1234;
+    r->trees[0] = (OBJECT *)NATIVE_OFFSET(objects);
+    r->strings[0] = (char *)NATIVE_OFFSET(text); r->strings[1] = (char *)-1L;
+    r->images[0] = (BITBLK *)NATIVE_OFFSET(bit);
+    r->bitmap = 0xa55a; r->mask = 0xffff;
+    memcpy(r->text,"abc",4); memcpy(r->template,"______",7);
+    memcpy(r->valid,"F",2); memcpy(r->label,"Native",7);
+}
+
+int gem_resource_native(short graphics, short wchar, short hchar)
+{
+    NATIVE_RSC r, raw, fixed;
+    OBJECT *tree;
+    void *address;
+    short saved[15], other[15], invalid[15], i;
+    if (sizeof(void *) == 4)
+        VERIFY(sizeof(RSHDR) == 36 && sizeof(OBJECT) == 24 && sizeof(TEDINFO) == 28 &&
+            sizeof(ICONBLK) == 36 && sizeof(BITBLK) == 16 && sizeof(USERBLK) == 8);
+    native_fixture(&r); memcpy(&raw,&r,sizeof(r));
+    memcpy(saved,aes_global,sizeof(saved)); memcpy(invalid,saved,sizeof(saved)); invalid[2] = -1;
+    VERIFY(mt_rsrc_rcfix(&r,invalid) == 0 && !memcmp(&r,&raw,sizeof(r)));
+    VERIFY(rsrc_rcfix(&r) == graphics);
+    if (!graphics) { VERIFY(!memcmp(&r,&raw,sizeof(r))); return 0; }
+    VERIFY(rsrc_gaddr(R_TREE,0,&tree) == 1 && tree == r.objects);
+    VERIFY(tree[0].ob_width == 20*wchar && tree[0].ob_height == 8*hchar);
+    VERIFY(tree[1].ob_x == 2*wchar-2 && tree[1].ob_y == hchar);
+    VERIFY(tree[1].ob_spec.tedinfo == &r.ted && r.ted.te_ptext == r.text &&
+        r.ted.te_ptmplt == r.template && r.ted.te_pvalid == r.valid);
+    VERIFY(tree[2].ob_spec.indirect == &r.indirect && tree[3].ob_spec.indirect == &r.indirect &&
+        r.indirect.free_string == r.label);
+    VERIFY(tree[4].ob_spec.bitblk == &r.bit && (void *)r.bit.bi_pdata == &r.bitmap);
+    VERIFY(tree[5].ob_spec.iconblk == &r.icon && r.icon.ib_pdata == (short *)&r.bitmap &&
+        r.icon.ib_pmask == (short *)&r.mask && r.icon.ib_ptext == r.label);
+    VERIFY(tree[6].ob_spec.userblk == &r.user && r.user.ub_code == native_callback && r.user.ub_parm == 1234);
+    VERIFY(rsrc_gaddr(R_STRING,0,&address) == 1 && address == r.text);
+    VERIFY(rsrc_gaddr(R_FRSTR,1,&address) == 1 && *(char **)address == (char *)-1L);
+    VERIFY(rsrc_gaddr(R_IMAGEDATA,0,&address) == 1 && address == &r.bit);
+    memcpy(other,aes_global,sizeof(other)); memcpy(&fixed,&r,sizeof(r));
+    VERIFY(rsrc_rcfix(&r) == 0 && !memcmp(&r,&fixed,sizeof(r)));
+    VERIFY(mt_rsrc_free(other) == 1 && !memcmp(&r,&fixed,sizeof(r)));
+    VERIFY(rsrc_gaddr(R_TREE,0,&tree) == 0);
+    /* An already relocated image is not silently fixed twice after free. */
+    VERIFY(rsrc_rcfix(&r) == 0 && !memcmp(&r,&fixed,sizeof(r)));
+    memcpy(&r,&raw,sizeof(r)); memcpy(aes_global,saved,sizeof(saved));
+    VERIFY(mt_rsrc_rcfix(&r,aes_global) == 1 && rsrc_free() == 1);
+    /* Every rejected raw image must leave both data and globals unchanged. */
+    for (i = 0; i < 20; i++) {
+        memcpy(&r,&raw,sizeof(r));
+        switch (i) {
+        case 0: r.header.rsh_nobs = -1; break;
+        case 1: r.header.rsh_object++; break;
+        case 2: r.header.rsh_rssize = sizeof(RSHDR)-1; break;
+        case 3: r.header.rsh_vrsn = 4; break;
+        case 4: r.ted.te_ptext = (char *)(unsigned long)sizeof(r); break;
+        case 5: r.objects[1].ob_spec.tedinfo = (TEDINFO *)NATIVE_OFFSET(label); break;
+        case 6: r.objects[2].ob_spec.indirect = (OBSPEC *)NATIVE_OFFSET(text); break;
+        case 7: r.objects[1].ob_next = 1; break;
+        case 8: r.trees[0] = (OBJECT *)NATIVE_OFFSET(ted); break;
+        case 9: r.bit.bi_wb = -1; break;
+        case 10: r.icon.ib_hicon = 32767; break;
+        case 11: r.objects[7].ob_flags = 0; break;
+        case 12: r.header.rsh_frstr = r.header.rsh_trindex; break;
+        case 13: r.ted.te_ptext = (char *)NATIVE_OFFSET(objects); break;
+        case 14: /* Relocation must not replace a USERDEF callback parameter. */
+        case 15:
+            r.user.ub_parm = NATIVE_OFFSET(label);
+            r.objects[2].ob_spec.indirect = r.objects[3].ob_spec.indirect =
+                (OBSPEC *)(NATIVE_OFFSET(user)+offsetof(USERBLK,ub_parm));
+            if (i == 15) { /* Protect USERBLK before encountering the slot. */
+                r.objects[1].ob_type = G_USERDEF;
+                r.objects[1].ob_spec.userblk = (USERBLK *)NATIVE_OFFSET(user);
+            }
+            break;
+        case 16: r.strings[0] = (char *)NATIVE_OFFSET(indirect); break;
+        case 17: /* Protect string data before encountering the slot. */
+            r.objects[1].ob_type = G_STRING;
+            r.objects[1].ob_spec.free_string = (char *)NATIVE_OFFSET(indirect);
+            break;
+        case 18: r.bit.bi_pdata = (void *)NATIVE_OFFSET(indirect); break;
+        case 19: r.icon.ib_pmask = (short *)NATIVE_OFFSET(indirect); break;
+        }
+        memcpy(&fixed,&r,sizeof(r)); memcpy(saved,aes_global,sizeof(saved));
+        VERIFY(rsrc_rcfix(&r) == 0 && !memcmp(&r,&fixed,sizeof(r)) &&
+            !memcmp(saved,aes_global,sizeof(saved)));
+    }
+    return 0;
+}
+
+/* Host fault injection expects all failed fixups to be transactional. */
+int gem_resource_native_failure(void)
+{
+    NATIVE_RSC r, raw;
+    short saved[15];
+    native_fixture(&r); memcpy(&raw,&r,sizeof(r)); memcpy(saved,aes_global,sizeof(saved));
+    VERIFY(rsrc_rcfix(&r) == 0);
+    VERIFY(!memcmp(&r,&raw,sizeof(r)) && !memcmp(saved,aes_global,sizeof(saved)));
+    return 0;
+}
