@@ -3,6 +3,7 @@
 #include "portab.h"
 #include "ptos.h"
 #include "gem_draw_probe.h"
+#include "mono_objects.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
 static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -219,6 +220,7 @@ int main(int argc, char **argv, char **envp)
         return 0;
     }
     status = mutation_checks(); if (status) return status;
+    status = gem_mono_checks(handle); if (status) return status;
     status = geometry_checks(handle); if (status) return status;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
     update = gem_probe_update_begin(); VERIFY(update >= 0);

@@ -207,15 +207,40 @@ void vst_height(WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
  * removal/recomposition. USERDEF VDI writes receive the same protection. */
 void gsx_moff(void) { }
 void gsx_mon(void) { }
-/* Image/icon adapters follow separately. Preflight rejects those types. */
+/* Mono forms remain in application memory. Submit only visible runs of set
+ * bits through the existing solid-fill service: no bitmap or object pointers
+ * cross the kernel boundary. The original image/icon painter uses MD_TRANS. */
 void gsx_blt(void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, WORD rule, WORD fg, WORD bg)
 {
-    (void)address; (void)sx; (void)sy; (void)dx; (void)dy; (void)w; (void)h; (void)rule; (void)fg; (void)bg;
-    aes_painter->ok = FALSE;
-}
-void gr_gicon(WORD state, ICONBLK *icon, CICON *color)
-{
-    (void)state; (void)icon; (void)color; aes_painter->ok = FALSE;
+    const UWORD *bitmap = address;
+    GRECT *clip = &aes_painter->clip;
+    LONG left, top, right, bottom, x, y, run, source_x, source_y, stride;
+    (void)bg;
+    if (!aes_painter->ok) return;
+    if (!bitmap || rule != MD_TRANS || fg < 0 || fg > 255 || w <= 0 || (w & 15) ||
+        h <= 0 || sx < 0 || sy < 0 || sx >= w || sy >= h) {
+        aes_painter->ok = FALSE; return;
+    }
+    stride = w/16;
+    left = max((LONG)dx,clip->g_x); top = max((LONG)dy,clip->g_y);
+    right = min((LONG)dx+w-sx,(LONG)clip->g_x+clip->g_w);
+    bottom = min((LONG)dy+h-sy,(LONG)clip->g_y+clip->g_h);
+    if (left >= right || top >= bottom) return;
+    vsf_color(fg);
+    for (y = top; y < bottom && aes_painter->ok; y++) {
+        source_y = sy+y-dy;
+        run = -1;
+        for (x = left; x <= right; x++) {
+            source_x = sx+x-dx;
+            if (x < right && (bitmap[source_y*stride+source_x/16] & (0x8000U >> (source_x & 15)))) {
+                if (run < 0) run = x;
+            } else if (run >= 0) {
+                aes_render_bb_fill(MD_REPLACE,FIS_SOLID,IP_SOLID,run,y,x-run,1);
+                run = -1;
+                if (!aes_painter->ok) break;
+            }
+        }
+    }
 }
 
 BOOL ob_render_cancelled(OBJECT *tree)
@@ -236,6 +261,8 @@ static BOOL supported(OBJECT *object)
     WORD type = object->ob_type & 255;
     OBSPEC spec;
     TEDINFO *ted;
+    BITBLK *bitmap;
+    ICONBLK *icon;
     if (object->ob_flags & FL3DMASK) return FALSE;
     spec = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
     if (spec.index == -1) return TRUE;
@@ -248,6 +275,20 @@ static BOOL supported(OBJECT *object)
             bounded_length(ted->te_ptext,(type == G_FTEXT || type == G_FBOXTEXT) ? MAX_LEN-1 : 127) <=
                 ((type == G_FTEXT || type == G_FBOXTEXT) ? MAX_LEN-1 : 127) &&
             ((type != G_FTEXT && type != G_FBOXTEXT) || bounded_length(ted->te_ptmplt,MAX_LEN-1) < MAX_LEN);
+    case G_IMAGE:
+        bitmap = spec.bitblk;
+        return bitmap && bitmap->bi_pdata && bitmap->bi_wb > 0 && !(bitmap->bi_wb & 1) &&
+            bitmap->bi_wb <= 4094 && bitmap->bi_hl > 0 &&
+            (ULONG)bitmap->bi_wb*bitmap->bi_hl <= VDI_SERVICE_MAX_BITMAP &&
+            bitmap->bi_x >= 0 && bitmap->bi_x < bitmap->bi_wb*8 &&
+            bitmap->bi_y >= 0 && bitmap->bi_y < bitmap->bi_hl &&
+            bitmap->bi_color >= 0 && bitmap->bi_color <= 255;
+    case G_ICON:
+        icon = spec.iconblk;
+        return icon && icon->ib_pdata && icon->ib_pmask && icon->ib_wicon > 0 &&
+            !(icon->ib_wicon & 15) && icon->ib_hicon > 0 &&
+            (ULONG)(icon->ib_wicon/8)*icon->ib_hicon <= VDI_SERVICE_MAX_BITMAP &&
+            bounded_length(icon->ib_ptext,127) <= 127;
     case G_USERDEF: return spec.userblk && spec.userblk->ub_code;
     default: return FALSE;
     }

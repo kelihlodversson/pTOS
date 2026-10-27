@@ -1382,8 +1382,8 @@ Session exit/re-registration also proves cleanup. Resource snapshots and the
 boot suite check that no mouse owner, window, session or allocation remains.
 
 
-Userspace classic object drawing (#745)
---------------------------------------
+Userspace classic object drawing (#745, #748)
+--------------------------------------------
 objc_draw/mt_objc_draw and objc_change/mt_objc_change use their standard GEM
 signatures and Boolean results. OBJECT arrays, INDIRECT specs, strings,
 TEDINFO and USERBLK records remain in the calling application's address
@@ -1405,14 +1405,29 @@ formatted underscores, and
 SELECTED/CROSSED/CHECKED/DISABLED/OUTLINED/SHADOWED states. The original
 text routines use bounded buffers: free text is limited to 127 characters,
 and formatted text and templates to 80 characters in this slice. Formatting
-recognizes the '@' empty-text marker without modifying caller text. Images,
-mono/color icons and 3D flags return GEM 0 until their rendering adapters
-are available. No extension capability bits are advertised. A preflight
+recognizes the '@' empty-text marker without modifying caller text. G_IMAGE
+and monochrome G_ICON are also supported: the original icon painter in
+shared/gemicon.c preserves mask/data layering, labels and character overlays,
+WHITEBAK and selected colour swapping. Colour icons and 3D flags return GEM 0
+until their rendering adapters are available. No extension capability bits are advertised. A preflight
 checks the requested visible subtree before painting, so an unsupported
 visible descendant does not leave a partly drawn tree; HIDETREE descendants
 are ignored. Each visible payload is checked again immediately before painting,
 since USERDEF can mutate later siblings. An oversized callback-mutated payload
 fails with GEM 0 before buffer copies.
+
+Bitmap words remain in userspace. The GSX adapter clips the destination and
+source bounds before reading, and submits only horizontal runs of set bits
+as existing solid VDI fills. Zero bits leave previous pixels untouched,
+including holes in icon masks; mask and image passes retain their original
+order and colours. BITBLK row widths must be positive even byte counts, no
+more than 4094 bytes (so their bit width fits WORD); source offsets must lie
+inside the form. Icon widths are positive multiples of 16. Each form is
+limited to the existing 1 MB bitmap bound. Invalid descriptors fail with GEM
+0 before painting, and visible descriptors/labels are revalidated after
+USERDEF callbacks. Icon labels use the same 127-character bound as other
+free text. Nonzero image source offsets restrict reads to the remaining
+source rows/columns; no trailing source storage is inferred.
 
 Drawing starts at the requested object using its absolute tree offset,
 visits children in sibling order through the requested depth (0..MAX_DEPTH),
@@ -1449,7 +1464,8 @@ application-controlled global cursor commands.
 objc_change ignores its reserved argument, updates caller-local state, and
 redraws only that object when requested. No-redraw and hidden-object state
 changes require no VDI access. The original classic AES state-change routine
-uses a clipped XOR of the interior whenever SELECTED changes, including
+repaints icons to swap their foreground/background colours. Other classic
+objects use a clipped XOR of the interior whenever SELECTED changes, including
 combined state transitions; otherwise it repaints the object. Deselection
 restores preceding pixels, including transparent objects. A failed redraw
 restores the old state; drawing errors cannot undo pixels that were already
