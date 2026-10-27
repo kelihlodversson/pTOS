@@ -58,3 +58,12 @@ UQUAD aes_memory_call(ULONG function, UQUAD argument)
     __asm__ volatile ("syscall" : "+a"(ax) : "r"(di) : "rcx", "r11", "memory", "cc");
     return ax;
 }
+
+UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
+{
+    register UQUAD ax __asm__("rax") = (1ULL << 32) | function;
+    register UQUAD di __asm__("rdi") = a, si __asm__("rsi") = b, dx __asm__("rdx") = c;
+    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di), "r"(si), "r"(dx)
+        : "rcx", "r11", "memory", "cc");
+    return ax;
+}

@@ -66,12 +66,13 @@ short mt_appl_init(short *global)
     if (!publish_label(handle)) {
         (void)aes_session_close(handle);
         aes_windows_reset();
+        aes_resources_reset();
         application_session = -1; application_id = -1;
         if (global != aes_global) clear_global(aes_global);
         sync_global(aes_global);
         sync_global(global); return -1;
     }
-    if (handle != application_session) aes_windows_reset();
+    if (handle != application_session) { aes_windows_reset(); aes_resources_reset(); }
     application_session = handle;
     application_id = (short)pid;
     global[0] = 0x0400; /* AES global-array ABI, not a claim of complete AES coverage. */
@@ -87,6 +88,7 @@ short mt_appl_exit(short *global)
 {
     if (!registered(global) || aes_session_close(application_session) != E_OK) return 0;
     aes_windows_reset();
+    aes_resources_reset();
     application_session = -1;
     application_id = -1;
     clear_global(global);
