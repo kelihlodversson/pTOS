@@ -405,7 +405,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
 
     if (ob_render_cancelled(tree) || (tree[obj].ob_flags & HIDETREE))
         return;
-    if (!OB_RENDER_READY(tree,obj))
+    if (!OB_RENDER_READY(tree,obj,sx,sy))
         return;
     ch = ob_sst(tree, obj, &spec, &state, &obtype, &flags, &t, &th);
 

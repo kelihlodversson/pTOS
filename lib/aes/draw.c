@@ -256,7 +256,24 @@ static LONG bounded_length(const char *string, LONG limit)
     while (n <= limit && string[n]) n++;
     return n;
 }
-static BOOL supported(OBJECT *object)
+static BOOL word_position(LONG x, LONG y)
+{
+    return x >= -32768L && x <= 32767L && y >= -32768L && y <= 32767L;
+}
+static BOOL icon_position(const ICONBLK *icon, WORD x, WORD y)
+{
+    LONG ix = (LONG)x+icon->ib_xicon, iy = (LONG)y+icon->ib_yicon;
+    LONG tx = (LONG)x+icon->ib_xtext, ty = (LONG)y+icon->ib_ytext;
+    /* The shared native icon painter stores translated origins in WORDs.
+     * Reject unrepresentable geometry before those assignments or its later
+     * character/label layout additions can wrap into the visible screen. */
+    if (!word_position(ix,iy) || !word_position(tx,ty)) return FALSE;
+    if ((icon->ib_char & 255) && !word_position(ix+icon->ib_xchar,iy+icon->ib_ychar)) return FALSE;
+    if (icon->ib_ptext[0] && (icon->ib_wtext < 0 || icon->ib_htext < 0 ||
+        !word_position(tx+icon->ib_wtext,ty+icon->ib_htext))) return FALSE;
+    return TRUE;
+}
+static BOOL supported(OBJECT *object, WORD x, WORD y)
 {
     WORD type = object->ob_type & 255;
     OBSPEC spec;
@@ -288,22 +305,23 @@ static BOOL supported(OBJECT *object)
         return icon && icon->ib_pdata && icon->ib_pmask && icon->ib_wicon > 0 &&
             !(icon->ib_wicon & 15) && icon->ib_hicon > 0 &&
             (ULONG)(icon->ib_wicon/8)*icon->ib_hicon <= VDI_SERVICE_MAX_BITMAP &&
-            bounded_length(icon->ib_ptext,127) <= 127;
+            bounded_length(icon->ib_ptext,127) <= 127 && icon_position(icon,x,y);
     case G_USERDEF: return spec.userblk && spec.userblk->ub_code;
     default: return FALSE;
     }
 }
-BOOL aes_render_ready(OBJECT *tree, WORD object)
+BOOL aes_render_ready(OBJECT *tree, WORD object, WORD x, WORD y)
 {
     /* USERDEF can change a later sibling after the subtree preflight. */
-    if (aes_painter->ok && !supported(&tree[object])) aes_painter->ok = FALSE;
+    if (aes_painter->ok && !supported(&tree[object],x,y)) aes_painter->ok = FALSE;
     return aes_painter->ok;
 }
 static BOOL preflight(OBJECT *tree, WORD object, WORD depth)
 {
-    WORD child;
+    WORD child, x, y;
     if (tree[object].ob_flags & HIDETREE) return TRUE;
-    if (!supported(&tree[object])) return FALSE;
+    ob_offset(tree,object,&x,&y);
+    if (!supported(&tree[object],x,y)) return FALSE;
     if (depth && tree[object].ob_head != NIL)
         for (child = tree[object].ob_head; child != object; child = tree[child].ob_next)
             if (child < 0 || !preflight(tree,child,depth-1)) return FALSE;

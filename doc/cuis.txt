@@ -1426,7 +1426,12 @@ inside the form. Icon widths are positive multiples of 16. Each form is
 limited to the existing 1 MB bitmap bound. Invalid descriptors fail with GEM
 0 before painting, and visible descriptors/labels are revalidated after
 USERDEF callbacks. Icon labels use the same 127-character bound as other
-free text. Nonzero image source offsets restrict reads to the remaining
+free text. Translated icon bitmap, label and character origins must fit
+WORD before the shared legacy painter stores them; nonempty label rectangles
+must also retain representable extents for text layout. Unrepresentable sums
+return GEM 0 before painting, including geometry changed by USERDEF. This
+check uses the actual traversal coordinates immediately before painting.
+Nonzero image source offsets restrict reads to the remaining
 source rows/columns; no trailing source storage is inferred.
 
 Drawing starts at the requested object using its absolute tree offset,

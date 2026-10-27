@@ -21,7 +21,7 @@
 } while (0)
 #endif
 #ifndef OB_RENDER_READY
-#define OB_RENDER_READY(tree,object) TRUE
+#define OB_RENDER_READY(tree,object,x,y) TRUE
 #endif
 #ifndef OB_RENDER_FILL
 #define OB_RENDER_FILL(x,y,w,h) do { \
