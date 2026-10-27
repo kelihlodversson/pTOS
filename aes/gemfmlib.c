@@ -40,15 +40,13 @@
 #include "geminit.h"
 #include "gemmnlib.h"
 #include "gemfmlib.h"
+#include "gemformkey.h"
 #include "scancode.h"
 #if ARCH_X86_64
 #include "aes_objects_kernel.h"
 #endif
 
 
-#define FORWARD 0
-#define BACKWARD 1
-#define DEFLT 2
 
 
 /* Global variables: */
@@ -121,54 +119,11 @@ void fm_own(WORD beg_ownit)
 }
 
 
-/*
- *  Routine to find the next editable text field, or a field that
- *  is marked as a default return field.
- */
-static WORD find_obj(OBJECT *tree, WORD start_obj, WORD which)
-{
-    WORD obj, flag, state, inc;
-    WORD            theflag;
-
-    obj = 0;
-    flag = EDITABLE;
-    inc = 1;
-    switch(which)
-    {
-    case BACKWARD:
-        inc = -1;
-        FALLTHROUGH;
-    case FORWARD:
-        obj = start_obj + inc;
-        break;
-    case DEFLT:
-        flag = DEFAULT;
-        break;
-    }
-
-    while (obj >= 0)
-    {
-        state = ob_fs(tree, obj, &theflag);
-        if (!(theflag & HIDETREE) && !(state & DISABLED))
-        {
-            if (theflag & flag)
-                return(obj);
-        }
-        if (theflag & LASTOB)
-            obj = -1;
-        else
-            obj += inc;
-    }
-
-    return start_obj;
-}
-
-
 static WORD fm_inifld(OBJECT *tree, WORD start_fld)
 {
     /* position cursor on the starting field */
     if (start_fld == 0)
-        start_fld = find_obj(tree, 0, FORWARD);
+        start_fld = fm_find_field(tree,0,FM_FORWARD);
 
     return start_fld;
 }
@@ -176,41 +131,11 @@ static WORD fm_inifld(OBJECT *tree, WORD start_fld)
 
 WORD fm_keybd(OBJECT *tree, WORD obj, WORD *pchar, WORD *pnew_obj)
 {
-    WORD    direction;
-
-    /* handle character */
-    direction = -1;
-    switch(*pchar)
-    {
-    case RETURN:
-    case ENTER:
-        obj = 0;
-        direction = DEFLT;
-        break;
-    case ARROW_UP:
-        direction = BACKWARD;
-        break;
-    case TAB:       /* shift-tab, ctrl-tab, alt-tab have the same scancode */
-    case ARROW_DOWN:
-        direction = FORWARD;
-        break;
-    }
-
-    if (direction != -1)
-    {
-        *pchar = 0x00;
-        *pnew_obj = find_obj(tree, obj, direction);
-        if ((direction == DEFLT) && (*pnew_obj != 0))
-        {
-            OBJECT *objptr = tree + *pnew_obj;
-            ob_change(tree, *pnew_obj, objptr->ob_state | SELECTED, TRUE);
-            return FALSE;
-        }
-    }
-
-    return TRUE;
+    WORD cont = fm_keybd_step(tree,obj,pchar,pnew_obj);
+    if (!cont)
+        ob_change(tree,*pnew_obj,tree[*pnew_obj].ob_state | SELECTED,TRUE);
+    return cont;
 }
-
 
 WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
 {
