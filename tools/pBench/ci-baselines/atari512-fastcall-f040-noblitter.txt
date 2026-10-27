@@ -1,14 +1,14 @@
 # pBench baseline
-# system: pTOS atari512-fastcall (0f34f11a)
-# emulator: Hatari v2.4.1, machine FALCON, CPU 68040, blitter off
+# system: pTOS atari512-fastcall (15146162)
+# emulator: Hatari v2.6.1, machine FALCON, CPU 68040, blitter off
 # Screen 640x480, 4 planes
-GEM Dialog Box         3.385 s     32 dialogs
-VDI Text               3.685 s    462 lines
-VDI Text Effects       3.910 s    352 lines
-VDI Small Text         5.000 s    616 lines
-VDI Graphics           5.875 s   2158 objects
-GEM Window             4.750 s     65 windows
-Blitting               4.455 s   1200 blits
-VDI Scroll             6.030 s    219 scrolls
-Justified Text         3.230 s   1460 lines
-VDI Enquire            1.625 s  43146 calls
+GEM Dialog Box         3.410 s     32 dialogs
+VDI Text               3.920 s    462 lines
+VDI Text Effects       4.285 s    352 lines
+VDI Small Text         5.395 s    616 lines
+VDI Graphics           6.165 s   2158 objects
+GEM Window             4.975 s     65 windows
+Blitting               4.515 s   1200 blits
+VDI Scroll             6.090 s    219 scrolls
+Justified Text         3.465 s   1460 lines
+VDI Enquire            1.637 s  43146 calls

@@ -202,6 +202,7 @@ same object.
 
 - `doc/install.txt` — the build system in full, and every configuration
 - `doc/coding.txt` — coding style
+- `doc/ci.txt` — what each check of a pull request covers, and which run on master and nightly instead
 - `doc/country.txt`, `doc/nls.txt` — countries, keyboard layouts, translations
 - `doc/ptos.txt` — pTOS's purpose and relationship to EmuTOS
 - `doc/status.txt` — tested pTOS hardware and emulator targets
