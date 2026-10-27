@@ -6,7 +6,7 @@
 #include "aesext.h"
 #include "vdipb.h"
 typedef struct painter {
-    WORD handle;
+    WORD handle, colour_planes;
     BOOL ok;
     TEDINFO edit;
     WS workstation;
@@ -20,6 +20,10 @@ typedef struct painter {
 } PAINTER;
 
 extern PAINTER *aes_painter;
+CICON *aes_render_cicon(CICONBLK *block);
+void aes_render_colourblit(const WORD *data, const GRECT *rect, WORD planes);
+void *aes_render_alloc(LONG bytes);
+WORD aes_render_free(void *memory);
 void aes_edit_draw(OBJECT *tree, WORD object, WORD depth);
 BOOL aes_render_ready(OBJECT *tree, WORD object, WORD x, WORD y);
 BOOL aes_render_extent(const GRECT *rect, WORD state, WORD thickness);

@@ -15,7 +15,7 @@ obj/libaes/draw_memory.o: $(LIBAES_MEMORY-y) $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
 # Compile shared C units normally, binding their GSX state to a private context.
-LIBAES_RENDER_OBJECTS = obj/libaes/gemicon.o obj/libaes/gemrender.o obj/libaes/gemrender_graphics.o obj/libaes/gemgraphutil.o
+LIBAES_RENDER_OBJECTS = obj/libaes/gemcicon.o obj/libaes/gemicon.o obj/libaes/gemrender.o obj/libaes/gemrender_graphics.o obj/libaes/gemgraphutil.o
 $(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemrender.h aes/shared/gemrender_binding.h lib/aes/render_bindings.h lib/aes/render_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_RENDER_BINDINGS='"render_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
@@ -197,7 +197,7 @@ endif
 obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h include/libaes.h include/vdi_service.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/GEMDRAW.TOS: tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMDRAW.TOS: tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)

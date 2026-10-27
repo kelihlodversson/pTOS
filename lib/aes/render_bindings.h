@@ -40,6 +40,10 @@
 #define OB_RENDER_FILL(x,y,w,h) aes_render_fill(x,y,w,h)
 #define OB_RENDER_3D 0
 #define OB_RENDER_NICELINES 0
-#define OB_RENDER_COLOUR_ICONS 0
+#define OB_RENDER_COLOUR_ICONS 1
+#define OB_RENDER_CICON(block) aes_render_cicon(block)
+#define OB_RENDER_COLOUR_BLIT(data,rect,planes) aes_render_colourblit(data,rect,planes)
+#define dos_alloc_anyram aes_render_alloc
+#define dos_free aes_render_free
 #define OB_RENDER_EXTENDED 0
 #endif

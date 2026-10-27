@@ -705,7 +705,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             FALLTHROUGH;
         case G_CICON:   /* a CICONBLK starts with an ICONBLK */
             if (obtype == G_CICON)
-                cicon = spec.ciconblk->mainlist;
+                cicon = OB_RENDER_CICON(spec.ciconblk);
 #endif
             ib = *(spec.iconblk);
             ib.ib_xicon += t.g_x;
@@ -911,6 +911,9 @@ void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
         ob_user(tree, obj, &t, spec, curr_state, new_state);
         redraw = FALSE;
         break;
+#if OB_RENDER_COLOUR_ICONS && defined(AES_RENDER_BINDINGS)
+    case G_CICON:   /* Library icons retain the native colour/selected data. */
+#endif
     case G_ICON:    /* never use XOR for icons */
         break;
     default:        /* others: handle change of SELECTED state */

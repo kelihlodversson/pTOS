@@ -2,6 +2,10 @@
 #include "gem.h"
 #include "gemerror.h"
 #include "mono_objects.h"
+#include "colour_objects.h"
+#include "../../aes/shared/gemcicon.h"
+#include "../../lib/aes/resource_context.h"
+#include "../../lib/aes/render_context.h"
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
@@ -16,7 +20,8 @@ static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
 static struct { WORD mode, color, interior, clip[4], line, line_type, line_pattern; } workstation[1024];
 static PARMBLK callback_parameters;
-static BOOL draw_error, window_update;
+static BOOL draw_error, window_update, allocation_error, release_error;
+static WORD screen_planes = 32;
 static WORD pixel_width = 1, pixel_height = 1;
 static BOOL trace_animation;
 static WORD corner_x, corner_y, corner_width;
@@ -29,10 +34,12 @@ static WORD modal_keys[16];
 static int modal_count, modal_at;
 UQUAD aes_memory_call(ULONG function, UQUAD argument)
 {
-    if (function == 0x48) return (uintptr_t)__builtin_malloc(argument);
-    if (function == 0x49) { __builtin_free((void *)(uintptr_t)argument); return E_OK; }
+    if (function == 0x48) return allocation_error ? (UQUAD)(QUAD)ENSMEM : (uintptr_t)__builtin_malloc(argument);
+    if (function == 0x49) { if (release_error) return (UQUAD)(QUAD)EACCDN; __builtin_free((void *)(uintptr_t)argument); return E_OK; }
     return EINVFN;
 }
+UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
+{ (void)fn; (void)a; (void)b; (void)c; return (UQUAD)(QUAD)EINVFN; }
 static struct { WORD events, x, y, buttons; } gesture[8];
 static int gesture_count, gesture_at, bad_gesture;
 static WORD mouse_x = 50, mouse_y = 50;
@@ -143,6 +150,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
         ws->ptsout[1] = 4;
+        ws->intout[13] = 256;
         ws->intout[3] = pixel_width; ws->intout[4] = pixel_height;
         workstation[ws->handle].line_type = 1;
         workstation[ws->handle].line_pattern = (WORD)0xffff;
@@ -213,7 +221,8 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         for (i = r->nintin; i < VDI_SERVICE_MAX_TEXT; i++) if (r->intin[i]) return EINVAL;
     }
     calls++;
-    if (r->code == 38 || r->code == 12) {
+    if (r->code == 102) out->intout[4] = screen_planes;
+    else if (r->code == 38 || r->code == 12) {
         out->ptsout[0] = out->ptsout[2] = 8;
         out->ptsout[1] = 13; out->ptsout[3] = 16;
         if (bad_layout_font) out->ptsout[2] = 0;
@@ -642,6 +651,33 @@ int main(void)
     if (before) __builtin_printf("GEM layout failure: %x\n",before);
     VERIFY(before == 0);
     VERIFY(preflight_scaling() == 0);
+    {
+        CICONBLK colour = { 0 };
+        CICON variants[4] = { { 0 } };
+        void *temporary;
+        variants[0].num_planes = 1; variants[0].next_res = variants+1;
+        variants[1].num_planes = 8; variants[1].next_res = variants+2;
+        variants[2].num_planes = 4; variants[2].next_res = variants+3;
+        variants[3].num_planes = 8;
+        colour.mainlist = variants;
+        VERIFY(rs_cicon_best(&colour,0) == NULL && rs_cicon_best(&colour,1) == variants);
+        VERIFY(rs_cicon_best(&colour,3) == variants && rs_cicon_best(&colour,4) == variants+2);
+        VERIFY(rs_cicon_best(&colour,8) == variants+1 && rs_cicon_best(&colour,32) == variants+1);
+        temporary = aes_render_alloc(70000); VERIFY(temporary != NULL);
+        release_error = TRUE; VERIFY(aes_render_free(temporary) == EACCDN);
+        release_error = FALSE; aes_resources_reset();
+        allocation_error = TRUE; VERIFY(aes_render_alloc(16) == NULL); allocation_error = FALSE;
+    }
+    screen_planes = 16;
+    before = gem_colour_checks(0); VERIFY(before == 0);
+    screen_planes = 32;
+    release_error = TRUE;
+    before = gem_colour_checks(0);
+    release_error = FALSE; aes_resources_reset();
+    VERIFY(before == 0);
+    before = gem_colour_checks(0);
+    if (before) __builtin_printf("colour object failure: %x\n",before);
+    VERIFY(before == 0);
     before = gem_mono_checks(0);
     if (before) __builtin_printf("mono object failure: %x\n",before);
     VERIFY(before == 0);

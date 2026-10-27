@@ -26,15 +26,19 @@ static RESOURCE_ALLOCATION *discarded_allocations;
 static LONG pending_close = -1;
 static char application_directory[RESOURCE_PATH];
 
-void *aes_resource_alloc(LONG bytes)
+void *aes_temporary_alloc(LONG bytes)
 {
     UQUAD address;
     RESOURCE_ALLOCATION *allocation;
-    if (bytes <= 0 || bytes > 65535) return NULL;
+    if (bytes <= 0 || bytes > 1024L*1024L) return NULL;
     address = aes_memory_call(0x48,(ULONG)bytes+sizeof(*allocation));
     if ((QUAD)address <= 0) return NULL;
     allocation = (RESOURCE_ALLOCATION *)(uintptr_t)address;
     return allocation+1;
+}
+void *aes_resource_alloc(LONG bytes)
+{
+    return bytes > 65535 ? NULL : aes_temporary_alloc(bytes);
 }
 WORD aes_resource_release(void *memory)
 {

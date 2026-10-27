@@ -1408,7 +1408,7 @@ and formatted text and templates to 80 characters in this slice. Formatting
 recognizes the '@' empty-text marker without modifying caller text. G_IMAGE
 and monochrome G_ICON are also supported: the original icon painter in
 shared/gemicon.c preserves mask/data layering, labels and character overlays,
-WHITEBAK and selected colour swapping. Colour icons and 3D flags return GEM 0
+WHITEBAK and selected colour swapping. 3D flags return GEM 0
 until their rendering adapters are available. No extension capability bits are advertised. A preflight
 checks the requested visible subtree before painting, so an unsupported
 visible descendant does not leave a partly drawn tree; HIDETREE descendants
@@ -1677,7 +1677,7 @@ images and icons remain in application memory. Bitmap words are decoded to
 native order; loading does not convert images into device format. On-disk
 USERDEF addresses are not executable native callbacks: applications install
 their own USERBLK functions after loading, as with other portable resources.
-Colour-icon data is retained without claiming colour-icon rendering support.
+Colour-icon data remains in standard format for the caller-local icon painter.
 
 The standard GEM globals carry the tree-table pointer in words 5/6, resource
 memory pointer in 7/8 and allocated length in word 9. Application-private words
@@ -1769,3 +1769,31 @@ existing resource paths. Tests compile a native-offset fixture with normal
 GEMlib headers, verify pointer identity, aliased specifications, scaling,
 USERDEF callbacks, saved globals and caller ownership, and exercise malformed
 input, headless metrics, allocation failures and failed cleanup retries.
+
+
+Colour-icon drawing
+-------------------
+
+G_CICON now uses the original shared gr_gicon painter for the icon mask,
+selected artwork, selected-without-artwork dithering, character and label.
+The native best-match routine is shared as gemcicon.c: exact plane counts win,
+otherwise the largest lower count wins, with original resource order breaking
+ties. Drawing never rewrites the caller's CICON list, data, masks or ICONBLK.
+The library queries screen planes through the existing read-only VDI inquiry;
+its initial backend covers x32 packed 16/32-bit screens with the standard
+256-entry GEM palette. Native planar AES keeps its existing transform/blit path.
+
+The library colour blit decodes standard plane-major words to palette-index
+runs and submits existing VDI fills, matching native packed-screen icon
+conversion (including palette-index zero outside coloured shapes). Palette
+pen ordering is shared with native VDI initialization. Explicit selected data
+and masks override ordinary artwork; when absent, the original alternating
+5555/aaaa mask darkens selection. Empty colour lists draw the original mono
+icon. Selection changes redraw colour icons rather than using an XOR shortcut.
+
+Visible-subtree preflight validates all variants, rejects cyclic lists and
+invalid counts/pointers, and bounds each colour bitmap to 1 MiB. Native icon
+coordinate/label checks and clipped destinations also apply. Dither allocation
+uses tracked temporary storage, with later cleanup retries after failed frees;
+allocation failure preserves the native undarkened-icon fallback. No kernel
+service or colour protocol is added, and 3D support remains a separate slice.

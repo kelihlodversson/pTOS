@@ -7,6 +7,7 @@ import argparse
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("output", type=Path)
 parser.add_argument("--application-directory", action="store_true")
+parser.add_argument("--colour-icons", action="store_true")
 args = parser.parse_args()
 
 image = bytearray(36)
@@ -86,4 +87,38 @@ for offset,value in ((ted+12,3),(ted+18,0x1100),(ted+24,7),(ted+26,7),
 long(strings+4,adjacent)
 if args.application_directory:
     image = image.replace(b"Free one\0", b"App file\0")
+if args.colour_icons:
+    # Extended RSC: one shared CICONBLK with 2- and 4-plane variants.
+    while len(image) & 3:
+        data(b"\0")
+    extension = reserve(12)
+    table = reserve(8)
+    block = reserve(38)
+    long(table, block)
+    long(table+4, 0xffffffff)
+    word(block+12, 0x2400)
+    word(block+22, 16)
+    word(block+24, 4)
+    long(block+34, 2)
+    data(struct.pack(">4H", *([0xa000]*4)))
+    data(struct.pack(">4H", *([0xffff]*4)))
+    data(bytes(12))
+    for planes in (2, 4):
+        header = reserve(22)
+        word(header, planes)
+        long(header+10, planes == 4)
+        long(header+18, planes == 2)
+        values = [0]*8 if planes == 2 else [v for v in (0x5555,0x3333,0x0f0f,0x00ff) for _ in range(4)]
+        data(struct.pack(">"+str(len(values))+"H", *values))
+        data(struct.pack(">4H", *([0xffff]*4)))
+        if planes == 4:
+            data(struct.pack(">16H", *[v^0xffff for v in values]))
+            data(struct.pack(">4H", *([0xffff]*4)))
+    word(0, 4)
+    word(34, extension)
+    long(extension, len(image))
+    long(extension+4, table)
+    word(objects+2*24+6, 33)
+    word(objects+3*24+6, 33)
+    long(indirect, 0)
 args.output.write_bytes(image)

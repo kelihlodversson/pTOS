@@ -27,6 +27,7 @@
 #include "gemshlib.h"
 #include "gemgraf.h"
 #include "gemrslib.h"
+#include "gemcicon.h"
 #include "gemgsxif.h"
 #include "rsload.h"
 #include "gemlayout.h"
@@ -61,32 +62,6 @@ void rs_obfix(OBJECT *tree, WORD curob)
 
 #if CONF_WITH_COLOUR_ICONS
 #if !defined(X32_USERLAND)
-/*
- * returns pointer to a CICON that best matches the current resolution
- *
- * the order of preference is as follows:
- *  1. the CICON with the same number of planes as the current resolution
- *  2. of those CICONS with fewer planes than the current resolution, the
- *     one with the most number of planes
- * if neither applies, NULL is returned
- */
-static CICON *best_match(CICONBLK *start)
-{
-    CICON *p, *found = NULL;
-
-    for (p = start->mainlist; p; p = p->next_res)
-    {
-        if (p->num_planes > gl_nplanes)     /* too many planes */
-            continue;
-        if (p->num_planes == gl_nplanes)    /* exact match */
-            return p;
-        if (!found || (p->num_planes > found->num_planes))
-            found = p;                      /* best so far */
-    }
-
-    return found;
-}
-
 /*
  * expand cicon data from S to D planes (S is strictly less than D)
  *
@@ -315,7 +290,7 @@ void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
     for (i = 0; i < num_cicons; i++)
     {
         ciconblk = ciconblkptr[i];
-        cicon = best_match(ciconblk);   /* find a suitable CICON */
+        cicon = rs_cicon_best(ciconblk,gl_nplanes);   /* find a suitable CICON */
         ciconblk->mainlist = cicon;
         if (!cicon)                     /* nothing suitable ... */
             continue;
