@@ -27,11 +27,19 @@ permissions:
   contents: read
 
 jobs:
-  # The three configurations one after the other in one job: each is a minute
-  # or so, the runner and the toolchain more than that.
-  build:
-    name: Build the systems and pBench
-    runs-on: ubuntu-latest
+  # One job: the three configurations are built (a minute or so each) and
+  # measured one after the other.  Each is its own check: it is compared with
+  # its own baseline, has its own comment on the pull request, and a
+  # significant slowdown of any of them fails the job at the end.  Hatari
+  # comes from the distribution's packages, which the 22.04 of an older runner
+  # has an old version of: a 24.04.
+  pbench:
+    name: pBench
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,6 +48,12 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
+
+      - name: Install Hatari
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hatari
+          hatari --version || true     # (it exits with 1)
 
       # The key of the baselines in tools/pBench/ci-baselines is the name of
       # the configuration.  atari256 and atari512-fastcall are built with
@@ -60,143 +74,76 @@ jobs:
             cp pbench.prg "products/$config/"
           done
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pbench-atari512
-          path: products/atari512/
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pbench-atari256
-          path: products/atari256/
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pbench-atari512-fastcall
-          path: products/atari512-fastcall/
-          retention-days: 7
-
-  measure:
-    name: Measure ${{ matrix.config }}
-    needs: build
-    # Hatari comes from the distribution's packages, which the 22.04 of the
-    # build's runner has an old version of.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        # The screen modes (see run-baselines.py --res): the ST modes of
-        # every configuration, and an emulated Falcon with a 68030 and with
-        # a 68040 for the one whose ROM image runs on it.
-        include:
-          - config: atari512
-            modes: low,med,high,f030,f040
-          - config: atari256
-            modes: low,med,high
-          - config: atari512-fastcall
-            modes: f030,f040
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: pbench-${{ matrix.config }}
-          path: products
-
-      - name: Install Hatari
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hatari
-          hatari --version || true     # (it exits with 1)
-
-      # A mode that gave no result is reported by the comparison below, which
-      # still has to run (and fails the job) so that the report, the summary
-      # and the comment are not lost
-      - name: Run pBench in every screen mode, with and without blitter
-        continue-on-error: true
-        # A run takes half a minute; one that hangs is given
-        # two minutes, three tries, in two waves of five: well below the job's
-        # 25 minutes, which would cancel the reporting steps too.
-        timeout-minutes: 15
+      # A mode that gave no result is reported by the comparison, which still
+      # has to run (and fail the job) so that the report, the summary and the
+      # comment are not lost.  A run takes half a minute; one that hangs is
+      # given two minutes, three tries, in two waves of five.  The screen
+      # modes (see run-baselines.py --res): the ST modes of every
+      # configuration, and an emulated Falcon with a 68030 and with a 68040
+      # for the one whose ROM image runs on it.
+      - name: Measure and compare
+        id: measure
         env:
-          CONFIG: ${{ matrix.config }}
-          MODES: ${{ matrix.modes }}
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          # a pull request from a fork has a read-only token, so there the
+          # summary is all there is
+          CAN_COMMENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          python3 tools/pBench/run-baselines.py \
-            --pbench products/pbench.prg --out results --jobs 5 --timeout 120 \
-            --res "$MODES" \
-            --system "${CONFIG}=products/system.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
-
-      # The results as text too, so that baselines can be made from the log
-      # when the artifact cannot be had (no -mfastcall toolchain to make them
-      # with locally either)
-      - name: Show the results
-        if: always()
-        run: |
-          for f in results/*.txt; do
-            # no match leaves the pattern itself: nothing to show then, and
-            # the comparison below reports the missing results
-            [ -e "$f" ] || continue
-            echo "::group::$f"
-            cat "$f"
+          slower=
+          for entry in atari512:low,med,high,f030,f040 atari256:low,med,high atari512-fastcall:f030,f040; do
+            config=${entry%%:*}
+            modes=${entry#*:}
+            echo "::group::$config"
+            python3 tools/pBench/run-baselines.py \
+              --pbench "products/$config/pbench.prg" --out results --jobs 5 --timeout 120 \
+              --res "$modes" \
+              --system "${config}=products/$config/system.img=pTOS ${config} (${GITHUB_SHA::8})" || true
+            # The results as text too, so that baselines can be made from the
+            # log when the artifact cannot be had (no -mfastcall toolchain to
+            # make them with locally either)
+            for f in results/${config}-*.txt; do
+              [ -e "$f" ] || continue
+              echo "== $f"
+              cat "$f"
+            done
             echo "::endgroup::"
+
+            # 0 as the baseline, 1 slower (or no result), 2 faster
+            rc=0
+            python3 tools/pBench/check-baseline.py --report "report-$config.md" \
+              tools/pBench/ci-baselines results "$config" || rc=$?
+            cat "report-$config.md" >>"$GITHUB_STEP_SUMMARY"
+            [ "$rc" != 1 ] || slower="$slower $config"
+
+            # Update the comment this job made on an earlier push, or make one
+            # when there is something to say: a significant change, in either
+            # direction.
+            if [ "$CAN_COMMENT" = true ]; then
+              marker="<!-- pbench-check:${config} -->"
+              id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                     --paginate --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1)
+              if [ -n "$id" ] || [ "$rc" != 0 ]; then
+                { echo "$marker"; cat "report-$config.md"; echo; echo "Commit ${GITHUB_SHA::8}."; } >comment.md
+                if [ -n "$id" ]; then
+                  gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md >/dev/null
+                else
+                  gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+                fi
+              fi
+            fi
           done
+          if [ -n "$slower" ]; then
+            echo "::error title=pBench::the graphics got significantly slower than tools/pBench/ci-baselines in:$slower (see the summary)"
+            exit 1
+          fi
 
       # What the baselines in the repository are made from when they have to
       # be made again: see doc/pbench.txt.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: pbench-results-${{ matrix.config }}
+          name: pbench-results
           path: results/
           retention-days: 14
-
-      - name: Compare with the baseline
-        id: compare
-        env:
-          CONFIG: ${{ matrix.config }}
-        run: |
-          rc=0
-          python3 tools/pBench/check-baseline.py --report report.md \
-            tools/pBench/ci-baselines results "$CONFIG" || rc=$?
-          cat report.md >>"$GITHUB_STEP_SUMMARY"
-          # 0 as the baseline, 1 slower (or no result), 2 faster
-          echo "status=$rc" >>"$GITHUB_OUTPUT"
-
-      # Update the comment this job made on an earlier push, or make one when
-      # there is something to say: a significant change, in either direction.
-      # A pull request from a fork has a read-only token, so there the
-      # summary above is all there is.
-      - name: Comment on the pull request
-        if: >-
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          CONFIG: ${{ matrix.config }}
-          STATUS: ${{ steps.compare.outputs.status }}
-        run: |
-          marker="<!-- pbench-check:${CONFIG} -->"
-          id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
-                 --paginate --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1)
-          if [ -z "$id" ] && [ "$STATUS" = 0 ]; then
-            exit 0
-          fi
-          { echo "$marker"; cat report.md; echo; echo "Commit ${GITHUB_SHA::8}."; } >comment.md
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md >/dev/null
-          else
-            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -F body=@comment.md >/dev/null
-          fi
-
-      - name: Fail on a slowdown
-        if: steps.compare.outputs.status == '1'
-        run: |
-          echo "::error title=pBench::the graphics got significantly slower than tools/pBench/ci-baselines (see the summary)"
-          exit 1

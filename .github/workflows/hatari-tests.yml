@@ -30,11 +30,16 @@ permissions:
   contents: read
 
 jobs:
-  # The three configurations one after the other in one job: each is a minute
-  # or so, the runner and the toolchain more than that.
-  build:
-    name: Build the systems and the test disk
-    runs-on: ubuntu-latest
+  # One job: the three systems are built (a minute or so each, with their test
+  # disk), then the tests run several at a time, one Hatari each, on the four
+  # CPUs of the runner.  Hatari's clock is the emulated one, so the results do
+  # not depend on how busy the runner is.  Hatari comes from the
+  # distribution's packages, which the 22.04 of an older runner has an old
+  # version of: a 24.04.
+  hatari:
+    name: Hatari tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,8 +50,11 @@ jobs:
           arch: m68k
 
       # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh)
-      - name: Install the disk image tools
-        run: sudo apt-get install -y --no-install-recommends dosfstools mtools
+      - name: Install Hatari and the disk image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hatari dosfstools mtools
+          hatari --version || true     # (it exits with 1)
 
       - name: Build the systems and the test disks
         run: |
@@ -61,60 +69,54 @@ jobs:
             cp test-hd.img "products/$config/"
           done
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hatari-tests-atari512
-          path: products/atari512/
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hatari-tests-atari512-fastcall
-          path: products/atari512-fastcall/
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hatari-tests-atari512-extdesk
-          path: products/atari512-extdesk/
-          retention-days: 7
-
-  test:
-    name: Test ${{ matrix.config }}, ${{ matrix.mode }}
-    needs: build
-    # Hatari comes from the distribution's packages, which the 22.04 of the
-    # build's runner has an old version of.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        # What a pull request runs is chosen from what depends on the mode
-        # and on the kernel (doc/ci.txt); master's nightly run and a manual
-        # one go through every combination.
-        include: >-
-          ${{ fromJSON(github.event_name == 'pull_request'
-          && '[{"config":"atari512","mode":"low"},{"config":"atari512","mode":"med"},{"config":"atari512","mode":"high"},{"config":"atari512","mode":"f030"},{"config":"atari512","mode":"f040"},{"config":"atari512-fastcall","mode":"low"},{"config":"atari512-fastcall","mode":"f040"},{"config":"atari512-extdesk","mode":"low"}]'
-          || '[{"config":"atari512","mode":"low"},{"config":"atari512","mode":"med"},{"config":"atari512","mode":"high"},{"config":"atari512","mode":"f030"},{"config":"atari512","mode":"f040"},{"config":"atari512-fastcall","mode":"low"},{"config":"atari512-fastcall","mode":"med"},{"config":"atari512-fastcall","mode":"high"},{"config":"atari512-fastcall","mode":"f030"},{"config":"atari512-fastcall","mode":"f040"},{"config":"atari512-extdesk","mode":"low"},{"config":"atari512-extdesk","mode":"med"},{"config":"atari512-extdesk","mode":"high"},{"config":"atari512-extdesk","mode":"f030"},{"config":"atari512-extdesk","mode":"f040"}]') }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: hatari-tests-${{ matrix.config }}
-          path: products
-
-      - name: Install Hatari
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hatari
-          hatari --version || true     # (it exits with 1)
-
-      # About four minutes; ten is for one that hangs, well below the job's
-      # 20 minutes, which would cancel the reporting too
+      # What a pull request runs is chosen from what depends on the mode and
+      # on the kernel (doc/ci.txt); master's nightly run and a manual one go
+      # through every combination.  About four minutes each; ten is for one
+      # that hangs, well below the job's time.
       - name: Run the tests under Hatari
-        timeout-minutes: 15
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          python3 tools/run-hatari-tests.py --tos products/system.img \
-            --disk products/test-hd.img --mode "${{ matrix.mode }}" \
-            --timeout 600
+          if [ "$EVENT" = pull_request ]; then
+            combos="atari512:low atari512:med atari512:high atari512:f030 atari512:f040 atari512-fastcall:low atari512-fastcall:f040 atari512-extdesk:low"
+          else
+            combos="atari512:low atari512:med atari512:high atari512:f030 atari512:f040 atari512-fastcall:low atari512-fastcall:med atari512-fastcall:high atari512-fastcall:f030 atari512-fastcall:f040 atari512-extdesk:low atari512-extdesk:med atari512-extdesk:high atari512-extdesk:f030 atari512-extdesk:f040"
+          fi
+          mkdir logs
+          run_one() {
+            config=${1%:*}
+            mode=${1#*:}
+            if timeout 900 python3 tools/run-hatari-tests.py \
+                 --tos "products/$config/system.img" \
+                 --disk "products/$config/test-hd.img" \
+                 --mode "$mode" --timeout 600 >"logs/$config-$mode.log" 2>&1; then
+              echo ok >"logs/$config-$mode.result"
+            else
+              echo FAILED >"logs/$config-$mode.result"
+            fi
+          }
+          export -f run_one
+          printf '%s\n' $combos | xargs -P "$(nproc)" -I{} bash -c 'run_one {}'
+
+          failed=
+          {
+            echo "| configuration | mode | result |"
+            echo "| --- | --- | --- |"
+          } >>"$GITHUB_STEP_SUMMARY"
+          for combo in $combos; do
+            config=${combo%:*}
+            mode=${combo#*:}
+            result=$(cat "logs/$config-$mode.result" 2>/dev/null || echo FAILED)
+            echo "::group::$config, $mode: $result"
+            cat "logs/$config-$mode.log"
+            echo "::endgroup::"
+            echo "| $config | $mode | $result |" >>"$GITHUB_STEP_SUMMARY"
+            if [ "$result" != ok ]; then
+              failed="$failed $config,$mode"
+              echo "::error title=$config, $mode::the tests failed on $config in the $mode mode"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::failed:$failed"
+            exit 1
+          fi

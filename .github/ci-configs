@@ -1,7 +1,7 @@
 # The configurations of configs/ and the build.yml job each is built in
 # (name, then group).  A group is one job that builds its configurations one
-# after the other, as "build GROUP" in the checks; the x86_64 ones are a job
-# each (the matrix of the x86_64 job in build.yml), because each boots a QEMU.
+# after the other (tools/ci-group.sh), shown as "build GROUP" in the checks;
+# the x86-* ones also boot or run what they built under QEMU.
 #
 # Every configuration has to be listed once: the "All builds" job fails
 # (tools/check-ci-configs.sh) when one is not, or when a name is not a
@@ -44,13 +44,13 @@ virt-m68k-cli                            m68k-other
 virt-m68k-cli-elf                        m68k-other
 virt-m68k-cli-fastcall                   m68k-other
 virt-m68k-fastcall                       m68k-other
-pc-x86_64                                x86_64
-pc-x86_64-accessories                    x86_64
-pc-x86_64-accessories-340                x86_64
-pc-x86_64-aes                            x86_64
-pc-x86_64-callbacks                      x86_64
-pc-x86_64-desktop                        x86_64
-pc-x86_64-desktop-tests                  x86_64
-pc-x86_64-desktop-tests-340              x86_64
-pc-x86_64-desktop-tests-builtin-cli      x86_64
-pc-x86_64-vdi                            x86_64
+pc-x86_64                                x86-boot-a
+pc-x86_64-accessories                    x86-boot-b
+pc-x86_64-accessories-340                x86-boot-b
+pc-x86_64-aes                            x86-boot-a
+pc-x86_64-callbacks                      x86-boot-b
+pc-x86_64-desktop                        x86-desktop
+pc-x86_64-desktop-tests                  x86-desktop
+pc-x86_64-desktop-tests-340              x86-desktop
+pc-x86_64-desktop-tests-builtin-cli      x86-desktop
+pc-x86_64-vdi                            x86-boot-a

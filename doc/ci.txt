@@ -8,14 +8,14 @@ which ones a pull request no longer runs, and where the rest runs instead.
 (The audit is issue #625; the numbers are from the pull requests of the weeks
 before it was made.)
 
-What a pull request runs now is 38 jobs, and about a quarter less runner time
+What a pull request runs now is 16 jobs, and about a quarter less runner time
 (178 -> 133 minutes of jobs from the Hatari and build cuts, the Hatari ones
 being half of all of it; the combined jobs save the toolchain and runner
-setup of each job they replace, which has not been measured), and
-far less waiting for a runner: the repository has only so many at a time, and
-a run of 82 jobs spent most of its wall-clock time (a median of 110 minutes
-for build.yml, for jobs of a minute each) in the queue.  The whole set still
-runs on master (push) and every night (schedule), and with "Run workflow"
+setup of each job they replace, which has not been measured), and far less
+waiting for a runner: the repository has only so many at a time, and a run of
+82 jobs spent most of its wall-clock time (a median of 110 minutes for
+build.yml, for jobs of a minute each) in the queue.  The whole set still runs
+on master (push) and every night (schedule), and with "Run workflow"
 (workflow_dispatch).
 
 
@@ -74,31 +74,53 @@ What is changed
   their build jobs did.
 - build.yml and hatari-tests.yml also run on a schedule (nightly) with all of
   the above.
-- The m68k and ARM configurations are built a few to a job (m68k-atari,
-  m68k-amiga, m68k-other, arm-rpi, arm-virt: 29 configurations in 5 jobs on a
-  pull request, 37 in 5 on master), one after the other, each failing on its
-  own: the job goes on with the next one, names the failed ones in
-  annotations ("::error title=CONFIG") and in its summary, and fails at the
-  end.  The three Build jobs of hatari-tests.yml and of pbench.yml are one job
-  each, building their three configurations in turn.  The x86-64 configurations
-  stay a job each (they boot a QEMU each).  The artifacts are per group
-  ("ptos-arm-rpi", with a directory per configuration) and the SD card image
-  job takes the Raspberry Pi kernels from there.
+- Jobs that took a runner and a toolchain for a minute of work are combined,
+  one check of them after the other in a job (tools/ci-group.sh), each
+  failing on its own: the job goes on with the next one, names the failed ones
+  in annotations ("::error title=NAME") and in its summary, and fails at the
+  end.
+    build.yml, m68k and ARM configurations: 5 jobs, "build m68k-atari",
+      "-amiga", "-other", "arm-rpi", "arm-virt" (29 configurations on a pull
+      request, 37 on master), tools/ci-build.sh; the artifacts are per group
+      ("ptos-arm-rpi", a directory per configuration), and the SD card
+      image job takes the Raspberry Pi kernels from there
+    build.yml, x86-64: 3 jobs, "build x86-boot-a", "-boot-b", "-desktop"
+      (tools/ci-x86_64.sh and tools/ci-x86_64-boot.sh: the build, the VDI
+      contract, the boot under QEMU/OVMF or the desktop tests), the last one
+      also running the regression suite of pc-x86_64
+    build.yml, regression suites: 2 jobs, "regression arm" (virt-arm, its
+      traditional FAT variant, raspi2b) and "regression m68k" (virt-m68k and
+      its fastcall build), tools/ci-regression.sh
+    hatari-tests.yml: 1 job that builds the three systems and runs the tests
+      four at a time, one Hatari each, on the four CPUs of the runner
+      (Hatari's clock is the emulated one: the load does not change the
+      results)
+    pbench.yml: 1 job that builds the three systems and measures them one
+      after the other; each has its own report, its own comment on the pull
+      request, and a slowdown of any of them fails the job
+- The matrices are not worked out from configs/ by a job of their own (the
+  "Enumerate configurations" job, a few seconds that tested nothing):
+  .github/ci-configs says which group builds each configuration, and the "All
+  builds" job runs tools/check-ci-configs.sh, which fails when one is in none.
 
-The roll-up "All builds" needs no change: it asks for the result of the
-matrices as they are generated.  The branch protection should require "All
-builds" (and "Test ..." and "Measure ..." if they are to block a merge); if
-the settings list single jobs by name, they have to follow the new names: the
-per-configuration build jobs are gone (build m68k-atari, ...), "Build
-atari512" and the like of the two test workflows are "Build the systems and
-the test disk" and "Build the systems and pBench", and the 7 Hatari
-combinations (atari512-fastcall: med, high, f030; atari512-extdesk: med, high,
-f030, f040) are not run by a pull request.  That is a repository setting that this
-change cannot make.
+The roll-up "All builds" asks for the result of the jobs it needs (build,
+x86_64, regression, release archives, SD card image).  The branch protection
+should require "All builds" (and the Hatari tests and pBench if they are to
+block a merge).  If the settings list single jobs by name, they have to follow
+the new names: the jobs of a group are one check, "build m68k-atari" and so
+on, "regression arm" and "regression m68k" replace the six "regression
+(...)", "Hatari tests" and "pBench" replace the "Build ..." / "Test ..." /
+"Measure ..." jobs, and "Enumerate configurations" is gone.  That is a
+repository setting that this change cannot make.
 
 
 Every check
 -----------
+
+(Listed by what each covers.  Most of them are no longer a check of their
+own: the builds, the boot tests and the regression suites are steps of the
+group jobs of "What is changed" above, and are named in the annotations and
+the summary of the job.)
 
 Builds (build.yml), one per configuration.  "Own" is the number of objects
 only that configuration compiles (the same source, the same preprocessing).
@@ -195,15 +217,16 @@ Packaging (build.yml):
 Not done (needs a decision)
 ---------------------------
 
-- The Build jobs of hatari-tests.yml and pbench.yml still build atari512,
-  atari256 and atari512-fastcall again, each with its test disk or program,
-  besides the build.yml ones.  They could take the kernel image from there,
-  but the artifact of one workflow is not available to another one; moving
-  the two workflows into build.yml (with needs:) would remove them, and put
-  the roll-up in charge of the Hatari and pBench results too.
-- The x86-64 configurations (10 jobs of 1..3 minutes, a QEMU boot each) could
-  be grouped in the same way; the boot test step is long and has conditions
-  per configuration, so it wants a loop of its own first.
+- atari512, atari256 and atari512-fastcall are built three times by a pull
+  request (build.yml, hatari-tests.yml, pbench.yml; the tests need the test
+  disk and pBench's program, which the others do not).  They could take the
+  kernel image from the build job, but the artifact of one workflow is not
+  available to another one; moving the three workflows into build.yml (with
+  needs:) would remove them, and put the roll-up in charge of the Hatari and
+  pBench results too.
 - "Release archives" (7 minutes) builds the images one after the other (the
   256 KB and 192 KB ones for all countries); one job per archive would run
   them in parallel.
+- The x32 job ("x32 ELF shared-library metadata") is not in the roll-up: a
+  pull request can be green in "All builds" with it red.  Whether it should
+  block a merge is a decision, not an audit finding.
