@@ -6,7 +6,7 @@
 #define VERIFY(c) do { if (!(c)) return 0x7500 | __LINE__; } while (0)
 int gem_form_key_checks(short handle)
 {
-    OBJECT tree[6] = { { 0 } }, single = { 0 };
+    OBJECT tree[6] = { { 0 } }, single = { 0 }, pixel = { 0 };
     short next, key, global[15];
     int i, before, above, below;
     for (i = 0; i < 6; i++) {
@@ -52,7 +52,14 @@ int gem_form_key_checks(short handle)
         return 0;
     }
     VERIFY(objc_draw(tree,5,0,0,0,160,120) == 1);
-    before = gem_probe_pixel(handle,11,41);
+    /* Truecolor palette readback may map inverted white back to pen 0.
+     * Red test points make the native XOR observable without assuming a
+     * particular packed representation of black or an alpha byte. */
+    pixel.ob_next = pixel.ob_head = pixel.ob_tail = -1;
+    pixel.ob_type = G_BOX; pixel.ob_spec.index = 0x1172;
+    pixel.ob_x = 11; pixel.ob_y = 41; pixel.ob_width = pixel.ob_height = 1;
+    VERIFY(objc_draw(&pixel,0,0,0,0,160,120) == 1);
+    before = gem_probe_pixel(handle,11,41); VERIFY(before == 2);
     VERIFY(form_keybd(tree,1,88,0x1c0d,&next,&key) == 0 && next == 5 && key == 0);
     VERIFY((tree[5].ob_state & OS_SELECTED) && gem_probe_pixel(handle,11,41) != before);
     VERIFY(objc_change(tree,5,0,0,0,160,120,0,1) == 1 && gem_probe_pixel(handle,11,41) == before);
@@ -62,6 +69,10 @@ int gem_form_key_checks(short handle)
     /* Native FORM_KEYBD clips selection to the area below the menu bar. */
     tree[5].ob_y = 8;
     VERIFY(objc_draw(tree,5,0,0,0,160,120) == 1);
+    pixel.ob_y = 10;
+    VERIFY(objc_draw(&pixel,0,0,0,0,160,120) == 1);
+    pixel.ob_y = 21;
+    VERIFY(objc_draw(&pixel,0,0,0,0,160,120) == 1);
     above = gem_probe_pixel(handle,11,10); below = gem_probe_pixel(handle,11,21);
     VERIFY(form_keybd(tree,1,88,0x1c0d,&next,&key) == 0 && next == 5 && key == 0);
     VERIFY(gem_probe_pixel(handle,11,10) == above && gem_probe_pixel(handle,11,21) != below);
