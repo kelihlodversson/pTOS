@@ -131,11 +131,17 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
 /*
  *  Routine to draw a box using the current attributes
  */
-static void gsx_box(GRECT *pt)
+#ifndef OB_RENDER_BOX
+static void gsx_box(LONG x, LONG y, LONG w, LONG h)
 {
-    gsx_bxpts(pt);
+    GRECT rect;
+    /* Native AES retains its WORD VDI points and public calling convention. */
+    r_set(&rect,x,y,w,h);
+    gsx_bxpts(&rect);
     v_pline(5, ptsin);
 }
+#define OB_RENDER_BOX gsx_box
+#endif
 
 /*
  *  Routine to do a filled bit blit (a rectangle)
@@ -321,11 +327,8 @@ void gr_crack(UWORD color, WORD *pbc, WORD *ptc, WORD *pip, WORD *pic, WORD *pmd
     *pic = color & 0x000f;
 }
 
-void gr_box(WORD x, WORD y, WORD w, WORD h, WORD th)
+void gr_box(OB_RENDER_COORD x, OB_RENDER_COORD y, OB_RENDER_COORD w, OB_RENDER_COORD h, WORD th)
 {
-    GRECT   t, n;
-
-    r_set(&t, x, y, w, h);
     if (th != 0)
     {
         if (th < 0)
@@ -334,9 +337,7 @@ void gr_box(WORD x, WORD y, WORD w, WORD h, WORD th)
         do
         {
             th += (th > 0) ? -1 : 1;
-            rc_copy(&t, &n);
-            gr_inside(&n, th);
-            gsx_box(&n);
+            OB_RENDER_BOX((LONG)x+th,(LONG)y+th,(LONG)w-2*th,(LONG)h-2*th);
         } while (th != 0);
         gsx_mon();
     }

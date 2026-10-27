@@ -1421,12 +1421,14 @@ bounds. Child objects are not implicitly clipped to their parent's logical
 rectangle. Hidden objects are rejected before reading their payload or
 INDIRECT pointer. Fills and oversized border segments are intersected with
 the painter clip before VDI submission, preserving the original edges rather
-than drawing new edges along the clip boundary. Userspace fill endpoints
-remain LONG until clipped, including maximum-WORD widths and heights. Fully
-clipped text is culled before VDI submission. Partially clipped runs drop
-complete off-screen cells while preserving the original positions of the
-remaining glyphs. An empty clip succeeds without painting. objc_find retains
-logical hit bounds; 3D hit expansion remains deferred with 3D rendering.
+than drawing new edges along the clip boundary. Userspace fill endpoints,
+expanded object bounds and box/outline border coordinates remain LONG until
+clipped, including maximum-WORD widths and heights. The shared border loop
+retains the WORD calling convention in native builds. Fully clipped text is
+culled before VDI submission. Partially clipped runs drop complete off-
+screen cells while preserving the original positions of the remaining
+glyphs. An empty clip succeeds without painting. objc_find retains logical
+hit bounds; 3D hit expansion remains deferred with 3D rendering.
 
 Drawing reuses an existing per-window update section without upgrading or
 releasing it. Otherwise it obtains a nested standard display update section.

@@ -28,6 +28,10 @@
 #define ptsout (aes_painter->outpoints)
 #define D (aes_painter->scratch)
 
+#define OB_RENDER_COORD LONG
+#define gr_box aes_render_border
+#define OB_RENDER_BOX aes_render_box
+#define OB_RENDER_EXTENT aes_render_extent
 #define OB_RENDER_READY(tree,object) aes_render_ready(tree,object)
 #define OB_RENDER_FILL(x,y,w,h) aes_render_fill(x,y,w,h)
 #define OB_RENDER_3D 0

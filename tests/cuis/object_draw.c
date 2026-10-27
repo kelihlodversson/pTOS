@@ -117,7 +117,7 @@ int main(void)
 {
     OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
     WORD x,y;
-    int before;
+    int before, axis, style;
     OBSPEC indirect;
     TEDINFO ted = { 0 };
     USERBLK user;
@@ -228,6 +228,22 @@ int main(void)
     VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[20][159] == RED);
     large.ob_width = 20; large.ob_height = 32767;
     VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[119][20] == RED);
+    for (axis = 0; axis < 2; axis++) for (style = 0; style < 3; style++) {
+        large.ob_width = axis ? 20 : 32767; large.ob_height = axis ? 32767 : 20;
+        large.ob_state = style == 2 ? OUTLINED : 0;
+        large.ob_spec.index = style == 0 ? 0x11172 : style == 1 ? 0xff1172 : 0x1172;
+        __builtin_memset(image,0,sizeof(image));
+        VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[15][15] == RED);
+        if (style == 2) {
+            VERIFY((axis ? image[100][7] : image[7][100]) == BLACK);
+            VERIFY((axis ? image[100][8] : image[8][100]) == WHITE);
+        } else {
+            int edge = style == 0 ? 10 : 9;
+            VERIFY((axis ? image[100][edge] : image[edge][100]) == BLACK);
+        }
+        VERIFY((axis ? image[119][15] : image[15][159]) == RED);
+    }
+    large.ob_state = 0;
     for (x = 0; x < 3; x++) labels[x].ob_next = labels[x].ob_head = labels[x].ob_tail = -1;
     labels[0].ob_type = G_IBOX; labels[0].ob_width = 160; labels[0].ob_height = 120;
     labels[1].ob_type = G_BUTTON; labels[1].ob_spec.free_string = "Wide";

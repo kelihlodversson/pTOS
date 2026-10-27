@@ -8,6 +8,9 @@
 #endif
 /* Native wrappers retain their validation and legacy VDI buffer conversion.
  * libaes overrides admission and fill submission for its bounded context. */
+#ifndef OB_RENDER_COORD
+#define OB_RENDER_COORD WORD
+#endif
 #ifndef OB_RENDER_READY
 #define OB_RENDER_READY(tree,object) TRUE
 #endif

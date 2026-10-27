@@ -54,7 +54,7 @@ static int geometry_checks(WORD handle)
 {
     OBJECT hidden[5] = { { 0 } }, large = { 0 };
     WORD reference[16][17];
-    int black, x, y;
+    int black, x, y, axis, style;
     object(&hidden[0],G_BOX,0,0,100,100); hidden[0].ob_spec.index = 0x1170;
     object(&hidden[1],G_TEXT,0,0,20,20); hidden[1].ob_flags = OF_HIDETREE;
     object(&hidden[2],G_IBOX,0,0,20,20); hidden[2].ob_flags = OF_HIDETREE|OF_INDIRECT;
@@ -87,6 +87,23 @@ static int geometry_checks(WORD handle)
     VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
     VERIFY(gem_probe_pixel(handle,0,10) == black && gem_probe_pixel(handle,19,20) == black);
     VERIFY(gem_probe_pixel(handle,0,20) == 0);
+    large.ob_x = large.ob_y = 10; large.ob_type = G_BOX;
+    for (axis = 0; axis < 2; axis++) for (style = 0; style < 3; style++) {
+        large.ob_width = axis ? 20 : 32767; large.ob_height = axis ? 32767 : 20;
+        large.ob_state = style == 2 ? OS_OUTLINED : 0;
+        large.ob_spec.index = style == 0 ? 0x11172 : style == 1 ? 0xff1172 : 0x1172;
+        VERIFY(objc_draw(hidden,0,0,0,0,100,100) == 1);
+        VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1 && gem_probe_pixel(handle,15,15) == 2);
+        if (style == 2) {
+            VERIFY(gem_probe_pixel(handle,axis ? 7 : 50,axis ? 50 : 7) == black);
+            VERIFY(gem_probe_pixel(handle,axis ? 8 : 50,axis ? 50 : 8) == 0);
+        } else {
+            int edge = style == 0 ? 10 : 9;
+            VERIFY(gem_probe_pixel(handle,axis ? edge : 50,axis ? 50 : edge) == black);
+        }
+        VERIFY(gem_probe_pixel(handle,axis ? 15 : 99,axis ? 99 : 15) == 2);
+    }
+    large.ob_state = 0;
     object(&hidden[3],G_BUTTON,10,10,25000,20); hidden[3].ob_spec.free_string = "Wide";
     object(&hidden[4],G_BOX,40,60,8,8); hidden[4].ob_spec.index = 0x1174;
     VERIFY(objc_add(hidden,0,3) == 1 && objc_add(hidden,0,4) == 1);

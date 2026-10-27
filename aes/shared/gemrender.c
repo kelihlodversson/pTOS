@@ -450,6 +450,10 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
      * do trivial reject with full extent including outline, shadow,
      * & thickness
      */
+#ifdef OB_RENDER_EXTENT
+    if (!OB_RENDER_EXTENT(&t,state,th))
+        return;
+#else
     if (gl_clip.g_w && gl_clip.g_h)
     {
         rc_copy(&t, &c);
@@ -461,6 +465,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         if (!(gsx_chkclip(&c)))
             return;
     }
+#endif
 
 #if OB_RENDER_3D
     rc_copy(&t, &effect_grect); /* save for add_3d_effect() at the end */

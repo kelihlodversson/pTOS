@@ -102,7 +102,7 @@ static WORD line_outcode(LONG x, LONG y)
     return (x < c->g_x ? 1 : x >= (LONG)c->g_x+c->g_w ? 2 : 0) |
            (y < c->g_y ? 4 : y >= (LONG)c->g_y+c->g_h ? 8 : 0);
 }
-static BOOL clip_segment(WORD *points)
+static BOOL clip_segment(LONG *points)
 {
     LONG x1 = points[0], y1 = points[1], x2 = points[2], y2 = points[3];
     LONG x, y, dx, dy, bound;
@@ -124,9 +124,36 @@ static BOOL clip_segment(WORD *points)
     points[0] = x1; points[1] = y1; points[2] = x2; points[3] = y2;
     return TRUE;
 }
+static void draw_segment(LONG *segment)
+{
+    WORD points[4], i;
+    if (!aes_painter->ok || !clip_segment(segment)) return;
+    for (i = 0; i < 4; i++) points[i] = segment[i];
+    aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,2,(uintptr_t)points,0) == E_OK;
+}
+BOOL aes_render_extent(const GRECT *rect, WORD state, WORD thickness)
+{
+    GRECT *clip = &aes_painter->clip;
+    LONG pad = state & OUTLINED ? 3 : 3L*thickness;
+    if (pad < 0) pad = -pad;
+    return (LONG)rect->g_x+rect->g_w+pad >= clip->g_x &&
+           (LONG)rect->g_y+rect->g_h+pad >= clip->g_y &&
+           (LONG)rect->g_x-pad < (LONG)clip->g_x+clip->g_w &&
+           (LONG)rect->g_y-pad < (LONG)clip->g_y+clip->g_h;
+}
+void aes_render_box(LONG x, LONG y, LONG width, LONG height)
+{
+    LONG right = x+width-1, bottom = y+height-1;
+    LONG top_edge[4] = { x,y,right,y }, right_edge[4] = { right,y,right,bottom };
+    LONG bottom_edge[4] = { right,bottom,x,bottom }, left_edge[4] = { x,bottom,x,y };
+    if (width <= 0 || height <= 0) return;
+    draw_segment(top_edge); draw_segment(right_edge);
+    draw_segment(bottom_edge); draw_segment(left_edge);
+}
 void v_pline(WORD count, WORD *points)
 {
-    WORD i, segment[4];
+    WORD i, j;
+    LONG segment[4];
     BOOL oversized = FALSE;
     if (!aes_painter->ok) return;
     for (i = 0; i < count*2; i++)
@@ -139,9 +166,8 @@ void v_pline(WORD count, WORD *points)
      * Clip each segment, never the box as a whole: its off-screen edges
      * must not turn into visible edges along the clipping rectangle. */
     for (i = 1; i < count && aes_painter->ok; i++) {
-        memcpy(segment,points+(i-1)*2,sizeof(segment));
-        if (clip_segment(segment))
-            aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,2,(uintptr_t)segment,0) == E_OK;
+        for (j = 0; j < 4; j++) segment[j] = points[(i-1)*2+j];
+        draw_segment(segment);
     }
 }
 void vs_clip(WORD enabled, WORD *points)

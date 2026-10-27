@@ -20,6 +20,9 @@ typedef struct painter {
 
 extern PAINTER *aes_painter;
 BOOL aes_render_ready(OBJECT *tree, WORD object);
+BOOL aes_render_extent(const GRECT *rect, WORD state, WORD thickness);
+void aes_render_border(LONG x, LONG y, LONG width, LONG height, WORD thickness);
+void aes_render_box(LONG x, LONG y, LONG width, LONG height);
 void aes_render_fill(LONG x, LONG y, LONG width, LONG height);
 
 #endif
