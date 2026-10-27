@@ -441,7 +441,7 @@ void fix_objects(void)
     WORD ii;
     WORD obtype;
     OBJECT *obj;
-#if RSLOAD_COLOUR_ICONS
+#if RSLOAD_COLOUR_ICONS && !defined(AES_RSC_BINDINGS)
     OBSPEC *spec;
 #endif
 
@@ -453,7 +453,7 @@ void fix_objects(void)
         switch (obtype)
         {
         case G_CICON:
-#if RSLOAD_COLOUR_ICONS
+#if RSLOAD_COLOUR_ICONS && !defined(AES_RSC_BINDINGS)
             spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
             spec->ciconblk = get_ciconblkptr(rs_hdr)[spec->index];
 #endif
@@ -673,6 +673,14 @@ static BOOL decode_object_spec(OBSPEC *native, UWORD type, ULONG spec,
             return FALSE;
         native->free_string = native_disk_ptr(image, layout, disk, spec);
         return native->free_string != NULL;
+#ifdef AES_RSC_BINDINGS
+    case G_CICON:
+        /* Resolve from the immutable disk index, never from a shared slot
+         * which another object may already have converted to a pointer.
+         * layout_ordinary() has checked every colour-icon index. */
+        native->ciconblk = ((CICONBLK **)(image + layout->cicon_table))[spec];
+        return TRUE;
+#endif
     case G_USERDEF:
         native->userblk = native_userblk_ptr(image, layout, disk, spec);
         return native->userblk != NULL;

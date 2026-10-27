@@ -163,6 +163,41 @@ int main(int argc, char **argv)
         header->rsh_nobs--;
     }
     VERIFY(rsrc_free() == 1 && !allocations);
+    /* Two indirect colour icons alias the same disk specification slot.
+     * Include a direct reference to the same icon as well. */
+    {
+        OBJECT *tree;
+        CICONBLK *colour;
+        int slot = ((int)disk[36+2*24+12]<<24) |
+            ((int)disk[36+2*24+13]<<16) |
+            ((int)disk[36+2*24+14]<<8) | disk[36+2*24+15];
+        int extension = (size+3)&~3;
+        int table = extension+12, block = table+8;
+        disk_word(0,4); disk_word(34,extension);
+        memset(disk+size,0,block+54-size);
+        disk_long(extension,block+54); disk_long(extension+4,table);
+        disk_long(table,block); disk_long(table+4,0xffffffffUL);
+        disk_word(block+22,16); disk_word(block+24,1);
+        disk_word(block+38,0xa55a); disk_word(block+40,0xffff);
+        disk_long(slot,0);
+        disk_word(36+2*24+6,G_CICON); disk_word(36+3*24+6,G_CICON);
+        disk_word(36+5*24+6,G_CICON); disk_long(36+5*24+12,0);
+        disk_size = block+54;
+        VERIFY(rsrc_load("GEMTEST.RSC") == 1);
+        VERIFY(rsrc_gaddr(R_TREE,0,&address) == 1); tree = address;
+        VERIFY(tree[2].ob_spec.indirect == tree[3].ob_spec.indirect);
+        colour = tree[2].ob_spec.indirect->ciconblk;
+        VERIFY(colour == tree[3].ob_spec.indirect->ciconblk &&
+            colour == tree[5].ob_spec.ciconblk);
+        VERIFY(colour->monoblk.ib_wicon == 16 &&
+            colour->monoblk.ib_pdata[0] == (WORD)0xa55a &&
+            colour->monoblk.ib_pmask[0] == (WORD)0xffff);
+        VERIFY(rsrc_free() == 1 && !allocations && !files);
+        /* Invalid indices must fail before any pointer fixup. */
+        disk_long(slot,1);
+        VERIFY(rsrc_load("GEMTEST.RSC") == 0 && !allocations && !files);
+        memcpy(disk,original,sizeof(disk)); disk_size = size;
+    }
     /* Search order: app directory, caller path, drive root, then PATH. */
     available = "GOOD\\GEMTEST.RSC"; attempts = 0;
     VERIFY(rsrc_load("ELSE\\GEMTEST.RSC") == 1);
