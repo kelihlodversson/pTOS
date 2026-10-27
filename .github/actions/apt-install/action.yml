@@ -8,9 +8,8 @@
 # else; without, it fetches from the mirror, retrying a stalled one, and the
 # files go to the cache for the next job.  The key has the image version of
 # the runner, as the files are what it lacked, and the package list.  Each
-# package list has a directory of its own: the steps of a job save their
-# caches when it ends, so a shared one would put the files of all of them into
-# every entry.
+# package list has a directory of its own, so an entry holds the files of its
+# own packages and not those of the steps before it.
 #
 # Caches written by a pull request are seen by that pull request only; the
 # runs of master (push and the nightly schedule) keep one that all of them
@@ -42,8 +41,15 @@ runs:
         echo "hash=$hash" >>"$GITHUB_OUTPUT"
         echo "key=apt-$os-${ImageVersion:-unknown}-$hash" >>"$GITHUB_OUTPUT"
 
-    - name: Cache the packages
-      uses: actions/cache@v4
+    # restore and save are steps of their own, not one actions/cache step with
+    # its save at the end of the job: when this action is used by another
+    # composite action (setup-toolchain) the path of a step that has to be
+    # evaluated again at the end of the job loses "steps", and nothing is
+    # saved ("Path Validation Error").  Saved right after the install, a
+    # cache is also there when something later in the job fails.
+    - name: Restore the packages
+      id: cache
+      uses: actions/cache/restore@v4
       with:
         path: ${{ runner.temp }}/apt-debs-${{ steps.key.outputs.hash }}
         key: ${{ steps.key.outputs.key }}
@@ -56,3 +62,10 @@ runs:
       run: |
         read -ra args <<<"$PACKAGES"
         "${{ github.action_path }}/install.sh" "$DEBS" "${args[@]}"
+
+    - name: Save the packages
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/apt-debs-${{ steps.key.outputs.hash }}
+        key: ${{ steps.key.outputs.key }}
