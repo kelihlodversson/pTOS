@@ -6,6 +6,8 @@
 #include "application.h"
 #include "resource_context.h"
 #include "rsload.h"
+#include "gemrcfix.h"
+#include "gemlayout.h"
 #include "string.h"
 #include "ptos.h"
 
@@ -52,7 +54,7 @@ WORD aes_resource_discard(void *memory)
  * until both the image and the record itself have actually been released. */
 static BOOL release_resource(RESOURCE_CONTEXT *resource)
 {
-    if (resource->native.ap_rscmem) {
+    if (resource->native.ap_rscmem && !resource->caller_owned) {
         if (aes_resource_release(resource->native.ap_rscmem) != E_OK) return FALSE;
         resource->native.ap_rscmem = NULL;
     }
@@ -222,7 +224,7 @@ static RESOURCE_CONTEXT **selected(WORD *global, BOOL tree_table)
 
 /* Validate reachable sibling rings before any normal AES traversal can loop
  * on a malformed disk tree. Duplicate tree-table entries share one preflight. */
-static BOOL valid_trees(RESOURCE_CONTEXT *resource)
+static BOOL valid_trees(RESOURCE_CONTEXT *resource, BOOL offsets)
 {
     typedef struct { WORD object, next, last; } FRAME;
     RSHDR *header = resource->native.ap_rscmem;
@@ -239,7 +241,9 @@ static BOOL valid_trees(RESOURCE_CONTEXT *resource)
     visited = (UBYTE *)(stack+header->rsh_nobs); validated = visited+header->rsh_nobs;
     memset(validated,0,header->rsh_nobs);
     for (i = 0; i < header->rsh_ntree; i++) {
-        tree = resource->native.ap_ptree[i]; root = tree-objects;
+        tree = resource->native.ap_ptree[i];
+        if (offsets) tree = (OBJECT *)((char *)header+(uintptr_t)tree);
+        root = tree-objects;
         if (root < 0 || root >= header->rsh_nobs) goto done;
         if (validated[root]) continue;
         for (count = 1; root+count <= header->rsh_nobs; count++)
@@ -289,7 +293,7 @@ WORD mt_rsrc_load(const char *name, WORD *global)
     aes_resource = resource;
     ok = aes_resource_read(&resource->native,(UWORD)handle) != 0;
     if (!close_resource_file()) ok = FALSE;
-    if (ok) { resource->header = *resource->native.ap_rscmem; ok = valid_trees(resource); }
+    if (ok) { resource->header = *resource->native.ap_rscmem; ok = valid_trees(resource,FALSE); }
     if (ok && aes_application_session(global) != session) ok = FALSE;
     if (ok) {
         aes_resource_fix();
@@ -302,12 +306,60 @@ WORD mt_rsrc_load(const char *name, WORD *global)
     return ok ? 1 : 0;
 }
 WORD rsrc_load(const char *name) { return mt_rsrc_load(name,aes_global); }
+
+WORD mt_rsrc_rcfix(void *image, WORD *global)
+{
+    RSHDR *header = image, *staged;
+    RESOURCE_CONTEXT *resource, *p;
+    OBJECT *objects;
+    LONG session;
+    WORD i;
+    BOOL ok;
+    if (!header || (uintptr_t)header % __alignof__(void *)) return 0;
+    session = aes_application_session(global);
+    if (session < 0 || header->rsh_rssize < sizeof(*header)) return 0;
+    /* Fixing a live image twice must never relocate pointers or scale twice.
+     * GEM callers release the selected resource before installing rcfix data. */
+    if (*selected(global,FALSE)) return 0;
+    for (p = resources; p; p = p->next)
+        if (p->native.ap_rscmem == image) return 0;
+    retry_resource_releases();
+    resource = aes_resource_alloc(sizeof(*resource));
+    if (!resource) return 0;
+    memset(resource,0,sizeof(*resource));
+    resource->caller_owned = TRUE;
+    resource->native.ap_rscmem = image;
+    resource->native.ap_rsclen = header->rsh_rssize;
+    resource->native.ap_ptree = (OBJECT **)((char *)image+header->rsh_trindex);
+    resource->header = *header;
+    if (!aes_layout_metrics(&resource->metrics,global)) { dispose_resource(resource); return 0; }
+    staged = aes_resource_alloc(header->rsh_rssize);
+    if (!staged) { dispose_resource(resource); return 0; }
+    memcpy(staged,image,header->rsh_rssize);
+    ok = rs_rcfix_native(header,staged) && valid_trees(resource,TRUE);
+    if (ok && aes_application_session(global) != session) ok = FALSE;
+    if (ok) {
+        objects = (OBJECT *)((char *)staged+staged->rsh_object);
+        for (i = 0; i < staged->rsh_nobs; i++)
+            rs_obfix_metrics(objects,i,resource->metrics.wchar,resource->metrics.hchar,resource->metrics.width);
+        /* All fallible work precedes the in-place commit. Pointer targets
+         * already refer to caller storage, never to the temporary copy. */
+        memcpy(image,staged,header->rsh_rssize);
+        resource->next = resources; resources = resource;
+        publish(global,resource);
+    } else dispose_resource(resource);
+    aes_resource_discard(staged);
+    return ok ? 1 : 0;
+}
+WORD rsrc_rcfix(void *image) { return mt_rsrc_rcfix(image,aes_global); }
+
 WORD mt_rsrc_free(WORD *global)
 {
     RESOURCE_CONTEXT **link, *resource;
     if (aes_application_session(global) < 0) return 0;
     link = selected(global,FALSE); resource = *link;
-    if (!resource || aes_resource_release(resource->native.ap_rscmem) != E_OK) return 0;
+    if (!resource || (!resource->caller_owned &&
+        aes_resource_release(resource->native.ap_rscmem) != E_OK)) return 0;
     *link = resource->next;
     resource->native.ap_rscmem = NULL;
     dispose_resource(resource);

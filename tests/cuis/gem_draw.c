@@ -233,6 +233,7 @@ int main(int argc, char **argv, char **envp)
     }
     if (gem_probe_open(&handle,&width,&height) != 0) {
         GRECT untouched = { 1,2,3,4 };
+        status = gem_resource_native(0,0,0); if (status) return status;
         status = gem_resource_checks(0,0,0); if (status) return status;
         status = gem_form_checks(0); if (status) return status;
         status = gem_button_checks(0); if (status) return status;
@@ -299,6 +300,7 @@ int main(int argc, char **argv, char **envp)
     child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
     VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7010);
     status = gem_resource_checks(1,cellw,cellh); if (status) return status;
+    status = gem_resource_native(1,cellw,cellh); if (status) return status;
     status = gem_resource_original(); if (status) return status;
     control[0] = 0x7011;
     VERIFY(appl_write((short)child,16,control) == 1);

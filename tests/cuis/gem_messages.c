@@ -34,7 +34,7 @@ int main(int argc, char **argv, char **envp)
     (void)envp;
     id = appl_init(); VERIFY(id > 0);
     VERIFY(appl_find(NULL) == id && mt_appl_init(other) == id);
-    VERIFY(appl_getinfo(4, &a, &b, &c, &d) == 1 && !a && b == 1 && !c && !d);
+    VERIFY(appl_getinfo(4, &a, &b, &c, &d) == 1 && !a && b == 1 && !c && d == 1);
     VERIFY(appl_getinfo(6, &a, &b, &c, &d) == 1 && a == 1 && !b && !c && !d);
     for (i = 0; i < sizeof(data); i++) data[i] = (UBYTE)(i * 7 + 3);
     if (argc > 1) {

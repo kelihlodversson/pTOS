@@ -102,6 +102,18 @@ int main(int argc, char **argv)
     disk_size = fread(disk,1,sizeof(disk),file); VERIFY(fclose(file) == 0 && disk_size > 36);
     memcpy(original,disk,sizeof(disk));
     aes_resources_init();
+    result = gem_resource_native(1,8,16);
+    VERIFY(result == 0 && !allocations);
+    for (i = 0; i < 3; i++) {
+        alloc_after = i;
+        VERIFY(gem_resource_native_failure() == 0 && !allocations);
+    }
+    alloc_after = -1;
+    free_after = 0;
+    VERIFY(gem_resource_native(1,8,16) == 0 && allocations > 0);
+    aes_resources_reset(); VERIFY(allocations > 0);
+    free_after = -1;
+    aes_resources_reset(); VERIFY(!allocations);
     result = gem_resource_checks(1,8,16);
     if (result) __builtin_printf("GEM resource failure: %x\n",result);
     VERIFY(result == 0 && !files && !allocations);
@@ -287,6 +299,7 @@ int main(int argc, char **argv)
     disk_size = fread(disk,1,sizeof(disk),file); VERIFY(fclose(file) == 0);
     VERIFY(gem_resource_original() == 0 && !allocations && !files);
     graphics_error = 1;
+    VERIFY(gem_resource_native(0,8,16) == 0 && !allocations);
     VERIFY(gem_resource_checks(0,8,16) == 0 && !allocations && !files);
     return 0;
 }

@@ -121,6 +121,7 @@ short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, short 
     if (d) *d = 0;
     if (type == AES_PROCESS && registered(global)) {
         if (b) *b = 1; /* MiNT/AES ID conversion; scheduling remains cooperative. */
+        if (d) *d = 1; /* Standard caller-owned native rsrc_rcfix. */
         return 1;
     }
     if (type == AES_INQUIRE && registered(global)) {

@@ -9,6 +9,7 @@ typedef struct resource_context {
     AESGLOBAL native;
     RSHDR header;
     LAYOUT_METRICS metrics;
+    BOOL caller_owned;
 } RESOURCE_CONTEXT;
 extern RESOURCE_CONTEXT *aes_resource;
 WORD aes_resource_read(AESGLOBAL *global, UWORD handle);
