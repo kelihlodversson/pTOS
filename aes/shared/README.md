@@ -32,5 +32,5 @@ consumer-specific transport and ownership code kept outside this directory.
 `gemformerror.c` contain the original text editing, modal loop, XOR animations,
 alert layout and error mapping. The native entry points and libaes compile
 these ordinary C files with their own bindings. Alert icons and system strings
-are shared in `gemalertdata.c` and `gemalertstrings.c`; the latter retains native
+are generated in aes/shared/gem_rsc.c from aes/gem.rsc, with native
 NLS tagging, while the library currently uses the original English strings.

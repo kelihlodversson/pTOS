@@ -1258,7 +1258,7 @@ endif
 DESKRSC_BASE = desk/desktop
 DESKRSCGEN_BASE = desk/desk_rsc
 GEMRSC_BASE = aes/gem
-GEMRSCGEN_BASE = aes/gem_rsc
+GEMRSCGEN_BASE = aes/shared/gem_rsc
 ICONRSC_BASE = desk/icon
 ICONRSCGEN_BASE = desk/icons
 MFORMRSC_BASE = aes/mform
