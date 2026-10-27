@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "tests/cuis/object_draw.c",
-                "tests/cuis/mono_objects.c", "lib/aes/draw.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
+                "tests/cuis/mono_objects.c", "tests/cuis/gem_layout.c", "lib/aes/layout.c", "aes/shared/gemlayout.c", "lib/aes/draw.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
                 "-Dsprintf=aes_draw_test_sprintf", "-ffunction-sections", "-fdata-sections",
                 "-Wl,--gc-sections,--wrap=ob_offset", "-o", str(work / "draw")]
     subprocess.run(command, check=True)

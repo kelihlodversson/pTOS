@@ -2,6 +2,7 @@
 #include "gem.h"
 #include "gemerror.h"
 #include "mono_objects.h"
+#include "gem_layout.h"
 #include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
@@ -10,11 +11,11 @@ short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
-static struct { WORD mode, color, interior, clip[4], line; } workstation[128];
+static struct { WORD mode, color, interior, clip[4], line; } workstation[256];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
 static int releases;
-static BOOL invalidate_global;
+static BOOL invalidate_global, bad_layout_font, fail_layout_close;
 static ULONG callbacks;
 static OBJECT *mutation_target;
 static int mutation_kind;
@@ -35,17 +36,18 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     VDI_SERVICE_DRAW_RESULT *out = (void *)(uintptr_t)c;
     LONG x,y;
     (void)d;
-    if (fn == VDI_SERVICE_CLOSE) { closes++; return E_OK; }
+    if (fn == VDI_SERVICE_CLOSE) { closes++; return fail_layout_close ? EACCDN : E_OK; }
     if (graphics_error) return graphics_error;
     if (fn == VDI_SERVICE_OPEN) {
         VDI_SERVICE_WORKSTATION *ws = (void *)(uintptr_t)b;
         __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
         ws->ptsout[1] = 4;
-        if (opens >= 128) return ENSMEM;
+        if (opens >= 256) return ENSMEM;
         return E_OK;
     }
-    if (a <= 0 || a >= 128 || (!nesting && !window_update)) return EACCDN;
+    if (a <= 0 || a >= 256) return EACCDN;
+    if (!nesting && !window_update && !(fn == VDI_SERVICE_DRAW && r->code == 38)) return EACCDN;
     if (fn == VDI_SERVICE_CLIP) {
         __builtin_memcpy(workstation[a].clip,(void *)(uintptr_t)c,8);
         return E_OK;
@@ -88,6 +90,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     if (r->code == 38 || r->code == 12) {
         out->ptsout[0] = out->ptsout[2] = 8;
         out->ptsout[1] = 13; out->ptsout[3] = 16;
+        if (bad_layout_font) out->ptsout[2] = 0;
     } else if (r->code == 32) workstation[a].mode = r->intin[0];
     else if (r->code == 25) workstation[a].color = r->intin[0];
     else if (r->code == 23) workstation[a].interior = r->intin[0];
@@ -114,6 +117,11 @@ static WORD callback(PARMBLK *parameters)
     }
     if (invalidate_global) session_error = EACCDN;
     return 0;
+}
+LONG gem_probe_cell(WORD handle, WORD *width, WORD *height)
+{
+    (void)handle; *width = 8; *height = 16;
+    return E_OK;
 }
 int gem_probe_pixel(WORD handle, WORD x, WORD y)
 {
@@ -148,6 +156,32 @@ static int preflight_scaling(void)
         VERIFY(objc_draw(wide,0,1,0,0,0,0) == 1);
         VERIFY(offset_scans-before <= 2);
     }
+    return 0;
+}
+static int layout_failures(void)
+{
+    OBJECT root = { 0 }, saved;
+    GRECT bounds = { 1,2,3,4 };
+    int before = opens, released = releases;
+    root.ob_next = root.ob_head = root.ob_tail = -1;
+    root.ob_type = G_BOX; root.ob_spec.index = 0x1172;
+    root.ob_x = 0x0203; root.ob_y = 0x0304; root.ob_width = 80; root.ob_height = 40;
+    saved = root;
+    graphics_error = EINVFN;
+    VERIFY(rsrc_obfix(&root,0) == 0 && form_center_grect(&root,&bounds) == 0 && opens == before);
+    graphics_error = 0;
+    draw_error = TRUE;
+    VERIFY(rsrc_obfix(&root,0) == 0 && form_center_grect(&root,&bounds) == 0 && opens == closes);
+    draw_error = FALSE; bad_layout_font = TRUE;
+    VERIFY(rsrc_obfix(&root,0) == 0 && form_center_grect(&root,&bounds) == 0 && opens == closes);
+    bad_layout_font = FALSE; fail_layout_close = TRUE;
+    VERIFY(rsrc_obfix(&root,0) == 0 && form_center_grect(&root,&bounds) == 0 && opens == closes);
+    fail_layout_close = FALSE; before = opens; session_error = EACCDN;
+    VERIFY(rsrc_obfix(&root,0) == 0 && form_center_grect(&root,&bounds) == 0 && opens == before);
+    session_error = 0;
+    VERIFY(!__builtin_memcmp(&root,&saved,sizeof(root)));
+    VERIFY(bounds.g_x == 1 && bounds.g_y == 2 && bounds.g_w == 3 && bounds.g_h == 4);
+    VERIFY(!nesting && releases == released);
     return 0;
 }
 int main(void)
@@ -316,6 +350,10 @@ int main(void)
         VERIFY(objc_draw(labels,0,1,0,0,160,120) == 0 && opens == closes && !nesting);
     }
     mutation_target = NULL;
+    VERIFY(layout_failures() == 0);
+    before = gem_layout_checks(0,160,120);
+    if (before) __builtin_printf("GEM layout failure: %x\n",before);
+    VERIFY(before == 0);
     VERIFY(preflight_scaling() == 0);
     before = gem_mono_checks(0);
     if (before) __builtin_printf("mono object failure: %x\n",before);

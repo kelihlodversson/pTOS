@@ -40,3 +40,14 @@ LONG gem_probe_update_end(LONG window)
     if (rc == 0) rc = aes_window_destroy(window);
     return rc;
 }
+
+LONG gem_probe_cell(WORD handle, WORD *width, WORD *height)
+{
+    VDI_SERVICE_DRAW_REQUEST request = { 0 };
+    VDI_SERVICE_DRAW_RESULT result = { 0 };
+    LONG status;
+    request.code = 38;
+    status = service(VDI_SERVICE_DRAW,handle,(uintptr_t)&request,(uintptr_t)&result,0);
+    if (!status) { *width = result.ptsout[2]; *height = result.ptsout[3]; }
+    return status;
+}

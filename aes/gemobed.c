@@ -28,6 +28,7 @@
 #include "geminit.h"
 #include "gemobjop.h"
 #include "gemobed.h"
+#include "gemlayout.h"
 
 #include "string.h"
 #include "scancode.h"
@@ -66,43 +67,7 @@ static void ob_getsp(OBJECT *tree, WORD obj, TEDINFO *pted)
 
 void ob_center(OBJECT *tree, GRECT *pt)
 {
-    WORD    xd, yd, wd, hd;
-    OBSPEC spec;
-    WORD dummy;
-    GRECT t;
-    WORD th;
-
-    wd = tree->ob_width;
-    hd = tree->ob_height;
-    xd = (gl_width - wd) / 2;
-    yd = gl_hbox + ((gl_height - gl_hbox - hd) / 2);
-    tree->ob_x = xd;
-    tree->ob_y = yd;
-
-    /* account for outline */
-    if (tree->ob_state & OUTLINED)
-    {
-        xd -= 3;
-        if (xd < 0)     /* don't move object offscreen */
-            xd = 0;
-        yd -= 3;
-        if (yd < 0)     /* don't move object offscreen */
-            yd = 0;
-        wd += 6;
-        hd += 6;
-    }
-
-    /* account for shadow */
-    if (tree->ob_state & SHADOWED)
-    {
-        ob_sst(tree, ROOT, &spec, &dummy, &dummy, &dummy, &t, &th);
-        if (th < 0)
-            th = -th;
-        th += th;
-        wd += th;
-        hd += th;
-    }
-    r_set(pt, xd, yd, wd, hd);
+    ob_center_metrics(tree,pt,gl_width,gl_height,gl_hbox);
 }
 
 
