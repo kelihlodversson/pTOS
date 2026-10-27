@@ -1,0 +1,54 @@
+#
+# Install apt packages, keeping the downloaded .deb files in the Actions
+# cache.
+#
+# The runners' mirror is sometimes slow (57 kB/s was seen: minutes for the
+# 20 MB of a toolchain), and which job gets it is luck.  With the files in the
+# cache a job installs them with dpkg, without fetching an index or anything
+# else; without, it fetches from the mirror, retrying a stalled one, and the
+# files go to the cache for the next job.  The key has the image version of
+# the runner, as the files are what it lacked, and the package list.
+#
+# Caches written by a pull request are seen by that pull request only; the
+# runs of master (push and the nightly schedule) keep one that all of them
+# can use.
+#
+
+name: Install apt packages
+description: Install packages with apt, from a cache of their files if there is one.
+
+inputs:
+  packages:
+    description: >
+      What to give "apt-get install" after the -y: the packages, and options
+      such as --no-install-recommends.
+    required: true
+
+runs:
+  using: composite
+
+  steps:
+    - name: Work out the cache key
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        os=$(. /etc/os-release && echo "$VERSION_ID")
+        hash=$(echo "$PACKAGES" | sha256sum | cut -c1-16)
+        echo "key=apt-$os-${ImageVersion:-unknown}-$hash" >>"$GITHUB_OUTPUT"
+
+    - name: Cache the packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/apt-debs
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Install the packages
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        DEBS: ${{ runner.temp }}/apt-debs
+      run: |
+        read -ra args <<<"$PACKAGES"
+        "${{ github.action_path }}/install.sh" "$DEBS" "${args[@]}"

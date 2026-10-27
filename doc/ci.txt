@@ -222,6 +222,25 @@ Packaging (build.yml):
     All builds                 keep (the roll-up)
 
 
+Package downloads
+-----------------
+
+The runners' mirror is sometimes slow, and which job gets it is luck: in one
+run a job spent 5 min 53 s fetching the 20 MB of the x86-64 toolchain and 7
+min 7 s fetching QEMU, while the other jobs of the run did the same in 15-20
+seconds.  Combining jobs does not help against that (they would all wait for
+the same download), so the apt packages of the jobs are installed with
+.github/actions/apt-install: it sets apt's retries and timeouts (a stalled
+mirror fails over instead of crawling), keeps the downloaded .deb files in the
+Actions cache (the key has the runner image version and the package list)
+and, with the files in the cache, installs them with dpkg, without fetching
+an index or anything else.  The m68k toolchain is cached in the same way by
+setup-toolchain, by the hashes of its archives.  What is still fetched every
+time: pip packages (kconfiglib, fontTools), the Raspberry Pi firmware and the
+fonts for the SD card image.  release.yml (a tag) installs its tools as it
+did.
+
+
 Not done (needs a decision)
 ---------------------------
 
