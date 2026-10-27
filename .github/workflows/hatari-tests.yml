@@ -30,12 +30,11 @@ permissions:
   contents: read
 
 jobs:
+  # The three configurations one after the other in one job: each is a minute
+  # or so, the runner and the toolchain more than that.
   build:
-    name: Build ${{ matrix.config }}
+    name: Build the systems and the test disk
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        config: [atari512, atari512-fastcall, atari512-extdesk]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,19 +48,35 @@ jobs:
       - name: Install the disk image tools
         run: sudo apt-get install -y --no-install-recommends dosfstools mtools
 
-      - name: Build the system and the test disk
+      - name: Build the systems and the test disks
         run: |
-          make "${{ matrix.config }}_defconfig"
-          make
-          make test-hd
           mkdir products
-          cp ptos512k.img products/system.img
-          cp test-hd.img products/
+          for config in atari512 atari512-fastcall atari512-extdesk; do
+            make distclean >/dev/null 2>&1
+            make "${config}_defconfig"
+            make
+            make test-hd
+            mkdir "products/$config"
+            cp ptos512k.img "products/$config/system.img"
+            cp test-hd.img "products/$config/"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hatari-tests-${{ matrix.config }}
-          path: products/
+          name: hatari-tests-atari512
+          path: products/atari512/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hatari-tests-atari512-fastcall
+          path: products/atari512-fastcall/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hatari-tests-atari512-extdesk
+          path: products/atari512-extdesk/
           retention-days: 7
 
   test:

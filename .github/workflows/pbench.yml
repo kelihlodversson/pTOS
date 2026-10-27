@@ -27,22 +27,11 @@ permissions:
   contents: read
 
 jobs:
+  # The three configurations one after the other in one job: each is a minute
+  # or so, the runner and the toolchain more than that.
   build:
-    name: Build ${{ matrix.config }}
+    name: Build the systems and pBench
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # The key of the baselines in tools/pBench/ci-baselines is the name of
-        # the configuration.  atari256 and atari512-fastcall are built with
-        # -mfastcall.
-        include:
-          - config: atari512
-            image: ptos512k.img
-          - config: atari256
-            image: ptos256us.img
-          # the 512 KB image of the TT and the Falcon built with -mfastcall
-          - config: atari512-fastcall
-            image: ptos512k.img
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,19 +41,41 @@ jobs:
         with:
           arch: m68k
 
-      - name: Build the system and pBench
+      # The key of the baselines in tools/pBench/ci-baselines is the name of
+      # the configuration.  atari256 and atari512-fastcall are built with
+      # -mfastcall (atari512-fastcall: the 512 KB image of the TT and the
+      # Falcon).
+      - name: Build the systems and pBench
         run: |
-          make "${{ matrix.config }}_defconfig"
-          make
-          make pbench.prg
           mkdir products
-          cp ${{ matrix.image }} products/system.img
-          cp pbench.prg products/
+          for entry in atari512:ptos512k.img atari256:ptos256us.img atari512-fastcall:ptos512k.img; do
+            config=${entry%%:*}
+            image=${entry#*:}
+            make distclean >/dev/null 2>&1
+            make "${config}_defconfig"
+            make
+            make pbench.prg
+            mkdir "products/$config"
+            cp "$image" "products/$config/system.img"
+            cp pbench.prg "products/$config/"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pbench-${{ matrix.config }}
-          path: products/
+          name: pbench-atari512
+          path: products/atari512/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pbench-atari256
+          path: products/atari256/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pbench-atari512-fastcall
+          path: products/atari512-fastcall/
           retention-days: 7
 
   measure:

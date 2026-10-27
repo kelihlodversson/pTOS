@@ -136,8 +136,7 @@ jobs:
     name: Enumerate configurations
     runs-on: ubuntu-latest
     outputs:
-      m68k: ${{ steps.enumerate.outputs.m68k }}
-      arm: ${{ steps.enumerate.outputs.arm }}
+      groups: ${{ steps.enumerate.outputs.groups }}
       x86_64: ${{ steps.enumerate.outputs.x86_64 }}
     steps:
       - uses: actions/checkout@v4
@@ -167,8 +166,12 @@ jobs:
             skipped=$(sed -e 's/#.*//' -e 's/[[:space:]].*//' .github/pr-skip-configs | grep .)
           fi
 
-          m68k=
-          arm=
+          # The m68k and ARM configurations are built a few to a job (a
+          # configuration is a minute or so, the job's toolchain and runner
+          # are not): "group arch config" lines, one per configuration,
+          # collected below into one entry per group.  The x86-64 ones boot
+          # a QEMU each and stay one job per configuration.
+          lines=
           x86_64=
           for config in configs/*_defconfig; do
             name=$(basename "$config" _defconfig)
@@ -179,25 +182,41 @@ jobs:
             # architecture, MACHINE_PC_X86_64 the x86-64 one; everything
             # else in configs/ is m68k or ColdFire.
             if grep -qE '^MACHINE_(RPI|VIRT_ARM)=y' "$config"; then
-              arm="$arm $name"
+              case $name in
+                rpi*) group=arm-rpi ;;
+                *)    group=arm-virt ;;
+              esac
+              lines="$lines$group arm $name"$'\n'
             elif grep -qE '^MACHINE_PC_X86_64=y' "$config"; then
               x86_64="$x86_64 $name"
             else
-              m68k="$m68k $name"
+              case $name in
+                atari*) group=m68k-atari ;;
+                amiga*) group=m68k-amiga ;;
+                *)      group=m68k-other ;;
+              esac
+              lines="$lines$group m68k $name"$'\n'
             fi
           done
 
-          # One JSON array per architecture, for the matrices below.
-          echo "m68k=$(to_json "$m68k")" >>"$GITHUB_OUTPUT"
-          echo "arm=$(to_json "$arm")" >>"$GITHUB_OUTPUT"
+          # [{"group":"m68k-atari","arch":"m68k","configs":"atari192 ..."},...]
+          groups=$(printf '%s' "$lines" | awk '
+            { if (!($1 in cfg)) { order[++n] = $1; arch[$1] = $2 }
+              cfg[$1] = cfg[$1] " " $3 }
+            END { printf "["
+                  for (i = 1; i <= n; i++) {
+                    g = order[i]; sub(/^ /, "", cfg[g])
+                    printf "%s{\"group\":\"%s\",\"arch\":\"%s\",\"configs\":\"%s\"}", (i > 1 ? "," : ""), g, arch[g], cfg[g]
+                  }
+                  printf "]" }')
+
+          echo "groups=$groups" >>"$GITHUB_OUTPUT"
           echo "x86_64=$(to_json "$x86_64")" >>"$GITHUB_OUTPUT"
 
           {
             echo '## Configurations to build'
             echo
-            echo "m68k:$m68k"
-            echo
-            echo "arm:$arm"
+            printf '%s' "$lines" | awk '{ g[$1] = g[$1] " " $3 } END { for (k in g) print "- " k ":" g[k] }' | sort
             echo
             echo "x86_64:$x86_64"
             if [ -n "$skipped" ]; then
@@ -206,18 +225,19 @@ jobs:
             fi
           } >>"$GITHUB_STEP_SUMMARY"
 
-  m68k:
-    # The configuration name is the job name, so a failure is identified by
-    # the entry in the checks list, without opening any logs.
-    name: ${{ matrix.config }}
+  # A few configurations to a job, one after the other: the job's own cost
+  # (a runner, the toolchain) is more than a configuration's.  Every
+  # configuration is still an independent compatibility check: one that
+  # fails does not stop the others, and is named in the annotations and in
+  # the job's summary.
+  build:
+    name: build ${{ matrix.group }}
     needs: configurations
     runs-on: ubuntu-latest
     strategy:
-      # Every configuration is an independent compatibility check, so one
-      # failure must not hide the state of the others.
       fail-fast: false
       matrix:
-        config: ${{ fromJSON(needs.configurations.outputs.m68k) }}
+        include: ${{ fromJSON(needs.configurations.outputs.groups) }}
     steps:
       # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
@@ -226,97 +246,65 @@ jobs:
 
       - uses: ./.github/actions/setup-toolchain
         with:
-          arch: m68k
+          arch: ${{ matrix.arch }}
 
-      - name: Build ${{ matrix.config }}
+      - name: Build the configurations
         env:
-          CONFIG: ${{ matrix.config }}
-        run: |
-          set -o pipefail   # tee below must not hide a failing make
-          # Kconfig warns about a discarded assignment only here, so the
-          # log starts with the defconfig
-          make "${CONFIG}_defconfig" 2>&1 | tee build.log
-          make 2>&1 | tee -a build.log
-          # every configuration builds without warnings (#584): keep it so
-          tools/check-build-warnings.sh build.log
-
-      - name: Collect the build products
+          CONFIGS: ${{ matrix.configs }}
         run: |
           mkdir products
-          # The name of the image depends on the configuration, so take
-          # whatever the build produced rather than guessing.
-          for product in *.img *.prg *.st *.s19 *.stc *.rom *.adf *.sym emutos.map; do
-            if [ -e "$product" ]; then
-              cp "$product" products/
+          failed=
+          {
+            echo "| configuration | result |"
+            echo "| --- | --- |"
+          } >>"$GITHUB_STEP_SUMMARY"
+          for config in $CONFIGS; do
+            echo "::group::$config"
+            # (-e does not work inside an if, hence the explicit exits)
+            if (
+              set -o pipefail   # tee below must not hide a failing make
+              make distclean >/dev/null 2>&1
+              # Kconfig warns about a discarded assignment only here, so the
+              # log starts with the defconfig
+              make "${config}_defconfig" 2>&1 | tee build.log || exit 1
+              make 2>&1 | tee -a build.log || exit 1
+              # every configuration builds without warnings (#584): keep it so
+              tools/check-build-warnings.sh build.log || exit 1
+            ); then
+              result=ok
+              # The names of the products depend on the configuration, so
+              # take whatever the build produced rather than guessing: the
+              # images (kernel.img, kernel7.img, ... on the Raspberry Pi),
+              # the symbols, the map, and EmuCON and EmuDesk, the programs
+              # CONF_EXTERNAL_CLI and CONF_EXTERNAL_DESK load from the boot
+              # drive.
+              mkdir "products/$config"
+              for product in *.img *.prg *.st *.s19 *.stc *.rom *.adf *.sym \
+                             emutos.elf emutos.map cli/emucon.tos emudesk.prg; do
+                if [ -e "$product" ]; then
+                  cp "$product" "products/$config/"
+                fi
+              done
+            else
+              result=FAILED
+              failed="$failed $config"
+              echo "::error title=$config::the $config configuration failed"
             fi
+            echo "::endgroup::"
+            echo "| $config | $result |" >>"$GITHUB_STEP_SUMMARY"
           done
-          ls -l products
+          ls -lR products | head -100
+          if [ -n "$failed" ]; then
+            echo "::error::failed:$failed"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: ptos-${{ matrix.config }}
+          name: ptos-${{ matrix.group }}
           path: products/
           retention-days: 14
-
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
-
-  arm:
-    name: ${{ matrix.config }}
-    needs: configurations
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        config: ${{ fromJSON(needs.configurations.outputs.arm) }}
-    steps:
-      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: ./.github/actions/setup-toolchain
-        with:
-          arch: arm
-
-      - name: Build ${{ matrix.config }}
-        env:
-          CONFIG: ${{ matrix.config }}
-        run: |
-          set -o pipefail   # tee below must not hide a failing make
-          # Kconfig warns about a discarded assignment only here, so the
-          # log starts with the defconfig
-          make "${CONFIG}_defconfig" 2>&1 | tee build.log
-          make 2>&1 | tee -a build.log
-          # every configuration builds without warnings (#584): keep it so
-          tools/check-build-warnings.sh build.log
-
-      - name: Collect the build products
-        run: |
-          mkdir products
-          # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
-          # ELF the image was extracted from, which still has the symbols,
-          # EmuCON and EmuDesk, the programs CONF_EXTERNAL_CLI and
-          # CONF_EXTERNAL_DESK load from the boot drive.
-          for product in *.img emutos.elf emutos.map cli/emucon.tos emudesk.prg; do
-            if [ -e "$product" ]; then
-              cp "$product" products/
-            fi
-          done
-          ls -l products
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ptos-${{ matrix.config }}
-          path: products/
-          retention-days: 14
-
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
 
   x86_64:
     name: ${{ matrix.config }}
@@ -779,21 +767,19 @@ jobs:
 
   raspi-sdcard:
     name: Raspberry Pi SD card image
-    needs: [arm]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # The kernel images the arm matrix above already built for rpi1-4 --
-      # rebuilding them here too would just double the wait.  rpi2-sparse is
-      # a VDI test variant of rpi2, not part of the SD card; the pattern's
-      # single-digit character class excludes it (and the virt-arm ones,
-      # which are QEMU-only and have no kernel*.img at all).
+      # The kernel images the arm-rpi job above already built for rpi1-4 --
+      # rebuilding them here too would just double the wait.  The artifact
+      # also holds rpi2-kproc, rpi2-sparse and rpi2-test, which are VDI and
+      # test variants and not part of the SD card: they are not copied.
       - name: Collect the rpi1-4 kernel images
         uses: actions/download-artifact@v4
         with:
-          pattern: ptos-rpi[1-4]
-          merge-multiple: true
+          name: ptos-arm-rpi
           path: raspi-build
 
       # mtools/dosfstools build the FAT16 partition and fdisk provides sfdisk
@@ -818,7 +804,7 @@ jobs:
           archive="ptos-raspi-$VERSION"
           mkdir -p "sdcard/$archive"
 
-          cp raspi-build/kernel*.img "sdcard/$archive"/
+          cp raspi-build/rpi[1-4]/kernel*.img "sdcard/$archive"/
           cp sdcard/raspi-firmware/* "sdcard/$archive"/
           rm -r sdcard/raspi-firmware
 
@@ -826,8 +812,8 @@ jobs:
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
           make release-raspi-resources DEST="sdcard/$archive" \
-            RASPI_EMUCON=raspi-build/emucon.tos \
-            RASPI_EMUDESK=raspi-build/emudesk.prg
+            RASPI_EMUCON=raspi-build/rpi2/emucon.tos \
+            RASPI_EMUDESK=raspi-build/rpi2/emudesk.prg
 
           # The default scalable fonts (DejaVu, with their licence), which
           # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive
@@ -852,7 +838,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [configurations, m68k, arm, x86_64, regression, release-archives, raspi-sdcard]
+    needs: [configurations, build, x86_64, regression, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -861,16 +847,14 @@ jobs:
     steps:
       - name: Check the results
         run: |
-          echo "m68k configurations:   ${{ needs.m68k.result }}"
-          echo "arm configurations:    ${{ needs.arm.result }}"
+          echo "m68k and arm builds:   ${{ needs.build.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
           ok=true
-          [ '${{ needs.m68k.result }}' = success ] || ok=false
-          [ '${{ needs.arm.result }}' = success ] || ok=false
+          [ '${{ needs.build.result }}' = success ] || ok=false
           # A matrix with no configurations (no MACHINE_PC_X86_64=y defconfig
           # exists yet on this branch) generates no x86_64 job at all, and
           # GitHub then reports needs.x86_64.result as "failure" rather than
