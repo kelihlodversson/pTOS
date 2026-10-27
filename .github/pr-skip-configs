@@ -1,0 +1,15 @@
+# Configurations whose build job a pull request does not run (see doc/ci.txt).
+# The build workflow still builds every one of them on master and every night,
+# so a break in one is found there; a pull request gets the other jobs.
+#
+# One name per line, then why it is not needed on a pull request.  A name is
+# a file configs/NAME_defconfig.  Lines starting with # are comments.
+
+amiga                    compiles exactly what amiga-kickdisk does (the ROM image is the other product)
+atari1024                nothing it compiles is not compiled by atari512, aranym or firebee; its image size is built on master
+rpi2-test                compiles exactly what rpi2 does; the regression job (raspi2b) builds it
+virt-arm-cli             the regression job (virt-arm and its traditional FAT variant) builds it, with the warning check
+virt-m68k                the default calling convention is compiled by the other virt-m68k ones and atari512; virt-m68k-fastcall stays
+virt-m68k-cli            compiles nothing that virt-m68k-cli-elf and virt-m68k-cli-fastcall do not
+virt-m68k-cli-elf        the regression job (virt-m68k) builds it, with the warning check
+virt-m68k-cli-fastcall   the regression job (virt-m68k-fastcall) builds it, with the warning check
