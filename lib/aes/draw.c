@@ -66,9 +66,60 @@ void gsx_1code(WORD code, WORD value)
     aes_painter->input[0] = value;
     gsx2();
 }
+/* Match native VDI's Cohen-Sutherland clipping and rounded intersections.
+ * Wider intermediates avoid overflow with arbitrary WORD object geometry. */
+static LONG line_intersection(LONG a, LONG b, LONG divisor)
+{
+    QUAD q = (QUAD)a * b * 2 / divisor;
+    return (LONG)(q >= 0 ? (q+1)/2 : (q-1)/2);
+}
+static WORD line_outcode(LONG x, LONG y)
+{
+    GRECT *c = &aes_painter->clip;
+    return (x < c->g_x ? 1 : x >= (LONG)c->g_x+c->g_w ? 2 : 0) |
+           (y < c->g_y ? 4 : y >= (LONG)c->g_y+c->g_h ? 8 : 0);
+}
+static BOOL clip_segment(WORD *points)
+{
+    LONG x1 = points[0], y1 = points[1], x2 = points[2], y2 = points[3];
+    LONG x, y, dx, dy, bound;
+    WORD first, last, code;
+    GRECT *c = &aes_painter->clip;
+    while ((first = line_outcode(x1,y1)) | (last = line_outcode(x2,y2))) {
+        if (first & last) return FALSE;
+        code = first ? first : last;
+        dx = x2-x1; dy = y2-y1;
+        if (code & 3) {
+            bound = code & 1 ? c->g_x : (LONG)c->g_x+c->g_w-1;
+            x = bound; y = y1+line_intersection(dy,bound-x1,dx);
+        } else {
+            bound = code & 4 ? c->g_y : (LONG)c->g_y+c->g_h-1;
+            y = bound; x = x1+line_intersection(dx,bound-y1,dy);
+        }
+        if (first) { x1 = x; y1 = y; } else { x2 = x; y2 = y; }
+    }
+    points[0] = x1; points[1] = y1; points[2] = x2; points[3] = y2;
+    return TRUE;
+}
 void v_pline(WORD count, WORD *points)
 {
-    if (aes_painter->ok) aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,count,(uintptr_t)points,0) == E_OK;
+    WORD i, segment[4];
+    BOOL oversized = FALSE;
+    if (!aes_painter->ok) return;
+    for (i = 0; i < count*2; i++)
+        if (points[i] < -MAX_COORDINATE || points[i] > MAX_COORDINATE) oversized = TRUE;
+    if (!oversized) {
+        aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,count,(uintptr_t)points,0) == E_OK;
+        return;
+    }
+    /* The classic painter uses solid replace/transparent border lines.
+     * Clip each segment, never the box as a whole: its off-screen edges
+     * must not turn into visible edges along the clipping rectangle. */
+    for (i = 1; i < count && aes_painter->ok; i++) {
+        memcpy(segment,points+(i-1)*2,sizeof(segment));
+        if (clip_segment(segment))
+            aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,2,(uintptr_t)segment,0) == E_OK;
+    }
 }
 void vs_clip(WORD enabled, WORD *points)
 {
@@ -78,8 +129,12 @@ void vr_recfl(WORD *points)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     request.code = FILL_RECTANGLE; request.nptsin = 2;
-    memcpy(request.ptsin,points,sizeof(request.ptsin));
-    invoke(&request);
+    request.ptsin[0] = max(points[0],aes_painter->clip.g_x);
+    request.ptsin[1] = max(points[1],aes_painter->clip.g_y);
+    request.ptsin[2] = min((LONG)points[2],(LONG)aes_painter->clip.g_x+aes_painter->clip.g_w-1);
+    request.ptsin[3] = min((LONG)points[3],(LONG)aes_painter->clip.g_y+aes_painter->clip.g_h-1);
+    if (request.ptsin[0] <= request.ptsin[2] && request.ptsin[1] <= request.ptsin[3])
+        invoke(&request);
 }
 void vst_height(WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
 {

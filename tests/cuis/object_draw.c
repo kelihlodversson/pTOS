@@ -8,7 +8,7 @@ short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count;
-static struct { WORD mode, color, interior, clip[4]; } workstation[32];
+static struct { WORD mode, color, interior, clip[4], line; } workstation[96];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
 static int releases;
@@ -37,18 +37,44 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
         ws->ptsout[1] = 4;
-        if (opens >= 32) return ENSMEM;
+        if (opens >= 96) return ENSMEM;
         return E_OK;
     }
-    if (a <= 0 || a >= 32 || (!nesting && !window_update)) return EACCDN;
+    if (a <= 0 || a >= 96 || (!nesting && !window_update)) return EACCDN;
     if (fn == VDI_SERVICE_CLIP) {
         __builtin_memcpy(workstation[a].clip,(void *)(uintptr_t)c,8);
         return E_OK;
     }
-    if (fn == VDI_SERVICE_COLOR) return (LONG)b; /* VDI returns the selected pen. */
-    if (fn == VDI_SERVICE_LINE) return E_OK;
+    if (fn == VDI_SERVICE_COLOR) { workstation[a].line = b; return (LONG)b; }
+    if (fn == VDI_SERVICE_LINE) {
+        WORD *points = (void *)(uintptr_t)c;
+        LONG i, x2, y2, dx, dy, sx, sy, error, twice;
+        for (i = 0; i < (LONG)b*2; i++)
+            if (points[i] < -10000 || points[i] > 10000) return EINVAL;
+        for (i = 1; i < (LONG)b; i++) {
+            x = points[(i-1)*2]; y = points[(i-1)*2+1];
+            x2 = points[i*2]; y2 = points[i*2+1];
+            dx = __builtin_abs(x2-x); dy = -__builtin_abs(y2-y);
+            sx = x < x2 ? 1 : -1; sy = y < y2 ? 1 : -1; error = dx+dy;
+            for (;;) {
+                if (x >= 0 && x < 160 && y >= 0 && y < 120 &&
+                    x >= workstation[a].clip[0] && x <= workstation[a].clip[2] &&
+                    y >= workstation[a].clip[1] && y <= workstation[a].clip[3])
+                    image[y][x] = workstation[a].line;
+                if (x == x2 && y == y2) break;
+                twice = error*2;
+                if (twice >= dy) { error += dy; x += sx; }
+                if (twice <= dx) { error += dx; y += sy; }
+            }
+        }
+        return E_OK;
+    }
     if (fn != VDI_SERVICE_DRAW) return EINVFN;
     if (draw_error) return EACCDN;
+    if (r->code == 114) {
+        int i;
+        for (i = 0; i < 4; i++) if (r->ptsin[i] < -10000 || r->ptsin[i] > 10000) return EINVAL;
+    }
     calls++;
     if (r->code == 38 || r->code == 12) {
         out->ptsout[0] = out->ptsout[2] = 8;
@@ -77,7 +103,7 @@ static WORD callback(PARMBLK *parameters)
 }
 int main(void)
 {
-    OBJECT tree[4] = { { 0 } };
+    OBJECT tree[4] = { { 0 } }, large = { 0 };
     WORD x,y;
     int before;
     OBSPEC indirect;
@@ -96,6 +122,15 @@ int main(void)
     VERIFY(objc_draw(tree,0,1,20,20,10,10) == 1 && opens == closes && !nesting);
     for (y = 0; y < 120; y++) for (x = 0; x < 160; x++)
         VERIFY(image[y][x] == (x >= 20 && x < 30 && y >= 20 && y < 30 ? RED : WHITE));
+    tree[3].ob_type = G_TEXT; tree[3].ob_spec.tedinfo = NULL;
+    VERIFY(objc_draw(tree,0,1,0,0,160,120) == 1);
+    tree[3].ob_flags |= INDIRECT; tree[3].ob_spec.indirect = NULL;
+    VERIFY(objc_draw(tree,0,1,0,0,160,120) == 1);
+    VERIFY(objc_draw(tree,3,0,0,0,160,120) == 1);
+    tree[3].ob_type = G_ICON; tree[3].ob_flags = HIDETREE;
+    /* Restore the original clip's backdrop for selection round trips. */
+    __builtin_memset(image,0,sizeof(image));
+    VERIFY(objc_draw(tree,0,1,20,20,10,10) == 1);
     VERIFY(objc_change(tree,1,99,0,0,160,120,SELECTED,1) == 1 && tree[1].ob_state == SELECTED);
     VERIFY(image[20][20] == (RED ^ 15));
     VERIFY(objc_change(tree,1,0,0,0,160,120,0,1) == 1 && image[20][20] == RED);
@@ -158,6 +193,22 @@ int main(void)
     VERIFY(objc_draw(tree,0,1,0,0,0,120) == 1 && opens == before);
     VERIFY(objc_change(tree,2,0,0,0,0,0,DISABLED,1) == 1 && tree[2].ob_state == DISABLED);
     VERIFY(objc_change(tree,2,0,200,200,10,10,CROSSED,1) == 1 && tree[2].ob_state == CROSSED);
+    large.ob_next = large.ob_head = large.ob_tail = -1;
+    large.ob_x = large.ob_y = 10; large.ob_width = 10000; large.ob_height = 20;
+    large.ob_type = G_BOX; large.ob_spec.index = 0x1172;
+    __builtin_memset(image,0,sizeof(image));
+    VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1);
+    VERIFY(image[10][159] == RED && image[29][159] == RED && image[30][159] == WHITE);
+    large.ob_type = G_IBOX; large.ob_spec.index = 0x11100;
+    __builtin_memset(image,0,sizeof(image));
+    VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1);
+    VERIFY(image[10][159] == BLACK && image[29][159] == BLACK && image[20][10] == BLACK);
+    VERIFY(image[20][159] == WHITE && image[20][11] == WHITE);
+    large.ob_width = 20; large.ob_height = 10000;
+    __builtin_memset(image,0,sizeof(image));
+    VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1);
+    VERIFY(image[119][10] == BLACK && image[119][29] == BLACK && image[10][20] == BLACK);
+    VERIFY(image[119][20] == WHITE);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     return 0;
 }

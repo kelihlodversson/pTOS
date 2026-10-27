@@ -403,11 +403,11 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     BOOL movetext, changecol;
 #endif
 
-    if (ob_render_cancelled(tree))
+    if (ob_render_cancelled(tree) || (tree[obj].ob_flags & HIDETREE))
         return;
     ch = ob_sst(tree, obj, &spec, &state, &obtype, &flags, &t, &th);
 
-    if ((flags & HIDETREE) || (spec.index == -1L))
+    if (spec.index == -1L)
         return;
 
     t.g_x = sx;

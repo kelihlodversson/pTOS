@@ -18,6 +18,38 @@ static void object(OBJECT *o, short type, short x, short y, short w, short h)
     o->ob_type = type; o->ob_flags = o->ob_state = 0;
     o->ob_x = x; o->ob_y = y; o->ob_width = w; o->ob_height = h;
 }
+static int geometry_checks(WORD handle)
+{
+    OBJECT hidden[3] = { { 0 } }, large = { 0 };
+    int black;
+    object(&hidden[0],G_BOX,0,0,100,100); hidden[0].ob_spec.index = 0x1170;
+    object(&hidden[1],G_TEXT,0,0,20,20); hidden[1].ob_flags = OF_HIDETREE;
+    object(&hidden[2],G_IBOX,0,0,20,20); hidden[2].ob_flags = OF_HIDETREE|OF_INDIRECT;
+    VERIFY(objc_add(hidden,0,1) == 1 && objc_add(hidden,0,2) == 1);
+    VERIFY(objc_draw(hidden,0,1,0,0,100,100) == 1);
+    object(&large,G_BOX,10,10,10000,20); large.ob_spec.index = 0x1172;
+    VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
+    VERIFY(gem_probe_pixel(handle,99,10) == 2 && gem_probe_pixel(handle,99,29) == 2);
+    VERIFY(gem_probe_pixel(handle,99,30) == 0);
+    VERIFY(objc_draw(hidden,0,1,0,0,100,100) == 1);
+    large.ob_type = G_IBOX; large.ob_spec.index = 0x11100;
+    /* Use the native line renderer's black pixel as the reference; the
+     * truecolor VDI readback need not report its index as logical pen 1. */
+    large.ob_width = 20;
+    VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
+    black = gem_probe_pixel(handle,10,10); VERIFY(black != 0);
+    VERIFY(objc_draw(hidden,0,1,0,0,100,100) == 1);
+    large.ob_width = 10000;
+    VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
+    VERIFY(gem_probe_pixel(handle,99,10) == black && gem_probe_pixel(handle,99,29) == black);
+    VERIFY(gem_probe_pixel(handle,10,20) == black && gem_probe_pixel(handle,99,20) == 0);
+    VERIFY(objc_draw(hidden,0,1,0,0,100,100) == 1);
+    large.ob_x = -10010; large.ob_width = 10030;
+    VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
+    VERIFY(gem_probe_pixel(handle,0,10) == black && gem_probe_pixel(handle,19,20) == black);
+    VERIFY(gem_probe_pixel(handle,0,20) == 0);
+    return 0;
+}
 static short callback(PARMBLK *pb)
 {
     OBJECT box = { 0 };
@@ -110,6 +142,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    status = geometry_checks(handle); if (status) return status;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
     update = gem_probe_update_begin(); VERIFY(update >= 0);
     box.ob_spec.index = 0x1172;

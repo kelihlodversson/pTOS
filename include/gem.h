@@ -17,6 +17,9 @@ extern "C" {
 #ifndef OF_LASTOB
 #define OF_LASTOB LASTOB
 #endif
+#ifndef OF_INDIRECT
+#define OF_INDIRECT INDIRECT
+#endif
 #ifndef OF_HIDETREE
 #define OF_HIDETREE HIDETREE
 #endif
