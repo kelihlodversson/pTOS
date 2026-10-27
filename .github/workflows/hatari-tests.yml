@@ -32,10 +32,11 @@ permissions:
 jobs:
   # One job: the three systems are built (a minute or so each, with their test
   # disk), then the tests run several at a time, one Hatari each, on the four
-  # CPUs of the runner, in a container with a newer Hatari (see the last step).
+  # CPUs of the runner.  The runner is an Ubuntu 26.04, for its Hatari 2.6: the
+  # 2.4.1 of the 24.04 hangs the 68030 address-space runs (#727, #737).
   hatari:
     name: Hatari tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -47,10 +48,11 @@ jobs:
           arch: m68k
 
       # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh)
-      - name: Install the disk image tools
+      - name: Install Hatari and the disk image tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dosfstools mtools
+          sudo apt-get install -y --no-install-recommends hatari dosfstools mtools
+          hatari --version || true     # (it exits with 1)
 
       - name: Build the systems and the test disks
         run: |
@@ -67,20 +69,9 @@ jobs:
 
       # What a pull request runs is chosen from what depends on the mode and
       # on the kernel (doc/ci.txt); master's nightly run and a manual one go
-      # through every combination (tools/ci-hatari.sh).  Hatari is the 2.6 of
-      # Ubuntu 26.04, in a container: the 2.4.1 of the 24.04 runner hangs the
-      # 68030 address-space runs (#727, #737).  About four minutes a test;
-      # ten is for one that hangs, well below the job's time.
+      # through every combination (tools/ci-hatari.sh).  About four minutes a
+      # test; ten is for one that hangs, well below the job's time.
       - name: Run the tests under Hatari
         env:
           EVENT: ${{ github.event_name }}
-        run: |
-          docker run --rm -v "$PWD:/work" -w /work \
-            -v "$GITHUB_STEP_SUMMARY:$GITHUB_STEP_SUMMARY" \
-            -e EVENT -e GITHUB_STEP_SUMMARY \
-            ubuntu:26.04 bash -e -c '
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update -qq
-              apt-get install -y --no-install-recommends hatari python3
-              hatari --version || true     # (it exits with 1)
-              tools/ci-hatari.sh'
+        run: tools/ci-hatari.sh

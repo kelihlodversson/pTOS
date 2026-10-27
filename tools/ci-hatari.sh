@@ -12,7 +12,7 @@
 # combinations chosen from what depends on the mode and on the kernel
 # (doc/ci.txt), anything else all of them.  Output goes to logs/ and, on GitHub
 # Actions, to the job's summary, with an annotation for each that failed.
-# Hatari and python3 have to be installed.
+# Hatari and python3 have to be installed (CI: the 2.6 of an Ubuntu 26.04).
 #
 
 set -e -o pipefail
