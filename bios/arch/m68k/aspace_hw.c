@@ -49,7 +49,19 @@
 #define PDT_RESIDENT    0x1UL
 #define PDT_MASK        0x3UL
 #define PTE_W           0x004UL         /* write protected */
+#if CONF_ATARI_HIGHER_HALF
+/*
+ * The pages of a process are write-through on an Atari, as the ST-RAM is in
+ * bios/arch/m68k/68040_pmmu.S: the disk controllers DMA into the RAM behind
+ * the data cache, and a page is mapped twice, in the process and in the window
+ * of the kernel.  With copyback pages the TT does not run on Hatari's 68040:
+ * after a disk read a word on the stack of the kernel (a return address) is
+ * stale and a return jumps into data.  (#728 has what was tried.)
+ */
+#define PTE_CM_COPYBACK 0x000UL         /* cacheable, write-through */
+#else
 #define PTE_CM_COPYBACK 0x020UL         /* cacheable, copyback */
+#endif
 #define PTE_S           0x080UL         /* supervisor only */
 #define PTE_G           0x400UL         /* the same in every address space */
 #define PTE_OWNED       0x800UL         /* (a bit left to software) a private page */

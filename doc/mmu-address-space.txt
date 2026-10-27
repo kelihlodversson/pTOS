@@ -546,7 +546,15 @@ the 68040, with the shape of the plan above.  What is particular to it:
     reach it.  The data cache is physical there, so the clearing of it at every
     return to a program (the 68030's, see above) is not done.  Hatari's Falcon
     with --cpulevel 4 --mmu on runs the whole suite (--mode f040a, job
-    falcon-aspace040).
+    falcon-aspace040), and so does the TT (--mode tt040a, no TT-RAM).  The
+    pages of a process are write-through on an Atari (aspace_hw.c): with
+    copyback pages the TT, whose disk is DMA (ACSI) and not PIO as on the
+    Falcon, does not run on Hatari's 68040: after a disk read a return address
+    on the stack of the kernel was stale, and the return jumped into data (the
+    trace showed ckdrv() returning to a string of the ROM; with the data cache
+    off, or with write-through pages, the same image passes).  Whether that is
+    Hatari's cache emulation or a coherence gap of the kernel's own that the
+    hardware would show too is not known; #737 can tell with another core.
 
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................
