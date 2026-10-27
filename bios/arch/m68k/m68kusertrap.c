@@ -71,7 +71,9 @@ static const struct shape xshape[] = {
  * bios/biosaccess.c know of, and several of them hand an address to the
  * kernel that it would use in supervisor mode: Mfpint() and Xbtimer() install
  * an interrupt handler, VgetRGB() writes to a pointer, Keytbl() and Prtblk()
- * read tables at one.  So a program may make only the calls below, whose
+ * read tables at one; Jdisint(), Jenabint() and the sound chip's Giaccess(),
+ * Offgibit() and Ongibit() change what the machine runs on (the 200 Hz tick,
+ * the floppy select lines) for everyone.  So a program may make only the calls below, whose
  * arguments are numbers or are checked by xbios_check_user_args(); the rest
  * are refused until they are checked one by one.
  */
@@ -80,8 +82,8 @@ static BOOL atari_xbios_allowed(WORD fn)
     switch (fn) {
     case 0x00: case 0x02: case 0x03: case 0x04: case 0x05: case 0x06:
     case 0x07: case 0x0C: case 0x0F: case 0x11: case 0x12: case 0x15:
-    case 0x16: case 0x17: case 0x18: case 0x19: case 0x1A: case 0x1B:
-    case 0x1C: case 0x1D: case 0x1E: case 0x20: case 0x21: case 0x23:
+    case 0x16: case 0x17: case 0x18: case 0x19: case 0x20: case 0x21:
+    case 0x23:
     case 0x25: case 0x27: case 0x2A: case 0x2B: case 0x2C: case 0x40:
     case 0x58: case 0x59: case 0x5A: case 0x5B: case 0x5C:
         return TRUE;
