@@ -451,7 +451,7 @@ WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, W
     for (i = 0; i < template; i++) if (ted->te_ptmplt[i] == '_') slots++;
     /* find_pos() needs a template slot for every legal insertion position. */
     if (slots < ted->te_txtlen-1 || (kind != EDINIT && (*index < 0 || *index > raw))) return 0;
-    staged = *index;
+    staged = kind == EDINIT ? 0 : *index;
     if (!render(tree,object,0,0,0,32767,32767,global,FALSE,0,key,&staged,kind,NULL,NULL)) return 0;
     *index = staged;
     return 1;
@@ -465,6 +465,17 @@ typedef struct { WORD kind; GRECT small, large; } FORM_ANIMATION;
 static void animate_form(void *argument)
 {
     FORM_ANIMATION *a = argument;
+    PAINTER *p = aes_painter;
+    LONG hbox = (LONG)p->hchar + 3, wbox;
+    /* Match gsx_start(), including non-square pixel aspect and the minimum
+     * button width. Corner lengths in gsx_xcbox() must still fit a WORD. */
+    if (p->workstation.ws_wpixel <= 0 || p->workstation.ws_hpixel <= 0 || hbox > 16383) {
+        p->ok = FALSE; return;
+    }
+    wbox = hbox * p->workstation.ws_hpixel / p->workstation.ws_wpixel;
+    if (wbox < (LONG)p->wchar + 4) wbox = (LONG)p->wchar + 4;
+    if (wbox > 16383) { p->ok = FALSE; return; }
+    p->wbox = wbox; p->hbox = hbox;
     if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
     else gr_shrinkbox(&a->small,&a->large);
 }

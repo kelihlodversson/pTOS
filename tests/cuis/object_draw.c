@@ -14,9 +14,13 @@ short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
-static struct { WORD mode, color, interior, clip[4], line; } workstation[1024];
+static struct { WORD mode, color, interior, clip[4], line, line_type, line_pattern; } workstation[1024];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
+static WORD pixel_width = 1, pixel_height = 1;
+static BOOL trace_animation;
+static WORD corner_x, corner_y, corner_width;
+static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type;
 static int releases, mouse_nesting, mouse_releases;
 static BOOL input_error, mouse_error, foreign_display;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
@@ -139,6 +143,9 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
         ws->ptsout[1] = 4;
+        ws->intout[3] = pixel_width; ws->intout[4] = pixel_height;
+        workstation[ws->handle].line_type = 1;
+        workstation[ws->handle].line_pattern = (WORD)0xffff;
         if (opens >= 1024) return ENSMEM;
         return E_OK;
     }
@@ -163,6 +170,15 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     if (fn == VDI_SERVICE_LINE) {
         WORD *points = (void *)(uintptr_t)c;
         LONG i, x2, y2, dx, dy, sx, sy, error, twice;
+        if (trace_animation) {
+            if (workstation[a].line_type != 7) bad_line_type++;
+            if ((UWORD)workstation[a].line_pattern == 0x5555 ||
+                (UWORD)workstation[a].line_pattern == 0xaaaa) patterned_segments++;
+            if (b == 2 && points[0] == corner_x && points[1] == corner_y+38 &&
+                points[2] == corner_x && points[3] == corner_y) corner_vertical++;
+            if (b == 2 && points[0] == corner_x && points[1] == corner_y &&
+                points[2] == corner_x+corner_width && points[3] == corner_y) corner_horizontal++;
+        }
         for (i = 0; i < (LONG)b*2; i++)
             if (points[i] < -10000 || points[i] > 10000) return EINVAL;
         for (i = 1; i < (LONG)b; i++) {
@@ -202,6 +218,8 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         out->ptsout[1] = 13; out->ptsout[3] = 16;
         if (bad_layout_font) out->ptsout[2] = 0;
     } else if (r->code == 32) workstation[a].mode = r->intin[0];
+    else if (r->code == 15) workstation[a].line_type = r->intin[0];
+    else if (r->code == 113) workstation[a].line_pattern = r->intin[0];
     else if (r->code == 25) workstation[a].color = r->intin[0];
     else if (r->code == 23) workstation[a].interior = r->intin[0];
     else if (r->code == 8) {
@@ -381,6 +399,30 @@ static int form_interactions(void)
     VERIFY(form_button(tree,1,1,&next) == 0 && next == 99 && !mouse_nesting);
     input_error = FALSE;
     VERIFY(opens == closes && !nesting && !mouse_nesting && !bad_gesture);
+    return 0;
+}
+static int animation_checks(void)
+{
+    static const WORD aspects[3][3] = { { 1,1,38 }, { 1,2,76 }, { 3,1,24 } };
+    int aspect, kind;
+    for (aspect = 0; aspect < 3; aspect++) for (kind = FMD_GROW; kind <= FMD_SHRINK; kind++) {
+        pixel_width = aspects[aspect][0]; pixel_height = aspects[aspect][1];
+        corner_width = aspects[aspect][2];
+        corner_x = kind == FMD_GROW ? 58 : 0;
+        corner_y = kind == FMD_GROW ? 38 : 0;
+        corner_vertical = corner_horizontal = patterned_segments = bad_line_type = 0;
+        trace_animation = TRUE;
+        VERIFY(form_dial(kind,20,30,4,4,0,0,120,80) == 1);
+        trace_animation = FALSE;
+        VERIFY(corner_vertical >= 2 && corner_horizontal >= 2);
+        VERIFY(patterned_segments > 0 && !bad_line_type);
+        VERIFY(opens == closes && !nesting);
+    }
+    pixel_width = 0;
+    VERIFY(form_dial(FMD_GROW,20,30,4,4,0,0,120,80) == 0 && opens == closes && !nesting);
+    pixel_width = 1; pixel_height = 0;
+    VERIFY(form_dial(FMD_SHRINK,20,30,4,4,0,0,120,80) == 0 && opens == closes && !nesting);
+    pixel_height = 1;
     return 0;
 }
 void gem_form_input_stage(short stage) { (void)stage; }
@@ -588,6 +630,7 @@ int main(void)
     if (before) __builtin_printf("GEM forms failure: %x\n",before);
     VERIFY(before == 0);
     VERIFY(modal_checks() == 0);
+    VERIFY(animation_checks() == 0);
     before = gem_button_checks(1);
     if (before) __builtin_printf("GEM button failure: %x\n",before);
     VERIFY(before == 0);

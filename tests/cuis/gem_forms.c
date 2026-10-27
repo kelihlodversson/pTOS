@@ -26,7 +26,7 @@ int gem_form_checks(short graphics)
     OBJECT tree[3] = { { 0 } };
     TEDINFO ted = { 0 };
     char text[7] = "@";
-    short index = 77, global[15];
+    short index = 77, fresh_index, global[15];
     int i;
     setup(tree,&ted,text);
     for (i = 0; i < 15; i++) global[i] = aes_global[i];
@@ -42,6 +42,10 @@ int gem_form_checks(short graphics)
         return 0;
     }
     VERIFY(index == 0);
+    /* ED_INIT is an output-only index, just like the first form_do edit. */
+    VERIFY(objc_edit(tree,1,0,&index,ED_END) == 1);
+    VERIFY(mt_objc_edit(tree,1,0,&fresh_index,ED_INIT,global) == 1 && fresh_index == 0);
+    index = fresh_index;
     i = objc_edit(tree,1,'a',&index,ED_CHAR);
     VERIFY(i == 1 && index == 1 && text[0] == 'A' && !text[1]);
     VERIFY(mt_objc_edit(tree,1,'2',&index,ED_CHAR,global) == 1 && index == 2 && text[1] == '2');
