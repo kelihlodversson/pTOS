@@ -60,14 +60,13 @@ void rs_obfix_metrics(OBJECT *tree, WORD curob, WORD wchar, WORD hchar, WORD scr
 }
 
 
-BOOL ob_center_metrics(OBJECT *tree, GRECT *pt, WORD screen_width, WORD screen_height, WORD hbox)
+void ob_center_metrics(OBJECT *tree, GRECT *pt, WORD screen_width, WORD screen_height, WORD hbox)
 {
     WORD    xd, yd, wd, hd;
     OBSPEC spec;
     WORD dummy;
     GRECT t;
     WORD th;
-    LONG extra = 0;
 
     wd = tree->ob_width;
     hd = tree->ob_height;
@@ -85,7 +84,6 @@ BOOL ob_center_metrics(OBJECT *tree, GRECT *pt, WORD screen_width, WORD screen_h
         yd -= 3;
         if (yd < 0)     /* don't move object offscreen */
             yd = 0;
-        extra += 6;
         wd += 6;
         hd += 6;
     }
@@ -94,7 +92,6 @@ BOOL ob_center_metrics(OBJECT *tree, GRECT *pt, WORD screen_width, WORD screen_h
     if (tree->ob_state & SHADOWED)
     {
         ob_sst(tree, ROOT, &spec, &dummy, &dummy, &dummy, &t, &th);
-        extra += th < 0 ? -2L*th : 2L*th;
         if (th < 0)
             th = -th;
         th += th;
@@ -102,7 +99,4 @@ BOOL ob_center_metrics(OBJECT *tree, GRECT *pt, WORD screen_width, WORD screen_h
         hd += th;
     }
     r_set(pt, xd, yd, wd, hd);
-    /* Native callers retain the WORD result. Userspace can reject expanded
-     * extents that wrapped, including twice a maximum TEDINFO thickness. */
-    return (LONG)tree->ob_width+extra <= 32767 && (LONG)tree->ob_height+extra <= 32767;
 }

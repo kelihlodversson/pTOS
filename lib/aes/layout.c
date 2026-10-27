@@ -6,6 +6,7 @@
 #include "application.h"
 #include "transport.h"
 #include "gemlayout.h"
+#include "gemobjop.h"
 
 typedef struct {
     WORD width, height, wchar, hchar, hbox;
@@ -41,6 +42,21 @@ short mt_rsrc_obfix(OBJECT *tree, short object, short *global)
 }
 short rsrc_obfix(OBJECT *tree, short object) { return mt_rsrc_obfix(tree,object,aes_global); }
 
+/* Overflow rejection belongs to the userspace adapter. The native shared
+ * painter keeps its original WORD behavior and pays no ROM cost for this. */
+static BOOL center_extent(OBJECT *root)
+{
+    LONG extra = root->ob_state & OUTLINED ? 6 : 0;
+    WORD thickness, dummy;
+    OBSPEC spec;
+    GRECT rect;
+    if (root->ob_state & SHADOWED) {
+        ob_sst(root,ROOT,&spec,&dummy,&dummy,&dummy,&rect,&thickness);
+        extra += thickness < 0 ? -2L*thickness : 2L*thickness;
+    }
+    return (LONG)root->ob_width+extra <= 32767 && (LONG)root->ob_height+extra <= 32767;
+}
+
 short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global)
 {
     LAYOUT_METRICS m;
@@ -48,7 +64,8 @@ short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global)
     GRECT bounds;
     if (!tree || !rect || tree[0].ob_width < 0 || tree[0].ob_height < 0 || !metrics(&m,global)) return 0;
     root = tree[0];
-    if (!ob_center_metrics(&root,&bounds,m.width,m.height,m.hbox)) return 0;
+    if (!center_extent(&root)) return 0;
+    ob_center_metrics(&root,&bounds,m.width,m.height,m.hbox);
     /* The native helper retains WORD geometry. Stage its result so an
      * unrepresentable outline/shadow extent cannot alter caller data. */
     if (bounds.g_w < 0 || bounds.g_h < 0) return 0;
