@@ -154,11 +154,8 @@ void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh)
         gl_patt = patt;
     }
 
-    ptsin[0] = hx;
-    ptsin[1] = hy;
-    ptsin[2] = hx + hw - 1;
-    ptsin[3] = hy + hh - 1;
-    vr_recfl(ptsin);
+    /* The binding controls when endpoints are narrowed to VDI WORDs. */
+    OB_RENDER_FILL(hx,hy,hw,hh);
 }
 
 

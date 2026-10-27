@@ -148,16 +148,21 @@ void vs_clip(WORD enabled, WORD *points)
 {
     if (aes_painter->ok) aes_painter->ok = aes_graphics_call(VDI_SERVICE_CLIP,aes_painter->handle,enabled,(uintptr_t)points,0) == E_OK;
 }
-void vr_recfl(WORD *points)
+void aes_render_fill(LONG x, LONG y, LONG width, LONG height)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
+    if (width <= 0 || height <= 0) return;
     request.code = FILL_RECTANGLE; request.nptsin = 2;
-    request.ptsin[0] = max(points[0],aes_painter->clip.g_x);
-    request.ptsin[1] = max(points[1],aes_painter->clip.g_y);
-    request.ptsin[2] = min((LONG)points[2],(LONG)aes_painter->clip.g_x+aes_painter->clip.g_w-1);
-    request.ptsin[3] = min((LONG)points[3],(LONG)aes_painter->clip.g_y+aes_painter->clip.g_h-1);
+    request.ptsin[0] = max(x,aes_painter->clip.g_x);
+    request.ptsin[1] = max(y,aes_painter->clip.g_y);
+    request.ptsin[2] = min(x+width-1,(LONG)aes_painter->clip.g_x+aes_painter->clip.g_w-1);
+    request.ptsin[3] = min(y+height-1,(LONG)aes_painter->clip.g_y+aes_painter->clip.g_h-1);
     if (request.ptsin[0] <= request.ptsin[2] && request.ptsin[1] <= request.ptsin[3])
         invoke(&request);
+}
+void vr_recfl(WORD *points)
+{
+    aes_render_fill(points[0],points[1],(LONG)points[2]-points[0]+1,(LONG)points[3]-points[1]+1);
 }
 void vst_height(WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
 {
@@ -214,6 +219,12 @@ static BOOL supported(OBJECT *object)
     case G_USERDEF: return spec.userblk && spec.userblk->ub_code;
     default: return FALSE;
     }
+}
+BOOL aes_render_ready(OBJECT *tree, WORD object)
+{
+    /* USERDEF can change a later sibling after the subtree preflight. */
+    if (aes_painter->ok && !supported(&tree[object])) aes_painter->ok = FALSE;
+    return aes_painter->ok;
 }
 static BOOL preflight(OBJECT *tree, WORD object, WORD depth)
 {

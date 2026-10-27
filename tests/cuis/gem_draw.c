@@ -18,6 +18,38 @@ static void object(OBJECT *o, short type, short x, short y, short w, short h)
     o->ob_type = type; o->ob_flags = o->ob_state = 0;
     o->ob_x = x; o->ob_y = y; o->ob_width = w; o->ob_height = h;
 }
+static char mutation_text[200];
+static int mutation_kind;
+static short mutate_callback(PARMBLK *pb)
+{
+    OBJECT *target = (OBJECT *)(uintptr_t)pb->pb_parm;
+    if (!mutation_kind) target->ob_spec.free_string = mutation_text;
+    else if (mutation_kind == 1) target->ob_spec.tedinfo->te_ptext = mutation_text;
+    else target->ob_spec.tedinfo->te_ptmplt = mutation_text;
+    return 0;
+}
+static int mutation_checks(void)
+{
+    OBJECT tree[3] = { { 0 } };
+    TEDINFO ted = { 0 };
+    USERBLK user;
+    int i;
+    for (i = 0; i < 199; i++) mutation_text[i] = 'X';
+    object(&tree[0],G_IBOX,0,0,100,100);
+    object(&tree[1],G_USERDEF,0,0,20,20); tree[1].ob_spec.userblk = &user;
+    object(&tree[2],G_STRING,30,0,60,20);
+    user.ub_code = mutate_callback; user.ub_parm = (intptr_t)&tree[2];
+    ted.te_font = 3; ted.te_color = 0x1100;
+    VERIFY(objc_add(tree,0,1) == 1 && objc_add(tree,0,2) == 1);
+    for (mutation_kind = 0; mutation_kind < 3; mutation_kind++) {
+        ted.te_ptext = "ok"; ted.te_ptmplt = "__";
+        tree[2].ob_type = mutation_kind == 0 ? G_STRING : mutation_kind == 1 ? G_TEXT : G_FTEXT;
+        tree[2].ob_spec.tedinfo = &ted;
+        if (!mutation_kind) tree[2].ob_spec.free_string = "ok";
+        VERIFY(objc_draw(tree,0,1,0,0,100,100) == 0);
+    }
+    return 0;
+}
 static int geometry_checks(WORD handle)
 {
     OBJECT hidden[5] = { { 0 } }, large = { 0 };
@@ -32,6 +64,12 @@ static int geometry_checks(WORD handle)
     VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
     VERIFY(gem_probe_pixel(handle,99,10) == 2 && gem_probe_pixel(handle,99,29) == 2);
     VERIFY(gem_probe_pixel(handle,99,30) == 0);
+    VERIFY(objc_draw(hidden,0,1,0,0,100,100) == 1);
+    large.ob_width = 32767;
+    VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1 && gem_probe_pixel(handle,99,20) == 2);
+    large.ob_width = 20; large.ob_height = 32767;
+    VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1 && gem_probe_pixel(handle,20,99) == 2);
+    large.ob_width = 10000; large.ob_height = 20;
     VERIFY(objc_draw(hidden,0,1,0,0,100,100) == 1);
     large.ob_type = G_IBOX; large.ob_spec.index = 0x11100;
     /* Use the native line renderer's black pixel as the reference; the
@@ -157,6 +195,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    status = mutation_checks(); if (status) return status;
     status = geometry_checks(handle); if (status) return status;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
     update = gem_probe_update_begin(); VERIFY(update >= 0);

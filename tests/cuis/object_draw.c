@@ -14,6 +14,9 @@ static BOOL draw_error, window_update;
 static int releases;
 static BOOL invalidate_global;
 static ULONG callbacks;
+static OBJECT *mutation_target;
+static int mutation_kind;
+static char mutation_text[200];
 LONG aes_application_session(short *global) { return global && !session_error ? 7 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -102,6 +105,11 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 static WORD callback(PARMBLK *parameters)
 {
     callbacks++; callback_parameters = *parameters;
+    if (mutation_target) {
+        if (mutation_kind == 0) mutation_target->ob_spec.free_string = mutation_text;
+        else if (mutation_kind == 1) mutation_target->ob_spec.tedinfo->te_ptext = mutation_text;
+        else mutation_target->ob_spec.tedinfo->te_ptmplt = mutation_text;
+    }
     if (invalidate_global) session_error = EACCDN;
     return 0;
 }
@@ -113,6 +121,7 @@ int main(void)
     OBSPEC indirect;
     TEDINFO ted = { 0 };
     USERBLK user;
+    TEDINFO changed = { 0 };
     char raw[] = "AB", pattern[] = "__.__", big[258];
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
@@ -213,6 +222,12 @@ int main(void)
     VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1);
     VERIFY(image[119][10] == BLACK && image[119][29] == BLACK && image[10][20] == BLACK);
     VERIFY(image[119][20] == WHITE);
+    large.ob_type = G_BOX; large.ob_spec.index = 0x1172;
+    large.ob_width = 32767; large.ob_height = 20;
+    __builtin_memset(image,0,sizeof(image));
+    VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[20][159] == RED);
+    large.ob_width = 20; large.ob_height = 32767;
+    VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1 && image[119][20] == RED);
     for (x = 0; x < 3; x++) labels[x].ob_next = labels[x].ob_head = labels[x].ob_tail = -1;
     labels[0].ob_type = G_IBOX; labels[0].ob_width = 160; labels[0].ob_height = 120;
     labels[1].ob_type = G_BUTTON; labels[1].ob_spec.free_string = "Wide";
@@ -229,6 +244,19 @@ int main(void)
     VERIFY(objc_draw(&large,0,0,0,0,17,120) == 1);
     VERIFY(last_count == 3 && last_text[0] == 'B' && last_text[2] == 'D');
     VERIFY(last_text_x == -2 && last_text_y == 33);
+    __builtin_memset(mutation_text,'X',sizeof(mutation_text)-1);
+    labels[1].ob_type = G_USERDEF; labels[1].ob_spec.userblk = &user;
+    labels[1].ob_width = labels[1].ob_height = 20; user.ub_code = callback;
+    mutation_target = &labels[2];
+    changed.te_font = IBM; changed.te_color = 0x1100;
+    for (mutation_kind = 0; mutation_kind < 3; mutation_kind++) {
+        changed.te_ptext = "ok"; changed.te_ptmplt = "__";
+        labels[2].ob_type = mutation_kind == 0 ? G_STRING : mutation_kind == 1 ? G_TEXT : G_FTEXT;
+        labels[2].ob_spec.tedinfo = &changed;
+        if (!mutation_kind) labels[2].ob_spec.free_string = "ok";
+        VERIFY(objc_draw(labels,0,1,0,0,160,120) == 0 && opens == closes && !nesting);
+    }
+    mutation_target = NULL;
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     return 0;
 }

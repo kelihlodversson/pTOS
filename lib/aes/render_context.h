@@ -19,5 +19,7 @@ typedef struct painter {
 } PAINTER;
 
 extern PAINTER *aes_painter;
+BOOL aes_render_ready(OBJECT *tree, WORD object);
+void aes_render_fill(LONG x, LONG y, LONG width, LONG height);
 
 #endif

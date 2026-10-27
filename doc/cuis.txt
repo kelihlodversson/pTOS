@@ -1410,7 +1410,9 @@ mono/color icons and 3D flags return GEM 0 until their rendering adapters
 are available. No extension capability bits are advertised. A preflight
 checks the requested visible subtree before painting, so an unsupported
 visible descendant does not leave a partly drawn tree; HIDETREE descendants
-are ignored.
+are ignored. Each visible payload is checked again immediately before painting,
+since USERDEF can mutate later siblings. An oversized callback-mutated payload
+fails with GEM 0 before buffer copies.
 
 Drawing starts at the requested object using its absolute tree offset,
 visits children in sibling order through the requested depth (0..MAX_DEPTH),
@@ -1419,9 +1421,11 @@ bounds. Child objects are not implicitly clipped to their parent's logical
 rectangle. Hidden objects are rejected before reading their payload or
 INDIRECT pointer. Fills and oversized border segments are intersected with
 the painter clip before VDI submission, preserving the original edges rather
-than drawing new edges along the clip boundary. Fully clipped text is culled
-before VDI submission. Partially clipped runs drop complete off-screen cells
-while preserving the original positions of the remaining glyphs. An empty clip succeeds without painting. objc_find retains
+than drawing new edges along the clip boundary. Userspace fill endpoints
+remain LONG until clipped, including maximum-WORD widths and heights. Fully
+clipped text is culled before VDI submission. Partially clipped runs drop
+complete off-screen cells while preserving the original positions of the
+remaining glyphs. An empty clip succeeds without painting. objc_find retains
 logical hit bounds; 3D hit expansion remains deferred with 3D rendering.
 
 Drawing reuses an existing per-window update section without upgrading or
