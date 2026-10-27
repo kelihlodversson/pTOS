@@ -713,10 +713,13 @@ Continuous integration
 GitHub Actions builds the tree on every push and pull request to master.
 The workflows live in .github/workflows:
 
-build.yml       builds every configuration in configs/ as a job of its own,
-                so a failure names the machine it broke, and builds the m68k
+build.yml       builds every configuration in configs/ (a few to a job; a
+                failure still names the configuration in the annotations and
+                the job's summary), runs the regression suites, and builds the m68k
                 release archives and the Raspberry Pi SD card image (see
-                above).  Every image is kept as a workflow artifact.
+                above).  Every image is kept as a workflow artifact.  A pull
+                request does not build the configurations in
+                .github/pr-skip-configs; see doc/ci.txt.
 release.yml     publishes a GitHub release.  It runs when a version tag such
                 as v0.1.0 is pushed, and can also be started by hand, which
                 publishes a snapshot prerelease instead.
