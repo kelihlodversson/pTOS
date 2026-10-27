@@ -16,7 +16,7 @@ waiting for a runner: the repository has only so many at a time, and a run of
 82 jobs spent most of its wall-clock time (a median of 110 minutes for
 build.yml, for jobs of a minute each) in the queue.  The whole set of builds
 still runs on master (push), every night (schedule) and with "Run workflow"
-(workflow_dispatch); all 22 Hatari combinations run every night and on request
+(workflow_dispatch); all 23 Hatari combinations run every night and on request
 (hatari-tests.yml has no push trigger); pBench (pbench.yml) runs on pull
 requests and on request only, as it did before.
 
@@ -63,18 +63,18 @@ How it was audited
 What is changed
 ---------------
 
-- hatari-tests.yml: a pull request runs 8 of the 22 combinations: atari512 in
+- hatari-tests.yml: a pull request runs 9 of the 23 combinations: atari512 in
   low, high, f030 and f040 (it is the one that exercises the screen-mode
   dependent suites, and the data cache of the Falcon; med is the same code as
   low with another plane count, so only low, the 16 colour ST mode, stands
   for both) and atari512-fastcall in f040 (the calling convention at run
   time, on the 68040), atari512-kproc in f030 (the kernel processes),
   falcon-mmu in f030 (the Falcon ROM with the kernel in the upper half and the
-  68030 MMU on, which only a 68030 runs) and falcon-aspace in f030a (an
+  68030 MMU on, which only a 68030 runs) and falcon-aspace in f030a and tta (an
   address space for every process, #727: the harness is the shell, and a 68030
   runs it).  atari512-extdesk is not run (the external desktop is
   not mode dependent, and the 22 tests do not touch it), nor built, by a
-  pull request.  All 22 run every night and on request.  The job prints the
+  pull request.  All 23 run every night and on request.  The job prints the
   seconds of each in its summary.
 - build.yml: the configurations in .github/pr-skip-configs are not built by a
   pull request (8 jobs), with the reason for each in that file.  The ones

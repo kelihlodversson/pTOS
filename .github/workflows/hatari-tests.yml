@@ -56,6 +56,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends hatari dosfstools mtools
           hatari --version || true     # (it exits with 1)
+          # the TT mode reads the screen (tools/run-hatari-tests.py), for the
+          # interpreter that setup-toolchain selected
+          python3 -m pip install pillow
 
       - name: Build the systems and the test disks
         run: |

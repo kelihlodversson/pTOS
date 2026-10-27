@@ -30,6 +30,10 @@
  */
 void pmem32_init(PADDR start, PADDR end);
 
+/* More RAM above what pmem32_init() was given (the TT-RAM of an Atari, with
+ * ST-RAM below it): the pages in between are not the allocator's. */
+void pmem32_add(PADDR start, PADDR end);
+
 /* `pages` contiguous pages, the first at an address that is a multiple of
  * `align_pages` pages (a power of two); PMEM32_NONE if there are none.  The
  * pages are not cleared. */

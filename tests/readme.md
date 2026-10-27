@@ -313,7 +313,9 @@ The `falcon-mmu` image (#726: the Falcon ROM that runs in the upper half, with
 the 68030 MMU on from its first instruction) is run on the 68030 only, and so
 is `falcon-aspace` (#727: the same with an address space for every process; it
 has no VDI, so no blitter suites, and its shell is the test harness: `make
-test-hd-shell` makes its disk, `run-hatari-tests.py --mode f030a` runs it).
+test-hd-shell` makes its disk, `run-hatari-tests.py --mode f030a` runs it, and `--mode tta` on a TT with TT-RAM,
+where Hatari's `--conout` shows nothing and the result is read from the screen,
+which needs Pillow).
 
 `make x32-vdi-import-test` builds the native VDI import applications and
 malformed metadata fixtures in `obj/x32/VDI*.TOS`. Copy those files to the PC

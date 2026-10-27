@@ -522,6 +522,18 @@ the 68040, with the shape of the plan above.  What is particular to it:
     isolation suite, mmap, process_calls and the loaders pass; the hatari-tests
     job is falcon-aspace.  The 68030 itself is checked on Hatari's WinUAE
     core only (#737 covers the correctness fixes of newer ones).
+  - The TT (#728): the same image runs on Hatari's TT (--machine tt --cpulevel 3
+    --mmu on, 32-bit addressing, 10 MB of ST-RAM and 32 MB of TT-RAM;
+    run-hatari-tests.py --mode tta).  TT-RAM is not BDOS alternative RAM there
+    (altram_init() is not called: its addresses would be the physical ones, in
+    the lower half, which belongs to the processes): pmem32_add() gives its
+    pages to the page allocator, and they are reached through the window like
+    the ST-RAM ones.  The tree of atari_mmu.S maps the TT-RAM as it is; DMA does
+    not use it (the drivers bounce what is outside the ST-RAM of the window).
+    Hatari's --conout reads the arguments of the BIOS call from the stack as a
+    physical address, which a kernel in the window is not on a TT, so
+    run-hatari-tests.py reads the result from the screen (the font of the ROM)
+    in that mode.
 
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................

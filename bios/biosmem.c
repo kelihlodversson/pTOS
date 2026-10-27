@@ -84,6 +84,13 @@ static void process_memory_init(void)
         pool = POOL_MIN;
     memtop = (UBYTE *)(((ULONG)membot + pool) & ~0xfffUL);
     pmem32_init(pmem32_phys(memtop), pmem32_phys(phystop));
+#if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
+    /* TT-RAM is pages for the processes too, through the window (which maps
+     * it, doc/mmu-address-space.txt); it is not BDOS alternative RAM, whose
+     * addresses would be the physical ones, in the lower half */
+    if (ramtop)
+        pmem32_add((PADDR)(uintptr_t)TTRAM_START, (PADDR)(uintptr_t)ramtop);
+#endif
     if (!aspace_kernel_init())
         panic("no memory for the address spaces\n");
 }

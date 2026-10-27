@@ -670,7 +670,7 @@ falcon-aspace_defconfig (#727), the same ROM with CONF_WITH_PROCESS_ASPACES.  It
 has no desktop (the shell is the program EMUCON.TOS of the boot drive, or
 SHELL.TOS), and "make test-hd-shell" makes the test disk whose shell is the
 test harness, which tools/run-hatari-tests.py --mode f030a runs under Hatari
-the way CI does.  doc/mmu-address-space.txt describes the start and the
+the way CI does (--mode tta runs it on a TT, with TT-RAM).  doc/mmu-address-space.txt describes the start and the
 address spaces.
 
 PC (x86-64, UEFI boot)

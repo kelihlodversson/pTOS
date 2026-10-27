@@ -63,6 +63,26 @@ void pmem32_init(PADDR start, PADDR end)
     nfree = npages;
 }
 
+void pmem32_add(PADDR start, PADDR end)
+{
+    PADDR s = (start + PMEM32_PAGE - 1) & ~(PMEM32_PAGE - 1);
+    PADDR e = end & ~(PMEM32_PAGE - 1);
+    ULONG first, last, i;
+
+    if (!npages || s < first_phys + (PADDR)npages * PMEM32_PAGE || e <= s)
+        return;                         /* only above what is managed already */
+    first = (ULONG)((s - first_phys) / PMEM32_PAGE);
+    if (first >= MAX_PAGES)
+        return;
+    last = (ULONG)((e - first_phys) / PMEM32_PAGE);
+    if (last > MAX_PAGES || e - first_phys > (PADDR)MAX_PAGES * PMEM32_PAGE)
+        last = MAX_PAGES;
+    for (i = first; i < last; i++)      /* (the pages between stay in use) */
+        set_page(i, FALSE);
+    nfree += last - first;
+    npages = last;
+}
+
 /* the smallest page index >= i whose physical page number is a multiple of align */
 static ULONG align_up(ULONG i, ULONG align)
 {
