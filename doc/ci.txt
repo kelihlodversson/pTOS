@@ -1,0 +1,240 @@
+The checks of a pull request
+============================
+
+A pull request used to get 82 jobs from the four workflows in
+.github/workflows (build.yml, hatari-tests.yml, pbench.yml; release.yml only
+runs for a tag).  This file says what each of them covers that no other does,
+which ones a pull request no longer runs, and where the rest runs instead.
+(The audit is issue #625; the numbers are from the pull requests of the weeks
+before it was made.)
+
+What a pull request runs now is 16 jobs, and about a quarter less runner time
+(178 -> 133 minutes of jobs from the Hatari and build cuts, the Hatari ones
+being half of all of it; the combined jobs save the toolchain and runner
+setup of each job they replace, which has not been measured), and far less
+waiting for a runner: the repository has only so many at a time, and a run of
+82 jobs spent most of its wall-clock time (a median of 110 minutes for
+build.yml, for jobs of a minute each) in the queue.  The whole set of builds
+still runs on master (push), every night (schedule) and with "Run workflow"
+(workflow_dispatch); all 21 Hatari combinations run every night and on request
+(hatari-tests.yml has no push trigger); pBench (pbench.yml) runs on pull
+requests and on request only, as it did before.
+
+
+How it was audited
+------------------
+
+1. Code.  For each of the 47 configurations in configs/, the preprocessed
+   source of every object that "make" compiles was hashed (so a different
+   #if, a different include path or a different calling convention counts,
+   a different file list alone does not).  Two configurations compile the
+   same thing where those agree.  A greedy set cover over the 2608 different
+   (object, source) pairs needs 39 configurations; these are the ones that
+   compile nothing that the union of the others does not (a configuration may
+   still have a different image, link or test):
+
+     amiga, amiga-kickdisk   the same objects, with the same source (they
+                             differ in the image made from them)
+     rpi2, rpi2-test         the same, byte for byte, apart from the
+                             configuration values the code does not use
+     atari1024, atari512,    only covered by the rest, as sets of objects
+     virt-m68k, virt-m68k-cli, virt-m68k-cli-fastcall,
+     pc-x86_64-desktop-tests
+
+2. Runs.  The suites the Hatari jobs run are the same in every mode; those
+   that depend on the screen mode and the CPU are text_blit and raster_copy
+   (planes, the Falcon's data cache: tools/run-hatari-tests.py fails the run
+   if either skips itself); the others (tests/readme.md) are OS-level.
+
+3. History.  The Actions history of the pull requests: 190 runs of build.yml,
+   245 of hatari-tests.yml, 315 of pbench.yml.  A build job of a configuration
+   has failed alone (no other build job failing in the same run) in none of
+   those; build jobs fail in groups (14 of them together five times: shared
+   code that does not compile), so one of the group would have said as much.
+   What failed alone: "Release archives" (10 times, for instance a ROM image
+   over its size in a country that no per-configuration job builds), the x32 desktop
+   tests (pc-x86_64-desktop-tests*), the regression suites of pc-x86_64 and
+   raspi2b, and the Build jobs of hatari-tests.yml and pbench.yml (they build the
+   tests and pBench, which no other job does: 12 and 13 times).  The Hatari tests failed with a mode of their own once
+   (f040 in all three configurations at the same time) and once with
+   atari512-fastcall in low only.
+
+
+What is changed
+---------------
+
+- hatari-tests.yml: a pull request runs 7 of the 21 combinations: atari512 in
+  low, high, f030 and f040 (it is the one that exercises the screen-mode
+  dependent suites, and the data cache of the Falcon; med is the same code as
+  low with another plane count, so only low, the 16 colour ST mode, stands
+  for both) and atari512-fastcall in f040 (the calling convention at run
+  time, on the 68040).  atari512-extdesk is not run (the external desktop is
+  not mode dependent, and the 22 tests do not touch it), nor built, by a
+  pull request.  All 21 run every night and on request.  The job prints the
+  seconds of each in its summary.
+- build.yml: the configurations in .github/pr-skip-configs are not built by a
+  pull request (8 jobs), with the reason for each in that file.  The ones
+  whose kernel the regression jobs build (virt-arm-cli, virt-m68k-cli-elf,
+  virt-m68k-cli-fastcall, rpi2-test) are checked for warnings there now, as
+  their build jobs did.
+- build.yml and hatari-tests.yml also run on a schedule (nightly) with all of
+  the above.
+- Jobs that took a runner and a toolchain for a minute of work are combined,
+  one check of them after the other in a job (tools/ci-group.sh), each
+  failing on its own: the job goes on with the next one, names the failed ones
+  in annotations ("::error title=NAME") and in its summary, and fails at the
+  end.
+    build.yml, m68k and ARM configurations: 5 jobs, "build m68k-atari",
+      "-amiga", "-other", "arm-rpi", "arm-virt" (29 configurations on a pull
+      request, 37 on master), tools/ci-build.sh; the artifacts are per group
+      ("ptos-arm-rpi", a directory per configuration), and the SD card
+      image job takes the Raspberry Pi kernels from there
+    build.yml, x86-64: 3 jobs, "build x86-boot-a", "-boot-b", "-desktop"
+      (tools/ci-x86_64.sh and tools/ci-x86_64-boot.sh: the build, the VDI
+      contract, the boot under QEMU/OVMF or the desktop tests), the last one
+      also running the regression suite of pc-x86_64
+    build.yml, regression suites: 2 jobs, "regression arm" (virt-arm, its
+      traditional FAT variant, raspi2b) and "regression m68k" (virt-m68k and
+      its fastcall build), tools/ci-regression.sh
+    hatari-tests.yml: 1 job that builds the three systems and runs the tests
+      four at a time, one Hatari each, on the four CPUs of the runner
+      (Hatari's clock is the emulated one: the load does not change the
+      results; tools/ci-hatari.sh).  The job runs on an ubuntu-26.04 runner,
+      for its Hatari 2.6: the 2.4.1 of the 24.04 runner hangs the 68030
+      address-space runs (#727, #737).  pBench runs on the same, and its baselines
+      are made with it
+    pbench.yml: 1 job that builds the three systems and measures them one
+      after the other; each has its own report, its own comment on the pull
+      request, and a slowdown of any of them fails the job
+- The matrices are not worked out from configs/ by a job of their own (the
+  "Enumerate configurations" job, a few seconds that tested nothing):
+  .github/ci-configs says which group builds each configuration, and the "All
+  builds" job runs tools/check-ci-configs.sh, which fails when one is in none.
+
+The roll-up "All builds" asks for the result of the jobs it needs (build,
+x86_64, regression, release archives, SD card image).  The branch protection
+should require "All builds" (and the Hatari tests and pBench if they are to
+block a merge).  If the settings list single jobs by name, they have to follow
+the new names: the jobs of a group are one check, "build m68k-atari" and so
+on, "regression arm" and "regression m68k" replace the six "regression
+(...)", "Hatari tests" and "pBench" replace the "Build ..." / "Test ..." /
+"Measure ..." jobs, and "Enumerate configurations" is gone.  That is a
+repository setting that this change cannot make.
+
+
+Every check
+-----------
+
+(Listed by what each covers.  Most of them are no longer a check of their
+own: the builds, the boot tests and the regression suites are steps of the
+group jobs of "What is changed" above, and are named in the annotations and
+the summary of the job.)
+
+Builds (build.yml), one per configuration.  "Own" is the number of objects
+only that configuration compiles (the same source, the same preprocessing).
+
+  m68k, the Atari
+    atari192                  129 own    ROM of 192 KB; all countries in
+                                         "Release archives"; keep
+    atari256                  103        256 KB, -mfastcall; keep
+    atari512                    0        the default; also what Hatari and pBench
+                                         build and what is released; keep
+    atari512-fastcall           6        -mfastcall (21 sources differ); keep
+    atari512-kproc             81        kernel processes; keep
+    atari512-dispatch          46        trap dispatch table; keep
+    atari512-extdesk           21        external desktop; keep
+    atari1024                   0        a 1 MB image; covered; master only
+    aranym                     63        keep
+    cartridge                  76        keep
+    firebee, firebee-prg        4 each   keep both (the .prg is another product)
+    floppy                     11        keep
+    prg                         4        keep
+    m548x-bas, m548x-dbug       2, 12    keep
+    m548x-prg                  32        keep
+  m68k, the Amiga
+    amiga                       0        same code as amiga-kickdisk; master only
+    amiga-kickdisk              0        keep (it is the one "make release" builds)
+    amiga-vampire              23        keep
+    amigaflop                  17        keep
+    amigaflop-vampire          23        keep
+  m68k, virt-m68k (QEMU)
+    virt-m68k                   0        covered; master only
+    virt-m68k-fastcall          5        the fastcall build of the machine; keep
+    virt-m68k-cli               0        covered; master only
+    virt-m68k-cli-elf           6        built by regression (virt-m68k); master only
+    virt-m68k-cli-fastcall      0        built by regression (virt-m68k-fastcall);
+                                         master only
+  arm
+    rpi1                       24        keep
+    rpi2                        0        keep (the SD card image needs it)
+    rpi2-test                   0        same code as rpi2, built by regression
+                                         (raspi2b); master only
+    rpi2-kproc                 96        keep
+    rpi2-sparse                13        keep
+    rpi3                        1        one source differs from rpi2; keep (cheap,
+                                         and the SD card image needs it)
+    rpi4                       22        keep
+    virt-arm                    2        keep
+    virt-arm-cli               67        built by regression (virt-arm); master only
+    virt-arm-tc32               1        true colour 32 bit screen; keep
+  x86-64 (also: boot test, x32 VDI contract)
+    pc-x86_64, -vdi, -aes, -callbacks, -accessories, -accessories-340,
+    -desktop, -desktop-tests, -desktop-tests-340, -desktop-tests-builtin-cli
+                               3 .. 27   each boots or runs something of its
+                                         own; keep all
+
+Tests in an emulator:
+
+    regression (virt-arm), (virt-arm-traditional-fat), (raspi2b),
+    (virt-m68k), (virt-m68k-fastcall), (pc-x86_64)
+                               keep; each is another machine, kernel or FAT
+                               implementation
+    Test atari512, <mode>      low, high, f030, f040: keep; med nightly only
+    Test atari512-fastcall     f040: keep; low, med, high, f030 nightly only
+    Test atari512-extdesk      nightly only
+    Build atari512, -fastcall, -extdesk (hatari-tests.yml)
+                               build the test disk, which no other job does;
+                               keep (see "Not done")
+
+Measurements (pbench.yml):
+
+    Build atari256, atari512, atari512-fastcall, Measure atari256, atari512,
+    atari512-fastcall          keep; the Falcon text tests of the three are
+                               a few percent off their baseline, which are the
+                               baselines' business, not the audit's
+
+Packaging (build.yml):
+
+    Enumerate configurations   a no-op of a few seconds that took a check and
+                               a runner start to compute a list that rarely
+                               changes: gone.  The groups are static in
+                               build.yml, .github/ci-configs says which
+                               configuration is in which, and the "All builds"
+                               job runs tools/check-ci-configs.sh, which fails
+                               when a configuration is in none
+    x32 ELF shared-library metadata
+                               keep; the only job that tests the x32 loader on
+                               the host
+    Release archives           keep; the only job that builds every country of
+                               the 192 KB and 256 KB images (and checks their
+                               ROM sizes), and "make release" itself
+    Raspberry Pi SD card image keep
+    All builds                 keep (the roll-up)
+
+
+Not done (needs a decision)
+---------------------------
+
+- atari512, atari256 and atari512-fastcall are built three times by a pull
+  request (build.yml, hatari-tests.yml, pbench.yml; the tests need the test
+  disk and pBench's program, which the others do not).  They could take the
+  kernel image from the build job, but the artifact of one workflow is not
+  available to another one; moving the three workflows into build.yml (with
+  needs:) would remove them, and put the roll-up in charge of the Hatari and
+  pBench results too.
+- "Release archives" (7 minutes) builds the images one after the other (the
+  256 KB and 192 KB ones for all countries); one job per archive would run
+  them in parallel.
+- The x32 job ("x32 ELF shared-library metadata") is not in the roll-up: a
+  pull request can be green in "All builds" with it red.  Whether it should
+  block a merge is a decision, not an audit finding.

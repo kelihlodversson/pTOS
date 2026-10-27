@@ -1,8 +1,9 @@
 #
 # Regression tests under Hatari: runtests.tos (tests/, doc in tests/readme.md)
 # on the test disk, on an emulated STE in the three ST screen modes and on an
-# emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725).
-# The two blitter suites
+# emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725);
+# falcon-mmu (the Falcon ROM with the kernel in the upper half, #726) runs on
+# the 68030 only.  The two blitter suites
 # (text_blit and raster_copy) compare the blitter with the CPU path pixel by
 # pixel, and have to run, not skip themselves, on every one of them; the
 # Falcon is the one with a data cache (the blitter paths flush and invalidate
@@ -11,16 +12,16 @@
 # atari512-fastcall is the same image built with -mfastcall, which is the
 # only place its code is tested under that calling convention at run time.
 #
-# falcon-mmu is the Falcon ROM with the kernel in the upper half, running with
-# the 68030 MMU on from its first instruction (#726): it is tested on the
-# emulated 68030 only.
-#
 
 name: Hatari tests
 
 on:
   pull_request:
     branches: [master, "epic/**"]
+  # every configuration in every screen mode, which a pull request does not
+  # run (see the matrix of the test job)
+  schedule:
+    - cron: '23 3 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -31,12 +32,14 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build ${{ matrix.config }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu]
+  # One job: the three systems are built (a minute or so each, with their test
+  # disk), then the tests run several at a time, one Hatari each, on the four
+  # CPUs of the runner.  The runner is an Ubuntu 26.04, for its Hatari 2.6: the
+  # 2.4.1 of the 24.04 hangs the 68030 address-space runs (#727, #737).
+  hatari:
+    name: Hatari tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,63 +50,34 @@ jobs:
           arch: m68k
 
       # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh)
-      - name: Install the disk image tools
-        run: sudo apt-get install -y --no-install-recommends dosfstools mtools
-
-      - name: Build the system and the test disk
-        run: |
-          make "${{ matrix.config }}_defconfig"
-          make
-          make test-hd
-          mkdir products
-          cp ptos512k.img products/system.img
-          cp test-hd.img products/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hatari-tests-${{ matrix.config }}
-          path: products/
-          retention-days: 7
-
-  test:
-    name: Test ${{ matrix.config }}, ${{ matrix.mode }}
-    needs: build
-    # Hatari comes from the distribution's packages, which the 22.04 of the
-    # build's runner has an old version of.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        config: [atari512, atari512-fastcall, atari512-kproc, atari512-extdesk, falcon-mmu]
-        mode: [low, med, high, f030, f040]
-        # falcon-mmu is the Falcon ROM with the kernel in the upper half and
-        # the 68030 MMU on from its first instruction (#726): a 68030 only
-        exclude:
-          - {config: falcon-mmu, mode: low}
-          - {config: falcon-mmu, mode: med}
-          - {config: falcon-mmu, mode: high}
-          - {config: falcon-mmu, mode: f040}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: hatari-tests-${{ matrix.config }}
-          path: products
-
-      - name: Install Hatari
+      - name: Install Hatari and the disk image tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hatari
+          sudo apt-get install -y --no-install-recommends hatari dosfstools mtools
           hatari --version || true     # (it exits with 1)
 
-      # Four to ten minutes (the Falcon modes run with the MMU on, which makes
-      # the 68040 one the slowest); fifteen is for one that hangs, well below
-      # the job's 30 minutes, which would cancel the reporting too
-      - name: Run the tests under Hatari
-        timeout-minutes: 20
+      - name: Build the systems and the test disks
         run: |
-          python3 tools/run-hatari-tests.py --tos products/system.img \
-            --disk products/test-hd.img --mode "${{ matrix.mode }}" \
-            --timeout 900
+          mkdir products
+          configs="atari512 atari512-fastcall atari512-kproc falcon-mmu"
+          # a pull request does not run atari512-extdesk (doc/ci.txt)
+          [ "${{ github.event_name }}" = pull_request ] || configs="$configs atari512-extdesk"
+          for config in $configs; do
+            make distclean >/dev/null 2>&1
+            make "${config}_defconfig"
+            make
+            make test-hd
+            mkdir "products/$config"
+            cp ptos512k.img "products/$config/system.img"
+            cp test-hd.img "products/$config/"
+          done
+
+      # What a pull request runs is chosen from what depends on the mode and
+      # on the kernel (doc/ci.txt); master's nightly run and a manual one go
+      # through every combination (tools/ci-hatari.sh).  A run takes three to
+      # six minutes on a quiet runner, twice that on a busy one; twenty is for one that
+      # hangs, well below the job's time.
+      - name: Run the tests under Hatari
+        env:
+          EVENT: ${{ github.event_name }}
+        run: tools/ci-hatari.sh

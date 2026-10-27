@@ -23,6 +23,10 @@ on:
     branches: [master, "epic/**"]
   pull_request:
     branches: [master, "epic/**"]
+  # every configuration, including those .github/pr-skip-configs leaves out of
+  # a pull request, once a night
+  schedule:
+    - cron: '41 2 * * *'
   workflow_dispatch:
 
 # Superseded runs of a pull request are of no interest.  Runs on master are
@@ -125,78 +129,24 @@ jobs:
           retention-days: 14
 
 
-  # The matrices are derived from configs/ instead of being written out here,
-  # so that adding a configuration automatically makes it a compatibility
-  # check without anyone having to remember this file.
-  configurations:
-    name: Enumerate configurations
-    runs-on: ubuntu-latest
-    outputs:
-      m68k: ${{ steps.enumerate.outputs.m68k }}
-      arm: ${{ steps.enumerate.outputs.arm }}
-      x86_64: ${{ steps.enumerate.outputs.x86_64 }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Split the configurations by architecture
-        id: enumerate
-        run: |
-          # ["rpi1","rpi2"] from a space separated list, [] when it is empty.
-          # Written out by hand rather than with jq, so that this job needs
-          # nothing beyond the shell.  A defconfig name never needs escaping.
-          to_json() {
-            local out= sep=
-            for name in $1; do
-              out="$out$sep\"$name\""
-              sep=,
-            done
-            printf '[%s]' "$out"
-          }
-
-          m68k=
-          arm=
-          x86_64=
-          for config in configs/*_defconfig; do
-            name=$(basename "$config" _defconfig)
-            # MACHINE_RPI or MACHINE_VIRT_ARM is what selects the ARM
-            # architecture, MACHINE_PC_X86_64 the x86-64 one; everything
-            # else in configs/ is m68k or ColdFire.
-            if grep -qE '^MACHINE_(RPI|VIRT_ARM)=y' "$config"; then
-              arm="$arm $name"
-            elif grep -qE '^MACHINE_PC_X86_64=y' "$config"; then
-              x86_64="$x86_64 $name"
-            else
-              m68k="$m68k $name"
-            fi
-          done
-
-          # One JSON array per architecture, for the matrices below.
-          echo "m68k=$(to_json "$m68k")" >>"$GITHUB_OUTPUT"
-          echo "arm=$(to_json "$arm")" >>"$GITHUB_OUTPUT"
-          echo "x86_64=$(to_json "$x86_64")" >>"$GITHUB_OUTPUT"
-
-          {
-            echo '## Configurations to build'
-            echo
-            echo "m68k:$m68k"
-            echo
-            echo "arm:$arm"
-            echo
-            echo "x86_64:$x86_64"
-          } >>"$GITHUB_STEP_SUMMARY"
-
-  m68k:
-    # The configuration name is the job name, so a failure is identified by
-    # the entry in the checks list, without opening any logs.
-    name: ${{ matrix.config }}
-    needs: configurations
+  # A few configurations to a job, one after the other (tools/ci-group.sh):
+  # the job's own cost (a runner, the toolchain) is more than a
+  # configuration's.  Every configuration is still an independent
+  # compatibility check: one that fails does not stop the others, and is named
+  # in the annotations and in the job's summary.
+  build:
+    name: build ${{ matrix.group }}
     runs-on: ubuntu-latest
     strategy:
-      # Every configuration is an independent compatibility check, so one
-      # failure must not hide the state of the others.
       fail-fast: false
       matrix:
-        config: ${{ fromJSON(needs.configurations.outputs.m68k) }}
+        # The configurations of a group are in .github/ci-configs
+        include:
+          - {group: m68k-atari, arch: m68k}
+          - {group: m68k-amiga, arch: m68k}
+          - {group: m68k-other, arch: m68k}
+          - {group: arm-rpi, arch: arm}
+          - {group: arm-virt, arch: arm}
     steps:
       # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
@@ -205,107 +155,32 @@ jobs:
 
       - uses: ./.github/actions/setup-toolchain
         with:
-          arch: m68k
+          arch: ${{ matrix.arch }}
 
-      - name: Build ${{ matrix.config }}
-        env:
-          CONFIG: ${{ matrix.config }}
-        run: |
-          set -o pipefail   # tee below must not hide a failing make
-          # Kconfig warns about a discarded assignment only here, so the
-          # log starts with the defconfig
-          make "${CONFIG}_defconfig" 2>&1 | tee build.log
-          make 2>&1 | tee -a build.log
-          # every configuration builds without warnings (#584): keep it so
-          tools/check-build-warnings.sh build.log
-
-      - name: Collect the build products
-        run: |
-          mkdir products
-          # The name of the image depends on the configuration, so take
-          # whatever the build produced rather than guessing.
-          for product in *.img *.prg *.st *.s19 *.stc *.rom *.adf *.sym emutos.map; do
-            if [ -e "$product" ]; then
-              cp "$product" products/
-            fi
-          done
-          ls -l products
+      - name: Build the configurations
+        run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: ptos-${{ matrix.config }}
+          name: ptos-${{ matrix.group }}
           path: products/
           retention-days: 14
 
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
-
-  arm:
-    name: ${{ matrix.config }}
-    needs: configurations
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        config: ${{ fromJSON(needs.configurations.outputs.arm) }}
-    steps:
-      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
-      - uses: actions/checkout@v4
-        with:
-          # CONF_EXTERNAL_CLI builds EmuCON against the libcmini submodule
-          submodules: true
-
-      - uses: ./.github/actions/setup-toolchain
-        with:
-          arch: arm
-
-      - name: Build ${{ matrix.config }}
-        env:
-          CONFIG: ${{ matrix.config }}
-        run: |
-          set -o pipefail   # tee below must not hide a failing make
-          # Kconfig warns about a discarded assignment only here, so the
-          # log starts with the defconfig
-          make "${CONFIG}_defconfig" 2>&1 | tee build.log
-          make 2>&1 | tee -a build.log
-          # every configuration builds without warnings (#584): keep it so
-          tools/check-build-warnings.sh build.log
-
-      - name: Collect the build products
-        run: |
-          mkdir products
-          # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
-          # ELF the image was extracted from, which still has the symbols,
-          # EmuCON and EmuDesk, the programs CONF_EXTERNAL_CLI and
-          # CONF_EXTERNAL_DESK load from the boot drive.
-          for product in *.img emutos.elf emutos.map cli/emucon.tos emudesk.prg; do
-            if [ -e "$product" ]; then
-              cp "$product" products/
-            fi
-          done
-          ls -l products
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ptos-${{ matrix.config }}
-          path: products/
-          retention-days: 14
-
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
-
+  # The same for the x86-64 configurations, which also boot what they built
+  # under QEMU and OVMF, or run the external desktop tests, and for the
+  # regression suite of pc-x86_64, which builds pc-x86_64-desktop again
+  # (tools/ci-x86_64.sh, tools/ci-regression.sh).
   x86_64:
-    name: ${{ matrix.config }}
-    needs: configurations
+    name: build ${{ matrix.group }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        config: ${{ fromJSON(needs.configurations.outputs.x86_64) }}
+        include:
+          - {group: x86-boot-a}
+          - {group: x86-boot-b}
+          - {group: x86-desktop}
     steps:
       # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
@@ -316,407 +191,48 @@ jobs:
         with:
           arch: x86_64
 
-      - name: Build ${{ matrix.config }}
-        env:
-          CONFIG: ${{ matrix.config }}
+      # (the regression suite also wants the fonts of the gdos_answer suite:
+      # see the regression job)
+      - name: Install QEMU and OVMF
         run: |
-          set -o pipefail   # tee below must not hide a failing make
-          # Kconfig warns about a discarded assignment only here, so the
-          # log starts with the defconfig
-          make "${CONFIG}_defconfig" 2>&1 | tee build.log
-          # CI deliberately uses Ubuntu's native gcc/binutils instead of the
-          # x86_64-elf- cross toolchain selected by the developer default.
-          make CROSS_COMPILE= 2>&1 | tee -a build.log
-          tools/check-build-warnings.sh build.log
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 ovmf dosfstools mtools
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf \
+              fonts-liberation
+          python3 -m pip install fonttools
 
-      - name: Check the x32 VDI parameter contract
-        run: make CROSS_COMPILE= vdi-contract-test
+      - name: Build and test the configurations
+        run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-x86_64.sh
 
-      - name: Collect the build products
-        run: |
-          mkdir products
-          # The PE32+ EFI application, plus the map file with its symbols.
-          for product in *.efi emutos.map cli/emucon.tos emudesk.prg; do
-            if [ -e "$product" ]; then
-              cp "$product" products/
-            fi
-          done
-          ls -l products
+      # The regression suite of pc-x86_64 (a desktop, started from
+      # tests/emudesk.inf), after the configurations: it is its own check
+      - name: Run the regression suite
+        if: matrix.group == 'x86-desktop' && !cancelled()
+        run: tools/ci-group.sh --names pc-x86_64 tools/ci-regression.sh
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: ptos-${{ matrix.config }}
+          name: ptos-${{ matrix.group }}
           path: products/
           retention-days: 14
 
-      # A build that links is not a build that boots: without this, a
-      # regression in the boot path, the trap-dispatch/machine-hook layer,
-      # or the exception/panic path would still show as a green job, since
-      # nothing above actually runs the image. pc-x86_64 and
-      # pc-x86_64-eager boot this way (EFI/OVMF); a future non-EFI x86-64
-      # config would need its own check instead of this one.
-      - name: Install QEMU and OVMF for the boot test
-        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || startsWith(matrix.config, 'pc-x86_64-accessories') || startsWith(matrix.config, 'pc-x86_64-desktop-tests') || matrix.config == 'pc-x86_64-eager'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y qemu-system-x86 ovmf
-
-      # Booted the same way ptos-smoketest documents: a synthesized FAT ESP
-      # directory (QEMU's fat: driver), OVMF firmware, -machine pc (legacy
-      # IDE, which OVMF's boot manager auto-discovers the ESP through --
-      # q35/AHCI needs more setup, not verified here). This deliberately
-      # keeps the default EmuCON image headless; the separate GOP/AES
-      # desktop smoke test is visual. -cpu qemu64,+pdpe1gb is required: the physical-memory
-      # direct map needs 1 GiB pages (#344), which QEMU's default qemu64
-      # CPU model does not advertise on its own.
-      #
-      # pTOS never exits on its own once it reaches the shell -- it waits
-      # for keyboard input forever -- so `timeout` is expected to be what
-      # ends the process, not a status. That is why the exit code is
-      # checked explicitly instead of just letting the step fail or
-      # succeed on it: 124 means the timeout fired (the normal case here),
-      # anything else means QEMU itself exited unexpectedly.
-      - name: Boot-test under QEMU/OVMF
-        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || startsWith(matrix.config, 'pc-x86_64-accessories') || matrix.config == 'pc-x86_64-eager'
-        run: |
-          mkdir -p esp/EFI/BOOT
-          cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
-          # EmuCON, the x32 program the kernel loads from the boot drive
-          cp cli/emucon.tos esp/EMUCON.TOS
-          # a real x32 ELF on the boot drive: the self-test runs it through
-          # Pexec() from a ring-3 process (nested launch), as EmuCON does
-          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
-          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
-            make CROSS_COMPILE= -j2 x32-accessory-test
-            cp obj/x32/*.ACC esp/
-          fi
-          cp obj/x32/VDI*.TOS obj/x32/AES*.TOS esp/
-          cp obj/x32/x32probe.elf esp/X32AES.TOS
-          cp obj/x32/x32probe.elf esp/X32CB.TOS
-          cp x32hello.elf esp/X32HELLO.TOS
-          # The optional VDI self-test loads a second client while the first
-          # still owns a workstation, to check process isolation.
-          cp obj/x32/x32probe.elf esp/X32VDI.TOS
-          # the same program linked for another address, which Pexec() has to
-          # move into the image window and relocate
-          cp x32reloc.elf esp/X32RELOC.TOS
-          # ... and one linked for another address without relocations, which
-          # must be refused
-          cp x32noreloc.elf esp/X32NOREL.TOS
-          # ... and one with a 6 MiB bss, loaded by PE_LOAD straight into the
-          # caller's heap
-          cp x32big.elf esp/X32BIG.TOS
-          # ... and one cut short, whose loading fails halfway
-          head -c 2000 x32hello.elf > esp/X32TRUNC.TOS
-          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
-
-          rm -f boot.log boot-monitor.sock
-          aes_input_pid=
-          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
-            python3 tests/x32_accessory/drive_input.py boot.log boot-monitor.sock &
-            aes_input_pid=$!
-          fi
-          set +e
-          timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-            -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
-            -drive format=raw,file=fat:rw:esp \
-            -serial file:boot.log -display none \
-            -monitor unix:boot-monitor.sock,server=on,wait=off
-          qemu_exit=$?
-          aes_input_exit=0
-          if [ -n "$aes_input_pid" ]; then
-            wait "$aes_input_pid"
-            aes_input_exit=$?
-          fi
-          set -e
-
-          echo "::group::Serial console log"
-          cat boot.log
-          echo "::endgroup::"
-
-          if [ "$aes_input_exit" != 0 ]; then
-            echo "::error::typed AES PS/2 input regression failed"
-            exit 1
-          fi
-          if [ "$qemu_exit" != 124 ]; then
-            echo "::error::qemu-system-x86_64 exited with code $qemu_exit instead of running until the timeout killed it -- that means it never reached the shell (where it would otherwise wait for input forever)"
-            exit 1
-          fi
-
-          # A triple fault (a page-table, GDT/IDT or ABI bug) makes OVMF
-          # silently reset the VM and retry, which shows up as the boot
-          # progress lines repeating -- so exactly one attempt is part of
-          # the pass signal, not just "did it get far enough".
-          entries=$(grep -c 'EFI entry reached' boot.log || true)
-          if [ "$entries" != 1 ]; then
-            echo "::error::expected exactly one 'EFI entry reached' line, found $entries -- likely a reset/triple-fault loop"
-            exit 1
-          fi
-
-          if grep -q '^panic:' boot.log; then
-            echo "::error::the kernel panicked during boot"
-            exit 1
-          fi
-
-          # The memory-management self-test (bios/machine/pc-x86_64/memtest.c,
-          # #362) repeats process create/exit and injected-failure cycles
-          # and requires every allocator to return to its starting state:
-          # a leaked mapping, page-table or backing page, KPROC record or
-          # kernel-heap block fails it.
-          if grep -q 'x86-64 memtest: FAIL' boot.log; then
-            echo "::error::the boot-time memory-management self-test failed"
-            exit 1
-          fi
-          if ! grep -q 'x86-64 memtest: PASS' boot.log; then
-            echo "::error::the boot-time memory-management self-test never reported PASS"
-            exit 1
-          fi
-          if ! grep -q 'x86-64 AES client: PASS' boot.log || ! grep -q 'x86-64 AES imports: PASS' boot.log; then
-            echo "::error::AES clients, process coordination, imports or baseline refusal did not pass"
-            exit 1
-          fi
-          if ! grep -q 'x86-64 user callbacks: PASS' boot.log; then
-            echo "::error::typed callbacks, nesting, alternate stacks, faults or baseline refusal failed"
-            exit 1
-          fi
-          if ! grep -q 'x86-64 VDI imports: PASS' boot.log; then
-            echo "::error::VDI import resolution, isolation or baseline refusal did not pass"
-            exit 1
-          fi
-          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI client: PASS' boot.log; then
-            echo "::error::the ring-3 VDI client, validation and ownership tests did not pass"
-            exit 1
-          fi
-          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI padded pitch: PASS' boot.log; then
-            echo "::error::VDI initialization or drawing corrupted padded framebuffer rows"
-            exit 1
-          fi
-          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI coordinate bounds: PASS' boot.log; then
-            echo "::error::VDI coordinate bounds or large-screen drawing checks did not pass"
-            exit 1
-          fi
-
-          # The self-test also launches real ring-3 x32 processes
-          # (tests/x32_probe/): entry state and selectors, a GEMDOS call
-          # across the syscall boundary, fault containment, private pages.
-          # Its deliberate faults print "process fault:" lines BEFORE the
-          # PASS line; any such line after it is the built-in EmuCON itself
-          # faulting.
-          if ! grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config &&
-             sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
-            echo "::error::the ring-3 EmuCON faulted"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 nested pexec: PASS' boot.log; then
-            echo "::error::a ring-3 process could not run a child through Pexec() and resume"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 private heap: PASS' boot.log; then
-            echo "::error::a loaded x32 program could not use its private Malloc() memory"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 private image: PASS' boot.log; then
-            echo "::error::a new process did not get its image in the image window"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 unaligned relocation: PASS' boot.log; then
-            echo "::error::a program linked for another address was not relocated correctly"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 pexec go gives back: PASS' boot.log; then
-            echo "::error::PE_GO did not give the loaded program's pages back"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 pexec go gives back with a gap: PASS' boot.log; then
-            echo "::error::PE_GO did not find the loaded program's pages after the child allocated below them"
-            exit 1
-          fi
-
-          # pc-x86_64-eager is built without demand paging (#562): the
-          # Psetlimit and demand-paging probes, which need it, say SKIP, and
-          # the eager one runs instead
-          if [ "${{ matrix.config }}" = pc-x86_64-eager ]; then
-            if ! grep -q 'x86-64 no demand paging: PASS' boot.log; then
-              echo "::error::without demand paging, a process's memory was not backed when handed out, or Malloc(-1) promised more"
-              exit 1
-            fi
-          else
-            if ! grep -q 'x86-64 psetlimit: PASS' boot.log; then
-              echo "::error::Psetlimit did not set, report or pass on the limits and the stack size"
-              exit 1
-            fi
-
-            if ! grep -q 'x86-64 demand paging: PASS' boot.log; then
-              echo "::error::a process's Malloc() memory and stack were not backed on first touch"
-              exit 1
-            fi
-          fi
-
-          if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then
-            echo "::error::PE_LOAD did not take a program bigger than the image window"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 pexec truncated: PASS' boot.log; then
-            echo "::error::a failed load did not leave the loader in its own address space"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 ancestors: PASS' boot.log; then
-            echo "::error::a ring-3 grandchild did not see its ancestors' basepages"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 nested fault: PASS' boot.log; then
-            echo "::error::a ring-3 process did not survive its child's fault and resume"
-            exit 1
-          fi
-
-          if ! grep -q 'x86-64 nested ptermres: PASS' boot.log; then
-            echo "::error::a ring-3 process could not keep launching children that stay resident"
-            exit 1
-          fi
-
-          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
-            python3 tests/x32_accessory/check_boot.py boot.log
-            exit 0
-          fi
-
-          # EmuCON is an x32 program run in ring 3 -- not linked into the
-          # kernel -- loaded from the boot drive as EMUCON.TOS (the kernel
-          # says "EmuCON: ..." when it cannot), so its banner can only come
-          # from that process.
-          if grep -Eq '^EmuCON: (cannot|this system has no built-in shell)' boot.log; then
-            echo "::error::the kernel could not start the ring-3 EmuCON"
-            exit 1
-          fi
-          if ! grep -q 'Welcome to EmuCON2' boot.log; then
-            echo "::error::never reached the EmuCON2 shell prompt"
-            exit 1
-          fi
-
-          echo "Boot test passed: reached the ring-3 EmuCON2 shell, no reset loop, no panic."
-
-      - name: Exercise the external ring-3 desktop
-        if: startsWith(matrix.config, 'pc-x86_64-desktop-tests')
-        run: |
-          make CROSS_COMPILE= -j2 x32-desktop-test x32-desktop-window-test
-          console_args=()
-          if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
-            console_args+=(--embedded-console)
-          fi
-          python3 tests/x32_desktop/run.py --output obj/x32-desktop-runtime "${console_args[@]}"
-
-      - uses: actions/upload-artifact@v4
-        if: always() && startsWith(matrix.config, 'pc-x86_64-desktop-tests')
-        with:
-          name: desktop-runtime-${{ matrix.config }}
-          path: obj/x32-desktop-runtime/
-          retention-days: 14
-
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
-
-  # The regression suite (tests/, `make test-dir`) run under QEMU.  The virt
-  # machines are built without the AES (the *-cli configurations) so that
-  # they boot to EmuCON, where tools/run-regression-tests.sh types the name
-  # of the suite into the serial console. The x32 and Pi desktops start it
-  # from tests/emudesk.inf's autorun line. See tests/readme.md.
+  # The regression suite (tests/, `make test-dir`) under QEMU on the virt and
+  # Raspberry Pi machines (tools/ci-regression.sh; the pc-x86_64 one is in the
+  # x86_64 job above): the machines of an architecture to a job.
   regression:
-    name: regression (${{ matrix.machine }})
-    needs: configurations
-    runs-on: ${{ matrix.runner }}
+    name: regression ${{ matrix.arch }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - machine: virt-arm
-            config: virt-arm-cli
-            arch: arm
-            runner: ubuntu-latest
+          - arch: arm
+            machines: virt-arm virt-arm-traditional-fat raspi2b virt-arm-aspace raspi2b-aspace
             qemu: qemu-system-arm
-            make_args: ''
-          # Exercise the small-ROM deletion implementation on a board
-          # that can run the complete regression suite automatically.
-          - machine: virt-arm-traditional-fat
-            script_machine: virt-arm
-            config: virt-arm-cli
-            arch: arm
-            runner: ubuntu-latest
-            qemu: qemu-system-arm
-            make_args: ''
-            traditional_fat: true
-          # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
-          # screen of the Pi's framebuffer.  The desktop starts the suite
-          # (tests/emudesk.inf) and the console is on the UART as well
-          # (rpi2-test_defconfig), where the script reads the verdict; no
-          # shutdown checks, which type into EmuCON
-          - machine: raspi2b
-            config: rpi2-test
-            arch: arm
-            runner: ubuntu-latest
-            qemu: qemu-system-arm
-            make_args: ''
-          - machine: virt-m68k
-            config: virt-m68k-cli-elf
-            arch: m68k
-            runner: ubuntu-latest
+          - arch: m68k
+            machines: virt-m68k virt-m68k-fastcall virt-m68k-mmu virt-m68k-aspace
             qemu: qemu-system-misc
-            make_args: ''
-          # the register-argument calling convention (-mfastcall): the VDI's scalable fonts call
-          # FreeType on a stack of its own, which it has to survive
-          - machine: virt-m68k-fastcall
-            script_machine: virt-m68k
-            config: virt-m68k-cli-fastcall
-            arch: m68k
-            runner: ubuntu-latest
-            qemu: qemu-system-misc
-            make_args: ''
-          # the higher-half kernel with the 68040 MMU on (#569)
-          - machine: virt-m68k-mmu
-            config: virt-m68k-mmu
-            arch: m68k
-            runner: ubuntu-latest
-            qemu: qemu-system-misc
-            make_args: ''
-          # every process in an address space of its own, user mode and page
-          # tables per process (#568, #570)
-          - machine: virt-m68k-aspace
-            config: virt-m68k-aspace
-            arch: m68k
-            runner: ubuntu-latest
-            qemu: qemu-system-misc
-            make_args: ''
-          - machine: virt-arm-aspace
-            script_machine: virt-arm
-            config: virt-arm-aspace
-            arch: arm
-            runner: ubuntu-latest
-            qemu: qemu-system-arm
-            make_args: ''
-          # EmuCON on the UART; no shutdown checks (QEMU's raspi2b does not switch off)
-          - machine: raspi2b-aspace
-            config: rpi2-aspace
-            arch: arm
-            runner: ubuntu-latest
-            qemu: qemu-system-arm
-            make_args: ''
-          - machine: pc-x86_64
-            config: pc-x86_64-desktop
-            arch: x86_64
-            runner: ubuntu-latest
-            qemu: qemu-system-x86 ovmf
-            # native gcc, as in the x86_64 build job above
-            make_args: CROSS_COMPILE=
     steps:
       - uses: actions/checkout@v4
         with:
@@ -740,30 +256,9 @@ jobs:
           # selects its own Python, which the system's packages are not for)
           python3 -m pip install fonttools
 
-      - name: Build the kernel and the test programs
-        env:
-          CONFIG: ${{ matrix.config }}
-          MAKE_ARGS: ${{ matrix.make_args }}
-          TRADITIONAL_FAT: ${{ matrix.traditional_fat || false }}
-        run: |
-          make "${CONFIG}_defconfig"
-          if [ "$TRADITIONAL_FAT" = true ]; then
-            sed -i 's/^CONF_WITH_FAT_FILE_LIFETIMES=y$/# CONF_WITH_FAT_FILE_LIFETIMES is not set/' .config
-          fi
-          make $MAKE_ARGS
-          make $MAKE_ARGS test-dir
-
       - name: Run the regression suite
-        run: tools/run-regression-tests.sh ${{ matrix.script_machine || matrix.machine }}
+        run: tools/ci-group.sh --names "${{ matrix.machines }}" tools/ci-regression.sh
 
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=regression (${{ matrix.machine }})::the regression suite failed on ${{ matrix.machine }}"
-
-  # An m68k image that needs the PMMU (CONF_REQUIRE_PMMU, #564) must stop
-  # with a message on a CPU without one, and boot on a 68040: boot it on
-  # both under QEMU's virt machine and look at the serial console.
   pmmu-check:
     name: PMMU startup check (virt-m68k-mmu)
     runs-on: ubuntu-latest
@@ -827,21 +322,19 @@ jobs:
 
   raspi-sdcard:
     name: Raspberry Pi SD card image
-    needs: [arm]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # The kernel images the arm matrix above already built for rpi1-4 --
-      # rebuilding them here too would just double the wait.  rpi2-sparse is
-      # a VDI test variant of rpi2, not part of the SD card; the pattern's
-      # single-digit character class excludes it (and the virt-arm ones,
-      # which are QEMU-only and have no kernel*.img at all).
+      # The kernel images the arm-rpi job above already built for rpi1-4 --
+      # rebuilding them here too would just double the wait.  The artifact
+      # also holds rpi2-kproc, rpi2-sparse and rpi2-test, which are VDI and
+      # test variants and not part of the SD card: they are not copied.
       - name: Collect the rpi1-4 kernel images
         uses: actions/download-artifact@v4
         with:
-          pattern: ptos-rpi[1-4]
-          merge-multiple: true
+          name: ptos-arm-rpi
           path: raspi-build
 
       # mtools/dosfstools build the FAT16 partition and fdisk provides sfdisk
@@ -866,7 +359,7 @@ jobs:
           archive="ptos-raspi-$VERSION"
           mkdir -p "sdcard/$archive"
 
-          cp raspi-build/kernel*.img "sdcard/$archive"/
+          cp raspi-build/rpi[1-4]/kernel*.img "sdcard/$archive"/
           cp sdcard/raspi-firmware/* "sdcard/$archive"/
           rm -r sdcard/raspi-firmware
 
@@ -874,8 +367,8 @@ jobs:
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
           make release-raspi-resources DEST="sdcard/$archive" \
-            RASPI_EMUCON=raspi-build/emucon.tos \
-            RASPI_EMUDESK=raspi-build/emudesk.prg
+            RASPI_EMUCON=raspi-build/rpi2/emucon.tos \
+            RASPI_EMUDESK=raspi-build/rpi2/emudesk.prg
 
           # The default scalable fonts (DejaVu, with their licence), which
           # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive
@@ -900,40 +393,40 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [configurations, m68k, arm, x86_64, regression, pmmu-check, release-archives, raspi-sdcard]
+    needs: [build, x86_64, regression, pmmu-check, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      # The matrices are not worked out from configs/ (a job of its own for
+      # a list that rarely changes): this fails when a configuration is not
+      # in .github/ci-configs or the x86_64 matrix, so that none is left out.
+      - name: Check that every configuration is built
+        run: tools/check-ci-configs.sh
+
       - name: Check the results
+        if: ${{ !cancelled() }}
         run: |
-          echo "m68k configurations:   ${{ needs.m68k.result }}"
-          echo "arm configurations:    ${{ needs.arm.result }}"
+          echo "m68k and arm builds:   ${{ needs.build.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
-          echo "PMMU startup check:    ${{ needs.pmmu-check.result }}"
+          echo "PMMU startup check:     ${{ needs.pmmu-check.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
           ok=true
-          [ '${{ needs.m68k.result }}' = success ] || ok=false
-          [ '${{ needs.arm.result }}' = success ] || ok=false
-          # A matrix with no configurations (no MACHINE_PC_X86_64=y defconfig
-          # exists yet on this branch) generates no x86_64 job at all, and
-          # GitHub then reports needs.x86_64.result as "failure" rather than
-          # "skipped" -- so the x86_64 job's result only counts when its
-          # matrix was actually non-empty.
-          if [ '${{ needs.configurations.outputs.x86_64 }}' != '[]' ]; then
-            [ '${{ needs.x86_64.result }}' = success ] || ok=false
-          fi
+          [ '${{ needs.build.result }}' = success ] || ok=false
+          [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
           [ '${{ needs.pmmu-check.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 
           if ! $ok; then
-            echo "::error::at least one required job failed (configuration build, regression suite, PMMU startup check, release archives or SD card image): see the results above"
+            echo "::error::at least one required job failed (configuration build, regression suite, release archives or SD card image): see the results above"
             exit 1
           fi
