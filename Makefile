@@ -376,7 +376,7 @@ DEPFLAGS = -MMD -MP
 # Link-time optimization, see BUILD_LTO in Kconfig.machine; LTOFLAGS may be
 # overridden to try other -flto variants.
 ifdef BUILD_LTO
-LTOFLAGS ?= -flto
+LTOFLAGS ?= -flto=auto
 # On the ELF m68k toolchain the final LTO assembly must get the same local
 # label fix as the per-file assembly; see tools/lto-as/as.
 ifdef BUILD_TOOLCHAIN_IS_ELF
