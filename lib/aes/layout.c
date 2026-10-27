@@ -6,13 +6,10 @@
 #include "application.h"
 #include "transport.h"
 #include "gemlayout.h"
+#include "layout.h"
 #include "gemobjop.h"
 
-typedef struct {
-    WORD width, height, wchar, hchar, hbox;
-} LAYOUT_METRICS;
-
-static BOOL metrics(LAYOUT_METRICS *m, WORD *global)
+BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
 {
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 };
     VDI_SERVICE_WORKSTATION ws;
@@ -36,7 +33,7 @@ static BOOL metrics(LAYOUT_METRICS *m, WORD *global)
 short mt_rsrc_obfix(OBJECT *tree, short object, short *global)
 {
     LAYOUT_METRICS m;
-    if (!tree || object < 0 || !metrics(&m,global)) return 0;
+    if (!tree || object < 0 || !aes_layout_metrics(&m,global)) return 0;
     rs_obfix_metrics(tree,object,m.wchar,m.hchar,m.width);
     return 1;
 }
@@ -62,7 +59,7 @@ short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global)
     LAYOUT_METRICS m;
     OBJECT root;
     GRECT bounds;
-    if (!tree || !rect || tree[0].ob_width < 0 || tree[0].ob_height < 0 || !metrics(&m,global)) return 0;
+    if (!tree || !rect || tree[0].ob_width < 0 || tree[0].ob_height < 0 || !aes_layout_metrics(&m,global)) return 0;
     root = tree[0];
     if (!center_extent(&root)) return 0;
     ob_center_metrics(&root,&bounds,m.width,m.height,m.hbox);

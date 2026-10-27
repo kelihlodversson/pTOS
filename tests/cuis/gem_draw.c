@@ -5,6 +5,7 @@
 #include "gem_draw_probe.h"
 #include "mono_objects.h"
 #include "gem_layout.h"
+#include "form_keys.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
 static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -206,6 +207,7 @@ int main(int argc, char **argv, char **envp)
     }
     if (gem_probe_open(&handle,&width,&height) != 0) {
         GRECT untouched = { 1,2,3,4 };
+        status = gem_form_key_checks(-1); if (status) return status;
         box.ob_x = 7; box.ob_y = 9;
         VERIFY(rsrc_obfix(&box,0) == 0 && box.ob_x == 7 && box.ob_y == 9);
         VERIFY(form_center_grect(&box,&untouched) == 0 && box.ob_x == 7 && untouched.g_x == 1);
@@ -224,6 +226,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    status = gem_form_key_checks(handle); if (status) return status;
     status = gem_layout_checks(handle,width,height); if (status) return status;
     status = mutation_checks(); if (status) return status;
     status = gem_mono_checks(handle); if (status) return status;

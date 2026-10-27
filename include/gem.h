@@ -17,6 +17,9 @@ extern "C" {
 #ifndef OS_SHADOWED
 #define OS_SHADOWED SHADOWED
 #endif
+#ifndef OF_EDITABLE
+#define OF_EDITABLE EDITABLE
+#endif
 #ifndef OF_LASTOB
 #define OF_LASTOB LASTOB
 #endif
@@ -191,6 +194,8 @@ short wind_set(short id, short field, short a, short b, short c, short d);
 short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global);
 short wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh);
 short mt_wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh, short *global);
+short form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining);
+short mt_form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining, short *global);
 short rsrc_obfix(OBJECT *tree, short object);
 short mt_rsrc_obfix(OBJECT *tree, short object, short *global);
 short form_center(OBJECT *tree, short *x, short *y, short *w, short *h);

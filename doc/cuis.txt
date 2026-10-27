@@ -1537,3 +1537,29 @@ and return GEM 0 without mutation when graphics are unavailable or a query
 fails. They introduce no new kernel calls, configuration options or capability
 claims. Resource file loading and interactive form/event handling remain
 subsequent migration work.
+
+
+Userspace form keyboard navigation (#755)
+----------------------------------------
+form_keybd/mt_form_keybd use the standard GEM object, proposed-next-object,
+key, next-object and remaining-key arguments. They operate on the caller's
+OBJECT array and return GEM 1 to continue form interaction or GEM 0 when a
+default action terminates it. The original native field search and keyboard
+decisions are shared as ordinary aes/shared/gemformkey.c code. Tab/down
+search forward, up searches backward, and Return/keypad Enter select the
+first enabled, non-hidden DEFAULT object. Navigation keys are consumed;
+other keys and the proposed next-object value pass through for text editing.
+Fields marked DISABLED or HIDETREE are skipped as in the native algorithm.
+Reaching either end retains the current field. Forward navigation from a
+LASTOB record now stops before reading beyond the resource array, including
+in native AES's shared search.
+
+Only default activation draws, through ordinary libaes objc_change, with the
+native form clip below the menu bar. Selection preserves other state bits.
+Already-selected defaults need no repaint. Plain navigation needs no VDI,
+display lock, mouse grab or event wait; a registered application supplies the
+key explicitly. Invalid arguments, unavailable graphics for a needed repaint
+or drawing failures return GEM 0 without committing the output arguments.
+The normal object painter owns workstation/update cleanup. No kernel
+service, scheduler change, capability claim or custom public API is added.
+The full form_do loop, button tracking and text editing remain later slices.

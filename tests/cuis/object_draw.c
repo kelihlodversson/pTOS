@@ -3,6 +3,7 @@
 #include "gemerror.h"
 #include "mono_objects.h"
 #include "gem_layout.h"
+#include "form_keys.h"
 #include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
@@ -350,6 +351,9 @@ int main(void)
         VERIFY(objc_draw(labels,0,1,0,0,160,120) == 0 && opens == closes && !nesting);
     }
     mutation_target = NULL;
+    before = gem_form_key_checks(0);
+    if (before) __builtin_printf("form keyboard failure: %x\n",before);
+    VERIFY(before == 0);
     VERIFY(layout_failures() == 0);
     before = gem_layout_checks(0,160,120);
     if (before) __builtin_printf("GEM layout failure: %x\n",before);
