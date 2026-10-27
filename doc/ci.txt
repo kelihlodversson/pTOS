@@ -8,7 +8,7 @@ which ones a pull request no longer runs, and where the rest runs instead.
 (The audit is issue #625; the numbers are from the pull requests of the weeks
 before it was made.)
 
-What a pull request runs now is 39 jobs, and about a quarter less runner time
+What a pull request runs now is 38 jobs, and about a quarter less runner time
 (178 -> 133 minutes of jobs from the Hatari and build cuts, the Hatari ones
 being half of all of it; the combined jobs save the toolchain and runner
 setup of each job they replace, which has not been measured), and
@@ -175,7 +175,13 @@ Measurements (pbench.yml):
 
 Packaging (build.yml):
 
-    Enumerate configurations   keep (the matrices come from it)
+    Enumerate configurations   a no-op of a few seconds that took a check and
+                               a runner start to compute a list that rarely
+                               changes: gone.  The groups are static in
+                               build.yml, .github/ci-configs says which
+                               configuration is in which, and the "All builds"
+                               job runs tools/check-ci-configs.sh, which fails
+                               when a configuration is in none
     x32 ELF shared-library metadata
                                keep; the only job that tests the x32 loader on
                                the host
