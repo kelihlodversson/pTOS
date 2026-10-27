@@ -88,8 +88,10 @@ static void process_memory_init(void)
     /* TT-RAM is pages for the processes too, through the window (which maps
      * it, doc/mmu-address-space.txt); it is not BDOS alternative RAM, whose
      * addresses would be the physical ones, in the lower half */
-    if (ramtop)
+    if (ramtop) {
         pmem32_add((PADDR)(uintptr_t)TTRAM_START, (PADDR)(uintptr_t)ramtop);
+        pmem32_prefer((PADDR)(uintptr_t)TTRAM_START);   /* the ST-RAM is for DMA, and the overflow */
+    }
 #endif
     if (!aspace_kernel_init())
         panic("no memory for the address spaces\n");

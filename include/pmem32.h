@@ -34,10 +34,17 @@ void pmem32_init(PADDR start, PADDR end);
  * ST-RAM below it): the pages in between are not the allocator's. */
 void pmem32_add(PADDR start, PADDR end);
 
+/* The pages from `start` up are the ones pmem32_alloc() hands out first: the
+ * TT-RAM, which is faster than the ST-RAM and which the DMA of the machine
+ * does not reach.  The ST-RAM below it is used when those are all taken. */
+void pmem32_prefer(PADDR start);
+
 /* `pages` contiguous pages, the first at an address that is a multiple of
  * `align_pages` pages (a power of two); PMEM32_NONE if there are none.  The
  * pages are not cleared. */
 PADDR pmem32_alloc(ULONG pages, ULONG align_pages);
+/* The same, but only below the preferred pages: for what a DMA device reads or writes */
+PADDR pmem32_alloc_low(ULONG pages, ULONG align_pages);
 void pmem32_free(PADDR phys, ULONG pages);
 
 /* TRUE iff the page containing phys is one the allocator manages and has handed out */

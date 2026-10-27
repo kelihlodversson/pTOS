@@ -528,7 +528,9 @@ the 68040, with the shape of the plan above.  What is particular to it:
     (altram_init() is not called: its addresses would be the physical ones, in
     the lower half, which belongs to the processes): pmem32_add() gives its
     pages to the page allocator, and they are reached through the window like
-    the ST-RAM ones.  The tree of atari_mmu.S maps the TT-RAM as it is; DMA does
+    the ST-RAM ones.  pmem32_prefer() makes the allocator take the TT-RAM
+    first and the ST-RAM when that is full; pmem32_alloc_low() is for what a
+    DMA device will touch and takes ST-RAM only.  The tree of atari_mmu.S maps the TT-RAM as it is; DMA does
     not use it (the drivers bounce what is outside the ST-RAM of the window).
     Hatari's --conout reads the arguments of the BIOS call from the stack as a
     physical address, which a kernel in the window is not on a TT, so
