@@ -44,6 +44,20 @@ import time
 
 NTESTS = 10
 
+# --configfile only adds to the user's hatari.cfg, it does not replace it.  A
+# user who has hard disk images or a directory configured would get them as
+# C: and up, and pBench's work directory, which has to be C: for --auto, as a
+# drive after those.  This switches them off.
+CONFIG = """[HardDisk]
+bUseHardDiskDirectory = FALSE
+[ACSI]
+%s
+[SCSI]
+%s
+[IDE]
+%s""" % tuple('\n'.join('bUseDevice%d = FALSE' % i for i in range(n))
+              for n in (8, 8, 2))
+
 
 def hatari_version():
     r = subprocess.run(['hatari', '--version'], capture_output=True, text=True)
@@ -65,6 +79,10 @@ def main():
     a = ap.parse_args()
 
     work = tempfile.mkdtemp(prefix='pbench-')
+    cfgdir = tempfile.mkdtemp(prefix='pbench-cfg-')
+    cfg = os.path.join(cfgdir, 'hatari.cfg')
+    with open(cfg, 'w') as f:
+        f.write(CONFIG + '\n')
     shutil.copy(a.pbench, os.path.join(work, 'PBENCH.PRG'))
     shots = os.path.join(work, 'shots')
     os.mkdir(shots)
@@ -108,6 +126,7 @@ def main():
                '--auto', 'C:\\PBENCH.PRG', '--screenshot-dir', shots, work]
         if machine == 'st':
             cmd[1:1] = ['--blitter', 'off']
+    cmd[1:1] = ['--configfile', cfg]
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
@@ -131,6 +150,7 @@ def main():
     proc.kill()
     proc.wait()
     shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(cfgdir, ignore_errors=True)
     if not lines:
         sys.exit('no results from Hatari (timeout or crash)')
 
