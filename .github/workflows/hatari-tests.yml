@@ -63,7 +63,7 @@ jobs:
       - name: Build the systems and the test disks
         run: |
           mkdir products
-          configs="atari512 atari512-fastcall atari512-kproc falcon-mmu falcon-aspace"
+          configs="atari512 atari512-fastcall atari512-kproc falcon-mmu falcon-aspace falcon-aspace040"
           # a pull request does not run atari512-extdesk (doc/ci.txt)
           [ "${{ github.event_name }}" = pull_request ] || configs="$configs atari512-extdesk"
           for config in $configs; do
@@ -72,7 +72,7 @@ jobs:
             make
             mkdir "products/$config"
             cp ptos512k.img "products/$config/system.img"
-            if [ "$config" = falcon-aspace ]; then
+            if [ "$config" = falcon-aspace ] || [ "$config" = falcon-aspace040 ]; then
               # the harness is the shell of the system (#727): no EmuCON, no keyboard
               make test-hd-shell
               cp test-hd-shell.img "products/$config/test-hd.img"

@@ -41,7 +41,7 @@
 
 #include "asmdefs.h"
 
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_ATARI_HIGHER_HALF && !CONF_ATARI_HIGHER_HALF_68040
 
         .globl  C_SYM(atari_mmu_root)
         .globl  C_SYM(atari_mmu_tc)
@@ -146,4 +146,4 @@ atari_mmu_c0:
         .set    i,i+1
         .endr
 
-#endif /* CONF_ATARI_HIGHER_HALF */
+#endif /* CONF_ATARI_HIGHER_HALF && !CONF_ATARI_HIGHER_HALF_68040 */

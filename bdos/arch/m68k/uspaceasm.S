@@ -60,7 +60,7 @@ C_SYM(enter):
         move.l  (sp)+,a0
         move.l  a0,usp
         movem.l (sp)+,d0-d7/a0-a6
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_ATARI_HIGHER_HALF && !CONF_ATARI_HIGHER_HALF_68040
         // the 68030's data cache is addressed logically: what the call wrote
         // into the memory of the process through the window is not what a
         // line of it under the address of the process holds

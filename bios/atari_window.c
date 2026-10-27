@@ -39,7 +39,11 @@ UBYTE *virt_pool_start(UBYTE *kernel_end)
 }
 
 #if CONF_WITH_PROCESS_ASPACES
+#if CONF_ATARI_HIGHER_HALF_68040
+extern const ULONG atari_mmu_root[];    /* atari_mmu040.S */
+#else
 extern const ULONG atari_mmu_crp[2];    /* atari_mmu.S */
+#endif
 
 /*
  * A reset comes back to startup.S, which goes to the low alias of the code:
@@ -48,8 +52,14 @@ extern const ULONG atari_mmu_crp[2];    /* atari_mmu.S */
  */
 void machine_reset_prepare(void)
 {
+#if CONF_ATARI_HIGHER_HALF_68040
+    __asm__ volatile ("move.l %0,%%a0\n\t.long 0x4e7b8806\n\t.long 0x4e7b8807\n\t.word 0xf518"
+                      : : "g" ((ULONG)(uintptr_t)&atari_mmu_root[0] - ATARI_WINDOW_VBASE)
+                      : "a0", "memory");                                /* movec a0,urp; movec a0,srp; pflusha */
+#else
     __asm__ volatile ("move.l %0,%%a0\n\t.long 0xf0104c00\n\t.long 0xf0002400"
                       : : "g" (&atari_mmu_crp[0]) : "a0", "memory");    /* pmove (a0),crp; pflusha */
+#endif
 }
 #endif
 

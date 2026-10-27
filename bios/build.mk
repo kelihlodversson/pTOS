@@ -70,7 +70,7 @@ obj-$(ARCH_X86_64) += tosvars.o aciaemu.o
 # layout of a loaded program (bios/aspace.c and the page-table backend of the
 # architecture).  x86-64 has its own, in bios/machine/pc-x86_64/.
 obj-$(CONF_WITH_PROCESS_ASPACES) += pmem32.o kheap.o procmem.o aspace.o progimage.o
-obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),aspace_hw.o) $(if $(MACHINE_VIRT_M68K),aspace_hw.o) $(if $(CONF_ATARI_HIGHER_HALF),aspace_hw030.o)
+obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(ARCH_ARM),aspace_hw.o) $(if $(MACHINE_VIRT_M68K),aspace_hw.o) $(if $(CONF_ATARI_HIGHER_HALF),$(if $(CONF_ATARI_HIGHER_HALF_68040),aspace_hw.o,aspace_hw030.o))
 
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.
@@ -89,7 +89,7 @@ obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
 obj-$(CONF_WITH_HIGHER_HALF) += $(if $(MACHINE_VIRT_M68K),virt_mmu.o virt_mmu_early.o)
 
 # the Atari ROM that runs in the upper half (bios/arch/m68k/atari_mmu.S)
-obj-$(CONF_ATARI_HIGHER_HALF) += atari_mmu.o atari_window.o
+obj-$(CONF_ATARI_HIGHER_HALF) += $(if $(CONF_ATARI_HIGHER_HALF_68040),atari_mmu040.o,atari_mmu.o) atari_window.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 

@@ -534,6 +534,19 @@ the 68040, with the shape of the plan above.  What is particular to it:
     physical address, which a kernel in the window is not on a TT, so
     run-hatari-tests.py reads the result from the screen (the font of the ROM)
     in that mode.
+  - The 68040 (#728): falcon-aspace040_defconfig (CONF_ATARI_HIGHER_HALF_68040)
+    is the same ROM for the MMU of a 68040.  startup.S sets TC, ITT/DTT, URP
+    and SRP with movec (the 68030 pmove is an F-line trap there), the static
+    tree is atari_mmu040.S, and the page tables of the processes are those of
+    the backend of virt-m68k, aspace_hw.c.  The 68040 has no early termination,
+    so the tree is three full levels and maps only the first 16 MiB, twice
+    (at 0 and in the window) with the same tables; the I/O area of the ST
+    (0xff000000 and up) is the transparent window DTT0 of the supervisor, the
+    part at 0x00f00000 is not cached.  There is no TT-RAM, as the tree does not
+    reach it.  The data cache is physical there, so the clearing of it at every
+    return to a program (the 68030's, see above) is not done.  Hatari's Falcon
+    with --cpulevel 4 --mmu on runs the whole suite (--mode f040a, job
+    falcon-aspace040).
 
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................

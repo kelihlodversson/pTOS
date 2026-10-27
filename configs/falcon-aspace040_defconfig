@@ -1,0 +1,15 @@
+# 512 KB Atari ROM image for the 68040 with every process in an address space
+# of its own (#728, #571): falcon-aspace for the MMU of a 68040 instead of that
+# of a 68030, with the page tables of the 68040 backend (aspace_hw.c).  For
+# Hatari's Falcon or TT with --cpulevel 4 --mmu on (tools/run-hatari-tests.py
+# --mode f040a and tt040a); the image does not start on a 68030.  No TT-RAM.
+TARGET_512=y
+BUILD_UNIQUE_COUNTRY=y
+CONF_ATARI_HIGHER_HALF=y
+CONF_ATARI_HIGHER_HALF_68040=y
+CONF_WITH_AES=n
+CONF_WITH_ELF_LOADER=y
+CONF_EXTERNAL_CLI=y
+CONF_WITH_PROCESS_ASPACES=y
+CONF_WITH_MMAP=y
+CONF_WITH_ELF_SHARED=y

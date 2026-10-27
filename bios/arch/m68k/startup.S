@@ -39,7 +39,10 @@
         .extern C_SYM(resvalid)
         .extern C_SYM(resvector)
         .extern C_SYM(stktop)
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_ATARI_HIGHER_HALF && CONF_ATARI_HIGHER_HALF_68040
+        .extern C_SYM(atari_mmu_root)
+        .extern C_SYM(atari_mmu_dtt0)
+#elif CONF_ATARI_HIGHER_HALF
         .extern C_SYM(atari_mmu_crp)
         .extern C_SYM(atari_mmu_tc)
 #endif
@@ -375,6 +378,26 @@ _realmain:
         move.l  d0,a0
         jmp     (a0)
 hh_low:
+#if CONF_ATARI_HIGHER_HALF_68040
+        // The 68040 MMU (atari_mmu040.S): caches and translation off, the
+        // transparent windows set, the root of the tree in URP and SRP.
+        moveq   #0,d0
+        MOVEC_D0_CACR                   // caches off
+        CINVA_BC                        //  and empty
+        MOVEC_D0_TC                     // translation off, if it is on
+        MOVEC_D0_ITT0
+        MOVEC_D0_ITT1
+        MOVEC_D0_DTT1
+        move.l  PHYS(C_SYM(atari_mmu_dtt0)),d0
+        MOVEC_D0_DTT0                   // the I/O area: transparent, not cached
+        lea     PHYS(C_SYM(atari_mmu_root)),a0
+        .dc.l   0x4e7b8806              // movec a0,urp
+        .dc.l   0x4e7b8807              // movec a0,srp
+        .dc.w   0xf518                  // pflusha
+        move.l  #0x00008000,d0
+        MOVEC_D0_TC                     // on: the next instruction is fetched through it
+        jmp     (hh_high).l             // into the window
+#else
         move.l  #0x00000808,d0          // clear and disable the caches (they are
         MOVEC_D0_CACR                   //  addressed logically)
         lea     PHYS(zero),a0
@@ -387,6 +410,7 @@ hh_low:
         lea     PHYS(C_SYM(atari_mmu_tc)),a0
         PMOVE_A0_TC                     // on: the next instruction is fetched through it
         jmp     (hh_high).l             // into the window
+#endif
 hh_high:
 #endif
 

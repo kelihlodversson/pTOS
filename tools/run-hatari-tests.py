@@ -20,6 +20,9 @@
 #                 test-hd-shell", whose shell is the test harness, so the
 #                 tests start by themselves, and the two blitter suites are
 #                 not expected;
+#                 f040a and tt040a: the same for the image with the 68040 MMU
+#                 (falcon-aspace040, #728), on a Falcon and on a TT (without
+#                 TT-RAM, which the 68040 tree does not map);
 #                 tta: a TT with a 68030, 10 MB of ST-RAM and 32 MB of TT-RAM,
 #                 32-bit addressing, for the same image and disk as f030a
 #                 (#728), on ACSI, as the TT has no IDE;
@@ -110,7 +113,7 @@ def main():
     ap.add_argument('--tos', required=True)
     ap.add_argument('--disk', required=True)
     ap.add_argument('--mode', required=True,
-                    choices=['low', 'med', 'high', 'f030', 'f040', 'f030a', 'tta'])
+                    choices=['low', 'med', 'high', 'f030', 'f040', 'f030a', 'tta', 'f040a', 'tt040a'])
     ap.add_argument('--timeout', type=int, default=600)
     a = ap.parse_args()
 
@@ -118,15 +121,17 @@ def main():
     disk = os.path.join(work, 'test-hd.img')    # Hatari locks the file
     shutil.copy(a.disk, disk)
     log = os.path.join(work, 'console.txt')
-    if a.mode in ('f030', 'f040', 'f030a'):
+    if a.mode in ('f030', 'f040', 'f030a', 'f040a'):
         cmd = ['hatari', '--tos', a.tos, '--machine', 'falcon',
-               '--cpulevel', '4' if a.mode == 'f040' else '3',
+               '--cpulevel', '4' if a.mode in ('f040', 'f040a') else '3',
                '--memsize', '14', '--dsp', 'none', '--sound', 'off',
                '--mmu', 'on', '--monitor', 'vga', '--ide-master', disk]
-    elif a.mode == 'tta':
+    elif a.mode in ('tta', 'tt040a'):
         cmd = ['hatari', '--tos', a.tos, '--machine', 'tt',
-               '--cpulevel', '3', '--addr24', 'off', '--memsize', '10',
-               '--ttram', '32', '--sound', 'off', '--mmu', 'on',
+               '--cpulevel', '4' if a.mode == 'tt040a' else '3',
+               '--addr24', 'off', '--memsize', '10',
+               '--ttram', '0' if a.mode == 'tt040a' else '32',
+               '--sound', 'off', '--mmu', 'on',
                '--monitor', 'vga', '--acsi', '0=' + disk]
     else:
         cmd = ['hatari', '--tos', a.tos, '--machine', 'ste', '--memsize', '4',
@@ -136,7 +141,7 @@ def main():
     cmd += ['--conout', '2', '--fast-forward', 'on']
     avi = os.path.join(work, 'screen.avi')
     glyphs = None
-    if a.mode == 'tta':         # --conout shows nothing here: read the screen
+    if a.mode in ('tta', 'tt040a'):         # --conout shows nothing here: read the screen
         glyphs = load_font()
         cmd += ['--avirecord', '--avi-vcodec', 'png', '--avi-file', avi]
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
@@ -173,7 +178,7 @@ def main():
         print('run-hatari-tests: %s tests failed' % summary.group(2),
               file=sys.stderr)
         return 1
-    if a.mode in ('f030a', 'tta'):       # no VDI, so no blitter suites
+    if a.mode in ('f030a', 'tta', 'f040a', 'tt040a'):       # no VDI, so no blitter suites
         return 0
     skipped = [l for l in text.splitlines()
                if 'SKIP' in l and any(t in l for t in MUST_RUN)]
