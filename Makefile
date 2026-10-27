@@ -373,9 +373,9 @@ INC = $(addprefix -I,$(include_dirs))
 # Automatic header dependency generation, one .d file per object.
 DEPFLAGS = -MMD -MP
 
-# Experimental: "make LTO=1" builds with link-time optimization; LTOFLAGS
-# may be overridden to try other -flto variants.
-ifeq ($(LTO),1)
+# Link-time optimization, see BUILD_LTO in Kconfig.machine; LTOFLAGS may be
+# overridden to try other -flto variants.
+ifdef BUILD_LTO
 LTOFLAGS ?= -flto
 # On the ELF m68k toolchain the final LTO assembly must get the same local
 # label fix as the per-file assembly; see tools/lto-as/as.
