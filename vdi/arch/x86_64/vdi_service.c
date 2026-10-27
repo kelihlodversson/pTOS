@@ -869,8 +869,8 @@ static LONG screen_buffer(WORD handle, UQUAD rectangle, UQUAD buffer, UQUAD rest
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     if (vdi_truecolor_screen()) stride = (ULONG)memory.fd_w * vdi_truecolor_pixel_size();
 #endif
+    if (!stride || stride > VDI_SERVICE_MAX_BITMAP/(UWORD)r.g_h) return EINVAL;
     bytes = stride * r.g_h;
-    if (!stride || bytes > VDI_SERVICE_MAX_BITMAP) return EINVAL;
     if (restore ? !kproc_validate_user_range(buffer,bytes) : !kproc_validate_user_write(buffer,bytes)) return EIMBA;
     memory.fd_addr = kalloc(bytes);
     if (!memory.fd_addr) return ENSMEM;

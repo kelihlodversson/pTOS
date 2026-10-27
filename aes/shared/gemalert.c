@@ -15,6 +15,7 @@
 #ifdef AES_ALERT_BINDINGS
 #include AES_ALERT_BINDINGS
 #else
+#include "gemgsxif.h"
 #define ALERT_3D CONF_WITH_3D_OBJECTS
 #endif
 

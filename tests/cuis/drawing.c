@@ -48,6 +48,46 @@ static LONG pixel(WORD handle, WORD x, WORD y, WORD *output)
 }
 /* Capturing into application memory is allowed outside the active window.
  * Compare overlapping screen copies against that immutable source image. */
+/* Save reads are unrestricted. Restores intersect both the live CUIS region
+ * and the workstation clip, preserving an occluder's pixels. */
+static int snapshot_checks(WORD handle)
+{
+    ULONG buffer[16*16] = { 0 }, again[16*16] = { 0 };
+    WORD rect[4] = { 0,0,16,16 }, clip[4] = { 10,10,11,11 }, output[2];
+    WORD before[16*16], expected;
+    int x, y;
+#define SNAP_CHECK(c) do { if (!(c)) return 0x5400 | __LINE__; } while (0)
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,0,0,0) == EIMBA);
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,0,0) == EIMBA);
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,(uintptr_t)buffer,2) == EINVAL);
+    rect[0] = -1;
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,(uintptr_t)buffer,0) == EINVAL);
+    rect[0] = 0;
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,(uintptr_t)buffer,0) == E_OK);
+    for (y = 0; y < 16; y++) for (x = 0; x < 16; x++) {
+        SNAP_CHECK(pixel(handle,x,y,output) == E_OK); before[y*16+x] = output[1];
+    }
+    SNAP_CHECK(attribute(handle,25,2) == E_OK && bar(handle) == E_OK);
+    SNAP_CHECK(service(VDI_SERVICE_CLIP,handle,1,(uintptr_t)clip,0) == E_OK);
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,(uintptr_t)buffer,1) == E_OK);
+    for (y = 0; y < 16; y++) for (x = 0; x < 16; x++) {
+        SNAP_CHECK(pixel(handle,x,y,output) == E_OK);
+        /* The target starts at (8,8). Only the explicit 2x2 clip restores. */
+        if (x >= 10 && x <= 11 && y >= 10 && y <= 11) expected = before[y*16+x];
+        else if (x >= 8 && y >= 8) expected = 2;
+        else expected = before[y*16+x];
+        SNAP_CHECK(output[1] == expected);
+    }
+    SNAP_CHECK(service(VDI_SERVICE_CLIP,handle,0,(uintptr_t)clip,0) == E_OK);
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,(uintptr_t)buffer,1) == E_OK);
+    SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,(uintptr_t)again,0) == E_OK);
+    /* Opaque bytes preserve exact packed colours, not palette approximations. */
+    for (x = 0; x < (int)sizeof(buffer); x++)
+        SNAP_CHECK(((UBYTE *)buffer)[x] == ((UBYTE *)again)[x]);
+    SNAP_CHECK(attribute(handle,25,0) == E_OK);
+#undef SNAP_CHECK
+    return 0;
+}
 static int copy_checks(WORD handle)
 {
     static WORD image[40 * 40];
@@ -146,6 +186,8 @@ int libaes_drawing_checks(void)
     CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
     CHECK(service(VDI_SERVICE_SCREEN_COPY, handle, 0, 0, 0) == EIMBA);
+    rc = snapshot_checks(handle);
+    if (rc) return rc;
     rc = copy_checks(handle);
     if (rc) return rc;
     CHECK(service(VDI_SERVICE_CLIP, handle, 1, (uintptr_t)clip, 0) == E_OK);

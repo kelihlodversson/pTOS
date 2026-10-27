@@ -10,6 +10,7 @@
 
 ALERT_CONTEXT *aes_alert_context;
 static WORD *error_global;
+static BOOL error_ok;
 
 WORD mt_form_alert(WORD button, const char *text, WORD *global)
 {
@@ -63,37 +64,20 @@ done:
 }
 WORD form_alert(WORD button, const char *text) { return mt_form_alert(button,text,aes_global); }
 
-static const char *const error_strings[] = {
-    ("[2][This application cannot|"                   /* AL18ERR */
-       "find the folder or file|"
-       "you just tried to access.][  OK  ]"),
-    ("[1][This application does not|"                 /* AL04ERR */
-       "have room to open another|"
-       "document.  To make room,|"
-       "close any document that|"
-       "you do not need.][  OK  ]"),
-    ("[1][An item with this name|"                    /* AL05ERR */
-       "already exists in the|"
-       "directory, or this item|"
-       "is set to Read Only status.][  OK  ]"),
-    ("[1][The drive you specified|"                   /* AL15ERR */
-       "does not exist.][Cancel]"),
-    ("[1][There is not enough memory|"                /* AL08ERR */
-       "in your computer for the|"
-       "application you just tried|"
-       "to run.][  OK  ]"),
-    ("[3][TOS error #%u.][Cancel]"),                  /* ALXXERR */
-};
 WORD aes_error_show(WORD string, WORD *number, WORD button)
 {
     char text[64], digits[6];
     const char *source;
     char *out = text;
-    WORD n = 0;
+    WORD n = 0, result;
     UWORD value;
     if (string < AL18ERR || string > ALXXERR) return 0;
-    source = error_strings[string-AL18ERR];
-    if (!number) return mt_form_alert(button,source,error_global);
+    source = rs_fstr[string];
+    if (!number) {
+        result = mt_form_alert(button,source,error_global);
+        error_ok = result != 0;
+        return result;
+    }
     /* The original generic alert has a single %u, with a WORD argument. */
     value = (UWORD)*number;
     do { digits[n++] = '0'+value%10; value /= 10; } while (value);
@@ -104,15 +88,19 @@ WORD aes_error_show(WORD string, WORD *number, WORD button)
         } else *out++ = *source++;
     }
     *out = 0;
-    return mt_form_alert(button,text,error_global);
+    result = mt_form_alert(button,text,error_global);
+    error_ok = result != 0;
+    return result;
 }
 WORD mt_form_error(WORD error, WORD *global)
 {
     WORD *saved = error_global, result;
+    BOOL saved_ok = error_ok, ok;
     if (aes_application_session(global) < 0) return 0;
-    error_global = global;
+    error_global = global; error_ok = TRUE;
     result = aes_error_core(error);
-    error_global = saved;
-    return result;
+    ok = error_ok;
+    error_global = saved; error_ok = saved_ok;
+    return ok ? result : 0;
 }
 WORD form_error(WORD error) { return mt_form_error(error,aes_global); }

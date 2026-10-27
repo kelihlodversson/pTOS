@@ -5,6 +5,7 @@
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
+#include "gem_forms.h"
 #include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
@@ -13,12 +14,21 @@ short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
-static struct { WORD mode, color, interior, clip[4], line; } workstation[256];
+static struct { WORD mode, color, interior, clip[4], line; } workstation[1024];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
 static int releases, mouse_nesting, mouse_releases;
 static BOOL input_error, mouse_error, foreign_display;
-static int display_waits;
+static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
+static BOOL keyboard_error, snapshot_error;
+static WORD modal_keys[16];
+static int modal_count, modal_at;
+UQUAD aes_memory_call(ULONG function, UQUAD argument)
+{
+    if (function == 0x48) return (uintptr_t)__builtin_malloc(argument);
+    if (function == 0x49) { __builtin_free((void *)(uintptr_t)argument); return E_OK; }
+    return EINVFN;
+}
 static struct { WORD events, x, y, buttons; } gesture[8];
 static int gesture_count, gesture_at, bad_gesture;
 static WORD mouse_x = 50, mouse_y = 50;
@@ -31,6 +41,12 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_KEYBOARD_LOCK && a == 7) {
+        if (keyboard_error || !nesting || !mouse_nesting || (!b && !keyboard_nesting)) return EACCDN;
+        keyboard_nesting += b ? 1 : -1;
+        return E_OK;
+    }
+    if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; return nesting ? E_OK : EACCDN; }
     if (fn == CUIS_MOUSE_LOCK && a == 7) {
         if (b && mouse_error) return EACCDN;
         if (!b && !mouse_nesting) return EACCDN;
@@ -78,6 +94,12 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
     BOOL inside;
     (void)leave2; (void)x2; (void)y2; (void)w2; (void)h2; (void)message; (void)interval;
     if (input_error || aes_application_session(global) < 0) return 0;
+    if (events == (MU_KEYBD|MU_BUTTON) && clicks == 2 && mask == 255 && state == 1) {
+        if (!keyboard_nesting || !nesting || !mouse_nesting || modal_at == modal_count) return 0;
+        *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
+        *key = modal_keys[modal_at++]; *count = 0;
+        return MU_KEYBD;
+    }
     if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || state) {
         bad_gesture++; return 0;
     }
@@ -117,11 +139,22 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
         ws->ptsout[1] = 4;
-        if (opens >= 256) return ENSMEM;
+        if (opens >= 1024) return ENSMEM;
         return E_OK;
     }
-    if (a <= 0 || a >= 256) return EACCDN;
+    if (a <= 0 || a >= 1024) return EACCDN;
     if (!nesting && !window_update && !(fn == VDI_SERVICE_DRAW && r->code == 38)) return EACCDN;
+    if (fn == VDI_SERVICE_SCREEN_BUFFER) {
+        GRECT *rect = (void *)(uintptr_t)b;
+        WORD *buffer = (void *)(uintptr_t)c;
+        if (snapshot_error) return EACCDN;
+        for (y = 0; y < rect->g_h; y++) for (x = 0; x < rect->g_w; x++) {
+            if (d) image[y+rect->g_y][x+rect->g_x] = buffer[y*rect->g_w+x];
+            else buffer[y*rect->g_w+x] = image[y+rect->g_y][x+rect->g_x];
+        }
+        if (d) snapshot_writes++; else snapshot_reads++;
+        return E_OK;
+    }
     if (fn == VDI_SERVICE_CLIP) {
         __builtin_memcpy(workstation[a].clip,(void *)(uintptr_t)c,8);
         return E_OK;
@@ -141,7 +174,10 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
                 if (x >= 0 && x < 160 && y >= 0 && y < 120 &&
                     x >= workstation[a].clip[0] && x <= workstation[a].clip[2] &&
                     y >= workstation[a].clip[1] && y <= workstation[a].clip[3])
-                    image[y][x] = workstation[a].line;
+                    {
+                        if (workstation[a].mode == MD_XOR) image[y][x] ^= 15;
+                        else image[y][x] = workstation[a].line;
+                    }
                 if (x == x2 && y == y2) break;
                 twice = error*2;
                 if (twice >= dy) { error += dy; x += sx; }
@@ -347,6 +383,37 @@ static int form_interactions(void)
     VERIFY(opens == closes && !nesting && !mouse_nesting && !bad_gesture);
     return 0;
 }
+void gem_form_input_stage(short stage) { (void)stage; }
+static int modal_checks(void)
+{
+    OBJECT tree[2] = { { 0 } };
+    int before;
+    tree[0].ob_type = G_IBOX;
+    tree[0].ob_next = tree[0].ob_head = tree[0].ob_tail = -1;
+    tree[1].ob_type = G_BUTTON; tree[1].ob_flags = OF_SELECTABLE|OF_EXIT|OF_DEFAULT|OF_LASTOB;
+    tree[1].ob_spec.free_string = "OK"; tree[1].ob_width = 32; tree[1].ob_height = 16;
+    tree[1].ob_next = tree[1].ob_head = tree[1].ob_tail = -1;
+    VERIFY(objc_add(tree,0,1) == 1);
+    modal_keys[0] = 0x1e61; modal_keys[1] = 0x0332; modal_keys[2] = 0x1c0d; modal_keys[3] = 0x1c0d;
+    modal_count = 4; modal_at = 0;
+    VERIFY(gem_form_interactive() == 0 && modal_at == 4);
+    VERIFY(snapshot_reads == 1 && snapshot_writes == 1 && !keyboard_nesting && !nesting && !mouse_nesting);
+    /* An alert must leave every saved background pixel unchanged. */
+    __builtin_memset(image,0x0202,sizeof(image));
+    modal_count = 1; modal_at = 0; modal_keys[0] = 0x1c0d;
+    VERIFY(form_alert(1,"[1][Look||here][OK]") == 1 && modal_at == 1);
+    for (before = 0; before < 120*160; before++) VERIFY(((WORD *)image)[before] == 0x0202);
+    modal_at = 0; modal_count = 1;
+    VERIFY(form_error(2) == 0 && modal_at == 1);
+    keyboard_error = TRUE; before = releases;
+    VERIFY(form_do(tree,0) == 0 && releases == before+1 && !nesting && !mouse_nesting && !keyboard_nesting);
+    keyboard_error = FALSE; input_error = TRUE;
+    VERIFY(form_do(tree,0) == 0 && !nesting && !mouse_nesting && !keyboard_nesting);
+    input_error = FALSE; snapshot_error = TRUE;
+    VERIFY(form_alert(1,"[0][Error][OK]") == 0 && !nesting && !mouse_nesting && !keyboard_nesting);
+    snapshot_error = FALSE;
+    return 0;
+}
 int main(void)
 {
     OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
@@ -517,6 +584,10 @@ int main(void)
     if (before) __builtin_printf("form keyboard failure: %x\n",before);
     VERIFY(before == 0);
     VERIFY(form_interactions() == 0);
+    before = gem_form_checks(1);
+    if (before) __builtin_printf("GEM forms failure: %x\n",before);
+    VERIFY(before == 0);
+    VERIFY(modal_checks() == 0);
     before = gem_button_checks(1);
     if (before) __builtin_printf("GEM button failure: %x\n",before);
     VERIFY(before == 0);

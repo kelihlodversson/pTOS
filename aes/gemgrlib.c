@@ -34,6 +34,7 @@
 #include "gemgsxif.h"
 #include "gemgrlib.h"
 #include "gemwatch.h"
+#include "gemformanim.h"
 #include "gemasm.h"
 #include "rectfunc.h"
 
@@ -75,10 +76,10 @@ BOOL gr_stilldn(BOOL out, WORD x, WORD y, WORD w, WORD h)
 }
 
 
-static void gr_setup(WORD color)
+void gr_setup(void)
 {
     gsx_sclip(&gl_rscreen);
-    gsx_attr(FALSE, MD_XOR, color);
+    gsx_attr(FALSE, MD_XOR, BLACK);
 }
 
 
@@ -141,7 +142,7 @@ void gr_rubwind(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
     GRECT   o;
 
     wm_update(BEG_UPDATE);
-    gr_setup(BLACK);
+    gr_setup();
 
     r_set(&o, xorigin, yorigin, 0, 0);
 
@@ -186,7 +187,7 @@ void gr_dragbox(WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
     GRECT   o;
 
     wm_update(BEG_UPDATE);
-    gr_setup(BLACK);
+    gr_setup();
 
     gr_clamp(sx+1, sy+1, 0, 0, &offx, &offy);
     r_set(&o, sx, sy, w, h);

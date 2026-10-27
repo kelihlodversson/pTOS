@@ -580,8 +580,8 @@ LONG cuis_display_redraw(UQUAD handle, UQUAD x, UQUAD y, UQUAD width, UQUAD heig
         cuis_input_unlock(flags); return EACCDN;
     }
     if (width && height) for (window = window_front; window; window = window->znext) {
-        if ((QUAD)window->x < (QUAD)(LONG)x + (LONG)width && (QUAD)window->x + window->width > (LONG)x &&
-            (QUAD)window->y < (QUAD)(LONG)y + (LONG)height && (QUAD)window->y + window->height > (LONG)y) {
+        if ((QUAD)window->x < (QUAD)(LONG)x + (LONG)width && (QUAD)window->x + window->width + window->outset_right > (LONG)x &&
+            (QUAD)window->y < (QUAD)(LONG)y + (LONG)height && (QUAD)window->y + window->height + window->outset_bottom > (LONG)y) {
             window->redraw = TRUE;
             if (window->managed_activation) window->notices |= CUIS_NOTICE_REDRAW;
         }

@@ -27,3 +27,10 @@ interfaces and VDI point conversion.
 
 Future reusable resource, object and graphics routines belong here too, with
 consumer-specific transport and ownership code kept outside this directory.
+
+`gemedit.c`, `gemformdo.c`, `gemformanim.c`, `gemalert.c` and
+`gemformerror.c` contain the original text editing, modal loop, XOR animations,
+alert layout and error mapping. The native entry points and libaes compile
+these ordinary C files with their own bindings. Alert icons and system strings
+are shared in `gemalertdata.c` and `gemalertstrings.c`; the latter retains native
+NLS tagging, while the library currently uses the original English strings.

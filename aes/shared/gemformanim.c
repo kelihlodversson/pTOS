@@ -11,11 +11,7 @@
 #ifdef AES_ANIM_BINDINGS
 #include AES_ANIM_BINDINGS
 #else
-static void gr_setup(WORD color)
-{
-    gsx_sclip(&gl_rscreen);
-    gsx_attr(FALSE,MD_XOR,color);
-}
+#include "gemformanim.h"
 #endif
 
 static void gr_scale(WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pystep)
@@ -24,7 +20,7 @@ static void gr_scale(WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pys
     WORD dist;
 
 
-    gr_setup(BLACK);
+    gr_setup();
 
     dist = (xdist + ydist) / 2;
 
