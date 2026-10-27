@@ -1666,3 +1666,50 @@ QEMU's actual keyboard device, run tools/test-mmap-boot.sh with
 MMAP_BOOT_FORM_INPUT=1 on a combined libaes/VDI test build. Optional
 MMAP_BOOT_SCREENSHOT captures the displayed alert in that mode. No production
 input-injection syscall is added.
+
+Classic resource files
+----------------------
+
+libaes exports standard rsrc_load/free/gaddr/saddr and mt_* bindings. It compiles
+the existing aes/shared/rsload_portable.c big-endian parser/materializer and the
+original shared gemrsaddr.c lookup routines. Resource trees, TEDINFOs, strings,
+images and icons remain in application memory. Bitmap words are decoded to
+native order; loading does not convert images into device format. On-disk
+USERDEF addresses are not executable native callbacks: applications install
+their own USERBLK functions after loading, as with other portable resources.
+Colour-icon data is retained without claiming colour-icon rendering support.
+
+The standard GEM globals carry the tree-table pointer in words 5/6, resource
+memory pointer in 7/8 and allocated length in word 9. Application-private words
+3/4 remain untouched. R_TREE follows the tree-table global independently; other
+selectors and freeing follow the resource-image global, as in native AES.
+Multiple successful loads retain their allocations, as
+in native AES: saved copies of the resource globals can select an earlier live
+load. rsrc_free releases only the selected resource, clears its resource fields
+and rejects stale selections. appl_exit also frees unselected retained loads;
+ordinary process exit/fault cleanup reclaims all process-owned memory.
+
+A failed load leaves the selected resource and its globals unchanged. The
+library checks counts, indices and reachable tree sibling rings, including the
+LASTOB boundary, before publishing a new image. String/image-only resources
+are accepted. Materialized resources retain the portable loader's 65535-byte
+limit; large-resource/RSX extensions and in-place rsrc_rcfix are not advertised.
+Loading currently requires VDI font metrics for standard character-coordinate
+scaling; resource lookup and address changes themselves require no drawing.
+
+File lookup follows the native search order: application directory, supplied
+path, current drive root, then semicolon/comma-separated PATH entries. The
+library constructor remembers the launch directory using the existing ELF
+AT_EXECFN auxiliary value and GEMDOS directory calls; extended ARGV[0] cannot
+redirect it, and later chdir calls do not change it. The CRT supplies a private
+auxiliary-value accessor to dependent libraries. No new kernel GUI services,
+resource handles or negotiation are introduced. Input paths are bounded to
+127 bytes, and lookup leaves the application's DTA untouched.
+
+Tests include an ordinary big-endian fixture with indirect aliases, TEDINFOs,
+mono images/icons, USERDEF metadata and free strings/images, as well as the
+unaltered aes/gem.rsc file. Host ASan/UBSan checks malformed/truncated files,
+allocation/read/seek/close/free failures and ownership retention. Real x32 GEM
+clients exercise saved globals, isolated images, session/normal/fault cleanup,
+application-directory lookup after chdir with misleading extended ARGV[0],
+and PATH-only lookup. The same fixture compiles with unmodified GEMlib headers.

@@ -34,3 +34,9 @@ alert layout and error mapping. The native entry points and libaes compile
 these ordinary C files with their own bindings. Alert icons and system strings
 are generated in aes/shared/gem_rsc.c from aes/gem.rsc, with native
 NLS tagging, while the library currently uses the original English strings.
+
+`gemrsaddr.c` is the original resource address-lookup core. `rsload_portable.c`
+is compiled normally for libaes with private allocation, file-I/O, scaling and
+context bindings; the native build retains its existing adapters and layout.
+Library records use native pointer alignment, and wide-pointer host tests keep indirect
+specifications in native slots rather than overwriting four-byte disk slots.

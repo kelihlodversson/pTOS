@@ -53,6 +53,16 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-o", str(work / "application")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "application")], check=True)
+    fixture = work / "GEMTEST.RSC"
+    subprocess.run([sys.executable, "tools/make-cuis-resource.py", str(fixture)], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-ffunction-sections", "-fdata-sections", "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "-Ilib/ldso/client",
+                '-DAES_RSC_BINDINGS="resource_bindings.h"', "-D__ptos_getauxval=aes_test_getauxval", "-Dgetenv=aes_test_getenv", "-Dsprintf=aes_resource_test_sprintf",
+                "tests/cuis/resources.c", "tests/cuis/gem_resources.c", "lib/aes/resources.c", "aes/shared/rsload_portable.c",
+                "aes/shared/gemrsaddr.c", "aes/shared/gemlayout.c", "util/string.c", "-Wl,--gc-sections", "-o", str(work / "resources")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "resources"), str(fixture), "aes/gem.rsc"], check=True)
     # These resource IDs/data are generated, and a clean checkout has neither
     # gem_rsc.h nor gem_rsc.c. Generate private host fixtures from the source RSC.
     subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) +

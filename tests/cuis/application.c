@@ -43,6 +43,8 @@ static LONG window_transport(ULONG fn, UQUAD a)
     if (fn == CUIS_WINDOW_DESTROY) native_windows[i] = 0;
     return E_OK;
 }
+static int resource_resets;
+void aes_resources_reset(void) { resource_resets++; }
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -413,11 +415,12 @@ int main(void)
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);
+    resource_resets = 0;
     close_result = EACCDN;
-    CHECK(appl_exit() == 0 && live && gl_apid == 7);
+    CHECK(appl_exit() == 0 && live && gl_apid == 7 && !resource_resets);
     CHECK(wind_get(held, WF_KIND, NULL, NULL, NULL, NULL) == 1);
     close_result = 0;
-    CHECK(mt_appl_exit(other) == 1 && !live && closes == 1 && other[2] == -1);
+    CHECK(mt_appl_exit(other) == 1 && !live && closes == 1 && other[2] == -1 && resource_resets == 1);
     CHECK(gl_apid == -1 && aes_global[2] == -1 && gl_ap_version == 0);
     CHECK(mt_appl_yield(other) == 0 && appl_exit() == 0);
     CHECK(appl_init() == 7 && live);
