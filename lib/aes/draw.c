@@ -207,15 +207,40 @@ void vst_height(WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
  * removal/recomposition. USERDEF VDI writes receive the same protection. */
 void gsx_moff(void) { }
 void gsx_mon(void) { }
-/* Image/icon adapters follow separately. Preflight rejects those types. */
+/* Mono forms remain in application memory. Submit only visible runs of set
+ * bits through the existing solid-fill service: no bitmap or object pointers
+ * cross the kernel boundary. The original image/icon painter uses MD_TRANS. */
 void gsx_blt(void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, WORD rule, WORD fg, WORD bg)
 {
-    (void)address; (void)sx; (void)sy; (void)dx; (void)dy; (void)w; (void)h; (void)rule; (void)fg; (void)bg;
-    aes_painter->ok = FALSE;
-}
-void gr_gicon(WORD state, ICONBLK *icon, CICON *color)
-{
-    (void)state; (void)icon; (void)color; aes_painter->ok = FALSE;
+    const UWORD *bitmap = address;
+    GRECT *clip = &aes_painter->clip;
+    LONG left, top, right, bottom, x, y, run, source_x, source_y, stride;
+    (void)bg;
+    if (!aes_painter->ok) return;
+    if (!bitmap || rule != MD_TRANS || fg < 0 || fg > 255 || w <= 0 || (w & 15) ||
+        h <= 0 || sx < 0 || sy < 0 || sx >= w || sy >= h) {
+        aes_painter->ok = FALSE; return;
+    }
+    stride = w/16;
+    left = max((LONG)dx,clip->g_x); top = max((LONG)dy,clip->g_y);
+    right = min((LONG)dx+w-sx,(LONG)clip->g_x+clip->g_w);
+    bottom = min((LONG)dy+h-sy,(LONG)clip->g_y+clip->g_h);
+    if (left >= right || top >= bottom) return;
+    vsf_color(fg);
+    for (y = top; y < bottom && aes_painter->ok; y++) {
+        source_y = sy+y-dy;
+        run = -1;
+        for (x = left; x <= right; x++) {
+            source_x = sx+x-dx;
+            if (x < right && (bitmap[source_y*stride+source_x/16] & (0x8000U >> (source_x & 15)))) {
+                if (run < 0) run = x;
+            } else if (run >= 0) {
+                aes_render_bb_fill(MD_REPLACE,FIS_SOLID,IP_SOLID,run,y,x-run,1);
+                run = -1;
+                if (!aes_painter->ok) break;
+            }
+        }
+    }
 }
 
 BOOL ob_render_cancelled(OBJECT *tree)
@@ -231,11 +256,30 @@ static LONG bounded_length(const char *string, LONG limit)
     while (n <= limit && string[n]) n++;
     return n;
 }
-static BOOL supported(OBJECT *object)
+static BOOL word_position(LONG x, LONG y)
+{
+    return x >= -32768L && x <= 32767L && y >= -32768L && y <= 32767L;
+}
+static BOOL icon_position(const ICONBLK *icon, WORD x, WORD y)
+{
+    LONG ix = (LONG)x+icon->ib_xicon, iy = (LONG)y+icon->ib_yicon;
+    LONG tx = (LONG)x+icon->ib_xtext, ty = (LONG)y+icon->ib_ytext;
+    /* The shared native icon painter stores translated origins in WORDs.
+     * Reject unrepresentable geometry before those assignments or its later
+     * character/label layout additions can wrap into the visible screen. */
+    if (!word_position(ix,iy) || !word_position(tx,ty)) return FALSE;
+    if ((icon->ib_char & 255) && !word_position(ix+icon->ib_xchar,iy+icon->ib_ychar)) return FALSE;
+    if (icon->ib_ptext[0] && (icon->ib_wtext < 0 || icon->ib_htext < 0 ||
+        !word_position(tx+icon->ib_wtext,ty+icon->ib_htext))) return FALSE;
+    return TRUE;
+}
+static BOOL supported(OBJECT *object, WORD x, WORD y)
 {
     WORD type = object->ob_type & 255;
     OBSPEC spec;
     TEDINFO *ted;
+    BITBLK *bitmap;
+    ICONBLK *icon;
     if (object->ob_flags & FL3DMASK) return FALSE;
     spec = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
     if (spec.index == -1) return TRUE;
@@ -248,24 +292,38 @@ static BOOL supported(OBJECT *object)
             bounded_length(ted->te_ptext,(type == G_FTEXT || type == G_FBOXTEXT) ? MAX_LEN-1 : 127) <=
                 ((type == G_FTEXT || type == G_FBOXTEXT) ? MAX_LEN-1 : 127) &&
             ((type != G_FTEXT && type != G_FBOXTEXT) || bounded_length(ted->te_ptmplt,MAX_LEN-1) < MAX_LEN);
+    case G_IMAGE:
+        bitmap = spec.bitblk;
+        return bitmap && bitmap->bi_pdata && bitmap->bi_wb > 0 && !(bitmap->bi_wb & 1) &&
+            bitmap->bi_wb <= 4094 && bitmap->bi_hl > 0 &&
+            (ULONG)bitmap->bi_wb*bitmap->bi_hl <= VDI_SERVICE_MAX_BITMAP &&
+            bitmap->bi_x >= 0 && bitmap->bi_x < bitmap->bi_wb*8 &&
+            bitmap->bi_y >= 0 && bitmap->bi_y < bitmap->bi_hl &&
+            bitmap->bi_color >= 0 && bitmap->bi_color <= 255;
+    case G_ICON:
+        icon = spec.iconblk;
+        return icon && icon->ib_pdata && icon->ib_pmask && icon->ib_wicon > 0 &&
+            !(icon->ib_wicon & 15) && icon->ib_hicon > 0 &&
+            (ULONG)(icon->ib_wicon/8)*icon->ib_hicon <= VDI_SERVICE_MAX_BITMAP &&
+            bounded_length(icon->ib_ptext,127) <= 127 && icon_position(icon,x,y);
     case G_USERDEF: return spec.userblk && spec.userblk->ub_code;
     default: return FALSE;
     }
 }
-BOOL aes_render_ready(OBJECT *tree, WORD object)
+BOOL aes_render_ready(OBJECT *tree, WORD object, WORD x, WORD y)
 {
     /* USERDEF can change a later sibling after the subtree preflight. */
-    if (aes_painter->ok && !supported(&tree[object])) aes_painter->ok = FALSE;
+    if (aes_painter->ok && !supported(&tree[object],x,y)) aes_painter->ok = FALSE;
     return aes_painter->ok;
 }
-static BOOL preflight(OBJECT *tree, WORD object, WORD depth)
+static BOOL preflight(OBJECT *tree, WORD object, WORD depth, WORD x, WORD y)
 {
     WORD child;
     if (tree[object].ob_flags & HIDETREE) return TRUE;
-    if (!supported(&tree[object])) return FALSE;
+    if (!supported(&tree[object],x,y)) return FALSE;
     if (depth && tree[object].ob_head != NIL)
         for (child = tree[object].ob_head; child != object; child = tree[child].ob_next)
-            if (child < 0 || !preflight(tree,child,depth-1)) return FALSE;
+            if (child < 0 || !preflight(tree,child,depth-1,(WORD)(x+tree[child].ob_x),(WORD)(y+tree[child].ob_y))) return FALSE;
     return TRUE;
 }
 static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD cw, WORD ch,
@@ -277,7 +335,12 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, parent, x, y, dummy;
     BOOL opened = FALSE, success = FALSE;
-    if (session < 0 || !preflight(tree,start,depth)) return 0;
+    if (session < 0) return 0;
+    /* Resolve ancestors once; each descendant inherits its parent's absolute
+     * position without rescanning the sibling chain through get_par(). */
+    x = y = 0;
+    if (!(tree[start].ob_flags & HIDETREE)) ob_offset(tree,start,&x,&y);
+    if (!preflight(tree,start,depth,x,y)) return 0;
     if (cw <= 0 || ch <= 0) {
         if (change) tree[start].ob_state = state;
         return 1;

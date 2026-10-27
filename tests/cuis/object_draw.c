@@ -1,6 +1,8 @@
 /* Public object-drawing contracts against a small independent pixel oracle. */
 #include "gem.h"
 #include "gemerror.h"
+#include "mono_objects.h"
+#include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("object draw failure: %d\n",__LINE__); return __LINE__; } } while (0)
@@ -8,7 +10,7 @@ short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
-static struct { WORD mode, color, interior, clip[4], line; } workstation[96];
+static struct { WORD mode, color, interior, clip[4], line; } workstation[128];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
 static int releases;
@@ -40,10 +42,10 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
         ws->ptsout[1] = 4;
-        if (opens >= 96) return ENSMEM;
+        if (opens >= 128) return ENSMEM;
         return E_OK;
     }
-    if (a <= 0 || a >= 96 || (!nesting && !window_update)) return EACCDN;
+    if (a <= 0 || a >= 128 || (!nesting && !window_update)) return EACCDN;
     if (fn == VDI_SERVICE_CLIP) {
         __builtin_memcpy(workstation[a].clip,(void *)(uintptr_t)c,8);
         return E_OK;
@@ -111,6 +113,41 @@ static WORD callback(PARMBLK *parameters)
         else mutation_target->ob_spec.tedinfo->te_ptmplt = mutation_text;
     }
     if (invalidate_global) session_error = EACCDN;
+    return 0;
+}
+int gem_probe_pixel(WORD handle, WORD x, WORD y)
+{
+    (void)handle;
+    return image[y][x];
+}
+/* Count ancestor searches independently of node visits. A flat tree should
+ * need a constant number, rather than one scan of the remaining siblings
+ * for every node. The empty clip isolates subtree admission from painting. */
+static ULONG offset_scans;
+void __real_ob_offset(OBJECT *tree, WORD object, WORD *x, WORD *y);
+void __wrap_ob_offset(OBJECT *tree, WORD object, WORD *x, WORD *y)
+{
+    offset_scans++;
+    __real_ob_offset(tree,object,x,y);
+}
+static int preflight_scaling(void)
+{
+    static OBJECT wide[4001];
+    ULONG before;
+    int count, i;
+    for (count = 32; count <= 4000; count *= 5) {
+        __builtin_memset(wide,0,sizeof(wide));
+        wide[0].ob_next = -1; wide[0].ob_head = 1; wide[0].ob_tail = count;
+        wide[0].ob_type = G_IBOX; wide[0].ob_width = 160; wide[0].ob_height = 120;
+        for (i = 1; i <= count; i++) {
+            wide[i].ob_head = wide[i].ob_tail = -1;
+            wide[i].ob_next = i == count ? 0 : i+1;
+            wide[i].ob_type = G_IBOX; wide[i].ob_width = wide[i].ob_height = 10;
+        }
+        before = offset_scans;
+        VERIFY(objc_draw(wide,0,1,0,0,0,0) == 1);
+        VERIFY(offset_scans-before <= 2);
+    }
     return 0;
 }
 int main(void)
@@ -279,6 +316,10 @@ int main(void)
         VERIFY(objc_draw(labels,0,1,0,0,160,120) == 0 && opens == closes && !nesting);
     }
     mutation_target = NULL;
+    VERIFY(preflight_scaling() == 0);
+    before = gem_mono_checks(0);
+    if (before) __builtin_printf("mono object failure: %x\n",before);
+    VERIFY(before == 0);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     return 0;
 }

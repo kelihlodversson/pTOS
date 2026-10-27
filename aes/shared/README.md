@@ -4,7 +4,7 @@ This directory holds ordinary C sources reused by native AES, standalone GEM
 programs, or libaes. Compile these sources into each consumer; do not include
 implementation files from other C files.
 
-- `gemrender*` and `gemgraphutil.c`: original object painting and GSX drawing.
+- `gemrender*`, `gemicon.c` and `gemgraphutil.c`: original object painting and GSX drawing.
 - `gemobjtree*` and `gemobjwalk.c`: object-tree editing, coordinates and traversal.
 - `gemrslib*` and `rsload*`: resource handling and the configured resource loaders,
   already reused by native AES and the standalone desktop. Moving them here does
