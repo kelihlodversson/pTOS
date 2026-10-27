@@ -29,6 +29,7 @@
 #include "gemrslib.h"
 #include "gemgsxif.h"
 #include "rsload.h"
+#include "gemlayout.h"
 #include "endian.h"
 
 #include "intmath.h"
@@ -52,56 +53,9 @@ RSHDR   *rs_hdr;
 AESGLOBAL *rs_global;
 static char    tmprsfname[128];
 
-/*
- *  Fix up a character position, from offset,row/col to a pixel value.
- *  If width is 80 then convert to full screen width.
- */
-static void fix_chpos(WORD *pfix, WORD offset)
-{
-    WORD coffset;
-    WORD cpos;
-
-    cpos = *pfix;
-    coffset = HIBYTE(cpos);
-    cpos = LOBYTE(cpos);
-
-    switch(offset)
-    {
-    case 0:
-        cpos *= gl_wchar;
-        break;
-    case 1:
-        cpos *= gl_hchar;
-        break;
-    case 2:
-        if (cpos == 80)
-            cpos = gl_width;
-        else
-            cpos *= gl_wchar;
-        break;
-    case 3:
-        cpos *= gl_hchar;
-        break;
-    }
-
-    cpos += ( coffset > 128 ) ? (coffset - 256) : coffset;
-    *pfix = cpos;
-}
-
-
-/************************************************************************/
-/* rs_obfix                                                             */
-/************************************************************************/
 void rs_obfix(OBJECT *tree, WORD curob)
 {
-    WORD offset;
-    WORD *p;
-
-    /* set X,Y,W,H */
-    p = &tree[curob].ob_x;
-
-    for (offset=0; offset<4; offset++)
-        fix_chpos(p+offset, offset);
+    rs_obfix_metrics(tree,curob,gl_wchar,gl_hchar,gl_width);
 }
 
 

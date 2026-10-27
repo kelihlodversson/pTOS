@@ -1507,3 +1507,33 @@ helper waits for the demo-ready marker and writes a PNG directly from QEMU;
 no generated or reconstructed UI is used. The checked-in example is in
 doc/screenshots/libaes-objects.png. Window decorations, forms, resources,
 menus, bitmap/icon drawing and 3D extensions remain subsequent slices.
+
+
+Userspace resource and form geometry (#752)
+-----------------------------------------
+rsrc_obfix/mt_rsrc_obfix convert a single OBJECT's encoded resource x/y/w/h
+coordinates to pixels using the system font's cell size. The original
+fix_chpos algorithm is shared in aes/shared/gemlayout.c with native AES and
+the standalone desktop resource loader. Low bytes count character cells;
+high bytes provide the original GEM pixel adjustment, including the native
+0x80 boundary behavior. A width low byte of 80 denotes the physical screen
+width before applying its pixel adjustment. Applications fix each object
+once; this operation does not load resources or relocate their pointers.
+
+form_center/mt_form_center move the root object to the original GEM center,
+using the screen area below the menu bar (system font cell height plus
+three pixels). Their returned save rectangle includes outline and shadow
+extents; root coordinates continue to describe the logical object. The
+original ob_center algorithm is shared in the same C unit. Standard GEMlib
+form_center_grect/mt_form_center_grect convenience functions use that path.
+The userspace wrapper stages changes and rejects negative root dimensions
+or unrepresentable expanded extents with GEM 0, leaving inputs/outputs
+unchanged. Child geometry is not moved or traversed.
+
+These APIs require a registered application and query a private virtual VDI
+workstation without display or mouse ownership. They close the workstation
+before committing caller geometry, preserve application workstation state,
+and return GEM 0 without mutation when graphics are unavailable or a query
+fails. They introduce no new kernel calls, configuration options or capability
+claims. Resource file loading and interactive form/event handling remain
+subsequent migration work.
