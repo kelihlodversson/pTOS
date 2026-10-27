@@ -1563,6 +1563,3 @@ or drawing failures return GEM 0 without committing the output arguments.
 The normal object painter owns workstation/update cleanup. No kernel
 service, scheduler change, capability claim or custom public API is added.
 The full form_do loop, button tracking and text editing remain later slices.
-
-This slice is stacked on #753 in a separate worktree. Its PR must remain
-draft until #753 has merged into epic/661-userspace-aes-cuis.
