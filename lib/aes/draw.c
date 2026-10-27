@@ -38,6 +38,28 @@ static void invoke(VDI_SERVICE_DRAW_REQUEST *request)
         memcpy(aes_painter->outpoints,result.ptsout,sizeof(result.ptsout));
     }
 }
+/* System GSX fonts use fixed cells and a left-aligned baseline. Drop only
+ * complete off-screen cells, retaining the origin of partially clipped glyphs. */
+static BOOL visible_text(VDI_SERVICE_DRAW_REQUEST *request)
+{
+    PAINTER *p = aes_painter;
+    LONG x = request->ptsin[0], y = request->ptsin[1];
+    WORD width = p->font == SMALL ? p->wschar : p->wchar;
+    WORD height = p->font == SMALL ? p->hschar : p->hchar;
+    WORD top = p->font == SMALL ? p->small_top : p->char_top;
+    WORD first = 0, last = request->nintin, i;
+    LONG right = (LONG)p->clip.g_x+p->clip.g_w;
+    if (y-top >= (LONG)p->clip.g_y+p->clip.g_h || y-top+height <= p->clip.g_y)
+        return FALSE;
+    while (first < last && x+(LONG)(first+1)*width <= p->clip.g_x) first++;
+    while (last > first && x+(LONG)(last-1)*width >= right) last--;
+    if (first == last) return FALSE;
+    for (i = first; i < last; i++) request->intin[i-first] = request->intin[i];
+    for (i = last-first; i < request->nintin; i++) request->intin[i] = 0;
+    request->nintin = last-first;
+    request->ptsin[0] = x+(LONG)first*width;
+    return TRUE;
+}
 void gsx2(void)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
@@ -53,6 +75,7 @@ void gsx2(void)
     request.code = aes_painter->control.code; request.nintin = aes_painter->control.nintin; request.nptsin = aes_painter->control.nptsin;
     for (i = 0; i < aes_painter->control.nintin; i++) request.intin[i] = aes_painter->input[i];
     for (i = 0; i < aes_painter->control.nptsin*2; i++) request.ptsin[i] = aes_painter->points[i];
+    if (request.code == TEXT && !visible_text(&request)) return;
     /* Native VDI clamps style zero to one; preserve that result within the
      * typed service's canonical range (solid/hollow fills ignore the style). */
     if (request.code == SET_FILL_STYLE && request.intin[0] == 0) request.intin[0] = 1;

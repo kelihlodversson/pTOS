@@ -20,8 +20,9 @@ static void object(OBJECT *o, short type, short x, short y, short w, short h)
 }
 static int geometry_checks(WORD handle)
 {
-    OBJECT hidden[3] = { { 0 } }, large = { 0 };
-    int black;
+    OBJECT hidden[5] = { { 0 } }, large = { 0 };
+    WORD reference[16][17];
+    int black, x, y;
     object(&hidden[0],G_BOX,0,0,100,100); hidden[0].ob_spec.index = 0x1170;
     object(&hidden[1],G_TEXT,0,0,20,20); hidden[1].ob_flags = OF_HIDETREE;
     object(&hidden[2],G_IBOX,0,0,20,20); hidden[2].ob_flags = OF_HIDETREE|OF_INDIRECT;
@@ -48,6 +49,20 @@ static int geometry_checks(WORD handle)
     VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
     VERIFY(gem_probe_pixel(handle,0,10) == black && gem_probe_pixel(handle,19,20) == black);
     VERIFY(gem_probe_pixel(handle,0,20) == 0);
+    object(&hidden[3],G_BUTTON,10,10,25000,20); hidden[3].ob_spec.free_string = "Wide";
+    object(&hidden[4],G_BOX,40,60,8,8); hidden[4].ob_spec.index = 0x1174;
+    VERIFY(objc_add(hidden,0,3) == 1 && objc_add(hidden,0,4) == 1);
+    VERIFY(objc_draw(hidden,0,1,0,0,100,100) == 1 && gem_probe_pixel(handle,40,60) == 4);
+    VERIFY(objc_draw(hidden,0,0,0,0,100,100) == 1);
+    object(&large,G_STRING,10,40,80,16); large.ob_spec.free_string = "ABCDE";
+    VERIFY(objc_draw(&large,0,0,0,0,100,100) == 1);
+    for (y = 0; y < 16; y++) for (x = 0; x < 17; x++)
+        reference[y][x] = gem_probe_pixel(handle,x+20,y+40);
+    VERIFY(objc_draw(hidden,0,0,0,0,100,100) == 1);
+    large.ob_x = -10;
+    VERIFY(objc_draw(&large,0,0,0,40,17,16) == 1);
+    for (y = 0; y < 16; y++) for (x = 0; x < 17; x++)
+        VERIFY(gem_probe_pixel(handle,x,y+40) == reference[y][x]);
     return 0;
 }
 static short callback(PARMBLK *pb)

@@ -7,7 +7,7 @@
 short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
-static WORD image[120][160], last_text[256], last_count;
+static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
 static struct { WORD mode, color, interior, clip[4], line; } workstation[96];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update;
@@ -71,9 +71,13 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn != VDI_SERVICE_DRAW) return EINVFN;
     if (draw_error) return EACCDN;
-    if (r->code == 114) {
+    if (r->code == 114 || r->code == 8) {
         int i;
-        for (i = 0; i < 4; i++) if (r->ptsin[i] < -10000 || r->ptsin[i] > 10000) return EINVAL;
+        for (i = 0; i < r->nptsin*2; i++) if (r->ptsin[i] < -10000 || r->ptsin[i] > 10000) return EINVAL;
+    }
+    if (r->code == 8) {
+        int i;
+        for (i = r->nintin; i < VDI_SERVICE_MAX_TEXT; i++) if (r->intin[i]) return EINVAL;
     }
     calls++;
     if (r->code == 38 || r->code == 12) {
@@ -83,7 +87,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     else if (r->code == 25) workstation[a].color = r->intin[0];
     else if (r->code == 23) workstation[a].interior = r->intin[0];
     else if (r->code == 8) {
-        texts++; last_count = r->nintin;
+        texts++; last_count = r->nintin; last_text_x = r->ptsin[0]; last_text_y = r->ptsin[1];
         __builtin_memcpy(last_text,r->intin,2*last_count);
     } else if (r->code == 114) {
         for (y = r->ptsin[1]; y <= r->ptsin[3]; y++) for (x = r->ptsin[0]; x <= r->ptsin[2]; x++) {
@@ -103,7 +107,7 @@ static WORD callback(PARMBLK *parameters)
 }
 int main(void)
 {
-    OBJECT tree[4] = { { 0 } }, large = { 0 };
+    OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
     WORD x,y;
     int before;
     OBSPEC indirect;
@@ -209,6 +213,22 @@ int main(void)
     VERIFY(objc_draw(&large,0,0,0,0,160,120) == 1);
     VERIFY(image[119][10] == BLACK && image[119][29] == BLACK && image[10][20] == BLACK);
     VERIFY(image[119][20] == WHITE);
+    for (x = 0; x < 3; x++) labels[x].ob_next = labels[x].ob_head = labels[x].ob_tail = -1;
+    labels[0].ob_type = G_IBOX; labels[0].ob_width = 160; labels[0].ob_height = 120;
+    labels[1].ob_type = G_BUTTON; labels[1].ob_spec.free_string = "Wide";
+    labels[1].ob_x = labels[1].ob_y = 10; labels[1].ob_width = 25000; labels[1].ob_height = 20;
+    labels[2].ob_type = G_BOX; labels[2].ob_spec.index = 0x1174;
+    labels[2].ob_x = 40; labels[2].ob_y = 60; labels[2].ob_width = labels[2].ob_height = 8;
+    VERIFY(objc_add(labels,0,1) == 1 && objc_add(labels,0,2) == 1);
+    before = texts;
+    VERIFY(objc_draw(labels,0,1,0,0,160,120) == 1 && texts == before && image[60][40] == BLUE);
+    labels[1].ob_width = 40; labels[1].ob_height = 25000;
+    VERIFY(objc_draw(labels,0,1,0,0,160,120) == 1 && texts == before && image[60][40] == BLUE);
+    large.ob_type = G_STRING; large.ob_spec.free_string = "ABCDE";
+    large.ob_x = -10; large.ob_y = 20; large.ob_width = 80; large.ob_height = 16;
+    VERIFY(objc_draw(&large,0,0,0,0,17,120) == 1);
+    VERIFY(last_count == 3 && last_text[0] == 'B' && last_text[2] == 'D');
+    VERIFY(last_text_x == -2 && last_text_y == 33);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     return 0;
 }
