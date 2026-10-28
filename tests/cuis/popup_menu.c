@@ -65,6 +65,12 @@ int gem_popup_checks(short handle)
     input.mn_item = 1; tree[2].ob_next = 1;
     VERIFY(menu_popup(&input,20,30,&output) == 0);
     tree[2].ob_next = 0; global[2] = -1;
-    VERIFY(mt_menu_popup(&input,20,30,&output,global) == 0);
+    output.mn_keystate = 123; output.mn_item = 456;
+    VERIFY(mt_menu_popup(&input,20,30,&output,global) == 0 && !output.mn_keystate && output.mn_item == 456);
+    input.mn_keystate = 123;
+    VERIFY(mt_menu_popup(&input,20,30,&input,global) == 0 && !input.mn_keystate && input.mn_item == 1);
+    output.mn_keystate = 123;
+    VERIFY(menu_popup(0,20,30,&output) == 0 && !output.mn_keystate && output.mn_item == 456);
+    VERIFY(menu_popup(&input,20,30,0) == 0);
     return 0;
 }
