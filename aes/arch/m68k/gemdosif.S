@@ -229,11 +229,13 @@ _aestrap:
 
 trapaes:
 #if CONF_DEBUG_AES_STACK
-        lea     -16(sp),sp
-        movem.l d0-d1/a0-a1,(sp)
-        jsr     _trapaes_debug_enter
-        movem.l (sp),d0-d1/a0-a1
-        lea     16(sp),sp
+        // d2 too: under -mfastcall it is call-clobbered, and the client
+        // expects the trap to preserve it
+        lea     -20(sp),sp
+        movem.l d0-d2/a0-a1,(sp)
+        jsr     C_SYM(trapaes_debug_enter)
+        movem.l (sp),d0-d2/a0-a1
+        lea     20(sp),sp
 #endif
 
         jbsr    C_SYM(disable_interrupts)     // mask out interrupts
@@ -299,11 +301,11 @@ trapaes:
         jbsr    C_SYM(enable_interrupts)      // restore interrupt mask
 
 #if CONF_DEBUG_AES_STACK
-        lea     -16(sp),sp
-        movem.l d0-d1/a0-a1,(sp)
-        jsr     _trapaes_debug_exit
-        movem.l (sp),d0-d1/a0-a1
-        lea     16(sp),sp
+        lea     -20(sp),sp
+        movem.l d0-d2/a0-a1,(sp)
+        jsr     C_SYM(trapaes_debug_exit)
+        movem.l (sp),d0-d2/a0-a1
+        lea     20(sp),sp
 #endif
         rte
 

@@ -512,6 +512,21 @@ config BUILD_TOOLCHAIN_IS_ELF
 	bool
 	default y if BUILD_TOOLCHAIN_MINTELF || BUILD_TOOLCHAIN_ELF
 
+config BUILD_LTO
+	bool "Link-time optimization (-flto)"
+	depends on BUILD_TOOLCHAIN_MINTELF && ARCH_M68K_CLASSIC
+	default y if TARGET_CART || TARGET_192 || TARGET_256
+	help
+	  Build the kernel with GCC's link-time optimization, which lets the
+	  compiler inline and discard code across source files.  This makes
+	  the image several KB smaller, so it is on by default for the ROM
+	  images of 256 KB and less, which need the space.
+
+	  Only the m68k-atari-mintelf toolchain is supported: the final code
+	  is generated at link time, so tools/lto-as/as puts the assembly
+	  through tools/fix-m68k-local-labels.py on the way to gas, as the
+	  Makefile does for every source file otherwise.
+
 config CROSS_COMPILE
 	string "Cross compiler prefix override"
 	default ""

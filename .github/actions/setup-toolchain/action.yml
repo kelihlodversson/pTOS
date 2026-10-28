@@ -111,13 +111,14 @@ runs:
 
     # A plain bare metal arm-none-eabi toolchain is all the Raspberry Pi
     # targets need, and Ubuntu packages one.
+    #
+    # (zip packs the Raspberry Pi kernels for a release.  The packages come
+    # from a cache of their files when there is one: see apt-install.)
     - name: Install the ARM cross toolchain
       if: inputs.arch == 'arm'
-      shell: bash
-      run: |
-        sudo apt-get update -qq
-        # zip packs the Raspberry Pi kernels for a release.
-        sudo apt-get install -y gcc-arm-none-eabi zip
+      uses: ./.github/actions/apt-install
+      with:
+        packages: gcc-arm-none-eabi zip
 
     # No cross toolchain: the runner's own native gcc/binutils compile and
     # link the x86-64 EFI image directly (see the ARCH_X86_64 MULTILIBFLAGS
@@ -129,16 +130,21 @@ runs:
     # verified below rather than assumed, so a runner image that ever
     # drops it fails here with a clear message instead of a confusing
     # linker error partway through a build.
+    #
+    # gcc-multilib: the built-in EmuCON and the boot self-test's probe
+    # program are x32 (-mx32) executables, built by the same gcc.  They are
+    # freestanding, but the multilib package is what guarantees the driver,
+    # its x32 specs and the linker emulation are all present.
     - name: Install the x86-64 build tools
+      if: inputs.arch == 'x86_64'
+      uses: ./.github/actions/apt-install
+      with:
+        packages: gcc binutils gcc-multilib
+
+    - name: Check the x86-64 linker
       if: inputs.arch == 'x86_64'
       shell: bash
       run: |
-        sudo apt-get update -qq
-        # gcc-multilib: the built-in EmuCON and the boot self-test's probe
-        # program are x32 (-mx32) executables, built by the same gcc.  They
-        # are freestanding, but the multilib package is what guarantees the
-        # driver, its x32 specs and the linker emulation are all present.
-        sudo apt-get install -y gcc binutils gcc-multilib
         if ! ld --help | grep -q i386pep; then
           echo "::error::this runner's ld has no i386pep (PE32+) emulation, needed to link the x86-64 EFI image"
           exit 1

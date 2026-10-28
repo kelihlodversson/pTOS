@@ -13,11 +13,25 @@
 #ifndef _NATFEAT_H
 #define _NATFEAT_H
 
+/*
+ * The emulator reads the arguments of nfID() and nfCall() from the stack.
+ * -mfastcall passes the first of them in registers, even those of a variadic
+ * function, so these two are called with the standard convention.
+ */
+#if CONF_WITH_MFASTCALL
+#define NF_CDECL __attribute__((cdecl))
+#else
+#define NF_CDECL
+#endif
+
+typedef long NFIDFunc(const char *) NF_CDECL;
+typedef long NFCallFunc(long ID, ...) NF_CDECL;
+
 typedef struct
 {
         long magic;
-        long (* nfID)(const char *);
-        long (* nfCall)(long ID, ...);
+        NFIDFunc *nfID;
+        NFCallFunc *nfCall;
 } NatFeatCookie;
 
 extern NatFeatCookie natfeat_cookie;
