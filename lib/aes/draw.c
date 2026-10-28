@@ -18,6 +18,8 @@
 #include "intmath.h"
 #include "string.h"
 #include "rectfunc.h"
+#include "frames.h"
+#include "gemmovegeom.h"
 
 #include "render_context.h"
 #include "resource_context.h"
@@ -616,6 +618,66 @@ WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD 
     dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
     a.kind = kind; a.small = *small; a.large = *large;
     return render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
+}
+
+typedef struct {
+    LONG native, session, press_x, press_y;
+    const WM_FRAME_STATE *state;
+    GRECT result;
+    BOOL completed;
+} FRAME_MOVE;
+static void move_frame(void *argument)
+{
+    FRAME_MOVE *move = argument;
+    PAINTER *p = aes_painter;
+    GRECT outline;
+    LONG event[4], result;
+    WORD width = p->workstation.ws_xres+1;
+    if (!wm_move_position(&move->state->border,move->press_x,move->press_y,
+                         move->press_x,move->press_y,width,move->state->wbox,move->state->hbox,&outline)) {
+        p->ok = FALSE; return;
+    }
+    gsx_attr(FALSE,MD_XOR,BLACK);
+    for (;;) {
+        /* Native gr_dragbox uses this same patterned XOR outline. Display
+         * ownership spans the wait, so peers cannot overwrite its pixels. */
+        gsx_xbox(&outline);
+        if (!p->ok) break;
+        result = cuis_call6(CUIS_CONTROL_READ,move->native,(uintptr_t)&event[0],
+            (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        while (!result) {
+            result = cuis_call6(CUIS_EVENT_WAIT,move->native,CUIS_EVENT_CONTROL,(QUAD)-1,0,0,0);
+            if (result <= 0) break;
+            result = cuis_call6(CUIS_CONTROL_READ,move->native,(uintptr_t)&event[0],
+                (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        }
+        gsx_xbox(&outline);
+        if (!p->ok || result <= 0 || (event[2] & ~1L)) break;
+        if (!wm_move_position(&move->state->border,move->press_x,move->press_y,
+                event[0],event[1],width,move->state->wbox,move->state->hbox,&outline)) {
+            p->ok = FALSE; break;
+        }
+        if (!(event[2] & 1)) {
+            move->completed = (event[3] & 1) != 0; move->result = outline; break;
+        }
+    }
+}
+BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y,
+                     GRECT *result, WORD *global)
+{
+    OBJECT dummy = { 0 };
+    FRAME_MOVE move;
+    BOOL ok;
+    dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
+    dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
+    move.native = native; move.session = aes_application_session(global);
+    move.state = state; move.press_x = press_x; move.press_y = press_y;
+    move.completed = FALSE;
+    ok = render(&dummy,0,0,0,state->hbox,32767,32767-state->hbox,global,
+                FALSE,0,0,NULL,0,move_frame,&move) != 0;
+    if (!ok) (void)cuis_call6(CUIS_DISPLAY_REDRAW,move.session,0,0,32767,32767,0);
+    if (ok && move.completed) *result = move.result;
+    return ok && move.completed;
 }
 
 

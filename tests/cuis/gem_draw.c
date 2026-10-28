@@ -49,11 +49,11 @@ static int control_checks(void)
     short id, stage, result, message[8], x,y,w,h;
     char ready[] = "x32 GEM frame control 0: READY\r\n";
     static const char pass[] = "x32 GEM frame controls: PASS\r\n";
-    id = wind_create(NAME|CLOSER|FULLER,0,0,200,140);
+    id = wind_create(NAME|CLOSER|FULLER|MOVER,0,0,200,140);
     VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Close and full") == 1);
     VERIFY(wind_open(id,20,30,200,140) == 1);
     while (appl_read(-1,16,message) == 1) { }
-    for (stage = 0; stage < 3; stage++) {
+    for (stage = 0; stage < 4; stage++) {
         ready[22] = '0'+stage;
         ptos_write(1,ready,sizeof(ready)-1);
         for (;;) {
@@ -62,8 +62,8 @@ static int control_checks(void)
             VERIFY(result && !(result & (MU_BUTTON|MU_TIMER)));
             if (result & MU_MESAG) {
                 if (message[0] == WM_REDRAW) continue;
-                VERIFY(stage && message[0] == (stage == 1 ? WM_FULLED : WM_CLOSED));
-                VERIFY(message[3] == id && message[4] == 20 && message[5] == 30 &&
+                VERIFY(stage && message[0] == (stage == 1 ? WM_FULLED : stage == 2 ? WM_CLOSED : WM_MOVED));
+                VERIFY(message[3] == id && message[4] == (stage == 3 ? 80 : 20) && message[5] == (stage == 3 ? 70 : 30) &&
                     message[6] == 200 && message[7] == 140);
                 break;
             }

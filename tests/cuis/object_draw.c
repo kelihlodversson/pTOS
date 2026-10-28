@@ -31,7 +31,9 @@ static PARMBLK callback_parameters;
 static BOOL draw_error, window_update, allocation_error, release_error;
 static WORD screen_planes = 32;
 static WORD pixel_width = 1, pixel_height = 1;
-static BOOL trace_animation;
+static BOOL trace_animation, move_test;
+static LONG move_records[4][4], move_error;
+static WORD move_count, move_at, move_waits;
 static WORD corner_x, corner_y, corner_width;
 static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type;
 static int releases, mouse_nesting, mouse_releases;
@@ -93,6 +95,18 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (move_test && fn == CUIS_CONTROL_READ && a == 99) {
+        if (move_error) { LONG result = move_error; move_error = 0; return result; }
+        if (move_at == move_count) return 0;
+        *(LONG *)(uintptr_t)b = move_records[move_at][0]; *(LONG *)(uintptr_t)c = move_records[move_at][1];
+        *(LONG *)(uintptr_t)d = move_records[move_at][2]; *(LONG *)(uintptr_t)e = move_records[move_at++][3];
+        return 1;
+    }
+    if (move_test && fn == CUIS_EVENT_WAIT && a == 99 && b == CUIS_EVENT_CONTROL && c == (UQUAD)(QUAD)-1) {
+        if (!nesting) return EACCDN;
+        move_waits++; move_count = 2;
+        return 1;
+    }
     if (fn == CUIS_FOCUS_QUERY && a == 99) return 1;
     if (fn == CUIS_WINDOW_REGION && a == 99) {
         if (b) return 0;
@@ -544,6 +558,40 @@ static int frame_paint_checks(void)
     __builtin_memcpy(image,saved,sizeof(image));
     return 0;
 }
+static int move_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    GRECT border = { 20,20,100,80 }, result = { 99,99,99,99 };
+    WORD saved[120][160];
+    int before;
+    VERIFY(aes_frame_prepare(&state,NAME|MOVER,&border,"Mover","",aes_global));
+    VERIFY(aes_frame_control(&state,70,25) == W_NAME);
+    __builtin_memcpy(saved,image,sizeof(image));
+    move_records[0][0] = 70; move_records[0][1] = 60; move_records[0][2] = 1; move_records[0][3] = 0;
+    move_records[1][0] = 90; move_records[1][1] = 80; move_records[1][2] = 0; move_records[1][3] = 1;
+    move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
+    before = patterned_segments;
+    VERIFY(aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(result.g_x == 70 && result.g_y == 75 && result.g_w == 100 && result.g_h == 80);
+    VERIFY(move_waits == 1 && move_at == 2 && patterned_segments > before);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_error = ERANGE; result.g_x = 99;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global) && result.g_x == 99);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_error = EACCDN;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_at = 0; move_count = 1; move_records[0][2] = 3;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    before = redraws; bar_line_error = TRUE;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(redraws > before && !nesting && opens == closes);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+    bar_line_error = FALSE;
+    move_test = trace_animation = FALSE;
+    return 0;
+}
 static int frame_metric_checks(void)
 {
     WORD wbox = 99, hbox = 99, width = 99, height = 99;
@@ -630,6 +678,7 @@ int main(void)
     char raw[] = "AB", pattern[] = "__.__", big[258];
     VERIFY(frame_metric_checks() == 0);
     VERIFY(frame_paint_checks() == 0);
+    VERIFY(move_paint_checks() == 0);
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
     tree[0].ob_x = 10; tree[0].ob_y = 12; tree[0].ob_width = 100; tree[0].ob_height = 80;

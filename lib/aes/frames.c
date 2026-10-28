@@ -49,6 +49,13 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
         ob_3d_bounds(&frame.tree[object],1,TRUE,&left,&top,&width,&height);
         if (x >= left && y >= top && x < left+width && y < top+height) return object;
     }
+    if (state->kind & MOVER) {
+        object = W_NAME;
+        left = (LONG)frame.tree[W_BOX].ob_x+frame.tree[W_TITLE].ob_x+frame.tree[object].ob_x;
+        top = (LONG)frame.tree[W_BOX].ob_y+frame.tree[W_TITLE].ob_y+frame.tree[object].ob_y;
+        ob_3d_bounds(&frame.tree[object],1,TRUE,&left,&top,&width,&height);
+        if (x >= left && y >= top && x < left+width && y < top+height) return object;
+    }
     return 0;
 }
 BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, WORD *global)
@@ -73,7 +80,7 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
     drawing.colours = drawing.topped ? top : bottom;
     wm_frame_init(&frame);
     wm_frame_build(frame.tree,&frame.name,&frame.info,&drawing);
-    if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER))
+    if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER || object == W_NAME))
         frame.tree[object].ob_state |= SELECTED;
     for (index = 0; ; index++) {
         result = cuis_call6(CUIS_WINDOW_REGION,native,index,(uintptr_t)&region[0],

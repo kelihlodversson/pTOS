@@ -2050,7 +2050,7 @@ are reported as GEM 0.
 
 Decorated borders must admit a positive work area, title inset and drop shadow
 without WORD overflow. Tiny/overflowing rectangles fail before configuration.
-Kind-zero window behavior is retained. MOVER, SIZER, arrows,
+Kind-zero window behavior is retained. SIZER, arrows,
 sliders, HOTCLOSE and other creation flags remain rejected until their actions
 are implemented. No further capability bits are advertised. CUIS gains no GEM
 frame flags, object pointers, drawing commands or architecture-specific code.
@@ -2077,7 +2077,7 @@ native AES. Neither request closes, destroys, maximizes or otherwise changes
 the window: the application remains responsible for its response. An activation
 click on a background window requests WM_TOPPED only. Other buttons, release
 outside, lost input, geometry/visibility/focus changes and mouse grabs cancel
-the gesture. MOVER/SIZER/scrollbars and HOTCLOSE remain unsupported.
+the gesture. SIZER/scrollbars and HOTCLOSE remain unsupported.
 
 CUIS adds two generic scalar operations under CONF_WITH_CUIS:
 
@@ -2114,3 +2114,45 @@ queued and captured border gestures even if window focus and stacking stay the
 same. Completed requests retain a release-time rectangle separately from the
 watch box; a later geometry change, close or release-feedback drawing failure
 cannot retract that request while its message waits for stream capacity.
+
+Window move gestures (#793)
+--------------------------
+
+External libaes accepts MOVER, including MOVER without NAME. Dragging the native
+name/title object selects it and draws the original gsx_xbox dotted XOR outline
+from aes/shared/gemgraphutil.c. The window and its work pixels remain fixed.
+Releasing the left button appends standard WM_MOVED (28): sender/extra length
+zero, handle in word 3, proposed x/y and unchanged border width/height in words
+4-7. The application chooses whether to call wind_set(WF_CURRXYWH). Background
+activation still requests only WM_TOPPED. NAME without MOVER is not draggable;
+CLOSER/FULLER retain their existing watch-box semantics.
+
+The press-to-border offset is retained, even when a press and release were
+queued before servicing. Wide-intermediate constraints match native
+hctl_window()/gr_dragbox()/rc_constrain: left edge 0, top at hbox, rightmost
+origin screen_width-wbox-6-2*ADJ3DSTD and the native MAX_COORDINATE vertical
+constraint. WORD outline endpoints cannot wrap for oversized windows. Shared
+geometry lives in aes/shared/gemmovegeom.c; native frame/title/glyph and GSX
+outline drawing sources remain shared without .inc files.
+
+The display lock spans outline drawing, input waits and XOR erasure, as native
+GEM's update scope does. No mouse grab replaces the existing border capture;
+no ordinary button history, key queue, event filters or completed input result
+is consumed by tracking. Other mouse buttons, lost border records, ownership
+cancellation or drawing/input failure abort without WM_MOVED. Successful and
+cancelled outlines are erased before leaving the display scope. A rendering
+failure invalidates the display for application redraw. Completed move requests
+retain proposed geometry independently of later application geometry changes
+and full-stream retries. Modal scopes defer servicing before a drag starts.
+
+CUIS_EVENT_CONTROL (16) extends the existing EVENT_WAIT window-event mask; it
+waits on that owned window's border queue/cancellation rather than all session
+windows. It uses the existing scalar window/events/timeout arguments (0 poll,
+-1 indefinite, positive milliseconds), and never consumes records or changes
+session input predicates/results. Another window's queued records cannot make
+this wait spin. Cancellation remains readable and wakes both window and session
+control waits while a peer owns the mouse, allowing the outline owner to release
+its display lock even if that peer is waiting for display access. These generic
+kernel changes remain compiled only with CONF_WITH_CUIS. There is no new syscall
+opcode or public libaes entry point. SIZER, arrows/sliders and HOTCLOSE remain
+subsequent work.

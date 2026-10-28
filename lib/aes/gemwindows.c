@@ -147,7 +147,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     LONG native, identifier;
     WORD wbox = 1, hbox = 1, width = 640, height = 400;
     WM_FRAME_INSETS insets;
-    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER)) || aes_application_session(global) < 0) return -1;
+    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER)) || aes_application_session(global) < 0) return -1;
     for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
     if ((kind && !aes_frame_metrics(&wbox,&hbox,&width,&height,global)) ||
@@ -369,18 +369,29 @@ static LONG service_controls(LONG session, WORD *global)
             if (result == ERANGE) {
                 selected = window->control_selected;
                 window->control = 0; window->control_selected = FALSE;
-                if (selected && window->open && (window->kind & (CLOSER|FULLER)))
+                if (selected && window->open && (window->kind & (CLOSER|FULLER|MOVER)))
                     (void)paint_window(window,global);
                 result = E_OK; continue;
             }
             if (result < 0) goto done;
-            if (!window->open || !(window->kind & (CLOSER|FULLER))) continue;
+            if (!window->open || !(window->kind & (CLOSER|FULLER|MOVER))) continue;
             if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
                 window->control = 0; window->control_selected = FALSE; break;
             }
             object = aes_frame_control(&state,event[0],event[1]);
             if ((event[3] & 1) && (event[2] & 1) && !window->control)
                 window->control = object;
+            if (window->control == W_NAME && event[2] == 1) {
+                window->control_selected = TRUE;
+                if (paint_window(window,global) && aes_frame_move(window->native,&state,event[0],event[1],
+                                                                &window->control_rectangle,global))
+                    window->control_message = WM_MOVED;
+                window->control = 0; window->control_selected = FALSE;
+                (void)paint_window(window,global);
+                result = flush_control(window,session);
+                if (result < 0 || control_pipe_blocked) goto done;
+                continue;
+            }
             completed = window->control && !(event[2] & 1) && (event[3] & 1) && object == window->control;
             if (event[2] & ~1L) { window->control = 0; completed = FALSE; }
             selected = window->control && object == window->control && (event[2] & 1);

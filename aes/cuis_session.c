@@ -1383,6 +1383,7 @@ static BOOL wait_ready(void *argument)
     if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
         ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
         ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
+        ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))) ||
         ((events & CUIS_EVENT_MESSAGE) && wait->client->message_count)) return TRUE;
     return wait->timeout >= 0 && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration;
 }
@@ -1409,6 +1410,7 @@ static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, 
         if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
             ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
             ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
+            ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))) ||
             ((events & CUIS_EVENT_MESSAGE) && client->message_count)) {
             cuis_input_unlock(flags); return 1;
         }
@@ -1587,9 +1589,9 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_SURFACE) && !mouse_owner && surface_owner == wait->client &&
         wait->client->surface_events && (!wait->input.tracking || result))
         result |= CUIS_READY_SURFACE;
-    if ((wait->events & CUIS_READY_CONTROL) && !mouse_owner && (!wait->input.tracking || result)) {
+    if ((wait->events & CUIS_READY_CONTROL) && (!wait->input.tracking || result)) {
         for (control = wait->client->windows; control; control = control->next)
-            if (control->control_count || control->control_overflow) { result |= CUIS_READY_CONTROL; break; }
+            if (control->control_overflow || (!mouse_owner && control->control_count)) { result |= CUIS_READY_CONTROL; break; }
     }
     return result;
 }
@@ -1894,7 +1896,7 @@ LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout)
 {
     CUIS_WINDOW *window;
     if (handle > 0x7fffffffULL || !events ||
-        (events & ~(UQUAD)(CUIS_EVENT_KEY | CUIS_EVENT_POINTER | CUIS_EVENT_REDRAW | CUIS_EVENT_MESSAGE))) return EINVAL;
+        (events & ~(UQUAD)(CUIS_EVENT_KEY | CUIS_EVENT_POINTER | CUIS_EVENT_REDRAW | CUIS_EVENT_MESSAGE | CUIS_EVENT_CONTROL))) return EINVAL;
     window = input_window(handle);
     if (!window) return EACCDN;
     refresh_pointer_bounds();
@@ -1910,7 +1912,7 @@ static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD but
     if (handle > 0x7fffffffULL) return EINVAL;
     window = input_window(handle);
     if (!window) return EACCDN;
-    if (control && mouse_owner) return 0;
+    if (control && mouse_owner && !window->control_overflow) return 0;
     queue = control ? window->controls : window->pointer;
     head = control ? &window->control_head : &window->pointer_head;
     count = control ? &window->control_count : &window->pointer_count;

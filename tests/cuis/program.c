@@ -133,7 +133,7 @@ static int pointer_checks(void)
     CHECK(aes_event_wait(window, CUIS_EVENT_KEY, 0) == EACCDN);
     CHECK(aes_event_wait(window, CUIS_EVENT_POINTER | CUIS_EVENT_KEY, 0) == 0);
     CHECK(aes_event_wait(window, 0, 0) == EINVAL);
-    CHECK(aes_event_wait(window, 16, 0) == EINVAL);
+    CHECK(aes_event_wait(window, 32, 0) == EINVAL);
     CHECK(aes_event_wait(window, CUIS_EVENT_POINTER, -2) == EINVAL);
     CHECK(aes_event_wait(window, CUIS_EVENT_POINTER, 1) == 0);
 #if CONF_WITH_X86_64_MEMTEST
