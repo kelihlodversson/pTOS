@@ -30,15 +30,17 @@ int main(int argc, char **argv, char **envp)
         message[2] = message[3] = message[4] = message[5] = message[6] = message[7] = 0;
         VERIFY(appl_write(parent, 16, message) == 1 && control_message(message) == 1);
         VERIFY(wind_get(message[3], WF_CURRXYWH, &x, &y, &w, &h) == 0);
-        window = wind_create(0, 0, 0, 100, 100);
+        window = wind_create(NAME, 0, 0, 100, 100);
         VERIFY(window > 0 && window != message[3] && wind_open(window, 5, 6, 30, 40) == 1);
         message[1] = id; message[3] = window;
         VERIFY(appl_write(parent, 16, message) == 1 && control_message(message) == 1);
         _Exit(37); /* Kernel cleanup must reclaim the open window. */
     }
     result = gem_window_checks(globals); if (result) return result;
-    window = wind_create(0, 0, 0, 200, 160);
-    VERIFY(window > 0 && wind_open(window, 10, 20, 100, 80) == 1);
+    window = wind_create(NAME|INFO, 0, 0, 200, 160);
+    VERIFY(window > 0 && wind_set_str(window,WF_NAME,"Parent") == 1);
+    VERIFY(wind_set_str(window,WF_INFO,"Shared native frame") == 1);
+    VERIFY(wind_open(window,10,20,100,80) == 1);
     VERIFY(appl_init() == id && wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1);
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMWIN.TOS", (uintptr_t)tail, (uintptr_t)environment);
     VERIFY(child > 0 && control_message(message) == 1 && message[0] == 899);

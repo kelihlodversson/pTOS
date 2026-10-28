@@ -1490,6 +1490,9 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_NOTICE) && notices_ready(wait->client)) result |= CUIS_READY_NOTICE;
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
+    if ((wait->events & CUIS_READY_DISPLAY) &&
+        (display_owner == wait->client || display_available(wait->client)) &&
+        (!wait->input.tracking || result)) result |= CUIS_READY_DISPLAY;
     /* Internal work must not end an unfinished multi-click wait. Keep its
      * count, snapshot and original deadline resident until a user event is
      * ready; report the pending surface alongside that event. */

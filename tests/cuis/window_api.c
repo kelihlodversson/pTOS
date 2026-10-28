@@ -31,7 +31,7 @@ static int gem_window_checks(short *global)
         WINDOW_VERIFY(wind_calc(WC_WORK,0,32767,0,10,10,&x,&y,&w,&h) == 0 && x == 123);
         WINDOW_VERIFY(wind_calc(WC_WORK,NAME,10,20,100,80,NULL,NULL,NULL,NULL) == 1);
     }
-    WINDOW_VERIFY(wind_create(1, 0, 0, 100, 80) == -1);
+    WINDOW_VERIFY(wind_create(CLOSER, 0, 0, 100, 80) == -1);
     id = mt_wind_create(0, 10, 20, 300, 200, global);
     WINDOW_VERIFY(id > 0 && wind_close(id) == 0);
     WINDOW_VERIFY(wind_get(id, WF_CURRXYWH, &x, &y, &w, &h) == 1 && !(x | y | w | h));
@@ -65,6 +65,18 @@ static int gem_window_checks(short *global)
     WINDOW_VERIFY(mt_wind_open(id, 1, 2, 30, 40, global) == 1 && mt_wind_delete(id, global) == 1);
     WINDOW_VERIFY(wind_delete(id) == 0 && wind_get(id, WF_KIND, &x, &y, &w, &h) == 0);
     WINDOW_VERIFY(wind_open(0, 1, 2, 3, 4) == 0 && wind_delete(-1) == 0);
+    id = wind_create(NAME|INFO,0,0,200,160);
+    WINDOW_VERIFY(id > 0);
+    WINDOW_VERIFY(wind_get(id,WF_KIND,&x,&y,&w,&h) == 1 && x == (NAME|INFO));
+    WINDOW_VERIFY(wind_set_str(id,WF_NAME,"Native title") == 1);
+    WINDOW_VERIFY(mt_wind_set_str(id,WF_INFO,"Information",global) == 1);
+    WINDOW_VERIFY(wind_set_str(id,WF_NAME,NULL) == 0);
+    WINDOW_VERIFY(wind_open(id,20,60,100,5) == 0);
+    WINDOW_VERIFY(wind_open(id,20,60,120,100) == 1);
+    WINDOW_VERIFY(wind_get(id,WF_WORKXYWH,&x,&y,&w,&h) == 1 && x == 21 && y > 61 && w == 118 && h < 98);
+    WINDOW_VERIFY(wind_set_str(id,WF_NAME,"Retitled") == 1);
+    WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,40,80,140,120) == 1);
+    WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
     for (i = 0; i < 64; i++) {
         ids[i] = wind_create(0, 0, 0, 100, 100);
         WINDOW_VERIFY(ids[i] > 0);

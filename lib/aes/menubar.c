@@ -220,7 +220,7 @@ LONG aes_menu_dispatch(WORD *global)
     VDI_SERVICE_WORKSTATION ws;
     WORD pair, current = NIL, active = NIL, candidate, title, item, mx, my, buttons, modifiers;
     WORD events, mouse[4];
-    BOOL locked = FALSE, grabbed = FALSE, opened = FALSE, copied = FALSE, ok = TRUE, pressed;
+    BOOL locked = FALSE, grabbed = FALSE, opened = FALSE, copied = FALSE, overlay = FALSE, ok = TRUE, pressed;
     GRECT rect;
     void *buffer = NULL;
     if (!bar.tree || bar.busy || session < 0) return E_OK;
@@ -235,6 +235,8 @@ LONG aes_menu_dispatch(WORD *global)
     bar.busy = TRUE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) { ok = FALSE; goto done; }
     locked = TRUE;
+    if (!aes_frames_suspend()) { ok = FALSE; goto done; }
+    overlay = TRUE;
     flags = cuis_call6(CUIS_SURFACE_STATUS,session,1,0,0,0,0);
     if (flags < 0) { ok = FALSE; goto done; }
     if (!(flags & CUIS_SURFACE_OWNED)) goto done;
@@ -301,6 +303,7 @@ done:
     if (grabbed && cuis_call6(CUIS_MOUSE_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (locked && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (buffer && aes_resource_discard(buffer) != E_OK) ok = FALSE;
+    if (overlay) aes_frames_resume();
     bar.busy = FALSE;
     if (!ok) {
         bar.pending = FALSE;

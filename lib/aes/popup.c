@@ -74,7 +74,7 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, WORD *global)
     OBJECT *original, *tree = NULL, *box;
     void *buffer = NULL;
     LONG session = aes_application_session(global), x, y, pad, right, bottom, bytes;
-    BOOL display = FALSE, grabbed = FALSE, opened = FALSE, copied = FALSE, ok = FALSE;
+    BOOL display = FALSE, grabbed = FALSE, opened = FALSE, copied = FALSE, overlay = FALSE, ok = FALSE;
     if (!result) return 0;
     if (!menu || session < 0) { result->mn_keystate = 0; return 0; }
     input = *menu; output = input;
@@ -142,6 +142,8 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, WORD *global)
     if (!buffer) goto done;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;
+    if (!aes_frames_suspend()) goto done;
+    overlay = TRUE;
     if (cuis_call6(CUIS_MOUSE_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     grabbed = TRUE;
     if (mt_evnt_button(1,1,0,mouse,mouse+1,mouse+2,mouse+3,global) <= 0) goto done;
@@ -160,6 +162,7 @@ done:
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (buffer && aes_resource_discard(buffer) != E_OK) ok = FALSE;
     if (tree && aes_resource_discard(tree) != E_OK) ok = FALSE;
+    if (overlay) aes_frames_resume();
     if (ok && selection > 0) { *result = output; return 1; }
     result->mn_keystate = 0;
     return 0;

@@ -1,0 +1,8 @@
+/* Private native frame drawing over CUIS-owned visible regions. */
+#ifndef LIBAES_FRAMES_H
+#define LIBAES_FRAMES_H
+#include "gemframe.h"
+BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
+                       char *name, char *info, WORD *global);
+BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global);
+#endif

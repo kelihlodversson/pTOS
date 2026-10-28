@@ -177,6 +177,8 @@ static int demo(WORD width, WORD height)
     OBJECT scene[16] = { { 0 } };
     static TEDINFO title, field;
     short i, x = (width-580)/2, y = (height-380)/2;
+    short frame, wx, wy, ww, wh;
+    OBJECT work = { 0 };
     object(&scene[0],G_BOX,0,0,width,height); scene[0].ob_spec.index = 0x1143;
     object(&scene[1],G_BOX,x,y,580,380); scene[1].ob_spec.index = 0x11178;
     scene[1].ob_state = OS_OUTLINED|OS_SHADOWED;
@@ -206,6 +208,14 @@ static int demo(WORD width, WORD height)
     for (i = 8; i <= 12; i++) VERIFY(objc_add(scene,7,i) == 1);
     for (i = 13; i <= 15; i++) VERIFY(objc_add(scene,1,i) == 1);
     VERIFY(objc_draw(scene,0,8,0,0,width,height) == 1);
+    frame = wind_create(NAME|INFO,0,0,width,height);
+    VERIFY(frame > 0 && wind_set_str(frame,WF_NAME,"Native GEM window") == 1);
+    VERIFY(wind_set_str(frame,WF_INFO,"Shared AES frame builder") == 1);
+    VERIFY(wind_open(frame,width-300,height-190,260,140) == 1);
+    VERIFY(wind_get(frame,WF_WORKXYWH,&wx,&wy,&ww,&wh) == 1);
+    object(&work,G_BOX,wx,wy,ww,wh); work.ob_spec.index = 0x1170;
+    VERIFY(objc_draw(&work,0,0,wx,wy,ww,wh) == 1);
+
     {
         static const char ready[] = "x32 GEM object screenshot: READY\r\n";
         ptos_write(1,ready,sizeof(ready)-1);
@@ -213,6 +223,7 @@ static int demo(WORD width, WORD height)
     /* Keep the serial test marker out of the visual framebuffer. */
     VERIFY(objc_draw(scene,0,0,0,height-32,width,32) == 1);
     VERIFY(evnt_timer(1800) == 1);
+    VERIFY(wind_close(frame) == 1 && wind_delete(frame) == 1);
     return 0;
 }
 int main(int argc, char **argv, char **envp)
@@ -318,8 +329,14 @@ int main(int argc, char **argv, char **envp)
     }
     status = process(0x3d,(uintptr_t)"FORMTEST.ON",0,0,0);
     if (status >= 0) {
+        short overlay_window;
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
         VERIFY(process(0x3e,status,0,0,0) == 0);
+        /* Leave a decorated redraw pending beneath the alert and subsequent
+         * modal scopes. Their recursive waits must not repaint its frame. */
+        overlay_window = wind_create(NAME|INFO,0,0,240,140);
+        VERIFY(overlay_window > 0 && wind_set_str(overlay_window,WF_NAME,"Behind overlays") == 1);
+        VERIFY(wind_open(overlay_window,width/2-100,height/2-30,240,140) == 1);
         status = gem_form_interactive(); if (status) return status;
         ptos_write(1,pass,sizeof(pass)-1);
         status = gem_popup_checks(handle); if (status) return status;
@@ -345,6 +362,7 @@ int main(int argc, char **argv, char **envp)
             }
             {
                 static const char menu_pass[] = "x32 GEM menu bar: PASS\r\n";
+                VERIFY(wind_close(overlay_window) == 1 && wind_delete(overlay_window) == 1);
                 ptos_write(1,menu_pass,sizeof(menu_pass)-1);
                 {
                     short window = wind_create(0,20,100,100,80);

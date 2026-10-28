@@ -969,11 +969,10 @@ GEM plain-window lifecycle and geometry (#732)
 --------------------------------------------
 
 libaes exports wind_create/open/close/delete/get/set/calc and their standard
-mt_* forms. This is the metadata/lifecycle foundation for kind == 0 windows;
-nonzero decoration kinds fail explicitly. It does not yet draw even the plain
-frame, paint decorations or adapt keyboard/button/rectangle events.
+mt_* forms. This section describes the metadata/lifecycle foundation for
+kind == 0 windows. Title/info frame rendering is added by #787 below.
 Window messages/focus and stack/owner queries are added by #738 below. Desktop handle 0, foreign-window
-geometry queries, titles, sliders and other
+geometry queries, sliders and other
 fields remain unsupported (return 0 without changing outputs). Update locking and rectangle enumeration are added by #734 below. No additional
 appl_getinfo capabilities are advertised by these slices.
 
@@ -1005,7 +1004,7 @@ its hidden native geometry may have been prepared for the attempted open.
 wind_close saves the last current rectangle as previous and clears current.
 wind_delete also accepts an open window, hiding and destroying it in CUIS.
 
-wind_get supports WF_KIND (zero), WF_CURRXYWH, WF_PREVXYWH, WF_FULLXYWH and
+wind_get supports WF_KIND, WF_CURRXYWH, WF_PREVXYWH, WF_FULLXYWH and
 WF_WORKXYWH. wind_set supports WF_CURRXYWH, even while closed; only a successful
 configure advances previous/current. Open and configure require positive border
 width/height. Full geometry is retained exactly as provided at creation.
@@ -1968,7 +1967,11 @@ CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
   strip height and grants painting without changing ownership or fallback order.
 - 54 SURFACE_END(session,commit): commits with 1 or cancels with 0 under the
   display lock. Releasing the display lock also cancels an unfinished stage.
-READY_SURFACE is bit 128 in SESSION_WAIT. CUIS does not interpret GEM object
+READY_SURFACE is bit 128 in SESSION_WAIT. READY_DISPLAY is bit 256: it
+reports when a display acquisition can succeed (including an already-owned
+display scope). It does not acquire ownership. Frame notice pumps try the
+display lock nonblockingly and wait for display availability alongside queued
+messages, so a lock holder blocked writing to the receiver can still progress. CUIS does not interpret GEM object
 pointers, AES opcodes or message formats. It has no feature/version negotiation
 or drawing commands; ordinary streams carry opaque application message bytes.
 
@@ -1999,7 +2002,64 @@ unchanged. Wide intermediate arithmetic rejects results outside signed WORD
 range. Small rectangles retain negative work extents as in native AES, and
 representable frame/work conversions round-trip exactly.
 
-This slice adds calculation only: wind_create still rejects nonzero kinds
-until frame rendering and gadget actions are implemented. Capability queries
-continue to leave unsupported window behavior unadvertised. Kernel window
-geometry and the native AES binary are unchanged.
+This slice adds calculation only; title/info frames follow in #787 below.
+Capability queries continue to leave unsupported window behavior unadvertised.
+
+Native title and info frames (#787)
+
+wind_create accepts NAME, INFO and their combination, retaining the original
+kind in WF_KIND. The native 3D frame builder is separately compiled from
+aes/shared/gemframe.c by both native AES and libaes. Object indices live in
+aes/shared/gemframeids.h. Native 2D small-ROM construction stays unchanged.
+The shared builder retains native layout, glyphs, colours, title activation
+and shadow appearance for all classic gadgets; this public slice enables only
+those frames that do not require additional gadget actions.
+
+wind_set_str/mt_wind_set_str set WF_NAME and WF_INFO using ordinary GEMlib
+signatures. The traditional wind_set/mt_wind_set high-WORD/low-WORD pointer
+form works too. Labels remain caller-owned and must stay alive until replaced
+or the window is deleted. The bounded object painter supports labels of up to
+127 bytes. NULL labels fail, while an empty string is valid.
+
+Opening and changing a decorated window draw its frame. Redraw notices publish WM_REDRAW
+for the work area and repaint owned frames under the same display lock. The
+notice is acknowledged before drawing, so focus/damage during painting stays
+pending for the next pass. Event waits and
+timers service internal frame notices while preserving user timer deadlines,
+queued messages and unfinished multi-click waits. A full message stream
+suppresses repeated internal wakes until capacity can be freed. APR_NOWAIT
+uses a nonblocking display acquisition and leaves repaint work pending if a
+peer owns the display. Topping/bottoming
+repaints the caller's frame; affected peers receive their normal redraw notices.
+WF_WORKXYWH, visible work rectangles and WM_REDRAW use the registered kind,
+matching wind_calc. WF_FIRSTXYWH copies its complete region snapshot into
+caller-owned storage; WF_NEXTXYWH consumes that copy, so intervening frame
+painting cannot replace an active public traversal. Snapshot allocation failure
+returns GEM 0 without changing outputs or the previous traversal. Remaining
+rectangles are freed on restart, close, deletion, geometry change or application
+reset. The painter uses CUIS visible-region snapshots under the
+display lock and the original object renderer, preserving work pixels and
+occluding clients. A drawing failure leaves the notice available for retry;
+failed opening hides the window and restores local rectangles when cleanup
+succeeds. Failed configuration attempts restore the previous geometry when
+the rollback succeeds; if rollback itself fails, metadata retains the last
+successful CUIS geometry. Text replacement restores its previous label on
+painting failure. Painting failures invalidate the affected display rectangle
+for later redraw. Cleanup attempts release temporary display locks and workstations; errors
+are reported as GEM 0.
+
+Decorated borders must admit a positive work area, title inset and drop shadow
+without WORD overflow. Tiny/overflowing rectangles fail before configuration.
+Kind-zero window behavior is retained. MOVER, CLOSER, FULLER, SIZER, arrows,
+sliders, HOTCLOSE and other creation flags remain rejected until their actions
+are implemented. No further capability bits are advertised. CUIS gains no GEM
+frame flags, object pointers, drawing commands or architecture-specific code.
+
+Frame painting is suspended throughout caller-local overlay scopes: alerts,
+form_do and watch-box input, FMD_START through matching FMD_FINISH, popup menus
+and menu-bar tracking. Nested scopes resume only after the outer overlay is
+removed or its saved pixels are restored. Redraw notices stay pending and do
+not wake internal waits during suspension. Ordinary stream messages remain
+readable. The event timer's remaining interval is computed immediately before
+the kernel wait, after pre-wait frame painting has consumed its share of the
+original deadline.

@@ -67,9 +67,11 @@ WORD mt_form_do(OBJECT *tree, WORD start, WORD *global)
     c.session = aes_application_session(global);
     if (c.session < 0 || !aes_layout_metrics(&c.metrics,global)) return 0;
     c.global = global; c.ok = TRUE;
+    if (!aes_frames_suspend()) return 0;
     aes_modal = &c;
     result = aes_form_do_core(tree,start);
     aes_modal = saved;
+    aes_frames_resume();
     return c.ok ? result : 0;
 }
 WORD form_do(OBJECT *tree, WORD start) { return mt_form_do(tree,start,aes_global); }
@@ -84,16 +86,20 @@ WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
     if (session < 0 || kind < FMD_START || kind > FMD_FINISH) return 0;
     small.g_x = sx; small.g_y = sy; small.g_w = sw; small.g_h = sh;
     large.g_x = x; large.g_y = y; large.g_w = w; large.g_h = h;
-    /* Native FMD_START has no persistent allocation or ownership side effect. */
-    if (kind == FMD_START) return 1;
+    /* No allocation or kernel ownership; retain only local overlay scope. */
+    if (kind == FMD_START) return aes_frames_dialog(TRUE);
     if (w <= 0 || h <= 0) return 0;
     if (kind == FMD_GROW || kind == FMD_SHRINK) {
         if (sw <= 0 || sh <= 0 || sw > w || sh > h) return 0;
-        return aes_form_animation(kind,&small,&large,global);
+        if (!aes_frames_suspend()) return 0;
+        ok = aes_form_animation(kind,&small,&large,global);
+        aes_frames_resume();
+        return ok;
     }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
     ok = cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)x,(QUAD)y,w,h,0) == E_OK;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
+    if (ok) (void)aes_frames_dialog(FALSE);
     return ok ? 1 : 0;
 }
 WORD form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh, WORD x, WORD y, WORD w, WORD h)

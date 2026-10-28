@@ -4,8 +4,14 @@
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/application.h"
+#include "../../lib/aes/frames.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
+extern void *malloc(__SIZE_TYPE__ bytes);
+extern void free(void *memory);
+static BOOL region_alloc_failure;
+void *aes_temporary_alloc(LONG bytes) { return region_alloc_failure ? NULL : malloc(bytes); }
+WORD aes_resource_discard(void *memory) { free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static BOOL live;
 static ULONG starts, closes, yields, delays;
@@ -25,11 +31,14 @@ static ULONG window_error_fn;
 static LONG window_error;
 static ULONG window_calls, display_nesting;
 static LONG display_error, region_error, mouse_error;
+static ULONG display_block_requests;
+static BOOL release_display_on_wait;
 static ULONG mouse_nesting, mouse_block;
 static LONG region_values[3][4];
 static ULONG region_count;
 static LONG stack_values[4];
 static LONG notice_kind, notice_native, notice_id, publish_failure, notice_on_wait;
+static ULONG notice_only_wakes;
 static LONG window_transport(ULONG fn, UQUAD a)
 {
     short i;
@@ -134,6 +143,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         return E_OK;
     }
     if (fn == CUIS_DISPLAY_LOCK) {
+        if (b && c) display_block_requests++;
         if (display_error) return display_error;
         if (a != (UQUAD)handle || !live) return EACCDN;
         if (b) display_nesting++;
@@ -157,8 +167,15 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (menu_test && menu_wakes && (c & CUIS_READY_SURFACE)) {
             menu_wakes--; menu_ticks++; return CUIS_READY_SURFACE;
         }
+        if (release_display_on_wait && (c & CUIS_READY_DISPLAY)) {
+            release_display_on_wait = FALSE; display_error = 0;
+        }
+        if ((c & CUIS_READY_DISPLAY) && !display_error) ready |= CUIS_READY_DISPLAY;
         if (notice_on_wait) { notice_kind = notice_on_wait; notice_on_wait = 0; }
-        if ((c & CUIS_READY_NOTICE) && notice_kind) ready |= CUIS_READY_NOTICE;
+        if ((c & CUIS_READY_NOTICE) && notice_kind) {
+            ready |= CUIS_READY_NOTICE;
+            if (notice_only_wakes) { notice_only_wakes--; menu_ticks += 3; return ready; }
+        }
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
         if (c & CUIS_READY_TIMER) {
@@ -251,7 +268,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~CUIS_READY_SURFACE));
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY)));
     CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
     state_error = EIMBA; x = 123;
@@ -283,6 +300,30 @@ BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, WORD *
     if (width) *width = frame_screen_width;
     if (height) *height = frame_screen_height;
     return TRUE;
+}
+/* Window lifecycle tests isolate the private paint adapter; pixel and native
+ * frame construction contracts run against production code in other suites. */
+static BOOL frame_paint_failure;
+static ULONG frame_paints;
+static BOOL frame_damage_once;
+static ULONG frame_paint_ticks;
+static char *last_frame_name;
+BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
+                       char *name, char *info, WORD *global)
+{
+    (void)kind; (void)global;
+    if (border->g_w < 5 || border->g_h < 50) return FALSE;
+    state->border = *border; state->name = name; state->info = info;
+    return TRUE;
+}
+BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
+{
+    (void)native; (void)global;
+    if (!state->name || !state->info) return FALSE;
+    frame_paints++; last_frame_name = state->name;
+    menu_ticks += frame_paint_ticks; frame_paint_ticks = 0;
+    if (frame_damage_once) { frame_damage_once = FALSE; notice_kind = CUIS_NOTICE_REDRAW; }
+    return !frame_paint_failure;
 }
 #include "window_api.c"
 static int window_failures(void)
@@ -326,6 +367,97 @@ static int window_failures(void)
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
     return 0;
 }
+static int frame_failures(void)
+{
+    short id, x, y, w, h;
+    id = wind_create(NAME|INFO,0,0,200,120);
+    CHECK(id > 0 && wind_set_str(id,WF_NAME,"Original") == 1);
+    frame_paint_failure = TRUE;
+    CHECK(wind_open(id,10,20,100,80) == 0 && wind_close(id) == 0);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && !(x|y|w|h));
+    frame_paint_failure = FALSE;
+    CHECK(wind_open(id,10,20,100,80) == 1);
+    frame_paint_failure = TRUE;
+    CHECK(wind_set(id,WF_CURRXYWH,30,40,120,100) == 0);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 10 && y == 20 && w == 100 && h == 80);
+    CHECK(wind_set_str(id,WF_NAME,"Replacement") == 0 && last_frame_name[0] == 'O');
+    frame_paint_failure = FALSE;
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    return 0;
+}
+static int frame_event_checks(void)
+{
+    short id, message[8], clicks;
+    ULONG before;
+    id = wind_create(NAME|INFO,0,0,200,120);
+    CHECK(id > 0 && wind_open(id,10,20,100,80) == 1);
+    notice_native = native_windows[id-1]; notice_id = id;
+    notice_only_wakes = 1; notice_on_wait = CUIS_NOTICE_REDRAW;
+    menu_ticks = 0; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && wait_calls == before+2 && waited_interval == 5);
+    CHECK(!notice_kind && pipe_count == 16 && (waited_mask & CUIS_READY_NOTICE));
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW && message[3] == id);
+    pipe_count = sizeof(pipe_data); notice_kind = CUIS_NOTICE_REDRAW;
+    CHECK(evnt_timer(0) == 1 && !(waited_mask & CUIS_READY_NOTICE) && notice_kind);
+    pipe_count = 0; notice_kind = 0;
+    notice_on_wait = CUIS_NOTICE_REDRAW; input_ready = CUIS_READY_BUTTON; input_count = 2;
+    CHECK(evnt_multi(MU_BUTTON,2,1,1,0,0,0,0,0,0,0,0,0,0,NULL,0,
+                     NULL,NULL,NULL,NULL,NULL,&clicks) == MU_BUTTON && clicks == 2);
+    CHECK(!(waited_mask & CUIS_READY_NOTICE) && !notice_kind && pipe_count == 16);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
+    input_ready = 0;
+    notice_kind = CUIS_NOTICE_REDRAW; display_error = EAGAIN;
+    before = frame_paints;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && frame_paints == before && notice_kind);
+    display_error = 0;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
+    CHECK(!display_nesting && frame_paints == before+1);
+    notice_kind = CUIS_NOTICE_REDRAW; frame_damage_once = TRUE;
+    before = frame_paints;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
+    CHECK(!notice_kind && frame_paints == before+2 && pipe_count == 16);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !pipe_count);
+    pipe_count = sizeof(pipe_data); notice_kind = CUIS_NOTICE_REDRAW;
+    frame_paint_failure = TRUE;
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48 && notice_kind);
+    pipe_count = sizeof(pipe_data);
+    CHECK(evnt_mesag(message) == 1 && pipe_count == 48 && notice_kind);
+    frame_paint_failure = FALSE; pipe_count = 0;
+
+    /* A lock holder may be blocked writing our full stream. Repainting
+     * cannot prevent reads from releasing its backpressure. */
+    notice_kind = CUIS_NOTICE_REDRAW; display_error = EAGAIN;
+    pipe_count = sizeof(pipe_data); before = display_block_requests;
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48 && notice_kind);
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                     NULL,NULL,NULL,NULL,NULL,NULL) == (MU_MESAG|MU_TIMER));
+    CHECK(pipe_count == 32 && notice_kind && display_block_requests == before);
+    pipe_count = 0; release_display_on_wait = TRUE;
+    CHECK(appl_read(pid,16,message) == 1 && message[0] == WM_REDRAW);
+    CHECK(!notice_kind && !display_error && display_block_requests == before);
+    /* Time spent servicing the pre-wait frame must consume the original
+     * timer budget, including across the low-31-bit clock wrap. */
+    notice_kind = CUIS_NOTICE_REDRAW; menu_ticks = 0; frame_paint_ticks = 10;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0);
+    pipe_count = 0; notice_kind = CUIS_NOTICE_REDRAW;
+    menu_ticks = 0x7ffffffeUL; frame_paint_ticks = 10;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0);
+    pipe_count = 0;
+    /* Nested overlays leave damage queued and suppress notice readiness
+     * in both pre- and post-wait pumps until the outer scope ends. */
+    CHECK(aes_frames_suspend() && aes_frames_suspend());
+    notice_kind = CUIS_NOTICE_REDRAW; before = frame_paints;
+    CHECK(evnt_timer(0) == 1 && notice_kind && frame_paints == before);
+    CHECK(!(waited_mask & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY)));
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && notice_kind);
+    aes_frames_resume();
+    CHECK(evnt_timer(0) == 1 && notice_kind && frame_paints == before);
+    aes_frames_resume();
+    CHECK(evnt_timer(0) == 1 && !notice_kind && frame_paints == before+1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    return 0;
+}
 static int display_api_checks(void)
 {
     short id, other, x = 99, y, w, h;
@@ -354,13 +486,17 @@ static int display_api_checks(void)
     region_count = 3;
     CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1 && y == 1 && w == 9 && h == 9);
     CHECK(wind_get(other, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1);
-    region_error = EIMBA; x = 99;
-    CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 0 && x == 99);
-    region_error = 0;
+    /* Another region consumer replaces the kernel snapshot. NEXT must
+     * still use the original caller-owned rectangles without transport. */
+    region_alloc_failure = TRUE; x = 99;
+    CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 0 && x == 99);
+    region_alloc_failure = FALSE;
+    region_error = EIMBA;
     CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && x == 10 && y == 1 && w == 9 && h == 18);
     CHECK(wind_get(other, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && x == 10);
     CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
     CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
+    region_error = 0;
     CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1);
     CHECK(wind_delete(id) == 1 && wind_delete(other) == 1 && display_nesting == 1);
     CHECK(wind_update(END_UPDATE) == 1 && !display_nesting);
@@ -466,7 +602,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);
