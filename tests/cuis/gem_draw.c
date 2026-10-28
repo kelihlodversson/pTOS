@@ -329,8 +329,14 @@ int main(int argc, char **argv, char **envp)
     }
     status = process(0x3d,(uintptr_t)"FORMTEST.ON",0,0,0);
     if (status >= 0) {
+        short overlay_window;
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
         VERIFY(process(0x3e,status,0,0,0) == 0);
+        /* Leave a decorated redraw pending beneath the alert and subsequent
+         * modal scopes. Their recursive waits must not repaint its frame. */
+        overlay_window = wind_create(NAME|INFO,0,0,240,140);
+        VERIFY(overlay_window > 0 && wind_set_str(overlay_window,WF_NAME,"Behind overlays") == 1);
+        VERIFY(wind_open(overlay_window,width/2-100,height/2-30,240,140) == 1);
         status = gem_form_interactive(); if (status) return status;
         ptos_write(1,pass,sizeof(pass)-1);
         status = gem_popup_checks(handle); if (status) return status;
@@ -356,6 +362,7 @@ int main(int argc, char **argv, char **envp)
             }
             {
                 static const char menu_pass[] = "x32 GEM menu bar: PASS\r\n";
+                VERIFY(wind_close(overlay_window) == 1 && wind_delete(overlay_window) == 1);
                 ptos_write(1,menu_pass,sizeof(menu_pass)-1);
                 {
                     short window = wind_create(0,20,100,100,80);

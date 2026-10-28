@@ -21,7 +21,7 @@ WORD mt_form_alert(WORD button, const char *text, WORD *global)
     LONG session = aes_application_session(global);
     UQUAD memory = 0;
     ULONG bytes;
-    BOOL opened = FALSE, display = FALSE, copied = FALSE, ok = TRUE;
+    BOOL opened = FALSE, display = FALSE, copied = FALSE, overlay = FALSE, ok = TRUE;
     if (session < 0 || button < 0 || button > MAX_BUTNUM || !text ||
         text[0] != '[' || text[1] < '0' || text[1] > '3' || text[2] != ']' || text[3] != '[' ||
         !aes_layout_metrics(&c.metrics,global)) return 0;
@@ -47,6 +47,8 @@ WORD mt_form_alert(WORD button, const char *text, WORD *global)
     if ((QUAD)memory <= 0) { memory = 0; goto done; }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;
+    if (!aes_frames_suspend()) goto done;
+    overlay = TRUE;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
     opened = TRUE;
     if (aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&rect,memory,0) != E_OK) goto done;
@@ -61,6 +63,7 @@ done:
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (memory && (LONG)aes_memory_call(0x49,memory) != E_OK) ok = FALSE;
     aes_alert_context = saved;
+    if (overlay) aes_frames_resume();
     return ok ? selection : 0;
 }
 WORD form_alert(WORD button, const char *text) { return mt_form_alert(button,text,aes_global); }

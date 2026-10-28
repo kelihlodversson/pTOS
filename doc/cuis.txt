@@ -1967,7 +1967,11 @@ CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
   strip height and grants painting without changing ownership or fallback order.
 - 54 SURFACE_END(session,commit): commits with 1 or cancels with 0 under the
   display lock. Releasing the display lock also cancels an unfinished stage.
-READY_SURFACE is bit 128 in SESSION_WAIT. CUIS does not interpret GEM object
+READY_SURFACE is bit 128 in SESSION_WAIT. READY_DISPLAY is bit 256: it
+reports when a display acquisition can succeed (including an already-owned
+display scope). It does not acquire ownership. Frame notice pumps try the
+display lock nonblockingly and wait for display availability alongside queued
+messages, so a lock holder blocked writing to the receiver can still progress. CUIS does not interpret GEM object
 pointers, AES opcodes or message formats. It has no feature/version negotiation
 or drawing commands; ordinary streams carry opaque application message bytes.
 
@@ -2028,7 +2032,12 @@ uses a nonblocking display acquisition and leaves repaint work pending if a
 peer owns the display. Topping/bottoming
 repaints the caller's frame; affected peers receive their normal redraw notices.
 WF_WORKXYWH, visible work rectangles and WM_REDRAW use the registered kind,
-matching wind_calc. The painter uses CUIS visible-region snapshots under the
+matching wind_calc. WF_FIRSTXYWH copies its complete region snapshot into
+caller-owned storage; WF_NEXTXYWH consumes that copy, so intervening frame
+painting cannot replace an active public traversal. Snapshot allocation failure
+returns GEM 0 without changing outputs or the previous traversal. Remaining
+rectangles are freed on restart, close, deletion, geometry change or application
+reset. The painter uses CUIS visible-region snapshots under the
 display lock and the original object renderer, preserving work pixels and
 occluding clients. A drawing failure leaves the notice available for retry;
 failed opening hides the window and restores local rectangles when cleanup
@@ -2045,3 +2054,12 @@ Kind-zero window behavior is retained. MOVER, CLOSER, FULLER, SIZER, arrows,
 sliders, HOTCLOSE and other creation flags remain rejected until their actions
 are implemented. No further capability bits are advertised. CUIS gains no GEM
 frame flags, object pointers, drawing commands or architecture-specific code.
+
+Frame painting is suspended throughout caller-local overlay scopes: alerts,
+form_do and watch-box input, FMD_START through matching FMD_FINISH, popup menus
+and menu-bar tracking. Nested scopes resume only after the outer overlay is
+removed or its saved pixels are restored. Redraw notices stay pending and do
+not wake internal waits during suspension. Ordinary stream messages remain
+readable. The event timer's remaining interval is computed immediately before
+the kernel wait, after pre-wait frame painting has consumed its share of the
+original deadline.
