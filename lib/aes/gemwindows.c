@@ -18,7 +18,24 @@ static struct gem_window {
     ULONG region_index;
     GRECT current, previous, full;
 } windows[GEM_WINDOW_LIMIT];
-static BOOL frame_notice_blocked;
+static BOOL frame_notice_blocked, frame_display_blocked;
+static ULONG frame_overlays, frame_dialogs;
+BOOL aes_frames_suspended(void) { return frame_overlays != 0; }
+BOOL aes_frames_wait_display(void) { return frame_display_blocked && !frame_overlays; }
+BOOL aes_frames_suspend(void)
+{
+    if (frame_overlays == 0xffffffffUL) return FALSE;
+    frame_overlays++; return TRUE;
+}
+void aes_frames_resume(void) { if (frame_overlays) frame_overlays--; }
+BOOL aes_frames_dialog(BOOL begin)
+{
+    if (begin) {
+        if (!aes_frames_suspend()) return FALSE;
+        frame_dialogs++;
+    } else if (frame_dialogs) { frame_dialogs--; aes_frames_resume(); }
+    return TRUE;
+}
 BOOL aes_frames_registered(void)
 {
     short i;
@@ -26,13 +43,14 @@ BOOL aes_frames_registered(void)
         if (windows[i].id && windows[i].open && windows[i].kind) return TRUE;
     return FALSE;
 }
-BOOL aes_frames_listening(void) { return !frame_notice_blocked && aes_frames_registered(); }
+BOOL aes_frames_listening(void) { return !frame_notice_blocked && !frame_overlays && aes_frames_registered(); }
 
 void aes_windows_reset(void)
 {
     short i;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++) windows[i].id = 0;
-    frame_notice_blocked = FALSE;
+    frame_notice_blocked = frame_display_blocked = FALSE;
+    frame_overlays = frame_dialogs = 0;
 }
 
 static struct gem_window *lookup(short id, short *global)
@@ -84,6 +102,11 @@ static BOOL paint_window(struct gem_window *window, short *global)
 {
     WM_FRAME_STATE state;
     if (!window->kind || !window->open) return TRUE;
+    if (frame_overlays) {
+        LONG session = aes_application_session(global);
+        return session >= 0 && cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)window->current.g_x,
+            (QUAD)window->current.g_y,window->current.g_w+2,window->current.g_h+2,0) == E_OK;
+    }
     return aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global) &&
         aes_frame_paint(window->native,&state,global);
 }
@@ -226,7 +249,9 @@ static LONG publish_notice(struct gem_window *window, LONG session, LONG kind,
     BOOL frame = kind == CUIS_NOTICE_REDRAW && window->kind && window->open;
     if (!frame) return cuis_call6(CUIS_NOTICE_PUBLISH,session,window->native,kind,
                                  (uintptr_t)message,sizeof(short)*8,0);
-    if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return EACCDN;
+    result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
+    if (result == EAGAIN) { frame_display_blocked = TRUE; return result; }
+    if (result != E_OK) return result;
     if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
         result = EACCDN; goto done;
     }
@@ -249,7 +274,8 @@ LONG aes_window_messages(LONG session, short *global)
     short message[8], i, j;
     struct gem_window *window;
     GRECT work;
-    frame_notice_blocked = FALSE;
+    if (frame_overlays) return E_OK;
+    frame_notice_blocked = frame_display_blocked = FALSE;
     /* Bound pumping even if input continuously invalidates the display. */
     for (i = 0; i < 2 * GEM_WINDOW_LIMIT; i++) {
         kind = cuis_call6(CUIS_NOTICE_PEEK, session, (uintptr_t)&native, (uintptr_t)&identifier, 0, 0, 0);
@@ -282,11 +308,12 @@ LONG aes_window_messages(LONG session, short *global)
 LONG aes_window_messages_poll(LONG session, short *global)
 {
     LONG result;
+    if (frame_overlays) return E_OK;
     if (!aes_frames_registered()) return aes_window_messages(session,global);
     /* APR_NOWAIT may paint only after a nonblocking acquisition. Nested
      * frame/renderer locks then borrow our already-owned display scope. */
     result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
-    if (result == EAGAIN) return E_OK;
+    if (result == EAGAIN) { frame_display_blocked = TRUE; return E_OK; }
     if (result != E_OK) return result;
     result = aes_window_messages(session,global);
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;

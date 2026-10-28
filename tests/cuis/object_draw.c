@@ -14,6 +14,7 @@
 #include "gem_layout.h"
 #include "../../lib/aes/layout.h"
 #include "../../lib/aes/frames.h"
+#include "../../lib/aes/application.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
@@ -78,6 +79,15 @@ void gem_menubar_input_stage(short stage)
     gesture[2] = gesture[1]; gesture[2].events = MU_BUTTON; gesture[2].buttons = 1;
     gesture[3] = gesture[2]; gesture[3].buttons = 0;
     mouse_x = 30; mouse_y = 8;
+}
+static ULONG frame_overlay_depth, frame_dialog_depth, bad_overlay_scope;
+BOOL aes_frames_suspend(void) { frame_overlay_depth++; return TRUE; }
+void aes_frames_resume(void) { if (frame_overlay_depth) frame_overlay_depth--; else bad_overlay_scope++; }
+BOOL aes_frames_dialog(BOOL begin)
+{
+    if (begin) { frame_dialog_depth++; return aes_frames_suspend(); }
+    if (frame_dialog_depth) { frame_dialog_depth--; aes_frames_resume(); }
+    return TRUE;
 }
 LONG aes_application_session(short *global) { return global && global[2] >= 0 && !session_error ? 7 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
@@ -167,6 +177,7 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
         if (aes_menu_dispatch(global) < 0 || !bar_stream) return 0;
         __builtin_memcpy(message,bar_message,16); bar_stream = FALSE; return MU_MESAG;
     }
+    if (!frame_overlay_depth) { bad_overlay_scope++; return 0; }
     if (events == (MU_KEYBD|MU_BUTTON) && clicks == 2 && mask == 255 && state == 1) {
         if (!keyboard_nesting || !nesting || !mouse_nesting || modal_at == modal_count) return 0;
         *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
@@ -206,6 +217,7 @@ short evnt_multi(short events, short clicks, short button_mask, short button_sta
 short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my,
                       short *buttons, short *mods, short *global)
 {
+    if (!frame_overlay_depth) { bad_overlay_scope++; return 0; }
     if (input_error || aes_application_session(global) < 0) return 0;
     if (!mouse_nesting || clicks != 1 || mask != 1 || state) { bad_gesture++; return 0; }
     *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
@@ -951,5 +963,6 @@ int main(void)
     if (before) __builtin_printf("mono object failure: %x\n",before);
     VERIFY(before == 0);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
+    VERIFY(!frame_overlay_depth && !frame_dialog_depth && !bad_overlay_scope);
     return 0;
 }

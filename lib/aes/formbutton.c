@@ -16,6 +16,10 @@ static BOOL grab(void)
 {
     FORM_CONTEXT *c = aes_form_context;
     if (!c->ok) return FALSE;
+    if (!c->overlay) {
+        c->ok = aes_frames_suspend(); c->overlay = c->ok;
+        if (!c->ok) return FALSE;
+    }
     if (!c->grabbed) {
         c->ok = cuis_call6(CUIS_MOUSE_LOCK,c->session,1,1,0,0,0) == E_OK;
         c->grabbed = c->ok;
@@ -117,6 +121,7 @@ static BOOL finish(FORM_CONTEXT *c, FORM_CONTEXT *saved)
 {
     if (c->grabbed && cuis_call6(CUIS_MOUSE_LOCK,c->session,0,0,0,0,0) != E_OK) c->ok = FALSE;
     aes_form_context = saved;
+    if (c->overlay) aes_frames_resume();
     return c->ok;
 }
 short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_state, short *global)

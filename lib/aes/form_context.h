@@ -6,7 +6,7 @@
 typedef struct {
     short *global;
     LONG session;
-    BOOL ok, grabbed, have_metrics, full_screen, have_release, released_inside;
+    BOOL ok, grabbed, overlay, have_metrics, full_screen, have_release, released_inside;
     LAYOUT_METRICS metrics;
     GRECT screen;
 } FORM_CONTEXT;

@@ -39,6 +39,13 @@ static int display_checks(void)
     CHECK(cuis_window_service(CUIS_WINDOW_DESTROY, cover, 0, 0, 0, 0) == E_OK);
     run = &second;
     second_session = cuis_service(CUIS_SESSION_START, 0);
+    CHECK(cuis_session_wait(second_session,0,CUIS_READY_DISPLAY|CUIS_READY_TIMER,0) == CUIS_READY_TIMER);
+    run = &first;
+    CHECK(cuis_stream_service(CUIS_STREAM_WRITE,second_session,0x10000,16,0,0) == 16);
+    run = &second;
+    CHECK(cuis_session_wait(second_session,16,CUIS_READY_STREAM|CUIS_READY_DISPLAY|CUIS_READY_TIMER,0) ==
+          (CUIS_READY_STREAM|CUIS_READY_TIMER));
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,second_session,0x20000,16,0,0) == 16);
     CHECK(cuis_display_lock(first_session, 1, 0) == EACCDN);
     CHECK(cuis_display_lock(second_session, 1, 0) == EAGAIN);
     CHECK(cuis_display_lock(second_session, 0, 0) == EACCDN);
@@ -53,10 +60,14 @@ static int display_checks(void)
     run = &second;
     b = cuis_window_service(CUIS_WINDOW_CREATE, 5, 5, 10, 10, 0);
     CHECK(b >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, b, 0, 0, 0, 0) == E_OK);
+    CHECK(cuis_session_wait(second_session,0,CUIS_READY_DISPLAY,0) == CUIS_READY_DISPLAY);
     CHECK(cuis_display_lock(second_session, 1, 1) == E_OK);
+    CHECK(cuis_session_wait(second_session,0,CUIS_READY_DISPLAY,0) == CUIS_READY_DISPLAY);
     display_release_owner = &second;
     run = &first;
     input_sleeps = 0;
+    CHECK(cuis_session_wait(first_session,0,CUIS_READY_DISPLAY,0) == CUIS_READY_DISPLAY);
+    CHECK(!display_owner && input_sleeps == 1);
     CHECK(cuis_display_lock(first_session, 1, 1) == E_OK && input_sleeps == 1 && !input_bad_idle);
     CHECK(REGION(a, 0) == 1 && copied[0] == 0 && copied[1] == 0 && copied[2] == 20 && copied[3] == 5);
     before = allocations - frees;
