@@ -525,6 +525,9 @@ ROMSIZE = 128
 image-default = ptoscart.img
 MEMBOT_REFERENCE = TOS102
 endif
+ifdef TARGET_CART_STUB
+image-default = ptoscartstub.img
+endif
 ifdef TARGET_PRG
 image-default = ptos$(UNIQUE).prg
 endif
@@ -598,7 +601,9 @@ TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym *.efi
 .PHONY: all
 all: $(IMAGE) $(image-extra)
 	@echo "# $(IMAGE) is ready"
+ifndef TARGET_CART_STUB
 	@$(call report-memory)
+endif
 
 # Userspace linker code must never become a kernel symbol-resolution service.
 # Kconfig selects supported address-space backends; shared C code needs no
@@ -751,6 +756,17 @@ $(IMAGE): $(EMUTOS_IMG) mkrom
 ifdef TARGET_CART
 	./mkrom stc $(EMUTOS_IMG) ptos.stc
 endif
+endif
+
+#
+# ROM that only hands over to the cartridge: one source file, none of the
+# kernel.  The 192 KB are the two ROM sockets of the original ST.
+#
+
+ifdef TARGET_CART_STUB
+$(IMAGE): bios/arch/m68k/cartstub.S mkrom | obj
+	$(CC) $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) -nostartfiles -nostdlib -Wl,--oformat=binary,-Ttext=0x00fc0000,--entry=0x00fc0000 $< -o obj/cartstub.bin
+	./mkrom pad 192k obj/cartstub.bin $@
 endif
 
 # Hatari symbol file, useful with the 512 KB image

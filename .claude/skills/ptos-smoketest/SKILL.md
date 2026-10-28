@@ -143,6 +143,17 @@ magic `0xfa52235f`. It is a diagnostic image, NOT a full OS: it is limited to
     --machine ste --memsize 4 --sound off \
     --avirecord --avi-vcodec png --avi-file /tmp/cart.avi --run-vbls 900
   ```
+- **Without a real TOS:** `cartstub_defconfig` builds `ptoscartstub.img`, a
+  192 KB ROM that only hands over to the cartridge (`bios/arch/m68k/cartstub.S`),
+  so the cartridge can be tested as the whole OS. It is an ST ROM (version
+  1.04): run it as `--machine st`, e.g. (`make distclean` between the builds,
+  copy the two images first)
+  ```sh
+  hatari --tos ptoscartstub.img --cartridge ptoscart.img \
+    --machine st --memsize 1 --sound off --run-vbls 300
+  ```
+  Verified: the pTOS boot screen (version, CPU, machine, ST-RAM, drives) is
+  up within about 5 s. With no cartridge the border flashes red.
 - **It does NOT boot to the desktop** — the GEM desktop does not exist in this
   image, so the desktop detector above must NOT be used as the pass signal. Instead, the cartridge runs its diagnostics and renders a **text
   screen** (light-grey `238,238,238` background with black character glyphs).

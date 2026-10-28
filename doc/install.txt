@@ -378,6 +378,10 @@ atari512-extdesk    the same with EmuDesk as a program (CONF_EXTERNAL_DESK):
                     the ROM has no desktop and the AES loads EMUDESK.PRG
                     from the boot drive ("make test-hd" puts it there)
 cartridge           ptoscart.img and ptos.stc, diagnostic cartridge
+cartstub            ptoscartstub.img, a 192 KB ROM (at 0x00fc0000) with no OS in
+                    it: it hands over to the diagnostic cartridge, so the OS can
+                    live on a cartridge such as the one above; the screen
+                    border flashes red without one
 prg                 ptos.prg, a RAM TOS, multi-language
 floppy              ptosus.st, a bootable floppy holding a RAM TOS
 aranym              ptos-aranym.img, suitable for ARAnyM

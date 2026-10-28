@@ -32,6 +32,7 @@ atari512-fastcall                        m68k-atari
 atari512-kproc                           m68k-atari
 aranym                                   m68k-other
 cartridge                                m68k-other
+cartstub                                 m68k-other
 firebee                                  m68k-other
 firebee-prg                              m68k-other
 floppy                                   m68k-other

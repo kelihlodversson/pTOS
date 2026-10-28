@@ -89,8 +89,8 @@ What is changed
   in annotations ("::error title=NAME") and in its summary, and fails at the
   end.
     build.yml, m68k and ARM configurations: 5 jobs, "build m68k-atari",
-      "-amiga", "-other", "arm-rpi", "arm-virt" (29 configurations on a pull
-      request, 37 on master), tools/ci-build.sh; the artifacts are per group
+      "-amiga", "-other", "arm-rpi", "arm-virt" (30 configurations on a pull
+      request, 38 on master), tools/ci-build.sh; the artifacts are per group
       ("ptos-arm-rpi", a directory per configuration), and the SD card
       image job takes the Raspberry Pi kernels from there
     build.yml, x86-64: 3 jobs, "build x86-boot-a", "-boot-b", "-desktop"
@@ -150,6 +150,7 @@ only that configuration compiles (the same source, the same preprocessing).
     atari1024                   0        a 1 MB image; covered; master only
     aranym                     63        keep
     cartridge                  76        keep
+    cartstub                    1        one assembler file; keep
     firebee, firebee-prg        4 each   keep both (the .prg is another product)
     floppy                     11        keep
     prg                         4        keep
