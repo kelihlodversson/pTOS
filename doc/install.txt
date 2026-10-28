@@ -673,6 +673,17 @@ test harness, which tools/run-hatari-tests.py --mode f030a runs under Hatari
 the way CI does (--mode tta runs it on a TT, with TT-RAM).  doc/mmu-address-space.txt describes the start and the
 address spaces.
 
+amiga-mmu_defconfig (#737, #571) is the same start for the Amiga: the 256 KB ROM with
+CONF_AMIGA_HIGHER_HALF, linked at 0x80000000 (the ROM runs at 0x80fc0000), with the
+68030 MMU on from the first instruction through a static tree in the ROM
+(bios/arch/m68k/amiga_mmu.S) that maps the 24-bit address space of the Amiga (the
+custom chips, the CIAs and the other I/O areas not cached and supervisor-only),
+and, as it is, what a 32-bit Amiga has above it, which the ROM probes.  The
+Copper list, the bit planes and the disk DMA are given physical addresses
+(virt_to_phys(), bios/amiga_window.c).  It needs a 68030 with its MMU: under
+Amiberry, tools/run-amiberry.py --cpu 68030 (doc/debugging.txt).  It has no
+address space of its own for a process yet.
+
 PC (x86-64, UEFI boot)
 ----------------------
 

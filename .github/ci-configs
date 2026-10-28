@@ -21,6 +21,7 @@ virt-arm-aspace                          arm-virt
 virt-arm-tc32                            arm-virt
 amiga                                    m68k-amiga
 amiga-kickdisk                           m68k-amiga
+amiga-mmu                                m68k-amiga
 amiga-vampire                            m68k-amiga
 amigaflop                                m68k-amiga
 amigaflop-vampire                        m68k-amiga

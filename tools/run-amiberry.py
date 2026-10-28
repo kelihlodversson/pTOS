@@ -94,6 +94,10 @@ def main():
         f.write(CONFIG.format(rom=os.path.abspath(a.rom), cpu=a.cpu,
                               caches='true' if a.caches else 'false',
                               cycle_exact='true' if a.cycle_exact else 'false'))
+    try:
+        os.unlink(socket_path())        # (a killed emulator leaves its socket behind)
+    except OSError:
+        pass
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
     log = os.path.join(work, 'amiberry.log')
     with open(log, 'w') as out:
@@ -105,6 +109,8 @@ def main():
         path = socket_path()
         deadline = time.time() + 30
         while not os.path.exists(path) and time.time() < deadline:
+            if proc.poll() is not None:
+                raise OSError('the emulator exited')
             time.sleep(0.5)
         time.sleep(a.wait)
         if a.screenshot:

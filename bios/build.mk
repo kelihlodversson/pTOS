@@ -90,6 +90,8 @@ obj-$(CONF_WITH_HIGHER_HALF) += $(if $(MACHINE_VIRT_M68K),virt_mmu.o virt_mmu_ea
 
 # the Atari ROM that runs in the upper half (bios/arch/m68k/atari_mmu.S)
 obj-$(CONF_ATARI_HIGHER_HALF) += $(if $(CONF_ATARI_HIGHER_HALF_68040),atari_mmu040.o,atari_mmu.o) atari_window.o
+# and the Amiga one (bios/arch/m68k/amiga_mmu.S)
+obj-$(CONF_AMIGA_HIGHER_HALF) += amiga_mmu.o amiga_window.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 

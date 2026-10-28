@@ -14,6 +14,9 @@
 
 #include "emutos.h"
 #include "amiga.h"
+#if CONF_AMIGA_HIGHER_HALF
+#include "amiga_mmu.h"
+#endif
 #include "vectors.h"
 #include "tosvars.h"
 #include "bios.h"
@@ -1789,7 +1792,13 @@ static WORD amiga_floppy_read_raw_track(void)
     KDEBUG(("DMA start...\n"));
 
     /* Set DMA address */
+#if CONF_AMIGA_HIGHER_HALF
+    /* the buffer is in the kernel image, in the window: the disk DMA takes
+     * the physical address */
+    DSKPTH = (void *)(uintptr_t)virt_to_phys(mfm_track);
+#else
     DSKPTH = mfm_track;
+#endif
 
     /* Start DMA read */
     dsklen = DK_DMAEN | (MFM_TRACK_SIZE / 2); /* Read + size in words */

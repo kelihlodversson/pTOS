@@ -564,6 +564,35 @@ the 68040, with the shape of the plan above.  What is particular to it:
     Hatari's cache emulation or a coherence gap of the kernel's own that the
     hardware would show too is not known; #737 can tell with another core.
 
+The Amiga, as built by #737 (CONF_AMIGA_HIGHER_HALF)
+.....................................................
+
+The same start as the Falcon's, for the Amiga ROM (amiga-mmu_defconfig): the
+kernel is linked in the window (the ROM at 0x80fc0000), the 68030 MMU is on from
+the first instruction (startup.S, the static tree of amiga_mmu.S: the physical
+address of the ROM is where the 68030 reads its first PC from, offset 4 of the
+ROM), and the TOS low memory and the pool stay at their physical addresses.  The
+tree maps what the Amiga has:
+
+  - 0x00000000-0x009fffff the RAM (chip and Zorro II), cached;
+  - 0x00a00000-0x00efffff the CIAs, the custom chips, the clock and the I/O and
+    autoconfig areas, supervisor-only and not cached;
+  - 0x00f00000-0x00ffffff the ROM;
+  - the rest of the 32-bit space the way it is, not cached, and the Zorro III
+    autoconfig space at 0xff000000: the ROM probes both for the RAM and the
+    boards of an A3000 or A4000, and the bus answers, with no bus error, where
+    there is nothing.  An unmapped range would be a bus error in the middle of
+    the probe (the first boot of this image died on a read of 0xff000100);
+  - the window, over the first 16 MiB.
+
+What a custom chip is given is a physical address (virt_to_phys()): the disk DMA
+pointer; the Copper list and the screen are in the pool already.  Verified on
+Amiberry (doc/debugging.txt) with a 68030: the desktop comes up, the CPU is
+fetching from 0x80fd.... which is only possible through the tree (the
+emulated RAM is 2 MB).  Not yet: the 68040 and 68060 (their MMU is the other one
+of this file), and address spaces for the processes (the custom chips are at
+0x00dff000, in the half that a process owns).
+
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................
 

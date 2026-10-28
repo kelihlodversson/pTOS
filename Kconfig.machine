@@ -181,6 +181,7 @@ config CONF_WITH_HIGHER_HALF
 	default y if MACHINE_VIRT_ARM
 	default y if MACHINE_VIRT_M68K && CONF_REQUIRE_PMMU
 	default y if CONF_ATARI_HIGHER_HALF
+	default y if CONF_AMIGA_HIGHER_HALF
 	default y if MACHINE_RPI && CONF_WITH_ARM_PMMU
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
@@ -339,6 +340,39 @@ config CONF_ATARI_HIGHER_HALF
 	  and for emulators of it with the MMU on (Hatari: --machine falcon
 	  --cpulevel 3 --mmu on).  It replaces CONF_WITH_68030_PMMU, whose
 	  tree only keeps the I/O area out of the data cache.
+
+# The Amiga ROM that runs with the 68030 MMU on from its first instruction
+# (#737), the way the Atari one does: the same static tree in the ROM, for the
+# memory map of the Amiga.
+config CONF_AMIGA_HIGHER_HALF
+	bool "Amiga ROM with the kernel in the upper half (68030 MMU, experimental)"
+	depends on MACHINE_AMIGA && TARGET_AMIGA_ROM
+	depends on CONF_WITH_ADVANCED_CPU
+	depends on BUILD_TOOLCHAIN_IS_ELF
+	depends on !CONF_WITH_STATIC_ALT_RAM
+	default n
+	help
+	  Link the ROM into the physical-memory window at 0x80000000 (the
+	  ROM is at 0x80fc0000, the RAM from 0x80000000) and run it with the
+	  MMU of a 68030 on from the first instruction.  The tree is static
+	  and lives in the ROM, so it is there before the RAM is configured:
+	  the window and the low addresses (where the TOS low memory, the
+	  pool programs are loaded into and the ROM are) map the same physical
+	  memory, the custom chips, the CIAs and the other I/O areas are
+	  supervisor-only and not cached, and nothing else is mapped: RAM
+	  above 0x00a00000 (Zorro III) is not used.
+
+	  The image needs a 68030 with its MMU (not a 68EC030, and not a 68040
+	  or 68060, which have a different MMU).  For an emulated Amiga with a
+	  68030 and its MMU (tools/run-amiberry.py).
+
+# What the two ROMs that run in the window of the physical memory share
+# (emutos.ld, startup.S): linked at 0x80000000 and up, with the TOS low memory
+# at its own addresses, and the MMU of a 68030 on before the RAM is configured.
+config CONF_M68K_ROM_WINDOW
+	bool
+	default y if CONF_ATARI_HIGHER_HALF
+	default y if CONF_AMIGA_HIGHER_HALF
 
 # The same ROM for a 68040 (#728): its MMU is not the 68030's (movec TC, URP
 # and SRP instead of pmove, short descriptors, no early termination), so the

@@ -378,9 +378,9 @@ pi_chk030:
 
 // We're running on a 68030 or a 68ec030
 
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
 
-// The MMU is on since the first instruction (atari_mmu.S), with a tree that
+// The MMU is on since the first instruction (atari_mmu.S, amiga_mmu.S), with a tree that
 // keeps the i/o area out of the data cache: enable both caches, on a full
 // 68030 (the image does not start on anything else, and a 68ec030 has no
 // tree to avoid caching the i/o area with)

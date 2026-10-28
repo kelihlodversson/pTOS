@@ -51,7 +51,10 @@ ENTRY(C_SYM(os_entry))
  * though EMUTOS_LIVES_IN_RAM is set for it: unlike EmuTOS's other
  * RAM-resident targets, its .text is still placed at a fixed address
  * (the ARM kernel load address) rather than following REGION_RAM. */
-#if defined(MACHINE_AMIGA)
+#if defined(MACHINE_AMIGA) && CONF_AMIGA_HIGHER_HALF
+/* the ROM is at 0x00fc0000, and runs in the window, 0x80000000 above */
+# define ROM_ORIGIN 0x80fc0000
+#elif defined(MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
 #elif defined (MACHINE_RPI) && CONF_WITH_HIGHER_HALF
 # define ROM_ORIGIN 0x80008000
@@ -83,7 +86,7 @@ ENTRY(C_SYM(os_entry))
  */
 MEMORY
 {
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
     /* the TOS low memory, at its fixed addresses (the ROM is in the window as
      * well, and the rest of the RAM) */
     stram : ORIGIN = 0x00000000, LENGTH = 32K
@@ -113,7 +116,7 @@ MEMORY
 /* Region used as read/write memory */
 #if CONF_WITH_STATIC_ALT_RAM
 REGION_ALIAS("REGION_RAM", altram)
-#elif (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_ATARI_HIGHER_HALF
+#elif (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
 REGION_ALIAS("REGION_RAM", window)
 #else
 REGION_ALIAS("REGION_RAM", stram)
@@ -169,7 +172,7 @@ REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
  * (startup.S, raspi_mmu_boot.c). */
 # define LMA_AT(section) AT(ADDR(section) - 0x80000000)
 # define LMA_LOW(section) LMA_AT(section)
-#elif (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_ATARI_HIGHER_HALF
+#elif (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
 /* virt-m68k: the RAM is at physical 0, so the window is 0x80000000 above
  * where the bytes are loaded.  The TOS low memory is at its physical
  * addresses, and has no LMA_AT.  The Atari ROM: the same, for the ROM, which
@@ -182,7 +185,7 @@ REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
 #endif
 
 /* A higher-half kernel with no TOS low memory at all (the ARM one) */
-#if CONF_WITH_HIGHER_HALF && !defined(MACHINE_VIRT_M68K) && !CONF_ATARI_HIGHER_HALF
+#if CONF_WITH_HIGHER_HALF && !defined(MACHINE_VIRT_M68K) && !CONF_M68K_ROM_WINDOW
 # define NO_LOW_MEMORY 1
 #else
 # define NO_LOW_MEMORY 0
@@ -223,7 +226,7 @@ SECTIONS
         C_SYM(stkbot) = .;
         . += 2K;
          C_SYM(stktop) = .;
-#if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_ATARI_HIGHER_HALF
+#if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
     } >stram                    /* in the low memory, like the rest of it */
 #else
     } >REGION_READ_WRITE
@@ -306,7 +309,7 @@ SECTIONS
         C_SYM(_edata) = __edata;
     } >REGION_READ_ONLY
 
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
     /* The static MMU tree of the ROM (bios/arch/m68k/atari_mmu.S).  Its own
      * section, because the tables must be on 16-byte boundaries. */
     .mmutree : LMA_AT(.mmutree) ALIGN(16)
@@ -318,7 +321,7 @@ SECTIONS
     /* The BSS segment contains uninitialized global variables.
      * It will be cleared by the startup code.
      */
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
     /* in the window, right after the low memory: the same physical bytes */
     .bss (0x80000000 + ALIGN(__low_stram_end, 4)) : LMA_AT(.bss) MIN_SUBALIGN
 #else
@@ -362,7 +365,7 @@ SECTIONS
     {
          __end_os_stram = .;
          C_SYM(_end_os_stram) = __end_os_stram;
-#if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_ATARI_HIGHER_HALF
+#if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
     } >window
 #else
     } >stram

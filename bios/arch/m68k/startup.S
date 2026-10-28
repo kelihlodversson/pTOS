@@ -12,12 +12,19 @@
 
 // ==== Defines ==============================================================
 
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
         // The ROM is linked in the window (emutos.ld) but runs, until the MMU
         // is on, at the physical address it is at: PHYS() has the address of a
         // symbol of the window converted.
         .equ    window_base, 0x80000000
 # define PHYS(sym)      (sym - window_base).l
+# if CONF_AMIGA_HIGHER_HALF
+#  define MMU_TREE_CRP  amiga_mmu_crp
+#  define MMU_TREE_TC   amiga_mmu_tc
+# else
+#  define MMU_TREE_CRP  atari_mmu_crp
+#  define MMU_TREE_TC   atari_mmu_tc
+# endif
 #endif
 
         .equ    cart_base, 0x00fa0000  // Base of ROM port cartridge
@@ -45,6 +52,9 @@
 #elif CONF_ATARI_HIGHER_HALF
         .extern C_SYM(atari_mmu_crp)
         .extern C_SYM(atari_mmu_tc)
+#elif CONF_AMIGA_HIGHER_HALF
+        .extern C_SYM(amiga_mmu_crp)
+        .extern C_SYM(amiga_mmu_tc)
 #endif
 
         // Memory
@@ -77,7 +87,11 @@
 #if defined(MACHINE_AMIGA) && !EMUTOS_LIVES_IN_RAM
     .dc.w   0x1111      // 256 KB ROM
     .dc.w   0x4ef9      // jmp
+#if CONF_AMIGA_HIGHER_HALF
+    .dc.l   amiga_main - window_base    // pc at power on: the physical address of the ROM
+#else
     .dc.l   amiga_main  // pc at power on or after physical reset
+#endif
 
     /* Some softkick programs (ex: BlizKick) requires the entry point to be here */
     .org    0xd0
@@ -96,7 +110,7 @@ os_entry:
 os_version:
     .dc.w   TOS_VERSION // TOS version
 reseth:
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
     .dc.l   C_SYM(main) - window_base       // pointer to reset handler: the physical address
 #else
     .dc.l   C_SYM(main)       // pointer to reset handler
@@ -106,7 +120,7 @@ reseth:
 // In EmuTOS, this never happens, so os_end and os_res1 below are never used.
 // Note that the first field here has a different meaning from gm_magic.
 C_SYM(os_beg):
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
     .dc.l   C_SYM(os_header) - window_base  // base of OS = _sysbase: where the ROM is
 #else
     .dc.l   C_SYM(os_header)  // base of OS = _sysbase
@@ -366,8 +380,9 @@ _realmain:
         // but it matters for software reset
         move    #0x2700,sr
 
-#if CONF_ATARI_HIGHER_HALF
-        // The 68030 MMU, first thing, with the static tree of atari_mmu.S: it
+#if CONF_M68K_ROM_WINDOW
+        // The 68030 MMU, first thing, with the static tree of atari_mmu.S or
+        // amiga_mmu.S: it
         // needs no RAM.  Entered at the physical address after a reset of the
         // machine, with the MMU off, and at the window by a software reset
         // (warm_reset(): jmp main) with the MMU on; both reach the low alias
@@ -404,10 +419,10 @@ hh_low:
         PMOVE_A0_TC                     // translation off, if it is on
         PMOVE_A0_TTR0                   // and the transparent windows
         PMOVE_A0_TTR1
-        lea     PHYS(C_SYM(atari_mmu_crp)),a0
+        lea     PHYS(C_SYM(MMU_TREE_CRP)),a0
         PMOVE_A0_CRP
         PFLUSHA
-        lea     PHYS(C_SYM(atari_mmu_tc)),a0
+        lea     PHYS(C_SYM(MMU_TREE_TC)),a0
         PMOVE_A0_TC                     // on: the next instruction is fetched through it
         jmp     (hh_high).l             // into the window
 #endif
@@ -551,7 +566,7 @@ cache_done:
 /*
  * disable the MMU
  */
-#if !defined(__mcoldfire__) && !defined(MACHINE_LISA) && !CONF_ATARI_HIGHER_HALF
+#if !defined(__mcoldfire__) && !defined(MACHINE_LISA) && !CONF_M68K_ROM_WINDOW
         move.l  #not_68030,0x2c    // PMOVE is lineF on non-68030 systems
         lea     zero,a0
         PMOVE_A0_TTR0              // first we initialise the TTRs (ACRs on a 68ec030)

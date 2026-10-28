@@ -1,0 +1,9 @@
+# Amiga ROM image with the kernel in the upper half and the 68030 MMU on from the
+# first instruction (#737, #571): the ROM runs at 0x80fc0000 and the RAM at
+# 0x80000000 (doc/mmu-address-space.txt).  For a 68030 with its MMU (the
+# Amiberry of tools/run-amiberry.py: --cpu 68030).
+MACHINE_AMIGA=y
+CONF_AMIGA_HIGHER_HALF=y
+
+# Without -mfastcall the 256 KB ROM no longer fits (see amiga_defconfig).
+CONF_WITH_MFASTCALL=y
