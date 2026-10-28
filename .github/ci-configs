@@ -32,6 +32,7 @@ atari512-dispatch                        m68k-atari
 atari512-extdesk                         m68k-atari
 atari512-fastcall                        m68k-atari
 falcon-aspace                           m68k-atari
+falcon-aspace040                         m68k-atari
 falcon-mmu                               m68k-atari
 atari512-kproc                           m68k-atari
 aranym                                   m68k-other

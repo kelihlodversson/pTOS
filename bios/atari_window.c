@@ -15,7 +15,7 @@ ULONG virt_to_phys(const void *va)
 {
     ULONG a = (ULONG)(uintptr_t)va;
 
-    if (a >= ATARI_WINDOW_VBASE && a < ATARI_WINDOW_VBASE + 0x20000000UL)
+    if (a >= ATARI_WINDOW_VBASE && a < ATARI_WINDOW_VBASE + 0x40000000UL)
         return a - ATARI_WINDOW_VBASE;
 #if CONF_WITH_PROCESS_ASPACES
     if (a < 0x8000UL)                   /* the low memory, where it is (the disk buffer) */
@@ -39,17 +39,28 @@ UBYTE *virt_pool_start(UBYTE *kernel_end)
 }
 
 #if CONF_WITH_PROCESS_ASPACES
+#if CONF_ATARI_HIGHER_HALF_68040
+#else
 extern const ULONG atari_mmu_crp[2];    /* atari_mmu.S */
+#endif
 
 /*
  * A reset comes back to startup.S, which goes to the low alias of the code:
  * the static tree maps it, and the trees of the processes do not.  Load it
- * again (and flush) before the jump.
+ * again (and flush) before the jump.  On a 68040 that is the boot root of
+ * aspace_hw.c, the static tree with the window of the TT-RAM: the stack of
+ * the caller may be in the TT-RAM, and it is used until the jump.
  */
 void machine_reset_prepare(void)
 {
+#if CONF_ATARI_HIGHER_HALF_68040
+    __asm__ volatile ("move.l %0,%%a0\n\t.long 0x4e7b8806\n\t.long 0x4e7b8807\n\t.word 0xf518"
+                      : : "g" ((ULONG)aspace_hw_boot_root())
+                      : "a0", "memory");                                /* movec a0,urp; movec a0,srp; pflusha */
+#else
     __asm__ volatile ("move.l %0,%%a0\n\t.long 0xf0104c00\n\t.long 0xf0002400"
                       : : "g" (&atari_mmu_crp[0]) : "a0", "memory");    /* pmove (a0),crp; pflusha */
+#endif
 }
 #endif
 

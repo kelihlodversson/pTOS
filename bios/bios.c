@@ -808,8 +808,9 @@ static void bios_init(void)
     osinit_before_xmaddalt();   /* initialize BDOS (part 1) */
     KDEBUG(("after osinit_before_xmaddalt()\n"));
 
-#if CONF_WITH_ALT_RAM
-    /* Add Alt-RAM to BDOS pool */
+#if CONF_WITH_ALT_RAM && !CONF_WITH_PROCESS_ASPACES
+    /* Add Alt-RAM to BDOS pool (with an address space for every process the
+     * RAM is pages: see process_memory_init()) */
     KDEBUG(("altram_init()\n"));
     altram_init();
 #endif
