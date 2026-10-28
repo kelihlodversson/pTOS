@@ -91,7 +91,7 @@ static ULONG detect_ttram_size(void)
 /*
  * The static tree of the 68040 (atari_mmu040.S) maps the first 16 MiB only,
  * so the probes of the TT-RAM, at its physical addresses, would all fault.
- * While they run, DTT1 passes 0x00000000-0x1fffffff through to the physical
+ * While they run, DTT1 passes 0x00000000-0x3fffffff through to the physical
  * memory, not cached, for the supervisor; afterwards it is off again and the
  * data cache pushed, as the stack that was used meanwhile bypassed it.  Only
  * a TT has TT-RAM: on a Falcon, Hatari answers the reads of the window and
@@ -99,7 +99,7 @@ static ULONG detect_ttram_size(void)
  */
 static void ttram_window(BOOL on)
 {
-    ULONG v = on ? 0x001fa040UL : 0;
+    ULONG v = on ? 0x003fa040UL : 0;
 
     if (on && !check_read_byte((long)TT_PALETTE_REGS))  /* (detect_video() has not run yet) */
         return;

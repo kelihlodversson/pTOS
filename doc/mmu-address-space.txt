@@ -427,7 +427,7 @@ from virt-m68k below:
     and .bss are in the window, right after the TOS low memory, which is at
     its fixed addresses as on virt-m68k.
   - The window maps the physical memory from 0, ST-RAM, ROM and TT-RAM
-    (0x80000000-0x9fffffff); the same memory is at its physical addresses, which
+    (0x80000000-0xbfffffff); the same memory is at its physical addresses, which
     is where the pool the programs live in, the screen and the DMA buffers
     are.  The I/O area (0x00f00000-0x00ffffff and the alias 0xff000000 up that
     code reaches it at, 0xffff8000 and so on) is supervisor-only and not
@@ -545,7 +545,7 @@ the 68040, with the shape of the plan above.  What is particular to it:
     (0xff000000 and up) is the transparent window DTT0 of the supervisor, the
     part at 0x00f00000 is not cached.  The tree does not reach the TT-RAM (its
     size is not known when the ROM is built): ttram_detect() (memory2.c) opens
-    DTT1 over 0-0x1fffffff while it probes, on a TT only (a Falcon is not
+    DTT1 over 0-0x3fffffff (the 1 GiB of the window) while it probes, on a TT only (a Falcon is not
     asked: Hatari answers its reads and then faults on a write), and
     aspace_hw_init() builds the window of the TT-RAM, at 0x80000000 plus its
     physical address, in a root in the RAM, from tables in the ST-RAM
