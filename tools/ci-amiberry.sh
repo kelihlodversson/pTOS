@@ -75,13 +75,22 @@ print(1 if idle <= pc < idle + 0x40 else 0)")
         failed="$failed $name"
     else
         echo "$name: booted (idle at PC=$pc)"
-        if make test-hd >"logs/$name.testdisk" 2>&1 \
-           && python3 tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd.img \
-                --cpu "$cpu" >"logs/$name-tests.log" 2>&1; then
-            echo "$name: $(grep 'Summary' "logs/$name-tests.log")"
+        # (once with the caches of the CPU left out of the emulation, the baseline,
+        # and once with the instruction and data caches emulated)
+        if make test-hd >"logs/$name.testdisk" 2>&1; then
+            for mode in "" "--caches"; do
+                suffix=${mode:+-caches}
+                if python3 tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd.img \
+                    --cpu "$cpu" $mode >"logs/$name$suffix-tests.log" 2>&1; then
+                    echo "$name${suffix:+ ($suffix)}: $(grep 'Summary' "logs/$name$suffix-tests.log")"
+                else
+                    echo "::error::$name$suffix: the tests failed (logs/$name$suffix-tests.log)"
+                    grep -E 'FAIL|Summary|run-amiberry-tests' "logs/$name$suffix-tests.log" | head -20
+                    failed="$failed $name$suffix"
+                fi
+            done
         else
-            echo "::error::$name: the tests failed (logs/$name-tests.log)"
-            grep -E 'FAIL|Summary|run-amiberry-tests' "logs/$name-tests.log" | head -20
+            echo "::error::$name: the test disk was not made (logs/$name.testdisk)"
             failed="$failed $name"
         fi
     fi

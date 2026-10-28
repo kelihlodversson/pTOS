@@ -20,6 +20,7 @@
 /* flags of the access to test */
 #define MMUPROBE_WRITE  0x1     /* a write (else a read) */
 #define MMUPROBE_SUPER  0x2     /* a supervisor data access (else a user data access) */
+#define MMUPROBE_CACHE  0x4     /* also: alternate between RAM and two I/O registers, with the caches on */
 
 /* the fields of an unknown value are 0xffffffff */
 struct mmu_probe {
@@ -42,6 +43,14 @@ struct mmu_probe {
     ULONG window_ok;            /* phys is reachable through the window of the kernel */
     ULONG window_word;          /* the four bytes at phys (big endian), read through the window: the
                                  * same bytes by a second mapping */
+    ULONG io_counter;           /* in, MMUPROBE_CACHE: a byte register of a device that changes by itself
+                                 * (a timer, the beam position) */
+    ULONG io_rw;                /* in: a byte register that holds what is written to it */
+    ULONG io_mask;              /* in: the bits of it that do */
+    ULONG cache_changes;        /* the counter changed this many times (0: the CPU read a cached copy) */
+    ULONG cache_bad_ram;        /* RAM did not read back what was written, in the alternation */
+    ULONG cache_bad_io;         /* the register did not read back what was written, or did not have it
+                                 * after the data cache was pushed out: the write stayed in the CPU */
 };
 
 #if CONF_WITH_MMU_PROBE

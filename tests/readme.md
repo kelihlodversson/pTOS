@@ -165,7 +165,16 @@ runs in the upper half): translation is on with 4 KiB pages, the roots are set, 
 translates to a physical page that the kernel half also reaches (the same bytes by
 a second mapping), the cache attributes and the protection are the tree's; the
 CPU's own PTEST answers (the tables are walked in software on a 68060, which has no
-PTEST), not the emulator's setting.  Run under Hatari (f030a, tta, f040a, tt040a,
+PTEST), not the emulator's setting.  With a device register that changes by itself (the
+beam position on the Amiga, the 200 Hz timer of the MFP on the Atari) and one that holds
+what is written to it, it also alternates between RAM and I/O with the caches on (a
+counter that never changes would be read from a cache; a register that does not have its
+value after the data cache is pushed out would be a write that stayed in the CPU).  Every
+failure of the suite carries the model, TC, the roots and the PTEST status of the access.
+Limit: the Amiberry core caches only what is RAM (a cached I/O mapping is not seen by it,
+checked by making the I/O pages cacheable in a build and running both passes), so there the
+alternation is a check of the device accesses, and the cache mode of the descriptor, which
+PTEST gives, is the check of the attribute.  Run under Hatari (f030a, tta, f040a, tt040a,
 f030), QEMU (virt-m68k-mmu, virt-m68k-aspace) and, on the Amiga ROMs, Amiberry on a
 68030, a 68040 and a 68060 (`tools/run-amiberry-tests.py`, doc/debugging.txt: the
 results are read from `RUNTESTS.LOG`, which a build for the Amiga writes on the test

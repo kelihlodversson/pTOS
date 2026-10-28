@@ -221,7 +221,9 @@ mtools until the summary is there (the whole suite takes seconds):
     make amiga-mmu040_defconfig && make && make test-hd
     tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd.img --cpu 68060
 
-tools/ci-amiberry.sh does it for every Amiga configuration and CPU, as CI does.  The
+tools/ci-amiberry.sh does it for every Amiga configuration and CPU, as CI does, twice: with the
+caches of the CPU out of the emulation (the baseline) and with them emulated (--caches; the
+log of that pass is logs/CONFIG-CPU-caches-tests.log).  The
 68060 has no PTEST and no MMUSR: the MMU fixture (tests/mmu_state) walks the tables of
 a 68060 in software.
 

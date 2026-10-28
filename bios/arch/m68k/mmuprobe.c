@@ -219,7 +219,7 @@ static BOOL kernel_readable(ULONG va)
     }
 }
 
-LONG mmu_probe(struct mmu_probe *p)
+static void translate(struct mmu_probe *p)
 {
     ULONG va = p->va;
     BOOL write = (p->flags & MMUPROBE_WRITE) != 0;
@@ -242,7 +242,7 @@ LONG mmu_probe(struct mmu_probe *p)
         p->model = 30;
         read_030(p);
         if (!p->enabled)
-            return E_OK;
+            return;
 
         psr = ptest030(va, fc, write, &desc);
         p->status = psr;
@@ -284,7 +284,7 @@ LONG mmu_probe(struct mmu_probe *p)
         p->model = (ULONG)mcpu;
         read_040(p);
         if (!p->enabled)
-            return E_OK;
+            return;
 
         m = ptest_any(va, fc, write);
         p->status = m;
@@ -300,7 +300,7 @@ LONG mmu_probe(struct mmu_probe *p)
         }
     }
     else
-        return E_OK;
+        return;
 
     /* the same bytes by the window of the kernel, a second mapping of them (the
      * four bytes at phys, which may not be aligned, or across a page) */
@@ -312,6 +312,64 @@ LONG mmu_probe(struct mmu_probe *p)
         p->window_word = ((ULONG)w[0] << 24) | ((ULONG)w[1] << 16) | ((ULONG)w[2] << 8) | w[3];
         p->window_ok = 1;
     }
+    return;
+}
+
+
+/*
+ * Cached and cache-inhibited pages next to each other: a RAM word and a
+ * register of a device are written and read in turns, as an instruction stream
+ * would, and a counter of a device that runs by itself is read in between.  A
+ * cached mapping of the I/O area shows as a counter that never changes (the
+ * CPU reads its own copy); a write that stays in the CPU (a copyback line for
+ * a cache-inhibited page) as a register that does not have the value once the
+ * data cache is pushed out.  The register is put back as it was.
+ */
+#define CACHE_ROUNDS 400000UL
+
+static void cache_alternation(struct mmu_probe *p)
+{
+    volatile UBYTE *counter = (volatile UBYTE *)p->io_counter;
+    volatile UBYTE *rw = (volatile UBYTE *)p->io_rw;
+    static volatile ULONG ram[16];
+    UBYTE mask = (UBYTE)p->io_mask, saved, v = 0, last, x;
+    ULONG i;
+
+    p->cache_changes = p->cache_bad_ram = p->cache_bad_io = 0;
+    if (!p->io_counter || !p->io_rw || !p->enabled
+        || !kernel_readable(p->io_counter) || !kernel_readable(p->io_rw))
+        return;
+
+    saved = *rw;
+    last = *counter;
+    for (i = 0; i < CACHE_ROUNDS; i++)
+    {
+        ram[i & 15] = i;
+        v = (UBYTE)((i * 5 + 1) & mask);
+        *rw = (UBYTE)((saved & ~mask) | v);
+        if (ram[i & 15] != i)
+            p->cache_bad_ram++;
+        if ((UBYTE)(*rw & mask) != v)
+            p->cache_bad_io++;
+        x = *counter;
+        if (x != last)
+        {
+            last = x;
+            if (++p->cache_changes >= 4)
+                break;
+        }
+    }
+    flush_data_cache((void *)p->io_rw, 16L);
+    if ((UBYTE)(*rw & mask) != v)
+        p->cache_bad_io++;
+    *rw = saved;
+}
+
+LONG mmu_probe(struct mmu_probe *p)
+{
+    translate(p);
+    if (p->flags & MMUPROBE_CACHE)
+        cache_alternation(p);
     return E_OK;
 }
 
