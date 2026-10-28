@@ -11,7 +11,9 @@ int gem_menu_checks(short handle)
     title.ob_next = title.ob_head = title.ob_tail = -1;
     title.ob_type = G_TITLE; title.ob_spec.free_string = text;
     title.ob_x = title.ob_y = 20; title.ob_width = 60; title.ob_height = 20;
-    background = title; background.ob_type = G_BOX; background.ob_spec.index = 0x1170;
+    background = title; background.ob_type = G_BOX; background.ob_spec.index = 0x1172;
+    /* A coloured background keeps XOR selection distinguishable through
+     * palette-index readback on truecolour displays. */
     VERIFY(objc_draw(&background,0,0,0,0,100,100) == 1);
     VERIFY(objc_draw(&title,0,0,0,0,100,100) == 1);
     for (i = 0; i < 40; i++) before[i] = gem_probe_pixel(handle,25+i,22);

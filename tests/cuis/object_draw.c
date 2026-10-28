@@ -683,6 +683,23 @@ int main(void)
     before = gem_menu_checks(0);
     if (before) __builtin_printf("menu item failure: %x\n",before);
     VERIFY(before == 0);
+    {
+        OBJECT title = { 0 };
+        char label[16] = "Title";
+        title.ob_next = title.ob_head = title.ob_tail = NIL;
+        title.ob_type = G_TITLE; title.ob_spec.free_string = label;
+        title.ob_x = title.ob_y = 20; title.ob_width = 60; title.ob_height = 20;
+        title.ob_state = CHECKED;
+        draw_error = TRUE;
+        VERIFY(menu_tnormal(&title,0,HIGHLIGHT) == 0 && title.ob_state == CHECKED);
+        VERIFY(menu_ienable(&title,(WORD)0x8000,DISABLE) == 0 && title.ob_state == CHECKED);
+        before = opens;
+        VERIFY(menu_icheck(&title,0,UNCHECK) == 1 && !title.ob_state);
+        VERIFY(menu_ienable(&title,0,DISABLE) == 1 && title.ob_state == DISABLED);
+        VERIFY(menu_text(&title,0,"Changed") == 1 && label[0] == 'C');
+        VERIFY(opens == before);
+        draw_error = FALSE;
+    }
     before = gem_3d_checks(0);
     if (before) __builtin_printf("3D object failure: %x\n",before);
     VERIFY(before == 0);
