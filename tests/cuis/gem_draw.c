@@ -8,6 +8,7 @@
 #include "three_d.h"
 #include "menu_items.h"
 #include "popup_menu.h"
+#include "gem_menubar.h"
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
@@ -34,6 +35,12 @@ void gem_popup_input_stage(short stage)
 {
     char message[] = "x32 GEM popup 0: READY\r\n";
     message[14] = '0'+stage;
+    ptos_write(1,message,sizeof(message)-1);
+}
+void gem_menubar_input_stage(short stage)
+{
+    static const char message[] = "x32 GEM menu bar: READY\r\n";
+    (void)stage;
     ptos_write(1,message,sizeof(message)-1);
 }
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
@@ -251,6 +258,7 @@ int main(int argc, char **argv, char **envp)
         box.ob_x = 7; box.ob_y = 9;
         VERIFY(rsrc_obfix(&box,0) == 0 && box.ob_x == 7 && box.ob_y == 9);
         VERIFY(form_center_grect(&box,&untouched) == 0 && box.ob_x == 7 && untouched.g_x == 1);
+        VERIFY(menu_bar(&box,MENU_INSTALL) == 0 && menu_bar(NULL,MENU_REMOVE) == 1);
         VERIFY(objc_draw(&box,0,0,0,0,100,100) == 0 && appl_exit() == 1);
         {
             static const char marker[] = "x32 GEM object drawing: unavailable\r\n";
@@ -293,6 +301,21 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    if (argc > 1 && argv[1][0] == 'm') {
+        short parent = (short)process(0x10c,0,0,0,0), window;
+        VERIFY(gem_menubar_install(handle,3) == 1);
+        window = wind_create(0,300,100,100,80);
+        VERIFY(window > 0 && wind_open(window,300,100,100,80) == 1);
+        control[0] = 0x7020; control[1] = global[2];
+        VERIFY(appl_write(parent,16,control) == 1);
+        VERIFY(control_message(control) == 1 && control[0] == 0x7021);
+        VERIFY(wind_set(window,WF_TOP,0,0,0,0) == 1 && evnt_timer(0) == 1);
+        control[0] = 0x7022;
+        VERIFY(appl_write(parent,16,control) == 1);
+        VERIFY(control_message(control) == 1 && control[0] == 0x7023);
+        VERIFY(appl_exit() == 1); /* Exit while owning the surface. */
+        return 0;
+    }
     status = process(0x3d,(uintptr_t)"FORMTEST.ON",0,0,0);
     if (status >= 0) {
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
@@ -303,6 +326,52 @@ int main(int argc, char **argv, char **envp)
         {
             static const char popup_pass[] = "x32 GEM popup menus: PASS\r\n";
             ptos_write(1,popup_pass,sizeof(popup_pass)-1);
+            {
+                short queued = wind_create(0,0,19,200,120);
+                short message[8], mx, my, buttons, keys, key, clicks;
+                short state;
+                VERIFY(queued > 0 && wind_open(queued,0,19,200,120) == 1);
+                VERIFY(wind_set(queued,WF_TOP,0,0,0,0) == 1);
+                while (appl_read(-1,16,message) == 1) { }
+                status = gem_menubar_checks(handle); if (status) return status;
+                /* Menu tracking must preserve the earlier application click. */
+                for (state = 1; state >= 0; state--) {
+                    VERIFY(evnt_multi(MU_BUTTON|MU_TIMER,1,1,state,
+                        0,0,0,0,0,0,0,0,0,0,message,0,
+                        &mx,&my,&buttons,&keys,&key,&clicks) & MU_BUTTON);
+                    VERIFY(mx == 80 && my == 33 && buttons == state);
+                }
+                VERIFY(wind_close(queued) == 1 && wind_delete(queued) == 1);
+            }
+            {
+                static const char menu_pass[] = "x32 GEM menu bar: PASS\r\n";
+                ptos_write(1,menu_pass,sizeof(menu_pass)-1);
+                {
+                    short window = wind_create(0,20,100,100,80);
+                    VERIFY(window > 0 && wind_open(window,20,100,100,80) == 1);
+                    VERIFY(gem_menubar_install(handle,2) == 1);
+                    tail[1] = 'm';
+                    child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+                    VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7020);
+                    VERIFY(gem_probe_pixel(handle,130,5) == 3);
+                    VERIFY(wind_set(window,WF_TOP,0,0,0,0) == 1 && evnt_timer(0) == 1);
+                    VERIFY(gem_probe_pixel(handle,130,5) == 2);
+                    control[0] = 0x7021;
+                    VERIFY(appl_write((short)child,16,control) == 1);
+                    VERIFY(control_message(control) == 1 && control[0] == 0x7022);
+                    VERIFY(gem_probe_pixel(handle,130,5) == 3);
+                    control[0] = 0x7023;
+                    VERIFY(appl_write((short)child,16,control) == 1);
+                    VERIFY(process(0x13a,child,0,0,0) == (LONG)((ULONG)child<<16));
+                    VERIFY(evnt_timer(0) == 1 && gem_probe_pixel(handle,130,5) == 2);
+                    VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+                    VERIFY(wind_close(window) == 1 && wind_delete(window) == 1);
+                    {
+                        static const char handoff[] = "x32 GEM menu handoff: PASS\r\n";
+                        ptos_write(1,handoff,sizeof(handoff)-1);
+                    }
+                }
+            }
         }
     }
     VERIFY(gem_probe_cell(handle,&cellw,&cellh) == 0);

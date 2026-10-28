@@ -4,6 +4,7 @@
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
+#include "menubar.h"
 
 short aes_global[AES_GLOBMAX] = { 0, 0, -1 };
 short gl_apid = -1, gl_ap_version;
@@ -65,14 +66,14 @@ short mt_appl_init(short *global)
     if (handle < 0) { sync_global(global); return -1; }
     if (!publish_label(handle)) {
         (void)aes_session_close(handle);
-        aes_windows_reset();
+        aes_menu_reset(); aes_windows_reset();
         aes_resources_reset();
         application_session = -1; application_id = -1;
         if (global != aes_global) clear_global(aes_global);
         sync_global(aes_global);
         sync_global(global); return -1;
     }
-    if (handle != application_session) { aes_windows_reset(); aes_resources_reset(); }
+    if (handle != application_session) { aes_menu_reset(); aes_windows_reset(); aes_resources_reset(); }
     application_session = handle;
     application_id = (short)pid;
     global[0] = 0x0400; /* AES global-array ABI, not a claim of complete AES coverage. */
@@ -87,7 +88,7 @@ short appl_init(void) { return mt_appl_init(aes_global); }
 short mt_appl_exit(short *global)
 {
     if (!registered(global) || aes_session_close(application_session) != E_OK) return 0;
-    aes_windows_reset();
+    aes_menu_reset(); aes_windows_reset();
     aes_resources_reset();
     application_session = -1;
     application_id = -1;
@@ -108,7 +109,10 @@ short appl_yield(void) { return mt_appl_yield(aes_global); }
 short mt_evnt_timer(unsigned long interval, short *global)
 {
     if (!registered(global) || interval > 0xffffffffUL) return 0;
-    return cuis_call6(CUIS_SESSION_DELAY, (QUAD)application_session, interval, 0, 0, 0, 0) == E_OK ? 1 : 0;
+    if (!aes_menu_registered())
+        return cuis_call6(CUIS_SESSION_DELAY, (QUAD)application_session, interval, 0, 0, 0, 0) == E_OK ? 1 : 0;
+    return mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,interval,
+                         NULL,NULL,NULL,NULL,NULL,NULL,global) == MU_TIMER;
 }
 short evnt_timer(unsigned long interval) { return mt_evnt_timer(interval, aes_global); }
 
@@ -176,12 +180,13 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
     if (!length) return 1;
     for (;;) {
         LONG result;
+        if ((id == APR_NOWAIT ? aes_menu_flush(global) : aes_menu_dispatch(global)) < 0) return 0;
         if (aes_window_messages(application_session, global) < 0) return 0;
         result = cuis_call6(CUIS_STREAM_READ, application_session, (uintptr_t)buffer, length, 0, 0, 0);
         if (result == length) return 1;
         if (result != EAGAIN || id == APR_NOWAIT) return 0;
         if (cuis_call6(CUIS_SESSION_WAIT, application_session, length,
-                       CUIS_READY_STREAM | CUIS_READY_NOTICE, 0, 0, 0) <= 0) return 0;
+                       CUIS_READY_STREAM | CUIS_READY_NOTICE | (aes_menu_listening() ? CUIS_READY_SURFACE : 0), 0, 0, 0) <= 0) return 0;
     }
 }
 short appl_read(short id, short length, void *buffer) { return mt_appl_read(id, length, buffer, aes_global); }

@@ -110,7 +110,15 @@ void cuis_input_idle(void)
         stream_change_after = 0;
     }
     if (input_packet_mode) {
-        if (input_packet_mode == 8) {
+        if (input_packet_mode == 9) {
+            if (input_sleeps == 1)
+                cuis_pointer_packet((WORD)(40-pointer_x),(WORD)(60-pointer_y),1,NULL,NULL);
+            if (input_sleeps == 2) {
+                cuis_pointer_packet(0,0,0,NULL,NULL);
+                cuis_pointer_packet((WORD)(5-pointer_x),(WORD)(5-pointer_y),0,NULL,NULL);
+                input_packet_mode = 0;
+            }
+        } else if (input_packet_mode == 8) {
             cuis_pointer_packet((WORD)(210 - pointer_x), (WORD)(210 - pointer_y), 0, NULL, NULL);
             input_packet_mode = 0;
         } else if (input_packet_mode == 5 || input_packet_mode == 6) {
@@ -244,6 +252,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "notices.c"
 #include "input_events.c"
 #include "mouse_control.c"
+#include "surfaces.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -318,5 +327,11 @@ int main(void)
     rc = input_event_checks();
     if (rc) return rc;
     rc = input_capture_checks();
-    return rc ? rc : mouse_control_checks();
+    if (rc) return rc;
+    rc = mouse_control_checks();
+    if (rc) return rc;
+    rc = fresh_mouse_checks();
+    if (rc) return rc;
+    rc = surface_checks();
+    return rc ? rc : surface_cleanup_checks();
 }

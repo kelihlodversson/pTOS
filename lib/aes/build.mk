@@ -1,7 +1,7 @@
 # Ordinary shared ELF, distinct from the historic fixed-image import stubs.
 LIBAES_CFLAGS = $(LDSO_CFLAGS) -DOB_WALK_COORD=LONG -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
-obj/libaes/application.o: lib/aes/application.c lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/application.o: lib/aes/application.c lib/aes/menubar.h lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/gemwindows.o: lib/aes/gemwindows.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
@@ -25,7 +25,7 @@ obj/libaes/gemobjwalk.o: aes/shared/gemobjwalk.c aes/gemobjop.h aes/shared/gemre
 obj/libaes/draw.o: lib/aes/draw.c aes/gemobjop.h lib/aes/style.h aes/shared/gemcicon.h include/vdi_colmap.h lib/aes/resource_context.h aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/events.o: lib/aes/events.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/events.o: lib/aes/events.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/session.o: lib/aes/session.c lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
@@ -104,7 +104,7 @@ obj/libaes/gemrcfix.o: aes/shared/gemrcfix.c aes/shared/gemrcfix.h $(AUTOCONF_H)
 obj/libaes/resources.o: lib/aes/resources.c aes/shared/gemrcfix.h lib/aes/resource_context.h lib/aes/application.h lib/aes/layout.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/libaes.so: obj/libaes/popup.o obj/libaes/gemmenupopup.o obj/libaes/menus.o obj/libaes/gemmenuchange.o $(LIBAES_RESOURCE_OBJECTS) obj/ldso/libptos.so obj/libaes/form_resources.o obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
+obj/libaes/libaes.so: obj/libaes/menubar.o obj/libaes/gemmenubar.o obj/libaes/popup.o obj/libaes/gemmenupopup.o obj/libaes/menus.o obj/libaes/gemmenuchange.o $(LIBAES_RESOURCE_OBJECTS) obj/ldso/libptos.so obj/libaes/form_resources.o obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
 	$(CC) $(LDSO_LDFLAGS) $(LIBAES_CFLAGS) -nostdlib -shared \
 	  -Wl,--gc-sections,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so,-init,aes_resources_init \
 	  -Wl,--version-script,lib/aes/exports.map -o $@ $(filter %.o,$^) -Lobj/ldso -lptos
@@ -197,7 +197,7 @@ endif
 obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h include/libaes.h include/vdi_service.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/GEMDRAW.TOS: tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMDRAW.TOS: tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -222,5 +222,12 @@ obj/libaes/popup.o: lib/aes/popup.c include/gemmenu.h include/gem.h aes/shared/g
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/gemmenupopup.o: aes/shared/gemmenupopup.c aes/shared/gemmenupopup.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
+
+obj/libaes/menubar.o: lib/aes/menubar.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h lib/aes/layout.h lib/aes/resource_context.h aes/shared/gemobjtree.h aes/shared/gemobjbounds.h aes/shared/gemmenubar.h include/vdi_service.h include/gem.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
+obj/libaes/gemmenubar.o: aes/shared/gemmenubar.c aes/shared/gemmenubar.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@

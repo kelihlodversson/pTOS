@@ -6,6 +6,8 @@
 #include "three_d.h"
 #include "menu_items.h"
 #include "popup_menu.h"
+#include "gem_menubar.h"
+#include "../../lib/aes/menubar.h"
 #include "../../aes/shared/gemcicon.h"
 #include "../../lib/aes/resource_context.h"
 #include "../../lib/aes/render_context.h"
@@ -30,7 +32,12 @@ static BOOL trace_animation;
 static WORD corner_x, corner_y, corner_width;
 static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type;
 static int releases, mouse_nesting, mouse_releases;
-static BOOL input_error, mouse_error, foreign_display, popup_mode;
+static BOOL input_error, mouse_error, foreign_display, popup_mode, bar_mode;
+static WORD bar_height, bar_events, bar_message[8];
+static BOOL bar_stream, bar_line_error, bar_close_error, bar_write_block;
+static int bar_writes;
+static WORD bar_trial_height, bar_snapshot_handle;
+static int bar_failed_closes;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
 static int popup_paints;
@@ -60,10 +67,39 @@ void gem_popup_input_stage(short stage)
     gesture[0].y = (stage == 0 || stage == 3) ? 55 : stage == 1 ? 5 : 35;
     mouse_x = 35; mouse_y = 35;
 }
+void gem_menubar_input_stage(short stage)
+{
+    (void)stage;
+    bar_mode = TRUE; gesture_at = 0; gesture_count = 4;
+    gesture[0].events = MU_M1; gesture[0].x = 80; gesture[0].y = 8; gesture[0].buttons = 0;
+    gesture[1].events = MU_M1; gesture[1].x = 80; gesture[1].y = 33; gesture[1].buttons = 0;
+    gesture[2] = gesture[1]; gesture[2].events = MU_BUTTON; gesture[2].buttons = 1;
+    gesture[3] = gesture[2]; gesture[3].buttons = 0;
+    mouse_x = 30; mouse_y = 8;
+}
 LONG aes_application_session(short *global) { return global && global[2] >= 0 && !session_error ? 7 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_SURFACE_BEGIN) { if (!nesting || bar_trial_height) return EACCDN; bar_trial_height = b; return E_OK; }
+    if (fn == CUIS_SURFACE_END) {
+        if (!bar_trial_height) return EACCDN;
+        if (b) { bar_height = bar_trial_height; bar_events = CUIS_SURFACE_DIRTY; }
+        bar_trial_height = 0; return E_OK;
+    }
+    if (fn == CUIS_SURFACE_REGISTER) { bar_height = b; bar_events = b ? CUIS_SURFACE_DIRTY : 0; return E_OK; }
+    if (fn == CUIS_SURFACE_STATUS) {
+        LONG value = bar_height ? CUIS_SURFACE_OWNED | bar_events : 0;
+        if (bar_mode && bar_height) value |= CUIS_SURFACE_POINTER;
+        if (b == 1) bar_events = 0;
+        if (b == 2) bar_events |= CUIS_SURFACE_DIRTY;
+        return value;
+    }
+    if (fn == CUIS_STREAM_WRITE && bar_mode && c == 16) {
+        if (bar_write_block) return EAGAIN;
+        bar_writes++;
+        __builtin_memcpy(bar_message,(void *)(uintptr_t)b,16); bar_stream = TRUE; return 16;
+    }
     if (fn == CUIS_KEYBOARD_LOCK && a == 7) {
         if (keyboard_error || !nesting || !mouse_nesting || (!b && !keyboard_nesting)) return EACCDN;
         keyboard_nesting += b ? 1 : -1;
@@ -71,6 +107,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; return nesting ? E_OK : EACCDN; }
     if (fn == CUIS_MOUSE_LOCK && a == 7) {
+        if (bar_mode && b && b != CUIS_MOUSE_FRESH) return EINVAL;
         if (b && mouse_error) return EACCDN;
         if (!b && !mouse_nesting) return EACCDN;
         if (!b) mouse_releases++;
@@ -117,13 +154,17 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
     BOOL inside;
     (void)leave2; (void)x2; (void)y2; (void)w2; (void)h2; (void)message; (void)interval;
     if (input_error || aes_application_session(global) < 0) return 0;
+    if (bar_mode && events == (MU_MESAG|MU_TIMER)) {
+        if (aes_menu_dispatch(global) < 0 || !bar_stream) return 0;
+        __builtin_memcpy(message,bar_message,16); bar_stream = FALSE; return MU_MESAG;
+    }
     if (events == (MU_KEYBD|MU_BUTTON) && clicks == 2 && mask == 255 && state == 1) {
         if (!keyboard_nesting || !nesting || !mouse_nesting || modal_at == modal_count) return 0;
         *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
         *key = modal_keys[modal_at++]; *count = 0;
         return MU_KEYBD;
     }
-    if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || state != (popup_mode ? 1 : 0)) {
+    if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || (!bar_mode && state != (popup_mode ? 1 : 0))) {
         bad_gesture++; return 0;
     }
     ready = MU_BUTTON;
@@ -134,7 +175,7 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
         sb = gesture[gesture_at].buttons; ready = gesture[gesture_at++].events;
     }
     inside = w > 0 && h > 0 && sx >= x && sy >= y && (LONG)sx < (LONG)x+w && (LONG)sy < (LONG)y+h;
-    if (((ready & MU_BUTTON) && sb != (popup_mode ? 1 : 0)) || ((ready & MU_M1) && (inside == leave))) {
+    if (((ready & MU_BUTTON) && sb != (bar_mode ? state : popup_mode ? 1 : 0)) || ((ready & MU_M1) && (inside == leave))) {
         bad_gesture++; return 0;
     }
     *mx = sx; *my = sy; *buttons = sb; *mods = 0;
@@ -142,6 +183,17 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
     if (count) *count = ready & MU_BUTTON ? 1 : 0;
     return ready;
 }
+short evnt_multi(short events, short clicks, short button_mask, short button_state,
+                 short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
+                 short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
+                 short message[], unsigned long interval, short *mx, short *my,
+                 short *buttons, short *modifiers, short *key, short *click_count)
+{
+    return mt_evnt_multi(events, clicks, button_mask, button_state,
+                         m1_leave, m1_x, m1_y, m1_w, m1_h, m2_leave, m2_x, m2_y, m2_w, m2_h,
+                         message, interval, mx, my, buttons, modifiers, key, click_count, aes_global);
+}
+
 short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my,
                       short *buttons, short *mods, short *global)
 {
@@ -156,7 +208,12 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     VDI_SERVICE_DRAW_RESULT *out = (void *)(uintptr_t)c;
     LONG x,y;
     (void)d;
-    if (fn == VDI_SERVICE_CLOSE) { closes++; return fail_layout_close ? EACCDN : E_OK; }
+    if (fn == VDI_SERVICE_CLOSE) {
+        if (bar_close_error && a == (UWORD)bar_snapshot_handle) {
+            bar_close_error = FALSE; bar_failed_closes++; return EACCDN;
+        }
+        closes++; return fail_layout_close ? EACCDN : E_OK;
+    }
     if (graphics_error) return graphics_error;
     if (fn == VDI_SERVICE_OPEN) {
         VDI_SERVICE_WORKSTATION *ws = (void *)(uintptr_t)b;
@@ -176,6 +233,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         GRECT *rect = (void *)(uintptr_t)b;
         WORD *buffer = (void *)(uintptr_t)c;
         if (snapshot_error) return EACCDN;
+        if (bar_close_error && !d) bar_snapshot_handle = a;
         for (y = 0; y < rect->g_h; y++) for (x = 0; x < rect->g_w; x++) {
             if (d) image[y+rect->g_y][x+rect->g_x] = buffer[y*rect->g_w+x];
             else buffer[y*rect->g_w+x] = image[y+rect->g_y][x+rect->g_x];
@@ -189,6 +247,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn == VDI_SERVICE_COLOR) { workstation[a].line = b; return (LONG)b; }
     if (fn == VDI_SERVICE_LINE) {
+        if (bar_line_error) return EACCDN;
         WORD *points = (void *)(uintptr_t)c;
         LONG i, x2, y2, dx, dy, sx, sy, error, twice;
         if (trace_animation) {
@@ -745,6 +804,53 @@ int main(void)
     popup_mode = FALSE; gesture_count = gesture_at = 0;
     if (before) __builtin_printf("popup menu failure: %x\n",before);
     VERIFY(before == 0);
+    {
+        WORD saved[120][160];
+        int reads = snapshot_reads, writes = snapshot_writes;
+        __builtin_memcpy(saved,image,sizeof(image));
+        bar_line_error = TRUE;
+        VERIFY(gem_menubar_install(0,2) == 0);
+        bar_line_error = FALSE;
+        VERIFY(!nesting && !mouse_nesting && !bar_height && !aes_menu_registered());
+        VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+        VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+        reads = snapshot_reads; writes = snapshot_writes;
+        bar_close_error = TRUE; bar_snapshot_handle = 0;
+        VERIFY(gem_menubar_install(0,3) == 0);
+        VERIFY(bar_failed_closes == 1 && !bar_close_error && !bar_trial_height);
+        VERIFY(!bar_height && !aes_menu_registered() && !nesting && !mouse_nesting);
+        VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+        VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+    }
+    {
+        int mode;
+        for (mode = 0; mode < 2; mode++) {
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(0);
+            bar_write_block = TRUE;
+            VERIFY(aes_menu_dispatch(aes_global) == E_OK && !aes_menu_listening());
+            before = bar_writes;
+            bar_write_block = FALSE;
+            if (mode) { bar_close_error = TRUE; bar_snapshot_handle = 0; }
+            else bar_line_error = TRUE;
+            VERIFY(gem_menubar_install(0,3) == 0);
+            bar_line_error = FALSE;
+            VERIFY(bar_writes == before+1 && aes_menu_listening());
+            VERIFY(aes_menu_flush(aes_global) == E_OK && bar_writes == before+1);
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+            bar_stream = bar_mode = FALSE;
+        }
+    }
+    VERIFY(gem_menubar_install(0,2) == 1);
+    gem_menubar_mutate();
+    before = snapshot_reads;
+    VERIFY(aes_menu_dispatch(aes_global) < 0 && snapshot_reads == before);
+    VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !aes_menu_registered());
+    before = gem_menubar_checks(0);
+    bar_mode = FALSE; gesture_count = gesture_at = 0;
+    if (before) __builtin_printf("menu bar failure: %x\n",before);
+    VERIFY(before == 0);
+    VERIFY(!nesting && !mouse_nesting && !bar_height);
     before = gem_menu_checks(0);
     if (before) __builtin_printf("menu item failure: %x\n",before);
     VERIFY(before == 0);

@@ -3,6 +3,7 @@
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
+#include "menubar.h"
 
 static short coordinate(LONG value)
 {
@@ -35,14 +36,14 @@ short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers)
     return mt_graf_mkstate(mx, my, buttons, modifiers, aes_global);
 }
 
-short mt_evnt_multi(short events, short clicks, short button_mask, short button_state,
+static short event_once(short events, short clicks, short button_mask, short button_state,
                     short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                     short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
                     short message[], unsigned long interval, short *mx, short *my,
                     short *buttons, short *modifiers, short *key, short *click_count, short *global)
 {
     LONG session, ready, result = 0, state[4], input[5];
-    ULONG mask = 0;
+    ULONG mask = 0, wait_mask;
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
         ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL) ||
         ((events & MU_BUTTON) && ((UWORD)clicks & 0xfe00)) ||
@@ -69,8 +70,9 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     if ((events & MU_MESAG) && aes_window_messages(session, global) < 0) return 0;
     if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
-    ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, mask, interval, 0, 0);
-    if (ready <= 0 || ((ULONG)ready & ~mask)) return 0;
+    wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
+    ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
+    if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
     if ((ready & CUIS_READY_NOTICE) && aes_window_messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
@@ -78,6 +80,11 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
         state[0] = input[2]; state[1] = input[3];
         state[2] = (ULONG)input[4] & 0xffff; state[3] = (ULONG)input[4] >> 16;
     } else if (snapshot(session, state) != E_OK) return 0;
+    if (ready & CUIS_READY_SURFACE) {
+        if (aes_menu_dispatch(global) < 0) return 0;
+        ready &= ~CUIS_READY_SURFACE;
+        if (!ready) return -1; /* Re-arm user predicates after internal tracking. */
+    }
     if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE)) {
         if (cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0) != 16) return 0;
         result |= MU_MESAG;
@@ -92,6 +99,40 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     if (click_count) *click_count = ready & CUIS_READY_BUTTON ? (short)input[1] : 0;
     return (short)result;
 }
+short mt_evnt_multi(short events, short clicks, short button_mask, short button_state,
+                    short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
+                    short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
+                    short message[], unsigned long interval, short *mx, short *my,
+                    short *buttons, short *modifiers, short *key, short *click_count, short *global)
+{
+    LONG start = 0, now, session;
+    ULONG elapsed, duration, ticks, remaining = interval;
+    short result;
+    BOOL clocked = (events & MU_TIMER) && aes_menu_registered();
+    if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
+    session = aes_application_session(global);
+    duration = interval/5 + (interval%5 != 0) + (interval != 0);
+    if (clocked) {
+        start = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+        if (start < 0) return 0;
+    }
+    for (;;) {
+        if (aes_menu_dispatch(global) < 0) return 0;
+        if (clocked) {
+            now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+            if (now < 0) return 0;
+            elapsed = ((ULONG)now-(ULONG)start) & 0x7fffffffUL;
+            ticks = elapsed >= duration ? 0 : duration-elapsed;
+            /* Preserve the original partial-tick guard. A final single tick
+             * uses a positive wait, so an internal wake cannot expire early. */
+            remaining = ticks > 1 ? (ticks-1)*5 : ticks ? 1 : 0;
+        }
+        result = event_once(events,clicks,button_mask,button_state,m1_leave,m1_x,m1_y,m1_w,m1_h,
+                            m2_leave,m2_x,m2_y,m2_w,m2_h,message,remaining,mx,my,buttons,modifiers,key,click_count,global);
+        if (result >= 0) return result;
+    }
+}
+
 short evnt_multi(short events, short clicks, short button_mask, short button_state,
                  short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                  short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
