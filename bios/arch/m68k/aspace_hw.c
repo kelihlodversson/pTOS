@@ -173,7 +173,7 @@ static BOOL map_ttram(volatile ULONG *r)
     ptr = tt_table(512);
     if (!ptr)
         return FALSE;
-    memcpy((void *)ptr, table(r[USER_ROOT] & ~0x1ffUL), 512);
+    memcpy((void *)ptr, (const void *)table(r[USER_ROOT] & ~0x1ffUL), 512);
     r[USER_ROOT] = (ULONG)pmem32_phys((void *)ptr) | UDT_RESIDENT;
     if (end > 0x40000000UL)             /* the window is 1 GiB */
         end = 0x40000000UL;
@@ -220,7 +220,7 @@ BOOL aspace_hw_init(void)
             return FALSE;
         memset(pmem32_virt(root), 0, PAGE);
         r = table(root);
-        memcpy((void *)r, table(kernel_root), ROOT_ENTRIES * 4);
+        memcpy((void *)r, (const void *)table(kernel_root), ROOT_ENTRIES * 4);
         if (!map_ttram(r))
             return FALSE;
         kernel_root = root;
