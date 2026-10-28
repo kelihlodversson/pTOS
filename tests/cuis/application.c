@@ -13,7 +13,8 @@ static UBYTE pipe_data[64];
 static ULONG pipe_count, pipe_block;
 static LONG wait_error, state_error, read_error;
 static LONG state_values[4] = { 17, 23, 2, 5 };
-static ULONG wait_calls;
+static ULONG wait_calls, menu_ticks, menu_dispatch_ticks, menu_wakes;
+static BOOL menu_test;
 static LONG input_ready, input_key = 0x001e0061, input_count = 2;
 static UQUAD input_arguments[5];
 static ULONG input_configuration, click_interval = 450;
@@ -46,10 +47,15 @@ static LONG window_transport(ULONG fn, UQUAD a)
 }
 static int resource_resets;
 void aes_resources_reset(void) { resource_resets++; }
-BOOL aes_menu_registered(void) { return FALSE; }
-BOOL aes_menu_listening(void) { return FALSE; }
+BOOL aes_menu_registered(void) { return menu_test; }
+BOOL aes_menu_listening(void) { return menu_test; }
 LONG aes_menu_flush(WORD *global) { (void)global; return E_OK; }
-LONG aes_menu_dispatch(WORD *global) { (void)global; return E_OK; }
+LONG aes_menu_dispatch(WORD *global)
+{
+    (void)global;
+    if (menu_test) { menu_ticks += menu_dispatch_ticks; menu_dispatch_ticks = 0; }
+    return E_OK;
+}
 void aes_menu_reset(void) { }
 LONG aes_process_call(ULONG fn)
 {
@@ -143,14 +149,21 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a, "GEMTEST ", 8) ? EFILNF : handle;
     if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
     if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
+    if (fn == CUIS_CLOCK) return menu_ticks & 0x7fffffffUL;
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
+        if (menu_test && menu_wakes && (c & CUIS_READY_SURFACE)) {
+            menu_wakes--; menu_ticks++; return CUIS_READY_SURFACE;
+        }
         if (notice_on_wait) { notice_kind = notice_on_wait; notice_on_wait = 0; }
         if ((c & CUIS_READY_NOTICE) && notice_kind) ready |= CUIS_READY_NOTICE;
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
-        if (c & CUIS_READY_TIMER) ready |= CUIS_READY_TIMER;
+        if (c & CUIS_READY_TIMER) {
+            if (menu_test && d) menu_ticks += d/5 + (d%5 != 0) + 1;
+            ready |= CUIS_READY_TIMER;
+        }
         return ready;
     }
     if (fn == CUIS_INPUT_STATE) {
@@ -248,6 +261,14 @@ static int input_api_checks(void)
     failure = EACCDN;
     CHECK(evnt_button(1,1,1,NULL,NULL,NULL,NULL) == 0 && wait_calls == before);
     failure = 0; input_ready = 0;
+    menu_test = TRUE; menu_ticks = 0; menu_dispatch_ticks = 1; menu_wakes = 1;
+    before = wait_calls;
+    CHECK(MULTI(MU_TIMER,10,NULL) == MU_TIMER && wait_calls == before+2);
+    CHECK(menu_ticks >= 3 && waited_interval == 1 && waited_mask == (CUIS_READY_TIMER|CUIS_READY_SURFACE));
+    menu_ticks = 0x7fffffffUL; menu_dispatch_ticks = 1; menu_wakes = 0;
+    CHECK(MULTI(MU_TIMER,10,NULL) == MU_TIMER && waited_interval == 5);
+    CHECK(((menu_ticks-0x7fffffffUL) & 0x7fffffffUL) >= 3);
+    menu_test = FALSE;
     return 0;
 }
 #undef MULTI

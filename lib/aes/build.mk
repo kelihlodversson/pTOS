@@ -1,7 +1,7 @@
 # Ordinary shared ELF, distinct from the historic fixed-image import stubs.
 LIBAES_CFLAGS = $(LDSO_CFLAGS) -DOB_WALK_COORD=LONG -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
-obj/libaes/application.o: lib/aes/application.c lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/application.o: lib/aes/application.c lib/aes/menubar.h lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/gemwindows.o: lib/aes/gemwindows.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
@@ -25,7 +25,7 @@ obj/libaes/gemobjwalk.o: aes/shared/gemobjwalk.c aes/gemobjop.h aes/shared/gemre
 obj/libaes/draw.o: lib/aes/draw.c aes/gemobjop.h lib/aes/style.h aes/shared/gemcicon.h include/vdi_colmap.h lib/aes/resource_context.h aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/events.o: lib/aes/events.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/events.o: lib/aes/events.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/session.o: lib/aes/session.c lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
@@ -225,7 +225,7 @@ obj/libaes/gemmenupopup.o: aes/shared/gemmenupopup.c aes/shared/gemmenupopup.h $
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
 
-obj/libaes/menubar.o: lib/aes/menubar.c lib/aes/menubar.h aes/shared/gemmenubar.h include/gem.h $(AUTOCONF_H)
+obj/libaes/menubar.o: lib/aes/menubar.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h lib/aes/layout.h lib/aes/resource_context.h aes/shared/gemobjtree.h aes/shared/gemobjbounds.h aes/shared/gemmenubar.h include/vdi_service.h include/gem.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/gemmenubar.o: aes/shared/gemmenubar.c aes/shared/gemmenubar.h $(AUTOCONF_H)

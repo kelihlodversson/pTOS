@@ -86,6 +86,26 @@ static BOOL flush(LONG session)
     if (result == 16) { bar.pending = FALSE; return TRUE; }
     return result == EAGAIN;
 }
+static BOOL refresh(void)
+{
+    WORD pairs = mn_bar_index(bar.tree,bar.count,NULL,0);
+    MENU_BAR_ENTRY *entries = bar.entries;
+    UBYTE *seen;
+    if (!pairs) return FALSE;
+    if (pairs != bar.pairs) {
+        entries = aes_temporary_alloc((LONG)pairs*sizeof(*entries)+(bar.count+7L)/8);
+        if (!entries) return FALSE;
+    }
+    seen = (UBYTE *)(entries+pairs);
+    if (!mn_bar_admit(bar.tree,bar.count,seen,(bar.count+7L)/8) ||
+        !mn_bar_index(bar.tree,bar.count,entries,pairs)) {
+        if (entries != bar.entries) (void)aes_resource_discard(entries);
+        return FALSE;
+    }
+    if (entries != bar.entries) (void)aes_resource_discard(bar.entries);
+    bar.entries = entries; bar.pairs = pairs;
+    return TRUE;
+}
 LONG aes_menu_flush(WORD *global)
 {
     LONG session = aes_application_session(global);
@@ -100,7 +120,7 @@ void aes_menu_reset(void)
 WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
 {
     LONG session = aes_application_session(global), registered;
-    BAR next = { 0 }, old;
+    BAR next = { 0 }, old = bar;
     LONG count, bytes;
     WORD original_width = 0, i;
     UBYTE *seen;
@@ -109,6 +129,7 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
     void *buffer = NULL;
     BOOL locked = FALSE, opened = FALSE, installed = FALSE, ok = FALSE;
     if (session < 0 || (show != 0 && show != 1) || bar.busy) return 0;
+    if (!flush(session) || bar.pending) return 0;
     if (!show) {
         if (cuis_call6(CUIS_SURFACE_REGISTER,session,0,0,0,0,0) != E_OK) return 0;
         aes_menu_reset(); return 1;
@@ -132,7 +153,8 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
         tree[2].ob_x < 0 || tree[2].ob_y < 0 || tree[2].ob_width <= 0 || tree[2].ob_height <= 0 ||
         (LONG)tree[1].ob_x+tree[2].ob_x+tree[2].ob_width > next.metrics.width ||
         (LONG)tree[2].ob_y+tree[2].ob_height > next.height) goto done;
-    for (i = 0; i < next.count; i++) if ((tree[i].ob_flags & INDIRECT) && !tree[i].ob_spec.indirect) {
+    for (i = 0; i < next.count; i++) if ((seen[i >> 3] & (1U << (i & 7))) &&
+        (tree[i].ob_flags & INDIRECT) && !tree[i].ob_spec.indirect) {
         if (!(tree[i].ob_flags & HIDETREE)) goto done;
     }
     original_width = tree[1].ob_width;
@@ -159,19 +181,28 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
         bar = old;
         (void)cuis_call6(CUIS_SURFACE_REGISTER,session,old.tree ? old.height : 0,0,0,0,0);
         tree[1].ob_width = original_width;
-    } else {
-        if (old.entries) (void)aes_resource_discard(old.entries);
-        next.entries = NULL;
     }
+    /* Keep the previous registration until workstation cleanup succeeds. */
     goto done;
 rollback_width:
     tree[1].ob_width = original_width;
 done:
-    if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) ok = FALSE;
+    if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) {
+        if (installed && ok) {
+            (void)aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&rect,(uintptr_t)buffer,1);
+            bar = old;
+            (void)cuis_call6(CUIS_SURFACE_REGISTER,session,old.tree ? old.height : 0,0,0,0,0);
+            tree[1].ob_width = original_width;
+        }
+        ok = FALSE;
+    }
     if (locked && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
-    if (buffer && aes_resource_discard(buffer) != E_OK) ok = FALSE;
+    if (buffer) (void)aes_resource_discard(buffer);
+    if (installed && bar.entries == next.entries) {
+        if (old.entries) (void)aes_resource_discard(old.entries);
+        next.entries = NULL;
+    }
     if (next.entries) (void)aes_resource_discard(next.entries);
-    (void)installed;
     return ok;
 }
 WORD menu_bar(OBJECT *tree, WORD show) { return mt_menu_bar(tree,show,aes_global); }
@@ -191,6 +222,9 @@ LONG aes_menu_dispatch(WORD *global)
     flags = cuis_call6(CUIS_SURFACE_STATUS,session,0,0,0,0,0);
     if (flags < 0) return flags;
     if (!(flags & CUIS_SURFACE_OWNED) || !(flags & (CUIS_SURFACE_DIRTY|CUIS_SURFACE_POINTER))) return E_OK;
+    /* Recheck caller edits before any drawing can invoke an unsupported
+     * payload or use stale title/dropdown correspondence. */
+    if (!refresh()) return EACCDN;
     bar.busy = TRUE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) { ok = FALSE; goto done; }
     locked = TRUE;

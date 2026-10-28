@@ -3,11 +3,11 @@
 #include "gem_draw_probe.h"
 #include "gem_menubar.h"
 #define VERIFY(c) do { if (!(c)) return 0x7e00 | __LINE__; } while (0)
-int gem_menubar_checks(short handle)
+static void setup(OBJECT *tree, short ch)
 {
-    OBJECT tree[10] = { { 0 } };
-    short cw, ch, message[8], result, i, global[15];
-    VERIFY(gem_probe_cell(handle,&cw,&ch) == 0);
+    short i;
+    static const OBJECT empty = { 0 };
+    for (i = 0; i < 10; i++) tree[i] = empty;
     for (i = 0; i < 10; i++) {
         tree[i].ob_next = tree[i].ob_head = tree[i].ob_tail = -1;
         tree[i].ob_type = G_IBOX;
@@ -34,6 +34,13 @@ int gem_menubar_checks(short handle)
         tree[i+2].ob_width = 100; tree[i+2].ob_height = 40;
     }
     tree[9].ob_flags = OF_LASTOB;
+}
+int gem_menubar_checks(short handle)
+{
+    OBJECT tree[10] = { { 0 } };
+    short cw, ch, message[8], result, i, global[15];
+    VERIFY(gem_probe_cell(handle,&cw,&ch) == 0);
+    setup(tree,ch);
     gem_menubar_input_stage(0);
     VERIFY(menu_bar(tree,MENU_INSTALL) == 1 && tree[1].ob_width >= 120);
     result = evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,5000,
@@ -49,4 +56,20 @@ int gem_menubar_checks(short handle)
     VERIFY(menu_bar(tree,MENU_REMOVE) == 1);
     VERIFY(menu_bar(tree,2) == 0);
     return 0;
+}
+
+static OBJECT installed[10];
+int gem_menubar_install(short handle, short colour)
+{
+    short cw, ch;
+    if (gem_probe_cell(handle,&cw,&ch)) return 0;
+    setup(installed,ch);
+    installed[1].ob_spec.index = 0x1170 | colour;
+    return menu_bar(installed,MENU_INSTALL);
+}
+
+void gem_menubar_mutate(void)
+{
+    installed[3].ob_type = G_USERDEF;
+    installed[3].ob_spec.userblk = 0;
 }

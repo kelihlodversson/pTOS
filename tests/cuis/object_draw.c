@@ -34,7 +34,7 @@ static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type
 static int releases, mouse_nesting, mouse_releases;
 static BOOL input_error, mouse_error, foreign_display, popup_mode, bar_mode;
 static WORD bar_height, bar_events, bar_message[8];
-static BOOL bar_stream;
+static BOOL bar_stream, bar_line_error;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
 static int popup_paints;
@@ -229,6 +229,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn == VDI_SERVICE_COLOR) { workstation[a].line = b; return (LONG)b; }
     if (fn == VDI_SERVICE_LINE) {
+        if (bar_line_error) return EACCDN;
         WORD *points = (void *)(uintptr_t)c;
         LONG i, x2, y2, dx, dy, sx, sy, error, twice;
         if (trace_animation) {
@@ -785,6 +786,22 @@ int main(void)
     popup_mode = FALSE; gesture_count = gesture_at = 0;
     if (before) __builtin_printf("popup menu failure: %x\n",before);
     VERIFY(before == 0);
+    {
+        WORD saved[120][160];
+        int reads = snapshot_reads, writes = snapshot_writes;
+        __builtin_memcpy(saved,image,sizeof(image));
+        bar_line_error = TRUE;
+        VERIFY(gem_menubar_install(0,2) == 0);
+        bar_line_error = FALSE;
+        VERIFY(!nesting && !mouse_nesting && !bar_height && !aes_menu_registered());
+        VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+        VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+    }
+    VERIFY(gem_menubar_install(0,2) == 1);
+    gem_menubar_mutate();
+    before = snapshot_reads;
+    VERIFY(aes_menu_dispatch(aes_global) < 0 && snapshot_reads == before);
+    VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !aes_menu_registered());
     before = gem_menubar_checks(0);
     bar_mode = FALSE; gesture_count = gesture_at = 0;
     if (before) __builtin_printf("menu bar failure: %x\n",before);

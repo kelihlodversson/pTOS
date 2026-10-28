@@ -86,6 +86,7 @@ typedef struct cuis_client {
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
     UWORD surface_height, surface_events;
+    struct cuis_client *surface_next;
     LONG input_result[5]; /* key, count, x, y, packed buttons/modifiers */
 } CUIS_CLIENT;
 static CUIS_CLIENT *clients;
@@ -117,17 +118,34 @@ static CUIS_RECT display_clip;
 
 /* A process-owned top strip is generic display coordination, not a GEM
  * tree/message protocol. Focus chooses among registered surfaces. */
-static CUIS_CLIENT *surface_owner, *surface_capture;
+static CUIS_CLIENT *surface_owner, *surface_capture, *surface_front;
 static BOOL surface_focus_pending;
+static UWORD surface_height;
+static void damage_windows(void);
+static void surface_remove(CUIS_CLIENT *client)
+{
+    CUIS_CLIENT **link;
+    for (link = &surface_front; *link && *link != client; link = &(*link)->surface_next) ;
+    if (*link) *link = client->surface_next;
+    client->surface_next = NULL;
+}
 static void surface_choose(CUIS_CLIENT *client)
 {
-    if (surface_owner) surface_owner->surface_events = 0;
+    UWORD height = surface_height;
+    BOOL changed = surface_owner != client;
+    if (surface_owner) {
+        surface_owner->surface_events = 0;
+        if (changed && !keyboard_owner) surface_owner->key_head = surface_owner->key_count = 0;
+    }
     surface_owner = client;
+    surface_height = client ? client->surface_height : 0;
     if (client) {
         client->surface_events = CUIS_SURFACE_DIRTY;
+        if (changed && !keyboard_owner) client->key_head = client->key_count = 0;
         if (pointer_initialized && pointer_y < client->surface_height && !pointer_buttons)
             client->surface_events |= CUIS_SURFACE_POINTER;
     }
+    if (height != (client ? client->surface_height : 0)) damage_windows();
 }
 static void surface_focus(void)
 {
@@ -142,8 +160,8 @@ static void surface_fallback(CUIS_CLIENT *exclude)
     if (focus_window && focus_window->client != exclude && focus_window->client->surface_height) {
         surface_choose(focus_window->client); return;
     }
-    for (client = clients; client; client = client->next)
-        if (client != exclude && client->surface_height) break;
+    for (client = surface_front; client; client = client->surface_next)
+        if (client != exclude) break;
     surface_choose(client);
 }
 
@@ -175,6 +193,7 @@ static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total
     if (!b) { kfree(a); return ENSMEM; }
     a[0].x = window->x > 0 ? window->x : 0;
     a[0].y = window->y > 0 ? window->y : 0;
+    if (surface_owner && a[0].y < surface_owner->surface_height) a[0].y = surface_owner->surface_height;
     right = window->x + window->width + window->outset_right;
     bottom = window->y + window->height + window->outset_bottom;
     if (right > mode.width) right = mode.width;
@@ -251,10 +270,11 @@ BOOL cuis_keyboard_event(ULONG key)
 {
     UQUAD flags = cuis_input_lock();
     CUIS_WINDOW *window = focus_window;
-    if (keyboard_owner) {
-        if (keyboard_owner->key_count < CUIS_KEY_CAPACITY) {
-            keyboard_owner->keys[(keyboard_owner->key_head + keyboard_owner->key_count) % CUIS_KEY_CAPACITY] = key;
-            keyboard_owner->key_count++;
+    CUIS_CLIENT *client = keyboard_owner ? keyboard_owner : window ? NULL : surface_owner;
+    if (client) {
+        if (client->key_count < CUIS_KEY_CAPACITY) {
+            client->keys[(client->key_head + client->key_count) % CUIS_KEY_CAPACITY] = key;
+            client->key_count++;
         }
     } else if (window && window->key_count < CUIS_KEY_CAPACITY) {
         window->keys[(window->key_head + window->key_count) % CUIS_KEY_CAPACITY] = key;
@@ -262,7 +282,7 @@ BOOL cuis_keyboard_event(ULONG key)
     }
     cuis_input_unlock(flags);
     /* A full focused queue drops the newest key, never leaks it to BIOS. */
-    return keyboard_owner != NULL || window != NULL;
+    return client != NULL || window != NULL;
 }
 
 /* All routing and topology commits use the same short IRQ exclusion.
@@ -559,8 +579,12 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
         else if ((display_owner && display_owner != client) || (update_owner && update_owner != client) ||
                  (surface_capture && surface_capture != client)) result = EAGAIN;
         else {
+            surface_remove(client);
             client->surface_height = argument;
-            if (argument) { surface_focus_pending = FALSE; surface_choose(client); }
+            if (argument) {
+                client->surface_next = surface_front; surface_front = client;
+                surface_focus_pending = FALSE; surface_choose(client);
+            }
             else if (surface_owner == client) surface_fallback(client);
             result = E_OK;
         }
@@ -731,7 +755,7 @@ void cuis_process_exit(PD *owner)
         CUIS_WINDOW *window;
         UQUAD flags = cuis_input_lock();
         client->input_wait = NULL;
-        client->surface_height = 0;
+        client->surface_height = 0; surface_remove(client);
         if (surface_capture == client) { surface_capture = NULL; pointer_suppressed = pointer_buttons != 0; }
         if (surface_owner == client) surface_fallback(client);
         if (mouse_owner == client) end_mouse();
@@ -805,7 +829,8 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->stream_head = client->stream_bytes = 0;
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
-        client->surface_height = client->surface_events = 0;
+        client->surface_height = client->surface_events = 0; client->surface_next = NULL;
+        client->key_head = client->key_count = 0;
         memset(&client->input_filter, 0, sizeof(client->input_filter));
         memset(client->input_result, 0, sizeof(client->input_result));
         client->owner = run;
@@ -1196,7 +1221,7 @@ BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
     if (!update_owner || update_owner->owner != run || index >= update_count)
         return FALSE;
     *rect = update_clips[index];
-    if (surface_owner && surface_owner != update_owner && rect->y < surface_owner->surface_height) {
+    if (surface_owner && rect->y < surface_owner->surface_height) {
         LONG cut = surface_owner->surface_height-rect->y;
         if (cut > rect->height) cut = rect->height;
         rect->y += cut; rect->height -= cut;
@@ -1402,7 +1427,8 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
         result |= wait->input.ready;
         if ((wait->events & CUIS_READY_KEY) &&
             (keyboard_owner ? (keyboard_owner == wait->client && wait->client->key_count) :
-             (client_window(wait->client, window) && window->key_count)))
+             (window ? client_window(wait->client, window) && window->key_count :
+              surface_owner == wait->client && wait->client->key_count)))
             result |= CUIS_READY_KEY;
     }
     if ((wait->events & CUIS_READY_STREAM) && wait->client->stream_bytes >= wait->minimum)
@@ -1459,7 +1485,7 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
                 }
                 client->input_result[0] = 0;
                 if (ready & CUIS_READY_KEY) {
-                    if (keyboard_owner == client) {
+                    if (keyboard_owner == client || (!focus_window && surface_owner == client)) {
                         client->input_result[0] = client->keys[client->key_head];
                         client->key_head = (client->key_head + 1) % CUIS_KEY_CAPACITY;
                         client->key_count--;

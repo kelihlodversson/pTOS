@@ -1,7 +1,7 @@
 /* Generic top-strip ownership and input remain independent of GEM trees. */
 static int surface_checks(void)
 {
-    LONG a, b, window;
+    LONG a, b, c, window;
     CUIS_RECT rect;
     next_handle = next_window_handle = 0;
     run = &first; a = cuis_service(CUIS_SESSION_START,0);
@@ -11,6 +11,10 @@ static int surface_checks(void)
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,20) == E_OK);
     CHECK((cuis_surface_service(CUIS_SURFACE_STATUS,b,1) & (CUIS_SURFACE_OWNED|CUIS_SURFACE_DIRTY)) == 3);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,b,0) == CUIS_SURFACE_OWNED);
+    CHECK(!focus_window && cuis_keyboard_event(0x1e0061));
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,20) == E_OK);
+    CHECK(cuis_session_wait(b,0,CUIS_READY_KEY,0) == CUIS_READY_KEY);
+    CHECK((*find_owner(run))->input_result[0] == 0x1e0061);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,b,3) == EINVAL);
     CHECK(cuis_surface_service(CUIS_CLOCK,b,1) == EINVAL);
     input_ticks = 0xffffffffUL;
@@ -27,8 +31,11 @@ static int surface_checks(void)
     CHECK(cuis_display_lock(a,0,0) == E_OK);
     CHECK(cuis_session_wait(a,16,CUIS_READY_SURFACE,0) == CUIS_READY_SURFACE);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,a,1) & CUIS_SURFACE_DIRTY);
-    window = cuis_window_service(CUIS_WINDOW_CREATE,20,40,100,100,0);
+    window = cuis_window_service(CUIS_WINDOW_CREATE,0,0,100,100,0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
+    CHECK(cuis_clip_service(window,0,0x1000,0x1004,0x1008,0x100c) == 1 && copied[1] == 19 && copied[3] == 81);
+    CHECK(cuis_window_service(CUIS_UPDATE_END,window,0,0,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
     run = &second;
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,20) == E_OK);
@@ -53,5 +60,20 @@ static int surface_checks(void)
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,0) == E_OK && !surface_owner);
     cuis_process_exit(&second);
     CHECK(!surface_owner && !surface_capture && allocations == frees);
+    run = &first; a = cuis_service(CUIS_SESSION_START,0);
+    run = &second; b = cuis_service(CUIS_SESSION_START,0);
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,20) == E_OK);
+    run = &first;
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,19) == E_OK);
+    run = &third; c = cuis_service(CUIS_SESSION_START,0);
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,c,18) == E_OK);
+    cuis_process_exit(&third);
+    run = &first;
+    CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,a,0) & CUIS_SURFACE_OWNED);
+    cuis_process_exit(&first);
+    run = &second;
+    CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,b,0) & CUIS_SURFACE_OWNED);
+    cuis_process_exit(&second);
+    CHECK(!surface_front && !surface_owner && allocations == frees);
     return 0;
 }

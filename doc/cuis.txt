@@ -1505,7 +1505,7 @@ X86_64_MEMTEST, build the kernel and x32test/import fixtures, then run the boot
 script with MMAP_BOOT_SCREENSHOT=/tmp/ptos-libaes-objects.png. The optional QMP
 helper waits for the demo-ready marker and writes a PNG directly from QEMU;
 no generated or reconstructed UI is used. The checked-in example is in
-doc/screenshots/libaes-objects.png. Window decorations and menus remain subsequent slices. Forms, resources,
+doc/screenshots/libaes-objects.png. Window decorations and extended menus remain subsequent slices. Forms, resources,
 bitmap/icon drawing and 3D objects are now supported.
 
 
@@ -1851,9 +1851,9 @@ string buffer without drawing or changing its address. As in native AES, the
 caller must provide writable storage large enough for the new text and NUL;
 the object width is not a buffer capacity. Text buffers remain caller-owned.
 
-This slice does not install a menu bar, track menus, publish MN_SELECTED or
-advertise extended-menu capabilities. Those need separate global ownership
-and interaction work. No kernel ABI or configuration changes are introduced.
+These item calls do not install a menu bar; use menu_bar, described below.
+Extended-menu capabilities remain unadvertised. No kernel ABI or configuration
+changes were introduced by the item-state slice.
 
 
 Standalone popup menus (#776)
@@ -1868,7 +1868,8 @@ This initial adapter accepts a G_BOX/G_IBOX with immediate G_STRING/G_TITLE
 leaves, including disabled/hidden entries and indirect specifications. It
 supports up to 4096 entries. Scrolling/listboxes, attached submenus, nested
 item trees and other item types return 0. Extended-menu capability bits stay
-unadvertised. Global menu-bar ownership/tracking remains a separate slice.
+unadvertised. Standard menu bars are described below; scrolling and submenus
+remain later extensions.
 
 The library makes a bounded private copy of the popup objects, preserving the
 caller's links, coordinates, state and string ownership. The requested point
@@ -1897,3 +1898,73 @@ Regressions cover scripted tracking and host ASan/UBSan binding/failure paths.
 The ordinary GEM fixture is also built against unmodified GEMlib headers;
 opt-in QEMU input tests drive the real PS/2 mouse to select, cancel outside,
 click a disabled item and select from a non-root menu with aliased descriptors.
+
+
+Standard menu bars (#779)
+
+menu_bar/mt_menu_bar implement MENU_INSTALL and MENU_REMOVE with ordinary GEM
+OBJECT trees. The first three objects retain the standard screen/bar/active
+roles; the root's last child contains dropdown boxes. Arrays must end with
+LASTOB. The shared gemmenubar.c pairs titles and dropdowns by sibling order,
+including non-contiguous object IDs. Bounded bitset admission rejects cyclic,
+shared or malformed lists and unsupported visible payloads before painting.
+Classic string/title items, hidden/disabled entries and indirect strings are
+supported. Attached submenus, accessory registration and extended menu modes
+remain separate slices; extended-menu capability queries remain unsupported.
+
+Installation extends object 1 to the right screen edge, as in native AES,
+and uses the original shared object painter plus the native black separator.
+The caller keeps the tree and strings alive until removal. States, labels
+and topology are rechecked before later painting/interaction; unsupported
+caller edits fail without invoking USERDEF. The library owns only a temporary
+index, not the caller's resource. Removal and session cleanup discard index
+storage without dereferencing a possibly retired caller tree.
+
+Each process registers a generic top strip with CUIS. Focus changes choose
+the focused window's registered surface; explicit installation activates the
+caller's surface. When its owner exits/removes it, a focused registered client
+wins, otherwise the most recently registered surviving surface is restored.
+Focus-driven ownership changes defer while display/update or surface drag ownership is
+held. Native window regions exclude the strip. Other clients' full-screen
+writes are clipped below it, while screen reads/copies may still read the
+entire screen, including for screenshot applications. Windowless surface
+owners receive keyboard input when no window has focus. Modal mouse control
+suppresses surface handling; menu activation gestures do not enter ordinary
+application button history.
+
+Normal evnt_* and blocking appl_read calls pump menu work in libaes. Hovering
+a title opens its dropdown, moving across titles switches menus, and
+click/drag release selects an enabled item or cancels outside. Existing display
+and mouse locks protect exact background snapshots, including borders and 3D
+margins. Highlight sampling uses one-pixel motion predicates. Successful
+selection queues a standard eight-WORD MN_SELECTED: sender 0, title/item in
+words 3/4, tree pointer in words 5/6, and dropdown root in word 7. The selected
+title stays highlighted until menu_tnormal. A full stream retains one pending
+selection and defers further menu handling or replacement until it can be
+published; it never blocks writing to its own full stream. APR_NOWAIT reads
+flush pending messages without entering a blocking menu interaction.
+
+Internal wakes re-arm application predicates and preserve original timer
+expiry across the 200 Hz partial-tick guard and clock wrap. Event results are
+snapshotted before recursive menu tracking can replace input filters/results.
+Failed painting restores the saved pixels and registration; failed temporary
+frees stay on the resource allocator's retry list.
+
+CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
+- 50 SURFACE_REGISTER(session,height): zero removes, positive reserves a top
+  strip and activates it; returns E_OK or a negative error.
+- 51 SURFACE_STATUS(session,action): action 0 queries OWNED/DIRTY/POINTER bits,
+  action 1 acknowledges pending work, action 2 invalidates an owned surface.
+  Acknowledge does not discard work during modal mouse control.
+- 52 CLOCK(session,0): returns the low 31 bits of the 200 Hz tick counter.
+  The maximum supported 32-bit millisecond timeout is shorter than its wrap.
+READY_SURFACE is bit 128 in SESSION_WAIT. CUIS does not interpret GEM object
+pointers, AES opcodes or message formats. It has no feature/version negotiation
+or drawing commands; ordinary streams carry opaque application message bytes.
+
+Validation covers host sanitizer ownership/clipping/exit/input tests, source
+admission and caller mutations, paint-failure restoration, timer wakes/wrap,
+and ordinary GEM source compiled against unmodified GEMlib headers. Real
+QEMU mouse tests select across titles, and isolated clients exercise focus
+handoff, separate menu colours and owner exit. Headless, legacy-AES desktop,
+native ROM and contract configurations are also checked.

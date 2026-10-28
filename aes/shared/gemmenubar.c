@@ -82,6 +82,10 @@ static BOOL text(const OBJECT *object)
     for (n = 0; n <= 127; n++) if (!spec.free_string[n]) return TRUE;
     return FALSE;
 }
+static BOOL box_spec(const OBJECT *object)
+{
+    return (object->ob_flags & HIDETREE) || !(object->ob_flags & INDIRECT) || object->ob_spec.indirect;
+}
 WORD mn_bar_admit(const OBJECT *tree, WORD count, UBYTE *scratch, ULONG bytes)
 {
     WORD total, title, menu, container, i, item, last, type;
@@ -89,14 +93,16 @@ WORD mn_bar_admit(const OBJECT *tree, WORD count, UBYTE *scratch, ULONG bytes)
     if (!scratch || count <= MENU_ACTIVE) return 0;
     needed = ((ULONG)count+7)/8;
     if (bytes < needed || !(total = pairs(tree,count)) ||
-        !box(tree) || !box(tree+MENU_BAR) || !box(tree+MENU_ACTIVE)) return 0;
+        !box(tree) || !box(tree+MENU_BAR) || !box(tree+MENU_ACTIVE) ||
+        !box_spec(tree) || !box_spec(tree+MENU_BAR) || !box_spec(tree+MENU_ACTIVE) ||
+        !box_spec(tree+tree[ROOT].ob_tail)) return 0;
     for (n = 0; n < needed; n++) scratch[n] = 0;
     container = tree[ROOT].ob_tail;
     claim(scratch,ROOT,count); claim(scratch,MENU_BAR,count);
     claim(scratch,MENU_ACTIVE,count); claim(scratch,container,count);
     title = tree[MENU_ACTIVE].ob_head; menu = tree[container].ob_head;
     for (i = 0; i < total; i++) {
-        if (!claim(scratch,title,count) || !claim(scratch,menu,count) || !text(tree+title) ||
+        if (!claim(scratch,title,count) || !claim(scratch,menu,count) || !box_spec(tree+menu) || !text(tree+title) ||
             (tree[title].ob_flags & SUBMENU)) return 0;
         item = tree[menu].ob_head; last = NIL;
         while (item != menu && item != NIL) {
