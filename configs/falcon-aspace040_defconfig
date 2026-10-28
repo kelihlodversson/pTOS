@@ -2,7 +2,7 @@
 # of its own (#728, #571): falcon-aspace for the MMU of a 68040 instead of that
 # of a 68030, with the page tables of the 68040 backend (aspace_hw.c).  For
 # Hatari's Falcon or TT with --cpulevel 4 --mmu on (tools/run-hatari-tests.py
-# --mode f040a and tt040a); the image does not start on a 68030.  No TT-RAM.
+# --mode f040a and tt040a); the image does not start on a 68030.
 TARGET_512=y
 BUILD_UNIQUE_COUNTRY=y
 CONF_ATARI_HIGHER_HALF=y

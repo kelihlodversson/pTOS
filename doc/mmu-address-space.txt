@@ -477,8 +477,7 @@ the 68040, with the shape of the plan above.  What is particular to it:
   - The memory of the kernel and of the programs is all in the window:
     phystop is an address of it (memory.S adds the base), the pool is the
     first part of it and the page allocator (pmem32) has the rest, up to
-    the top of the ST-RAM.  TT-RAM is not used (it is not in the allocator's
-    range).  CONF_WITH_CARTRIDGE is not offered: a cartridge program runs in
+    the top of the ST-RAM, then the TT-RAM of an Atari (below).  CONF_WITH_CARTRIDGE is not offered: a cartridge program runs in
     supervisor mode at the addresses of the ROM port, which no tree maps.
   - Descriptors are long ones with S (the page is the kernel's) and WP, and
     have the used and the modified bit set when they are made: the MMU never
@@ -544,11 +543,18 @@ the 68040, with the shape of the plan above.  What is particular to it:
     so the tree is three full levels and maps only the first 16 MiB, twice
     (at 0 and in the window) with the same tables; the I/O area of the ST
     (0xff000000 and up) is the transparent window DTT0 of the supervisor, the
-    part at 0x00f00000 is not cached.  There is no TT-RAM, as the tree does not
-    reach it.  The data cache is physical there, so the clearing of it at every
+    part at 0x00f00000 is not cached.  The tree does not reach the TT-RAM (its
+    size is not known when the ROM is built): ttram_detect() (memory2.c) opens
+    DTT1 over 0-0x1fffffff while it probes, on a TT only (a Falcon is not
+    asked: Hatari answers its reads and then faults on a write), and
+    aspace_hw_init() builds the window of the TT-RAM, at 0x80000000 plus its
+    physical address, in a root in the RAM, from tables in the ST-RAM
+    (pmem32_alloc_low()), and runs the MMU on that root: every other root
+    copies its kernel half.  Its pages are write-through like the others
+    (tests/ttram checks that a block larger than the ST-RAM works).  The data cache is physical there, so the clearing of it at every
     return to a program (the 68030's, see above) is not done.  Hatari's Falcon
     with --cpulevel 4 --mmu on runs the whole suite (--mode f040a, job
-    falcon-aspace040), and so does the TT (--mode tt040a, no TT-RAM).  The
+    falcon-aspace040), and so does the TT (--mode tt040a, with 32 MB of TT-RAM).  The
     pages of a process are write-through on an Atari (aspace_hw.c): with
     copyback pages the TT, whose disk is DMA (ACSI) and not PIO as on the
     Falcon, does not run on Hatari's 68040: after a disk read a return address

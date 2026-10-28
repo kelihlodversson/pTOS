@@ -33,6 +33,9 @@
 #include "procmem.h"
 #include "pmem32.h"
 #include "aspace32.h"
+#if CONF_ATARI_HIGHER_HALF
+#include "tosvars.h"
+#endif
 
 #define PAGE            PMEM32_PAGE
 #define ROOT_ENTRIES    128
@@ -128,6 +131,78 @@ static void pflusha(void)
     __asm__ volatile (".word 0xf518" : : : "memory");                    /* pflusha */
 }
 
+#if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
+/*
+ * The tree in the ROM (atari_mmu040.S) maps the window over the first 16 MiB
+ * only: the size of the TT-RAM is not known when it is built.  So the window
+ * of the TT-RAM, at 0x80000000 + its physical address, is built here, in a
+ * root in the RAM that the MMU runs on from then on (the ROM tree is the
+ * template of the rest).  Its tables are permanent and come from the ST-RAM,
+ * which the window reaches already.
+ */
+static PADDR tt_page;                    /* the page the tables are cut from */
+static ULONG tt_offset;
+
+static volatile ULONG *tt_table(ULONG size)    /* zeroed, aligned to its size */
+{
+    ULONG off = (tt_offset + size - 1) & ~(size - 1);
+
+    if (!tt_page || off + size > PAGE) {
+        tt_page = pmem32_alloc_low(1, 1);
+        if (tt_page == PMEM32_NONE) {
+            tt_page = 0;
+            return NULL;
+        }
+        memset(pmem32_virt(tt_page), 0, PAGE);
+        off = 0;
+    }
+    tt_offset = off + size;
+    return table(tt_page + off);
+}
+
+static BOOL map_ttram(volatile ULONG *r)
+{
+    ULONG start = (ULONG)(uintptr_t)TTRAM_START;
+    ULONG end = (ULONG)(uintptr_t)ramtop & ~(PAGE - 1);
+    volatile ULONG *ptr;
+    ULONG p;
+
+    if (!ramtop)
+        return TRUE;
+    /* the pointer table of the ROM tree, which has no room for the TT-RAM, copied into the RAM */
+    ptr = tt_table(512);
+    if (!ptr)
+        return FALSE;
+    memcpy((void *)ptr, table(r[USER_ROOT] & ~0x1ffUL), 512);
+    r[USER_ROOT] = (ULONG)pmem32_phys((void *)ptr) | UDT_RESIDENT;
+    if (end > 0x40000000UL)             /* the window is 1 GiB */
+        end = 0x40000000UL;
+    for (p = start; p < end; p += PAGE) {
+        volatile ULONG *pt;
+        ULONG ri = USER_ROOT + (p >> 25);
+        ULONG pi = (p >> 18) & (PTR_ENTRIES - 1);
+
+        if (!(r[ri] & UDT_MASK)) {
+            ptr = tt_table(512);
+            if (!ptr)
+                return FALSE;
+            r[ri] = (ULONG)pmem32_phys((void *)ptr) | UDT_RESIDENT;
+        }
+        ptr = table(r[ri] & ~0x1ffUL);
+        if (!(ptr[pi] & UDT_MASK)) {
+            pt = tt_table(256);
+            if (!pt)
+                return FALSE;
+            ptr[pi] = (ULONG)pmem32_phys((void *)pt) | UDT_RESIDENT;
+        } else {
+            pt = table(ptr[pi] & ~0xffUL);
+        }
+        pt[(p >> 12) & (PT_ENTRIES - 1)] = p | PDT_RESIDENT | PTE_CM_COPYBACK | PTE_S | PTE_G;
+    }
+    return TRUE;
+}
+#endif
+
 BOOL aspace_hw_init(void)
 {
     volatile ULONG *pt;
@@ -135,8 +210,27 @@ BOOL aspace_hw_init(void)
 
     kernel_root = read_srp() & ~0x1ffUL;
 
+#if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
+    if (ramtop) {
+        /* a root of the RAM with the window of the TT-RAM; the ROM tree is not changed */
+        PADDR root = pmem32_alloc_low(1, 1);
+        volatile ULONG *r;
+
+        if (root == PMEM32_NONE)
+            return FALSE;
+        memset(pmem32_virt(root), 0, PAGE);
+        r = table(root);
+        memcpy((void *)r, table(kernel_root), ROOT_ENTRIES * 4);
+        if (!map_ttram(r))
+            return FALSE;
+        kernel_root = root;
+        write_roots((ULONG)root);       /* (nothing is cached in the RAM above the 16 MiB yet) */
+        pflusha();
+    }
+#endif
+
     /* the page table of the kernel's low memory, supervisor only */
-    low_page_table = pmem32_alloc(1, 1);
+    low_page_table = pmem32_alloc_low(1, 1);
     if (low_page_table == PMEM32_NONE)
         return FALSE;
     memset(pmem32_virt(low_page_table), 0, PAGE);

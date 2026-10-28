@@ -26,7 +26,7 @@ LONG phys_pages_total(void)
     /* phystop is an address of the kernel window: the RAM starts at its base */
     ULONG bytes = (ULONG)(uintptr_t)phystop - (ULONG)PMEM32_WINDOW_BASE;
 
-#if CONF_ATARI_HIGHER_HALF && !CONF_ATARI_HIGHER_HALF_68040 && CONF_WITH_TTRAM
+#if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
     if (ramtop)                         /* the TT-RAM is pages of the allocator too */
         bytes += (ULONG)(uintptr_t)ramtop - (ULONG)(uintptr_t)TTRAM_START;
 #endif

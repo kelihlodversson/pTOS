@@ -353,8 +353,8 @@ config CONF_ATARI_HIGHER_HALF_68040
 	  that of a 68030.  The static tree in the ROM maps the first 16 MiB
 	  of the RAM (and so the ROM and the I/O area, which are in them) in
 	  the window and at their own addresses, with the I/O area not cached;
-	  there is no TT-RAM (a 68040 TT would have it above 16 MiB, which the
-	  tree does not map yet).  With CONF_WITH_PROCESS_ASPACES the page
+	  the TT-RAM, whose size is not known when the ROM is built, is added to
+	  the window at boot by aspace_hw_init().  With CONF_WITH_PROCESS_ASPACES the page
 	  tables of the processes are those of bios/arch/m68k/aspace_hw.c.
 
 	  For emulators of a Falcon or a TT with a 68040 and the MMU on

@@ -24,7 +24,9 @@
  * of the ST I/O registers go (0xffff8000 and up), is a transparent window of
  * the supervisor (DTT0, set by startup.S): serialized, not cached.  The first
  * page is not for a program, as in the other tree.  Nothing else is mapped:
- * not the TT-RAM, which a 68040 TT has above 16 MiB.  ITT0, ITT1 and DTT1 are off.
+ * not the TT-RAM, which a 68040 TT has above 16 MiB: its size is not known when
+ * the ROM is built, so aspace_hw_init() (aspace_hw.c) puts it in the window,
+ * in a root in the RAM that it copies this one into.  ITT0, ITT1 and DTT1 are off.
  *
  * With CONF_WITH_PROCESS_ASPACES every page is supervisor-only, and the tree
  * is the boot tree and the source of the kernel half of the others

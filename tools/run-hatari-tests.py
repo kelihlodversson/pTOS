@@ -130,7 +130,7 @@ def main():
         cmd = ['hatari', '--tos', a.tos, '--machine', 'tt',
                '--cpulevel', '4' if a.mode == 'tt040a' else '3',
                '--addr24', 'off', '--memsize', '10',
-               '--ttram', '0' if a.mode == 'tt040a' else '32',
+               '--ttram', '32',
                '--sound', 'off', '--mmu', 'on',
                '--monitor', 'vga', '--acsi', '0=' + disk]
     else:
