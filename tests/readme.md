@@ -172,7 +172,22 @@ results are read from `RUNTESTS.LOG`, which a build for the Amiga writes on the 
 disk).  `tests/isolation/` does the
 same with `isoprobe.c` (`ISOPROBE.TOS`), which makes the forbidden accesses
 one launch at a time; the suite is built only where `CONF_WITH_USER_ASPACE`
-is set on ARM and m68k.
+is set on ARM and m68k.  Its translation cache checks (`check_translation_cache()`,
+m68k and ARM) put a page at the same address in the parent and in the children and
+switch between them, and change a page the CPU has just used (read-only and back,
+no access, unmapped, mapped again): the next access must follow at once, with a
+fault where there should be one.
+`tests/mmu_fault/` (m68k, with address spaces and `Mmap()`) is the recovery from
+page faults: an instruction that faults in the middle of its work on pages that
+are not there yet (auto-increment and auto-decrement stores of each width at every
+offset from a page boundary, MOVEM both ways, an instruction with two faulting
+operands, read-modify-write, long runs of stores, an instruction fetch across a
+page and from a page that is not there, the kernel copying with `Fread()` and
+`Fwrite()` across them) must finish as if nothing had happened: the right bytes,
+each write once, the address registers moved once.  The cases that need an
+access across a boundary (odd offsets, two operands) are left out where
+`TEST_NO_CROSSING` is set, and TAS and CAS are not run, because their fault is
+not served (doc/mmu-address-space.txt).
 
 ```c
 #include "test.h"

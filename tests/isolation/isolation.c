@@ -26,6 +26,7 @@
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
 #include <stddef.h>
+#include "include/mmapcall.h"
 
 void test_isolation(void);
 
@@ -268,6 +269,57 @@ static void check_faults_leave_nothing(void)
     expect(rc == 42L, "a program did not run after others faulted", rc);
 }
 
+
+#if defined(__mc68000__) || defined(__arm__)
+#define SWITCH_VA   0x02000000UL        /* in the mapping window of every process */
+
+/*
+ * The same address is a page of each process, and a different page.  The
+ * parent keeps writing its own while children map, change and drop theirs: a
+ * translation cache that holds an entry of the one for the other shows up as
+ * the wrong bytes on one side or the other.  Then a page that changes (down,
+ * up, unmapped, remapped) must take effect on the very next access, though the
+ * CPU has just used it.
+ */
+static void check_translation_cache(void)
+{
+    volatile unsigned long *mine = (volatile unsigned long *)SWITCH_VA;
+    unsigned long i;
+    long rc;
+
+    if (mm_map(0L, 1, PROT_READ, 0) == -32L)
+        return;                         /* (no Mmap() in this build) */
+    rc = mm_map((long)SWITCH_VA, 1, PROT_READ | PROT_WRITE, 1);
+    expect(rc == (long)SWITCH_VA, "Mmap(fixed) for the context switch test failed", rc);
+    if (rc != (long)SWITCH_VA)
+        return;
+
+    for (i = 0; i < 8; i++)
+    {
+        *mine = 0x70000000UL + i;
+        rc = probe('M', SWITCH_VA, 0x80000000UL + i);
+        expect(rc == SURVIVED, "a process did not get a page of its own at the address of the parent's", rc);
+        ptest_assert_msg(*mine == 0x70000000UL + i, "a process changed the page of its parent at the same address");
+        rc = probe('R', SWITCH_VA, 0x90000000UL + i);
+        expect(rc == SURVIVED, "a page that was unmapped and mapped again showed old contents", rc);
+        ptest_assert_msg(*mine == 0x70000000UL + i, "a process changed the page of its parent (unmap and map)");
+        rc = probe('D', SWITCH_VA, 0xa0000000UL + i);
+        expect(rc == SURVIVED, "a page whose permissions changed twice did not follow", rc);
+    }
+    for (i = 0; i < 4; i++)
+    {
+        rc = probe('W', SWITCH_VA, 0xb0000000UL + i);
+        expect(rc == FAULT, "a write to a page made read-only was not stopped", rc);
+        rc = probe('N', SWITCH_VA, 0xc0000000UL + i);
+        expect(rc == FAULT, "a read of a page made inaccessible was not stopped", rc);
+        rc = probe('U', SWITCH_VA, 0xd0000000UL + i);
+        expect(rc == FAULT, "a read of an unmapped page was not stopped", rc);
+        ptest_assert_msg(*mine == 0x70000007UL, "a process that was stopped changed the page of its parent");
+    }
+    mm_unmap((long)SWITCH_VA, 1);
+}
+#endif
+
 #endif /* TEST_WITH_USER_ASPACE */
 
 void test_isolation(void)
@@ -279,6 +331,9 @@ void test_isolation(void)
     check_private_pages();
     check_pointer_refusals();
     check_faults_leave_nothing();
+#if defined(__mc68000__) || defined(__arm__)
+    check_translation_cache();
+#endif
 #endif
     ptest_pass();
 }
