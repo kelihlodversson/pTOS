@@ -1832,3 +1832,25 @@ Regression coverage includes native bevel/selection pixels, configurable
 colours, saved-global sysvar calls, invalid arguments, expanded and shadowed
 hit rectangles, and overflowing geometry. The same ordinary GEM source runs
 in the host sanitizer suite and in x32 QEMU against unmodified GEMlib headers.
+
+
+Menu item APIs (#774)
+
+menu_icheck, menu_ienable, menu_tnormal and menu_text (and their mt forms)
+operate on the application's own menu tree. State changes compile the native
+do_chg routine from aes/shared/gemmenuchange.c with library draw bindings.
+Checking an item changes only CHECKED. Enabling changes only DISABLED, and
+setting bit 15 of the item number requests immediate redraw, as in native GEM.
+menu_tnormal changes SELECTED and redraws the title, but refuses disabled
+items. Other state bits are preserved. Redraw uses the existing objc_change
+adapter, full-screen clipping and nested display ownership; draw failures
+retain the previous state. Saved-global calls use that registered application.
+
+menu_text copies the supplied NUL-terminated text into the existing menu
+string buffer without drawing or changing its address. As in native AES, the
+caller must provide writable storage large enough for the new text and NUL;
+the object width is not a buffer capacity. Text buffers remain caller-owned.
+
+This slice does not install a menu bar, track menus, publish MN_SELECTED or
+advertise extended-menu capabilities. Those need separate global ownership
+and interaction work. No kernel ABI or configuration changes are introduced.

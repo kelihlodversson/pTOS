@@ -3,6 +3,7 @@
 #include "libaes.h"
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
+#undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static BOOL live;

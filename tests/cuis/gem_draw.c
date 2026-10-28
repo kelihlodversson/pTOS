@@ -6,6 +6,7 @@
 #include "mono_objects.h"
 #include "colour_objects.h"
 #include "three_d.h"
+#include "menu_items.h"
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
@@ -324,6 +325,11 @@ int main(int argc, char **argv, char **envp)
     status = gem_colour_resource_checks(handle); if (status) return status;
     {
         static const char marker[] = "x32 GEM colour icons: PASS\r\n";
+        ptos_write(1,marker,sizeof(marker)-1);
+    }
+    status = gem_menu_checks(handle); if (status) return status;
+    {
+        static const char marker[] = "x32 GEM menu items: PASS\r\n";
         ptos_write(1,marker,sizeof(marker)-1);
     }
     status = gem_3d_checks(handle); if (status) return status;
