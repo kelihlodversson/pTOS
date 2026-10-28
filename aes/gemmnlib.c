@@ -143,42 +143,6 @@ static void rect_change(OBJECT *tree, MOBLK *prmob, WORD iob, BOOL x)
 
 
 /*
- *  Routine to change the state of a particular object.  The change in
- *  state will not occur if the object is disabled and the chkdisabled
- *  parameter is set.  The object will be drawn with its new state only
- *  if the dodraw parameter is set.
- */
-BOOL do_chg(OBJECT *tree, WORD iitem, UWORD chgvalue,
-             WORD dochg, WORD dodraw, WORD chkdisabled)
-/* tree:         tree that holds item */
-/* iitem:        item to affect       */
-/* chgvalue:     bit value to change  */
-/* dochg:        set or reset value   */
-/* dodraw:       draw resulting change*/
-/* chkdisabled:  only if item enabled */
-{
-    UWORD   curr_state;
-    OBJECT  *obj;
-
-    obj = tree + iitem;
-    curr_state = obj->ob_state;
-    if (chkdisabled && (curr_state & DISABLED) )
-        return FALSE;
-
-    if (dochg)
-        curr_state |= chgvalue;
-    else
-        curr_state &= ~chgvalue;
-
-    if (dodraw)
-        gsx_sclip(&gl_rzero);
-
-    ob_change(tree, iitem, curr_state, dodraw);
-    return TRUE;
-}
-
-
-/*
  *  Test if an item number has changed
  */
 static BOOL item_changed(WORD last_item, WORD cur_item)

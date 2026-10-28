@@ -268,6 +268,20 @@ short form_center(OBJECT *tree, short *x, short *y, short *w, short *h);
 short mt_form_center(OBJECT *tree, short *x, short *y, short *w, short *h, short *global);
 short form_center_grect(OBJECT *tree, GRECT *rect);
 short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global);
+#define CHECK 1
+#define UNCHECK 0
+#define ENABLE 1
+#define DISABLE 0
+#define HIGHLIGHT 0
+#define UNHIGHLIGHT 1
+short menu_icheck(OBJECT *tree, short item, short check);
+short mt_menu_icheck(OBJECT *tree, short item, short check, short *global);
+short menu_ienable(OBJECT *tree, short item, short enable);
+short mt_menu_ienable(OBJECT *tree, short item, short enable, short *global);
+short menu_tnormal(OBJECT *tree, short item, short normal);
+short mt_menu_tnormal(OBJECT *tree, short item, short normal, short *global);
+short menu_text(OBJECT *tree, short item, const char *text);
+short mt_menu_text(OBJECT *tree, short item, const char *text, short *global);
 short objc_sysvar(short mode, short which, short in1, short in2, short *out1, short *out2);
 short mt_objc_sysvar(short mode, short which, short in1, short in2, short *out1, short *out2, short *global);
 short objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h);
