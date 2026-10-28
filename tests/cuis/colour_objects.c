@@ -54,6 +54,62 @@ static int colour_pixels(short handle, CICONBLK *block)
     /* Dither darkening is tested separately by removing selected data. */
     return 0;
 }
+/* A separate eight-plane image covers every raw palette index. Reference
+ * swatches use 256 one-pixel GEM images in one tree/workstation, independent
+ * of the colour-plane decoder and without assuming unique RGB palette values. */
+static int full_palette_pixels(short handle, CICONBLK *block)
+{
+    static const short low_pens[16] = { 0,2,3,6,4,7,5,8,9,10,11,14,12,15,13,255 };
+    OBJECT swatches[257] = { { 0 } }, icon = { 0 };
+    BITBLK bits[256] = { { 0 } };
+    short one = 1, index, x, y;
+    int expected[256];
+    swatches[0].ob_next = -1; swatches[0].ob_head = 1; swatches[0].ob_tail = 256;
+    swatches[0].ob_type = G_IBOX; swatches[0].ob_width = swatches[0].ob_height = 100;
+    for (index = 0; index < 256; index++) {
+        OBJECT *o = swatches+index+1;
+        o->ob_next = index == 255 ? 0 : index+2;
+        o->ob_head = o->ob_tail = -1; o->ob_type = G_IMAGE;
+        o->ob_x = 80+(index&15); o->ob_y = 80+(index>>4);
+        o->ob_width = o->ob_height = 1; o->ob_spec.bitblk = bits+index;
+        bits[index].bi_pdata = &one; bits[index].bi_wb = 2; bits[index].bi_hl = 1;
+        bits[index].bi_x = 15;
+        bits[index].bi_color = index < 16 ? low_pens[index] : index == 255 ? 1 : index;
+    }
+    VERIFY(objc_draw(swatches,0,1,0,0,100,100) == 1);
+    for (index = 0; index < 256; index++) {
+        expected[index] = gem_probe_pixel(handle,80+(index&15),80+(index>>4));
+        VERIFY(expected[index] >= 0);
+    }
+    icon.ob_next = icon.ob_head = icon.ob_tail = -1;
+    icon.ob_type = G_CICON; icon.ob_spec.ciconblk = block;
+    icon.ob_x = icon.ob_y = 10; icon.ob_width = icon.ob_height = 16;
+    VERIFY(objc_draw(&icon,0,0,0,0,100,100) == 1);
+    for (y = 0; y < 16; y++) for (x = 0; x < 16; x++)
+        VERIFY(gem_probe_pixel(handle,x+10,y+10) == expected[y*16+x]);
+    VERIFY(objc_change(&icon,0,0,0,0,100,100,OS_SELECTED,1) == 1);
+    for (y = 0; y < 16; y++) for (x = 0; x < 16; x++)
+        VERIFY(gem_probe_pixel(handle,x+10,y+10) == expected[255-y*16-x]);
+    return 0;
+}
+static int native_full_palette(short handle)
+{
+    CICONBLK block = { 0 };
+    CICON variant = { 0 };
+    short data[128] = { 0 }, selected[128], mask[16], x, y, plane;
+    for (plane = 0; plane < 8; plane++) for (y = 0; y < 16; y++) {
+        for (x = 0; x < 16; x++)
+            if ((y*16+x) & (1<<plane)) data[plane*16+y] |= (unsigned short)0x8000 >> x;
+        selected[plane*16+y] = (short)~data[plane*16+y];
+    }
+    for (y = 0; y < 16; y++) mask[y] = -1;
+    block.monoblk.ib_pdata = mask; block.monoblk.ib_pmask = mask;
+    block.monoblk.ib_ptext = ""; block.monoblk.ib_wicon = block.monoblk.ib_hicon = 16;
+    block.mainlist = &variant; variant.num_planes = 8;
+    variant.col_data = data; variant.col_mask = mask;
+    variant.sel_data = selected; variant.sel_mask = mask;
+    return full_palette_pixels(handle,&block);
+}
 int gem_colour_checks(short handle)
 {
     CICONBLK block = { 0 }, saved;
@@ -76,6 +132,7 @@ int gem_colour_checks(short handle)
     block.mainlist = &low;
     memcpy(&saved,&block,sizeof(block)); low_saved = low; high_saved = high;
     memcpy(data_saved,data,sizeof(data)); memcpy(selected_saved,selected,sizeof(selected));
+    result = native_full_palette(handle); if (result) return result;
     result = colour_pixels(handle,&block); if (result) return result;
     VERIFY(!memcmp(&saved,&block,sizeof(block)) && !memcmp(&low,&low_saved,sizeof(low)) &&
         !memcmp(&high,&high_saved,sizeof(high)) && !memcmp(data,data_saved,sizeof(data)) &&
@@ -135,6 +192,13 @@ int gem_colour_resource_checks(short handle)
     block = tree[2].ob_spec.indirect->ciconblk;
     VERIFY(block && block->mainlist && block->mainlist->next_res);
     result = colour_pixels(handle,block);
+    VERIFY(rsrc_free() == 1);
+    if (result) return result;
+    VERIFY(rsrc_load("GEM256.RSC") == 1 && rsrc_gaddr(R_TREE,0,&tree) == 1);
+    VERIFY(tree[2].ob_spec.indirect == tree[3].ob_spec.indirect);
+    block = tree[2].ob_spec.indirect->ciconblk;
+    VERIFY(block && block->mainlist && block->monoblk.ib_hicon == 16);
+    result = full_palette_pixels(handle,block);
     VERIFY(rsrc_free() == 1);
     return result;
 }

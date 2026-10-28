@@ -1797,3 +1797,8 @@ coordinate/label checks and clipped destinations also apply. Dither allocation
 uses tracked temporary storage, with later cleanup retries after failed frees;
 allocation failure preserves the native undarkened-icon fallback. No kernel
 service or colour protocol is added, and 3D support remains a separate slice.
+
+Colour-icon regressions include an eight-plane 16x16 pattern covering every
+raw index 0..255 and its selected complement. Independent one-pixel G_IMAGE
+swatches check all mappings, including index 255 to BLACK, in both the host
+oracle and disk-loaded GEM256.RSC through the real x32 loader and VDI.
