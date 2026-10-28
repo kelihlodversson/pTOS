@@ -146,6 +146,15 @@ struct mem_info {
  * and the value in arg2 and returns 0.
  */
 #define S_DESKINFO      ((WORD)0xfffc)
+
+/*
+ * S_MMUPROBE - pTOS-only, and only in a build with the regression tests on an
+ * m68k MMU image (CONF_WITH_MMU_PROBE): the MMU registers and the translation
+ * of an address of the caller, by the CPU's own instruction (PTEST).  arg1 is
+ * a struct mmu_probe* (include/mmuprobe.h), in and out, arg2 its size, the
+ * protocol of S_MEMINFO.  For the tests of the page tables (tests/mmu_state).
+ */
+#define S_MMUPROBE      ((WORD)0xfffa)
 #define S_DESKSET       ((WORD)0xfffb)
 
 /* items of S_DESKSET */

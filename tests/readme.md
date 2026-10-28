@@ -158,7 +158,14 @@ being treated as suites themselves. `tests/pie_load/`, for instance,
 also has `pie_probe.c`: a standalone payload `pie_load.c` launches via
 `Pexec()` to test the PIE ELF loader, built and linked separately from
 `runtests.tos` (see the Makefile's `pieprobe.tos` rule) rather than
-compiled in as a `test_<name>()` entry point.  `tests/isolation/` does the
+compiled in as a `test_<name>()` entry point.  `tests/mmu_state/` asks the
+kernel what the MMU is, with `Ssystem(S_MMUPROBE)` (include/mmuprobe.h,
+bios/arch/m68k/mmuprobe.c, only in a build with the tests on an m68k image that
+runs in the upper half): translation is on with 4 KiB pages, the roots are set, a page of the program
+translates to a physical page that the kernel half also reaches (the same bytes by
+a second mapping), the cache attributes and the protection are the tree's; the
+CPU's own PTEST answers, not the emulator's setting.  Run under Hatari
+(f030a, tta, f040a, tt040a, f030) and QEMU (virt-m68k-mmu, virt-m68k-aspace).  `tests/isolation/` does the
 same with `isoprobe.c` (`ISOPROBE.TOS`), which makes the forbidden accesses
 one launch at a time; the suite is built only where `CONF_WITH_USER_ASPACE`
 is set on ARM and m68k.

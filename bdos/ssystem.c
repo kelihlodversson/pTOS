@@ -37,6 +37,9 @@
 #include "fs.h"            /* OPNFILES */
 #include "biosext.h"       /* phys_pages_total() */
 #include "kproc.h"
+#if CONF_WITH_MMU_PROBE
+#include "mmuprobe.h"
+#endif
 #include "string.h"
 #include "has.h"           /* has_alt_ram */
 #if CONF_WITH_AES
@@ -562,6 +565,31 @@ static LONG ssystem_meminfo(long arg1, LONG arg2)
     return n;
 }
 
+#if CONF_WITH_MMU_PROBE
+/*
+ * ssystem_mmuprobe - S_MMUPROBE (pTOS extension, see ssystem.h): the struct
+ * is in and out, the address to test is in it
+ */
+static LONG ssystem_mmuprobe(long arg1, LONG arg2)
+{
+    struct mmu_probe p;
+    LONG n;
+
+    if (arg2 == -1)
+        return (LONG)sizeof(p);
+
+    if (!arg1 || arg2 <= 0)
+        return EINVFN;
+
+    n = arg2 < (LONG)sizeof(p) ? arg2 : (LONG)sizeof(p);
+    memset(&p, 0, sizeof(p));
+    svar_copy(&p, (const void *)arg1, n);   /* (a smaller struct has the address and the flags only) */
+    mmu_probe(&p);
+    svar_copy((void *)arg1, &p, n);
+    return n;
+}
+#endif
+
 /*
  * ssystem_deskinfo - S_DESKINFO (pTOS extension, see ssystem.h)
  */
@@ -667,6 +695,9 @@ static BOOL ssystem_has_mode(WORD mode)
     case S_CONSOLE_DIM:
     case S_DESKINFO:
     case S_DESKSET:
+#if CONF_WITH_MMU_PROBE
+    case S_MMUPROBE:
+#endif
         return TRUE;
     default:
         return FALSE;
@@ -772,6 +803,10 @@ LONG xssystem(WORD mode, long arg1, long arg2)
         return ssystem_string(arg1, (LONG)arg2, SSYSTEM_CVERSION, sizeof(SSYSTEM_CVERSION));
     case S_MEMINFO:
         return ssystem_meminfo(arg1, (LONG)arg2);
+#if CONF_WITH_MMU_PROBE
+    case S_MMUPROBE:
+        return ssystem_mmuprobe(arg1, (LONG)arg2);
+#endif
 
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);
