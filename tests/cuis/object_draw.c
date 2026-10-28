@@ -32,7 +32,8 @@ static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type
 static int releases, mouse_nesting, mouse_releases;
 static BOOL input_error, mouse_error, foreign_display, popup_mode;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
-static BOOL keyboard_error, snapshot_error;
+static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
+static int popup_paints;
 static WORD modal_keys[16];
 static int modal_count, modal_at;
 UQUAD aes_memory_call(ULONG function, UQUAD argument)
@@ -224,6 +225,12 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn != VDI_SERVICE_DRAW) return EINVFN;
     if (draw_error) return EACCDN;
+    /* Permit the box fill, then fail the next painting operation. Font and
+     * attribute queries and snapshot restoration must still succeed. */
+    if (popup_paint_failure && (r->code == 114 || r->code == 8) && popup_paints++ > 0) {
+        popup_changed_before_failure = image[35][25] != 1;
+        return EACCDN;
+    }
     if (r->code == 114 || r->code == 8) {
         int i;
         for (i = 0; i < r->nptsin*2; i++) if (r->ptsin[i] < -10000 || r->ptsin[i] > 10000) return EINVAL;
@@ -693,7 +700,8 @@ int main(void)
     {
         OBJECT popup[2] = { { 0 } };
         MENU menu, output;
-        int mode;
+        int mode, reads, writes, mouse_ends, display_ends;
+        WORD previous_pixel, saved[120][160];
         popup[0].ob_next = NIL; popup[0].ob_head = popup[0].ob_tail = 1;
         popup[0].ob_type = G_BOX; popup[0].ob_spec.index = 0x1170;
         popup[0].ob_width = 80; popup[0].ob_height = 20;
@@ -706,11 +714,28 @@ int main(void)
         popup_mode = TRUE; gesture_count = gesture_at = 0;
         for (mode = 0; mode < 6; mode++) {
             allocation_error = mode == 0; mouse_error = mode == 1;
-            snapshot_error = mode == 2; draw_error = mode == 3;
+            snapshot_error = mode == 2; popup_paint_failure = mode == 3;
+            popup_paints = 0; popup_changed_before_failure = FALSE;
+            reads = snapshot_reads; writes = snapshot_writes;
+            mouse_ends = mouse_releases; display_ends = releases;
+            previous_pixel = image[35][25];
+            if (mode == 3) {
+                /* The popup paints WHITE over this independent BLACK pixel. */
+                image[35][25] = 1;
+                __builtin_memcpy(saved,image,sizeof(image));
+            }
             input_error = mode == 4; release_error = mode == 5;
             if (mode == 5) input_error = TRUE;
             VERIFY(menu_popup(&menu,20,30,&output) == 0);
             VERIFY(!nesting && !mouse_nesting && !popup[1].ob_state);
+            if (mode == 3) {
+                VERIFY(popup_paints == 2 && popup_changed_before_failure);
+                VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+                VERIFY(mouse_releases == mouse_ends+1 && releases > display_ends);
+                VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+                image[35][25] = previous_pixel;
+            }
+            popup_paint_failure = FALSE;
             allocation_error = mouse_error = snapshot_error = draw_error = input_error = release_error = FALSE;
             aes_resources_reset();
         }

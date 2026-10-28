@@ -75,7 +75,8 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, WORD *global)
     void *buffer = NULL;
     LONG session = aes_application_session(global), x, y, pad, right, bottom, bytes;
     BOOL display = FALSE, grabbed = FALSE, opened = FALSE, copied = FALSE, ok = FALSE;
-    if (!menu || !result || session < 0) return 0;
+    if (!result) return 0;
+    if (!menu || session < 0) { result->mn_keystate = 0; return 0; }
     input = *menu; output = input;
     if (!input.mn_tree || input.mn_menu < 0 || input.mn_item < 0 || input.mn_scroll ||
         !aes_layout_metrics(&m,global)) goto done;
