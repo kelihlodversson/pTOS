@@ -15,7 +15,7 @@ static int mouse_control_checks(void)
     CHECK(cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
     wb = cb->windows;
     run = &first;
-    CHECK(ML(1ULL<<32,1,0) == EINVAL && ML(a,2,0) == EINVAL && ML(a,1,2) == EINVAL && ML(a,0,1) == EINVAL);
+    CHECK(ML(1ULL<<32,1,0) == EINVAL && ML(a,3,0) == EINVAL && ML(a,1,2) == EINVAL && ML(a,0,1) == EINVAL);
     CHECK(ML(a,0,0) == EACCDN && ML(b,1,0) == EACCDN);
     CHECK(ML(a,1,1) == E_OK && ML(a,1,0) == E_OK && mouse_depth == 2 && focus_window == wb);
     CHECK(cuis_mouse_active() && !ca->windows);
@@ -117,6 +117,47 @@ static int mouse_control_checks(void)
     CHECK(cuis_service(CUIS_SESSION_END,a) == E_OK && frees > before && !mouse_owner && !keyboard_owner && pointer_suppressed);
     CHECK(point_at(900,700,0) && !pointer_suppressed); /* Consumed orphan release. */
     CHECK(allocations == frees && !input_bad_idle && input_irqs);
+    return 0;
+}
+static int fresh_mouse_checks(void)
+{
+    LONG session, window;
+    CUIS_CLIENT *client;
+    CUIS_POINTER history[CUIS_POINTER_CAPACITY];
+    ULONG head, recent, buttons;
+    run = &first; session = cuis_service(CUIS_SESSION_START,0); client = *find_owner(run);
+    window = cuis_window_service(CUIS_WINDOW_CREATE,0,20,200,150,0);
+    CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    refresh_pointer_bounds(); pointer_suppressed = pointer_legacy_drag = FALSE;
+    CHECK(point_at(40,60,0) && point_at(40,60,1) && point_at(40,60,0));
+    CHECK(client->edge_count == 2);
+    head = client->edge_head; recent = client->recent_count; buttons = client->recent_buttons;
+    memcpy(history,client->button_edges,sizeof(history));
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,session,19) == E_OK);
+    CHECK(point_at(30,8,0) && client->edge_count == 2);
+    CHECK(ML(session,CUIS_MOUSE_FRESH,1) == E_OK && !client->edge_count && client->isolated_mouse);
+    CHECK(ML(session,CUIS_MOUSE_FRESH,0) == EACCDN);
+    CHECK(ML(session,1,0) == E_OK && mouse_depth == 2);
+    CHECK(ML(session,0,0) == E_OK && client->isolated_mouse);
+    CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,1,1,0,0) == E_OK);
+    CHECK(MW(session,CUIS_READY_BUTTON) == CUIS_READY_TIMER); /* Old press is not a menu selection. */
+    CHECK(point_at(40,60,1) && point_at(40,60,0));
+    CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,0,1,0,0) == E_OK);
+    CHECK(MW(session,CUIS_READY_BUTTON) & CUIS_READY_BUTTON);
+    CHECK(ML(session,0,0) == E_OK && !client->isolated_mouse && client->edge_count == 2);
+    CHECK(client->edge_head == head && client->recent_count == recent && client->recent_buttons == buttons);
+    CHECK(!memcmp(history,client->button_edges,sizeof(history)));
+    CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,1,1,0,0) == E_OK);
+    CHECK(MW(session,CUIS_READY_BUTTON) & CUIS_READY_BUTTON);
+    CHECK(MR(session) == E_OK && copied[2] == 40 && copied[3] == 60 && (copied[4]&1));
+    CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,0,1,0,0) == E_OK);
+    CHECK(MW(session,CUIS_READY_BUTTON) & CUIS_READY_BUTTON);
+    CHECK(MR(session) == E_OK && copied[2] == 40 && copied[3] == 60 && !(copied[4]&1));
+    CHECK(!client->edge_count);
+    CHECK(ML(session,CUIS_MOUSE_FRESH,1) == E_OK);
+    cuis_process_exit(&first);
+    CHECK(!mouse_owner && allocations == frees);
     return 0;
 }
 #undef ML

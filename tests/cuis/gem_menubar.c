@@ -43,9 +43,12 @@ int gem_menubar_checks(short handle)
     setup(tree,ch);
     gem_menubar_input_stage(0);
     VERIFY(menu_bar(tree,MENU_INSTALL) == 1 && tree[1].ob_width >= 120);
-    result = evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,5000,
-                        NULL,NULL,NULL,NULL,NULL,NULL);
-    VERIFY((result & MU_MESAG) && message[0] == MN_SELECTED && message[1] == 0);
+    do {
+        result = evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,5000,
+                            NULL,NULL,NULL,NULL,NULL,NULL);
+        VERIFY(result & MU_MESAG);
+    } while (message[0] != MN_SELECTED); /* Strip changes can redraw open windows. */
+    VERIFY(message[1] == 0);
     VERIFY(message[3] == 4 && message[4] == 9 && message[7] == 7);
     VERIFY((((unsigned long)(unsigned short)message[5]<<16) | (unsigned short)message[6]) == ((unsigned long)tree & 0xffffffffUL));
     VERIFY((tree[4].ob_state & OS_SELECTED) && !(tree[3].ob_state & OS_SELECTED));

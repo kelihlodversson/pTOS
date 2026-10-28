@@ -326,7 +326,23 @@ int main(int argc, char **argv, char **envp)
         {
             static const char popup_pass[] = "x32 GEM popup menus: PASS\r\n";
             ptos_write(1,popup_pass,sizeof(popup_pass)-1);
-            status = gem_menubar_checks(handle); if (status) return status;
+            {
+                short queued = wind_create(0,0,19,200,120);
+                short message[8], mx, my, buttons, keys, key, clicks;
+                short state;
+                VERIFY(queued > 0 && wind_open(queued,0,19,200,120) == 1);
+                VERIFY(wind_set(queued,WF_TOP,0,0,0,0) == 1);
+                while (appl_read(-1,16,message) == 1) { }
+                status = gem_menubar_checks(handle); if (status) return status;
+                /* Menu tracking must preserve the earlier application click. */
+                for (state = 1; state >= 0; state--) {
+                    VERIFY(evnt_multi(MU_BUTTON|MU_TIMER,1,1,state,
+                        0,0,0,0,0,0,0,0,0,0,message,0,
+                        &mx,&my,&buttons,&keys,&key,&clicks) & MU_BUTTON);
+                    VERIFY(mx == 80 && my == 33 && buttons == state);
+                }
+                VERIFY(wind_close(queued) == 1 && wind_delete(queued) == 1);
+            }
             {
                 static const char menu_pass[] = "x32 GEM menu bar: PASS\r\n";
                 ptos_write(1,menu_pass,sizeof(menu_pass)-1);

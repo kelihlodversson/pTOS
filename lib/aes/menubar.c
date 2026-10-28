@@ -62,6 +62,14 @@ static void *snapshot_allocate(const GRECT *rect)
     ULONG pixels = (ULONG)((rect->g_w+15L)&~15L)*(UWORD)rect->g_h;
     return pixels && pixels <= VDI_SERVICE_MAX_BITMAP/4 ? aes_temporary_alloc(pixels*4) : NULL;
 }
+static BOOL restore_snapshot(VDI_SERVICE_WORKSTATION *ws, BOOL *opened, const GRECT *rect, void *buffer)
+{
+    if (!*opened) {
+        if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)workin,(uintptr_t)ws,0,0) != E_OK) return FALSE;
+        *opened = TRUE;
+    }
+    return aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws->handle,(uintptr_t)rect,(uintptr_t)buffer,1) == E_OK;
+}
 static BOOL change(WORD object, BOOL selected, WORD *global, const GRECT *clip)
 {
     UWORD state = bar.tree[object].ob_state;
@@ -119,7 +127,7 @@ void aes_menu_reset(void)
 
 WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
 {
-    LONG session = aes_application_session(global), registered;
+    LONG session = aes_application_session(global);
     BAR next = { 0 }, old = bar;
     LONG count, bytes;
     WORD original_width = 0, i;
@@ -127,7 +135,7 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
     VDI_SERVICE_WORKSTATION ws;
     GRECT rect;
     void *buffer = NULL;
-    BOOL locked = FALSE, opened = FALSE, installed = FALSE, ok = FALSE;
+    BOOL locked = FALSE, opened = FALSE, staged = FALSE, installed = FALSE, ok = FALSE;
     if (session < 0 || (show != 0 && show != 1) || bar.busy) return 0;
     if (!flush(session) || bar.pending) return 0;
     if (!show) {
@@ -171,31 +179,29 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)workin,(uintptr_t)&ws,0,0) != E_OK) goto rollback_width;
     opened = TRUE;
     if (aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&rect,(uintptr_t)buffer,0) != E_OK) goto rollback_width;
-    registered = cuis_call6(CUIS_SURFACE_REGISTER,session,next.height,0,0,0,0);
-    if (registered != E_OK) goto rollback_width;
-    installed = TRUE; old = bar; bar = next; bar.busy = TRUE;
+    if (cuis_call6(CUIS_SURFACE_BEGIN,session,next.height,0,0,0,0) != E_OK) goto rollback_width;
+    staged = TRUE; bar = next; bar.busy = TRUE;
     ok = paint(global,ws.handle);
-    bar.busy = FALSE;
+    if (ok) {
+        if (aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) ok = FALSE;
+        else opened = FALSE;
+    }
+    if (ok) {
+        if (cuis_call6(CUIS_SURFACE_END,session,1,0,0,0,0) != E_OK) ok = FALSE;
+        else { staged = FALSE; installed = TRUE; bar.busy = FALSE; }
+    }
     if (!ok) {
-        (void)aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&rect,(uintptr_t)buffer,1);
-        bar = old;
-        (void)cuis_call6(CUIS_SURFACE_REGISTER,session,old.tree ? old.height : 0,0,0,0,0);
+        (void)restore_snapshot(&ws,&opened,&rect,buffer);
+        (void)cuis_call6(CUIS_SURFACE_END,session,0,0,0,0,0);
+        staged = FALSE; bar = old;
         tree[1].ob_width = original_width;
     }
-    /* Keep the previous registration until workstation cleanup succeeds. */
     goto done;
 rollback_width:
     tree[1].ob_width = original_width;
 done:
-    if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) {
-        if (installed && ok) {
-            (void)aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&rect,(uintptr_t)buffer,1);
-            bar = old;
-            (void)cuis_call6(CUIS_SURFACE_REGISTER,session,old.tree ? old.height : 0,0,0,0,0);
-            tree[1].ob_width = original_width;
-        }
-        ok = FALSE;
-    }
+    if (staged) (void)cuis_call6(CUIS_SURFACE_END,session,0,0,0,0,0);
+    if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) ok = FALSE;
     if (locked && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (buffer) (void)aes_resource_discard(buffer);
     if (installed && bar.entries == next.entries) {
@@ -238,7 +244,7 @@ LONG aes_menu_dispatch(WORD *global)
     if (!mt_graf_mkstate(&mx,&my,&buttons,&modifiers,global)) { ok = FALSE; goto done; }
     pair = title_at(mx,my);
     if (pair == NIL) goto done;
-    if (cuis_call6(CUIS_MOUSE_LOCK,session,1,1,0,0,0) != E_OK) { ok = FALSE; goto done; }
+    if (cuis_call6(CUIS_MOUSE_LOCK,session,CUIS_MOUSE_FRESH,1,0,0,0) != E_OK) { ok = FALSE; goto done; }
     grabbed = TRUE; pressed = (buttons & 1) != 0;
     for (;;) {
         if (pair != NIL && pair != current) {

@@ -34,7 +34,9 @@ static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type
 static int releases, mouse_nesting, mouse_releases;
 static BOOL input_error, mouse_error, foreign_display, popup_mode, bar_mode;
 static WORD bar_height, bar_events, bar_message[8];
-static BOOL bar_stream, bar_line_error;
+static BOOL bar_stream, bar_line_error, bar_close_error;
+static WORD bar_trial_height, bar_snapshot_handle;
+static int bar_failed_closes;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
 static int popup_paints;
@@ -78,6 +80,12 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_SURFACE_BEGIN) { if (!nesting || bar_trial_height) return EACCDN; bar_trial_height = b; return E_OK; }
+    if (fn == CUIS_SURFACE_END) {
+        if (!bar_trial_height) return EACCDN;
+        if (b) { bar_height = bar_trial_height; bar_events = CUIS_SURFACE_DIRTY; }
+        bar_trial_height = 0; return E_OK;
+    }
     if (fn == CUIS_SURFACE_REGISTER) { bar_height = b; bar_events = b ? CUIS_SURFACE_DIRTY : 0; return E_OK; }
     if (fn == CUIS_SURFACE_STATUS) {
         LONG value = bar_height ? CUIS_SURFACE_OWNED | bar_events : 0;
@@ -96,6 +104,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; return nesting ? E_OK : EACCDN; }
     if (fn == CUIS_MOUSE_LOCK && a == 7) {
+        if (bar_mode && b && b != CUIS_MOUSE_FRESH) return EINVAL;
         if (b && mouse_error) return EACCDN;
         if (!b && !mouse_nesting) return EACCDN;
         if (!b) mouse_releases++;
@@ -196,7 +205,12 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     VDI_SERVICE_DRAW_RESULT *out = (void *)(uintptr_t)c;
     LONG x,y;
     (void)d;
-    if (fn == VDI_SERVICE_CLOSE) { closes++; return fail_layout_close ? EACCDN : E_OK; }
+    if (fn == VDI_SERVICE_CLOSE) {
+        if (bar_close_error && a == (UWORD)bar_snapshot_handle) {
+            bar_close_error = FALSE; bar_failed_closes++; return EACCDN;
+        }
+        closes++; return fail_layout_close ? EACCDN : E_OK;
+    }
     if (graphics_error) return graphics_error;
     if (fn == VDI_SERVICE_OPEN) {
         VDI_SERVICE_WORKSTATION *ws = (void *)(uintptr_t)b;
@@ -216,6 +230,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         GRECT *rect = (void *)(uintptr_t)b;
         WORD *buffer = (void *)(uintptr_t)c;
         if (snapshot_error) return EACCDN;
+        if (bar_close_error && !d) bar_snapshot_handle = a;
         for (y = 0; y < rect->g_h; y++) for (x = 0; x < rect->g_w; x++) {
             if (d) image[y+rect->g_y][x+rect->g_x] = buffer[y*rect->g_w+x];
             else buffer[y*rect->g_w+x] = image[y+rect->g_y][x+rect->g_x];
@@ -794,6 +809,13 @@ int main(void)
         VERIFY(gem_menubar_install(0,2) == 0);
         bar_line_error = FALSE;
         VERIFY(!nesting && !mouse_nesting && !bar_height && !aes_menu_registered());
+        VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+        VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+        reads = snapshot_reads; writes = snapshot_writes;
+        bar_close_error = TRUE; bar_snapshot_handle = 0;
+        VERIFY(gem_menubar_install(0,3) == 0);
+        VERIFY(bar_failed_closes == 1 && !bar_close_error && !bar_trial_height);
+        VERIFY(!bar_height && !aes_menu_registered() && !nesting && !mouse_nesting);
         VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
         VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
     }
