@@ -37,10 +37,8 @@ BOOL do_chg(OBJECT *tree, WORD iitem, UWORD chgvalue,
     if (chkdisabled && (curr_state & DISABLED) )
         return FALSE;
 
-    if (dochg)
-        curr_state |= chgvalue;
-    else
-        curr_state &= ~chgvalue;
+    curr_state |= chgvalue;
+    if (!dochg) curr_state &= ~chgvalue;
 
     if (dodraw)
         gsx_sclip(&gl_rzero);
