@@ -3,7 +3,7 @@ The checks of a pull request
 
 A pull request used to get 82 jobs from the four workflows in
 .github/workflows (build.yml, hatari-tests.yml, pbench.yml; release.yml only
-runs for a tag).  This file says what each of them covers that no other does,
+runs for a tag; amiberry.yml, below, came after the audit).  This file says what each of them covers that no other does,
 which ones a pull request no longer runs, and where the rest runs instead.
 (The audit is issue #625; the numbers are from the pull requests of the weeks
 before it was made.)
@@ -19,6 +19,19 @@ still runs on master (push), every night (schedule) and with "Run workflow"
 (workflow_dispatch); all 25 Hatari combinations run every night and on request
 (hatari-tests.yml has no push trigger); pBench (pbench.yml) runs on pull
 requests and on request only, as it did before.
+
+
+amiberry.yml (#737) builds the pinned Amiberry (tools/amiberry-pin.sh) for the
+Amiga tests, and boots the Amiga ROMs on it: amiga on a 68030, 68040 and 68060,
+amiga-mmu on the 68030 and amiga-mmu040 on the 68040 and the 68060, each checked to
+be idle in the kernel and, for the MMU images, to be running in the window.  The
+emulator is built from source only when the cache is missing or stale (the key is
+the hash of the pin file and of the build script, .github/actions/setup-amiberry);
+it runs on a pull request that touches the Amiga port or the pin, on pushes to
+master and the epics that touch the pin (a cache of a pull request is seen by that
+pull request only, so these keep the one the others restore), every week (an unused
+cache is evicted after seven days) and on request.  About ten minutes on a hit,
+twenty or so with the build.
 
 
 How it was audited

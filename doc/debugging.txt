@@ -189,19 +189,21 @@ configuration).  The baseline is pinned:
     "latest": a newer tag is a deliberate change of this file.
   - The distribution's fs-uae (3.1.66) is far older and is not a baseline.
 
-Build (no sudo; the packages are libsdl3-dev, libsdl3-image-dev, libpng-dev,
-libflac-dev, libcurl4-openssl-dev, nlohmann-json3-dev, zlib1g-dev, cmake and
-g++; every optional feature is switched off):
+Build (no sudo needed to run the script; the packages it builds with are
+AMIBERRY_APT_PACKAGES of tools/amiberry-pin.sh -- libsdl3-dev, libsdl3-image-dev,
+libpng-dev, libflac-dev, libcurl4-openssl-dev, nlohmann-json3-dev, zlib1g-dev, cmake
+and g++ -- and without sudo they can be unpacked into a directory, as the
+toolchain-install skill does); every optional feature is switched off:
 
-    git clone --branch v8.5.0 --recurse-submodules --depth 1 \
-        https://github.com/BlitterStudio/amiberry.git ~/.local/src/amiberry
-    cd ~/.local/src/amiberry && mkdir build && cd build
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUNDLE_SDL=OFF \
-        -DUSE_PCEM=OFF -DUSE_PPC=OFF -DUSE_QEMU_PPC=OFF -DUSE_LIBSERIALPORT=OFF \
-        -DUSE_LIBENET=OFF -DUSE_PORTMIDI=OFF -DUSE_LIBMPEG2=OFF -DUSE_MPG123=OFF \
-        -DUSE_VIDEOGRAB=OFF -DUSE_FFMPEG=OFF -DUSE_WEBP=OFF -DUSE_UAENET_PCAP=OFF \
-        -DUSE_UAENET_TAP=OFF -DUSE_ZSTD=OFF -DUSE_OPENGL=OFF -DUSE_JIT=OFF
-    make -j$(nproc)                       # about four minutes
+    tools/build-amiberry.sh               # ~/.local/amiberry/bin/amiberry, about four minutes
+    export AMIBERRY=~/.local/amiberry/bin/amiberry
+
+The pin, the options and the packages are in tools/amiberry-pin.sh; the script
+clones the pinned commit and refuses another one.  CI builds it the same way, once,
+and caches it (.github/workflows/amiberry.yml, the setup-amiberry action): the cache
+key is the hash of the pin file and of the script, so a new pin rebuilds it and
+nothing else does.  That workflow also boots the Amiga ROMs on it
+(tools/ci-amiberry.sh).
 
 Run the Amiga ROM (the configuration needs Thorsten Otto's -mfastcall
 toolchain, see the toolchain-install skill):
