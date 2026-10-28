@@ -32,6 +32,28 @@ static int control_checks(void)
     CHECK(CREAD(wa) == 1 && copied[2] == 1);
     CHECK(CREAD(wa) == 1 && copied[0] == 60 && copied[2] == 1);
     CHECK(CREAD(wa) == 1 && copied[2] == 0 && CREAD(wa) == 0);
+    /* Rectangle exit/entry remains live over borders, independently of
+     * suppression of button quick checks and ordinary button history. */
+    CHECK(point_at(60,75,0));
+    CHECK(cuis_input_config(CUIS_INPUT_RECT,a,2,21,52,98,57) == E_OK && cuis_input_config(CUIS_INPUT_RECT,a,1,20,30,100,22) == E_OK);
+    memset(&wait,0,sizeof(wait)); wait.events = CUIS_READY_RECT1|CUIS_READY_RECT2|CUIS_READY_BUTTON;
+    client->input_wait = &wait;
+    CHECK(point_at(25,35,0));
+    CHECK((wait.ready & (CUIS_READY_RECT1|CUIS_READY_RECT2)) == (CUIS_READY_RECT1|CUIS_READY_RECT2));
+    CHECK(!(wait.ready & CUIS_READY_BUTTON)); client->input_wait = NULL;
+    /* Surface clipping changes can occlude a gadget with no focus change. */
+    CHECK(point_at(25,35,1));
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,40) == E_OK);
+    CHECK(focus_window == client->windows && window_front == client->windows && !pointer_capture);
+    CHECK(CREAD(wa) == ERANGE && CREAD(wa) == 0 && point_at(25,35,0));
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,0) == E_OK);
+    CHECK(point_at(25,35,1) && point_at(25,35,0));
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,10) == E_OK);
+    CHECK(CREAD(wa) == ERANGE && CREAD(wa) == 0);
+    CHECK(point_at(25,35,1));
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,40) == E_OK);
+    CHECK(CREAD(wa) == ERANGE && CREAD(wa) == 0 && point_at(25,35,0));
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,0) == E_OK);
     /* A topology change cancels a captured border drag and its release. */
     CHECK(point_at(25,35,1));
     run = &second; b = cuis_service(CUIS_SESSION_START,0);
