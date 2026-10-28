@@ -3,5 +3,5 @@
 #define GEMCICON_H
 #include "portab.h"
 #include "obdefs.h"
-CICON *rs_cicon_best(CICONBLK *start, WORD planes);
+CICON *rs_cicon_best(CICONBLK *start, WORD planes) __attribute__((pure));
 #endif
