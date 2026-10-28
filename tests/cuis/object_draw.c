@@ -35,7 +35,8 @@ static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type
 static int releases, mouse_nesting, mouse_releases;
 static BOOL input_error, mouse_error, foreign_display, popup_mode, bar_mode;
 static WORD bar_height, bar_events, bar_message[8];
-static BOOL bar_stream, bar_line_error, bar_close_error;
+static BOOL bar_stream, bar_line_error, bar_close_error, bar_write_block;
+static int bar_writes;
 static WORD bar_trial_height, bar_snapshot_handle;
 static int bar_failed_closes;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
@@ -96,6 +97,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         return value;
     }
     if (fn == CUIS_STREAM_WRITE && bar_mode && c == 16) {
+        if (bar_write_block) return EAGAIN;
+        bar_writes++;
         __builtin_memcpy(bar_message,(void *)(uintptr_t)b,16); bar_stream = TRUE; return 16;
     }
     if (fn == CUIS_KEYBOARD_LOCK && a == 7) {
@@ -838,6 +841,25 @@ int main(void)
         VERIFY(!bar_height && !aes_menu_registered() && !nesting && !mouse_nesting);
         VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
         VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+    }
+    {
+        int mode;
+        for (mode = 0; mode < 2; mode++) {
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(0);
+            bar_write_block = TRUE;
+            VERIFY(aes_menu_dispatch(aes_global) == E_OK && !aes_menu_listening());
+            before = bar_writes;
+            bar_write_block = FALSE;
+            if (mode) { bar_close_error = TRUE; bar_snapshot_handle = 0; }
+            else bar_line_error = TRUE;
+            VERIFY(gem_menubar_install(0,3) == 0);
+            bar_line_error = FALSE;
+            VERIFY(bar_writes == before+1 && aes_menu_listening());
+            VERIFY(aes_menu_flush(aes_global) == E_OK && bar_writes == before+1);
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+            bar_stream = bar_mode = FALSE;
+        }
     }
     VERIFY(gem_menubar_install(0,2) == 1);
     gem_menubar_mutate();

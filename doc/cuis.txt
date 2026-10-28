@@ -1944,6 +1944,9 @@ selection and defers further menu handling or replacement until it can be
 published; it never blocks writing to its own full stream. APR_NOWAIT reads
 flush pending messages without entering a blocking menu interaction.
 
+An unfinished multi-click wait retains its count, snapshot and original click
+deadline in the kernel. Surface-only work waits until click completion or a
+requested application event; menu tracking cannot discard the first click.
 Internal wakes re-arm application predicates and preserve original timer
 expiry across the 200 Hz partial-tick guard and clock wrap. Event results are
 snapshotted before recursive menu tracking can replace input filters/results.

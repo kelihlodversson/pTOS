@@ -128,7 +128,7 @@ void aes_menu_reset(void)
 WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
 {
     LONG session = aes_application_session(global);
-    BAR next = { 0 }, old = bar;
+    BAR next = { 0 }, old;
     LONG count, bytes;
     WORD original_width = 0, i;
     UBYTE *seen;
@@ -138,6 +138,7 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
     BOOL locked = FALSE, opened = FALSE, staged = FALSE, installed = FALSE, ok = FALSE;
     if (session < 0 || (show != 0 && show != 1) || bar.busy) return 0;
     if (!flush(session) || bar.pending) return 0;
+    old = bar;
     if (!show) {
         if (cuis_call6(CUIS_SURFACE_REGISTER,session,0,0,0,0,0) != E_OK) return 0;
         aes_menu_reset(); return 1;
