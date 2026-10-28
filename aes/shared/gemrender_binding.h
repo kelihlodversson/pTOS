@@ -30,6 +30,9 @@
     vr_recfl(ptsin); \
 } while (0)
 #endif
+#ifndef OB_RENDER_CICON
+#define OB_RENDER_CICON(block) ((block)->mainlist)
+#endif
 #ifndef OB_RENDER_3D
 #define OB_RENDER_3D CONF_WITH_3D_OBJECTS
 #define OB_RENDER_NICELINES CONF_WITH_NICELINES

@@ -7,6 +7,8 @@ import argparse
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("output", type=Path)
 parser.add_argument("--application-directory", action="store_true")
+parser.add_argument("--colour-icons", action="store_true")
+parser.add_argument("--colour-icons-256", action="store_true")
 args = parser.parse_args()
 
 image = bytearray(36)
@@ -86,4 +88,46 @@ for offset,value in ((ted+12,3),(ted+18,0x1100),(ted+24,7),(ted+26,7),
 long(strings+4,adjacent)
 if args.application_directory:
     image = image.replace(b"Free one\0", b"App file\0")
+if args.colour_icons or args.colour_icons_256:
+    # Two/four-plane regression, or full palette with a winning eight-plane variant.
+    height = 16 if args.colour_icons_256 else 4
+    variants = (2, 4, 8) if args.colour_icons_256 else (2, 4)
+    while len(image) & 3:
+        data(b"\0")
+    extension = reserve(12)
+    table = reserve(8)
+    block = reserve(38)
+    long(table, block)
+    long(table+4, 0xffffffff)
+    word(block+12, 0x2400)
+    word(block+22, 16)
+    word(block+24, height)
+    long(block+34, len(variants))
+    data(struct.pack(">"+str(height)+"H", *([0xa000]*height)))
+    data(struct.pack(">"+str(height)+"H", *([0xffff]*height)))
+    data(bytes(12))
+    for planes in variants:
+        header = reserve(22)
+        word(header, planes)
+        last = planes == variants[-1]
+        long(header+10, last)
+        long(header+18, not last)
+        if last:
+            values = [sum(0x8000 >> x for x in range(16) if
+                          ((y*16+x) if planes == 8 else x) & (1 << plane))
+                      for plane in range(planes) for y in range(height)]
+        else:
+            values = [0]*(planes*height)
+        data(struct.pack(">"+str(len(values))+"H", *values))
+        data(struct.pack(">"+str(height)+"H", *([0xffff]*height)))
+        if last:
+            data(struct.pack(">"+str(len(values))+"H", *[v^0xffff for v in values]))
+            data(struct.pack(">"+str(height)+"H", *([0xffff]*height)))
+    word(0, 4)
+    word(34, extension)
+    long(extension, len(image))
+    long(extension+4, table)
+    word(objects+2*24+6, 33)
+    word(objects+3*24+6, 33)
+    long(indirect, 0)
 args.output.write_bytes(image)

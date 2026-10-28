@@ -20,6 +20,9 @@
 #include "rectfunc.h"
 
 #include "render_context.h"
+#include "resource_context.h"
+#include "gemcicon.h"
+#include "vdi_colmap.h"
 #include "../../aes/gemobed.h"
 #include "../../aes/gemgrlib.h"
 WORD aes_edit_core(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
@@ -246,6 +249,73 @@ void gsx_blt(void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, 
     }
 }
 
+/* Colour icons use unchanged standard-format planes in application memory.
+ * The x32 packed-screen adapter emits palette-index runs through VDI, matching
+ * native rs_cicon_pack without changing the caller's CICON or its bitmaps. */
+static WORD colour_pen(UWORD index)
+{
+    WORD pen, colours = aes_painter->workstation.ws_ncolors;
+    if (index >= (UWORD)colours) index = 0; /* Native pack's invalid-index rule. */
+    if (index == (UWORD)(colours-1)) return BLACK;
+    if (index == 15 && colours > 16) return colours-1;
+    for (pen = 0; pen < 16; pen++)
+        if (pen != BLACK && vdi_pen_order[pen] == index) return pen;
+    return index;
+}
+void *aes_render_alloc(LONG bytes) { return aes_temporary_alloc(bytes); }
+WORD aes_render_free(void *memory) { return aes_resource_discard(memory); }
+CICON *aes_render_cicon(CICONBLK *block)
+{
+    VDI_SERVICE_DRAW_REQUEST request = { 0 };
+    if (!aes_painter->ok || !block->mainlist) return NULL;
+    if (!aes_painter->colour_planes) {
+        request.code = 102; request.nintin = 1; request.intin[0] = 1;
+        invoke(&request);
+        if (!aes_painter->ok) return NULL;
+        aes_painter->colour_planes = aes_painter->output[4];
+        /* External x32 graphics currently uses packed GOP screens. Native
+         * planar AES retains its transform/OR path unchanged. */
+        if ((aes_painter->colour_planes != 16 && aes_painter->colour_planes != 32) ||
+            aes_painter->workstation.ws_ncolors != 256) {
+            aes_painter->ok = FALSE; return NULL;
+        }
+    }
+    return rs_cicon_best(block,aes_painter->colour_planes);
+}
+void aes_render_colourblit(const WORD *data, const GRECT *rect, WORD planes)
+{
+    LONG left, right, top, bottom, x, y, word, stride, plane_words, start;
+    WORD plane, previous, pen;
+    UWORD index, mask;
+    GRECT *clip = &aes_painter->clip;
+    if (!aes_painter->ok) return;
+    stride = rect->g_w/16; plane_words = stride*rect->g_h;
+    left = max(rect->g_x,clip->g_x); top = max(rect->g_y,clip->g_y);
+    right = min((LONG)rect->g_x+rect->g_w,(LONG)clip->g_x+clip->g_w);
+    bottom = min((LONG)rect->g_y+rect->g_h,(LONG)clip->g_y+clip->g_h);
+    for (y = top; y < bottom && aes_painter->ok; y++) {
+        start = left; previous = -1;
+        for (x = left; x <= right; x++) {
+            pen = -1;
+            if (x < right) {
+                word = (y-rect->g_y)*stride+(x-rect->g_x)/16;
+                mask = 0x8000U >> ((x-rect->g_x)&15); index = 0;
+                for (plane = 0; plane < planes; plane++)
+                    if ((UWORD)data[word+plane*plane_words] & mask) index |= 1U << plane;
+                pen = colour_pen(index);
+            }
+            if (pen != previous) {
+                if (previous >= 0) {
+                    vsf_color(previous);
+                    aes_render_bb_fill(MD_REPLACE,FIS_SOLID,IP_SOLID,start,y,x-start,1);
+                    if (!aes_painter->ok) break;
+                }
+                start = x; previous = pen;
+            }
+        }
+    }
+}
+
 BOOL ob_render_cancelled(OBJECT *tree)
 {
     (void)tree;
@@ -283,6 +353,8 @@ static BOOL supported(OBJECT *object, WORD x, WORD y)
     TEDINFO *ted;
     BITBLK *bitmap;
     ICONBLK *icon;
+    CICON *variant, *slow, *fast;
+    ULONG bytes;
     if (object->ob_flags & FL3DMASK) return FALSE;
     spec = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
     if (spec.index == -1) return TRUE;
@@ -303,6 +375,22 @@ static BOOL supported(OBJECT *object, WORD x, WORD y)
             bitmap->bi_x >= 0 && bitmap->bi_x < bitmap->bi_wb*8 &&
             bitmap->bi_y >= 0 && bitmap->bi_y < bitmap->bi_hl &&
             bitmap->bi_color >= 0 && bitmap->bi_color <= 255;
+    case G_CICON:
+        if (!spec.ciconblk) return FALSE;
+        slow = fast = spec.ciconblk->mainlist;
+        while (fast && fast->next_res) {
+            slow = slow->next_res; fast = fast->next_res->next_res;
+            if (slow == fast) return FALSE;
+        }
+        icon = &spec.ciconblk->monoblk;
+        if (icon->ib_wicon <= 0 || (icon->ib_wicon & 15) || icon->ib_hicon <= 0) return FALSE;
+        bytes = (ULONG)(icon->ib_wicon/8)*icon->ib_hicon;
+        for (variant = spec.ciconblk->mainlist; variant; variant = variant->next_res)
+            if (variant->num_planes <= 0 || variant->num_planes > 16 ||
+                bytes > VDI_SERVICE_MAX_BITMAP/(UWORD)variant->num_planes ||
+                !variant->col_data || !variant->col_mask ||
+                (variant->sel_data && !variant->sel_mask)) return FALSE;
+        FALLTHROUGH;
     case G_ICON:
         icon = spec.iconblk;
         return icon && icon->ib_pdata && icon->ib_pmask && icon->ib_wicon > 0 &&

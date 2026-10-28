@@ -45,3 +45,10 @@ specifications in native slots rather than overwriting four-byte disk slots.
 staging storage while keeping pointer targets in caller storage. It is a
 separate native-layout operation from `rsload_portable.c` disk decoding;
 libaes owns the transaction, metrics, registration and caller-storage lifetime.
+
+`gemcicon.c` is the original native best-plane selection shared by resource
+preparation and libaes drawing. `gemicon.c` keeps the native mask, selected
+artwork/dither, character and label painter; the library supplies only its
+standard-plane colour blit and tracked temporary-allocation adapters. The VDI
+pen ordering constant is shared in include/vdi_colmap.h without changing the
+native palette mapping. Native raster transformation/composition stays native.

@@ -35,7 +35,7 @@
 
 
 #include "gemrender_binding.h"
-#if OB_RENDER_COLOUR_ICONS
+#if OB_RENDER_COLOUR_ICONS && !defined(AES_RENDER_BINDINGS)
 #include "gemdos.h"
 #endif
 
@@ -53,6 +53,7 @@ static void gr_gblt(WORD *pimage, GRECT *pi, WORD col1, WORD col2)
  *  planes composed over the mask blit), packed truecolor needs
  *  BM_S_ONLY so RGB565 values are replaced, not ORed.
  */
+#ifndef OB_RENDER_COLOUR_BLIT
 static void gr_colourblit(WORD *pdata, GRECT *pi, WORD num_planes)
 {
     WORD pxyarray[8];
@@ -77,6 +78,9 @@ static void gr_colourblit(WORD *pdata, GRECT *pi, WORD num_planes)
     vro_cpyfm(vdi_colour_blit_mode(), pxyarray, &gl_src, &gl_dst);
 }
 
+
+#define OB_RENDER_COLOUR_BLIT(data,rect,planes) gr_colourblit(data,rect,planes)
+#endif
 
 /*
  *  Create a dithered copy of the specified mask and return its address
@@ -175,7 +179,7 @@ void gr_gicon(WORD state, ICONBLK *ib, CICON *cicon)
 #if OB_RENDER_COLOUR_ICONS
     if (cicon)
     {
-        gr_colourblit(pdata, pi, cicon->num_planes);
+        OB_RENDER_COLOUR_BLIT(pdata, pi, cicon->num_planes);
         if (state & SELECTED)
         {
             tmp = fgcol;
