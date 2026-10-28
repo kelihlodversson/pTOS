@@ -102,3 +102,68 @@ static int surface_checks(void)
     CHECK(!surface_front && !surface_owner && allocations == frees);
     return 0;
 }
+
+/* Deferred focus must run after capture cleanup and after exit-owned locks. */
+static int surface_cleanup_checks(void)
+{
+    LONG a, b, c, wa, wb;
+    int mode;
+    for (mode = 0; mode < 2; mode++) {
+        run = &first; a = cuis_service(CUIS_SESSION_START,0);
+        wa = cuis_window_service(CUIS_WINDOW_CREATE,0,30,100,100,0);
+        CHECK(wa >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,wa,1,0,0,0) == E_OK);
+        CHECK(cuis_window_service(CUIS_WINDOW_SHOW,wa,0,0,0,0) == E_OK);
+        run = &second; b = cuis_service(CUIS_SESSION_START,0);
+        wb = cuis_window_service(CUIS_WINDOW_CREATE,200,30,100,100,0);
+        CHECK(wb >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,wb,1,0,0,0) == E_OK);
+        CHECK(cuis_window_service(CUIS_WINDOW_SHOW,wb,0,0,0,0) == E_OK);
+        CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,19) == E_OK);
+        run = &third; c = cuis_service(CUIS_SESSION_START,0);
+        CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,c,19) == E_OK);
+        run = &first;
+        CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
+        if (!mode) {
+            CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,19) == E_OK);
+            pointer_suppressed = pointer_legacy_drag = FALSE;
+            CHECK(point_at(5,5,0) && point_at(5,5,1) && surface_capture);
+            CHECK(cuis_mouse_lock(a,1,1) == E_OK);
+            run = &second;
+            CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
+            CHECK(surface_focus_pending && surface_owner == *find_owner(&first));
+            run = &first;
+            CHECK(cuis_mouse_lock(a,0,0) == E_OK);
+            CHECK(surface_owner == *find_owner(&second) && !surface_focus_pending);
+            CHECK(point_at(5,5,0));
+        } else {
+            CHECK(cuis_display_lock(a,1,1) == E_OK);
+            CHECK(cuis_window_service(CUIS_WINDOW_HIDE,wa,0,0,0,0) == E_OK);
+            CHECK(focus_window && focus_window->client == *find_owner(&second));
+            CHECK(surface_focus_pending && surface_owner == *find_owner(&third));
+        }
+        cuis_process_exit(&first);
+        CHECK(!display_owner && !update_owner && surface_owner == *find_owner(&second));
+        cuis_process_exit(&second); cuis_process_exit(&third);
+        CHECK(!surface_owner && !surface_front && allocations == frees);
+    }
+    /* Enter the strip while a single click is accumulating toward a double.
+     * The internal wake must retain the first press and its timeout. */
+    run = &first; a = cuis_service(CUIS_SESSION_START,0);
+    wa = cuis_window_service(CUIS_WINDOW_CREATE,0,30,100,100,0);
+    CHECK(wa >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,19) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,a,1) & CUIS_SURFACE_DIRTY);
+    pointer_suppressed = pointer_legacy_drag = FALSE;
+    CHECK(point_at(40,60,0));
+    CHECK(cuis_input_config(CUIS_INPUT_BUTTON,a,1,1,2,0,0) == E_OK);
+    input_ticks = 100; input_sleeps = 0; input_packet_mode = 9;
+    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_SURFACE,0) ==
+          (CUIS_READY_BUTTON|CUIS_READY_SURFACE));
+    CHECK(input_sleeps >= 91 && input_sleeps <= 93);
+    CHECK((*find_owner(run))->input_result[1] == 1);
+    CHECK((*find_owner(run))->input_result[2] == 40 && (*find_owner(run))->input_result[3] == 60);
+    CHECK((*find_owner(run))->input_result[4] & 1);
+    cuis_process_exit(&first);
+    CHECK(allocations == frees);
+    return 0;
+}

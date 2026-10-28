@@ -751,6 +751,7 @@ static void end_mouse(void)
         client->recent_count = client->saved_recent_count; client->recent_buttons = client->saved_recent_buttons;
         client->isolated_mouse = FALSE;
     }
+    surface_focus();
     sample_input_waits();
 }
 
@@ -817,6 +818,9 @@ void cuis_process_exit(PD *owner)
             window_total--;
             kfree(window);
         }
+        flags = cuis_input_lock();
+        surface_focus();
+        cuis_input_unlock(flags);
         *link = client->next;
         if (client->stream_data) kfree(client->stream_data);
         if (client->pending_write) kfree(client->pending_write);
@@ -1484,10 +1488,14 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_STREAM) && wait->client->stream_bytes >= wait->minimum)
         result |= CUIS_READY_STREAM;
     if ((wait->events & CUIS_READY_NOTICE) && notices_ready(wait->client)) result |= CUIS_READY_NOTICE;
-    if ((wait->events & CUIS_READY_SURFACE) && !mouse_owner && surface_owner == wait->client && wait->client->surface_events)
-        result |= CUIS_READY_SURFACE;
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
+    /* Internal work must not end an unfinished multi-click wait. Keep its
+     * count, snapshot and original deadline resident until a user event is
+     * ready; report the pending surface alongside that event. */
+    if ((wait->events & CUIS_READY_SURFACE) && !mouse_owner && surface_owner == wait->client &&
+        wait->client->surface_events && (!wait->input.tracking || result))
+        result |= CUIS_READY_SURFACE;
     return result;
 }
 
