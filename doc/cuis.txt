@@ -1947,8 +1947,11 @@ flush pending messages without entering a blocking menu interaction.
 Internal wakes re-arm application predicates and preserve original timer
 expiry across the 200 Hz partial-tick guard and clock wrap. Event results are
 snapshotted before recursive menu tracking can replace input filters/results.
-Failed painting restores the saved pixels and registration; failed temporary
-frees stay on the resource allocator's retry list.
+Failed painting restores the saved pixels; staged installation preserves the
+previous owner and registration order until painting and workstation cleanup
+succeed. Fresh mouse acquisition (MOUSE_LOCK mode 2) suspends application
+button history, tracks only new input, and restores that history on release.
+Failed temporary frees stay on the resource allocator's retry list.
 
 CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
 - 50 SURFACE_REGISTER(session,height): zero removes, positive reserves a top
@@ -1958,6 +1961,10 @@ CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
   Acknowledge does not discard work during modal mouse control.
 - 52 CLOCK(session,0): returns the low 31 bits of the 200 Hz tick counter.
   The maximum supported 32-bit millisecond timeout is shorter than its wrap.
+- 53 SURFACE_BEGIN(session,height): under the display lock, stages a positive
+  strip height and grants painting without changing ownership or fallback order.
+- 54 SURFACE_END(session,commit): commits with 1 or cancels with 0 under the
+  display lock. Releasing the display lock also cancels an unfinished stage.
 READY_SURFACE is bit 128 in SESSION_WAIT. CUIS does not interpret GEM object
 pointers, AES opcodes or message formats. It has no feature/version negotiation
 or drawing commands; ordinary streams carry opaque application message bytes.

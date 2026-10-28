@@ -360,7 +360,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
     case CUIS_SERVICE_CLASS:
 #if CONF_WITH_CUIS
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
-            ((fn >= CUIS_SURFACE_REGISTER && fn <= CUIS_CLOCK) ?
+            ((fn >= CUIS_SURFACE_REGISTER && fn <= CUIS_SURFACE_END) ?
                  cuis_surface_service(fn, frame->rdi, frame->rsi) :
              (fn >= CUIS_INPUT_RECT && fn <= CUIS_INPUT_INTERVAL) ?
                  cuis_input_config(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :

@@ -86,10 +86,22 @@ for stage, (x, y) in enumerate(((35, 55), (5, 5), (35, 35), (35, 55))):
 marker("x32 GEM popup menus: PASS")
 marker("x32 GEM menu bar: READY")
 time.sleep(0.3)
+# Home outside the titles so homing itself cannot start menu tracking.
 for _ in range(32):
-    move(-127, -127)
+    move(-127, 0)
     time.sleep(0.02)
-move(30, 8)
+move(127, 0)
+move(73, 0)
+for _ in range(32):
+    move(0, -127)
+    time.sleep(0.02)
+# Queue an application click at the future dropdown item before tracking.
+move(-120, 33)
+mouse_event([{"type": "btn", "data": {"down": True, "button": "left"}}])
+time.sleep(0.1)
+mouse_event([{"type": "btn", "data": {"down": False, "button": "left"}}])
+time.sleep(0.1)
+move(-50, -25)
 time.sleep(0.25)
 move(50, 0)
 time.sleep(0.25)

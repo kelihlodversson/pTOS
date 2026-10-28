@@ -321,5 +321,7 @@ int main(void)
     rc = input_capture_checks();
     if (rc) return rc;
     rc = mouse_control_checks();
+    if (rc) return rc;
+    rc = fresh_mouse_checks();
     return rc ? rc : surface_checks();
 }
