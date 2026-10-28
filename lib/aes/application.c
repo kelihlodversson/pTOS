@@ -109,7 +109,8 @@ short appl_yield(void) { return mt_appl_yield(aes_global); }
 short mt_evnt_timer(unsigned long interval, short *global)
 {
     if (!registered(global) || interval > 0xffffffffUL) return 0;
-    if (!aes_menu_registered() && !aes_frames_registered())
+    if (!aes_menu_registered() && !aes_frames_registered() &&
+        !aes_controls_listening() && !aes_frames_wait_display())
         return cuis_call6(CUIS_SESSION_DELAY, (QUAD)application_session, interval, 0, 0, 0, 0) == E_OK ? 1 : 0;
     return mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,interval,
                          NULL,NULL,NULL,NULL,NULL,NULL,global) == MU_TIMER;

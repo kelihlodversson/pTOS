@@ -378,9 +378,8 @@ static LONG service_controls(LONG session, WORD *global)
             if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
                 window->control = 0; window->control_selected = FALSE; break;
             }
-            object = aes_frame_control(&state,event[0],event[1]);
             if ((event[3] & 1) && (event[2] & 1) && !window->control)
-                window->control = object;
+                window->control = aes_frame_control(&state,event[0],event[1]);
             if (window->control == W_NAME && event[2] == 1) {
                 window->control_selected = TRUE;
                 if (paint_window(window,global) && aes_frame_move(window->native,&state,event[0],event[1],
@@ -392,6 +391,8 @@ static LONG service_controls(LONG session, WORD *global)
                 if (result < 0 || control_pipe_blocked) goto done;
                 continue;
             }
+            object = window->control && aes_frame_control_inside(&state,window->control,event[0],event[1]) ?
+                window->control : 0;
             completed = window->control && !(event[2] & 1) && (event[3] & 1) && object == window->control;
             if (event[2] & ~1L) { window->control = 0; completed = FALSE; }
             selected = window->control && object == window->control && (event[2] & 1);

@@ -2,7 +2,7 @@
 #define CREAD(h) cuis_control_service(h,0x1000,0x1004,0x1008,0x100c)
 static int control_checks(void)
 {
-    LONG a, b, wa, wb, wc;
+    LONG a, b, wa, wb, wc, cover;
     CUIS_CLIENT *client;
     ULONG i;
     CUIS_INPUT_WAIT wait = { 0 };
@@ -54,6 +54,23 @@ static int control_checks(void)
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,40) == E_OK);
     CHECK(CREAD(wa) == ERANGE && CREAD(wa) == 0 && point_at(25,35,0));
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,0) == E_OK);
+    /* An unmanaged occluder may disappear before the owner reads its
+     * captured release. Restored focus/front cannot revive that gesture. */
+    cover = cuis_window_service(CUIS_WINDOW_CREATE,20,30,100,22,0);
+    CHECK(cover >= 0 && point_at(25,35,1));
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,cover,0,0,0,0) == E_OK);
+    CHECK(focus_window == client->windows->next && !pointer_capture && pointer_suppressed);
+    CHECK(point_at(25,35,0));
+    CHECK(cuis_window_service(CUIS_WINDOW_HIDE,cover,0,0,0,0) == E_OK);
+    CHECK(CREAD(wa) == ERANGE && CREAD(wa) == 0);
+    /* Lower an already visible unmanaged cover, then raise it transiently. */
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,cover,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_LOWER,cover,0,0,0,0) == E_OK);
+    CHECK(point_at(25,35,1) && point_at(25,35,0));
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,cover,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_HIDE,cover,0,0,0,0) == E_OK);
+    CHECK(CREAD(wa) == ERANGE && CREAD(wa) == 0);
+    CHECK(cuis_window_service(CUIS_WINDOW_DESTROY,cover,0,0,0,0) == E_OK);
     /* A topology change cancels a captured border drag and its release. */
     CHECK(point_at(25,35,1));
     run = &second; b = cuis_service(CUIS_SESSION_START,0);
