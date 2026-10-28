@@ -421,6 +421,8 @@ ULONG amiga_detect_ram(void *start, void *end, ULONG step)
     return p - pbyte_start;
 }
 
+#if !CONF_AMIGA_HIGHER_HALF_68040     /* (the probes of the RAM above the 24 bits: its tree maps no more, amiga_mmu040.S) */
+
 /* Reverse RAM detection, when actual RAM is located at the end of the range. */
 static ULONG amiga_detect_ram_reverse(void *start, void *end, ULONG step)
 {
@@ -433,6 +435,8 @@ static ULONG amiga_detect_ram_reverse(void *start, void *end, ULONG step)
 
     return pbyte_end - (p + step);
 }
+
+#endif /* !CONF_AMIGA_HIGHER_HALF_68040 */
 
 /* Detect Slow RAM, a.k.a A500 trapdoor RAM, a.k.a pseudo-fast RAM.
  * Max = 1.5 MB (standard)
@@ -465,6 +469,8 @@ static void add_slow_ram(void)
     KDEBUG(("Slow RAM detected at %p, size=%lu\n", start, size));
     xmaddalt(start, size);
 }
+
+#if !CONF_AMIGA_HIGHER_HALF_68040
 
 /* Detect A3000/A4000 Processor Slot Fast RAM, a.k.a. Ramsey High MBRAM.
  * Max = 128 MB, theoretical max = 1904 MB? */
@@ -504,6 +510,8 @@ static void add_motherboard_fast_ram(void)
     KDEBUG(("Motherboard Fast RAM detected at %p, size=%lu\n", end - size, size));
     xmaddalt(end - size, size);
 }
+
+#endif /* !CONF_AMIGA_HIGHER_HALF_68040 */
 
 /* Forward declarations */
 static void add_expansion_ram(void);
