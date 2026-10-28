@@ -6,6 +6,7 @@
 #ifdef AES_MENU_BINDINGS
 #include AES_MENU_BINDINGS
 #else
+#include "aesext.h"
 #include "struct.h"
 #include "aesvars.h"
 #include "gemgsxif.h"
