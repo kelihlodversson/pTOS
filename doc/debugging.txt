@@ -212,6 +212,19 @@ toolchain, see the toolchain-install skill):
     tools/run-amiberry.py --rom ptos-amiga.rom --cpu 68040 --wait 12 \
         --cmd GET_CPU_REGS --screenshot desktop.png
 
+The regression tests run on it too (tools/run-amiberry-tests.py): the test disk is on
+the IDE of the emulated A1200 (Gayle), the desktop starts runtests.tos from it, and a
+build for the Amiga writes what the program prints to RUNTESTS.LOG on the disk
+(TEST_LOG_FILE, tests/testlib.c), which the script reads from a copy of the image with
+mtools until the summary is there (the whole suite takes seconds):
+
+    make amiga-mmu040_defconfig && make && make test-hd
+    tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd.img --cpu 68060
+
+tools/ci-amiberry.sh does it for every Amiga configuration and CPU, as CI does.  The
+68060 has no PTEST and no MMUSR: the MMU fixture (tests/mmu_state) walks the tables of
+a 68060 in software.
+
 tools/run-amiberry.py writes the configuration of the run (a 32-bit CPU of the
 given model with its MMU emulated, JIT and cycle-exact off, caches off unless
 --caches, no sound, no floppy), starts the emulator headless (SDL's dummy

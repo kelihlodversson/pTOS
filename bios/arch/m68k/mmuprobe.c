@@ -3,7 +3,8 @@
  *
  * What the MMU is, and what a virtual address translates to, from the CPU
  * itself: PTEST on a 68030 (the PSR, and the descriptor it ends at, for the
- * physical address), PTEST on a 68040 and a 68060 (the MMUSR).  The
+ * physical address), PTEST on a 68040 (the MMUSR); a 68060 has neither PTEST
+ * nor an MMUSR, and the tables are walked in software.  The
  * instructions are spelled as words: the file is assembled for the -m68020
  * (or -m68000) the image is built for.  See include/mmuprobe.h.
  *
@@ -105,6 +106,72 @@ static ULONG ptest040(ULONG va, ULONG fc, BOOL write)
     return mmusr;
 }
 
+/*
+ * The 68060 has no PTEST and no MMUSR (the instruction is a line F exception
+ * there): the walk of the tables is made in software, with the descriptors of
+ * the 68040 (the same format), read through the window of the kernel, and the
+ * result is given as the MMUSR of a 68040 would have it.  The transparent
+ * translation registers are looked at first, as the hardware does.
+ */
+static ULONG creg(int which)
+{
+    ULONG v;
+
+    switch (which)
+    {
+    case 0:  __asm__ volatile (".long 0x4e7a0006\n\tmove.l %%d0,%0" : "=m" (v) : : "d0", "memory"); break;   /* movec dtt0,d0 */
+    case 1:  __asm__ volatile (".long 0x4e7a0007\n\tmove.l %%d0,%0" : "=m" (v) : : "d0", "memory"); break;   /* movec dtt1,d0 */
+    case 2:  __asm__ volatile (".long 0x4e7a0806\n\tmove.l %%d0,%0" : "=m" (v) : : "d0", "memory"); break;   /* movec urp,d0 */
+    default: __asm__ volatile (".long 0x4e7a0807\n\tmove.l %%d0,%0" : "=m" (v) : : "d0", "memory"); break;   /* movec srp,d0 */
+    }
+    return v;
+}
+
+static ULONG window_long(ULONG phys)
+{
+    return *(volatile ULONG *)(WINDOW + phys);
+}
+
+static ULONG walk060(ULONG va, ULONG fc)
+{
+    ULONG d, table, w = 0;
+    int i;
+
+    for (i = 0; i < 2; i++)
+    {
+        ULONG t = creg(i);
+        ULONG s = (t >> 13) & 3;        /* 0 user, 1 supervisor, 2 and 3 both */
+
+        if ((t & 0x8000UL) && ((((va >> 24) ^ (t >> 24)) & ~(t >> 16) & 0xff) == 0)
+            && (s >= 2 || (s == 0 && fc == FC_USER_DATA) || (s == 1 && fc == FC_SUPER_DATA)))
+            return MMUSR_T | (t & 0x60UL) | (t & MMUSR_W);
+    }
+
+    table = creg(fc == FC_USER_DATA ? 2 : 3) & ~0x1ffUL;
+    d = window_long(table + ((va >> 25) & 0x7f) * 4);               /* root: 7 bits, 32 MiB */
+    if ((d & 3) < 2)
+        return 0;
+    w |= d & MMUSR_W;
+    table = d & ~0x1ffUL;
+    d = window_long(table + ((va >> 18) & 0x7f) * 4);               /* pointer: 7 bits, 256 KiB */
+    if ((d & 3) < 2)
+        return 0;
+    w |= d & MMUSR_W;
+    table = d & ~0xffUL;
+    d = window_long(table + ((va >> 12) & 0x3f) * 4);               /* page: 6 bits, 4 KiB */
+    if ((d & 3) == 2)                                               /* indirect */
+        d = window_long(d & ~3UL);
+    if ((d & 3) == 0)
+        return 0;
+    return MMUSR_R | (d & 0xfffff000UL) | (d & (MMUSR_S | 0x60UL | 0x10UL)) | w | (d & MMUSR_W);
+}
+
+/* the MMUSR for an address, by PTEST or by the walk of the 68060 */
+static ULONG ptest_any(ULONG va, ULONG fc, BOOL write)
+{
+    return mcpu == 60 ? walk060(va, fc) : ptest040(va, fc, write);
+}
+
 static void read_030(struct mmu_probe *p)
 {
     ULONG tc, crp[2], srp[2];
@@ -146,7 +213,7 @@ static BOOL kernel_readable(ULONG va)
     }
     else
     {
-        ULONG m = ptest040(va, FC_SUPER_DATA, FALSE);
+        ULONG m = ptest_any(va, FC_SUPER_DATA, FALSE);
 
         return (m & (MMUSR_R | MMUSR_T)) != 0;
     }
@@ -219,7 +286,7 @@ LONG mmu_probe(struct mmu_probe *p)
         if (!p->enabled)
             return E_OK;
 
-        m = ptest040(va, fc, write);
+        m = ptest_any(va, fc, write);
         p->status = m;
         p->mapped = (m & (MMUSR_R | MMUSR_T)) != 0;
         p->write_protected = (m & MMUSR_W) != 0;

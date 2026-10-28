@@ -1,6 +1,7 @@
 #!/bin/sh
 #
-# ci-amiberry.sh - boot the Amiga ROMs of pTOS on the pinned Amiberry (#737)
+# ci-amiberry.sh - boot the Amiga ROMs of pTOS on the pinned Amiberry, and run
+# the regression tests on them (#737)
 #
 # Usage: tools/ci-amiberry.sh [CONFIG:CPU ...]
 #
@@ -10,7 +11,9 @@
 # (in stop_until_interrupt, which the desktop waits in) and, for the images that
 # run in the upper half, that it is fetching from the window (0x80000000 and
 # up), which it can only do through the MMU tree that the ROM set up.  The
-# screenshot of each is left in logs/.  Amiberry is the one of
+# screenshot of each is left in logs/.  Then the test disk is made (make test-hd:
+# mkfs.fat and mtools) and tools/run-amiberry-tests.py runs the suite of tests/
+# from it, on the same CPU; its log is logs/CONFIG-CPU-tests.log.  Amiberry is the one of
 # tools/build-amiberry.sh (the setup-amiberry action sets $AMIBERRY).
 #
 # The default list is the Amiga configurations and the CPUs they are for.
@@ -72,6 +75,15 @@ print(1 if idle <= pc < idle + 0x40 else 0)")
         failed="$failed $name"
     else
         echo "$name: booted (idle at PC=$pc)"
+        if make test-hd >"logs/$name.testdisk" 2>&1 \
+           && python3 tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd.img \
+                --cpu "$cpu" >"logs/$name-tests.log" 2>&1; then
+            echo "$name: $(grep 'Summary' "logs/$name-tests.log")"
+        else
+            echo "::error::$name: the tests failed (logs/$name-tests.log)"
+            grep -E 'FAIL|Summary|run-amiberry-tests' "logs/$name-tests.log" | head -20
+            failed="$failed $name"
+        fi
     fi
     echo "::endgroup::"
 done

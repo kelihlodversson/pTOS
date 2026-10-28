@@ -164,8 +164,12 @@ bios/arch/m68k/mmuprobe.c, only in a build with the tests on an m68k image that
 runs in the upper half): translation is on with 4 KiB pages, the roots are set, a page of the program
 translates to a physical page that the kernel half also reaches (the same bytes by
 a second mapping), the cache attributes and the protection are the tree's; the
-CPU's own PTEST answers, not the emulator's setting.  Run under Hatari
-(f030a, tta, f040a, tt040a, f030) and QEMU (virt-m68k-mmu, virt-m68k-aspace).  `tests/isolation/` does the
+CPU's own PTEST answers (the tables are walked in software on a 68060, which has no
+PTEST), not the emulator's setting.  Run under Hatari (f030a, tta, f040a, tt040a,
+f030), QEMU (virt-m68k-mmu, virt-m68k-aspace) and, on the Amiga ROMs, Amiberry on a
+68030, a 68040 and a 68060 (`tools/run-amiberry-tests.py`, doc/debugging.txt: the
+results are read from `RUNTESTS.LOG`, which a build for the Amiga writes on the test
+disk).  `tests/isolation/` does the
 same with `isoprobe.c` (`ISOPROBE.TOS`), which makes the forbidden accesses
 one launch at a time; the suite is built only where `CONF_WITH_USER_ASPACE`
 is set on ARM and m68k.

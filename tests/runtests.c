@@ -23,6 +23,7 @@ int main(void)
         conws("\r\nSome tests FAILED.\r\n");
     else
         conws("\r\nAll tests passed.\r\n");
+    ptest_log_flush();
 
     Pterm(failures);
     return failures;

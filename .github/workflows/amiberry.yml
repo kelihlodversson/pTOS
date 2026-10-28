@@ -11,8 +11,12 @@
 # unused cache is evicted after seven days).
 #
 # The boot job then builds the Amiga ROMs and checks that each boots on the CPU
-# it is for, and that the MMU images run in the upper half
-# (tools/ci-amiberry.sh).
+# it is for, that the MMU images run in the upper half, and that the Zorro II
+# fast RAM has been configured; then it runs the regression tests of tests/ on
+# each, from a disk on the IDE of the emulated Amiga (tools/ci-amiberry.sh,
+# tools/run-amiberry-tests.py): the emulator is the one place the MMU tests of
+# the 68030, the 68040 and the 68060 run on an implementation that has the
+# fixes of 2026.
 #
 
 name: Amiberry
@@ -25,6 +29,8 @@ on:
       - tools/build-amiberry.sh
       - tools/ci-amiberry.sh
       - tools/run-amiberry.py
+      - tools/run-amiberry-tests.py
+      - tests/**
       - .github/actions/setup-amiberry/**
       - .github/workflows/amiberry.yml
       - bios/arch/m68k/amiga_mmu*.S
@@ -59,7 +65,7 @@ jobs:
       - uses: ./.github/actions/setup-amiberry
 
   amiga-boot:
-    name: Amiga ROMs on Amiberry
+    name: Amiga ROMs and tests on Amiberry
     needs: amiberry
     runs-on: ubuntu-26.04
     timeout-minutes: 45
@@ -75,13 +81,21 @@ jobs:
       # (after the build job, so that the cache is there)
       - uses: ./.github/actions/setup-amiberry
 
-      - name: Boot the Amiga ROMs
+      # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh) and read the
+      # log of the run from it (tools/run-amiberry-tests.py)
+      - name: Install the disk image tools
+        run: |
+          sudo apt-get install -y --no-install-recommends dosfstools mtools
+
+      - name: Boot the Amiga ROMs and run the tests
         run: sh tools/ci-amiberry.sh
 
-      - name: Keep the screens
+      - name: Keep the logs and the screens
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: amiga-boot-screens
-          path: logs/*.png
+          name: amiga-logs
+          path: |
+            logs/*.png
+            logs/*-tests.log
           if-no-files-found: ignore

@@ -48,6 +48,13 @@ floppy0type=-1
 sound_output=none
 """
 
+# a hard disk on the IDE of the A600 and the A1200 (Gayle), where pTOS looks for
+# one: the image is a raw disk with a partition table
+DISK_CONFIG = """chipset_compatible=A1200
+ide=a600/a1200
+uaehf0=hdf,rw,DH0:{disk},32,1,2,512,0,,ide0_mainboard
+"""
+
 
 def socket_path():
     runtime = os.environ.get('XDG_RUNTIME_DIR')
@@ -71,6 +78,46 @@ def ipc(path, line, timeout=10.0):
     return data.decode(errors='replace').rstrip('\n').replace('\t', '\n')
 
 
+def start(amiberry, rom, cpu, disk=None, caches=False, cycle_exact=False):
+    """Start the emulator, headless, on a ROM (and an image of a hard disk),
+    and wait for its IPC socket: returns (the process, the socket path, the
+    directory of its configuration and log)."""
+    work = tempfile.mkdtemp(prefix='amiberry-tests-')
+    cfg = os.path.join(work, 'amiga.uae')
+    with open(cfg, 'w') as f:
+        f.write(CONFIG.format(rom=os.path.abspath(rom), cpu=cpu,
+                              caches='true' if caches else 'false',
+                              cycle_exact='true' if cycle_exact else 'false'))
+        if disk:
+            f.write(DISK_CONFIG.format(disk=os.path.abspath(disk)))
+    path = socket_path()
+    try:
+        os.unlink(path)                 # (a killed emulator leaves its socket behind)
+    except OSError:
+        pass
+    env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
+    with open(os.path.join(work, 'amiberry.log'), 'w') as out:
+        proc = subprocess.Popen([amiberry, '--log', '-G', '-f', cfg], env=env,
+                                stdout=out, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+    deadline = time.time() + 30
+    while not os.path.exists(path) and time.time() < deadline:
+        if proc.poll() is not None:
+            raise OSError('the emulator exited (log: %s/amiberry.log)' % work)
+        time.sleep(0.5)
+    return proc, path, work
+
+
+def stop(proc):
+    try:
+        ipc(socket_path(), 'QUIT', 3)
+    except (OSError, socket.timeout):
+        pass
+    time.sleep(1)
+    proc.kill()
+    proc.wait()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--rom', required=True, help='the pTOS Amiga ROM image')
@@ -85,34 +132,15 @@ def main():
     ap.add_argument('--caches', action='store_true',
                     help='CPU instruction and data caches on (off by default)')
     ap.add_argument('--cycle-exact', action='store_true')
+    ap.add_argument('--disk', help='an image of a hard disk, on the IDE')
     a = ap.parse_args()
 
     if not os.path.exists(a.amiberry):
         sys.exit('run-amiberry: no emulator at %s (doc/debugging.txt)' % a.amiberry)
-    work = tempfile.mkdtemp(prefix='amiberry-tests-')
-    cfg = os.path.join(work, 'amiga.uae')
-    with open(cfg, 'w') as f:
-        f.write(CONFIG.format(rom=os.path.abspath(a.rom), cpu=a.cpu,
-                              caches='true' if a.caches else 'false',
-                              cycle_exact='true' if a.cycle_exact else 'false'))
-    try:
-        os.unlink(socket_path())        # (a killed emulator leaves its socket behind)
-    except OSError:
-        pass
-    env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
-    log = os.path.join(work, 'amiberry.log')
-    with open(log, 'w') as out:
-        proc = subprocess.Popen([a.amiberry, '--log', '-G', '-f', cfg], env=env,
-                                stdout=out, stderr=subprocess.STDOUT,
-                                start_new_session=True)
     status = 0
+    proc = None
     try:
-        path = socket_path()
-        deadline = time.time() + 30
-        while not os.path.exists(path) and time.time() < deadline:
-            if proc.poll() is not None:
-                raise OSError('the emulator exited')
-            time.sleep(0.5)
+        proc, path, work = start(a.amiberry, a.rom, a.cpu, a.disk, a.caches, a.cycle_exact)
         time.sleep(a.wait)
         if a.screenshot:
             print(ipc(path, 'SCREENSHOT\t' + os.path.abspath(a.screenshot)))
@@ -123,16 +151,11 @@ def main():
                 continue
             print(ipc(path, c.replace(' ', '\t')))
     except (OSError, socket.timeout) as e:
-        print('run-amiberry: %s (log: %s)' % (e, log), file=sys.stderr)
+        print('run-amiberry: %s' % e, file=sys.stderr)
         status = 1
     finally:
-        try:
-            ipc(socket_path(), 'QUIT', 3)
-        except (OSError, socket.timeout):
-            pass
-        time.sleep(1)
-        proc.kill()
-        proc.wait()
+        if proc:
+            stop(proc)
     return status
 
 

@@ -58,10 +58,12 @@ void test_sysconf(void)
     ptest_assert_msg(Sysconf(6) == 4096, "Sysconf(_SC_PAGE_SIZE) is not 4096");
     ptest_assert_msg(Sysconf(8) == 1024 && Sysconf(9) == 1024, "the passwd and group buffer sizes");
 
-    /* memory: at least the 4 MB of the smallest machine; what is free is no more
-     * than there is, where the machine can say */
+    /* memory: at least 2 MB, the chip RAM of the Amiga (the other machines have
+     * 4 MB or more; the RAM of an Amiga beyond its chip RAM is alternative RAM,
+     * which is not what this counts); what is free is no more than there is,
+     * where the machine can say */
     phys = Sysconf(10);
-    ptest_assert_msg(phys >= 1024, "Sysconf(_SC_PHYS_PAGES) is below 4 MB");
+    ptest_assert_msg(phys >= 512, "Sysconf(_SC_PHYS_PAGES) is below 2 MB");
     avail = Sysconf(7);
     ptest_assert_msg(avail == EINVFN || (avail > 0 && avail <= phys),
                      "Sysconf(_SC_AVPHYS_PAGES) is more than there is");
