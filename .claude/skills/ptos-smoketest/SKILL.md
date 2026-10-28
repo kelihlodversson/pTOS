@@ -132,17 +132,32 @@ print('desktop' if menu and status else 'not booted yet',
 magic `0xfa52235f`. It is a diagnostic image, NOT a full OS: it is limited to
 128 KB, so **the AES and the desktop cannot be included** (`Kconfig.image`).
 
-- **It needs a separate machine TOS ROM.** Hatari requires `--tos <file>` and
-  pTOS's own ROM images cannot run the cartridge: pTOS has cartridge detection
-  compiled out (`CONF_WITH_CARTRIDGE` is fixed to 0), so a pTOS `--tos` never
-  checks for `$fa52235f` and the cartridge is ignored. Use a real Atari TOS
-  (e.g. TOS 2.06 for the STE) as the machine TOS:
+- **It needs a machine ROM, because the cartridge is not a machine.** Hatari
+  requires `--tos <file>`. A pTOS ROM image cannot be that ROM on its own:
+  the cartridge is a diagnostic cartridge, and `CONF_WITH_CARTRIDGE` depends
+  on `!DIAGNOSTIC_CARTRIDGE`, so the cartridge image itself does not run
+  other cartridges. A pTOS ROM with `CONF_WITH_CARTRIDGE` (the default for
+  the Atari ROMs) does hand over to a diagnostic cartridge, but it has not
+  been tried here. Use either a real Atari TOS (e.g. TOS 2.06 for the STE),
+  or the hand-over ROM below:
   ```sh
   make cartridge_defconfig && make
   hatari --tos /path/to/tos206us.img --cartridge ptoscart.img \
     --machine ste --memsize 4 --sound off \
     --avirecord --avi-vcodec png --avi-file /tmp/cart.avi --run-vbls 900
   ```
+- **Without a real TOS:** `cartstub_defconfig` builds `ptoscartstub.img`, a
+  192 KB ROM that only hands over to the cartridge (`bios/arch/m68k/cartstub.S`),
+  so the cartridge can be tested as the whole OS. It is an ST ROM (version
+  1.04): run it as `--machine st`, e.g. (`make distclean` between the builds,
+  copy the two images first)
+  ```sh
+  hatari --tos ptoscartstub.img --cartridge ptoscart.img \
+    --machine st --memsize 1 --sound off --run-vbls 300
+  ```
+  Verified: the pTOS boot screen (version, CPU, machine, ST-RAM, drives) is
+  up within about 5 s. Without a cartridge the stub is meant to flash the
+  border red; that was not run (Hatari installs its own cartridge).
 - **It does NOT boot to the desktop** — the GEM desktop does not exist in this
   image, so the desktop detector above must NOT be used as the pass signal. Instead, the cartridge runs its diagnostics and renders a **text
   screen** (light-grey `238,238,238` background with black character glyphs).
