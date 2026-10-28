@@ -46,16 +46,23 @@ for combo in $combos; do
         continue
     fi
 
+    # (the Zorro II fast RAM of the configuration answers only if the ROM has
+    # configured the board, which is autoconfig through the I/O window)
     python3 tools/run-amiberry.py --rom ptos-amiga.rom --cpu "$cpu" --wait 15 \
-        --cmd GET_CPU_REGS --screenshot "logs/$name.png" >"logs/$name.log" 2>&1
+        --cmd GET_CPU_REGS --cmd "WRITE_MEM 0x300000 4 305419896" \
+        --cmd "READ_MEM 0x300000 4" --screenshot "logs/$name.png" >"logs/$name.log" 2>&1
     pc=$(sed -n 's/^PC=\([0-9A-Fa-f]*\)$/\1/p' "logs/$name.log" | head -1)
+    fastram=$(sed -n '/^> READ_MEM 0x300000 4/{n;n;p}' "logs/$name.log" | head -1)
 
     # the PC is within the loop of stop_until_interrupt (a few instructions)
     ok=$(python3 -c "
 import sys
 pc = int('${pc:-0}', 16); idle = int('$idle', 16)
 print(1 if idle <= pc < idle + 0x40 else 0)")
-    if [ "$ok" != 1 ]; then
+    if [ "$fastram" != 305419896 ]; then
+        echo "::error::$name: the Zorro II fast RAM does not answer (the board was not configured): read ${fastram:-nothing}"
+        failed="$failed $name"
+    elif [ "$ok" != 1 ]; then
         echo "::error::$name: not idle in the kernel: PC=${pc:-?}, stop_until_interrupt at $idle"
         cat "logs/$name.log"
         failed="$failed $name"

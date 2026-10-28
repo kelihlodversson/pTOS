@@ -20,16 +20,19 @@
  *   0x00000000-0x00000fff         the same        yes    no   (the TOS low memory's
  *                                                            first page: vectors, sysvars, stack)
  *   0x00001000-0x009fffff         the same        yes    yes  (chip RAM and Zorro II RAM)
- *   0x00a00000-0x00bfffff         the same        no     no   (PCMCIA, the CIAs)
  *   0x00c00000-0x00dbffff         the same        no     yes  (the slow RAM, or a mirror of the custom
  *                                                            chips: the ROM probes it and gives the RAM
  *                                                            to the programs)
- *   0x00dc0000-0x00efffff         the same        no     no   (the clock, the custom chips, the Zorro II
- *                                                            I/O area and the autoconfig space)
  *   0x00f00000-0x00ffffff         the same        yes    yes  (the ROM at 0x00fc0000)
  *   0x01000000-0x7fffffff         the same        no     yes  (the RAM and boards of a 32-bit Amiga)
  *   0xfe000000-0xffffffff         the same        no     no   (the Zorro III autoconfig space)
  *   0x80000000-0x80ffffff         0x00000000-     as the first ranges  (the window)
+ *   0xf0a00000-0xf0efffff         0x00a00000-     no     no   (the I/O window: PCMCIA, the CIAs, the
+ *                                                            custom chips, the clock, Gayle, the Zorro II
+ *                                                            I/O area and autoconfig space; bios/amiga_io.h)
+ *
+ * The I/O is not in the lower half, which belongs to the processes once they
+ * have address spaces: the kernel reaches it through its own window.
  *
  * Nothing else is mapped.  TT0 and TT1 are off.
  *
@@ -88,7 +91,11 @@ amiga_mmu_a:
         .set    i,i+1
         .endr
         .dc.l   TABLE, amiga_mmu_b - WINDOW             // 0x80000000: the same, in the window
-        .rept   62                                      // 0x82000000-0xfdffffff: nothing
+        .rept   55                                      // 0x82000000-0xefffffff: nothing
+        .dc.l   0, 0
+        .endr
+        .dc.l   TABLE, amiga_mmu_io - WINDOW            // 0xf0000000: the I/O window
+        .rept   6                                       // 0xf2000000-0xfdffffff: nothing
         .dc.l   0, 0
         .endr
         .dc.l   PAGE_IO, 127 << 25                      // 0xfe000000-0xffffffff: as it is
@@ -102,16 +109,16 @@ amiga_mmu_b:
         .dc.l   PAGE, i << 18
         .set    i,i+1
         .endr
-        .rept   8                                       // 0x00a00000-0x00bfffff: I/O
-        .dc.l   PAGE_IO, i << 18
+        .rept   8                                       // 0x00a00000-0x00bfffff: (the I/O window)
+        .dc.l   0, 0
         .set    i,i+1
         .endr
         .rept   7                                       // 0x00c00000-0x00dbffff: the slow RAM
         .dc.l   PAGE_CI, i << 18
         .set    i,i+1
         .endr
-        .rept   5                                       // 0x00dc0000-0x00efffff: I/O
-        .dc.l   PAGE_IO, i << 18
+        .rept   5                                       // 0x00dc0000-0x00efffff: (the I/O window)
+        .dc.l   0, 0
         .set    i,i+1
         .endr
         .rept   4                                       // 0x00f00000-0x00ffffff: the ROM
@@ -121,6 +128,22 @@ amiga_mmu_b:
         .rept   64                                      // 0x01000000-0x01ffffff: as it is
         .dc.l   PAGE_CI, i << 18
         .set    i,i+1
+        .endr
+
+// (io) 128 entries of 256 KiB: the I/O window, 0xf0000000-0xf1ffffff for the physical
+// 0x00000000-0x01ffffff, of which only the I/O area is mapped
+        .balign 16
+amiga_mmu_io:
+        .rept   40                                      // 0x00000000-0x009fffff: nothing
+        .dc.l   0, 0
+        .endr
+        .set    i,40
+        .rept   20                                      // 0x00a00000-0x00efffff: I/O
+        .dc.l   PAGE_IO, i << 18
+        .set    i,i+1
+        .endr
+        .rept   68                                      // 0x00f00000-0x01ffffff: nothing
+        .dc.l   0, 0
         .endr
 
 // (c) 64 pages of 4 KiB: the first 256 KiB

@@ -17,13 +17,17 @@
  *   virtual                       physical        cache  user
  *   0x00000000-0x00000fff         the same        WT     no
  *   0x00001000-0x009fffff         the same        WT     yes  (chip RAM and Zorro II RAM)
- *   0x00a00000-0x00bfffff         the same        no     no   (PCMCIA, the CIAs)
  *   0x00c00000-0x00dbffff         the same        no     yes  (the slow RAM, or a mirror of the
  *                                                            custom chips)
- *   0x00dc0000-0x00efffff         the same        no     no   (the clock, the custom chips, the
- *                                                            Zorro II I/O area and autoconfig space)
  *   0x00f00000-0x00ffffff         the same        WT     yes  (the ROM)
  *   0x80000000-0x80ffffff         0x00000000-     as above   (the window)
+ *   0xf0a00000-0xf0efffff         0x00a00000-     no     no   (the I/O window: PCMCIA, the CIAs, the
+ *                                                            custom chips, the clock, Gayle, the Zorro II
+ *                                                            I/O area and autoconfig space; bios/amiga_io.h)
+ *
+ * The I/O is not in the lower half, which belongs to the processes once they
+ * have address spaces: the kernel reaches it through its own window, which
+ * shares the page tables of the 16 MiB.
  *
  * The Zorro III autoconfig space at 0xff000000-0xffffffff is a transparent
  * window (DTT0, set by startup.S): supervisor-only, serialized, not cached.
@@ -76,7 +80,11 @@ C_SYM(amiga_mmu_root):
         .dc.l   0
         .endr
         .dc.l   amiga_mmu_ptr - WINDOW + UDT            // 0x80000000: the same, in the window
-        .rept   63
+        .rept   55
+        .dc.l   0
+        .endr
+        .dc.l   amiga_mmu_io_ptr - WINDOW + UDT         // 0xf0000000: the I/O window
+        .rept   7
         .dc.l   0
         .endr
 
@@ -84,11 +92,42 @@ C_SYM(amiga_mmu_root):
         .balign 512
 amiga_mmu_ptr:
         .set    i,0
-        .rept   64
+        .rept   40                                      // 0x00000000-0x009fffff: RAM
+        .dc.l   amiga_mmu_pages - WINDOW + 256 * i + UDT
+        .set    i,i+1
+        .endr
+        .rept   8                                       // 0x00a00000-0x00bfffff: (the I/O window)
+        .dc.l   0
+        .set    i,i+1
+        .endr
+        .rept   7                                       // 0x00c00000-0x00dbffff: the slow RAM
+        .dc.l   amiga_mmu_pages - WINDOW + 256 * i + UDT
+        .set    i,i+1
+        .endr
+        .rept   5                                       // 0x00dc0000-0x00efffff: (the I/O window)
+        .dc.l   0
+        .set    i,i+1
+        .endr
+        .rept   4                                       // 0x00f00000-0x00ffffff: the ROM
         .dc.l   amiga_mmu_pages - WINDOW + 256 * i + UDT
         .set    i,i+1
         .endr
         .rept   64
+        .dc.l   0
+        .endr
+
+// the pointer table of the I/O window: the page tables of the I/O area
+        .balign 512
+amiga_mmu_io_ptr:
+        .rept   40
+        .dc.l   0
+        .endr
+        .set    i,40
+        .rept   20                                      // 0x00a00000-0x00efffff
+        .dc.l   amiga_mmu_pages - WINDOW + 256 * i + UDT
+        .set    i,i+1
+        .endr
+        .rept   68
         .dc.l   0
         .endr
 

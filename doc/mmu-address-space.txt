@@ -575,8 +575,17 @@ ROM), and the TOS low memory and the pool stay at their physical addresses.  The
 tree maps what the Amiga has:
 
   - 0x00000000-0x009fffff the RAM (chip and Zorro II), cached;
-  - 0x00a00000-0x00efffff the CIAs, the custom chips, the clock and the I/O and
-    autoconfig areas, supervisor-only and not cached;
+  - the I/O (0x00a00000-0x00efffff: PCMCIA, the CIAs, the custom chips, the
+    clock, Gayle, the Zorro II I/O and autoconfig areas) is not in the lower half at
+    all: the kernel reaches it through a window of its own in the kernel half, the same
+    range at 0xf0000000 (0xf0dff000 for the custom chips), supervisor-only and not
+    cached.  The lower half is where a process lives once it has an address space of its
+    own, and it must have no I/O in it.  Every access of the kernel is AMIGA_IO(address)
+    (include/amiga_io.h, the identity in an image that is not in the upper half);
+    a board is on the bus at its physical address, which is where its Zorro II or III
+    layout is decided (a pointer of the window would have been taken for a Zorro III
+    board: the first boot with the window put the RAM board at address 0, and
+    tools/ci-amiberry.sh now checks that the fast RAM answers);
   - 0x00f00000-0x00ffffff the ROM;
   - the rest of the 32-bit space the way it is, not cached, and the Zorro III
     autoconfig space at 0xff000000: the ROM probes both for the RAM and the
@@ -605,8 +614,9 @@ the 68030 image) is not mapped, and the ROM does not probe it.  The pages are
 write-through, as the ST-RAM of the Atari is.  The desktop comes up on Amiberry's
 68040 and 68060 with the same stack pointer as on the 68030.
 
-Not yet: address spaces for the processes (the custom chips are at 0x00dff000, in
-the half that a process owns).
+Not yet: address spaces for the processes themselves (CONF_WITH_PROCESS_ASPACES for
+the Amiga: the backends are the Atari's, and the conversions for the DMA of the
+chip set that an address space of a process needs).
 
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................

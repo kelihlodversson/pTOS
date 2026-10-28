@@ -677,7 +677,7 @@ amiga-mmu_defconfig (#737, #571) is the same start for the Amiga: the 256 KB ROM
 CONF_AMIGA_HIGHER_HALF, linked at 0x80000000 (the ROM runs at 0x80fc0000), with the
 68030 MMU on from the first instruction through a static tree in the ROM
 (bios/arch/m68k/amiga_mmu.S) that maps the 24-bit address space of the Amiga (the
-custom chips, the CIAs and the other I/O areas not cached and supervisor-only),
+custom chips, the CIAs and the other I/O areas in a window of their own at 0xf0000000, not cached and supervisor-only: the lower half has no I/O),
 and, as it is, what a 32-bit Amiga has above it, which the ROM probes.  The
 Copper list, the bit planes and the disk DMA are given physical addresses
 (virt_to_phys(), bios/amiga_window.c).  It needs a 68030 with its MMU: under

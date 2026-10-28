@@ -773,7 +773,7 @@ static void ConfigChain(APTR baseAddr)
             gotrom = ReadExpansionRom(baseAddr, configDev);
         }
         if (!gotrom) {
-            baseAddr = (APTR)E_EXPANSIONBASE;
+            baseAddr = (APTR)AMIGA_IO(E_EXPANSIONBASE);
             gotrom = ReadExpansionRom(baseAddr, configDev);
         }
         if (!gotrom) {
@@ -799,7 +799,7 @@ static void ExpansionInit(struct ExpansionBase *ExpansionBase)
     NEWLIST(&ExpansionBase->eb_BoardList);
 
     /* See what expansion hardware we can detect. */
-    ConfigChain((APTR)E_EXPANSIONBASE);
+    ConfigChain((APTR)AMIGA_IO(E_EXPANSIONBASE));
 }
 
 /* EmuTOS to AROS glue for Alternate RAM detection ****************************/

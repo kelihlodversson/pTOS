@@ -8,7 +8,8 @@ Linux), headless, and ask the emulator questions through its IPC socket
 
 Starts Amiberry with the SDL dummy video driver, a 32-bit 68030/68040/68060
 with its MMU emulated, JIT and cycle-exact off, no sound and no floppy, waits,
-sends each --cmd (tab separated fields: the IPC protocol of Amiberry,
+sends each --cmd (tab separated fields: the IPC protocol of Amiberry; "SLEEP <seconds>"
+waits, for a command that has to come while the guest is still running,
 docs/ipc.md in its source: READ_MEM <addr> <width>, GET_CPU_REGS, ...), takes
 the screenshot and stops it.  The reply of each command is printed.
 
@@ -117,6 +118,9 @@ def main():
             print(ipc(path, 'SCREENSHOT\t' + os.path.abspath(a.screenshot)))
         for c in a.cmd:
             print('> ' + c)
+            if c.startswith('SLEEP '):          # (not a command of the emulator: wait)
+                time.sleep(float(c.split()[1]))
+                continue
             print(ipc(path, c.replace(' ', '\t')))
     except (OSError, socket.timeout) as e:
         print('run-amiberry: %s (log: %s)' % (e, log), file=sys.stderr)
