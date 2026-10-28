@@ -192,8 +192,8 @@ offsets. No hit (or a negative start/depth) returns -1. The search is iterative
 and does not invoke USERDEF callbacks or dereference object specifications.
 These local mt_* calls ignore the global array and need no registration.
 Trees must have valid GEM parent/sibling links; invalid pointers fault in
-userspace. Render-dependent 3D enlargement is not included yet, so 3D hit
-areas will be completed with the object rendering migration.
+userspace. 3D hit areas follow native expansion rules, including outlined objects and
+the logical hit rectangle used for shadowed objects.
 
 With CONF_WITH_LIBAES enabled, the algorithms in aes/shared/gemobjtree.c are
 also used by kernel AES. With the feature disabled, the original kernel
@@ -1408,8 +1408,8 @@ and formatted text and templates to 80 characters in this slice. Formatting
 recognizes the '@' empty-text marker without modifying caller text. G_IMAGE
 and monochrome G_ICON are also supported: the original icon painter in
 shared/gemicon.c preserves mask/data layering, labels and character overlays,
-WHITEBAK and selected colour swapping. 3D flags return GEM 0
-until their rendering adapters are available. No extension capability bits are advertised. A preflight
+WHITEBAK and selected colour swapping. Native 3D flags and objc_sysvar are
+also supported (see below). A preflight
 checks the requested visible subtree before painting, so an unsupported
 visible descendant does not leave a partly drawn tree; HIDETREE descendants
 are ignored. Each visible payload is checked again immediately before painting,
@@ -1449,8 +1449,8 @@ clipped, including maximum-WORD widths and heights. The shared border loop
 retains the WORD calling convention in native builds. Fully clipped text is
 culled before VDI submission. Partially clipped runs drop complete off-
 screen cells while preserving the original positions of the remaining
-glyphs. An empty clip succeeds without painting. objc_find retains logical
-hit bounds; 3D hit expansion remains deferred with 3D rendering.
+glyphs. An empty clip succeeds without painting. objc_find applies native 3D
+hit expansion.
 
 Drawing reuses an existing per-window update section without upgrading or
 releasing it. Otherwise it obtains a nested standard display update section.
@@ -1505,8 +1505,8 @@ X86_64_MEMTEST, build the kernel and x32test/import fixtures, then run the boot
 script with MMAP_BOOT_SCREENSHOT=/tmp/ptos-libaes-objects.png. The optional QMP
 helper waits for the demo-ready marker and writes a PNG directly from QEMU;
 no generated or reconstructed UI is used. The checked-in example is in
-doc/screenshots/libaes-objects.png. Window decorations, forms, resources,
-menus, bitmap/icon drawing and 3D extensions remain subsequent slices.
+doc/screenshots/libaes-objects.png. Window decorations and menus remain subsequent slices. Forms, resources,
+bitmap/icon drawing and 3D objects are now supported.
 
 
 Userspace resource and form geometry (#752)
@@ -1578,7 +1578,7 @@ are released. It waits for button/rectangle predicates through the existing
 GEM event adapter, leaving keyboard and message input queued. When release
 and a boundary change arrive together, trusted release coordinates determine
 the final state and inside/outside result. Absolute child bounds include the
-parent offsets. As with current object drawing, 3D expansion is deferred.
+parent offsets and native 3D expansion.
 
 form_button preserves selectable toggling, EXIT continuation, editable-field
 returns, radio sibling deselection and TOUCHEXIT behavior. Exactly two clicks
@@ -1655,9 +1655,8 @@ current CUIS and workstation clips. All native raster storage is kernel-private
 bounded staging memory, freed before return. Library snapshots are limited to
 one MiB of worst-case storage, allocated and freed through GEMDOS.
 
-The library uses the classic two-dimensional alert appearance and English system
-error strings for now; 3D objects and locale selection remain separate migration
-work. form_error keeps the standard positive DOS error-number convention and
+The library uses native 3D alert buttons and background flags, with English
+system error strings. Locale selection remains separate migration work. form_error keeps the standard positive DOS error-number convention and
 native return behavior, rather than returning the alert button number.
 
 Validation includes the host sanitizer suite and ordinary GEM source compiled
@@ -1796,9 +1795,36 @@ invalid counts/pointers, and bounds each colour bitmap to 1 MiB. Native icon
 coordinate/label checks and clipped destinations also apply. Dither allocation
 uses tracked temporary storage, with later cleanup retries after failed frees;
 allocation failure preserves the native undarkened-icon fallback. No kernel
-service or colour protocol is added, and 3D support remains a separate slice.
+service or colour protocol is added.
 
 Colour-icon regressions include an eight-plane 16x16 pattern covering every
 raw index 0..255 and its selected complement. Independent one-pixel G_IMAGE
 swatches check all mappings, including index 255 to BLACK, in both the host
 oracle and disk-loaded GEM256.RSC through the real x32 loader and VDI.
+
+
+Userspace 3D objects (#772)
+
+libaes compiles the original aes/shared/gemrender.c 3D painter with caller-local
+bindings. FL3DIND, FL3DACT and FL3DBAK retain the native bevels, fill colours,
+selected text movement and colour changes. Form watch rectangles include the
+same expansion, and alerts use the original 3D button layout. No native kernel
+behaviour or ROM object list changes.
+
+objc_sysvar and mt_objc_sysvar expose the standard SV_INQUIRE/SV_SET interface
+for LK3DIND, LK3DACT, INDBUTCOL, ACTBUTCOL, BACKGRCOL and read-only AD3DVAL.
+Preferences are local to the calling process, including saved-global calls;
+they do not change other applications' appearance. Defaults come from native
+init_3d using the current workstation palette. Invalid modes, selectors and
+colour indices fail without modifying output arguments. AES_OBJECT reports
+3D flags and basic objc_sysvar support, without claiming GDOS object fonts.
+
+The original painter uses WORD intermediates for 3D outlines and shadows.
+Preflight rejects 3D objects whose expanded geometry cannot fit those
+intermediates before painting or changing state. Existing wide-coordinate 2D
+rendering remains available. Shared bounds calculations use LONG intermediates.
+
+Regression coverage includes native bevel/selection pixels, configurable
+colours, saved-global sysvar calls, invalid arguments, expanded and shadowed
+hit rectangles, and overflowing geometry. The same ordinary GEM source runs
+in the host sanitizer suite and in x32 QEMU against unmodified GEMlib headers.

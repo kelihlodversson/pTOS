@@ -1,7 +1,7 @@
 /* Bind the original alert layout to per-call resource storage. */
 #include "alert_context.h"
 #include "gemlayout.h"
-#define ALERT_3D 0
+#define ALERT_3D 1
 #define fm_alert_tree aes_alert_tree
 #define rs_trees (aes_alert_context->trees)
 #define gl_hchar (aes_alert_context->metrics.hchar)

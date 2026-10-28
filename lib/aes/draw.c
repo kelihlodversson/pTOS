@@ -30,6 +30,7 @@ WORD aes_edit_core(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
 
 /* Save/restore around nested USERDEF calls. */
 PAINTER *aes_painter;
+AES_3D_STYLE aes_3d_style;
 
 
 /* Only these low-level GSX bindings differ from the native renderer. They
@@ -346,7 +347,7 @@ static BOOL icon_position(const ICONBLK *icon, WORD x, WORD y)
         !word_position(tx+icon->ib_wtext,ty+icon->ib_htext))) return FALSE;
     return TRUE;
 }
-static BOOL supported(OBJECT *object, WORD x, WORD y)
+static BOOL supported_payload(OBJECT *object, WORD x, WORD y)
 {
     WORD type = object->ob_type & 255;
     OBSPEC spec;
@@ -355,7 +356,6 @@ static BOOL supported(OBJECT *object, WORD x, WORD y)
     ICONBLK *icon;
     CICON *variant, *slow, *fast;
     ULONG bytes;
-    if (object->ob_flags & FL3DMASK) return FALSE;
     spec = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
     if (spec.index == -1) return TRUE;
     switch (type) {
@@ -401,6 +401,26 @@ static BOOL supported(OBJECT *object, WORD x, WORD y)
     default: return FALSE;
     }
 }
+static BOOL supported(OBJECT *object, WORD x, WORD y)
+{
+    if (!supported_payload(object,x,y)) return FALSE;
+    if (object->ob_flags & FL3DMASK) {
+        OBSPEC effective = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
+        LONG pad = 8, w = object->ob_width, h = object->ob_height;
+        /* The original 3D painter uses WORD rectangles/line points. Keep
+         * every outline, bevel and selected-text addition representable. */
+        WORD border, dummy;
+        GRECT logical;
+        OBSPEC ignored;
+        if (effective.index == -1L) return TRUE;
+        ob_sst(object,0,&ignored,&dummy,&dummy,&dummy,&logical,&border);
+        if (border < 0) pad -= 3L*border; else pad += 3L*border;
+        if (w <= 0 || h <= 0 || (LONG)x-pad < -32768L || (LONG)y-pad < -32768L ||
+            (LONG)x+w+pad > 32767L || (LONG)y+h+pad > 32767L ||
+            w+2*pad > 32767L || h+2*pad > 32767L) return FALSE;
+    }
+    return TRUE;
+}
 BOOL aes_render_ready(OBJECT *tree, WORD object, WORD x, WORD y)
 {
     /* USERDEF can change a later sibling after the subtree preflight. */
@@ -445,6 +465,7 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     opened = TRUE; aes_painter = &p; p.handle = ws.handle; p.ok = TRUE;
     memcpy(&p.workstation,ws.intout,sizeof(ws.intout));
     memcpy((WORD *)&p.workstation+45,ws.ptsout,sizeof(ws.ptsout));
+    if (!aes_3d_style.ready) { aes_init_3d(); aes_3d_style.ready = TRUE; }
     p.mode = p.text_color = p.line_color = p.interior = p.pattern = p.font = -1;
     p.clip.g_x = cx < 0 ? 0 : cx; p.clip.g_y = cy < 0 ? 0 : cy;
     right = (LONG)cx+cw; bottom = (LONG)cy+ch;
@@ -576,3 +597,28 @@ WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD 
     a.kind = kind; a.small = *small; a.large = *large;
     return render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
 }
+
+
+WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2, WORD *global)
+{
+    PAINTER p = { 0 }, *saved = aes_painter;
+    VDI_SERVICE_WORKSTATION ws;
+    WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, first = 0, second = 0, result;
+    if ((mode != SV_INQUIRE && mode != SV_SET) || aes_application_session(global) < 0) return 0;
+    /* Negative colours are not VDI pens and cannot index xor_color's table. */
+    if (mode == SV_SET && (which == INDBUTCOL || which == ACTBUTCOL || which == BACKGRCOL) && in1 < 0) return 0;
+    if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) return 0;
+    if (aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK ||
+        ws.intout[13] <= 0 || ws.intout[13] > 256) return 0;
+    p.workstation.ws_ncolors = ws.intout[13]; aes_painter = &p;
+    if (!aes_3d_style.ready) { aes_init_3d(); aes_3d_style.ready = TRUE; }
+    result = aes_sysvar_core(mode,which,in1,in2,&first,&second);
+    aes_painter = saved;
+    if (result && !mode) {
+        if (out1) *out1 = first;
+        if (out2 && (which == LK3DIND || which == LK3DACT || which == AD3DVALUE)) *out2 = second;
+    }
+    return result;
+}
+WORD objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
+{ return mt_objc_sysvar(mode,which,in1,in2,out1,out2,aes_global); }

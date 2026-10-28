@@ -180,6 +180,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then
         grep -q 'x32 GEM object drawing: PASS' "$log"
         grep -q 'x32 GEM colour icons: PASS' "$log"
+        grep -q 'x32 GEM 3D objects: PASS' "$log"
         grep -q 'x32 GEM resource loading: PASS' "$log"
     else
         grep -q 'x32 GEM object drawing: unavailable' "$log"

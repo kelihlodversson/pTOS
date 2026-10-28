@@ -5,6 +5,7 @@
 #include "gem_draw_probe.h"
 #include "mono_objects.h"
 #include "colour_objects.h"
+#include "three_d.h"
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
@@ -325,6 +326,11 @@ int main(int argc, char **argv, char **envp)
         static const char marker[] = "x32 GEM colour icons: PASS\r\n";
         ptos_write(1,marker,sizeof(marker)-1);
     }
+    status = gem_3d_checks(handle); if (status) return status;
+    {
+        static const char marker[] = "x32 GEM 3D objects: PASS\r\n";
+        ptos_write(1,marker,sizeof(marker)-1);
+    }
     status = gem_mono_checks(handle); if (status) return status;
     status = geometry_checks(handle); if (status) return status;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
@@ -344,6 +350,9 @@ int main(int argc, char **argv, char **envp)
     object(&box,G_BOX,20,20,20,20); box.ob_spec.index = 0x1172;
     VERIFY(mt_objc_draw(&box,0,0,25,25,10,10,global) == 1);
     VERIFY(gem_probe_pixel(handle,26,26) == 2 && gem_probe_pixel(handle,24,24) == 0 && gem_probe_pixel(handle,35,35) == 0);
+    /* Native high-colour selection redraws coloured boxes.  Capture a fully
+     * painted object before checking selection/deselection restoration. */
+    VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
     for (y = 0; y < 20; y++) for (x = 0; x < 20; x++) pixels[y*20+x] = gem_probe_pixel(handle,x+20,y+20);
     VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1 && gem_probe_pixel(handle,26,26) != 2);
     VERIFY(mt_objc_change(&box,0,0,0,0,100,100,0,1,global) == 1);

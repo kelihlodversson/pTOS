@@ -6,6 +6,9 @@
 #include "application.h"
 #include "form_context.h"
 #include "gemobjtree.h"
+#include "gemobjbounds.h"
+#include "../../aes/gemobjop.h"
+#include "render_context.h"
 
 FORM_CONTEXT *aes_form_context;
 
@@ -36,8 +39,21 @@ void aes_form_clip(const GRECT *clip)
 }
 void aes_form_rect(OBJECT *tree, WORD object, GRECT *rect)
 {
+    WORD border, dummy;
+    OBSPEC spec;
+    LONG x, y, width, height;
     ob_offset(tree,object,&rect->g_x,&rect->g_y);
-    rect->g_w = tree[object].ob_width; rect->g_h = tree[object].ob_height;
+    x = rect->g_x; y = rect->g_y;
+    ob_sst(tree,object,&spec,&dummy,&dummy,&dummy,rect,&border);
+    ob_3d_bounds(tree+object,border,FALSE,&x,&y,&width,&height);
+    if (x < -32768L || x > 32767L || y < -32768L || y > 32767L ||
+        width < 0 || width > 32767L || height < 0 || height > 32767L) {
+        rect->g_w = rect->g_h = 0;
+        if (aes_form_context) aes_form_context->ok = FALSE;
+        if (aes_painter) aes_painter->ok = FALSE;
+        return;
+    }
+    rect->g_x = x; rect->g_y = y; rect->g_w = width; rect->g_h = height;
 }
 UWORD aes_form_flags(OBJECT *tree, WORD object, WORD *flags)
 {

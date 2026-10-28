@@ -2,6 +2,7 @@
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later.
  */
 #include "libaes.h"
+#include "../../aes/shared/gemobjbounds.h"
 #include "../../aes/shared/gemobjtree.h"
 
 WORD objc_add(OBJECT *tree, WORD parent, WORD child)
@@ -32,13 +33,15 @@ WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y)
 
 static BOOL object_contains(const OBJECT *object, WORD x, WORD y, WORD mx, WORD my)
 {
-    return !(object->ob_flags & HIDETREE) && mx >= x && my >= y &&
-           mx < (LONG)x + object->ob_width && my < (LONG)y + object->ob_height;
+    LONG bx = x, by = y, width, height;
+    ob_3d_bounds(object,0,TRUE,&bx,&by,&width,&height);
+    return !(object->ob_flags & HIDETREE) && mx >= bx && my >= by &&
+           mx < bx+width && my < by+height;
 }
 
 /* Scan siblings forward once and descend into the last matching child:
  * later siblings are drawn on top. No recursion or per-object scratch space.
- * Coordinates are logical object bounds; rendering effects are not hit areas. */
+ * Native 3D/outline expansion applies; shadowed objects keep logical hits. */
 WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my)
 {
     WORD object = start, child, found, x, y, child_x, child_y;

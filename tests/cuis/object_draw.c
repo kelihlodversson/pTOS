@@ -3,6 +3,7 @@
 #include "gemerror.h"
 #include "mono_objects.h"
 #include "colour_objects.h"
+#include "three_d.h"
 #include "../../aes/shared/gemcicon.h"
 #include "../../lib/aes/resource_context.h"
 #include "../../lib/aes/render_context.h"
@@ -677,6 +678,9 @@ int main(void)
     VERIFY(before == 0);
     before = gem_colour_checks(0);
     if (before) __builtin_printf("colour object failure: %x\n",before);
+    VERIFY(before == 0);
+    before = gem_3d_checks(0);
+    if (before) __builtin_printf("3D object failure: %x\n",before);
     VERIFY(before == 0);
     before = gem_mono_checks(0);
     if (before) __builtin_printf("mono object failure: %x\n",before);
