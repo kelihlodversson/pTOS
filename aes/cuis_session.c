@@ -85,6 +85,7 @@ typedef struct cuis_client {
     CUIS_INPUT_WAIT *input_wait; /* Resident syscall stack, only while blocked. */
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
+    UWORD surface_height, surface_events;
     LONG input_result[5]; /* key, count, x, y, packed buttons/modifiers */
 } CUIS_CLIENT;
 static CUIS_CLIENT *clients;
@@ -114,12 +115,45 @@ static CUIS_CLIENT *display_owner;
 static ULONG display_depth;
 static CUIS_RECT display_clip;
 
+/* A process-owned top strip is generic display coordination, not a GEM
+ * tree/message protocol. Focus chooses among registered surfaces. */
+static CUIS_CLIENT *surface_owner, *surface_capture;
+static BOOL surface_focus_pending;
+static void surface_choose(CUIS_CLIENT *client)
+{
+    if (surface_owner) surface_owner->surface_events = 0;
+    surface_owner = client;
+    if (client) {
+        client->surface_events = CUIS_SURFACE_DIRTY;
+        if (pointer_initialized && pointer_y < client->surface_height && !pointer_buttons)
+            client->surface_events |= CUIS_SURFACE_POINTER;
+    }
+}
+static void surface_focus(void)
+{
+    if (!surface_focus_pending || display_owner || update_owner || surface_capture) return;
+    surface_focus_pending = FALSE;
+    if (focus_window && focus_window->client->surface_height && surface_owner != focus_window->client)
+        surface_choose(focus_window->client);
+}
+static void surface_fallback(CUIS_CLIENT *exclude)
+{
+    CUIS_CLIENT *client;
+    if (focus_window && focus_window->client != exclude && focus_window->client->surface_height) {
+        surface_choose(focus_window->client); return;
+    }
+    for (client = clients; client; client = client->next)
+        if (client != exclude && client->surface_height) break;
+    surface_choose(client);
+}
+
 static void end_update(void)
 {
     if (update_clips) kfree(update_clips);
     update_clips = NULL;
     update_count = 0;
     update_owner = NULL;
+    surface_focus();
     update_window = NULL;
 }
 
@@ -206,6 +240,8 @@ static BOOL set_focus(CUIS_WINDOW *window)
         }
         if (window) window->key_head = window->key_count = 0;
         focus_window = window;
+        surface_focus_pending = TRUE;
+        surface_focus();
     }
     cuis_input_unlock(flags);
     return changed;
@@ -312,6 +348,20 @@ static BOOL route_pointer(ULONG changed)
         if (target) pointer_enqueue(target, changed, target == hit);
         else button_enqueue(mouse_owner, changed);
         if (!pointer_buttons) pointer_capture = NULL;
+        return TRUE;
+    }
+    if (surface_capture || (surface_owner && !pointer_capture && pointer_y < surface_owner->surface_height)) {
+        CUIS_CLIENT *client = surface_capture ? surface_capture : surface_owner;
+        if (pointer_hover) pointer_enqueue(pointer_hover,0,FALSE);
+        pointer_hover = NULL;
+        client->surface_events |= CUIS_SURFACE_POINTER;
+        if (pointer_buttons) surface_capture = client;
+        /* Surface gestures are consumed by its owner-side handler, not
+         * ordinary application button history. A subsequent mouse grab
+         * samples the current held state without replaying a bar press. */
+        if (!pointer_buttons && surface_capture) {
+            sample_input_waits(); surface_capture = NULL; surface_focus();
+        }
         return TRUE;
     }
     if (!pointer_capture && (changed & pointer_buttons)) {
@@ -482,6 +532,43 @@ static BOOL display_available(void *argument)
     return !display_owner && !update_owner;
 }
 
+LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
+{
+    CUIS_CLIENT *client;
+    SCREEN_MODE_DESC mode;
+    UQUAD flags;
+    LONG result;
+    if (handle > 0x7fffffffULL) return EINVAL;
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
+    if (function == CUIS_CLOCK) {
+        result = argument ? EINVAL : (LONG)(cuis_input_ticks() & 0x7fffffffUL);
+    } else if (function == CUIS_SURFACE_STATUS) {
+        if (argument > 2) result = EINVAL;
+        else if (argument == 2) {
+            if (surface_owner != client) result = EACCDN;
+            else { client->surface_events |= CUIS_SURFACE_DIRTY; result = E_OK; }
+        } else {
+            result = surface_owner == client ? CUIS_SURFACE_OWNED | (mouse_owner ? 0 : client->surface_events) : 0;
+            if (argument && !mouse_owner) client->surface_events = 0;
+        }
+    } else if (function == CUIS_SURFACE_REGISTER) {
+        screen_get_current_mode_desc(&mode);
+        if (argument && (argument > 32767 || argument >= mode.height || !mode.width)) result = EINVAL;
+        else if ((display_owner && display_owner != client) || (update_owner && update_owner != client) ||
+                 (surface_capture && surface_capture != client)) result = EAGAIN;
+        else {
+            client->surface_height = argument;
+            if (argument) { surface_focus_pending = FALSE; surface_choose(client); }
+            else if (surface_owner == client) surface_fallback(client);
+            result = E_OK;
+        }
+    } else result = EINVFN;
+    cuis_input_unlock(flags);
+    return result;
+}
+
 LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 {
     CUIS_CLIENT *client;
@@ -494,7 +581,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
         if (!acquire) {
             if (display_owner != client) { cuis_input_unlock(flags); return EACCDN; }
-            if (!--display_depth) { end_keyboard(); clear_display_regions(client); display_owner = NULL; }
+            if (!--display_depth) { end_keyboard(); clear_display_regions(client); display_owner = NULL; surface_focus(); }
             cuis_input_unlock(flags); return E_OK;
         }
         if (display_owner == client) {
@@ -532,6 +619,7 @@ static BOOL mouse_available(void *argument)
 {
     CUIS_CLIENT *client = argument;
     return !mouse_owner && (!pointer_buttons ||
+        surface_capture == client ||
         (pointer_capture && pointer_capture->client == client && !pointer_activation_drag));
 }
 
@@ -594,7 +682,7 @@ static void end_mouse(void)
     end_keyboard();
     mouse_owner->edge_count = mouse_owner->recent_count = 0;
     mouse_owner = NULL; mouse_depth = 0;
-    pointer_capture = pointer_hover = NULL;
+    pointer_capture = pointer_hover = NULL; surface_capture = NULL;
     pointer_activation_drag = FALSE;
     /* Never deliver a release without the press that belonged to the grab. */
     pointer_suppressed = pointer_buttons != 0;
@@ -643,6 +731,9 @@ void cuis_process_exit(PD *owner)
         CUIS_WINDOW *window;
         UQUAD flags = cuis_input_lock();
         client->input_wait = NULL;
+        client->surface_height = 0;
+        if (surface_capture == client) { surface_capture = NULL; pointer_suppressed = pointer_buttons != 0; }
+        if (surface_owner == client) surface_fallback(client);
         if (mouse_owner == client) end_mouse();
         cuis_input_unlock(flags);
         if (update_owner == client) end_update();
@@ -714,6 +805,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->stream_head = client->stream_bytes = 0;
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
+        client->surface_height = client->surface_events = 0;
         memset(&client->input_filter, 0, sizeof(client->input_filter));
         memset(client->input_result, 0, sizeof(client->input_result));
         client->owner = run;
@@ -1094,11 +1186,21 @@ BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
     if (display_owner) {
         if (display_owner->owner != run || index) return FALSE;
         *rect = display_clip;
+        if (surface_owner && surface_owner != display_owner) {
+            LONG cut = surface_owner->surface_height;
+            if (cut > rect->height) cut = rect->height;
+            rect->height -= cut; rect->y += cut;
+        }
         return TRUE;
     }
     if (!update_owner || update_owner->owner != run || index >= update_count)
         return FALSE;
     *rect = update_clips[index];
+    if (surface_owner && surface_owner != update_owner && rect->y < surface_owner->surface_height) {
+        LONG cut = surface_owner->surface_height-rect->y;
+        if (cut > rect->height) cut = rect->height;
+        rect->y += cut; rect->height -= cut;
+    }
     return TRUE;
 }
 
@@ -1218,7 +1320,9 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     if (pointer_initialized) { x = pointer_x; y = pointer_y; buttons = pointer_buttons; }
     owned = !pointer_suppressed && !pointer_legacy_drag && !pointer_activation_drag &&
         (mouse_owner ? mouse_owner == client :
-         pointer_capture ? client_window(client, pointer_capture) : client_window(client, focus_window));
+         surface_capture ? FALSE :
+         pointer_capture ? client_window(client, pointer_capture) :
+         surface_owner && y < surface_owner->surface_height ? FALSE : client_window(client, focus_window));
     if (owned) {
         for (i = 0; i < 2; i++) {
             bit = i ? CUIS_READY_RECT2 : CUIS_READY_RECT1;
@@ -1304,6 +1408,8 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_STREAM) && wait->client->stream_bytes >= wait->minimum)
         result |= CUIS_READY_STREAM;
     if ((wait->events & CUIS_READY_NOTICE) && notices_ready(wait->client)) result |= CUIS_READY_NOTICE;
+    if ((wait->events & CUIS_READY_SURFACE) && !mouse_owner && surface_owner == wait->client && wait->client->surface_events)
+        result |= CUIS_READY_SURFACE;
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
     return result;

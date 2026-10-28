@@ -244,6 +244,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "notices.c"
 #include "input_events.c"
 #include "mouse_control.c"
+#include "surfaces.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -318,5 +319,7 @@ int main(void)
     rc = input_event_checks();
     if (rc) return rc;
     rc = input_capture_checks();
-    return rc ? rc : mouse_control_checks();
+    if (rc) return rc;
+    rc = mouse_control_checks();
+    return rc ? rc : surface_checks();
 }

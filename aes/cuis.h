@@ -4,6 +4,7 @@
 #include "bdosdefs.h"
 #include "cuis_region.h"
 #include "../include/cuis.h"
+LONG cuis_surface_service(ULONG function, UQUAD session, UQUAD argument);
 LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e);
 LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e);

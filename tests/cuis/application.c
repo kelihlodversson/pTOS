@@ -46,6 +46,11 @@ static LONG window_transport(ULONG fn, UQUAD a)
 }
 static int resource_resets;
 void aes_resources_reset(void) { resource_resets++; }
+BOOL aes_menu_registered(void) { return FALSE; }
+BOOL aes_menu_listening(void) { return FALSE; }
+LONG aes_menu_flush(WORD *global) { (void)global; return E_OK; }
+LONG aes_menu_dispatch(WORD *global) { (void)global; return E_OK; }
+void aes_menu_reset(void) { }
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -232,7 +237,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == CUIS_READY_ALL);
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~CUIS_READY_SURFACE));
     CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
     state_error = EIMBA; x = 123;

@@ -8,6 +8,7 @@
 #include "three_d.h"
 #include "menu_items.h"
 #include "popup_menu.h"
+#include "gem_menubar.h"
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
@@ -34,6 +35,12 @@ void gem_popup_input_stage(short stage)
 {
     char message[] = "x32 GEM popup 0: READY\r\n";
     message[14] = '0'+stage;
+    ptos_write(1,message,sizeof(message)-1);
+}
+void gem_menubar_input_stage(short stage)
+{
+    static const char message[] = "x32 GEM menu bar: READY\r\n";
+    (void)stage;
     ptos_write(1,message,sizeof(message)-1);
 }
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
@@ -303,6 +310,11 @@ int main(int argc, char **argv, char **envp)
         {
             static const char popup_pass[] = "x32 GEM popup menus: PASS\r\n";
             ptos_write(1,popup_pass,sizeof(popup_pass)-1);
+            status = gem_menubar_checks(handle); if (status) return status;
+            {
+                static const char menu_pass[] = "x32 GEM menu bar: PASS\r\n";
+                ptos_write(1,menu_pass,sizeof(menu_pass)-1);
+            }
         }
     }
     VERIFY(gem_probe_cell(handle,&cellw,&cellh) == 0);

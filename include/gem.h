@@ -275,6 +275,11 @@ short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global);
 #define DISABLE 0
 #define HIGHLIGHT 0
 #define UNHIGHLIGHT 1
+#define MENU_REMOVE 0
+#define MENU_INSTALL 1
+#define MN_SELECTED 10
+short menu_bar(OBJECT *tree, short show);
+short mt_menu_bar(OBJECT *tree, short show, short *global);
 short menu_popup(MENU *menu, short x, short y, MENU *result);
 short mt_menu_popup(MENU *menu, short x, short y, MENU *result, short *global);
 short menu_icheck(OBJECT *tree, short item, short check);
