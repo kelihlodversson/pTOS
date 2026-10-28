@@ -69,11 +69,11 @@ BYTE ob_sst(OBJECT *tree, WORD obj, OBSPEC *pspec, WORD *pstate, WORD *ptype,
 
 
 void everyobj(OBJECT *tree, WORD this, WORD last, EVERYOBJ_CALLBACK routine,
-              WORD startx, WORD starty, WORD maxdep)
+              OB_WALK_COORD startx, OB_WALK_COORD starty, WORD maxdep)
 {
     WORD    tmp1;
     WORD    depth;
-    WORD    x[MAX_DEPTH+2], y[MAX_DEPTH+2];
+    OB_WALK_COORD x[MAX_DEPTH+2], y[MAX_DEPTH+2];
     OBJECT  *obj;
 
     x[0] = startx;

@@ -60,6 +60,10 @@ extern "C" {
 #define AES_GLOBMAX 15
 #define AES_PROCESS 4
 #define AES_INQUIRE 6
+#define AES_OBJECT 13
+#define SV_INQUIRE 0
+#define SV_SET 1
+#define AD3DVAL AD3DVALUE
 #define APR_NOWAIT (-1)
 #define MU_KEYBD 0x0001
 #define MU_BUTTON 0x0002
@@ -264,6 +268,8 @@ short form_center(OBJECT *tree, short *x, short *y, short *w, short *h);
 short mt_form_center(OBJECT *tree, short *x, short *y, short *w, short *h, short *global);
 short form_center_grect(OBJECT *tree, GRECT *rect);
 short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global);
+short objc_sysvar(short mode, short which, short in1, short in2, short *out1, short *out2);
+short mt_objc_sysvar(short mode, short which, short in1, short in2, short *out1, short *out2, short *global);
 short objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h);
 short mt_objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h, short *global);
 short objc_change(OBJECT *tree, short object, short reserved, short x, short y, short w, short h, short state, short redraw);

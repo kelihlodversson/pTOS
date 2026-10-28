@@ -29,6 +29,7 @@
 /*
  * 3D globals set and returned by objc_sysvar()
  */
+#ifndef AES_RENDER_BINDINGS
 static WORD indtxtmove;         /* 1 => indicators move text */
 static WORD indcolchange;       /* 1 => indicators change colour */
 static WORD acttxtmove;         /* 1 => activators move text */
@@ -36,6 +37,7 @@ static WORD actcolchange;       /* 1 => activators change colour */
 static WORD indbutcol;          /* indicator button colour */
 static WORD actbutcol;          /* activator button colour */
 WORD backgrcol;                 /* background colour - used by fm_alert() */
+#endif
 
 /*
  *  4-colour table used by xor_color():

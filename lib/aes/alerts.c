@@ -28,6 +28,7 @@ WORD mt_form_alert(WORD button, const char *text, WORD *global)
     c.screen.g_w = c.metrics.width; c.screen.g_h = c.metrics.height;
     c.trees[DIALERT] = c.objects;
     c.objects[0].ob_type = G_BOX; c.objects[0].ob_state = OUTLINED;
+    c.objects[0].ob_flags = FL3DBAK; /* Original DIALERT resource flags. */
     c.objects[0].ob_spec.index = 0x00011100L;
     for (i = 0; i < MAX_LINENUM; i++) {
         c.objects[MSGOFF+i].ob_type = G_STRING;

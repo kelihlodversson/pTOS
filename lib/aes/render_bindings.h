@@ -38,7 +38,16 @@
 #define OB_RENDER_EXTENT aes_render_extent
 #define OB_RENDER_READY(tree,object,x,y) aes_render_ready(tree,object,x,y)
 #define OB_RENDER_FILL(x,y,w,h) aes_render_fill(x,y,w,h)
-#define OB_RENDER_3D 0
+#define OB_RENDER_3D 1
+#define indtxtmove (aes_3d_style.indicator_move)
+#define indcolchange (aes_3d_style.indicator_change)
+#define acttxtmove (aes_3d_style.activator_move)
+#define actcolchange (aes_3d_style.activator_change)
+#define indbutcol (aes_3d_style.indicator_colour)
+#define actbutcol (aes_3d_style.activator_colour)
+#define backgrcol (aes_3d_style.background)
+#define init_3d aes_init_3d
+#define ob_sysvar aes_sysvar_core
 #define OB_RENDER_NICELINES 0
 #define OB_RENDER_COLOUR_ICONS 1
 #define OB_RENDER_CICON(block) aes_render_cicon(block)

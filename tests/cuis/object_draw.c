@@ -3,6 +3,7 @@
 #include "gemerror.h"
 #include "mono_objects.h"
 #include "colour_objects.h"
+#include "three_d.h"
 #include "../../aes/shared/gemcicon.h"
 #include "../../lib/aes/resource_context.h"
 #include "../../lib/aes/render_context.h"
@@ -678,6 +679,32 @@ int main(void)
     before = gem_colour_checks(0);
     if (before) __builtin_printf("colour object failure: %x\n",before);
     VERIFY(before == 0);
+    before = gem_3d_checks(0);
+    if (before) __builtin_printf("3D object failure: %x\n",before);
+    VERIFY(before == 0);
+    {
+        OBJECT button = { 0 };
+        WORD x, y, move = -1, change = -1;
+        button.ob_next = button.ob_head = button.ob_tail = NIL;
+        button.ob_type = G_BUTTON; button.ob_flags = FL3DACT | LASTOB;
+        button.ob_x = button.ob_y = 20; button.ob_width = 80; button.ob_height = 30;
+        button.ob_spec.free_string = "Move";
+        VERIFY(objc_draw(&button,0,0,0,0,160,120) == 1);
+        x = last_text_x; y = last_text_y;
+        VERIFY(objc_change(&button,0,0,0,0,160,120,SELECTED,1) == 1);
+        VERIFY(last_text_x == x+1 && last_text_y == y+1);
+        VERIFY(objc_sysvar(SV_SET,LK3DACT,0,-1,NULL,NULL) == 1);
+        VERIFY(objc_draw(&button,0,0,0,0,160,120) == 1);
+        VERIFY(last_text_x == x+1 && last_text_y == y+1);
+        VERIFY(objc_change(&button,0,0,0,0,160,120,0,1) == 1);
+        VERIFY(last_text_x == x+1 && last_text_y == y+1);
+        fail_layout_close = TRUE;
+        VERIFY(objc_sysvar(SV_SET,LK3DACT,1,1,NULL,NULL) == 0);
+        fail_layout_close = FALSE;
+        VERIFY(objc_sysvar(SV_INQUIRE,LK3DACT,0,0,&move,&change) == 1);
+        VERIFY(move == 0 && change == 0);
+        VERIFY(objc_sysvar(SV_SET,LK3DACT,1,0,NULL,NULL) == 1);
+    }
     before = gem_mono_checks(0);
     if (before) __builtin_printf("mono object failure: %x\n",before);
     VERIFY(before == 0);

@@ -6,6 +6,7 @@
 #include "aesext.h"
 #include "vdipb.h"
 #include "gsxdefs.h"
+#include "style.h"
 typedef struct painter {
     WORD handle, colour_planes;
     BOOL ok;
@@ -21,6 +22,8 @@ typedef struct painter {
 } PAINTER;
 
 extern PAINTER *aes_painter;
+void aes_init_3d(void);
+WORD aes_sysvar_core(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2);
 CICON *aes_render_cicon(CICONBLK *block);
 void aes_render_colourblit(const WORD *data, const GRECT *rect, WORD planes);
 void *aes_render_alloc(LONG bytes);

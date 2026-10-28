@@ -124,6 +124,11 @@ short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, short 
         if (d) *d = 1; /* Standard caller-owned native rsrc_rcfix. */
         return 1;
     }
+    if (type == AES_OBJECT && registered(global)) {
+        if (a) *a = 1; /* Standard 3D object flags. */
+        if (b) *b = 1; /* MultiTOS objc_sysvar, without extended selectors. */
+        return 1;
+    }
     if (type == AES_INQUIRE && registered(global)) {
         if (a) *a = 1; /* APR_NOWAIT */
         return 1;

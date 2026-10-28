@@ -30,6 +30,7 @@ WORD aes_edit_core(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
 
 /* Save/restore around nested USERDEF calls. */
 PAINTER *aes_painter;
+AES_3D_STYLE aes_3d_style;
 
 
 /* Only these low-level GSX bindings differ from the native renderer. They
@@ -333,7 +334,7 @@ static BOOL word_position(LONG x, LONG y)
 {
     return x >= -32768L && x <= 32767L && y >= -32768L && y <= 32767L;
 }
-static BOOL icon_position(const ICONBLK *icon, WORD x, WORD y)
+static BOOL icon_position(const ICONBLK *icon, LONG x, LONG y)
 {
     LONG ix = (LONG)x+icon->ib_xicon, iy = (LONG)y+icon->ib_yicon;
     LONG tx = (LONG)x+icon->ib_xtext, ty = (LONG)y+icon->ib_ytext;
@@ -346,7 +347,7 @@ static BOOL icon_position(const ICONBLK *icon, WORD x, WORD y)
         !word_position(tx+icon->ib_wtext,ty+icon->ib_htext))) return FALSE;
     return TRUE;
 }
-static BOOL supported(OBJECT *object, WORD x, WORD y)
+static BOOL supported_payload(OBJECT *object, LONG x, LONG y)
 {
     WORD type = object->ob_type & 255;
     OBSPEC spec;
@@ -355,7 +356,6 @@ static BOOL supported(OBJECT *object, WORD x, WORD y)
     ICONBLK *icon;
     CICON *variant, *slow, *fast;
     ULONG bytes;
-    if (object->ob_flags & FL3DMASK) return FALSE;
     spec = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
     if (spec.index == -1) return TRUE;
     switch (type) {
@@ -401,36 +401,75 @@ static BOOL supported(OBJECT *object, WORD x, WORD y)
     default: return FALSE;
     }
 }
+static BOOL supported(OBJECT *object, LONG x, LONG y)
+{
+    LONG payload_x = x, payload_y = y;
+    /* Icon bitmap, label and character offsets use the enlarged 3D origin. */
+    if (object->ob_flags & FL3DOBJ) { payload_x -= ADJ3DSTD; payload_y -= ADJ3DSTD; }
+    if (!word_position(x,y) || !supported_payload(object,payload_x,payload_y)) return FALSE;
+    if (object->ob_flags & FL3DMASK) {
+        OBSPEC effective = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
+        LONG pad = 8, w = object->ob_width, h = object->ob_height;
+        /* The original 3D painter uses WORD rectangles/line points. Keep
+         * every outline, bevel and selected-text addition representable. */
+        WORD border, dummy;
+        GRECT logical;
+        OBSPEC ignored;
+        if (effective.index == -1L) return TRUE;
+        ob_sst(object,0,&ignored,&dummy,&dummy,&dummy,&logical,&border);
+        if (border < 0) pad -= 3L*border; else pad += 3L*border;
+        if (w <= 0 || h <= 0 || (LONG)x-pad < -32768L || (LONG)y-pad < -32768L ||
+            (LONG)x+w+pad > 32767L || (LONG)y+h+pad > 32767L ||
+            w+2*pad > 32767L || h+2*pad > 32767L) return FALSE;
+    }
+    return TRUE;
+}
 BOOL aes_render_ready(OBJECT *tree, WORD object, WORD x, WORD y)
 {
     /* USERDEF can change a later sibling after the subtree preflight. */
     if (aes_painter->ok && !supported(&tree[object],x,y)) aes_painter->ok = FALSE;
     return aes_painter->ok;
 }
-static BOOL preflight(OBJECT *tree, WORD object, WORD depth, WORD x, WORD y)
+static BOOL preflight(OBJECT *tree, WORD object, WORD depth, LONG x, LONG y)
 {
     WORD child;
     if (tree[object].ob_flags & HIDETREE) return TRUE;
     if (!supported(&tree[object],x,y)) return FALSE;
     if (depth && tree[object].ob_head != NIL)
         for (child = tree[object].ob_head; child != object; child = tree[child].ob_next)
-            if (child < 0 || !preflight(tree,child,depth-1,(WORD)(x+tree[child].ob_x),(WORD)(y+tree[child].ob_y))) return FALSE;
+            if (child < 0 || !preflight(tree,child,depth-1,x+tree[child].ob_x,y+tree[child].ob_y)) return FALSE;
     return TRUE;
+}
+/* Resolve the start's ancestors once, before narrowing any accumulated sum.
+ * The shared wide walker carries descendant positions through callbacks. */
+static void absolute_position(OBJECT *tree, WORD object, LONG *x, LONG *y)
+{
+    *x = *y = 0;
+    do {
+        *x += tree[object].ob_x; *y += tree[object].ob_y;
+        object = get_par(tree,object);
+    } while (object != NIL);
+}
+static void draw_object(OBJECT *tree, WORD object, LONG x, LONG y)
+{
+    if (!aes_painter->ok || (tree[object].ob_flags & HIDETREE)) return;
+    if (!supported(&tree[object],x,y)) { aes_painter->ok = FALSE; return; }
+    ob_render_object(tree,object,(WORD)x,(WORD)y);
 }
 static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD cw, WORD ch,
                    WORD *global, BOOL change, UWORD state, WORD key, WORD *index, WORD kind, void (*operation)(void *), void *argument)
 {
     PAINTER p = { 0 }, *saved = aes_painter;
-    LONG session = aes_application_session(global), right, bottom, lock;
+    LONG session = aes_application_session(global), right, bottom, lock, x, y;
     VDI_SERVICE_WORKSTATION ws;
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
-    WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, parent, x, y, dummy;
+    WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, parent, dummy;
     BOOL opened = FALSE, success = FALSE;
     if (session < 0) return 0;
     /* Resolve ancestors once; each descendant inherits its parent's absolute
      * position without rescanning the sibling chain through get_par(). */
     x = y = 0;
-    if (!(tree[start].ob_flags & HIDETREE)) ob_offset(tree,start,&x,&y);
+    if (!(tree[start].ob_flags & HIDETREE)) absolute_position(tree,start,&x,&y);
     if (!preflight(tree,start,depth,x,y)) return 0;
     if (cw <= 0 || ch <= 0) {
         if (change) tree[start].ob_state = state;
@@ -445,6 +484,7 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     opened = TRUE; aes_painter = &p; p.handle = ws.handle; p.ok = TRUE;
     memcpy(&p.workstation,ws.intout,sizeof(ws.intout));
     memcpy((WORD *)&p.workstation+45,ws.ptsout,sizeof(ws.ptsout));
+    if (!aes_3d_style.ready) { aes_init_3d(); aes_3d_style.ready = TRUE; }
     p.mode = p.text_color = p.line_color = p.interior = p.pattern = p.font = -1;
     p.clip.g_x = cx < 0 ? 0 : cx; p.clip.g_y = cy < 0 ? 0 : cy;
     right = (LONG)cx+cw; bottom = (LONG)cy+ch;
@@ -470,8 +510,8 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     else if (change) ob_render_change(tree,start,state,TRUE);
     else {
         parent = get_par(tree,start);
-        if (parent != NIL) ob_offset(tree,parent,&x,&y); else x = y = 0;
-        everyobj(tree,start,start == ROOT ? NIL : tree[start].ob_next,ob_render_object,x,y,depth);
+        if (parent != NIL) absolute_position(tree,parent,&x,&y); else x = y = 0;
+        everyobj(tree,start,start == ROOT ? NIL : tree[start].ob_next,draw_object,x,y,depth);
     }
     success = p.ok;
 done:
@@ -512,10 +552,11 @@ WORD objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD 
 /* The editor redraws into the same workstation and immutable update clip. */
 void aes_edit_draw(OBJECT *tree, WORD object, WORD depth)
 {
-    WORD parent, x = 0, y = 0;
+    WORD parent;
+    LONG x = 0, y = 0;
     parent = get_par(tree,object);
-    if (parent != NIL) ob_offset(tree,parent,&x,&y);
-    everyobj(tree,object,tree[object].ob_next,ob_render_object,x,y,depth);
+    if (parent != NIL) absolute_position(tree,parent,&x,&y);
+    everyobj(tree,object,tree[object].ob_next,draw_object,x,y,depth);
 }
 
 WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, WORD *global)
@@ -576,3 +617,28 @@ WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD 
     a.kind = kind; a.small = *small; a.large = *large;
     return render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
 }
+
+
+WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2, WORD *global)
+{
+    PAINTER p = { 0 }, *saved = aes_painter;
+    VDI_SERVICE_WORKSTATION ws;
+    WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, first = 0, second = 0, result;
+    if ((mode != SV_INQUIRE && mode != SV_SET) || aes_application_session(global) < 0) return 0;
+    /* Negative colours are not VDI pens and cannot index xor_color's table. */
+    if (mode == SV_SET && (which == INDBUTCOL || which == ACTBUTCOL || which == BACKGRCOL) && in1 < 0) return 0;
+    if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) return 0;
+    if (aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK ||
+        ws.intout[13] <= 0 || ws.intout[13] > 256) return 0;
+    p.workstation.ws_ncolors = ws.intout[13]; aes_painter = &p;
+    if (!aes_3d_style.ready) { aes_init_3d(); aes_3d_style.ready = TRUE; }
+    result = aes_sysvar_core(mode,which,in1,in2,&first,&second);
+    aes_painter = saved;
+    if (result && !mode) {
+        if (out1) *out1 = first;
+        if (out2 && (which == LK3DIND || which == LK3DACT || which == AD3DVALUE)) *out2 = second;
+    }
+    return result;
+}
+WORD objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
+{ return mt_objc_sysvar(mode,which,in1,in2,out1,out2,aes_global); }
