@@ -27,11 +27,11 @@ WORD mn_popup_track(OBJECT *tree, WORD root, WORD start, const POPUP_TRACK_OPS *
         if (item < 0) {
             outside = FALSE;
             if (!ops->rect(context,tree,root,&rect)) goto done;
-        } else if (item == root) {
-            /* Background/padding must wake on motion towards an item, not
-             * only on leaving the entire enclosing box. */
+        } else {
+            /* Any motion can change the topmost hit in overlapping siblings
+             * (including expanded 3D rows), even inside the old hit area. */
             rect.g_x = x; rect.g_y = y; rect.g_w = rect.g_h = 1;
-        } else if (!ops->rect(context,tree,item,&rect)) goto done;
+        }
         events = ops->wait(context,outside,&rect,mouse);
         if (!(events & (MU_M1 | MU_BUTTON))) goto done;
         x = mouse[0]; y = mouse[1];

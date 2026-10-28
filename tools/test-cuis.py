@@ -56,7 +56,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iaes/shared", "tests/cuis/popup_track.c",
-                "aes/shared/gemmenupopup.c", "-o", str(work / "popup-track")]
+                "aes/shared/gemmenupopup.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c",
+                "aes/shared/gemobjbounds.c", "-DLIBAES_OBJECT_HOST_TEST", "-o", str(work / "popup-track")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "popup-track")], check=True)
     fixture = work / "GEMTEST.RSC"
