@@ -48,8 +48,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     subprocess.run([str(work / "objects")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
-                "-fno-builtin", "-I" + temp, "-Iinclude", "-Ilib/aes",
-                "tests/cuis/application.c", "lib/aes/application.c", "lib/aes/events.c", "lib/aes/session.c", "lib/aes/gemwindows.c",
+                "-fno-builtin", "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes/shared",
+                "tests/cuis/application.c", "lib/aes/application.c", "lib/aes/events.c", "lib/aes/session.c", "lib/aes/gemwindows.c", "aes/shared/gemframegeom.c",
                 "-o", str(work / "application")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "application")], check=True)

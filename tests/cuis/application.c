@@ -3,6 +3,7 @@
 #include "libaes.h"
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
+#include "../../lib/aes/application.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
@@ -272,10 +273,24 @@ static int input_api_checks(void)
     return 0;
 }
 #undef MULTI
+/* Deterministic native system-font box metrics for the window binding. */
+static BOOL frame_metrics_failure;
+BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *global)
+{
+    if (frame_metrics_failure || aes_application_session(global) < 0) return FALSE;
+    *wbox = 19; *hbox = 19;
+    return TRUE;
+}
 #include "window_api.c"
 static int window_failures(void)
 {
     short id, x = 99, y = 99, w = 99, h = 99;
+    frame_metrics_failure = TRUE;
+    CHECK(wind_calc(WC_WORK,NAME,0,0,100,80,&x,&y,&w,&h) == 0);
+    CHECK(x == 99 && y == 99 && w == 99 && h == 99);
+    frame_metrics_failure = FALSE;
+    CHECK(wind_calc(WC_WORK,NAME|INFO|SIZER,0,0,100,80,&x,&y,&w,&h) == 1);
+    CHECK(x == 1 && y == 42 && w == 76 && h == 37);
     window_error_fn = CUIS_WINDOW_CREATE; window_error = ENSMEM;
     CHECK(wind_create(0, 0, 0, 10, 10) == -1);
     window_error_fn = CUIS_WINDOW_IDENTIFY; window_error = EACCDN;

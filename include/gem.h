@@ -165,6 +165,48 @@ short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, sh
 #endif
 short wind_update(short code);
 short mt_wind_update(short code, short *global);
+#ifndef NAME
+#define NAME 0x0001
+#endif
+#ifndef CLOSER
+#define CLOSER 0x0002
+#endif
+#ifndef FULLER
+#define FULLER 0x0004
+#endif
+#ifndef MOVER
+#define MOVER 0x0008
+#endif
+#ifndef INFO
+#define INFO 0x0010
+#endif
+#ifndef SIZER
+#define SIZER 0x0020
+#endif
+#ifndef UPARROW
+#define UPARROW 0x0040
+#endif
+#ifndef DNARROW
+#define DNARROW 0x0080
+#endif
+#ifndef VSLIDE
+#define VSLIDE 0x0100
+#endif
+#ifndef LFARROW
+#define LFARROW 0x0200
+#endif
+#ifndef RTARROW
+#define RTARROW 0x0400
+#endif
+#ifndef HSLIDE
+#define HSLIDE 0x0800
+#endif
+#ifndef HOTCLOSE
+#define HOTCLOSE 0x1000
+#endif
+#ifndef HOTCLOSEBOX
+#define HOTCLOSEBOX 0x1000
+#endif
 #ifndef WC_BORDER
 #define WC_BORDER 0
 #endif

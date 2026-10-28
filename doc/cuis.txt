@@ -1011,15 +1011,15 @@ configure advances previous/current. Open and configure require positive border
 width/height. Full geometry is retained exactly as provided at creation.
 All ordinary results are GEM 1/0, never negative CUIS error codes.
 
-wind_calc is local and requires no registration. For kind zero, WC_WORK insets
+For kind zero, wind_calc requires no registration. WC_WORK insets
 the border by one pixel on each side, and WC_BORDER reverses that calculation,
 matching classic GEM plain-window geometry. WF_WORKXYWH uses the same rule on
 the current border rectangle. In particular, after wind_close the zero border
 produces (1,1,-2,-2), matching the existing GEM AES close/draw_change/wm_calc
 path; it is not clamped to an invented zero work rectangle. A closed window
 can subsequently receive WF_CURRXYWH and reports the corresponding work area
-without becoming visible. Arithmetic/results retain GEM short coordinate
-semantics. Outputs are written only on success and may alias inputs; optional
+without becoming visible. Unrepresentable signed WORD results fail without
+wrapping or changing outputs. Outputs may alias inputs; optional
 NULL outputs are ignored. Non-NULL invalid pointers fault in userspace.
 
 Host tests cover full native handle bits, transport errors, retry/state retention,
@@ -1975,3 +1975,26 @@ and ordinary GEM source compiled against unmodified GEMlib headers. Real
 QEMU mouse tests select across titles, and isolated clients exercise focus
 handoff, separate menu colours and owner exit. Headless, legacy-AES desktop,
 native ROM and contract configurations are also checked.
+
+Decorated window geometry (#781)
+
+wind_calc/mt_wind_calc also accept the classic NAME, CLOSER, FULLER, MOVER,
+INFO, SIZER, arrow and slider bits, plus PC-GEM HOTCLOSE. Unknown extension
+bits fail. The separately compiled aes/shared/gemframegeom.c derives margins
+from native wm_calc, including its 3D title, info and sizer placement rules.
+External libaes uses the native 3D frame layout. Decorations do not accumulate
+when several gadgets occupy the same row or column.
+
+Decorated calculations require an application session and obtain system font
+cell and pixel aspect metrics from a private workstation. Box height is the
+cell height plus three; width uses the native pixel-aspect calculation with
+its character-width-plus-four minimum. The kind-zero calculation remains
+independent of workstation/session access. Workstation errors leave outputs
+unchanged. Wide intermediate arithmetic rejects results outside signed WORD
+range. Small rectangles retain negative work extents as in native AES, and
+representable frame/work conversions round-trip exactly.
+
+This slice adds calculation only: wind_create still rejects nonzero kinds
+until frame rendering and gadget actions are implemented. Capability queries
+continue to leave unsupported window behavior unadvertised. Kernel window
+geometry and the native AES binary are unchanged.

@@ -9,13 +9,13 @@
 #include "layout.h"
 #include "gemobjop.h"
 
-BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
+static BOOL layout_metrics(LAYOUT_METRICS *m, WORD *wbox, WORD *global)
 {
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 };
     VDI_SERVICE_WORKSTATION ws;
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     VDI_SERVICE_DRAW_RESULT result = { 0 };
-    LONG status, closed;
+    LONG status, closed, width;
     if (aes_application_session(global) < 0) return FALSE;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) return FALSE;
     request.code = 38; /* vqt_attributes: current system font cell metrics. */
@@ -27,6 +27,26 @@ BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
     m->width = ws.intout[0]+1; m->height = ws.intout[1]+1;
     m->wchar = result.ptsout[2]; m->hchar = result.ptsout[3];
     m->hbox = m->hchar+3; /* Original gsx_start() menu/box height. */
+    if (wbox) {
+        if (ws.intout[3] <= 0 || ws.intout[4] <= 0) return FALSE;
+        width = (LONG)m->hbox * ws.intout[4] / ws.intout[3];
+        if (width < (LONG)m->wchar+4) width = (LONG)m->wchar+4;
+        if (width > 32767) return FALSE;
+        *wbox = width;
+    }
+    return TRUE;
+}
+
+BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
+{
+    return layout_metrics(m,NULL,global);
+}
+BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *global)
+{
+    LAYOUT_METRICS m;
+    WORD width;
+    if (!layout_metrics(&m,&width,global)) return FALSE;
+    *wbox = width; *hbox = m.hbox;
     return TRUE;
 }
 
