@@ -72,6 +72,12 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "aes/shared/gemframegeom.c", "-o", str(work / "frame-geometry")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "frame-geometry")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-I" + temp, "-Iinclude", "-Iaes/shared", "tests/cuis/frame_tree.c",
+                "aes/shared/gemframe.c", "-o", str(work / "frame-tree")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "frame-tree")], check=True)
     fixture = work / "GEMTEST.RSC"
     subprocess.run([sys.executable, "tools/make-cuis-resource.py", str(fixture)], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
@@ -100,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "-Ilib/ldso/client", "tests/cuis/object_draw.c",
-                "tests/cuis/mono_objects.c", "tests/cuis/colour_objects.c", "tests/cuis/three_d.c", "tests/cuis/menu_items.c", "tests/cuis/popup_menu.c", "tests/cuis/gem_menubar.c", "lib/aes/menus.c", "lib/aes/popup.c", "lib/aes/menubar.c", "aes/shared/gemmenubar.c", "aes/shared/gemmenupopup.c", "aes/shared/gemmenuchange.c", "tests/cuis/gem_layout.c", "tests/cuis/form_keys.c", "tests/cuis/gem_buttons.c", "tests/cuis/gem_forms.c", "lib/aes/resources.c", "lib/aes/forms.c", "lib/aes/alerts.c", "aes/shared/gemformdo.c", "aes/shared/gemalert.c", str(work / "gem_rsc.c"), "aes/shared/gemformerror.c", "lib/aes/formbutton.c", "aes/shared/gemformbutton.c", "aes/shared/gemwatch.c", "lib/aes/formkeys.c", "aes/shared/gemformkey.c", "lib/aes/layout.c", "aes/shared/gemlayout.c", "lib/aes/draw.c", "aes/shared/gemedit.c", "aes/shared/gemformanim.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
+                "tests/cuis/mono_objects.c", "tests/cuis/colour_objects.c", "tests/cuis/three_d.c", "tests/cuis/menu_items.c", "tests/cuis/popup_menu.c", "tests/cuis/gem_menubar.c", "lib/aes/menus.c", "lib/aes/popup.c", "lib/aes/menubar.c", "aes/shared/gemmenubar.c", "aes/shared/gemmenupopup.c", "aes/shared/gemmenuchange.c", "tests/cuis/gem_layout.c", "tests/cuis/form_keys.c", "tests/cuis/gem_buttons.c", "tests/cuis/gem_forms.c", "lib/aes/resources.c", "lib/aes/forms.c", "lib/aes/alerts.c", "aes/shared/gemformdo.c", "aes/shared/gemalert.c", str(work / "gem_rsc.c"), "aes/shared/gemformerror.c", "lib/aes/formbutton.c", "aes/shared/gemformbutton.c", "aes/shared/gemwatch.c", "lib/aes/formkeys.c", "aes/shared/gemformkey.c", "lib/aes/frames.c", "aes/shared/gemframe.c", "aes/shared/gemframegeom.c", "lib/aes/layout.c", "aes/shared/gemlayout.c", "lib/aes/draw.c", "aes/shared/gemedit.c", "aes/shared/gemformanim.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c", "aes/shared/gemobjwalk.c", *shared_draw, "util/string.c", "util/rectfunc.c",
                 '-DOB_WALK_COORD=LONG', '-DAES_RESOURCE_FORMS_ONLY', '-DAES_RESOURCE_STRINGS_LOCAL', '-DAES_MENU_BINDINGS="menu_bindings.h"', '-DAES_MODAL_BINDINGS="modal_bindings.h"', '-DAES_ALERT_BINDINGS="alert_bindings.h"', '-DAES_ERROR_BINDINGS="error_bindings.h"', '-DAES_EDIT_BINDINGS="edit_bindings.h"', '-DAES_ANIM_BINDINGS="anim_bindings.h"', '-DAES_FORM_BINDINGS="form_bindings.h"', '-DAES_FORMKEY_BINDINGS="formkey_bindings.h"', "-Dsprintf=aes_draw_test_sprintf", "-ffunction-sections", "-fdata-sections",
                 "-Wl,--gc-sections,--wrap=ob_offset", "-o", str(work / "draw")]
     subprocess.run(command, check=True)

@@ -213,6 +213,14 @@ short mt_wind_update(short code, short *global);
 #ifndef WC_WORK
 #define WC_WORK 1
 #endif
+#ifndef WF_NAME
+#define WF_NAME 2
+#endif
+#ifndef WF_INFO
+#define WF_INFO 3
+#endif
+short wind_set_str(short id, short field, const char *text);
+short mt_wind_set_str(short id, short field, const char *text, short *global);
 #ifndef WF_KIND
 #define WF_KIND 1
 #endif

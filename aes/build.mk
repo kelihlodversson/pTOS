@@ -20,6 +20,7 @@ obj-$(CONF_WITH_LIBAES) += gemobjtree.o
 obj-$(CONF_WITH_LEGACY_RSC_LOAD) += rsload_legacy.o
 obj-$(CONF_WITH_PORTABLE_RSC_LOAD) += rsload_portable.o
 obj-$(CONF_WITH_MENU_EXTENSION) += gemmnext.o
+obj-$(CONF_WITH_3D_OBJECTS) += gemframe.o
 obj-$(CONF_WITH_COLOUR_ICONS) += gemcicon.o
 
 endif

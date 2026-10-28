@@ -4,6 +4,7 @@
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/application.h"
+#include "../../lib/aes/frames.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
@@ -284,6 +285,26 @@ BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, WORD *
     if (height) *height = frame_screen_height;
     return TRUE;
 }
+/* Window lifecycle tests isolate the private paint adapter; pixel and native
+ * frame construction contracts run against production code in other suites. */
+static BOOL frame_paint_failure;
+static ULONG frame_paints;
+static char *last_frame_name;
+BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
+                       char *name, char *info, WORD *global)
+{
+    (void)kind; (void)global;
+    if (border->g_w < 5 || border->g_h < 50) return FALSE;
+    state->border = *border; state->name = name; state->info = info;
+    return TRUE;
+}
+BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
+{
+    (void)native; (void)global;
+    if (!state->name || !state->info) return FALSE;
+    frame_paints++; last_frame_name = state->name;
+    return !frame_paint_failure;
+}
 #include "window_api.c"
 static int window_failures(void)
 {
@@ -323,6 +344,24 @@ static int window_failures(void)
     window_error_fn = CUIS_WINDOW_DESTROY;
     CHECK(wind_delete(id) == 0);
     window_error_fn = 0;
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    return 0;
+}
+static int frame_failures(void)
+{
+    short id, x, y, w, h;
+    id = wind_create(NAME|INFO,0,0,200,120);
+    CHECK(id > 0 && wind_set_str(id,WF_NAME,"Original") == 1);
+    frame_paint_failure = TRUE;
+    CHECK(wind_open(id,10,20,100,80) == 0 && wind_close(id) == 0);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && !(x|y|w|h));
+    frame_paint_failure = FALSE;
+    CHECK(wind_open(id,10,20,100,80) == 1);
+    frame_paint_failure = TRUE;
+    CHECK(wind_set(id,WF_CURRXYWH,30,40,120,100) == 0);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 10 && y == 20 && w == 100 && h == 80);
+    CHECK(wind_set_str(id,WF_NAME,"Replacement") == 0 && last_frame_name[0] == 'O');
+    frame_paint_failure = FALSE;
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
     return 0;
 }
@@ -466,7 +505,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

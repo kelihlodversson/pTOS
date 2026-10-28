@@ -6,10 +6,13 @@
 #include "application.h"
 #include "layout.h"
 #include "gemframegeom.h"
+#include "frames.h"
 
 #define GEM_WINDOW_LIMIT 64
 static struct gem_window {
     short id;
+    UWORD kind;
+    char *name, *info;
     LONG native;
     BOOL open;
     ULONG region_index;
@@ -67,12 +70,20 @@ short wind_calc(short type, short kind, short x, short y, short w, short h,
     return mt_wind_calc(type, kind, x, y, w, h, ox, oy, ow, oh, aes_global);
 }
 
+static BOOL paint_window(struct gem_window *window, short *global)
+{
+    WM_FRAME_STATE state;
+    if (!window->kind || !window->open) return TRUE;
+    return aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global) &&
+        aes_frame_paint(window->native,&state,global);
+}
+
 static short local_wind_create(short kind, short x, short y, short w, short h, short *global)
 {
     struct gem_window *window;
     short i;
     LONG native, identifier;
-    if (kind || aes_application_session(global) < 0) return -1;
+    if (((UWORD)kind & ~(NAME|INFO)) || aes_application_session(global) < 0) return -1;
     for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
     /* GEM starts closed with zero current/previous geometry. CUIS requires
@@ -88,6 +99,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     }
     window = &windows[i];
     window->native = native;
+    window->kind = kind; window->name = window->info = "";
     window->open = FALSE;
     window->region_index = 0xffffffffUL;
     window->current.g_x = window->current.g_y = 0;
@@ -103,8 +115,11 @@ short wind_create(short kind, short x, short y, short w, short h)
     return mt_wind_create(kind, x, y, w, h, aes_global);
 }
 
-static BOOL configure(struct gem_window *window, short x, short y, short w, short h)
+static BOOL configure(struct gem_window *window, short x, short y, short w, short h, short *global)
 {
+    WM_FRAME_STATE state;
+    GRECT border = { x,y,w,h };
+    if (window->kind && !aes_frame_prepare(&state,window->kind,&border,window->name,window->info,global)) return FALSE;
     return w > 0 && h > 0 &&
         mt_wind_calc(WC_WORK,0,x,y,w,h,NULL,NULL,NULL,NULL,NULL) &&
         cuis_call6(CUIS_WINDOW_CONFIGURE, window->native,
@@ -113,13 +128,22 @@ static BOOL configure(struct gem_window *window, short x, short y, short w, shor
 static short local_wind_open(short id, short x, short y, short w, short h, short *global)
 {
     struct gem_window *window = lookup(id, global);
-    if (!window || window->open || !configure(window, x, y, w, h)) return 0;
+    GRECT current, previous;
+    if (!window || window->open || !configure(window, x, y, w, h, global)) return 0;
+    current = window->current; previous = window->previous;
     if (cuis_call6(CUIS_WINDOW_SHOW, window->native, 0, 0, 0, 0, 0) != E_OK) return 0;
     window->current.g_x = x; window->current.g_y = y;
     window->current.g_w = w; window->current.g_h = h;
     window->previous = window->current;
     window->open = TRUE;
     window->region_index = 0xffffffffUL;
+    if (!paint_window(window,global)) {
+        if (cuis_call6(CUIS_WINDOW_HIDE,window->native,0,0,0,0,0) == E_OK) {
+            window->open = FALSE;
+            window->current = current; window->previous = previous;
+        }
+        return 0;
+    }
     return 1;
 }
 short wind_open(short id, short x, short y, short w, short h)
@@ -154,7 +178,7 @@ static short visible_work(struct gem_window *window, BOOL first, GRECT *out, sho
     LONG state[4], result, left, top, right, bottom, edge;
     ULONG index = first ? 0 : window->region_index;
     GRECT work;
-    if (!mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
+    if (!mt_wind_calc(WC_WORK, window->kind, window->current.g_x, window->current.g_y,
                   window->current.g_w, window->current.g_h,
                   &work.g_x, &work.g_y, &work.g_w, &work.g_h, global)) return 0;
     for (;;) {
@@ -201,8 +225,9 @@ LONG aes_window_messages(LONG session, short *global)
         for (j = 0; j < 8; j++) message[j] = 0;
         message[3] = window->id;
         if (kind == CUIS_NOTICE_REDRAW) {
+            if (!paint_window(window,global)) return EACCDN;
             message[0] = WM_REDRAW;
-            if (!mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
+            if (!mt_wind_calc(WC_WORK, window->kind, window->current.g_x, window->current.g_y,
                           window->current.g_w, window->current.g_h,
                           &work.g_x, &work.g_y, &work.g_w, &work.g_h, global)) return EIMBA;
             message[4] = work.g_x; message[5] = work.g_y;
@@ -249,7 +274,7 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
         if (!visible_work(window, field == WF_FIRSTXYWH, &r, global)) return 0;
         break;
     case WF_KIND:
-        r.g_x = r.g_y = r.g_w = r.g_h = 0;
+        r.g_x = window->kind; r.g_y = r.g_w = r.g_h = 0;
         break;
     case WF_CURRXYWH: r = window->current; break;
     case WF_PREVXYWH: r = window->previous; break;
@@ -258,7 +283,7 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
         /* Match GEM draw_change: even a closed zero border is passed through
          * WC_WORK, rather than clamped to a new empty-work convention. */
         r = window->current;
-        if (!mt_wind_calc(WC_WORK, 0, r.g_x, r.g_y, r.g_w, r.g_h,
+        if (!mt_wind_calc(WC_WORK, window->kind, r.g_x, r.g_y, r.g_w, r.g_h,
                           &r.g_x, &r.g_y, &r.g_w, &r.g_h, global)) return 0;
         break;
     default: return 0;
@@ -274,17 +299,29 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
 {
     struct gem_window *window = lookup(id, global);
     if (!window) return 0;
+    if (field == WF_NAME || field == WF_INFO)
+        return mt_wind_set_str(id,field,(const char *)(uintptr_t)(((ULONG)(UWORD)a<<16)|(UWORD)b),global);
     if (field == WF_CURRXYWH) {
-        if (!configure(window, a, b, c, d)) return 0;
+        GRECT current = window->current, previous = window->previous;
+        if (!configure(window, a, b, c, d, global)) return 0;
         window->region_index = 0xffffffffUL;
         window->previous = window->current;
         window->current.g_x = a; window->current.g_y = b;
         window->current.g_w = c; window->current.g_h = d;
+        if (!paint_window(window,global)) {
+            if (configure(window,current.g_x,current.g_y,current.g_w,current.g_h,global)) {
+                window->current = current; window->previous = previous;
+                (void)paint_window(window,global);
+            }
+            return 0;
+        }
         return 1;
     }
-    if ((field == WF_TOP || field == WF_BOTTOM) && window->open)
-        return cuis_call6(field == WF_TOP ? CUIS_WINDOW_RAISE : CUIS_WINDOW_LOWER,
-                          window->native, 0, 0, 0, 0, 0) == E_OK ? 1 : 0;
+    if ((field == WF_TOP || field == WF_BOTTOM) && window->open) {
+        if (cuis_call6(field == WF_TOP ? CUIS_WINDOW_RAISE : CUIS_WINDOW_LOWER,
+                      window->native,0,0,0,0,0) != E_OK) return 0;
+        return paint_window(window,global) ? 1 : 0;
+    }
     return 0; /* Decorated fields migrate with the frame renderer. */
 }
 short wind_set(short id, short field, short a, short b, short c, short d)
@@ -351,4 +388,28 @@ short mt_wind_set(short id, short field, short a, short b, short c, short d, sho
     result = local_wind_set(id, field, a, b, c, d, global);
     if (!mt_wind_update(END_UPDATE, global)) return 0;
     return result;
+}
+
+short mt_wind_set_str(short id, short field, const char *text, short *global)
+{
+    struct gem_window *window = lookup(id,global);
+    char *old;
+    BOOL ok;
+    if (!window || !text || (field != WF_NAME && field != WF_INFO) ||
+        !mt_wind_update(BEG_UPDATE,global)) return 0;
+    old = field == WF_NAME ? window->name : window->info;
+    if (field == WF_NAME) window->name = (char *)text;
+    else window->info = (char *)text;
+    ok = paint_window(window,global);
+    if (!ok) {
+        if (field == WF_NAME) window->name = old;
+        else window->info = old;
+        (void)paint_window(window,global);
+    }
+    if (!mt_wind_update(END_UPDATE,global)) ok = FALSE;
+    return ok ? 1 : 0;
+}
+short wind_set_str(short id, short field, const char *text)
+{
+    return mt_wind_set_str(id,field,text,aes_global);
 }

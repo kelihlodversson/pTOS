@@ -25,6 +25,7 @@
 #include "aesvars.h"
 #include "obdefs.h"
 #include "gemlib.h"
+#include "shared/gemframe.h"
 
 #include "gemaplib.h"
 #include "gemflag.h"
@@ -139,7 +140,6 @@ static const WORD gl_3dflags[NUM_ELEM] =
     FL3DACT         /* W_HELEV      */
 };
 
-static const char empty_name[] = "";
 #endif
 
 #if CONF_WITH_WINDOW_COLOURS
@@ -279,6 +279,7 @@ static void w_setsize(WORD which, WORD w_handle, GRECT *pt)
 }
 
 
+#if !CONF_WITH_3D_OBJECTS
 static void w_adjust( WORD parent, WORD obj, WORD x, WORD y,  WORD w, WORD h)
 {
     W_ACTIVE[obj].ob_x = x;
@@ -290,6 +291,7 @@ static void w_adjust( WORD parent, WORD obj, WORD x, WORD y,  WORD w, WORD h)
     w_obadd(W_ACTIVE, parent, obj);
 }
 
+#endif
 
 /*
  *  Walk the list and draw the parts of the window tree owned by this window
@@ -421,6 +423,7 @@ static void w_cpwalk(WORD wh, WORD obj, WORD depth, BOOL usetrue)
 }
 
 
+#if !CONF_WITH_3D_OBJECTS
 static void w_setcolor(WINDOW *pw, WORD gadget, BOOL istop)
 {
 #if CONF_WITH_WINDOW_COLOURS
@@ -437,238 +440,33 @@ static void w_setcolor(WINDOW *pw, WORD gadget, BOOL istop)
 #endif
 }
 
+#endif
 
 #if CONF_WITH_3D_OBJECTS
 /*
  * main routines to build a window with 3D objects
  */
-static void w_bldvbar(UWORD kind, BOOL istop, WINDOW *pw, WORD x, WORD y, WORD w, WORD h)
-{
-    WORD size, posn;
-
-    w_setcolor(pw, W_VBAR, istop);
-    w_adjust(W_DATA, W_VBAR, x, y, adj_wbox, h);
-
-    y = 0;
-
-    if (kind & UPARROW)
-    {
-        w_setcolor(pw, W_UPARROW, istop);
-        w_adjust(W_VBAR, W_UPARROW, ADJ3DSTD, y+ADJ3DSTD, gl_wbox, gl_hbox);
-        y += adj_hbox;      /* adjust y for VSLIDE */
-        h -= adj_hbox;      /* adjust h for VSLIDE */
-    }
-
-    if (kind & DNARROW)
-    {
-        h -= adj_hbox;      /* adjust h for DNARROW, VSLIDE */
-        w_setcolor(pw, W_DNARROW, istop);
-        w_adjust(W_VBAR, W_DNARROW, ADJ3DSTD, y+h+ADJ3DSTD-1, gl_wbox, gl_hbox);
-    }
-
-    if (kind & VSLIDE)
-    {
-        w_setcolor(pw, W_VSLIDE, istop);
-        w_adjust(W_VBAR, W_VSLIDE, 0, y, adj_wbox, h);
-        if (pw->w_vslsiz == -1)
-            size = gl_hbox;
-        else size = max(gl_hbox, mul_div(h, pw->w_vslsiz, 1000));
-        posn = mul_div(h-size, pw->w_vslide, 1000);
-        w_setcolor(pw, W_VELEV, istop);
-        w_adjust(W_VSLIDE, W_VELEV, ADJ3DSTD, posn+ADJ3DSTD, gl_wbox, size-2*ADJ3DSTD-1);
-    }
-}
-
-
-static void w_bldhbar(UWORD kind, BOOL istop, WINDOW *pw, WORD x, WORD y, WORD w, WORD h)
-{
-    WORD size, posn;
-
-    w_setcolor(pw, W_HBAR, istop);
-    w_adjust(W_DATA, W_HBAR, x, y, w, adj_hbox);
-
-    x = 0;
-
-    if (kind & LFARROW)
-    {
-        w_setcolor(pw, W_LFARROW, istop);
-        w_adjust(W_HBAR, W_LFARROW, x+ADJ3DSTD, ADJ3DSTD, gl_wbox, gl_hbox);
-        x += adj_wbox;      /* adjust x for HSLIDE */
-        w -= adj_wbox;      /* adjust w for HSLIDE */
-    }
-
-    if (kind & RTARROW)
-    {
-        w -= adj_wbox;      /* adjust w for RTARROW, HSLIDE */
-        w_setcolor(pw, W_RTARROW, istop);
-        w_adjust(W_HBAR, W_RTARROW, x+w-1+ADJ3DSTD, ADJ3DSTD, gl_wbox, gl_hbox);
-    }
-
-    if (kind & HSLIDE)
-    {
-        w_setcolor(pw, W_HSLIDE, istop);
-        w_adjust(W_HBAR, W_HSLIDE, x, 0, w, adj_hbox);
-        if (pw->w_hslsiz == -1)
-            size = gl_wbox;
-        else size = max(gl_wbox, mul_div(w, pw->w_hslsiz, 1000));
-        posn = mul_div(w-size, pw->w_hslide, 1000);
-        w_setcolor(pw, W_HELEV, istop);
-        w_adjust(W_HSLIDE, W_HELEV, posn+ADJ3DSTD, ADJ3DSTD, size-2*ADJ3DSTD-1, gl_hbox);
-    }
-}
-
-
 void w_bldactive(WORD w_handle)
 {
-    BOOL    istop, havevbar, havehbar;
-    WORD    kind;
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wuninitialized"
-    WORD    corner_x, corner_y;
-#pragma GCC diagnostic pop
-    GRECT   t;
-    WORD    tempw;
-    WINDOW  *pw;
-
-    if (w_handle == NIL)
-        return;
-
-    pw = &D.w_win[w_handle];
-
-    istop = (gl_wtop == w_handle);  /* set if it is on top */
-    kind = pw->w_kind;              /* get the kind of window */
-    w_nilit(NUM_ELEM, W_ACTIVE);
-
-    /* start adding pieces & adjusting sizes */
-    gl_aname.te_ptext = (kind & NAME) ? pw->w_pname : (char *)empty_name;
-    gl_ainfo.te_ptext = pw->w_pinfo;
-    gl_aname.te_just = TE_CNTR;
-
-    w_getsize(WS_CURR, w_handle, &t);
-    W_ACTIVE[W_BOX].ob_x = t.g_x;
-    W_ACTIVE[W_BOX].ob_y = t.g_y;
-    W_ACTIVE[W_BOX].ob_width = t.g_w;
-    W_ACTIVE[W_BOX].ob_height = t.g_h;
-    w_setcolor(pw, W_BOX, istop);
-
-    /* do title area */
-    t.g_x = t.g_y = 0;
-    if (kind & TGADGETS)
-    {
-        w_setcolor(pw, W_TITLE, istop);
-        w_adjust(W_BOX, W_TITLE, t.g_x, t.g_y, t.g_w, adj_hbox);
-        tempw = t.g_w;
-        if (kind & CLOSER)
-        {
-            w_setcolor(pw, W_CLOSER, istop);
-            w_adjust(W_TITLE, W_CLOSER, t.g_x+ADJ3DSTD, t.g_y+ADJ3DSTD, gl_wbox, gl_hbox);
-            t.g_x += adj_wbox;
-            tempw -= adj_wbox;
-        }
-        if (kind & FULLER)
-        {
-            w_setcolor(pw, W_FULLER, istop);
-            tempw -= adj_wbox;
-            w_adjust(W_TITLE, W_FULLER, t.g_x+tempw+ADJ3DSTD, t.g_y+ADJ3DSTD, gl_wbox, gl_hbox);
-        }
-        if (kind & NAME)
-        {
-            w_setcolor(pw, W_NAME, istop);
-            tempw -= 2 * ADJ3DSTD;
-            w_adjust(W_TITLE, W_NAME, t.g_x+ADJ3DSTD, t.g_y+ADJ3DSTD, tempw, gl_hbox);
-            W_ACTIVE[W_NAME].ob_state = istop ? NORMAL : DISABLED;
-#if !CONF_WITH_WINDOW_COLOURS
-            gl_aname.te_color = istop ? TOPPED_COLOR : UNTOPPED_COLOR;
+    WM_FRAME_STATE state;
+    WINDOW *window;
+    if (w_handle == NIL) return;
+    window = &D.w_win[w_handle];
+    w_getsize(WS_CURR,w_handle,&state.border);
+    state.kind = window->w_kind; state.topped = gl_wtop == w_handle;
+    state.wbox = gl_wbox; state.hbox = gl_hbox;
+    state.adjusted_width = adj_wbox; state.adjusted_height = adj_hbox;
+    state.name = window->w_pname; state.info = window->w_pinfo;
+    state.hslide = window->w_hslide; state.vslide = window->w_vslide;
+    state.hslsiz = window->w_hslsiz; state.vslsiz = window->w_vslsiz;
+#if CONF_WITH_WINDOW_COLOURS
+    state.top_colours = window->w_tcolor; state.bottom_colours = window->w_bcolor;
+#else
+    state.top_colours = state.bottom_colours = NULL;
 #endif
-        }
-        else if (kind & MOVER)
-        {
-            /*
-             * in TOS4, you may specify a MOVER gadget with no NAME gadget
-             */
-            tempw -= 2 * ADJ3DSTD;
-            w_adjust(W_TITLE, W_NAME, t.g_x+ADJ3DSTD, t.g_y+ADJ3DSTD, tempw, gl_hbox);
-            W_ACTIVE[W_NAME].ob_state = istop ? NORMAL : DISABLED;
-            gl_aname.te_color = 0;
-        }
-
-        W_ACTIVE[W_NAME].ob_flags = (kind & NAME) ? FL3DACT : FL3DNONE;
-
-        t.g_x = 0;
-        t.g_y += adj_hbox;
-        t.g_h -= adj_hbox;
-    }
-
-    /* do info area */
-    if (kind & INFO)
-    {
-        w_setcolor(pw, W_INFO, istop);
-        w_adjust(W_BOX, W_INFO, t.g_x, t.g_y, t.g_w, gl_hbox);
-        t.g_y += gl_hbox;
-        t.g_h -= gl_hbox;
-    }
-
-    /* do data area */
-    w_adjust(W_BOX, W_DATA, t.g_x, t.g_y, t.g_w, t.g_h);
-
-    /* determine whether we should display sizer & vertical/horizontal bars */
-    havevbar = (kind & VGADGETS) ? TRUE : FALSE;
-    havehbar = (kind & HGADGETS) ? TRUE : FALSE;
-
-    /*
-     * If we have a SIZER, we must draw a vertical bar and/or a horizontal
-     * bar.  Atari TOS versions 1-3 always drew both, but TOS4 only draws
-     * the one(s) containing other window elements.  If no other window
-     * elements are present, it draws a vertical bar.  We do the same.
-     */
-
-    /* if we have both bars or a SIZER, we draw a corner element */
-    corner_x = corner_y = -1;   /* assume no corner (SIZER or dummy) */
-    if ((havehbar && havevbar) || (kind & SIZER))
-    {
-        corner_x = t.g_w - gl_wbox - ADJ3DSTD;
-        corner_y = t.g_h - gl_hbox - ADJ3DSTD;
-    }
-    /* if we have a SIZER but no bars, we draw a vertical bar */
-    if ((!havevbar && !havehbar) && (kind & SIZER))
-        havevbar = TRUE;
-
-    /* do work area */
-    t.g_x = t.g_y = 1;      /* allow a 1-pixel border */
-    t.g_w -= 2;
-    t.g_h -= 2;
-    if (havevbar || (kind & SIZER))
-        t.g_w -= (adj_wbox - 1);
-    if (havehbar || (kind & SIZER))
-        t.g_h -= (adj_hbox - 1);
-
-    w_adjust(W_DATA, W_WORK, t.g_x, t.g_y, t.g_w, t.g_h);
-
-    /* do vertical bar area */
-    if (havevbar)
-    {
-        t.g_x += t.g_w;
-        w_bldvbar(kind, istop, pw, t.g_x, 0, t.g_w+2, t.g_h+2);
-    }
-
-    /* do horizontal bar area */
-    if (havehbar)
-    {
-        t.g_y += t.g_h;
-        w_bldhbar(kind, istop, pw, 0, t.g_y, t.g_w+2, t.g_h+2);
-    }
-
-    /* do sizer area */
-    if (corner_x >= 0)
-    {
-        w_setcolor(pw, W_SIZER, istop);
-        w_adjust(W_DATA, W_SIZER, corner_x, corner_y, gl_wbox, gl_hbox);
-        /* we only display the sizer indicator if we're really a SIZER */
-        W_ACTIVE[W_SIZER].ob_spec.index &= 0x00ffffffL;   /* remove gadget char */
-        if (kind & SIZER)
-            W_ACTIVE[W_SIZER].ob_spec.index |= 0x06000000L;
-    }
+    wm_frame_build(W_ACTIVE,&gl_aname,&gl_ainfo,&state);
 }
+
 #else
 /*
  * main routines to build a window with old-style (non-3D) objects

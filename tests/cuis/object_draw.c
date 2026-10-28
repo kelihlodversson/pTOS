@@ -13,6 +13,7 @@
 #include "../../lib/aes/render_context.h"
 #include "gem_layout.h"
 #include "../../lib/aes/layout.h"
+#include "../../lib/aes/frames.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
@@ -82,6 +83,13 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_FOCUS_QUERY && a == 99) return 1;
+    if (fn == CUIS_WINDOW_REGION && a == 99) {
+        if (b) return 0;
+        *(LONG *)(uintptr_t)c = 20; *(LONG *)(uintptr_t)d = 20;
+        *(LONG *)(uintptr_t)e = 100; *(LONG *)(uintptr_t)f = 80;
+        return 1;
+    }
     if (fn == CUIS_SURFACE_BEGIN) { if (!nesting || bar_trial_height) return EACCDN; bar_trial_height = b; return E_OK; }
     if (fn == CUIS_SURFACE_END) {
         if (!bar_trial_height) return EACCDN;
@@ -489,6 +497,26 @@ static int form_interactions(void)
     VERIFY(opens == closes && !nesting && !mouse_nesting && !bad_gesture);
     return 0;
 }
+static int frame_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    GRECT border = { 20,20,100,80 };
+    WORD saved[120][160];
+    int x,y, changed = 0;
+    __builtin_memcpy(saved,image,sizeof(image));
+    VERIFY(aes_frame_prepare(&state,NAME|INFO,&border,"Title","Info",aes_global));
+    VERIFY(aes_frame_paint(99,&state,aes_global));
+    /* Frame clipping must not touch application work pixels or its neighbour. */
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) {
+        if (x < 20 || x >= 120 || y < 20 || y >= 100 ||
+            (x >= 21 && x < 119 && y >= 62 && y < 99))
+            VERIFY(image[y][x] == saved[y][x]);
+        else if (image[y][x] != saved[y][x]) changed++;
+    }
+    VERIFY(changed > 100 && !nesting && opens == closes);
+    __builtin_memcpy(image,saved,sizeof(image));
+    return 0;
+}
 static int frame_metric_checks(void)
 {
     WORD wbox = 99, hbox = 99, width = 99, height = 99;
@@ -574,6 +602,7 @@ int main(void)
     TEDINFO changed = { 0 };
     char raw[] = "AB", pattern[] = "__.__", big[258];
     VERIFY(frame_metric_checks() == 0);
+    VERIFY(frame_paint_checks() == 0);
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
     tree[0].ob_x = 10; tree[0].ob_y = 12; tree[0].ob_width = 100; tree[0].ob_height = 80;
