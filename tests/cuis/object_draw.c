@@ -12,6 +12,7 @@
 #include "../../lib/aes/resource_context.h"
 #include "../../lib/aes/render_context.h"
 #include "gem_layout.h"
+#include "../../lib/aes/layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
@@ -488,6 +489,24 @@ static int form_interactions(void)
     VERIFY(opens == closes && !nesting && !mouse_nesting && !bad_gesture);
     return 0;
 }
+static int frame_metric_checks(void)
+{
+    WORD wbox = 99, hbox = 99;
+    VERIFY(aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 19 && hbox == 19);
+    pixel_height = 2;
+    VERIFY(aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 38 && hbox == 19);
+    pixel_width = 3; pixel_height = 1;
+    VERIFY(aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    pixel_width = 0;
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    pixel_width = 1; pixel_height = 32767;
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    pixel_height = 1; fail_layout_close = TRUE;
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    fail_layout_close = FALSE;
+    VERIFY(opens == closes);
+    return 0;
+}
 static int animation_checks(void)
 {
     static const WORD aspects[3][3] = { { 1,1,38 }, { 1,2,76 }, { 3,1,24 } };
@@ -553,6 +572,7 @@ int main(void)
     USERBLK user;
     TEDINFO changed = { 0 };
     char raw[] = "AB", pattern[] = "__.__", big[258];
+    VERIFY(frame_metric_checks() == 0);
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
     tree[0].ob_x = 10; tree[0].ob_y = 12; tree[0].ob_width = 100; tree[0].ob_height = 80;

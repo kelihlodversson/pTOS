@@ -4,6 +4,8 @@
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
+#include "layout.h"
+#include "gemframegeom.h"
 
 #define GEM_WINDOW_LIMIT 64
 static struct gem_window {
@@ -41,12 +43,21 @@ short mt_wind_calc(short type, short kind, short x, short y, short w, short h,
                    short *ox, short *oy, short *ow, short *oh, short *global)
 {
     GRECT r;
-    short inset;
-    (void)global;
-    if (kind || (type != WC_BORDER && type != WC_WORK)) return 0;
-    inset = type == WC_WORK ? 1 : -1;
-    r.g_x = x + inset; r.g_y = y + inset;
-    r.g_w = w - 2 * inset; r.g_h = h - 2 * inset;
+    WM_FRAME_INSETS insets;
+    WORD wbox = 1, hbox = 1;
+    LONG nx, ny, nw, nh, sign;
+    /* Classic gadgets and PC-GEM HOTCLOSE; extension bits are unsupported. */
+    if (((UWORD)kind & ~0x1fffU) || (type != WC_BORDER && type != WC_WORK)) return 0;
+    if (kind && !aes_frame_metrics(&wbox,&hbox,global)) return 0;
+    if (!wm_frame_insets((UWORD)kind,wbox,hbox,TRUE,&insets)) return 0;
+    sign = type == WC_WORK ? 1 : -1;
+    nx = x + sign*insets.left; ny = y + sign*insets.top;
+    nw = w - sign*(insets.left+insets.right);
+    nh = h - sign*(insets.top+insets.bottom);
+    /* Preserve negative work extents for small borders, but never wrap. */
+    if (nx < -32768 || nx > 32767 || ny < -32768 || ny > 32767 ||
+        nw < -32768 || nw > 32767 || nh < -32768 || nh > 32767) return 0;
+    r.g_x = nx; r.g_y = ny; r.g_w = nw; r.g_h = nh;
     output(&r, ox, oy, ow, oh);
     return 1;
 }
@@ -94,7 +105,9 @@ short wind_create(short kind, short x, short y, short w, short h)
 
 static BOOL configure(struct gem_window *window, short x, short y, short w, short h)
 {
-    return w > 0 && h > 0 && cuis_call6(CUIS_WINDOW_CONFIGURE, window->native,
+    return w > 0 && h > 0 &&
+        mt_wind_calc(WC_WORK,0,x,y,w,h,NULL,NULL,NULL,NULL,NULL) &&
+        cuis_call6(CUIS_WINDOW_CONFIGURE, window->native,
                      (QUAD)x, (QUAD)y, w, h, 0) == E_OK;
 }
 static short local_wind_open(short id, short x, short y, short w, short h, short *global)
@@ -189,9 +202,9 @@ LONG aes_window_messages(LONG session, short *global)
         message[3] = window->id;
         if (kind == CUIS_NOTICE_REDRAW) {
             message[0] = WM_REDRAW;
-            mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
+            if (!mt_wind_calc(WC_WORK, 0, window->current.g_x, window->current.g_y,
                           window->current.g_w, window->current.g_h,
-                          &work.g_x, &work.g_y, &work.g_w, &work.g_h, global);
+                          &work.g_x, &work.g_y, &work.g_w, &work.g_h, global)) return EIMBA;
             message[4] = work.g_x; message[5] = work.g_y;
             message[6] = work.g_w > 0 ? work.g_w : 0;
             message[7] = work.g_h > 0 ? work.g_h : 0;

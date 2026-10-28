@@ -8,7 +8,29 @@ static int gem_window_checks(short *global)
     WINDOW_VERIFY(mt_wind_calc(WC_BORDER, 0, x, y, w, h, &x, &y, &w, &h, global) == 1);
     WINDOW_VERIFY(x == 10 && y == 20 && w == 100 && h == 80);
     WINDOW_VERIFY(wind_calc(99, 0, 1, 2, 3, 4, &x, &y, &w, &h) == 0 && x == 10);
-    WINDOW_VERIFY(wind_calc(WC_WORK, 1, 1, 2, 3, 4, &x, &y, &w, &h) == 0 && x == 10);
+    WINDOW_VERIFY(wind_calc(WC_WORK, 0x4000, 1, 2, 3, 4, &x, &y, &w, &h) == 0 && x == 10);
+    {
+        static const short kinds[] = { NAME,CLOSER,FULLER,MOVER,INFO,SIZER,
+            UPARROW|DNARROW|VSLIDE,LFARROW|RTARROW|HSLIDE,
+            NAME|INFO|SIZER,NAME|CLOSER|FULLER|MOVER|INFO|SIZER|VSLIDE|HSLIDE,
+            SIZER|HSLIDE,SIZER|VSLIDE,HOTCLOSEBOX };
+        unsigned k;
+        for (k = 0; k < sizeof(kinds)/sizeof(kinds[0]); k++) {
+            WINDOW_VERIFY(wind_calc(WC_WORK,kinds[k],-20,30,300,200,&x,&y,&w,&h) == 1);
+            WINDOW_VERIFY(x == -19 && y >= 31 && w <= 298 && h <= 198);
+            WINDOW_VERIFY(mt_wind_calc(WC_BORDER,kinds[k],x,y,w,h,&x,&y,&w,&h,global) == 1);
+            WINDOW_VERIFY(x == -20 && y == 30 && w == 300 && h == 200);
+        }
+        WINDOW_VERIFY(wind_calc(WC_WORK,MOVER,0,0,0,0,&x,&y,&w,&h) == 1);
+        WINDOW_VERIFY(x == 1 && y > 1 && w == -2 && h < -2);
+        WINDOW_VERIFY(wind_calc(WC_BORDER,MOVER,x,y,w,h,&x,&y,&w,&h) == 1);
+        WINDOW_VERIFY(!(x|y|w|h));
+        x = y = w = h = 123;
+        WINDOW_VERIFY(wind_calc(WC_BORDER,NAME,0,-32768,32767,32767,&x,&y,&w,&h) == 0);
+        WINDOW_VERIFY(x == 123 && y == 123 && w == 123 && h == 123);
+        WINDOW_VERIFY(wind_calc(WC_WORK,0,32767,0,10,10,&x,&y,&w,&h) == 0 && x == 123);
+        WINDOW_VERIFY(wind_calc(WC_WORK,NAME,10,20,100,80,NULL,NULL,NULL,NULL) == 1);
+    }
     WINDOW_VERIFY(wind_create(1, 0, 0, 100, 80) == -1);
     id = mt_wind_create(0, 10, 20, 300, 200, global);
     WINDOW_VERIFY(id > 0 && wind_close(id) == 0);
@@ -22,6 +44,7 @@ static int gem_window_checks(short *global)
     WINDOW_VERIFY(wind_get(id, WF_PREVXYWH, &x, &y, &w, &h) == 1);
     WINDOW_VERIFY(x == -5 && y == 6 && w == 100 && h == 80);
     WINDOW_VERIFY(wind_set(id, WF_CURRXYWH, 20, 30, 0, 160) == 0);
+    WINDOW_VERIFY(wind_set(id, WF_CURRXYWH, 32767, 30, 10, 10) == 0);
     WINDOW_VERIFY(wind_get(id, WF_CURRXYWH, &x, &y, &w, &h) == 1);
     WINDOW_VERIFY(x == 20 && y == 30 && w == 200 && h == 160);
     WINDOW_VERIFY(wind_get(id, 32767, &x, &y, &w, &h) == 0 && x == 20);
