@@ -13,10 +13,15 @@ static void setup(OBJECT *tree)
     tree[0].ob_head = 1; tree[0].ob_tail = 7;
     tree[1].ob_head = tree[1].ob_tail = 2; tree[1].ob_next = 7;
     tree[2].ob_head = 5; tree[2].ob_tail = 3; tree[2].ob_next = 1;
-    tree[5].ob_type = G_TITLE; tree[5].ob_next = 3;
-    tree[3].ob_type = G_TITLE; tree[3].ob_next = 2;
+    tree[5].ob_type = G_TITLE; tree[5].ob_next = 3; tree[5].ob_spec.free_string = "First";
+    tree[3].ob_type = G_TITLE; tree[3].ob_next = 2; tree[3].ob_spec.free_string = "Second";
     tree[7].ob_head = 11; tree[7].ob_tail = 8; tree[7].ob_next = 0;
     tree[11].ob_next = 8; tree[8].ob_next = 7;
+    tree[11].ob_head = tree[11].ob_tail = 4;
+    tree[8].ob_head = tree[8].ob_tail = 6;
+    tree[4].ob_type = tree[6].ob_type = G_STRING;
+    tree[4].ob_spec.free_string = "Item 1"; tree[6].ob_spec.free_string = "Item 2";
+    tree[4].ob_next = 11; tree[6].ob_next = 8;
 }
 static BOOL unchanged(const MENU_BAR_ENTRY *entries)
 {
@@ -59,5 +64,46 @@ int main(void)
     }
     VERIFY(mn_bar_index(NULL,12,entries,2) == 0 && unchanged(entries));
     VERIFY(mn_bar_index(tree,2,entries,2) == 0 && unchanged(entries));
+    {
+        UBYTE seen[2] = { 123,234 };
+        OBSPEC indirect;
+        char long_text[129];
+        int i;
+        setup(tree);
+        VERIFY(mn_bar_admit(tree,12,seen,1) == 0 && seen[0] == 123 && seen[1] == 234);
+        VERIFY(mn_bar_admit(tree,12,NULL,2) == 0 && mn_bar_admit(NULL,12,seen,2) == 0);
+        VERIFY(mn_bar_admit(tree,12,seen,2) == 2);
+        tree[4].ob_state = DISABLED; tree[6].ob_flags = HIDETREE;
+        tree[6].ob_spec.free_string = NULL;
+        VERIFY(mn_bar_admit(tree,12,seen,2) == 2);
+        indirect.free_string = "Indirect";
+        tree[5].ob_flags = INDIRECT; tree[5].ob_spec.indirect = &indirect;
+        VERIFY(mn_bar_admit(tree,12,seen,2) == 2);
+        VERIFY(tree[5].ob_spec.indirect == &indirect && tree[4].ob_state == DISABLED);
+        tree[5].ob_spec.indirect = NULL;
+        VERIFY(mn_bar_admit(tree,12,seen,2) == 0);
+        for (i = 0; i < 128; i++) long_text[i] = 'x';
+        long_text[128] = 0;
+        setup(tree); tree[4].ob_spec.free_string = long_text;
+        VERIFY(mn_bar_admit(tree,12,seen,2) == 0);
+        for (mode = 0; mode < 10; mode++) {
+            setup(tree);
+            switch (mode) {
+            case 0: tree[8].ob_head = tree[8].ob_tail = 4; break;
+            case 1: tree[4].ob_next = 4; break;
+            case 2: tree[4].ob_next = 6; break;
+            case 3: tree[4].ob_next = NIL; break;
+            case 4: tree[11].ob_tail = NIL; break;
+            case 5: tree[11].ob_head = 12; break;
+            case 6: tree[4].ob_type = G_USERDEF; break;
+            case 7: tree[4].ob_flags = SUBMENU; break;
+            case 8: tree[4].ob_head = 9; break;
+            default: tree[11].ob_head = 11; tree[11].ob_tail = NIL; break;
+            }
+            VERIFY(mn_bar_admit(tree,12,seen,2) == 0);
+        }
+        setup(tree); tree[11].ob_head = tree[11].ob_tail = NIL;
+        VERIFY(mn_bar_admit(tree,12,seen,2) == 2);
+    }
     return 0;
 }

@@ -58,3 +58,59 @@ WORD mn_bar_index(const OBJECT *tree, WORD count, MENU_BAR_ENTRY *output, WORD c
     }
     return total;
 }
+
+/* A bounded bitset makes each reachable node unique without rescanning
+ * parents or siblings. Orphan objects are allowed, as with objc_delete(). */
+static BOOL claim(UBYTE *seen, WORD object, WORD count)
+{
+    UBYTE bit;
+    if (!node(object,count)) return FALSE;
+    bit = 1U << (object & 7);
+    if (seen[object >> 3] & bit) return FALSE;
+    seen[object >> 3] |= bit;
+    return TRUE;
+}
+static BOOL text(const OBJECT *object)
+{
+    OBSPEC spec;
+    WORD n;
+    /* Native drawing skips hidden objects, including their payloads. */
+    if (object->ob_flags & HIDETREE) return TRUE;
+    if ((object->ob_flags & INDIRECT) && !object->ob_spec.indirect) return FALSE;
+    spec = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
+    if (!spec.free_string || spec.index == -1L) return FALSE;
+    for (n = 0; n <= 127; n++) if (!spec.free_string[n]) return TRUE;
+    return FALSE;
+}
+WORD mn_bar_admit(const OBJECT *tree, WORD count, UBYTE *scratch, ULONG bytes)
+{
+    WORD total, title, menu, container, i, item, last, type;
+    ULONG needed, n;
+    if (!scratch || count <= MENU_ACTIVE) return 0;
+    needed = ((ULONG)count+7)/8;
+    if (bytes < needed || !(total = pairs(tree,count)) ||
+        !box(tree) || !box(tree+MENU_BAR) || !box(tree+MENU_ACTIVE)) return 0;
+    for (n = 0; n < needed; n++) scratch[n] = 0;
+    container = tree[ROOT].ob_tail;
+    claim(scratch,ROOT,count); claim(scratch,MENU_BAR,count);
+    claim(scratch,MENU_ACTIVE,count); claim(scratch,container,count);
+    title = tree[MENU_ACTIVE].ob_head; menu = tree[container].ob_head;
+    for (i = 0; i < total; i++) {
+        if (!claim(scratch,title,count) || !claim(scratch,menu,count) || !text(tree+title) ||
+            (tree[title].ob_flags & SUBMENU)) return 0;
+        item = tree[menu].ob_head; last = NIL;
+        while (item != menu && item != NIL) {
+            if (!claim(scratch,item,count)) return 0;
+            type = tree[item].ob_type & 255;
+            if ((type != G_STRING && type != G_TITLE) || tree[item].ob_head != NIL ||
+                tree[item].ob_tail != NIL || (tree[item].ob_flags & SUBMENU) || !text(tree+item)) return 0;
+            last = item; item = tree[item].ob_next;
+        }
+        /* Empty boxes have NIL/NIL children. Nonempty lists must terminate
+         * at their parent and agree with its tail, exactly as GEM requires. */
+        if (tree[menu].ob_tail != last || (last != NIL && item != menu) ||
+            (last == NIL && item != NIL)) return 0;
+        title = tree[title].ob_next; menu = tree[menu].ob_next;
+    }
+    return total;
+}
