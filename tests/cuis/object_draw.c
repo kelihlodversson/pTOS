@@ -513,7 +513,7 @@ static int frame_paint_checks(void)
 {
     WM_FRAME_STATE state;
     GRECT border = { 20,20,100,80 };
-    WORD saved[120][160];
+    WORD saved[120][160], unselected[120][160];
     int x,y, changed = 0;
     __builtin_memcpy(saved,image,sizeof(image));
     VERIFY(aes_frame_prepare(&state,NAME|INFO,&border,"Title","Info",aes_global));
@@ -526,6 +526,21 @@ static int frame_paint_checks(void)
         else if (image[y][x] != saved[y][x]) changed++;
     }
     VERIFY(changed > 100 && !nesting && opens == closes);
+    VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER,&border,"Title","",aes_global));
+    VERIFY(aes_frame_control(&state,25,25) == W_CLOSER);
+    VERIFY(aes_frame_control(&state,110,25) == W_FULLER);
+    VERIFY(aes_frame_control(&state,70,70) == 0);
+    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,FALSE,aes_global));
+    __builtin_memcpy(unselected,image,sizeof(image));
+    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,TRUE,aes_global));
+    changed = 0;
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) {
+        if (image[y][x] != unselected[y][x]) {
+            VERIFY(x >= 20 && x < 43 && y >= 20 && y < 43);
+            changed++;
+        }
+    }
+    VERIFY(changed > 0 && !nesting && opens == closes);
     __builtin_memcpy(image,saved,sizeof(image));
     return 0;
 }

@@ -6,6 +6,7 @@ LONG aes_window_messages(LONG session, short *global);
 LONG aes_window_messages_poll(LONG session, short *global);
 void aes_resources_reset(void);
 void aes_windows_reset(void);
+BOOL aes_controls_listening(void);
 BOOL aes_frames_registered(void);
 BOOL aes_frames_listening(void);
 BOOL aes_frames_suspended(void);

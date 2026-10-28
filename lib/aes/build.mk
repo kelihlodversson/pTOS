@@ -4,7 +4,7 @@ LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
 obj/libaes/application.o: lib/aes/application.c lib/aes/menubar.h lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/gemwindows.o: lib/aes/gemwindows.c lib/aes/frames.h lib/aes/layout.h aes/shared/gemframegeom.h lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/gemwindows.o: lib/aes/gemwindows.c lib/aes/resource_context.h lib/aes/frames.h lib/aes/layout.h aes/shared/gemframegeom.h lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
 obj/libaes/draw_string.o: util/string.c $(AUTOCONF_H)
@@ -107,7 +107,7 @@ obj/libaes/resources.o: lib/aes/resources.c aes/shared/gemrcfix.h lib/aes/resour
 obj/libaes/gemframe.o: aes/shared/gemframe.c aes/shared/gemframe.h aes/shared/gemframeids.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -DAES_FRAME_TEMPLATE -c $< -o $@
-obj/libaes/frames.o: lib/aes/frames.c lib/aes/frames.h lib/aes/layout.h aes/shared/gemframe.h $(AUTOCONF_H)
+obj/libaes/frames.o: lib/aes/frames.c aes/shared/gemobjbounds.h lib/aes/frames.h lib/aes/layout.h aes/shared/gemframe.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
 obj/libaes/gemframegeom.o: aes/shared/gemframegeom.c aes/shared/gemframegeom.h $(AUTOCONF_H)

@@ -7,6 +7,7 @@
 #include "layout.h"
 #include "frames.h"
 #include "gemframegeom.h"
+#include "gemobjbounds.h"
 
 BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
                        char *name, char *info, WORD *global)
@@ -22,6 +23,8 @@ BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
         border->g_x < -32766 || border->g_y < -32766 ||
         (LONG)border->g_x+border->g_w+2 > 32767 ||
         (LONG)border->g_y+border->g_h+2 > 32767) return FALSE;
+    if (border->g_w <= ((kind & CLOSER) != 0)*(state->wbox+4) +
+        ((kind & FULLER) != 0)*(state->wbox+4) + 4) return FALSE;
     state->border = *border; state->kind = kind;
     state->adjusted_width = state->wbox+4-(width < 640 ? 1+(height >= 400) : 0);
     state->adjusted_height = state->hbox+4;
@@ -32,7 +35,23 @@ BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
     state->topped = FALSE;
     return TRUE;
 }
-BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
+WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
+{
+    WM_FRAME frame;
+    WORD object;
+    LONG left, top, width, height;
+    wm_frame_init(&frame);
+    wm_frame_build(frame.tree,&frame.name,&frame.info,state);
+    for (object = W_CLOSER; object <= W_FULLER; object += W_FULLER-W_CLOSER) {
+        if (!(state->kind & (object == W_CLOSER ? CLOSER : FULLER))) continue;
+        left = (LONG)frame.tree[W_BOX].ob_x+frame.tree[W_TITLE].ob_x+frame.tree[object].ob_x;
+        top = (LONG)frame.tree[W_BOX].ob_y+frame.tree[W_TITLE].ob_y+frame.tree[object].ob_y;
+        ob_3d_bounds(&frame.tree[object],1,TRUE,&left,&top,&width,&height);
+        if (x >= left && y >= top && x < left+width && y < top+height) return object;
+    }
+    return 0;
+}
+BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, WORD *global)
 {
     WM_FRAME frame;
     WM_FRAME_STATE drawing = *state;
@@ -54,6 +73,8 @@ BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
     drawing.colours = drawing.topped ? top : bottom;
     wm_frame_init(&frame);
     wm_frame_build(frame.tree,&frame.name,&frame.info,&drawing);
+    if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER))
+        frame.tree[object].ob_state |= SELECTED;
     for (index = 0; ; index++) {
         result = cuis_call6(CUIS_WINDOW_REGION,native,index,(uintptr_t)&region[0],
                             (uintptr_t)&region[1],(uintptr_t)&region[2],(uintptr_t)&region[3]);
@@ -70,4 +91,9 @@ done:
                               (QUAD)state->border.g_y,state->border.g_w+2,state->border.g_h+2,0);
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     return ok;
+}
+
+BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
+{
+    return aes_frame_paint_control(native,state,0,FALSE,global);
 }

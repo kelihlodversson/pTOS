@@ -31,7 +31,7 @@ static int gem_window_checks(short *global)
         WINDOW_VERIFY(wind_calc(WC_WORK,0,32767,0,10,10,&x,&y,&w,&h) == 0 && x == 123);
         WINDOW_VERIFY(wind_calc(WC_WORK,NAME,10,20,100,80,NULL,NULL,NULL,NULL) == 1);
     }
-    WINDOW_VERIFY(wind_create(CLOSER, 0, 0, 100, 80) == -1);
+    WINDOW_VERIFY(wind_create(MOVER, 0, 0, 100, 80) == -1);
     id = mt_wind_create(0, 10, 20, 300, 200, global);
     WINDOW_VERIFY(id > 0 && wind_close(id) == 0);
     WINDOW_VERIFY(wind_get(id, WF_CURRXYWH, &x, &y, &w, &h) == 1 && !(x | y | w | h));
