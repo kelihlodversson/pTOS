@@ -682,7 +682,10 @@ and, as it is, what a 32-bit Amiga has above it, which the ROM probes.  The
 Copper list, the bit planes and the disk DMA are given physical addresses
 (virt_to_phys(), bios/amiga_window.c).  It needs a 68030 with its MMU: under
 Amiberry, tools/run-amiberry.py --cpu 68030 (doc/debugging.txt).  It has no
-address space of its own for a process yet.
+address space of its own for a process yet.  amiga-mmu040_defconfig is the same for the
+MMU of a 68040 or a 68060 (--cpu 68040 or 68060): the ROM is 512 KB, at 0x00f80000
+(CONF_AMIGA_ROM_512K, as the ROMs of the A3000 and A4000: the 256 KB one has no room
+for a tree without early termination), and the RAM above the 24 bits is not used.
 
 PC (x86-64, UEFI boot)
 ----------------------

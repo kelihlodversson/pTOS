@@ -20,9 +20,12 @@
  *   0x00000000-0x00000fff         the same        yes    no   (the TOS low memory's
  *                                                            first page: vectors, sysvars, stack)
  *   0x00001000-0x009fffff         the same        yes    yes  (chip RAM and Zorro II RAM)
- *   0x00a00000-0x00efffff         the same        no     no   (the CIAs, the custom chips, the clock,
- *                                                            the Zorro II I/O area and the autoconfig
- *                                                            space, the ranges of the slow RAM)
+ *   0x00a00000-0x00bfffff         the same        no     no   (PCMCIA, the CIAs)
+ *   0x00c00000-0x00dbffff         the same        no     yes  (the slow RAM, or a mirror of the custom
+ *                                                            chips: the ROM probes it and gives the RAM
+ *                                                            to the programs)
+ *   0x00dc0000-0x00efffff         the same        no     no   (the clock, the custom chips, the Zorro II
+ *                                                            I/O area and the autoconfig space)
  *   0x00f00000-0x00ffffff         the same        yes    yes  (the ROM at 0x00fc0000)
  *   0x01000000-0x7fffffff         the same        no     yes  (the RAM and boards of a 32-bit Amiga)
  *   0xfe000000-0xffffffff         the same        no     no   (the Zorro III autoconfig space)
@@ -38,7 +41,7 @@
 
 #include "asmdefs.h"
 
-#if CONF_AMIGA_HIGHER_HALF
+#if CONF_AMIGA_HIGHER_HALF && !CONF_AMIGA_HIGHER_HALF_68040
 
         .globl  C_SYM(amiga_mmu_root)
         .globl  C_SYM(amiga_mmu_tc)
@@ -99,7 +102,15 @@ amiga_mmu_b:
         .dc.l   PAGE, i << 18
         .set    i,i+1
         .endr
-        .rept   20                                      // 0x00a00000-0x00efffff: I/O
+        .rept   8                                       // 0x00a00000-0x00bfffff: I/O
+        .dc.l   PAGE_IO, i << 18
+        .set    i,i+1
+        .endr
+        .rept   7                                       // 0x00c00000-0x00dbffff: the slow RAM
+        .dc.l   PAGE_CI, i << 18
+        .set    i,i+1
+        .endr
+        .rept   5                                       // 0x00dc0000-0x00efffff: I/O
         .dc.l   PAGE_IO, i << 18
         .set    i,i+1
         .endr
@@ -122,4 +133,4 @@ amiga_mmu_c:
         .set    i,i+1
         .endr
 
-#endif /* CONF_AMIGA_HIGHER_HALF */
+#endif /* CONF_AMIGA_HIGHER_HALF && !CONF_AMIGA_HIGHER_HALF_68040 */

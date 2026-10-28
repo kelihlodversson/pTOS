@@ -51,9 +51,14 @@ ENTRY(C_SYM(os_entry))
  * though EMUTOS_LIVES_IN_RAM is set for it: unlike EmuTOS's other
  * RAM-resident targets, its .text is still placed at a fixed address
  * (the ARM kernel load address) rather than following REGION_RAM. */
-#if defined(MACHINE_AMIGA) && CONF_AMIGA_HIGHER_HALF
+#if defined(MACHINE_AMIGA) && CONF_AMIGA_HIGHER_HALF && CONF_AMIGA_ROM_512K
+/* the ROM is at 0x00f80000, and runs in the window, 0x80000000 above */
+# define ROM_ORIGIN 0x80f80000
+#elif defined(MACHINE_AMIGA) && CONF_AMIGA_HIGHER_HALF
 /* the ROM is at 0x00fc0000, and runs in the window, 0x80000000 above */
 # define ROM_ORIGIN 0x80fc0000
+#elif defined(MACHINE_AMIGA) && CONF_AMIGA_ROM_512K
+# define ROM_ORIGIN 0x00f80000
 #elif defined(MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
 #elif defined (MACHINE_RPI) && CONF_WITH_HIGHER_HALF

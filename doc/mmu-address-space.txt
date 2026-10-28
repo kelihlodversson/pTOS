@@ -585,13 +585,28 @@ tree maps what the Amiga has:
     the probe (the first boot of this image died on a read of 0xff000100);
   - the window, over the first 16 MiB.
 
+The slow RAM (0x00c00000-0x00dbffff) is not cached and open to the programs: the
+ROM probes it and gives it to them as Alt-RAM.
+
 What a custom chip is given is a physical address (virt_to_phys()): the disk DMA
 pointer; the Copper list and the screen are in the pool already.  Verified on
 Amiberry (doc/debugging.txt) with a 68030: the desktop comes up, the CPU is
 fetching from 0x80fd.... which is only possible through the tree (the
-emulated RAM is 2 MB).  Not yet: the 68040 and 68060 (their MMU is the other one
-of this file), and address spaces for the processes (the custom chips are at
-0x00dff000, in the half that a process owns).
+emulated RAM is 2 MB).
+
+The 68040 and the 68060 (amiga-mmu040_defconfig, CONF_AMIGA_HIGHER_HALF_68040) have
+the tree of atari_mmu040.S for the Amiga (bios/arch/m68k/amiga_mmu040.S): no early
+termination, so 16 MiB of 4 KiB pages, 17.9 KB, which the 256 KB ROM has no room for:
+the ROM is 512 KB, at 0x00f80000 (CONF_AMIGA_ROM_512K; first word 0x1114; mkrom
+amiga-512), as the Kickstarts of the A3000 and the A4000.  The Zorro III autoconfig
+space at 0xff000000 is a transparent window (DTT0), as the Atari I/O is.  What a
+32-bit Amiga has above the 24 bits (the motherboard and processor slot RAM, probed by
+the 68030 image) is not mapped, and the ROM does not probe it.  The pages are
+write-through, as the ST-RAM of the Atari is.  The desktop comes up on Amiberry's
+68040 and 68060 with the same stack pointer as on the 68030.
+
+Not yet: address spaces for the processes (the custom chips are at 0x00dff000, in
+the half that a process owns).
 
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................

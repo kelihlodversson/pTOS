@@ -518,8 +518,12 @@ static void add_alt_ram_from_hardware(void)
     {
         /* Add the slowest RAM first to put it at the end of the Alt-RAM pool */
         add_slow_ram();
+#if !CONF_AMIGA_HIGHER_HALF_68040
+        /* the tree of the 68040 and the 68060 maps the 24 bits only
+         * (amiga_mmu040.S): a probe above would fault */
         add_processor_slot_fast_ram();
         add_motherboard_fast_ram();
+#endif
     }
 
     add_expansion_ram();

@@ -1102,7 +1102,7 @@ AMIGA_ROM = ptos-amiga.rom
 
 ifdef TARGET_AMIGA_ROM
 $(IMAGE): $(EMUTOS_IMG) mkrom
-	./mkrom amiga $< $@
+	./mkrom $(if $(CONF_AMIGA_ROM_512K),amiga-512,amiga) $< $@
 endif
 
 ifdef TARGET_AMIGA_KICKDISK
@@ -1110,7 +1110,7 @@ $(IMAGE): $(AMIGA_ROM) mkrom
 	./mkrom amiga-kickdisk $< $@
 
 $(AMIGA_ROM): $(EMUTOS_IMG) mkrom
-	./mkrom amiga $< $@
+	./mkrom $(if $(CONF_AMIGA_ROM_512K),amiga-512,amiga) $< $@
 endif
 
 ifdef TARGET_AMIGA_FLOPPY

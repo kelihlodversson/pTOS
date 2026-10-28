@@ -21,9 +21,13 @@
 # if CONF_AMIGA_HIGHER_HALF
 #  define MMU_TREE_CRP  amiga_mmu_crp
 #  define MMU_TREE_TC   amiga_mmu_tc
+#  define MMU_TREE_ROOT amiga_mmu_root
+#  define MMU_TREE_DTT0 amiga_mmu_dtt0
 # else
 #  define MMU_TREE_CRP  atari_mmu_crp
 #  define MMU_TREE_TC   atari_mmu_tc
+#  define MMU_TREE_ROOT atari_mmu_root
+#  define MMU_TREE_DTT0 atari_mmu_dtt0
 # endif
 #endif
 
@@ -52,6 +56,9 @@
 #elif CONF_ATARI_HIGHER_HALF
         .extern C_SYM(atari_mmu_crp)
         .extern C_SYM(atari_mmu_tc)
+#elif CONF_AMIGA_HIGHER_HALF_68040
+        .extern C_SYM(amiga_mmu_root)
+        .extern C_SYM(amiga_mmu_dtt0)
 #elif CONF_AMIGA_HIGHER_HALF
         .extern C_SYM(amiga_mmu_crp)
         .extern C_SYM(amiga_mmu_tc)
@@ -85,7 +92,11 @@
 #endif
 
 #if defined(MACHINE_AMIGA) && !EMUTOS_LIVES_IN_RAM
+#if CONF_AMIGA_ROM_512K
+    .dc.w   0x1114      // 512 KB ROM
+#else
     .dc.w   0x1111      // 256 KB ROM
+#endif
     .dc.w   0x4ef9      // jmp
 #if CONF_AMIGA_HIGHER_HALF
     .dc.l   amiga_main - window_base    // pc at power on: the physical address of the ROM
@@ -393,8 +404,8 @@ _realmain:
         move.l  d0,a0
         jmp     (a0)
 hh_low:
-#if CONF_ATARI_HIGHER_HALF_68040
-        // The 68040 MMU (atari_mmu040.S): caches and translation off, the
+#if CONF_M68K_ROM_WINDOW_040
+        // The 68040 MMU (atari_mmu040.S, amiga_mmu040.S): caches and translation off, the
         // transparent windows set, the root of the tree in URP and SRP.
         moveq   #0,d0
         MOVEC_D0_CACR                   // caches off
@@ -403,9 +414,9 @@ hh_low:
         MOVEC_D0_ITT0
         MOVEC_D0_ITT1
         MOVEC_D0_DTT1
-        move.l  PHYS(C_SYM(atari_mmu_dtt0)),d0
+        move.l  PHYS(C_SYM(MMU_TREE_DTT0)),d0
         MOVEC_D0_DTT0                   // the I/O area: transparent, not cached
-        lea     PHYS(C_SYM(atari_mmu_root)),a0
+        lea     PHYS(C_SYM(MMU_TREE_ROOT)),a0
         .dc.l   0x4e7b8806              // movec a0,urp
         .dc.l   0x4e7b8807              // movec a0,srp
         .dc.w   0xf518                  // pflusha
