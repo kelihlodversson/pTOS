@@ -28,7 +28,7 @@ BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
     state->name = name; state->info = info;
     state->hslide = state->vslide = 0;
     state->hslsiz = state->vslsiz = -1;
-    state->top_colours = state->bottom_colours = NULL;
+    state->colours = NULL;
     state->topped = FALSE;
     return TRUE;
 }
@@ -51,7 +51,7 @@ BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
     result = cuis_call6(CUIS_FOCUS_QUERY,native,0,0,0,0,0);
     if (result < 0) { ok = FALSE; goto done; }
     drawing.topped = result != 0;
-    drawing.top_colours = top; drawing.bottom_colours = bottom;
+    drawing.colours = drawing.topped ? top : bottom;
     wm_frame_init(&frame);
     wm_frame_build(frame.tree,&frame.name,&frame.info,&drawing);
     for (index = 0; ; index++) {

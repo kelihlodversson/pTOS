@@ -18,11 +18,21 @@ static struct gem_window {
     ULONG region_index;
     GRECT current, previous, full;
 } windows[GEM_WINDOW_LIMIT];
+static BOOL frame_notice_blocked;
+BOOL aes_frames_registered(void)
+{
+    short i;
+    for (i = 0; i < GEM_WINDOW_LIMIT; i++)
+        if (windows[i].id && windows[i].open && windows[i].kind) return TRUE;
+    return FALSE;
+}
+BOOL aes_frames_listening(void) { return !frame_notice_blocked && aes_frames_registered(); }
 
 void aes_windows_reset(void)
 {
     short i;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++) windows[i].id = 0;
+    frame_notice_blocked = FALSE;
 }
 
 static struct gem_window *lookup(short id, short *global)
@@ -208,12 +218,38 @@ static short visible_work(struct gem_window *window, BOOL first, GRECT *out, sho
     }
 }
 
+static LONG publish_notice(struct gem_window *window, LONG session, LONG kind,
+                            short message[8], short *global)
+{
+    WM_FRAME_STATE state;
+    LONG result;
+    BOOL frame = kind == CUIS_NOTICE_REDRAW && window->kind && window->open;
+    if (!frame) return cuis_call6(CUIS_NOTICE_PUBLISH,session,window->native,kind,
+                                 (uintptr_t)message,sizeof(short)*8,0);
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return EACCDN;
+    if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
+        result = EACCDN; goto done;
+    }
+    /* Acknowledge before painting. Focus/damage arriving during the draw
+     * remains pending for the next pass instead of being cleared afterward. */
+    result = cuis_call6(CUIS_NOTICE_PUBLISH,session,window->native,kind,(uintptr_t)message,sizeof(short)*8,0);
+    if ((result >= 0 || result == EAGAIN) && !aes_frame_paint(window->native,&state,global)) {
+        (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)window->current.g_x,
+                        (QUAD)window->current.g_y,window->current.g_w+2,window->current.g_h+2,0);
+        result = EACCDN;
+    }
+done:
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;
+    return result;
+}
+
 LONG aes_window_messages(LONG session, short *global)
 {
     LONG native, identifier, kind, result;
     short message[8], i, j;
     struct gem_window *window;
     GRECT work;
+    frame_notice_blocked = FALSE;
     /* Bound pumping even if input continuously invalidates the display. */
     for (i = 0; i < 2 * GEM_WINDOW_LIMIT; i++) {
         kind = cuis_call6(CUIS_NOTICE_PEEK, session, (uintptr_t)&native, (uintptr_t)&identifier, 0, 0, 0);
@@ -225,7 +261,6 @@ LONG aes_window_messages(LONG session, short *global)
         for (j = 0; j < 8; j++) message[j] = 0;
         message[3] = window->id;
         if (kind == CUIS_NOTICE_REDRAW) {
-            if (!paint_window(window,global)) return EACCDN;
             message[0] = WM_REDRAW;
             if (!mt_wind_calc(WC_WORK, window->kind, window->current.g_x, window->current.g_y,
                           window->current.g_w, window->current.g_h,
@@ -235,13 +270,27 @@ LONG aes_window_messages(LONG session, short *global)
             message[7] = work.g_h > 0 ? work.g_h : 0;
         } else if (kind == CUIS_NOTICE_ACTIVATE) message[0] = WM_TOPPED;
         else return EINVFN;
-        result = cuis_call6(CUIS_NOTICE_PUBLISH, session, native, kind, (uintptr_t)message, sizeof(message), 0);
+        result = publish_notice(window,session,kind,message,global);
         /* A full pipe already has enough data to satisfy every legal read.
          * Leave the notice pending and let the caller free pipe capacity. */
-        if (result == EAGAIN) return E_OK;
+        if (result == EAGAIN) { frame_notice_blocked = TRUE; return E_OK; }
         if (result < 0) return result;
     }
     return E_OK;
+}
+
+LONG aes_window_messages_poll(LONG session, short *global)
+{
+    LONG result;
+    if (!aes_frames_registered()) return aes_window_messages(session,global);
+    /* APR_NOWAIT may paint only after a nonblocking acquisition. Nested
+     * frame/renderer locks then borrow our already-owned display scope. */
+    result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
+    if (result == EAGAIN) return E_OK;
+    if (result != E_OK) return result;
+    result = aes_window_messages(session,global);
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;
+    return result;
 }
 
 short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, short *global)

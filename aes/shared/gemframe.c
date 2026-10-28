@@ -5,30 +5,30 @@
 #include "aesdefs.h"
 #include "intmath.h"
 #include "string.h"
-static const WORD gl_watype[NUM_ELEM] =
+const UWORD wm_frame_types[NUM_ELEM] =
 {
     G_IBOX,         /* W_BOX        */
     G_BOX,          /* W_TITLE      */
-    G_BOXCHAR,      /* W_CLOSER     */
+    G_BOXCHAR|FL3DACT,      /* W_CLOSER     */
     G_BOXTEXT,      /* W_NAME       */
-    G_BOXCHAR,      /* W_FULLER     */
+    G_BOXCHAR|FL3DACT,      /* W_FULLER     */
     G_BOXTEXT,      /* W_INFO       */
     G_IBOX,         /* W_DATA       */
     G_IBOX,         /* W_WORK       */
-    G_BOXCHAR,      /* W_SIZER      */
+    G_BOXCHAR|FL3DACT,      /* W_SIZER      */
     G_BOX,          /* W_VBAR       */
-    G_BOXCHAR,      /* W_UPARROW    */
-    G_BOXCHAR,      /* W_DNARROW    */
+    G_BOXCHAR|FL3DACT,      /* W_UPARROW    */
+    G_BOXCHAR|FL3DACT,      /* W_DNARROW    */
     G_BOX,          /* W_VSLIDE     */
-    G_BOX,          /* W_VELEV      */
+    G_BOX|FL3DACT,          /* W_VELEV      */
     G_BOX,          /* W_HBAR       */
-    G_BOXCHAR,      /* W_LFARROW    */
-    G_BOXCHAR,      /* W_RTARROW    */
+    G_BOXCHAR|FL3DACT,      /* W_LFARROW    */
+    G_BOXCHAR|FL3DACT,      /* W_RTARROW    */
     G_BOX,          /* W_HSLIDE     */
-    G_BOX           /* W_HELEV      */
+    G_BOX|FL3DACT           /* W_HELEV      */
 };
 
-static const LONG gl_waspec[NUM_ELEM] =
+const LONG wm_frame_specs[NUM_ELEM] =
 {
     0x00011101L,    /* W_BOX        */
     0x00011101L,    /* W_TITLE      */
@@ -51,31 +51,7 @@ static const LONG gl_waspec[NUM_ELEM] =
     0x00011101L     /* W_HELEV      */
 };
 
-static const WORD gl_3dflags[NUM_ELEM] =
-{
-    FL3DNONE,       /* W_BOX        */
-    FL3DNONE,       /* W_TITLE      */
-    FL3DACT,        /* W_CLOSER     */
-    FL3DNONE,       /* W_NAME - may be altered by w_bldactive() */
-    FL3DACT,        /* W_FULLER     */
-    FL3DNONE,       /* W_INFO       */
-    FL3DNONE,       /* W_DATA       */
-    FL3DNONE,       /* W_WORK       */
-    FL3DACT,        /* W_SIZER      */
-    FL3DNONE,       /* W_VBAR       */
-    FL3DACT,        /* W_UPARROW    */
-    FL3DACT,        /* W_DNARROW    */
-    FL3DNONE,       /* W_VSLIDE     */
-    FL3DACT,        /* W_VELEV      */
-    FL3DNONE,       /* W_HBAR       */
-    FL3DACT,        /* W_LFARROW    */
-    FL3DACT,        /* W_RTARROW    */
-    FL3DNONE,       /* W_HSLIDE     */
-    FL3DACT         /* W_HELEV      */
-};
-
-
-static char empty_name[] = "";
+#ifdef AES_FRAME_TEMPLATE
 static const TEDINFO text_template = {
     NULL,NULL,NULL,IBM,0,TE_LEFT,0x1100,0,1,80,80
 };
@@ -85,9 +61,9 @@ void wm_frame_init(WM_FRAME *frame)
     memset(frame,0,sizeof(*frame));
     for (i = 0; i < NUM_ELEM; i++) {
         frame->tree[i].ob_next = frame->tree[i].ob_head = frame->tree[i].ob_tail = NIL;
-        frame->tree[i].ob_type = gl_watype[i];
-        frame->tree[i].ob_spec.index = gl_waspec[i];
-        frame->tree[i].ob_flags = gl_3dflags[i];
+        frame->tree[i].ob_type = wm_frame_types[i] & 255;
+        frame->tree[i].ob_spec.index = wm_frame_specs[i];
+        frame->tree[i].ob_flags = wm_frame_types[i] & FL3DMASK;
     }
     frame->tree[ROOT].ob_state = SHADOWED;
     frame->name = frame->info = text_template;
@@ -95,31 +71,36 @@ void wm_frame_init(WM_FRAME *frame)
     frame->tree[W_NAME].ob_spec.tedinfo = &frame->name;
     frame->tree[W_INFO].ob_spec.tedinfo = &frame->info;
 }
-static void frame_adjust(OBJECT *tree, WORD parent, WORD obj, WORD x, WORD y, WORD w, WORD h)
+#endif
+static char empty_name[] = "";
+static void frame_adjust(OBJECT *__restrict__ tree, WORD parent, WORD obj, WORD x, WORD y, WORD w, WORD h)
 {
-    WORD last = tree[parent].ob_tail;
-    tree[obj].ob_x = x; tree[obj].ob_y = y;
-    tree[obj].ob_width = w; tree[obj].ob_height = h;
-    tree[obj].ob_head = tree[obj].ob_tail = NIL;
-    tree[obj].ob_next = parent;
-    if (last == NIL) tree[parent].ob_head = obj;
+    OBJECT *child = tree+obj, *owner = tree+parent;
+    WORD last = owner->ob_tail;
+    /* wm_frame_build cleared all links; every child is attached once. */
+    child->ob_x = x; child->ob_y = y;
+    child->ob_width = w; child->ob_height = h;
+    child->ob_next = parent;
+    if (last == NIL) owner->ob_head = obj;
     else tree[last].ob_next = obj;
-    tree[parent].ob_tail = obj;
+    owner->ob_tail = obj;
 }
-static void frame_colour(OBJECT *tree, const WM_FRAME_STATE *state, WORD gadget)
+static void frame_colour(OBJECT *__restrict__ tree, const WM_FRAME_STATE *__restrict__ state, WORD gadget)
 {
-    const WORD *colours = state->topped ? state->top_colours : state->bottom_colours;
+    OBJECT *object = tree+gadget;
     WORD colour;
-    if (!colours) return;
-    colour = colours[gadget];
-    if ((tree[gadget].ob_type & 255) == G_BOXTEXT) tree[gadget].ob_spec.tedinfo->te_color = colour;
-    else tree[gadget].ob_spec.index = (tree[gadget].ob_spec.index & 0xffff0000UL) | (UWORD)colour;
+#if defined(AES_FRAME_TEMPLATE) || !CONF_WITH_WINDOW_COLOURS
+    if (!state->colours) return;
+#endif
+    colour = state->colours[gadget];
+    if ((object->ob_type & 255) == G_BOXTEXT) object->ob_spec.tedinfo->te_color = colour;
+    else object->ob_spec.index = (object->ob_spec.index & 0xffff0000UL) | (UWORD)colour;
 }
 
 #define TGADGETS (NAME|CLOSER|FULLER|MOVER)
 #define VGADGETS (UPARROW|DNARROW|VSLIDE)
 #define HGADGETS (LFARROW|RTARROW|HSLIDE)
-static void frame_vbar(OBJECT *tree, const WM_FRAME_STATE *state, UWORD kind, WORD x, WORD y, WORD w, WORD h)
+static void frame_vbar(OBJECT *__restrict__ tree, const WM_FRAME_STATE *__restrict__ state, UWORD kind, WORD x, WORD y, WORD w, WORD h)
 {
     WORD size, posn;
     (void)w;
@@ -158,7 +139,7 @@ static void frame_vbar(OBJECT *tree, const WM_FRAME_STATE *state, UWORD kind, WO
 }
 
 
-static void frame_hbar(OBJECT *tree, const WM_FRAME_STATE *state, UWORD kind, WORD x, WORD y, WORD w, WORD h)
+static void frame_hbar(OBJECT *__restrict__ tree, const WM_FRAME_STATE *__restrict__ state, UWORD kind, WORD x, WORD y, WORD w, WORD h)
 {
     WORD size, posn;
     (void)h;
@@ -197,14 +178,16 @@ static void frame_hbar(OBJECT *tree, const WM_FRAME_STATE *state, UWORD kind, WO
 }
 
 
-void wm_frame_build(OBJECT *tree, TEDINFO *name, TEDINFO *info, const WM_FRAME_STATE *state)
+void wm_frame_build(OBJECT *__restrict__ tree, TEDINFO *name, TEDINFO *info, const WM_FRAME_STATE *__restrict__ state)
 {
     BOOL istop = state->topped, havevbar, havehbar;
     UWORD kind = state->kind;
-    WORD corner_x, corner_y, tempw, i;
+    WORD corner_x, corner_y, tempw;
+    OBJECT *object = tree+NUM_ELEM;
     GRECT t;
-    for (i = 0; i < NUM_ELEM; i++)
-        tree[i].ob_next = tree[i].ob_head = tree[i].ob_tail = NIL;
+    while (object > tree) {
+        object--; object->ob_next = object->ob_head = object->ob_tail = NIL;
+    }
     /* start adding pieces & adjusting sizes */
     name->te_ptext = (kind & NAME) ? state->name : (char *)empty_name;
     info->te_ptext = state->info;
@@ -243,8 +226,10 @@ void wm_frame_build(OBJECT *tree, TEDINFO *name, TEDINFO *info, const WM_FRAME_S
             tempw -= 2 * ADJ3DSTD;
             frame_adjust(tree, W_TITLE, W_NAME, t.g_x+ADJ3DSTD, t.g_y+ADJ3DSTD, tempw, state->hbox);
             tree[W_NAME].ob_state = istop ? NORMAL : DISABLED;
-        if (!state->top_colours)
+#if defined(AES_FRAME_TEMPLATE) || !CONF_WITH_WINDOW_COLOURS
+        if (!state->colours)
             name->te_color = istop ? 0x11a1 : 0x1100;
+#endif
 
         }
         else if (kind & MOVER)

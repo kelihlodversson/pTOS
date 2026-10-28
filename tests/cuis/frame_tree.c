@@ -20,7 +20,7 @@ int main(void)
 {
     WM_FRAME first, second;
     WM_FRAME_STATE state = { { 10,20,320,200 },NAME|INFO,TRUE,19,19,23,23,
-                            0,0,-1,-1,"Title","Info",NULL,NULL };
+                            0,0,-1,-1,"Title","Info",NULL };
     ULONG seen;
     UWORD kind;
     wm_frame_init(&first); wm_frame_init(&second);

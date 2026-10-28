@@ -106,7 +106,7 @@ obj/libaes/resources.o: lib/aes/resources.c aes/shared/gemrcfix.h lib/aes/resour
 	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemframe.o: aes/shared/gemframe.c aes/shared/gemframe.h aes/shared/gemframeids.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
-	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
+	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -DAES_FRAME_TEMPLATE -c $< -o $@
 obj/libaes/frames.o: lib/aes/frames.c lib/aes/frames.h lib/aes/layout.h aes/shared/gemframe.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@

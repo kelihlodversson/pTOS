@@ -31,6 +31,7 @@ static LONG region_values[3][4];
 static ULONG region_count;
 static LONG stack_values[4];
 static LONG notice_kind, notice_native, notice_id, publish_failure, notice_on_wait;
+static ULONG notice_only_wakes;
 static LONG window_transport(ULONG fn, UQUAD a)
 {
     short i;
@@ -159,7 +160,10 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
             menu_wakes--; menu_ticks++; return CUIS_READY_SURFACE;
         }
         if (notice_on_wait) { notice_kind = notice_on_wait; notice_on_wait = 0; }
-        if ((c & CUIS_READY_NOTICE) && notice_kind) ready |= CUIS_READY_NOTICE;
+        if ((c & CUIS_READY_NOTICE) && notice_kind) {
+            ready |= CUIS_READY_NOTICE;
+            if (notice_only_wakes) { notice_only_wakes--; menu_ticks += 3; return ready; }
+        }
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
         if (c & CUIS_READY_TIMER) {
@@ -289,6 +293,7 @@ BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, WORD *
  * frame construction contracts run against production code in other suites. */
 static BOOL frame_paint_failure;
 static ULONG frame_paints;
+static BOOL frame_damage_once;
 static char *last_frame_name;
 BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
                        char *name, char *info, WORD *global)
@@ -303,6 +308,7 @@ BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
     (void)native; (void)global;
     if (!state->name || !state->info) return FALSE;
     frame_paints++; last_frame_name = state->name;
+    if (frame_damage_once) { frame_damage_once = FALSE; notice_kind = CUIS_NOTICE_REDRAW; }
     return !frame_paint_failure;
 }
 #include "window_api.c"
@@ -362,6 +368,41 @@ static int frame_failures(void)
     CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 10 && y == 20 && w == 100 && h == 80);
     CHECK(wind_set_str(id,WF_NAME,"Replacement") == 0 && last_frame_name[0] == 'O');
     frame_paint_failure = FALSE;
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    return 0;
+}
+static int frame_event_checks(void)
+{
+    short id, message[8], clicks;
+    ULONG before;
+    id = wind_create(NAME|INFO,0,0,200,120);
+    CHECK(id > 0 && wind_open(id,10,20,100,80) == 1);
+    notice_native = native_windows[id-1]; notice_id = id;
+    notice_only_wakes = 1; notice_on_wait = CUIS_NOTICE_REDRAW;
+    menu_ticks = 0; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && wait_calls == before+2 && waited_interval == 5);
+    CHECK(!notice_kind && pipe_count == 16 && (waited_mask & CUIS_READY_NOTICE));
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW && message[3] == id);
+    pipe_count = sizeof(pipe_data); notice_kind = CUIS_NOTICE_REDRAW;
+    CHECK(evnt_timer(0) == 1 && !(waited_mask & CUIS_READY_NOTICE) && notice_kind);
+    pipe_count = 0; notice_kind = 0;
+    notice_on_wait = CUIS_NOTICE_REDRAW; input_ready = CUIS_READY_BUTTON; input_count = 2;
+    CHECK(evnt_multi(MU_BUTTON,2,1,1,0,0,0,0,0,0,0,0,0,0,NULL,0,
+                     NULL,NULL,NULL,NULL,NULL,&clicks) == MU_BUTTON && clicks == 2);
+    CHECK(!(waited_mask & CUIS_READY_NOTICE) && !notice_kind && pipe_count == 16);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
+    input_ready = 0;
+    notice_kind = CUIS_NOTICE_REDRAW; display_error = EAGAIN;
+    before = frame_paints;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && frame_paints == before && notice_kind);
+    display_error = 0;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
+    CHECK(!display_nesting && frame_paints == before+1);
+    notice_kind = CUIS_NOTICE_REDRAW; frame_damage_once = TRUE;
+    before = frame_paints;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
+    CHECK(!notice_kind && frame_paints == before+2 && pipe_count == 16);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !pipe_count);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
     return 0;
 }
@@ -505,7 +546,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

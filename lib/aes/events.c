@@ -44,6 +44,7 @@ static short event_once(short events, short clicks, short button_mask, short but
 {
     LONG session, ready, result = 0, state[4], input[5];
     ULONG mask = 0, wait_mask;
+    BOOL frame_work = aes_frames_registered();
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
         ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL) ||
         ((events & MU_BUTTON) && ((UWORD)clicks & 0xfe00)) ||
@@ -67,10 +68,14 @@ static short event_once(short events, short clicks, short button_mask, short but
                        (QUAD)m2_w, (QUAD)m2_h) < 0) return 0;
         mask |= CUIS_READY_RECT2;
     }
-    if ((events & MU_MESAG) && aes_window_messages(session, global) < 0) return 0;
+    if (((events & MU_MESAG) || frame_work) && aes_window_messages(session, global) < 0) return 0;
     if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
+    /* A multi-click owns per-call accumulation until completion. Service
+     * frame work afterward rather than interrupting that unfinished count. */
+    if (aes_frames_listening() && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
+        wait_mask |= CUIS_READY_NOTICE;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
     if ((ready & CUIS_READY_NOTICE) && aes_window_messages(session, global) < 0) return 0;
@@ -80,6 +85,11 @@ static short event_once(short events, short clicks, short button_mask, short but
         state[0] = input[2]; state[1] = input[3];
         state[2] = (ULONG)input[4] & 0xffff; state[3] = (ULONG)input[4] >> 16;
     } else if (snapshot(session, state) != E_OK) return 0;
+    if (frame_work && !(ready & CUIS_READY_NOTICE) && aes_window_messages(session,global) < 0) return 0;
+    if ((ready & CUIS_READY_NOTICE) && !(mask & CUIS_READY_NOTICE)) {
+        ready &= ~CUIS_READY_NOTICE;
+        if (!ready) return -1;
+    }
     if (ready & CUIS_READY_SURFACE) {
         if (aes_menu_dispatch(global) < 0) return 0;
         ready &= ~CUIS_READY_SURFACE;
@@ -108,7 +118,7 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     LONG start = 0, now, session;
     ULONG elapsed, duration, ticks, remaining = interval;
     short result;
-    BOOL clocked = (events & MU_TIMER) && aes_menu_registered();
+    BOOL clocked = (events & MU_TIMER) && (aes_menu_registered() || aes_frames_registered());
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     session = aes_application_session(global);
     duration = interval/5 + (interval%5 != 0) + (interval != 0);

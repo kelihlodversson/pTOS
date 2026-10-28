@@ -70,6 +70,7 @@ static OBJECT W_TREE[NUM_WIN];
 static OBJECT W_ACTIVE[NUM_ELEM];
 
 
+#if !CONF_WITH_3D_OBJECTS
 static const WORD gl_watype[NUM_ELEM] =
 {
     G_IBOX,         /* W_BOX        */
@@ -116,31 +117,9 @@ static const LONG gl_waspec[NUM_ELEM] =
     0x00011101L     /* W_HELEV      */
 };
 
-#if CONF_WITH_3D_OBJECTS
-static const WORD gl_3dflags[NUM_ELEM] =
-{
-    FL3DNONE,       /* W_BOX        */
-    FL3DNONE,       /* W_TITLE      */
-    FL3DACT,        /* W_CLOSER     */
-    FL3DNONE,       /* W_NAME - may be altered by w_bldactive() */
-    FL3DACT,        /* W_FULLER     */
-    FL3DNONE,       /* W_INFO       */
-    FL3DNONE,       /* W_DATA       */
-    FL3DNONE,       /* W_WORK       */
-    FL3DACT,        /* W_SIZER      */
-    FL3DNONE,       /* W_VBAR       */
-    FL3DACT,        /* W_UPARROW    */
-    FL3DACT,        /* W_DNARROW    */
-    FL3DNONE,       /* W_VSLIDE     */
-    FL3DACT,        /* W_VELEV      */
-    FL3DNONE,       /* W_HBAR       */
-    FL3DACT,        /* W_LFARROW    */
-    FL3DACT,        /* W_RTARROW    */
-    FL3DNONE,       /* W_HSLIDE     */
-    FL3DACT         /* W_HELEV      */
-};
-
 #endif
+
+
 
 #if CONF_WITH_WINDOW_COLOURS
 /*
@@ -460,9 +439,9 @@ void w_bldactive(WORD w_handle)
     state.hslide = window->w_hslide; state.vslide = window->w_vslide;
     state.hslsiz = window->w_hslsiz; state.vslsiz = window->w_vslsiz;
 #if CONF_WITH_WINDOW_COLOURS
-    state.top_colours = window->w_tcolor; state.bottom_colours = window->w_bcolor;
+    state.colours = state.topped ? window->w_tcolor : window->w_bcolor;
 #else
-    state.top_colours = state.bottom_colours = NULL;
+    state.colours = NULL;
 #endif
     wm_frame_build(W_ACTIVE,&gl_aname,&gl_ainfo,&state);
 }
@@ -1113,10 +1092,13 @@ void wm_init(void)
     w_nilit(NUM_ELEM, W_ACTIVE);
     for (i = 0; i < NUM_ELEM; i++)
     {
+#if CONF_WITH_3D_OBJECTS
+        W_ACTIVE[i].ob_type = wm_frame_types[i] & 255;
+        W_ACTIVE[i].ob_spec.index = wm_frame_specs[i];
+        W_ACTIVE[i].ob_flags = wm_frame_types[i] & FL3DMASK;
+#else
         W_ACTIVE[i].ob_type = gl_watype[i];
         W_ACTIVE[i].ob_spec.index = gl_waspec[i];
-#if CONF_WITH_3D_OBJECTS
-        W_ACTIVE[i].ob_flags = gl_3dflags[i];
 #endif
     }
     W_ACTIVE[ROOT].ob_state = SHADOWED;
