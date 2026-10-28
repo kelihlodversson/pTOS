@@ -275,10 +275,13 @@ static int input_api_checks(void)
 #undef MULTI
 /* Deterministic native system-font box metrics for the window binding. */
 static BOOL frame_metrics_failure;
-BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *global)
+static WORD frame_screen_width = 640, frame_screen_height = 400;
+BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, WORD *global)
 {
     if (frame_metrics_failure || aes_application_session(global) < 0) return FALSE;
     *wbox = 19; *hbox = 19;
+    if (width) *width = frame_screen_width;
+    if (height) *height = frame_screen_height;
     return TRUE;
 }
 #include "window_api.c"
@@ -291,6 +294,15 @@ static int window_failures(void)
     frame_metrics_failure = FALSE;
     CHECK(wind_calc(WC_WORK,NAME|INFO|SIZER,0,0,100,80,&x,&y,&w,&h) == 1);
     CHECK(x == 1 && y == 42 && w == 76 && h == 37);
+    frame_screen_width = 320; frame_screen_height = 200;
+    CHECK(wind_calc(WC_WORK,NAME|INFO|SIZER,0,0,100,80,&x,&y,&w,&h) == 1);
+    CHECK(x == 1 && y == 42 && w == 77 && h == 37);
+    CHECK(wind_calc(WC_BORDER,NAME|INFO|SIZER,x,y,w,h,&x,&y,&w,&h) == 1);
+    CHECK(x == 0 && y == 0 && w == 100 && h == 80);
+    frame_screen_height = 400;
+    CHECK(wind_calc(WC_WORK,NAME|INFO|SIZER,0,0,100,80,&x,&y,&w,&h) == 1);
+    CHECK(x == 1 && y == 42 && w == 78 && h == 37);
+    frame_screen_width = 640;
     window_error_fn = CUIS_WINDOW_CREATE; window_error = ENSMEM;
     CHECK(wind_create(0, 0, 0, 10, 10) == -1);
     window_error_fn = CUIS_WINDOW_IDENTIFY; window_error = EACCDN;

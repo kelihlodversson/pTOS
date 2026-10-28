@@ -44,12 +44,12 @@ short mt_wind_calc(short type, short kind, short x, short y, short w, short h,
 {
     GRECT r;
     WM_FRAME_INSETS insets;
-    WORD wbox = 1, hbox = 1;
+    WORD wbox = 1, hbox = 1, screen_width = 640, screen_height = 400;
     LONG nx, ny, nw, nh, sign;
     /* Classic gadgets and PC-GEM HOTCLOSE; extension bits are unsupported. */
     if (((UWORD)kind & ~0x1fffU) || (type != WC_BORDER && type != WC_WORK)) return 0;
-    if (kind && !aes_frame_metrics(&wbox,&hbox,global)) return 0;
-    if (!wm_frame_insets((UWORD)kind,wbox,hbox,TRUE,&insets)) return 0;
+    if (kind && !aes_frame_metrics(&wbox,&hbox,&screen_width,&screen_height,global)) return 0;
+    if (!wm_frame_insets((UWORD)kind,wbox,hbox,TRUE,screen_width,screen_height,&insets)) return 0;
     sign = type == WC_WORK ? 1 : -1;
     nx = x + sign*insets.left; ny = y + sign*insets.top;
     nw = w - sign*(insets.left+insets.right);

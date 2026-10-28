@@ -1991,8 +1991,10 @@ when several gadgets occupy the same row or column.
 Decorated calculations require an application session and obtain system font
 cell and pixel aspect metrics from a private workstation. Box height is the
 cell height plus three; width uses the native pixel-aspect calculation with
-its character-width-plus-four minimum. The kind-zero calculation remains
-independent of workstation/session access. Workstation errors leave outputs
+its character-width-plus-four minimum. Native TOS4 narrows the adjusted 3D
+box width by one below 640 screen pixels, plus another at 400 or more lines;
+these mode-dependent adjustments affect the vertical bar width. The kind-zero
+calculation remains independent of workstation/session access. Workstation errors leave outputs
 unchanged. Wide intermediate arithmetic rejects results outside signed WORD
 range. Small rectangles retain negative work extents as in native AES, and
 representable frame/work conversions round-trip exactly.
