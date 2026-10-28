@@ -5,6 +5,7 @@
 #define PTOS_GEM_H
 #include "obdefs.h"
 #include "rsdefs.h"
+#include "gemmenu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -274,6 +275,8 @@ short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global);
 #define DISABLE 0
 #define HIGHLIGHT 0
 #define UNHIGHLIGHT 1
+short menu_popup(MENU *menu, short x, short y, MENU *result);
+short mt_menu_popup(MENU *menu, short x, short y, MENU *result, short *global);
 short menu_icheck(OBJECT *tree, short item, short check);
 short mt_menu_icheck(OBJECT *tree, short item, short check, short *global);
 short menu_ienable(OBJECT *tree, short item, short enable);

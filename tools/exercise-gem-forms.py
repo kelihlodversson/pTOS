@@ -60,6 +60,30 @@ if output:
     command("screendump", {"filename": str(destination), "format": "png"})
 key("ret")
 marker("x32 GEM modal forms: PASS")
+
+def mouse_event(events):
+    command("input-send-event", {"events": events})
+
+
+def move(dx, dy):
+    mouse_event([{"type": "rel", "data": {"axis": "x", "value": dx}},
+                 {"type": "rel", "data": {"axis": "y", "value": dy}}])
+
+
+for stage, (x, y) in enumerate(((35, 55), (5, 5), (35, 35), (35, 55))):
+    marker("x32 GEM popup %d: READY" % stage)
+    time.sleep(0.2)
+    # The PC has a relative PS/2 mouse. Clamp against the upper-left edge
+    # with bounded packets before moving to the requested screen pixel.
+    for _ in range(32):
+        move(-127, -127)
+        time.sleep(0.02)
+    move(x, y)
+    time.sleep(0.2)
+    mouse_event([{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(0.1)
+    mouse_event([{"type": "btn", "data": {"down": False, "button": "left"}}])
+marker("x32 GEM popup menus: PASS")
 stream.close()
 connection.close()
 print("Real keyboard/modal GEM form tests passed.")
