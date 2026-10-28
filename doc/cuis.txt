@@ -2104,3 +2104,13 @@ mouse grabs invalidate pending border gestures. Nonblocking display acquisition
 and a retained completed message prevent drawing or full-stream backpressure
 from blocking ordinary message reads. All public calls remain standard GEM;
 there is no new exported libaes API or feature negotiation.
+
+Control readiness servicing drains records/cancellation for every live GEM
+handle, including plain, title/info-only and hidden windows. Only open windows
+with a supported gadget interpret those records or paint feedback. Border hover
+suppresses live button predicates while focused MU_M1/MU_M2 rectangle predicates
+remain active. Changing the selected top-strip surface or its height invalidates
+queued and captured border gestures even if window focus and stacking stay the
+same. Completed requests retain a release-time rectangle separately from the
+watch box; a later geometry change, close or release-feedback drawing failure
+cannot retract that request while its message waits for stream capacity.

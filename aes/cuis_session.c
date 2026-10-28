@@ -130,6 +130,7 @@ static BOOL surface_focus_pending;
 static UWORD surface_height, surface_paint_height;
 static CUIS_CLIENT *surface_painter;
 static void damage_windows(void);
+static void cancel_controls(CUIS_WINDOW *window);
 static void surface_remove(CUIS_CLIENT *client)
 {
     CUIS_CLIENT **link;
@@ -141,6 +142,11 @@ static void surface_choose(CUIS_CLIENT *client)
 {
     UWORD height = surface_height;
     BOOL changed = surface_owner != client;
+    CUIS_WINDOW *window;
+    /* A surface can cover a gadget without changing window focus/stacking.
+     * Invalidate both queued gestures and a capture under the old clipping. */
+    if (changed || height != (client ? client->surface_height : 0))
+        for (window = window_front; window; window = window->znext) cancel_controls(window);
     if (surface_owner) {
         surface_owner->surface_events = 0;
         if (changed && !keyboard_owner) surface_owner->key_head = surface_owner->key_count = 0;
@@ -1479,7 +1485,6 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
          surface_capture ? FALSE :
          pointer_capture ? client_window(client, pointer_capture) :
          surface_owner && y < surface_owner->surface_height ? FALSE :
-         pointer_hover == NULL && pointer_hit() && !content_contains(pointer_hit()) ? FALSE :
          client_window(client, focus_window));
     if (owned) {
         for (i = 0; i < 2; i++) {
@@ -1490,6 +1495,9 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
             if ((wait->events & bit) && (inside != rect->leave)) wait->ready |= bit;
         }
     }
+    /* Border hover suppresses live button predicates, not MU_M1/MU_M2.
+     * Trusted work-area history below still retains its original ownership. */
+    if (!mouse_owner && !pointer_capture && pointer_hit() && !content_contains(pointer_hit())) owned = FALSE;
     if (initial && (wait->events & CUIS_READY_BUTTON)) {
         /* GEM's quick check retains a press/release pair that arrived before
          * the wait was registered. A bounded private history is independent

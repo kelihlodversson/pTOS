@@ -136,8 +136,9 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         pipe_count += e; notice_kind = 0; return E_OK;
     }
     if (fn == CUIS_CONTROL_READ) {
+        if ((LONG)a != control_target) return 0;
         if (control_read_error) { LONG result = control_read_error; control_read_error = 0; return result; }
-        if ((LONG)a != control_target || control_at == control_count) return 0;
+        if (control_at == control_count) return 0;
         *(LONG *)(uintptr_t)b = control_events[control_at][0];
         *(LONG *)(uintptr_t)c = control_events[control_at][1];
         *(LONG *)(uintptr_t)d = control_events[control_at][2];
@@ -188,6 +189,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (release_display_on_wait && (c & CUIS_READY_DISPLAY)) {
             release_display_on_wait = FALSE; display_error = 0;
         }
+        if ((c & CUIS_READY_CONTROL) && (control_at < control_count || control_read_error)) ready |= CUIS_READY_CONTROL;
         if ((c & CUIS_READY_DISPLAY) && !display_error) ready |= CUIS_READY_DISPLAY;
         if (notice_on_wait) { notice_kind = notice_on_wait; notice_on_wait = 0; }
         if ((c & CUIS_READY_NOTICE) && notice_kind) {
@@ -490,7 +492,7 @@ static int frame_event_checks(void)
 }
 static int control_api_checks(void)
 {
-    short id, message[8], x,y,w,h;
+    short id, other, message[8], x,y,w,h;
     ULONG before;
     id = wind_create(NAME|CLOSER|FULLER,0,0,200,140);
     CHECK(id > 0 && wind_open(id,20,30,200,140) == 1);
@@ -524,9 +526,29 @@ static int control_api_checks(void)
     control_event(210,35,1,1); control_event(210,35,0,1);
     pipe_count = sizeof(pipe_data);
     CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(wind_set(id,WF_CURRXYWH,30,40,210,150) == 1);
     CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
     CHECK(evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
-    CHECK(message[0] == WM_FULLED && !pipe_count);
+    CHECK(message[0] == WM_FULLED && !pipe_count && message[4] == 20 && message[5] == 30 &&
+          message[6] == 200 && message[7] == 140);
+    CHECK(wind_set(id,WF_CURRXYWH,20,30,200,140) == 1);
+    /* Queue scope includes title-only, kind-zero and hidden live handles. */
+    other = wind_create(NAME,0,0,200,140);
+    CHECK(other > 0 && wind_open(other,20,30,200,140) == 1);
+    control_target = native_windows[other-1]; control_at = control_count = 0;
+    control_event(25,35,1,1); control_event(25,35,0,1);
+    CHECK(evnt_timer(0) == 1 && control_at == control_count && !pipe_count);
+    CHECK(wind_close(other) == 1);
+    control_read_error = ERANGE;
+    CHECK(evnt_timer(0) == 1 && !control_read_error && !pipe_count);
+    CHECK(wind_delete(other) == 1);
+    other = wind_create(0,0,0,200,140);
+    CHECK(other > 0 && wind_open(other,20,30,200,140) == 1);
+    control_target = native_windows[other-1]; control_at = control_count = 0;
+    control_event(20,30,1,1); control_event(20,30,0,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && control_at == control_count);
+    CHECK(wind_close(other) == 1 && wind_delete(other) == 1);
+    control_target = native_windows[id-1];
     /* Busy display preserves stream progress; overlays postpone all controls. */
     control_at = control_count = 0;
     control_event(25,35,1,1); control_event(25,35,0,1);
@@ -542,7 +564,20 @@ static int control_api_checks(void)
     frame_paint_failure = TRUE;
     CHECK(evnt_timer(0) == 1 && !pipe_count);
     frame_paint_failure = FALSE;
-    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    control_at = control_count = 0; control_event(25,35,1,1);
+    CHECK(evnt_timer(0) == 1 && control_selection);
+    control_event(25,35,0,1); frame_paint_failure = TRUE;
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED);
+    frame_paint_failure = FALSE;
+    control_at = control_count = 0;
+    control_event(25,35,1,1); control_event(25,35,0,1);
+    pipe_count = sizeof(pipe_data);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(wind_close(id) == 1);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
+    CHECK(message[0] == WM_CLOSED && message[4] == 20 && message[5] == 30 && message[6] == 200 && message[7] == 140);
+    CHECK(wind_delete(id) == 1);
     control_target = 0; control_at = control_count = 0;
     return 0;
 }

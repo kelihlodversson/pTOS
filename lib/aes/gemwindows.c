@@ -30,6 +30,7 @@ static struct gem_window {
     LONG native;
     BOOL open, control_selected;
     WORD control, control_message;
+    GRECT control_rectangle;
     struct visible_region *regions;
     GRECT current, previous, full;
 } windows[GEM_WINDOW_LIMIT];
@@ -41,7 +42,7 @@ BOOL aes_controls_listening(void)
     short i;
     if (frame_overlays || control_display_blocked || control_pipe_blocked) return FALSE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
-        if (windows[i].id && windows[i].open && (windows[i].kind & (CLOSER|FULLER))) return TRUE;
+        if (windows[i].id) return TRUE;
     return FALSE;
 }
 BOOL aes_frames_suspended(void) { return frame_overlays != 0; }
@@ -166,8 +167,9 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     window = &windows[i];
     window->native = native;
     window->kind = kind; window->name = window->info = "";
+    window->control_message = 0;
     window->open = FALSE;
-    window->control = window->control_message = 0; window->control_selected = FALSE;
+    window->control = 0; window->control_selected = FALSE;
     discard_regions(&window->regions);
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
@@ -226,7 +228,7 @@ static short local_wind_close(short id, short *global)
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
     window->open = FALSE;
-    window->control = window->control_message = 0; window->control_selected = FALSE;
+    window->control = 0; window->control_selected = FALSE;
     discard_regions(&window->regions);
     return 1;
 }
@@ -329,8 +331,8 @@ static LONG flush_control(struct gem_window *window, LONG session)
     LONG result;
     if (!window->control_message) return E_OK;
     message[0] = window->control_message; message[3] = window->id;
-    message[4] = window->current.g_x; message[5] = window->current.g_y;
-    message[6] = window->current.g_w; message[7] = window->current.g_h;
+    message[4] = window->control_rectangle.g_x; message[5] = window->control_rectangle.g_y;
+    message[6] = window->control_rectangle.g_w; message[7] = window->control_rectangle.g_h;
     result = cuis_call6(CUIS_STREAM_WRITE,session,(uintptr_t)message,16,0,0,0);
     if (result == EAGAIN) { control_pipe_blocked = TRUE; return E_OK; }
     if (result != 16) return result < 0 ? result : EACCDN;
@@ -347,7 +349,7 @@ static LONG service_controls(LONG session, WORD *global)
     control_display_blocked = control_pipe_blocked = FALSE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
         window = &windows[i];
-        if (!window->id || !window->open || !(window->kind & (CLOSER|FULLER))) continue;
+        if (!window->id) continue;
         result = flush_control(window,session);
         if (result < 0) return result;
     }
@@ -358,17 +360,21 @@ static LONG service_controls(LONG session, WORD *global)
     if (result != E_OK) return result;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
         window = &windows[i];
-        if (!window->id || !window->open || !(window->kind & (CLOSER|FULLER))) continue;
+        if (!window->id) continue;
         /* Bounded even under a continuously moving producer. */
         for (n = 0; n < 16; n++) {
             result = cuis_call6(CUIS_CONTROL_READ,window->native,(uintptr_t)&event[0],
                 (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
             if (!result) break;
             if (result == ERANGE) {
+                selected = window->control_selected;
                 window->control = 0; window->control_selected = FALSE;
-                (void)paint_window(window,global); result = E_OK; continue;
+                if (selected && window->open && (window->kind & (CLOSER|FULLER)))
+                    (void)paint_window(window,global);
+                result = E_OK; continue;
             }
             if (result < 0) goto done;
+            if (!window->open || !(window->kind & (CLOSER|FULLER))) continue;
             if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
                 window->control = 0; window->control_selected = FALSE; break;
             }
@@ -378,13 +384,16 @@ static LONG service_controls(LONG session, WORD *global)
             completed = window->control && !(event[2] & 1) && (event[3] & 1) && object == window->control;
             if (event[2] & ~1L) { window->control = 0; completed = FALSE; }
             selected = window->control && object == window->control && (event[2] & 1);
-            if (completed) window->control_message = window->control == W_CLOSER ? WM_CLOSED : WM_FULLED;
+            if (completed) {
+                window->control_message = window->control == W_CLOSER ? WM_CLOSED : WM_FULLED;
+                window->control_rectangle = window->current;
+            }
             if (!(event[2] & 1)) window->control = 0;
             if (window->control_selected != selected) {
                 window->control_selected = selected;
                 if (!paint_window(window,global)) {
-                    window->control = window->control_message = 0; window->control_selected = FALSE;
-                    continue;
+                    window->control = 0; window->control_selected = FALSE;
+                    if (!completed) continue;
                 }
             }
             result = flush_control(window,session);
@@ -512,7 +521,7 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
         GRECT current = window->current, previous = window->previous;
         if (!configure(window, a, b, c, d, global)) return 0;
         discard_regions(&window->regions);
-        window->control = window->control_message = 0; window->control_selected = FALSE;
+        window->control = 0; window->control_selected = FALSE;
         window->previous = window->current;
         window->current.g_x = a; window->current.g_y = b;
         window->current.g_w = c; window->current.g_h = d;
