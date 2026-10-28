@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive opt-in GEM modal tests through QEMU's actual keyboard device."""
+"""Drive opt-in GEM forms and popups through QEMU keyboard/mouse devices."""
 import json
 from pathlib import Path
 import socket
@@ -86,4 +86,4 @@ for stage, (x, y) in enumerate(((35, 55), (5, 5), (35, 35), (35, 55))):
 marker("x32 GEM popup menus: PASS")
 stream.close()
 connection.close()
-print("Real keyboard/modal GEM form tests passed.")
+print("Real keyboard/mouse GEM form and popup tests passed.")

@@ -1854,3 +1854,46 @@ the object width is not a buffer capacity. Text buffers remain caller-owned.
 This slice does not install a menu bar, track menus, publish MN_SELECTED or
 advertise extended-menu capabilities. Those need separate global ownership
 and interaction work. No kernel ABI or configuration changes are introduced.
+
+
+Standalone popup menus (#776)
+
+menu_popup and mt_menu_popup use the standard MENU descriptor and return 1 for
+a selection or 0 for cancellation/failure. The output descriptor retains the
+original tree and menu object IDs and reports the selected item and modifier
+state. On cancellation/failure only mn_keystate is cleared. Input and output
+may be the same descriptor; saved globals select the registered application.
+
+This initial adapter accepts a G_BOX/G_IBOX with immediate G_STRING/G_TITLE
+leaves, including disabled/hidden entries and indirect specifications. It
+supports up to 4096 entries. Scrolling/listboxes, attached submenus, nested
+item trees and other item types return 0. Extended-menu capability bits stay
+unadvertised. Global menu-bar ownership/tracking remains a separate slice.
+
+The library makes a bounded private copy of the popup objects, preserving the
+caller's links, coordinates, state and string ownership. The requested point
+locates the starting item; placement retains native font-row adjustment and
+keeps the box below the menu bar. Oversized menus and snapshots above one MiB
+fail. Drawing uses the original shared AES object painter and existing VDI
+operations, clipped to the snapshot rectangle including borders/3D effects.
+
+The separately compiled tracker in aes/shared/gemmenupopup.c is derived from
+the native popup loop. Explicit input/drawing/geometry operations keep it
+independent of kernel globals. It tests click coordinates even without a
+separate motion event, refuses disabled/hidden/root selections, tracks moves
+out of background padding, and cleans transient selection after errors or
+outside cancellation. Native AES retains its existing popup implementation;
+its public MENU layout is shared through include/gemmenu.h. No kernel services
+or new configuration options are added by this slice.
+
+A popup holds nested display and mouse ownership, waits for the opening
+button release, saves the background, tracks the click and waits for release
+before restoring the screen and releasing ownership. Keyboard/messages stay
+queued. Screen snapshots exclude the mouse cursor through the existing VDI
+service. Temporary tree/snapshot frees use the resource allocator's failed-free
+retry list. Selection is published only after restoration and cleanup succeed.
+
+Regressions cover scripted tracking and host ASan/UBSan binding/failure paths.
+The ordinary GEM fixture is also built against unmodified GEMlib headers;
+opt-in QEMU input tests drive the real PS/2 mouse to select, cancel outside,
+click a disabled item and select from a non-root menu with aliased descriptors.
