@@ -39,17 +39,26 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
 {
     WM_FRAME frame;
     WORD object;
-    LONG left, top, width, height;
+    if (x < -32768 || x > 32767 || y < -32768 || y > 32767) return 0;
     wm_frame_init(&frame);
     wm_frame_build(frame.tree,&frame.name,&frame.info,state);
-    for (object = W_CLOSER; object <= W_FULLER; object += W_FULLER-W_CLOSER) {
-        if (!(state->kind & (object == W_CLOSER ? CLOSER : FULLER))) continue;
-        left = (LONG)frame.tree[W_BOX].ob_x+frame.tree[W_TITLE].ob_x+frame.tree[object].ob_x;
-        top = (LONG)frame.tree[W_BOX].ob_y+frame.tree[W_TITLE].ob_y+frame.tree[object].ob_y;
-        ob_3d_bounds(&frame.tree[object],1,TRUE,&left,&top,&width,&height);
-        if (x >= left && y >= top && x < left+width && y < top+height) return object;
-    }
-    return 0;
+    /* Later siblings win overlapping 3D hit bounds, exactly as ob_find()
+     * does in the native control manager before entering gr_watchbox(). */
+    object = objc_find(frame.tree,ROOT,8,(WORD)x,(WORD)y);
+    return object == W_CLOSER || object == W_FULLER ? object : 0;
+}
+BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
+{
+    WM_FRAME frame;
+    LONG left, top, width, height;
+    if ((object != W_CLOSER || !(state->kind & CLOSER)) &&
+        (object != W_FULLER || !(state->kind & FULLER))) return FALSE;
+    wm_frame_init(&frame);
+    wm_frame_build(frame.tree,&frame.name,&frame.info,state);
+    left = (LONG)frame.tree[W_BOX].ob_x+frame.tree[W_TITLE].ob_x+frame.tree[object].ob_x;
+    top = (LONG)frame.tree[W_BOX].ob_y+frame.tree[W_TITLE].ob_y+frame.tree[object].ob_y;
+    ob_3d_bounds(&frame.tree[object],1,FALSE,&left,&top,&width,&height);
+    return x >= left && y >= top && x < left+width && y < top+height;
 }
 BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, WORD *global)
 {

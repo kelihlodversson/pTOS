@@ -367,6 +367,12 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
     if (x >= state->border.g_x+state->border.g_w-18 && x < state->border.g_x+state->border.g_w-2) return W_FULLER;
     return 0;
 }
+BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
+{
+    /* Model the low-resolution overlap that loses initial tree priority. */
+    if (object == W_CLOSER && x == state->border.g_x+22 && y == state->border.g_y+5) return TRUE;
+    return aes_frame_control(state,x,y) == object;
+}
 #include "window_api.c"
 static int window_failures(void)
 {
@@ -507,6 +513,13 @@ static int control_api_checks(void)
     id = wind_create(NAME|CLOSER|FULLER,0,0,200,140);
     CHECK(id > 0 && wind_open(id,20,30,200,140) == 1);
     control_target = native_windows[id-1]; control_at = control_count = 0;
+    control_event(42,35,1,1); control_event(42,35,0,1);
+    CHECK(evnt_timer(0) == 1 && !pipe_count && !control_selection);
+    control_event(25,35,1,1); control_event(42,35,1,0);
+    CHECK(evnt_timer(0) == 1 && control_selection);
+    control_event(42,35,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED);
+    control_at = control_count = 0;
     control_event(25,35,1,1);
     CHECK(evnt_timer(0) == 1 && control_selection && control_object == W_CLOSER && !pipe_count);
     control_event(60,75,1,0);

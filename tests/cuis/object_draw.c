@@ -528,6 +528,12 @@ static int frame_paint_checks(void)
     VERIFY(changed > 100 && !nesting && opens == closes);
     VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER,&border,"Title","",aes_global));
     VERIFY(aes_frame_control(&state,25,25) == W_CLOSER);
+    /* 160-pixel mode reduces adjusted_width: the later title sibling
+     * overlaps the closer at x=42 and must win the initial tree hit. */
+    VERIFY(aes_frame_control(&state,42,25) == 0);
+    VERIFY(aes_frame_control_inside(&state,W_CLOSER,42,25));
+    VERIFY(!aes_frame_control_inside(&state,W_CLOSER,43,25));
+    VERIFY(aes_frame_control(&state,65578,25) == 0);
     VERIFY(aes_frame_control(&state,110,25) == W_FULLER);
     VERIFY(aes_frame_control(&state,70,70) == 0);
     VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,FALSE,aes_global));
