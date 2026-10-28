@@ -21,7 +21,7 @@
  *   0x00f00000-0x00ffffff         the same        no     no   (the I/O area, 24 bits)
  *   0x01000000-0x7fffffff         the same        yes    yes  (TT-RAM and the like)
  *   0x80000000-0x81ffffff         0x00000000-     as the range above
- *   0x82000000-0x9fffffff         0x02000000-     yes    yes  (TT-RAM, in the window)
+ *   0x82000000-0xbfffffff         0x02000000-     yes    yes  (TT-RAM, in the window: 1 GiB)
  *   0xff000000-0xffffffff         0x00000000-     no     no   (the I/O area, as the ST sees it
  *                                                            at 0xffff8000: an alias)
  *
@@ -97,11 +97,11 @@ atari_mmu_a:
         .endr
         .dc.l   TABLE, atari_mmu_b0 - WINDOW            // 0x80000000: the same, in the window
         .set    i,1
-        .rept   15                                      // 0x82000000-0x9fffffff
+        .rept   31                                      // 0x82000000-0xbfffffff
         .dc.l   PAGE, i << 25
         .set    i,i+1
         .endr
-        .rept   47                                      // 0xa0000000-0xfdffffff: nothing
+        .rept   31                                      // 0xc0000000-0xfdffffff: nothing
         .dc.l   0, 0
         .endr
         .dc.l   TABLE, atari_mmu_b1 - WINDOW            // 0xfe000000: the I/O area

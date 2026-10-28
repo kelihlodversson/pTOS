@@ -33,6 +33,9 @@ static ULONG nfree;
 static ULONG pref;                      /* the first preferred page; 0: all alike */
 static ULONG hint_pref, hint_low;       /* where the last search of each zone ended */
 
+/* the end of what the window of the kernel holds: 1 GiB of RAM from its base */
+#define WINDOW_END      ((PADDR)PMEM32_RAM_BASE + (PADDR)MAX_PAGES * PMEM32_PAGE)
+
 static BOOL page_used(ULONG i)
 {
     return (used[i >> 3] >> (i & 7)) & 1;
@@ -52,6 +55,8 @@ void pmem32_init(PADDR start, PADDR end)
     PADDR e = end & ~(PMEM32_PAGE - 1);
     ULONG i;
 
+    if (e > WINDOW_END)                 /* (MAX_PAGES counts from `start`, which is not the base) */
+        e = WINDOW_END;
     memset(used, 0xff, sizeof(used));
     first_phys = s;
     npages = 0;
@@ -74,6 +79,8 @@ void pmem32_add(PADDR start, PADDR end)
     PADDR e = end & ~(PMEM32_PAGE - 1);
     ULONG first, last, i;
 
+    if (e > WINDOW_END)
+        e = WINDOW_END;
     if (!npages || s < first_phys + (PADDR)npages * PMEM32_PAGE || e <= s)
         return;                         /* only above what is managed already */
     first = (ULONG)((s - first_phys) / PMEM32_PAGE);

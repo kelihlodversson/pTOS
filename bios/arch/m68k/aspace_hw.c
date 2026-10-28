@@ -35,6 +35,7 @@
 #include "aspace32.h"
 #if CONF_ATARI_HIGHER_HALF
 #include "tosvars.h"
+#include "atari_mmu.h"
 #endif
 
 #define PAGE            PMEM32_PAGE
@@ -451,6 +452,14 @@ void aspace_hw_drop_tables(PADDR root, const PADDR *pages, ULONG n)
         c->offset = PAGE;
     }
 }
+
+#if CONF_ATARI_HIGHER_HALF
+/* the root the MMU ran on when the address spaces began: the static tree of the ROM, with the window of the TT-RAM */
+ULONG aspace_hw_boot_root(void)
+{
+    return (ULONG)kernel_root;
+}
+#endif
 
 PADDR aspace_hw_current(void)
 {

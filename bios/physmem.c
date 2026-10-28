@@ -28,7 +28,8 @@ LONG phys_pages_total(void)
 
 #if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
     if (ramtop)                         /* the TT-RAM is pages of the allocator too */
-        bytes += (ULONG)(uintptr_t)ramtop - (ULONG)(uintptr_t)TTRAM_START;
+        bytes += (ramtop > (UBYTE *)0x40000000UL ? 0x40000000UL : (ULONG)(uintptr_t)ramtop)
+                 - (ULONG)(uintptr_t)TTRAM_START;       /* (what the window holds) */
 #endif
     return (LONG)(bytes / 4096UL);
 #else
