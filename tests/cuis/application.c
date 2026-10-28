@@ -7,6 +7,11 @@
 #include "../../lib/aes/frames.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
+extern void *malloc(__SIZE_TYPE__ bytes);
+extern void free(void *memory);
+static BOOL region_alloc_failure;
+void *aes_temporary_alloc(LONG bytes) { return region_alloc_failure ? NULL : malloc(bytes); }
+WORD aes_resource_discard(void *memory) { free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static BOOL live;
 static ULONG starts, closes, yields, delays;
@@ -412,6 +417,13 @@ static int frame_event_checks(void)
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
     CHECK(!notice_kind && frame_paints == before+2 && pipe_count == 16);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !pipe_count);
+    pipe_count = sizeof(pipe_data); notice_kind = CUIS_NOTICE_REDRAW;
+    frame_paint_failure = TRUE;
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48 && notice_kind);
+    pipe_count = sizeof(pipe_data);
+    CHECK(evnt_mesag(message) == 1 && pipe_count == 48 && notice_kind);
+    frame_paint_failure = FALSE; pipe_count = 0;
+
     /* A lock holder may be blocked writing our full stream. Repainting
      * cannot prevent reads from releasing its backpressure. */
     notice_kind = CUIS_NOTICE_REDRAW; display_error = EAGAIN;
@@ -474,13 +486,17 @@ static int display_api_checks(void)
     region_count = 3;
     CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1 && y == 1 && w == 9 && h == 9);
     CHECK(wind_get(other, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1);
-    region_error = EIMBA; x = 99;
-    CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 0 && x == 99);
-    region_error = 0;
+    /* Another region consumer replaces the kernel snapshot. NEXT must
+     * still use the original caller-owned rectangles without transport. */
+    region_alloc_failure = TRUE; x = 99;
+    CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 0 && x == 99);
+    region_alloc_failure = FALSE;
+    region_error = EIMBA;
     CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && x == 10 && y == 1 && w == 9 && h == 18);
     CHECK(wind_get(other, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && x == 10);
     CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
     CHECK(wind_get(id, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
+    region_error = 0;
     CHECK(wind_get(id, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && x == 1);
     CHECK(wind_delete(id) == 1 && wind_delete(other) == 1 && display_nesting == 1);
     CHECK(wind_update(END_UPDATE) == 1 && !display_nesting);

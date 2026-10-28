@@ -7,6 +7,20 @@
 #include "layout.h"
 #include "gemframegeom.h"
 #include "frames.h"
+#include "resource_context.h"
+
+struct visible_region {
+    struct visible_region *next;
+    LONG bounds[4];
+};
+static void discard_regions(struct visible_region **head)
+{
+    struct visible_region *item;
+    while ((item = *head) != NULL) {
+        *head = item->next;
+        (void)aes_resource_discard(item);
+    }
+}
 
 #define GEM_WINDOW_LIMIT 64
 static struct gem_window {
@@ -15,7 +29,7 @@ static struct gem_window {
     char *name, *info;
     LONG native;
     BOOL open;
-    ULONG region_index;
+    struct visible_region *regions;
     GRECT current, previous, full;
 } windows[GEM_WINDOW_LIMIT];
 static BOOL frame_notice_blocked, frame_display_blocked;
@@ -48,7 +62,10 @@ BOOL aes_frames_listening(void) { return !frame_notice_blocked && !frame_overlay
 void aes_windows_reset(void)
 {
     short i;
-    for (i = 0; i < GEM_WINDOW_LIMIT; i++) windows[i].id = 0;
+    for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
+        discard_regions(&windows[i].regions);
+        windows[i].id = 0;
+    }
     frame_notice_blocked = frame_display_blocked = FALSE;
     frame_overlays = frame_dialogs = 0;
 }
@@ -134,7 +151,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     window->native = native;
     window->kind = kind; window->name = window->info = "";
     window->open = FALSE;
-    window->region_index = 0xffffffffUL;
+    discard_regions(&window->regions);
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
     window->previous = window->current;
@@ -169,7 +186,7 @@ static short local_wind_open(short id, short x, short y, short w, short h, short
     window->current.g_w = w; window->current.g_h = h;
     window->previous = window->current;
     window->open = TRUE;
-    window->region_index = 0xffffffffUL;
+    discard_regions(&window->regions);
     if (!paint_window(window,global)) {
         if (cuis_call6(CUIS_WINDOW_HIDE,window->native,0,0,0,0,0) == E_OK) {
             window->open = FALSE;
@@ -192,7 +209,7 @@ static short local_wind_close(short id, short *global)
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
     window->open = FALSE;
-    window->region_index = 0xffffffffUL;
+    discard_regions(&window->regions);
     return 1;
 }
 short wind_close(short id) { return mt_wind_close(id, aes_global); }
@@ -201,6 +218,7 @@ static short local_wind_delete(short id, short *global)
     struct gem_window *window = lookup(id, global);
     /* Native destruction hides an open window and reclaims its input queues. */
     if (!window || cuis_call6(CUIS_WINDOW_DESTROY, window->native, 0, 0, 0, 0, 0) != E_OK) return 0;
+    discard_regions(&window->regions);
     window->id = 0;
     return 1;
 }
@@ -209,23 +227,40 @@ short wind_delete(short id) { return mt_wind_delete(id, aes_global); }
 static short visible_work(struct gem_window *window, BOOL first, GRECT *out, short *global)
 {
     LONG state[4], result, left, top, right, bottom, edge;
-    ULONG index = first ? 0 : window->region_index;
+    ULONG index;
     GRECT work;
+    struct visible_region *snapshot = NULL, **tail = &snapshot, *item;
+    if (first) {
+        /* Copy the complete CUIS snapshot before frame painting can replace it. */
+        for (index = 0; ; index++) {
+            result = cuis_call6(CUIS_WINDOW_REGION,window->native,index,
+                (uintptr_t)&state[0],(uintptr_t)&state[1],
+                (uintptr_t)&state[2],(uintptr_t)&state[3]);
+            if (result < 0) { discard_regions(&snapshot); return 0; }
+            if (!result) break;
+            item = aes_temporary_alloc(sizeof(*item));
+            if (!item) { discard_regions(&snapshot); return 0; }
+            item->next = NULL;
+            item->bounds[0] = state[0]; item->bounds[1] = state[1];
+            item->bounds[2] = state[2]; item->bounds[3] = state[3];
+            *tail = item; tail = &item->next;
+        }
+        discard_regions(&window->regions);
+        window->regions = snapshot;
+    }
     if (!mt_wind_calc(WC_WORK, window->kind, window->current.g_x, window->current.g_y,
                   window->current.g_w, window->current.g_h,
                   &work.g_x, &work.g_y, &work.g_w, &work.g_h, global)) return 0;
     for (;;) {
-        if (index == 0xffffffffUL) result = 0;
-        else result = cuis_call6(CUIS_WINDOW_REGION, window->native, index,
-                                 (uintptr_t)&state[0], (uintptr_t)&state[1],
-                                 (uintptr_t)&state[2], (uintptr_t)&state[3]);
-        if (result < 0) return 0;
-        if (!result) {
+        item = window->regions;
+        if (!item) {
             out->g_x = out->g_y = out->g_w = out->g_h = 0;
-            window->region_index = 0xffffffffUL;
             return 1;
         }
-        index++;
+        state[0] = item->bounds[0]; state[1] = item->bounds[1];
+        state[2] = item->bounds[2]; state[3] = item->bounds[3];
+        window->regions = item->next;
+        (void)aes_resource_discard(item);
         left = state[0] > work.g_x ? state[0] : work.g_x;
         top = state[1] > work.g_y ? state[1] : work.g_y;
         right = state[0] + state[2]; edge = (LONG)work.g_x + work.g_w;
@@ -235,7 +270,6 @@ static short visible_work(struct gem_window *window, BOOL first, GRECT *out, sho
         if (work.g_w > 0 && work.g_h > 0 && right > left && bottom > top) {
             out->g_x = (short)left; out->g_y = (short)top;
             out->g_w = (short)(right - left); out->g_h = (short)(bottom - top);
-            window->region_index = index;
             return 1;
         }
     }
@@ -261,7 +295,7 @@ static LONG publish_notice(struct gem_window *window, LONG session, LONG kind,
     if ((result >= 0 || result == EAGAIN) && !aes_frame_paint(window->native,&state,global)) {
         (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)window->current.g_x,
                         (QUAD)window->current.g_y,window->current.g_w+2,window->current.g_h+2,0);
-        result = EACCDN;
+        if (result != EAGAIN) result = EACCDN;
     }
 done:
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;
@@ -380,7 +414,7 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
     if (field == WF_CURRXYWH) {
         GRECT current = window->current, previous = window->previous;
         if (!configure(window, a, b, c, d, global)) return 0;
-        window->region_index = 0xffffffffUL;
+        discard_regions(&window->regions);
         window->previous = window->current;
         window->current.g_x = a; window->current.g_y = b;
         window->current.g_w = c; window->current.g_h = d;

@@ -2032,7 +2032,12 @@ uses a nonblocking display acquisition and leaves repaint work pending if a
 peer owns the display. Topping/bottoming
 repaints the caller's frame; affected peers receive their normal redraw notices.
 WF_WORKXYWH, visible work rectangles and WM_REDRAW use the registered kind,
-matching wind_calc. The painter uses CUIS visible-region snapshots under the
+matching wind_calc. WF_FIRSTXYWH copies its complete region snapshot into
+caller-owned storage; WF_NEXTXYWH consumes that copy, so intervening frame
+painting cannot replace an active public traversal. Snapshot allocation failure
+returns GEM 0 without changing outputs or the previous traversal. Remaining
+rectangles are freed on restart, close, deletion, geometry change or application
+reset. The painter uses CUIS visible-region snapshots under the
 display lock and the original object renderer, preserving work pixels and
 occluding clients. A drawing failure leaves the notice available for retry;
 failed opening hides the window and restores local rectangles when cleanup
