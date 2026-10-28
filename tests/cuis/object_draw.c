@@ -491,18 +491,19 @@ static int form_interactions(void)
 }
 static int frame_metric_checks(void)
 {
-    WORD wbox = 99, hbox = 99;
-    VERIFY(aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 19 && hbox == 19);
+    WORD wbox = 99, hbox = 99, width = 99, height = 99;
+    VERIFY(aes_frame_metrics(&wbox,&hbox,&width,&height,aes_global) && wbox == 19 && hbox == 19);
+    VERIFY(width == 160 && height == 120);
     pixel_height = 2;
-    VERIFY(aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 38 && hbox == 19);
+    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 38 && hbox == 19);
     pixel_width = 3; pixel_height = 1;
-    VERIFY(aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
     pixel_width = 0;
-    VERIFY(!aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
     pixel_width = 1; pixel_height = 32767;
-    VERIFY(!aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
     pixel_height = 1; fail_layout_close = TRUE;
-    VERIFY(!aes_frame_metrics(&wbox,&hbox,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
     fail_layout_close = FALSE;
     VERIFY(opens == closes);
     return 0;

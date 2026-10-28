@@ -41,12 +41,14 @@ BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
 {
     return layout_metrics(m,NULL,global);
 }
-BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *global)
+BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *screen_width, WORD *screen_height, WORD *global)
 {
     LAYOUT_METRICS m;
     WORD width;
     if (!layout_metrics(&m,&width,global)) return FALSE;
     *wbox = width; *hbox = m.hbox;
+    if (screen_width) *screen_width = m.width;
+    if (screen_height) *screen_height = m.height;
     return TRUE;
 }
 
