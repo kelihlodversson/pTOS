@@ -7,6 +7,7 @@
 #include "colour_objects.h"
 #include "three_d.h"
 #include "menu_items.h"
+#include "popup_menu.h"
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
@@ -28,6 +29,12 @@ void gem_form_input_stage(short stage)
     static const char alert[] = "x32 GEM alert input: READY\r\n";
     if (stage == 1) ptos_write(1,form,sizeof(form)-1);
     else ptos_write(1,alert,sizeof(alert)-1);
+}
+void gem_popup_input_stage(short stage)
+{
+    char message[] = "x32 GEM popup 0: READY\r\n";
+    message[14] = '0'+stage;
+    ptos_write(1,message,sizeof(message)-1);
 }
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
 {
@@ -292,6 +299,11 @@ int main(int argc, char **argv, char **envp)
         VERIFY(process(0x3e,status,0,0,0) == 0);
         status = gem_form_interactive(); if (status) return status;
         ptos_write(1,pass,sizeof(pass)-1);
+        status = gem_popup_checks(handle); if (status) return status;
+        {
+            static const char popup_pass[] = "x32 GEM popup menus: PASS\r\n";
+            ptos_write(1,popup_pass,sizeof(popup_pass)-1);
+        }
     }
     VERIFY(gem_probe_cell(handle,&cellw,&cellh) == 0);
     {

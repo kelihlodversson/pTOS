@@ -5,6 +5,7 @@
 #include "colour_objects.h"
 #include "three_d.h"
 #include "menu_items.h"
+#include "popup_menu.h"
 #include "../../aes/shared/gemcicon.h"
 #include "../../lib/aes/resource_context.h"
 #include "../../lib/aes/render_context.h"
@@ -29,9 +30,10 @@ static BOOL trace_animation;
 static WORD corner_x, corner_y, corner_width;
 static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type;
 static int releases, mouse_nesting, mouse_releases;
-static BOOL input_error, mouse_error, foreign_display;
+static BOOL input_error, mouse_error, foreign_display, popup_mode;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
-static BOOL keyboard_error, snapshot_error;
+static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
+static int popup_paints;
 static WORD modal_keys[16];
 static int modal_count, modal_at;
 UQUAD aes_memory_call(ULONG function, UQUAD argument)
@@ -50,6 +52,14 @@ static ULONG callbacks;
 static OBJECT *mutation_target;
 static int mutation_kind;
 static char mutation_text[200];
+void gem_popup_input_stage(short stage)
+{
+    popup_mode = TRUE; gesture_at = 0; gesture_count = 1;
+    gesture[0].events = MU_BUTTON; gesture[0].buttons = 1;
+    gesture[0].x = stage == 1 ? 5 : 35;
+    gesture[0].y = (stage == 0 || stage == 3) ? 55 : stage == 1 ? 5 : 35;
+    mouse_x = 35; mouse_y = 35;
+}
 LONG aes_application_session(short *global) { return global && global[2] >= 0 && !session_error ? 7 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -113,17 +123,18 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
         *key = modal_keys[modal_at++]; *count = 0;
         return MU_KEYBD;
     }
-    if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || state) {
+    if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || state != (popup_mode ? 1 : 0)) {
         bad_gesture++; return 0;
     }
     ready = MU_BUTTON;
+    if (popup_mode) sb = 1;
     if (gesture_count) {
         if (gesture_at == gesture_count) { bad_gesture++; return 0; }
         sx = gesture[gesture_at].x; sy = gesture[gesture_at].y;
         sb = gesture[gesture_at].buttons; ready = gesture[gesture_at++].events;
     }
     inside = w > 0 && h > 0 && sx >= x && sy >= y && (LONG)sx < (LONG)x+w && (LONG)sy < (LONG)y+h;
-    if (((ready & MU_BUTTON) && sb) || ((ready & MU_M1) && (inside == leave))) {
+    if (((ready & MU_BUTTON) && sb != (popup_mode ? 1 : 0)) || ((ready & MU_M1) && (inside == leave))) {
         bad_gesture++; return 0;
     }
     *mx = sx; *my = sy; *buttons = sb; *mods = 0;
@@ -214,6 +225,12 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn != VDI_SERVICE_DRAW) return EINVFN;
     if (draw_error) return EACCDN;
+    /* Permit the box fill, then fail the next painting operation. Font and
+     * attribute queries and snapshot restoration must still succeed. */
+    if (popup_paint_failure && (r->code == 114 || r->code == 8) && popup_paints++ > 0) {
+        popup_changed_before_failure = image[35][25] != 1;
+        return EACCDN;
+    }
     if (r->code == 114 || r->code == 8) {
         int i;
         for (i = 0; i < r->nptsin*2; i++) if (r->ptsin[i] < -10000 || r->ptsin[i] > 10000) return EINVAL;
@@ -679,6 +696,54 @@ int main(void)
     VERIFY(before == 0);
     before = gem_colour_checks(0);
     if (before) __builtin_printf("colour object failure: %x\n",before);
+    VERIFY(before == 0);
+    {
+        OBJECT popup[2] = { { 0 } };
+        MENU menu, output;
+        int mode, reads, writes, mouse_ends, display_ends;
+        WORD previous_pixel, saved[120][160];
+        popup[0].ob_next = NIL; popup[0].ob_head = popup[0].ob_tail = 1;
+        popup[0].ob_type = G_BOX; popup[0].ob_spec.index = 0x1170;
+        popup[0].ob_width = 80; popup[0].ob_height = 20;
+        popup[1].ob_next = 0; popup[1].ob_head = popup[1].ob_tail = NIL;
+        popup[1].ob_type = G_STRING; popup[1].ob_spec.free_string = "Item";
+        popup[1].ob_width = 80; popup[1].ob_height = 20;
+        menu.mn_tree = popup; menu.mn_menu = 0; menu.mn_item = 1;
+        menu.mn_scroll = menu.mn_keystate = 0;
+        output = menu;
+        popup_mode = TRUE; gesture_count = gesture_at = 0;
+        for (mode = 0; mode < 6; mode++) {
+            allocation_error = mode == 0; mouse_error = mode == 1;
+            snapshot_error = mode == 2; popup_paint_failure = mode == 3;
+            popup_paints = 0; popup_changed_before_failure = FALSE;
+            reads = snapshot_reads; writes = snapshot_writes;
+            mouse_ends = mouse_releases; display_ends = releases;
+            previous_pixel = image[35][25];
+            if (mode == 3) {
+                /* The popup paints WHITE over this independent BLACK pixel. */
+                image[35][25] = 1;
+                __builtin_memcpy(saved,image,sizeof(image));
+            }
+            input_error = mode == 4; release_error = mode == 5;
+            if (mode == 5) input_error = TRUE;
+            VERIFY(menu_popup(&menu,20,30,&output) == 0);
+            VERIFY(!nesting && !mouse_nesting && !popup[1].ob_state);
+            if (mode == 3) {
+                VERIFY(popup_paints == 2 && popup_changed_before_failure);
+                VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+                VERIFY(mouse_releases == mouse_ends+1 && releases > display_ends);
+                VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+                image[35][25] = previous_pixel;
+            }
+            popup_paint_failure = FALSE;
+            allocation_error = mouse_error = snapshot_error = draw_error = input_error = release_error = FALSE;
+            aes_resources_reset();
+        }
+        popup_mode = FALSE;
+    }
+    before = gem_popup_checks(0);
+    popup_mode = FALSE; gesture_count = gesture_at = 0;
+    if (before) __builtin_printf("popup menu failure: %x\n",before);
     VERIFY(before == 0);
     before = gem_menu_checks(0);
     if (before) __builtin_printf("menu item failure: %x\n",before);
