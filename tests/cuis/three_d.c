@@ -14,6 +14,13 @@ static int swatch(short handle, short colour)
     if (!objc_draw(&o,0,0,0,0,100,100)) return -1;
     return gem_probe_pixel(handle,80,80);
 }
+static OBJECT *moved_object;
+static short move_sibling(PARMBLK *parameters)
+{
+    (void)parameters;
+    moved_object->ob_x = -32700;
+    return 0;
+}
 int gem_3d_checks(short handle)
 {
     OBJECT box = { 0 }, tree[2] = { { 0 } };
@@ -73,5 +80,59 @@ int gem_3d_checks(short handle)
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 0);
     box.ob_width = 20; box.ob_type = G_TEXT; box.ob_spec.tedinfo = 0;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 0);
+    /* Parent/child sums must be checked before any WORD narrowing, both
+     * when traversing a whole tree and when starting directly at a child. */
+    tree[0].ob_x = -32760; tree[0].ob_y = 0;
+    tree[1].ob_x = -32700; tree[1].ob_y = 20; tree[1].ob_flags = 0x200;
+    tree[1].ob_state = 0;
+    VERIFY(objc_draw(tree,0,1,0,0,100,100) == 0);
+    VERIFY(objc_draw(tree,1,0,0,0,100,100) == 0);
+    VERIFY(objc_change(tree,1,0,0,0,100,100,OS_SELECTED,1) == 0 && !tree[1].ob_state);
+    tree[0].ob_x = 0; tree[0].ob_y = -32760;
+    tree[1].ob_x = 20; tree[1].ob_y = -32700;
+    VERIFY(objc_draw(tree,0,1,0,0,100,100) == 0);
+    VERIFY(objc_change(tree,1,0,0,0,100,100,OS_SELECTED,1) == 0 && !tree[1].ob_state);
+    {
+        CICONBLK colour = { 0 };
+        ICONBLK *icon = &colour.monoblk;
+        short data[1] = { 0 }, axis, part, kind;
+        icon->ib_pdata = icon->ib_pmask = data;
+        icon->ib_ptext = "X"; icon->ib_wicon = 16; icon->ib_hicon = 1;
+        icon->ib_wtext = 8; icon->ib_htext = 16; icon->ib_char = 'X';
+        box.ob_x = box.ob_y = 0; box.ob_width = box.ob_height = 20;
+        box.ob_spec.ciconblk = &colour;
+        for (kind = 0; kind < 2; kind++) {
+            box.ob_type = kind ? G_CICON : G_ICON;
+            for (axis = 0; axis < 2; axis++) for (part = 0; part < 3; part++) {
+                short *offset = part == 0 ? (axis ? &icon->ib_yicon : &icon->ib_xicon) :
+                    part == 1 ? (axis ? &icon->ib_ytext : &icon->ib_xtext) :
+                                (axis ? &icon->ib_ychar : &icon->ib_xchar);
+                *offset = -32767;
+                VERIFY(objc_draw(&box,0,0,0,0,100,100) == 0);
+                VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 0 && !box.ob_state);
+                *offset = 0;
+            }
+        }
+    }
+    {
+        OBJECT siblings[3] = { { 0 } };
+        USERBLK user;
+        int before = gem_probe_pixel(handle,76,25);
+        user.ub_code = move_sibling; user.ub_parm = 0;
+        siblings[0].ob_next = siblings[0].ob_head = siblings[0].ob_tail = -1;
+        siblings[0].ob_type = G_IBOX; siblings[0].ob_x = -32760;
+        siblings[0].ob_width = 100; siblings[0].ob_height = 100;
+        siblings[1].ob_next = siblings[1].ob_head = siblings[1].ob_tail = -1;
+        siblings[1].ob_type = G_USERDEF; siblings[1].ob_spec.userblk = &user;
+        siblings[1].ob_x = 32760; siblings[1].ob_y = 20;
+        siblings[1].ob_width = siblings[1].ob_height = 20;
+        siblings[2] = siblings[1]; siblings[2].ob_type = G_BOX;
+        siblings[2].ob_spec.index = 0x1172; siblings[2].ob_flags = 0x200;
+        VERIFY(objc_add(siblings,0,1) == 1 && objc_add(siblings,0,2) == 1);
+        moved_object = siblings+2;
+        VERIFY(objc_draw(siblings,0,1,0,0,100,100) == 0);
+        VERIFY(siblings[2].ob_x == -32700 && gem_probe_pixel(handle,76,25) == before);
+        moved_object = 0;
+    }
     return 0;
 }

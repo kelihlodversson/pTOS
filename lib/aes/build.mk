@@ -1,5 +1,5 @@
 # Ordinary shared ELF, distinct from the historic fixed-image import stubs.
-LIBAES_CFLAGS = $(LDSO_CFLAGS) -Iinclude -Iobj -Iutil
+LIBAES_CFLAGS = $(LDSO_CFLAGS) -DOB_WALK_COORD=LONG -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
 obj/libaes/application.o: lib/aes/application.c lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
@@ -19,10 +19,10 @@ LIBAES_RENDER_OBJECTS = obj/libaes/gemobjbounds.o obj/libaes/gemcicon.o obj/liba
 $(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemobjbounds.h aes/shared/gemrender.h aes/shared/gemcicon.h aes/shared/gemrender_binding.h lib/aes/render_bindings.h lib/aes/render_context.h lib/aes/style.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_RENDER_BINDINGS='"render_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/gemobjwalk.o: aes/shared/gemobjwalk.c aes/shared/gemrender.h $(AUTOCONF_H)
+obj/libaes/gemobjwalk.o: aes/shared/gemobjwalk.c aes/gemobjop.h aes/shared/gemrender.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/draw.o: lib/aes/draw.c lib/aes/style.h aes/shared/gemcicon.h include/vdi_colmap.h lib/aes/resource_context.h aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
+obj/libaes/draw.o: lib/aes/draw.c aes/gemobjop.h lib/aes/style.h aes/shared/gemcicon.h include/vdi_colmap.h lib/aes/resource_context.h aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/events.o: lib/aes/events.c lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)

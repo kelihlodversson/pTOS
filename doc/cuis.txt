@@ -1823,6 +1823,10 @@ The original painter uses WORD intermediates for 3D outlines and shadows.
 Preflight rejects 3D objects whose expanded geometry cannot fit those
 intermediates before painting or changing state. Existing wide-coordinate 2D
 rendering remains available. Shared bounds calculations use LONG intermediates.
+Drawing preflight and the libaes tree walker also keep accumulated ancestor
+and descendant positions in LONG until validated, including callback-mutated
+siblings. Icon bitmap, label and character offsets are checked against the
+actual 3D-adjusted origin. Native traversal keeps its original WORD layout.
 
 Regression coverage includes native bevel/selection pixels, configurable
 colours, saved-global sysvar calls, invalid arguments, expanded and shadowed
