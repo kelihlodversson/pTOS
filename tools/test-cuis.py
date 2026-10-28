@@ -66,6 +66,12 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "aes/shared/gemmenubar.c", "-o", str(work / "menu-bar")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "menu-bar")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-I" + temp, "-Iinclude", "-Iaes/shared", "tests/cuis/frame_geometry.c",
+                "aes/shared/gemframegeom.c", "-o", str(work / "frame-geometry")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "frame-geometry")], check=True)
     fixture = work / "GEMTEST.RSC"
     subprocess.run([sys.executable, "tools/make-cuis-resource.py", str(fixture)], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
