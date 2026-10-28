@@ -139,7 +139,9 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     LONG start = 0, session;
     ULONG duration;
     short result;
-    BOOL clocked = (events & MU_TIMER) && (aes_menu_registered() || aes_frames_registered());
+    BOOL clocked = (events & MU_TIMER) &&
+        (aes_menu_registered() || aes_frames_registered() ||
+         aes_controls_listening() || aes_frames_wait_display());
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     session = aes_application_session(global);
     duration = interval/5 + (interval%5 != 0) + (interval != 0);

@@ -2114,3 +2114,10 @@ queued and captured border gestures even if window focus and stacking stay the
 same. Completed requests retain a release-time rectangle separately from the
 watch box; a later geometry change, close or release-feedback drawing failure
 cannot retract that request while its message waits for stream capacity.
+
+Plain and hidden live windows also participate in control servicing. Nonzero
+GEM timers retain their original deadline across control-only and display-ready
+wakes, including when no decorated window or menu exists. Window show/raise/
+lower/hide operations cancel background border gestures under the topology IRQ
+lock independently of focus; a temporary unmanaged occluder cannot restore an
+old queued release's eligibility by disappearing before CONTROL_READ.

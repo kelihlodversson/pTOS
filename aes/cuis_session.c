@@ -279,6 +279,14 @@ static void cancel_controls(CUIS_WINDOW *window)
         pointer_suppressed = pointer_buttons != 0;
     }
 }
+/* Only the front window may interpret border controls. Preserve that
+ * eligibility across transient unmanaged occlusion, independently of focus. */
+static void cancel_background_controls(void)
+{
+    CUIS_WINDOW *window;
+    for (window = window_front ? window_front->znext : NULL; window; window = window->znext)
+        cancel_controls(window);
+}
 static BOOL content_contains(CUIS_WINDOW *window)
 {
     return (QUAD)pointer_x >= (QUAD)window->x+window->content_left &&
@@ -596,6 +604,7 @@ static void hide_window(CUIS_WINDOW *window)
     UQUAD flags = cuis_input_lock();
     if (!window->visible) { cuis_input_unlock(flags); return; }
     unlink_visible(window);
+    cancel_background_controls();
     window->visible = FALSE;
     cancel_controls(window);
     window->redraw = FALSE;
@@ -1174,6 +1183,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         window->visible = TRUE;
         window->znext = window_front;
         window_front = window;
+        cancel_background_controls();
         if (window->managed_activation) set_focus(window);
         route_pointer(0);
         cuis_input_unlock(flags);
@@ -1195,6 +1205,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         unlink_visible(window);
         window->znext = window_front;
         window_front = window;
+        cancel_background_controls();
         if (window->managed_activation) set_focus(window);
         route_pointer(0);
         cuis_input_unlock(flags);
@@ -1207,6 +1218,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         unlink_visible(window);
         for (back = &window_front; *back; back = &(*back)->znext) ;
         *back = window;
+        cancel_background_controls();
         if (window->managed_activation && focus_window == window) set_focus(window_front);
         route_pointer(0);
         cuis_input_unlock(flags);

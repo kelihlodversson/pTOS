@@ -33,6 +33,7 @@ static ULONG window_calls, display_nesting;
 static LONG display_error, region_error, mouse_error;
 static ULONG display_block_requests;
 static BOOL release_display_on_wait;
+static ULONG display_release_ticks;
 static ULONG mouse_nesting, mouse_block;
 static LONG region_values[3][4];
 static ULONG region_count;
@@ -40,7 +41,7 @@ static LONG stack_values[4];
 static LONG notice_kind, notice_native, notice_id, publish_failure, notice_on_wait;
 static ULONG notice_only_wakes;
 static LONG control_events[32][4], control_target, control_read_error;
-static ULONG control_count, control_at;
+static ULONG control_count, control_at, control_only_wakes;
 static BOOL control_selection;
 static WORD control_object;
 static void control_event(LONG x, LONG y, LONG buttons, LONG changed)
@@ -188,6 +189,15 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         }
         if (release_display_on_wait && (c & CUIS_READY_DISPLAY)) {
             release_display_on_wait = FALSE; display_error = 0;
+            if (display_release_ticks) {
+                menu_ticks += display_release_ticks; display_release_ticks = 0;
+                return CUIS_READY_DISPLAY;
+            }
+        }
+        if ((c & CUIS_READY_CONTROL) && control_only_wakes && d) {
+            control_only_wakes--; menu_ticks += 3;
+            control_event(25,35,0,1);
+            return CUIS_READY_CONTROL;
         }
         if ((c & CUIS_READY_CONTROL) && (control_at < control_count || control_read_error)) ready |= CUIS_READY_CONTROL;
         if ((c & CUIS_READY_DISPLAY) && !display_error) ready |= CUIS_READY_DISPLAY;
@@ -582,6 +592,27 @@ static int control_api_checks(void)
     return 0;
 }
 
+static int control_timer_checks(void)
+{
+    short id;
+    ULONG before;
+    id = wind_create(0,0,0,100,100);
+    CHECK(id > 0 && wind_open(id,20,30,100,100) == 1);
+    control_target = native_windows[id-1]; control_at = control_count = 0;
+    control_only_wakes = 3; menu_ticks = 0; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0 && menu_ticks == 6 && wait_calls == before+3);
+    control_only_wakes = 3; menu_ticks = 0x7ffffffeUL; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+3);
+    control_only_wakes = 0;
+    display_error = EAGAIN;
+    CHECK(aes_window_messages(handle,aes_global) == E_OK && aes_frames_wait_display() && !aes_controls_listening());
+    release_display_on_wait = TRUE; display_release_ticks = 6; menu_ticks = 0; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+2 && !display_error);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    control_target = 0; control_at = control_count = 0;
+    return 0;
+}
+
 static int display_api_checks(void)
 {
     short id, other, x = 99, y, w, h;
@@ -726,7 +757,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);
