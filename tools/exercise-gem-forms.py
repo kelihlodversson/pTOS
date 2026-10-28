@@ -47,7 +47,41 @@ def key(name):
     time.sleep(0.12)
 
 
+def mouse_event(events):
+    command("input-send-event", {"events": events})
+
+
+def control_move(dx, dy):
+    while dx or dy:
+        x, y = max(-127, min(127, dx)), max(-127, min(127, dy))
+        mouse_event([{"type": "rel", "data": {"axis": "x", "value": x}},
+                     {"type": "rel", "data": {"axis": "y", "value": y}}])
+        dx, dy = dx-x, dy-y
+        time.sleep(0.03)
+
+
+def button(down):
+    mouse_event([{"type": "btn", "data": {"down": down, "button": "left"}}])
+    time.sleep(0.15)
+
+
 command("qmp_capabilities")
+for stage in range(3):
+    marker("x32 GEM frame control %d: READY" % stage)
+    for _ in range(32):
+        control_move(-127, -127)
+    control_move(210 if stage == 1 else 30, 40)
+    button(True)
+    if stage == 0:
+        control_move(50, 50)  # Close: release outside cancels.
+    elif stage == 1:
+        control_move(-130, 50)
+        time.sleep(0.1)
+        control_move(130, -50)  # Full: leaving and returning reselects.
+    button(False)
+    if stage == 0:
+        key("ret")  # Barrier after the cancelled gesture.
+marker("x32 GEM frame controls: PASS")
 marker("x32 GEM form input: READY")
 time.sleep(0.2)
 for name in ("a", "2", "ret"):
@@ -60,10 +94,6 @@ if output:
     command("screendump", {"filename": str(destination), "format": "png"})
 key("ret")
 marker("x32 GEM modal forms: PASS")
-
-def mouse_event(events):
-    command("input-send-event", {"events": events})
-
 
 def move(dx, dy):
     mouse_event([{"type": "rel", "data": {"axis": "x", "value": dx}},

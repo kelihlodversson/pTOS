@@ -33,12 +33,22 @@ static ULONG window_calls, display_nesting;
 static LONG display_error, region_error, mouse_error;
 static ULONG display_block_requests;
 static BOOL release_display_on_wait;
+static ULONG display_release_ticks;
 static ULONG mouse_nesting, mouse_block;
 static LONG region_values[3][4];
 static ULONG region_count;
 static LONG stack_values[4];
 static LONG notice_kind, notice_native, notice_id, publish_failure, notice_on_wait;
 static ULONG notice_only_wakes;
+static LONG control_events[32][4], control_target, control_read_error;
+static ULONG control_count, control_at, control_only_wakes;
+static BOOL control_selection;
+static WORD control_object;
+static void control_event(LONG x, LONG y, LONG buttons, LONG changed)
+{
+    control_events[control_count][0] = x; control_events[control_count][1] = y;
+    control_events[control_count][2] = buttons; control_events[control_count++][3] = changed;
+}
 static LONG window_transport(ULONG fn, UQUAD a)
 {
     short i;
@@ -126,6 +136,16 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)d, e);
         pipe_count += e; notice_kind = 0; return E_OK;
     }
+    if (fn == CUIS_CONTROL_READ) {
+        if ((LONG)a != control_target) return 0;
+        if (control_read_error) { LONG result = control_read_error; control_read_error = 0; return result; }
+        if (control_at == control_count) return 0;
+        *(LONG *)(uintptr_t)b = control_events[control_at][0];
+        *(LONG *)(uintptr_t)c = control_events[control_at][1];
+        *(LONG *)(uintptr_t)d = control_events[control_at][2];
+        *(LONG *)(uintptr_t)e = control_events[control_at++][3];
+        return 1;
+    }
     if (fn == CUIS_WINDOW_REGION) {
         if (region_error) return region_error;
         if (b >= region_count) return 0;
@@ -151,7 +171,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         else display_nesting--;
         return E_OK;
     }
-    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY))
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT))
         return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
         __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
@@ -169,7 +189,17 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         }
         if (release_display_on_wait && (c & CUIS_READY_DISPLAY)) {
             release_display_on_wait = FALSE; display_error = 0;
+            if (display_release_ticks) {
+                menu_ticks += display_release_ticks; display_release_ticks = 0;
+                return CUIS_READY_DISPLAY;
+            }
         }
+        if ((c & CUIS_READY_CONTROL) && control_only_wakes && d) {
+            control_only_wakes--; menu_ticks += 3;
+            control_event(25,35,0,1);
+            return CUIS_READY_CONTROL;
+        }
+        if ((c & CUIS_READY_CONTROL) && (control_at < control_count || control_read_error)) ready |= CUIS_READY_CONTROL;
         if ((c & CUIS_READY_DISPLAY) && !display_error) ready |= CUIS_READY_DISPLAY;
         if (notice_on_wait) { notice_kind = notice_on_wait; notice_on_wait = 0; }
         if ((c & CUIS_READY_NOTICE) && notice_kind) {
@@ -268,7 +298,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY)));
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL)));
     CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
     state_error = EIMBA; x = 123;
@@ -324,6 +354,24 @@ BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
     menu_ticks += frame_paint_ticks; frame_paint_ticks = 0;
     if (frame_damage_once) { frame_damage_once = FALSE; notice_kind = CUIS_NOTICE_REDRAW; }
     return !frame_paint_failure;
+}
+BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, WORD *global)
+{
+    control_object = object; control_selection = selected;
+    return aes_frame_paint(native,state,global);
+}
+WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
+{
+    if (y < state->border.g_y+2 || y >= state->border.g_y+18) return 0;
+    if (x >= state->border.g_x+2 && x < state->border.g_x+18) return W_CLOSER;
+    if (x >= state->border.g_x+state->border.g_w-18 && x < state->border.g_x+state->border.g_w-2) return W_FULLER;
+    return 0;
+}
+BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
+{
+    /* Model the low-resolution overlap that loses initial tree priority. */
+    if (object == W_CLOSER && x == state->border.g_x+22 && y == state->border.g_y+5) return TRUE;
+    return aes_frame_control(state,x,y) == object;
 }
 #include "window_api.c"
 static int window_failures(void)
@@ -458,6 +506,126 @@ static int frame_event_checks(void)
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
     return 0;
 }
+static int control_api_checks(void)
+{
+    short id, other, message[8], x,y,w,h;
+    ULONG before;
+    id = wind_create(NAME|CLOSER|FULLER,0,0,200,140);
+    CHECK(id > 0 && wind_open(id,20,30,200,140) == 1);
+    control_target = native_windows[id-1]; control_at = control_count = 0;
+    control_event(42,35,1,1); control_event(42,35,0,1);
+    CHECK(evnt_timer(0) == 1 && !pipe_count && !control_selection);
+    control_event(25,35,1,1); control_event(42,35,1,0);
+    CHECK(evnt_timer(0) == 1 && control_selection);
+    control_event(42,35,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED);
+    control_at = control_count = 0;
+    control_event(25,35,1,1);
+    CHECK(evnt_timer(0) == 1 && control_selection && control_object == W_CLOSER && !pipe_count);
+    control_event(60,75,1,0);
+    CHECK(evnt_timer(0) == 1 && !control_selection && !pipe_count);
+    control_event(25,35,1,0);
+    CHECK(evnt_timer(0) == 1 && control_selection);
+    control_event(25,35,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED && message[3] == id);
+    CHECK(message[1] == 0 && message[2] == 0 && message[4] == 20 && message[5] == 30 &&
+          message[6] == 200 && message[7] == 140 && !control_selection);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 140);
+    control_at = control_count = 0;
+    control_event(210,35,1,1); control_event(210,35,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_FULLED && message[3] == id);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && w == 200 && h == 140);
+    control_event(25,35,1,1); control_event(60,75,0,1);
+    CHECK(evnt_timer(0) == 1 && !pipe_count && !control_selection);
+    control_event(25,35,3,3); control_event(25,35,0,3);
+    CHECK(evnt_timer(0) == 1 && !pipe_count);
+    control_event(25,35,1,1);
+    CHECK(evnt_timer(0) == 1 && control_selection);
+    control_read_error = ERANGE;
+    control_event(25,35,0,1);
+    CHECK(evnt_timer(0) == 1 && !pipe_count && !control_selection);
+    /* Full self-stream: retain the completed message while reads drain it. */
+    control_at = control_count = 0;
+    control_event(210,35,1,1); control_event(210,35,0,1);
+    pipe_count = sizeof(pipe_data);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(wind_set(id,WF_CURRXYWH,30,40,210,150) == 1);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
+    CHECK(message[0] == WM_FULLED && !pipe_count && message[4] == 20 && message[5] == 30 &&
+          message[6] == 200 && message[7] == 140);
+    CHECK(wind_set(id,WF_CURRXYWH,20,30,200,140) == 1);
+    /* Queue scope includes title-only, kind-zero and hidden live handles. */
+    other = wind_create(NAME,0,0,200,140);
+    CHECK(other > 0 && wind_open(other,20,30,200,140) == 1);
+    control_target = native_windows[other-1]; control_at = control_count = 0;
+    control_event(25,35,1,1); control_event(25,35,0,1);
+    CHECK(evnt_timer(0) == 1 && control_at == control_count && !pipe_count);
+    CHECK(wind_close(other) == 1);
+    control_read_error = ERANGE;
+    CHECK(evnt_timer(0) == 1 && !control_read_error && !pipe_count);
+    CHECK(wind_delete(other) == 1);
+    other = wind_create(0,0,0,200,140);
+    CHECK(other > 0 && wind_open(other,20,30,200,140) == 1);
+    control_target = native_windows[other-1]; control_at = control_count = 0;
+    control_event(20,30,1,1); control_event(20,30,0,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && control_at == control_count);
+    CHECK(wind_close(other) == 1 && wind_delete(other) == 1);
+    control_target = native_windows[id-1];
+    /* Busy display preserves stream progress; overlays postpone all controls. */
+    control_at = control_count = 0;
+    control_event(25,35,1,1); control_event(25,35,0,1);
+    display_error = EAGAIN; pipe_count = 16; before = control_at;
+    CHECK(evnt_mesag(message) == 1 && control_at == before);
+    display_error = 0;
+    CHECK(aes_frames_suspend());
+    CHECK(evnt_timer(0) == 1 && control_at == before && !(waited_mask & CUIS_READY_CONTROL));
+    aes_frames_resume();
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED);
+    control_at = control_count = 0;
+    control_event(25,35,1,1); control_event(25,35,0,1);
+    frame_paint_failure = TRUE;
+    CHECK(evnt_timer(0) == 1 && !pipe_count);
+    frame_paint_failure = FALSE;
+    control_at = control_count = 0; control_event(25,35,1,1);
+    CHECK(evnt_timer(0) == 1 && control_selection);
+    control_event(25,35,0,1); frame_paint_failure = TRUE;
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED);
+    frame_paint_failure = FALSE;
+    control_at = control_count = 0;
+    control_event(25,35,1,1); control_event(25,35,0,1);
+    pipe_count = sizeof(pipe_data);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(wind_close(id) == 1);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
+    CHECK(message[0] == WM_CLOSED && message[4] == 20 && message[5] == 30 && message[6] == 200 && message[7] == 140);
+    CHECK(wind_delete(id) == 1);
+    control_target = 0; control_at = control_count = 0;
+    return 0;
+}
+
+static int control_timer_checks(void)
+{
+    short id;
+    ULONG before;
+    id = wind_create(0,0,0,100,100);
+    CHECK(id > 0 && wind_open(id,20,30,100,100) == 1);
+    control_target = native_windows[id-1]; control_at = control_count = 0;
+    control_only_wakes = 3; menu_ticks = 0; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0 && menu_ticks == 6 && wait_calls == before+3);
+    control_only_wakes = 3; menu_ticks = 0x7ffffffeUL; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+3);
+    control_only_wakes = 0;
+    display_error = EAGAIN;
+    CHECK(aes_window_messages(handle,aes_global) == E_OK && aes_frames_wait_display() && !aes_controls_listening());
+    release_display_on_wait = TRUE; display_release_ticks = 6; menu_ticks = 0; before = wait_calls;
+    CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+2 && !display_error);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    control_target = 0; control_at = control_count = 0;
+    return 0;
+}
+
 static int display_api_checks(void)
 {
     short id, other, x = 99, y, w, h;
@@ -602,7 +770,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

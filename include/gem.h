@@ -168,6 +168,12 @@ short mt_wind_update(short code, short *global);
 #ifndef NAME
 #define NAME 0x0001
 #endif
+#ifndef WM_CLOSED
+#define WM_CLOSED 22
+#endif
+#ifndef WM_FULLED
+#define WM_FULLED 23
+#endif
 #ifndef CLOSER
 #define CLOSER 0x0002
 #endif

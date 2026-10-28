@@ -77,9 +77,10 @@ static short event_once(short events, short clicks, short button_mask, short but
      * frame work afterward rather than interrupting that unfinished count. */
     if (aes_frames_listening() && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
         wait_mask |= CUIS_READY_NOTICE;
+    if (aes_controls_listening()) wait_mask |= CUIS_READY_CONTROL;
     if (aes_frames_suspended()) wait_mask &= ~CUIS_READY_NOTICE;
     else if (aes_frames_wait_display()) {
-        wait_mask &= ~CUIS_READY_NOTICE; wait_mask |= CUIS_READY_DISPLAY;
+        wait_mask &= ~(CUIS_READY_NOTICE|CUIS_READY_CONTROL); wait_mask |= CUIS_READY_DISPLAY;
     }
     if (clocked) {
         now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
@@ -90,7 +91,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     }
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
-    if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY)) && aes_window_messages(session, global) < 0) return 0;
+    if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL)) && aes_window_messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
                        (uintptr_t)&input[2], (uintptr_t)&input[3], (uintptr_t)&input[4]) != E_OK) return 0;
@@ -102,8 +103,8 @@ static short event_once(short events, short clicks, short button_mask, short but
         ready &= ~CUIS_READY_NOTICE;
         if (!ready) return -1;
     }
-    if (ready & CUIS_READY_DISPLAY) {
-        ready &= ~CUIS_READY_DISPLAY;
+    if (ready & (CUIS_READY_DISPLAY|CUIS_READY_CONTROL)) {
+        ready &= ~(CUIS_READY_DISPLAY|CUIS_READY_CONTROL);
         if (!ready) return -1;
     }
     if ((ready & CUIS_READY_NOTICE) && !(mask & CUIS_READY_NOTICE)) {
@@ -138,7 +139,9 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     LONG start = 0, session;
     ULONG duration;
     short result;
-    BOOL clocked = (events & MU_TIMER) && (aes_menu_registered() || aes_frames_registered());
+    BOOL clocked = (events & MU_TIMER) &&
+        (aes_menu_registered() || aes_frames_registered() ||
+         aes_controls_listening() || aes_frames_wait_display());
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     session = aes_application_session(global);
     duration = interval/5 + (interval%5 != 0) + (interval != 0);

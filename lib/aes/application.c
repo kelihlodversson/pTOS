@@ -109,7 +109,8 @@ short appl_yield(void) { return mt_appl_yield(aes_global); }
 short mt_evnt_timer(unsigned long interval, short *global)
 {
     if (!registered(global) || interval > 0xffffffffUL) return 0;
-    if (!aes_menu_registered() && !aes_frames_registered())
+    if (!aes_menu_registered() && !aes_frames_registered() &&
+        !aes_controls_listening() && !aes_frames_wait_display())
         return cuis_call6(CUIS_SESSION_DELAY, (QUAD)application_session, interval, 0, 0, 0, 0) == E_OK ? 1 : 0;
     return mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,interval,
                          NULL,NULL,NULL,NULL,NULL,NULL,global) == MU_TIMER;
@@ -187,7 +188,7 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
         if (result == length) return 1;
         if (result != EAGAIN || id == APR_NOWAIT) return 0;
         if (cuis_call6(CUIS_SESSION_WAIT, application_session, length,
-                       CUIS_READY_STREAM | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) | (aes_menu_listening() ? CUIS_READY_SURFACE : 0), 0, 0, 0) <= 0) return 0;
+                       CUIS_READY_STREAM | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) | (aes_menu_listening() ? CUIS_READY_SURFACE : 0) | (aes_controls_listening() ? CUIS_READY_CONTROL : 0), 0, 0, 0) <= 0) return 0;
     }
 }
 short appl_read(short id, short length, void *buffer) { return mt_appl_read(id, length, buffer, aes_global); }

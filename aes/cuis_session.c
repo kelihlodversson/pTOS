@@ -37,6 +37,10 @@ typedef struct cuis_window {
     UWORD outset_right, outset_bottom;
     CUIS_RECT *display_regions, *pending_regions;
     ULONG display_region_count;
+    UWORD content_left, content_top, content_right, content_bottom;
+    CUIS_POINTER controls[CUIS_POINTER_CAPACITY];
+    UWORD control_head, control_count;
+    BOOL control_overflow;
     BOOL display_regions_valid;
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
@@ -104,7 +108,7 @@ static ULONG window_total;
 static CUIS_WINDOW *pointer_hover, *pointer_capture;
 static LONG pointer_x, pointer_y, pointer_width, pointer_height;
 static ULONG pointer_buttons;
-static BOOL pointer_activation_drag;
+static BOOL pointer_activation_drag, pointer_control_drag;
 static BOOL pointer_initialized, pointer_seen, pointer_suppressed, pointer_legacy_drag;
 static CUIS_CLIENT *update_owner;
 static CUIS_WINDOW *update_window;
@@ -126,6 +130,7 @@ static BOOL surface_focus_pending;
 static UWORD surface_height, surface_paint_height;
 static CUIS_CLIENT *surface_painter;
 static void damage_windows(void);
+static void cancel_controls(CUIS_WINDOW *window);
 static void surface_remove(CUIS_CLIENT *client)
 {
     CUIS_CLIENT **link;
@@ -137,6 +142,11 @@ static void surface_choose(CUIS_CLIENT *client)
 {
     UWORD height = surface_height;
     BOOL changed = surface_owner != client;
+    CUIS_WINDOW *window;
+    /* A surface can cover a gadget without changing window focus/stacking.
+     * Invalidate both queued gestures and a capture under the old clipping. */
+    if (changed || height != (client ? client->surface_height : 0))
+        for (window = window_front; window; window = window->znext) cancel_controls(window);
     if (surface_owner) {
         surface_owner->surface_events = 0;
         if (changed && !keyboard_owner) surface_owner->key_head = surface_owner->key_count = 0;
@@ -257,6 +267,34 @@ static void damage_windows(void)
     cuis_input_unlock(flags);
 }
 
+/* Invalidate queued border gestures whenever their target changes. */
+static void cancel_controls(CUIS_WINDOW *window)
+{
+    if (!window) return;
+    if (window->control_count || (pointer_capture == window && pointer_control_drag))
+        window->control_overflow = TRUE;
+    window->control_head = window->control_count = 0;
+    if (pointer_capture == window && pointer_control_drag) {
+        pointer_capture = NULL; pointer_control_drag = FALSE;
+        pointer_suppressed = pointer_buttons != 0;
+    }
+}
+/* Only the front window may interpret border controls. Preserve that
+ * eligibility across transient unmanaged occlusion, independently of focus. */
+static void cancel_background_controls(void)
+{
+    CUIS_WINDOW *window;
+    for (window = window_front ? window_front->znext : NULL; window; window = window->znext)
+        cancel_controls(window);
+}
+static BOOL content_contains(CUIS_WINDOW *window)
+{
+    return (QUAD)pointer_x >= (QUAD)window->x+window->content_left &&
+        (QUAD)pointer_y >= (QUAD)window->y+window->content_top &&
+        (QUAD)pointer_x < (QUAD)window->x+window->width-window->content_right &&
+        (QUAD)pointer_y < (QUAD)window->y+window->height-window->content_bottom;
+}
+
 /* IRQ keyboard delivery uses only the published focus pointer and its
  * resident bounded queue. Remove that pointer before a window can be freed. */
 static BOOL set_focus(CUIS_WINDOW *window)
@@ -265,6 +303,7 @@ static BOOL set_focus(CUIS_WINDOW *window)
     BOOL changed = focus_window != window;
     if (changed) {
         if (focus_window) {
+            cancel_controls(focus_window);
             focus_window->key_head = focus_window->key_count = 0;
             if ((!window || window->client != focus_window->client) && focus_window->client != mouse_owner) {
                 focus_window->client->edge_count = 0;
@@ -365,6 +404,26 @@ static void pointer_enqueue(CUIS_WINDOW *window, ULONG changed, BOOL inside)
     event->state = changed | (inside ? CUIS_POINTER_INSIDE : 0);
     window->pointer_count++;
 }
+static void control_enqueue(CUIS_WINDOW *window, ULONG changed)
+{
+    CUIS_POINTER *event;
+    if (!window) return;
+    if (window->control_count && !changed) {
+        event = &window->controls[(window->control_head+window->control_count-1)%CUIS_POINTER_CAPACITY];
+        if (!(event->state & CUIS_POINTER_CHANGED) && event->buttons == pointer_buttons) {
+            event->x = pointer_x; event->y = pointer_y; return;
+        }
+    }
+    if (window->control_count == CUIS_POINTER_CAPACITY) {
+        window->control_head = window->control_count = 0;
+        window->control_overflow = TRUE;
+        changed = 0;
+    }
+    event = &window->controls[(window->control_head+window->control_count)%CUIS_POINTER_CAPACITY];
+    event->x = pointer_x; event->y = pointer_y;
+    event->buttons = pointer_buttons; event->state = changed;
+    window->control_count++;
+}
 static BOOL route_pointer(ULONG changed)
 {
     CUIS_WINDOW *hit, *target;
@@ -412,7 +471,10 @@ static BOOL route_pointer(ULONG changed)
             if (hit->managed_activation && hit != window_front) {
                 hit->notices |= CUIS_NOTICE_ACTIVATE;
                 pointer_activation_drag = TRUE;
-            } else if (set_focus(hit)) damage_windows();
+            } else {
+                if (set_focus(hit)) damage_windows();
+                pointer_control_drag = !content_contains(hit);
+            }
         } else {
             if (pointer_hover) pointer_enqueue(pointer_hover, 0, FALSE);
             pointer_hover = NULL;
@@ -424,6 +486,17 @@ static BOOL route_pointer(ULONG changed)
     if (pointer_activation_drag) {
         if (!pointer_buttons) { pointer_capture = NULL; pointer_activation_drag = FALSE; }
         return TRUE; /* A click-to-top is not also application button input. */
+    }
+    if (pointer_control_drag && pointer_capture) {
+        control_enqueue(pointer_capture,changed);
+        pointer_hover = NULL;
+        if (!pointer_buttons) pointer_capture = NULL;
+        return TRUE;
+    }
+    /* Border hover must not satisfy ordinary application predicates/history. */
+    if (!pointer_capture && hit && !content_contains(hit)) {
+        if (pointer_hover) pointer_enqueue(pointer_hover,0,FALSE);
+        pointer_hover = NULL; return TRUE;
     }
     target = pointer_capture ? pointer_capture : hit;
     consumed = target != NULL;
@@ -505,6 +578,7 @@ BOOL cuis_pointer_packet(WORD dx, WORD dy, ULONG buttons, LONG *out_x, LONG *out
         }
     } else consumed = route_pointer(old ^ pointer_buttons);
     sample_input_waits();
+    if (!pointer_buttons) pointer_control_drag = FALSE;
     cuis_input_unlock(flags);
     return consumed;
 }
@@ -530,7 +604,9 @@ static void hide_window(CUIS_WINDOW *window)
     UQUAD flags = cuis_input_lock();
     if (!window->visible) { cuis_input_unlock(flags); return; }
     unlink_visible(window);
+    cancel_background_controls();
     window->visible = FALSE;
+    cancel_controls(window);
     window->redraw = FALSE;
     window->notices = 0;
     window->pointer_head = window->pointer_count = 0;
@@ -741,7 +817,7 @@ static void end_mouse(void)
     mouse_owner->edge_count = mouse_owner->recent_count = 0;
     mouse_owner = NULL; mouse_depth = 0;
     pointer_capture = pointer_hover = NULL; surface_capture = NULL;
-    pointer_activation_drag = FALSE;
+    pointer_activation_drag = pointer_control_drag = FALSE;
     /* Never deliver a release without the press that belonged to the grab. */
     pointer_suppressed = pointer_buttons != 0;
     route_pointer(0);
@@ -758,6 +834,7 @@ static void end_mouse(void)
 LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 {
     CUIS_CLIENT *client;
+    CUIS_WINDOW *window;
     UQUAD flags;
     if (handle > 0x7fffffffULL || acquire > CUIS_MOUSE_FRESH || block > 1 || (!acquire && block)) return EINVAL;
     refresh_pointer_bounds();
@@ -784,6 +861,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
                 client->edge_head = client->edge_count = client->recent_count = 0;
                 client->recent_buttons = 0; client->isolated_mouse = TRUE;
             }
+            for (window = window_front; window; window = window->znext) cancel_controls(window);
             mouse_owner = client; mouse_depth = 1;
             pointer_capture = NULL;
             route_pointer(0);
@@ -994,7 +1072,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
 
     if ((function < CUIS_WINDOW_CREATE || function > CUIS_FOCUS_RELEASE ||
          function == CUIS_WINDOW_CLIP) && function != CUIS_WINDOW_IDENTIFY &&
-        function != CUIS_WINDOW_OUTSET && function != CUIS_WINDOW_POLICY)
+        function != CUIS_WINDOW_OUTSET && function != CUIS_WINDOW_POLICY && function != CUIS_WINDOW_CONTENT)
         return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
@@ -1012,6 +1090,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         window->znext = NULL;
         window->display_regions = window->pending_regions = NULL; window->display_regions_valid = FALSE;
         window->display_region_count = 0;
+        window->content_left = window->content_top = window->content_right = window->content_bottom = 0;
+        window->control_head = window->control_count = 0; window->control_overflow = FALSE;
         window->outset_right = window->outset_bottom = 0;
         window->visible = FALSE;
         window->managed_activation = FALSE; window->notices = 0;
@@ -1064,11 +1144,23 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         if (window->x == (LONG)b && window->y == (LONG)c &&
             window->width == (LONG)d && window->height == (LONG)e) break;
         flags = cuis_input_lock();
+        cancel_controls(window);
         window->x = (LONG)b; window->y = (LONG)c;
         window->width = (LONG)d; window->height = (LONG)e;
         route_pointer(0);
         cuis_input_unlock(flags);
         if (window->visible) damage_windows();
+        break;
+    case CUIS_WINDOW_CONTENT:
+        /* Insets are independent of current size so hidden windows can be
+         * configured before opening; an empty content area is permitted. */
+        if (b > 32767 || c > 32767 || d > 32767 || e > 32767) return EINVAL;
+        flags = cuis_input_lock();
+        cancel_controls(window);
+        window->content_left = b; window->content_top = c;
+        window->content_right = d; window->content_bottom = e;
+        route_pointer(0);
+        cuis_input_unlock(flags);
         break;
     case CUIS_WINDOW_POLICY:
         if (b > 1) return EINVAL;
@@ -1091,6 +1183,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         window->visible = TRUE;
         window->znext = window_front;
         window_front = window;
+        cancel_background_controls();
         if (window->managed_activation) set_focus(window);
         route_pointer(0);
         cuis_input_unlock(flags);
@@ -1112,6 +1205,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         unlink_visible(window);
         window->znext = window_front;
         window_front = window;
+        cancel_background_controls();
         if (window->managed_activation) set_focus(window);
         route_pointer(0);
         cuis_input_unlock(flags);
@@ -1124,6 +1218,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         unlink_visible(window);
         for (back = &window_front; *back; back = &(*back)->znext) ;
         *back = window;
+        cancel_background_controls();
         if (window->managed_activation && focus_window == window) set_focus(window_front);
         route_pointer(0);
         cuis_input_unlock(flags);
@@ -1397,11 +1492,12 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     ULONG buttons, modifiers;
     cuis_input_snapshot(&x, &y, &buttons, &modifiers);
     if (pointer_initialized) { x = pointer_x; y = pointer_y; buttons = pointer_buttons; }
-    owned = !pointer_suppressed && !pointer_legacy_drag && !pointer_activation_drag &&
+    owned = !pointer_suppressed && !pointer_legacy_drag && !pointer_activation_drag && !pointer_control_drag &&
         (mouse_owner ? mouse_owner == client :
          surface_capture ? FALSE :
          pointer_capture ? client_window(client, pointer_capture) :
-         surface_owner && y < surface_owner->surface_height ? FALSE : client_window(client, focus_window));
+         surface_owner && y < surface_owner->surface_height ? FALSE :
+         client_window(client, focus_window));
     if (owned) {
         for (i = 0; i < 2; i++) {
             bit = i ? CUIS_READY_RECT2 : CUIS_READY_RECT1;
@@ -1411,6 +1507,9 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
             if ((wait->events & bit) && (inside != rect->leave)) wait->ready |= bit;
         }
     }
+    /* Border hover suppresses live button predicates, not MU_M1/MU_M2.
+     * Trusted work-area history below still retains its original ownership. */
+    if (!mouse_owner && !pointer_capture && pointer_hit() && !content_contains(pointer_hit())) owned = FALSE;
     if (initial && (wait->events & CUIS_READY_BUTTON)) {
         /* GEM's quick check retains a press/release pair that arrived before
          * the wait was registered. A bounded private history is independent
@@ -1474,6 +1573,7 @@ static BOOL notices_ready(CUIS_CLIENT *client)
 
 static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
 {
+    CUIS_WINDOW *control;
     LONG result = 0;
     CUIS_WINDOW *window = focus_window;
     if (wait->events & CUIS_READY_INPUT) {
@@ -1499,6 +1599,10 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_SURFACE) && !mouse_owner && surface_owner == wait->client &&
         wait->client->surface_events && (!wait->input.tracking || result))
         result |= CUIS_READY_SURFACE;
+    if ((wait->events & CUIS_READY_CONTROL) && !mouse_owner && (!wait->input.tracking || result)) {
+        for (control = wait->client->windows; control; control = control->next)
+            if (control->control_count || control->control_overflow) { result |= CUIS_READY_CONTROL; break; }
+    }
     return result;
 }
 
@@ -1808,42 +1912,59 @@ LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout)
     refresh_pointer_bounds();
     return wait_events(*find_owner(run), window, (ULONG)events, timeout);
 }
-LONG cuis_pointer_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
+static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
 {
     CUIS_WINDOW *window;
-    CUIS_POINTER event;
+    CUIS_POINTER event, *queue;
+    UWORD *head, *count;
+    BOOL *overflow;
     UQUAD flags;
     if (handle > 0x7fffffffULL) return EINVAL;
     window = input_window(handle);
     if (!window) return EACCDN;
+    if (control && mouse_owner) return 0;
+    queue = control ? window->controls : window->pointer;
+    head = control ? &window->control_head : &window->pointer_head;
+    count = control ? &window->control_count : &window->pointer_count;
+    overflow = control ? &window->control_overflow : &window->pointer_overflow;
     flags = cuis_input_lock();
-    if (window->pointer_overflow) {
-        window->pointer_overflow = FALSE;
+    if (control && (!window->visible || window != window_front || window != focus_window)) cancel_controls(window);
+    if (*overflow) {
+        *overflow = FALSE;
         cuis_input_unlock(flags); return ERANGE;
     }
-    if (!window->pointer_count) { cuis_input_unlock(flags); return 0; }
+    if (!*count) { cuis_input_unlock(flags); return 0; }
     cuis_input_unlock(flags);
     if (!kproc_validate_user_write(x, sizeof(LONG)) ||
         !kproc_validate_user_write(y, sizeof(LONG)) ||
         !kproc_validate_user_write(buttons, sizeof(ULONG)) ||
         !kproc_validate_user_write(changed, sizeof(ULONG))) return EIMBA;
     flags = cuis_input_lock();
-    if (window->pointer_overflow) {
-        window->pointer_overflow = FALSE;
+    if (*overflow) {
+        *overflow = FALSE;
         cuis_input_unlock(flags); return ERANGE;
     }
-    if (!window->pointer_count) { cuis_input_unlock(flags); return 0; }
-    event = window->pointer[window->pointer_head];
+    if (!*count) { cuis_input_unlock(flags); return 0; }
+    event = queue[*head];
     if (!kproc_copy_to_user(x, &event.x, sizeof(LONG)) ||
         !kproc_copy_to_user(y, &event.y, sizeof(LONG)) ||
         !kproc_copy_to_user(buttons, &event.buttons, sizeof(ULONG)) ||
         !kproc_copy_to_user(changed, &event.state, sizeof(ULONG))) {
         cuis_input_unlock(flags); return EIMBA;
     }
-    window->pointer_head = (window->pointer_head + 1) % CUIS_POINTER_CAPACITY;
-    window->pointer_count--;
+    *head = (*head + 1) % CUIS_POINTER_CAPACITY;
+    (*count)--;
     cuis_input_unlock(flags);
     return 1;
+}
+
+LONG cuis_pointer_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
+{
+    return read_pointer(FALSE,handle,x,y,buttons,changed);
+}
+LONG cuis_control_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
+{
+    return read_pointer(TRUE,handle,x,y,buttons,changed);
 }
 
 /* Generic notices are converted by libaes, then atomically appended as opaque

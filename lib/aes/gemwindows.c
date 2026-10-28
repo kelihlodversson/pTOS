@@ -28,14 +28,25 @@ static struct gem_window {
     UWORD kind;
     char *name, *info;
     LONG native;
-    BOOL open;
+    BOOL open, control_selected;
+    WORD control, control_message;
+    GRECT control_rectangle;
     struct visible_region *regions;
     GRECT current, previous, full;
 } windows[GEM_WINDOW_LIMIT];
 static BOOL frame_notice_blocked, frame_display_blocked;
 static ULONG frame_overlays, frame_dialogs;
+static BOOL control_display_blocked, control_pipe_blocked;
+BOOL aes_controls_listening(void)
+{
+    short i;
+    if (frame_overlays || control_display_blocked || control_pipe_blocked) return FALSE;
+    for (i = 0; i < GEM_WINDOW_LIMIT; i++)
+        if (windows[i].id) return TRUE;
+    return FALSE;
+}
 BOOL aes_frames_suspended(void) { return frame_overlays != 0; }
-BOOL aes_frames_wait_display(void) { return frame_display_blocked && !frame_overlays; }
+BOOL aes_frames_wait_display(void) { return (frame_display_blocked || control_display_blocked) && !frame_overlays; }
 BOOL aes_frames_suspend(void)
 {
     if (frame_overlays == 0xffffffffUL) return FALSE;
@@ -67,6 +78,7 @@ void aes_windows_reset(void)
         windows[i].id = 0;
     }
     frame_notice_blocked = frame_display_blocked = FALSE;
+    control_display_blocked = control_pipe_blocked = FALSE;
     frame_overlays = frame_dialogs = 0;
 }
 
@@ -125,7 +137,7 @@ static BOOL paint_window(struct gem_window *window, short *global)
             (QUAD)window->current.g_y,window->current.g_w+2,window->current.g_h+2,0) == E_OK;
     }
     return aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global) &&
-        aes_frame_paint(window->native,&state,global);
+        aes_frame_paint_control(window->native,&state,window->control,window->control_selected,global);
 }
 
 static short local_wind_create(short kind, short x, short y, short w, short h, short *global)
@@ -133,9 +145,13 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     struct gem_window *window;
     short i;
     LONG native, identifier;
-    if (((UWORD)kind & ~(NAME|INFO)) || aes_application_session(global) < 0) return -1;
+    WORD wbox = 1, hbox = 1, width = 640, height = 400;
+    WM_FRAME_INSETS insets;
+    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER)) || aes_application_session(global) < 0) return -1;
     for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
+    if ((kind && !aes_frame_metrics(&wbox,&hbox,&width,&height,global)) ||
+        !wm_frame_insets(kind,wbox,hbox,TRUE,width,height,&insets)) return -1;
     /* GEM starts closed with zero current/previous geometry. CUIS requires
      * positive extents even for hidden metadata, so use an invisible placeholder. */
     native = cuis_call6(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0, 0);
@@ -143,14 +159,17 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     identifier = cuis_call6(CUIS_WINDOW_IDENTIFY, native, 0, 0, 0, 0, 0);
     if (identifier <= 0 || identifier > 32767 ||
         cuis_call6(CUIS_WINDOW_OUTSET, native, 2, 2, 0, 0, 0) != E_OK ||
-        cuis_call6(CUIS_WINDOW_POLICY, native, 1, 0, 0, 0, 0) != E_OK) {
+        cuis_call6(CUIS_WINDOW_POLICY, native, 1, 0, 0, 0, 0) != E_OK ||
+        cuis_call6(CUIS_WINDOW_CONTENT,native,insets.left,insets.top,insets.right,insets.bottom,0) != E_OK) {
         (void)cuis_call6(CUIS_WINDOW_DESTROY, native, 0, 0, 0, 0, 0);
         return -1;
     }
     window = &windows[i];
     window->native = native;
     window->kind = kind; window->name = window->info = "";
+    window->control_message = 0;
     window->open = FALSE;
+    window->control = 0; window->control_selected = FALSE;
     discard_regions(&window->regions);
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
@@ -209,6 +228,7 @@ static short local_wind_close(short id, short *global)
     window->current.g_x = window->current.g_y = 0;
     window->current.g_w = window->current.g_h = 0;
     window->open = FALSE;
+    window->control = 0; window->control_selected = FALSE;
     discard_regions(&window->regions);
     return 1;
 }
@@ -292,11 +312,96 @@ static LONG publish_notice(struct gem_window *window, LONG session, LONG kind,
     /* Acknowledge before painting. Focus/damage arriving during the draw
      * remains pending for the next pass instead of being cleared afterward. */
     result = cuis_call6(CUIS_NOTICE_PUBLISH,session,window->native,kind,(uintptr_t)message,sizeof(short)*8,0);
-    if ((result >= 0 || result == EAGAIN) && !aes_frame_paint(window->native,&state,global)) {
+    if ((result >= 0 || result == EAGAIN) && !aes_frame_paint_control(window->native,&state,window->control,window->control_selected,global)) {
         (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)window->current.g_x,
                         (QUAD)window->current.g_y,window->current.g_w+2,window->current.g_h+2,0);
         if (result != EAGAIN) result = EACCDN;
     }
+done:
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;
+    return result;
+}
+
+/* Border input is serviced without grabbing the ordinary button history.
+ * CUIS keeps capture and cancels stale topology/ownership; this private
+ * watch-box state uses the native frame's objects and SELECTED appearance. */
+static LONG flush_control(struct gem_window *window, LONG session)
+{
+    WORD message[8] = { 0,0,0,0,0,0,0,0 };
+    LONG result;
+    if (!window->control_message) return E_OK;
+    message[0] = window->control_message; message[3] = window->id;
+    message[4] = window->control_rectangle.g_x; message[5] = window->control_rectangle.g_y;
+    message[6] = window->control_rectangle.g_w; message[7] = window->control_rectangle.g_h;
+    result = cuis_call6(CUIS_STREAM_WRITE,session,(uintptr_t)message,16,0,0,0);
+    if (result == EAGAIN) { control_pipe_blocked = TRUE; return E_OK; }
+    if (result != 16) return result < 0 ? result : EACCDN;
+    window->control_message = 0;
+    return E_OK;
+}
+static LONG service_controls(LONG session, WORD *global)
+{
+    short i, n, object;
+    LONG result = E_OK, event[4];
+    BOOL selected, completed;
+    WM_FRAME_STATE state;
+    struct gem_window *window;
+    control_display_blocked = control_pipe_blocked = FALSE;
+    for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
+        window = &windows[i];
+        if (!window->id) continue;
+        result = flush_control(window,session);
+        if (result < 0) return result;
+    }
+    if (control_pipe_blocked) return E_OK;
+    if (!aes_controls_listening()) return E_OK;
+    result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
+    if (result == EAGAIN) { control_display_blocked = TRUE; return E_OK; }
+    if (result != E_OK) return result;
+    for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
+        window = &windows[i];
+        if (!window->id) continue;
+        /* Bounded even under a continuously moving producer. */
+        for (n = 0; n < 16; n++) {
+            result = cuis_call6(CUIS_CONTROL_READ,window->native,(uintptr_t)&event[0],
+                (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
+            if (!result) break;
+            if (result == ERANGE) {
+                selected = window->control_selected;
+                window->control = 0; window->control_selected = FALSE;
+                if (selected && window->open && (window->kind & (CLOSER|FULLER)))
+                    (void)paint_window(window,global);
+                result = E_OK; continue;
+            }
+            if (result < 0) goto done;
+            if (!window->open || !(window->kind & (CLOSER|FULLER))) continue;
+            if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
+                window->control = 0; window->control_selected = FALSE; break;
+            }
+            if ((event[3] & 1) && (event[2] & 1) && !window->control)
+                window->control = aes_frame_control(&state,event[0],event[1]);
+            object = window->control && aes_frame_control_inside(&state,window->control,event[0],event[1]) ?
+                window->control : 0;
+            completed = window->control && !(event[2] & 1) && (event[3] & 1) && object == window->control;
+            if (event[2] & ~1L) { window->control = 0; completed = FALSE; }
+            selected = window->control && object == window->control && (event[2] & 1);
+            if (completed) {
+                window->control_message = window->control == W_CLOSER ? WM_CLOSED : WM_FULLED;
+                window->control_rectangle = window->current;
+            }
+            if (!(event[2] & 1)) window->control = 0;
+            if (window->control_selected != selected) {
+                window->control_selected = selected;
+                if (!paint_window(window,global)) {
+                    window->control = 0; window->control_selected = FALSE;
+                    if (!completed) continue;
+                }
+            }
+            result = flush_control(window,session);
+            if (result < 0 || control_pipe_blocked) goto done;
+        }
+    }
+    result = E_OK;
 done:
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;
     return result;
@@ -309,6 +414,8 @@ LONG aes_window_messages(LONG session, short *global)
     struct gem_window *window;
     GRECT work;
     if (frame_overlays) return E_OK;
+    result = service_controls(session,global);
+    if (result < 0) return result;
     frame_notice_blocked = frame_display_blocked = FALSE;
     /* Bound pumping even if input continuously invalidates the display. */
     for (i = 0; i < 2 * GEM_WINDOW_LIMIT; i++) {
@@ -415,6 +522,7 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
         GRECT current = window->current, previous = window->previous;
         if (!configure(window, a, b, c, d, global)) return 0;
         discard_regions(&window->regions);
+        window->control = 0; window->control_selected = FALSE;
         window->previous = window->current;
         window->current.g_x = a; window->current.g_y = b;
         window->current.g_w = c; window->current.g_h = d;

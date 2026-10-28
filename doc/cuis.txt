@@ -1161,7 +1161,7 @@ invalid identifiers/PIDs or non-Boolean open status fail without truncation.
 Foreign geometry and desktop handle-0 metadata remain later work.
 No additional appl_getinfo extension bits are advertised in this slice.
 
-Window close/move/size/full gadget requests, WM_NEWTOP and optional AES4
+Window move/size gadget requests, WM_NEWTOP and optional AES4
 WM_ONTOP/WM_UNTOPPED notifications are not synthesized here. Decoration
 interactions and their applicable GEM/MultiAES semantics migrate with the
 renderer/input adapters. A programmatic geometry change or close does not
@@ -2050,7 +2050,7 @@ are reported as GEM 0.
 
 Decorated borders must admit a positive work area, title inset and drop shadow
 without WORD overflow. Tiny/overflowing rectangles fail before configuration.
-Kind-zero window behavior is retained. MOVER, CLOSER, FULLER, SIZER, arrows,
+Kind-zero window behavior is retained. MOVER, SIZER, arrows,
 sliders, HOTCLOSE and other creation flags remain rejected until their actions
 are implemented. No further capability bits are advertised. CUIS gains no GEM
 frame flags, object pointers, drawing commands or architecture-specific code.
@@ -2063,3 +2063,61 @@ not wake internal waits during suspension. Ordinary stream messages remain
 readable. The event timer's remaining interval is computed immediately before
 the kernel wait, after pre-wait frame painting has consumed its share of the
 original deadline.
+
+Close and fuller window controls (#790)
+--------------------------------------
+
+External libaes accepts CLOSER and FULLER, independently or together with
+NAME/INFO. Native shared frame objects, glyphs and SELECTED rendering provide
+watch-box feedback. A left press selects the original gadget, leaving it
+unselects it, and returning selects it again. Release inside that same gadget
+appends WM_CLOSED (22) or WM_FULLED (23). Words 1/2 are zero, word 3 is the GEM
+window handle, and words 4-7 contain its current border rectangle, matching
+native AES. Neither request closes, destroys, maximizes or otherwise changes
+the window: the application remains responsible for its response. An activation
+click on a background window requests WM_TOPPED only. Other buttons, release
+outside, lost input, geometry/visibility/focus changes and mouse grabs cancel
+the gesture. MOVER/SIZER/scrollbars and HOTCLOSE remain unsupported.
+
+CUIS adds two generic scalar operations under CONF_WITH_CUIS:
+
+- 55 WINDOW_CONTENT(window,left,top,right,bottom): set nonnegative content
+  insets (0..32767), relative to the border. Defaults are zero. Insets may be
+  configured while hidden; sums exceeding an extent leave content empty.
+  Changing them cancels pending border gestures. The same topology/display
+  ownership rules as WINDOW_CONFIGURE apply.
+- 56 CONTROL_READ(window,out_x,out_y,out_buttons,out_changed): read one trusted
+  border-pointer record, returning 1, empty 0, or a negative error. All outputs
+  are LONGs, coordinates are screen-relative, and changed has the same button
+  bits as POINTER_READ. The caller must own the window. Failed output copies
+  do not pop the record. ERANGE cancels tracking after queue overflow or a
+  target invalidation; no GEM gadget IDs, trees or messages enter the kernel.
+
+READY_CONTROL (512) wakes SESSION_WAIT for these records or cancellation.
+Each window has a bounded 16-record border queue, with adjacent motion records
+coalesced. A press on the border captures that routing until release, keeping
+all gesture edges out of ordinary window pointer queues and session button
+history, even when it crosses the content area. Earlier work-area clicks are
+preserved. As with READY_SURFACE, internal readiness does not interrupt an
+unfinished multi-click accumulation. Modal scopes defer control servicing and
+mouse grabs invalidate pending border gestures. Nonblocking display acquisition
+and a retained completed message prevent drawing or full-stream backpressure
+from blocking ordinary message reads. All public calls remain standard GEM;
+there is no new exported libaes API or feature negotiation.
+
+Control readiness servicing drains records/cancellation for every live GEM
+handle, including plain, title/info-only and hidden windows. Only open windows
+with a supported gadget interpret those records or paint feedback. Border hover
+suppresses live button predicates while focused MU_M1/MU_M2 rectangle predicates
+remain active. Changing the selected top-strip surface or its height invalidates
+queued and captured border gestures even if window focus and stacking stay the
+same. Completed requests retain a release-time rectangle separately from the
+watch box; a later geometry change, close or release-feedback drawing failure
+cannot retract that request while its message waits for stream capacity.
+
+Plain and hidden live windows also participate in control servicing. Nonzero
+GEM timers retain their original deadline across control-only and display-ready
+wakes, including when no decorated window or menu exists. Window show/raise/
+lower/hide operations cancel background border gestures under the topology IRQ
+lock independently of focus; a temporary unmanaged occluder cannot restore an
+old queued release's eligibility by disappearing before CONTROL_READ.

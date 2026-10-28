@@ -43,6 +43,41 @@ void gem_menubar_input_stage(short stage)
     (void)stage;
     ptos_write(1,message,sizeof(message)-1);
 }
+/* Compiles against unmodified GEMlib as well as the kernel's GEM header. */
+static int control_checks(void)
+{
+    short id, stage, result, message[8], x,y,w,h;
+    char ready[] = "x32 GEM frame control 0: READY\r\n";
+    static const char pass[] = "x32 GEM frame controls: PASS\r\n";
+    id = wind_create(NAME|CLOSER|FULLER,0,0,200,140);
+    VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Close and full") == 1);
+    VERIFY(wind_open(id,20,30,200,140) == 1);
+    while (appl_read(-1,16,message) == 1) { }
+    for (stage = 0; stage < 3; stage++) {
+        ready[22] = '0'+stage;
+        ptos_write(1,ready,sizeof(ready)-1);
+        for (;;) {
+            result = evnt_multi(MU_MESAG|MU_BUTTON|MU_KEYBD|MU_TIMER,1,1,1,
+                0,0,0,0,0,0,0,0,0,0,message,10000,NULL,NULL,NULL,NULL,NULL,NULL);
+            VERIFY(result && !(result & (MU_BUTTON|MU_TIMER)));
+            if (result & MU_MESAG) {
+                if (message[0] == WM_REDRAW) continue;
+                VERIFY(stage && message[0] == (stage == 1 ? WM_FULLED : WM_CLOSED));
+                VERIFY(message[3] == id && message[4] == 20 && message[5] == 30 &&
+                    message[6] == 200 && message[7] == 140);
+                break;
+            }
+            if (result & MU_KEYBD) { VERIFY(!stage); break; }
+        }
+        VERIFY(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 140);
+        VERIFY(evnt_multi(MU_BUTTON|MU_TIMER,1,1,1,0,0,0,0,0,0,0,0,0,0,NULL,0,
+            NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER);
+    }
+    VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
 {
     o->ob_next = o->ob_head = o->ob_tail = -1;
@@ -332,6 +367,7 @@ int main(int argc, char **argv, char **envp)
         short overlay_window;
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
         VERIFY(process(0x3e,status,0,0,0) == 0);
+        status = control_checks(); if (status) return status;
         /* Leave a decorated redraw pending beneath the alert and subsequent
          * modal scopes. Their recursive waits must not repaint its frame. */
         overlay_window = wind_create(NAME|INFO,0,0,240,140);
