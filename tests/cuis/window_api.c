@@ -83,9 +83,17 @@ static int gem_window_checks(short *global)
     WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,20,30,2,16) == 0);
     WINDOW_VERIFY(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && w == 40 && h == 55);
     WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    id = wind_create(NAME|SIZER,-32120,30,32320,140);
+    WINDOW_VERIFY(id > 0 && wind_open(id,-32120,30,32320,140) == 1);
+    WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,-32120,30,32749,131) == 1);
+    WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
     id = wind_create(MOVER,0,30,32763,80);
     WINDOW_VERIFY(id > 0 && wind_open(id,0,30,32763,80) == 1);
     WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,2,30,32763,80) == 1);
+    WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    id = wind_create(MOVER|SIZER,0,30,32758,140);
+    WINDOW_VERIFY(id > 0 && wind_open(id,0,30,32758,140) == 1);
+    WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,0,30,32758,140) == 1);
     WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
     for (i = 0; i < 64; i++) {
         ids[i] = wind_create(0, 0, 0, 100, 100);

@@ -1,3 +1,5 @@
+#include "gemframegeom.h"
+#include "aesdefs.h"
 /* Generic content/border routing never interprets GEM gadgets or messages. */
 #define CREAD(h) cuis_control_service(h,0x1000,0x1004,0x1008,0x100c)
 static int control_checks(void)
@@ -6,6 +8,8 @@ static int control_checks(void)
     CUIS_CLIENT *client;
     ULONG i;
     CUIS_INPUT_WAIT wait = { 0 };
+    WM_FRAME_INSETS insets;
+    WORD widths[] = { 320,320,640 }, heights[] = { 200,400,400 };
     run = &first; a = cuis_service(CUIS_SESSION_START,0);
     wa = cuis_window_service(CUIS_WINDOW_CREATE,20,30,100,80,0);
     CHECK(a >= 0 && wa >= 0);
@@ -15,6 +19,26 @@ static int control_checks(void)
     CHECK(cuis_window_service(CUIS_WINDOW_SHOW,wa,0,0,0,0) == E_OK);
     client = *find_owner(run);
     pointer_suppressed = pointer_legacy_drag = FALSE;
+    /* Real pointer routing at the expanded corner's upper-left edge,
+     * including both low-resolution adjusted-width variants. */
+    for (i = 0; i < 3; i++) {
+        CHECK(wm_frame_insets(NAME|SIZER,19,19,TRUE,widths[i],heights[i],&insets));
+        CHECK(cuis_window_service(CUIS_WINDOW_CONTENT,wa,insets.left,insets.top,insets.right,insets.bottom) == E_OK);
+        CHECK(cuis_window_service(CUIS_WINDOW_CORNER,wa,23,23,0,0) == E_OK);
+        client->edge_count = client->recent_count = 0;
+        wait.events = CUIS_READY_BUTTON; wait.ready = 0; client->input_wait = &wait;
+        CHECK(point_at(97,87,0) && point_at(97,87,1) && point_at(130,120,1) && point_at(130,120,0));
+        CHECK(!wait.ready && !client->edge_count); client->input_wait = NULL;
+        CHECK(CREAD(wa) == 1 && copied[0] == 97 && copied[1] == 87 && copied[2] == 1);
+        CHECK(CREAD(wa) == 1 && copied[2] == 1);
+        CHECK(CREAD(wa) == 1 && copied[2] == 0 && CREAD(wa) == 0);
+        CHECK(point_at(96,90,0) && point_at(96,90,1) && point_at(96,90,0));
+        CHECK(client->edge_count == 2 && CREAD(wa) == 0);
+    }
+    CHECK(cuis_window_service(CUIS_WINDOW_CORNER,wa,32768,23,0,0) == EINVAL);
+    CHECK(cuis_window_service(CUIS_WINDOW_CORNER,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONTENT,wa,1,22,1,1) == E_OK);
+    client->edge_count = client->recent_count = 0;
     CHECK(point_at(40,70,0) && point_at(40,70,1) && point_at(40,70,0));
     CHECK(client->edge_count == 2);
     CHECK(point_at(25,35,1) && point_at(25,35,0));

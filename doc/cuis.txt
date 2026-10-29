@@ -2079,7 +2079,7 @@ click on a background window requests WM_TOPPED only. Other buttons, release
 outside, lost input, geometry/visibility/focus changes and mouse grabs cancel
 the gesture. Scrollbar interactions and HOTCLOSE remain unsupported.
 
-CUIS adds two generic scalar operations under CONF_WITH_CUIS:
+CUIS adds three generic scalar operations under CONF_WITH_CUIS:
 
 - 55 WINDOW_CONTENT(window,left,top,right,bottom): set nonnegative content
   insets (0..32767), relative to the border. Defaults are zero. Insets may be
@@ -2092,6 +2092,14 @@ CUIS adds two generic scalar operations under CONF_WITH_CUIS:
   bits as POINTER_READ. The caller must own the window. Failed output copies
   do not pop the record. ERANGE cancels tracking after queue overflow or a
   target invalidation; no GEM gadget IDs, trees or messages enter the kernel.
+
+- 57 WINDOW_CORNER(window,width,height): reserve a bottom-right control
+  rectangle independently of content insets (each dimension 0..32767).
+  Either zero disables it; both default to zero. Hidden windows may be
+  configured before sizing. Changes cancel pending gestures and follow the
+  same ownership rules as WINDOW_CONTENT. Libaes reserves the complete
+  expanded SIZER corner, including its bevel and low-resolution overlap;
+  WF_WORKXYWH and work-area drawing remain unchanged.
 
 READY_CONTROL (512) wakes SESSION_WAIT for these records or cancellation.
 Each window has a bounded 16-record border queue, with adjacent motion records
@@ -2209,3 +2217,11 @@ waiting, and can complete released sizing requests entirely through polling.
 Completed requests retain their proposed dimensions under stream backpressure
 and later application geometry changes. Arrow/slider/scrollbar interactions and
 HOTCLOSE remain subsequent work.
+
+Frame admission and sizing now share WM_FRAME_LIMITS. Corner minima include
+both 3D bevel margins, so the full SIZER stays inside its data area rather than
+expanding into the title or above an untitled border. Size maxima include both
+the renderer's padded object dimensions and its absolute WORD scratch endpoints,
+using the same padding calculation as the object renderer. This includes the
+low-resolution FULLER offset. Boundary WM_SIZED proposals therefore remain
+admissible and paintable, rather than relying only on the outer shadow margin.

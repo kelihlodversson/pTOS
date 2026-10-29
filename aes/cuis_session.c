@@ -37,6 +37,7 @@ typedef struct cuis_window {
     UWORD outset_right, outset_bottom;
     CUIS_RECT *display_regions, *pending_regions;
     ULONG display_region_count;
+    UWORD corner_width, corner_height;
     UWORD content_left, content_top, content_right, content_bottom;
     CUIS_POINTER controls[CUIS_POINTER_CAPACITY];
     UWORD control_head, control_count;
@@ -289,6 +290,9 @@ static void cancel_background_controls(void)
 }
 static BOOL content_contains(CUIS_WINDOW *window)
 {
+    if (window->corner_width && window->corner_height &&
+        (QUAD)pointer_x >= (QUAD)window->x+window->width-window->corner_width &&
+        (QUAD)pointer_y >= (QUAD)window->y+window->height-window->corner_height) return FALSE;
     return (QUAD)pointer_x >= (QUAD)window->x+window->content_left &&
         (QUAD)pointer_y >= (QUAD)window->y+window->content_top &&
         (QUAD)pointer_x < (QUAD)window->x+window->width-window->content_right &&
@@ -1072,7 +1076,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
 
     if ((function < CUIS_WINDOW_CREATE || function > CUIS_FOCUS_RELEASE ||
          function == CUIS_WINDOW_CLIP) && function != CUIS_WINDOW_IDENTIFY &&
-        function != CUIS_WINDOW_OUTSET && function != CUIS_WINDOW_POLICY && function != CUIS_WINDOW_CONTENT)
+        function != CUIS_WINDOW_OUTSET && function != CUIS_WINDOW_POLICY && function != CUIS_WINDOW_CONTENT && function != CUIS_WINDOW_CORNER)
         return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
@@ -1090,6 +1094,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         window->znext = NULL;
         window->display_regions = window->pending_regions = NULL; window->display_regions_valid = FALSE;
         window->display_region_count = 0;
+        window->corner_width = window->corner_height = 0;
         window->content_left = window->content_top = window->content_right = window->content_bottom = 0;
         window->control_head = window->control_count = 0; window->control_overflow = FALSE;
         window->outset_right = window->outset_bottom = 0;
@@ -1150,6 +1155,16 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         route_pointer(0);
         cuis_input_unlock(flags);
         if (window->visible) damage_windows();
+        break;
+    case CUIS_WINDOW_CORNER:
+        /* Generic bottom-right control rectangle, independent of content
+         * insets and current size. Zero in either dimension disables it. */
+        if (b > 32767 || c > 32767) return EINVAL;
+        flags = cuis_input_lock();
+        cancel_controls(window);
+        window->corner_width = b; window->corner_height = c;
+        route_pointer(0);
+        cuis_input_unlock(flags);
         break;
     case CUIS_WINDOW_CONTENT:
         /* Insets are independent of current size so hidden windows can be
