@@ -13,20 +13,11 @@ BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
                        char *name, char *info, WORD *global)
 {
     WORD width, height;
-    WM_FRAME_INSETS insets;
+    WM_FRAME_LIMITS limits;
     if (!aes_frame_metrics(&state->wbox,&state->hbox,&width,&height,global) ||
-        !wm_frame_insets(kind,state->wbox,state->hbox,TRUE,width,height,&insets)) return FALSE;
-    /* Native titles inset their text by ADJ3DSTD at both sides. Admission
-     * keeps every visible object positive, with room for the drop shadow. */
-    if (state->wbox > 16383 || state->hbox > 16383 || border->g_w < 5 || border->g_h <= insets.top+insets.bottom ||
-        border->g_w <= insets.left+insets.right || border->g_w > 32763 || border->g_h > 32763 ||
-        border->g_x < -32766 || border->g_y < -32766 ||
-        (LONG)border->g_x+border->g_w+2 > 32767 ||
-        (LONG)border->g_y+border->g_h+2 > 32767) return FALSE;
-    if (border->g_w <= ((kind & CLOSER) != 0)*(state->wbox+4) +
-        ((kind & FULLER) != 0)*(state->wbox+4) + 4) return FALSE;
-    if ((kind & SIZER) && border->g_h < insets.top-((kind & (NAME|CLOSER|FULLER|MOVER)) ? 0 : 1)+state->hbox+ADJ3DSTD)
-        return FALSE;
+        !wm_frame_limits(kind,border->g_x,border->g_y,state->wbox,state->hbox,width,height,&limits) ||
+        border->g_w < limits.min_w || border->g_w > limits.max_w ||
+        border->g_h < limits.min_h || border->g_h > limits.max_h) return FALSE;
     state->border = *border; state->kind = kind;
     state->adjusted_width = state->wbox+4-(width < 640 ? 1+(height >= 400) : 0);
     state->adjusted_height = state->hbox+4;

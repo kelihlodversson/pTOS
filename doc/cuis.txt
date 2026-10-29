@@ -2209,3 +2209,11 @@ waiting, and can complete released sizing requests entirely through polling.
 Completed requests retain their proposed dimensions under stream backpressure
 and later application geometry changes. Arrow/slider/scrollbar interactions and
 HOTCLOSE remain subsequent work.
+
+Frame admission and sizing now share WM_FRAME_LIMITS. Corner minima include
+both 3D bevel margins, so the full SIZER stays inside its data area rather than
+expanding into the title or above an untitled border. Size maxima include both
+the renderer's padded object dimensions and its absolute WORD scratch endpoints,
+using the same padding calculation as the object renderer. This includes the
+low-resolution FULLER offset. Boundary WM_SIZED proposals therefore remain
+admissible and paintable, rather than relying only on the outer shadow margin.

@@ -21,6 +21,7 @@
 #include "frames.h"
 #include "gemmovegeom.h"
 #include "gemsizegeom.h"
+#include "gemobjbounds.h"
 #include "gemframegeom.h"
 
 #include "render_context.h"
@@ -413,7 +414,7 @@ static BOOL supported(OBJECT *object, LONG x, LONG y)
     if (!word_position(x,y) || !supported_payload(object,payload_x,payload_y)) return FALSE;
     if (object->ob_flags & FL3DMASK) {
         OBSPEC effective = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
-        LONG pad = 8, w = object->ob_width, h = object->ob_height;
+        LONG pad, w = object->ob_width, h = object->ob_height;
         /* The original 3D painter uses WORD rectangles/line points. Keep
          * every outline, bevel and selected-text addition representable. */
         WORD border, dummy;
@@ -421,7 +422,7 @@ static BOOL supported(OBJECT *object, LONG x, LONG y)
         OBSPEC ignored;
         if (effective.index == -1L) return TRUE;
         ob_sst(object,0,&ignored,&dummy,&dummy,&dummy,&logical,&border);
-        if (border < 0) pad -= 3L*border; else pad += 3L*border;
+        pad = ob_3d_padding(border);
         if (w <= 0 || h <= 0 || (LONG)x-pad < -32768L || (LONG)y-pad < -32768L ||
             (LONG)x+w+pad > 32767L || (LONG)y+h+pad > 32767L ||
             w+2*pad > 32767L || h+2*pad > 32767L) return FALSE;

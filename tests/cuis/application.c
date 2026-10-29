@@ -702,7 +702,7 @@ static int size_api_checks(void)
     CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 140);
     control_at = control_count = 0;
     control_event(210,160,1,1); control_event(-100,-100,0,1);
-    CHECK(evnt_mesag(message) == 1 && message[6] == 76 && message[7] == 44);
+    CHECK(evnt_mesag(message) == 1 && message[6] == 76 && message[7] == 46);
     control_at = control_count = 0; before = size_calls;
     control_event(210,160,1,1); pipe_count = 16;
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !pipe_count && size_calls == before);

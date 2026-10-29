@@ -4,6 +4,7 @@
 #include "gemframegeom.h"
 #include "aesdefs.h"
 #include "obdefs.h"
+#include "gemobjbounds.h"
 BOOL wm_frame_insets(UWORD kind, WORD wbox, WORD hbox, BOOL three_d, WORD screen_width, WORD screen_height, WM_FRAME_INSETS *out)
 {
     WM_FRAME_INSETS r = { 1,1,1,1 };
@@ -36,4 +37,68 @@ BOOL wm_frame_insets(UWORD kind, WORD wbox, WORD hbox, BOOL three_d, WORD screen
     }
     *out = r;
     return TRUE;
+}
+
+/* Admission and interactive sizing share the renderer's WORD scratch limits.
+ * Native frame templates use one-pixel borders for title text and gadgets. */
+BOOL wm_frame_limits(UWORD kind, LONG x, LONG y, WORD wbox, WORD hbox,
+                      WORD screen_width, WORD screen_height, WM_FRAME_LIMITS *out)
+{
+    WM_FRAME_INSETS insets;
+    WM_FRAME_LIMITS r;
+    LONG pad = ob_3d_padding(1), aw, edge, offset, deduction;
+    UWORD top = kind & (NAME|CLOSER|FULLER|MOVER);
+    if (x < -32766 || y < -32766 || x > 32767 || y > 32767 ||
+        wbox > 16383 || hbox > 16383 ||
+        !wm_frame_insets(kind,wbox,hbox,TRUE,screen_width,screen_height,&insets)) return FALSE;
+    aw = wbox+2*ADJ3DSTD-(screen_width < 640 ? 1+(screen_height >= 400) : 0);
+    r.min_w = insets.left+insets.right+1;
+    edge = ((kind & CLOSER) != 0)*(wbox+4L)+((kind & FULLER) != 0)*(wbox+4L)+5;
+    if (r.min_w < edge) r.min_w = edge;
+    r.min_h = insets.top+insets.bottom+1;
+    r.max_w = 32765L-x; if (r.max_w > 32763) r.max_w = 32763;
+    r.max_h = 32765L-y; if (r.max_h > 32763) r.max_h = 32763;
+    if (kind & SIZER) {
+        /* Include both bevel margins above/below the logical corner. */
+        edge = insets.top-(top ? 0 : 1)+hbox+2*ADJ3DSTD;
+        if (r.min_h < edge) r.min_h = edge;
+    }
+    if (kind & (NAME|CLOSER|FULLER)) {
+        if (y+ADJ3DSTD-pad < -32768L || y+ADJ3DSTD+hbox+pad > 32767L || hbox+2*pad > 32767L)
+            return FALSE;
+    }
+    if (kind & CLOSER) {
+        if (x+ADJ3DSTD-pad < -32768L || x+ADJ3DSTD+wbox+pad > 32767L || wbox+2*pad > 32767L)
+            return FALSE;
+    }
+    if (kind & NAME) {
+        offset = ADJ3DSTD+((kind & CLOSER) ? aw : 0);
+        deduction = 2*ADJ3DSTD+((kind & CLOSER) != 0)*aw+((kind & FULLER) != 0)*aw;
+        if (x+offset-pad < -32768L) return FALSE;
+        edge = 32767L-2*pad+deduction;
+        if (r.max_w > edge) r.max_w = edge;
+        edge = 32767L-x-offset-pad+deduction;
+        if (r.max_w > edge) r.max_w = edge;
+    }
+    if (kind & FULLER) {
+        edge = -32768L-x+aw-ADJ3DSTD+pad;
+        if (r.min_w < edge) r.min_w = edge;
+        edge = 32767L-x+aw-ADJ3DSTD-wbox-pad;
+        if (r.max_w > edge) r.max_w = edge;
+        if (wbox+2*pad > 32767L) return FALSE;
+    }
+    if (kind & SIZER) {
+        edge = -32768L-x+wbox+ADJ3DSTD+pad;
+        if (r.min_w < edge) r.min_w = edge;
+        edge = 32767L-x+ADJ3DSTD-pad;
+        if (r.max_w > edge) r.max_w = edge;
+        if (wbox+2*pad > 32767L) return FALSE;
+        edge = -32768L-y+hbox+ADJ3DSTD+pad;
+        if (r.min_h < edge) r.min_h = edge;
+        edge = 32767L-y+ADJ3DSTD-pad;
+        if (r.max_h > edge) r.max_h = edge;
+        if (hbox+2*pad > 32767L) return FALSE;
+    }
+    if (r.min_w > r.max_w || r.min_h > r.max_h) return FALSE;
+    *out = r; return TRUE;
 }

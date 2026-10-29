@@ -14,15 +14,15 @@ int main(void)
     CHECK(wm_size_position(&start,NAME|SIZER,260,200,8,16,19,19,640,400,&result));
     CHECK(result.g_x == 20 && result.g_y == 30 && result.g_w == 241 && result.g_h == 171);
     CHECK(wm_size_position(&start,NAME|SIZER,-100,-100,8,16,19,19,640,400,&result));
-    CHECK(result.g_w == 76 && result.g_h == 44);
+    CHECK(result.g_w == 76 && result.g_h == 46);
     CHECK(wm_size_position(&start,NAME|INFO|SIZER,-100,-100,8,16,19,19,640,400,&result));
-    CHECK(result.g_w == 76 && result.g_h == 63);
+    CHECK(result.g_w == 76 && result.g_h == 65);
     CHECK(wm_size_position(&start,SIZER,-100,-100,8,16,19,19,640,400,&result));
-    CHECK(result.g_w == 25 && result.g_h == 21);
+    CHECK(result.g_w == 25 && result.g_h == 23);
     CHECK(wm_size_position(&start,SIZER,-100,-100,8,16,19,19,320,200,&result));
-    CHECK(result.g_w == 24 && result.g_h == 21);
+    CHECK(result.g_w == 24 && result.g_h == 23);
     CHECK(wm_size_position(&start,NAME|SIZER,-100,-100,8,16,38,19,640,400,&result));
-    CHECK(result.g_w == 152 && result.g_h == 44);
+    CHECK(result.g_w == 152 && result.g_h == 46);
     for (k = 0; k < sizeof(kinds)/sizeof(kinds[0]); k++) {
         CHECK(wm_frame_insets(kinds[k],19,19,TRUE,640,400,&insets));
         for (x = -100; x < 1000; x += 113) for (y = -100; y < 1000; y += 97) {
@@ -36,6 +36,14 @@ int main(void)
     }
     CHECK(wm_size_position(&start,NAME|SIZER,2147483647L,2147483647L,8,16,19,19,640,400,&result));
     CHECK((LONG)result.g_x+result.g_w+2 <= 32767 && (LONG)result.g_y+result.g_h+2 <= 32767);
+    start.g_x = -32120; start.g_y = 30; start.g_w = 32320; start.g_h = 140;
+    CHECK(wm_size_position(&start,NAME|SIZER,639,160,8,16,19,19,640,400,&result));
+    CHECK(result.g_w == 32749);
+    start.g_x = 32600; start.g_w = 100;
+    CHECK(wm_size_position(&start,NAME|SIZER,32767,160,8,16,19,19,640,400,&result));
+    CHECK(result.g_w == 158);
+    CHECK(wm_size_position(&start,NAME|FULLER|SIZER,32767,160,8,16,19,19,320,200,&result));
+    CHECK(result.g_w == 157);
     result.g_x = 99;
     CHECK(!wm_size_position(&start,NAME,40,50,8,16,19,19,640,400,&result) && result.g_x == 99);
     start.g_x = 32730;
