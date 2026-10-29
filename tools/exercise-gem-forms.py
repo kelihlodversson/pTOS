@@ -92,6 +92,17 @@ for stage in range(7):
     if stage == 0:
         key("ret")  # Barrier after the cancelled gesture.
 marker("x32 GEM frame controls: PASS")
+for stage, (x, y) in enumerate(((210, 60), (210, 155), (30, 180), (190, 180))):
+    marker("x32 GEM arrow %d: READY" % stage)
+    for _ in range(32):
+        control_move(-127, -127)
+    control_move(x, y)
+    button(True)
+    marker("x32 GEM arrow %d: HELD" % stage)
+    control_move(300-x, 240-y)
+    marker("x32 GEM arrow %d: OUTSIDE" % stage)
+    button(False)
+marker("x32 GEM scroll arrows: PASS")
 marker("x32 GEM form input: READY")
 time.sleep(0.2)
 for name in ("a", "2", "ret"):

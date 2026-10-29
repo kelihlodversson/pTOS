@@ -45,6 +45,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     LONG session, ready, result = 0, state[4], input[5];
     ULONG mask = 0, wait_mask, elapsed, ticks;
     LONG now;
+    BOOL repeat_timer = FALSE;
     BOOL frame_work = aes_frames_registered();
     LONG (*messages)(LONG,short *) = ((events & MU_TIMER) && !interval) ?
         aes_window_messages_poll : aes_window_messages;
@@ -91,8 +92,25 @@ static short event_once(short events, short clicks, short button_mask, short but
         ticks = elapsed >= duration ? 0 : duration-elapsed;
         interval = ticks > 1 ? (ticks-1)*5 : ticks ? 1 : 0;
     }
+    /* A held arrow needs another cooperative dispatch even without pointer
+     * motion. Internal timer wakes never become public MU_TIMER events or
+     * restart an application's deadline/multi-click accumulation. */
+    if (aes_controls_repeating() && (!(events & MU_BUTTON) || (clicks & 255) <= 1) &&
+        (!(mask & CUIS_READY_TIMER) || interval > 5)) {
+        wait_mask |= CUIS_READY_TIMER; interval = 5; repeat_timer = TRUE;
+    }
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
+    if (repeat_timer && (ready & CUIS_READY_TIMER)) {
+        if (messages(session,global) < 0) return 0;
+        ready &= ~CUIS_READY_TIMER;
+        if (events & MU_TIMER) {
+            now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+            if (now < 0) return 0;
+            if ((((ULONG)now-(ULONG)start) & 0x7fffffffUL) >= duration) ready |= CUIS_READY_TIMER;
+        }
+        if (!ready) return -1;
+    }
     if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL)) && messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],

@@ -1,6 +1,7 @@
 /* Public object-drawing contracts against a small independent pixel oracle. */
 #include "gem.h"
 #include "gemmovegeom.h"
+#include "gemframegeom.h"
 #include "gemerror.h"
 #include "mono_objects.h"
 #include "colour_objects.h"
@@ -34,6 +35,7 @@ static PARMBLK callback_parameters;
 static BOOL draw_error, window_update, allocation_error, release_error;
 static WORD screen_planes = 32;
 static WORD pixel_width = 1, pixel_height = 1;
+static WORD display_width = 160, display_height = 120;
 static BOOL trace_animation, move_test;
 static LONG move_records[4][4], move_error;
 static WORD move_count, move_at, move_waits;
@@ -256,7 +258,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     if (fn == VDI_SERVICE_OPEN) {
         VDI_SERVICE_WORKSTATION *ws = (void *)(uintptr_t)b;
         __builtin_memset(ws,0,sizeof(*ws));
-        ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
+        ws->handle = ++opens; ws->intout[0] = display_width-1; ws->intout[1] = display_height-1;
         ws->ptsout[1] = 4;
         ws->intout[13] = 256;
         ws->intout[3] = pixel_width; ws->intout[4] = pixel_height;
@@ -691,6 +693,56 @@ static int size_frame_limits_checks(void)
     __builtin_memcpy(image,saved,sizeof(image));
     return 0;
 }
+static int arrow_frame_checks(void)
+{
+    static const UWORD flags[] = { UPARROW,DNARROW,LFARROW,RTARROW };
+    static const WORD objects[] = { W_UPARROW,W_DNARROW,W_LFARROW,W_RTARROW };
+    static const WORD actions[] = { WA_UPLINE,WA_DNLINE,WA_LFLINE,WA_RTLINE };
+    WM_FRAME_STATE state;
+    WM_FRAME frame;
+    WM_FRAME_LIMITS limits;
+    GRECT border;
+    WORD saved[120][160], modes[3][2] = { {320,200},{320,400},{640,400} };
+    UWORD kind;
+    unsigned mask, mode, i;
+    LONG x,y;
+    __builtin_memcpy(saved,image,sizeof(image));
+    for (mode = 0; mode < 3; mode++) {
+        display_width = modes[mode][0]; display_height = modes[mode][1];
+        for (mask = 1; mask < 16; mask++) {
+            kind = NAME|INFO|SIZER;
+            for (i = 0; i < 4; i++) if (mask & (1U << i)) kind |= flags[i];
+            VERIFY(wm_frame_limits(kind,20,30,19,19,display_width,display_height,&limits));
+            border.g_x = 20; border.g_y = 30; border.g_w = limits.min_w; border.g_h = limits.min_h;
+            VERIFY(aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+            VERIFY(aes_frame_paint(99,&state,aes_global));
+            wm_frame_init(&frame); wm_frame_build(frame.tree,&frame.name,&frame.info,&state);
+            for (i = 0; i < 4; i++) if (mask & (1U << i)) {
+                WORD object = objects[i], bar = i < 2 ? W_VBAR : W_HBAR;
+                x = (LONG)border.g_x+frame.tree[W_DATA].ob_x+frame.tree[bar].ob_x+frame.tree[object].ob_x+9;
+                y = (LONG)border.g_y+frame.tree[W_DATA].ob_y+frame.tree[bar].ob_y+frame.tree[object].ob_y+9;
+                VERIFY(wm_arrow_action(aes_frame_control(&state,x,y)) == actions[i]);
+            }
+            VERIFY(aes_frame_paint_control(99,&state,objects[mask & 1 ? 0 : mask & 2 ? 1 : mask & 4 ? 2 : 3],TRUE,aes_global));
+            border.g_w--;
+            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+            border.g_w++; border.g_h--;
+            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+        }
+        /* Actual production preflight/painting at positive WORD endpoints,
+         * with both bars and all fixed/relative arrow positions present. */
+        kind = UPARROW|DNARROW|LFARROW|RTARROW;
+        VERIFY(wm_frame_limits(kind,32600,32600,19,19,display_width,display_height,&limits));
+        border.g_x = border.g_y = 32600; border.g_w = limits.max_w; border.g_h = limits.max_h;
+        VERIFY(aes_frame_prepare(&state,kind,&border,"","",aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_RTARROW,TRUE,aes_global));
+    }
+    VERIFY(wm_arrow_action(W_SIZER) == -1 && wm_arrow_action(W_VSLIDE) == -1 && wm_arrow_action(W_WORK) == -1);
+    display_width = 160; display_height = 120;
+    VERIFY(!nesting && opens == closes);
+    __builtin_memcpy(image,saved,sizeof(image));
+    return 0;
+}
 static int frame_metric_checks(void)
 {
     WORD wbox = 99, hbox = 99, width = 99, height = 99;
@@ -780,6 +832,7 @@ int main(void)
     VERIFY(move_paint_checks() == 0);
     VERIFY(size_paint_checks() == 0);
     VERIFY(size_frame_limits_checks() == 0);
+    VERIFY(arrow_frame_checks() == 0);
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
     tree[0].ob_x = 10; tree[0].ob_y = 12; tree[0].ob_width = 100; tree[0].ob_height = 80;

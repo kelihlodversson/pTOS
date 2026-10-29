@@ -29,7 +29,7 @@ static struct gem_window {
     short id;
     UWORD kind;
     char *name, *info;
-    LONG native, drag_x, drag_y;
+    LONG native, drag_x, drag_y, arrow_tick;
     BOOL open, control_selected;
     WORD control, control_message;
     GRECT control_rectangle;
@@ -38,6 +38,8 @@ static struct gem_window {
 } windows[GEM_WINDOW_LIMIT];
 static BOOL frame_notice_blocked, frame_display_blocked;
 static ULONG frame_overlays, frame_dialogs;
+#define ARROW_GADGETS (UPARROW|DNARROW|LFARROW|RTARROW)
+#define CONTROL_GADGETS (CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS)
 static BOOL control_display_blocked, control_pipe_blocked;
 BOOL aes_controls_listening(void)
 {
@@ -45,6 +47,14 @@ BOOL aes_controls_listening(void)
     if (frame_overlays || control_display_blocked || control_pipe_blocked) return FALSE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
         if (windows[i].id) return TRUE;
+    return FALSE;
+}
+BOOL aes_controls_repeating(void)
+{
+    short i;
+    if (!aes_controls_listening()) return FALSE;
+    for (i = 0; i < GEM_WINDOW_LIMIT; i++)
+        if (windows[i].id && windows[i].open && wm_arrow_action(windows[i].control) >= 0) return TRUE;
     return FALSE;
 }
 BOOL aes_frames_suspended(void) { return frame_overlays != 0; }
@@ -149,7 +159,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     LONG native, identifier;
     WORD wbox = 1, hbox = 1, width = 640, height = 400;
     WM_FRAME_INSETS insets;
-    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER|SIZER)) || aes_application_session(global) < 0) return -1;
+    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS)) || aes_application_session(global) < 0) return -1;
     for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
     if ((kind && !aes_frame_metrics(&wbox,&hbox,&width,&height,global)) ||
@@ -387,6 +397,16 @@ static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
     }
     return E_OK;
 }
+static LONG arrow_message(struct gem_window *window, LONG session)
+{
+    LONG now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+    if (now < 0) return now;
+    window->arrow_tick = now;
+    window->control_message = WM_ARROWED;
+    window->control_rectangle.g_x = wm_arrow_action(window->control);
+    window->control_rectangle.g_y = window->control_rectangle.g_w = window->control_rectangle.g_h = 0;
+    return flush_control(window,session);
+}
 static LONG service_controls(LONG session, WORD *global, BOOL polling)
 {
     short i, n, object;
@@ -430,12 +450,12 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
             if (result == ERANGE) {
                 selected = window->control_selected;
                 window->control = 0; window->control_selected = FALSE;
-                if (selected && window->open && (window->kind & (CLOSER|FULLER|MOVER|SIZER)))
+                if (selected && window->open && (window->kind & CONTROL_GADGETS))
                     (void)paint_window(window,global);
                 result = E_OK; continue;
             }
             if (result < 0) goto done;
-            if (!window->open || !(window->kind & (CLOSER|FULLER|MOVER|SIZER))) continue;
+            if (!window->open || !(window->kind & CONTROL_GADGETS)) continue;
             if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
                 window->control = 0; window->control_selected = FALSE; break;
             }
@@ -450,6 +470,26 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
                 }
                 result = service_drag(window,&state,session,global);
                 if (result < 0 || control_pipe_blocked) goto done;
+                continue;
+            }
+            if (wm_arrow_action(window->control) >= 0) {
+                /* Native arrows send on press and repeat until release,
+                 * retaining the original action and selection outside the
+                 * glyph. They do not use close/full watch-box semantics. */
+                selected = event[2] == 1;
+                completed = selected && (event[3] & 1);
+                if (window->control_selected != selected) {
+                    window->control_selected = selected;
+                    if (!paint_window(window,global)) {
+                        window->control = 0; window->control_selected = FALSE;
+                        continue;
+                    }
+                }
+                if (completed) {
+                    result = arrow_message(window,session);
+                    if (result < 0 || control_pipe_blocked) goto done;
+                }
+                if (!selected) window->control = 0;
                 continue;
             }
             object = window->control && aes_frame_control_inside(&state,window->control,event[0],event[1]) ?
@@ -471,6 +511,18 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
             }
             result = flush_control(window,session);
             if (result < 0 || control_pipe_blocked) goto done;
+        }
+        /* Read cancellation/release before generating any repeat. Only
+         * repeat after draining the bounded queue, at most once per native
+         * two-tick dispatch interval, never in a tight loop or by waiting
+         * with the display. */
+        if (n < 16 && wm_arrow_action(window->control) >= 0) {
+            LONG now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+            if (now < 0) { result = now; goto done; }
+            if ((((ULONG)now-(ULONG)window->arrow_tick) & 0x7fffffffUL) >= 2) {
+                result = arrow_message(window,session);
+                if (result < 0 || control_pipe_blocked) goto done;
+            }
         }
     }
     result = E_OK;

@@ -187,8 +187,13 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
         result = cuis_call6(CUIS_STREAM_READ, application_session, (uintptr_t)buffer, length, 0, 0, 0);
         if (result == length) return 1;
         if (result != EAGAIN || id == APR_NOWAIT) return 0;
-        if (cuis_call6(CUIS_SESSION_WAIT, application_session, length,
-                       CUIS_READY_STREAM | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) | (aes_menu_listening() ? CUIS_READY_SURFACE : 0) | (aes_controls_listening() ? CUIS_READY_CONTROL : 0), 0, 0, 0) <= 0) return 0;
+        {
+            BOOL repeat = aes_controls_repeating();
+            if (cuis_call6(CUIS_SESSION_WAIT, application_session, length,
+                           CUIS_READY_STREAM | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
+                           (aes_menu_listening() ? CUIS_READY_SURFACE : 0) | (aes_controls_listening() ? CUIS_READY_CONTROL : 0) |
+                           (repeat ? CUIS_READY_TIMER : 0), repeat ? 5 : 0, 0, 0) <= 0) return 0;
+        }
     }
 }
 short appl_read(short id, short length, void *buffer) { return mt_appl_read(id, length, buffer, aes_global); }

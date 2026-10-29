@@ -168,6 +168,15 @@ short mt_wind_update(short code, short *global);
 #ifndef NAME
 #define NAME 0x0001
 #endif
+#ifndef WM_ARROWED
+#define WM_ARROWED 24
+#endif
+#ifndef WA_UPLINE
+#define WA_UPLINE 2
+#define WA_DNLINE 3
+#define WA_LFLINE 6
+#define WA_RTLINE 7
+#endif
 #ifndef WM_SIZED
 #define WM_SIZED 27
 #endif

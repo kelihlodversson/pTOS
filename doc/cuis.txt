@@ -2215,7 +2215,7 @@ erase on completion/cancellation; drawing failures request display redraw.
 APR_NOWAIT and explicit zero-time polls retain held sizing presses without
 waiting, and can complete released sizing requests entirely through polling.
 Completed requests retain their proposed dimensions under stream backpressure
-and later application geometry changes. Arrow/slider/scrollbar interactions and
+and later application geometry changes. Slider/page interactions and
 HOTCLOSE remain subsequent work.
 
 Frame admission and sizing now share WM_FRAME_LIMITS. Corner minima include
@@ -2225,3 +2225,45 @@ the renderer's padded object dimensions and its absolute WORD scratch endpoints,
 using the same padding calculation as the object renderer. This includes the
 low-resolution FULLER offset. Boundary WM_SIZED proposals therefore remain
 admissible and paintable, rather than relying only on the outer shadow margin.
+
+Window scroll-arrow controls (#797)
+----------------------------------
+
+External libaes accepts UPARROW, DNARROW, LFARROW and RTARROW, separately
+or in combination with the existing title, information and sizing controls.
+The original native aes/shared/gemframe.c builds the bars and glyphs, including
+aspect and low-resolution adjustments and selected appearance. Admission and
+move/size proposals share limits for the actual padded arrow positions, valid
+work/bar extents and opposing glyphs; no kernel frame code is changed.
+
+Pressing an arrow sends standard WM_ARROWED (24), sender/extra length zero,
+window handle in word 3, WA_UPLINE (2), WA_DNLINE (3), WA_LFLINE (6) or
+WA_RTLINE (7) in word 4, and zero words 5-7. The application owns scrolling
+and redraw. Like native handle_arrow_msg(), press sends immediately and the
+original action repeats while held, including outside the arrow rectangle;
+release ends tracking without another action. The selected glyph stays active
+throughout that capture. Background activation, topology/ownership changes,
+queue overflow and mixed-button cancellation use the existing generic CUIS
+control path. Earlier ordinary work-area button edges remain independent.
+
+Repeats are cooperative: each service pass can emit at most one due repeat,
+with a two-tick minimum between repeats and no initial key-repeat delay.
+Blocking GEM reads and single-click event waits request short internal timer
+wakeups when a held arrow needs service without pointer motion. The display
+lock is released before waiting. Internal wakes never return MU_TIMER unless
+the application's own original timer deadline has expired. Unfinished
+multi-click accumulation is not interrupted by repeat timers. APR_NOWAIT and
+zero-time timer polls never wait for input. Stream writes remain nonblocking;
+a full stream retains one pending action and lets the application drain data,
+rather than waiting while holding display ownership or growing a repeat list.
+Release/cancellation records are processed before generating another repeat.
+
+GEMDRAW.TOS and the QEMU input driver exercise all four actions, multiple held
+repeats, dragging outside, release suppression, polling-only completion, normal
+button-history isolation and unchanged window geometry. The source builds
+against unmodified GEMlib headers. Host sanitizer tests also cover full-stream
+progress, batched reads, clock wrap, original timer deadlines, rendering and
+cancellation/failure cleanup, every arrow combination, low-resolution modes,
+minimum geometry and the production painter's positive WORD endpoints.
+VSLIDE/HSLIDE, thumb tracking and WA_*PAGE actions remain subsequent work;
+unsupported creation flags and slider fields still return GEM failure.

@@ -94,6 +94,53 @@ static int control_checks(void)
     return 0;
 }
 
+/* The original arrow stays selected and repeats even after leaving its
+ * rectangle. These are standard GEM calls, including the polling stage. */
+static int arrow_checks(void)
+{
+    short id, stage, message[8], result, count, x,y,w,h, buttons;
+    const short actions[] = { WA_UPLINE,WA_DNLINE,WA_LFLINE,WA_RTLINE };
+    char ready[] = "x32 GEM arrow 0: READY\r\n";
+    char held[] = "x32 GEM arrow 0: HELD\r\n";
+    char outside[] = "x32 GEM arrow 0: OUTSIDE\r\n";
+    static const char pass[] = "x32 GEM scroll arrows: PASS\r\n";
+    id = wind_create(NAME|UPARROW|DNARROW|LFARROW|RTARROW,0,0,200,160);
+    VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Native scroll arrows") == 1);
+    VERIFY(wind_open(id,20,30,200,160) == 1);
+    while (appl_read(-1,16,message) == 1) { }
+    for (stage = 0; stage < 4; stage++) {
+        ready[14] = held[14] = outside[14] = '0'+stage;
+        ptos_write(1,ready,sizeof(ready)-1);
+        count = 0;
+        for (;;) {
+            if (stage == 1) {
+                result = appl_read(-1,16,message) == 1 ? MU_MESAG : 0;
+                if (!result) { VERIFY(evnt_timer(0) == 1); continue; }
+            } else result = evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,1,1,1,
+                0,0,0,0,0,0,0,0,0,0,message,4000,NULL,NULL,NULL,NULL,NULL,NULL);
+            VERIFY(result == MU_MESAG);
+            if (message[0] == WM_REDRAW) continue;
+            VERIFY(message[0] == WM_ARROWED && message[3] == id && message[4] == actions[stage]);
+            VERIFY(!message[1] && !message[2] && !message[5] && !message[6] && !message[7]);
+            count++;
+            if (count == 3) ptos_write(1,held,sizeof(held)-1);
+            VERIFY(graf_mkstate(&x,&y,&buttons,NULL) == 1);
+            if (count >= 3 && x >= 280 && y >= 220 && (buttons & 1)) break;
+        }
+        ptos_write(1,outside,sizeof(outside)-1);
+        do {
+            VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1);
+        } while (buttons & 1);
+        while (appl_read(-1,16,message) == 1) VERIFY(message[0] == WM_ARROWED && message[4] == actions[stage]);
+        VERIFY(evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,1,1,1,
+            0,0,0,0,0,0,0,0,0,0,message,20,NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER);
+        VERIFY(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 160);
+    }
+    VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
 {
     o->ob_next = o->ob_head = o->ob_tail = -1;
@@ -384,6 +431,7 @@ int main(int argc, char **argv, char **envp)
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
         VERIFY(process(0x3e,status,0,0,0) == 0);
         status = control_checks(); if (status) return status;
+        status = arrow_checks(); if (status) return status;
         /* Leave a decorated redraw pending beneath the alert and subsequent
          * modal scopes. Their recursive waits must not repaint its frame. */
         overlay_window = wind_create(NAME|INFO,0,0,240,140);
