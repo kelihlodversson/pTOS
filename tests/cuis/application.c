@@ -213,6 +213,13 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         }
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
+        if ((c & CUIS_READY_SERVICE) && !ready) {
+            ULONG timer_ticks = d ? d/5+(d%5 != 0)+1 : 0;
+            if ((c & CUIS_READY_TIMER) && !d) return CUIS_READY_TIMER;
+            menu_ticks += 2; ready |= CUIS_READY_SERVICE;
+            if ((c & CUIS_READY_TIMER) && timer_ticks <= 2) ready |= CUIS_READY_TIMER;
+            return ready;
+        }
         if (c & CUIS_READY_TIMER) {
             if (menu_test && d) menu_ticks += d/5 + (d%5 != 0) + 1;
             ready |= CUIS_READY_TIMER;
@@ -303,7 +310,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL)));
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)));
     CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
     state_error = EIMBA; x = 123;
@@ -742,6 +749,11 @@ static int arrow_api_checks(void)
     CHECK(evnt_mesag(message) == 1 && message[4] == WA_UPLINE);
     menu_test = TRUE; before = menu_ticks;
     CHECK(evnt_mesag(message) == 1 && message[4] == WA_UPLINE && menu_ticks >= before+2);
+    before = menu_ticks;
+    CHECK(evnt_multi(MU_MESAG|MU_BUTTON,2,1,1,0,0,0,0,0,0,0,0,0,0,
+        message,0,NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
+    CHECK(message[0] == WM_ARROWED && message[4] == WA_UPLINE && menu_ticks >= before+2);
+    CHECK(waited_mask & CUIS_READY_SERVICE);
     before = menu_ticks;
     CHECK(appl_read(pid,32,batch) == 1 && menu_ticks >= before+4);
     CHECK(batch[0] == WM_ARROWED && batch[8] == WM_ARROWED && batch[4] == WA_UPLINE && batch[12] == WA_UPLINE);

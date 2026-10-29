@@ -2248,9 +2248,10 @@ control path. Earlier ordinary work-area button edges remain independent.
 
 Repeats are cooperative: each service pass can emit at most one due repeat,
 with a two-tick minimum between repeats and no initial key-repeat delay.
-Blocking GEM reads and single-click event waits request short internal timer
-wakeups when a held arrow needs service without pointer motion. The display
-lock is released before waiting. Internal wakes never return MU_TIMER unless
+Blocking GEM reads and event waits request internal service wakeups when a
+held arrow needs service without pointer motion, including calls configured
+for double-click detection with no multi-click currently in progress. The display
+lock is released before waiting. Internal service wakes never return MU_TIMER unless
 the application's own original timer deadline has expired. Unfinished
 multi-click accumulation is not interrupted by repeat timers. APR_NOWAIT and
 zero-time timer polls never wait for input. Stream writes remain nonblocking;
@@ -2267,3 +2268,11 @@ cancellation/failure cleanup, every arrow combination, low-resolution modes,
 minimum geometry and the production painter's positive WORD endpoints.
 VSLIDE/HSLIDE, thumb tracking and WA_*PAGE actions remain subsequent work;
 unsupported creation flags and slider fields still return GEM failure.
+
+CUIS READY_SERVICE (1024) adds a generic maintenance wake to SESSION_WAIT,
+without new syscall arguments or GEM-specific kernel state. It becomes ready
+after two native ticks, independently of the requested TIMER deadline. Like
+other internal readiness, it is deferred during unfinished multi-click
+accumulation until a requested public event is ready; that accumulation stays
+resident with its original count and deadline. Libaes consumes SERVICE
+internally, services due controls, then re-arms the public event wait.
