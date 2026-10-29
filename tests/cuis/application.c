@@ -45,6 +45,7 @@ static LONG control_events[32][4], control_target, control_read_error;
 static ULONG control_count, control_at, control_only_wakes;
 static BOOL control_selection;
 static WORD control_object;
+static ULONG move_calls;
 static void control_event(LONG x, LONG y, LONG buttons, LONG changed)
 {
     control_events[control_count][0] = x; control_events[control_count][1] = y;
@@ -372,7 +373,7 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
 BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, WORD *global)
 {
     LONG event[4], result;
-    (void)global;
+    (void)global; move_calls++;
     for (;;) {
         result = cuis_call6(CUIS_CONTROL_READ,native,(uintptr_t)&event[0],(uintptr_t)&event[1],
             (uintptr_t)&event[2],(uintptr_t)&event[3],0);
@@ -622,9 +623,23 @@ static int control_api_checks(void)
 static int move_api_checks(void)
 {
     short id, message[8], x,y,w,h;
+    ULONG before;
     id = wind_create(NAME|MOVER,0,0,200,140);
     CHECK(id > 0 && wind_open(id,20,30,200,140) == 1);
     control_target = native_windows[id-1]; control_at = control_count = 0;
+    before = move_calls;
+    control_event(80,35,1,1); pipe_count = 16;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !pipe_count && control_at == 1 && move_calls == before);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && control_at == 1 && move_calls == before);
+    CHECK(evnt_timer(0) == 1 && move_calls == before);
+    control_event(180,85,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_MOVED && message[4] == 120 && message[5] == 80);
+    control_at = control_count = 0;
+    state_values[2] = 0;
+    control_event(80,35,1,1); control_event(180,85,0,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_MOVED && message[4] == 120 && message[5] == 80);
+    CHECK(move_calls == before+1); /* Polling completion never calls the blocking tracker. */
+    state_values[2] = 2; control_at = control_count = 0;
     control_event(80,35,1,1); control_event(140,65,1,0); control_event(180,85,0,1);
     CHECK(evnt_mesag(message) == 1 && message[0] == WM_MOVED && message[3] == id);
     CHECK(message[4] == 120 && message[5] == 80 && message[6] == 200 && message[7] == 140);

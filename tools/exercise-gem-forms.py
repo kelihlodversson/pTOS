@@ -66,11 +66,11 @@ def button(down):
 
 
 command("qmp_capabilities")
-for stage in range(4):
+for stage in range(5):
     marker("x32 GEM frame control %d: READY" % stage)
     for _ in range(32):
         control_move(-127, -127)
-    control_move(210 if stage == 1 else 80 if stage == 3 else 30, 40)
+    control_move(210 if stage == 1 else 80 if stage >= 3 else 30, 40)
     button(True)
     if stage == 0:
         control_move(50, 50)  # Close: release outside cancels.
@@ -79,7 +79,10 @@ for stage in range(4):
         time.sleep(0.1)
         control_move(130, -50)  # Full: leaving and returning reselects.
     elif stage == 3:
+        marker("x32 GEM mover poll: PASS")  # Polls must finish while held.
         control_move(60, 40)  # Move: propose a new position, preserving size.
+    elif stage == 4:
+        control_move(60, 40)  # Poll-only clients must also receive WM_MOVED.
     button(False)
     if stage == 0:
         key("ret")  # Barrier after the cancelled gesture.

@@ -576,10 +576,10 @@ static int move_paint_checks(void)
     move_records[0][0] = 70; move_records[0][1] = 60; move_records[0][2] = 1; move_records[0][3] = 0;
     move_records[1][0] = 90; move_records[1][1] = 80; move_records[1][2] = 0; move_records[1][3] = 1;
     move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
-    before = patterned_segments;
+    before = patterned_segments; bad_line_type = 0;
     VERIFY(aes_frame_move(99,&state,40,25,&result,aes_global));
     VERIFY(result.g_x == 70 && result.g_y == 75 && result.g_w == 100 && result.g_h == 80);
-    VERIFY(move_waits == 1 && move_at == 2 && patterned_segments > before);
+    VERIFY(move_waits == 1 && move_at == 2 && patterned_segments > before && !bad_line_type);
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
     move_error = ERANGE; result.g_x = 99;
     VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global) && result.g_x == 99);

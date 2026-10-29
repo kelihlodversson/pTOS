@@ -2163,3 +2163,12 @@ its display lock even if that peer is waiting for display access. These generic
 kernel changes remain compiled only with CONF_WITH_CUIS. There is no new syscall
 opcode or public libaes entry point. SIZER, arrows/sliders and HOTCLOSE remain
 subsequent work.
+
+APR_NOWAIT reads and explicit zero-duration event polls never start a blocking
+mover wait. A polled title press retains its original anchor privately, leaving
+held-motion records queued until a blocking event/message service can
+track it. Poll-only applications can finish a released drag without drawing an
+outline or waiting for further input. Queued application messages remain readable while the title is held.
+Move proposals reserve the same two-pixel shadow margin as frame admission, so
+wind_set can apply boundary proposals. Move outlines select VDI line type 7 as
+well as the original shared GSX dotted patterns.

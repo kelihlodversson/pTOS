@@ -638,6 +638,7 @@ static void move_frame(void *argument)
         p->ok = FALSE; return;
     }
     gsx_attr(FALSE,MD_XOR,BLACK);
+    vsl_type(7); /* gsx_xbox supplies user-defined dotted line patterns. */
     for (;;) {
         /* Native gr_dragbox uses this same patterned XOR outline. Display
          * ownership spans the wait, so peers cannot overwrite its pixels. */

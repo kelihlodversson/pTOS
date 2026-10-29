@@ -19,7 +19,9 @@ int main(void)
     CHECK(result.g_x == 0 && result.g_y == 19);
     start.g_w = start.g_h = 32763;
     CHECK(wm_move_position(&start,80,35,32767,32767,32767,19,19,&result));
-    CHECK((LONG)result.g_x+result.g_w-1 <= 32767 && (LONG)result.g_y+result.g_h-1 <= 32767);
+    CHECK((LONG)result.g_x+result.g_w+2 <= 32767 && (LONG)result.g_y+result.g_h+2 <= 32767);
+    start.g_x = 0; start.g_y = 30; start.g_w = 32763; start.g_h = 80;
+    CHECK(wm_move_position(&start,80,35,32767,35,640,19,19,&result) && result.g_x == 2);
     start.g_w = 0; result.g_x = 99;
     CHECK(!wm_move_position(&start,80,35,90,40,640,19,19,&result) && result.g_x == 99);
     return 0;

@@ -17,10 +17,10 @@ BOOL wm_move_position(const GRECT *start, LONG press_x, LONG press_y,
     if (top < hbox) top = hbox;
     if (left > max_x) left = max_x;
     if (top > max_y) top = max_y;
-    /* The shared GSX outline endpoints are WORDs. Never wrap an oversized
-     * window's right/bottom edges while retaining native off-screen motion. */
-    if (left+start->g_w-1 > 32767) left = 32768L-start->g_w;
-    if (top+start->g_h-1 > 32767) top = 32768L-start->g_h;
+    /* Reserve the same two-pixel shadow margin as frame admission, so
+     * every proposal remains applicable and its WORD endpoints cannot wrap. */
+    if (left+start->g_w+2 > 32767) left = 32765L-start->g_w;
+    if (top+start->g_h+2 > 32767) top = 32765L-start->g_h;
     if (left < -32768 || left > 32767 || top < -32768 || top > 32767) return FALSE;
     *result = *start; result->g_x = left; result->g_y = top;
     return TRUE;
