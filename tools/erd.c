@@ -1669,7 +1669,9 @@ PRIVATE int write_include(FILE *fp,char *name)
 #ifdef GEM_RSC
     fprintf(fp,"#ifdef AES_RESOURCE_STRINGS_LOCAL\n#define N_(text) text\n#else\n");
 #endif
+#ifndef MFORM_RSC
     fprintf(fp,"#include \"nls.h\"\n\n");
+#endif
 #ifdef GEM_RSC
     fprintf(fp,"#endif\n\n");
 #endif

@@ -255,5 +255,5 @@ obj/libaes/mforms.c obj/libaes/mforms.h &: mrd aes/mform.rsc aes/mform.def
 	./mrd -pmform aes/mform obj/libaes/mforms
 obj/libaes/mforms.o: obj/libaes/mforms.c obj/libaes/mforms.h include/gem.h include/mform.h $(AUTOCONF_H)
 	$(CC) $(LIBAES_CFLAGS) -Iobj/libaes -include gem.h -c $< -o $@
-obj/libaes/graphics.o: lib/aes/graphics.c lib/aes/graphics.h lib/aes/layout.h lib/aes/application.h include/gem.h include/cuis.h obj/libaes/mforms.h $(AUTOCONF_H)
+obj/libaes/graphics.o: lib/aes/graphics.c lib/aes/graphics.h lib/aes/layout.h lib/aes/application.h lib/aes/transport.h include/gem.h include/mform.h include/vdi_service.h include/cuis.h obj/libaes/mforms.h $(AUTOCONF_H)
 	$(CC) $(LIBAES_CFLAGS) -Iobj/libaes -c $< -o $@
