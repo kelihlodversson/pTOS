@@ -3,6 +3,7 @@
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
 #include "gemframegeom.h"
 #include "aesdefs.h"
+#include "gemframeids.h"
 #include "obdefs.h"
 #include "gemobjbounds.h"
 BOOL wm_frame_insets(UWORD kind, WORD wbox, WORD hbox, BOOL three_d, WORD screen_width, WORD screen_height, WM_FRAME_INSETS *out)
@@ -46,12 +47,17 @@ BOOL wm_frame_limits(UWORD kind, LONG x, LONG y, WORD wbox, WORD hbox,
 {
     WM_FRAME_INSETS insets;
     WM_FRAME_LIMITS r;
-    LONG pad = ob_3d_padding(1), aw, edge, offset, deduction;
+    LONG pad = ob_3d_padding(1), aw, ah, edge, offset, deduction;
+    LONG data_top, vertical_reserve, horizontal_reserve;
     UWORD top = kind & (NAME|CLOSER|FULLER|MOVER);
     if (x < -32766 || y < -32766 || x > 32767 || y > 32767 ||
         wbox > 16383 || hbox > 16383 ||
         !wm_frame_insets(kind,wbox,hbox,TRUE,screen_width,screen_height,&insets)) return FALSE;
     aw = wbox+2*ADJ3DSTD-(screen_width < 640 ? 1+(screen_height >= 400) : 0);
+    ah = hbox+2*ADJ3DSTD;
+    data_top = (top ? ah : 0)+((kind & INFO) ? hbox : 0);
+    vertical_reserve = (kind & (UPARROW|DNARROW|VSLIDE|SIZER)) ? aw-1 : 0;
+    horizontal_reserve = (kind & (LFARROW|RTARROW|HSLIDE|SIZER)) ? ah-1 : 0;
     r.min_w = insets.left+insets.right+1;
     edge = ((kind & CLOSER) != 0)*(wbox+4L)+((kind & FULLER) != 0)*(wbox+4L)+5;
     if (r.min_w < edge) r.min_w = edge;
@@ -99,6 +105,64 @@ BOOL wm_frame_limits(UWORD kind, LONG x, LONG y, WORD wbox, WORD hbox,
         if (r.max_h > edge) r.max_h = edge;
         if (hbox+2*pad > 32767L) return FALSE;
     }
+    /* The native bar builder positions each arrow with its 3D margins.
+     * Keep opposing expanded glyphs disjoint and reserve the other bar. */
+    if (kind & (UPARROW|DNARROW)) {
+        edge = data_top+horizontal_reserve+ah*((kind & UPARROW) != 0)+
+            ah*((kind & DNARROW) != 0)+((kind & DNARROW) != 0)+(horizontal_reserve != 0);
+        if (r.min_h < edge) r.min_h = edge;
+        edge = -32768L-x+aw-ADJ3DSTD+pad;
+        if (r.min_w < edge) r.min_w = edge;
+        edge = 32767L-x+aw-ADJ3DSTD-wbox-pad;
+        if (r.max_w > edge) r.max_w = edge;
+        if (wbox+2*pad > 32767L) return FALSE;
+    }
+    if (kind & UPARROW) {
+        edge = y+data_top+ADJ3DSTD;
+        if (edge-pad < -32768L || edge+hbox+pad > 32767L || hbox+2*pad > 32767L) return FALSE;
+    }
+    if (kind & DNARROW) {
+        offset = horizontal_reserve+ah-ADJ3DSTD+1;
+        edge = -32768L-y+offset+pad;
+        if (r.min_h < edge) r.min_h = edge;
+        edge = 32767L-y+offset-hbox-pad;
+        if (r.max_h > edge) r.max_h = edge;
+        if (hbox+2*pad > 32767L) return FALSE;
+    }
+    if (kind & (LFARROW|RTARROW)) {
+        edge = vertical_reserve+((kind & LFARROW) ? wbox+2*ADJ3DSTD : 0)+
+            ((kind & RTARROW) ? aw+1 : 0)+(vertical_reserve != 0);
+        if (r.min_w < edge) r.min_w = edge;
+        edge = -32768L-y+ah-ADJ3DSTD+pad;
+        if (r.min_h < edge) r.min_h = edge;
+        edge = 32767L-y+ah-ADJ3DSTD-hbox-pad;
+        if (r.max_h > edge) r.max_h = edge;
+        if (hbox+2*pad > 32767L) return FALSE;
+    }
+    if (kind & LFARROW) {
+        if (x+ADJ3DSTD-pad < -32768L || x+ADJ3DSTD+wbox+pad > 32767L || wbox+2*pad > 32767L)
+            return FALSE;
+    }
+    if (kind & RTARROW) {
+        offset = vertical_reserve+aw-ADJ3DSTD+1;
+        edge = -32768L-x+offset+pad;
+        if (r.min_w < edge) r.min_w = edge;
+        edge = 32767L-x+offset-wbox-pad;
+        if (r.max_w > edge) r.max_w = edge;
+        if (wbox+2*pad > 32767L) return FALSE;
+    }
     if (r.min_w > r.max_w || r.min_h > r.max_h) return FALSE;
     *out = r; return TRUE;
+}
+
+/* Standard native line actions; bars and slider page regions are separate. */
+WORD wm_arrow_action(WORD object)
+{
+    switch (object) {
+    case W_UPARROW: return WA_UPLINE;
+    case W_DNARROW: return WA_DNLINE;
+    case W_LFARROW: return WA_LFLINE;
+    case W_RTARROW: return WA_RTLINE;
+    }
+    return -1;
 }

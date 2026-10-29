@@ -7,6 +7,7 @@
 #include "../../lib/aes/frames.h"
 #include "gemmovegeom.h"
 #include "gemsizegeom.h"
+#include "gemframegeom.h"
 #include "../../lib/aes/layout.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
@@ -212,6 +213,13 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         }
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
+        if ((c & CUIS_READY_SERVICE) && !ready) {
+            ULONG timer_ticks = d ? d/5+(d%5 != 0)+1 : 0;
+            if ((c & CUIS_READY_TIMER) && !d) return CUIS_READY_TIMER;
+            menu_ticks += 2; ready |= CUIS_READY_SERVICE;
+            if ((c & CUIS_READY_TIMER) && timer_ticks <= 2) ready |= CUIS_READY_TIMER;
+            return ready;
+        }
         if (c & CUIS_READY_TIMER) {
             if (menu_test && d) menu_ticks += d/5 + (d%5 != 0) + 1;
             ready |= CUIS_READY_TIMER;
@@ -302,7 +310,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL)));
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)));
     CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
     state_error = EIMBA; x = 123;
@@ -375,6 +383,17 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
 }
 WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
 {
+    if (state->kind & (UPARROW|DNARROW|LFARROW|RTARROW)) {
+        if (x >= state->border.g_x+state->border.g_w-23) {
+            if ((state->kind & UPARROW) && y < state->border.g_y+46) return W_UPARROW;
+            if ((state->kind & DNARROW) && y >= state->border.g_y+state->border.g_h-46) return W_DNARROW;
+        }
+        if (y >= state->border.g_y+state->border.g_h-23) {
+            if ((state->kind & LFARROW) && x < state->border.g_x+23) return W_LFARROW;
+            if (state->kind & RTARROW) return W_RTARROW;
+        }
+        return 0;
+    }
     if ((state->kind & SIZER) && x >= state->border.g_x+state->border.g_w-20 &&
         x < state->border.g_x+state->border.g_w && y >= state->border.g_y+state->border.g_h-20 &&
         y < state->border.g_y+state->border.g_h) return W_SIZER;
@@ -700,6 +719,82 @@ static int move_api_checks(void)
     return 0;
 }
 
+static int arrow_api_checks(void)
+{
+    short id, message[8], batch[16], x,y,w,h;
+    WORD actions[] = { WA_UPLINE,WA_DNLINE,WA_LFLINE,WA_RTLINE };
+    WORD points[4][2] = { {210,60},{210,150},{30,180},{190,180} };
+    ULONG i, before;
+    id = wind_create(NAME|UPARROW|DNARROW|LFARROW|RTARROW,0,0,200,160);
+    CHECK(id > 0 && wind_open(id,20,30,200,160) == 1);
+    control_target = native_windows[id-1]; pipe_count = 0;
+    for (i = 0; i < 4; i++) {
+        control_at = control_count = 0;
+        control_event(points[i][0],points[i][1],1,1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_ARROWED && message[3] == id && message[4] == actions[i]);
+        CHECK(!message[1] && !message[2] && !message[5] && !message[6] && !message[7]);
+        CHECK(aes_controls_repeating() && control_selection);
+        before = wait_calls;
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && wait_calls == before);
+        /* Selection and original action persist when dragged outside. */
+        control_event(300,250,1,0); menu_ticks += 2;
+        CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == actions[i] && control_selection);
+        /* A due repeat must not overtake a queued release. */
+        menu_ticks += 2; control_event(300,250,0,1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating() && !control_selection);
+    }
+    /* Blocking reads repeat without pointer motion and let cooperative
+     * peers run. Internal wakes never masquerade as the caller's timer. */
+    control_at = control_count = 0; control_event(210,60,1,1);
+    CHECK(evnt_mesag(message) == 1 && message[4] == WA_UPLINE);
+    menu_test = TRUE; before = menu_ticks;
+    CHECK(evnt_mesag(message) == 1 && message[4] == WA_UPLINE && menu_ticks >= before+2);
+    before = menu_ticks;
+    CHECK(evnt_multi(MU_MESAG|MU_BUTTON,2,1,1,0,0,0,0,0,0,0,0,0,0,
+        message,0,NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
+    CHECK(message[0] == WM_ARROWED && message[4] == WA_UPLINE && menu_ticks >= before+2);
+    CHECK(waited_mask & CUIS_READY_SERVICE);
+    before = menu_ticks;
+    CHECK(appl_read(pid,32,batch) == 1 && menu_ticks >= before+4);
+    CHECK(batch[0] == WM_ARROWED && batch[8] == WM_ARROWED && batch[4] == WA_UPLINE && batch[12] == WA_UPLINE);
+    before = menu_ticks;
+    CHECK(evnt_timer(40) == 1 && menu_ticks >= before+9);
+    CHECK(pipe_count && pipe_count <= sizeof(pipe_data));
+    control_event(210,60,0,1);
+    while (appl_read(APR_NOWAIT,16,message) == 1) CHECK(message[0] == WM_ARROWED);
+    CHECK(!aes_controls_repeating()); menu_test = FALSE;
+    control_at = control_count = 0; menu_ticks = 0x7fffffffUL;
+    control_event(210,60,1,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1);
+    menu_ticks += 2;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == WA_UPLINE);
+    control_event(210,60,0,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    menu_ticks = 0;
+    /* Full streams retain a single pending action and preserve ordinary
+     * progress. A later release stops future repeat, not that accepted press. */
+    pipe_count = sizeof(pipe_data); control_at = control_count = 0;
+    control_event(30,180,1,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && pipe_count == 48);
+    control_event(30,180,0,1);
+    for (i = 0; i < 3; i++) CHECK(appl_read(APR_NOWAIT,16,message) == 1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_ARROWED && message[4] == WA_LFLINE);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    control_at = control_count = 0; control_event(210,60,1,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1);
+    control_read_error = ERANGE; menu_ticks += 2;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    control_read_error = 0;
+    control_at = control_count = 0; control_event(210,60,1,1);
+    frame_paint_failure = TRUE;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    frame_paint_failure = FALSE;
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 160);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    control_target = 0; control_at = control_count = 0; pipe_count = 0;
+    return 0;
+}
+
 static int size_api_checks(void)
 {
     short id, message[8], x,y,w,h;
@@ -902,7 +997,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && arrow_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

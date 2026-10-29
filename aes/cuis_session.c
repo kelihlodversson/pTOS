@@ -1620,6 +1620,13 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
         for (control = wait->client->windows; control; control = control->next)
             if (control->control_overflow || (!mouse_owner && control->control_count)) { result |= CUIS_READY_CONTROL; break; }
     }
+    /* A generic maintenance wake has its own short dispatch cadence. It
+     * must not complete/restart an unfinished multi-click accumulation;
+     * defer it just like other internal readiness until a public event is
+     * ready. The caller's independent TIMER deadline remains in force. */
+    if ((wait->events & CUIS_READY_SERVICE) &&
+        (ULONG)(cuis_input_ticks()-wait->start) >= 2 &&
+        (!wait->input.tracking || result)) result |= CUIS_READY_SERVICE;
     return result;
 }
 

@@ -110,6 +110,15 @@ static int input_event_checks(void)
         CHECK(IW(session,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON && !(*find_owner(run))->edge_count);
     }
     CHECK(IB(session,2,1,1,0) == E_OK);
+    /* Internal maintenance wakes may service idle clients, but must not
+     * split a real double-click wait into fresh per-call accumulations. */
+    input_sleeps = 0; input_packet_mode = 1;
+    CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_SERVICE,0) == (CUIS_READY_BUTTON|CUIS_READY_SERVICE));
+    CHECK(!input_packet_mode && input_sleeps >= 91 && input_sleeps <= 95);
+    CHECK(IR(session) == E_OK && copied[1] == 2);
+    input_sleeps = 0; input_packet_mode = 2;
+    CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER|CUIS_READY_SERVICE,10) == (CUIS_READY_TIMER|CUIS_READY_SERVICE));
+    CHECK(input_sleeps == 3 && IR(session) == E_OK && !copied[1]);
     /* Another source cancels click accumulation without delaying its timer. */
     input_sleeps = 0; input_packet_mode = 2;
     CHECK(IW(session,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_TIMER && input_sleeps == 3);

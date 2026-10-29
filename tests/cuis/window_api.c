@@ -31,7 +31,7 @@ static int gem_window_checks(short *global)
         WINDOW_VERIFY(wind_calc(WC_WORK,0,32767,0,10,10,&x,&y,&w,&h) == 0 && x == 123);
         WINDOW_VERIFY(wind_calc(WC_WORK,NAME,10,20,100,80,NULL,NULL,NULL,NULL) == 1);
     }
-    WINDOW_VERIFY(wind_create(UPARROW, 0, 0, 100, 80) == -1);
+    WINDOW_VERIFY(wind_create(VSLIDE, 0, 0, 100, 80) == -1);
     id = mt_wind_create(0, 10, 20, 300, 200, global);
     WINDOW_VERIFY(id > 0 && wind_close(id) == 0);
     WINDOW_VERIFY(wind_get(id, WF_CURRXYWH, &x, &y, &w, &h) == 1 && !(x | y | w | h));
@@ -95,6 +95,11 @@ static int gem_window_checks(short *global)
     WINDOW_VERIFY(id > 0 && wind_open(id,0,30,32758,140) == 1);
     WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,0,30,32758,140) == 1);
     WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    id = wind_create(NAME|UPARROW|DNARROW|LFARROW|RTARROW,0,0,200,160);
+    WINDOW_VERIFY(id > 0 && wind_open(id,20,30,200,160) == 1);
+    WINDOW_VERIFY(wind_get(id,WF_WORKXYWH,&x,&y,&w,&h) == 1 && x == 21 && y == 53 && w == 176 && h == 114);
+    WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    WINDOW_VERIFY(wind_create(HSLIDE,0,0,200,160) == -1);
     for (i = 0; i < 64; i++) {
         ids[i] = wind_create(0, 0, 0, 100, 100);
         WINDOW_VERIFY(ids[i] > 0);
