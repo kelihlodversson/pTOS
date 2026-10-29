@@ -36,8 +36,13 @@
 # The harness prints what each test did on the console, which Hatari's
 # --conout 2 sends to its standard output; the run is over when the summary
 # line has been printed (the harness leaves the machine at the desktop, so
-# the emulator is stopped then).  Exit status: 0 if every test passed,
-# 1 if one failed, the run timed out or did not finish, 2 if text_blit or
+# the emulator is stopped then).  The run also stops at once, with the text, when
+# the kernel panics: its handler waits for a key, and the text is on the emulated
+# screen only, unless Hatari gets --natfeats on, when kprintf() (which the panic
+# uses too) sends it to the log; the TT modes read it from the screen, where
+# natfeats upsets the capture.  Exit status: 0 if every test passed, 1 if one
+# failed, the kernel panicked, the run timed out or
+# did not finish, 2 if text_blit or
 # raster_copy skipped itself, which is a failure here: that they run on the
 # machine and the screen mode is the point of this.
 #
@@ -105,6 +110,8 @@ def screen_text(avi, glyphs):
 
 
 SUMMARY = re.compile(r'--- Summary: (\d+) passed, (\d+) failed, (\d+) total ---')
+# the first line of dopanic()'s output (bios/kprint.c), which kprintf() sends to the log
+PANIC = re.compile(r'^Panic: ', re.M)
 MUST_RUN = ('text_blit', 'raster_copy')
 
 
@@ -141,6 +148,8 @@ def main():
     cmd += ['--conout', '2', '--fast-forward', 'on']
     avi = os.path.join(work, 'screen.avi')
     glyphs = None
+    if a.mode not in ('tta', 'tt040a'):
+        cmd += ['--natfeats', 'on']         # the panic text reaches the log (below)
     if a.mode in ('tta', 'tt040a'):         # --conout shows nothing here: read the screen
         glyphs = load_font()
         cmd += ['--avirecord', '--avi-vcodec', 'png', '--avi-file', avi]
@@ -150,6 +159,7 @@ def main():
                                 stderr=subprocess.STDOUT)
         text = ''
         summary = None
+        panic = None
         deadline = time.time() + a.timeout
         while time.time() < deadline and proc.poll() is None:
             time.sleep(2)
@@ -157,6 +167,10 @@ def main():
                 text = f.read()
             if glyphs:
                 text = screen_text(avi, glyphs)
+            panic = PANIC.search(text)
+            if panic:
+                panic = text[panic.start():]
+                break
             summary = SUMMARY.search(text)
             if summary:
                 break
@@ -169,6 +183,11 @@ def main():
 
     text = text.replace('\r', '')
     print(text)
+    if panic:
+        print('run-hatari-tests: the kernel panicked:\n' +
+              '\n'.join(panic.replace('\r', '').splitlines()[:12]),
+              file=sys.stderr)
+        return 1
     summary = SUMMARY.search(text)
     if not summary:
         print('run-hatari-tests: no summary from the test harness '
