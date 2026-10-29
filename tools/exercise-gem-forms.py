@@ -66,6 +66,11 @@ def button(down):
 
 
 command("qmp_capabilities")
+marker("x32 GEM graphics: READY")
+for _ in range(16):
+    control_move(-127, -127)
+control_move(300, 250)
+marker("x32 GEM graphics setup/cursors: PASS")
 for stage in range(7):
     marker("x32 GEM frame control %d: READY" % stage)
     for _ in range(16):

@@ -19,6 +19,12 @@
 #include "aesext.h"
 #include "vdi_defs.h"
 #include "mform.h"
+#if CONF_WITH_CUIS
+#include "string.h"
+#endif
+#if CONF_WITH_CUIS
+#include "../aes/cuis.h"
+#endif
 #include "vdistub.h"
 #include "tosvars.h"
 #include "biosext.h"
@@ -114,10 +120,16 @@ static const MFORM arrow_mform = {
  *      hide_cnt = hide_cnt - 1
  *      draw_flag = 0
  */
+#if CONF_WITH_CUIS
+static BOOL cuis_pointer_initial_hide;
+#endif
 static void dis_cur(void)
 {
     linea_vars.mouse_flag += 1;            /* disable mouse redrawing */
     linea_vars.HIDE_CNT -= 1;   /* decrement hide operations counter */
+#if CONF_WITH_CUIS
+    if (linea_vars.HIDE_CNT <= 0) cuis_pointer_initial_hide = FALSE;
+#endif
     if (linea_vars.HIDE_CNT == 0) {
         cur_display(&linea_vars.mouse_cdb, mcs_ptr, linea_vars.GCURX, linea_vars.GCURY);  /* display the cursor */
         linea_vars.draw_flag = 0;          /* disable vbl drawing routine */
@@ -596,6 +608,33 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
     vdi_cuis_cursor_flush();
 #endif
 }
+#if CONF_WITH_CUIS
+static BOOL cuis_pointer_ready, cuis_pointer_active, cuis_pointer_hidden, cuis_pointer_valid;
+static MFORM cuis_pointer_form;
+void vdi_cuis_pointer(const MFORM *form, BOOL hidden)
+{
+    BOOL release_initial = FALSE;
+    if (!cuis_pointer_ready || (!form && !cuis_pointer_active)) return;
+    if (!cuis_pointer_active) {
+        /* Typed clients cannot alter the initial VDI hide independently.
+         * Thereafter CUIS contributes one balanced visibility overlay. */
+        release_initial = cuis_pointer_initial_hide;
+        cuis_pointer_initial_hide = FALSE;
+        cuis_pointer_active = TRUE;
+    }
+    if (!form) form = default_mform();
+
+    if (!cuis_pointer_valid || memcmp(&cuis_pointer_form,form,sizeof(*form))) {
+        hide_cur(); set_mouse_form(form,&linea_vars.mouse_cdb); dis_cur();
+        cuis_pointer_form = *form; cuis_pointer_valid = TRUE;
+    }
+    if (hidden && !cuis_pointer_hidden) hide_cur();
+    if (!hidden && cuis_pointer_hidden) dis_cur();
+    cuis_pointer_hidden = hidden;
+    if (release_initial) dis_cur();
+}
+#endif
+
 
 
 
@@ -685,6 +724,9 @@ void vdimouse_init(void)
 
     /* mouse settings */
     linea_vars.HIDE_CNT = 1;               /* mouse is initially hidden */
+#if CONF_WITH_CUIS
+    cuis_pointer_initial_hide = TRUE;
+#endif
     linea_vars.GCURX = linea_vars.DEV_TAB[0] / 2;     /* initialize the mouse to center */
     linea_vars.GCURY = linea_vars.DEV_TAB[1] / 2;
 
@@ -713,6 +755,11 @@ void vdimouse_init(void)
 
     /* Initialize mouse via XBIOS in relative mode */
     Initmous(1, &mouse_params, mouse_int);
+#if CONF_WITH_CUIS
+    cuis_pointer_ready = TRUE;
+    cuis_pointer_active = cuis_pointer_hidden = cuis_pointer_valid = FALSE;
+    cuis_pointer_sync();
+#endif
 
 #if CONF_WITH_EXTENDED_MOUSE
     {
@@ -731,6 +778,9 @@ void vdimouse_init(void)
  */
 void vdimouse_exit(void)
 {
+#if CONF_WITH_CUIS
+    cuis_pointer_ready = FALSE;
+#endif
     linea_vars.user_but = (void(*)(WORD))just_rts;
 #if CONF_WITH_NATIVE_ABI
     linea_vars.user_mot = default_user_mot;

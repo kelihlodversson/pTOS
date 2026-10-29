@@ -584,4 +584,9 @@ void v_bez(Vwk *vwk, Point *points, int count);
 void v_bez_fill(Vwk *vwk, Point *points, int count);
 #endif
 
+#if CONF_WITH_CUIS
+struct mform;
+void vdi_cuis_pointer(const struct mform *form, BOOL hidden);
+#endif
+
 #endif                          /* VDIDEF_H */
