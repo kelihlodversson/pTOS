@@ -116,8 +116,8 @@ static int arrow_checks(void)
             if (stage == 1) {
                 result = appl_read(-1,16,message) == 1 ? MU_MESAG : 0;
                 if (!result) { VERIFY(evnt_timer(0) == 1); continue; }
-            } else result = evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,1,1,1,
-                0,0,0,0,0,0,0,0,0,0,message,4000,NULL,NULL,NULL,NULL,NULL,NULL);
+            } else result = evnt_multi(MU_MESAG|MU_BUTTON|(stage ? MU_TIMER : 0),2,1,1,
+                0,0,0,0,0,0,0,0,0,0,message,stage ? 4000 : 0,NULL,NULL,NULL,NULL,NULL,NULL);
             VERIFY(result == MU_MESAG);
             if (message[0] == WM_REDRAW) continue;
             VERIFY(message[0] == WM_ARROWED && message[3] == id && message[4] == actions[stage]);
