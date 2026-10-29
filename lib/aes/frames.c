@@ -19,12 +19,14 @@ BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
     /* Native titles inset their text by ADJ3DSTD at both sides. Admission
      * keeps every visible object positive, with room for the drop shadow. */
     if (state->wbox > 16383 || state->hbox > 16383 || border->g_w < 5 || border->g_h <= insets.top+insets.bottom ||
-        border->g_w > 32763 || border->g_h > 32763 ||
+        border->g_w <= insets.left+insets.right || border->g_w > 32763 || border->g_h > 32763 ||
         border->g_x < -32766 || border->g_y < -32766 ||
         (LONG)border->g_x+border->g_w+2 > 32767 ||
         (LONG)border->g_y+border->g_h+2 > 32767) return FALSE;
     if (border->g_w <= ((kind & CLOSER) != 0)*(state->wbox+4) +
         ((kind & FULLER) != 0)*(state->wbox+4) + 4) return FALSE;
+    if ((kind & SIZER) && border->g_h < insets.top-((kind & (NAME|CLOSER|FULLER|MOVER)) ? 0 : 1)+state->hbox+ADJ3DSTD)
+        return FALSE;
     state->border = *border; state->kind = kind;
     state->adjusted_width = state->wbox+4-(width < 640 ? 1+(height >= 400) : 0);
     state->adjusted_height = state->hbox+4;
@@ -46,7 +48,8 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
      * does in the native control manager before entering gr_watchbox(). */
     object = objc_find(frame.tree,ROOT,8,(WORD)x,(WORD)y);
     return object == W_CLOSER || object == W_FULLER ||
-        (object == W_NAME && (state->kind & MOVER)) ? object : 0;
+        (object == W_NAME && (state->kind & MOVER)) ||
+        (object == W_SIZER && (state->kind & SIZER)) ? object : 0;
 }
 BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
 {
@@ -83,7 +86,7 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
     drawing.colours = drawing.topped ? top : bottom;
     wm_frame_init(&frame);
     wm_frame_build(frame.tree,&frame.name,&frame.info,&drawing);
-    if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER || object == W_NAME))
+    if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER || object == W_NAME || object == W_SIZER))
         frame.tree[object].ob_state |= SELECTED;
     for (index = 0; ; index++) {
         result = cuis_call6(CUIS_WINDOW_REGION,native,index,(uintptr_t)&region[0],

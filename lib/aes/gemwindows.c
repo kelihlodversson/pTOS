@@ -7,6 +7,7 @@
 #include "layout.h"
 #include "gemframegeom.h"
 #include "gemmovegeom.h"
+#include "gemsizegeom.h"
 #include "frames.h"
 #include "resource_context.h"
 
@@ -28,7 +29,7 @@ static struct gem_window {
     short id;
     UWORD kind;
     char *name, *info;
-    LONG native, move_x, move_y;
+    LONG native, drag_x, drag_y;
     BOOL open, control_selected;
     WORD control, control_message;
     GRECT control_rectangle;
@@ -148,7 +149,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     LONG native, identifier;
     WORD wbox = 1, hbox = 1, width = 640, height = 400;
     WM_FRAME_INSETS insets;
-    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER)) || aes_application_session(global) < 0) return -1;
+    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER|SIZER)) || aes_application_session(global) < 0) return -1;
     for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
     if ((kind && !aes_frame_metrics(&wbox,&hbox,&width,&height,global)) ||
@@ -340,25 +341,30 @@ static LONG flush_control(struct gem_window *window, LONG session)
     window->control_message = 0;
     return E_OK;
 }
-static LONG service_move(struct gem_window *window, const WM_FRAME_STATE *state, LONG session, WORD *global)
+static LONG service_drag(struct gem_window *window, const WM_FRAME_STATE *state, LONG session, WORD *global)
 {
+    BOOL sizing = window->control == W_SIZER;
     window->control_selected = TRUE;
-    if (paint_window(window,global) && aes_frame_move(window->native,state,window->move_x,window->move_y,
-                                                    &window->control_rectangle,global))
-        window->control_message = WM_MOVED;
+    if (paint_window(window,global) && (sizing ?
+        aes_frame_size(window->native,state,window->drag_x,window->drag_y,&window->control_rectangle,global) :
+        aes_frame_move(window->native,state,window->drag_x,window->drag_y,&window->control_rectangle,global)))
+        window->control_message = sizing ? WM_SIZED : WM_MOVED;
     window->control = 0; window->control_selected = FALSE;
     (void)paint_window(window,global);
     return flush_control(window,session);
 }
-static LONG poll_move(struct gem_window *window, LONG session, WORD *global)
+static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
 {
     LONG current[4], event[4], result;
     WORD wbox, hbox, width, height, n;
+    LAYOUT_METRICS metrics;
+    BOOL sizing = window->control == W_SIZER;
     /* Finish already-released drags without an outline/input wait. Keep
      * held motion queued, so a later blocking tracker sees every position. */
     if (cuis_call6(CUIS_INPUT_STATE,session,(uintptr_t)&current[0],(uintptr_t)&current[1],
                    (uintptr_t)&current[2],(uintptr_t)&current[3],0) != E_OK || current[2]) return E_OK;
-    if (!aes_frame_metrics(&wbox,&hbox,&width,&height,global)) return E_OK;
+    if (!aes_frame_metrics(&wbox,&hbox,&width,&height,global) ||
+        (sizing && !aes_layout_metrics(&metrics,global))) return E_OK;
     for (n = 0; n < 16; n++) {
         result = cuis_call6(CUIS_CONTROL_READ,window->native,(uintptr_t)&event[0],
             (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
@@ -368,9 +374,12 @@ static LONG poll_move(struct gem_window *window, LONG session, WORD *global)
             return result < 0 && result != ERANGE ? result : E_OK;
         }
         if (event[2] & 1) continue;
-        if ((event[3] & 1) && wm_move_position(&window->current,window->move_x,window->move_y,
-                event[0],event[1],width,wbox,hbox,&window->control_rectangle))
-            window->control_message = WM_MOVED;
+        if ((event[3] & 1) && (sizing ?
+            wm_size_position(&window->current,window->kind,event[0],event[1],metrics.wchar,metrics.hchar,
+                             wbox,hbox,width,height,&window->control_rectangle) :
+            wm_move_position(&window->current,window->drag_x,window->drag_y,event[0],event[1],width,wbox,hbox,
+                             &window->control_rectangle)))
+            window->control_message = sizing ? WM_SIZED : WM_MOVED;
         window->control = 0;
         return flush_control(window,session);
     }
@@ -400,14 +409,14 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
         if (!window->id) continue;
         /* A poll retains the captured press, without painting or waiting.
          * The next blocking service resumes from the original anchor. */
-        if (window->control == W_NAME) {
+        if (window->control == W_NAME || window->control == W_SIZER) {
             if (polling) {
-                result = poll_move(window,session,global);
+                result = poll_drag(window,session,global);
                 if (result < 0 || control_pipe_blocked) goto done;
                 continue;
             }
             if (aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
-                result = service_move(window,&state,session,global);
+                result = service_drag(window,&state,session,global);
                 if (result < 0 || control_pipe_blocked) goto done;
             } else window->control = 0;
         }
@@ -419,25 +428,25 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
             if (result == ERANGE) {
                 selected = window->control_selected;
                 window->control = 0; window->control_selected = FALSE;
-                if (selected && window->open && (window->kind & (CLOSER|FULLER|MOVER)))
+                if (selected && window->open && (window->kind & (CLOSER|FULLER|MOVER|SIZER)))
                     (void)paint_window(window,global);
                 result = E_OK; continue;
             }
             if (result < 0) goto done;
-            if (!window->open || !(window->kind & (CLOSER|FULLER|MOVER))) continue;
+            if (!window->open || !(window->kind & (CLOSER|FULLER|MOVER|SIZER))) continue;
             if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
                 window->control = 0; window->control_selected = FALSE; break;
             }
             if ((event[3] & 1) && (event[2] & 1) && !window->control)
                 window->control = aes_frame_control(&state,event[0],event[1]);
-            if (window->control == W_NAME && event[2] == 1) {
-                window->move_x = event[0]; window->move_y = event[1];
+            if ((window->control == W_NAME || window->control == W_SIZER) && event[2] == 1) {
+                window->drag_x = event[0]; window->drag_y = event[1];
                 if (polling) {
-                    result = poll_move(window,session,global);
+                    result = poll_drag(window,session,global);
                     if (result < 0 || control_pipe_blocked) goto done;
                     break;
                 }
-                result = service_move(window,&state,session,global);
+                result = service_drag(window,&state,session,global);
                 if (result < 0 || control_pipe_blocked) goto done;
                 continue;
             }

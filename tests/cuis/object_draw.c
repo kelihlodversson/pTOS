@@ -601,6 +601,36 @@ static int move_paint_checks(void)
     VERIFY(aes_frame_control(&state,25,25) == W_CLOSER);
     return 0;
 }
+static int size_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    GRECT border = { 20,20,100,80 }, result = { 99,99,99,99 };
+    WORD saved[120][160];
+    int before;
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&border,"Sizer","",aes_global));
+    VERIFY(aes_frame_control(&state,110,90) == W_SIZER);
+    __builtin_memcpy(saved,image,sizeof(image));
+    move_records[0][0] = 70; move_records[0][1] = 60; move_records[0][2] = 1; move_records[0][3] = 0;
+    move_records[1][0] = 90; move_records[1][1] = 80; move_records[1][2] = 0; move_records[1][3] = 1;
+    move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
+    before = patterned_segments; bad_line_type = 0;
+    VERIFY(aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(result.g_x == 20 && result.g_y == 20 && result.g_w == 76 && result.g_h == 61);
+    VERIFY(move_waits == 1 && move_at == 2 && patterned_segments >= before+32 && !bad_line_type);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&result,"Sizer","",aes_global));
+    move_error = ERANGE; result.g_x = 99;
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global) && result.g_x == 99);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_error = EACCDN;
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    before = redraws; bar_line_error = TRUE;
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(redraws > before && !nesting && opens == closes);
+    bar_line_error = FALSE; move_test = trace_animation = FALSE;
+    return 0;
+}
 static int frame_metric_checks(void)
 {
     WORD wbox = 99, hbox = 99, width = 99, height = 99;
@@ -688,6 +718,7 @@ int main(void)
     VERIFY(frame_metric_checks() == 0);
     VERIFY(frame_paint_checks() == 0);
     VERIFY(move_paint_checks() == 0);
+    VERIFY(size_paint_checks() == 0);
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
     tree[0].ob_x = 10; tree[0].ob_y = 12; tree[0].ob_width = 100; tree[0].ob_height = 80;

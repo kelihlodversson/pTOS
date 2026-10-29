@@ -2050,7 +2050,7 @@ are reported as GEM 0.
 
 Decorated borders must admit a positive work area, title inset and drop shadow
 without WORD overflow. Tiny/overflowing rectangles fail before configuration.
-Kind-zero window behavior is retained. SIZER, arrows,
+Kind-zero window behavior is retained. Arrows,
 sliders, HOTCLOSE and other creation flags remain rejected until their actions
 are implemented. No further capability bits are advertised. CUIS gains no GEM
 frame flags, object pointers, drawing commands or architecture-specific code.
@@ -2077,7 +2077,7 @@ native AES. Neither request closes, destroys, maximizes or otherwise changes
 the window: the application remains responsible for its response. An activation
 click on a background window requests WM_TOPPED only. Other buttons, release
 outside, lost input, geometry/visibility/focus changes and mouse grabs cancel
-the gesture. SIZER/scrollbars and HOTCLOSE remain unsupported.
+the gesture. Scrollbar interactions and HOTCLOSE remain unsupported.
 
 CUIS adds two generic scalar operations under CONF_WITH_CUIS:
 
@@ -2161,7 +2161,7 @@ this wait spin. Cancellation remains readable and wakes both window and session
 control waits while a peer owns the mouse, allowing the outline owner to release
 its display lock even if that peer is waiting for display access. These generic
 kernel changes remain compiled only with CONF_WITH_CUIS. There is no new syscall
-opcode or public libaes entry point. SIZER, arrows/sliders and HOTCLOSE remain
+opcode or public libaes entry point. Arrows/sliders and HOTCLOSE remain
 subsequent work.
 
 APR_NOWAIT reads and explicit zero-duration event polls never start a blocking
@@ -2172,3 +2172,40 @@ outline or waiting for further input. Queued application messages remain readabl
 Move proposals reserve the same two-pixel shadow margin as frame admission, so
 wind_set can apply boundary proposals. Move outlines select VDI line type 7 as
 well as the original shared GSX dotted patterns.
+
+Window sizing gestures (#795)
+----------------------------
+
+External libaes accepts SIZER with the existing NAME/INFO/CLOSER/FULLER/MOVER
+flags, including a lone SIZER without a title. Initial hit testing uses the
+native shared OBJECT tree and its sibling priority. The original corner glyph
+and SELECTED feedback come from aes/shared/gemframe.c. No in-kernel AES or ROM
+frame source is changed for this slice.
+
+Sizing holds the border origin fixed and uses native gr_rubwind's mouse-minus-
+origin-plus-one dimensions. A dotted XOR border box and a second work-area box
+reuse gsx_xbox from aes/shared/gemgraphutil.c, under one display scope. The
+work-area offsets follow the window kind. Release sends standard WM_SIZED (27),
+with sender/extra length zero, handle in word 3, and the proposed border x/y/w/h
+in words 4-7. The application decides whether to apply it with WF_CURRXYWH;
+current, previous and work geometry are not changed by the request itself.
+
+Shared geometry in aes/shared/gemsizegeom.c retains native minimum character
+width/height, four box widths for title/horizontal gadgets, and six box heights
+for explicit vertical gadgets. Additional frame-admission minima keep work and
+title extents positive and the sizing glyph inside its data area. TOS4's lone
+SIZER reserves a vertical bar, rather than both bars. The low-resolution adjusted
+box metric, INFO line, aspect ratio, and two-pixel shadow/WORD limits are retained.
+An impossible minimum/maximum combination cancels instead of producing a
+rectangle the application cannot apply.
+
+Sizing reuses mover border capture and per-window waits without new kernel
+operations or public libaes entry points. It preserves ordinary button history,
+keys and input-result snapshots. Background activation remains WM_TOPPED only;
+other buttons, invalidated ownership or overflow cancel the gesture. Outlines
+erase on completion/cancellation; drawing failures request display redraw.
+APR_NOWAIT and explicit zero-time polls retain held sizing presses without
+waiting, and can complete released sizing requests entirely through polling.
+Completed requests retain their proposed dimensions under stream backpressure
+and later application geometry changes. Arrow/slider/scrollbar interactions and
+HOTCLOSE remain subsequent work.
