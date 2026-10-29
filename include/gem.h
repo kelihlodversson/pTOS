@@ -168,6 +168,9 @@ short mt_wind_update(short code, short *global);
 #ifndef NAME
 #define NAME 0x0001
 #endif
+#ifndef WM_SIZED
+#define WM_SIZED 27
+#endif
 #ifndef WM_MOVED
 #define WM_MOVED 28
 #endif

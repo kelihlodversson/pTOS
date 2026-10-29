@@ -20,6 +20,9 @@
 #include "rectfunc.h"
 #include "frames.h"
 #include "gemmovegeom.h"
+#include "gemsizegeom.h"
+#include "gemobjbounds.h"
+#include "gemframegeom.h"
 
 #include "render_context.h"
 #include "resource_context.h"
@@ -411,7 +414,7 @@ static BOOL supported(OBJECT *object, LONG x, LONG y)
     if (!word_position(x,y) || !supported_payload(object,payload_x,payload_y)) return FALSE;
     if (object->ob_flags & FL3DMASK) {
         OBSPEC effective = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
-        LONG pad = 8, w = object->ob_width, h = object->ob_height;
+        LONG pad, w = object->ob_width, h = object->ob_height;
         /* The original 3D painter uses WORD rectangles/line points. Keep
          * every outline, bevel and selected-text addition representable. */
         WORD border, dummy;
@@ -419,7 +422,7 @@ static BOOL supported(OBJECT *object, LONG x, LONG y)
         OBSPEC ignored;
         if (effective.index == -1L) return TRUE;
         ob_sst(object,0,&ignored,&dummy,&dummy,&dummy,&logical,&border);
-        if (border < 0) pad -= 3L*border; else pad += 3L*border;
+        pad = ob_3d_padding(border);
         if (w <= 0 || h <= 0 || (LONG)x-pad < -32768L || (LONG)y-pad < -32768L ||
             (LONG)x+w+pad > 32767L || (LONG)y+h+pad > 32767L ||
             w+2*pad > 32767L || h+2*pad > 32767L) return FALSE;
@@ -624,17 +627,39 @@ typedef struct {
     LONG native, session, press_x, press_y;
     const WM_FRAME_STATE *state;
     GRECT result;
-    BOOL completed;
-} FRAME_MOVE;
-static void move_frame(void *argument)
+    BOOL completed, sizing;
+    WORD wchar, hchar, width, height;
+    WM_FRAME_INSETS insets;
+} FRAME_DRAG;
+static BOOL drag_position(FRAME_DRAG *drag, LONG x, LONG y, GRECT *outline)
 {
-    FRAME_MOVE *move = argument;
+    if (drag->sizing) return wm_size_position(&drag->state->border,drag->state->kind,x,y,
+        drag->wchar,drag->hchar,drag->state->wbox,drag->state->hbox,drag->width,drag->height,outline);
+    return wm_move_position(&drag->state->border,drag->state->kind,drag->press_x,drag->press_y,x,y,
+        drag->width,drag->height,drag->state->wbox,drag->state->hbox,outline);
+}
+static void drag_outline(FRAME_DRAG *drag, GRECT *outline)
+{
+    GRECT work;
+    gsx_xbox(outline);
+    if (drag->sizing) {
+        work.g_x = outline->g_x+drag->insets.left; work.g_y = outline->g_y+drag->insets.top;
+        work.g_w = outline->g_w-drag->insets.left-drag->insets.right;
+        work.g_h = outline->g_h-drag->insets.top-drag->insets.bottom;
+        gsx_xbox(&work); /* Native gr_rubwind's second, work-area box. */
+    }
+}
+static void drag_frame(void *argument)
+{
+    FRAME_DRAG *drag = argument;
     PAINTER *p = aes_painter;
     GRECT outline;
     LONG event[4], result;
-    WORD width = p->workstation.ws_xres+1;
-    if (!wm_move_position(&move->state->border,move->press_x,move->press_y,
-                         move->press_x,move->press_y,width,move->state->wbox,move->state->hbox,&outline)) {
+    drag->width = p->workstation.ws_xres+1; drag->height = p->workstation.ws_yres+1;
+    drag->wchar = p->wchar; drag->hchar = p->hchar;
+    if (!wm_frame_insets(drag->state->kind,drag->state->wbox,drag->state->hbox,TRUE,
+                         drag->width,drag->height,&drag->insets) ||
+        !drag_position(drag,drag->press_x,drag->press_y,&outline)) {
         p->ok = FALSE; return;
     }
     gsx_attr(FALSE,MD_XOR,BLACK);
@@ -642,43 +667,51 @@ static void move_frame(void *argument)
     for (;;) {
         /* Native gr_dragbox uses this same patterned XOR outline. Display
          * ownership spans the wait, so peers cannot overwrite its pixels. */
-        gsx_xbox(&outline);
+        drag_outline(drag,&outline);
         if (!p->ok) break;
-        result = cuis_call6(CUIS_CONTROL_READ,move->native,(uintptr_t)&event[0],
+        result = cuis_call6(CUIS_CONTROL_READ,drag->native,(uintptr_t)&event[0],
             (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
         while (!result) {
-            result = cuis_call6(CUIS_EVENT_WAIT,move->native,CUIS_EVENT_CONTROL,(QUAD)-1,0,0,0);
+            result = cuis_call6(CUIS_EVENT_WAIT,drag->native,CUIS_EVENT_CONTROL,(QUAD)-1,0,0,0);
             if (result <= 0) break;
-            result = cuis_call6(CUIS_CONTROL_READ,move->native,(uintptr_t)&event[0],
+            result = cuis_call6(CUIS_CONTROL_READ,drag->native,(uintptr_t)&event[0],
                 (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
         }
-        gsx_xbox(&outline);
+        drag_outline(drag,&outline);
         if (!p->ok || result <= 0 || (event[2] & ~1L)) break;
-        if (!wm_move_position(&move->state->border,move->press_x,move->press_y,
-                event[0],event[1],width,move->state->wbox,move->state->hbox,&outline)) {
+        if (!drag_position(drag,event[0],event[1],&outline)) {
             p->ok = FALSE; break;
         }
         if (!(event[2] & 1)) {
-            move->completed = (event[3] & 1) != 0; move->result = outline; break;
+            drag->completed = (event[3] & 1) != 0; drag->result = outline; break;
         }
     }
 }
-BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y,
-                     GRECT *result, WORD *global)
+static BOOL track_frame(BOOL sizing, LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y,
+                         GRECT *result, WORD *global)
 {
     OBJECT dummy = { 0 };
-    FRAME_MOVE move;
+    FRAME_DRAG drag;
     BOOL ok;
     dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
     dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
-    move.native = native; move.session = aes_application_session(global);
-    move.state = state; move.press_x = press_x; move.press_y = press_y;
-    move.completed = FALSE;
+    drag.native = native; drag.session = aes_application_session(global);
+    drag.state = state; drag.press_x = press_x; drag.press_y = press_y;
+    drag.completed = FALSE; drag.sizing = sizing;
     ok = render(&dummy,0,0,0,state->hbox,32767,32767-state->hbox,global,
-                FALSE,0,0,NULL,0,move_frame,&move) != 0;
-    if (!ok) (void)cuis_call6(CUIS_DISPLAY_REDRAW,move.session,0,0,32767,32767,0);
-    if (ok && move.completed) *result = move.result;
-    return ok && move.completed;
+                FALSE,0,0,NULL,0,drag_frame,&drag) != 0;
+    if (!ok) (void)cuis_call6(CUIS_DISPLAY_REDRAW,drag.session,0,0,32767,32767,0);
+    if (ok && drag.completed) *result = drag.result;
+    return ok && drag.completed;
+}
+
+BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+{
+    return track_frame(FALSE,native,state,press_x,press_y,result,global);
+}
+BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+{
+    return track_frame(TRUE,native,state,press_x,press_y,result,global);
 }
 
 

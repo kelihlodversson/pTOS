@@ -6,6 +6,8 @@
 #include "../../lib/aes/application.h"
 #include "../../lib/aes/frames.h"
 #include "gemmovegeom.h"
+#include "gemsizegeom.h"
+#include "../../lib/aes/layout.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
 extern void *malloc(__SIZE_TYPE__ bytes);
@@ -45,7 +47,7 @@ static LONG control_events[32][4], control_target, control_read_error;
 static ULONG control_count, control_at, control_only_wakes;
 static BOOL control_selection;
 static WORD control_object;
-static ULONG move_calls;
+static ULONG move_calls, size_calls;
 static void control_event(LONG x, LONG y, LONG buttons, LONG changed)
 {
     control_events[control_count][0] = x; control_events[control_count][1] = y;
@@ -173,7 +175,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         else display_nesting--;
         return E_OK;
     }
-    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT))
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
         return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
         __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
@@ -333,6 +335,14 @@ BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, WORD *
     if (height) *height = frame_screen_height;
     return TRUE;
 }
+BOOL aes_layout_metrics(LAYOUT_METRICS *metrics, WORD *global)
+{
+    (void)global;
+    if (frame_metrics_failure) return FALSE;
+    metrics->width = frame_screen_width; metrics->height = frame_screen_height;
+    metrics->wchar = 8; metrics->hchar = 16; metrics->hbox = 19;
+    return TRUE;
+}
 /* Window lifecycle tests isolate the private paint adapter; pixel and native
  * frame construction contracts run against production code in other suites. */
 static BOOL frame_paint_failure;
@@ -365,6 +375,9 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
 }
 WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
 {
+    if ((state->kind & SIZER) && x >= state->border.g_x+state->border.g_w-20 &&
+        x < state->border.g_x+state->border.g_w && y >= state->border.g_y+state->border.g_h-20 &&
+        y < state->border.g_y+state->border.g_h) return W_SIZER;
     if (y < state->border.g_y+2 || y >= state->border.g_y+18) return 0;
     if ((state->kind & CLOSER) && x >= state->border.g_x+2 && x < state->border.g_x+18) return W_CLOSER;
     if ((state->kind & FULLER) && x >= state->border.g_x+state->border.g_w-18 && x < state->border.g_x+state->border.g_w-2) return W_FULLER;
@@ -378,8 +391,20 @@ BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG
         result = cuis_call6(CUIS_CONTROL_READ,native,(uintptr_t)&event[0],(uintptr_t)&event[1],
             (uintptr_t)&event[2],(uintptr_t)&event[3],0);
         if (result != 1 || (event[2] & ~1L)) return FALSE;
-        if (!(event[2] & 1)) return (event[3] & 1) && wm_move_position(&state->border,press_x,press_y,
-            event[0],event[1],frame_screen_width,state->wbox,state->hbox,out);
+        if (!(event[2] & 1)) return (event[3] & 1) && wm_move_position(&state->border,state->kind,press_x,press_y,
+            event[0],event[1],frame_screen_width,frame_screen_height,state->wbox,state->hbox,out);
+    }
+}
+BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, WORD *global)
+{
+    LONG event[4], result;
+    (void)global; (void)press_x; (void)press_y; size_calls++;
+    for (;;) {
+        result = cuis_call6(CUIS_CONTROL_READ,native,(uintptr_t)&event[0],(uintptr_t)&event[1],
+            (uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        if (result != 1 || (event[2] & ~1L)) return FALSE;
+        if (!(event[2] & 1)) return (event[3] & 1) && wm_size_position(&state->border,state->kind,
+            event[0],event[1],8,16,state->wbox,state->hbox,frame_screen_width,frame_screen_height,out);
     }
 }
 BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
@@ -660,6 +685,54 @@ static int move_api_checks(void)
     CHECK(appl_read(pid,16,message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
     CHECK(message[0] == WM_MOVED && message[4] == 120 && message[5] == 80 && message[6] == 200 && message[7] == 140);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    id = wind_create(MOVER|SIZER,0,30,32758,140);
+    CHECK(id > 0 && wind_open(id,0,30,32758,140) == 1);
+    control_target = native_windows[id-1];
+    for (before = 0; before < 2; before++) {
+        control_at = control_count = 0; state_values[2] = before ? 0 : 2;
+        control_event(80,35,1,1); control_event(130,35,0,1);
+        CHECK((before ? appl_read(APR_NOWAIT,16,message) : evnt_mesag(message)) == 1);
+        CHECK(message[0] == WM_MOVED && message[4] == 0 && message[5] == 30 && message[6] == 32758 && message[7] == 140);
+        CHECK(wind_set(id,WF_CURRXYWH,message[4],message[5],message[6],message[7]) == 1);
+    }
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    control_target = 0; control_at = control_count = 0;
+    return 0;
+}
+
+static int size_api_checks(void)
+{
+    short id, message[8], x,y,w,h;
+    ULONG before;
+    id = wind_create(NAME|CLOSER|FULLER|MOVER|SIZER,0,0,200,140);
+    CHECK(id > 0 && wind_open(id,20,30,200,140) == 1);
+    control_target = native_windows[id-1]; control_at = control_count = 0;
+    control_event(210,160,1,1); control_event(240,185,1,0); control_event(260,200,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_SIZED && message[3] == id);
+    CHECK(message[4] == 20 && message[5] == 30 && message[6] == 241 && message[7] == 171);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 140);
+    control_at = control_count = 0;
+    control_event(210,160,1,1); control_event(-100,-100,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[6] == 76 && message[7] == 46);
+    control_at = control_count = 0; before = size_calls;
+    control_event(210,160,1,1); pipe_count = 16;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !pipe_count && size_calls == before);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && size_calls == before);
+    CHECK(evnt_timer(0) == 1 && size_calls == before);
+    control_event(260,200,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_SIZED && message[6] == 241 && message[7] == 171);
+    control_at = control_count = 0; state_values[2] = 0;
+    control_event(210,160,1,1); control_event(260,200,0,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_SIZED && size_calls == before+1);
+    state_values[2] = 2; control_at = control_count = 0;
+    control_event(210,160,3,3); control_event(260,200,0,3);
+    CHECK(evnt_timer(0) == 1 && !pipe_count);
+    control_event(210,160,1,1); control_event(260,200,0,1); pipe_count = sizeof(pipe_data);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(wind_set(id,WF_CURRXYWH,30,40,210,150) == 1);
+    CHECK(appl_read(pid,16,message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
+    CHECK(message[0] == WM_SIZED && message[4] == 20 && message[5] == 30 && message[6] == 241 && message[7] == 171);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
     control_target = 0; control_at = control_count = 0;
     return 0;
 }
@@ -829,7 +902,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);
