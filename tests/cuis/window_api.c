@@ -77,6 +77,10 @@ static int gem_window_checks(short *global)
     WINDOW_VERIFY(wind_set_str(id,WF_NAME,"Retitled") == 1);
     WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,40,80,140,120) == 1);
     WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    id = wind_create(MOVER,0,30,32763,80);
+    WINDOW_VERIFY(id > 0 && wind_open(id,0,30,32763,80) == 1);
+    WINDOW_VERIFY(wind_set(id,WF_CURRXYWH,2,30,32763,80) == 1);
+    WINDOW_VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
     for (i = 0; i < 64; i++) {
         ids[i] = wind_create(0, 0, 0, 100, 100);
         WINDOW_VERIFY(ids[i] > 0);

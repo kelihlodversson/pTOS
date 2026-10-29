@@ -6,6 +6,7 @@
 #include "application.h"
 #include "layout.h"
 #include "gemframegeom.h"
+#include "gemmovegeom.h"
 #include "frames.h"
 #include "resource_context.h"
 
@@ -27,7 +28,7 @@ static struct gem_window {
     short id;
     UWORD kind;
     char *name, *info;
-    LONG native;
+    LONG native, move_x, move_y;
     BOOL open, control_selected;
     WORD control, control_message;
     GRECT control_rectangle;
@@ -339,7 +340,43 @@ static LONG flush_control(struct gem_window *window, LONG session)
     window->control_message = 0;
     return E_OK;
 }
-static LONG service_controls(LONG session, WORD *global)
+static LONG service_move(struct gem_window *window, const WM_FRAME_STATE *state, LONG session, WORD *global)
+{
+    window->control_selected = TRUE;
+    if (paint_window(window,global) && aes_frame_move(window->native,state,window->move_x,window->move_y,
+                                                    &window->control_rectangle,global))
+        window->control_message = WM_MOVED;
+    window->control = 0; window->control_selected = FALSE;
+    (void)paint_window(window,global);
+    return flush_control(window,session);
+}
+static LONG poll_move(struct gem_window *window, LONG session, WORD *global)
+{
+    LONG current[4], event[4], result;
+    WORD wbox, hbox, width, height, n;
+    /* Finish already-released drags without an outline/input wait. Keep
+     * held motion queued, so a later blocking tracker sees every position. */
+    if (cuis_call6(CUIS_INPUT_STATE,session,(uintptr_t)&current[0],(uintptr_t)&current[1],
+                   (uintptr_t)&current[2],(uintptr_t)&current[3],0) != E_OK || current[2]) return E_OK;
+    if (!aes_frame_metrics(&wbox,&hbox,&width,&height,global)) return E_OK;
+    for (n = 0; n < 16; n++) {
+        result = cuis_call6(CUIS_CONTROL_READ,window->native,(uintptr_t)&event[0],
+            (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        if (!result) return E_OK;
+        if (result < 0 || (event[2] & ~1L)) {
+            window->control = 0;
+            return result < 0 && result != ERANGE ? result : E_OK;
+        }
+        if (event[2] & 1) continue;
+        if ((event[3] & 1) && wm_move_position(&window->current,window->move_x,window->move_y,
+                event[0],event[1],width,wbox,hbox,&window->control_rectangle))
+            window->control_message = WM_MOVED;
+        window->control = 0;
+        return flush_control(window,session);
+    }
+    return E_OK;
+}
+static LONG service_controls(LONG session, WORD *global, BOOL polling)
 {
     short i, n, object;
     LONG result = E_OK, event[4];
@@ -361,6 +398,19 @@ static LONG service_controls(LONG session, WORD *global)
     for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
         window = &windows[i];
         if (!window->id) continue;
+        /* A poll retains the captured press, without painting or waiting.
+         * The next blocking service resumes from the original anchor. */
+        if (window->control == W_NAME) {
+            if (polling) {
+                result = poll_move(window,session,global);
+                if (result < 0 || control_pipe_blocked) goto done;
+                continue;
+            }
+            if (aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
+                result = service_move(window,&state,session,global);
+                if (result < 0 || control_pipe_blocked) goto done;
+            } else window->control = 0;
+        }
         /* Bounded even under a continuously moving producer. */
         for (n = 0; n < 16; n++) {
             result = cuis_call6(CUIS_CONTROL_READ,window->native,(uintptr_t)&event[0],
@@ -381,13 +431,13 @@ static LONG service_controls(LONG session, WORD *global)
             if ((event[3] & 1) && (event[2] & 1) && !window->control)
                 window->control = aes_frame_control(&state,event[0],event[1]);
             if (window->control == W_NAME && event[2] == 1) {
-                window->control_selected = TRUE;
-                if (paint_window(window,global) && aes_frame_move(window->native,&state,event[0],event[1],
-                                                                &window->control_rectangle,global))
-                    window->control_message = WM_MOVED;
-                window->control = 0; window->control_selected = FALSE;
-                (void)paint_window(window,global);
-                result = flush_control(window,session);
+                window->move_x = event[0]; window->move_y = event[1];
+                if (polling) {
+                    result = poll_move(window,session,global);
+                    if (result < 0 || control_pipe_blocked) goto done;
+                    break;
+                }
+                result = service_move(window,&state,session,global);
                 if (result < 0 || control_pipe_blocked) goto done;
                 continue;
             }
@@ -418,14 +468,14 @@ done:
     return result;
 }
 
-LONG aes_window_messages(LONG session, short *global)
+static LONG window_messages(LONG session, short *global, BOOL polling)
 {
     LONG native, identifier, kind, result;
     short message[8], i, j;
     struct gem_window *window;
     GRECT work;
     if (frame_overlays) return E_OK;
-    result = service_controls(session,global);
+    result = service_controls(session,global,polling);
     if (result < 0) return result;
     frame_notice_blocked = frame_display_blocked = FALSE;
     /* Bound pumping even if input continuously invalidates the display. */
@@ -457,17 +507,22 @@ LONG aes_window_messages(LONG session, short *global)
     return E_OK;
 }
 
+LONG aes_window_messages(LONG session, short *global)
+{
+    return window_messages(session,global,FALSE);
+}
+
 LONG aes_window_messages_poll(LONG session, short *global)
 {
     LONG result;
     if (frame_overlays) return E_OK;
-    if (!aes_frames_registered()) return aes_window_messages(session,global);
+    if (!aes_frames_registered()) return window_messages(session,global,TRUE);
     /* APR_NOWAIT may paint only after a nonblocking acquisition. Nested
      * frame/renderer locks then borrow our already-owned display scope. */
     result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
     if (result == EAGAIN) { frame_display_blocked = TRUE; return E_OK; }
     if (result != E_OK) return result;
-    result = aes_window_messages(session,global);
+    result = window_messages(session,global,TRUE);
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;
     return result;
 }
