@@ -93,7 +93,7 @@ jobs:
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
           readelf -d obj/libaes/CUIS.TOS | grep 'libaes.so'
           readelf -l obj/libaes/CUIS.TOS | grep '/GEMSYS/LIB/X32/LD.SO'
-          MMAP_BOOT_TIMEOUT=60 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
+          MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Exercise shared desktop and console consumers
         run: |

@@ -68,7 +68,7 @@ def button(down):
 command("qmp_capabilities")
 for stage in range(7):
     marker("x32 GEM frame control %d: READY" % stage)
-    for _ in range(32):
+    for _ in range(16):
         control_move(-127, -127)
     control_move(210 if stage == 1 or stage >= 5 else 80 if stage >= 3 else 30,
                  160 if stage >= 5 else 40)
@@ -94,7 +94,7 @@ for stage in range(7):
 marker("x32 GEM frame controls: PASS")
 for stage, (x, y) in enumerate(((210, 60), (210, 155), (30, 180), (190, 180))):
     marker("x32 GEM arrow %d: READY" % stage)
-    for _ in range(32):
+    for _ in range(16):
         control_move(-127, -127)
     control_move(x, y)
     button(True)
@@ -103,6 +103,31 @@ for stage, (x, y) in enumerate(((210, 60), (210, 155), (30, 180), (190, 180))):
     marker("x32 GEM arrow %d: OUTSIDE" % stage)
     button(False)
 marker("x32 GEM scroll arrows: PASS")
+slider_points = ((40, 177), (180, 177), (207, 70), (207, 150),
+                 (106, 177), (207, 108), (106, 177), (207, 108))
+for stage, (x, y) in enumerate(slider_points):
+    marker("x32 GEM slider %d: READY" % stage)
+    for _ in range(16):
+        control_move(-127, -127)
+    control_move(x, y)
+    button(True)
+    if stage < 4:
+        marker("x32 GEM slider %d: HELD" % stage)
+        control_move(300-x, 240-y)
+        marker("x32 GEM slider %d: OUTSIDE" % stage)
+    else:
+        if stage >= 6:
+            marker("x32 GEM slider %d: HELD" % stage)
+        if stage == 4:
+            control_move(154, 0)
+        elif stage == 5:
+            control_move(0, -68)
+        elif stage == 6:
+            control_move(-100, 0)
+        else:
+            control_move(0, 142)
+    button(False)
+marker("x32 GEM sliders: PASS")
 marker("x32 GEM form input: READY")
 time.sleep(0.2)
 for name in ("a", "2", "ret"):
@@ -126,7 +151,7 @@ for stage, (x, y) in enumerate(((35, 55), (5, 5), (35, 35), (35, 55))):
     time.sleep(0.2)
     # The PC has a relative PS/2 mouse. Clamp against the upper-left edge
     # with bounded packets before moving to the requested screen pixel.
-    for _ in range(32):
+    for _ in range(16):
         move(-127, -127)
         time.sleep(0.02)
     move(x, y)
@@ -138,12 +163,12 @@ marker("x32 GEM popup menus: PASS")
 marker("x32 GEM menu bar: READY")
 time.sleep(0.3)
 # Home outside the titles so homing itself cannot start menu tracking.
-for _ in range(32):
+for _ in range(16):
     move(-127, 0)
     time.sleep(0.02)
 move(127, 0)
 move(73, 0)
-for _ in range(32):
+for _ in range(16):
     move(0, -127)
     time.sleep(0.02)
 # Queue an application click at the future dropdown item before tracking.

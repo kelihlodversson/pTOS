@@ -141,6 +141,64 @@ static int arrow_checks(void)
     return 0;
 }
 
+static int slider_checks(void)
+{
+    short id, stage, message[8], result, count, x,y,w,h, buttons, position;
+    const short actions[] = { WA_LFPAGE,WA_RTPAGE,WA_UPPAGE,WA_DNPAGE };
+    short queued[8] = { 0x4713,0,0,0,0,0,0,0 };
+    char ready[] = "x32 GEM slider 0: READY\r\n";
+    char held[] = "x32 GEM slider 0: HELD\r\n";
+    char outside[] = "x32 GEM slider 0: OUTSIDE\r\n";
+    static const char pass[] = "x32 GEM sliders: PASS\r\n";
+    id = wind_create(NAME|VSLIDE|HSLIDE,0,0,200,160);
+    VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Native sliders") == 1);
+    VERIFY(wind_set(id,WF_HSLIDE,500,0,0,0) == 1 && wind_set(id,WF_VSLIDE,500,0,0,0) == 1);
+    VERIFY(wind_open(id,20,30,200,160) == 1);
+    while (appl_read(-1,16,message) == 1) { }
+    for (stage = 0; stage < 8; stage++) {
+        ready[15] = held[15] = outside[15] = '0'+stage;
+        ptos_write(1,ready,sizeof(ready)-1);
+        if (stage >= 6) {
+            do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1); } while (!(buttons & 1));
+            VERIFY(appl_write(aes_global[2],16,queued) == 1);
+            VERIFY(appl_read(-1,16,message) == 1 && message[0] == 0x4713);
+            VERIFY(appl_read(-1,16,message) == 0);
+            ptos_write(1,held,sizeof(held)-1);
+        }
+        count = 0;
+        for (;;) {
+            if (stage >= 6) {
+                result = appl_read(-1,16,message) == 1 ? MU_MESAG : 0;
+                if (!result) { VERIFY(evnt_timer(0) == 1); continue; }
+            } else result = evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,2,1,1,
+                0,0,0,0,0,0,0,0,0,0,message,4000,NULL,NULL,NULL,NULL,NULL,NULL);
+            VERIFY(result == MU_MESAG);
+            if (message[0] == WM_REDRAW) continue;
+            VERIFY(message[3] == id && !message[1] && !message[2] && !message[5] && !message[6] && !message[7]);
+            if (stage >= 4) {
+                VERIFY(message[0] == ((stage & 1) ? WM_VSLID : WM_HSLID));
+                VERIFY(message[4] == ((stage == 4 || stage == 7) ? 1000 : 0));
+                break;
+            }
+            VERIFY(message[0] == WM_ARROWED && message[4] == actions[stage]);
+            if (++count == 3) ptos_write(1,held,sizeof(held)-1);
+            VERIFY(graf_mkstate(&x,&y,&buttons,NULL) == 1);
+            if (count >= 3 && x >= 280 && y >= 220 && (buttons & 1)) break;
+        }
+        if (stage < 4) ptos_write(1,outside,sizeof(outside)-1);
+        do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1); } while (buttons & 1);
+        while (appl_read(-1,16,message) == 1) VERIFY(stage < 4 && message[0] == WM_ARROWED && message[4] == actions[stage]);
+        VERIFY(evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,1,1,1,
+            0,0,0,0,0,0,0,0,0,0,message,20,NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER);
+        VERIFY(wind_get(id,WF_HSLIDE,&position,NULL,NULL,NULL) == 1 && position == 500);
+        VERIFY(wind_get(id,WF_VSLIDE,&position,NULL,NULL,NULL) == 1 && position == 500);
+        VERIFY(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 160);
+    }
+    VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
 {
     o->ob_next = o->ob_head = o->ob_tail = -1;
@@ -432,6 +490,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(process(0x3e,status,0,0,0) == 0);
         status = control_checks(); if (status) return status;
         status = arrow_checks(); if (status) return status;
+        status = slider_checks(); if (status) return status;
         /* Leave a decorated redraw pending beneath the alert and subsequent
          * modal scopes. Their recursive waits must not repaint its frame. */
         overlay_window = wind_create(NAME|INFO,0,0,240,140);

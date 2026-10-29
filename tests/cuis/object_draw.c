@@ -2,6 +2,7 @@
 #include "gem.h"
 #include "gemmovegeom.h"
 #include "gemframegeom.h"
+#include "gemslidegeom.h"
 #include "gemerror.h"
 #include "mono_objects.h"
 #include "colour_objects.h"
@@ -743,6 +744,66 @@ static int arrow_frame_checks(void)
     __builtin_memcpy(image,saved,sizeof(image));
     return 0;
 }
+static int slider_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    WM_FRAME_LIMITS limits;
+    WM_SLIDER_GEOMETRY slider;
+    GRECT border = { 20,20,120,95 }, result;
+    WORD saved[120][160], value;
+    WORD sizes[] = { -1,1,250,1000 }, positions[] = { 0,500,1000 };
+    WORD mode, size, position;
+    __builtin_memcpy(saved,image,sizeof(image));
+    for (mode = 0; mode < 3; mode++) {
+        display_width = mode < 2 ? 320 : 640; display_height = mode ? 400 : 200;
+        for (size = 0; size < 4; size++) for (position = 0; position < 3; position++) {
+            VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE|SIZER,&border,"Sliders","",aes_global));
+            state.hslsiz = state.vslsiz = sizes[size]; state.hslide = state.vslide = positions[position];
+            VERIFY(wm_slider_geometry(&state,W_HELEV,&slider));
+            VERIFY(aes_frame_control(&state,slider.thumb.g_x+3,slider.thumb.g_y+3) == W_HELEV);
+            VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+            VERIFY(wm_slider_geometry(&state,W_VELEV,&slider));
+            VERIFY(aes_frame_control(&state,slider.thumb.g_x+3,slider.thumb.g_y+3) == W_VELEV);
+            VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+        }
+        VERIFY(wm_frame_limits(HSLIDE|VSLIDE,32600,32600,19,19,display_width,display_height,&limits));
+        border.g_x = border.g_y = 32600; border.g_w = limits.max_w; border.g_h = limits.max_h;
+        VERIFY(aes_frame_prepare(&state,HSLIDE|VSLIDE,&border,"","",aes_global));
+        state.hslsiz = state.vslsiz = 1000; state.hslide = state.vslide = 1000;
+        VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+        border.g_x = border.g_y = 20; border.g_w = 120; border.g_h = 95;
+    }
+    display_width = 160; display_height = 120;
+    VERIFY(wm_frame_limits(HSLIDE,-32000,20,19,19,160,120,&limits));
+    border.g_x = -32000; border.g_y = 20; border.g_w = limits.max_w; border.g_h = 95;
+    VERIFY(aes_frame_prepare(&state,HSLIDE,&border,"","",aes_global));
+    state.hslsiz = state.hslide = 1000;
+    VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+    VERIFY(wm_frame_limits(VSLIDE,20,-32000,19,19,160,120,&limits));
+    border.g_x = 20; border.g_y = -32000; border.g_w = 120; border.g_h = limits.max_h;
+    VERIFY(aes_frame_prepare(&state,VSLIDE,&border,"","",aes_global));
+    state.vslsiz = state.vslide = 1000;
+    VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+    border.g_x = border.g_y = 20; border.g_w = 120; border.g_h = 95;
+    VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE,&border,"Sliders","",aes_global));
+    VERIFY(wm_slider_geometry(&state,W_HELEV,&slider));
+    move_records[0][0] = slider.thumb.g_x+10; move_records[0][1] = slider.thumb.g_y+3;
+    move_records[0][2] = 1; move_records[0][3] = 0;
+    move_records[1][0] = 200; move_records[1][1] = slider.thumb.g_y+3;
+    move_records[1][2] = 0; move_records[1][3] = 1;
+    move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
+    __builtin_memcpy(image,saved,sizeof(image));
+    VERIFY(aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,aes_global));
+    VERIFY(result.g_x == 1000 && !result.g_y && !result.g_w && !result.g_h && move_waits == 1);
+    VERIFY(!__builtin_memcmp(image,saved,sizeof(image)) && !nesting && opens == closes);
+    move_error = ERANGE; result.g_x = 99;
+    VERIFY(!aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,aes_global) && result.g_x == 99);
+    VERIFY(!__builtin_memcmp(image,saved,sizeof(image)) && !nesting && opens == closes);
+    move_test = trace_animation = FALSE;
+    VERIFY(wm_slider_position(&slider,0,0,0,0,&value,&result));
+    return 0;
+}
 static int frame_metric_checks(void)
 {
     WORD wbox = 99, hbox = 99, width = 99, height = 99;
@@ -833,6 +894,7 @@ int main(void)
     VERIFY(size_paint_checks() == 0);
     VERIFY(size_frame_limits_checks() == 0);
     VERIFY(arrow_frame_checks() == 0);
+    VERIFY(slider_paint_checks() == 0);
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
     tree[0].ob_x = 10; tree[0].ob_y = 12; tree[0].ob_width = 100; tree[0].ob_height = 80;

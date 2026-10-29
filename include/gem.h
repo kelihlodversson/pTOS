@@ -168,6 +168,28 @@ short mt_wind_update(short code, short *global);
 #ifndef NAME
 #define NAME 0x0001
 #endif
+#ifndef WF_HSLIDE
+#define WF_HSLIDE 8
+#define WF_VSLIDE 9
+#endif
+#ifndef WF_HSLSIZE
+#define WF_HSLSIZE 15
+#define WF_VSLSIZE 16
+#endif
+#ifndef WF_HSLSIZ
+#define WF_HSLSIZ 15
+#define WF_VSLSIZ 16
+#endif
+#ifndef WM_HSLID
+#define WM_HSLID 25
+#define WM_VSLID 26
+#endif
+#ifndef WA_UPPAGE
+#define WA_UPPAGE 0
+#define WA_DNPAGE 1
+#define WA_LFPAGE 4
+#define WA_RTPAGE 5
+#endif
 #ifndef WM_ARROWED
 #define WM_ARROWED 24
 #endif
