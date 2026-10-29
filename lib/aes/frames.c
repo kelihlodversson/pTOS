@@ -45,7 +45,8 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
     /* Later siblings win overlapping 3D hit bounds, exactly as ob_find()
      * does in the native control manager before entering gr_watchbox(). */
     object = objc_find(frame.tree,ROOT,8,(WORD)x,(WORD)y);
-    return object == W_CLOSER || object == W_FULLER ? object : 0;
+    return object == W_CLOSER || object == W_FULLER ||
+        (object == W_NAME && (state->kind & MOVER)) ? object : 0;
 }
 BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
 {
@@ -82,7 +83,7 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
     drawing.colours = drawing.topped ? top : bottom;
     wm_frame_init(&frame);
     wm_frame_build(frame.tree,&frame.name,&frame.info,&drawing);
-    if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER))
+    if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER || object == W_NAME))
         frame.tree[object].ob_state |= SELECTED;
     for (index = 0; ; index++) {
         result = cuis_call6(CUIS_WINDOW_REGION,native,index,(uintptr_t)&region[0],

@@ -46,6 +46,8 @@ static short event_once(short events, short clicks, short button_mask, short but
     ULONG mask = 0, wait_mask, elapsed, ticks;
     LONG now;
     BOOL frame_work = aes_frames_registered();
+    LONG (*messages)(LONG,short *) = ((events & MU_TIMER) && !interval) ?
+        aes_window_messages_poll : aes_window_messages;
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
         ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL) ||
         ((events & MU_BUTTON) && ((UWORD)clicks & 0xfe00)) ||
@@ -69,7 +71,7 @@ static short event_once(short events, short clicks, short button_mask, short but
                        (QUAD)m2_w, (QUAD)m2_h) < 0) return 0;
         mask |= CUIS_READY_RECT2;
     }
-    if (((events & MU_MESAG) || frame_work) && aes_window_messages(session, global) < 0) return 0;
+    if (((events & MU_MESAG) || frame_work) && messages(session, global) < 0) return 0;
     if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
@@ -91,14 +93,14 @@ static short event_once(short events, short clicks, short button_mask, short but
     }
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
-    if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL)) && aes_window_messages(session, global) < 0) return 0;
+    if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL)) && messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
                        (uintptr_t)&input[2], (uintptr_t)&input[3], (uintptr_t)&input[4]) != E_OK) return 0;
         state[0] = input[2]; state[1] = input[3];
         state[2] = (ULONG)input[4] & 0xffff; state[3] = (ULONG)input[4] >> 16;
     } else if (snapshot(session, state) != E_OK) return 0;
-    if (frame_work && !(ready & CUIS_READY_NOTICE) && aes_window_messages(session,global) < 0) return 0;
+    if (frame_work && !(ready & CUIS_READY_NOTICE) && messages(session,global) < 0) return 0;
     if ((ready & CUIS_READY_NOTICE) && aes_frames_wait_display()) {
         ready &= ~CUIS_READY_NOTICE;
         if (!ready) return -1;

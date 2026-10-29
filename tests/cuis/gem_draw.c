@@ -46,24 +46,38 @@ void gem_menubar_input_stage(short stage)
 /* Compiles against unmodified GEMlib as well as the kernel's GEM header. */
 static int control_checks(void)
 {
-    short id, stage, result, message[8], x,y,w,h;
+    short id, stage, result, message[8], x,y,w,h, buttons;
+    short queued[8] = { 0x4712,0,0,0,0,0,0,0 };
     char ready[] = "x32 GEM frame control 0: READY\r\n";
     static const char pass[] = "x32 GEM frame controls: PASS\r\n";
-    id = wind_create(NAME|CLOSER|FULLER,0,0,200,140);
+    id = wind_create(NAME|CLOSER|FULLER|MOVER,0,0,200,140);
     VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Close and full") == 1);
     VERIFY(wind_open(id,20,30,200,140) == 1);
     while (appl_read(-1,16,message) == 1) { }
-    for (stage = 0; stage < 3; stage++) {
+    for (stage = 0; stage < 5; stage++) {
         ready[22] = '0'+stage;
         ptos_write(1,ready,sizeof(ready)-1);
+        if (stage == 3) {
+            static const char poll_pass[] = "x32 GEM mover poll: PASS\r\n";
+            do {
+                VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1);
+            } while (!(buttons & 1));
+            VERIFY(appl_write(aes_global[2],16,queued) == 1);
+            VERIFY(appl_read(-1,16,message) == 1 && message[0] == 0x4712);
+            VERIFY(appl_read(-1,16,message) == 0);
+            ptos_write(1,poll_pass,sizeof(poll_pass)-1);
+        }
         for (;;) {
-            result = evnt_multi(MU_MESAG|MU_BUTTON|MU_KEYBD|MU_TIMER,1,1,1,
+            if (stage == 4) {
+                result = appl_read(-1,16,message) == 1 ? MU_MESAG : 0;
+                if (!result) { VERIFY(evnt_timer(0) == 1); continue; }
+            } else result = evnt_multi(MU_MESAG|MU_BUTTON|MU_KEYBD|MU_TIMER,1,1,1,
                 0,0,0,0,0,0,0,0,0,0,message,10000,NULL,NULL,NULL,NULL,NULL,NULL);
             VERIFY(result && !(result & (MU_BUTTON|MU_TIMER)));
             if (result & MU_MESAG) {
                 if (message[0] == WM_REDRAW) continue;
-                VERIFY(stage && message[0] == (stage == 1 ? WM_FULLED : WM_CLOSED));
-                VERIFY(message[3] == id && message[4] == 20 && message[5] == 30 &&
+                VERIFY(stage && message[0] == (stage == 1 ? WM_FULLED : stage == 2 ? WM_CLOSED : WM_MOVED));
+                VERIFY(message[3] == id && message[4] == (stage >= 3 ? 80 : 20) && message[5] == (stage >= 3 ? 70 : 30) &&
                     message[6] == 200 && message[7] == 140);
                 break;
             }

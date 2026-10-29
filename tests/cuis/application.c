@@ -5,6 +5,7 @@
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/application.h"
 #include "../../lib/aes/frames.h"
+#include "gemmovegeom.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
 extern void *malloc(__SIZE_TYPE__ bytes);
@@ -44,6 +45,7 @@ static LONG control_events[32][4], control_target, control_read_error;
 static ULONG control_count, control_at, control_only_wakes;
 static BOOL control_selection;
 static WORD control_object;
+static ULONG move_calls;
 static void control_event(LONG x, LONG y, LONG buttons, LONG changed)
 {
     control_events[control_count][0] = x; control_events[control_count][1] = y;
@@ -343,6 +345,7 @@ BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
 {
     (void)kind; (void)global;
     if (border->g_w < 5 || border->g_h < 50) return FALSE;
+    state->kind = kind; state->wbox = 19; state->hbox = 19;
     state->border = *border; state->name = name; state->info = info;
     return TRUE;
 }
@@ -363,9 +366,21 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
 WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
 {
     if (y < state->border.g_y+2 || y >= state->border.g_y+18) return 0;
-    if (x >= state->border.g_x+2 && x < state->border.g_x+18) return W_CLOSER;
-    if (x >= state->border.g_x+state->border.g_w-18 && x < state->border.g_x+state->border.g_w-2) return W_FULLER;
-    return 0;
+    if ((state->kind & CLOSER) && x >= state->border.g_x+2 && x < state->border.g_x+18) return W_CLOSER;
+    if ((state->kind & FULLER) && x >= state->border.g_x+state->border.g_w-18 && x < state->border.g_x+state->border.g_w-2) return W_FULLER;
+    return (state->kind & MOVER) ? W_NAME : 0;
+}
+BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, WORD *global)
+{
+    LONG event[4], result;
+    (void)global; move_calls++;
+    for (;;) {
+        result = cuis_call6(CUIS_CONTROL_READ,native,(uintptr_t)&event[0],(uintptr_t)&event[1],
+            (uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        if (result != 1 || (event[2] & ~1L)) return FALSE;
+        if (!(event[2] & 1)) return (event[3] & 1) && wm_move_position(&state->border,press_x,press_y,
+            event[0],event[1],frame_screen_width,state->wbox,state->hbox,out);
+    }
 }
 BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
 {
@@ -605,6 +620,50 @@ static int control_api_checks(void)
     return 0;
 }
 
+static int move_api_checks(void)
+{
+    short id, message[8], x,y,w,h;
+    ULONG before;
+    id = wind_create(NAME|MOVER,0,0,200,140);
+    CHECK(id > 0 && wind_open(id,20,30,200,140) == 1);
+    control_target = native_windows[id-1]; control_at = control_count = 0;
+    before = move_calls;
+    control_event(80,35,1,1); pipe_count = 16;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !pipe_count && control_at == 1 && move_calls == before);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && control_at == 1 && move_calls == before);
+    CHECK(evnt_timer(0) == 1 && move_calls == before);
+    control_event(180,85,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_MOVED && message[4] == 120 && message[5] == 80);
+    control_at = control_count = 0;
+    state_values[2] = 0;
+    control_event(80,35,1,1); control_event(180,85,0,1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_MOVED && message[4] == 120 && message[5] == 80);
+    CHECK(move_calls == before+1); /* Polling completion never calls the blocking tracker. */
+    state_values[2] = 2; control_at = control_count = 0;
+    control_event(80,35,1,1); control_event(140,65,1,0); control_event(180,85,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_MOVED && message[3] == id);
+    CHECK(message[4] == 120 && message[5] == 80 && message[6] == 200 && message[7] == 140);
+    CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 140);
+    control_at = control_count = 0;
+    control_event(80,35,1,1); control_event(-100,-100,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_MOVED && message[4] == 0 && message[5] == 19);
+    control_event(80,35,1,1); control_event(32767,32767,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[4] == frame_screen_width-29 && message[5] == 9879);
+    control_at = control_count = 0;
+    control_event(80,35,3,3); control_event(180,85,0,3);
+    CHECK(evnt_timer(0) == 1 && !pipe_count);
+    /* A blocked move request retains the proposed, not current, geometry. */
+    control_event(80,35,1,1); control_event(180,85,0,1);
+    pipe_count = sizeof(pipe_data);
+    CHECK(appl_read(pid,16,message) == 1 && pipe_count == 48);
+    CHECK(wind_set(id,WF_CURRXYWH,30,40,220,150) == 1);
+    CHECK(appl_read(pid,16,message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
+    CHECK(message[0] == WM_MOVED && message[4] == 120 && message[5] == 80 && message[6] == 200 && message[7] == 140);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    control_target = 0; control_at = control_count = 0;
+    return 0;
+}
+
 static int control_timer_checks(void)
 {
     short id;
@@ -770,7 +829,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

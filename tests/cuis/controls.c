@@ -2,7 +2,7 @@
 #define CREAD(h) cuis_control_service(h,0x1000,0x1004,0x1008,0x100c)
 static int control_checks(void)
 {
-    LONG a, b, wa, wb, cover;
+    LONG a, b, wa, wb, wc, cover;
     CUIS_CLIENT *client;
     ULONG i;
     CUIS_INPUT_WAIT wait = { 0 };
@@ -92,6 +92,25 @@ static int control_checks(void)
     CHECK(CREAD(wa) == ERANGE); /* Lost edges cannot complete an old gesture. */
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE,wa,21,30,100,80) == E_OK);
     CHECK(CREAD(wa) == ERANGE && CREAD(wa) == 0);
+    wc = cuis_window_service(CUIS_WINDOW_CREATE,0,0,10,10,0);
+    CHECK(wc >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,wc,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
+    CHECK(point_at(25,35,1));
+    CHECK(cuis_event_service(wc,CUIS_EVENT_CONTROL,0) == 0);
+    CHECK(cuis_event_service(wa,CUIS_EVENT_CONTROL,0) == 1 && CREAD(wa) == 1);
+    CHECK(cuis_event_service(wa,CUIS_EVENT_CONTROL,0) == 0);
+    CHECK(point_at(25,35,0));
+    /* A peer may grab the released mouse, then wait for our display lock.
+     * Cancellation must remain readable while that peer owns the mouse. */
+    CHECK(cuis_display_lock(a,1,0) == E_OK);
+    run = &second; CHECK(cuis_mouse_lock(b,1,0) == E_OK);
+    run = &first;
+    CHECK(cuis_event_service(wa,CUIS_EVENT_CONTROL,0) == 1);
+    CHECK(cuis_session_wait(a,0,CUIS_READY_CONTROL,0) == CUIS_READY_CONTROL);
+    CHECK(CREAD(wa) == ERANGE && cuis_event_service(wa,CUIS_EVENT_CONTROL,0) == 0);
+    run = &second; CHECK(cuis_mouse_lock(b,0,0) == E_OK);
+    run = &first; CHECK(cuis_display_lock(a,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_DESTROY,wc,0,0,0,0) == E_OK);
     CHECK(point_at(25,35,1));
     CHECK(cuis_window_service(CUIS_WINDOW_HIDE,wa,0,0,0,0) == E_OK);
     CHECK(CREAD(wa) == ERANGE && point_at(25,35,0));
