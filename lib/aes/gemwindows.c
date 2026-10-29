@@ -8,6 +8,7 @@
 #include "gemframegeom.h"
 #include "gemmovegeom.h"
 #include "gemsizegeom.h"
+#include "gemslidegeom.h"
 #include "frames.h"
 #include "resource_context.h"
 
@@ -31,7 +32,9 @@ static struct gem_window {
     char *name, *info;
     LONG native, drag_x, drag_y, arrow_tick;
     BOOL open, control_selected;
-    WORD control, control_message;
+    WORD control, control_message, control_action;
+    WORD hslide, vslide, hslsiz, vslsiz;
+    WM_SLIDER_GEOMETRY drag_slider;
     GRECT control_rectangle;
     struct visible_region *regions;
     GRECT current, previous, full;
@@ -39,8 +42,11 @@ static struct gem_window {
 static BOOL frame_notice_blocked, frame_display_blocked;
 static ULONG frame_overlays, frame_dialogs;
 #define ARROW_GADGETS (UPARROW|DNARROW|LFARROW|RTARROW)
-#define CONTROL_GADGETS (CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS)
+#define CONTROL_GADGETS (CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS|VSLIDE|HSLIDE)
 static BOOL control_display_blocked, control_pipe_blocked;
+static BOOL thumb_control(WORD object) { return object == W_HELEV || object == W_VELEV; }
+static BOOL drag_control(WORD object) { return object == W_NAME || object == W_SIZER || thumb_control(object); }
+static BOOL repeat_control(WORD object) { return wm_arrow_action(object) >= 0 || object == W_VSLIDE || object == W_HSLIDE; }
 BOOL aes_controls_listening(void)
 {
     short i;
@@ -54,7 +60,7 @@ BOOL aes_controls_repeating(void)
     short i;
     if (!aes_controls_listening()) return FALSE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
-        if (windows[i].id && windows[i].open && wm_arrow_action(windows[i].control) >= 0) return TRUE;
+        if (windows[i].id && windows[i].open && repeat_control(windows[i].control)) return TRUE;
     return FALSE;
 }
 BOOL aes_frames_suspended(void) { return frame_overlays != 0; }
@@ -139,6 +145,13 @@ short wind_calc(short type, short kind, short x, short y, short w, short h,
     return mt_wind_calc(type, kind, x, y, w, h, ox, oy, ow, oh, aes_global);
 }
 
+static BOOL prepare_window(struct gem_window *window, const GRECT *border, WM_FRAME_STATE *state, WORD *global)
+{
+    if (!aes_frame_prepare(state,window->kind,border,window->name,window->info,global)) return FALSE;
+    state->hslide = window->hslide; state->vslide = window->vslide;
+    state->hslsiz = window->hslsiz; state->vslsiz = window->vslsiz;
+    return TRUE;
+}
 static BOOL paint_window(struct gem_window *window, short *global)
 {
     WM_FRAME_STATE state;
@@ -148,7 +161,7 @@ static BOOL paint_window(struct gem_window *window, short *global)
         return session >= 0 && cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)window->current.g_x,
             (QUAD)window->current.g_y,window->current.g_w+2,window->current.g_h+2,0) == E_OK;
     }
-    return aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global) &&
+    return prepare_window(window,&window->current,&state,global) &&
         aes_frame_paint_control(window->native,&state,window->control,window->control_selected,global);
 }
 
@@ -159,7 +172,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     LONG native, identifier;
     WORD wbox = 1, hbox = 1, width = 640, height = 400;
     WM_FRAME_INSETS insets;
-    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS)) || aes_application_session(global) < 0) return -1;
+    if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS|VSLIDE|HSLIDE)) || aes_application_session(global) < 0) return -1;
     for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
     if ((kind && !aes_frame_metrics(&wbox,&hbox,&width,&height,global)) ||
@@ -181,6 +194,8 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     window = &windows[i];
     window->native = native;
     window->kind = kind; window->name = window->info = "";
+    window->hslide = window->vslide = 0; window->hslsiz = window->vslsiz = -1;
+    window->control_action = -1;
     window->control_message = 0;
     window->open = FALSE;
     window->control = 0; window->control_selected = FALSE;
@@ -202,7 +217,7 @@ static BOOL configure(struct gem_window *window, short x, short y, short w, shor
 {
     WM_FRAME_STATE state;
     GRECT border = { x,y,w,h };
-    if (window->kind && !aes_frame_prepare(&state,window->kind,&border,window->name,window->info,global)) return FALSE;
+    if (window->kind && !prepare_window(window,&border,&state,global)) return FALSE;
     return w > 0 && h > 0 &&
         mt_wind_calc(WC_WORK,0,x,y,w,h,NULL,NULL,NULL,NULL,NULL) &&
         cuis_call6(CUIS_WINDOW_CONFIGURE, window->native,
@@ -320,7 +335,7 @@ static LONG publish_notice(struct gem_window *window, LONG session, LONG kind,
     result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
     if (result == EAGAIN) { frame_display_blocked = TRUE; return result; }
     if (result != E_OK) return result;
-    if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
+    if (!prepare_window(window,&window->current,&state,global)) {
         result = EACCDN; goto done;
     }
     /* Acknowledge before painting. Focus/damage arriving during the draw
@@ -359,8 +374,11 @@ static LONG service_drag(struct gem_window *window, const WM_FRAME_STATE *state,
     window->control_selected = TRUE;
     if (paint_window(window,global) && (sizing ?
         aes_frame_size(window->native,state,window->drag_x,window->drag_y,&window->control_rectangle,global) :
+        thumb_control(window->control) ? aes_frame_slide(window->native,state,window->control,
+            window->drag_x,window->drag_y,&window->control_rectangle,global) :
         aes_frame_move(window->native,state,window->drag_x,window->drag_y,&window->control_rectangle,global)))
-        window->control_message = sizing ? WM_SIZED : WM_MOVED;
+        window->control_message = sizing ? WM_SIZED : window->control == W_HELEV ? WM_HSLID :
+            window->control == W_VELEV ? WM_VSLID : WM_MOVED;
     window->control = 0; window->control_selected = FALSE;
     (void)paint_window(window,global);
     return flush_control(window,session);
@@ -368,7 +386,8 @@ static LONG service_drag(struct gem_window *window, const WM_FRAME_STATE *state,
 static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
 {
     LONG current[4], event[4], result;
-    WORD wbox, hbox, width, height, n;
+    WORD wbox, hbox, width, height, n, value;
+    GRECT outline;
     LAYOUT_METRICS metrics;
     BOOL sizing = window->control == W_SIZER;
     /* Finish already-released drags without an outline/input wait. Keep
@@ -386,7 +405,13 @@ static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
             return result < 0 && result != ERANGE ? result : E_OK;
         }
         if (event[2] & 1) continue;
-        if ((event[3] & 1) && (sizing ?
+        if ((event[3] & 1) && thumb_control(window->control)) {
+            if (wm_slider_position(&window->drag_slider,window->drag_x,window->drag_y,event[0],event[1],&value,&outline)) {
+                window->control_rectangle.g_x = value;
+                window->control_rectangle.g_y = window->control_rectangle.g_w = window->control_rectangle.g_h = 0;
+                window->control_message = window->control == W_HELEV ? WM_HSLID : WM_VSLID;
+            }
+        } else if ((event[3] & 1) && (sizing ?
             wm_size_position(&window->current,window->kind,event[0],event[1],metrics.wchar,metrics.hchar,
                              wbox,hbox,width,height,&window->control_rectangle) :
             wm_move_position(&window->current,window->kind,window->drag_x,window->drag_y,event[0],event[1],width,height,wbox,hbox,
@@ -403,7 +428,7 @@ static LONG arrow_message(struct gem_window *window, LONG session)
     if (now < 0) return now;
     window->arrow_tick = now;
     window->control_message = WM_ARROWED;
-    window->control_rectangle.g_x = wm_arrow_action(window->control);
+    window->control_rectangle.g_x = window->control_action;
     window->control_rectangle.g_y = window->control_rectangle.g_w = window->control_rectangle.g_h = 0;
     return flush_control(window,session);
 }
@@ -431,13 +456,13 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
         if (!window->id) continue;
         /* A poll retains the captured press, without painting or waiting.
          * The next blocking service resumes from the original anchor. */
-        if (window->control == W_NAME || window->control == W_SIZER) {
+        if (drag_control(window->control)) {
             if (polling) {
                 result = poll_drag(window,session,global);
                 if (result < 0 || control_pipe_blocked) goto done;
                 continue;
             }
-            if (aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
+            if (prepare_window(window,&window->current,&state,global)) {
                 result = service_drag(window,&state,session,global);
                 if (result < 0 || control_pipe_blocked) goto done;
             } else window->control = 0;
@@ -456,12 +481,20 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
             }
             if (result < 0) goto done;
             if (!window->open || !(window->kind & CONTROL_GADGETS)) continue;
-            if (!aes_frame_prepare(&state,window->kind,&window->current,window->name,window->info,global)) {
+            if (!prepare_window(window,&window->current,&state,global)) {
                 window->control = 0; window->control_selected = FALSE; break;
             }
-            if ((event[3] & 1) && (event[2] & 1) && !window->control)
+            if ((event[3] & 1) && (event[2] & 1) && !window->control) {
                 window->control = aes_frame_control(&state,event[0],event[1]);
-            if ((window->control == W_NAME || window->control == W_SIZER) && event[2] == 1) {
+                window->control_action = wm_arrow_action(window->control);
+                if (window->control == W_VSLIDE || window->control == W_HSLIDE) {
+                    window->control_action = wm_slider_page(&state,window->control,event[0],event[1]);
+                    if (window->control_action < 0) window->control = 0;
+                }
+                if (thumb_control(window->control) && !wm_slider_geometry(&state,window->control,&window->drag_slider))
+                    window->control = 0;
+            }
+            if ((drag_control(window->control)) && event[2] == 1) {
                 window->drag_x = event[0]; window->drag_y = event[1];
                 if (polling) {
                     result = poll_drag(window,session,global);
@@ -472,12 +505,12 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
                 if (result < 0 || control_pipe_blocked) goto done;
                 continue;
             }
-            if (wm_arrow_action(window->control) >= 0) {
+            if (repeat_control(window->control)) {
                 /* Native arrows send on press and repeat until release,
                  * retaining the original action and selection outside the
                  * glyph. They do not use close/full watch-box semantics. */
-                selected = event[2] == 1;
-                completed = selected && (event[3] & 1);
+                completed = event[2] == 1 && (event[3] & 1);
+                selected = event[2] == 1 && wm_arrow_action(window->control) >= 0;
                 if (window->control_selected != selected) {
                     window->control_selected = selected;
                     if (!paint_window(window,global)) {
@@ -489,7 +522,7 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
                     result = arrow_message(window,session);
                     if (result < 0 || control_pipe_blocked) goto done;
                 }
-                if (!selected) window->control = 0;
+                if (event[2] != 1) window->control = 0;
                 continue;
             }
             object = window->control && aes_frame_control_inside(&state,window->control,event[0],event[1]) ?
@@ -516,7 +549,7 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
          * repeat after draining the bounded queue, at most once per native
          * two-tick dispatch interval, never in a tight loop or by waiting
          * with the display. */
-        if (n < 16 && wm_arrow_action(window->control) >= 0) {
+        if (n < 16 && repeat_control(window->control)) {
             LONG now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
             if (now < 0) { result = now; goto done; }
             if ((((ULONG)now-(ULONG)window->arrow_tick) & 0x7fffffffUL) >= 2) {
@@ -619,6 +652,10 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     case WF_NEXTXYWH:
         if (!visible_work(window, field == WF_FIRSTXYWH, &r, global)) return 0;
         break;
+    case WF_HSLIDE: r.g_x = window->hslide; r.g_y = r.g_w = r.g_h = 0; break;
+    case WF_VSLIDE: r.g_x = window->vslide; r.g_y = r.g_w = r.g_h = 0; break;
+    case WF_HSLSIZE: r.g_x = window->hslsiz; r.g_y = r.g_w = r.g_h = 0; break;
+    case WF_VSLSIZE: r.g_x = window->vslsiz; r.g_y = r.g_w = r.g_h = 0; break;
     case WF_KIND:
         r.g_x = window->kind; r.g_y = r.g_w = r.g_h = 0;
         break;
@@ -641,10 +678,36 @@ short wind_get(short id, short field, short *a, short *b, short *c, short *d)
 {
     return mt_wind_get(id, field, a, b, c, d, aes_global);
 }
+static WORD *slider_field(struct gem_window *window, WORD field)
+{
+    switch (field) {
+    case WF_HSLIDE: return &window->hslide;
+    case WF_VSLIDE: return &window->vslide;
+    case WF_HSLSIZE: return &window->hslsiz;
+    case WF_VSLSIZE: return &window->vslsiz;
+    }
+    return NULL;
+}
 static short local_wind_set(short id, short field, short a, short b, short c, short d, short *global)
 {
     struct gem_window *window = lookup(id, global);
+    WORD *slot, old;
     if (!window) return 0;
+    slot = slider_field(window,field);
+    if (slot) {
+        BOOL size = field == WF_HSLSIZE || field == WF_VSLSIZE;
+        BOOL vertical = field == WF_VSLIDE || field == WF_VSLSIZE;
+        if (!(size && a == -1)) { if (a < 1) a = 1; if (a > 1000) a = 1000; }
+        if (*slot == a) return 1;
+        old = *slot; *slot = a;
+        /* A deferred thumb drag uses frozen rectangles. A setter replaces
+         * that geometry, so discard its proposal; page holds keep repeating. */
+        if (thumb_control(window->control)) { window->control = 0; window->control_selected = FALSE; }
+        if (window->open && (window->kind & (vertical ? VSLIDE : HSLIDE)) && !paint_window(window,global)) {
+            *slot = old; (void)paint_window(window,global); return 0;
+        }
+        return 1;
+    }
     if (field == WF_NAME || field == WF_INFO)
         return mt_wind_set_str(id,field,(const char *)(uintptr_t)(((ULONG)(UWORD)a<<16)|(UWORD)b),global);
     if (field == WF_CURRXYWH) {

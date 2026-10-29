@@ -2266,8 +2266,8 @@ against unmodified GEMlib headers. Host sanitizer tests also cover full-stream
 progress, batched reads, clock wrap, original timer deadlines, rendering and
 cancellation/failure cleanup, every arrow combination, low-resolution modes,
 minimum geometry and the production painter's positive WORD endpoints.
-VSLIDE/HSLIDE, thumb tracking and WA_*PAGE actions remain subsequent work;
-unsupported creation flags and slider fields still return GEM failure.
+VSLIDE/HSLIDE, thumb tracking and WA_*PAGE actions are covered by #801
+below; other unsupported creation flags/fields still return GEM failure.
 
 CUIS READY_SERVICE (1024) adds a generic maintenance wake to SESSION_WAIT,
 without new syscall arguments or GEM-specific kernel state. It becomes ready
@@ -2276,3 +2276,53 @@ other internal readiness, it is deferred during unfinished multi-click
 accumulation until a requested public event is ready; that accumulation stays
 resident with its original count and deadline. Libaes consumes SERVICE
 internally, services due controls, then re-arms the public event wait.
+
+Window sliders and page actions (#801)
+-------------------------------------
+
+External libaes accepts HSLIDE and VSLIDE with the existing frame flags.
+The native shared frame builder supplies the bars, tracks and elevators;
+caller-local aes/shared/gemslidegeom.c derives their actual rectangles from
+that same tree. No parallel hand-drawn slider or new public AES API is used.
+WF_HSLIDE/WF_VSLIDE query stored positions, initially 0. WF_HSLSIZE/WF_VSLSIZE
+(and the historic WF_HSLSIZ/WF_VSLSIZ spellings) query thumb sizes, initially
+-1 for the native one-box default. Setters retain native wm_set clamping:
+positions and explicit sizes below 1 become 1, values above 1000 become 1000,
+and -1 remains valid for the default size. Fractions use the original shared
+builder's box minimum, proportional sizing and position arithmetic. Fields
+remain queryable while closed or without the associated gadget; successful
+open/close operations retain them. Painting failures restore the old field.
+
+Clicking an uncovered track sends WM_ARROWED with WA_LFPAGE (4), WA_RTPAGE
+(5), WA_UPPAGE (0) or WA_DNPAGE (1), chosen relative to the elevator's logical
+origin just as native hctl_window does. Page holds retain their original action
+while held, even outside the track or after the application updates a slider.
+They share the bounded repeat/cancellation/service-wake path with line arrows,
+and do not select the track.
+
+Dragging a thumb uses the original patterned XOR gr_dragbox outline and
+native gr_slidebox constraints, including its 3D expansion, low-resolution
+cross-axis adjustment, rounded fraction and one-pixel full-thumb travel.
+Release proposes WM_HSLID (25) or WM_VSLID (26), sender/extra length zero,
+window handle in word 3, position 0..1000 in word 4, and zero words 5-7.
+Stored positions and application content remain unchanged until the owner
+applies its chosen update. Initial hits use native OBJECT-tree sibling
+priority. Blocking drags wait only on their own trusted control queue; held
+APR_NOWAIT/zero-time polls retain the original geometry and remain nonblocking.
+Polling-only clients can complete released drags without drawing an outline.
+Replacing slider geometry during a deferred thumb drag cancels that local
+proposal; an already accepted pending message retains its original value
+under stream backpressure or later field updates.
+
+Admission reserves enough track space for the native default thumb and
+bounds full-sized selected elevators against the production painter's padded
+WORD dimensions/endpoints. The same limits constrain move/size proposals.
+Host sanitizer tests compare proposal math to native rc_constrain and
+mul_div_round across orientations, arrow combinations, default/explicit sizes,
+positions, aspect metrics, low-resolution modes and extreme input coordinates.
+Production painter tests cover minimum/default/full thumbs, hit priority,
+outline restoration/cancellation, positive endpoints and maximum padded
+sizes. Standard GEM clients built against unmodified GEMlib headers exercise
+field semantics, page holds and both orientations in blocking/polling drags.
+The expanded combined QEMU forms/window suite has a 90-second CI budget.
+HOTCLOSE and the remaining unimplemented window extensions are still rejected.

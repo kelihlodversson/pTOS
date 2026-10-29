@@ -8,6 +8,7 @@
 #include "gemmovegeom.h"
 #include "gemsizegeom.h"
 #include "gemframegeom.h"
+#include "gemslidegeom.h"
 #include "../../lib/aes/layout.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
@@ -358,12 +359,16 @@ static ULONG frame_paints;
 static BOOL frame_damage_once;
 static ULONG frame_paint_ticks;
 static char *last_frame_name;
+static WORD last_sliders[4];
 BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
                        char *name, char *info, WORD *global)
 {
     (void)kind; (void)global;
     if (border->g_w < 5 || border->g_h < 50) return FALSE;
     state->kind = kind; state->wbox = 19; state->hbox = 19;
+    state->adjusted_width = 23-(frame_screen_width < 640 ? 1+(frame_screen_height >= 400) : 0);
+    state->adjusted_height = 23; state->topped = FALSE; state->colours = NULL;
+    state->hslide = state->vslide = 0; state->hslsiz = state->vslsiz = -1;
     state->border = *border; state->name = name; state->info = info;
     return TRUE;
 }
@@ -372,6 +377,8 @@ BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
     (void)native; (void)global;
     if (!state->name || !state->info) return FALSE;
     frame_paints++; last_frame_name = state->name;
+    last_sliders[0] = state->hslide; last_sliders[1] = state->vslide;
+    last_sliders[2] = state->hslsiz; last_sliders[3] = state->vslsiz;
     menu_ticks += frame_paint_ticks; frame_paint_ticks = 0;
     if (frame_damage_once) { frame_damage_once = FALSE; notice_kind = CUIS_NOTICE_REDRAW; }
     return !frame_paint_failure;
@@ -383,6 +390,16 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
 }
 WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
 {
+    WM_SLIDER_GEOMETRY slider;
+    WORD object;
+    for (object = W_HELEV; object >= W_VELEV; object -= W_HELEV-W_VELEV) {
+        if (!wm_slider_geometry(state,object,&slider)) continue;
+        if (x >= slider.thumb.g_x && y >= slider.thumb.g_y && x < (LONG)slider.thumb.g_x+slider.thumb.g_w &&
+            y < (LONG)slider.thumb.g_y+slider.thumb.g_h) return object;
+        if (x >= slider.track.g_x && y >= slider.track.g_y && x < (LONG)slider.track.g_x+slider.track.g_w &&
+            y < (LONG)slider.track.g_y+slider.track.g_h) return object-1;
+    }
+
     if (state->kind & (UPARROW|DNARROW|LFARROW|RTARROW)) {
         if (x >= state->border.g_x+state->border.g_w-23) {
             if ((state->kind & UPARROW) && y < state->border.g_y+46) return W_UPARROW;
@@ -424,6 +441,24 @@ BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG
         if (result != 1 || (event[2] & ~1L)) return FALSE;
         if (!(event[2] & 1)) return (event[3] & 1) && wm_size_position(&state->border,state->kind,
             event[0],event[1],8,16,state->wbox,state->hbox,frame_screen_width,frame_screen_height,out);
+    }
+}
+BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *out, WORD *global)
+{
+    WM_SLIDER_GEOMETRY slider;
+    GRECT outline;
+    LONG event[4], result;
+    WORD value;
+    (void)global;
+    if (!wm_slider_geometry(state,object,&slider)) return FALSE;
+    for (;;) {
+        result = cuis_call6(CUIS_CONTROL_READ,native,(uintptr_t)&event[0],(uintptr_t)&event[1],
+            (uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        if (result != 1 || (event[2] & ~1L)) return FALSE;
+        if (!(event[2] & 1)) {
+            if (!(event[3] & 1) || !wm_slider_position(&slider,press_x,press_y,event[0],event[1],&value,&outline)) return FALSE;
+            out->g_x = value; out->g_y = out->g_w = out->g_h = 0; return TRUE;
+        }
     }
 }
 BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, LONG y)
@@ -795,6 +830,55 @@ static int arrow_api_checks(void)
     return 0;
 }
 
+static int slider_api_checks(void)
+{
+    short id, message[8], position, n;
+    WORD points[4][2] = { {40,177},{180,177},{207,70},{207,150} };
+    WORD actions[] = { WA_LFPAGE,WA_RTPAGE,WA_UPPAGE,WA_DNPAGE };
+    id = wind_create(NAME|VSLIDE|HSLIDE,0,0,200,160);
+    CHECK(id > 0 && wind_set(id,WF_HSLIDE,500,0,0,0) == 1 && wind_set(id,WF_VSLIDE,500,0,0,0) == 1);
+    CHECK(wind_open(id,20,30,200,160) == 1 && last_sliders[0] == 500 && last_sliders[1] == 500);
+    control_target = native_windows[id-1]; pipe_count = 0;
+    for (n = 0; n < 4; n++) {
+        control_at = control_count = 0; control_event(points[n][0],points[n][1],1,1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_ARROWED && message[4] == actions[n] && !control_selection);
+        control_event(300,250,1,0); menu_ticks += 2;
+        CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == actions[n]);
+        control_event(300,250,0,1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    }
+    control_at = control_count = 0;
+    control_event(106,177,1,1); control_event(1000,177,0,1);
+    CHECK(evnt_mesag(message) == 1 && message[0] == WM_HSLID && message[3] == id && message[4] == 1000);
+    CHECK(!message[5] && !message[6] && !message[7]);
+    CHECK(wind_get(id,WF_HSLIDE,&position,NULL,NULL,NULL) == 1 && position == 500);
+    control_at = control_count = 0;
+    control_event(207,108,1,1); control_event(207,0,0,1); state_values[2] = 0;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_VSLID && message[4] == 0);
+    CHECK(wind_get(id,WF_VSLIDE,&position,NULL,NULL,NULL) == 1 && position == 500);
+    /* Held polls remain nonblocking; replacing thumb geometry cancels the
+     * frozen drag without publishing an obsolete position on release. */
+    control_at = control_count = 0; control_event(106,177,1,1); state_values[2] = 1;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && control_at == 1);
+    CHECK(wind_set(id,WF_HSLIDE,600,0,0,0) == 1);
+    control_event(1000,177,0,1); state_values[2] = 0;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0);
+    /* Accepted proposals survive stream pressure and subsequent setters. */
+    control_at = control_count = 0; control_event(123,177,1,1); control_event(1000,177,0,1);
+    pipe_count = sizeof(pipe_data);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && pipe_count == 48);
+    CHECK(wind_set(id,WF_HSLIDE,200,0,0,0) == 1);
+    for (n = 0; n < 3; n++) CHECK(appl_read(APR_NOWAIT,16,message) == 1);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_HSLID && message[4] == 1000);
+    frame_paint_failure = TRUE;
+    CHECK(wind_set(id,WF_HSLSIZE,250,0,0,0) == 0);
+    frame_paint_failure = FALSE;
+    CHECK(wind_get(id,WF_HSLSIZE,&position,NULL,NULL,NULL) == 1 && position == -1);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    control_target = 0; control_at = control_count = 0; pipe_count = 0;
+    return 0;
+}
+
 static int size_api_checks(void)
 {
     short id, message[8], x,y,w,h;
@@ -997,7 +1081,7 @@ int main(void)
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && arrow_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && arrow_api_checks() == 0 && slider_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

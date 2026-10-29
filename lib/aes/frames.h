@@ -10,4 +10,5 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y);
 BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, WORD *global);
 BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global);
 BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global);
+BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *result, WORD *global);
 #endif

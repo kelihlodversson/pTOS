@@ -20,6 +20,7 @@
 #include "rectfunc.h"
 #include "frames.h"
 #include "gemmovegeom.h"
+#include "gemslidegeom.h"
 #include "gemsizegeom.h"
 #include "gemobjbounds.h"
 #include "gemframegeom.h"
@@ -627,12 +628,15 @@ typedef struct {
     LONG native, session, press_x, press_y;
     const WM_FRAME_STATE *state;
     GRECT result;
-    BOOL completed, sizing;
+    BOOL completed, sizing, sliding;
+    WORD slider_value;
+    WM_SLIDER_GEOMETRY slider;
     WORD wchar, hchar, width, height;
     WM_FRAME_INSETS insets;
 } FRAME_DRAG;
 static BOOL drag_position(FRAME_DRAG *drag, LONG x, LONG y, GRECT *outline)
 {
+    if (drag->sliding) return wm_slider_position(&drag->slider,drag->press_x,drag->press_y,x,y,&drag->slider_value,outline);
     if (drag->sizing) return wm_size_position(&drag->state->border,drag->state->kind,x,y,
         drag->wchar,drag->hchar,drag->state->wbox,drag->state->hbox,drag->width,drag->height,outline);
     return wm_move_position(&drag->state->border,drag->state->kind,drag->press_x,drag->press_y,x,y,
@@ -687,7 +691,7 @@ static void drag_frame(void *argument)
         }
     }
 }
-static BOOL track_frame(BOOL sizing, LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y,
+static BOOL track_frame(WORD object, LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y,
                          GRECT *result, WORD *global)
 {
     OBJECT dummy = { 0 };
@@ -697,21 +701,31 @@ static BOOL track_frame(BOOL sizing, LONG native, const WM_FRAME_STATE *state, L
     dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
     drag.native = native; drag.session = aes_application_session(global);
     drag.state = state; drag.press_x = press_x; drag.press_y = press_y;
-    drag.completed = FALSE; drag.sizing = sizing;
+    drag.completed = FALSE; drag.sizing = object == W_SIZER;
+    drag.sliding = object == W_HELEV || object == W_VELEV;
+    if (drag.sliding && !wm_slider_geometry(state,object,&drag.slider)) return FALSE;
     ok = render(&dummy,0,0,0,state->hbox,32767,32767-state->hbox,global,
                 FALSE,0,0,NULL,0,drag_frame,&drag) != 0;
     if (!ok) (void)cuis_call6(CUIS_DISPLAY_REDRAW,drag.session,0,0,32767,32767,0);
-    if (ok && drag.completed) *result = drag.result;
+    if (ok && drag.completed) {
+        *result = drag.result;
+        if (drag.sliding) { result->g_x = drag.slider_value; result->g_y = result->g_w = result->g_h = 0; }
+    }
     return ok && drag.completed;
 }
 
 BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
 {
-    return track_frame(FALSE,native,state,press_x,press_y,result,global);
+    return track_frame(W_NAME,native,state,press_x,press_y,result,global);
 }
 BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
 {
-    return track_frame(TRUE,native,state,press_x,press_y,result,global);
+    return track_frame(W_SIZER,native,state,press_x,press_y,result,global);
+}
+
+BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+{
+    return (object == W_HELEV || object == W_VELEV) && track_frame(object,native,state,press_x,press_y,result,global);
 }
 
 

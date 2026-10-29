@@ -107,7 +107,7 @@ BOOL wm_frame_limits(UWORD kind, LONG x, LONG y, WORD wbox, WORD hbox,
     }
     /* The native bar builder positions each arrow with its 3D margins.
      * Keep opposing expanded glyphs disjoint and reserve the other bar. */
-    if (kind & (UPARROW|DNARROW)) {
+    if (kind & (UPARROW|DNARROW|VSLIDE)) {
         edge = data_top+horizontal_reserve+ah*((kind & UPARROW) != 0)+
             ah*((kind & DNARROW) != 0)+((kind & DNARROW) != 0)+(horizontal_reserve != 0);
         if (r.min_h < edge) r.min_h = edge;
@@ -129,7 +129,7 @@ BOOL wm_frame_limits(UWORD kind, LONG x, LONG y, WORD wbox, WORD hbox,
         if (r.max_h > edge) r.max_h = edge;
         if (hbox+2*pad > 32767L) return FALSE;
     }
-    if (kind & (LFARROW|RTARROW)) {
+    if (kind & (LFARROW|RTARROW|HSLIDE)) {
         edge = vertical_reserve+((kind & LFARROW) ? wbox+2*ADJ3DSTD : 0)+
             ((kind & RTARROW) ? aw+1 : 0)+(vertical_reserve != 0);
         if (r.min_w < edge) r.min_w = edge;
@@ -150,6 +150,32 @@ BOOL wm_frame_limits(UWORD kind, LONG x, LONG y, WORD wbox, WORD hbox,
         edge = 32767L-x+offset-wbox-pad;
         if (r.max_w > edge) r.max_w = edge;
         if (wbox+2*pad > 32767L) return FALSE;
+    }
+    /* Bound even full-sized 3D elevators using the production painter's
+     * padded dimensions and endpoints. Track space excludes the arrows. */
+    if (kind & VSLIDE) {
+        LONG arrows = ah*(((kind & UPARROW) != 0)+((kind & DNARROW) != 0));
+        if (hbox <= 2*ADJ3DSTD+1) return FALSE;
+        edge = data_top+horizontal_reserve+arrows+hbox;
+        if (r.min_h < edge) r.min_h = edge;
+        edge = y+data_top+((kind & UPARROW) ? ah : 0)+ADJ3DSTD;
+        if (edge-pad < -32768L) return FALSE;
+        edge = 32767L-2*pad+2*ADJ3DSTD+1+data_top+horizontal_reserve+arrows;
+        if (r.max_h > edge) r.max_h = edge;
+        edge = 32767L-y+horizontal_reserve+((kind & DNARROW) ? ah : 0)+ADJ3DSTD+1-pad;
+        if (r.max_h > edge) r.max_h = edge;
+    }
+    if (kind & HSLIDE) {
+        LONG arrows = aw*(((kind & LFARROW) != 0)+((kind & RTARROW) != 0));
+        if (wbox <= 2*ADJ3DSTD+1) return FALSE;
+        edge = vertical_reserve+arrows+wbox;
+        if (r.min_w < edge) r.min_w = edge;
+        edge = x+((kind & LFARROW) ? aw : 0)+ADJ3DSTD;
+        if (edge-pad < -32768L) return FALSE;
+        edge = 32767L-2*pad+2*ADJ3DSTD+1+vertical_reserve+arrows;
+        if (r.max_w > edge) r.max_w = edge;
+        edge = 32767L-x+vertical_reserve+((kind & RTARROW) ? aw : 0)+ADJ3DSTD+1-pad;
+        if (r.max_w > edge) r.max_w = edge;
     }
     if (r.min_w > r.max_w || r.min_h > r.max_h) return FALSE;
     *out = r; return TRUE;

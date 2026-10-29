@@ -9,6 +9,10 @@ capture=
 trap '[ -z "$capture" ] || kill "$capture" 2>/dev/null || true; rm -rf "$work"' EXIT HUP INT TERM
 log=${MMAP_BOOT_LOG:-$work/boot.log}
 firmware=${OVMF_DIR:-/usr/share/OVMF}
+boot_timeout=${MMAP_BOOT_TIMEOUT:-45}
+if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+    boot_timeout=${MMAP_BOOT_TIMEOUT:-90}
+fi
 case ${1:-} in
     '') expected=PASS ;;
     --disabled) expected=disabled ;;
@@ -117,17 +121,17 @@ if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
     set -- "$@" -qmp "unix:$work/qmp.sock,server=on,wait=off"
     : > "$log"
     python3 tools/exercise-gem-forms.py "$work/qmp.sock" "$log" "${MMAP_BOOT_SCREENSHOT:-}" \
-        "${MMAP_BOOT_TIMEOUT:-45}" > "$log.capture" 2>&1 &
+        "$boot_timeout" > "$log.capture" 2>&1 &
     capture=$!
 elif [ -n "${MMAP_BOOT_SCREENSHOT:-}" ]; then
     set -- "$@" -qmp "unix:$work/qmp.sock,server=on,wait=off"
     : > "$log"
     python3 tools/capture-gem-screen.py "$work/qmp.sock" "$log" "$MMAP_BOOT_SCREENSHOT" \
-        "${MMAP_BOOT_TIMEOUT:-45}" > "$log.capture" 2>&1 &
+        "$boot_timeout" > "$log.capture" 2>&1 &
     capture=$!
 fi
 set +e
-timeout "${MMAP_BOOT_TIMEOUT:-45}" "$@" -machine pc -m 256 \
+timeout "$boot_timeout" "$@" -machine pc -m 256 \
     -cpu qemu64,+pdpe1gb -nic none \
     -drive if=pflash,format=raw,readonly=on,file="$firmware/OVMF_CODE_4M.fd" \
     -drive if=pflash,format=raw,file="$work/vars.fd" \
@@ -182,6 +186,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
         grep -q 'x32 GEM colour icons: PASS' "$log"
         grep -q 'x32 GEM menu items: PASS' "$log"
         if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+            grep -q 'x32 GEM sliders: PASS' "$log"
             grep -q 'x32 GEM menu bar: PASS' "$log"
             grep -q 'x32 GEM menu handoff: PASS' "$log"
         fi
