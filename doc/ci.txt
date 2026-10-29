@@ -76,7 +76,9 @@ What is changed
   same for the 68040 MMU, #728, on a Falcon and on a TT).  atari512-extdesk is not run (the external desktop is
   not mode dependent, and the 22 tests do not touch it), nor built, by a
   pull request.  All 25 run every night and on request.  The job prints the
-  seconds of each in its summary.
+  seconds of each in its summary.  A failure of falcon-aspace in f030a or tta is
+  only a warning (NONBLOCKING in tools/ci-hatari.sh, #805): Hatari 2.6.1 takes
+  an interrupt wrongly after the RTE of a 68030 bus error frame.
 - build.yml: the configurations in .github/pr-skip-configs are not built by a
   pull request (8 jobs), with the reason for each in that file.  The ones
   whose kernel the regression jobs build (virt-arm-cli, virt-m68k-cli-elf,
