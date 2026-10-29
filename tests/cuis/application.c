@@ -175,7 +175,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         else display_nesting--;
         return E_OK;
     }
-    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT))
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
         return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
         __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
@@ -391,8 +391,8 @@ BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG
         result = cuis_call6(CUIS_CONTROL_READ,native,(uintptr_t)&event[0],(uintptr_t)&event[1],
             (uintptr_t)&event[2],(uintptr_t)&event[3],0);
         if (result != 1 || (event[2] & ~1L)) return FALSE;
-        if (!(event[2] & 1)) return (event[3] & 1) && wm_move_position(&state->border,press_x,press_y,
-            event[0],event[1],frame_screen_width,state->wbox,state->hbox,out);
+        if (!(event[2] & 1)) return (event[3] & 1) && wm_move_position(&state->border,state->kind,press_x,press_y,
+            event[0],event[1],frame_screen_width,frame_screen_height,state->wbox,state->hbox,out);
     }
 }
 BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, WORD *global)
@@ -684,6 +684,17 @@ static int move_api_checks(void)
     CHECK(wind_set(id,WF_CURRXYWH,30,40,220,150) == 1);
     CHECK(appl_read(pid,16,message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1 && evnt_mesag(message) == 1);
     CHECK(message[0] == WM_MOVED && message[4] == 120 && message[5] == 80 && message[6] == 200 && message[7] == 140);
+    CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
+    id = wind_create(MOVER|SIZER,0,30,32758,140);
+    CHECK(id > 0 && wind_open(id,0,30,32758,140) == 1);
+    control_target = native_windows[id-1];
+    for (before = 0; before < 2; before++) {
+        control_at = control_count = 0; state_values[2] = before ? 0 : 2;
+        control_event(80,35,1,1); control_event(130,35,0,1);
+        CHECK((before ? appl_read(APR_NOWAIT,16,message) : evnt_mesag(message)) == 1);
+        CHECK(message[0] == WM_MOVED && message[4] == 0 && message[5] == 30 && message[6] == 32758 && message[7] == 140);
+        CHECK(wind_set(id,WF_CURRXYWH,message[4],message[5],message[6],message[7]) == 1);
+    }
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
     control_target = 0; control_at = control_count = 0;
     return 0;

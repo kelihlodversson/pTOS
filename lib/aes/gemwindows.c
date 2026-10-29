@@ -162,7 +162,9 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     if (identifier <= 0 || identifier > 32767 ||
         cuis_call6(CUIS_WINDOW_OUTSET, native, 2, 2, 0, 0, 0) != E_OK ||
         cuis_call6(CUIS_WINDOW_POLICY, native, 1, 0, 0, 0, 0) != E_OK ||
-        cuis_call6(CUIS_WINDOW_CONTENT,native,insets.left,insets.top,insets.right,insets.bottom,0) != E_OK) {
+        cuis_call6(CUIS_WINDOW_CONTENT,native,insets.left,insets.top,insets.right,insets.bottom,0) != E_OK ||
+        cuis_call6(CUIS_WINDOW_CORNER,native,(kind & SIZER) ? wbox+2*ADJ3DSTD : 0,
+                   (kind & SIZER) ? hbox+2*ADJ3DSTD : 0,0,0,0) != E_OK) {
         (void)cuis_call6(CUIS_WINDOW_DESTROY, native, 0, 0, 0, 0, 0);
         return -1;
     }
@@ -377,7 +379,7 @@ static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
         if ((event[3] & 1) && (sizing ?
             wm_size_position(&window->current,window->kind,event[0],event[1],metrics.wchar,metrics.hchar,
                              wbox,hbox,width,height,&window->control_rectangle) :
-            wm_move_position(&window->current,window->drag_x,window->drag_y,event[0],event[1],width,wbox,hbox,
+            wm_move_position(&window->current,window->kind,window->drag_x,window->drag_y,event[0],event[1],width,height,wbox,hbox,
                              &window->control_rectangle)))
             window->control_message = sizing ? WM_SIZED : WM_MOVED;
         window->control = 0;

@@ -110,7 +110,7 @@ obj/libaes/gemframe.o: aes/shared/gemframe.c aes/shared/gemframe.h aes/shared/ge
 obj/libaes/gemsizegeom.o: aes/shared/gemsizegeom.c aes/shared/gemsizegeom.h aes/shared/gemframegeom.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
-obj/libaes/gemmovegeom.o: aes/shared/gemmovegeom.c aes/shared/gemmovegeom.h include/obdefs.h $(AUTOCONF_H)
+obj/libaes/gemmovegeom.o: aes/shared/gemmovegeom.c aes/shared/gemmovegeom.h aes/shared/gemframegeom.h include/obdefs.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
 obj/libaes/frames.o: lib/aes/frames.c aes/shared/gemframegeom.h aes/shared/gemobjbounds.h lib/aes/frames.h lib/aes/layout.h aes/shared/gemframe.h $(AUTOCONF_H)

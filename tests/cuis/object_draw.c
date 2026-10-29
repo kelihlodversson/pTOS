@@ -1,5 +1,6 @@
 /* Public object-drawing contracts against a small independent pixel oracle. */
 #include "gem.h"
+#include "gemmovegeom.h"
 #include "gemerror.h"
 #include "mono_objects.h"
 #include "colour_objects.h"
@@ -651,6 +652,11 @@ static int size_frame_limits_checks(void)
     LONG x,y,w,h;
     unsigned i;
     __builtin_memcpy(saved,image,sizeof(image));
+    start.g_x = 20; start.g_y = 30; start.g_w = 100; start.g_h = 80;
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&start,"Title","",aes_global));
+    VERIFY(aes_frame_control(&state,97,87) == W_SIZER);
+    VERIFY(aes_frame_control(&state,97,90) == W_SIZER);
+    start.g_y = 20; start.g_h = 100;
     for (i = 0; i < sizeof(kinds)/sizeof(kinds[0]); i++) {
         VERIFY(wm_size_position(&start,kinds[i],-100,-100,8,16,19,19,160,120,&proposed));
         VERIFY(proposed.g_h == (i == 0 ? 23 : i == 1 ? 46 : 65));
@@ -674,6 +680,13 @@ static int size_frame_limits_checks(void)
         VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
         VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
     }
+    start.g_x = 0; start.g_y = 30; start.g_w = 32758; start.g_h = 140;
+    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&start,"","",aes_global));
+    VERIFY(wm_move_position(&start,MOVER|SIZER,80,35,130,35,160,120,19,19,&proposed));
+    VERIFY(proposed.g_x == 0 && proposed.g_y == 30 && proposed.g_w == start.g_w && proposed.g_h == start.g_h);
+    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&proposed,"","",aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
     VERIFY(!nesting && opens == closes);
     __builtin_memcpy(image,saved,sizeof(image));
     return 0;

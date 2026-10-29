@@ -635,8 +635,8 @@ static BOOL drag_position(FRAME_DRAG *drag, LONG x, LONG y, GRECT *outline)
 {
     if (drag->sizing) return wm_size_position(&drag->state->border,drag->state->kind,x,y,
         drag->wchar,drag->hchar,drag->state->wbox,drag->state->hbox,drag->width,drag->height,outline);
-    return wm_move_position(&drag->state->border,drag->press_x,drag->press_y,x,y,
-        drag->width,drag->state->wbox,drag->state->hbox,outline);
+    return wm_move_position(&drag->state->border,drag->state->kind,drag->press_x,drag->press_y,x,y,
+        drag->width,drag->height,drag->state->wbox,drag->state->hbox,outline);
 }
 static void drag_outline(FRAME_DRAG *drag, GRECT *outline)
 {

@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-ffunction-sections", "-fdata-sections", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Ibdos",
-                "-Iaes", "-Iaes/shared", "tests/cuis/session.c", "aes/cuis_region.c", "-Wl,--gc-sections",
+                "-Iaes", "-Iaes/shared", "tests/cuis/session.c", "aes/cuis_region.c", "aes/shared/gemframegeom.c", "-Wl,--gc-sections",
                 "-o", str(work / "sessions")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "sessions")], check=True)
