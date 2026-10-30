@@ -49,6 +49,14 @@ static ULONG region_count;
 static LONG stack_values[4];
 static UWORD colour_settings[38];
 static UQUAD colour_settings_set;
+static BOOL colour_peer_pending;
+static LONG colour_fail_slot = -1;
+static void publish_peer_colours(void)
+{
+    colour_settings[W_NAME] = 0x1172; colour_settings[19+W_NAME] = 0x1174;
+    colour_settings_set |= (1ULL << W_NAME) | (1ULL << (19+W_NAME));
+    colour_peer_pending = FALSE;
+}
 static ULONG background_state;
 static ULONG background_on_wait, background_only_wakes;
 static LONG background_error, reset_error;
@@ -130,7 +138,15 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     if (fn == CUIS_SETTING) {
         if (a >= 38) return EINVAL;
-        if (!e) return colour_settings_set & (1ULL << a) ? colour_settings[a] : EFILNF;
+        if (!e) {
+            LONG value;
+            if ((LONG)a == colour_fail_slot) return EACCDN;
+            value = colour_settings_set & (1ULL << a) ? colour_settings[a] : EFILNF;
+            /* A queued peer can publish between separate scalar reads only
+             * when the querying client has no display ownership. */
+            if (colour_peer_pending && !display_nesting) publish_peer_colours();
+            return value;
+        }
         if (e & 1) { colour_settings[a] = b; colour_settings_set |= 1ULL << a; }
         if (e & 2) { colour_settings[c] = d; colour_settings_set |= 1ULL << c; }
         return E_OK;
@@ -225,6 +241,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (b) display_nesting++;
         else if (!display_nesting) return EACCDN;
         else display_nesting--;
+        if (!display_nesting && colour_peer_pending) publish_peer_colours();
         return E_OK;
     }
     if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))

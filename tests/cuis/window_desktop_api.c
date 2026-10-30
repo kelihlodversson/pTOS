@@ -1,4 +1,36 @@
 /* Standard window helpers, colours and desktop contracts over failing transport. */
+static int default_colour_checks(short *global)
+{
+    short gadget, top, bottom, flags, slot;
+    CHECK(wind_set(0,WF_DCOLOR,W_NAME,0x11a1,0x1101,0) == 1);
+    colour_peer_pending = TRUE; gadget = W_NAME;
+    CHECK(wind_get(0,WF_DCOLOR,&gadget,&top,&bottom,&flags) == 1);
+    CHECK(top == 0x11a1 && bottom == 0x1101 && !display_nesting && !colour_peer_pending);
+    CHECK(wind_get(0,WF_DCOLOR,&gadget,&top,&bottom,&flags) == 1 && top == 0x1172 && bottom == 0x1174);
+    CHECK(wind_set(0,WF_DCOLOR,W_NAME,0x11a1,0x1101,0) == 1);
+    CHECK(wind_update(BEG_UPDATE) == 1);
+    colour_peer_pending = TRUE;
+    CHECK(mt_wind_get(0,WF_DCOLOR,&gadget,&top,&bottom,&flags,global) == 1);
+    CHECK(top == 0x11a1 && bottom == 0x1101 && display_nesting == 1 && colour_peer_pending);
+    CHECK(wind_update(END_UPDATE) == 1 && !colour_peer_pending);
+    CHECK(wind_get(0,WF_DCOLOR,&gadget,&top,&bottom,&flags) == 1 && top == 0x1172 && bottom == 0x1174);
+    top = bottom = flags = 123;
+    display_error = EAGAIN;
+    CHECK(!wind_get(0,WF_DCOLOR,&gadget,&top,&bottom,&flags) && !display_nesting);
+    CHECK(gadget == W_NAME && top == 123 && bottom == 123 && flags == 123);
+    display_error = 0;
+    for (slot = 0; slot < 2; slot++) {
+        colour_fail_slot = slot ? 19+W_NAME : W_NAME;
+        CHECK(wind_update(BEG_UPDATE) == 1);
+        CHECK(!mt_wind_get(0,WF_DCOLOR,&gadget,&top,&bottom,&flags,global));
+        CHECK(display_nesting == 1 && gadget == W_NAME && top == 123 && bottom == 123 && flags == 123);
+        CHECK(wind_update(END_UPDATE) == 1);
+    }
+    colour_fail_slot = -1;
+    CHECK(wind_set(0,WF_DCOLOR,W_NAME,0x11a1,0x1101,0) == 1 && !display_nesting);
+    return 0;
+}
+
 static int background_event_checks(short *global)
 {
     short message[8], saved[8], key = 99, clicks = 99, x = 99, y = 99, buttons = 99, modifiers = 99;
@@ -44,6 +76,7 @@ static int window_desktop_api_checks(short *global)
     OBJECT tree = { NIL,NIL,NIL,G_BOX,LASTOB,NORMAL,{0x1173},0,0,640,400 };
     void *pointer, *again;
     ULONG before;
+    CHECK(default_colour_checks(global) == 0);
     CHECK(mt_wind_new(NULL) == 0 && mt_wind_set_ptr(0,WF_NEWDESK,&tree,invalid) == 0);
     CHECK(wind_get_grect(0,WF_CURRXYWH,&result) == 1 && result.g_w == 640 && result.g_h == 400);
     CHECK(mt_wind_get_grect(0,WF_WORKXYWH,&result,global) == 1 && result.g_y == 0);

@@ -720,8 +720,10 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
             if (!window) return 0;
             top = (UWORD)window->top_colours[gadget]; bottom = (UWORD)window->bottom_colours[gadget];
         } else {
+            if (!mt_wind_update(BEG_UPDATE,global)) return 0;
             top = cuis_call6(CUIS_SETTING,gadget,0,0,0,0,0);
             bottom = cuis_call6(CUIS_SETTING,NUM_ELEM+gadget,0,0,0,0,0);
+            if (!mt_wind_update(END_UPDATE,global)) return 0;
             if (top == EFILNF) top = (UWORD)aes_top_colours[gadget];
             if (bottom == EFILNF) bottom = (UWORD)aes_bottom_colours[gadget];
             if (top < 0 || top > 65535 || bottom < 0 || bottom > 65535) return 0;
