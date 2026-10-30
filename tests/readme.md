@@ -352,6 +352,13 @@ test-hd-shell` makes its disk, `run-hatari-tests.py --mode f030a` runs it, and `
 where Hatari's `--conout` shows nothing and the result is read from the screen,
 which needs Pillow).
 
+If the kernel panics during a run (`Panic: ...`, from `dopanic()`), the harness
+stops at once and prints the panic text, with status 1: the panic handler waits
+for a key, so without this the run would wait out its timeout with the text
+only on the emulated screen.  The text reaches the harness through the log
+(Hatari's `--natfeats on`: `kprintf()` prints it there) or, in the TT modes,
+through the screen it reads.
+
 `make x32-vdi-import-test` builds the native VDI import applications and
 malformed metadata fixtures in `obj/x32/VDI*.TOS`. Copy those files to the PC
 boot drive alongside `X32VDI.TOS`. Both PC configurations require
