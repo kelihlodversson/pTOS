@@ -19,6 +19,11 @@
 #include "../../../aes/cuis.h"
 #include "kheap.h"
 #include "grect.h"
+#if CONF_WITH_X86_64_MEMTEST
+#include "mform.h"
+#include "screen_mode.h"
+#include "tosvars.h"
+#endif
 #endif
 #if CONF_WITH_USER_CALLBACKS
 #include "../../../bdos/user_callback.h"
@@ -392,12 +397,32 @@ BOOL vdi_service_test_reopen(void)
     WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
     WORD integers[45], points[12];
     void (*installed)(int), (*chain)(int);
-    ULONG saved_pixel;
-    BOOL result;
+    ULONG saved_pixel, cursor_saved = 0;
+    volatile ULONG *cursor_pixel = NULL;
+    SCREEN_MODE_DESC mode;
+    MFORM cursor_form = { 0 };
+    WORD cursor_x = linea_vars.GCURX, cursor_y = linea_vars.GCURY;
+    BOOL result, cursor_drawn = FALSE;
     int i;
     if (!physical_active || !physical_owned) return FALSE;
     for (i = 2; i <= NUM_VDI_HANDLES; i++)
         if (owners[i]) return FALSE;
+    /* Force a visible single-pixel cursor before the preserved reopen. Its
+     * old pixel must be restored even after the new cursor is shown/hidden. */
+    screen_get_current_mode_desc(&mode);
+    if (mode.layout == SCREEN_LAYOUT_PACKED && mode.bits_per_pixel == 32 &&
+        mode.width >= 64 && mode.height >= 64) {
+        cursor_form.mf_nplanes = 1;
+        cursor_form.mf_fg = 1;
+        cursor_form.mf_mask[0] = cursor_form.mf_data[0] = 0x8000;
+        vdi_cuis_pointer(&cursor_form, TRUE);
+        linea_vars.GCURX = linea_vars.GCURY = 32;
+        cursor_pixel = (volatile ULONG *)((UBYTE *)v_bas_ad + 32 * mode.pitch) + 32;
+        cursor_saved = *cursor_pixel;
+        *cursor_pixel = 0x005a7193UL;
+        vdi_cuis_pointer(&cursor_form, FALSE);
+        cursor_drawn = *cursor_pixel != 0x005a7193UL;
+    }
     installed = (void (*)(int))Setexc(0x100, -1L);
     chain = linea_vars.tim_chain;
     control.code = 1;
@@ -409,6 +434,13 @@ BOOL vdi_service_test_reopen(void)
              (void (*)(int))Setexc(0x100, -1L) == installed;
     service_transition = FALSE;
     lifecycle_after(saved_pixel);
+    if (cursor_pixel) {
+        vdi_cuis_pointer(&cursor_form, FALSE);
+        vdi_cuis_pointer(&cursor_form, TRUE);
+        result = result && cursor_drawn && *cursor_pixel == 0x005a7193UL;
+        *cursor_pixel = cursor_saved;
+        linea_vars.GCURX = cursor_x; linea_vars.GCURY = cursor_y;
+    }
     return result;
 }
 #endif

@@ -815,7 +815,14 @@ void vdimouse_init(void)
 void vdimouse_exit(void)
 {
 #if CONF_WITH_CUIS
+    UQUAD flags = cuis_input_lock();
+    /* A preserved framebuffer must not retain cursor pixels after its saved
+     * background is discarded by the next mouse initialization. Prevent an
+     * IRQ handoff from showing it again while teardown is in progress. */
     cuis_pointer_ready = FALSE;
+    hide_cur();
+    linea_vars.draw_flag = FALSE;
+    cuis_input_unlock(flags);
 #endif
     linea_vars.user_but = (void(*)(WORD))just_rts;
 #if CONF_WITH_NATIVE_ABI
