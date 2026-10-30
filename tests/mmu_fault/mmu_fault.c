@@ -44,6 +44,7 @@ void test_mmu_fault(void);
 
 #define PAGE        MM_PAGE
 #define FIXTURE     "C:\\RUNTESTS.TOS"
+#define CODEFILE    "C:\\MMUCODE.TMP"
 
 /* a fresh mapping of <pages> pages, none of them there yet */
 static unsigned char * __attribute__((noinline)) fresh(long pages)
@@ -129,11 +130,11 @@ static __attribute__((noinline)) void move_pair(unsigned char **s, unsigned char
 /* longword stores of v, v+1, ... with post-increment, up to <end> */
 static __attribute__((noinline)) unsigned char *store_run(unsigned char *a, unsigned char *end, unsigned long v)
 {
-    __asm__ volatile ("1: move.l %2,(%0)+\n\t"
-                      "addq.l #1,%2\n\t"
-                      "cmp.l %1,%0\n\t"
+    __asm__ volatile ("1: move.l %1,(%0)+\n\t"
+                      "addq.l #1,%1\n\t"
+                      "cmp.l %2,%0\n\t"
                       "bne.b 1b"
-                      : "+a" (a) : "a" (end), "d" (v) : "memory", "cc");
+                      : "+a" (a), "+d" (v) : "a" (end) : "memory", "cc");     /* (v is counted up) */
     return a;
 }
 
@@ -264,14 +265,36 @@ static void test_movem(void)
         movem_store(a, src);
         ptest_assert_msg(bytes_are(m, at - 8, at + 24, at, at + 16, want), "MOVEM across a page boundary wrote the wrong bytes");
 
-        /* ... read back upwards (post-increment), into registers: the register moves 16 bytes */
+        /* (the bytes are in, and read back: the pages are there) */
         a = m + at;
         a = movem_load_post(a, back);
-        ptest_assert_msg(a == m + at + 16, "MOVEM (An)+ moved the register wrongly");
+        ptest_assert_msg(a == m + at + 16, "MOVEM (An)+ of pages that are there moved the register wrongly");
         for (j = 0; j < 4; j++)
             if (back[j] != src[j])
             {
                 ptest_fail("MOVEM across a page boundary read the wrong registers");
+                break;
+            }
+        drop(m, 2);
+
+        /* ... and the load itself, from two pages that nothing has touched yet,
+         * upwards (post-increment): the pages arrive in the middle of the
+         * instruction, the registers get zeros and the register moves 16 bytes once */
+        m = fresh(2);
+        if (!m)
+        {
+            ptest_fail("Mmap(for a MOVEM load) failed");
+            return;
+        }
+        for (j = 0; j < 4; j++)
+            back[j] = 0xa5a5a5a5UL;
+        a = m + at;
+        a = movem_load_post(a, back);
+        ptest_assert_msg(a == m + at + 16, "MOVEM (An)+ from pages that are not there moved the register wrongly");
+        for (j = 0; j < 4; j++)
+            if (back[j] != 0UL)
+            {
+                ptest_fail("MOVEM across a page boundary of pages that are not there did not read zeros");
                 break;
             }
         drop(m, 2);
@@ -415,6 +438,8 @@ static void test_runs(void)
  * touched, so the CPU faults on the fetch itself.  A page of zeros executes as
  * ORI.B #0,D0 (two words each), which does nothing.
  */
+static void test_fetch_file(void);
+
 static void test_fetch(void)
 {
     unsigned char *m;
@@ -428,7 +453,9 @@ static void test_fetch(void)
         ptest_fail("Mmap(for instruction fetch) failed");
         return;
     }
-    /* (1) MOVE.L #$0badcafe,D0 ; RTS, the opcode in the last word of page 0, the rest in page 1 */
+    /* (1) MOVE.L #$0badcafe,D0 ; RTS, the opcode in the last word of page 0, the rest in page 1
+     * (written first, so that the second page is in: the fetch of the opcode across the boundary;
+     * the fault on the extension words is test_fetch_file()) */
     w = (volatile unsigned short *)(m + PAGE - 2);
     w[0] = 0x203c;
     w[1] = 0x0bad;
@@ -451,6 +478,57 @@ static void test_fetch(void)
     r = call_with(f, 0x12345678UL);
     ptest_assert_msg(r == 0x12345678UL, "code on pages that were not there did not run through");
     drop(m, 6);
+
+    test_fetch_file();
+}
+
+/*
+ * The same instruction across a page boundary, from a file: the code is written
+ * to a file of two pages, and mapped, so that nothing of it is in memory and
+ * the fetch of the extension words, after the opcode on the first page, is what
+ * faults on the second.  (In test_fetch() the words were written first, which
+ * brings the page in.)
+ */
+static void test_fetch_file(void)
+{
+    static unsigned char img[2 * PAGE];
+    static const unsigned char code[] = { 0x20, 0x3c, 0x0b, 0xad, 0xca, 0xfe, 0x4e, 0x75 };
+    long wh, fh, m, i;
+    unsigned long (*f)(void);
+    unsigned long r;
+
+    for (i = 0; i < (long)sizeof code; i++)
+        img[PAGE - 2 + i] = code[i];
+    wh = Fcreate(CODEFILE, 0);
+    if (wh < 0)
+        return;                         /* (the disk cannot be written: nothing to show) */
+    i = Fwrite((int)wh, (long)sizeof img, img);
+    Fclose((int)wh);
+    if (i != (long)sizeof img)
+    {
+        Fdelete(CODEFILE);
+        return;
+    }
+    fh = Fopen(CODEFILE, 0);
+    if (fh < 0)
+    {
+        Fdelete(CODEFILE);
+        return;
+    }
+    m = sys6(GEMDOS_MMAP, 0L, 2 * PAGE, PROT_READ | PROT_EXEC, MAP_PRIVATE, fh, 0L);
+    ptest_assert_msg(m > 0, "Mmap(code file) failed");
+    if (m > 0)
+    {
+        f = (unsigned long (*)(void))(m + PAGE - 2);
+        r = f();
+        ptest_assert_msg(r == 0x0badcafeUL,
+                         "an instruction whose extension words are on a page that is not there was not fetched whole");
+        r = f();
+        ptest_assert_msg(r == 0x0badcafeUL, "the same instruction failed the second time");
+        mm_unmap(m, 2);
+    }
+    Fclose((int)fh);
+    Fdelete(CODEFILE);
 }
 
 /*
