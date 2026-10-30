@@ -201,6 +201,33 @@ static void read_040(struct mmu_probe *p)
     p->root[2] = p->root[3] = 0;
 }
 
+/*
+ * The cache mode (CM of the descriptor: 0 write-through, 1 copyback, 2 not
+ * cached and serialized, 3 not cached) that a data transparent translation
+ * gives to `va`; 0xffffffff if neither DTT0 nor DTT1 matches.  The MMU says only
+ * that an address is transparent (MMUSR.T), not how it is cached.
+ */
+static ULONG dtt_cache_mode(ULONG va, BOOL super)
+{
+    ULONG dtt[2], v;
+    int i;
+
+    __asm__ volatile (".long 0x4e7a0006\n\tmove.l %%d0,%0" : "=m" (dtt[0]) : : "d0", "memory");   /* movec dtt0,d0 */
+    __asm__ volatile (".long 0x4e7a0007\n\tmove.l %%d0,%0" : "=m" (dtt[1]) : : "d0", "memory");   /* movec dtt1,d0 */
+    for (i = 0; i < 2; i++)
+    {
+        v = dtt[i];
+        if (!(v & 0x8000UL))                                    /* E: enabled */
+            continue;
+        if ((((va >> 24) ^ (v >> 24)) & ~(v >> 16) & 0xffUL) != 0)      /* logical base and mask */
+            continue;
+        if (((v >> 13) & 3) < 2 && ((v >> 13) & 3) != (super ? 1UL : 0UL))   /* S: user, supervisor, or both */
+            continue;
+        return (v >> 5) & 3;
+    }
+    return 0xffffffffUL;
+}
+
 /* is `va` of the kernel half mapped for a supervisor read? (before it is read) */
 static BOOL kernel_readable(ULONG va)
 {
@@ -296,7 +323,8 @@ static void translate(struct mmu_probe *p)
         if (p->mapped)
         {
             p->phys = (m & MMUSR_T) ? va : ((m & 0xfffff000UL) | (va & 0xfffUL));
-            p->cache_mode = (m & MMUSR_T) ? 0xffffffffUL : (ULONG)MMUSR_CM(m);
+            p->cache_mode = (m & MMUSR_T) ? dtt_cache_mode(va, fc == FC_SUPER_DATA)
+                                          : (ULONG)MMUSR_CM(m);
         }
     }
     else

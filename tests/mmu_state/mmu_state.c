@@ -180,7 +180,7 @@ void test_mmu_state(void)
     probe(&p, TEST_MMU_IO_ADDR, 0);
     CHECK(p.access == 0, "the I/O area is open to a user access");
     probe(&p, TEST_MMU_IO_ADDR, MMUPROBE_SUPER);
-    CHECK(p.cache_mode >= 2, "the I/O area is cached");
+    CHECK(p.cache_mode == 2 || p.cache_mode == 3, "the I/O area is cached (or its cache mode is not known)");
 #endif
 #ifdef TEST_MMU_IO_CACHE
     /*
