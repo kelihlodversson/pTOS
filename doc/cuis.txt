@@ -2384,3 +2384,30 @@ and verifies restoration after an isolated child exits with outstanding hides
 and an open window. The existing input/window/forms/menu/pixel tests continue
 with the application's cursor hidden. Public drag/rubber/slide helper APIs and
 additional graphics extensions remain subsequent work.
+
+Interactive graphics tracking
+-----------------------------
+
+External libaes implements graf_rubberbox, graf_dragbox and graf_slidebox,
+including their mt variants and ordinary GEMlib source signatures. Native AES
+and libaes compile the same tracking loops from aes/shared/gemgrtrack.c, using
+the original patterned XOR outlines. Rubber dimensions use inclusive pointer
+coordinates and the supplied minima. Dragging retains the native pointer offset
+and rectangle constraints. Sliding applies native 3D expansion and rounding to
+0..1000, returning zero for a track with no travel. The object tree is not moved.
+
+The adapter holds whole-screen display and mouse ownership across tracking,
+suspends automatic frame painting, and balances nested caller grabs. A held
+gesture must belong to the application (for example through window content
+capture); a fullscreen application can acquire BEG_MCTRL before waiting for
+its press. Acquisition does not wait on a foreign gesture while excluding its
+drawing. Past release history cannot end a tracker while the button remains
+held. The adapter waits directly for pointer changes and release, without
+recursively dispatching menus or window controls.
+
+Coordinates and caller-local slider trees are checked before tracking. Parent
+relationships are indexed in one bounded pass, with cycle and duplicate-parent
+rejection. Failures leave rubber/drag output pointers unchanged and release
+acquired ownership; a failed XOR operation requests redraw. As in GEM, zero is
+both a valid slider position and its failure return. No new kernel operation
+or public pTOS-specific tracking API is required.

@@ -31,6 +31,12 @@ extern "C" {
 #ifndef OF_EDITABLE
 #define OF_EDITABLE EDITABLE
 #endif
+#ifndef OF_FL3DIND
+#define OF_FL3DIND FL3DIND
+#define OF_FL3DBAK FL3DBAK
+#define OF_FL3DACT FL3DACT
+#define OF_FL3DMASK FL3DOBJ
+#endif
 #ifndef OF_LASTOB
 #define OF_LASTOB LASTOB
 #endif
@@ -426,6 +432,12 @@ short mt_objc_add(OBJECT *tree, short parent, short child, short *global);
 short mt_objc_delete(OBJECT *tree, short object, short *global);
 short mt_objc_order(OBJECT *tree, short object, short position, short *global);
 short mt_objc_offset(OBJECT *tree, short object, short *x, short *y, short *global);
+short graf_rubberbox(short x, short y, short wmin, short hmin, short *w, short *h);
+short mt_graf_rubberbox(short x, short y, short wmin, short hmin, short *w, short *h, short *global);
+short graf_dragbox(short w, short h, short x, short y, short bx, short by, short bw, short bh, short *rx, short *ry);
+short mt_graf_dragbox(short w, short h, short x, short y, short bx, short by, short bw, short bh, short *rx, short *ry, short *global);
+short graf_slidebox(OBJECT *tree, short parent, short object, short vertical);
+short mt_graf_slidebox(OBJECT *tree, short parent, short object, short vertical, short *global);
 short objc_add(OBJECT *tree, short parent, short child);
 short objc_delete(OBJECT *tree, short object);
 short objc_order(OBJECT *tree, short object, short position);

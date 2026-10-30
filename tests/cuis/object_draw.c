@@ -65,6 +65,8 @@ UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
 static struct { WORD events, x, y, buttons; } gesture[8];
 static int gesture_count, gesture_at, bad_gesture;
 static WORD mouse_x = 50, mouse_y = 50;
+static BOOL tracking_mode, tracking_stale;
+static WORD tracking_buttons;
 static BOOL invalidate_global, bad_layout_font, fail_layout_close;
 static ULONG callbacks;
 static OBJECT *mutation_target;
@@ -101,6 +103,25 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (tracking_mode && (fn == CUIS_INPUT_BUTTON || fn == CUIS_INPUT_RECT))
+        return nesting >= 2 && mouse_nesting && !input_error ? E_OK : EACCDN;
+    if (tracking_mode && fn == CUIS_SESSION_WAIT) {
+        if (!mouse_nesting || nesting < 2 || gesture_at >= gesture_count || input_error) return EACCDN;
+        return gesture[gesture_at].events & MU_BUTTON ? CUIS_READY_BUTTON : CUIS_READY_RECT1;
+    }
+    if (tracking_mode && fn == CUIS_INPUT_RESULT) {
+        if (gesture_at >= gesture_count) return EACCDN;
+        *(LONG *)(uintptr_t)b = *(LONG *)(uintptr_t)c = 0;
+        *(LONG *)(uintptr_t)d = gesture[gesture_at].x;
+        *(LONG *)(uintptr_t)e = gesture[gesture_at].y;
+        *(LONG *)(uintptr_t)f = gesture[gesture_at].buttons;
+        if (!(tracking_stale && !gesture_at)) {
+            mouse_x = gesture[gesture_at].x; mouse_y = gesture[gesture_at].y;
+            tracking_buttons = gesture[gesture_at].buttons;
+        }
+        gesture_at++;
+        return E_OK;
+    }
     if (move_test && fn == CUIS_CONTROL_READ && a == 99) {
         if (move_error) { LONG result = move_error; move_error = 0; return result; }
         if (move_at == move_count) return 0;
@@ -146,6 +167,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; return nesting ? E_OK : EACCDN; }
     if (fn == CUIS_MOUSE_LOCK && a == 7) {
+        if (tracking_mode && b && c) return EINVAL;
         if (bar_mode && b && b != CUIS_MOUSE_FRESH) return EINVAL;
         if (b && mouse_error) return EACCDN;
         if (!b && !mouse_nesting) return EACCDN;
@@ -176,7 +198,7 @@ short wind_update(short code) { return mt_wind_update(code,aes_global); }
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *mods, short *global)
 {
     if (aes_application_session(global) < 0) return 0;
-    *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
+    *mx = mouse_x; *my = mouse_y; *buttons = tracking_mode ? tracking_buttons : 0; *mods = 0;
     return 1;
 }
 short graf_mkstate(short *mx, short *my, short *buttons, short *mods)
@@ -878,6 +900,65 @@ static int modal_checks(void)
     snapshot_error = FALSE;
     return 0;
 }
+static void tracking_events(WORD x, WORD y)
+{
+    tracking_mode = TRUE; tracking_stale = FALSE; tracking_buttons = 1;
+    gesture_at = 0; gesture_count = 2;
+    mouse_x = mouse_y = 50;
+    gesture[0].events = MU_M1; gesture[0].x = x; gesture[0].y = y; gesture[0].buttons = 1;
+    gesture[1] = gesture[0]; gesture[1].events = MU_BUTTON; gesture[1].buttons = 0;
+}
+static int tracking_checks(void)
+{
+    OBJECT tree[2] = { { 0 } };
+    WORD x,y,rx = -1,ry = -1;
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) image[y][x] = (x+y)&15;
+    tracking_events(80,70);
+    VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 1 && rx == 71 && ry == 61);
+    tracking_events(150,110);
+    VERIFY(mt_graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry,aes_global) == 1 && rx == 80 && ry == 70);
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) VERIFY(image[y][x] == ((x+y)&15));
+    tree[0].ob_head = tree[0].ob_tail = 1; tree[0].ob_next = NIL;
+    tree[0].ob_x = tree[0].ob_y = 20; tree[0].ob_width = 100; tree[0].ob_height = 60; tree[0].ob_type = G_BOX;
+    tree[1].ob_next = 0; tree[1].ob_head = tree[1].ob_tail = NIL;
+    tree[1].ob_width = tree[1].ob_height = 20; tree[1].ob_flags = LASTOB; tree[1].ob_type = G_BOX;
+    tracking_events(90,50);
+    VERIFY(graf_slidebox(tree,0,1,0) == 500 && !tree[1].ob_x && !tree[1].ob_y);
+    tree[1].ob_flags |= FL3DACT;
+    tracking_events(90,50);
+    VERIFY(mt_graf_slidebox(tree,0,1,0,aes_global) == 526);
+    tree[1].ob_flags = LASTOB; tree[1].ob_width = 100;
+    tracking_events(90,50);
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && gesture_at == 2);
+    tree[1].ob_width = 20;
+    tracking_events(90,50); tree[1].ob_next = 1;
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && !gesture_at);
+    tree[1].ob_next = 0;
+    allocation_error = TRUE;
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && !gesture_at);
+    allocation_error = FALSE;
+    tracking_events(80,70); nesting = mouse_nesting = 1;
+    VERIFY(graf_rubberbox(10,10,0,0,&rx,&ry) == 1 && nesting == 1 && mouse_nesting == 1);
+    nesting = mouse_nesting = 0;
+    tracking_events(80,70); tracking_stale = TRUE;
+    gesture[2] = gesture[1]; gesture[1] = gesture[0];
+    gesture[0].events = MU_BUTTON; gesture[0].buttons = 0;
+    gesture[0].x = 5; gesture[0].y = 5; gesture_count = 3;
+    VERIFY(graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry) == 1 && rx == 70 && ry == 60 && gesture_at == 3);
+    rx = ry = -1;
+    tracking_events(80,70); input_error = TRUE;
+    VERIFY(graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    input_error = FALSE;
+    tracking_events(80,70); mouse_error = TRUE;
+    VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    mouse_error = FALSE;
+    VERIFY(graf_dragbox(0,20,0,0,0,0,100,90,&rx,&ry) == 0);
+    VERIFY(!nesting && !mouse_nesting && opens == closes && !bad_overlay_scope && !frame_overlay_depth);
+    tracking_mode = FALSE; gesture_count = gesture_at = 0;
+    __builtin_memset(image,0,sizeof(image));
+    return 0;
+}
+
 int main(void)
 {
     OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
@@ -888,6 +969,7 @@ int main(void)
     USERBLK user;
     TEDINFO changed = { 0 };
     char raw[] = "AB", pattern[] = "__.__", big[258];
+    VERIFY(tracking_checks() == 0);
     VERIFY(frame_metric_checks() == 0);
     VERIFY(frame_paint_checks() == 0);
     VERIFY(move_paint_checks() == 0);

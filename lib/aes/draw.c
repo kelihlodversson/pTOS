@@ -752,3 +752,92 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
 }
 WORD objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
 { return mt_objc_sysvar(mode,which,in1,in2,out1,out2,aes_global); }
+
+/* Public graphics calls share the native XOR tracking loops. The renderer
+ * lends its private workstation; whole-screen and mouse ownership span waits. */
+#include "tracking.h"
+#include "../../aes/gemgrlib.h"
+AES_TRACK *aes_tracker;
+void aes_track_setup(void)
+{
+    gsx_attr(FALSE,MD_XOR,BLACK);
+    vsl_type(7);
+}
+void aes_track_parent(OBJECT *tree, WORD object, GRECT *rect)
+{
+    (void)tree; (void)object;
+    *rect = aes_tracker->bounds;
+}
+void aes_track_child(OBJECT *tree, WORD object, GRECT *rect)
+{
+    memcpy(rect,&tree[object].ob_x,sizeof(*rect));
+}
+static BOOL track_pointer_valid(void)
+{
+    AES_TRACK *t = aes_tracker;
+    LONG dx = (LONG)t->mouse[0]-t->box.g_x, dy = (LONG)t->mouse[1]-t->box.g_y;
+    return dx < 32767 && dy < 32767;
+}
+BOOL aes_track_wait(void)
+{
+    AES_TRACK *t = aes_tracker;
+    LONG session = aes_application_session(t->global), ready, input[5];
+    ULONG mask = CUIS_READY_RECT1|CUIS_READY_BUTTON;
+    if (!aes_painter->ok) return FALSE;
+    if (cuis_call6(CUIS_INPUT_BUTTON,session,255,0,1,0,0) < 0 ||
+        cuis_call6(CUIS_INPUT_RECT,session,2,(QUAD)t->mouse[0],(QUAD)t->mouse[1],1,1) < 0) goto failed;
+    ready = cuis_call6(CUIS_SESSION_WAIT,session,16,mask,0,0,0);
+    if (ready <= 0 || ((ULONG)ready & ~mask) ||
+        cuis_call6(CUIS_INPUT_RESULT,session,(uintptr_t)&input[0],(uintptr_t)&input[1],
+            (uintptr_t)&input[2],(uintptr_t)&input[3],(uintptr_t)&input[4]) != E_OK ||
+        input[2] < 0 || input[2] > 32766 || input[3] < 0 || input[3] > 32766) goto failed;
+    t->mouse[0] = input[2]; t->mouse[1] = input[3]; t->mouse[2] = input[4] & 3;
+    /* A caller may already own BEG_MCTRL and retain an older release in
+     * its FIFO. Native tracking follows the currently held gesture, rather
+     * than finishing it from history while the button is still down. */
+    if (ready & CUIS_READY_BUTTON) {
+        if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global)) goto failed;
+        if (!track_pointer_valid()) goto failed;
+        return (t->mouse[2] & 255) != 0;
+    }
+    if (!track_pointer_valid()) goto failed;
+    return TRUE;
+failed:
+    aes_painter->ok = FALSE;
+    return FALSE;
+}
+static void track_graphics(void *argument)
+{
+    AES_TRACK *t = argument;
+    if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global) || !track_pointer_valid()) {
+        aes_painter->ok = FALSE; return;
+    }
+    if (t->kind == AES_TRACK_RUBBER)
+        gr_rubbox(t->box.g_x,t->box.g_y,t->box.g_w,t->box.g_h,&t->result1,&t->result2);
+    else if (t->kind == AES_TRACK_SLIDE) t->result1 = gr_slidebox(t->tree,0,1,t->vertical);
+    else gr_dragbox(t->box.g_w,t->box.g_h,t->box.g_x,t->box.g_y,&t->bounds,&t->result1,&t->result2);
+}
+BOOL aes_graphics_track(AES_TRACK *t)
+{
+    AES_TRACK *saved = aes_tracker;
+    OBJECT dummy = { 0 };
+    LONG session = aes_application_session(t->global);
+    BOOL mouse = FALSE, ok = FALSE;
+    if (session < 0 || !aes_frames_suspend()) return FALSE;
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto resume;
+    /* Do not wait on another client's gesture while excluding its drawing. */
+    mouse = cuis_call6(CUIS_MOUSE_LOCK,session,1,0,0,0,0) == E_OK;
+    if (mouse) {
+        dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
+        dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
+        aes_tracker = t;
+        ok = render(&dummy,0,0,0,0,32767,32767,t->global,FALSE,0,0,NULL,0,track_graphics,t) != 0;
+        aes_tracker = saved;
+    }
+    if (!ok) (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
+    if (mouse && cuis_call6(CUIS_MOUSE_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
+resume:
+    aes_frames_resume();
+    return ok;
+}
