@@ -24,6 +24,7 @@
 #endif
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
+#include "../aes/cuis_input.h"
 #endif
 #include "vdistub.h"
 #include "tosvars.h"
@@ -610,8 +611,10 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
 }
 #if CONF_WITH_CUIS
 static BOOL cuis_pointer_ready, cuis_pointer_active, cuis_pointer_hidden, cuis_pointer_valid;
-static MFORM cuis_pointer_form;
-void vdi_cuis_pointer(const MFORM *form, BOOL hidden)
+static MFORM cuis_pointer_form, cuis_pointer_requested_form;
+static BOOL cuis_pointer_pending, cuis_pointer_applying;
+static BOOL cuis_pointer_requested_default, cuis_pointer_requested_hidden;
+static void apply_cuis_pointer(const MFORM *form, BOOL hidden)
 {
     BOOL release_initial = FALSE;
     if (!cuis_pointer_ready || (!form && !cuis_pointer_active)) return;
@@ -632,6 +635,39 @@ void vdi_cuis_pointer(const MFORM *form, BOOL hidden)
     if (!hidden && cuis_pointer_hidden) dis_cur();
     cuis_pointer_hidden = hidden;
     if (release_initial) dis_cur();
+}
+
+/* IRQ handoffs retain a value copy until the outermost cursor operation ends.
+ * Applying a form itself calls the guarded helpers, so suppress nested flushes. */
+void vdi_cuis_pointer_flush(void)
+{
+    UQUAD flags = cuis_input_lock();
+    if (cuis_pointer_ready && cuis_pointer_pending &&
+        !linea_vars.mouse_flag && !cuis_pointer_applying) {
+        cuis_pointer_applying = TRUE;
+        cuis_pointer_pending = FALSE;
+        apply_cuis_pointer(cuis_pointer_requested_default ? NULL :
+                           &cuis_pointer_requested_form, cuis_pointer_requested_hidden);
+        cuis_pointer_applying = FALSE;
+    }
+    cuis_input_unlock(flags);
+}
+
+void vdi_cuis_pointer(const MFORM *form, BOOL hidden)
+{
+    UQUAD flags = cuis_input_lock();
+    cuis_pointer_requested_default = form == NULL;
+    if (form) cuis_pointer_requested_form = *form;
+    cuis_pointer_requested_hidden = hidden;
+    cuis_pointer_pending = TRUE;
+    vdi_cuis_pointer_flush();
+    cuis_input_unlock(flags);
+}
+
+void vdi_cuis_pointer_start(void)
+{
+    cuis_pointer_ready = TRUE;
+    cuis_pointer_sync();
 }
 #endif
 
@@ -716,6 +752,11 @@ void vdimouse_init(void)
         UBYTE yparam;
     } mouse_params = {0, 0, 1, 1};
 
+#if CONF_WITH_CUIS
+    cuis_pointer_ready = FALSE;
+    cuis_pointer_pending = cuis_pointer_applying = FALSE;
+    cuis_pointer_active = cuis_pointer_hidden = cuis_pointer_valid = FALSE;
+#endif
     /* Input must be initialized here and not in init_wk */
     linea_vars.loc_mode = 0;               /* default is request mode  */
     linea_vars.val_mode = 0;               /* default is request mode  */
@@ -755,11 +796,6 @@ void vdimouse_init(void)
 
     /* Initialize mouse via XBIOS in relative mode */
     Initmous(1, &mouse_params, mouse_int);
-#if CONF_WITH_CUIS
-    cuis_pointer_ready = TRUE;
-    cuis_pointer_active = cuis_pointer_hidden = cuis_pointer_valid = FALSE;
-    cuis_pointer_sync();
-#endif
 
 #if CONF_WITH_EXTENDED_MOUSE
     {
@@ -831,6 +867,18 @@ void vdimouse_exit(void)
 
 static void vb_draw(void)
 {
+#if CONF_WITH_CUIS
+    UQUAD flags = cuis_input_lock();
+    if (linea_vars.draw_flag && !linea_vars.mouse_flag) {
+        linea_vars.draw_flag = FALSE;
+        linea_vars.mouse_flag++;
+        cur_replace(mcs_ptr);
+        cur_display(&linea_vars.mouse_cdb, mcs_ptr, linea_vars.newx, linea_vars.newy);
+        linea_vars.mouse_flag--;
+    }
+    vdi_cuis_cursor_flush();
+    cuis_input_unlock(flags);
+#else
     disable_interrupts();
     if (linea_vars.draw_flag) {
         linea_vars.draw_flag = FALSE;
@@ -841,6 +889,7 @@ static void vb_draw(void)
         }
     } else
         enable_interrupts();
+#endif
 }
 
 

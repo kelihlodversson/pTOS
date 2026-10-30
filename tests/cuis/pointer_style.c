@@ -2,6 +2,7 @@
 static int pointer_style_checks(void)
 {
     LONG a,b,wa,wb;
+    CUIS_WINDOW *captured;
     MFORM *form = (MFORM *)stream_input;
     CHECK(sizeof(MFORM) == 74 && __builtin_offsetof(MFORM,mf_bg) == 6 && __builtin_offsetof(MFORM,mf_fg) == 8);
     run = &first; a = cuis_service(CUIS_SESSION_START,0);
@@ -41,6 +42,37 @@ static int pointer_style_checks(void)
     CHECK(cuis_mouse_lock(a,CUIS_MOUSE_FRESH,0) == E_OK && displayed_pointer.mf_fg == 1);
     CHECK(cuis_mouse_lock(a,0,0) == E_OK && (*find_owner(run))->pointer_style_set);
     CHECK(displayed_pointer.mf_fg == 2 && !displayed_hidden);
+    /* Content capture survives focus transfer, but hiding its window must
+     * publish the focused owner's cursor without requiring another packet. */
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wa,0,0,0,0) == E_OK);
+    pointer_suppressed = pointer_legacy_drag = FALSE;
+    CHECK(point_at(60,60,1) && pointer_capture && pointer_capture->handle == (ULONG)wa);
+    captured = pointer_capture;
+    run = &second;
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wb,0,0,0,0) == E_OK);
+    CHECK(displayed_pointer.mf_fg == 1 && displayed_hidden);
+    run = &first;
+    CHECK(cuis_window_service(CUIS_WINDOW_HIDE,wa,0,0,0,0) == E_OK);
+    CHECK(!pointer_capture && displayed_pointer.mf_fg == 2 && !displayed_hidden);
+    CHECK(point_at(60,60,0));
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wa,0,0,0,0) == E_OK);
+    pointer_capture = captured;
+    pointer_control_drag = TRUE;
+    run = &second;
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wb,0,0,0,0) == E_OK);
+    /* Focus transfer may itself invalidate border capture. Force a stale
+     * control capture to exercise cancellation independently of focus. */
+    pointer_capture = captured;
+    pointer_control_drag = TRUE;
+    cuis_pointer_sync();
+    CHECK(displayed_pointer.mf_fg == 1 && displayed_hidden);
+    cancel_controls(pointer_capture);
+    CHECK(!pointer_capture && displayed_pointer.mf_fg == 2 && !displayed_hidden);
     cuis_process_exit(&second);
     CHECK(displayed_pointer.mf_fg == 1 && displayed_hidden);
     cuis_process_exit(&first);

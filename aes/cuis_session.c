@@ -302,6 +302,7 @@ static void cancel_controls(CUIS_WINDOW *window)
     if (pointer_capture == window && pointer_control_drag) {
         pointer_capture = NULL; pointer_control_drag = FALSE;
         pointer_suppressed = pointer_buttons != 0;
+        cuis_pointer_sync();
     }
 }
 /* Only the front window may interpret border controls. Preserve that
@@ -650,6 +651,7 @@ static void hide_window(CUIS_WINDOW *window)
     if (pointer_hover == window) pointer_hover = NULL;
     if (focus_window == window) set_focus(window_front);
     route_pointer(0);
+    cuis_pointer_sync();
     cuis_input_unlock(flags);
     damage_windows();
 }

@@ -439,6 +439,8 @@ void timer_exit(void);
 void esc_exit(Vwk *);
 #if CONF_WITH_CUIS
 void vdi_cuis_cursor_flush(void);
+void vdi_cuis_pointer_flush(void);
+void vdi_cuis_pointer_start(void);
 #endif
 void mouse_int(UBYTE *buf);   /* mouse interrupt vector */
 void wheel_int(UBYTE *buf);   /* wheel interrupt routine */
