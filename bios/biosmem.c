@@ -84,6 +84,8 @@ static void process_memory_init(void)
         pool = POOL_MAX;
     if (pool < POOL_MIN)
         pool = POOL_MIN;
+    if (pool > avail)                   /* (an Amiga with 1 MiB of chip RAM: the pool is all of it) */
+        pool = avail;
     memtop = (UBYTE *)(((ULONG)membot + pool) & ~0xfffUL);
     pmem32_init(pmem32_phys(memtop), pmem32_phys(phystop));
 #if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM

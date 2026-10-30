@@ -56,11 +56,11 @@ const char *amiga_machine_name(void);
 void amiga_autoconfig(void);
 #if CONF_WITH_ALT_RAM
 void amiga_add_alt_ram(void);
+ULONG amiga_detect_ram(void *start, void *end, ULONG step);
+#endif
 #if CONF_WITH_PROCESS_ASPACES
 void amiga_process_memory_init(void);
 extern ULONG amiga_process_ram;     /* the bytes of the boards that are pages of the processes */
-#endif
-ULONG amiga_detect_ram(void *start, void *end, ULONG step);
 #endif
 ULONG amiga_initial_vram_size(void);
 void amiga_screen_init(void);

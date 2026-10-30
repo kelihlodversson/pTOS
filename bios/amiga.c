@@ -3068,27 +3068,39 @@ ULONG amiga_process_ram;
  */
 void amiga_process_memory_init(void)
 {
-    struct Node *node;
     PADDR first = 0;
 
-    for (node = boardList.lh_Head; node->ln_Succ; node = node->ln_Succ)
+    /* in ascending order of the addresses: pmem32_add() takes RAM above what it has,
+     * and the boards are in the order autoconfig found them in */
+    for (;;)
     {
-        struct ConfigDev *configDev = (struct ConfigDev *)node;
-        PADDR start = (PADDR)(uintptr_t)configDev->cd_BoardAddr;
+        struct Node *node;
+        struct ConfigDev *lowest = NULL;
 
-        if (!(configDev->cd_Rom.er_Type & ERTF_MEMLIST)
-            || (configDev->cd_Flags & (CDF_SHUTUP | CDF_PROCESSED)))
-            continue;
-        if (start < 0x00200000UL || start + configDev->cd_BoardSize > 0x00a00000UL)
-            continue;                   /* not in the window: left as it is */
+        for (node = boardList.lh_Head; node->ln_Succ; node = node->ln_Succ)
+        {
+            struct ConfigDev *configDev = (struct ConfigDev *)node;
+            PADDR start = (PADDR)(uintptr_t)configDev->cd_BoardAddr;
+
+            if (!(configDev->cd_Rom.er_Type & ERTF_MEMLIST)
+                || (configDev->cd_Flags & (CDF_SHUTUP | CDF_PROCESSED)))
+                continue;
+            if (start < 0x00200000UL || start + configDev->cd_BoardSize > 0x00a00000UL)
+                continue;               /* not in the window: left as it is */
+            if (!lowest || start < (PADDR)(uintptr_t)lowest->cd_BoardAddr)
+                lowest = configDev;
+        }
+        if (!lowest)
+            break;
 
         KDEBUG(("amiga_process_memory_init() RAM %p size=%lu\n",
-            configDev->cd_BoardAddr, (unsigned long)configDev->cd_BoardSize));
-        pmem32_add(start, start + configDev->cd_BoardSize);
-        amiga_process_ram += configDev->cd_BoardSize;
+            lowest->cd_BoardAddr, (unsigned long)lowest->cd_BoardSize));
+        pmem32_add((PADDR)(uintptr_t)lowest->cd_BoardAddr,
+                   (PADDR)(uintptr_t)lowest->cd_BoardAddr + lowest->cd_BoardSize);
+        amiga_process_ram += lowest->cd_BoardSize;
         if (!first)
-            first = start;
-        configDev->cd_Flags |= CDF_PROCESSED;
+            first = (PADDR)(uintptr_t)lowest->cd_BoardAddr;
+        lowest->cd_Flags |= CDF_PROCESSED;
     }
     if (first)
         pmem32_prefer(first);           /* the chip RAM is what the custom chips reach */

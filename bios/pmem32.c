@@ -81,8 +81,8 @@ void pmem32_add(PADDR start, PADDR end)
 
     if (e > WINDOW_END)
         e = WINDOW_END;
-    if (!npages || s < first_phys + (PADDR)npages * PMEM32_PAGE || e <= s)
-        return;                         /* only above what is managed already */
+    if (s < first_phys + (PADDR)npages * PMEM32_PAGE || e <= s)
+        return;                         /* only above what is managed already (or above where it begins, if it has nothing) */
     first = (ULONG)((s - first_phys) / PMEM32_PAGE);
     if (first >= MAX_PAGES)
         return;

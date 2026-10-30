@@ -123,6 +123,9 @@ C_SYM(cold_reset):
 #ifdef MACHINE_AMIGA
         clr.l   C_SYM(memvalid).w      // Invalidate memvalid
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)    // the tree that maps the low alias of the ROM
+#endif
 #if CONF_AMIGA_ROM_512K
         move.l  0x00f80004,a0   // Get the entry adress from offset 4 in the ROM (it starts at 0x00f80000)
 #else
