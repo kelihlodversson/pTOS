@@ -149,7 +149,15 @@ BOOL aspace_hw_init(void)
     kernel_root = read_crp();
 
     /* the page table of the kernel's low memory, supervisor only */
+#if CONF_AMIGA_HIGHER_HALF
+    /* from the chip RAM that is left if there is some, so that a board of 2 MiB
+     * stays whole for the process window that is allocated next */
+    low_page_table = pmem32_alloc_low(1, 1);
+    if (low_page_table == PMEM32_NONE)
+        low_page_table = pmem32_alloc(1, 1);
+#else
     low_page_table = pmem32_alloc(1, 1);
+#endif
     if (low_page_table == PMEM32_NONE)
         return FALSE;
     memset(pmem32_virt(low_page_table), 0, PAGE);

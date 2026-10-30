@@ -237,7 +237,11 @@ BOOL aspace_hw_init(void)
      * where the pages above the chip RAM may be all there is, from any page: only
      * the custom chips want the chip RAM, and the CPU walks this table) */
 #if CONF_AMIGA_HIGHER_HALF
-    low_page_table = pmem32_alloc(1, 1);
+    /* from the chip RAM that is left if there is some, so that a board of 2 MiB
+     * stays whole for the process window that is allocated next */
+    low_page_table = pmem32_alloc_low(1, 1);
+    if (low_page_table == PMEM32_NONE)
+        low_page_table = pmem32_alloc(1, 1);
 #else
     low_page_table = pmem32_alloc_low(1, 1);
 #endif
