@@ -392,6 +392,12 @@ short mt_wind_set_str(short id, short field, const char *text, short *global);
 #define W_HELEV 18
 #endif
 short fsel_input(char *path, char *selection, short *button);
+short shel_read(char *command, char *tail);
+short mt_shel_read(char *command, char *tail, short *global);
+short shel_find(char *path);
+short mt_shel_find(char *path, short *global);
+short shel_envrn(char **result, const char *prefix);
+short mt_shel_envrn(char **result, const char *prefix, short *global);
 short mt_fsel_input(char *path, char *selection, short *button, short *global);
 short fsel_exinput(char *path, char *selection, short *button, const char *title);
 short mt_fsel_exinput(char *path, char *selection, short *button, const char *title, short *global);
