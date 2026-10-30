@@ -35,12 +35,11 @@ use_gui=no
 kickstart_rom_file={rom}
 cpu_model={cpu}
 mmu_model={cpu}
-cpu_compatible=false
+cpu_compatible={compatible}
 cpu_24bit_addressing=false
 cpu_speed=max
 cpu_cycle_exact={cycle_exact}
 cpu_data_cache={caches}
-cpu_instruction_cache={caches}
 chipmem_size=4
 fastmem_size=8
 chipset=aga
@@ -54,11 +53,6 @@ DISK_CONFIG = """chipset_compatible=A1200
 ide=a600/a1200
 uaehf0=hdf,rw,DH0:{disk},32,1,2,512,0,,ide0_mainboard
 """
-
-
-def socket_path():
-    runtime = os.environ.get('XDG_RUNTIME_DIR')
-    return os.path.join(runtime or '/tmp', 'amiberry.sock')
 
 
 def ipc(path, line, timeout=10.0):
@@ -81,21 +75,23 @@ def ipc(path, line, timeout=10.0):
 def start(amiberry, rom, cpu, disk=None, caches=False, cycle_exact=False):
     """Start the emulator, headless, on a ROM (and an image of a hard disk),
     and wait for its IPC socket: returns (the process, the socket path, the
-    directory of its configuration and log)."""
+    directory of its configuration and log).  The socket is in a runtime
+    directory of its own, so that no other emulator of the user is touched."""
     work = tempfile.mkdtemp(prefix='amiberry-tests-')
     cfg = os.path.join(work, 'amiga.uae')
     with open(cfg, 'w') as f:
         f.write(CONFIG.format(rom=os.path.abspath(rom), cpu=cpu,
                               caches='true' if caches else 'false',
+                              # the data cache is only emulated in the compatible mode
+                              compatible='true' if caches else 'false',
                               cycle_exact='true' if cycle_exact else 'false'))
         if disk:
             f.write(DISK_CONFIG.format(disk=os.path.abspath(disk)))
-    path = socket_path()
-    try:
-        os.unlink(path)                 # (a killed emulator leaves its socket behind)
-    except OSError:
-        pass
-    env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
+    runtime = os.path.join(work, 'run')
+    os.mkdir(runtime, 0o700)
+    path = os.path.join(runtime, 'amiberry.sock')
+    env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy',
+               XDG_RUNTIME_DIR=runtime)
     with open(os.path.join(work, 'amiberry.log'), 'w') as out:
         proc = subprocess.Popen([amiberry, '--log', '-G', '-f', cfg], env=env,
                                 stdout=out, stderr=subprocess.STDOUT,
@@ -108,9 +104,9 @@ def start(amiberry, rom, cpu, disk=None, caches=False, cycle_exact=False):
     return proc, path, work
 
 
-def stop(proc):
+def stop(proc, path):
     try:
-        ipc(socket_path(), 'QUIT', 3)
+        ipc(path, 'QUIT', 3)
     except (OSError, socket.timeout):
         pass
     time.sleep(1)
@@ -139,6 +135,7 @@ def main():
         sys.exit('run-amiberry: no emulator at %s (doc/debugging.txt)' % a.amiberry)
     status = 0
     proc = None
+    path = None
     try:
         proc, path, work = start(a.amiberry, a.rom, a.cpu, a.disk, a.caches, a.cycle_exact)
         time.sleep(a.wait)
@@ -155,7 +152,7 @@ def main():
         status = 1
     finally:
         if proc:
-            stop(proc)
+            stop(proc, path)
     return status
 
 

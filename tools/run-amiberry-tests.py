@@ -13,7 +13,7 @@ a test at a time, and this script reads the file from a copy of the image
 (mtools) until the summary is there.  It fails on a failed test, on a missing
 summary within the timeout, and when the emulator stops.  The log is printed.
 
-Needs mtools (mtype) on the host.  The emulator is the pinned Amiberry
+Needs mtools (mtype, mdel) on the host.  The emulator is the pinned Amiberry
 (doc/debugging.txt), $AMIBERRY or --amiberry.
 
 Copyright (C) 2026 The pTOS development team.
@@ -54,6 +54,16 @@ def read_log(image):
     return r.stdout.decode(errors='replace').replace('\r', '') if r.returncode == 0 else ''
 
 
+def clear_log(image):
+    """Remove a RUNTESTS.LOG that the disk already has (a disk that was run
+    before), so that only this run can make the one that is read."""
+    mt = ['-i', '%s@@%d' % (image, PARTITION_OFFSET)]
+    if subprocess.run(['mtype'] + mt + ['::RUNTESTS.LOG'], stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL, timeout=30).returncode != 0:
+        return                          # not there
+    subprocess.run(['mdel'] + mt + ['::RUNTESTS.LOG'], check=True, timeout=30)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--rom', required=True)
@@ -67,18 +77,24 @@ def main():
 
     if not os.path.exists(a.amiberry):
         sys.exit('run-amiberry-tests: no emulator at %s (doc/debugging.txt)' % a.amiberry)
-    if shutil.which('mtype') is None:
-        sys.exit('run-amiberry-tests: mtools is needed (mtype)')
+    if shutil.which('mtype') is None or shutil.which('mdel') is None:
+        sys.exit('run-amiberry-tests: mtools is needed (mtype, mdel)')
 
     ra = load_runner()
     work = tempfile.mkdtemp(prefix='amiberry-disk-')
     image = os.path.join(work, 'test-hd.img')           # (the emulator writes to it)
     shutil.copy(a.disk, image)
+    try:
+        clear_log(image)
+    except (OSError, subprocess.SubprocessError) as e:
+        shutil.rmtree(work, ignore_errors=True)
+        sys.exit('run-amiberry-tests: cannot clear the old RUNTESTS.LOG of the disk: %s' % e)
 
     proc = None
+    path = None
     text = ''
     try:
-        proc, _, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches)
+        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches)
         deadline = time.time() + a.timeout
         while time.time() < deadline:
             time.sleep(5)
@@ -91,7 +107,7 @@ def main():
                 break
     finally:
         if proc:
-            ra.stop(proc)
+            ra.stop(proc, path)
         text = read_log(image) or text
         shutil.rmtree(work, ignore_errors=True)
 

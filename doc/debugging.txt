@@ -229,9 +229,11 @@ a 68060 in software.
 
 tools/run-amiberry.py writes the configuration of the run (a 32-bit CPU of the
 given model with its MMU emulated, JIT and cycle-exact off, caches off unless
---caches, no sound, no floppy), starts the emulator headless (SDL's dummy
-video driver) and talks to it through its IPC socket
-($XDG_RUNTIME_DIR/amiberry.sock; docs/ipc.md of Amiberry): the registers
+--caches, which also makes the CPU compatible, as the data cache is only
+emulated in that mode; no sound, no floppy), starts the emulator headless
+(SDL's dummy video driver) and talks to it through its IPC socket
+(amiberry.sock in a runtime directory of the run's own, so that an emulator
+of the user is never touched; docs/ipc.md of Amiberry): the registers
 (GET_CPU_REGS), memory (READ_MEM <addr> <width>, WRITE_MEM), disassembly,
 breakpoints and stepping (DEBUG_*, SET_BREAKPOINT), screenshots and the CPU
 model.  Verified: the ROM reaches the desktop on a 68030, a 68040 and a
