@@ -110,8 +110,10 @@ def screen_text(avi, glyphs):
 
 
 SUMMARY = re.compile(r'--- Summary: (\d+) passed, (\d+) failed, (\d+) total ---')
-# the first line of dopanic()'s output (bios/kprint.c), which kprintf() sends to the log
-PANIC = re.compile(r'^Panic: ', re.M)
+# the first line of dopanic()'s output (bios/kprint.c), which kprintf() sends to
+# the log; not anchored, as the line of a test whose result is not printed yet
+# ("  name... ") is still open when the panic starts
+PANIC = re.compile(r'Panic: ')
 MUST_RUN = ('text_blit', 'raster_copy')
 
 

@@ -356,6 +356,7 @@ void dopanic(const char *fmt, ...)
         } *s = (void *)proc_stk;
 
         va_list ap;
+        kcprintf("Panic: ");    /* as the exceptions below: tools/run-hatari-tests.py */
         va_start(ap, fmt);
         vkcprintf(fmt, ap);
         va_end(ap);
