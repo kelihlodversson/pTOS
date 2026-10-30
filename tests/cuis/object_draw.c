@@ -912,7 +912,7 @@ static int tracking_checks(void)
 {
     OBJECT tree[2] = { { 0 } };
     WORD x,y,rx = -1,ry = -1;
-    int damaged;
+    int damaged, display_releases, pointer_releases;
     VERIFY(OF_FL3DMASK == 0x600);
     VERIFY((OF_FL3DIND & OF_FL3DMASK) == OF_FL3DIND);
     VERIFY((OF_FL3DBAK & OF_FL3DMASK) == OF_FL3DBAK);
@@ -967,8 +967,19 @@ static int tracking_checks(void)
     VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 0 && rx == -1 && ry == -1);
     mouse_error = FALSE;
     VERIFY(graf_dragbox(0,20,0,0,0,0,100,90,&rx,&ry) == 0);
+    /* Oversized public drag boxes cannot fit. Reject before acquiring any
+     * ownership or drawing, with caller outputs and input history untouched. */
+    tracking_events(80,70); damaged = opens;
+    display_releases = releases; pointer_releases = mouse_releases;
+    VERIFY(graf_dragbox(100,20,0,0,0,0,50,90,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    VERIFY(mt_graf_dragbox(20,100,0,0,0,0,100,90,&rx,&ry,aes_global) == 0 && rx == -1 && ry == -1);
+    VERIFY(opens == damaged && !gesture_at && !nesting && !mouse_nesting && !frame_overlay_depth);
+    VERIFY(releases == display_releases && mouse_releases == pointer_releases);
+    tracking_events(80,70);
+    VERIFY(graf_dragbox(100,90,0,0,0,0,100,90,&rx,&ry) == 1 && rx == 0 && ry == 0);
     VERIFY(!nesting && !mouse_nesting && opens == closes && !bad_overlay_scope && !frame_overlay_depth);
     tracking_mode = FALSE; gesture_count = gesture_at = 0;
+    mouse_x = mouse_y = 50;
     __builtin_memset(image,0,sizeof(image));
     return 0;
 }

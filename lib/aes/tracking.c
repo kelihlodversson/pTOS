@@ -26,7 +26,7 @@ WORD mt_graf_dragbox(WORD w, WORD h, WORD x, WORD y, WORD bx, WORD by, WORD bw, 
                      WORD *rx, WORD *ry, WORD *global)
 {
     AES_TRACK t = { 0 };
-    if (!rx || !ry || !rectangle(x,y,w,h) || !rectangle(bx,by,bw,bh)) return 0;
+    if (!rx || !ry || !rectangle(x,y,w,h) || !rectangle(bx,by,bw,bh) || w > bw || h > bh) return 0;
     t.kind = AES_TRACK_DRAG; t.global = global;
     t.box.g_x = x; t.box.g_y = y; t.box.g_w = w; t.box.g_h = h;
     t.bounds.g_x = bx; t.bounds.g_y = by; t.bounds.g_w = bw; t.bounds.g_h = bh;
