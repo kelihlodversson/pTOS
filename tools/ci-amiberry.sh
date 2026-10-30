@@ -23,7 +23,7 @@
 
 set -u
 
-combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060"}
+combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060 amiga-aspace:68030"}
 mkdir -p logs
 failed=
 
@@ -40,6 +40,32 @@ for combo in $combos; do
         echo "::endgroup::"
         continue
     fi
+
+    # an image with an address space for every process has no desktop: the
+    # harness is the shell (make test-hd-shell), it halts the machine when it
+    # is done, and the suite is the whole check
+    case $config in
+    *aspace*)
+        if make test-hd-shell >"logs/$name.testdisk" 2>&1; then
+            for mode in "" "--caches"; do
+                suffix=${mode:+-caches}
+                if python3 tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd-shell.img \
+                    --cpu "$cpu" $mode >"logs/$name$suffix-tests.log" 2>&1; then
+                    echo "$name${suffix:+ ($suffix)}: $(grep 'Summary' "logs/$name$suffix-tests.log")"
+                else
+                    echo "::error::$name$suffix: the tests failed (logs/$name$suffix-tests.log)"
+                    grep -E 'FAIL|Summary|run-amiberry-tests' "logs/$name$suffix-tests.log" | head -20
+                    failed="$failed $name$suffix"
+                fi
+            done
+        else
+            echo "::error::$name: the test disk was not made (logs/$name.testdisk)"
+            failed="$failed $name"
+        fi
+        echo "::endgroup::"
+        continue
+        ;;
+    esac
 
     idle=$(awk '/^ +0x[0-9a-f]+ +stop_until_interrupt$/ { print $1; exit }' emutos.map)
     if [ -z "$idle" ]; then
