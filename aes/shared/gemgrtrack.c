@@ -205,5 +205,3 @@ WORD gr_slidebox(OBJECT *tree, WORD parent, WORD obj, WORD isvert)
     else
         return 0;
 }
-
-
