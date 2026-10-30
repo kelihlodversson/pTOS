@@ -2754,12 +2754,23 @@ static BOOL configure_zorro2_board(APTR board, struct ConfigDev *configDev)
 #define ZORRO3_SPACE_END    (EZ3_CONFIGAREAEND + 1UL)
 #define ZORRO3_SLOT_SIZE    0x01000000
 
+#if CONF_AMIGA_HIGHER_HALF_68040
+/* The tree of the 68040 and the 68060 maps the 24 bits only (amiga_mmu040.S):
+ * a board above them (Zorro III) cannot be probed, nor used as RAM */
+#define BOARD_UNMAPPED(configDev) ((ULONG)(configDev)->cd_BoardAddr >= 0x01000000UL)
+#else
+#define BOARD_UNMAPPED(configDev) 0
+#endif
+
 /* Probe a board for actual RAM size */
 static void autosize_ramboard(struct ConfigDev *configDev)
 {
     UBYTE *start;
     ULONG maxsize;
     ULONG actualsize;
+
+    if (BOARD_UNMAPPED(configDev))
+        return;
 
     KDEBUG(("autosize_ramboard() configDev=%p cd_BoardSize=0x%08lx\n",
         configDev, configDev->cd_BoardSize));
@@ -3009,6 +3020,15 @@ static void add_ram_from_board(struct ConfigDev *configDev)
     /* Skip already processed boards */
     if (configDev->cd_Flags & (CDF_SHUTUP | CDF_PROCESSED))
         return;
+
+    /* Skip the RAM that the tree of the 68040 and the 68060 does not map */
+    if (BOARD_UNMAPPED(configDev))
+    {
+        KDEBUG(("*** Expansion RAM not used: configDev=%p cd_BoardAddr=%p is not mapped\n",
+            configDev, configDev->cd_BoardAddr));
+        configDev->cd_Flags |= CDF_PROCESSED;
+        return;
+    }
 
     KDEBUG(("*** Expansion RAM found: configDev=%p cd_BoardAddr=%p cd_BoardSize=%lu\n",
         configDev, configDev->cd_BoardAddr, configDev->cd_BoardSize));
