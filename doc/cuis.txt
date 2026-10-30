@@ -2326,3 +2326,61 @@ sizes. Standard GEM clients built against unmodified GEMlib headers exercise
 field semantics, page holds and both orientations in blocking/polling drags.
 The expanded combined QEMU forms/window suite has a 90-second CI budget.
 HOTCLOSE and the remaining unimplemented window extensions are still rejected.
+
+Graphics handle and cursor bindings (#803)
+-----------------------------------------
+
+External libaes provides standard graf_handle/mt_graf_handle and
+graf_mouse/mt_graf_mouse. The graphics handle is a persistent, process-owned
+screen workstation, usable in the ordinary graf_handle/v_opnvwk startup
+sequence. Character and box metrics use the same system-font/aspect calculation
+as resource, form and window layout. Repeated calls retain the handle;
+closing an application's separate virtual workstation does not close it.
+Invalidated handles are reopened, transient checks fail without dropping the
+cached handle, and appl_exit/reset closes the private workstation. Failure
+returns GEM 0 without changing caller metric outputs; optional output pointers
+may be NULL. Headless clients retain the existing failure behavior when typed
+VDI is unavailable.
+
+Cursor forms are generated from the original aes/mform.rsc/.def data with the
+existing mrd tool, rather than copied or redrawn. The eight native forms,
+USER_DEF, counted M_OFF/M_ON, M_SAVE/M_RESTORE and M_LAST/M_PREVIOUS are
+implemented. Form arguments for modes that do not use them are ignored.
+Native invalid-low-mode fallback and unknown-high-mode no-op behavior remain.
+Current, previous and saved forms and the hide depth are private to each
+application; USER_DEF copies caller data before returning. Failed transport
+calls do not replace that state. The public MFORM spelling, colour-field
+order and signed WORD arrays match GEMlib. Native VDI words remain unchanged:
+the internal mask/data colour names differ historically from GEMlib's public
+names. Resource data and custom records pass through in their original word
+order. The native kernel's MFORM view is unchanged.
+
+CUIS_POINTER_STYLE (58) takes (owned_session, form_address, hide_depth), with
+one fixed 74-byte VDI pointer bitmap and depth 0..32767. It returns E_OK or a
+negative native error. It never retains the supplied address, interprets GEM
+mode numbers, or negotiates a protocol. CUIS stores a bounded form copy and
+selects the mouse-grab/capture owner, the input owner of a top strip under the pointer,
+the focused window's client, or the active windowless fallback. Background
+updates remain pending. Focus/strip crossings, grab release, application exit
+and physical display reinitialization restore the appropriate client's form
+and visibility. VDI performs the actual cursor drawing using its original
+form conversion, hide/show and save/restore routines. CUIS contributes one
+balanced visibility overlay, independent of temporary VDI drawing hides;
+nested client hides do not wrap the hardware hide count. No cursor becomes
+visible solely because an old client opens a workstation. The first explicit
+cursor request enters normal pointer display behavior. Ending the last cursor
+owner restores the default form and releases its hide contribution.
+
+All kernel storage, routing and VDI hooks are CONF_WITH_CUIS-gated. Native
+non-CUIS cursor code, resource forms and ROM object lists retain their prior
+behavior. Host sanitizer tests cover metric/handle failures and caching,
+public/native record layouts, copied/saved/previous forms, counted visibility,
+failed mutations, session initialization, foreign ownership, top-strip
+crossings, normal/fresh grabs and teardown. The real x32 GEM fixture builds
+against unmodified GEMlib headers, uses standard graphics/virtual-workstation
+startup signatures over the existing VDI transport, compares cursor pixels
+with native pen swatches, checks background restoration and nested visibility,
+and verifies restoration after an isolated child exits with outstanding hides
+and an open window. The existing input/window/forms/menu/pixel tests continue
+with the application's cursor hidden. Public drag/rubber/slide helper APIs and
+additional graphics extensions remain subsequent work.

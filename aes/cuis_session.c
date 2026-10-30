@@ -8,6 +8,7 @@
 #include "gemerror.h"
 #include "kheap.h"
 #include "string.h"
+#include "mform.h"
 #include "../bdos/kproc.h"
 
 extern PD *run;
@@ -89,6 +90,9 @@ typedef struct cuis_client {
     CUIS_POINTER saved_edges[CUIS_POINTER_CAPACITY];
     ULONG saved_head, saved_count, saved_recent_count, saved_recent_buttons;
     BOOL isolated_mouse;
+    BOOL pointer_style_set;
+    UWORD pointer_hidden;
+    MFORM pointer_style;
     CUIS_INPUT_FILTER input_filter;
     CUIS_INPUT_WAIT *input_wait; /* Resident syscall stack, only while blocked. */
     ULONG keys[CUIS_KEY_CAPACITY];
@@ -139,6 +143,25 @@ static void surface_remove(CUIS_CLIENT *client)
     if (*link) *link = client->surface_next;
     client->surface_next = NULL;
 }
+extern void vdi_cuis_pointer(const MFORM *form, BOOL hidden);
+static CUIS_CLIENT *pointer_fallback;
+/* VDI owns the pixels. CUIS retains bounded data, never a caller address. */
+void cuis_pointer_sync(void)
+{
+    UQUAD flags = cuis_input_lock();
+    CUIS_CLIENT *owner = mouse_owner ? mouse_owner :
+        pointer_capture ? pointer_capture->client : surface_capture ? surface_capture :
+        surface_owner && pointer_initialized && pointer_y < surface_height ? surface_owner :
+        focus_window ? focus_window->client : surface_owner;
+    if (!pointer_fallback || !pointer_fallback->pointer_style_set) {
+        for (pointer_fallback = clients; pointer_fallback && !pointer_fallback->pointer_style_set;
+             pointer_fallback = pointer_fallback->next) ;
+    }
+    if (!owner) owner = pointer_fallback;
+    vdi_cuis_pointer(owner && owner->pointer_style_set ? &owner->pointer_style : NULL,
+                     owner && owner->pointer_hidden);
+    cuis_input_unlock(flags);
+}
 static void surface_choose(CUIS_CLIENT *client)
 {
     UWORD height = surface_height;
@@ -161,6 +184,7 @@ static void surface_choose(CUIS_CLIENT *client)
             client->surface_events |= CUIS_SURFACE_POINTER;
     }
     if (height != (client ? client->surface_height : 0)) damage_windows();
+    cuis_pointer_sync();
 }
 static void surface_fallback(CUIS_CLIENT *exclude);
 static void surface_register(CUIS_CLIENT *client, UWORD height)
@@ -278,6 +302,7 @@ static void cancel_controls(CUIS_WINDOW *window)
     if (pointer_capture == window && pointer_control_drag) {
         pointer_capture = NULL; pointer_control_drag = FALSE;
         pointer_suppressed = pointer_buttons != 0;
+        cuis_pointer_sync();
     }
 }
 /* Only the front window may interpret border controls. Preserve that
@@ -318,6 +343,7 @@ static BOOL set_focus(CUIS_WINDOW *window)
         focus_window = window;
         surface_focus_pending = TRUE;
         surface_focus();
+        cuis_pointer_sync();
     }
     cuis_input_unlock(flags);
     return changed;
@@ -581,6 +607,7 @@ BOOL cuis_pointer_packet(WORD dx, WORD dy, ULONG buttons, LONG *out_x, LONG *out
             route_pointer(0); /* No foreign release without its matching press. */
         }
     } else consumed = route_pointer(old ^ pointer_buttons);
+    cuis_pointer_sync();
     sample_input_waits();
     if (!pointer_buttons) pointer_control_drag = FALSE;
     cuis_input_unlock(flags);
@@ -624,6 +651,7 @@ static void hide_window(CUIS_WINDOW *window)
     if (pointer_hover == window) pointer_hover = NULL;
     if (focus_window == window) set_focus(window_front);
     route_pointer(0);
+    cuis_pointer_sync();
     cuis_input_unlock(flags);
     damage_windows();
 }
@@ -654,6 +682,20 @@ static BOOL display_available(void *argument)
     return !display_owner && !update_owner;
 }
 
+LONG cuis_pointer_style(UQUAD handle, UQUAD address, UQUAD hidden)
+{
+    CUIS_CLIENT *client = *find_owner(run);
+    MFORM form;
+    UQUAD flags;
+    if (handle > 0x7fffffffULL || hidden > 32767) return EINVAL;
+    if (!client || handle != client->handle) return EACCDN;
+    if (!address || !kproc_copy_from_user(&form,address,sizeof(form))) return EIMBA;
+    flags = cuis_input_lock();
+    client->pointer_style = form; client->pointer_style_set = TRUE;
+    client->pointer_hidden = hidden;
+    cuis_pointer_sync();
+    cuis_input_unlock(flags); return E_OK;
+}
 LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
 {
     CUIS_CLIENT *client;
@@ -832,6 +874,7 @@ static void end_mouse(void)
         client->isolated_mouse = FALSE;
     }
     surface_focus();
+    cuis_pointer_sync();
     sample_input_waits();
 }
 
@@ -867,6 +910,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             }
             for (window = window_front; window; window = window->znext) cancel_controls(window);
             mouse_owner = client; mouse_depth = 1;
+            cuis_pointer_sync();
             pointer_capture = NULL;
             route_pointer(0);
             sample_input_waits();
@@ -886,6 +930,8 @@ void cuis_process_exit(PD *owner)
         CUIS_WINDOW *window;
         UQUAD flags = cuis_input_lock();
         client->input_wait = NULL;
+        client->pointer_style_set = FALSE; client->pointer_hidden = 0;
+        if (pointer_fallback == client) pointer_fallback = NULL;
         if (surface_painter == client) { surface_painter = NULL; surface_paint_height = 0; }
         client->surface_height = 0; surface_remove(client);
         if (surface_capture == client) { surface_capture = NULL; pointer_suppressed = pointer_buttons != 0; }
@@ -902,6 +948,7 @@ void cuis_process_exit(PD *owner)
         }
         flags = cuis_input_lock();
         surface_focus();
+        cuis_pointer_sync();
         cuis_input_unlock(flags);
         *link = client->next;
         if (client->stream_data) kfree(client->stream_data);
@@ -965,6 +1012,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
         client->isolated_mouse = FALSE;
+        client->pointer_style_set = FALSE; client->pointer_hidden = 0;
         client->surface_height = client->surface_events = 0; client->surface_next = NULL;
         client->key_head = client->key_count = 0;
         memset(&client->input_filter, 0, sizeof(client->input_filter));

@@ -31,6 +31,16 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                     "--config", "configs/pc-x86_64_defconfig", "--header",
                     str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")],
                    check=True)
+    subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) + ["-DMFORM_RSC", "tools/erd.c", "-o", str(work / "mrd")], check=True)
+    subprocess.run([str(work / "mrd"), "-pmform", "aes/mform", str(work / "mforms")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes", "-Iaes/shared",
+                "-include", "gem.h", "tests/cuis/graphics.c", "lib/aes/graphics.c", "lib/aes/layout.c", str(work / "mforms.c"),
+                "-o", str(work / "graphics")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "graphics")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-ffunction-sections", "-fdata-sections", "-fno-builtin",

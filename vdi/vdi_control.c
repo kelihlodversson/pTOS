@@ -663,6 +663,9 @@ void vdi_v_opnwk(Vwk * vwk)
 
     /* Just like TOS 2.06, make the physical workstation the current workstation for Line-A. */
     linea_vars.CUR_WORK = vwk;
+#if CONF_WITH_CUIS
+    vdi_cuis_pointer_start();   /* framebuffer initialization is complete */
+#endif
 }
 
 

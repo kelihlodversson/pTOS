@@ -6,6 +6,9 @@
 #include "obdefs.h"
 #include "rsdefs.h"
 #include "gemmenu.h"
+#define AES_GEM_TYPES
+#include "mform.h"
+#undef AES_GEM_TYPES
 
 #ifdef __cplusplus
 extern "C" {
@@ -131,6 +134,34 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
                     short message[], unsigned long interval, short *mx, short *my,
                     short *buttons, short *modifiers, short *key, short *click_count, short *global_aes);
+short graf_handle(short *wchar, short *hchar, short *wbox, short *hbox);
+short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, short *global);
+short graf_mouse(short mode, const MFORM *form);
+short mt_graf_mouse(short mode, const MFORM *form, short *global);
+#ifndef ARROW
+#define ARROW 0
+#define TEXT_CRSR 1
+#define HOURGLASS 2
+#define POINT_HAND 3
+#define FLAT_HAND 4
+#define THIN_CROSS 5
+#define THICK_CROSS 6
+#define OUTLN_CROSS 7
+#define USER_DEF 255
+#define M_OFF 256
+#define M_ON 257
+#define M_SAVE 258
+#define M_RESTORE 259
+#define M_PREVIOUS 260
+#endif
+#ifndef M_LAST
+#define M_LAST 260
+#endif
+#ifndef BEE
+#define BEE 2
+#define BUSY_BEE BEE
+#define BUSYBEE BEE
+#endif
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers);
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
 #ifndef WM_REDRAW

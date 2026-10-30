@@ -4,6 +4,13 @@
 const char *kproc_executable_name(PD *pd);
 #include "../../aes/cuis_session.c"
 
+static MFORM displayed_pointer;
+static BOOL displayed_hidden, displayed_style;
+void vdi_cuis_pointer(const MFORM *form, BOOL hidden)
+{
+    displayed_style = form != NULL; displayed_hidden = hidden;
+    if (form) displayed_pointer = *form;
+}
 static PD first, second, third, fourth, fifth;
 PD *run = &first;
 static union {
@@ -254,6 +261,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "mouse_control.c"
 #include "surfaces.c"
 #include "controls.c"
+#include "pointer_style.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -336,5 +344,7 @@ int main(void)
     rc = surface_checks();
     if (rc) return rc;
     rc = surface_cleanup_checks();
-    return rc ? rc : control_checks();
+    if (rc) return rc;
+    rc = control_checks();
+    return rc ? rc : pointer_style_checks();
 }

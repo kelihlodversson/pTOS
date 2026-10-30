@@ -44,6 +44,59 @@ void gem_menubar_input_stage(short stage)
     ptos_write(1,message,sizeof(message)-1);
 }
 /* Compiles against unmodified GEMlib as well as the kernel's GEM header. */
+static int graphics_checks(void)
+{
+    short physical, virtual_handle, w,h,bw,bh,x,y, color, pen, background, i;
+    short input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, output[57], global[15];
+    MFORM custom = { 0 };
+    short native_form[37] = { 0 };
+    static const char ready[] = "x32 GEM graphics: READY\r\n";
+    static const char pass[] = "x32 GEM graphics setup/cursors: PASS\r\n";
+    for (i = 0; i < 15; i++) global[i] = aes_global[i];
+    physical = mt_graf_handle(&w,&h,&bw,&bh,global);
+    VERIFY(physical > 0 && w > 0 && h > 0 && bw >= w+4 && bh == h+3);
+    VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
+    virtual_handle = physical; v_opnvwk(input,&virtual_handle,output);
+    VERIFY(virtual_handle > 0 && virtual_handle != physical && output[0] > 0 && output[1] > 0);
+    v_clsvwk(virtual_handle);
+    VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
+    ptos_write(1,ready,sizeof(ready)-1);
+    do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(&x,&y,NULL,NULL) == 1); } while (x != 300 || y != 250);
+    VERIFY(evnt_timer(20) == 1);
+    background = gem_probe_pixel(physical,x,y);
+    pen = 1;
+    VERIFY(gem_probe_swatch(physical,x+30,y,pen,&color) == 0);
+    if (background == color) { pen = 0; VERIFY(gem_probe_swatch(physical,x+30,y,pen,&color) == 0); }
+    VERIFY(color != background);
+    /* Keep native VDI word order explicit: GEMlib's historical colour
+     * field names differ from the internal VDI names. Bytes are unchanged. */
+    native_form[2] = 1; native_form[4] = pen;
+    __builtin_memcpy(&custom,native_form,sizeof(custom));
+    custom.mf_mask[0] = custom.mf_data[0] = (short)0x8000;
+    VERIFY(mt_graf_mouse(USER_DEF,&custom,global) == 1);
+    VERIFY(gem_probe_pixel(physical,x,y) == color);
+    VERIFY(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1);
+    VERIFY(gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_ON,NULL) == 1 && gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_ON,NULL) == 1 && gem_probe_pixel(physical,x,y) == color);
+    VERIFY(graf_mouse(M_SAVE,NULL) == 1);
+    custom.mf_data[0] = custom.mf_mask[0] = 0;
+    VERIFY(graf_mouse(USER_DEF,&custom) == 1 && gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_RESTORE,NULL) == 1 && gem_probe_pixel(physical,x,y) == color);
+    VERIFY(graf_mouse(M_PREVIOUS,NULL) == 1 && gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_PREVIOUS,NULL) == 1 && gem_probe_pixel(physical,x,y) == color);
+    {
+        char child_tail[3] = { 1,'g',0 };
+        VERIFY(process(0x4b,0,(uintptr_t)"\\GEMDRAW.TOS",(uintptr_t)child_tail,0) == 0);
+        VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
+        VERIFY(gem_probe_pixel(physical,x,y) == color);
+    }
+    for (i = 0; i < 8; i++) VERIFY(graf_mouse(i,NULL) == 1);
+    VERIFY(graf_mouse(M_OFF,NULL) == 1); /* Keep pixel fixtures cursor-free. */
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
 static int control_checks(void)
 {
     short id, stage, result, message[8], x,y,w,h, buttons;
@@ -395,6 +448,15 @@ int main(int argc, char **argv, char **envp)
     (void)argv; (void)envp;
     VERIFY(appl_init() > 0 && mt_appl_init(global) > 0);
     object(&box,G_BOX,0,0,100,100); box.ob_spec.index = 0x1170;
+    if (argc > 1 && argv[1][0] == 'g') {
+        short window = wind_create(0,0,0,80,70);
+        VERIFY(window > 0 && graf_mouse(HOURGLASS,NULL) == 1);
+        VERIFY(wind_open(window,280,230,80,70) == 1 && wind_set(window,WF_TOP,0,0,0,0) == 1);
+        VERIFY(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1);
+        /* Deliberately exit with outstanding hides and an open window. */
+        VERIFY(appl_exit() == 1);
+        return 0;
+    }
     if (argc > 1 && argv[1][0] == 'l') {
         short parent = (short)process(0x10c,0,0,0,0);
         VERIFY(parent > 0 && wind_update(BEG_UPDATE) == 1);
@@ -488,6 +550,7 @@ int main(int argc, char **argv, char **envp)
         short overlay_window;
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
         VERIFY(process(0x3e,status,0,0,0) == 0);
+        status = graphics_checks(); if (status) return status;
         status = control_checks(); if (status) return status;
         status = arrow_checks(); if (status) return status;
         status = slider_checks(); if (status) return status;
