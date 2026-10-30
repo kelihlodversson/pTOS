@@ -158,6 +158,19 @@ if output:
     command("screendump", {"filename": str(destination), "format": "png"})
 key("ret")
 marker("x32 GEM modal forms: PASS")
+for stage in range(3):
+    marker("x32 GEM file selector %d: READY" % stage)
+    time.sleep(0.3)
+    if stage == 1:
+        # The shared native 3D selector is centred on the 1024x768 GOP mode.
+        for _ in range(16):
+            control_move(-127, -127)
+        control_move(520, 544)
+        button(True)
+        button(False)
+    else:
+        key("ret")
+marker("x32 GEM file selectors: PASS")
 
 def move(dx, dy):
     mouse_event([{"type": "rel", "data": {"axis": "x", "value": dx}},

@@ -1,6 +1,7 @@
 # Ordinary shared ELF, distinct from the historic fixed-image import stubs.
 LIBAES_CFLAGS = $(LDSO_CFLAGS) -DOB_WALK_COORD=LONG -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
+LIBAES_ARCH_HEADERS-$(ARCH_X86_64) = -Iinclude/arch/x86_64
 obj/libaes/application.o: lib/aes/application.c lib/aes/desktop.h lib/aes/graphics.h lib/aes/menubar.h lib/aes/application.h include/gem.h lib/aes/transport.h include/libaes.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
@@ -90,7 +91,7 @@ obj/libaes/alerts.o: lib/aes/alerts.c lib/aes/alert_context.h $(AUTOCONF_H) aes/
 # as the native resource objects. Never include a C implementation as text.
 obj/libaes/form_resources.o: aes/shared/gem_rsc.c aes/shared/gem_rsc.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
-	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -DAES_RESOURCE_FORMS_ONLY -DAES_RESOURCE_STRINGS_LOCAL -ffunction-sections -fdata-sections -c $< -o $@
+	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -DAES_RESOURCE_FSEL -DAES_RESOURCE_STRINGS_LOCAL -ffunction-sections -fdata-sections -c $< -o $@
 LIBAES_RESOURCE_OBJECTS = obj/libaes/gemrcfix.o obj/libaes/resource_loader.o obj/libaes/gemrsaddr.o obj/libaes/resources.o
 obj/libaes/resource_loader.o: aes/shared/rsload_portable.c lib/aes/resource_bindings.h lib/aes/resource_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
@@ -122,7 +123,7 @@ obj/libaes/frames.o: lib/aes/frames.c lib/aes/frame_colours.h aes/shared/gemfram
 obj/libaes/gemframegeom.o: aes/shared/gemframegeom.c aes/shared/gemframegeom.h aes/shared/gemframeids.h aes/shared/gemobjbounds.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
-obj/libaes/libaes.so: obj/libaes/desktop.o obj/libaes/animations.o obj/libaes/tracking.o obj/libaes/gemgrtrack.o obj/libaes/graphics.o obj/libaes/mforms.o obj/libaes/gemslidegeom.o obj/libaes/gemsizegeom.o obj/libaes/gemmovegeom.o obj/libaes/frames.o obj/libaes/gemframe.o obj/libaes/gemframegeom.o obj/libaes/menubar.o obj/libaes/gemmenubar.o obj/libaes/popup.o obj/libaes/gemmenupopup.o obj/libaes/menus.o obj/libaes/gemmenuchange.o $(LIBAES_RESOURCE_OBJECTS) obj/ldso/libptos.so obj/libaes/form_resources.o obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
+obj/libaes/libaes.so: obj/libaes/fsel.o obj/libaes/gemfslib.o obj/libaes/selector_optimize.o obj/libaes/selector_miscutil.o obj/libaes/desktop.o obj/libaes/animations.o obj/libaes/tracking.o obj/libaes/gemgrtrack.o obj/libaes/graphics.o obj/libaes/mforms.o obj/libaes/gemslidegeom.o obj/libaes/gemsizegeom.o obj/libaes/gemmovegeom.o obj/libaes/frames.o obj/libaes/gemframe.o obj/libaes/gemframegeom.o obj/libaes/menubar.o obj/libaes/gemmenubar.o obj/libaes/popup.o obj/libaes/gemmenupopup.o obj/libaes/menus.o obj/libaes/gemmenuchange.o $(LIBAES_RESOURCE_OBJECTS) obj/ldso/libptos.so obj/libaes/form_resources.o obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
 	$(CC) $(LDSO_LDFLAGS) $(LIBAES_CFLAGS) -nostdlib -shared \
 	  -Wl,--gc-sections,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so,-init,aes_resources_init \
 	  -Wl,--version-script,lib/aes/exports.map -o $@ $(filter %.o,$^) -Lobj/ldso -lptos
@@ -215,7 +216,7 @@ endif
 obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h include/libaes.h include/vdi_service.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/GEMDRAW.TOS: tests/cuis/box_animations.c tests/cuis/box_animations.h tests/cuis/gem_tracking.c tests/cuis/gem_tracking.h tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMDRAW.TOS: tests/cuis/gem_selector.c tests/cuis/gem_selector.h tests/cuis/box_animations.c tests/cuis/box_animations.h tests/cuis/gem_tracking.c tests/cuis/gem_tracking.h tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -275,3 +276,16 @@ obj/libaes/gemformanim.o: lib/aes/render_bindings.h
 obj/libaes/desktop.o: lib/aes/desktop.c lib/aes/desktop.h lib/aes/application.h lib/aes/transport.h lib/aes/resource_context.h lib/aes/layout.h include/gem.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+
+obj/libaes/fsel.o: lib/aes/fsel.c lib/aes/fsel_context.h lib/aes/transport.h aes/shared/gem_rsc.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -DAES_RESOURCE_FSEL -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/gemfslib.o: aes/shared/gemfslib.c lib/aes/fsel_bindings.h lib/aes/fsel_context.h aes/shared/gem_rsc.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) $(LIBAES_ARCH_HEADERS-y) -DAES_RESOURCE_FSEL -Ilib/aes -Iaes -Iaes/shared -DAES_FSEL_BINDINGS='"fsel_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/selector_optimize.o: util/optimize.c $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
+obj/libaes/selector_miscutil.o: util/miscutil.c include/i18nconf.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
