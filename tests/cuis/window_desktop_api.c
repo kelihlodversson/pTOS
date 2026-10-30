@@ -1,0 +1,67 @@
+/* Standard window helpers, colours and desktop contracts over failing transport. */
+static int window_desktop_api_checks(short *global)
+{
+    short a, b, c, d, old, fresh, invalid[15] = {0};
+    GRECT rect = {10,20,100,80}, result;
+    OBJECT tree = { NIL,NIL,NIL,G_BOX,LASTOB,NORMAL,{0x1173},0,0,640,400 };
+    void *pointer, *again;
+    ULONG before;
+    CHECK(mt_wind_new(NULL) == 0 && mt_wind_set_ptr(0,WF_NEWDESK,&tree,invalid) == 0);
+    CHECK(wind_get_grect(0,WF_CURRXYWH,&result) == 1 && result.g_w == 640 && result.g_h == 400);
+    CHECK(mt_wind_get_grect(0,WF_WORKXYWH,&result,global) == 1 && result.g_y == 0);
+    CHECK(wind_get(0,WF_KIND,&a,&b,&c,&d) == 1 && !(a|b|c|d));
+    CHECK(wind_get(0,WF_OWNER,&a,&b,&c,&d) == 1 && !a && b == 1);
+    CHECK(wind_get_grect(0,WF_FIRSTXYWH,&result) == 1 && result.g_w == 640);
+    CHECK(wind_get_grect(0,WF_NEXTXYWH,&result) == 1 && !result.g_w && !result.g_h);
+    CHECK(!wind_get_grect(0,WF_WORKXYWH,NULL));
+    a = W_NAME;
+    CHECK(wind_get(0,WF_DCOLOR,&a,&b,&c,&d) == 1 && a == W_NAME && b == 0x11a1 && c == 0x1101 && d == 0x0f0f);
+    old = wind_create_grect(NAME,&rect); CHECK(old > 0);
+    CHECK(wind_set(-1,WF_DCOLOR,W_NAME,0x1172,0x1174,0) == 1);
+    fresh = mt_wind_create_grect(NAME,&rect,global); CHECK(fresh > 0);
+    a = W_NAME;
+    CHECK(wind_get(old,WF_COLOR,&a,&b,&c,&d) == 1 && b == 0x11a1 && c == 0x1101);
+    CHECK(wind_get(fresh,WF_COLOR,&a,&b,&c,&d) == 1 && b == 0x1172 && c == 0x1174);
+    CHECK(wind_set(fresh,WF_COLOR,W_NAME,-1,0x1173,0) == 1);
+    CHECK(wind_get(fresh,WF_COLOR,&a,&b,&c,&d) == 1 && b == 0x1172 && c == 0x1173);
+    a = -1; b = c = 123;
+    CHECK(!wind_get(fresh,WF_COLOR,&a,&b,&c,&d) && a == -1 && b == 123 && c == 123);
+    CHECK(!wind_set(fresh,WF_COLOR,19,0,0,0) && !wind_set(0,WF_DCOLOR,-1,0,0,0));
+    CHECK(wind_set(0,WF_DCOLOR,W_NAME,0x11a1,0x1101,0) == 1);
+    CHECK(wind_set_ptr(fresh,WF_NAME,(void *)"Colour title") == 1);
+    CHECK(mt_wind_get_ptr(fresh,WF_NAME,&pointer,global) == 1 && !__builtin_strcmp(pointer,"Colour title"));
+    CHECK(wind_open_grect(fresh,&rect) == 1);
+    frame_paint_failure = TRUE;
+    CHECK(!wind_set(fresh,WF_COLOR,W_NAME,0x1175,0x1176,0));
+    frame_paint_failure = FALSE; a = W_NAME;
+    CHECK(wind_get(fresh,WF_COLOR,&a,&b,&c,&d) == 1 && b == 0x1172 && c == 0x1173);
+    CHECK(wind_calc_grect(WC_WORK,0,&rect,&result) == 1 && result.g_x == 11 && result.g_y == 21);
+    CHECK(mt_wind_calc_grect(WC_BORDER,0,&result,&result,global) == 1 && result.g_w == rect.g_w);
+    CHECK(mt_wind_set_grect(fresh,WF_CURRXYWH,&rect,global) == 1);
+    CHECK(wind_get_ptr(0,WF_SCREEN,&pointer) == 1 && pointer);
+    CHECK(mt_wind_get_ptr(0,WF_SCREEN,&again,global) == 1 && pointer == again);
+    region_alloc_failure = TRUE;
+    /* Existing compatible storage does not allocate again. */
+    CHECK(wind_get_ptr(0,WF_SCREEN,&again) == 1 && pointer == again);
+    region_alloc_failure = FALSE;
+    CHECK(mt_wind_set_ptr_int(0,WF_NEWDESK,&tree,0,global) == 1);
+    CHECK(wind_get_ptr(0,WF_NEWDESK,&pointer) == 1 && pointer == &tree);
+    CHECK(aes_desktop_registered());
+    before = desktop_paints;
+    CHECK(evnt_timer(0) == 1 && desktop_paints > before && !(background_state & 2));
+    background_error = EACCDN; pointer = &rect;
+    CHECK(!wind_get_ptr(0,WF_NEWDESK,&pointer) && pointer == &rect);
+    CHECK(!wind_set_ptr(0,WF_NEWDESK,NULL)); background_error = 0;
+    CHECK(wind_get_ptr(0,WF_NEWDESK,&pointer) == 1 && pointer == &tree);
+    CHECK(wind_set_ptr(0,WF_NEWDESK,NULL) == 1 && wind_get_ptr(0,WF_NEWDESK,&pointer) == 1 && !pointer);
+    CHECK(evnt_timer(0) == 1 && !display_nesting);
+    CHECK(wind_update(BEG_UPDATE) && wind_update(BEG_UPDATE) && wind_update(BEG_MCTRL));
+    reset_error = EACCDN;
+    CHECK(!mt_wind_new(global) && wind_get(old,WF_KIND,&a,&b,&c,&d)); reset_error = 0;
+    CHECK(mt_wind_new(global) == 1 && !display_nesting && !mouse_nesting);
+    CHECK(!wind_get(old,WF_KIND,&a,&b,&c,&d) && !wind_get(fresh,WF_KIND,&a,&b,&c,&d));
+    CHECK(appl_find(NULL) == gl_apid && wind_create_grect(0,NULL) == -1);
+    CHECK(wind_create_grect(0,&rect) > 0 && wind_new() == 1);
+    aes_desktop_reset(); background_state = 0;
+    return 0;
+}

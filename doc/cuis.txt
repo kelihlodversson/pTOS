@@ -2458,3 +2458,86 @@ adapter tests check signed WORD arguments, mt_* globals and result validation.
 GEMFOC.TOS builds against normal GEM headers and checks borders, half-open edges,
 foreign windows, raising/lowering, closing/reopening and process-exit cleanup in
 isolated x32 clients. It emits "x32 GEM window lookup: PASS" on success.
+
+Classic window/desktop completion (#818)
+----------------------------------------
+
+External libaes supplies wind_new/mt_wind_new, desktop handle 0 queries,
+WF_NEWDESK, WF_SCREEN, WF_COLOR/WF_DCOLOR and the standard GEMlib int, pointer
+and GRECT window bindings. Kernel changes remain CONF_WITH_CUIS gated; native
+in-kernel AES drawing and ROM objects are unchanged.
+
+wind_new closes/deletes only the calling application's windows, releases all
+of its update/mouse/keyboard nesting and resets the cursor hide count. Other
+applications' windows, locks and sessions survive. The caller remains
+registered, keeps its graphics workstation and may create new windows. Its
+installed desktop also survives this window-manager reset.
+
+Handle 0 has full-screen current/previous geometry and work/full geometry
+below the active menu strip. FIRSTXYWH/NEXTXYWH return an independent desktop
+work-region iterator, excluding every visible window and its shadow. FIRST
+captures the complete list under an update section before replacing the local
+iterator; failures leave the old iterator intact. A caller can interleave this
+with window rectangle lists and automatic desktop painting.
+
+WF_NEWDESK installs a caller-owned tree/root through wind_set or the standard
+wind_set_ptr[_int] bindings. The library validates its visible subtree before
+publishing ownership; it does not alter the tree's layout. NULL selects the
+original AES default background pattern. No tree or callback pointer enters
+the kernel. The most recently installed background owns the bottom surface;
+removal or process exit falls back to the previous live registrant. Global
+window identifiers continue to exclude the background: wind_find returns 0
+there. Background clicks and mouse predicates belong to its owner, with drag
+capture preserved across windows/menu strips and sampled before release.
+
+Rendering runs in the owner's ordinary GEM event/message dispatch, using the
+original AES object painter over the desktop visible regions. Display
+contention is deferred, overlays suspend painting, and failed painting retains
+damage for retry. Damage is acknowledged before calling application USERDEFs,
+so reentrant invalidation is not lost. A sleeping owner wakes on background
+damage using ordinary native notice readiness. WF_NEWDESK queries return a
+pointer only to the caller's current tree; foreign process addresses are never
+exposed. Desktop owner and geometry metadata remain queryable across clients.
+
+WF_COLOR accepts gadget numbers W_BOX through W_HELEV. Top/bottom colour words
+use the native GEM frame format; -1 setters preserve that word. WF_DCOLOR is
+shared across clients and affects subsequently created windows; existing
+windows retain their own colour arrays. A default pair changes atomically.
+Invalid gadgets and failed repaints do not replace per-window colours. Colour
+getters take the gadget through the first output word, as GEMlib requires.
+WF_NAME/WF_INFO have standard local string/pointer getters as well as setters.
+
+WF_SCREEN returns a private compatibility scratch buffer and byte length in
+high/low WORD pairs. It reserves 640 character cells at four bytes per pixel
+for true-colour capacity, subject to the existing bounded allocation limit.
+The buffer is retained until application exit/reinitialization; applications
+must not free it. It is not a kernel address or shared application memory.
+Menus and forms retain their independent exact screen-save storage.
+
+Additional scalar native services, all requiring a registered caller:
+
+  60 BACKGROUND(session,action): action 0 withdraws this registration, 1
+     installs/reasserts it, 2 reads ownership/damage bits (1/2), 3 acknowledges
+     damage, and 4 invalidates. Mutations require display ownership; replacing
+     a foreign captured background returns EAGAIN.
+  61 BACKGROUND_REGION(session,index,x,y,width,height): four separate LONG
+     output pointers, result 1 for a rectangle or 0 at end, matching the window
+     snapshot/copyout and failure/lifetime rules.
+  62 DISPLAY_INFO(selector): scalar width (0), height (1), reserved top-strip
+     height (2) or active background owner's process ID (3).
+  63 WINDOWS_RESET(session): resets this caller's windows and coordination
+     scopes, acquiring display ownership cooperatively before changing Z-order.
+  64 SETTING(slot,value,other_slot,other_value,mask): bounded generic shared UI
+     preference words. Mask 0 reads the first slot (EFILNF if unset); bits 1/2
+     atomically write the selected slots. Writes require display ownership.
+     The kernel stores 64 uninterpreted UWORD slots; GEM colour interpretation
+     and native fallback defaults remain entirely in libaes.
+
+The host service, adapter and pixel suites cover peer isolation, ownership
+fallback, clipping/menu/shadow bounds, copy/allocation/drawing failures,
+reinitialization and reset. GEMFOC.TOS additionally exercises unmodified
+GEMlib headers, cross-process colour defaults, background pixels and raw-exit
+fallback, pointer buffers and nested wind_new cleanup. Its completion marker
+is "x32 GEM window/desktop APIs: PASS". Iconification, shading, toolbars and
+other extended-window compatibility remain separate work; no additional
+appl_getinfo capability bits are advertised by this slice.

@@ -11,6 +11,10 @@
 #include "gemslidegeom.h"
 #include "frames.h"
 #include "resource_context.h"
+#include "desktop.h"
+#include "graphics.h"
+#include "frame_colours.h"
+#include "string.h"
 
 struct visible_region {
     struct visible_region *next;
@@ -28,6 +32,7 @@ static void discard_regions(struct visible_region **head)
 #define GEM_WINDOW_LIMIT 64
 static struct gem_window {
     short id;
+    WORD top_colours[NUM_ELEM], bottom_colours[NUM_ELEM];
     UWORD kind;
     char *name, *info;
     LONG native, drag_x, drag_y, arrow_tick;
@@ -82,6 +87,7 @@ BOOL aes_frames_dialog(BOOL begin)
 BOOL aes_frames_registered(void)
 {
     short i;
+    if (aes_desktop_registered()) return TRUE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
         if (windows[i].id && windows[i].open && windows[i].kind) return TRUE;
     return FALSE;
@@ -159,6 +165,11 @@ static BOOL prepare_window(struct gem_window *window, const GRECT *border, WM_FR
     if (!aes_frame_prepare(state,window->kind,border,window->name,window->info,global)) return FALSE;
     state->hslide = window->hslide; state->vslide = window->vslide;
     state->hslsiz = window->hslsiz; state->vslsiz = window->vslsiz;
+    {
+        LONG focus = cuis_call6(CUIS_FOCUS_QUERY,window->native,0,0,0,0,0);
+        if (focus < 0) return FALSE;
+        state->colours = focus ? window->top_colours : window->bottom_colours;
+    }
     return TRUE;
 }
 static BOOL paint_window(struct gem_window *window, short *global)
@@ -181,11 +192,22 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     LONG native, identifier;
     WORD wbox = 1, hbox = 1, width = 640, height = 400;
     WM_FRAME_INSETS insets;
+    WORD top[NUM_ELEM], bottom[NUM_ELEM];
+    LONG value;
     if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS|VSLIDE|HSLIDE)) || aes_application_session(global) < 0) return -1;
     for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
     if ((kind && !aes_frame_metrics(&wbox,&hbox,&width,&height,global)) ||
         !wm_frame_insets(kind,wbox,hbox,TRUE,width,height,&insets)) return -1;
+    for (i = 0; i < NUM_ELEM; i++) {
+        value = cuis_call6(CUIS_SETTING,i,0,0,0,0,0);
+        if (value != EFILNF && (value < 0 || value > 65535)) return -1;
+        top[i] = value == EFILNF ? aes_top_colours[i] : (WORD)value;
+        value = cuis_call6(CUIS_SETTING,NUM_ELEM+i,0,0,0,0,0);
+        if (value != EFILNF && (value < 0 || value > 65535)) return -1;
+        bottom[i] = value == EFILNF ? aes_bottom_colours[i] : (WORD)value;
+    }
+    for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
     /* GEM starts closed with zero current/previous geometry. CUIS requires
      * positive extents even for hidden metadata, so use an invisible placeholder. */
     native = cuis_call6(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0, 0);
@@ -201,6 +223,8 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
         return -1;
     }
     window = &windows[i];
+    memcpy(window->top_colours,top,sizeof(top));
+    memcpy(window->bottom_colours,bottom,sizeof(bottom));
     window->native = native;
     window->kind = kind; window->name = window->info = "";
     window->hslide = window->vslide = 0; window->hslsiz = window->vslsiz = -1;
@@ -580,9 +604,12 @@ static LONG window_messages(LONG session, short *global, BOOL polling)
     struct gem_window *window;
     GRECT work;
     if (frame_overlays) return E_OK;
+    frame_notice_blocked = frame_display_blocked = FALSE;
+    result = aes_desktop_dispatch(global);
+    if (result == EAGAIN) { frame_display_blocked = TRUE; return E_OK; }
+    if (result < 0) return result;
     result = service_controls(session,global,polling);
     if (result < 0) return result;
-    frame_notice_blocked = frame_display_blocked = FALSE;
     /* Bound pumping even if input continuously invalidates the display. */
     for (i = 0; i < 2 * GEM_WINDOW_LIMIT; i++) {
         kind = cuis_call6(CUIS_NOTICE_PEEK, session, (uintptr_t)&native, (uintptr_t)&identifier, 0, 0, 0);
@@ -640,6 +667,16 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     short i;
     if (field == WF_TOP || field == WF_BOTTOM || field == WF_OWNER) {
         if (aes_application_session(global) < 0) return 0;
+        if (field == WF_OWNER && id == 0) {
+            values[0] = cuis_call6(CUIS_DISPLAY_INFO,3,0,0,0,0,0);
+            if (values[0] < 0 || values[0] > 32767) return 0;
+            r.g_x = values[0]; r.g_y = 1; r.g_h = 0;
+            result = cuis_call6(CUIS_STACK_QUERY,1,(uintptr_t)&values[0],
+                                (uintptr_t)&values[1],(uintptr_t)&values[2],0,0);
+            if (result != E_OK || values[0] < 0 || values[0] > 32767) return 0;
+            r.g_w = values[0];
+            output(&r,a,b,c,d); return 1;
+        }
         if (field == WF_OWNER)
             result = cuis_call6(CUIS_WINDOW_INFO, id, (uintptr_t)&values[0], (uintptr_t)&values[1],
                                 (uintptr_t)&values[2], (uintptr_t)&values[3], 0);
@@ -654,8 +691,74 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
         r.g_w = (short)values[2]; r.g_h = (short)values[3];
         output(&r, a, b, c, d); return 1;
     }
+    if (aes_application_session(global) < 0) return 0;
+    if (field == WF_SCREEN || field == WF_NEWDESK) {
+        void *pointer;
+        OBJECT *tree;
+        LONG bytes = 0;
+        WORD root = 0;
+        if (field == WF_SCREEN) {
+            pointer = aes_screen_buffer(&bytes,global);
+            if (!pointer) return 0;
+        } else {
+            if (id || !aes_desktop_get(&tree,&root,global)) return 0;
+            pointer = tree;
+        }
+        if ((UQUAD)(uintptr_t)pointer >> 32) return 0;
+        r.g_x = (WORD)((uintptr_t)pointer >> 16); r.g_y = (WORD)(uintptr_t)pointer;
+        r.g_w = field == WF_SCREEN ? (WORD)((ULONG)bytes >> 16) : root;
+        r.g_h = field == WF_SCREEN ? (WORD)bytes : 0;
+        output(&r,a,b,c,d); return 1;
+    }
+    if (field == WF_COLOR || field == WF_DCOLOR) {
+        LONG top, bottom;
+        WORD gadget;
+        if (!a || *a < 0 || *a >= NUM_ELEM) return 0;
+        gadget = *a;
+        if (field == WF_COLOR) {
+            window = lookup(id,global);
+            if (!window) return 0;
+            top = (UWORD)window->top_colours[gadget]; bottom = (UWORD)window->bottom_colours[gadget];
+        } else {
+            top = cuis_call6(CUIS_SETTING,gadget,0,0,0,0,0);
+            bottom = cuis_call6(CUIS_SETTING,NUM_ELEM+gadget,0,0,0,0,0);
+            if (top == EFILNF) top = (UWORD)aes_top_colours[gadget];
+            if (bottom == EFILNF) bottom = (UWORD)aes_bottom_colours[gadget];
+            if (top < 0 || top > 65535 || bottom < 0 || bottom > 65535) return 0;
+        }
+        r.g_x = gadget; r.g_y = (WORD)top; r.g_w = (WORD)bottom; r.g_h = 0x0f0f;
+        output(&r,a,b,c,d); return 1;
+    }
+    if (id == 0) {
+        switch (field) {
+        case WF_WORKXYWH: case WF_FULLXYWH:
+            if (!aes_desktop_geometry(&r,TRUE,global)) return 0;
+            break;
+        case WF_CURRXYWH: case WF_PREVXYWH:
+            if (!aes_desktop_geometry(&r,FALSE,global)) return 0;
+            break;
+        case WF_FIRSTXYWH: case WF_NEXTXYWH:
+            if (!aes_desktop_region(field == WF_FIRSTXYWH,&r,global)) return 0;
+            break;
+        case WF_KIND: r.g_x = r.g_y = r.g_w = r.g_h = 0; break;
+        default: return 0;
+        }
+        output(&r,a,b,c,d); return 1;
+    }
     window = lookup(id, global);
     if (!window) return 0;
+    if (field == WF_NAME || field == WF_INFO) {
+        const char *text = field == WF_NAME ? window->name : window->info;
+        ULONG length;
+        if (!(window->kind & (field == WF_NAME ? NAME : INFO)) || !a || !text) return 0;
+        for (length = 0; length < 128 && text[length]; length++) ;
+        if (length == 128) return 0;
+        if (b == a+1) {
+            if ((UQUAD)(uintptr_t)text >> 32) return 0;
+            *a = (WORD)((uintptr_t)text >> 16); *b = (WORD)(uintptr_t)text;
+        } else strcpy((char *)a,text);
+        return 1;
+    }
     switch (field) {
     case WF_FIRSTXYWH:
     case WF_NEXTXYWH:
@@ -701,7 +804,27 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
 {
     struct gem_window *window = lookup(id, global);
     WORD *slot, old;
+    if (field == WF_NEWDESK)
+        return id == 0 ? aes_desktop_set((OBJECT *)(uintptr_t)(((ULONG)(UWORD)a<<16)|(UWORD)b),c,global) : 0;
+    if (field == WF_DCOLOR) {
+        if (a < 0 || a >= NUM_ELEM) return 0;
+        if (b == -1 && c == -1) return 1;
+        return cuis_call6(CUIS_SETTING,a,(UWORD)b,NUM_ELEM+a,(UWORD)c,
+                          (b != -1 ? 1 : 0) | (c != -1 ? 2 : 0),0) == E_OK;
+    }
     if (!window) return 0;
+    if (field == WF_COLOR) {
+        WORD top, bottom;
+        if (a < 0 || a >= NUM_ELEM) return 0;
+        top = window->top_colours[a]; bottom = window->bottom_colours[a];
+        if (b != -1) window->top_colours[a] = b;
+        if (c != -1) window->bottom_colours[a] = c;
+        if (!paint_window(window,global)) {
+            window->top_colours[a] = top; window->bottom_colours[a] = bottom;
+            (void)paint_window(window,global); return 0;
+        }
+        return 1;
+    }
     slot = slider_field(window,field);
     if (slot) {
         BOOL size = field == WF_HSLSIZE || field == WF_VSLSIZE;
@@ -832,3 +955,81 @@ short wind_set_str(short id, short field, const char *text)
 {
     return mt_wind_set_str(id,field,text,aes_global);
 }
+
+short mt_wind_new(short *global)
+{
+    LONG session = aes_application_session(global);
+    if (session < 0 || cuis_call6(CUIS_WINDOWS_RESET,session,0,0,0,0,0) != E_OK) return 0;
+    aes_windows_reset(); aes_graphics_wind_new();
+    return 1;
+}
+short wind_new(void) { return mt_wind_new(aes_global); }
+short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, short *global)
+{
+    if (field == WF_NEWDESK) return id == 0 ? aes_desktop_set(pointer,value,global) : 0;
+    if (field == WF_NAME || field == WF_INFO) return mt_wind_set_str(id,field,pointer,global);
+    return 0;
+}
+short wind_set_ptr_int(short id, short field, void *pointer, short value)
+{ return mt_wind_set_ptr_int(id,field,pointer,value,aes_global); }
+short mt_wind_set_ptr(short id, short field, void *pointer, short *global)
+{ return mt_wind_set_ptr_int(id,field,pointer,0,global); }
+short wind_set_ptr(short id, short field, void *pointer)
+{ return mt_wind_set_ptr(id,field,pointer,aes_global); }
+short mt_wind_get_ptr(short id, short field, void **pointer, short *global)
+{
+    struct gem_window *window;
+    void *value;
+    OBJECT *tree;
+    LONG bytes;
+    if (!pointer || aes_application_session(global) < 0) return 0;
+    if (field == WF_NEWDESK) {
+        if (id || !aes_desktop_get(&tree,NULL,global)) return 0;
+        value = tree;
+    } else if (field == WF_SCREEN) {
+        value = aes_screen_buffer(&bytes,global);
+        if (!value) return 0;
+    } else if ((field == WF_NAME || field == WF_INFO) && (window = lookup(id,global)) != NULL &&
+               (window->kind & (field == WF_NAME ? NAME : INFO))) value = field == WF_NAME ? window->name : window->info;
+    else return 0;
+    *pointer = value; return 1;
+}
+short wind_get_ptr(short id, short field, void **pointer)
+{ return mt_wind_get_ptr(id,field,pointer,aes_global); }
+short mt_wind_get_int(short id, short field, short *value, short *global)
+{ return mt_wind_get(id,field,value,NULL,NULL,NULL,global); }
+short wind_get_int(short id, short field, short *value)
+{ return mt_wind_get_int(id,field,value,aes_global); }
+short mt_wind_set_int(short id, short field, short value, short *global)
+{ return mt_wind_set(id,field,value,0,0,0,global); }
+short wind_set_int(short id, short field, short value)
+{ return mt_wind_set_int(id,field,value,aes_global); }
+short mt_wind_get_grect(short id, short field, GRECT *rect, short *global)
+{
+    GRECT result = { 0,0,0,0 };
+    if (!rect || !mt_wind_get(id,field,&result.g_x,&result.g_y,&result.g_w,&result.g_h,global)) return 0;
+    *rect = result; return 1;
+}
+short wind_get_grect(short id, short field, GRECT *rect)
+{ return mt_wind_get_grect(id,field,rect,aes_global); }
+short mt_wind_set_grect(short id, short field, const GRECT *rect, short *global)
+{ return rect ? mt_wind_set(id,field,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : 0; }
+short wind_set_grect(short id, short field, const GRECT *rect)
+{ return mt_wind_set_grect(id,field,rect,aes_global); }
+short mt_wind_create_grect(short kind, const GRECT *rect, short *global)
+{ return rect ? mt_wind_create(kind,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : -1; }
+short wind_create_grect(short kind, const GRECT *rect)
+{ return mt_wind_create_grect(kind,rect,aes_global); }
+short mt_wind_open_grect(short id, const GRECT *rect, short *global)
+{ return rect ? mt_wind_open(id,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : 0; }
+short wind_open_grect(short id, const GRECT *rect)
+{ return mt_wind_open_grect(id,rect,aes_global); }
+short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, short *global)
+{
+    GRECT result;
+    if (!in || !out || !mt_wind_calc(type,kind,in->g_x,in->g_y,in->g_w,in->g_h,
+        &result.g_x,&result.g_y,&result.g_w,&result.g_h,global)) return 0;
+    *out = result; return 1;
+}
+short wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out)
+{ return mt_wind_calc_grect(type,kind,in,out,aes_global); }

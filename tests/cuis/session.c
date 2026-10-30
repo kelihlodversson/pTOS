@@ -263,6 +263,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "controls.c"
 #include "pointer_style.c"
 #include "window_at.c"
+#include "background.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -349,5 +350,7 @@ int main(void)
     rc = control_checks();
     if (rc) return rc;
     rc = pointer_style_checks();
-    return rc ? rc : window_at_checks();
+    if (rc) return rc;
+    rc = window_at_checks();
+    return rc ? rc : background_checks();
 }

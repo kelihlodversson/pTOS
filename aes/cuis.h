@@ -9,6 +9,11 @@ LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c,
 LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e);
 LONG cuis_window_at(UQUAD x, UQUAD y);
+LONG cuis_background(UQUAD session, UQUAD action);
+LONG cuis_background_region(UQUAD session, UQUAD index, UQUAD x, UQUAD y, UQUAD width, UQUAD height);
+LONG cuis_display_info(UQUAD selector);
+LONG cuis_windows_reset(UQUAD session);
+LONG cuis_setting(UQUAD slot, UQUAD value, UQUAD other, UQUAD other_value, UQUAD mask);
 LONG cuis_keyboard_lock(UQUAD handle, UQUAD acquire);
 LONG cuis_display_redraw(UQUAD handle, UQUAD x, UQUAD y, UQUAD width, UQUAD height);
 LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block);

@@ -65,7 +65,11 @@ static int graphics_checks(void)
     ptos_write(1,ready,sizeof(ready)-1);
     do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(&x,&y,NULL,NULL) == 1); } while (x != 300 || y != 250);
     VERIFY(evnt_timer(20) == 1);
+    /* Earlier GUI clients may have made the default cursor visible. Sample
+     * its backing pixel, independently of their final cursor state. */
+    VERIFY(graf_mouse(M_OFF,NULL) == 1);
     background = gem_probe_pixel(physical,x,y);
+    VERIFY(graf_mouse(M_ON,NULL) == 1);
     pen = 1;
     VERIFY(gem_probe_swatch(physical,x+30,y,pen,&color) == 0);
     if (background == color) { pen = 0; VERIFY(gem_probe_swatch(physical,x+30,y,pen,&color) == 0); }

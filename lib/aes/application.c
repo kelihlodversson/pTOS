@@ -6,6 +6,7 @@
 #include "application.h"
 #include "menubar.h"
 #include "graphics.h"
+#include "desktop.h"
 
 short aes_global[AES_GLOBMAX] = { 0, 0, -1 };
 short gl_apid = -1, gl_ap_version;
@@ -67,14 +68,14 @@ short mt_appl_init(short *global)
     if (handle < 0) { sync_global(global); return -1; }
     if (!publish_label(handle)) {
         (void)aes_session_close(handle);
-        aes_menu_reset(); aes_windows_reset(); aes_graphics_reset();
+        aes_menu_reset(); aes_windows_reset(); aes_desktop_reset(); aes_graphics_reset();
         aes_resources_reset();
         application_session = -1; application_id = -1;
         if (global != aes_global) clear_global(aes_global);
         sync_global(aes_global);
         sync_global(global); return -1;
     }
-    if (handle != application_session) { aes_menu_reset(); aes_windows_reset(); aes_graphics_reset(); aes_resources_reset(); }
+    if (handle != application_session) { aes_menu_reset(); aes_windows_reset(); aes_desktop_reset(); aes_graphics_reset(); aes_resources_reset(); }
     application_session = handle;
     application_id = (short)pid;
     global[0] = 0x0400; /* AES global-array ABI, not a claim of complete AES coverage. */
@@ -89,7 +90,7 @@ short appl_init(void) { return mt_appl_init(aes_global); }
 short mt_appl_exit(short *global)
 {
     if (!registered(global) || aes_session_close(application_session) != E_OK) return 0;
-    aes_menu_reset(); aes_windows_reset(); aes_graphics_reset();
+    aes_menu_reset(); aes_windows_reset(); aes_desktop_reset(); aes_graphics_reset();
     aes_resources_reset();
     application_session = -1;
     application_id = -1;
