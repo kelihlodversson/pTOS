@@ -370,15 +370,16 @@ BOOL cuis_keyboard_event(ULONG key)
 
 /* All routing and topology commits use the same short IRQ exclusion.
  * The global window bound also bounds hit testing and focus redraw work. */
-static CUIS_WINDOW *pointer_hit(void)
+static CUIS_WINDOW *window_at(LONG x, LONG y)
 {
     CUIS_WINDOW *window;
     for (window = window_front; window; window = window->znext)
-        if (pointer_x >= window->x && pointer_x < window->x + window->width &&
-            pointer_y >= window->y && pointer_y < window->y + window->height)
+        if (x >= window->x && x < window->x + window->width &&
+            y >= window->y && y < window->y + window->height)
             return window;
     return NULL;
 }
+
 /* Expiry must precede admission of a packet: a delayed waiter must not
  * count a new press as part of an already completed click window. */
 static void expire_button_wait(CUIS_INPUT_WAIT *wait)
@@ -459,7 +460,7 @@ static BOOL route_pointer(ULONG changed)
     CUIS_WINDOW *hit, *target;
     BOOL consumed;
     if (!pointer_initialized || pointer_suppressed || pointer_legacy_drag) return FALSE;
-    hit = pointer_hit();
+    hit = window_at(pointer_x, pointer_y);
     if (mouse_owner) {
         if (mouse_owner->isolated_mouse) {
             /* A private gesture must not append menu presses/releases to
@@ -1574,7 +1575,8 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     }
     /* Border hover suppresses live button predicates, not MU_M1/MU_M2.
      * Trusted work-area history below still retains its original ownership. */
-    if (!mouse_owner && !pointer_capture && pointer_hit() && !content_contains(pointer_hit())) owned = FALSE;
+    if (!mouse_owner && !pointer_capture && window_at(pointer_x, pointer_y) &&
+        !content_contains(window_at(pointer_x, pointer_y))) owned = FALSE;
     if (initial && (wait->events & CUIS_READY_BUTTON)) {
         /* GEM's quick check retains a press/release pair that arrived before
          * the wait was registered. A bounded private history is independent
@@ -2111,6 +2113,22 @@ publish_done:
     return result;
 }
 
+/* Read the authoritative visible stack without changing focus or input state.
+ * Window identifiers, unlike private native handles, are globally queryable. */
+LONG cuis_window_at(UQUAD x, UQUAD y)
+{
+    CUIS_WINDOW *window;
+    LONG result;
+    UQUAD flags = cuis_input_lock();
+    if (!*find_owner(run)) result = EACCDN;
+    else if (x != (UQUAD)(QUAD)(LONG)x || y != (UQUAD)(QUAD)(LONG)y) result = EINVAL;
+    else {
+        window = window_at((LONG)x, (LONG)y);
+        result = window ? window->identifier : 0;
+    }
+    cuis_input_unlock(flags);
+    return result;
+}
 LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e)
 {
     CUIS_CLIENT *client, *owner = NULL;

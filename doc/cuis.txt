@@ -2430,3 +2430,31 @@ Whole-screen display ownership and frame suspension span each public animation
 and balance nested caller scopes. No mouse/keyboard grab or input wait is added.
 Failures request window and owned-menu-surface repaint before the outer display
 scope is released. Kernel code and services are unchanged.
+
+Window lookup by screen coordinates (#816)
+-----------------------------------------
+
+External libaes exports standard wind_find(x,y) and mt_wind_find(x,y,global).
+They return the identifier of the frontmost open window containing the point,
+including its border, regardless of application ownership. A point not covered
+by an open window returns desktop identifier 0. Window bounds include their
+left/top edge and exclude their right/bottom edge; visual shadows do not count.
+Hidden or destroyed windows cannot be returned. Invalid registration and native
+query failures return -1, without leaking a CUIS error or narrowing a bad ID.
+
+CUIS_WINDOW_AT (59) takes two flat, sign-extended LONG coordinates and returns a
+non-negative global window identifier, or a negative GEMDOS error. Unused
+registers are ignored. A registered caller can query any visible window; the
+read-only operation requires no display/update ownership and changes neither
+focus, stacking, input queues nor pointer state. Full-width noncanonical LONG
+arguments return EINVAL. The scan uses the same half-open window bounds as
+pointer routing, under the same short IRQ exclusion as topology changes.
+There are no user buffer arguments and no additional capability claims.
+
+Host regressions cover registration, signed LONG extremes and malformed wide
+arguments, cross-session lookup, stack transitions, hidden/destroyed windows,
+shadow exclusion and lookup while another session holds the display lock. GEM
+adapter tests check signed WORD arguments, mt_* globals and result validation.
+GEMFOC.TOS builds against normal GEM headers and checks borders, half-open edges,
+foreign windows, raising/lowering, closing/reopening and process-exit cleanup in
+isolated x32 clients. It emits "x32 GEM window lookup: PASS" on success.
