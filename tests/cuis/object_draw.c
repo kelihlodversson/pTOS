@@ -1,5 +1,6 @@
 /* Public object-drawing contracts against a small independent pixel oracle. */
 #include "gem.h"
+#include "desktop.h"
 #include "gemmovegeom.h"
 #include "gemframegeom.h"
 #include "gemslidegeom.h"
@@ -35,6 +36,7 @@ static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_
 static struct { WORD mode, color, interior, clip[4], line, line_type, line_pattern; } workstation[1024];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update, allocation_error, release_error;
+static ULONG background_state;
 static WORD screen_planes = 32;
 static WORD pixel_width = 1, pixel_height = 1;
 static WORD display_width = 160, display_height = 120;
@@ -93,6 +95,7 @@ void gem_menubar_input_stage(short stage)
     mouse_x = 30; mouse_y = 8;
 }
 static ULONG frame_overlay_depth, frame_dialog_depth, bad_overlay_scope;
+BOOL aes_frames_suspended(void) { return frame_overlay_depth != 0; }
 BOOL aes_frames_suspend(void) { frame_overlay_depth++; return TRUE; }
 void aes_frames_resume(void) { if (frame_overlay_depth) frame_overlay_depth--; else bad_overlay_scope++; }
 BOOL aes_frames_dialog(BOOL begin)
@@ -105,6 +108,21 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_BACKGROUND) {
+        if (b == 2) return background_state;
+        if (!nesting) return EACCDN;
+        if (b == 1) background_state = 3;
+        if (b == 3) background_state &= ~2;
+        if (b == 4) background_state |= 2;
+        return E_OK;
+    }
+    if (fn == CUIS_DISPLAY_INFO) return a == 0 ? display_width : a == 1 ? display_height : bar_height;
+    if (fn == CUIS_BACKGROUND_REGION) {
+        if (b) return 0;
+        *(LONG *)(uintptr_t)c = 20; *(LONG *)(uintptr_t)d = 40;
+        *(LONG *)(uintptr_t)e = 40; *(LONG *)(uintptr_t)f = 20;
+        return 1;
+    }
     if (tracking_mode && (fn == CUIS_INPUT_BUTTON || fn == CUIS_INPUT_RECT))
         return nesting >= 2 && mouse_nesting && !input_error ? E_OK : EACCDN;
     if (tracking_mode && fn == CUIS_SESSION_WAIT) {
@@ -1057,6 +1075,35 @@ static int tracking_checks(void)
     return 0;
 }
 
+static int desktop_drawing_checks(void)
+{
+    OBJECT tree = { NIL,NIL,NIL,G_BOX,LASTOB,NORMAL,{0x1173},0,0,160,120 };
+    WORD x, y, saved[120][160];
+    int before;
+    __builtin_memcpy(saved,image,sizeof(saved));
+    VERIFY(aes_desktop_set(&tree,0,aes_global) == 1 && !nesting);
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && !nesting && background_state == 1);
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++)
+        VERIFY(image[y][x] == (x >= 20 && x < 60 && y >= 40 && y < 60 ? 3 : saved[y][x]));
+    background_state |= 2; draw_error = TRUE;
+    VERIFY(aes_desktop_dispatch(aes_global) == EACCDN && background_state == 3 && !nesting);
+    draw_error = FALSE;
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 1 && !nesting);
+    background_state |= 2; allocation_error = TRUE;
+    VERIFY(aes_desktop_dispatch(aes_global) == ENSMEM && background_state == 3 && !nesting);
+    allocation_error = FALSE;
+    before = calls;
+    VERIFY(aes_frames_suspend());
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 3 && calls == before);
+    aes_frames_resume();
+    foreign_display = TRUE;
+    VERIFY(aes_desktop_dispatch(aes_global) == EAGAIN && background_state == 3 && !nesting);
+    foreign_display = FALSE;
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 1);
+    aes_desktop_reset(); background_state = 0;
+    return 0;
+}
+
 int main(void)
 {
     OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
@@ -1422,6 +1469,7 @@ int main(void)
     before = gem_mono_checks(0);
     if (before) __builtin_printf("mono object failure: %x\n",before);
     VERIFY(before == 0);
+    VERIFY(desktop_drawing_checks() == 0);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     VERIFY(!frame_overlay_depth && !frame_dialog_depth && !bad_overlay_scope);
     return 0;

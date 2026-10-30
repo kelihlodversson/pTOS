@@ -369,6 +369,11 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
              (fn == CUIS_STACK_QUERY || fn == CUIS_WINDOW_INFO) ?
                  cuis_stack_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              fn == CUIS_WINDOW_AT ? cuis_window_at(frame->rdi, frame->rsi) :
+             fn == CUIS_BACKGROUND ? cuis_background(frame->rdi, frame->rsi) :
+             fn == CUIS_BACKGROUND_REGION ? cuis_background_region(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
+             fn == CUIS_DISPLAY_INFO ? cuis_display_info(frame->rdi) :
+             fn == CUIS_WINDOWS_RESET ? cuis_windows_reset(frame->rdi) :
+             fn == CUIS_SETTING ? cuis_setting(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              fn == CUIS_KEYBOARD_LOCK ? cuis_keyboard_lock(frame->rdi, frame->rsi) :
              fn == CUIS_DISPLAY_REDRAW ? cuis_display_redraw(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              fn == CUIS_MOUSE_LOCK ? cuis_mouse_lock(frame->rdi, frame->rsi, frame->rdx) :

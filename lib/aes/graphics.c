@@ -24,6 +24,7 @@ void aes_graphics_reset(void)
     if (graphics_handle > 0) (void)aes_graphics_call(VDI_SERVICE_CLOSE,graphics_handle,0,0,0);
     graphics_handle = mouse_depth = 0; cursor_initialized = FALSE;
 }
+void aes_graphics_wind_new(void) { mouse_depth = 0; }
 short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, short *global)
 {
     VDI_SERVICE_WORKSTATION ws;

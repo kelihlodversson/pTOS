@@ -2,6 +2,7 @@
 #include <gem.h>
 #include "portab.h"
 #include "ptos.h"
+#include "gem_draw_probe.h"
 #define VERIFY(c) do { if (!(c)) return 0x7600 | __LINE__; } while (0)
 static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -33,18 +34,35 @@ static int command(short child, short code, short message[8])
 int main(int argc, char **argv, char **envp)
 {
     short id, a, b, message[8] = { 0 }, global[15], top, owner, below, spare;
-    short foreign;
+    short foreign, graphic_handle = 0, width, height, x, y, w, h, gadget, colour, bottom, spare_colour;
+    OBJECT desktop = { -1,-1,-1,G_BOX,OF_LASTOB,0,{0x1173},0,0,0,0 };
+    void *pointer;
+    BOOL graphics;
     LONG child, status;
     char tail[3] = { 1, 'c', 0 };
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1);
     id = appl_init(); VERIFY(id > 0 && mt_appl_init(global) == id);
+    graphics = gem_probe_open(&graphic_handle,&width,&height) == 0;
+    VERIFY(wind_get(0,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 0 && y == 0 && w > 0 && h > 0);
+    desktop.ob_width = w; desktop.ob_height = h;
+    if (graphics) {
+        if (argc > 1) desktop.ob_spec.index = 0x1174;
+        VERIFY(mt_wind_set_ptr_int(0,WF_NEWDESK,&desktop,0,global) == 1);
+        VERIFY(wind_get_ptr(0,WF_NEWDESK,&pointer) == 1 && pointer == &desktop);
+        VERIFY(evnt_timer(0) == 1 && gem_probe_pixel(graphic_handle,200,200) == (argc > 1 ? 4 : 3));
+        VERIFY(wind_get(0,WF_SCREEN,&x,&y,&w,&h) == 1 && (x || y) && (w || h));
+    }
     if (argc > 1) {
         short parent = appl_find("GEMFOC");
         VERIFY(parent > 0 && parent != id);
+        gadget = W_NAME;
+        VERIFY(wind_get(-1,WF_DCOLOR,&gadget,&colour,&bottom,&spare_colour) == 1 && colour == 0x1172 && bottom == 0x1174);
         a = wind_create(0, 0, 0, 300, 300);
         VERIFY(a > 0 && wind_open(a, 100, 100, 60, 60) == 1);
+        gadget = W_NAME;
+        VERIFY(wind_get(a,WF_COLOR,&gadget,&colour,&bottom,&spare_colour) == 1 && colour == 0x1172 && bottom == 0x1174);
         message[0] = 900; message[1] = id; message[3] = a;
         VERIFY(appl_write(parent, 16, message) == 1);
         for (;;) {
@@ -73,9 +91,15 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_find(49,50) == a && wind_find(50,50) == b && wind_find(129,129) == b);
     VERIFY(wind_find(130,129) == 0 && wind_find(129,130) == 0 && wind_find(131,131) == 0);
     VERIFY(mt_wind_get(0, WF_TOP, &top, &owner, &below, &spare, global) == 1 && top == b && owner == id && below == a);
+    VERIFY(wind_set(-1,WF_DCOLOR,W_NAME,0x1172,0x1174,0) == 1);
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMFOC.TOS", (uintptr_t)tail, (uintptr_t)environment);
     VERIFY(child > 0 && control(message) && message[0] == 900); foreign = message[3];
     VERIFY(foreign > 0 && foreign != a && foreign != b);
+    if (graphics) {
+        VERIFY(gem_probe_pixel(graphic_handle,200,200) == 4);
+        pointer = &desktop;
+        VERIFY(wind_get_ptr(0,WF_NEWDESK,&pointer) == 0 && pointer == &desktop);
+    }
     VERIFY(wind_find(110,110) == foreign && mt_wind_find(159,159,global) == foreign);
     VERIFY(wind_find(160,159) == 0 && wind_find(159,160) == 0);
     VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == foreign && owner == child && below == b);
@@ -103,13 +127,29 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == a && owner == id);
     VERIFY(wind_get(foreign, WF_OWNER, &top, &owner, &below, &spare) == 0);
     VERIFY(wind_find(110,110) == b && wind_find(140,140) == 0);
-    VERIFY(wind_delete(a) == 1 && wind_delete(b) == 1 && appl_exit() == 1);
+    if (graphics) VERIFY(evnt_timer(0) == 1 && gem_probe_pixel(graphic_handle,200,200) == 3);
+    gadget = W_NAME;
+    VERIFY(wind_get(b,WF_COLOR,&gadget,&colour,&bottom,&spare_colour) == 1 && colour == 0x11a1 && bottom == 0x1101);
+    VERIFY(wind_set(-1,WF_DCOLOR,W_NAME,0x11a1,0x1101,0) == 1);
+    VERIFY(wind_update(BEG_UPDATE) == 1 && wind_update(BEG_UPDATE) == 1 && wind_update(BEG_MCTRL) == 1);
+    if (graphics) VERIFY(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1);
+    VERIFY(mt_wind_new(global) == 1);
+    VERIFY(wind_get(a,WF_KIND,&x,&y,&w,&h) == 0 && wind_get(b,WF_KIND,&x,&y,&w,&h) == 0);
+    VERIFY(wind_update(END_UPDATE) == 0 && wind_update(END_MCTRL) == 0 && appl_find(NULL) == id);
+    if (graphics) {
+        VERIFY(graf_mouse(M_ON,NULL) == 1 && gem_probe_close(graphic_handle) == 0);
+        VERIFY(wind_set_ptr(0,WF_NEWDESK,NULL) == 1 && evnt_timer(0) == 1);
+        VERIFY(wind_get_ptr(0,WF_NEWDESK,&pointer) == 1 && !pointer);
+    }
+    VERIFY(appl_exit() == 1);
     VERIFY(wind_find(0,0) == -1);
     {
         static const char marker[] = "x32 GEM window messages/focus: PASS\r\n";
+        static const char desktop_marker[] = "x32 GEM window/desktop APIs: PASS\r\n";
         static const char find_marker[] = "x32 GEM window lookup: PASS\r\n";
         ptos_write(1, marker, sizeof(marker)-1);
         ptos_write(1, find_marker, sizeof(find_marker)-1);
+        ptos_write(1, desktop_marker, sizeof(desktop_marker)-1);
     }
     return 0;
 }

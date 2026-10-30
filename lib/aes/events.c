@@ -123,15 +123,19 @@ static short event_once(short events, short clicks, short button_mask, short but
         if (!ready) return -1; /* Re-arm user predicates after internal tracking. */
     }
     if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE)) {
-        if (cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0) != 16) return 0;
-        result |= MU_MESAG;
+        LONG count = cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0);
+        /* A background notice may only repaint, without publishing a GEM
+         * message. Keep simultaneous public events and otherwise re-arm. */
+        if (count == 16) result |= MU_MESAG;
+        else if (count != EAGAIN) return 0;
     }
     if (ready & CUIS_READY_TIMER) result |= MU_TIMER;
-    output_state(state, mx, my, buttons, modifiers);
     if (ready & CUIS_READY_KEY) result |= MU_KEYBD;
     if (ready & CUIS_READY_BUTTON) result |= MU_BUTTON;
     if (ready & CUIS_READY_RECT1) result |= MU_M1;
     if (ready & CUIS_READY_RECT2) result |= MU_M2;
+    if (!result) return -1;
+    output_state(state, mx, my, buttons, modifiers);
     if (key) *key = ready & CUIS_READY_KEY ? (short)(((ULONG)input[0] >> 8 & 0xff00) | (input[0] & 255)) : 0;
     if (click_count) *click_count = ready & CUIS_READY_BUTTON ? (short)input[1] : 0;
     return (short)result;

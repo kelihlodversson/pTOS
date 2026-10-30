@@ -89,6 +89,9 @@ int main(void)
     CHECK(graf_mouse(42,NULL) == 1 && !__builtin_memcmp(&installed,mform_rs_data[0],sizeof(installed)));
     check_error = EIHNDL;
     CHECK(graf_handle(NULL,NULL,NULL,NULL) != handle); check_error = 0;
+    CHECK(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1 && hidden == 2);
+    aes_graphics_wind_new();
+    CHECK(graf_mouse(M_OFF,NULL) == 1 && hidden == 1);
     aes_graphics_reset(); CHECK(closed_handle > 0);
     pixel_y = 2;
     CHECK(graf_handle(&w,&h,&bw,&bh) > 0 && bw == 38);

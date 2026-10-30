@@ -8,6 +8,7 @@
 #include "frames.h"
 #include "gemframegeom.h"
 #include "gemobjbounds.h"
+#include "frame_colours.h"
 
 BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
                        char *name, char *info, WORD *global)
@@ -60,14 +61,6 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
 {
     WM_FRAME frame;
     WM_FRAME_STATE drawing = *state;
-    static const WORD top[NUM_ELEM] = {
-        0x1101,0x1101,0x1101,0x11a1,0x1101,0x1101,0x1101,0x1101,0x1101,
-        0x1101,0x1101,0x1101,0x1111,0x1101,0x1101,0x1101,0x1101,0x1111,0x1101
-    };
-    static const WORD bottom[NUM_ELEM] = {
-        0x1101,0x1101,0x1101,0x1101,0x1101,0x1101,0x1101,0x1101,0x1101,
-        0x1101,0x1101,0x1101,0x1111,0x1101,0x1101,0x1101,0x1101,0x1111,0x1101
-    };
     LONG session = aes_application_session(global), result, region[4];
     ULONG index;
     BOOL ok = TRUE;
@@ -75,7 +68,7 @@ BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD obje
     result = cuis_call6(CUIS_FOCUS_QUERY,native,0,0,0,0,0);
     if (result < 0) { ok = FALSE; goto done; }
     drawing.topped = result != 0;
-    drawing.colours = drawing.topped ? top : bottom;
+    if (!drawing.colours) drawing.colours = drawing.topped ? aes_top_colours : aes_bottom_colours;
     wm_frame_init(&frame);
     wm_frame_build(frame.tree,&frame.name,&frame.info,&drawing);
     if (selected && drawing.topped && (object == W_CLOSER || object == W_FULLER || object == W_NAME || object == W_SIZER || object == W_HELEV || object == W_VELEV || wm_arrow_action(object) >= 0))

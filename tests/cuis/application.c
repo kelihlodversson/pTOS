@@ -5,6 +5,7 @@
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/application.h"
 #include "../../lib/aes/frames.h"
+#include "../../lib/aes/desktop.h"
 #include "gemmovegeom.h"
 #include "gemsizegeom.h"
 #include "gemframegeom.h"
@@ -22,6 +23,7 @@ static BOOL live;
 static ULONG starts, closes, yields, delays;
 static ULONG graphics_resets;
 void aes_graphics_reset(void) { graphics_resets++; }
+void aes_graphics_wind_new(void) { }
 static UQUAD interval;
 static UBYTE pipe_data[64];
 static ULONG pipe_count, pipe_block;
@@ -45,6 +47,20 @@ static ULONG mouse_nesting, mouse_block;
 static LONG region_values[3][4];
 static ULONG region_count;
 static LONG stack_values[4];
+static UWORD colour_settings[38];
+static UQUAD colour_settings_set;
+static BOOL colour_peer_pending;
+static LONG colour_fail_slot = -1;
+static void publish_peer_colours(void)
+{
+    colour_settings[W_NAME] = 0x1172; colour_settings[19+W_NAME] = 0x1174;
+    colour_settings_set |= (1ULL << W_NAME) | (1ULL << (19+W_NAME));
+    colour_peer_pending = FALSE;
+}
+static ULONG background_state;
+static ULONG background_on_wait, background_only_wakes;
+static LONG background_error, reset_error;
+static ULONG desktop_paints;
 static LONG window_at_result;
 static UQUAD window_at_x, window_at_y;
 static ULONG window_at_calls;
@@ -75,6 +91,13 @@ static LONG window_transport(ULONG fn, UQUAD a)
     if (fn == CUIS_WINDOW_IDENTIFY) return i + 1;
     if (fn == CUIS_WINDOW_DESTROY) native_windows[i] = 0;
     return E_OK;
+}
+short mt_objc_draw(OBJECT *tree, short object, short depth, short x, short y,
+                    short w, short h, short *global)
+{
+    (void)tree; (void)object; (void)depth; (void)x; (void)y; (void)global;
+    if (w > 0 && h > 0) desktop_paints++;
+    return 1;
 }
 static int resource_resets;
 void aes_resources_reset(void) { resource_resets++; }
@@ -113,6 +136,40 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_SETTING) {
+        if (a >= 38) return EINVAL;
+        if (!e) {
+            LONG value;
+            if ((LONG)a == colour_fail_slot) return EACCDN;
+            value = colour_settings_set & (1ULL << a) ? colour_settings[a] : EFILNF;
+            /* A queued peer can publish between separate scalar reads only
+             * when the querying client has no display ownership. */
+            if (colour_peer_pending && !display_nesting) publish_peer_colours();
+            return value;
+        }
+        if (e & 1) { colour_settings[a] = b; colour_settings_set |= 1ULL << a; }
+        if (e & 2) { colour_settings[c] = d; colour_settings_set |= 1ULL << c; }
+        return E_OK;
+    }
+    if (fn == CUIS_BACKGROUND) {
+        if (background_error) return background_error;
+        if (b == 2) return background_state;
+        if (b == 1) background_state = 3;
+        if (b == 3) background_state &= ~2;
+        return E_OK;
+    }
+    if (fn == CUIS_BACKGROUND_REGION) {
+        if (b) return 0;
+        *(LONG *)(uintptr_t)c = 0; *(LONG *)(uintptr_t)d = 0;
+        *(LONG *)(uintptr_t)e = 640; *(LONG *)(uintptr_t)f = 400;
+        return 1;
+    }
+    if (fn == CUIS_DISPLAY_INFO) return a == 0 ? 640 : a == 1 ? 400 : 0;
+    if (fn == CUIS_WINDOWS_RESET) {
+        if (reset_error) return reset_error;
+        __builtin_memset(native_windows,0,sizeof(native_windows));
+        display_nesting = mouse_nesting = 0; return E_OK;
+    }
     if (fn == CUIS_WINDOW_AT) {
         window_at_calls++; window_at_x = a; window_at_y = b;
         return window_at_result;
@@ -184,6 +241,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (b) display_nesting++;
         else if (!display_nesting) return EACCDN;
         else display_nesting--;
+        if (!display_nesting && colour_peer_pending) publish_peer_colours();
         return E_OK;
     }
     if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
@@ -199,6 +257,11 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
+        if (background_on_wait && (c & CUIS_READY_NOTICE)) {
+            background_on_wait--; background_state |= 2;
+            ready |= CUIS_READY_NOTICE;
+            if (background_only_wakes) { background_only_wakes--; menu_ticks += 3; return ready; }
+        }
         if (menu_test && menu_wakes && (c & CUIS_READY_SURFACE)) {
             menu_wakes--; menu_ticks++; return CUIS_READY_SURFACE;
         }
@@ -1042,6 +1105,7 @@ static int metadata_checks(void)
     CHECK(wind_get(1, WF_OWNER, &a, &b, &c, &d) == 1 && a == 7 && b == 1 && c == 2 && d == 3);
     return 0;
 }
+#include "window_desktop_api.c"
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
@@ -1108,6 +1172,7 @@ int main(void)
     failure = 0;
     CHECK(event_checks() == 0 && input_api_checks() == 0);
     CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && arrow_api_checks() == 0 && slider_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(window_desktop_api_checks(other) == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
     other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);

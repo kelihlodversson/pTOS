@@ -322,6 +322,75 @@ short mt_wind_set_str(short id, short field, const char *text, short *global);
 #ifndef WF_BOTTOM
 #define WF_BOTTOM 25
 #endif
+#ifndef WF_NEWDESK
+#define WF_NEWDESK 14
+#endif
+#ifndef WF_SCREEN
+#define WF_SCREEN 17
+#endif
+#ifndef WF_COLOR
+#define WF_COLOR 18
+#endif
+#ifndef WF_DCOLOR
+#define WF_DCOLOR 19
+#endif
+#ifndef W_BOX
+#define W_BOX 0
+#endif
+#ifndef W_TITLE
+#define W_TITLE 1
+#endif
+#ifndef W_CLOSER
+#define W_CLOSER 2
+#endif
+#ifndef W_NAME
+#define W_NAME 3
+#endif
+#ifndef W_FULLER
+#define W_FULLER 4
+#endif
+#ifndef W_INFO
+#define W_INFO 5
+#endif
+#ifndef W_DATA
+#define W_DATA 6
+#endif
+#ifndef W_WORK
+#define W_WORK 7
+#endif
+#ifndef W_SIZER
+#define W_SIZER 8
+#endif
+#ifndef W_VBAR
+#define W_VBAR 9
+#endif
+#ifndef W_UPARROW
+#define W_UPARROW 10
+#endif
+#ifndef W_DNARROW
+#define W_DNARROW 11
+#endif
+#ifndef W_VSLIDE
+#define W_VSLIDE 12
+#endif
+#ifndef W_VELEV
+#define W_VELEV 13
+#endif
+#ifndef W_HBAR
+#define W_HBAR 14
+#endif
+#ifndef W_LFARROW
+#define W_LFARROW 15
+#endif
+#ifndef W_RTARROW
+#define W_RTARROW 16
+#endif
+#ifndef W_HSLIDE
+#define W_HSLIDE 17
+#endif
+#ifndef W_HELEV
+#define W_HELEV 18
+#endif
 short wind_create(short kind, short x, short y, short w, short h);
 short mt_wind_create(short kind, short x, short y, short w, short h, short *global);
 short wind_open(short id, short x, short y, short w, short h);
@@ -330,6 +399,28 @@ short wind_close(short id);
 short mt_wind_close(short id, short *global);
 short wind_delete(short id);
 short mt_wind_delete(short id, short *global);
+short mt_wind_new(short *global);
+short wind_new(void);
+short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, short *global);
+short wind_set_ptr_int(short id, short field, void *pointer, short value);
+short mt_wind_set_ptr(short id, short field, void *pointer, short *global);
+short wind_set_ptr(short id, short field, void *pointer);
+short mt_wind_get_ptr(short id, short field, void **pointer, short *global);
+short wind_get_ptr(short id, short field, void **pointer);
+short mt_wind_get_int(short id, short field, short *value, short *global);
+short wind_get_int(short id, short field, short *value);
+short mt_wind_set_int(short id, short field, short value, short *global);
+short wind_set_int(short id, short field, short value);
+short mt_wind_get_grect(short id, short field, GRECT *rect, short *global);
+short wind_get_grect(short id, short field, GRECT *rect);
+short mt_wind_set_grect(short id, short field, const GRECT *rect, short *global);
+short wind_set_grect(short id, short field, const GRECT *rect);
+short mt_wind_create_grect(short kind, const GRECT *rect, short *global);
+short wind_create_grect(short kind, const GRECT *rect);
+short mt_wind_open_grect(short id, const GRECT *rect, short *global);
+short wind_open_grect(short id, const GRECT *rect);
+short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, short *global);
+short wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out);
 short wind_find(short x, short y);
 short mt_wind_find(short x, short y, short *global);
 short wind_get(short id, short field, short *a, short *b, short *c, short *d);
