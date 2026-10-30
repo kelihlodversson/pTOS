@@ -115,6 +115,7 @@ SUMMARY = re.compile(r'--- Summary: (\d+) passed, (\d+) failed, (\d+) total ---'
 # ("  name... ") is still open when the panic starts
 PANIC = re.compile(r'Panic: ')
 MUST_RUN = ('text_blit', 'raster_copy')
+PANIC_DRAIN = 4         # seconds, for the rest of a panic message to be written
 
 
 def main():
@@ -168,14 +169,24 @@ def main():
         summary = None
         panic = None
         deadline = time.time() + a.timeout
+        def capture():
+            if glyphs:
+                return screen_text(avi, glyphs)
+            with open(log, errors='replace') as f:
+                return f.read()
+
         while time.time() < deadline and proc.poll() is None:
             time.sleep(2)
-            with open(log, errors='replace') as f:
-                text = f.read()
-            if glyphs:
-                text = screen_text(avi, glyphs)
+            text = capture()
             panic = PANIC.search(text)
             if panic:
+                # the poll can have caught the marker before the rest of the
+                # message, the PC and the registers: the handler then waits
+                # for a key, so let the text come out, then take the report
+                # from the last capture
+                time.sleep(PANIC_DRAIN)
+                text = capture()
+                panic = PANIC.search(text) or panic
                 panic = text[panic.start():]
                 break
             summary = SUMMARY.search(text)
@@ -183,7 +194,7 @@ def main():
                 break
         proc.kill()
         proc.wait()
-    if not glyphs:
+    if not glyphs and not panic:
         with open(log, errors='replace') as f:
             text = f.read()
     shutil.rmtree(work, ignore_errors=True)
