@@ -39,7 +39,8 @@ struct mmu_probe {
     ULONG super_only;           /* the page is supervisor-only */
     ULONG write_protected;      /* the page is write-protected */
     ULONG cache_mode;           /* 68040/60: 0 write-through, 1 copyback, 2 not cached and serialized,
-                                 * 3 not cached; 68030: 2 where the descriptor inhibits the cache, else 0 */
+                                 * 3 not cached (of the DTT0 or DTT1 that matches, for a transparent
+                                 * translation); 68030: 2 where the descriptor inhibits the cache, else 0 */
     ULONG window_ok;            /* phys is reachable through the window of the kernel */
     ULONG window_word;          /* the four bytes at phys (big endian), read through the window: the
                                  * same bytes by a second mapping; only of a page the caller can read

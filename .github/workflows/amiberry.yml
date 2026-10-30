@@ -33,8 +33,11 @@ on:
       - tests/**
       - .github/actions/setup-amiberry/**
       - .github/workflows/amiberry.yml
-      - bios/arch/m68k/amiga_mmu*.S
-      - bios/amiga*.c
+      - bios/arch/m68k/**
+      - bios/amiga*
+      - bios/aros*
+      - include/amiga*.h
+      - include/mmuprobe.h
       - configs/amiga*
   push:
     branches: [master, "epic/**"]
