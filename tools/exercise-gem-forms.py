@@ -71,6 +71,19 @@ for _ in range(16):
     control_move(-127, -127)
 control_move(300, 250)
 marker("x32 GEM graphics setup/cursors: PASS")
+for stage in range(4):
+    marker("x32 GEM graphics tracking %d: READY" % stage)
+    for _ in range(16):
+        control_move(-127, -127)
+    control_move(50 if stage < 2 else 70, 50 if stage < 2 else 60)
+    button(True)
+    time.sleep(0.1)
+    control_move(50 if stage == 0 else 130 if stage == 1 else 80 if stage == 2 else 0,
+                 40 if stage == 0 else 80 if stage == 1 else 0 if stage == 2 else 40)
+    time.sleep(0.1)
+    button(False)
+marker("x32 GEM graphics tracking: PASS")
+
 for stage in range(7):
     marker("x32 GEM frame control %d: READY" % stage)
     for _ in range(16):

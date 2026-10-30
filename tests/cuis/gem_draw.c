@@ -1,3 +1,4 @@
+#include "gem_tracking.h"
 /* Standard GEM source, real VDI pixel checks, and a userspace object demo. */
 #include <gem.h>
 #include "portab.h"
@@ -551,6 +552,7 @@ int main(int argc, char **argv, char **envp)
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
         VERIFY(process(0x3e,status,0,0,0) == 0);
         status = graphics_checks(); if (status) return status;
+        status = gem_tracking_checks(); if (status) return status;
         status = control_checks(); if (status) return status;
         status = arrow_checks(); if (status) return status;
         status = slider_checks(); if (status) return status;
