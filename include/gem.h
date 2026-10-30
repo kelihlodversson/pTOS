@@ -35,7 +35,7 @@ extern "C" {
 #define OF_FL3DIND FL3DIND
 #define OF_FL3DBAK FL3DBAK
 #define OF_FL3DACT FL3DACT
-#define OF_FL3DMASK FL3DOBJ
+#define OF_FL3DMASK FL3DMASK
 #endif
 #ifndef OF_LASTOB
 #define OF_LASTOB LASTOB

@@ -834,7 +834,12 @@ BOOL aes_graphics_track(AES_TRACK *t)
         ok = render(&dummy,0,0,0,0,32767,32767,t->global,FALSE,0,0,NULL,0,track_graphics,t) != 0;
         aes_tracker = saved;
     }
-    if (!ok) (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
+    if (!ok) {
+        (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
+        /* Whole-screen XOR outlines can also touch our registered menu bar;
+         * window damage alone does not schedule that surface's repaint. */
+        (void)cuis_call6(CUIS_SURFACE_STATUS,session,2,0,0,0,0);
+    }
     if (mouse && cuis_call6(CUIS_MOUSE_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
 resume:

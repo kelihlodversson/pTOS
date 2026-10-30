@@ -912,6 +912,11 @@ static int tracking_checks(void)
 {
     OBJECT tree[2] = { { 0 } };
     WORD x,y,rx = -1,ry = -1;
+    int damaged;
+    VERIFY(OF_FL3DMASK == 0x600);
+    VERIFY((OF_FL3DIND & OF_FL3DMASK) == OF_FL3DIND);
+    VERIFY((OF_FL3DBAK & OF_FL3DMASK) == OF_FL3DBAK);
+    VERIFY((OF_FL3DACT & OF_FL3DMASK) == OF_FL3DACT);
     for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) image[y][x] = (x+y)&15;
     tracking_events(80,70);
     VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 1 && rx == 71 && ry == 61);
@@ -949,6 +954,15 @@ static int tracking_checks(void)
     tracking_events(80,70); input_error = TRUE;
     VERIFY(graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry) == 0 && rx == -1 && ry == -1);
     input_error = FALSE;
+    /* Fail after painting over our own menu strip. Recovery must dirty the
+     * surface independently of window damage and retain balanced ownership. */
+    bar_height = 19; bar_events = 0; damaged = redraws;
+    tracking_events(80,70); input_error = TRUE;
+    VERIFY(image[0][1] == 1);
+    VERIFY(graf_rubberbox(0,0,10,10,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    VERIFY(image[0][1] != 1 && (bar_events & CUIS_SURFACE_DIRTY) && redraws == damaged+1);
+    VERIFY(!nesting && !mouse_nesting && opens == closes);
+    input_error = FALSE; bar_height = bar_events = 0;
     tracking_events(80,70); mouse_error = TRUE;
     VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 0 && rx == -1 && ry == -1);
     mouse_error = FALSE;
