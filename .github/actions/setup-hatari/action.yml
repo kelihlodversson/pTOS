@@ -1,0 +1,50 @@
+#
+# Install the pinned Hatari (tools/hatari-pin.sh), the emulator the Atari tests
+# run on (#807), built from source.
+#
+# It is built only when the cache is missing or stale: the key is the hash of
+# the pin file and of the build script, so a bump of either rebuilds it and
+# nothing else does (the build takes a few minutes; restoring it, seconds).
+# What is cached is the installed prefix, not the build tree.  The job that
+# runs this needs the repository checked out first (hashFiles, and the
+# scripts).
+#
+# A cache written by a pull request is only seen by that pull request, so the
+# hatari-tests.yml workflow also runs on pushes to master and the epics that
+# change the pin, and nightly (a cache that is not used for seven days is
+# evicted): the pull requests restore the one the base branch has.
+#
+
+name: Set up the pinned Hatari
+description: Restore, or build and cache, the Hatari of tools/hatari-pin.sh, and put it on PATH.
+
+runs:
+  using: composite
+
+  steps:
+    # SDL2 and the libraries are what it is built with and links to, so they
+    # are installed whether it comes from the cache or from a build
+    - name: Install what Hatari builds with and runs on
+      shell: bash
+      run: |
+        . tools/hatari-pin.sh
+        sudo apt-get update -qq
+        # shellcheck disable=SC2086  # a list
+        sudo apt-get install -y --no-install-recommends $HATARI_APT_PACKAGES
+
+    - name: Cache Hatari
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/hatari
+        key: hatari-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('tools/hatari-pin.sh', 'tools/build-hatari.sh') }}
+
+    - name: Build Hatari
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: tools/build-hatari.sh "$RUNNER_TEMP/hatari" "$RUNNER_TEMP/hatari-src"
+
+    # Whether it came from the cache or from the build: PATH is not cached
+    - name: Add Hatari to PATH
+      shell: bash
+      run: echo "$RUNNER_TEMP/hatari/bin" >>"$GITHUB_PATH"
