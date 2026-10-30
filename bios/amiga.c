@@ -1445,6 +1445,7 @@ static void add_uae_32bit_chip_ram(void)
 #if CONF_AMIGA_HIGHER_HALF_68040
     /* the tree of the 68040 and the 68060 maps the 24 bits only (amiga_mmu040.S):
      * RAM above them would fault when it is used */
+    MAYBE_UNUSED(uae_getchipmemsize);
 #else
     void *z3chipmem_start;
     ULONG z3chipmem_size;
