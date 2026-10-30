@@ -162,10 +162,12 @@ for stage in range(3):
     marker("x32 GEM file selector %d: READY" % stage)
     time.sleep(0.3)
     if stage == 1:
-        # The shared native 3D selector is centred on the 1024x768 GOP mode.
+        if output:
+            command("screendump", {"filename": str(Path(output).resolve().with_name(Path(output).stem + "-selector.png")), "format": "png"})
+        # The shared native 3D selector is centred on the default 1280x800 GOP mode.
         for _ in range(16):
             control_move(-127, -127)
-        control_move(520, 544)
+        control_move(648, 560)
         button(True)
         button(False)
     else:

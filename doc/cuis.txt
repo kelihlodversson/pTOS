@@ -2541,3 +2541,35 @@ fallback, pointer buffers and nested wind_new cleanup. Its completion marker
 is "x32 GEM window/desktop APIs: PASS". Iconification, shading, toolbars and
 other extended-window compatibility remain separate work; no additional
 appl_getinfo capability bits are advertised by this slice.
+
+Classic file selectors (#822)
+----------------------------
+
+External libaes implements fsel_input and fsel_exinput, including the standard
+mt_ variants. The public signatures match GEMlib: a writable path/mask buffer
+(at least 128 bytes), a writable 8.3 selection buffer (at least 13 bytes), and
+an output button word. fsel_exinput additionally accepts an optional title.
+Success returns 1, with button 1 for OK or 0 for Cancel; failure returns 0.
+Caller buffers are committed only after successful dialog cleanup.
+
+The implementation shares aes/shared/gemfslib.c and the generated native AES
+file-selector resource. It retains the native layout, drawing, directory and
+drive navigation, wildcard filtering, directory-first ordering, editable
+selection, double-click acceptance and scrolling. The native listing limit
+remains 1600 entries; a full listing is truncated without an error alert.
+Each invocation owns its writable object/TEDINFO/text tables and search DTA.
+It restores the caller's DTA pointer and leaves the current drive/directory
+unchanged. No additional kernel service or syscall is introduced.
+
+The modal selector nests display, mouse and keyboard ownership, suspends frame
+painting and snapshots its complete outlined rectangle before drawing. Cleanup
+restores the pixels, closes its private workstation, releases only its own
+ownership depths and frees temporary storage on success, cancellation or an
+error. Directory and allocation errors use the standard GEM form alerts.
+
+Host tests exercise navigation, filtering/sorting, acceptance/cancellation,
+scrolling, the listing cap and allocation, drawing and transport failures with
+nested ownership. The interactive x32 GEM client also accepts, cancels and
+reopens selectors through normal GEM headers, checking the DTA, current path,
+saved pixels and subsequent wind_update ownership. Its completion marker is
+"x32 GEM file selectors: PASS". Extended fslx_* selectors remain separate work.
