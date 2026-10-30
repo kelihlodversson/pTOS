@@ -46,11 +46,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install host and x32 test prerequisites
+      - name: Install the host and x32 test packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: gcc-multilib qemu-system-x86 ovmf dosfstools mtools
+      - name: Install the test tools for Python
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib
-          sudo apt-get install -y qemu-system-x86 ovmf dosfstools mtools
           python3 -m venv /tmp/elf-shared-venv
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
       - name: Test metadata, corrupt inputs and Kconfig isolation
@@ -194,12 +195,17 @@ jobs:
       # (the regression suite also wants the fonts of the gdos_answer suite:
       # see the regression job)
       - name: Install QEMU and OVMF
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y qemu-system-x86 ovmf dosfstools mtools
-          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf \
-              fonts-liberation
-          python3 -m pip install fonttools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-system-x86 ovmf dosfstools mtools
+
+      - name: Install the fonts
+        uses: ./.github/actions/apt-install
+        with:
+          packages: --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
 
       - name: Build and test the configurations
         run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-x86_64.sh
@@ -243,18 +249,23 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Install QEMU
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ${{ matrix.qemu }} dosfstools mtools
-          # scalable fonts for the gdos_answer suite: TrueType and CFF, one
-          # whose ascender is taller than its em (Loma), and a monospaced one
-          # with marks of no width (Liberation Mono); fontTools makes a TrueType
-          # collection of two Liberation Sans faces
-          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf \
-              fonts-liberation
-          # for the interpreter the test script runs (setup-toolchain
-          # selects its own Python, which the system's packages are not for)
-          python3 -m pip install fonttools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools
+
+      # scalable fonts for the gdos_answer suite: TrueType and CFF, one
+      # whose ascender is taller than its em (Loma), and a monospaced one
+      # with marks of no width (Liberation Mono); fontTools makes a TrueType
+      # collection of two Liberation Sans faces
+      - name: Install the fonts
+        uses: ./.github/actions/apt-install
+        with:
+          packages: --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+
+      # for the interpreter the test script runs (setup-toolchain selects its
+      # own Python, which the system's packages are not for)
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
 
       - name: Run the regression suite
         run: tools/ci-group.sh --names "${{ matrix.machines }}" tools/ci-regression.sh
@@ -345,7 +356,9 @@ jobs:
       # tools/fetch-raspi-firmware.sh and tools/fetch-fonts.sh download with, listed explicitly
       # rather than assumed from the runner image.
       - name: Install SD card image tooling
-        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl zip
+        uses: ./.github/actions/apt-install
+        with:
+          packages: mtools dosfstools fdisk dos2unix curl zip
 
       - name: Fetch the Raspberry Pi boot firmware
         run: ./tools/fetch-raspi-firmware.sh sdcard/raspi-firmware
