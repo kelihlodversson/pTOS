@@ -12,6 +12,7 @@
 #include "struct.h"
 #include "aesvars.h"
 #include "gemlib.h"
+#include "geminit.h"
 #include "gemdosif.h"
 #include "gemdos.h"
 #include "gempd.h"

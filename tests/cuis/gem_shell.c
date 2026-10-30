@@ -1,7 +1,7 @@
 /* Shell APIs through normal GEM headers, inside isolated dynamic clients. */
+#include <mint/basepage.h>
 #include <gem.h>
-#include "emutos.h"
-#include "bdosdefs.h"
+#include "portab.h"
 #include "ptos.h"
 #include "gem_shell.h"
 #define VERIFY(c) do { if (!(c)) return 0x8600 | __LINE__; } while (0)
@@ -23,7 +23,7 @@ int gem_shell_checks(short *global, int child)
     UBYTE dta[64], expected[64];
     UQUAD original_dta;
     int i;
-    PD *basepage = (PD *)(uintptr_t)ptos_basepage;
+    BASEPAGE *basepage = (BASEPAGE *)(uintptr_t)ptos_basepage;
     VERIFY(mt_shel_read(command,tail,global) == 1 && command[0] && command[1] == ':');
     for (i = 0; i < 128; i++) VERIFY((UBYTE)tail[i] == (UBYTE)basepage->p_cmdlin[i]);
     VERIFY(shel_envrn(&value,"PTOS_SHELL_ABSENT=") == 1 && !value);
