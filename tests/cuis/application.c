@@ -50,6 +50,7 @@ static LONG stack_values[4];
 static UWORD colour_settings[38];
 static UQUAD colour_settings_set;
 static ULONG background_state;
+static ULONG background_on_wait, background_only_wakes;
 static LONG background_error, reset_error;
 static ULONG desktop_paints;
 static LONG window_at_result;
@@ -239,6 +240,11 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
+        if (background_on_wait && (c & CUIS_READY_NOTICE)) {
+            background_on_wait--; background_state |= 2;
+            ready |= CUIS_READY_NOTICE;
+            if (background_only_wakes) { background_only_wakes--; menu_ticks += 3; return ready; }
+        }
         if (menu_test && menu_wakes && (c & CUIS_READY_SURFACE)) {
             menu_wakes--; menu_ticks++; return CUIS_READY_SURFACE;
         }

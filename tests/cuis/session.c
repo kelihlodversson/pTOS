@@ -352,5 +352,7 @@ int main(void)
     rc = pointer_style_checks();
     if (rc) return rc;
     rc = window_at_checks();
-    return rc ? rc : background_checks();
+    if (rc) return rc;
+    rc = background_checks();
+    return rc ? rc : background_release_checks();
 }

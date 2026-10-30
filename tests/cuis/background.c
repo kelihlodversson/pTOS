@@ -74,12 +74,21 @@ static int background_checks(void)
     CHECK(cuis_keyboard_event(0x1234) && ca->key_count == 1);
     CHECK(cuis_mouse_lock(a,1,0) == E_OK && cuis_display_lock(a,1,0) == E_OK);
     CHECK(cuis_display_lock(a,1,0) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_BEGIN,a,25) == E_OK && surface_painter == ca);
     ca->pointer_hidden = 2;
     before = cuis_window_count();
     CHECK(cuis_windows_reset(a) == E_OK && !mouse_owner && !display_owner && !ca->pointer_hidden);
+    CHECK(!surface_painter && !surface_paint_height);
     CHECK(cuis_window_count() == before && cuis_service(CUIS_SESSION_QUERY,a) == E_OK);
     CHECK(background_front == ca); /* wind_new retains desktop registration. */
+    CHECK(cuis_display_lock(a,1,0) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_BEGIN,a,25) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_END,a,0) == E_OK && cuis_display_lock(a,0,0) == E_OK);
     run = &second;
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,20) == E_OK);
+    CHECK(cuis_display_lock(b,1,0) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_BEGIN,b,22) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_END,b,0) == E_OK && cuis_display_lock(b,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
     CHECK(cuis_windows_reset(b) == E_OK && !update_owner && !cb->windows && !cb->window_count);
     CHECK(cuis_display_lock(b,1,0) == E_OK);
@@ -93,3 +102,40 @@ static int background_checks(void)
     return 0;
 }
 #undef BGREG
+
+/* A foreign border cannot steal a captured desktop drag's release. */
+static int background_release_checks(void)
+{
+    LONG a, b, window;
+    CUIS_CLIENT *desktop, *peer;
+    run = &first; a = cuis_service(CUIS_SESSION_START,0); desktop = *find_owner(run);
+    CHECK(a >= 0 && cuis_display_lock(a,1,0) == E_OK);
+    CHECK(cuis_background(a,1) == E_OK && cuis_display_lock(a,0,0) == E_OK);
+    run = &second; b = cuis_service(CUIS_SESSION_START,0); peer = *find_owner(run);
+    window = cuis_window_service(CUIS_WINDOW_CREATE,200,200,100,100,0);
+    CHECK(b >= 0 && window >= 0);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONTENT,window,20,20,1,1) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
+    pointer_suppressed = pointer_legacy_drag = FALSE;
+    pointer_buttons = 0;
+    CHECK(point_at(50,50,1) && background_capture == desktop);
+    CHECK(point_at(210,210,1) && background_capture == desktop && !pointer_capture);
+    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    CHECK(focus_window == peer->windows && !content_contains(focus_window));
+    run = &first;
+    CHECK(cuis_input_config(CUIS_INPUT_BUTTON,a,1,0,1,0,0) == E_OK);
+    input_sleeps = 0; input_packet_mode = 8;
+    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_BUTTON);
+    CHECK(input_sleeps == 1 && !input_packet_mode && !background_capture && !pointer_buttons);
+    CHECK(cuis_input_config(CUIS_INPUT_RESULT,a,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK);
+    CHECK(copied[1] == 1 && copied[2] == 210 && copied[3] == 210 && !(copied[4] & 3));
+    CHECK(!desktop->edge_count && !peer->edge_count);
+    /* Ordinary uncaptured border hover still suppresses live button waits. */
+    run = &second;
+    CHECK(cuis_input_config(CUIS_INPUT_BUTTON,b,1,0,1,0,0) == E_OK);
+    CHECK(cuis_session_wait(b,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0) == CUIS_READY_TIMER);
+    cuis_process_exit(&first); cuis_process_exit(&second);
+    CHECK(allocations == frees && input_irqs && !input_bad_idle);
+    return 0;
+}

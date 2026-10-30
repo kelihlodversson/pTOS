@@ -1,4 +1,42 @@
 /* Standard window helpers, colours and desktop contracts over failing transport. */
+static int background_event_checks(short *global)
+{
+    short message[8], saved[8], key = 99, clicks = 99, x = 99, y = 99, buttons = 99, modifiers = 99;
+    ULONG before;
+    __builtin_memset(message,0x55,sizeof(message));
+    __builtin_memcpy(saved,message,sizeof(saved));
+    input_ready = 0; background_on_wait = 1; before = wait_calls;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+        &x,&y,&buttons,&modifiers,&key,&clicks) == MU_TIMER);
+    CHECK(wait_calls == before+1 && !(background_state & 2));
+    CHECK(!__builtin_memcmp(message,saved,sizeof(saved)) && key == 0 && clicks == 0);
+    input_ready = CUIS_READY_INPUT; background_on_wait = 1; before = wait_calls;
+    CHECK(mt_evnt_multi(MU_MESAG|MU_TIMER|MU_KEYBD|MU_BUTTON|MU_M1|MU_M2,1,1,1,
+        0,0,0,100,100,0,0,0,100,100,message,0,&x,&y,&buttons,&modifiers,&key,&clicks,global) ==
+        (MU_TIMER|MU_KEYBD|MU_BUTTON|MU_M1|MU_M2));
+    CHECK(wait_calls == before+1 && key == 0x1e61 && clicks == 2);
+    CHECK(x == 17 && y == 23 && buttons == 2 && modifiers == 5);
+    CHECK(!__builtin_memcmp(message,saved,sizeof(saved)));
+    /* A notice-only wake re-arms against the original timer deadline. */
+    input_ready = 0; background_on_wait = background_only_wakes = 1;
+    before = wait_calls; menu_ticks = 100;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,100,
+        &x,&y,&buttons,&modifiers,&key,&clicks) == MU_TIMER);
+    CHECK(wait_calls == before+2 && waited_interval == 85 && !background_only_wakes && !background_on_wait);
+    /* A real message still combines with the timer during desktop damage. */
+    saved[0] = 123; saved[1] = gl_apid;
+    CHECK(appl_write(gl_apid,sizeof(saved),saved) == 1);
+    background_on_wait = 1;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+        &x,&y,&buttons,&modifiers,&key,&clicks) == (MU_MESAG|MU_TIMER));
+    CHECK(!pipe_count && !__builtin_memcmp(message,saved,sizeof(saved)));
+    read_error = EIMBA; background_on_wait = 1; x = 123;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+        &x,&y,&buttons,&modifiers,&key,&clicks) == 0 && x == 123);
+    read_error = 0;
+    return 0;
+}
+
 static int window_desktop_api_checks(short *global)
 {
     short a, b, c, d, old, fresh, invalid[15] = {0};
@@ -49,6 +87,7 @@ static int window_desktop_api_checks(short *global)
     CHECK(aes_desktop_registered());
     before = desktop_paints;
     CHECK(evnt_timer(0) == 1 && desktop_paints > before && !(background_state & 2));
+    CHECK(background_event_checks(global) == 0);
     background_error = EACCDN; pointer = &rect;
     CHECK(!wind_get_ptr(0,WF_NEWDESK,&pointer) && pointer == &rect);
     CHECK(!wind_set_ptr(0,WF_NEWDESK,NULL)); background_error = 0;

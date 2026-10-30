@@ -1452,6 +1452,7 @@ LONG cuis_windows_reset(UQUAD handle)
     }
     flags = cuis_input_lock();
     client->pointer_hidden = 0;
+    if (surface_painter == client) { surface_painter = NULL; surface_paint_height = 0; }
     clear_display_regions(client);
     display_depth = 0; display_owner = NULL;
     surface_focus(); cuis_pointer_sync();
@@ -1751,7 +1752,7 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     }
     /* Border hover suppresses live button predicates, not MU_M1/MU_M2.
      * Trusted work-area history below still retains its original ownership. */
-    if (!mouse_owner && !pointer_capture && window_at(pointer_x, pointer_y) &&
+    if (!mouse_owner && !pointer_capture && !background_capture && window_at(pointer_x, pointer_y) &&
         !content_contains(window_at(pointer_x, pointer_y))) owned = FALSE;
     if (initial && (wait->events & CUIS_READY_BUTTON)) {
         /* GEM's quick check retains a press/release pair that arrived before
