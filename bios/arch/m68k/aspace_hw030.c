@@ -1,9 +1,10 @@
 /*
  * aspace_hw030.c - the page tables of a process on the 68030
  *
- * The backend of bios/aspace.c (include/aspace32.h) for the Atari ROM that
- * runs in the upper half (CONF_ATARI_HIGHER_HALF, bios/arch/m68k/atari_mmu.S),
- * the counterpart of aspace_hw.c of the 68040 and 68060.  The tree has the
+ * The backend of bios/aspace.c (include/aspace32.h) for the Atari and Amiga
+ * ROMs that run in the upper half (CONF_ATARI_HIGHER_HALF, atari_mmu.S;
+ * CONF_AMIGA_HIGHER_HALF, amiga_mmu.S), the counterpart of aspace_hw.c of the
+ * 68040 and 68060.  The tree has the
  * same shape: 4 KiB pages and TC with PS = 12, IS = 0, TIA = 7, TIB = 7,
  * TIC = 6, which makes a root table of 128 entries of 32 MiB, pointer tables
  * of 128 entries of 256 KiB and page tables of 64 pages.  The descriptors are
@@ -43,7 +44,7 @@
 
 #include "config.h"
 
-#if CONF_WITH_USER_ASPACE && CONF_ATARI_HIGHER_HALF
+#if CONF_WITH_USER_ASPACE && CONF_M68K_ROM_WINDOW && !CONF_M68K_ROM_WINDOW_040
 
 #include "portab.h"
 #include "string.h"
@@ -405,4 +406,4 @@ void aspace_hw_code_changed(void)
     clear_caches();
 }
 
-#endif /* CONF_WITH_USER_ASPACE && CONF_ATARI_HIGHER_HALF */
+#endif /* CONF_WITH_USER_ASPACE && CONF_M68K_ROM_WINDOW && !CONF_M68K_ROM_WINDOW_040 */

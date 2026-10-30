@@ -16,6 +16,9 @@
 #include "emutos.h"
 #include "tosvars.h"
 #include "biosext.h"
+#if CONF_AMIGA_HIGHER_HALF
+#include "amiga.h"
+#endif
 #if CONF_WITH_PROCESS_ASPACES
 #include "pmem32.h"
 #endif
@@ -26,6 +29,9 @@ LONG phys_pages_total(void)
     /* phystop is an address of the kernel window: the RAM starts at its base */
     ULONG bytes = (ULONG)(uintptr_t)phystop - (ULONG)PMEM32_WINDOW_BASE;
 
+#if CONF_AMIGA_HIGHER_HALF
+    bytes += amiga_process_ram;         /* the RAM of the boards is pages of the allocator too */
+#endif
 #if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
     if (ramtop)                         /* the TT-RAM is pages of the allocator too */
         bytes += (ramtop > (UBYTE *)0x40000000UL ? 0x40000000UL : (ULONG)(uintptr_t)ramtop)

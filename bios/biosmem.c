@@ -95,8 +95,12 @@ static void process_memory_init(void)
         pmem32_prefer((PADDR)(uintptr_t)TTRAM_START);   /* the ST-RAM is for DMA, and the overflow */
     }
 #endif
+#ifndef MACHINE_AMIGA
     if (!aspace_kernel_init())
         panic("no memory for the address spaces\n");
+#endif
+    /* (on the Amiga the chip RAM is too small for the process window: the RAM of the
+     * expansion boards is added and the address space made in amiga_process_memory_init()) */
 }
 #endif
 

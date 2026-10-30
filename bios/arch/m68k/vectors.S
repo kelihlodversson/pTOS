@@ -1488,7 +1488,7 @@ biosxbios:
         addq.l  #4,sp
 #endif
         lea     16(sp),sp
-#if CONF_ATARI_HIGHER_HALF && !CONF_ATARI_HIGHER_HALF_68040
+#if CONF_M68K_ROM_WINDOW && !CONF_M68K_ROM_WINDOW_040
         // as at the return from a GEMDOS call (uspaceasm.S): the 68030's data
         // cache is addressed logically, and what the call wrote into the
         // memory of the process is not what its lines under the user address hold

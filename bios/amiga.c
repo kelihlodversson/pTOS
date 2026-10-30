@@ -15,6 +15,10 @@
 #include "emutos.h"
 #include "amiga.h"
 #include "amiga_io.h"
+#if CONF_WITH_PROCESS_ASPACES
+#include "pmem32.h"
+#include "aspace32.h"
+#endif
 #if CONF_AMIGA_HIGHER_HALF
 #include "amiga_mmu.h"
 #endif
@@ -522,6 +526,11 @@ static void add_uae_32bit_chip_ram(void);
 /* Detect Alt-RAM directly from hardware */
 static void add_alt_ram_from_hardware(void)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    /* the RAM of the expansion boards is pages of the processes (amiga_process_memory_init());
+     * the slow RAM and the RAM of the motherboard are not used with address spaces yet */
+    return;
+#endif
     /* 24-bit RAM is really SLOW since GOLD 2.12, don't use it. */
     if (!IS_APOLLO_68080)
     {
@@ -3039,6 +3048,48 @@ static void add_ram_from_board(struct ConfigDev *configDev)
     /* This board has been processed */
     configDev->cd_Flags |= CDF_PROCESSED;
 }
+
+#if CONF_WITH_PROCESS_ASPACES
+ULONG amiga_process_ram;
+
+/*
+ * With an address space for every process the RAM of the boards is not BDOS
+ * alternative RAM but pages that the processes are given (include/pmem32.h),
+ * reached through the window of the kernel, which maps the first 16 MiB: the
+ * boards of the Zorro II space (up to 0x00a00000).  The chip RAM alone is too
+ * small for the process window, so this is where the address space of the
+ * kernel is made, once those pages are known.
+ */
+void amiga_process_memory_init(void)
+{
+    struct Node *node;
+    PADDR first = 0;
+
+    for (node = boardList.lh_Head; node->ln_Succ; node = node->ln_Succ)
+    {
+        struct ConfigDev *configDev = (struct ConfigDev *)node;
+        PADDR start = (PADDR)(uintptr_t)configDev->cd_BoardAddr;
+
+        if (!(configDev->cd_Rom.er_Type & ERTF_MEMLIST)
+            || (configDev->cd_Flags & (CDF_SHUTUP | CDF_PROCESSED)))
+            continue;
+        if (start < 0x00200000UL || start + configDev->cd_BoardSize > 0x00a00000UL)
+            continue;                   /* not in the window: left as it is */
+
+        KDEBUG(("amiga_process_memory_init() RAM %p size=%lu\n",
+            configDev->cd_BoardAddr, (unsigned long)configDev->cd_BoardSize));
+        pmem32_add(start, start + configDev->cd_BoardSize);
+        amiga_process_ram += configDev->cd_BoardSize;
+        if (!first)
+            first = start;
+        configDev->cd_Flags |= CDF_PROCESSED;
+    }
+    if (first)
+        pmem32_prefer(first);           /* the chip RAM is what the custom chips reach */
+    if (!aspace_kernel_init())
+        panic("no memory for the address spaces\n");
+}
+#endif
 
 /* Look for RAM on Expansion boards. This must be done after AUTOCONFIG. */
 static void add_expansion_ram(void)

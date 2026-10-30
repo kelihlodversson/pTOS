@@ -34,6 +34,11 @@
  * The I/O is not in the lower half, which belongs to the processes once they
  * have address spaces: the kernel reaches it through its own window.
  *
+ * With CONF_WITH_PROCESS_ASPACES (#814) every page above is supervisor-only,
+ * and the tree is only what the machine starts with, what a reset needs back
+ * and, in its upper half (root entries 64-127), the kernel half that
+ * aspace_hw030.c copies into the root of every address space.
+ *
  * Nothing else is mapped.  TT0 and TT1 are off.
  *
  * Copyright (C) 2026 The pTOS development team
@@ -61,10 +66,20 @@ D_CI            = 0x40          // page descriptors only
 D_SUPER         = 0x100
 D_BASE          = 0x7fff0000 + 0xfc00
 
+#if CONF_WITH_PROCESS_ASPACES
+// With an address space for every process (#814) this tree is the boot tree
+// and the source of the kernel half of every other one (aspace_hw030.c): all
+// of it is the kernel's, none of it is for a program
+PAGE            = D_BASE + DT_PAGE + D_USED + D_MOD + D_SUPER
+PAGE_SUPER      = PAGE                  // (the bit is added once: twice would carry out of it)
+PAGE_IO         = PAGE + D_CI
+PAGE_CI         = PAGE + D_CI
+#else
 PAGE            = D_BASE + DT_PAGE + D_USED + D_MOD
 PAGE_SUPER      = PAGE + D_SUPER
 PAGE_IO         = PAGE + D_SUPER + D_CI
 PAGE_CI         = PAGE + D_CI
+#endif
 TABLE           = D_BASE + DT_TABLE + D_USED
 
 WINDOW          = 0x80000000
