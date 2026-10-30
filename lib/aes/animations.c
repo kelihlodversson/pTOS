@@ -2,8 +2,6 @@
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
 #include "animation.h"
 #include "application.h"
-#include "transport.h"
-#include "gemerror.h"
 
 static BOOL valid_rect(const GRECT *r)
 {
@@ -17,9 +15,7 @@ static WORD animate(WORD kind, const GRECT *small, const GRECT *large, WORD *glo
     if (session < 0 || !valid_rect(small) || !valid_rect(large) ||
         (kind != AES_ANIMATION_MOVE && (small->g_w > large->g_w || small->g_h > large->g_h))) return 0;
     if (!aes_frames_suspend()) return 0;
-    if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) { aes_frames_resume(); return 0; }
     ok = aes_form_animation(kind,small,large,global) != 0;
-    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     aes_frames_resume();
     return ok ? 1 : 0;
 }

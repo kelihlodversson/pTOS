@@ -51,7 +51,7 @@ static BOOL bar_stream, bar_line_error, bar_close_error, bar_write_block;
 static int bar_writes;
 static WORD bar_trial_height, bar_snapshot_handle;
 static int bar_failed_closes;
-static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
+static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws, unowned_redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
 static int popup_paints;
 static WORD modal_keys[16];
@@ -167,7 +167,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         keyboard_nesting += b ? 1 : -1;
         return E_OK;
     }
-    if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; return nesting ? E_OK : EACCDN; }
+    if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; if (!nesting) unowned_redraws++; return nesting ? E_OK : EACCDN; }
     if (fn == CUIS_MOUSE_LOCK && a == 7) {
         if (tracking_mode && b && c) return EINVAL;
         if (bar_mode && b && b != CUIS_MOUSE_FRESH) return EINVAL;
@@ -855,7 +855,7 @@ static int frame_metric_checks(void)
 static int animation_checks(void)
 {
     static const WORD aspects[3][3] = { { 1,1,38 }, { 1,2,76 }, { 3,1,24 } };
-    int aspect, kind, damaged, pointer_releases, pixel, result;
+    int aspect, kind, damaged, pointer_releases, pixel, result, nested, rejected;
     static WORD original[120][160];
     __builtin_memcpy(original,image,sizeof(image));
     result = gem_box_animation_checks(0);
@@ -903,6 +903,21 @@ static int animation_checks(void)
     VERIFY(graf_mbox(4,4,20,0,60,0) == 0);
     VERIFY(image[0][21] != pixel && redraws == damaged+1 && (bar_events & CUIS_SURFACE_DIRTY));
     animation_fail_after = -1; bar_height = bar_events = 0;
+    for (kind = FMD_GROW; kind <= FMD_SHRINK; kind++) for (nested = 0; nested < 2; nested++) {
+        if (nested) VERIFY(wind_update(BEG_UPDATE) == 1);
+        damaged = redraws; rejected = unowned_redraws;
+        bar_height = 19; bar_events = 0; animation_fail_after = 1;
+        __builtin_memcpy(original,image,sizeof(image));
+        VERIFY(form_dial(kind,20,0,4,4,0,0,120,80) == 0);
+        VERIFY(__builtin_memcmp(original,image,sizeof(image)) != 0);
+        VERIFY(redraws == damaged+1 && unowned_redraws == rejected && (bar_events & CUIS_SURFACE_DIRTY));
+        VERIFY(nesting == nested && !frame_overlay_depth && opens == closes);
+        animation_fail_after = -1; bar_height = bar_events = 0;
+        if (nested) VERIFY(wind_update(END_UPDATE) == 1);
+    }
+    window_update = TRUE; damaged = opens;
+    VERIFY(form_dial(FMD_GROW,20,0,4,4,0,0,120,80) == 0 && opens == damaged);
+    window_update = FALSE;
     VERIFY(mouse_releases == pointer_releases && !nesting && !frame_overlay_depth && opens == closes);
     return 0;
 }

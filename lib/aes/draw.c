@@ -666,6 +666,9 @@ WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD 
     FORM_ANIMATION a;
     WORD result;
     LONG session = aes_application_session(global);
+    /* form_dial and public graphics calls both need ownership through error
+     * recovery, after render() releases its own nested display scope. */
+    if (session < 0 || cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
     dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
     dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
     a.kind = kind; a.small = *small; a.large = *large;
@@ -674,6 +677,7 @@ WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD 
         (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
         (void)cuis_call6(CUIS_SURFACE_STATUS,session,2,0,0,0,0);
     }
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) result = 0;
     return result;
 }
 
