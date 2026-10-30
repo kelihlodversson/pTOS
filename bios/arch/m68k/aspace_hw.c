@@ -233,8 +233,14 @@ BOOL aspace_hw_init(void)
     }
 #endif
 
-    /* the page table of the kernel's low memory, supervisor only */
+    /* the page table of the kernel's low memory, supervisor only (on the Amiga,
+     * where the pages above the chip RAM may be all there is, from any page: only
+     * the custom chips want the chip RAM, and the CPU walks this table) */
+#if CONF_AMIGA_HIGHER_HALF
+    low_page_table = pmem32_alloc(1, 1);
+#else
     low_page_table = pmem32_alloc_low(1, 1);
+#endif
     if (low_page_table == PMEM32_NONE)
         return FALSE;
     memset(pmem32_virt(low_page_table), 0, PAGE);
