@@ -2411,3 +2411,22 @@ rejection. Failures leave rubber/drag output pointers unchanged and release
 acquired ownership; a failed XOR operation requests redraw. As in GEM, zero is
 both a valid slider position and its failure return. No new kernel operation
 or public pTOS-specific tracking API is required.
+
+Box animations
+--------------
+
+External libaes exports standard graf_mbox, graf_growbox and graf_shrinkbox,
+with mt variants and GEMlib's grow/shrink grect helpers. Shrink calls take the
+small destination first and the large source second. GRECT inputs are copied;
+aliasing the two rectangles does not modify caller data.
+
+The existing aes/shared/gemformanim.c supplies the same XOR paths used by
+native AES and form_dial. Private workstation metrics preserve patterned lines
+and aspect-dependent corner arms. Native scale calculations admit the complete
+trajectory before painting, including rounding, zero-distance drift and
+intermediate corner coordinates. Nonrepresentable paths fail before drawing.
+
+Whole-screen display ownership and frame suspension span each public animation
+and balance nested caller scopes. No mouse/keyboard grab or input wait is added.
+Failures request window and owned-menu-surface repaint before the outer display
+scope is released. Kernel code and services are unchanged.

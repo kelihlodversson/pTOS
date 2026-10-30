@@ -36,6 +36,15 @@ static void gr_scale(WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pys
         *pxstep = *pystep = 1;
 }
 
+#ifdef AES_ANIM_BINDINGS
+/* Let the userspace adapter admit the exact native trajectory before drawing.
+ * Native builds retain their original code and object size. */
+void aes_animation_scale(WORD xdist, WORD ydist, WORD *count, WORD *xstep, WORD *ystep)
+{
+    gr_scale(xdist,ydist,count,xstep,ystep);
+}
+#endif
+
 
 void gr_stepcalc(WORD orgw, WORD orgh, GRECT *pt, WORD *pcx, WORD *pcy,
                  WORD *pcnt, WORD *pxstep, WORD *pystep)

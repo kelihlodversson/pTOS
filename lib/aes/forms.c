@@ -5,6 +5,7 @@
 #include "application.h"
 #include "transport.h"
 #include "modal_context.h"
+#include "animation.h"
 
 MODAL_CONTEXT *aes_modal;
 
@@ -76,7 +77,6 @@ WORD mt_form_do(OBJECT *tree, WORD start, WORD *global)
 }
 WORD form_do(OBJECT *tree, WORD start) { return mt_form_do(tree,start,aes_global); }
 
-WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD *global);
 WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
                    WORD x, WORD y, WORD w, WORD h, WORD *global)
 {
