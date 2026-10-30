@@ -2579,3 +2579,49 @@ nested ownership. The interactive x32 GEM client also accepts, cancels and
 reopens selectors through normal GEM headers, checking the DTA, current path,
 saved pixels and subsequent wind_update ownership. Its completion marker is
 "x32 GEM file selectors: PASS". Extended fslx_* selectors remain separate work.
+
+Shell startup, environment and file queries (#826)
+------------------------------------------------
+
+External libaes implements shel_read, shel_envrn and shel_find, with their
+standard mt_* counterparts and GEMlib signatures. Shell launching and shared
+shell/desktop context are separate work; these queries add no kernel service.
+They require the caller's registered GEM global array.
+
+shel_read writes the complete startup executable specification and the original
+128-byte GEMDOS command tail, including its leading length byte. The command
+buffer must have at least 260 bytes. The library captures this information in
+its ELF initializer, using AT_EXECFN and the existing process basepage rather
+than ARGV[0]. Relative startup names are qualified with the launch directory;
+later drive/directory changes and extended ARGV tails do not change the result.
+Missing or invalid startup metadata returns 0 without changing either output.
+
+shel_envrn performs the native AES prefix search in the process's startup
+GEMDOS environment block. It returns 1 for a completed lookup and writes the
+address immediately following the prefix, or NULL when absent. The result is
+an ordinary process-local pointer into that environment. Empty values remain
+empty; PATH parsing does not treat the next environment variable as a path.
+NULL arguments, invalid globals or a malformed unterminated environment
+return 0 without changing the output pointer.
+
+shel_find uses the original native AES search core in aes/shared/gemshquery.c:
+first the basename in the launch application directory, then the supplied
+specification in the current directory, then the basename in the current
+drive's root, and finally the semicolon/comma-separated PATH components.
+Drive-relative PATH components retain their colon semantics. Like native TOS,
+a current-directory match leaves the supplied specification unchanged; other
+matches replace it with the successful candidate, retaining wildcard masks.
+The caller provides a writable buffer of at least 260 bytes. Success returns 1;
+missing files, invalid inputs or operational failures return 0 with the input
+buffer unchanged. Overlong PATH candidates are skipped within private bounded
+workspace. The search uses a private DTA and restores the original pointer,
+without changing the caller's DTA bytes, current drive or current directory.
+
+Native AES uses the same separately compiled query source with its existing
+state and bindings. Startup directory discovery is also shared with libaes's
+resource loader. The shell query fixture exercises native search precedence,
+prefix/missing/empty environment lookup, long paths and DTA failure cleanup
+under host sanitizers. The isolated x32 GEM client covers both short and ARGV
+launches, lookup after cwd changes, wildcard searches and caller DTA protection;
+its completion marker is "x32 GEM shell queries: PASS". No additional shell
+capability bits are advertised until their corresponding operations exist.

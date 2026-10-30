@@ -290,9 +290,9 @@ obj/libaes/selector_miscutil.o: util/miscutil.c include/i18nconf.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
 
-obj/libaes/shell.o: lib/aes/shell.c lib/aes/shell_context.h lib/aes/resource_context.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
+obj/libaes/shell.o: lib/aes/shell.c lib/aes/shell_context.h lib/aes/resource_context.h lib/aes/transport.h lib/aes/application.h lib/ldso/client/ptos.h include/gem.h include/bdosdefs.h include/userptr.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/gemshquery.o: aes/shared/gemshquery.c aes/shared/gemshquery.h lib/aes/shell_bindings.h lib/aes/shell_context.h $(AUTOCONF_H)
+obj/libaes/gemshquery.o: aes/shared/gemshquery.c aes/shared/gemshquery.h lib/aes/shell_bindings.h lib/aes/shell_context.h lib/aes/resource_context.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_SHELL_BINDINGS='"shell_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@

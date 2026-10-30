@@ -118,5 +118,8 @@ int main(void)
     VERIFY(shel_envrn(&value,"FOO=") == 1 && !value);
     basepage.p_cmdlin[0] = (char)128; aes_library_init();
     strcpy(command,"unchanged"); VERIFY(!shel_read(command,tail) && !strcmp(command,"unchanged"));
+    strcpy(executable,"C:/START/APP/TEST.TOS"); basepage.p_cmdlin[0] = 0;
+    aes_library_init();
+    VERIFY(shel_read(command,tail) == 1 && !strcmp(command,"C:\\START\\APP\\TEST.TOS"));
     return 0;
 }
