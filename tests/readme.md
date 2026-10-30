@@ -158,10 +158,45 @@ being treated as suites themselves. `tests/pie_load/`, for instance,
 also has `pie_probe.c`: a standalone payload `pie_load.c` launches via
 `Pexec()` to test the PIE ELF loader, built and linked separately from
 `runtests.tos` (see the Makefile's `pieprobe.tos` rule) rather than
-compiled in as a `test_<name>()` entry point.  `tests/isolation/` does the
+compiled in as a `test_<name>()` entry point.  `tests/mmu_state/` asks the
+kernel what the MMU is, with `Ssystem(S_MMUPROBE)` (include/mmuprobe.h,
+bios/arch/m68k/mmuprobe.c, only in a build with the tests on an m68k image that
+runs in the upper half): translation is on with 4 KiB pages, the roots are set, a page of the program
+translates to a physical page that the kernel half also reaches (the same bytes by
+a second mapping), the cache attributes and the protection are the tree's; the
+CPU's own PTEST answers (the tables are walked in software on a 68060, which has no
+PTEST), not the emulator's setting.  With a device register that changes by itself (the
+beam position on the Amiga, the 200 Hz timer of the MFP on the Atari) and one that holds
+what is written to it, it also alternates between RAM and I/O with the caches on (a
+counter that never changes would be read from a cache; a register that does not have its
+value after the data cache is pushed out would be a write that stayed in the CPU).  Every
+failure of the suite carries the model, TC, the roots and the PTEST status of the access.
+Limit: the Amiberry core caches only what is RAM (a cached I/O mapping is not seen by it,
+checked by making the I/O pages cacheable in a build and running both passes), so there the
+alternation is a check of the device accesses, and the cache mode of the descriptor, which
+PTEST gives, is the check of the attribute.  Run under Hatari (f030a, tta, f040a, tt040a,
+f030), QEMU (virt-m68k-mmu, virt-m68k-aspace) and, on the Amiga ROMs, Amiberry on a
+68030, a 68040 and a 68060 (`tools/run-amiberry-tests.py`, doc/debugging.txt: the
+results are read from `RUNTESTS.LOG`, which a build for the Amiga writes on the test
+disk).  `tests/isolation/` does the
 same with `isoprobe.c` (`ISOPROBE.TOS`), which makes the forbidden accesses
 one launch at a time; the suite is built only where `CONF_WITH_USER_ASPACE`
-is set on ARM and m68k.
+is set on ARM and m68k.  Its translation cache checks (`check_translation_cache()`,
+m68k and ARM) put a page at the same address in the parent and in the children and
+switch between them, and change a page the CPU has just used (read-only and back,
+no access, unmapped, mapped again): the next access must follow at once, with a
+fault where there should be one.
+`tests/mmu_fault/` (m68k, with address spaces and `Mmap()`) is the recovery from
+page faults: an instruction that faults in the middle of its work on pages that
+are not there yet (auto-increment and auto-decrement stores of each width at every
+offset from a page boundary, MOVEM both ways, an instruction with two faulting
+operands, read-modify-write, long runs of stores, an instruction fetch across a
+page and from a page that is not there, the kernel copying with `Fread()` and
+`Fwrite()` across them) must finish as if nothing had happened: the right bytes,
+each write once, the address registers moved once.  The cases that need an
+access across a boundary (odd offsets, two operands) are left out where
+`TEST_NO_CROSSING` is set, and TAS and CAS are not run, because their fault is
+not served (doc/mmu-address-space.txt).
 
 ```c
 #include "test.h"

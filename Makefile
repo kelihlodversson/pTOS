@@ -1120,7 +1120,7 @@ AMIGA_ROM = ptos-amiga.rom
 
 ifdef TARGET_AMIGA_ROM
 $(IMAGE): $(EMUTOS_IMG) mkrom
-	./mkrom amiga $< $@
+	./mkrom $(if $(CONF_AMIGA_ROM_512K),amiga-512,amiga) $< $@
 endif
 
 ifdef TARGET_AMIGA_KICKDISK
@@ -1128,7 +1128,7 @@ $(IMAGE): $(AMIGA_ROM) mkrom
 	./mkrom amiga-kickdisk $< $@
 
 $(AMIGA_ROM): $(EMUTOS_IMG) mkrom
-	./mkrom amiga $< $@
+	./mkrom $(if $(CONF_AMIGA_ROM_512K),amiga-512,amiga) $< $@
 endif
 
 ifdef TARGET_AMIGA_FLOPPY
@@ -1958,6 +1958,10 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_NO_RMW_FAULTS -DTEST_NO_CROSSING) \
+              $(if $(CONF_WITH_MMU_PROBE),-DTEST_WITH_MMU_PROBE) \
+              $(if $(MACHINE_AMIGA),-DTEST_LOG_FILE) \
+              $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
+              $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
               $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K)),-DTEST_WITH_ELF_SHARED)) \
               $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)

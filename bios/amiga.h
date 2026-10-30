@@ -13,6 +13,8 @@
 #ifndef AMIGA_H
 #define AMIGA_H
 
+#include "amiga_io.h"
+
 #ifdef MACHINE_AMIGA
 
 struct IDE
@@ -39,7 +41,7 @@ struct IDE
     UWORD data;
 };
 
-#define ide_interface ((volatile struct IDE*)0x00da0000)
+#define ide_interface ((volatile struct IDE*)AMIGA_IO(0x00da0000))
 
 extern const UBYTE scancode_atari_from_amiga[128];
 extern UWORD amiga_screen_width;

@@ -181,6 +181,7 @@ config CONF_WITH_HIGHER_HALF
 	default y if MACHINE_VIRT_ARM
 	default y if MACHINE_VIRT_M68K && CONF_REQUIRE_PMMU
 	default y if CONF_ATARI_HIGHER_HALF
+	default y if CONF_AMIGA_HIGHER_HALF
 	default y if MACHINE_RPI && CONF_WITH_ARM_PMMU
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
@@ -339,6 +340,73 @@ config CONF_ATARI_HIGHER_HALF
 	  and for emulators of it with the MMU on (Hatari: --machine falcon
 	  --cpulevel 3 --mmu on).  It replaces CONF_WITH_68030_PMMU, whose
 	  tree only keeps the I/O area out of the data cache.
+
+# The Amiga ROM that runs with the 68030 MMU on from its first instruction
+# (#737), the way the Atari one does: the same static tree in the ROM, for the
+# memory map of the Amiga.
+config CONF_AMIGA_HIGHER_HALF
+	bool "Amiga ROM with the kernel in the upper half (68030 MMU, experimental)"
+	depends on MACHINE_AMIGA && TARGET_AMIGA_ROM
+	depends on CONF_WITH_ADVANCED_CPU
+	depends on BUILD_TOOLCHAIN_IS_ELF
+	depends on !CONF_WITH_STATIC_ALT_RAM
+	default n
+	help
+	  Link the ROM into the physical-memory window at 0x80000000 (the
+	  ROM is at 0x80fc0000, the RAM from 0x80000000) and run it with the
+	  MMU of a 68030 on from the first instruction.  The tree is static
+	  and lives in the ROM, so it is there before the RAM is configured:
+	  the window and the low addresses (where the TOS low memory, the
+	  pool programs are loaded into and the ROM are) map the same physical
+	  memory, the custom chips, the CIAs and the other I/O areas are
+	  supervisor-only and not cached, and nothing else is mapped: RAM
+	  above 0x00a00000 (Zorro III) is not used.
+
+	  The image needs a 68030 with its MMU (not a 68EC030, and not a 68040
+	  or 68060, which have a different MMU).  For an emulated Amiga with a
+	  68030 and its MMU (tools/run-amiberry.py).
+
+# The Amiga ROM with 512 KB: the tree of the 68040 and the 68060 does not fit
+# the 256 KB one (#737).
+config CONF_AMIGA_ROM_512K
+	bool "512 KB Amiga ROM image (at 0x00f80000, as the ROMs of the A3000 and A4000)"
+	depends on TARGET_AMIGA_ROM
+	default n
+	help
+	  Build the Amiga ROM image of 512 KB instead of 256 KB: it is at
+	  0x00f80000, and its first word is 0x1114.  The static tree of the
+	  68040 and 68060 (CONF_AMIGA_HIGHER_HALF_68040) needs the room.
+
+# The same for a 68040 or a 68060 (#737): their MMU is not the 68030's (see
+# CONF_ATARI_HIGHER_HALF_68040), so the static tree and the start of it are
+# other ones.
+config CONF_AMIGA_HIGHER_HALF_68040
+	bool "... for a 68040 or a 68060, experimental"
+	depends on CONF_AMIGA_HIGHER_HALF && CONF_AMIGA_ROM_512K
+	default n
+	help
+	  Build the higher-half Amiga ROM for the MMU of a 68040 or a 68060
+	  instead of that of a 68030.  The static tree in the ROM maps the first
+	  16 MiB (the RAM of the chip set and of Zorro II, the I/O areas and the
+	  ROM) in the window and at their own addresses, with the I/O areas not
+	  cached; the Zorro III autoconfig space at 0xff000000 is a transparent
+	  window.  The RAM above the 24 bits (the motherboard and processor slot
+	  RAM, the Zorro III boards) is not mapped, and not probed.  The image
+	  does not start on a 68030.
+
+# What the two ROMs that run in the window of the physical memory share
+# (emutos.ld, startup.S): linked at 0x80000000 and up, with the TOS low memory
+# at its own addresses, and the MMU of a 68030 on before the RAM is configured.
+config CONF_M68K_ROM_WINDOW
+	bool
+	default y if CONF_ATARI_HIGHER_HALF
+	default y if CONF_AMIGA_HIGHER_HALF
+
+# ... and the 68040/68060 start they share
+config CONF_M68K_ROM_WINDOW_040
+	bool
+	default y if CONF_ATARI_HIGHER_HALF_68040
+	default y if CONF_AMIGA_HIGHER_HALF_68040
 
 # The same ROM for a 68040 (#728): its MMU is not the 68030's (movec TC, URP
 # and SRP instead of pmove, short descriptors, no early termination), so the

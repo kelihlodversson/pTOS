@@ -1,5 +1,12 @@
 menu "Regression tests"
 
+# The supervisor-side fixture of the MMU tests (#737): Ssystem(S_MMUPROBE)
+# reads the MMU and tests a translation for the caller.
+config CONF_WITH_MMU_PROBE
+    bool
+    default y if CONF_WITH_REGRESSION_TESTS && ARCH_M68K_CLASSIC && CONF_WITH_ADVANCED_CPU && CONF_WITH_HIGHER_HALF
+    select CONF_WITH_SSYSTEM
+
 config CONF_WITH_REGRESSION_TESTS
     bool "Include built-in regression tests"
     default y

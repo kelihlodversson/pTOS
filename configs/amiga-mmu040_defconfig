@@ -1,0 +1,12 @@
+# Amiga ROM image for a 68040 or a 68060 with the kernel in the upper half and
+# the MMU on from the first instruction (#737, #571): amiga-mmu for the MMU of a
+# 68040 or a 68060 instead of that of a 68030.  512 KB, at 0x00f80000: the static
+# tree needs the room.  Amiberry: tools/run-amiberry.py --cpu 68040 or 68060;
+# the image does not start on a 68030.
+MACHINE_AMIGA=y
+CONF_AMIGA_HIGHER_HALF=y
+CONF_AMIGA_HIGHER_HALF_68040=y
+CONF_AMIGA_ROM_512K=y
+
+# Without -mfastcall the ROM no longer fits (see amiga_defconfig).
+CONF_WITH_MFASTCALL=y

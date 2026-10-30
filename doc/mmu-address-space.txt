@@ -564,6 +564,60 @@ the 68040, with the shape of the plan above.  What is particular to it:
     Hatari's cache emulation or a coherence gap of the kernel's own that the
     hardware would show too is not known; #737 can tell with another core.
 
+The Amiga, as built by #737 (CONF_AMIGA_HIGHER_HALF)
+.....................................................
+
+The same start as the Falcon's, for the Amiga ROM (amiga-mmu_defconfig): the
+kernel is linked in the window (the ROM at 0x80fc0000), the 68030 MMU is on from
+the first instruction (startup.S, the static tree of amiga_mmu.S: the physical
+address of the ROM is where the 68030 reads its first PC from, offset 4 of the
+ROM), and the TOS low memory and the pool stay at their physical addresses.  The
+tree maps what the Amiga has:
+
+  - 0x00000000-0x009fffff the RAM (chip and Zorro II), cached;
+  - the I/O (0x00a00000-0x00efffff: PCMCIA, the CIAs, the custom chips, the
+    clock, Gayle, the Zorro II I/O and autoconfig areas) is not in the lower half at
+    all: the kernel reaches it through a window of its own in the kernel half, the same
+    range at 0xf0000000 (0xf0dff000 for the custom chips), supervisor-only and not
+    cached.  The lower half is where a process lives once it has an address space of its
+    own, and it must have no I/O in it.  Every access of the kernel is AMIGA_IO(address)
+    (include/amiga_io.h, the identity in an image that is not in the upper half);
+    a board is on the bus at its physical address, which is where its Zorro II or III
+    layout is decided (a pointer of the window would have been taken for a Zorro III
+    board: the first boot with the window put the RAM board at address 0, and
+    tools/ci-amiberry.sh now checks that the fast RAM answers);
+  - 0x00f00000-0x00ffffff the ROM;
+  - the rest of the 32-bit space the way it is, not cached, and the Zorro III
+    autoconfig space at 0xff000000: the ROM probes both for the RAM and the
+    boards of an A3000 or A4000, and the bus answers, with no bus error, where
+    there is nothing.  An unmapped range would be a bus error in the middle of
+    the probe (the first boot of this image died on a read of 0xff000100);
+  - the window, over the first 16 MiB.
+
+The slow RAM (0x00c00000-0x00dbffff) is not cached and open to the programs: the
+ROM probes it and gives it to them as Alt-RAM.
+
+What a custom chip is given is a physical address (virt_to_phys()): the disk DMA
+pointer; the Copper list and the screen are in the pool already.  Verified on
+Amiberry (doc/debugging.txt) with a 68030: the desktop comes up, the CPU is
+fetching from 0x80fd.... which is only possible through the tree (the
+emulated RAM is 2 MB).
+
+The 68040 and the 68060 (amiga-mmu040_defconfig, CONF_AMIGA_HIGHER_HALF_68040) have
+the tree of atari_mmu040.S for the Amiga (bios/arch/m68k/amiga_mmu040.S): no early
+termination, so 16 MiB of 4 KiB pages, 17.9 KB, which the 256 KB ROM has no room for:
+the ROM is 512 KB, at 0x00f80000 (CONF_AMIGA_ROM_512K; first word 0x1114; mkrom
+amiga-512), as the Kickstarts of the A3000 and the A4000.  The Zorro III autoconfig
+space at 0xff000000 is a transparent window (DTT0), as the Atari I/O is.  What a
+32-bit Amiga has above the 24 bits (the motherboard and processor slot RAM, probed by
+the 68030 image) is not mapped, and the ROM does not probe it.  The pages are
+write-through, as the ST-RAM of the Atari is.  The desktop comes up on Amiberry's
+68040 and 68060 with the same stack pointer as on the 68030.
+
+Not yet: address spaces for the processes themselves (CONF_WITH_PROCESS_ASPACES for
+the Amiga: the backends are the Atari's, and the conversions for the DMA of the
+chip set that an address space of a process needs).
+
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................
 

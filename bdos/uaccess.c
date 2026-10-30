@@ -39,6 +39,9 @@
 #include "proc.h"
 #include "bdosstub.h"
 #include "ssystem.h"
+#if CONF_WITH_MMU_PROBE
+#include "mmuprobe.h"
+#endif
 #include "uaccess.h"
 
 #if CONF_WITH_USER_COPY
@@ -385,6 +388,11 @@ static long ssystem_ok(const long *pw)
     if (mode == (WORD)0xfffe && size > 0)               /* S_CONSOLE_DIM struct */
         return buf_ok(arg1, size < (long)sizeof(struct console_dim) ? size
                             : (long)sizeof(struct console_dim), TRUE);
+#if CONF_WITH_MMU_PROBE
+    if (mode == S_MMUPROBE && size > 0)                 /* S_MMUPROBE struct, in and out */
+        return buf_ok(arg1, size < (long)sizeof(struct mmu_probe) ? size
+                            : (long)sizeof(struct mmu_probe), TRUE);
+#endif
     if (mode == S_DESKINFO && size > 0)                 /* S_DESKINFO struct */
         return buf_ok(arg1, size < (long)sizeof(struct desk_info) ? size
                             : (long)sizeof(struct desk_info), TRUE);

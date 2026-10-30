@@ -173,6 +173,74 @@ Use it only on a throwaway virt-m68k debug build:
     `-cpu m68000` CCR gap above was confirmed.
 
 
+Amiberry: the WinUAE core on Linux, for the Amiga port (#737)
+-------------------------------------------------------------
+
+The address spaces of the m68k backends are to be validated against a recent
+68030/68040/68060 and MMU implementation, not only against the older
+WinUAE-derived core in Hatari 2.5 and 2.6.  Amiberry is the Linux port of
+WinUAE and merges its core; it runs the pTOS Amiga ROM (the "amiga"
+configuration).  The baseline is pinned:
+
+  - Amiberry v8.5.0, commit 2a622d2674c4114d3600c4cda004c857d4878bdf
+    (2026-10-27), which merges WinUAE 6100b17 (2026-10-13): the MMU
+    cache-inhibit fixes of 2026-10-12 and the 68030 fault and restart fixes
+    of September 2026 are in; so are the MMU fixes of June 2026.  Not
+    "latest": a newer tag is a deliberate change of this file.
+  - The distribution's fs-uae (3.1.66) is far older and is not a baseline.
+
+Build (no sudo needed to run the script; the packages it builds with are
+AMIBERRY_APT_PACKAGES of tools/amiberry-pin.sh -- libsdl3-dev, libsdl3-image-dev,
+libpng-dev, libflac-dev, libcurl4-openssl-dev, nlohmann-json3-dev, zlib1g-dev, cmake
+and g++ -- and without sudo they can be unpacked into a directory, as the
+toolchain-install skill does); every optional feature is switched off:
+
+    tools/build-amiberry.sh               # ~/.local/amiberry/bin/amiberry, about four minutes
+    export AMIBERRY=~/.local/amiberry/bin/amiberry
+
+The pin, the options and the packages are in tools/amiberry-pin.sh; the script
+clones the pinned commit and refuses another one.  CI builds it the same way, once,
+and caches it (.github/workflows/amiberry.yml, the setup-amiberry action): the cache
+key is the hash of the pin file and of the script, so a new pin rebuilds it and
+nothing else does.  That workflow also boots the Amiga ROMs on it
+(tools/ci-amiberry.sh).
+
+Run the Amiga ROM (the configuration needs Thorsten Otto's -mfastcall
+toolchain, see the toolchain-install skill):
+
+    make amiga_defconfig && make          # ptos-amiga.rom
+    tools/run-amiberry.py --rom ptos-amiga.rom --cpu 68040 --wait 12 \
+        --cmd GET_CPU_REGS --screenshot desktop.png
+
+The regression tests run on it too (tools/run-amiberry-tests.py): the test disk is on
+the IDE of the emulated A1200 (Gayle), the desktop starts runtests.tos from it, and a
+build for the Amiga writes what the program prints to RUNTESTS.LOG on the disk
+(TEST_LOG_FILE, tests/testlib.c), which the script reads from a copy of the image with
+mtools until the summary is there (the whole suite takes seconds):
+
+    make amiga-mmu040_defconfig && make && make test-hd
+    tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd.img --cpu 68060
+
+tools/ci-amiberry.sh does it for every Amiga configuration and CPU, as CI does, twice: with the
+caches of the CPU out of the emulation (the baseline) and with them emulated (--caches; the
+log of that pass is logs/CONFIG-CPU-caches-tests.log).  The
+68060 has no PTEST and no MMUSR: the MMU fixture (tests/mmu_state) walks the tables of
+a 68060 in software.
+
+tools/run-amiberry.py writes the configuration of the run (a 32-bit CPU of the
+given model with its MMU emulated, JIT and cycle-exact off, caches off unless
+--caches, which also makes the CPU compatible, as the data cache is only
+emulated in that mode; no sound, no floppy), starts the emulator headless
+(SDL's dummy video driver) and talks to it through its IPC socket
+(amiberry.sock in a runtime directory of the run's own, so that an emulator
+of the user is never touched; docs/ipc.md of Amiberry): the registers
+(GET_CPU_REGS), memory (READ_MEM <addr> <width>, WRITE_MEM), disassembly,
+breakpoints and stepping (DEBUG_*, SET_BREAKPOINT), screenshots and the CPU
+model.  Verified: the ROM reaches the desktop on a 68030, a 68040 and a
+68060.  That the guest has really turned its MMU on is not shown by the
+emulator's setting: it has to be read from the guest (#737).
+
+
 Which tool for which bug
 ---------------------------
 

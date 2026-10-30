@@ -24,6 +24,7 @@
 
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#include "include/mmapcall.h"
 
 #define SURVIVED 7
 #define BROKEN   99
@@ -46,6 +47,30 @@ static unsigned long hex(const char **p)
             return v;
     }
 }
+
+
+#if defined(__mc68000__) || defined(__arm__)
+/*
+ * The address-translation cache and the context switch (#737): the parent
+ * has a page of its own at an address, and so has each of these probes; what
+ * each sees there is its own.  The calls that change a mapping the CPU has
+ * already used (a warm entry) must take effect at once.
+ */
+#define RW (PROT_READ | PROT_WRITE)
+
+/* a page of our own at <a>: it is new (zeros, not the page of another process there), and holds what is written */
+static int own_page(unsigned long a, unsigned long v)
+{
+    volatile unsigned long *q = (volatile unsigned long *)a;
+
+    if (mm_map((long)a, 1, RW, 1) != (long)a)
+        return 0;
+    if (*q != 0)
+        return 0;
+    *q = v;
+    return *q == v;
+}
+#endif
 
 int main(void)
 {
@@ -87,6 +112,49 @@ int main(void)
     case 's':
         *p = v;
         break;
+#if defined(__mc68000__) || defined(__arm__)
+    case 'M':           /* a page of our own */
+        return own_page(a, v) ? SURVIVED : BROKEN;
+    case 'R':           /* ... unmapped and mapped again: new zeros, not what the CPU remembers */
+        if (!own_page(a, v))
+            return BROKEN;
+        if (mm_unmap((long)a, 1) != 0)
+            return BROKEN;
+        return own_page(a, v + 1) ? SURVIVED : BROKEN;
+    case 'D':           /* permissions down and up again, with the page in the cache between */
+        if (!own_page(a, v))
+            return BROKEN;
+        if (mm_prot((long)a, 1, PROT_READ) != 0 || *p != v)
+            return BROKEN;
+        if (mm_prot((long)a, 1, RW) != 0)
+            return BROKEN;
+        *p = v + 1;
+        if (*p != v + 1 || mm_prot((long)a, 1, PROT_READ) != 0 || mm_prot((long)a, 1, RW) != 0)
+            return BROKEN;
+        *p = v + 2;
+        return *p == v + 2 ? SURVIVED : BROKEN;
+    case 'W':           /* read-only after a write: the next write must fault */
+        if (!own_page(a, v))
+            return BROKEN;
+        if (mm_prot((long)a, 1, PROT_READ) != 0)
+            return BROKEN;
+        *p = v + 1;
+        break;
+    case 'N':           /* no access after a write: the next read must fault */
+        if (!own_page(a, v))
+            return BROKEN;
+        if (mm_prot((long)a, 1, PROT_NONE) != 0)
+            return BROKEN;
+        v = *p;
+        break;
+    case 'U':           /* unmapped after a write: the next read must fault */
+        if (!own_page(a, v))
+            return BROKEN;
+        if (mm_unmap((long)a, 1) != 0)
+            return BROKEN;
+        v = *p;
+        break;
+#endif
     default:
         return 1;
     }

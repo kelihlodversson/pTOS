@@ -12,6 +12,7 @@
  */
 
 #include "asmdefs.h"
+#include "amiga_io.h"
 
 #if defined(MACHINE_AMIGA) && CONF_WITH_AROS
 
@@ -29,14 +30,14 @@ C_SYM(MemoryTest):
     move.l  %sp@(12),%d0    // blockSize
 
     movem.l %d2-%d5/%a2-%a3/%a5,%sp@-
-    move.w  0xdff01c,%sp@-  /* save INTENA */
+    move.w  AMIGA_IO(0xdff01c),%sp@-  /* save INTENA */
     subq.l  #8,%sp
     move.l  %sp,%a5
     bsr.s   .L_memtest
     addq.l  #8,%sp
     move.w  %sp@+,%d1
     or.w    #0x8000,%d1
-    move.w  %d1,0xdff09a    /* restore INTENA */
+    move.w  %d1,AMIGA_IO(0xdff09a)    /* restore INTENA */
     movem.l %sp@+,%d2-%d5/%a2-%a3/%a5
     rts
 
@@ -96,12 +97,12 @@ C_SYM(MemoryTest):
     move.l  %a0,%d2
     and.l   #0xff000000,%d2
     bne.s   .L_memtest_chipcheck_done   /* no chiptest if 32bit address */
-    move.w  #0x7fff,0xdff09a
+    move.w  #0x7fff,AMIGA_IO(0xdff09a)
     nop
     tst.w   %a0@(0x1c,%d1)              /* If non-zero, this is not INTENAR */
     bne.s   .L_memtest_chipcheck_done
     /* It was zero ... */
-    move.w  #0xc000,0xdff09a            /* Try the master enable */
+    move.w  #0xc000,AMIGA_IO(0xdff09a)            /* Try the master enable */
     nop
     tst.w   %a0@(0x1c,%d1)              /* If still zero, not INTENAR */
     bne     .L_memtest_done             /* It was a custom chip. */

@@ -1,0 +1,104 @@
+#
+# The pinned Amiberry (tools/amiberry-pin.sh), and the Amiga ROMs booted on it
+# (#737): Amiberry is the WinUAE core on Linux, the emulator for the 68030,
+# 68040 and 68060 MMU tests of the Amiga port.
+#
+# The emulator is built from source once and cached (.github/actions/
+# setup-amiberry): the build job here only builds it when the cache is missing
+# or stale, that is when the pin or the build script changed.  The runs on
+# master and the epic branches, and the weekly one, keep the cache that pull
+# requests restore (a pull request cannot see the caches of another one, and an
+# unused cache is evicted after seven days).
+#
+# The boot job then builds the Amiga ROMs and checks that each boots on the CPU
+# it is for, that the MMU images run in the upper half, and that the Zorro II
+# fast RAM has been configured; then it runs the regression tests of tests/ on
+# each, from a disk on the IDE of the emulated Amiga (tools/ci-amiberry.sh,
+# tools/run-amiberry-tests.py): the emulator is the one place the MMU tests of
+# the 68030, the 68040 and the 68060 run on an implementation that has the
+# fixes of 2026.
+#
+
+name: Amiberry
+
+on:
+  pull_request:
+    branches: [master, "epic/**"]
+    paths:
+      - tools/amiberry-pin.sh
+      - tools/build-amiberry.sh
+      - tools/ci-amiberry.sh
+      - tools/run-amiberry.py
+      - tools/run-amiberry-tests.py
+      - tests/**
+      - .github/actions/setup-amiberry/**
+      - .github/workflows/amiberry.yml
+      - bios/arch/m68k/**
+      - bios/amiga*
+      - bios/aros*
+      - include/amiga*.h
+      - include/mmuprobe.h
+      - configs/amiga*
+  push:
+    branches: [master, "epic/**"]
+    paths:
+      - tools/amiberry-pin.sh
+      - tools/build-amiberry.sh
+      - .github/actions/setup-amiberry/**
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # SDL3 is in the Ubuntu of 25.04 and later (26.04 is the runner Hatari uses)
+  amiberry:
+    name: Amiberry (pinned build)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-amiberry
+
+  amiga-boot:
+    name: Amiga ROMs and tests on Amiberry
+    needs: amiberry
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+
+      # (after the build job, so that the cache is there)
+      - uses: ./.github/actions/setup-amiberry
+
+      # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh) and read the
+      # log of the run from it (tools/run-amiberry-tests.py)
+      - name: Install the disk image tools
+        run: |
+          sudo apt-get install -y --no-install-recommends dosfstools mtools
+
+      - name: Boot the Amiga ROMs and run the tests
+        run: sh tools/ci-amiberry.sh
+
+      - name: Keep the logs and the screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: amiga-logs
+          path: |
+            logs/*.png
+            logs/*-tests.log
+          if-no-files-found: ignore

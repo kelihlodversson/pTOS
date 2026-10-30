@@ -25,6 +25,8 @@
 #include "raspi_memory.h"
 #elif CONF_ATARI_HIGHER_HALF
 #include "atari_mmu.h"
+#elif CONF_AMIGA_HIGHER_HALF
+#include "amiga_mmu.h"
 #else
 #include "virt_mmu.h"
 #endif
