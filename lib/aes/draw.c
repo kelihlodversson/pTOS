@@ -19,6 +19,7 @@
 #include "string.h"
 #include "rectfunc.h"
 #include "frames.h"
+#include "animation.h"
 #include "gemmovegeom.h"
 #include "gemslidegeom.h"
 #include "gemsizegeom.h"
@@ -597,6 +598,49 @@ WORD objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
 }
 
 typedef struct { WORD kind; GRECT small, large; } FORM_ANIMATION;
+/* A native trajectory is linear in position/size. Validate its endpoints
+ * with wide intermediates, including xcbox's aspect-dependent corner arms. */
+static BOOL animation_rect(LONG x, LONG y, LONG w, LONG h, BOOL corners)
+{
+    LONG right = x+w, bottom = y+h;
+    LONG wa = 2L*aes_painter->wbox, ha = 2L*aes_painter->hbox;
+    if (x < -32768L || x > 32767L || y < -32768L || y > 32767L ||
+        w < -32768L || w > 32767L || h < -32768L || h > 32767L ||
+        right-1 < -32768L || right-1 > 32767L || bottom-1 < -32768L || bottom-1 > 32767L) return FALSE;
+    return !corners || (right <= 32767L && bottom <= 32767L &&
+        x+wa <= 32767L && right-wa >= -32768L && y+ha <= 32767L && bottom-ha >= -32768L);
+}
+static BOOL animation_move(const GRECT *source, WORD dx, WORD dy)
+{
+    LONG xdist = (LONG)dx-source->g_x, ydist = (LONG)dy-source->g_y;
+    WORD count, xstep, ystep;
+    if (xdist < -32767L || xdist > 32767L || ydist < -32767L || ydist > 32767L) return FALSE;
+    aes_animation_scale(xdist < 0 ? -xdist : xdist, ydist < 0 ? -ydist : ydist,&count,&xstep,&ystep);
+    return animation_rect(source->g_x,source->g_y,source->g_w,source->g_h,FALSE) &&
+        animation_rect((LONG)source->g_x+(xdist > 0 ? 1L : -1L)*count*xstep,
+                       (LONG)source->g_y+(ydist > 0 ? 1L : -1L)*count*ystep,source->g_w,source->g_h,FALSE);
+}
+static BOOL animation_valid(FORM_ANIMATION *a)
+{
+    GRECT centered = a->small;
+    WORD x, y, count, xstep, ystep;
+    LONG delta;
+    if (a->kind == AES_ANIMATION_MOVE) return animation_move(&a->small,a->large.g_x,a->large.g_y);
+    if (!animation_rect(a->small.g_x,a->small.g_y,a->small.g_w,a->small.g_h,FALSE) ||
+        !animation_rect(a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
+    gr_stepcalc(a->small.g_w,a->small.g_h,&a->large,&x,&y,&count,&xstep,&ystep);
+    centered.g_x = x; centered.g_y = y;
+    if (a->kind == FMD_GROW) {
+        if (!animation_move(&a->small,x,y) || !animation_rect(x,y,centered.g_w,centered.g_h,TRUE)) return FALSE;
+        delta = -1;
+    } else {
+        if (!animation_move(&centered,a->small.g_x,a->small.g_y) ||
+            !animation_rect(a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
+        centered = a->large; delta = 1;
+    }
+    return animation_rect(centered.g_x+delta*count*xstep, centered.g_y+delta*count*ystep,
+        centered.g_w-2*delta*count*xstep,centered.g_h-2*delta*count*ystep,TRUE);
+}
 static void animate_form(void *argument)
 {
     FORM_ANIMATION *a = argument;
@@ -611,17 +655,30 @@ static void animate_form(void *argument)
     if (wbox < (LONG)p->wchar + 4) wbox = (LONG)p->wchar + 4;
     if (wbox > 16383) { p->ok = FALSE; return; }
     p->wbox = wbox; p->hbox = hbox;
-    if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
+    if (!animation_valid(a) || !p->ok) { p->ok = FALSE; return; }
+    if (a->kind == AES_ANIMATION_MOVE) gr_movebox(a->small.g_w,a->small.g_h,a->small.g_x,a->small.g_y,a->large.g_x,a->large.g_y);
+    else if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
     else gr_shrinkbox(&a->small,&a->large);
 }
 WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD *global)
 {
     OBJECT dummy = { 0 };
     FORM_ANIMATION a;
+    WORD result;
+    LONG session = aes_application_session(global);
+    /* form_dial and public graphics calls both need ownership through error
+     * recovery, after render() releases its own nested display scope. */
+    if (session < 0 || cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
     dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
     dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
     a.kind = kind; a.small = *small; a.large = *large;
-    return render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
+    result = render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
+    if (!result && session >= 0) {
+        (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
+        (void)cuis_call6(CUIS_SURFACE_STATUS,session,2,0,0,0,0);
+    }
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) result = 0;
+    return result;
 }
 
 typedef struct {

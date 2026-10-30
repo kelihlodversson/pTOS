@@ -23,6 +23,7 @@
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
+#include "box_animations.h"
 #include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
@@ -38,6 +39,7 @@ static WORD screen_planes = 32;
 static WORD pixel_width = 1, pixel_height = 1;
 static WORD display_width = 160, display_height = 120;
 static BOOL trace_animation, move_test;
+static int animation_fail_after = -1;
 static LONG move_records[4][4], move_error;
 static WORD move_count, move_at, move_waits;
 static WORD corner_x, corner_y, corner_width;
@@ -49,7 +51,7 @@ static BOOL bar_stream, bar_line_error, bar_close_error, bar_write_block;
 static int bar_writes;
 static WORD bar_trial_height, bar_snapshot_handle;
 static int bar_failed_closes;
-static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
+static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws, unowned_redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
 static int popup_paints;
 static WORD modal_keys[16];
@@ -165,7 +167,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         keyboard_nesting += b ? 1 : -1;
         return E_OK;
     }
-    if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; return nesting ? E_OK : EACCDN; }
+    if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; if (!nesting) unowned_redraws++; return nesting ? E_OK : EACCDN; }
     if (fn == CUIS_MOUSE_LOCK && a == 7) {
         if (tracking_mode && b && c) return EINVAL;
         if (bar_mode && b && b != CUIS_MOUSE_FRESH) return EINVAL;
@@ -189,6 +191,9 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 short mt_wind_update(short code, short *global)
 {
     if (aes_application_session(global) < 0) return 0;
+    if (code == END_UPDATE) return cuis_call6(CUIS_DISPLAY_LOCK,7,0,0,0,0,0) == E_OK;
+    if (code == BEG_UPDATE || code == (BEG_UPDATE|NO_BLOCK))
+        return cuis_call6(CUIS_DISPLAY_LOCK,7,1,!(code & NO_BLOCK),0,0,0) == E_OK;
     if (code == END_MCTRL) return cuis_call6(CUIS_MOUSE_LOCK,7,0,0,0,0,0) == E_OK;
     if (code == BEG_MCTRL || code == (BEG_MCTRL|NO_BLOCK))
         return cuis_call6(CUIS_MOUSE_LOCK,7,1,!(code & NO_BLOCK),0,0,0) == E_OK;
@@ -310,6 +315,8 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn == VDI_SERVICE_COLOR) { workstation[a].line = b; return (LONG)b; }
     if (fn == VDI_SERVICE_LINE) {
+        if (!animation_fail_after) return EACCDN;
+        if (animation_fail_after > 0) animation_fail_after--;
         if (bar_line_error) return EACCDN;
         WORD *points = (void *)(uintptr_t)c;
         LONG i, x2, y2, dx, dy, sx, sy, error, twice;
@@ -848,7 +855,16 @@ static int frame_metric_checks(void)
 static int animation_checks(void)
 {
     static const WORD aspects[3][3] = { { 1,1,38 }, { 1,2,76 }, { 3,1,24 } };
-    int aspect, kind;
+    int aspect, kind, damaged, pointer_releases, pixel, result, nested, rejected;
+    static WORD original[120][160];
+    __builtin_memcpy(original,image,sizeof(image));
+    result = gem_box_animation_checks(0);
+    if (result) __builtin_printf("box animation failure: %x\n",result);
+    VERIFY(result == 0);
+    VERIFY(!__builtin_memcmp(original,image,sizeof(image)));
+    VERIFY(graf_mbox(4,4,20,30,60,40) == 1 && graf_growbox(20,30,4,4,0,0,120,80) == 1 &&
+           graf_shrinkbox(20,30,4,4,0,0,120,80) == 1);
+    VERIFY(!__builtin_memcmp(original,image,sizeof(image)));
     for (aspect = 0; aspect < 3; aspect++) for (kind = FMD_GROW; kind <= FMD_SHRINK; kind++) {
         pixel_width = aspects[aspect][0]; pixel_height = aspects[aspect][1];
         corner_width = aspects[aspect][2];
@@ -857,6 +873,10 @@ static int animation_checks(void)
         corner_vertical = corner_horizontal = patterned_segments = bad_line_type = 0;
         trace_animation = TRUE;
         VERIFY(form_dial(kind,20,30,4,4,0,0,120,80) == 1);
+        VERIFY(corner_vertical >= 2 && corner_horizontal >= 2);
+        corner_vertical = corner_horizontal = 0;
+        VERIFY((kind == FMD_GROW ? graf_growbox(20,30,4,4,0,0,120,80) :
+                                  graf_shrinkbox(20,30,4,4,0,0,120,80)) == 1);
         trace_animation = FALSE;
         VERIFY(corner_vertical >= 2 && corner_horizontal >= 2);
         VERIFY(patterned_segments > 0 && !bad_line_type);
@@ -867,6 +887,38 @@ static int animation_checks(void)
     pixel_width = 1; pixel_height = 0;
     VERIFY(form_dial(FMD_SHRINK,20,30,4,4,0,0,120,80) == 0 && opens == closes && !nesting);
     pixel_height = 1;
+    VERIFY(graf_mbox(4,4,-20000,0,20000,0) == 0);
+    VERIFY(graf_mbox(4,4,-32768,0,-32768,10) == 0);
+    VERIFY(graf_growbox(0,0,1,1,32760,0,7,80) == 0);
+    window_update = TRUE; damaged = opens;
+    VERIFY(graf_growbox(20,30,4,4,0,0,120,80) == 0 && opens == damaged);
+    window_update = FALSE;
+    graphics_error = EACCDN;
+    VERIFY(graf_mbox(4,4,20,30,60,40) == 0);
+    graphics_error = E_OK;
+    /* Fail after one XOR segment over the menu strip. Both window and
+     * menu damage must be queued before the outer display scope is released. */
+    damaged = redraws; pointer_releases = mouse_releases;
+    bar_height = 19; bar_events = 0; pixel = image[0][21]; animation_fail_after = 1;
+    VERIFY(graf_mbox(4,4,20,0,60,0) == 0);
+    VERIFY(image[0][21] != pixel && redraws == damaged+1 && (bar_events & CUIS_SURFACE_DIRTY));
+    animation_fail_after = -1; bar_height = bar_events = 0;
+    for (kind = FMD_GROW; kind <= FMD_SHRINK; kind++) for (nested = 0; nested < 2; nested++) {
+        if (nested) VERIFY(wind_update(BEG_UPDATE) == 1);
+        damaged = redraws; rejected = unowned_redraws;
+        bar_height = 19; bar_events = 0; animation_fail_after = 1;
+        __builtin_memcpy(original,image,sizeof(image));
+        VERIFY(form_dial(kind,20,0,4,4,0,0,120,80) == 0);
+        VERIFY(__builtin_memcmp(original,image,sizeof(image)) != 0);
+        VERIFY(redraws == damaged+1 && unowned_redraws == rejected && (bar_events & CUIS_SURFACE_DIRTY));
+        VERIFY(nesting == nested && !frame_overlay_depth && opens == closes);
+        animation_fail_after = -1; bar_height = bar_events = 0;
+        if (nested) VERIFY(wind_update(END_UPDATE) == 1);
+    }
+    window_update = TRUE; damaged = opens;
+    VERIFY(form_dial(FMD_GROW,20,0,4,4,0,0,120,80) == 0 && opens == damaged);
+    window_update = FALSE;
+    VERIFY(mouse_releases == pointer_releases && !nesting && !frame_overlay_depth && opens == closes);
     return 0;
 }
 void gem_form_input_stage(short stage) { (void)stage; }

@@ -22,9 +22,11 @@ int gem_tracking_checks(void)
     window = wind_create(0,0,0,240,180); TRACK_CHECK(window > 0);
     TRACK_CHECK(wind_open(window,0,0,240,180) == 1 && wind_set(window,WF_TOP,0,0,0,0) == 1);
     for (stage = 0; stage < 4; stage++) {
-        int background = gem_probe_pixel(handle,40,40);
+        int background;
         ready[26] = '0'+stage;
         ptos_write(1,ready,sizeof(ready)-1);
+        /* Console output can scroll the framebuffer; sample afterwards. */
+        background = gem_probe_pixel(handle,40,40);
         do { TRACK_CHECK(graf_mkstate(&mx,&my,&buttons,&mods) == 1 && evnt_timer(0) == 1); } while (!(buttons & 1));
         if (stage == 0) {
             TRACK_CHECK(graf_rubberbox(40,40,10,10,&rx,&ry) == 1 && rx == 61 && ry == 51);
