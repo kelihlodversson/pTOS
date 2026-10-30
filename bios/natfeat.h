@@ -36,7 +36,14 @@ typedef struct
 
 extern NatFeatCookie natfeat_cookie;
 
+#if CONF_WITH_MFASTCALL
+/* the cookie's nfID() takes the name on the stack, a call through its pointer
+ * would pass it in a0 (natfeat.S) */
+long nf_lookup_id(const char *name);
+#define NFID    nf_lookup_id
+#else
 #define NFID    natfeat_cookie.nfID
+#endif
 #define NFCall  natfeat_cookie.nfCall
 
 void natfeat_init(void);
