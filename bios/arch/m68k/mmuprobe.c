@@ -303,10 +303,12 @@ static void translate(struct mmu_probe *p)
         return;
 
     /* the same bytes by the window of the kernel, a second mapping of them (the
-     * four bytes at phys, which may not be aligned, or across a page).  Only
-     * of a page the caller can read itself: a process asks for this, and the
-     * window shows all of the memory */
-    if (p->mapped && p->super_only == 0 && p->phys != 0xffffffffUL && p->phys < WINDOW_SIZE - 4
+     * four bytes at phys, which may not be aligned).  Only of a page the caller
+     * can read itself, and only if the four bytes are in that page: a process
+     * asks for this, and the window shows all of the memory, the next physical
+     * page included, which the check of this one does not cover */
+    if (p->mapped && p->super_only == 0 && p->phys != 0xffffffffUL
+        && (p->phys & 0xfffUL) <= 0xffcUL && p->phys < WINDOW_SIZE - 4
         && kernel_readable(WINDOW + p->phys) && kernel_readable(WINDOW + p->phys + 3))
     {
         const volatile UBYTE *w = (const volatile UBYTE *)(WINDOW + p->phys);
