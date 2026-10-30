@@ -25,6 +25,7 @@ typedef union resource_allocation {
 static RESOURCE_ALLOCATION *discarded_allocations;
 static LONG pending_close = -1;
 static char application_directory[RESOURCE_PATH];
+const char *aes_resource_directory(void) { return application_directory; }
 
 void *aes_temporary_alloc(LONG bytes)
 {

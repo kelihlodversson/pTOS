@@ -125,6 +125,15 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     (work / "i18nconf.h").write_text("/* Host selector uses untranslated resources. */\n")
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Iaes", "-Iaes/shared", "-Ilib/aes", "-Ilib/ldso/client",
+                '-DAES_SHELL_BINDINGS="shell_bindings.h"', "tests/cuis/shell.c", "lib/aes/shell.c", "lib/aes/resources.c",
+                "aes/shared/gemshquery.c", "util/optimize.c", "util/miscutil.c", "util/string.c", "util/doprintf.c",
+                "-o", str(work / "shell")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "shell")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Iaes", "-Iaes/shared", "-Ilib/aes",
                 "-DAES_RESOURCE_FSEL", "-DAES_RESOURCE_STRINGS_LOCAL", '-DAES_FSEL_BINDINGS="fsel_bindings.h"',
                 '-DAES_EDIT_BINDINGS="edit_bindings.h"', "tests/cuis/file_selector.c", "lib/aes/fsel.c",
