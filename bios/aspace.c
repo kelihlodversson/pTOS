@@ -941,7 +941,10 @@ BOOL aspace_kernel_init(void)
     PADDR window;
     VADDR va;
 
-    if (!aspace_hw_init() || !procmem_window_init(&window))
+    /* the process window first: it is the one allocation that needs a whole
+     * 2 MiB of contiguous pages (a board of that size is all of it), and a page
+     * of the tables taken before would break it */
+    if (!procmem_window_init(&window) || !aspace_hw_init())
         return FALSE;
     as = aspace_create();
     if (!as)

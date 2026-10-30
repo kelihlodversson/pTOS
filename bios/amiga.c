@@ -1317,11 +1317,20 @@ static UBYTE *uae_boot_rom; /* Pointer to UAE Boot ROM */
  * If found, update uae_boot_rom global variable. */
 static void detect_uae_boot_rom(void *p)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    /* The traps of the UAE Boot ROM work from the address it is at: a Line-A
+     * opcode there, with the ROM at 0x00f00000, which is in the lower half, that
+     * belongs to the processes once they have address spaces.  The kernel runs in
+     * the window (0x80f00000), where the emulator does not see the ROM, so the
+     * native features of UAE are not used with address spaces yet. */
+    MAYBE_UNUSED(p);
+#else
     UBYTE *pbyte = (UBYTE *)AMIGA_IO_ADDR((ULONG)p);    /* (it may be in the I/O range) */
 
     /* If uaelib_demux trap is found, assume this is the UAE Boot ROM */
     if (IS_TRAP(pbyte + OFFSET_UAELIB_DEMUX))
         uae_boot_rom = pbyte;
+#endif
 }
 
 /* Look for UAE Boot ROM at all well-known locations */
