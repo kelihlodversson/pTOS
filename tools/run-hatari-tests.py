@@ -178,16 +178,19 @@ def main():
         while time.time() < deadline and proc.poll() is None:
             time.sleep(2)
             text = capture()
-            panic = PANIC.search(text)
-            if panic:
+            found = PANIC.search(text)
+            if found:
                 # the poll can have caught the marker before the rest of the
                 # message, the PC and the registers: the handler then waits
                 # for a key, so let the text come out, then take the report
-                # from the last capture
+                # from the last capture (if that one has the marker too: a
+                # capture of the screen can fail and give nothing)
                 time.sleep(PANIC_DRAIN)
-                text = capture()
-                panic = PANIC.search(text) or panic
-                panic = text[panic.start():]
+                last = capture()
+                again = PANIC.search(last)
+                if again:
+                    text, found = last, again
+                panic = text[found.start():]
                 break
             summary = SUMMARY.search(text)
             if summary:
