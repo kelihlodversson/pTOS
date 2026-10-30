@@ -262,6 +262,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "surfaces.c"
 #include "controls.c"
 #include "pointer_style.c"
+#include "window_at.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -346,5 +347,7 @@ int main(void)
     rc = surface_cleanup_checks();
     if (rc) return rc;
     rc = control_checks();
-    return rc ? rc : pointer_style_checks();
+    if (rc) return rc;
+    rc = pointer_style_checks();
+    return rc ? rc : window_at_checks();
 }

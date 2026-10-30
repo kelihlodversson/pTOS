@@ -45,6 +45,9 @@ static ULONG mouse_nesting, mouse_block;
 static LONG region_values[3][4];
 static ULONG region_count;
 static LONG stack_values[4];
+static LONG window_at_result;
+static UQUAD window_at_x, window_at_y;
+static ULONG window_at_calls;
 static LONG notice_kind, notice_native, notice_id, publish_failure, notice_on_wait;
 static ULONG notice_only_wakes;
 static LONG control_events[32][4], control_target, control_read_error;
@@ -110,6 +113,10 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_WINDOW_AT) {
+        window_at_calls++; window_at_x = a; window_at_y = b;
+        return window_at_result;
+    }
     if (fn == CUIS_INPUT_BUTTON || fn == CUIS_INPUT_RECT) {
         input_configuration = fn;
         input_arguments[0] = b; input_arguments[1] = c; input_arguments[2] = d;
@@ -1042,6 +1049,7 @@ int main(void)
     ULONG count;
     short held;
     CHECK(gl_apid == -1 && aes_global[2] == -1);
+    CHECK(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1 && !window_at_calls);
     CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
     CHECK(wind_get(1, WF_KIND, &a, &b, &c, &d) == 0 && a == 1 && !window_calls);
     CHECK(appl_exit() == 0 && appl_yield() == 0 && evnt_timer(0) == 0);
@@ -1055,6 +1063,22 @@ int main(void)
     CHECK(gl_ap_version == aes_global[0] && gl_ap_version == 0x0400);
     CHECK(mt_appl_init(other) == 7 && other[2] == 7 && gl_apid == 7);
     CHECK(appl_init() == 7 && closes == 0); /* Repeated registration is idempotent. */
+    window_at_result = 0;
+    CHECK(wind_find(-32768,32767) == 0 && window_at_calls == 1);
+    CHECK(window_at_x == (UQUAD)(QUAD)-32768 && window_at_y == 32767);
+    window_at_result = 32767;
+    CHECK(mt_wind_find(32767,-32768,other) == 32767 && window_at_calls == 2);
+    CHECK(window_at_x == 32767 && window_at_y == (UQUAD)(QUAD)-32768);
+    window_at_result = 32768;
+    CHECK(wind_find(0,0) == -1);
+    window_at_result = EACCDN;
+    CHECK(wind_find(0,0) == -1);
+    window_at_result = EINVAL;
+    CHECK(wind_find(0,0) == -1);
+    count = window_at_calls;
+    other[2]++;
+    CHECK(mt_wind_find(0,0,other) == -1 && window_at_calls == count);
+    other[2]--;
     CHECK(appl_yield() == 1 && yields == 1);
     yield_result = EACCDN; CHECK(mt_appl_yield(other) == 0);
     yield_result = 0;

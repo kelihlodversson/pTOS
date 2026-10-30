@@ -179,6 +179,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM lifecycle/timers: PASS' "$log"
     grep -q 'x32 GEM discovery/messages: PASS' "$log"
     grep -q 'x32 GEM window messages/focus: PASS' "$log"
+    grep -q 'x32 GEM window lookup: PASS' "$log"
     grep -q 'x32 GEM input events: PASS' "$log"
     grep -q 'x32 GEM mouse control: PASS' "$log"
     if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then

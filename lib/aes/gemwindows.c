@@ -117,6 +117,15 @@ static void output(const GRECT *r, short *x, short *y, short *w, short *h)
     if (h) *h = r->g_h;
 }
 
+short mt_wind_find(short x, short y, short *global)
+{
+    LONG identifier;
+    if (aes_application_session(global) < 0) return -1;
+    identifier = cuis_call6(CUIS_WINDOW_AT, (QUAD)x, (QUAD)y, 0, 0, 0, 0);
+    return identifier >= 0 && identifier <= 32767 ? (short)identifier : -1;
+}
+short wind_find(short x, short y) { return mt_wind_find(x,y,aes_global); }
+
 short mt_wind_calc(short type, short kind, short x, short y, short w, short h,
                    short *ox, short *oy, short *ow, short *oh, short *global)
 {

@@ -330,6 +330,8 @@ short wind_close(short id);
 short mt_wind_close(short id, short *global);
 short wind_delete(short id);
 short mt_wind_delete(short id, short *global);
+short wind_find(short x, short y);
+short mt_wind_find(short x, short y, short *global);
 short wind_get(short id, short field, short *a, short *b, short *c, short *d);
 short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, short *global);
 short wind_set(short id, short field, short a, short b, short c, short d);
