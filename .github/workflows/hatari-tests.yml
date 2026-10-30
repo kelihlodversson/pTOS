@@ -19,6 +19,13 @@ name: Hatari tests
 on:
   pull_request:
     branches: [master, "epic/**"]
+  # a new pin of Hatari builds it and caches it for the pull requests
+  push:
+    branches: [master, "epic/**"]
+    paths:
+      - tools/hatari-pin.sh
+      - tools/build-hatari.sh
+      - .github/actions/setup-hatari/**
   # every configuration in every screen mode, which a pull request does not
   # run (see the matrix of the test job)
   schedule:
@@ -35,8 +42,9 @@ permissions:
 jobs:
   # One job: the three systems are built (a minute or so each, with their test
   # disk), then the tests run several at a time, one Hatari each, on the four
-  # CPUs of the runner.  The runner is an Ubuntu 26.04, for its Hatari 2.6: the
-  # 2.4.1 of the 24.04 hangs the 68030 address-space runs (#727, #737).
+  # CPUs of the runner.  The Hatari is the pinned build of tools/hatari-pin.sh:
+  # the 2.4.1 of the 24.04 package hangs the 68030 address-space runs (#727,
+  # #737), and the 2.6.1 of the 26.04 one lacks the 68030 MMU fixes of 2026 (#805).
   hatari:
     name: Hatari tests
     runs-on: ubuntu-26.04
@@ -50,11 +58,14 @@ jobs:
         with:
           arch: m68k
 
+      # the Hatari of tools/hatari-pin.sh, built once and cached (#807)
+      - uses: ./.github/actions/setup-hatari
+
       # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh)
-      - name: Install Hatari and the disk image tools
+      - name: Install the disk image tools
         uses: ./.github/actions/apt-install
         with:
-          packages: --no-install-recommends hatari dosfstools mtools
+          packages: --no-install-recommends dosfstools mtools
 
       - name: Report the Hatari version
         run: hatari --version || true     # (it exits with 1)

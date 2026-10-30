@@ -153,7 +153,12 @@ def main():
     glyphs = None
     if a.mode in ('tta', 'tt040a'):         # --conout shows nothing here: read the screen
         glyphs = load_font()
-        cmd += ['--avirecord', '--avi-vcodec', 'png', '--avi-file', avi]
+        # a flag up to Hatari 2.6.1, an option with a boolean after it since
+        help_text = subprocess.run([cmd[0], '-h'], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT,
+                                   universal_newlines=True).stdout
+        cmd += ['--avirecord'] + (['true'] if '--avirecord <bool>' in help_text else [])
+        cmd += ['--avi-vcodec', 'png', '--avi-file', avi]
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
     with open(log, 'w') as out:
         proc = subprocess.Popen(cmd, env=env, stdout=out,
