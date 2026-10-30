@@ -37,8 +37,13 @@
 # The harness prints what each test did on the console, which Hatari's
 # --conout 2 sends to its standard output; the run is over when the summary
 # line has been printed (the harness leaves the machine at the desktop, so
-# the emulator is stopped then).  Exit status: 0 if every test passed,
-# 1 if one failed, the run timed out or did not finish, 2 if text_blit or
+# the emulator is stopped then).  The run also stops at once, with the text, when
+# the kernel panics: its handler waits for a key, and the text is on the emulated
+# screen only, unless Hatari gets --natfeats on, when kprintf() (which the panic
+# uses too) sends it to the log; the TT modes read it from the screen, where
+# natfeats upsets the capture.  Exit status: 0 if every test passed, 1 if one
+# failed, the kernel panicked, the run timed out or
+# did not finish, 2 if text_blit or
 # raster_copy skipped itself, which is a failure here: that they run on the
 # machine and the screen mode is the point of this (an ST has no blitter, so
 # it is not one there).
@@ -107,7 +112,12 @@ def screen_text(avi, glyphs):
 
 
 SUMMARY = re.compile(r'--- Summary: (\d+) passed, (\d+) failed, (\d+) total ---')
+# the first line of dopanic()'s output (bios/kprint.c), which kprintf() sends to
+# the log; not anchored, as the line of a test whose result is not printed yet
+# ("  name... ") is still open when the panic starts
+PANIC = re.compile(r'Panic: ')
 MUST_RUN = ('text_blit', 'raster_copy')
+PANIC_DRAIN = 4         # seconds, for the rest of a panic message to be written
 
 
 def main():
@@ -151,6 +161,8 @@ def main():
     cmd += ['--conout', '2', '--fast-forward', 'on']
     avi = os.path.join(work, 'screen.avi')
     glyphs = None
+    if a.mode not in ('tta', 'tt040a'):
+        cmd += ['--natfeats', 'on']         # the panic text reaches the log (below)
     if a.mode in ('tta', 'tt040a'):         # --conout shows nothing here: read the screen
         glyphs = load_font()
         # a flag up to Hatari 2.6.1, an option with a boolean after it since
@@ -165,25 +177,48 @@ def main():
                                 stderr=subprocess.STDOUT)
         text = ''
         summary = None
+        panic = None
         deadline = time.time() + a.timeout
+        def capture():
+            if glyphs:
+                return screen_text(avi, glyphs)
+            with open(log, errors='replace') as f:
+                return f.read()
+
         while time.time() < deadline and proc.poll() is None:
             time.sleep(2)
-            with open(log, errors='replace') as f:
-                text = f.read()
-            if glyphs:
-                text = screen_text(avi, glyphs)
+            text = capture()
+            found = PANIC.search(text)
+            if found:
+                # the poll can have caught the marker before the rest of the
+                # message, the PC and the registers: the handler then waits
+                # for a key, so let the text come out, then take the report
+                # from the last capture (if that one has the marker too: a
+                # capture of the screen can fail and give nothing)
+                time.sleep(PANIC_DRAIN)
+                last = capture()
+                again = PANIC.search(last)
+                if again:
+                    text, found = last, again
+                panic = text[found.start():]
+                break
             summary = SUMMARY.search(text)
             if summary:
                 break
         proc.kill()
         proc.wait()
-    if not glyphs:
+    if not glyphs and not panic:
         with open(log, errors='replace') as f:
             text = f.read()
     shutil.rmtree(work, ignore_errors=True)
 
     text = text.replace('\r', '')
     print(text)
+    if panic:
+        print('run-hatari-tests: the kernel panicked:\n' +
+              '\n'.join(panic.replace('\r', '').splitlines()[:12]),
+              file=sys.stderr)
+        return 1
     summary = SUMMARY.search(text)
     if not summary:
         print('run-hatari-tests: no summary from the test harness '

@@ -17,6 +17,9 @@
 #if DETECT_NATIVE_FEATURES
         .globl  C_SYM(detect_native_features)
         .globl  C_SYM(natfeat_cookie)
+#if CONF_WITH_MFASTCALL
+        .globl  C_SYM(nf_lookup_id)
+#endif
 #endif
 #if CONF_WITH_XHDI
         .globl  C_SYM(xhdi_vec)
@@ -82,6 +85,21 @@ nfID:
 nfCall:
         .dc.w   0x7301  // Conflict with ColdFire instruction mvs.b d1,d1
         rts
+
+#if CONF_WITH_MFASTCALL
+/*
+ * long nf_lookup_id(const char *name) - NFID() of the code in this image.
+ *
+ * The cookie's nfID() takes its argument on the stack, as every program that
+ * finds the cookie calls it.  -mfastcall passes the argument of a call through
+ * a function pointer in a0, so the internal callers go through here instead.
+ */
+C_SYM(nf_lookup_id):
+        move.l  a0,-(sp)
+        jsr     nfID
+        addq.l  #4,sp
+        rts
+#endif
 
 #endif  /* DETECT_NATIVE_FEATURES */
 
