@@ -2489,6 +2489,9 @@ removal or process exit falls back to the previous live registrant. Global
 window identifiers continue to exclude the background: wind_find returns 0
 there. Background clicks and mouse predicates belong to its owner, with drag
 capture preserved across windows/menu strips and sampled before release.
+Replacing the active background discards its outgoing owner's unread ordinary
+keys as well as the incoming owner's stale keys. Explicit keyboard-grab queues
+are preserved; modal display ownership continues to exclude foreign transfers.
 
 Rendering runs in the owner's ordinary GEM event/message dispatch, using the
 original AES object painter over the desktop visible regions. Display
@@ -2505,7 +2508,10 @@ shared across clients and affects subsequently created windows; existing
 windows retain their own colour arrays. A default pair changes atomically.
 Invalid gadgets and failed repaints do not replace per-window colours. Colour
 getters take the gadget through the first output word, as GEMlib requires.
-WF_NAME/WF_INFO have standard local string/pointer getters as well as setters.
+WF_NAME/WF_INFO setters retain the caller's local string pointer. Their scalar
+wind_get/mt_wind_get getters return that address as high/low WORDs through the
+first two outputs, which must both be non-NULL. Output adjacency never selects
+a string copy. wind_get_ptr/mt_wind_get_ptr provide the explicit pointer helper.
 
 WF_SCREEN returns a private compatibility scratch buffer and byte length in
 high/low WORD pairs. It reserves 640 character cells at four bytes per pixel

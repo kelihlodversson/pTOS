@@ -782,6 +782,8 @@ LONG cuis_background(UQUAD handle, UQUAD action)
     else {
         background_remove(client);
         if (action) {
+            if (background_front && keyboard_owner != background_front)
+                background_front->key_head = background_front->key_count = 0;
             client->background_next = background_front;
             background_front = client; client->background_dirty = TRUE;
             if (keyboard_owner != client) client->key_head = client->key_count = 0;

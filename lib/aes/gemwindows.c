@@ -752,13 +752,12 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     if (field == WF_NAME || field == WF_INFO) {
         const char *text = field == WF_NAME ? window->name : window->info;
         ULONG length;
-        if (!(window->kind & (field == WF_NAME ? NAME : INFO)) || !a || !text) return 0;
+        if (!(window->kind & (field == WF_NAME ? NAME : INFO)) || !a || !b || !text) return 0;
         for (length = 0; length < 128 && text[length]; length++) ;
         if (length == 128) return 0;
-        if (b == a+1) {
-            if ((UQUAD)(uintptr_t)text >> 32) return 0;
-            *a = (WORD)((uintptr_t)text >> 16); *b = (WORD)(uintptr_t)text;
-        } else strcpy((char *)a,text);
+        if ((UQUAD)(uintptr_t)text >> 32) return 0;
+        /* These are scalar WORD outputs regardless of their placement. */
+        *a = (WORD)((uintptr_t)text >> 16); *b = (WORD)(uintptr_t)text;
         return 1;
     }
     switch (field) {

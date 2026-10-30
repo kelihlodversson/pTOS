@@ -354,5 +354,7 @@ int main(void)
     rc = window_at_checks();
     if (rc) return rc;
     rc = background_checks();
+    if (rc) return rc;
+    rc = background_keyboard_checks();
     return rc ? rc : background_release_checks();
 }

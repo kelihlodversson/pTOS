@@ -103,6 +103,75 @@ static int background_checks(void)
 }
 #undef BGREG
 
+static int background_key_poll(LONG handle, ULONG key)
+{
+    CHECK(cuis_session_wait(handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0) ==
+          (LONG)(CUIS_READY_TIMER|(key ? CUIS_READY_KEY : 0)));
+    CHECK(cuis_input_config(CUIS_INPUT_RESULT,handle,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK);
+    CHECK((ULONG)copied[0] == key);
+    return 0;
+}
+
+/* Replacing a menu-less desktop must discard old ordinary input, while an
+ * explicit keyboard grab preserves the grabbing client's queued keys. */
+static int background_keyboard_checks(void)
+{
+    LONG a, b;
+    WORD grab, exiting;
+    CUIS_CLIENT *ca, *cb;
+    for (grab = 0; grab < 3; grab++) for (exiting = 0; exiting < 2; exiting++) {
+        run = &first; a = cuis_service(CUIS_SESSION_START,0); ca = *find_owner(run);
+        CHECK(a >= 0 && cuis_display_lock(a,1,0) == E_OK);
+        CHECK(cuis_background(a,1) == E_OK && cuis_display_lock(a,0,0) == E_OK);
+        run = &second; b = cuis_service(CUIS_SESSION_START,0); cb = *find_owner(run);
+        CHECK(b >= 0 && !surface_owner && !focus_window);
+        run = &first;
+        if (grab == 1) {
+            CHECK(cuis_display_lock(a,1,0) == E_OK && cuis_mouse_lock(a,1,0) == E_OK);
+            CHECK(cuis_keyboard_lock(a,1) == E_OK);
+        }
+        CHECK(cuis_keyboard_event(0x1e61) && cuis_keyboard_event(0x3062));
+        CHECK(!background_key_poll(a,0x1e61) && ca->key_head && ca->key_count == 1);
+        run = &second;
+        if (grab == 1) {
+            /* B cannot replace a desktop while A retains modal ownership. */
+            CHECK(cuis_display_lock(b,1,0) == EAGAIN);
+            run = &first;
+            CHECK(cuis_background(a,1) == E_OK && !background_key_poll(a,0x3062));
+            CHECK(cuis_keyboard_event(0x2064) && !background_key_poll(a,0x2064));
+            CHECK(cuis_keyboard_lock(a,0) == E_OK && cuis_mouse_lock(a,0,0) == E_OK);
+            CHECK(cuis_display_lock(a,0,0) == E_OK && cuis_keyboard_event(0x3062));
+            run = &second;
+        }
+        CHECK(cuis_display_lock(b,1,0) == E_OK);
+        if (grab == 2) {
+            CHECK(cuis_mouse_lock(b,1,0) == E_OK);
+            CHECK(cuis_keyboard_lock(b,1) == E_OK && cuis_keyboard_event(0x2e63));
+        }
+        CHECK(cuis_background(b,1) == E_OK && background_front == cb && cb->background_next == ca);
+        CHECK(!ca->key_count && !ca->key_head);
+        if (grab == 2) CHECK(!background_key_poll(b,0x2e63));
+        else CHECK(!cb->key_count);
+        CHECK(cuis_keyboard_event(0x1265) && !background_key_poll(b,0x1265));
+        if (grab == 2) {
+            CHECK(cuis_keyboard_lock(b,0) == E_OK && cuis_mouse_lock(b,0,0) == E_OK);
+        }
+        CHECK(cuis_display_lock(b,0,0) == E_OK);
+        if (exiting) cuis_process_exit(&second);
+        else {
+            CHECK(cuis_display_lock(b,1,0) == E_OK && cuis_background(b,0) == E_OK);
+            CHECK(cuis_display_lock(b,0,0) == E_OK);
+        }
+        run = &first;
+        CHECK(background_front == ca && !background_key_poll(a,0));
+        CHECK(cuis_keyboard_event(0x2166) && !background_key_poll(a,0x2166));
+        cuis_process_exit(&first);
+        if (!exiting) cuis_process_exit(&second);
+        CHECK(!background_front && !keyboard_owner && !display_owner && allocations == frees);
+    }
+    return 0;
+}
+
 /* A foreign border cannot steal a captured desktop drag's release. */
 static int background_release_checks(void)
 {
