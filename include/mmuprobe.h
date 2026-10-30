@@ -42,11 +42,12 @@ struct mmu_probe {
                                  * 3 not cached; 68030: 2 where the descriptor inhibits the cache, else 0 */
     ULONG window_ok;            /* phys is reachable through the window of the kernel */
     ULONG window_word;          /* the four bytes at phys (big endian), read through the window: the
-                                 * same bytes by a second mapping */
-    ULONG io_counter;           /* in, MMUPROBE_CACHE: a byte register of a device that changes by itself
-                                 * (a timer, the beam position) */
-    ULONG io_rw;                /* in: a byte register that holds what is written to it */
-    ULONG io_mask;              /* in: the bits of it that do */
+                                 * same bytes by a second mapping; only of a page the caller can read
+                                 * itself (not supervisor-only), else 0 and window_ok is 0 */
+    ULONG io_counter;           /* out, MMUPROBE_CACHE: the byte register of a device that changes by
+                                 * itself (a timer, the beam position) the kernel used; 0 if it has none */
+    ULONG io_rw;                /* out: the byte register that holds what is written to it */
+    ULONG io_mask;              /* out: the bits of it that do */
     ULONG cache_changes;        /* the counter changed this many times (0: the CPU read a cached copy) */
     ULONG cache_bad_ram;        /* RAM did not read back what was written, in the alternation */
     ULONG cache_bad_io;         /* the register did not read back what was written, or did not have it

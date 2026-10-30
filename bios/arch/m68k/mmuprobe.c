@@ -303,8 +303,10 @@ static void translate(struct mmu_probe *p)
         return;
 
     /* the same bytes by the window of the kernel, a second mapping of them (the
-     * four bytes at phys, which may not be aligned, or across a page) */
-    if (p->mapped && p->phys != 0xffffffffUL && p->phys < WINDOW_SIZE - 4
+     * four bytes at phys, which may not be aligned, or across a page).  Only
+     * of a page the caller can read itself: a process asks for this, and the
+     * window shows all of the memory */
+    if (p->mapped && p->super_only == 0 && p->phys != 0xffffffffUL && p->phys < WINDOW_SIZE - 4
         && kernel_readable(WINDOW + p->phys) && kernel_readable(WINDOW + p->phys + 3))
     {
         const volatile UBYTE *w = (const volatile UBYTE *)(WINDOW + p->phys);
@@ -327,17 +329,40 @@ static void translate(struct mmu_probe *p)
  */
 #define CACHE_ROUNDS 400000UL
 
+
+/*
+ * The registers are the kernel's choice, not the caller's (a process asks for
+ * the test): a counter that runs by itself, and a register of which the
+ * bits of the mask hold what is written to them.
+ */
+#if CONF_ATARI_HIGHER_HALF
+#define PROBE_IO_COUNTER    0xfffffa23UL    /* MFP timer C data */
+#define PROBE_IO_RW         0xffff8241UL    /* a palette register */
+#define PROBE_IO_MASK       0x77UL
+#elif CONF_AMIGA_HIGHER_HALF
+#define PROBE_IO_COUNTER    0xf0dff007UL    /* the beam position */
+#define PROBE_IO_RW         0xf0bfe301UL    /* CIA A data direction register B (DDRB) */
+#define PROBE_IO_MASK       0xffUL
+#else
+#define PROBE_IO_COUNTER    0UL
+#define PROBE_IO_RW         0UL
+#define PROBE_IO_MASK       0UL
+#endif
+
 static void cache_alternation(struct mmu_probe *p)
 {
-    volatile UBYTE *counter = (volatile UBYTE *)p->io_counter;
-    volatile UBYTE *rw = (volatile UBYTE *)p->io_rw;
+    volatile UBYTE *counter = (volatile UBYTE *)PROBE_IO_COUNTER;
+    volatile UBYTE *rw = (volatile UBYTE *)PROBE_IO_RW;
     static volatile ULONG ram[16];
-    UBYTE mask = (UBYTE)p->io_mask, saved, v = 0, last, x;
+    UBYTE mask = (UBYTE)PROBE_IO_MASK, saved, v = 0, last, x;
     ULONG i;
 
+    p->io_counter = PROBE_IO_COUNTER;
+    p->io_rw = PROBE_IO_RW;
+    p->io_mask = PROBE_IO_MASK;
     p->cache_changes = p->cache_bad_ram = p->cache_bad_io = 0;
-    if (!p->io_counter || !p->io_rw || !p->enabled
-        || !kernel_readable(p->io_counter) || !kernel_readable(p->io_rw))
+    if (!PROBE_IO_COUNTER || !PROBE_IO_RW || !p->enabled
+        || !kernel_readable(PROBE_IO_COUNTER) || !kernel_readable(PROBE_IO_RW))
         return;
 
     saved = *rw;
@@ -359,7 +384,7 @@ static void cache_alternation(struct mmu_probe *p)
                 break;
         }
     }
-    flush_data_cache((void *)p->io_rw, 16L);
+    flush_data_cache((void *)PROBE_IO_RW, 16L);
     if ((UBYTE)(*rw & mask) != v)
         p->cache_bad_io++;
     *rw = saved;

@@ -182,16 +182,14 @@ void test_mmu_state(void)
     probe(&p, TEST_MMU_IO_ADDR, MMUPROBE_SUPER);
     CHECK(p.cache_mode >= 2, "the I/O area is cached");
 #endif
-#ifdef TEST_MMU_IO_COUNTER
+#ifdef TEST_MMU_IO_CACHE
     /*
      * Cached and cache-inhibited pages in turn, with the caches as the kernel
      * has them: RAM and a register written and read back in turns, a counter
      * of a device that has to keep changing (a cached copy would not), and
-     * the register has the value once the data cache is pushed out.
+     * the register has the value once the data cache is pushed out.  The
+     * kernel picks the registers (bios/arch/m68k/mmuprobe.c).
      */
-    p.io_counter = TEST_MMU_IO_COUNTER;
-    p.io_rw = TEST_MMU_IO_RW;
-    p.io_mask = TEST_MMU_IO_MASK;
     rc = probe(&p, TEST_MMU_IO_ADDR, MMUPROBE_SUPER | MMUPROBE_CACHE);
     CHECK(rc == (long)sizeof(p), "S_MMUPROBE(cache) failed");
     CHECK(p.cache_changes >= 2, "a register of a device that runs by itself did not change: the I/O area is read from the cache");
