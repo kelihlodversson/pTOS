@@ -51,7 +51,7 @@
 #include "../bios/header.h"
 
 #if CONF_WITH_VDI_CICON_TEST
-#include "../aes/gemrslib.h"    /* rs_loadmem() */
+#include "../aes/shared/gemrslib.h"    /* rs_loadmem() */
 extern const UBYTE cicontest_rsc[];
 extern const LONG cicontest_rsc_size;
 #endif

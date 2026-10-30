@@ -9,6 +9,20 @@
  */
 
 #include "emutos.h"
+#include "obdefs.h"
+#include "aesdefs.h"
+#include "gem_rsc.h"
+#include "optimize.h"
+#include "rectfunc.h"
+#include "gemerror.h"
+#include "string.h"
+#include "intmath.h"
+#include "miscutil.h"
+#include "asm.h"
+#ifdef AES_FSEL_BINDINGS
+#include AES_FSEL_BINDINGS
+#else
+#include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
 #include "tosvars.h"
@@ -40,6 +54,10 @@ static DTA fs_dta;
 #define fs_dta D.g_dta
 #endif
 
+#define FSEL_3D CONF_WITH_3D_OBJECTS
+#define FSEL_OK() TRUE
+#endif
+
 #define NM_NAMES (F9NAME-F1NAME+1)
 #define NAME_OFFSET F1NAME
 #define NM_DRIVES (FSLSTDRV-FS1STDRV+1)
@@ -55,13 +73,14 @@ static DTA fs_dta;
 #define MIN_NM_FILES 100L           /*  ... if memory is tight */
 
 
+#ifndef AES_FSEL_BINDINGS
 static GRECT gl_rfs;
-
-static const char gl_fsobj[4] = {FTITLE, FILEBOX, SCRLBAR, 0x0};
 
 static char *ad_fsnames;    /* holds filenames in currently-displayed directory */
 static LONG *g_fslist;      /* offsets of filenames within ad_fsnames */
 static LONG nm_files;       /* total number of slots in g_fslist[] */
+#endif
+static const char gl_fsobj[4] = {FTITLE, FILEBOX, SCRLBAR, 0x0};
 
 
 /*
@@ -69,7 +88,7 @@ static LONG nm_files;       /* total number of slots in g_fslist[] */
  */
 void fs_start(void)
 {
-#if CONF_WITH_3D_OBJECTS
+#if FSEL_3D
     OBJECT *obj, *tree = rs_trees[FSELECTR];
     TEDINFO *ted;
     WORD i, row;
@@ -338,7 +357,7 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
 
     set_mouse_to_arrow();
 
-    if ((ret == EFILNF) || (ret == ENMFIL))
+    if ((ret == 0) || (ret == EFILNF) || (ret == ENMFIL))
         return TRUE;
 
     if (!IS_BIOS_ERROR(ret))    /* if BDOS error, issue message via form_error(): */
@@ -408,7 +427,7 @@ static void fs_format(OBJECT *tree, WORD currtop, WORD count)
         h = max(gl_hbox, h);            /* min size elevator */
         y = mul_div_round(currtop, th-h, count-NM_NAMES);
     }
-#if CONF_WITH_3D_OBJECTS
+#if FSEL_3D
     y += ADJ3DSTD;
     h -= 2 * ADJ3DSTD;      /* we assume that 2*ADJ3DSTD < gl_hbox */
 #endif
@@ -634,7 +653,11 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     /* static: the FTITLE object's te_ptext is pointed directly at mask
      * (see below) and that pointer can outlive this call, e.g. if the
      * resource tree is redrawn without another fs_input() call first */
+#ifdef AES_FSEL_BINDINGS
+    BYTE *mask = aes_fsel->mask;
+#else
     static BYTE mask[LEN_ZPATH+1];
+#endif
     OBJECT *obj;
     TEDINFO *tedinfo;
 
@@ -729,7 +752,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     newsel = newdrive = FALSE;
     cont = newlist = TRUE;
     error = 0;      /* consecutive error count */
-    while(cont)
+    while(cont && FSEL_OK())
     {
         touchob = (newlist) ? 0x0 : fm_do(tree, FSSELECT);
         gsx_mxmy(&mx, &my);
@@ -937,6 +960,12 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 
         if (value)
             curr = fs_nscroll(tree, &sel, curr, count, touchob, value);
+    }
+
+    if (!FSEL_OK()) {
+        fm_dial(FMD_FINISH, &gl_rcenter, &gl_rfs);
+        dos_free(ad_fsnames);
+        return FALSE;
     }
 
     /* return path and file name to caller */

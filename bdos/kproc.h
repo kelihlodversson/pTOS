@@ -61,6 +61,10 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * 0 is the kernel's own context, which has none and is every boot-time basepage's
  * launcher. */
 WORD kproc_pid(PD *pd);                 /* 0: no record */
+#if CONF_WITH_CUIS
+void kproc_set_executable_name(PD *pd, const char *path);
+const char *kproc_executable_name(PD *pd);
+#endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
 SBYTE kproc_get_prio(PD *pd);
 void kproc_set_prio(PD *pd, SBYTE prio);
@@ -91,6 +95,11 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
 #endif
 BOOL kproc_standard_entry(PD *pd);
 BOOL kproc_prepare_user(PD *pd, PD *parent);
+#if CONF_WITH_NATIVE_SCHED
+void kproc_add_child_usage(PD *pd, ULONG milliseconds);
+void kproc_commit_async(PD *pd);
+BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller);
+#endif
 /*
  * Makes the process a built-in x32 program: kproc_prepare_user() will also
  * map the image's segments as private pages of its address space.  Must

@@ -5,9 +5,14 @@ set -eu
 top=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$top"
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-mmap.XXXXXX")
-trap 'rm -rf "$work"' EXIT HUP INT TERM
+capture=
+trap '[ -z "$capture" ] || kill "$capture" 2>/dev/null || true; rm -rf "$work"' EXIT HUP INT TERM
 log=${MMAP_BOOT_LOG:-$work/boot.log}
 firmware=${OVMF_DIR:-/usr/share/OVMF}
+boot_timeout=${MMAP_BOOT_TIMEOUT:-45}
+if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+    boot_timeout=${MMAP_BOOT_TIMEOUT:-90}
+fi
 case ${1:-} in
     '') expected=PASS ;;
     --disabled) expected=disabled ;;
@@ -38,6 +43,31 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     cp obj/ldso/test/client.elf "$work/CLIENT.TOS"
     cp obj/ldso/test/clientpie.elf "$work/CLIENTP.TOS"
     cp obj/ldso/ld.so "$work/GEMSYS/LIB/X32/LD.SO"
+    if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
+        cp obj/libaes/libaes.so "$work/GEMSYS/LIB/X32/LIBAES.SO"
+        cp obj/libaes/CUIS.TOS "$work/CUIS.TOS"
+        cp obj/libaes/CUISCHED.TOS "$work/CUISCHED.TOS"
+        cp obj/libaes/ASYNC.TOS "$work/ASYNC.TOS"
+        cp obj/libaes/GEM.TOS "$work/GEM.TOS"
+        cp obj/libaes/GEMMSG.TOS "$work/GEMMSG.TOS"
+        cp obj/libaes/GEMMSG.TOS "$work/GEMPEER.TOS"
+        cp obj/libaes/GEMFOC.TOS "$work/GEMFOC.TOS"
+        cp obj/libaes/GEMINP.TOS "$work/GEMINP.TOS"
+        cp obj/libaes/GEMMCTL.TOS "$work/GEMMCTL.TOS"
+        cp obj/libaes/GEMDRAW.TOS "$work/GEMDRAW.TOS"
+        cp obj/libaes/GEMTEST.RSC "$work/GEMTEST.RSC"
+        cp aes/gem.rsc "$work/GEMORIG.RSC"
+        python3 tools/make-cuis-resource.py --colour-icons "$work/GEMCOLOR.RSC"
+        python3 tools/make-cuis-resource.py --colour-icons-256 "$work/GEM256.RSC"
+        mkdir -p "$work/APPS" "$work/RPATH"
+        cp obj/libaes/GEMDRAW.TOS "$work/APPS/GEMPATH.TOS"
+        python3 tools/make-cuis-resource.py --application-directory "$work/APPS/GEMTEST.RSC"
+        cp "$work/APPS/GEMTEST.RSC" "$work/RPATH/GEMPATH.RSC"
+        cp obj/libaes/GEMUPD.TOS "$work/GEMUPD.TOS"
+        cp obj/libaes/GEMWIN.TOS "$work/GEMWIN.TOS"
+        cp obj/libaes/GEMEVNT.TOS "$work/GEMEVNT.TOS"
+        cp obj/libaes/GEMEVNT.TOS "$work/GEMEVPE.TOS"
+    fi
     cp obj/ldso/test/librt.so obj/ldso/test/libdyn.so "$work/GEMSYS/LIB/X32/"
     cp obj/ldso/test/BD.SO "$work/GEMSYS/LIB/X32/"
     cp obj/ldso/test/SO*.TOS "$work/"
@@ -67,8 +97,15 @@ fi
 if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
+if [ -f "$work/CUIS.TOS" ]; then
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS" "$work/GEMTEST.RSC" "$work/GEMORIG.RSC" "$work/GEMCOLOR.RSC" "$work/GEM256.RSC" "$work/APPS" "$work/RPATH"
+fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
+fi
+if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+    : > "$work/FORMTEST.ON"
+    set -- "$@" "$work/FORMTEST.ON"
 fi
 tools/mkhdisk.sh "$work/disk.img" 33554432 "$@" \
     "$work/X32HELLO.TOS" "$work/X32RELOC.TOS" "$work/X32NOREL.TOS" \
@@ -80,8 +117,21 @@ set -- qemu-system-x86_64
 if [ -n "${QEMU_DATA_DIR:-}" ]; then
     set -- "$@" -L "$QEMU_DATA_DIR"
 fi
+if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+    set -- "$@" -qmp "unix:$work/qmp.sock,server=on,wait=off"
+    : > "$log"
+    python3 tools/exercise-gem-forms.py "$work/qmp.sock" "$log" "${MMAP_BOOT_SCREENSHOT:-}" \
+        "$boot_timeout" > "$log.capture" 2>&1 &
+    capture=$!
+elif [ -n "${MMAP_BOOT_SCREENSHOT:-}" ]; then
+    set -- "$@" -qmp "unix:$work/qmp.sock,server=on,wait=off"
+    : > "$log"
+    python3 tools/capture-gem-screen.py "$work/qmp.sock" "$log" "$MMAP_BOOT_SCREENSHOT" \
+        "$boot_timeout" > "$log.capture" 2>&1 &
+    capture=$!
+fi
 set +e
-timeout "${MMAP_BOOT_TIMEOUT:-45}" "$@" -machine pc -m 256 \
+timeout "$boot_timeout" "$@" -machine pc -m 256 \
     -cpu qemu64,+pdpe1gb -nic none \
     -drive if=pflash,format=raw,readonly=on,file="$firmware/OVMF_CODE_4M.fd" \
     -drive if=pflash,format=raw,file="$work/vars.fd" \
@@ -89,6 +139,14 @@ timeout "${MMAP_BOOT_TIMEOUT:-45}" "$@" -machine pc -m 256 \
     -serial file:"$log" -display none > "$log.qemu" 2>&1
 rc=$?
 set -e
+if [ -n "$capture" ]; then
+    if ! wait "$capture"; then
+        cat "$log.capture"
+        exit 1
+    fi
+    cat "$log.capture"
+    capture=
+fi
 cat "$log.qemu"
 if [ -f "$log" ]; then cat "$log"; fi
 [ "$rc" -eq 124 ] || { echo "QEMU exited unexpectedly: $rc"; exit 1; }
@@ -109,6 +167,55 @@ fi
 if [ -f "$work/VDIIMP.TOS" ]; then
     grep -q 'x86-64 VDI imports: PASS' "$log"
     grep -q 'x86-64 AES imports: PASS' "$log"
+fi
+if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
+    if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then
+        grep -q 'x32 CUIS VDI enforcement: PASS' "$log"
+        if grep -q '^CONF_WITH_USER_CALLBACKS *= *y' obj/auto.conf; then
+            grep -q 'x32 async foreign callback: PASS' "$log"
+        fi
+    fi
+    grep -q 'x32 async launch/wait: PASS' "$log"
+    grep -q 'x32 GEM lifecycle/timers: PASS' "$log"
+    grep -q 'x32 GEM discovery/messages: PASS' "$log"
+    grep -q 'x32 GEM window messages/focus: PASS' "$log"
+    grep -q 'x32 GEM window lookup: PASS' "$log"
+    grep -q 'x32 GEM window/desktop APIs: PASS' "$log"
+    grep -q 'x32 GEM input events: PASS' "$log"
+    grep -q 'x32 GEM mouse control: PASS' "$log"
+    if grep -q '^CONF_WITH_X32_VDI *= *y' obj/auto.conf; then
+        grep -q 'x32 GEM object drawing: PASS' "$log"
+        grep -q 'x32 GEM colour icons: PASS' "$log"
+        grep -q 'x32 GEM menu items: PASS' "$log"
+        if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+            grep -q 'x32 GEM file selectors: PASS' "$log"
+            grep -q 'x32 GEM box animations: PASS' "$log"
+            grep -q 'x32 GEM graphics tracking: PASS' "$log"
+            grep -q 'x32 GEM graphics setup/cursors: PASS' "$log"
+            grep -q 'x32 GEM sliders: PASS' "$log"
+            grep -q 'x32 GEM menu bar: PASS' "$log"
+            grep -q 'x32 GEM menu handoff: PASS' "$log"
+        fi
+        grep -q 'x32 GEM 3D objects: PASS' "$log"
+        grep -q 'x32 GEM resource loading: PASS' "$log"
+    else
+        grep -q 'x32 GEM object drawing: unavailable' "$log"
+    fi
+    grep -q 'x32 GEM update/regions: PASS' "$log"
+    grep -q 'x32 GEM window lifecycle: PASS' "$log"
+    grep -q 'x32 GEM combined events: PASS' "$log"
+    test "$(grep -c 'x32 async orphan: PASS' "$log")" -ge 4
+    grep -q 'x86-64 async process calls: PASS' "$log"
+    grep -q 'x86-64 CUIS scheduler: PASS' "$log"
+    grep -q 'x32 CUIS messages: PASS' "$log"
+    grep -q 'x32 CUIS pointer/events: PASS' "$log"
+    grep -q 'x32 CUIS keyboard: PASS' "$log"
+    grep -q 'x32 CUIS focus: PASS' "$log"
+    grep -q 'x32 CUIS clipping: PASS' "$log"
+    grep -q 'x32 CUIS visibility: PASS' "$log"
+    grep -q 'x32 libaes objects: PASS' "$log"
+    grep -q 'x32 libaes/CUIS sessions: PASS' "$log"
+    grep -q 'x86-64 CUIS sessions: PASS' "$log"
 fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"

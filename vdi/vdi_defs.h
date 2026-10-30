@@ -437,6 +437,11 @@ extern void (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provi
 void vdimouse_exit(void);
 void timer_exit(void);
 void esc_exit(Vwk *);
+#if CONF_WITH_CUIS
+void vdi_cuis_cursor_flush(void);
+void vdi_cuis_pointer_flush(void);
+void vdi_cuis_pointer_start(void);
+#endif
 void mouse_int(UBYTE *buf);   /* mouse interrupt vector */
 void wheel_int(UBYTE *buf);   /* wheel interrupt routine */
 void mov_cur(WORD new_x, WORD new_y);      /* user button vector */
@@ -579,6 +584,11 @@ void v_bez_qual(Vwk *);
 void v_bez_control(Vwk *);
 void v_bez(Vwk *vwk, Point *points, int count);
 void v_bez_fill(Vwk *vwk, Point *points, int count);
+#endif
+
+#if CONF_WITH_CUIS
+struct mform;
+void vdi_cuis_pointer(const struct mform *form, BOOL hidden);
 #endif
 
 #endif                          /* VDIDEF_H */

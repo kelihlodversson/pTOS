@@ -108,7 +108,7 @@ def plane_owns(plane, in_top, left):
 
     Plane 0 = top-left quadrant, 1 = top-right, 2 = bottom-left,
     3 = bottom-right; a quadrant's colour code is the OR of the plane
-    bits there (rs_cicon_pack in aes/gemrslib.c maps plane p to bit
+    bits there (rs_cicon_pack in aes/shared/gemrslib.c maps plane p to bit
     1<<p of the colour code).
     """
     return (plane in (0, 1)) == in_top and (plane in (0, 2)) == left

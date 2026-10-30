@@ -2,6 +2,8 @@
 # aes/build.mk - objects making up the AES
 #
 
+obj-$(CONF_WITH_CUIS) += cuis_session.o cuis_region.o cuis_input_wait.o
+
 obj-$(CONF_WITH_X32_AES) += aes_service.o aes_image.o
 
 ifeq ($(CONF_WITH_AES),y)
@@ -10,12 +12,15 @@ obj-$(ARCH_ARM) += gemdosifc.o
 obj-$(ARCH_X86_64) += aes_accessory.o aes_window.o aes_objects_kernel.o aes_tree.o aes_shell.o
 
 obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
-	 gemfmalt.o gemfmerror.o gemfmlib.o gemfslib.o gemgraf.o gemgraphutil.o gemgrlib.o gemgsxif.o \
-	 geminit.o geminput.o gemmnlib.o gemobed.o gemobjop.o gemoblib.o \
-	 gempd.o gemqueue.o gemrslib.o gemsclib.o gemshlib.o gemsuper.o \
+	 gemfmalt.o gemalert.o gemfmerror.o gemformerror.o gemfmlib.o gemformdo.o gemformbutton.o gemwatch.o gemformkey.o gemfslib.o gemgraf.o gemlayout.o gemicon.o gemrender_graphics.o gemgraphutil.o gemgrlib.o gemgrtrack.o gemformanim.o gemgsxif.o \
+	 geminit.o geminput.o gemmnlib.o gemmenuchange.o gemobed.o gemedit.o gemobjop.o gemobjwalk.o gemoblib.o gemrender.o \
+	 gempd.o gemqueue.o gemrslib.o gemrsaddr.o gemsclib.o gemshlib.o gemsuper.o \
 	 gemwmlib.o gemwrect.o gsx2.o gem_rsc.o mforms.o
+obj-$(CONF_WITH_LIBAES) += gemobjtree.o
 obj-$(CONF_WITH_LEGACY_RSC_LOAD) += rsload_legacy.o
 obj-$(CONF_WITH_PORTABLE_RSC_LOAD) += rsload_portable.o
 obj-$(CONF_WITH_MENU_EXTENSION) += gemmnext.o
+obj-$(CONF_WITH_3D_OBJECTS) += gemframe.o
+obj-$(CONF_WITH_COLOUR_ICONS) += gemcicon.o
 
 endif

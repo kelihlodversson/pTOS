@@ -259,7 +259,7 @@ Vwk *vdi_backend_active_vwk(void)
  * cannot call -- that inline lives in vdi_backend.h, a vdi/-private
  * header the AES never includes.  This file is built exactly when
  * CONF_WITH_VDI_BACKEND_TRUECOLOR is set, matching the A1 branch's
- * compile-time guard in aes/gemrslib.c; under backend dispatch it is the
+ * compile-time guard in aes/shared/gemrslib.c; under backend dispatch it is the
  * runtime check against the selected ops table.
  */
 BOOL vdi_truecolor_screen(void)

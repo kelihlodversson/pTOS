@@ -9,6 +9,16 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_NATIVE_SCHED
+    bool
+    depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    help
+      Kernel-owned cooperative native process scheduling and standard MiNT
+      asynchronous launch, yield and child waits. Selected by CUIS initially;
+      independent of GUI session and input services. No preemption or Pfork.
+      Other architecture backends follow their isolated address spaces.
+
+
 config CONF_LOGSEC_SIZE
 	int "Maximum logical sector size, in bytes"
 	default 512

@@ -124,7 +124,9 @@ core-dirs-y = bios bdos fs util
 optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 ifneq ($(CONF_WITH_AES),y)
-optional-dirs-$(CONF_WITH_X32_AES) += aes
+ifneq ($(filter y,$(CONF_WITH_X32_AES) $(CONF_WITH_CUIS)),)
+optional-dirs-y += aes
+endif
 endif
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
@@ -136,7 +138,9 @@ dirs = $(core_dirs) $(optional_dirs)
 arch_subdirs = $(addprefix machine/,$(MACHINE)) $(addprefix arch/,$(ARCH))
 arch_dirs = $(foreach d,$(dirs),$(addprefix $(d)/,$(arch_subdirs)))
 
-vpath %.c $(arch_dirs) $(dirs)
+# Prefer the relocated generated resource over an old pre-migration copy.
+vpath gem_rsc.c aes/shared
+vpath %.c $(arch_dirs) $(dirs) aes/shared
 vpath %.S $(arch_dirs) $(dirs)
 
 #
@@ -367,7 +371,8 @@ endif
 # where the generated autoconf.h lives.
 current_dir = $(filter-out .,$(word 1,$(subst /, ,$(dir $<))))
 include_dirs = $(addprefix include/,$(arch_subdirs)) include obj \
-               $(if $(current_dir),$(addprefix $(current_dir)/,$(arch_subdirs)) $(current_dir))
+               $(if $(current_dir),$(addprefix $(current_dir)/,$(arch_subdirs)) $(current_dir)) \
+               $(if $(filter aes desk,$(current_dir)),aes/shared)
 INC = $(addprefix -I,$(include_dirs))
 
 # Automatic header dependency generation, one .d file per object.
@@ -606,6 +611,9 @@ all: $(IMAGE) $(image-extra)
 # not an executable interpreter (doc/elf-shared.txt).
 ifeq ($(CONF_WITH_ELF_SHARED),y)
 include lib/ldso/build.mk
+endif
+ifeq ($(CONF_WITH_LIBAES),y)
+include lib/aes/build.mk
 endif
 
 # The reference values below have been gathered from major TOS versions,
@@ -1103,8 +1111,8 @@ aes-contract-test: $(AUTOCONF_H)
 	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_TREE_HOST_TEST \
 	  tests/aes_contract/tree_contract.c aes/aes_tree.c -o obj/aes-tree-contract-test
 	./obj/aes-tree-contract-test
-	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Iaes \
-	  tests/aes_contract/graph_geometry.c aes/gemgraphutil.c -o obj/aes-graph-contract-test
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Iaes -Iaes/shared \
+	  tests/aes_contract/graph_geometry.c aes/shared/gemgraphutil.c -o obj/aes-graph-contract-test
 	./obj/aes-graph-contract-test
 
 TOCLEAN += obj/aes-contract-test obj/aes-tree-contract-test obj/aes-graph-contract-test
@@ -1270,7 +1278,9 @@ endif
 DESKRSC_BASE = desk/desktop
 DESKRSCGEN_BASE = desk/desk_rsc
 GEMRSC_BASE = aes/gem
-GEMRSCGEN_BASE = aes/gem_rsc
+GEMRSCGEN_BASE = aes/shared/gem_rsc
+# Also retire artifacts left by builds before the generated source moved.
+TOCLEAN += aes/gem_rsc.c aes/gem_rsc.h obj/desk/gem_rsc.o obj/desk/gem_rsc.d
 ICONRSC_BASE = desk/icon
 ICONRSCGEN_BASE = desk/icons
 MFORMRSC_BASE = aes/mform
@@ -2314,3 +2324,7 @@ $(DESK_OBJ): | $(GEN_SRC)
 #
 
 -include $(wildcard obj/*.d)
+
+.PHONY: cuis-contract-test
+cuis-contract-test:
+	python3 tools/test-cuis.py

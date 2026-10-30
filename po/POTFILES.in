@@ -9,7 +9,7 @@ bios/kprint.c
 
 bdos/osmem.c
 
-aes/gem_rsc.c
+aes/shared/gem_rsc.c
 
 desk/desk_rsc.c
 desk/deskinf.c

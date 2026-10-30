@@ -49,11 +49,105 @@
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#include "ksched.h"
+#include "process.h"
+#include "ikbd.h"
+#include "iorec.h"
+#endif
 #if CONF_WITH_X32_VDI
 #include "lineavars.h"
+#include "../../../vdi/vdi_defs.h"
 #include "screen_mode.h"
 #include "font.h"
 #include "vdi_service.h"
+#endif
+
+#if CONF_WITH_CUIS
+static BOOL cuis_input_watching, cuis_input_armed, cuis_input_legacy_clean;
+static ULONG cuis_input_injections, cuis_pointer_injections;
+static BOOL cuis_pointer_armed;
+#if CONF_WITH_X32_VDI
+static ULONG cuis_pointer_legacy_calls, cuis_pointer_cursor_calls;
+static BOOL cuis_pointer_callbacks_clean, cuis_pointer_cursor_updated, cuis_pointer_guard_clean;
+#if CONF_WITH_USER_CALLBACKS
+static BOOL cuis_pointer_stale_clean;
+#endif
+static void (*cuis_saved_cursor)(WORD, WORD);
+static void cuis_test_button(WORD buttons) { (void)buttons; cuis_pointer_legacy_calls++; }
+static ULONG cuis_test_motion(WORD x, WORD y)
+{
+    cuis_pointer_legacy_calls++;
+    return MAKE_ULONG(x, y);
+}
+static void cuis_test_cursor(WORD x, WORD y)
+{
+    cuis_pointer_cursor_calls++;
+    cuis_saved_cursor(x, y);
+}
+#endif
+void x86_64_memtest_cuis_wait(ULONG events)
+{
+    if (!cuis_input_watching) return;
+    if ((events & CUIS_EVENT_POINTER) && !cuis_pointer_injections) cuis_pointer_armed = TRUE;
+    else if ((events & CUIS_EVENT_KEY) && !cuis_input_injections) cuis_input_armed = TRUE;
+}
+void x86_64_memtest_cuis_tick(void)
+{
+    if (cuis_input_watching && cuis_pointer_armed) {
+        SBYTE press[3] = { (SBYTE)0xfa, 1, -1 }, release[3] = { (SBYTE)0xf8, 0, 0 };
+#if CONF_WITH_X32_VDI
+        void (*button)(WORD) = linea_vars.user_but;
+        ULONG (*motion)(WORD, WORD) = linea_vars.user_mot;
+        WORD old_x = linea_vars.GCURX, old_y = linea_vars.GCURY;
+        cuis_saved_cursor = linea_vars.user_cur;
+        cuis_pointer_legacy_calls = cuis_pointer_cursor_calls = 0;
+        linea_vars.user_but = cuis_test_button;
+        linea_vars.user_mot = cuis_test_motion;
+        linea_vars.user_cur = cuis_test_cursor;
+#endif
+        cuis_pointer_armed = FALSE;
+        cuis_pointer_injections++;
+#if CONF_WITH_X32_VDI
+#if CONF_WITH_USER_CALLBACKS
+        vdi_service_test_motion_begin();
+#endif
+        linea_vars.mouse_flag++;
+#endif
+        call_mousevec(press);
+        call_mousevec(release);
+#if CONF_WITH_X32_VDI
+        cuis_pointer_guard_clean = !cuis_pointer_cursor_calls &&
+            linea_vars.GCURX == (old_x < xres ? old_x + 1 : old_x) &&
+            linea_vars.GCURY == (old_y > 0 ? old_y - 1 : 0);
+        /* Show/hide may clear this after the packet. Flush must re-arm it. */
+        linea_vars.draw_flag = FALSE;
+        linea_vars.mouse_flag--;
+        vdi_cuis_cursor_flush();
+#if CONF_WITH_USER_CALLBACKS
+        cuis_pointer_stale_clean = vdi_service_test_motion_end();
+#endif
+#endif
+#if CONF_WITH_X32_VDI
+        linea_vars.user_but = button;
+        linea_vars.user_mot = motion;
+        linea_vars.user_cur = cuis_saved_cursor;
+        cuis_pointer_callbacks_clean = !cuis_pointer_legacy_calls;
+        cuis_pointer_cursor_updated = cuis_pointer_cursor_calls != 0;
+#endif
+    }
+    if (cuis_input_watching && cuis_input_armed) {
+        WORD tail = ikbdiorec.tail;
+        cuis_input_armed = FALSE;
+        cuis_input_injections++;
+        /* Deliver through the real translated keyboard producer in an IRQ,
+         * not a user-callable CUIS injection or a syscall polling hook. */
+        kbd_int(0x25);
+        kbd_int(0xa5);
+        if (ikbdiorec.tail != tail) cuis_input_legacy_clean = FALSE;
+    }
+}
 #endif
 
 extern void set_owner(void *addr, PD *p);
@@ -148,6 +242,48 @@ static ASPACE *must_create(const char *what)
 }
 
 /* ---- physical page allocator ------------------------------------- */
+
+#if CONF_WITH_LIBAES && CONF_WITH_X32_VDI
+/* Exercise cursor composition with actual ring-3 VDI writes and the normal
+ * native mouse-movement/VBL path; no user-facing cursor test API is needed. */
+static WORD renderer_vdi(WORD code, WORD value)
+{
+    VDICONTROL control = { 0 };
+    WORD input = value, points[12] = { 50,50 }, output[45] = { 0 };
+    VDIPB saved = linea_vars.local_pb;
+    VDIPB pb = { &control, &input, points, output, points };
+    control.code = code; control.handle = 1;
+    if (code == 105) control.nptsin = 1;
+    else control.nintin = 1;
+    GSX_ENTRY(0x73,&pb);
+    linea_vars.local_pb = saved;
+    return output[1];
+}
+static void test_renderer_cursor(void)
+{
+    WORD hidden = linea_vars.HIDE_CNT, x = linea_vars.GCURX, y = linea_vars.GCURY;
+    char tail[3] = { 1,'c',0 };
+    LONG result;
+    renderer_vdi(123,1);
+    linea_vars.GCURX = 50; linea_vars.GCURY = 50;
+    renderer_vdi(122,0);
+    CHECK(linea_vars.HIDE_CNT == 0, "renderer cursor test starts visible");
+    result = Pexec(PE_LOADGO,"C:\\GEMDRAW.TOS",tail,NULL);
+    CHECK(result == 0 && linea_vars.HIDE_CNT == 0, "object painting preserves visible cursor state");
+    linea_vars.GCURX = 120; linea_vars.GCURY = 120;
+    linea_vars.user_cur(120,120);
+    if (vblqueue[0]) vblqueue[0]();
+    CHECK(renderer_vdi(105,0) == 2, "cursor movement restores repainted object pixels");
+    renderer_vdi(123,1); renderer_vdi(123,1);
+    CHECK(linea_vars.HIDE_CNT == 2, "renderer cursor test starts with nested hides");
+    result = Pexec(PE_LOADGO,"C:\\GEMDRAW.TOS",tail,NULL);
+    CHECK(result == 0 && linea_vars.HIDE_CNT == 2, "object painting preserves nested cursor hides");
+    /* Both test passes have removed the cursor at this point. */
+    linea_vars.GCURX = x; linea_vars.GCURY = y;
+    linea_vars.HIDE_CNT = hidden ? hidden : 1;
+    if (!hidden) renderer_vdi(122,1);
+}
+#endif
 
 static void test_pmem(void)
 {
@@ -2002,9 +2138,15 @@ static void test_vdi_coordinate_bounds(void)
      * the valid signed boundary uses an invalid output buffer so neither
      * case needs to read beyond the real framebuffer. */
     for (i = 0; i < ARRAY_SIZE(heights); i++) {
+#if CONF_WITH_CUIS
+        CHECK(vdi_service_test_reset(), "kernel boundary resets idle physical VDI fixture");
+#endif
         linea_vars.V_REZ_VT = heights[i];
         probe_expect('P', 0, "large-screen VDI coordinate bounds and visible clipped lines");
     }
+#if CONF_WITH_CUIS
+    CHECK(vdi_service_test_reset(), "release physical VDI coordinate fixture");
+#endif
     linea_vars = *saved;
     kfree(saved);
     same(&s, "coordinate bounds VDI test");
@@ -2033,6 +2175,9 @@ static void test_vdi_padded_pitch(void)
     if (!saved)
         return;
     *saved = linea_vars;
+#if CONF_WITH_CUIS
+    CHECK(vdi_service_test_reset(), "kernel boundary resets physical VDI pitch fixture");
+#endif
 
     /* Crop the visible viewport while retaining the hardware scanline
      * stride. This creates real row padding even on unpadded QEMU GOP.
@@ -2055,6 +2200,9 @@ static void test_vdi_padded_pitch(void)
             if (row[x] != 0x5a7193c5UL)
                 padding_ok = FALSE;
     }
+#if CONF_WITH_CUIS
+    CHECK(vdi_service_test_reset(), "release physical VDI pitch fixture");
+#endif
     linea_vars = *saved;
     kfree(saved);
     CHECK(pitch_ok, "physical VDI open preserves the hardware pitch");
@@ -2062,6 +2210,139 @@ static void test_vdi_padded_pitch(void)
     same(&s, "padded-pitch VDI test");
     if (failures == before)
         kcprintf("x86-64 VDI padded pitch: PASS\n");
+}
+#endif
+
+#if CONF_WITH_CUIS
+static void test_async_processes(void)
+{
+    PD *program;
+    LONG rc, result;
+    void *environment_block;
+    static const char environment[] = { 0, 0 };
+    char tail[] = { 1, 'p', 0 };
+    UWORD i, j;
+    static const char roles[] = "pozvf";
+    SNAP s;
+    int before = failures;
+    ULONG sessions = cuis_session_count();
+    for (i = 0; i < 5; i++) {
+        snap(&s);
+        tail[1] = roles[i];
+        if (!i) {
+            result = Pexec(PE_LOADGO, "C:\\ASYNC.TOS", tail, environment);
+        } else {
+            rc = Pexec(PE_LOAD, "C:\\ASYNC.TOS", tail, environment);
+            CHECK(rc > 0, "load ordinary async process fixture");
+            if (rc <= 0) break;
+            program = (PD *)(uintptr_t)rc;
+            environment_block = USERPTR_TO_PTR(program->p_env);
+            result = Pexec(i == 2 ? PE_GO : PE_GOTHENFREE, NULL, (char *)program, NULL);
+            if (i == 2) {
+                CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
+                      "PE_GO keeps caller ownership after managed descendants exit");
+                CHECK(Mfree(environment_block) == E_OK && Mfree(program) == E_OK,
+                      "PE_GO retained environment and basepage remain freeable");
+            }
+        }
+        if (result != (i == 3 ? 77 : i == 4 ? 0xffff : 0))
+            kcprintf("async fixture %u returned %ld\n", (unsigned)i, (long)result);
+        CHECK(result == (i == 3 ? 77 : i == 4 ? 0xffff : 0),
+              "ordinary Pexec bootstraps async launch, waits and orphan cleanup");
+        CHECK(cuis_session_count() == sessions, "async clients' sessions are reclaimed");
+        same(&s, "ordinary launch, child records, stacks, zombies and directory references reclaimed");
+    }
+    for (i = 0; i < 2; i++) {
+        for (j = 1; j <= 2; j++) {
+            snap(&s);
+            rc = Pexec(PE_LOAD, "C:\\X32HELLO.TOS", "", environment);
+            CHECK(rc > 0, "load group allocation failure fixture");
+            if (rc <= 0) break;
+            program = (PD *)(uintptr_t)rc;
+            environment_block = USERPTR_TO_PTR(program->p_env);
+            x86_64_pmem_test_fail_after(j);
+            rc = Pexec(i ? PE_GOTHENFREE : PE_GO, NULL, (char *)program, NULL);
+            x86_64_pmem_test_fail_after(0);
+            CHECK(rc == ENSMEM && !ksched_active() && kproc_unlaunched(program),
+                  "failed group allocation leaves an unlaunched caller-owned program");
+            CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
+                  "Pexec does not transfer ownership before group allocation succeeds");
+            CHECK(Mfree(environment_block) == E_OK && Mfree(program) == E_OK,
+                  "failed ordinary launch leaves both retained blocks freeable");
+            same(&s, "ordinary launch group allocation failure unwinds completely");
+        }
+    }
+    kcprintf("x86-64 async process calls: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
+static void test_cuis_scheduler(void)
+{
+    PD *programs[2], *root = run;
+    LONG results[2], handles[2], rc;
+    static const char tail_a[] = { 1, 'a', 0 };
+    static const char environment[] = { 0, 0 };
+    char tail_b[] = { 2, 'b', '0', 0 };
+    UWORD mode, i;
+    SNAP s;
+    int before = failures;
+    ULONG sessions = cuis_session_count(), windows = cuis_window_count();
+    BOOL focused = cuis_focus_active(), pointing = cuis_pointer_attached();
+
+    for (mode = 0; mode < 3; mode++) {
+        snap(&s);
+        programs[0] = programs[1] = NULL;
+        tail_b[2] = '0' + mode;
+        for (i = 0; i < 2; i++) {
+            rc = Pexec(PE_LOAD, "C:\\CUISCHED.TOS", i ? tail_b : tail_a, environment);
+            if (rc < 0) kcprintf("scheduler load error %ld\n", (long)rc);
+            CHECK(rc > 0, "load isolated scheduler client");
+            if (rc <= 0) break;
+            programs[i] = (PD *)(uintptr_t)rc;
+            rc = proc_prepare_scheduled(programs[i]);
+            CHECK(rc == E_OK, "prepare scheduler client's address space");
+            if (rc < 0) break;
+            run = programs[i];
+            handles[i] = cuis_service(CUIS_SESSION_START, 0);
+            run = root;
+            CHECK(handles[i] >= 0, "register scheduler test peer");
+            if (handles[i] < 0) break;
+        }
+        if (i == 2) {
+            for (i = 0; i < 2; i++) {
+                run = programs[i];
+                CHECK(cuis_message_service(CUIS_MESSAGE_SEND, handles[i], handles[1-i], 0, 0, 0, 0) == E_OK,
+                      "bootstrap a known peer without adding an application-facing API");
+            }
+            run = root;
+            CHECK(ksched_run(programs, 0, results) == EINVAL, "scheduler rejects empty groups");
+            CHECK(ksched_run(programs, KSCHED_LIMIT + 1, results) == EINVAL, "scheduler enforces its task bound");
+            {
+                PD *duplicate[2] = { programs[0], programs[0] };
+                CHECK(ksched_run(duplicate, 2, results) == EINVAL, "scheduler rejects duplicate programs");
+            }
+            x86_64_pmem_test_fail_after(1);
+            rc = ksched_run(programs, 2, results);
+            x86_64_pmem_test_fail_after(0);
+            CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
+                  "scheduler allocation failure preserves both unlaunched programs");
+            rc = ksched_run(programs, 2, results);
+            CHECK(rc == E_OK, "scheduler completes all managed clients");
+            if (rc == E_OK) {
+                programs[0] = programs[1] = NULL;
+                if (results[0] != 0 || results[1] != (mode == 0 ? 0 : mode == 1 ? 0xffff : 77))
+                    kcprintf("scheduler mode %u results %ld %ld\n", (unsigned)mode, (long)results[0], (long)results[1]);
+                CHECK(results[0] == 0 && results[1] == (mode == 0 ? 0 : mode == 1 ? 0xffff : 77),
+                      "message handoffs, private state, FPU, nested wait, timeouts and exit status");
+            }
+        }
+        for (i = 0; i < 2; i++) if (programs[i]) proc_discard_accessory(programs[i]);
+        CHECK(run == root, "scheduler restores its launcher's process context");
+        CHECK(cuis_session_count() == sessions && cuis_window_count() == windows &&
+              cuis_focus_active() == focused && cuis_pointer_attached() == pointing,
+              "scheduler exits retire sessions, windows, focus and pointer targets");
+        same(&s, "CUIS scheduler task stacks, sessions and process resources reclaimed");
+    }
+    kcprintf("x86-64 CUIS scheduler: %s\n", failures == before ? "PASS" : "FAIL");
 }
 #endif
 
@@ -2154,6 +2435,150 @@ static void test_ring3(void)
         kcprintf("x86-64 ldso relocations: %s\n", failures == before ? "PASS" : "FAIL");
         kcprintf("x86-64 PT_INTERP startup: %s\n", failures == before ? "PASS" : "FAIL");
     }
+#endif
+
+#if CONF_WITH_LIBAES
+    {
+        int before = failures;
+        ULONG shares = aspace_file_cross_shares();
+        ULONG sessions = cuis_session_count(), windows = cuis_window_count();
+        ULONG visible = cuis_visible_window_count();
+        BOOL updating = cuis_update_active(), focused = cuis_focus_active();
+        BOOL pointing = cuis_pointer_attached();
+#if CONF_WITH_X32_VDI
+        SCREEN_MODE_DESC mode;
+        volatile ULONG *marker = NULL;
+        ULONG ticks, spins;
+        CHECK(vdi_service_test_reset(), "first native open starts with an idle physical display");
+        screen_get_current_mode_desc(&mode);
+        if (mode.layout == SCREEN_LAYOUT_PACKED && mode.bits_per_pixel == 32 &&
+            mode.width >= 256 && mode.height >= 64) {
+            marker = (volatile ULONG *)((UBYTE *)v_bas_ad + 8 * mode.pitch) + mode.width - 8;
+        }
+        vdi_service_test_watch(marker);
+#endif
+        cuis_input_watching = TRUE;
+        cuis_input_legacy_clean = TRUE;
+        cuis_input_armed = FALSE;
+        cuis_input_injections = cuis_pointer_injections = 0;
+        cuis_pointer_armed = FALSE;
+#if CONF_WITH_X32_VDI
+        cuis_pointer_callbacks_clean = cuis_pointer_cursor_updated = FALSE;
+#endif
+        probe_expect(':', 0, "libaes/CUIS: nested owners, private state, geometry and fault cleanup");
+        cuis_input_watching = FALSE;
+        CHECK(cuis_pointer_injections == 1 && !cuis_pointer_armed,
+              "CUIS pointer wait woke from a real IRQ packet and retained button edges");
+        CHECK(cuis_input_legacy_clean, "focused keyboard input did not leak to the BIOS queue");
+        CHECK(cuis_input_injections == 1 && !cuis_input_armed,
+              "CUIS keyboard wait woke from a translated key in a real timer IRQ");
+#if CONF_WITH_X32_VDI
+        CHECK(cuis_pointer_guard_clean, "CUIS guarded IRQ preserves logical coordinates and defers cursor drawing");
+#if CONF_WITH_USER_CALLBACKS
+        CHECK(cuis_pointer_stale_clean, "CUIS input rejects superseded native VDI motion completion");
+#endif
+        CHECK(cuis_pointer_callbacks_clean && cuis_pointer_cursor_updated,
+              "CUIS pointer routing preserves the cursor and suppresses legacy input callbacks");
+        CHECK(vdi_service_test_reopen(), "kernel physical reopen preserves the timer chain");
+        ticks = (ULONG)hz_200;
+        for (spins = 0; spins < 10000000UL && (ULONG)hz_200 == ticks; spins++)
+            __asm__ volatile ("pause");
+        CHECK((ULONG)hz_200 != ticks, "timer IRQs progress after native-to-kernel display handoff");
+        vdi_service_prepare_physical_open(); /* release the kernel reopen fixture */
+        CHECK(marker && vdi_service_test_preserved(),
+              "native first-open, last-close and fault cleanup preserve display pixels");
+        vdi_service_test_watch(NULL);
+        CHECK(vdi_service_test_reset(), "kernel releases idle CUIS display fixture");
+#endif
+        CHECK(cuis_pointer_attached() == pointing, "CUIS pointer targets reclaimed after exits");
+        CHECK(cuis_focus_active() == focused, "CUIS focus reclaimed after exits");
+        CHECK(cuis_update_active() == updating, "CUIS update section reclaimed after exits");
+        CHECK(cuis_visible_window_count() == visible, "CUIS visible stacking repaired after exits");
+        CHECK(cuis_window_count() == windows, "CUIS windows reclaimed after normal, raw and fault exits");
+        CHECK(cuis_session_count() == sessions, "CUIS sessions reclaimed after normal, raw and fault exits");
+        CHECK(aspace_file_cross_shares() != shares, "nested CUIS clients reuse DSO pages");
+        kcprintf("x86-64 CUIS sessions: %s\n", failures == before ? "PASS" : "FAIL");
+    }
+    test_cuis_scheduler();
+    test_async_processes();
+    {
+        SNAP s;
+        LONG result;
+        ULONG sessions = cuis_session_count();
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEM.TOS", "", NULL);
+        CHECK(result == 0, "standard GEM lifecycle, private globals and windowless timers");
+        CHECK(cuis_session_count() == sessions, "implicit GEM sessions reclaimed on exit and _Exit");
+        same(&s, "GEM API processes and their async children reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMMSG.TOS", "", NULL);
+        if (result) kcprintf("GEM messages fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "standard GEM discovery, byte pipes, backpressure and receiver exit");
+        CHECK(cuis_session_count() == sessions, "GEM discovery and message sessions reclaimed");
+        same(&s, "GEM message queues, blocked snapshots and peer processes reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMEVNT.TOS", "", NULL);
+        if (result) kcprintf("GEM events fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "standard GEM combined waits, zero polls, snapshots and copyout errors");
+        CHECK(cuis_session_count() == sessions, "GEM event sessions reclaimed after normal/fault exits");
+        same(&s, "GEM event waiters, pipe bytes and child processes reclaimed");
+        snap(&s);
+        {
+            ULONG windows = cuis_window_count();
+            result = Pexec(PE_LOADGO, "C:\\GEMWIN.TOS", "", NULL);
+            if (result) kcprintf("GEM windows fixture returned %ld\n", (long)result);
+            CHECK(result == 0, "standard GEM window lifecycle, geometry and isolated identifiers");
+            CHECK(cuis_window_count() == windows, "GEM windows reclaimed after session close and raw exit");
+        }
+        CHECK(cuis_session_count() == sessions, "GEM window sessions reclaimed");
+        same(&s, "GEM window clients and metadata reclaimed");
+        snap(&s);
+        {
+            ULONG windows = cuis_window_count();
+            result = Pexec(PE_LOADGO, "C:\\GEMUPD.TOS", "", NULL);
+            if (result) kcprintf("GEM update fixture returned %ld\n", (long)result);
+            CHECK(result == 0, "standard GEM nested update locks, contention and visible regions");
+            CHECK(cuis_window_count() == windows && !cuis_update_active(), "GEM update owners and windows reclaimed");
+        }
+        CHECK(cuis_session_count() == sessions, "GEM update sessions reclaimed");
+        same(&s, "GEM update clients and temporary regions reclaimed");
+        snap(&s);
+        {
+            ULONG windows = cuis_window_count();
+            result = Pexec(PE_LOADGO, "C:\\GEMFOC.TOS", "", NULL);
+            if (result) kcprintf("GEM focus fixture returned %ld\n", (long)result);
+            CHECK(result == 0, "standard GEM redraw messages, stacking and isolated owner queries");
+            CHECK(cuis_window_count() == windows && !cuis_focus_active(), "GEM message windows and focus reclaimed");
+        }
+        CHECK(cuis_session_count() == sessions, "GEM window message sessions reclaimed");
+        same(&s, "GEM notices, application pipes and focus clients reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMINP.TOS", "", NULL);
+        if (result) kcprintf("GEM input fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "standard GEM button, rectangle and combined input events");
+        CHECK(cuis_session_count() == sessions && !cuis_focus_active(), "GEM input session and focus reclaimed");
+        same(&s, "GEM input predicates, windows and client reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMMCTL.TOS", "", NULL);
+        if (result) kcprintf("GEM mouse control fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "standard GEM mouse-control nesting, contention and cleanup");
+        CHECK(cuis_session_count() == sessions && !cuis_mouse_active(), "GEM mouse owners and sessions reclaimed");
+        same(&s, "GEM mouse grab clients, windows and process resources reclaimed");
+        snap(&s);
+        result = Pexec(PE_LOADGO, "C:\\GEMDRAW.TOS", "", NULL);
+        if (result) kcprintf("GEM object drawing fixture returned %ld\n", (long)result);
+        CHECK(result == 0, "userspace GEM object drawing, state changes and callbacks");
+        CHECK(cuis_session_count() == sessions && !cuis_update_active(), "GEM renderer sessions and updates reclaimed");
+        same(&s, "GEM renderer workstations and callback process resources reclaimed");
+#if CONF_WITH_X32_VDI
+        snap(&s);
+        test_renderer_cursor();
+        CHECK(cuis_session_count() == sessions && !cuis_update_active(), "cursor repaint sessions and updates reclaimed");
+        same(&s, "cursor repaint workstations and process resources reclaimed");
+#endif
+    }
+#else
+    probe_expect(':', 0, "CUIS services are unavailable when disabled");
 #endif
 
     /* each process gets fresh private pages: what the first leaves in its
