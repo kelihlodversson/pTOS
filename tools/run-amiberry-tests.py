@@ -64,6 +64,18 @@ def clear_log(image):
     subprocess.run(['mdel'] + mt + ['::RUNTESTS.LOG'], check=True, timeout=30)
 
 
+def halted(ra, path, addr):
+    """The CPU is in halt() (the loop of a kernel that has nothing more to run)."""
+    try:
+        regs = ra.ipc(path, 'GET_CPU_REGS', 5)
+    except (OSError, ValueError):
+        return False
+    for line in regs.split('\n'):
+        if line.startswith('PC='):
+            return addr <= int(line[3:], 16) < addr + 16
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--rom', required=True)
@@ -73,6 +85,9 @@ def main():
                     os.path.expanduser('~/.local/src/amiberry/build/amiberry'))
     ap.add_argument('--timeout', type=float, default=1200, help='seconds for the whole suite')
     ap.add_argument('--caches', action='store_true', help='CPU caches on')
+    ap.add_argument('--halt', help='the address of halt() in the kernel (emutos.map): an image whose shell '
+                    'is the harness halts the machine when it is done, and the emulator does not write the '
+                    'log to the disk image until it is stopped, so the end is seen by the CPU')
     a = ap.parse_args()
 
     if not os.path.exists(a.amiberry):
@@ -104,6 +119,8 @@ def main():
             if proc.poll() is not None:
                 print('run-amiberry-tests: the emulator stopped (log: %s/amiberry.log)' % emu,
                       file=sys.stderr)
+                break
+            if a.halt and halted(ra, path, int(a.halt, 16)):
                 break
     finally:
         if proc:

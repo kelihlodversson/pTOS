@@ -46,11 +46,18 @@ for combo in $combos; do
     # is done, and the suite is the whole check
     case $config in
     *aspace*)
+        halt=$(awk '/^ +0x[0-9a-f]+ +halt$/ { print $1; exit }' emutos.map)
+        if [ -z "$halt" ]; then
+            echo "::error::$name: no halt in emutos.map"
+            failed="$failed $name"
+            echo "::endgroup::"
+            continue
+        fi
         if make test-hd-shell >"logs/$name.testdisk" 2>&1; then
             for mode in "" "--caches"; do
                 suffix=${mode:+-caches}
                 if python3 tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd-shell.img \
-                    --cpu "$cpu" $mode >"logs/$name$suffix-tests.log" 2>&1; then
+                    --cpu "$cpu" --halt "$halt" $mode >"logs/$name$suffix-tests.log" 2>&1; then
                     echo "$name${suffix:+ ($suffix)}: $(grep 'Summary' "logs/$name$suffix-tests.log")"
                 else
                     echo "::error::$name$suffix: the tests failed (logs/$name$suffix-tests.log)"
