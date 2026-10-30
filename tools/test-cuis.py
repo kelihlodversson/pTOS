@@ -121,6 +121,18 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) +
                    ["-DGEM_RSC", "tools/erd.c", "-o", str(work / "grd")], check=True)
     subprocess.run([str(work / "grd"), "aes/gem", str(work / "gem_rsc")], check=True)
+    (work / "i18nconf.h").write_text("/* Host selector uses untranslated resources. */\n")
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Iaes", "-Iaes/shared", "-Ilib/aes",
+                "-DAES_RESOURCE_FSEL", "-DAES_RESOURCE_STRINGS_LOCAL", '-DAES_FSEL_BINDINGS="fsel_bindings.h"',
+                '-DAES_EDIT_BINDINGS="edit_bindings.h"', "tests/cuis/file_selector.c", "lib/aes/fsel.c",
+                "aes/shared/gemfslib.c", str(work / "gem_rsc.c"), "aes/shared/gemlayout.c",
+                "aes/shared/gemobjtree.c", "aes/shared/gemobjbounds.c", "aes/shared/gemobjwalk.c", "aes/shared/gemedit.c",
+                "util/rectfunc.c", "util/doprintf.c", "util/optimize.c", "util/miscutil.c", "util/string.c", "-ffunction-sections", "-fdata-sections",
+                "-Wl,--gc-sections", "-o", str(work / "file-selector")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "file-selector")], check=True)
     shared_draw = []
     for name in ("gemrender", "gemrender_graphics", "gemgraphutil", "gemicon", "gemcicon", "gemobjbounds"):
         target = str(work / (name + ".o"))

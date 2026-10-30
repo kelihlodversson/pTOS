@@ -8,4 +8,5 @@ LONG aes_graphics_call(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c);
 UQUAD aes_memory_call(ULONG function, UQUAD argument);
 LONG aes_process_call(ULONG function);
+LONG aes_drive_map(void);
 #endif

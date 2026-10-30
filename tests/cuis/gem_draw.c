@@ -15,6 +15,7 @@
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
+#include "gem_selector.h"
 #include "gem_resources.h"
 #include "control_message.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
@@ -573,6 +574,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(wind_open(overlay_window,width/2-100,height/2-30,240,140) == 1);
         status = gem_form_interactive(); if (status) return status;
         ptos_write(1,pass,sizeof(pass)-1);
+        status = gem_selector_checks(handle); if (status) return status;
         status = gem_popup_checks(handle); if (status) return status;
         {
             static const char popup_pass[] = "x32 GEM popup menus: PASS\r\n";

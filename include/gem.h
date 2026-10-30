@@ -391,6 +391,10 @@ short mt_wind_set_str(short id, short field, const char *text, short *global);
 #ifndef W_HELEV
 #define W_HELEV 18
 #endif
+short fsel_input(char *path, char *selection, short *button);
+short mt_fsel_input(char *path, char *selection, short *button, short *global);
+short fsel_exinput(char *path, char *selection, short *button, const char *title);
+short mt_fsel_exinput(char *path, char *selection, short *button, const char *title, short *global);
 short wind_create(short kind, short x, short y, short w, short h);
 short mt_wind_create(short kind, short x, short y, short w, short h, short *global);
 short wind_open(short id, short x, short y, short w, short h);

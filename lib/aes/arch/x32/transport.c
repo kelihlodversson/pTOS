@@ -67,3 +67,10 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         : "rcx", "r11", "memory", "cc");
     return ax;
 }
+
+LONG aes_drive_map(void)
+{
+    register UQUAD ax __asm__("rax") = (13ULL << 32) | 10; /* BIOS Drvmap. */
+    __asm__ volatile ("syscall" : "+a"(ax) :: "rcx", "r11", "memory", "cc");
+    return (LONG)ax;
+}

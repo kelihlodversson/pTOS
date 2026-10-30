@@ -188,6 +188,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
         grep -q 'x32 GEM colour icons: PASS' "$log"
         grep -q 'x32 GEM menu items: PASS' "$log"
         if [ -n "${MMAP_BOOT_FORM_INPUT:-}" ]; then
+            grep -q 'x32 GEM file selectors: PASS' "$log"
             grep -q 'x32 GEM box animations: PASS' "$log"
             grep -q 'x32 GEM graphics tracking: PASS' "$log"
             grep -q 'x32 GEM graphics setup/cursors: PASS' "$log"
