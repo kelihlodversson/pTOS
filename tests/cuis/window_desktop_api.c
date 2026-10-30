@@ -1,4 +1,40 @@
 /* Standard window helpers, colours and desktop contracts over failing transport. */
+static int window_pointer_checks(short *global)
+{
+    static const char title[] = "A title longer than one WORD";
+    static const char info[] = "An info line longer than one WORD";
+    const char *texts[2] = { title,info };
+    short fields[2] = { WF_NAME,WF_INFO }, id, field, call, i;
+    short guarded[12], pair[2];
+    void *pointer;
+    ULONG expected;
+    id = wind_create(NAME|INFO,0,0,100,80);
+    CHECK(id > 0);
+    for (field = 0; field < 2; field++) {
+        CHECK(wind_set_ptr(id,fields[field],(void *)texts[field]) == 1);
+        CHECK((UQUAD)(uintptr_t)texts[field] <= 0xffffffffUL);
+        expected = (ULONG)(uintptr_t)texts[field];
+        for (call = 0; call < 2; call++) {
+            for (i = 0; i < 12; i++) guarded[i] = 0x5555;
+            if (call) CHECK(mt_wind_get(id,fields[field],guarded+1,guarded+4,guarded+7,guarded+10,global) == 1);
+            else CHECK(wind_get(id,fields[field],guarded+1,guarded+4,guarded+7,guarded+10) == 1);
+            CHECK((UWORD)guarded[1] == (UWORD)(expected >> 16) && (UWORD)guarded[4] == (UWORD)expected);
+            for (i = 0; i < 12; i++) if (i != 1 && i != 4) CHECK(guarded[i] == 0x5555);
+        }
+        CHECK(mt_wind_get(id,fields[field],pair,pair+1,NULL,NULL,global) == 1);
+        CHECK((((ULONG)(UWORD)pair[0] << 16)|(UWORD)pair[1]) == expected);
+        CHECK(wind_get_ptr(id,fields[field],&pointer) == 1 && pointer == texts[field]);
+        CHECK(mt_wind_get_ptr(id,fields[field],&pointer,global) == 1 && pointer == texts[field]);
+        guarded[1] = guarded[4] = 0x5555;
+        CHECK(!wind_get(id,fields[field],guarded+1,NULL,NULL,NULL) && guarded[1] == 0x5555);
+        CHECK(!mt_wind_get(id,fields[field],NULL,guarded+4,NULL,NULL,global) && guarded[4] == 0x5555);
+        CHECK(!mt_wind_get(id,fields[field],guarded+1,guarded+4,NULL,NULL,NULL));
+        CHECK(guarded[1] == 0x5555 && guarded[4] == 0x5555);
+    }
+    CHECK(wind_delete(id) == 1);
+    return 0;
+}
+
 static int default_colour_checks(short *global)
 {
     short gadget, top, bottom, flags, slot;
@@ -76,6 +112,7 @@ static int window_desktop_api_checks(short *global)
     OBJECT tree = { NIL,NIL,NIL,G_BOX,LASTOB,NORMAL,{0x1173},0,0,640,400 };
     void *pointer, *again;
     ULONG before;
+    CHECK(window_pointer_checks(global) == 0);
     CHECK(default_colour_checks(global) == 0);
     CHECK(mt_wind_new(NULL) == 0 && mt_wind_set_ptr(0,WF_NEWDESK,&tree,invalid) == 0);
     CHECK(wind_get_grect(0,WF_CURRXYWH,&result) == 1 && result.g_w == 640 && result.g_h == 400);

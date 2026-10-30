@@ -58,7 +58,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     subprocess.run([str(work / "objects")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
-                "-fno-builtin", "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes/shared",
+                # Scalar GEM pointer halves require 32-bit fixture addresses.
+                "-fno-pie", "-no-pie", "-fno-builtin", "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes/shared",
                 "-DAES_FRAME_TEMPLATE", "aes/shared/gemframe.c", "aes/shared/gemslidegeom.c", "tests/cuis/application.c", "lib/aes/application.c", "lib/aes/events.c", "lib/aes/session.c", "lib/aes/gemwindows.c", "lib/aes/desktop.c", "aes/shared/gemframegeom.c", "aes/shared/gemmovegeom.c", "aes/shared/gemsizegeom.c",
                 "-o", str(work / "application")]
     subprocess.run(command, check=True)

@@ -31,6 +31,32 @@ static int command(short child, short code, short message[8])
     if (!appl_write(child, 16, message) || !control(message)) return 0;
     return message[0] == code + 900;
 }
+static int pointer_checks(short *global)
+{
+    static const char *texts[] = { "Window pointer title", "Window pointer info" };
+    static const short fields[] = { WF_NAME,WF_INFO };
+    short id, field, call, i, words[12], pair[2];
+    void *pointer;
+    ULONG expected;
+    id = wind_create(NAME|INFO,0,0,100,80);
+    VERIFY(id > 0);
+    for (field = 0; field < 2; field++) {
+        expected = (uintptr_t)texts[field];
+        VERIFY(wind_set_ptr(id,fields[field],(void *)texts[field]) == 1);
+        for (call = 0; call < 2; call++) {
+            for (i = 0; i < 12; i++) words[i] = 0x5555;
+            if (call) VERIFY(mt_wind_get(id,fields[field],words+1,words+4,words+7,words+10,global) == 1);
+            else VERIFY(wind_get(id,fields[field],words+1,words+4,words+7,words+10) == 1);
+            VERIFY((UWORD)words[1] == (UWORD)(expected >> 16) && (UWORD)words[4] == (UWORD)expected);
+            for (i = 0; i < 12; i++) if (i != 1 && i != 4) VERIFY(words[i] == 0x5555);
+        }
+        VERIFY(wind_get(id,fields[field],pair,pair+1,NULL,NULL) == 1);
+        VERIFY((((ULONG)(UWORD)pair[0] << 16)|(UWORD)pair[1]) == expected);
+        VERIFY(mt_wind_get_ptr(id,fields[field],&pointer,global) == 1 && pointer == texts[field]);
+    }
+    VERIFY(wind_delete(id) == 1);
+    return 0;
+}
 int main(int argc, char **argv, char **envp)
 {
     short id, a, b, message[8] = { 0 }, global[15], top, owner, below, spare;
@@ -44,6 +70,7 @@ int main(int argc, char **argv, char **envp)
     (void)argv; (void)envp;
     VERIFY(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1);
     id = appl_init(); VERIFY(id > 0 && mt_appl_init(global) == id);
+    VERIFY(pointer_checks(global) == 0);
     graphics = gem_probe_open(&graphic_handle,&width,&height) == 0;
     VERIFY(wind_get(0,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 0 && y == 0 && w > 0 && h > 0);
     desktop.ob_width = w; desktop.ob_height = h;
