@@ -23,7 +23,7 @@
 
 set -u
 
-combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060 amiga-aspace:68030"}
+combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060 amiga-aspace:68030 amiga-aspace040:68040 amiga-aspace040:68060"}
 mkdir -p logs
 failed=
 

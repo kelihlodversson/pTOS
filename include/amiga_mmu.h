@@ -36,6 +36,11 @@ ULONG virt_to_phys(const void *va);
 #if CONF_WITH_PROCESS_ASPACES
 /* Before a reset (panicasm.S): the static tree is loaded again. */
 void machine_reset_prepare(void);
+#if CONF_AMIGA_HIGHER_HALF_68040
+/* The physical address of the root the MMU ran on when the address spaces
+ * began (bios/arch/m68k/aspace_hw.c). */
+ULONG aspace_hw_boot_root(void);
+#endif
 #endif
 
 /* The pool address (lower half) of the byte after the kernel image, whose

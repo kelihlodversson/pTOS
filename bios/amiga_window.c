@@ -38,8 +38,10 @@ UBYTE *virt_pool_start(UBYTE *kernel_end)
 #endif
 }
 
-#if CONF_WITH_PROCESS_ASPACES && !CONF_AMIGA_HIGHER_HALF_68040
+#if CONF_WITH_PROCESS_ASPACES
+#if !CONF_AMIGA_HIGHER_HALF_68040
 extern const ULONG amiga_mmu_crp[2];    /* amiga_mmu.S */
+#endif
 
 /*
  * A reset comes back to startup.S, which goes to the low alias of the code:
@@ -48,8 +50,14 @@ extern const ULONG amiga_mmu_crp[2];    /* amiga_mmu.S */
  */
 void machine_reset_prepare(void)
 {
+#if CONF_AMIGA_HIGHER_HALF_68040
+    __asm__ volatile ("move.l %0,%%a0\n\t.long 0x4e7b8806\n\t.long 0x4e7b8807\n\t.word 0xf518"
+                      : : "g" ((ULONG)aspace_hw_boot_root())
+                      : "a0", "memory");                                /* movec a0,urp; movec a0,srp; pflusha */
+#else
     __asm__ volatile ("move.l %0,%%a0\n\t.long 0xf0104c00\n\t.long 0xf0002400"
                       : : "g" (&amiga_mmu_crp[0]) : "a0", "memory");    /* pmove (a0),crp; pflusha */
+#endif
 }
 #endif
 
