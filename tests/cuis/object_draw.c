@@ -323,7 +323,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
                 points[2] == corner_x+corner_width && points[3] == corner_y) corner_horizontal++;
         }
         for (i = 0; i < (LONG)b*2; i++)
-            if (points[i] < -10000 || points[i] > 10000) return EINVAL;
+            if (!tracking_mode && (points[i] < -10000 || points[i] > 10000)) return EINVAL;
         for (i = 1; i < (LONG)b; i++) {
             x = points[(i-1)*2]; y = points[(i-1)*2+1];
             x2 = points[i*2]; y2 = points[i*2+1];
@@ -977,6 +977,27 @@ static int tracking_checks(void)
     VERIFY(releases == display_releases && mouse_releases == pointer_releases);
     tracking_events(80,70);
     VERIFY(graf_dragbox(100,90,0,0,0,0,100,90,&rx,&ry) == 1 && rx == 0 && ry == 0);
+    /* The initial wide offset fits a WORD. Subsequent motion exceeds that
+     * offset range, but the constrained box still fits at the same origin. */
+    tracking_events(10,10); mouse_x = mouse_y = 0; damaged = redraws;
+    VERIFY(graf_dragbox(32767,20,-32760,0,-32760,0,32767,20,&rx,&ry) == 1);
+    VERIFY(rx == -32760 && ry == 0 && gesture_at == 2 && redraws == damaged);
+    tree[0].ob_x = -32760; tree[0].ob_y = 0;
+    tree[0].ob_width = tree[1].ob_width = 32767;
+    tree[0].ob_height = tree[1].ob_height = 20;
+    tracking_events(10,10); mouse_x = mouse_y = 0;
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && gesture_at == 2 && redraws == damaged);
+    /* Exercise the release branch without a preceding motion wakeup too. */
+    tracking_events(10,10); mouse_x = mouse_y = 0;
+    gesture[0] = gesture[1]; gesture_count = 1;
+    VERIFY(graf_dragbox(32767,20,-32760,0,-32760,0,32767,20,&rx,&ry) == 1);
+    VERIFY(rx == -32760 && ry == 0 && gesture_at == 1 && redraws == damaged);
+    /* Initial offsets and continuously growing rubber sizes remain checked. */
+    tracking_events(10,10); mouse_x = 10; mouse_y = 0; rx = ry = -1;
+    VERIFY(graf_dragbox(32767,20,-32760,0,-32760,0,32767,20,&rx,&ry) == 0 && !gesture_at);
+    VERIFY(rx == -1 && ry == -1);
+    tracking_events(10,10); mouse_x = mouse_y = 0;
+    VERIFY(graf_rubberbox(-32760,0,1,1,&rx,&ry) == 0 && rx == -1 && ry == -1);
     VERIFY(!nesting && !mouse_nesting && opens == closes && !bad_overlay_scope && !frame_overlay_depth);
     tracking_mode = FALSE; gesture_count = gesture_at = 0;
     mouse_x = mouse_y = 50;

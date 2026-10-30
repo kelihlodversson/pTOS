@@ -797,10 +797,12 @@ BOOL aes_track_wait(void)
      * than finishing it from history while the button is still down. */
     if (ready & CUIS_READY_BUTTON) {
         if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global)) goto failed;
-        if (!track_pointer_valid()) goto failed;
+        if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid()) goto failed;
         return (t->mouse[2] & 255) != 0;
     }
-    if (!track_pointer_valid()) goto failed;
+    /* Drag/slide offsets were validated and captured once at entry. Only
+     * rubber dimensions continue growing relative to the original origin. */
+    if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid()) goto failed;
     return TRUE;
 failed:
     aes_painter->ok = FALSE;
