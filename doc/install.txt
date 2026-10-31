@@ -687,6 +687,19 @@ MMU of a 68040 or a 68060 (--cpu 68040 or 68060): the ROM is 512 KB, at 0x00f800
 (CONF_AMIGA_ROM_512K, as the ROMs of the A3000 and A4000: the 256 KB one has no room
 for a tree without early termination), and the RAM above the 24 bits is not used.
 
+amiga-aspace_defconfig (#814) is amiga-mmu with CONF_WITH_PROCESS_ASPACES (every process in
+an address space of its own, the 68030 backend of the Atari), and amiga-aspace040_defconfig
+is amiga-mmu040 with it (the 68040 and 68060 backend).  There is no desktop: the shell
+is the program EMUCON.TOS (or SHELL.TOS) of the boot drive, and "make test-hd-shell" makes
+the test disk whose shell is the harness, which tools/run-amiberry-tests.py --halt runs
+on Amiberry (tools/ci-amiberry.sh does so on the 68030, the 68040 and the 68060, with and
+without the caches of the CPU emulated).  The chip RAM alone is too small for the
+process window (2 MiB of contiguous pages), so the images need Zorro II fast RAM, whose
+boards are pages of the processes once autoconfig has found them; RAM above the 24 bits
+and the slow RAM are not used, and the native features of UAE are not (the traps of
+its Boot ROM only work from the address it is at).  doc/mmu-address-space.txt has the
+details.
+
 PC (x86-64, UEFI boot)
 ----------------------
 
