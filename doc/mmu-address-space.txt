@@ -614,9 +614,34 @@ the 68030 image) is not mapped, and the ROM does not probe it.  The pages are
 write-through, as the ST-RAM of the Atari is.  The desktop comes up on Amiberry's
 68040 and 68060 with the same stack pointer as on the 68030.
 
-Not yet: address spaces for the processes themselves (CONF_WITH_PROCESS_ASPACES for
-the Amiga: the backends are the Atari's, and the conversions for the DMA of the
-chip set that an address space of a process needs).
+With CONF_WITH_PROCESS_ASPACES (amiga-aspace_defconfig for the 68030 and
+amiga-aspace040_defconfig for the 68040 and the 68060, #814) every process has an
+address space of its own, with the backends of the Atari (bios/arch/m68k/aspace_hw030.c
+and aspace_hw.c):
+
+  - the static trees (amiga_mmu.S, amiga_mmu040.S) are all supervisor-only: they
+    are the boot tree, what a reset needs back (machine_reset_prepare(), also before
+    cold_reset() reads the ROM entry) and the source of the kernel half of every
+    other space, which copies their upper entries;
+  - the window over the first 16 MiB is how the kernel reaches the RAM, as everywhere;
+  - the pages of the processes are the pool above the kernel's own (at most the
+    chip RAM there is), then the RAM of the Zorro II boards (0x00200000-0x009fffff),
+    which amiga_process_memory_init() adds in ascending order once autoconfig has
+    found them; the address space of the kernel is made then, because the chip
+    RAM alone cannot hold the process window.  The slow RAM and the RAM above the
+    24 bits are not used;
+  - the pages are write-through on the 68040 and the 68060, as on the Atari, and the way
+    back to user mode clears the data cache of the 68030, whose cache is addressed
+    logically; the page table of the kernel's low memory is taken from the chip RAM
+    that is left, from any page when there is none;
+  - the movep of a 68060, emulated with the supervisor's accesses, ends a process that
+    executes it (int_unimpint, vectors.S), and the traps of the UAE Boot ROM are not
+    used (they work from the address it is at, which is in the lower half).
+
+Verified on Amiberry's 68030, 68040 and 68060, with the harness as the shell, the whole
+suite with and without the caches of the CPU emulated (tools/ci-amiberry.sh), and with
+1 MiB of chip RAM.  With 2 MiB of chip RAM and one 2 MiB board the machine boots but
+the process window is all of the board and the suite runs out of memory.
 
 virt-m68k, as built by #569 (CONF_WITH_HIGHER_HALF)
 ....................................................
