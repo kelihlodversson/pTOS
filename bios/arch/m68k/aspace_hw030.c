@@ -1,9 +1,10 @@
 /*
  * aspace_hw030.c - the page tables of a process on the 68030
  *
- * The backend of bios/aspace.c (include/aspace32.h) for the Atari ROM that
- * runs in the upper half (CONF_ATARI_HIGHER_HALF, bios/arch/m68k/atari_mmu.S),
- * the counterpart of aspace_hw.c of the 68040 and 68060.  The tree has the
+ * The backend of bios/aspace.c (include/aspace32.h) for the Atari and Amiga
+ * ROMs that run in the upper half (CONF_ATARI_HIGHER_HALF, atari_mmu.S;
+ * CONF_AMIGA_HIGHER_HALF, amiga_mmu.S), the counterpart of aspace_hw.c of the
+ * 68040 and 68060.  The tree has the
  * same shape: 4 KiB pages and TC with PS = 12, IS = 0, TIA = 7, TIB = 7,
  * TIC = 6, which makes a root table of 128 entries of 32 MiB, pointer tables
  * of 128 entries of 256 KiB and page tables of 64 pages.  The descriptors are
@@ -43,7 +44,7 @@
 
 #include "config.h"
 
-#if CONF_WITH_USER_ASPACE && CONF_ATARI_HIGHER_HALF
+#if CONF_WITH_USER_ASPACE && CONF_M68K_ROM_WINDOW && !CONF_M68K_ROM_WINDOW_040
 
 #include "portab.h"
 #include "string.h"
@@ -148,7 +149,15 @@ BOOL aspace_hw_init(void)
     kernel_root = read_crp();
 
     /* the page table of the kernel's low memory, supervisor only */
+#if CONF_AMIGA_HIGHER_HALF
+    /* from the chip RAM that is left if there is some, so that a board of 2 MiB
+     * stays whole for the process window that is allocated next */
+    low_page_table = pmem32_alloc_low(1, 1);
+    if (low_page_table == PMEM32_NONE)
+        low_page_table = pmem32_alloc(1, 1);
+#else
     low_page_table = pmem32_alloc(1, 1);
+#endif
     if (low_page_table == PMEM32_NONE)
         return FALSE;
     memset(pmem32_virt(low_page_table), 0, PAGE);
@@ -405,4 +414,4 @@ void aspace_hw_code_changed(void)
     clear_caches();
 }
 
-#endif /* CONF_WITH_USER_ASPACE && CONF_ATARI_HIGHER_HALF */
+#endif /* CONF_WITH_USER_ASPACE && CONF_M68K_ROM_WINDOW && !CONF_M68K_ROM_WINDOW_040 */

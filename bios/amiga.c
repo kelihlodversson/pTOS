@@ -15,6 +15,10 @@
 #include "emutos.h"
 #include "amiga.h"
 #include "amiga_io.h"
+#if CONF_WITH_PROCESS_ASPACES
+#include "pmem32.h"
+#include "aspace32.h"
+#endif
 #if CONF_AMIGA_HIGHER_HALF
 #include "amiga_mmu.h"
 #endif
@@ -522,6 +526,11 @@ static void add_uae_32bit_chip_ram(void);
 /* Detect Alt-RAM directly from hardware */
 static void add_alt_ram_from_hardware(void)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    /* the RAM of the expansion boards is pages of the processes (amiga_process_memory_init());
+     * the slow RAM and the RAM of the motherboard are not used with address spaces yet */
+    return;
+#endif
     /* 24-bit RAM is really SLOW since GOLD 2.12, don't use it. */
     if (!IS_APOLLO_68080)
     {
@@ -1308,11 +1317,20 @@ static UBYTE *uae_boot_rom; /* Pointer to UAE Boot ROM */
  * If found, update uae_boot_rom global variable. */
 static void detect_uae_boot_rom(void *p)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    /* The traps of the UAE Boot ROM work from the address it is at: a Line-A
+     * opcode there, with the ROM at 0x00f00000, which is in the lower half, that
+     * belongs to the processes once they have address spaces.  The kernel runs in
+     * the window (0x80f00000), where the emulator does not see the ROM, so the
+     * native features of UAE are not used with address spaces yet. */
+    MAYBE_UNUSED(p);
+#else
     UBYTE *pbyte = (UBYTE *)AMIGA_IO_ADDR((ULONG)p);    /* (it may be in the I/O range) */
 
     /* If uaelib_demux trap is found, assume this is the UAE Boot ROM */
     if (IS_TRAP(pbyte + OFFSET_UAELIB_DEMUX))
         uae_boot_rom = pbyte;
+#endif
 }
 
 /* Look for UAE Boot ROM at all well-known locations */
@@ -3045,6 +3063,60 @@ static void add_ram_from_board(struct ConfigDev *configDev)
     /* This board has been processed */
     configDev->cd_Flags |= CDF_PROCESSED;
 }
+
+#if CONF_WITH_PROCESS_ASPACES
+ULONG amiga_process_ram;
+
+/*
+ * With an address space for every process the RAM of the boards is not BDOS
+ * alternative RAM but pages that the processes are given (include/pmem32.h),
+ * reached through the window of the kernel, which maps the first 16 MiB: the
+ * boards of the Zorro II space (up to 0x00a00000).  The chip RAM alone is too
+ * small for the process window, so this is where the address space of the
+ * kernel is made, once those pages are known.
+ */
+void amiga_process_memory_init(void)
+{
+    PADDR first = 0;
+
+    /* in ascending order of the addresses: pmem32_add() takes RAM above what it has,
+     * and the boards are in the order autoconfig found them in */
+    for (;;)
+    {
+        struct Node *node;
+        struct ConfigDev *lowest = NULL;
+
+        for (node = boardList.lh_Head; node->ln_Succ; node = node->ln_Succ)
+        {
+            struct ConfigDev *configDev = (struct ConfigDev *)node;
+            PADDR start = (PADDR)(uintptr_t)configDev->cd_BoardAddr;
+
+            if (!(configDev->cd_Rom.er_Type & ERTF_MEMLIST)
+                || (configDev->cd_Flags & (CDF_SHUTUP | CDF_PROCESSED)))
+                continue;
+            if (start < 0x00200000UL || start + configDev->cd_BoardSize > 0x00a00000UL)
+                continue;               /* not in the window: left as it is */
+            if (!lowest || start < (PADDR)(uintptr_t)lowest->cd_BoardAddr)
+                lowest = configDev;
+        }
+        if (!lowest)
+            break;
+
+        KDEBUG(("amiga_process_memory_init() RAM %p size=%lu\n",
+            lowest->cd_BoardAddr, (unsigned long)lowest->cd_BoardSize));
+        pmem32_add((PADDR)(uintptr_t)lowest->cd_BoardAddr,
+                   (PADDR)(uintptr_t)lowest->cd_BoardAddr + lowest->cd_BoardSize);
+        amiga_process_ram += lowest->cd_BoardSize;
+        if (!first)
+            first = (PADDR)(uintptr_t)lowest->cd_BoardAddr;
+        lowest->cd_Flags |= CDF_PROCESSED;
+    }
+    if (first)
+        pmem32_prefer(first);           /* the chip RAM is what the custom chips reach */
+    if (!aspace_kernel_init())
+        panic("no memory for the address spaces\n");
+}
+#endif
 
 /* Look for RAM on Expansion boards. This must be done after AUTOCONFIG. */
 static void add_expansion_ram(void)

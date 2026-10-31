@@ -146,8 +146,9 @@ config ARCH_HAS_USER_ASPACE
 config CONF_WITH_PROCESS_ASPACES
 	bool "Every process in an address space of its own (32-bit MMU)"
 	depends on CONF_WITH_HIGHER_HALF
-	depends on (ARCH_ARM || (ARCH_M68K && (MACHINE_VIRT_M68K || CONF_ATARI_HIGHER_HALF)))
+	depends on (ARCH_ARM || (ARCH_M68K && (MACHINE_VIRT_M68K || CONF_ATARI_HIGHER_HALF || CONF_AMIGA_HIGHER_HALF)))
 	depends on CONF_EXTERNAL_CLI
+	depends on !MACHINE_AMIGA || CONF_WITH_ALT_RAM
 	default n
 	help
 	  Give each process the page tables of its own that doc/mmu-address-

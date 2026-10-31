@@ -1,0 +1,19 @@
+# Amiga ROM image for a 68040 or a 68060 with every process in an address space of
+# its own (#814, #571): amiga-mmu040 (the kernel in the upper half, the MMU of a
+# 68040 or a 68060 on from the first instruction) plus CONF_WITH_PROCESS_ASPACES.
+# The shell is the program EMUCON.TOS (or SHELL.TOS) of the boot drive, run in
+# user mode with page tables of its own; there is no desktop yet.  512 KB, at
+# 0x00f80000.  Amiberry: tools/run-amiberry.py --cpu 68040 or 68060.
+MACHINE_AMIGA=y
+CONF_AMIGA_HIGHER_HALF=y
+CONF_AMIGA_HIGHER_HALF_68040=y
+CONF_AMIGA_ROM_512K=y
+CONF_WITH_AES=n
+CONF_WITH_ELF_LOADER=y
+CONF_EXTERNAL_CLI=y
+CONF_WITH_PROCESS_ASPACES=y
+CONF_WITH_MMAP=y
+CONF_WITH_ELF_SHARED=y
+
+# Without -mfastcall the ROM no longer fits (see amiga_defconfig).
+CONF_WITH_MFASTCALL=y

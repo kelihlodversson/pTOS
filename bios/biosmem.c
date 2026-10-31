@@ -84,6 +84,8 @@ static void process_memory_init(void)
         pool = POOL_MAX;
     if (pool < POOL_MIN)
         pool = POOL_MIN;
+    if (pool > avail)                   /* (an Amiga with 1 MiB of chip RAM: the pool is all of it) */
+        pool = avail;
     memtop = (UBYTE *)(((ULONG)membot + pool) & ~0xfffUL);
     pmem32_init(pmem32_phys(memtop), pmem32_phys(phystop));
 #if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
@@ -95,8 +97,12 @@ static void process_memory_init(void)
         pmem32_prefer((PADDR)(uintptr_t)TTRAM_START);   /* the ST-RAM is for DMA, and the overflow */
     }
 #endif
+#ifndef MACHINE_AMIGA
     if (!aspace_kernel_init())
         panic("no memory for the address spaces\n");
+#endif
+    /* (on the Amiga the chip RAM is too small for the process window: the RAM of the
+     * expansion boards is added and the address space made in amiga_process_memory_init()) */
 }
 #endif
 

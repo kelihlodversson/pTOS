@@ -24,7 +24,10 @@ requests and on request only, as it did before.
 amiberry.yml (#737) builds the pinned Amiberry (tools/amiberry-pin.sh) for the
 Amiga tests, and boots the Amiga ROMs on it: amiga on a 68030, 68040 and 68060,
 amiga-mmu on the 68030 and amiga-mmu040 on the 68040 and the 68060, each checked to
-be idle in the kernel and, for the MMU images, to be running in the window.  The
+be idle in the kernel and, for the MMU images, to be running in the window;
+amiga-aspace (#814, every process in an address space of its own, the harness as the
+shell) runs the whole suite on the 68030, and amiga-aspace040 the same on the 68040 and the
+68060, each with and without the caches of the CPU.  The
 emulator is built from source only when the cache is missing or stale (the key is
 the hash of the pin file and of the build script, .github/actions/setup-amiberry);
 it runs on a pull request that touches the Amiga port or the pin, on pushes to

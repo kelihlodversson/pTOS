@@ -1134,6 +1134,14 @@ C_SYM(int_unimpint):
         btst.b  #0,(a0)                     // quick test for movep
         movea.l (sp)+,a0                    // restore a0, sp (does not change cc)
         jeq     unimp_vec                   // not movep, go to panic handler
+#if CONF_WITH_USER_ASPACE
+        // The accesses below are the supervisor's, with a check of the range that is
+        // the flat model's: for a process in an address space of its own they would
+        // reach the kernel's memory and the I/O.  Its movep ends that process, as any
+        // other exception of a process does (any_vec).
+        btst    #5,(sp)                     // supervisor mode?
+        jeq     unimp_vec                   // no
+#endif
         link    a6,#-SIZE_VARS              // reserve stack space
         movem.l d0-d7/a0-a5,UI_DREGS(a6)    // save d0-d7, a0-a5
         move.l  (a6),UI_A6(a6)              // save a6
@@ -1488,7 +1496,7 @@ biosxbios:
         addq.l  #4,sp
 #endif
         lea     16(sp),sp
-#if CONF_ATARI_HIGHER_HALF && !CONF_ATARI_HIGHER_HALF_68040
+#if CONF_M68K_ROM_WINDOW && !CONF_M68K_ROM_WINDOW_040
         // as at the return from a GEMDOS call (uspaceasm.S): the 68030's data
         // cache is addressed logically, and what the call wrote into the
         // memory of the process is not what its lines under the user address hold

@@ -58,10 +58,18 @@ PTE_M           = 0x10
 PTE_CM_NC       = 0x40
 PTE_S           = 0x80
 
+#if CONF_WITH_PROCESS_ASPACES
+// With an address space for every process (#814) this tree is the boot tree
+// and the source of the kernel half of every other one (aspace_hw.c): all of
+// it is the kernel's, none of it is for a program
+PAGE            = PDT + PTE_U + PTE_M + PTE_S
+PAGE_CI         = PDT + PTE_U + PTE_M + PTE_S + PTE_CM_NC
+#else
 PAGE            = PDT + PTE_U + PTE_M
+PAGE_CI         = PDT + PTE_U + PTE_M + PTE_CM_NC
+#endif
 PAGE_SUPER      = PDT + PTE_U + PTE_M + PTE_S
 PAGE_IO         = PDT + PTE_U + PTE_M + PTE_S + PTE_CM_NC
-PAGE_CI         = PDT + PTE_U + PTE_M + PTE_CM_NC
 
 WINDOW          = 0x80000000
 

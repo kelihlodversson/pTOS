@@ -66,7 +66,7 @@ PADDR pmem32_highest_addr(void);        /* the end of what it manages */
 #include "raspi_memmap.h"
 #define PMEM32_RAM_BASE     0UL
 #define PMEM32_WINDOW_BASE  RASPI_WINDOW_VBASE
-#elif defined(MACHINE_VIRT_M68K) || CONF_ATARI_HIGHER_HALF
+#elif defined(MACHINE_VIRT_M68K) || CONF_ATARI_HIGHER_HALF || CONF_AMIGA_HIGHER_HALF
 #define PMEM32_RAM_BASE     0UL
 #define PMEM32_WINDOW_BASE  0x80000000UL
 #else

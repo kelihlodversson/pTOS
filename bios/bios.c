@@ -444,6 +444,10 @@ static void bios_init(void)
      * Alt-RAM found on those boards will be added later in altram_init().
      */
     amiga_autoconfig();
+#if CONF_WITH_PROCESS_ASPACES
+    /* the RAM of the boards is pages of the processes: the kernel's address space needs it */
+    amiga_process_memory_init();
+#endif
 #endif
 
 #if CONF_WITH_68040_PMMU

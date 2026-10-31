@@ -36,6 +36,8 @@
 #if CONF_ATARI_HIGHER_HALF
 #include "tosvars.h"
 #include "atari_mmu.h"
+#elif CONF_AMIGA_HIGHER_HALF
+#include "amiga_mmu.h"
 #endif
 
 #define PAGE            PMEM32_PAGE
@@ -53,9 +55,10 @@
 #define PDT_RESIDENT    0x1UL
 #define PDT_MASK        0x3UL
 #define PTE_W           0x004UL         /* write protected */
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
 /*
- * The pages of a process are write-through on an Atari, as the ST-RAM is in
+ * The pages of a process are write-through on an Atari (and an Amiga, whose
+ * custom chips DMA into the chip RAM behind the data cache), as the ST-RAM is in
  * bios/arch/m68k/68040_pmmu.S: the disk controllers DMA into the RAM behind
  * the data cache, and a page is mapped twice, in the process and in the window
  * of the kernel.  With copyback pages the TT does not run on Hatari's 68040:
@@ -230,8 +233,18 @@ BOOL aspace_hw_init(void)
     }
 #endif
 
-    /* the page table of the kernel's low memory, supervisor only */
+    /* the page table of the kernel's low memory, supervisor only (on the Amiga,
+     * where the pages above the chip RAM may be all there is, from any page: only
+     * the custom chips want the chip RAM, and the CPU walks this table) */
+#if CONF_AMIGA_HIGHER_HALF
+    /* from the chip RAM that is left if there is some, so that a board of 2 MiB
+     * stays whole for the process window that is allocated next */
     low_page_table = pmem32_alloc_low(1, 1);
+    if (low_page_table == PMEM32_NONE)
+        low_page_table = pmem32_alloc(1, 1);
+#else
+    low_page_table = pmem32_alloc_low(1, 1);
+#endif
     if (low_page_table == PMEM32_NONE)
         return FALSE;
     memset(pmem32_virt(low_page_table), 0, PAGE);
@@ -453,7 +466,7 @@ void aspace_hw_drop_tables(PADDR root, const PADDR *pages, ULONG n)
     }
 }
 
-#if CONF_ATARI_HIGHER_HALF
+#if CONF_M68K_ROM_WINDOW
 /* the root the MMU ran on when the address spaces began: the static tree of the ROM, with the window of the TT-RAM */
 ULONG aspace_hw_boot_root(void)
 {
