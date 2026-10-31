@@ -20,7 +20,7 @@ Tested platforms
   QEMU x86-64 PC               | tested | UEFI/OVMF boot; EmuCON runs as an x32 program in ring 3 (no AES/EmuDesk)
   Hatari Atari emulation       | tested | m68k Atari configurations
   Hatari Falcon 68030/040      | tested | atari512: pBench in CI, regression tests by hand
-  Hatari Falcon/TT, MMU on     | tested | the kernel in the upper half and every process in an address space of its own (falcon-mmu, falcon-aspace, falcon-aspace040: 68030 and 68040); CI builds Hatari from a pinned commit (tools/hatari-pin.sh)
+  Hatari Falcon/TT, MMU on     | tested | the kernel in the upper half (falcon-mmu, 68030) and with every process in an address space of its own (falcon-aspace, falcon-aspace040: 68030 and 68040); CI builds Hatari from a pinned commit (tools/hatari-pin.sh)
   Amiberry Amiga 030/040/060   | tested | the ROMs with the kernel in the upper half (amiga-mmu, amiga-mmu040) and with every process in an address space of its own (amiga-aspace, amiga-aspace040); CI uses a pinned Amiberry (tools/amiberry-pin.sh)
 
 Other configurations are maintained as portability targets and may be
