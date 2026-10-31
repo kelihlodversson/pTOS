@@ -1,5 +1,5 @@
 /*
- * raspi_screen.h Raspberry PI framebuffer support
+ * raspi_memory.h - Raspberry Pi memory setup (MMU, RAM detection)
  *
  * Copyright (C) 2013-2018 The EmuTOS development team
  *
@@ -14,6 +14,18 @@
 void raspi_vcmem_init(void);
 UBYTE* raspi_get_coherent_buffer(int tag);
 #define COHERENT_TAG_MAILBOX 0
+/* The 8 KiB event-ring allocation consumes tags 1 and 2. */
+#define COHERENT_TAG_XHCI_EVENT_RING 1
+#define COHERENT_TAG_XHCI_ERST       3
+
+/* Top of ARM-visible RAM as reported by firmware, set by
+ * raspi_vcmem_init(). Not the same as phystop (include/tosvars.h):
+ * phystop marks where the topmost reserved megabyte (page table, cache
+ * coherent buffers) BEGINS, not where RAM ENDS -- callers that need the
+ * true top of RAM (e.g. to check a fixed physical address doesn't
+ * overlap ANY detected RAM, reserved or not) must use this, not
+ * phystop. See memory.c. */
+extern ULONG raspi_top_of_ram;
 
 #if CONF_WITH_MMU_TEXT_PROTECT
 /* mark [start, end) read-only at page granularity.
