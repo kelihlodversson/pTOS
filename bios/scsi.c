@@ -55,6 +55,9 @@
 #include "string.h"
 #include "tosvars.h"
 #include "vectors.h"
+#if CONF_ATARI_HIGHER_HALF
+#include "atari_mmu.h"
+#endif
 
 #if CONF_WITH_SCSI
 
@@ -613,8 +616,15 @@ static void set_input_phase(UBYTE phase)
 static void setup_tt_dma(CMDINFO *info)
 {
     UBYTE *p;
+    ULONG dmaaddr = (ULONG)(uintptr_t)info->bufptr;
 
-    p = (UBYTE *)&info->bufptr;     /* move data address to DMA pointer */
+#if CONF_ATARI_HIGHER_HALF
+    /* a buffer of the kernel image is in the window: the DMA takes the
+     * physical address */
+    dmaaddr = virt_to_phys(info->bufptr);
+#endif
+
+    p = (UBYTE *)&dmaaddr;          /* move data address to DMA pointer */
     SCSIDMA_BASE->ptr_upper = *p++;
     SCSIDMA_BASE->ptr_uprmiddle = *p++;
     SCSIDMA_BASE->ptr_lwrmiddle = *p++;
