@@ -39,7 +39,7 @@ plus mutable AES global array. Prototypes and buffer directions are explicit:
         Read a name with the same contract as init. Return its live app id,
         or ESRCH. The caller must itself be registered.
 
-    LONG aes_appl_write(WORD recipient, const AES_MESSAGE *message);
+    LONG aes_appl_write(WORD recipient, const AES_CLIENT_MESSAGE *message);
         Copy exactly 16 bytes (2-byte aligned) into the recipient's bounded
         kernel queue. Valid ids are 1-32767. The sender field supplied by
         the caller is ignored and replaced with its authoritative app id.
@@ -47,7 +47,7 @@ plus mutable AES global array. Prototypes and buffer directions are explicit:
         WORDs are opaque values; the kernel never follows them as pointers.
         There is no extended-length message or retained user buffer.
 
-    LONG aes_appl_read(AES_MESSAGE *message);
+    LONG aes_appl_read(AES_CLIENT_MESSAGE *message);
         Write exactly 16 bytes (2-byte aligned), consuming the oldest
         message in this process's queue only after a successful copy.
         Return EAGAIN if empty. There is no foreign receiver/owner argument.
@@ -301,7 +301,7 @@ at 6 (zero), ULONG features at 8 (MESSAGE=1, UPDATE=2, WAIT=4, INPUT=8, WINDOW=1
 WAIT, INPUT and WINDOW are advertised only for associated AES tasks. It is a value
 result, not writable shared service state. Editing it cannot change ownership.
 
-AES_MESSAGE (16 bytes, alignment 2): WORD type at 0, sender at 2, reserved
+AES_CLIENT_MESSAGE (16 bytes, alignment 2): WORD type at 0, sender at 2, reserved
 at 4 (zero), data[5] at 6. Messages are application data, not authenticated
 kernel-generated window/input notifications when sender is positive. The
 recipient can identify which registered process sent one from the supplied
@@ -311,7 +311,7 @@ x/y/width/height in data[1..4]; WM_CLOSED (22) requests a close and leaves the
 window open until its owner calls aes_wind_close/delete.
 
 AES_EVENT (20 bytes, alignment 2): UWORD events at 0, reserved at 2 (zero),
-AES_MESSAGE message at 4. Output records and unused fields are initialized;
+AES_CLIENT_MESSAGE message at 4. Output records and unused fields are initialized;
 no kernel stack or address is copied into them.
 
 AES_EVENT_RECT (10 bytes, alignment 2): WORD outside at 0 and GRECT at 2.
@@ -320,7 +320,7 @@ clicks/button_mask/button_state/reserved at 4/6/8/10, mouse1/mouse2 rectangles
 at 12/22, and ULONG timer_ms at 32. It contains no pointers.
 AES_INPUT_EVENT (32 bytes, alignment 2): UWORD events/reserved at 0/2,
 WORD mouse_x/mouse_y at 4/6, UWORD buttons/modifiers/key/clicks at 8/10/12/14,
-and AES_MESSAGE at 16. The existing AES_EVENT remains 20 bytes.
+and AES_CLIENT_MESSAGE at 16. The existing AES_EVENT remains 20 bytes.
 
 AES_WINDOW_INFO (52 bytes, alignment 2): WORD handle/owner at 0/2,
 UWORD kind/flags at 4/6, GRECT full/work/current/previous at 8/16/24/32,
@@ -364,8 +364,8 @@ before narrowing, and every user span belongs to the current process.
        0       name input*      AES_APP_INFO out* unused
        1       unused           unused            unused
        2       name input*      unused            unused
-       3       recipient id     AES_MESSAGE in*   unused
-       4       AES_MESSAGE out* unused            unused
+       3       recipient id     AES_CLIENT_MESSAGE in*   unused
+       4       AES_CLIENT_MESSAGE out* unused            unused
        5       event mask       AES_EVENT out*    unused
        6       update code      unused            unused
        7       message mask     AES_EVENT out*    unused

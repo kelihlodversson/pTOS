@@ -140,6 +140,10 @@ short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, short 
         if (d) *d = 1; /* Standard shel_rdef/shel_wdef. */
         return 1;
     }
+    if (type == AES_MESSAGE && registered(global)) {
+        if (a) *a = 0x20; /* CH_EXIT for ordinary AES4 shell launches. */
+        return 1;
+    }
     if (type == AES_INQUIRE && registered(global)) {
         if (a) *a = 1; /* APR_NOWAIT */
         if (b) *b = 1; /* SHEL_BUFSIZE and dynamic shell buffers. */
@@ -188,6 +192,7 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
     if (!length) return 1;
     for (;;) {
         LONG result;
+        if (aes_child_messages(application_session) < 0) return 0;
         if ((id == APR_NOWAIT ? aes_menu_flush(global) : aes_menu_dispatch(global)) < 0) return 0;
         if ((id == APR_NOWAIT ? aes_window_messages_poll(application_session,global) :
              aes_window_messages(application_session,global)) < 0) return 0;
@@ -197,7 +202,7 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
         {
             BOOL repeat = aes_controls_repeating();
             if (cuis_call6(CUIS_SESSION_WAIT, application_session, length,
-                           CUIS_READY_STREAM | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
+                           CUIS_READY_STREAM | CUIS_READY_CHILD | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
                            (aes_menu_listening() ? CUIS_READY_SURFACE : 0) | (aes_controls_listening() ? CUIS_READY_CONTROL : 0) |
                            (repeat ? CUIS_READY_SERVICE : 0), 0, 0, 0) <= 0) return 0;
         }

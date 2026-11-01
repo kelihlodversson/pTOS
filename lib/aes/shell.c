@@ -87,23 +87,42 @@ WORD mt_shel_read(char *command, char *tail, WORD *global)
     aes_shell_read_core(command,tail); return 1;
 }
 WORD shel_read(char *command, char *tail) { return mt_shel_read(command,tail,aes_global); }
+static BOOL gem_application(const char *path)
+{
+    ULONG length = strlen(path), i;
+    char extension[4];
+    if (length < 4 || path[length-4] != '.') return FALSE;
+    for (i = 0; i < 3; i++) {
+        char c = path[length-3+i];
+        extension[i] = c >= 'a' && c <= 'z' ? c-'a'+'A' : c;
+    }
+    extension[3] = 0;
+    return !strcmp(extension,"PRG") || !strcmp(extension,"APP");
+}
 WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
 {
     char path[AES_SHELL_PATH], staged_tail[128] = { 0 };
-    LONG pid;
-    /* MagiC parallel launch intentionally has no CH_EXIT notification. Other
-     * modes need their own lifecycle/screen semantics before being exposed. */
-    if (mode != SWM_LAUNCHNOW || graphical != GEMAPP || execution != SHW_PARALLEL ||
-        aes_application_session(global) < 0 || !tail || (UBYTE)tail[0] >= 127 ||
+    LONG pid, session, watch = 0;
+    if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
+    if (mode == SWM_LAUNCH ? execution != CL_NORMAL : graphical != GEMAPP || execution != SHW_PARALLEL) return 0;
+    session = aes_application_session(global);
+    if (session < 0 || !tail || (UBYTE)tail[0] >= 127 ||
         !aes_shell_copy(path,command,sizeof(path)) || !*path) return 0;
-    /* The ordinary tail may be shorter than 128 bytes. Do not read beyond its
-     * length byte and payload; 127 is reserved for extended ARGV passing. */
+    /* Read only the length byte/payload; 127 denotes extended ARGV passing. */
     memcpy(staged_tail,tail,(UBYTE)tail[0]+1);
     if (!mt_shel_find(path,global)) return 0;
-    /* GEMDOS inherits the caller's environment and standard files for env=0.
-     * No display lock may span the child launch or its subsequent execution. */
-    pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)staged_tail,0);
-    /* Kernel PIDs, also used as AES IDs, are bounded to 1..32767. */
+    if (mode == SWM_LAUNCH) {
+        if (!gem_application(path) || aes_child_messages(session) < 0) return 0;
+        watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
+        if (watch <= 0) return 0;
+    }
+    if (watch) {
+        /* The ordinary fixed-address loader installs the observer at spawn,
+         * atomically with launch, before the child can execute or be reaped. */
+        pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)staged_tail,0,0);
+    } else {
+        pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)staged_tail,0);
+    }
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
 }
 WORD shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail)

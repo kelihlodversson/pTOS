@@ -7,6 +7,9 @@
 #include "kheap.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#endif
 #if CONF_WITH_X86_64_MEMTEST
 #include "kprint.h"
 #endif
@@ -69,6 +72,9 @@ void ksched_context_restore(UQUAD identity)
 BOOL ksched_pid_reserved(WORD pid)
 {
     UWORD i;
+#if CONF_WITH_CUIS
+    if (cuis_child_pid_reserved(pid)) return TRUE;
+#endif
     if (!scheduler.active) return FALSE;
     for (i = 0; i < KSCHED_LIMIT; i++)
         if (scheduler.tasks[i].state != TASK_UNUSED && scheduler.tasks[i].pid == pid) return TRUE;
@@ -94,7 +100,15 @@ BOOL ksched_parent_pid(PD *pd, WORD *pid)
 void ksched_exiting(PD *pd, UWORD result)
 {
     UWORD i;
+#if CONF_WITH_CUIS
+    BOOL asynchronous = FALSE;
+    if (!scheduler.active) {
+        cuis_child_completed(kproc_get_parent(pd),kproc_pid(pd),result);
+        return;
+    }
+#else
     if (!scheduler.active) return;
+#endif
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
         if (task->state == TASK_UNUSED) continue;
@@ -104,18 +118,32 @@ void ksched_exiting(PD *pd, UWORD result)
         }
         if (task->program == pd) {
             ULONG usage[8];
+#if CONF_WITH_CUIS
+            asynchronous = task->asynchronous;
+#endif
             kproc_usage(pd, usage);
             task->usage[0] = usage[1] + usage[3];
             task->usage[1] = 0;
             task->result = result;
         }
     }
+#if CONF_WITH_CUIS
+    /* Nested synchronous children never return through task_entry(). Their
+     * trusted parent/PID still exist here; async tasks publish at task_entry
+     * after their final result/signal is known. */
+    if (!asynchronous) cuis_child_completed(kproc_get_parent(pd),kproc_pid(pd),result);
+#endif
 }
 
 void ksched_fault(PD *pd, WORD signal)
 {
     UWORD i;
-    if (!scheduler.active) return;
+    if (!scheduler.active) {
+#if CONF_WITH_CUIS
+        cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),signal);
+#endif
+        return;
+    }
     /* A foreign callback changes run, but retains the invoking task's
      * continuation. Attribute its fault to the owner, whose exit is deferred.
      * Nested synchronous children have no task entry of their own. */
@@ -124,9 +152,17 @@ void ksched_fault(PD *pd, WORD signal)
         if ((task->state == TASK_NEW || task->state == TASK_RUNNING ||
              task->state == TASK_BLOCKED) && task->program == pd) {
             if (!task->signal) task->signal = signal;
+#if CONF_WITH_CUIS
+            if (!task->asynchronous)
+                cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),task->signal);
+#endif
             return;
         }
     }
+#if CONF_WITH_CUIS
+    /* Nested synchronous children have no task slot of their own. */
+    cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),signal);
+#endif
 }
 
 static void task_entry(void)
@@ -140,6 +176,11 @@ static void task_entry(void)
 #endif
     task->program = NULL;
     task->state = task->asynchronous && task->parent ? TASK_ZOMBIE : TASK_DONE;
+#if CONF_WITH_CUIS
+    if (task->state == TASK_ZOMBIE)
+        cuis_child_completed(task->parent,task->pid,
+            task->signal ? (UWORD)task->signal << 8 : (UWORD)task->result);
+#endif
     x86_64_process_save(&task->context);
     longjmp(scheduler.resume, 1);
 }
@@ -168,7 +209,12 @@ LONG ksched_yield(void)
     return E_OK;
 }
 
+#if CONF_WITH_CUIS
+LONG ksched_spawn(PD *pd) { return ksched_spawn_observed(pd,0,0); }
+LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
+#else
 LONG ksched_spawn(PD *pd)
+#endif
 {
     UWORD i;
     KERNEL_TASK *task;
@@ -184,6 +230,16 @@ LONG ksched_spawn(PD *pd)
     memset(task, 0, sizeof(*task));
     task->stack_phys = kstack_alloc(&task->stack_top);
     if (!task->stack_phys) return ENSMEM;
+#if CONF_WITH_CUIS
+    if (token) {
+        LONG result = cuis_child_bind_spawn(session,token,pd);
+        if (result != E_OK) {
+            kstack_free(task->stack_phys);
+            memset(task,0,sizeof(*task));
+            return result;
+        }
+    }
+#endif
     /* Allocate the task stack before adopting the image. Preparation maps
      * the stable controller for exit, while ancestor copies retain PPID. */
     if (!kproc_prepare_async(pd, run, scheduler.root.pd)) {

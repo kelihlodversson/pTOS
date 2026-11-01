@@ -20,6 +20,7 @@ void *aes_temporary_alloc(LONG bytes) { return region_alloc_failure ? NULL : mal
 WORD aes_resource_discard(void *memory) { free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static BOOL live;
+static LONG child_status, child_on_wait, child_publish_error;
 static ULONG starts, closes, yields, delays;
 static ULONG graphics_resets;
 void aes_graphics_reset(void) { graphics_resets++; }
@@ -136,6 +137,14 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_CHILD_RESULT) return child_status;
+    if (fn == CUIS_CHILD_PUBLISH) {
+        if (child_publish_error) return child_publish_error;
+        if (!child_status || b != (ULONG)child_status || d != 16) return EACCDN;
+        if (pipe_count+d > sizeof(pipe_data)) return EAGAIN;
+        __builtin_memcpy(pipe_data+pipe_count,(void *)(uintptr_t)c,d);
+        pipe_count += d; child_status = 0; return E_OK;
+    }
     if (fn == CUIS_SETTING) {
         if (a >= 38) return EINVAL;
         if (!e) {
@@ -257,6 +266,9 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
+        if ((c & CUIS_READY_CHILD) && child_on_wait) {
+            child_status = child_on_wait; child_on_wait = 0; ready |= CUIS_READY_CHILD;
+        }
         if (background_on_wait && (c & CUIS_READY_NOTICE)) {
             background_on_wait--; background_state |= 2;
             ready |= CUIS_READY_NOTICE;
@@ -328,6 +340,56 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 }
 
 #define MULTI(mask, time, msg) evnt_multi(mask, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, msg, time, &x, &y, &buttons, &mods, &key, &clicks)
+static int child_message_checks(void)
+{
+    short message[8], expected[8] = { CH_EXIT,0,0,11,0x1234,0,0,0 };
+    UBYTE full[64];
+    int i;
+    CHECK(!pipe_count);
+    child_status = (11L << 16) | 0x1234;
+    child_publish_error = EIMBA;
+    for (i = 0; i < 8; i++) message[i] = 99;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && child_status && message[0] == 99);
+    child_publish_error = 0;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !child_status && !__builtin_memcmp(message,expected,16));
+    __builtin_memset(full,0x55,sizeof(full));
+    CHECK(appl_write(7,sizeof(full),full) == 1);
+    child_status = (11L << 16) | 0x1234;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && child_status && message[0] == 0x5555);
+    for (i = 0; i < 3; i++) CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == 0x5555);
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !__builtin_memcmp(message,expected,16) && !pipe_count);
+    child_on_wait = (11L << 16) | 0x1234;
+    CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,expected,16));
+    child_on_wait = (11L << 16) | 0x1234;
+    CHECK(evnt_multi(MU_MESAG,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                    NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG && !__builtin_memcmp(message,expected,16));
+    /* A publication allocation/copy failure after the wait must not consume
+     * and then discard a simultaneous key, button or timer result. */
+    child_on_wait = (11L << 16) | 0x1234;
+    child_publish_error = ENSMEM;
+    input_ready = CUIS_READY_KEY | CUIS_READY_BUTTON;
+    input_key = 0x001e0061; input_count = 2;
+    {
+        short key = 0, clicks = 0, sentinel[8] = { 99 };
+        CHECK(evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|MU_TIMER,2,1,1,0,0,0,0,0,0,0,0,0,0,
+                         sentinel,100,NULL,NULL,NULL,NULL,&key,&clicks) == (MU_KEYBD|MU_BUTTON|MU_TIMER));
+        CHECK(key == 0x1e61 && clicks == 2 && sentinel[0] == 99 && child_status);
+    }
+    /* A failure already present before entering the wait cannot mask a
+     * zero timer or input that is queued independently of the completion. */
+    input_ready = 0;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    message,0,NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && child_status);
+    input_ready = CUIS_READY_KEY;
+    {
+        short key = 0;
+        CHECK(evnt_multi(MU_MESAG|MU_KEYBD,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                        message,0,NULL,NULL,NULL,NULL,&key,NULL) == MU_KEYBD && key == 0x1e61 && child_status);
+    }
+    child_publish_error = 0; input_ready = 0;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !__builtin_memcmp(message,expected,16));
+    return 0;
+}
 static int event_checks(void)
 {
     short x = 99, y = 99, buttons = 99, mods = 99, key = 99, clicks = 99;
@@ -357,7 +419,7 @@ static int event_checks(void)
     CHECK(appl_write(7, 16, message) == 1);
     CHECK(mt_evnt_multi(MU_MESAG, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         output, ~0UL, NULL, NULL, NULL, NULL, NULL, NULL, global) == MU_MESAG);
-    CHECK(!pipe_count && waited_mask == (CUIS_READY_STREAM | CUIS_READY_NOTICE));
+    CHECK(!pipe_count && waited_mask == (CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD));
     return 0;
 }
 static int input_api_checks(void)
@@ -1154,6 +1216,7 @@ int main(void)
     CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
     CHECK(appl_getinfo(AES_PROCESS, &a, &b, &c, &d) == 1 && a == 0 && b == 1 && c == 0 && d == 1);
     CHECK(appl_getinfo(AES_OBJECT, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && c == 0 && d == 0);
+    CHECK(appl_getinfo(AES_MESSAGE, &a, &b, &c, &d) == 1 && a == 0x20 && !b && !c && !d);
     CHECK(appl_getinfo(AES_PCGEM, &a, &b, &c, &d) == 1 && a == 0 && b == 0 && c == 0 && d == 1);
     CHECK(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && c == 0 && d == 0);
     CHECK(appl_find(NULL) == 7 && appl_find("gemtest") == 7 && mt_appl_find("GEMTEST ", other) == 7);
@@ -1171,7 +1234,7 @@ int main(void)
     failure = EACCDN;
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
-    CHECK(event_checks() == 0 && input_api_checks() == 0);
+    CHECK(child_message_checks() == 0 && event_checks() == 0 && input_api_checks() == 0);
     CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && arrow_api_checks() == 0 && slider_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
     CHECK(window_desktop_api_checks(other) == 0);
     CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);

@@ -45,7 +45,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     LONG session, ready, result = 0, state[4], input[5];
     ULONG mask = 0, wait_mask, elapsed, ticks;
     LONG now;
-    BOOL frame_work = aes_frames_registered();
+    BOOL frame_work = aes_frames_registered(), child_failed = FALSE;
     LONG (*messages)(LONG,short *) = ((events & MU_TIMER) && !interval) ?
         aes_window_messages_poll : aes_window_messages;
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
@@ -72,7 +72,10 @@ static short event_once(short events, short clicks, short button_mask, short but
         mask |= CUIS_READY_RECT2;
     }
     if (((events & MU_MESAG) || frame_work) && messages(session, global) < 0) return 0;
-    if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
+    if (events & MU_MESAG) {
+        child_failed = aes_child_messages(session) < 0;
+        mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD;
+    }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
     /* A multi-click owns per-call accumulation until completion. Service
@@ -104,6 +107,12 @@ static short event_once(short events, short clicks, short button_mask, short but
         state[0] = input[2]; state[1] = input[3];
         state[2] = (ULONG)input[4] & 0xffff; state[3] = (ULONG)input[4] >> 16;
     } else if (snapshot(session, state) != E_OK) return 0;
+    /* Input was already consumed by the native wait. A failed child publish
+     * must leave its completion pending without dropping simultaneous input. */
+    if ((ready & CUIS_READY_CHILD) && aes_child_messages(session) < 0) {
+        ready &= ~CUIS_READY_CHILD;
+        child_failed = TRUE;
+    }
     if (frame_work && !(ready & CUIS_READY_NOTICE) && messages(session,global) < 0) return 0;
     if ((ready & CUIS_READY_NOTICE) && aes_frames_wait_display()) {
         ready &= ~CUIS_READY_NOTICE;
@@ -122,7 +131,7 @@ static short event_once(short events, short clicks, short button_mask, short but
         ready &= ~CUIS_READY_SURFACE;
         if (!ready) return -1; /* Re-arm user predicates after internal tracking. */
     }
-    if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE)) {
+    if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD)) {
         LONG count = cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0);
         /* A background notice may only repaint, without publishing a GEM
          * message. Keep simultaneous public events and otherwise re-arm. */
@@ -134,7 +143,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     if (ready & CUIS_READY_BUTTON) result |= MU_BUTTON;
     if (ready & CUIS_READY_RECT1) result |= MU_M1;
     if (ready & CUIS_READY_RECT2) result |= MU_M2;
-    if (!result) return -1;
+    if (!result) return child_failed ? 0 : -1;
     output_state(state, mx, my, buttons, modifiers);
     if (key) *key = ready & CUIS_READY_KEY ? (short)(((ULONG)input[0] >> 8 & 0xff00) | (input[0] & 255)) : 0;
     if (click_count) *click_count = ready & CUIS_READY_BUTTON ? (short)input[1] : 0;

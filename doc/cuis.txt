@@ -2769,3 +2769,98 @@ client launches two isolated children with ordinary and 126-byte tails. It
 checks inherited environment, captured startup command/tail, concurrent GEM
 message exchange, PID/status results, absence of CH_EXIT, balanced display
 nesting, working-directory preservation and resumed Fsnext searches.
+
+AES4 GEM launch and child-exit messages (#844)
+--------------------------------------------
+
+shel_write/mt_shel_write now also accept SWM_LAUNCH (0), CL_NORMAL (0).
+The graphical selector is ignored for this mode. After classic shel_find
+resolution, .PRG/.APP (case insensitive) are recognized as GEM applications;
+other executable kinds remain unsupported until their console/accessory
+ownership semantics are implemented. Ordinary tails retain the 0..126 bound.
+The call returns the new AES/process ID or zero. SHW_PARALLEL retains its
+separate documented no-CH_EXIT semantics.
+
+For an ordinary mode-0 child, libaes supplies exactly one CH_EXIT message
+when the process actually finishes: words are {90,0,0,child_id,exit_code,0,0,0}.
+appl_exit alone is not process completion. A normal Pterm result keeps its
+full WORD (e.g. 0x1234); faults use the existing native MiNT signal word
+(signal << 8). Children that exit or fault without ever registering with AES
+are included. AES_MESSAGE out1 bit 5 advertises CH_EXIT; other fields are zero.
+AES_SHELL remains unadvertised until its ordinary mode-1/chain semantics are
+implemented. No console, accessory, ARGV, chain/default-shell, shutdown or
+resolution-change support is implied by this slice.
+
+CUIS retains bounded, opaque process completion records, without interpreting
+GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
+
+  CUIS_CHILD_WATCH(session, action, token, image)
+    RESERVE (0), token=image=0: reserve one of 16 records; return a positive,
+    never-reused token or a negative error. No allocation is needed.
+    BIND (1): associate the reservation with an owned, live, unlaunched
+    Pexec(3) basepage. Kernel image metadata supplies its PID; no allocation
+    is needed. Started, freed/replaced, duplicate or foreign images fail.
+    Completion is recorded for synchronous Pexec(4/6) as well as asynchronous
+    starts; the ordinary retained/freeing ownership of those modes is kept.
+    Bound synchronous children retain their first fault signal even without
+    a scheduler task slot. CH_EXIT reports signal << 8 for a crash, while an
+    ordinary Pterm(-1) remains the full 0xffff termination result.
+    CANCEL (2), image=0: drop an owned reservation/notice, without killing or
+    reaping a child. Tokens from another session or an earlier lifetime fail.
+  CUIS_CHILD_LAUNCH(session, token, path, tail, environment)
+    Validate ordinary Pexec(100) arguments and load at the executable's link
+    address in private child pages, using the existing GEMDOS loader. Bind
+    the reserved observer inside spawn, before the child can execute. Return
+    its positive PID or a negative error; failures cancel the reservation.
+    The observer is an explicit kernel call argument, never a global latch.
+    Fixed-address ET_EXEC programs need no retained relocation tables.
+  CUIS_CHILD_RESULT(session)
+    Non-consuming FIFO peek. Zero means no completion; a positive scalar has
+    PID in its high WORD and exit status in its low WORD; errors are negative.
+  CUIS_CHILD_PUBLISH(session, expected_result, bytes_address, byte_count)
+    Append 1..32 opaque bytes to the caller's existing application pipe, only
+    if the same completion is still at its head. Failed copies, allocation,
+    or pipe capacity leave it pending; reentrant reservation changes cannot
+    publish or consume a replacement notice. Only a successful publication
+    consumes the record and nonblockingly reaps that specific child if it is still a native zombie. No unrelated child is read.
+
+Capacity is reserved before CUIS_CHILD_LAUNCH, which runs the standard
+asynchronous load-and-go path with a stack-scoped observer. The observer is
+bound before the child can start. Early native waits cannot erase a notice or
+reorder completions through delayed binding. Validation/load/start failures
+cancel the reservation; the GEMDOS loader retains its ordinary image cleanup
+and fixed-address loading behavior. The optional BIND operation remains for
+callers explicitly using editable Pexec(3) images. Completed
+notices survive an explicit application Pwaitpid, and hold their PID identity until publication/cancellation/session
+teardown even if the native zombie was already reaped. A session close drops
+its records, releasing PID reservations; it neither kills nor reaps live
+children. Subsequent registrations do not inherit old notifications.
+
+CUIS_READY_CHILD is a public readiness source in CUIS_SESSION_WAIT, alongside
+stream/notice/input/timer readiness. It wakes MU_MESAG immediately, including
+during unfinished multi-click accumulation. The interrupted button predicate
+retains its original count/deadline in session-owned state and continues
+sampling trusted pointer edges while the message is handled; a compatible
+subsequent button wait resumes it. Changing the button filter starts a new
+predicate. Intervening pointer edges are retained in a bounded private
+history: compatible resumption consumes them once; abandonment restores them
+ahead of later normal history for the new filter. Stream, key and timer
+wakeups preserve a resumed predicate too. A child-publication failure, before
+or after the native wait, does not mask ready keys, buttons or timer events. There is no maintenance polling
+and no replacement of the application's independent timer. Libaes converts
+notices before/after waits and in blocking/nonblocking appl_read; pipe
+backpressure preserves existing queued bytes ahead of the new message.
+
+Tests cover bounded reservations/tokens, ownership, completion order, early
+completion, copy/allocation/backpressure failures, explicit native waits,
+reentrant cancellation/replacement/session exit, PID retention, a completion
+interrupting a two-click predicate and unchanged caller output on failure.
+Normal-header x32 clients cover full-word exits, exit/fault before appl_init,
+exactly-once messages, automatic selective reaping, explicit Pwaitpid retaining
+a notice, unrelated Pexec children and unchanged SHW_PARALLEL behavior.
+
+The transitional native AES binding calls its 16-byte message type
+AES_CLIENT_MESSAGE, avoiding a collision with GEMlib's standard AES_MESSAGE
+capability selector. Legacy-only clients also retain the AES_MESSAGE typedef
+when that macro has not been defined. Its binary layout and service ABI are
+unchanged; tests cover legacy-only source and both public-header orders.
