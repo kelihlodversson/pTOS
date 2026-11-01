@@ -2695,3 +2695,38 @@ termination and validates AES_INQUIRE. Its marker is
 "x32 GEM shared shell buffer: PASS". The boot memory fixture checks that the
 buffer survives the last GUI exit, then explicitly reclaims this intentional
 persistent test state before its ordinary allocator leak comparison.
+
+Shared default desktop and clipboard paths (#840)
+------------------------------------------------
+
+shel_rdef/shel_wdef and their mt_* forms use the standard GEMlib void
+signatures. They read/write the default application filename (up to 12 bytes
+plus NUL) and its directory (up to 113 bytes plus NUL). Both fields are one
+opaque CUIS context record in slot 1, so a reader sees one complete update.
+Until configured, both fields are empty; the upcoming shell/desktop launch
+integration supplies the startup default and consumes this state. This slice
+stores the metadata; it does not yet launch the configured application.
+AES_PCGEM reports out4=1 for these functions; its other fields remain zero.
+
+scrp_read/scrp_write and their mt_* forms read/write an opaque clipboard path
+(up to 127 bytes plus NUL) in slot 2. They follow Atari TOS behavior: no path
+normalization, directory existence check, file enumeration or file deletion.
+A successful read returns 1 even when the path is empty (the initial state).
+The desktop can configure its clipboard directory at startup. This is not
+the PC-GEM scrap-format bitmap extension; scrp_clear is not provided.
+
+All calls require normal AES registration. Setters reject NULL or oversized
+strings without changing shared state. Void functions have no error result;
+on a failed read or malformed shared record they leave both caller buffers
+unchanged. scrp_* return 0 on failure. Writes publish complete staged records;
+a transport failure while releasing ownership can follow a committed write.
+Getters validate bounded NUL termination before committing output, and accept
+a valid fixed prefix in a larger context (CUIS storage does not shrink).
+Nested display ownership is preserved. The records persist across application
+and session exit independently of the shell buffer in slot 0. No new kernel
+services or feature-independent kernel changes are needed.
+
+Host tests cover maximum bounds, shorter replacement, malformed/truncated
+records, transport failures and display nesting. The normal-header GEM test
+checks both API forms, capability reporting, independent shell/default/scrap
+state and updates surviving normal and abrupt child process exit.

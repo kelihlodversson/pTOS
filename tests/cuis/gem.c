@@ -5,6 +5,7 @@
 #include "ptos.h"
 #include "gem_shell.h"
 #include "gem_buffer.h"
+#include "gem_metadata.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -35,6 +36,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
     GEM_TEST_CHECK(gem_shell_checks(globals,argc > 1,argc > 2) == 0);
     GEM_TEST_CHECK(gem_buffer_checks(globals,argc > 1) == 0);
+    GEM_TEST_CHECK(gem_metadata_checks(globals,argc > 1) == 0);
     if (argc > 1) {
         if (argv[1][0] == 'x') _Exit(41);
         return 37; /* Ordinary CRT finalization closes implicit registration. */
@@ -50,6 +52,7 @@ int main(int argc, char **argv, char **envp)
         status = PROC(0x13a, child, 0, 0, 0);
         GEM_TEST_CHECK(status == (LONG)(((ULONG)child << 16) | (i == 1 ? 41 : 37)));
         GEM_TEST_CHECK(gem_buffer_after_child(globals) == 0);
+        GEM_TEST_CHECK(gem_metadata_after_child(globals) == 0);
         GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_MESSAGE_READ, handle, (uintptr_t)&sender,
                   (uintptr_t)&w[0], (uintptr_t)&w[1], (uintptr_t)&w[2], (uintptr_t)&w[3]) == 1);
         GEM_TEST_CHECK(sender == handle && w[0] == 11 && w[1] == 22 && w[2] == 33 && w[3] == 44);
@@ -61,10 +64,12 @@ int main(int argc, char **argv, char **envp)
     {
         static const char marker[] = "x32 GEM lifecycle/timers: PASS\r\n";
         static const char buffer_marker[] = "x32 GEM shared shell buffer: PASS\r\n";
+        static const char metadata_marker[] = "x32 GEM desktop/clipboard metadata: PASS\r\n";
         static const char shell_marker[] = "x32 GEM shell queries: PASS\r\n";
         ptos_write(1, marker, sizeof(marker)-1);
         ptos_write(1, shell_marker, sizeof(shell_marker)-1);
         ptos_write(1, buffer_marker, sizeof(buffer_marker)-1);
+        ptos_write(1, metadata_marker, sizeof(metadata_marker)-1);
     }
     return 0;
 }

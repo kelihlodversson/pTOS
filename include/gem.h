@@ -69,6 +69,7 @@ extern "C" {
 #endif
 #define AES_GLOBMAX 15
 #define AES_PROCESS 4
+#define AES_PCGEM 5
 #define AES_INQUIRE 6
 #define AES_OBJECT 13
 #define SV_INQUIRE 0
@@ -395,6 +396,14 @@ short fsel_input(char *path, char *selection, short *button);
 #ifndef SHEL_BUFSIZE
 #define SHEL_BUFSIZE (-1)
 #endif
+void shel_rdef(char *command, char *directory);
+void mt_shel_rdef(char *command, char *directory, short *global);
+void shel_wdef(const char *command, const char *directory);
+void mt_shel_wdef(const char *command, const char *directory, short *global);
+short scrp_read(char *path);
+short mt_scrp_read(char *path, short *global);
+short scrp_write(const char *path);
+short mt_scrp_write(const char *path, short *global);
 short shel_get(char *buffer, short length);
 short mt_shel_get(char *buffer, short length, short *global);
 short shel_put(const char *buffer, short length);
