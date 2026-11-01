@@ -71,6 +71,7 @@ extern "C" {
 #define AES_PROCESS 4
 #define AES_PCGEM 5
 #define AES_INQUIRE 6
+#define AES_SHELL 10
 #define AES_OBJECT 13
 #define SV_INQUIRE 0
 #define SV_SET 1
@@ -410,6 +411,19 @@ short shel_put(const char *buffer, short length);
 short mt_shel_put(const char *buffer, short length, short *global);
 short shel_read(char *command, char *tail);
 short mt_shel_read(char *command, char *tail, short *global);
+#define SWM_LAUNCH 0
+#define SWM_LAUNCHNOW 1
+#define SHW_NOEXEC 0
+#define SHW_EXEC 1
+#define TOSAPP 0
+#define GEMAPP 1
+#define SHW_IMMED 0
+#define SHW_CHAIN 1
+#define SHW_DOS 2
+#define SHW_PARALLEL 100
+#define SHW_SINGLE 101
+short shel_write(short mode, short graphical, short execution, const void *command, const char *tail);
+short mt_shel_write(short mode, short graphical, short execution, const void *command, const char *tail, short *global);
 short shel_find(char *path);
 short mt_shel_find(char *path, short *global);
 short shel_envrn(char **result, const char *prefix);

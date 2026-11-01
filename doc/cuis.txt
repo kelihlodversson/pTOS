@@ -2730,3 +2730,42 @@ Host tests cover maximum bounds, shorter replacement, malformed/truncated
 records, transport failures and display nesting. The normal-header GEM test
 checks both API forms, capability reporting, independent shell/default/scrap
 state and updates surviving normal and abrupt child process exit.
+
+Parallel GEM shell launching (#842)
+-----------------------------------
+
+shel_write/mt_shel_write have the standard GEMlib signature (the command is
+const void *, the tail is const char *, and the result is short). Initially
+only SWM_LAUNCHNOW (1), GEMAPP (1), SHW_PARALLEL (100) is supported. This is the
+MagiC parallel execution mode: it returns the new AES/process ID immediately
+and sends no CH_EXIT message when that child exits. The parent can continue
+using ordinary GEM events while its child runs cooperatively. Standard MiNT
+Pwaitpid can collect the child's termination status; this call does not reap
+other children or consume the application's messages.
+
+The command is resolved through the existing classic shel_find search, with
+its private persistent DTA and original PATH rules. The caller's command/tail,
+DTA/search continuation, working directory and display-lock nesting are
+preserved. The library stages a bounded command string and an ordinary tail
+(length byte 0..126, then that many bytes); it reads only those tail bytes and
+zeroes the rest of its private 128-byte tail. Byte 127 and larger are rejected:
+ARGV/extended argument passing needs separate implementation. Pexec mode 100
+receives a null environment argument to inherit the calling process's GEMDOS
+environment and standard files. Its fourth argument uses the ordinary x32
+syscall register, with no new kernel service or legacy AES shell bridge.
+
+Invalid registration, malformed/oversized parameters, search or launch failure
+return zero. Unsupported selectors are rejected before interpreting their
+mode-dependent pointer arguments. The ordinary AES4 SWM_LAUNCH mode 0,
+chain/default-shell execution, console applications, accessory launch, ARGV
+parsing, extended option structures, shutdown and resolution changes remain
+unsupported. AES_SHELL is not advertised until its ordinary launch modes and
+reported semantics are implemented. In particular, this API does not yet
+replace the desktop's classic shell-launch adapter.
+
+Host sanitizer tests cover short/minimum/maximum tails, bounds and selectors,
+search/restore/launch failures and unchanged inputs/DTA. The normal GEM-header
+client launches two isolated children with ordinary and 126-byte tails. It
+checks inherited environment, captured startup command/tail, concurrent GEM
+message exchange, PID/status results, absence of CH_EXIT, balanced display
+nesting, working-directory preservation and resumed Fsnext searches.
