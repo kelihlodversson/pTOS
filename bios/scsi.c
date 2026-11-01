@@ -808,6 +808,13 @@ static void cleanup_tt_dma(CMDINFO *info)
     u.byte[2] = SCSIDMA_BASE->ptr_lwrmiddle;
     u.byte[3] = SCSIDMA_BASE->ptr_lower & 0xfc;
 
+#if CONF_ATARI_HIGHER_HALF
+    /* the DMA pointer is a physical address: the residue goes to the buffer
+     * of the kernel at the same offset from its start */
+    u.ptr = (UBYTE *)info->bufptr
+            + ((ULONG)(uintptr_t)u.ptr - virt_to_phys(info->bufptr));
+#endif
+
     for (p = u.ptr, q = (UBYTE *)&residue; bytes_remaining; bytes_remaining--)
         *p++ = *q++;
 }
