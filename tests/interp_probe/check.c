@@ -59,10 +59,16 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         return 6;
     if (launch) {
         const DL_LAUNCH *saved = (const DL_LAUNCH *)(uintptr_t)launch;
-        const unsigned char *tail = (const unsigned char *)(uintptr_t)(basepage+128);
+        static const char short_tail[] = "\"hello world\" \"\" C:\\tmp";
         if ((launch & 3) || launch < (uintptr_t)stack ||
             launch > 0x80000000U-sizeof(*saved) || saved->ready) return 9;
-        for (i = 0; i < DL_LAUNCH_TAIL; i++) if (saved->tail[i] != tail[i]) return 9;
+        if (extended) {
+            if (saved->tail[0] != 127) return 9;
+        } else {
+            if (saved->tail[0] != sizeof(short_tail)-1) return 9;
+            for (i = 0; i < sizeof(short_tail)-1; i++)
+                if (saved->tail[i+1] != (unsigned char)short_tail[i]) return 9;
+        }
     }
     for (i = 0; i < phnum; i++) {
         const uint32_t *ph = (const uint32_t *)(uintptr_t)(phdr + i * 32);
