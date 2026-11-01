@@ -1154,7 +1154,7 @@ int main(void)
     CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
     CHECK(appl_getinfo(AES_PROCESS, &a, &b, &c, &d) == 1 && a == 0 && b == 1 && c == 0 && d == 1);
     CHECK(appl_getinfo(AES_OBJECT, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && c == 0 && d == 0);
-    CHECK(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 0 && c == 0 && d == 0);
+    CHECK(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && c == 0 && d == 0);
     CHECK(appl_find(NULL) == 7 && appl_find("gemtest") == 7 && mt_appl_find("GEMTEST ", other) == 7);
     CHECK(appl_find("missing") == -1 && appl_find((const char *)(uintptr_t)0xffff0007UL) == 7);
     CHECK(appl_find((const char *)(uintptr_t)0xfffe0007UL) == 7);

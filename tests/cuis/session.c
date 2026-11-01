@@ -40,6 +40,8 @@ static LONG stream_peer_handle;
 static ULONG input_packet_mode;
 static BOOL input_drop_focus, input_drop_on_validate;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
+static void context_copy_hook(void);
+static void context_read_hook(void);
 static PD *mouse_release_owner;
 static ULONG mouse_release_steps;
 static BOOL mouse_release_exit;
@@ -205,6 +207,7 @@ BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
 {
     if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
+    context_read_hook();
     if (address >= 0x20000) {
         memcpy(stream_output + address - 0x20000, source, size); return TRUE;
     }
@@ -223,6 +226,7 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
         for (window = (*find_owner(run))->windows; window; window = window->next) window->notices = 0;
         cuis_input_unlock(flags);
     }
+    context_copy_hook();
     memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
 }
 const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
@@ -233,9 +237,7 @@ void *kalloc(ULONG bytes)
         if (fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) || stream_ring_count == 8) return NULL;
         allocations++; return stream_rings[stream_ring_count++];
     }
-    if ((bytes != sizeof(CUIS_CLIENT) && bytes != sizeof(CUIS_WINDOW) &&
-         bytes != CUIS_CLIP_LIMIT * sizeof(CUIS_RECT) &&
-         (bytes < sizeof(CUIS_PACKET) || bytes > sizeof(CUIS_PACKET) + CUIS_STREAM_MAX)) ||
+    if (!bytes || bytes > sizeof(pool[0]) ||
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
         allocations == 1024)
         return NULL;
@@ -264,6 +266,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "pointer_style.c"
 #include "window_at.c"
 #include "background.c"
+#include "contexts.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -356,5 +359,7 @@ int main(void)
     rc = background_checks();
     if (rc) return rc;
     rc = background_keyboard_checks();
-    return rc ? rc : background_release_checks();
+    if (rc) return rc;
+    rc = background_release_checks();
+    return rc ? rc : context_checks();
 }

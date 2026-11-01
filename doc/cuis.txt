@@ -2636,3 +2636,62 @@ under host sanitizers. The isolated x32 GEM client covers both short and ARGV
 launches, lookup after cwd changes, wildcard searches and caller DTA protection;
 its completion marker is "x32 GEM shell queries: PASS". No additional shell
 capability bits are advertised until their corresponding operations exist.
+
+Persistent GEM shell buffers (#838)
+----------------------------------
+
+External libaes supplies shel_get/shel_put and mt_* using the standard GEMlib
+char-buffer and signed-WORD length signatures. The initial shell buffer has
+4192 zero bytes. Successful puts replace the specified prefix, preserve the
+remaining bytes and grow storage when necessary, up to 32767 bytes. Shorter
+puts never shrink it. Values belong to the GUI context and survive normal,
+raw and final application/session exits, so a restarted desktop can recall
+its saved context. Native in-kernel AES retains its existing shell storage.
+
+shel_get copies at most the current shell size; excess caller bytes remain
+unchanged. Unwritten bytes inside the initial buffer read as zero. Ordinary
+successful gets/puts return 1, and invalid arguments or operation failures
+return 0. Length zero is a successful no-op, including with a NULL buffer.
+SHEL_BUFSIZE (-1) is the standard getter size inquiry and returns the current
+size without touching the buffer; other negative lengths are unsupported.
+AES_INQUIRE output 2 advertises this size inquiry. No default-desktop, launch
+or clipboard capability is advertised by this slice.
+
+Transfers nest display ownership around their context operation. Getter data
+is staged privately until the operation and ownership cleanup succeed, so a
+failed query/read/release leaves caller output unchanged. Allocation and
+source-copy failures do not replace shared data; temporary storage is released
+or handed to the existing deferred resource cleanup. An enclosing application
+wind_update scope remains owned by the caller.
+
+The generic native primitive is CUIS_CONTEXT (65), with flat registers:
+
+  CONTEXT(session,slot,action,address,length,offset)
+
+Slots 0..3 each hold up to 32767 opaque bytes; libaes uses slot 0 for its shell
+buffer. Action 0 reads a snapshot, 1 writes a range while preserving bytes
+outside it, and 2 returns the stored extent. Read/write return E_OK or a
+negative GEMDOS error. Size returns a nonnegative byte count or a negative
+error and requires address/length/offset all zero. Zero-length transfers are
+no-ops; reads zero-fill unwritten portions of the requested bounded range.
+All calls require the caller's own registered session. Read/write also require
+its display ownership; a size query needs no display grab. These shared slots
+are intentionally accessible to registered GUI clients, not private mailboxes.
+Kernel code never interprets the bytes as GEM structures or pointers.
+
+Read snapshots and write publication use short IRQ exclusion; allocation and
+user copies happen outside that exclusion. A write publishes only after its
+complete source copy and registration/display revalidation, and rejects an
+intervening reentrant update rather than overwriting it with stale data. All
+kernel storage and dispatch remain under CONF_WITH_CUIS, selected by external
+libaes. Persistent values are bounded independently of the number of clients.
+
+Host tests cover maximum extents, zero filling, partial updates, malformed
+calls, allocation/copy failures, peer mutation during a copy and owner exit.
+Library tests check size inquiry, growth, unchanged failed-read outputs and
+nested display cleanup. The isolated GEM client passes a 6000-byte buffer
+between parent and children, checks prefix preservation after normal/_Exit
+termination and validates AES_INQUIRE. Its marker is
+"x32 GEM shared shell buffer: PASS". The boot memory fixture checks that the
+buffer survives the last GUI exit, then explicitly reclaims this intentional
+persistent test state before its ordinary allocator leak comparison.

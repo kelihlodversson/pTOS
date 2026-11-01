@@ -761,6 +761,97 @@ LONG cuis_setting(UQUAD slot, UQUAD value, UQUAD other, UQUAD other_value, UQUAD
     cuis_input_unlock(flags); return result;
 }
 
+/* Persistent bounded UI context bytes. Only userspace interprets the data. */
+typedef struct {
+    UBYTE *data;
+    ULONG bytes;
+    UQUAD generation;
+} CUIS_CONTEXT_DATA;
+static CUIS_CONTEXT_DATA ui_contexts[CUIS_CONTEXT_SLOTS];
+
+static BOOL context_client(UQUAD session, BOOL display)
+{
+    CUIS_CLIENT *client = *find_owner(run);
+    return client && session == client->handle && (!display || display_owner == client);
+}
+LONG cuis_context(UQUAD session, UQUAD slot, UQUAD action, UQUAD address, UQUAD bytes, UQUAD offset)
+{
+    CUIS_CONTEXT_DATA *context;
+    UBYTE *staged, *old = NULL;
+    ULONG size, available;
+    UQUAD flags, generation = 0;
+    LONG result;
+    if (session > 0x7fffffffULL || slot >= CUIS_CONTEXT_SLOTS || action > CUIS_CONTEXT_SIZE ||
+        offset > CUIS_CONTEXT_BYTES || bytes > CUIS_CONTEXT_BYTES-offset ||
+        (action == CUIS_CONTEXT_SIZE && (address || bytes || offset))) return EINVAL;
+    flags = cuis_input_lock();
+    if (!context_client(session,action != CUIS_CONTEXT_SIZE)) {
+        cuis_input_unlock(flags); return EACCDN;
+    }
+    context = ui_contexts+slot;
+    if (action == CUIS_CONTEXT_SIZE) {
+        result = context->bytes; cuis_input_unlock(flags); return result;
+    }
+    if (!bytes) { cuis_input_unlock(flags); return E_OK; }
+    size = action == CUIS_CONTEXT_READ ? bytes :
+        (context->bytes > offset+bytes ? context->bytes : offset+bytes);
+    cuis_input_unlock(flags);
+    staged = kalloc(size);
+    if (!staged) return ENSMEM;
+    flags = cuis_input_lock();
+    if (!context_client(session,TRUE)) result = EACCDN;
+    else if (action == CUIS_CONTEXT_WRITE && context->bytes > size) result = EAGAIN;
+    else {
+        memset(staged,0,size);
+        generation = context->generation;
+        if (action == CUIS_CONTEXT_WRITE) {
+            if (context->bytes) memcpy(staged,context->data,context->bytes);
+        } else {
+            available = offset < context->bytes ? context->bytes-offset : 0;
+            if (available > bytes) available = bytes;
+            if (available) memcpy(staged,context->data+offset,available);
+        }
+        result = E_OK;
+    }
+    cuis_input_unlock(flags);
+    if (result == E_OK && !(action == CUIS_CONTEXT_READ ?
+        kproc_copy_to_user(address,staged,bytes) : kproc_copy_from_user(staged+offset,address,bytes))) result = EIMBA;
+    flags = cuis_input_lock();
+    if (result == E_OK && !context_client(session,TRUE)) result = EACCDN;
+    if (result == E_OK && action == CUIS_CONTEXT_WRITE) {
+        if (generation != context->generation) result = EAGAIN;
+        else {
+            old = context->data; context->data = staged; staged = NULL;
+            context->bytes = size; context->generation++;
+        }
+    }
+    cuis_input_unlock(flags);
+    if (old) kfree(old);
+    if (staged) kfree(staged);
+    return result;
+}
+
+#if CONF_WITH_X86_64_MEMTEST
+/* The boot fixture verifies persistence, then reclaims just its intentional
+ * context values before checking all other allocations for leaks. */
+BOOL cuis_context_test_reset(void)
+{
+    UBYTE *pending[CUIS_CONTEXT_SLOTS];
+    ULONG i;
+    BOOL retained = FALSE;
+    UQUAD flags = cuis_input_lock();
+    if (clients) { cuis_input_unlock(flags); return FALSE; }
+    for (i = 0; i < CUIS_CONTEXT_SLOTS; i++) {
+        pending[i] = ui_contexts[i].data;
+        if (pending[i]) retained = TRUE;
+        memset(ui_contexts+i,0,sizeof(ui_contexts[i]));
+    }
+    cuis_input_unlock(flags);
+    for (i = 0; i < CUIS_CONTEXT_SLOTS; i++) if (pending[i]) kfree(pending[i]);
+    return retained;
+}
+#endif
+
 /* Generic bottom surface ownership. GEM tree pointers stay in libaes. */
 LONG cuis_background(UQUAD handle, UQUAD action)
 {

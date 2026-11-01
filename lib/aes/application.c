@@ -138,6 +138,7 @@ short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, short 
     }
     if (type == AES_INQUIRE && registered(global)) {
         if (a) *a = 1; /* APR_NOWAIT */
+        if (b) *b = 1; /* SHEL_BUFSIZE and dynamic shell buffers. */
         return 1;
     }
     return 0;
