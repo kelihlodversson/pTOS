@@ -2,6 +2,7 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 const char *kproc_executable_name(PD *pd);
+long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 #include "../../aes/cuis_session.c"
 
 static MFORM displayed_pointer;
@@ -368,5 +369,9 @@ int main(void)
     rc = background_release_checks();
     if (rc) return rc;
     rc = context_checks();
-    return rc ? rc : child_completion_checks();
+    if (rc) return rc;
+    rc = child_completion_checks();
+    if (rc) return rc;
+    rc = button_resume_checks();
+    return rc ? rc : child_launch_checks();
 }

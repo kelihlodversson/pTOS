@@ -423,7 +423,20 @@ static WORD envsize(char *env)
  */
 static PD *cur_p;
 
+#if CONF_WITH_CUIS
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token);
 long xexec(WORD flag, char *path, char *tail, char *env)
+{
+    return exec_observed(flag,path,tail,env,0,0);
+}
+long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
+{
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token));
+}
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token)
+#else
+long xexec(WORD flag, char *path, char *tail, char *env)
+#endif
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -711,7 +724,11 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
 #if CONF_WITH_NATIVE_SCHED
     if (flag == PE_ASYNC_LOADGO) {
+#if CONF_WITH_CUIS
+        rc = ksched_spawn_observed(cur_p,session,token);
+#else
         rc = ksched_spawn(cur_p);
+#endif
         if (rc < 0) proc_discard_accessory(cur_p);
         return rc;
     }

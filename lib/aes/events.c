@@ -73,7 +73,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     }
     if (((events & MU_MESAG) || frame_work) && messages(session, global) < 0) return 0;
     if (events & MU_MESAG) {
-        if (aes_child_messages(session) < 0) return 0;
+        child_failed = aes_child_messages(session) < 0;
         mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD;
     }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;

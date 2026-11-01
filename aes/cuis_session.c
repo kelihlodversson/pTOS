@@ -10,6 +10,9 @@
 #include "string.h"
 #include "mform.h"
 #include "../bdos/kproc.h"
+#include "../bdos/fs.h"
+#include "../bdos/proc.h"
+#include "../bdos/uaccess.h"
 
 extern PD *run;
 
@@ -102,6 +105,8 @@ typedef struct cuis_client {
     CUIS_INPUT_WAIT *input_wait; /* Resident syscall stack, only while blocked. */
     CUIS_INPUT_WAIT button_resume;
     BOOL button_resume_active;
+    CUIS_POINTER button_resume_edges[CUIS_POINTER_CAPACITY];
+    UWORD button_resume_head, button_resume_count;
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
     UWORD surface_height, surface_events;
@@ -416,16 +421,43 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
         client->input_wait : client->button_resume_active ? &client->button_resume : NULL;
     if (changed) { client->recent_count = 1; client->recent_buttons = pointer_buttons; }
     expire_button_wait(wait);
-    if (changed && (!wait || (wait->ready & CUIS_READY_BUTTON))) {
-        if (client->edge_count == CUIS_POINTER_CAPACITY) {
-            client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
-            client->edge_count--;
+    if (changed && (client->button_resume_active || !wait || (wait->ready & CUIS_READY_BUTTON))) {
+        if (client->button_resume_active && !(wait->ready & CUIS_READY_BUTTON)) {
+            if (client->button_resume_count == CUIS_POINTER_CAPACITY) {
+                client->button_resume_head = (client->button_resume_head+1) % CUIS_POINTER_CAPACITY;
+                client->button_resume_count--;
+            }
+            event = &client->button_resume_edges[(client->button_resume_head+client->button_resume_count++) % CUIS_POINTER_CAPACITY];
+        } else {
+            if (client->edge_count == CUIS_POINTER_CAPACITY) {
+                client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
+                client->edge_count--;
+            }
+            event = &client->button_edges[(client->edge_head + client->edge_count++) % CUIS_POINTER_CAPACITY];
         }
-        cuis_input_snapshot(&x, &y, &buttons, &modifiers);
-        event = &client->button_edges[(client->edge_head + client->edge_count++) % CUIS_POINTER_CAPACITY];
+        cuis_input_snapshot(&x,&y,&buttons,&modifiers);
         event->x = pointer_x; event->y = pointer_y;
         event->buttons = pointer_buttons; event->state = modifiers;
     }
+}
+/* Cached edges belong to the resumed predicate only after a compatible
+ * wait consumes it. Abandonment returns them ahead of later normal history. */
+static void abandon_button_resume(CUIS_CLIENT *client)
+{
+    CUIS_POINTER edges[CUIS_POINTER_CAPACITY];
+    UWORD i, count = client->button_resume_count+client->edge_count;
+    UWORD skip = count > CUIS_POINTER_CAPACITY ? count-CUIS_POINTER_CAPACITY : 0;
+    if (!client->button_resume_active) return;
+    for (i = skip; i < count; i++) {
+        if (i < client->button_resume_count)
+            edges[i-skip] = client->button_resume_edges[(client->button_resume_head+i) % CUIS_POINTER_CAPACITY];
+        else
+            edges[i-skip] = client->button_edges[(client->edge_head+i-client->button_resume_count) % CUIS_POINTER_CAPACITY];
+    }
+    client->edge_head = 0; client->edge_count = count-skip;
+    memcpy(client->button_edges,edges,client->edge_count*sizeof(edges[0]));
+    client->button_resume_active = FALSE;
+    client->button_resume_head = client->button_resume_count = 0;
 }
 static void pointer_enqueue(CUIS_WINDOW *window, ULONG changed, BOOL inside)
 {
@@ -1116,6 +1148,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         }
         if (mouse_available(client)) {
             if (acquire == CUIS_MOUSE_FRESH) {
+                abandon_button_resume(client);
                 memcpy(client->saved_edges,client->button_edges,sizeof(client->button_edges));
                 client->saved_head = client->edge_head; client->saved_count = client->edge_count;
                 client->saved_recent_count = client->recent_count; client->saved_recent_buttons = client->recent_buttons;
@@ -1233,6 +1266,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
         client->button_resume_active = FALSE;
+        client->button_resume_head = client->button_resume_count = 0;
         memset(client->children,0,sizeof(client->children));
         client->child_count = 0;
         client->isolated_mouse = FALSE;
@@ -1813,6 +1847,7 @@ typedef struct {
 typedef struct {
     CUIS_CLIENT *client;
     ULONG events, minimum, start, duration;
+    BOOL resumed_button;
     CUIS_INPUT_WAIT input;
 } CUIS_SESSION_WAIT_STATE;
 
@@ -1984,10 +2019,13 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     flags = cuis_input_lock();
     memset(&wait.input, 0, sizeof(wait.input));
     wait.input.events = (ULONG)events;
+    wait.resumed_button = FALSE;
     if ((events & CUIS_READY_BUTTON) && client->button_resume_active) {
         wait.input = client->button_resume;
         wait.input.events = (ULONG)events;
         client->button_resume_active = FALSE;
+        client->button_resume_head = client->button_resume_count = 0;
+        wait.resumed_button = TRUE;
         sample_input(client,&wait.input,FALSE);
     } else if (events & CUIS_READY_INPUT) {
         sample_input(client,&wait.input,TRUE);
@@ -2011,11 +2049,12 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         if (ready) {
             if (events & CUIS_READY_INPUT) {
                 if (!(ready & CUIS_READY_BUTTON)) {
-                    if ((ready & CUIS_READY_CHILD) && wait.input.tracking) {
+                    if (((ready & CUIS_READY_CHILD) || wait.resumed_button) && wait.input.tracking) {
                         client->button_resume = wait.input;
                         client->button_resume.events = CUIS_READY_BUTTON;
                         client->button_resume.ready = 0;
                         client->button_resume_active = TRUE;
+                        client->button_resume_head = client->button_resume_count = 0;
                     }
                     wait.input.tracking = FALSE;
                     sample_input(client, &wait.input, FALSE);
@@ -2080,7 +2119,7 @@ LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c,
     else if (function == CUIS_INPUT_BUTTON) {
         if (client->input_filter.mask != (ULONG)a || client->input_filter.state != (ULONG)b ||
             client->input_filter.clicks != (ULONG)c || client->input_filter.invert != (BOOL)d)
-            client->button_resume_active = FALSE;
+            abandon_button_resume(client);
         client->input_filter.mask = (ULONG)a; client->input_filter.state = (ULONG)b;
         client->input_filter.clicks = (ULONG)c; client->input_filter.invert = (BOOL)d;
     } else if (function == CUIS_INPUT_INTERVAL) {
@@ -2654,5 +2693,52 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
 child_done:
     cuis_input_unlock(flags);
     if (storage) kfree(storage);
+    return result;
+}
+
+/* The existing GEMDOS loader keeps fixed-address ET_EXEC images at their link
+ * address. A stack-scoped observer reaches spawn before user execution. */
+LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *child)
+{
+    CUIS_CLIENT *client;
+    LONG result = EACCDN, pid = kproc_pid(child);
+    UWORD i, j;
+    UQUAD flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != session || pid <= 0) goto spawn_bound;
+    for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+        if (token && client->children[i].token == token && !client->children[i].pid) break;
+    if (i == CUIS_CHILDREN_PER_SESSION) goto spawn_bound;
+    for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
+        if (client->children[j].pid == pid) goto spawn_bound;
+    client->children[i].pid = (WORD)pid;
+    result = E_OK;
+spawn_bound:
+    cuis_input_unlock(flags); return result;
+}
+LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment)
+{
+    CUIS_CLIENT *client;
+    UQUAD flags;
+    UWORD i;
+    LONG result;
+    long args[7];
+    if (session > 0x7fffffffULL || !token || token > 0x7fffffffULL) return EINVAL;
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
+    for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+        if (client->children[i].token == token && !client->children[i].pid) break;
+    cuis_input_unlock(flags);
+    if (i == CUIS_CHILDREN_PER_SESSION) return EACCDN;
+    args[0] = 0x4b; args[1] = PE_ASYNC_LOADGO;
+    args[2] = (long)path; args[3] = (long)tail; args[4] = (long)environment;
+    args[5] = args[6] = 0;
+    result = (LONG)bdos_check_user_args(args);
+    if (!result)
+        result = (LONG)xexec_observed((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
+                                     (char *)(uintptr_t)environment,(ULONG)session,(ULONG)token);
+    if (result < 0)
+        (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
     return result;
 }

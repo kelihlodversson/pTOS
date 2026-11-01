@@ -68,6 +68,11 @@ typedef struct {
     WORD reserved;               /* zero: no pointer or extended payload */
     WORD data[5];                /* opaque values, never kernel pointers */
 } AES_CLIENT_MESSAGE;
+/* Legacy-only clients retain their source spelling. Standard GEM headers own
+ * AES_MESSAGE as a capability selector when both interfaces are included. */
+#ifndef AES_MESSAGE
+typedef AES_CLIENT_MESSAGE AES_MESSAGE;
+#endif
 
 typedef struct {
     UWORD events;

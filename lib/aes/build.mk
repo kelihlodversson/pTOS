@@ -157,7 +157,7 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/ASYNC.TOS
 endif
 
-obj/libaes/GEM.TOS: tests/cuis/gem.c tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEM.TOS: tests/cuis/gem.c obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -308,3 +308,7 @@ obj/libaes/shell_metadata.o: lib/aes/shell_metadata.c lib/aes/application.h lib/
 obj/libaes/children.o: lib/aes/children.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/gem.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
+
+obj/libaes/FIXED.PRG: tests/cuis/fixed_child.c
+	@mkdir -p $(@D)
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Os -fno-stack-protector -Wl,-e,_start -o $@ $<

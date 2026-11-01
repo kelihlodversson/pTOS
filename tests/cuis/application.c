@@ -375,6 +375,17 @@ static int child_message_checks(void)
                          sentinel,100,NULL,NULL,NULL,NULL,&key,&clicks) == (MU_KEYBD|MU_BUTTON|MU_TIMER));
         CHECK(key == 0x1e61 && clicks == 2 && sentinel[0] == 99 && child_status);
     }
+    /* A failure already present before entering the wait cannot mask a
+     * zero timer or input that is queued independently of the completion. */
+    input_ready = 0;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                    message,0,NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && child_status);
+    input_ready = CUIS_READY_KEY;
+    {
+        short key = 0;
+        CHECK(evnt_multi(MU_MESAG|MU_KEYBD,0,0,0,0,0,0,0,0,0,0,0,0,0,
+                        message,0,NULL,NULL,NULL,NULL,&key,NULL) == MU_KEYBD && key == 0x1e61 && child_status);
+    }
     child_publish_error = 0; input_ready = 0;
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !__builtin_memcmp(message,expected,16));
     return 0;

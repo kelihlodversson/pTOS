@@ -374,6 +374,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
              fn == CUIS_DISPLAY_INFO ? cuis_display_info(frame->rdi) :
              fn == CUIS_WINDOWS_RESET ? cuis_windows_reset(frame->rdi) :
              fn == CUIS_CONTEXT ? cuis_context(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
+             fn == CUIS_CHILD_LAUNCH ? cuis_child_launch(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
              (fn == CUIS_CHILD_WATCH || fn == CUIS_CHILD_RESULT || fn == CUIS_CHILD_PUBLISH) ?
                  cuis_child_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10) :
              fn == CUIS_SETTING ? cuis_setting(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :

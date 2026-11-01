@@ -25,6 +25,8 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument);
  * Spawn consumes an unprepared, loaded basepage only on success. */
 BOOL ksched_spawn_allowed(void);
 LONG ksched_spawn(PD *pd);
+/* Internal observed launch, available only with CUIS. */
+LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token);
 LONG ksched_yield(void);
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);

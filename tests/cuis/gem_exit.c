@@ -53,6 +53,9 @@ int gem_exit_checks(short *global)
     VERIFY(pid > 0 && process(0x13a,pid,0,0,0) == (int32_t)(((uint32_t)pid << 16) | 0x34));
     VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,0x1234));
     VERIFY(receive(message,0,global) == MU_TIMER);
+    /* A fixed ET_EXEC without relocation tables must keep its link address. */
+    pid = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\FIXED.PRG",tail);
+    VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,0x2468));
     /* Completion/reaping of A before launching B must preserve exit FIFO. */
     tail[1] = 'e';
     earlier = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail);

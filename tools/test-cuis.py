@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                     "--config", "configs/pc-x86_64_defconfig", "--header",
                     str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")],
                    check=True)
-    for order in (0, 1):
+    for order in (0, 1, 2):
         command = shlex.split(os.environ.get("HOSTCC", "cc"))
         command += ["-std=gnu90", "-Wall", "-Wextra", "-Werror", "-I" + temp, "-Iinclude",
                     "-DLEGACY_HEADER_FIRST=" + str(order), "tests/cuis/header_compat.c", "-o", str(work / "headers")]

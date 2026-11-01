@@ -7,8 +7,7 @@
 #include "runtime.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell failure: %d\n",__LINE__); return __LINE__; } } while (0)
 short aes_global[15] = { 0x400,-1,7 };
-static PD basepage, loaded_basepage;
-static LONG load_error, bind_error, image_frees;
+static PD basepage;
 static DL_LAUNCH launch;
 static char environment[AES_SHELL_ENV], long_prefix[AES_SHELL_ENV];
 static char short_environment[7] = { 'F','O','O','=','b','a','d' };
@@ -23,7 +22,7 @@ static int attempts, dta_calls, cwd_calls;
 static char tried[16][AES_SHELL_PATH];
 static const char *found;
 static LONG launch_result = 42;
-static LONG watch_result = 17, bound_pid, cancellations;
+static LONG watch_result = 17, cancellations, observed_launches;
 static int launches;
 static char launched_path[AES_SHELL_PATH], launched_tail[128];
 LONG aes_application_session(short *global)
@@ -33,7 +32,6 @@ unsigned long __ptos_getauxval(unsigned long type)
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
     (void)c;
-    if (function == 0x49) { image_frees++; return E_OK; }
     if (function == 0x19) { cwd_calls++; return drive; }
     if (function == 0x47) { cwd_calls++; strcpy((char *)(uintptr_t)a,cwd); return E_OK; }
     if (function == 0x2f) return get_error ? (UQUAD)(QUAD)EACCDN : (uintptr_t)current_dta;
@@ -58,28 +56,27 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     (void)e; (void)f;
     if (a != 9) return EACCDN;
     if (fn == CUIS_CHILD_RESULT) return 0;
+    if (fn == CUIS_CHILD_LAUNCH) {
+        if (b != 17 || e || f) return EINVAL;
+        strcpy(launched_path,(const char *)(uintptr_t)c);
+        memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
+        observed_launches++; launches++;
+        if (launch_result < 0) cancellations++;
+        return launch_result;
+    }
     if (fn != CUIS_CHILD_WATCH) return EINVFN;
     if (b == CUIS_CHILD_RESERVE) return watch_result;
     if (c != 17) return EACCDN;
-    if (b == CUIS_CHILD_BIND) { bound_pid = d; return bind_error; }
     if (b == CUIS_CHILD_CANCEL) { cancellations++; return E_OK; }
     return EINVFN;
 }
 UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
-    if (function != 0x4b || d || current_dta != &caller_dta) return (QUAD)EINVFN;
-    if (a == PE_ASYNC_GO_FREE) {
-        if (b || c != (uintptr_t)&loaded_basepage || bound_pid != (LONG)c) return (QUAD)EINVFN;
-        launches++; return (QUAD)launch_result;
-    }
-    if (a != PE_ASYNC_LOADGO && a != PE_LOAD) return (QUAD)EINVFN;
+    if (function != 0x4b || a != PE_ASYNC_LOADGO || d || current_dta != &caller_dta) return (QUAD)EINVFN;
+    launches++;
     strcpy(launched_path,(const char *)(uintptr_t)b);
     memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
-    if (a == PE_LOAD) {
-        loaded_basepage.p_env = 0x1234000;
-        return load_error ? (UQUAD)(QUAD)load_error : (UQUAD)(uintptr_t)&loaded_basepage;
-    }
-    launches++; return (QUAD)launch_result;
+    return (QUAD)launch_result;
 }
 
 int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
@@ -160,19 +157,13 @@ static int launch_checks(short *global)
     launch_result = 32767;
     VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal) == 32767);
     launch_result = 42;
-    VERIFY(shel_write(SWM_LAUNCH,99,CL_NORMAL,name,minimal) == 42 && bound_pid == (LONG)(uintptr_t)&loaded_basepage);
+    VERIFY(shel_write(SWM_LAUNCH,99,CL_NORMAL,name,minimal) == 42 && observed_launches == 1);
     before = launches;
     watch_result = EAGAIN;
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,name,minimal) && launches == before);
     watch_result = 17; launch_result = ENSMEM;
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,name,minimal) && cancellations == 1);
-    VERIFY(image_frees == 2);
-    launch_result = 42; before = launches;
-    load_error = EFILNF;
-    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,name,minimal) && launches == before && image_frees == 2);
-    load_error = 0; bind_error = EACCDN;
-    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,name,minimal) && launches == before && image_frees == 4);
-    bind_error = 0;
+    launch_result = 42;
     found = "GOOD\\NEXT.TOS";
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"NEXT.TOS",minimal));
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));

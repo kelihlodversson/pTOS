@@ -164,3 +164,108 @@ static int child_completion_checks(void)
 #undef CHILD_W
 #undef CHILD_R
 #undef CHILD_P
+
+/* Observed load-and-go reuses GEMDOS validation and attaches inside spawn. */
+static LONG child_validate_error, child_start_error;
+static ULONG child_start_calls;
+long bdos_check_user_args(const long *args)
+{
+    if (args[0] != 0x4b || args[1] != PE_ASYNC_LOADGO || args[2] != 0x11000 ||
+        args[3] != 0x12000 || args[4] || args[5] || args[6]) return EIMBA;
+    return child_validate_error;
+}
+long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token)
+{
+    LONG result;
+    if ((uintptr_t)path != 0x11000 || (uintptr_t)tail != 0x12000 || environment || !input_irqs) return EINVAL;
+    child_start_calls++;
+    if (child_start_error) return child_start_error;
+    result = cuis_child_bind_spawn(session,token,&third);
+    if (result != E_OK) return result;
+    test_children[0].status = (2L << 16) | 0x2468;
+    cuis_child_completed(run,2,0x2468);
+    return 2;
+}
+static int child_launch_checks(void)
+{
+    LONG session, token, other;
+    CHECK(!clients && allocations == frees);
+    next_child_token = 0; run = &first;
+    session = cuis_service(CUIS_SESSION_START,0);
+    run = &second; other = cuis_service(CUIS_SESSION_START,0); run = &first;
+    token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+    CHECK(cuis_child_launch(other,token,0x11000,0x12000,0) == EACCDN && !child_start_calls);
+    child_validate_error = EIMBA;
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == EIMBA && !child_start_calls);
+    CHECK(cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == EACCDN);
+    child_validate_error = 0;
+    token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+    child_start_error = ENSMEM;
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == ENSMEM && child_start_calls == 1);
+    CHECK(cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == EACCDN);
+    child_start_error = 0;
+    token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == 2 && child_start_calls == 2);
+    CHECK(cuis_child_service(CUIS_CHILD_RESULT,session,0,0,0) == ((2L << 16) | 0x2468));
+    CHECK(cuis_child_pid_reserved(2));
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == EACCDN && child_start_calls == 2);
+    cuis_process_exit(&first); run = &second; cuis_process_exit(run); run = &first;
+    CHECK(!clients && allocations == frees && !cuis_child_pid_reserved(2));
+    return 0;
+}
+
+static int button_resume_checks(void)
+{
+    LONG session, token, window;
+    CUIS_CLIENT *client;
+    int variant;
+    CHECK(!clients && allocations == frees);
+    run = &first; next_child_token = 0;
+    session = cuis_service(CUIS_SESSION_START,0);
+    client = *find_owner(run);
+    pointer_buttons = 0; input_pointer_source = pointer_suppressed = pointer_legacy_drag = FALSE;
+    window = cuis_window_service(CUIS_WINDOW_CREATE,0,0,300,300,0);
+    CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
+    for (variant = 0; variant < 2; variant++) {
+        test_children[0].parent = run; test_children[0].pid = 10;
+        test_children[0].reaped = test_children[0].started = FALSE; test_children[0].status = 0;
+        token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+        CHECK(cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_BIND,token,CHILD_IMAGE(10)) == E_OK);
+        client->recent_count = 0;
+        CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,1,2,0,0) == E_OK);
+        input_sleeps = 0; input_packet_mode = 2; child_idle_at = 2;
+        CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON|CUIS_READY_CHILD,0) == CUIS_READY_CHILD);
+        CHECK(client->button_resume_active && client->button_resume.count == 1);
+        CHECK(cuis_child_service(CUIS_CHILD_PUBLISH,session,(10L << 16)|0x0400,0x10000,16) == E_OK);
+        CHECK(cuis_stream_service(CUIS_STREAM_READ,session,0x20000,16,0,0) == 16);
+        if (!variant) {
+            cuis_pointer_packet(0,0,2,NULL,NULL); cuis_pointer_packet(0,0,0,NULL,NULL);
+            CHECK(client->button_resume_count == 2 && !client->edge_count);
+            CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,2,2,1,0,0) == E_OK);
+            CHECK(!client->button_resume_active && client->edge_count == 2);
+            CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON);
+            CHECK(cuis_input_config(CUIS_INPUT_RESULT,session,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK && (copied[4]&3) == 2);
+            CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,2,0,1,0,0) == E_OK);
+            CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON);
+            CHECK(cuis_input_config(CUIS_INPUT_RESULT,session,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK && !(copied[4]&3));
+            CHECK(!client->edge_count);
+        } else {
+            CHECK(cuis_stream_service(CUIS_STREAM_WRITE,session,0x10000,16,0,0) == 16);
+            CHECK(cuis_session_wait(session,16,CUIS_READY_BUTTON|CUIS_READY_STREAM,0) == CUIS_READY_STREAM);
+            CHECK(client->button_resume_active && client->button_resume.count == 1);
+            CHECK(cuis_stream_service(CUIS_STREAM_READ,session,0x20000,16,0,0) == 16);
+            CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0) == CUIS_READY_TIMER);
+            CHECK(client->button_resume_active && client->button_resume.count == 1);
+            CHECK(cuis_keyboard_event(0x001e0061));
+            CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON|CUIS_READY_KEY,0) == CUIS_READY_KEY);
+            CHECK(client->button_resume_active && client->button_resume.count == 1);
+            cuis_pointer_packet(0,0,1,NULL,NULL); cuis_pointer_packet(0,0,0,NULL,NULL);
+            CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON,0) == CUIS_READY_BUTTON);
+            CHECK(cuis_input_config(CUIS_INPUT_RESULT,session,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK && copied[1] == 2);
+            CHECK(!client->button_resume_active && !client->button_resume_count && !client->edge_count);
+        }
+    }
+    cuis_process_exit(run);
+    CHECK(!clients && allocations == frees);
+    return 0;
+}

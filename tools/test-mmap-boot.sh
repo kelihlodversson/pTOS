@@ -63,6 +63,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp obj/libaes/GEM.TOS "$work/APPS/GEMSHELL.TOS"
         cp obj/libaes/GEM.TOS "$work/APPS/GEMCHILD.PRG"
         cp obj/libaes/GEM.TOS "$work/APPS/GEMCHILD.APP"
+        cp obj/libaes/FIXED.PRG "$work/APPS/FIXED.PRG"
         : > "$work/APPS/SHELL.DAT"
         : > "$work/APPS/NEXT.DAT"
         : > "$work/FROM_ARG/SEARCH.DAT"

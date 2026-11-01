@@ -179,7 +179,12 @@ LONG ksched_yield(void)
     return E_OK;
 }
 
+#if CONF_WITH_CUIS
+LONG ksched_spawn(PD *pd) { return ksched_spawn_observed(pd,0,0); }
+LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
+#else
 LONG ksched_spawn(PD *pd)
+#endif
 {
     UWORD i;
     KERNEL_TASK *task;
@@ -195,6 +200,16 @@ LONG ksched_spawn(PD *pd)
     memset(task, 0, sizeof(*task));
     task->stack_phys = kstack_alloc(&task->stack_top);
     if (!task->stack_phys) return ENSMEM;
+#if CONF_WITH_CUIS
+    if (token) {
+        LONG result = cuis_child_bind_spawn(session,token,pd);
+        if (result != E_OK) {
+            kstack_free(task->stack_phys);
+            memset(task,0,sizeof(*task));
+            return result;
+        }
+    }
+#endif
     /* Allocate the task stack before adopting the image. Preparation maps
      * the stable controller for exit, while ancestor copies retain PPID. */
     if (!kproc_prepare_async(pd, run, scheduler.root.pd)) {
