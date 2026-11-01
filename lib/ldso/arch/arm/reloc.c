@@ -41,9 +41,7 @@ static int arm_value(uint32_t type, uint32_t bias, uint32_t symbol,
     case R_ARM_ABS32:                   /* modulo 2**32, as the ABI has it: the addend may be negative */
         *out = (uint32_t)(symbol + (uint32_t)addend);
         return DL_OK;
-    case R_ARM_RELATIVE:                /* B + A modulo 2**32, as ABS32: the addend may be negative */
-        *out = (uint32_t)(bias + (uint32_t)addend);
-        return DL_OK;
+    case R_ARM_RELATIVE: v = (int64_t)bias + (int64_t)addend; break;   /* the addend may be negative */
     case R_ARM_REL32:
         v = (int64_t)symbol + (int64_t)addend - (int64_t)place;
         if (v < INT32_MIN || v > INT32_MAX)

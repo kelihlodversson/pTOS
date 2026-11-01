@@ -1076,6 +1076,7 @@ class Metadata(unittest.TestCase):
         self.assertEqual(compute(GLOB_DAT, 0, 0x1234, 0x77), (0, 0x1234))   # S, not S + A
         self.assertEqual(compute(JUMP_SLOT, 0, 0x1234, 0x77), (0, 0x1234))
         self.assertEqual(compute(RELATIVE, 0x2000000, 0, 0x1000), (0, 0x2001000))
+        self.assertEqual(compute(RELATIVE, 0x70000000, 0, -4), (0, 0x6ffffffc))   # a negative addend
         self.assertEqual(compute(RELATIVE, 0xffffff00, 0, 0x1000)[0], -5)   # past the address space
         self.assertEqual(compute(20, 0, 0, 0)[0], -2)                        # R_ARM_COPY
         self.assertEqual(compute(0, 0, 0, 0), (0, 0))                        # NONE
