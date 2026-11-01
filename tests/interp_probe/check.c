@@ -61,7 +61,8 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         const DL_LAUNCH *saved = (const DL_LAUNCH *)(uintptr_t)launch;
         static const char short_tail[] = "\"hello world\" \"\" C:\\tmp";
         if ((launch & 3) || launch < (uintptr_t)stack ||
-            launch > 0x80000000U-sizeof(*saved) || saved->ready) return 9;
+            launch > 0x80000000U-sizeof(*saved) || saved->ready || !saved->environment ||
+            saved->environment_size < 2 || saved->environment_size > 32768) return 9;
         if (extended) {
             if (saved->tail[0] != 127) return 9;
         } else {

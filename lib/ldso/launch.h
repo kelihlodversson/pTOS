@@ -6,7 +6,7 @@
 #define DL_LAUNCH_PATH 260U
 #define DL_LAUNCH_TAIL 128U
 typedef struct {
-    uint32_t ready;
+    uint32_t ready, environment, environment_size;
     char command[DL_LAUNCH_PATH];
     unsigned char tail[DL_LAUNCH_TAIL];
 } DL_LAUNCH;

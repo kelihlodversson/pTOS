@@ -73,7 +73,7 @@ class Image(C.Structure):
 
 
 class StartInfo(C.Structure):
-    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias", "capture_launch")]
+    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias", "capture_launch", "environment")]
 
 
 class Mapping(C.Structure):
@@ -568,7 +568,7 @@ class Metadata(unittest.TestCase):
         if capture:
             tail = tail.ljust(128, b'\0')
         memory = C.create_string_buffer(capacity)
-        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, int(capture))
+        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, int(capture), 0x202000 if capture else 0)
         rsp, used = C.c_uint32(123), C.c_uint32(456)
         rc = self.lib.dl_start_stack(memory, capacity, 0x80000000,
             C.create_string_buffer(filename), len(filename) + 1,
@@ -615,8 +615,9 @@ class Metadata(unittest.TestCase):
         self.assertEqual(aux[0x5002], info.load_bias)
         if capture:
             launch = aux[0x5003] - base
-            self.assertEqual(data[launch:launch+264], bytes(264))
-            self.assertEqual(data[launch+264:launch+392], tail[:128])
+            self.assertEqual(struct.unpack_from('=III', data, launch), (0, 0x202000, len(env)))
+            self.assertEqual(data[launch+12:launch+272], bytes(260))
+            self.assertEqual(data[launch+272:launch+400], tail[:128])
             self.assertEqual(aux[0x5003] & 3, 0)
         else:
             self.assertNotIn(0x5003, aux)

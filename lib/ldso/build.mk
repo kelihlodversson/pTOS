@@ -57,9 +57,9 @@ obj/ldso/test/libleaf.so: tests/ldso_reloc/leaf.c
 obj/ldso/test/libtest.so: tests/ldso_reloc/library.c obj/ldso/test/libleaf.so
 	$(CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,libtest.so $< -Lobj/ldso/test -lleaf -o $@
 
-obj/ldso/test/probe.so: tests/interp_probe/start.S tests/interp_probe/check.c
+obj/ldso/test/probe.so: tests/interp_probe/start.S tests/interp_probe/check.c lib/ldso/launch.h
 	@mkdir -p $(@D)
-	$(CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -fvisibility=hidden -nostdlib -shared -Wl,--hash-style=sysv,-e,_start -o $@ $^
+	$(CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -fvisibility=hidden -nostdlib -shared -Wl,--hash-style=sysv,-e,_start -o $@ $(filter %.c %.S,$^)
 
 obj/ldso/test/dyntest.elf: tests/interp_probe/program.S obj/ldso/test/libtest.so
 	$(CC) $(LDSO_LDFLAGS) -mx32 -nostdlib -no-pie -Wl,--no-as-needed,--hash-style=sysv,-e,_start \

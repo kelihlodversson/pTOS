@@ -10,6 +10,7 @@ short aes_global[15] = { 0x400,-1,7 };
 static PD basepage;
 static DL_LAUNCH launch;
 static char environment[AES_SHELL_ENV], long_prefix[AES_SHELL_ENV];
+static char short_environment[7] = { 'F','O','O','=','b','a','d' };
 static char executable[AES_SHELL_PATH] = "APP\\TEST.TOS", cwd[128] = "\\START";
 static UBYTE initial_tail[128];
 static DTA caller_dta;
@@ -55,6 +56,8 @@ int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
 static void capture(void)
 {
     memcpy(launch.tail,basepage.p_cmdlin,128);
+    launch.environment = basepage.p_env;
+    launch.environment_size = basepage.p_env ? sizeof(environment) : 0;
     dl_capture_launch(&launch,executable);
     aes_library_init();
 }
@@ -135,6 +138,10 @@ int main(void)
     memset(long_prefix,'X',sizeof(long_prefix)); value = command;
     VERIFY(!shel_envrn(&value,long_prefix) && value == command);
     memset(environment,'X',sizeof(environment));
+    VERIFY(!shel_envrn(&value,"FOO=") && value == command && !shel_find(path) && dta_calls == before);
+    launch.environment = PTR_TO_USERPTR(short_environment);
+    launch.environment_size = sizeof(short_environment);
+    aes_library_init(); value = command;
     VERIFY(!shel_envrn(&value,"FOO=") && value == command && !shel_find(path) && dta_calls == before);
     basepage.p_env = 0; capture();
     VERIFY(shel_envrn(&value,"FOO=") == 1 && !value);

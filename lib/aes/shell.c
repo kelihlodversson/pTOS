@@ -15,6 +15,7 @@ DTA aes_shell_dta;
 char aes_shell_command[AES_SHELL_PATH], aes_shell_tail[128];
 char *aes_shell_environment;
 static BOOL startup_ready;
+static ULONG environment_bytes;
 static char empty_environment[2];
 
 static ULONG bounded_length(const char *text, ULONG limit)
@@ -45,8 +46,8 @@ BOOL aes_shell_path_valid(const char *path, const char *name)
 static BOOL environment_valid(void)
 {
     ULONG i;
-    if (!aes_shell_environment) return FALSE;
-    for (i = 0; i < AES_SHELL_ENV-1; i++)
+    if (!aes_shell_environment || environment_bytes < 2 || environment_bytes > AES_SHELL_ENV) return FALSE;
+    for (i = 0; i+1 < environment_bytes; i++)
         if (!aes_shell_environment[i] && !aes_shell_environment[i+1]) return TRUE;
     return FALSE;
 }
@@ -55,11 +56,12 @@ static BOOL environment_valid(void)
  * preinitializers. DT_INIT only consumes that saved state. */
 void aes_library_init(void)
 {
-    PD *basepage = (PD *)(uintptr_t)__ptos_getauxval(0x5000);
     const DL_LAUNCH *launch = (const DL_LAUNCH *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH);
     aes_resources_init();
     startup_ready = FALSE; aes_shell_command[0] = aes_shell_tail[0] = 0;
-    aes_shell_environment = basepage && basepage->p_env ? USERPTR_TO_PTR(basepage->p_env) : empty_environment;
+    aes_shell_environment = launch && launch->environment ?
+        (char *)(uintptr_t)launch->environment : empty_environment;
+    environment_bytes = launch && launch->environment ? launch->environment_size : sizeof(empty_environment);
     if (!launch || launch->ready != 1 || !*launch->command ||
         launch->tail[0] > 127 || !aes_shell_copy(aes_shell_command,launch->command,sizeof(aes_shell_command))) return;
     memcpy(aes_shell_tail,launch->tail,sizeof(aes_shell_tail));

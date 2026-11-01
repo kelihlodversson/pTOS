@@ -162,6 +162,8 @@ Required auxiliary entries:
 
 With CONF_WITH_LIBAES, the stack builder reserves an aligned DL_LAUNCH record
 and copies the complete original 128-byte GEMDOS tail before any user code.
+It also records the original environment address and actual allocation extent;
+userspace environment validation never scans beyond that range.
 LD.SO fills its bounded 260-byte qualified command and marks it ready before
 executing PREINIT_ARRAY. This preserves the launch command/directory and tail
 when a preinitializer changes cwd or overwrites the default DTA/basepage tail.

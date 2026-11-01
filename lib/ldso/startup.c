@@ -78,13 +78,17 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     if (!word(&s, 0) || !string(&s, (const unsigned char *)filename, n, &execfn))
         return DL_NO_SPACE;
     if (info->capture_launch) {
-        if (tailsize < DL_LAUNCH_TAIL) return DL_BAD_ELF;
+        if (tailsize < DL_LAUNCH_TAIL || !info->environment) return DL_BAD_ELF;
         s.back &= ~3U;
         if (s.back < s.front || s.back-s.front < sizeof(DL_LAUNCH)) return DL_NO_SPACE;
         s.back -= sizeof(DL_LAUNCH);
         launch = s.base+s.back;
+        for (i = 0; i < sizeof(uint32_t); i++) {
+            buffer[s.back+sizeof(uint32_t)+i] = ((const unsigned char *)&info->environment)[i];
+            buffer[s.back+2*sizeof(uint32_t)+i] = ((const unsigned char *)&envsize)[i];
+        }
         for (i = 0; i < DL_LAUNCH_TAIL; i++)
-            buffer[s.back+sizeof(uint32_t)+DL_LAUNCH_PATH+i] = tail[i];
+            buffer[s.back+3*sizeof(uint32_t)+DL_LAUNCH_PATH+i] = tail[i];
     }
     /* Locate the end of ordinary environment entries and the extended argv. */
     pos = 0; envend = 0;

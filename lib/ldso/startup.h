@@ -9,7 +9,7 @@
 #define DL_AT_PTOS_LOADBIAS 0x5002
 
 typedef struct {
-    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias, capture_launch;
+    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias, capture_launch, environment;
 } DL_START_INFO;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
@@ -24,7 +24,7 @@ typedef struct {
  * With a short tail, ARGV= and its payload are omitted but not used as argv.
  * Without extended ARGV, argv[0] and AT_EXECFN are the supplied filename.
  * capture_launch reserves a DL_LAUNCH auxiliary record and copies the complete
- * 128-byte original tail before user code; the interpreter qualifies its
+ * 128-byte original tail and original environment address/extent before user code; the interpreter qualifies its
  * command before preinitializers. A zero flag retains the existing stack ABI.
  * The environment must be double-NUL terminated within envsize (<=32768).
  */

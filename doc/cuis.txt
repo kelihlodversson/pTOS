@@ -2606,8 +2606,10 @@ an ordinary process-local pointer into that environment. Lookup stops before
 the ARGV= marker and argument payload, matching the startup envp boundary;
 variable-looking arguments never supply environment values. Empty values remain
 empty; PATH parsing does not treat the next environment variable as a path.
-NULL arguments, invalid globals or a malformed unterminated environment
-return 0 without changing the output pointer.
+The snapshot retains the original environment address and actual allocation
+extent, so validation does not scan a short block up to the 32 KB ABI maximum.
+NULL arguments, invalid globals or a malformed unterminated environment return
+0 without changing the output pointer.
 
 shel_find uses the original native AES search core in aes/shared/gemshquery.c:
 first the basename in the launch application directory, then the supplied
