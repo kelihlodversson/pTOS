@@ -21,7 +21,7 @@ int main(int argc, char **argv, char **envp)
     ULONG w[4], i;
     char tail[128] = { 1, 'c', 0 };
     static const char environment[] = "SHELLTEST=value\0PATH=C:\\BAD;C:\\RPATH,C:\\LOOKUP\0\0";
-    static const char argv_environment[] = "SHELLTEST=value\0PATH=C:\\RPATH\0ARGV=\0fake-name\0c\0\0";
+    static const char argv_environment[] = "SHELLTEST=value\0ARGV=\0fake-name\0c\0PATH=C:\\FROM_ARG\0\0";
     (void)envp;
     GEM_TEST_CHECK(argc >= 1 && gl_apid == -1 && aes_global[2] == -1 && aes_global[3] == 0);
     GEM_TEST_CHECK(appl_yield() == 0 && evnt_timer(0) == 0 && appl_exit() == 0);
@@ -32,7 +32,7 @@ int main(int argc, char **argv, char **envp)
     aes_global[3] = 1234;
     GEM_TEST_CHECK(mt_appl_yield(globals) == 1 && mt_evnt_timer(1, globals) == 1);
     GEM_TEST_CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
-    GEM_TEST_CHECK(gem_shell_checks(globals,argc > 1) == 0);
+    GEM_TEST_CHECK(gem_shell_checks(globals,argc > 1,argc > 2) == 0);
     if (argc > 1) {
         if (argv[1][0] == 'x') _Exit(41);
         return 37; /* Ordinary CRT finalization closes implicit registration. */
@@ -42,7 +42,7 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 3; i++) {
         GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_MESSAGE_SEND, handle, 11, 22, 33, 44, 0) == E_OK);
         tail[0] = i == 2 ? 127 : 1; tail[1] = i == 1 ? 'x' : 'c';
-        child = PROC(0x4b, 100, (uintptr_t)"C:\\APPS\\GEMSHELL.TOS", (uintptr_t)tail, (uintptr_t)(i == 2 ? argv_environment : environment));
+        child = PROC(0x4b, 100, (uintptr_t)"APPS\\GEMSHELL.TOS", (uintptr_t)tail, (uintptr_t)(i == 2 ? argv_environment : environment));
         GEM_TEST_CHECK(child > 0 && child != id);
         GEM_TEST_CHECK(evnt_timer(20) == 1 && appl_yield() == 1);
         status = PROC(0x13a, child, 0, 0, 0);

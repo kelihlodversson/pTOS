@@ -2,13 +2,14 @@
 #ifndef LDSO_STARTUP_H
 #define LDSO_STARTUP_H
 #include "dynamic.h"
+#include "launch.h"
 #define DL_START_CAPACITY 131072
 #define DL_AT_PTOS_BASEPAGE 0x5000
 #define DL_AT_PTOS_BOOTDRIVE 0x5001
 #define DL_AT_PTOS_LOADBIAS 0x5002
 
 typedef struct {
-    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias;
+    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias, capture_launch;
 } DL_START_INFO;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
@@ -22,6 +23,9 @@ typedef struct {
  * after it are omitted from envp. ARGV=NULL: extensions are unsupported.
  * With a short tail, ARGV= and its payload are omitted but not used as argv.
  * Without extended ARGV, argv[0] and AT_EXECFN are the supplied filename.
+ * capture_launch reserves a DL_LAUNCH auxiliary record and copies the complete
+ * 128-byte original tail before user code; the interpreter qualifies its
+ * command before preinitializers. A zero flag retains the existing stack ABI.
  * The environment must be double-NUL terminated within envsize (<=32768).
  */
 int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,

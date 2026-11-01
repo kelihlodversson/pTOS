@@ -7,9 +7,11 @@
 #include "transport.h"
 #include "gemerror.h"
 #include "ptos.h"
+#include "launch.h"
 #include "string.h"
 
 SHELL_CONTEXT *aes_shell;
+DTA aes_shell_dta;
 char aes_shell_command[AES_SHELL_PATH], aes_shell_tail[128];
 char *aes_shell_environment;
 static BOOL startup_ready;
@@ -49,24 +51,18 @@ static BOOL environment_valid(void)
     return FALSE;
 }
 
-/* DT_INIT runs before the application's constructors or main can change cwd.
- * Startup metadata already belongs to this process through the existing ABI. */
+/* The interpreter completed the optional launch record before executable
+ * preinitializers. DT_INIT only consumes that saved state. */
 void aes_library_init(void)
 {
-    PD *basepage = (PD *)(uintptr_t)__ptos_getauxval(0x5000); /* DL_AT_PTOS_BASEPAGE */
-    const char *command = (const char *)(uintptr_t)__ptos_getauxval(31); /* AT_EXECFN */
-    char path[AES_SHELL_PATH];
-    ULONG i;
+    PD *basepage = (PD *)(uintptr_t)__ptos_getauxval(0x5000);
+    const DL_LAUNCH *launch = (const DL_LAUNCH *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH);
     aes_resources_init();
     startup_ready = FALSE; aes_shell_command[0] = aes_shell_tail[0] = 0;
     aes_shell_environment = basepage && basepage->p_env ? USERPTR_TO_PTR(basepage->p_env) : empty_environment;
-    if (!basepage || bounded_length(command,sizeof(path)) == sizeof(path) || !*command ||
-        !*aes_resource_directory() || (UBYTE)basepage->p_cmdlin[0] > 127) return;
-    memcpy(path,command,strlen(command)+1);
-    for (i = 0; path[i]; i++) if (path[i] == '/') path[i] = '\\';
-    if (!aes_shell_copy(aes_shell_command,aes_resource_directory(),sizeof(aes_shell_command)) ||
-        !aes_shell_append(aes_shell_command,aes_shell_name(path),sizeof(aes_shell_command))) return;
-    memcpy(aes_shell_tail,basepage->p_cmdlin,sizeof(aes_shell_tail));
+    if (!launch || launch->ready != 1 || !*launch->command ||
+        launch->tail[0] > 127 || !aes_shell_copy(aes_shell_command,launch->command,sizeof(aes_shell_command))) return;
+    memcpy(aes_shell_tail,launch->tail,sizeof(aes_shell_tail));
     startup_ready = TRUE;
 }
 void aes_shell_set_dta(void *dta)
@@ -77,8 +73,11 @@ void aes_shell_set_dta(void *dta)
 }
 WORD aes_shell_first(char *path, WORD attributes)
 {
+    LONG result;
     if (!aes_shell->ok || !*path) return EFILNF;
-    return (WORD)aes_gemdos_call(0x4e,(uintptr_t)path,attributes,0);
+    result = (LONG)aes_gemdos_call(0x4e,(uintptr_t)path,attributes,0);
+    if (result < 0 && result != EFILNF && result != EPTHNF && result != ENMFIL) aes_shell->ok = FALSE;
+    return (WORD)result;
 }
 WORD mt_shel_read(char *command, char *tail, WORD *global)
 {

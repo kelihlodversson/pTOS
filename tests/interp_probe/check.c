@@ -1,5 +1,6 @@
 /* Standard ELF32 argc/argv/envp/auxv and private mapping probe (#660). */
 #include <stdint.h>
+#include "../../lib/ldso/launch.h"
 extern unsigned char _start[] __attribute__((visibility("hidden")));
 
 static int equal(const char *a, const char *b)
@@ -12,7 +13,7 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer);
 uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
 {
     uint32_t argc = stack[0], i, at, phdr = 0, phnum = 0, entry = 0, base = 0;
-    uint32_t pagesz = 0, execfn = 0, basepage = 0, phent = 0, bias = UINT32_MAX;
+    uint32_t pagesz = 0, execfn = 0, basepage = 0, phent = 0, bias = UINT32_MAX, launch = 0;
     const uint32_t *v = stack + 1;
     int extended;
 
@@ -44,6 +45,7 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         case 0x5000: basepage = v[1]; break;
         case 0x5001: if (v[1] >= 26) return 5; break;
         case 0x5002: bias = v[1]; break;
+        case DL_AT_PTOS_LAUNCH: launch = v[1]; break;
         default: return 5;
         }
     }
@@ -55,6 +57,13 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
                    !equal((const char *)(uintptr_t)execfn, "C:\\DYNPIE.TOS")) ||
         phdr < 0x400000 || phdr >= 0x800000 - phnum * 32)
         return 6;
+    if (launch) {
+        const DL_LAUNCH *saved = (const DL_LAUNCH *)(uintptr_t)launch;
+        const unsigned char *tail = (const unsigned char *)(uintptr_t)(basepage+128);
+        if ((launch & 3) || launch < (uintptr_t)stack ||
+            launch > 0x80000000U-sizeof(*saved) || saved->ready) return 9;
+        for (i = 0; i < DL_LAUNCH_TAIL; i++) if (saved->tail[i] != tail[i]) return 9;
+    }
     for (i = 0; i < phnum; i++) {
         const uint32_t *ph = (const uint32_t *)(uintptr_t)(phdr + i * 32);
         if (ph[0] == 6 && (phdr < ph[2] || bias != phdr - ph[2]))

@@ -20,6 +20,7 @@
 #define SH_COMMAND D.s_cmd
 #define SH_TAIL ad_stail
 #define SH_ENVIRONMENT ad_envrn
+#define SH_ENV_ENTRY(p) TRUE
 #define SH_APPDIR rlr->p_appdir
 #define SH_WORK D.g_work
 #define SH_DTA D.g_dta
@@ -76,7 +77,7 @@ void sh_envrn(char **ppath, const char *psrch)
     /*
      * scan environment string until double nul
      */
-    for (p = SH_ENVIRONMENT; *p; )
+    for (p = SH_ENVIRONMENT; *p && SH_ENV_ENTRY(p); )
     {
         if (strncmp(p, psrch, len) == 0)
         {
@@ -175,8 +176,8 @@ static WORD findfile(char *pspec)
     }
 
     /* (2) search in the current directory */
-    if (SH_COPY(SH_WORK, pspec, SH_WORK_BYTES) &&
-        dos_sfirst(SH_WORK, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
+    /* Fsfirst reads its filespec; no work-buffer copy is needed here. */
+    if (dos_sfirst(pspec, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
     {
         KDEBUG(("sh_find(2): returning pspec='%s'\n",pspec));
         return 1;

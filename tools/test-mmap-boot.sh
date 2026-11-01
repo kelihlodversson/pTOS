@@ -59,9 +59,11 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp aes/gem.rsc "$work/GEMORIG.RSC"
         python3 tools/make-cuis-resource.py --colour-icons "$work/GEMCOLOR.RSC"
         python3 tools/make-cuis-resource.py --colour-icons-256 "$work/GEM256.RSC"
-        mkdir -p "$work/APPS" "$work/RPATH" "$work/WORK"
+        mkdir -p "$work/APPS" "$work/RPATH" "$work/WORK" "$work/FROM_ARG"
         cp obj/libaes/GEM.TOS "$work/APPS/GEMSHELL.TOS"
         : > "$work/APPS/SHELL.DAT"
+        : > "$work/APPS/NEXT.DAT"
+        : > "$work/FROM_ARG/SEARCH.DAT"
         : > "$work/WORK/CURRENT.DAT"
         : > "$work/ROOT.DAT"
         : > "$work/RPATH/SEARCH.DAT"
@@ -103,7 +105,7 @@ if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/CUIS.TOS" ]; then
-    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS" "$work/GEMTEST.RSC" "$work/GEMORIG.RSC" "$work/GEMCOLOR.RSC" "$work/GEM256.RSC" "$work/APPS" "$work/RPATH" "$work/WORK" "$work/ROOT.DAT"
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS" "$work/GEMTEST.RSC" "$work/GEMORIG.RSC" "$work/GEMCOLOR.RSC" "$work/GEM256.RSC" "$work/APPS" "$work/RPATH" "$work/WORK" "$work/FROM_ARG" "$work/ROOT.DAT"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS

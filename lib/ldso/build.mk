@@ -32,7 +32,7 @@ obj/ldso/image_plan.o: lib/ldso/image_plan.c lib/ldso/image.h lib/ldso/dynamic.h
 	@mkdir -p $(@D)
 	$(CC) $(LDSO_CFLAGS) -c $< -o $@
 
-obj/ldso/startup.o: lib/ldso/startup.c lib/ldso/startup.h lib/ldso/dynamic.h $(AUTOCONF_H)
+obj/ldso/startup.o: lib/ldso/startup.c lib/ldso/launch.h lib/ldso/startup.h lib/ldso/dynamic.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LDSO_CFLAGS) -c $< -o $@
 
@@ -87,7 +87,7 @@ endif
 
 # Standalone interpreter, independent of libc and the kernel link engine.
 LDSO_START-$(ARCH_X86_64) = lib/ldso/arch/x32/start.S lib/ldso/arch/x32/bootstrap.c lib/ldso/arch/x32/syscall.c
-obj/ldso/ld.so: lib/ldso/runtime.c $(LDSO_START-y) obj/ldso/libldso.a \
+obj/ldso/ld.so: lib/ldso/runtime.c lib/ldso/launch.c lib/ldso/launch.h $(LDSO_START-y) obj/ldso/libldso.a \
                 lib/ldso/runtime.h lib/ldso/exports.map $(X32_PROBE_LDSO_HEADERS) lib/ldso/startup.h
 	$(CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -fvisibility=hidden -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-e,_start,--version-script,lib/ldso/exports.map \

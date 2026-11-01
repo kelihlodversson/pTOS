@@ -102,7 +102,7 @@ obj/libaes/gemrsaddr.o: aes/shared/gemrsaddr.c lib/aes/resource_bindings.h lib/a
 obj/libaes/gemrcfix.o: aes/shared/gemrcfix.c aes/shared/gemrcfix.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/resources.o: lib/aes/resources.c aes/shared/gemrcfix.h lib/aes/resource_context.h lib/aes/application.h lib/aes/layout.h $(AUTOCONF_H)
+obj/libaes/resources.o: lib/aes/resources.c lib/ldso/launch.h aes/shared/gemrcfix.h lib/aes/resource_context.h lib/aes/application.h lib/aes/layout.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemframe.o: aes/shared/gemframe.c aes/shared/gemframe.h aes/shared/gemframeids.h $(AUTOCONF_H)
@@ -290,7 +290,7 @@ obj/libaes/selector_miscutil.o: util/miscutil.c include/i18nconf.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
 
-obj/libaes/shell.o: lib/aes/shell.c lib/aes/shell_context.h lib/aes/resource_context.h lib/aes/transport.h lib/aes/application.h lib/ldso/client/ptos.h include/gem.h include/bdosdefs.h include/userptr.h $(AUTOCONF_H)
+obj/libaes/shell.o: lib/aes/shell.c lib/ldso/launch.h lib/aes/shell_context.h lib/aes/resource_context.h lib/aes/transport.h lib/aes/application.h lib/ldso/client/ptos.h include/gem.h include/bdosdefs.h include/userptr.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemshquery.o: aes/shared/gemshquery.c aes/shared/gemshquery.h lib/aes/shell_bindings.h lib/aes/shell_context.h lib/aes/resource_context.h $(AUTOCONF_H)

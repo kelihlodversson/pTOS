@@ -7,11 +7,11 @@
 #define AES_SHELL_ENV 32768UL
 typedef struct {
     char work[AES_SHELL_PATH];
-    DTA dta;
     void *original_dta;
     BOOL ok;
 } SHELL_CONTEXT;
 extern SHELL_CONTEXT *aes_shell;
+extern DTA aes_shell_dta;
 extern char aes_shell_command[AES_SHELL_PATH], aes_shell_tail[128];
 extern char *aes_shell_environment;
 void aes_library_init(void);

@@ -4,9 +4,11 @@
 #include "transport.h"
 #include "gemerror.h"
 #include "string.h"
+#include "runtime.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell failure: %d\n",__LINE__); return __LINE__; } } while (0)
 short aes_global[15] = { 0x400,-1,7 };
 static PD basepage;
+static DL_LAUNCH launch;
 static char environment[AES_SHELL_ENV], long_prefix[AES_SHELL_ENV];
 static char executable[AES_SHELL_PATH] = "APP\\TEST.TOS", cwd[128] = "\\START";
 static UBYTE initial_tail[128];
@@ -14,13 +16,14 @@ static DTA caller_dta;
 static void *current_dta = &caller_dta;
 static LONG drive = 2;
 static BOOL get_error, install_error, restore_error, search_error, registration_error;
+static LONG first_error;
 static int attempts, dta_calls, cwd_calls;
 static char tried[16][AES_SHELL_PATH];
 static const char *found;
 LONG aes_application_session(short *global)
 { return global && global[2] == 7 && !registration_error ? 9 : EACCDN; }
 unsigned long __ptos_getauxval(unsigned long type)
-{ return type == 0x5000 ? (uintptr_t)&basepage : type == 31 ? (uintptr_t)executable : 0; }
+{ return type == DL_AT_PTOS_LAUNCH ? (uintptr_t)&launch : type == 0x5000 ? (uintptr_t)&basepage : type == 31 ? (uintptr_t)executable : 0; }
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
     (void)c;
@@ -38,9 +41,22 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         memset(current_dta,0x66,sizeof(DTA));
         if (attempts < 16) strcpy(tried[attempts],(char *)(uintptr_t)a);
         attempts++;
+        if (attempts == 1 && first_error) return (QUAD)first_error;
         return found && !search_error && !strcmp(found,(char *)(uintptr_t)a) ? E_OK : (QUAD)EFILNF;
     }
     return (QUAD)EINVFN;
+}
+int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
+                  uint64_t d, uint64_t e, uint64_t f)
+{
+    (void)d; (void)e; (void)f;
+    return (int64_t)aes_gemdos_call(fn,a,b,c);
+}
+static void capture(void)
+{
+    memcpy(launch.tail,basepage.p_cmdlin,128);
+    dl_capture_launch(&launch,executable);
+    aes_library_init();
 }
 static int search(const char *input, const char *hit, const char *result, int count)
 {
@@ -58,6 +74,7 @@ static int search(const char *input, const char *hit, const char *result, int co
 }
 int main(void)
 {
+    static const char argv_env[] = "FOO=value\0ARGV=\0alias\0PATH=FROM_ARG\0\0";
     static const char env[] = "FOO=value\0PATH=BAD;GOOD,OTHER\0NEXT=not-a-path\0\0";
     char command[AES_SHELL_PATH], tail[128], path[AES_SHELL_PATH], *value;
     short global[15];
@@ -67,7 +84,7 @@ int main(void)
     initial_tail[0] = 5; memcpy(initial_tail+1,"a b c",5);
     for (i = 6; i < 128; i++) initial_tail[i] = (UBYTE)i;
     memcpy(basepage.p_cmdlin,initial_tail,128); memset(&caller_dta,0x55,sizeof(DTA));
-    aes_library_init();
+    capture();
     strcpy(cwd,"\\CHANGED"); drive = 3; executable[0] = 'X'; basepage.p_cmdlin[1] = 'X';
     VERIFY(mt_shel_read(command,tail,global) == 1 && !strcmp(command,"C:\\START\\APP\\TEST.TOS"));
     VERIFY(!memcmp(tail,initial_tail,128) && shel_read(command,tail) == 1);
@@ -105,6 +122,11 @@ int main(void)
     restore_error = TRUE;
     VERIFY(!search("DATA.TXT","C:\\START\\APP\\DATA.TXT",NULL,1) && !restore_error);
     search_error = TRUE; VERIFY(!search("DATA.TXT","GOOD\\DATA.TXT",NULL,6)); search_error = FALSE;
+    first_error = EREADF; VERIFY(!search("DATA.TXT","GOOD\\DATA.TXT",NULL,1));
+    first_error = EACCDN; VERIFY(!search("DATA.TXT","GOOD\\DATA.TXT",NULL,1));
+    first_error = ENMFIL; VERIFY(!search("DATA.TXT","GOOD\\DATA.TXT","GOOD\\DATA.TXT",5));
+    first_error = EPTHNF; VERIFY(!search("DATA.TXT","GOOD\\DATA.TXT","GOOD\\DATA.TXT",5));
+    first_error = 0;
     before = dta_calls;
     memset(path,'L',sizeof(path)); VERIFY(!shel_find(path) && dta_calls == before);
     VERIFY(!shel_find(NULL) && !shel_find("") && dta_calls == before);
@@ -114,12 +136,27 @@ int main(void)
     VERIFY(!shel_envrn(&value,long_prefix) && value == command);
     memset(environment,'X',sizeof(environment));
     VERIFY(!shel_envrn(&value,"FOO=") && value == command && !shel_find(path) && dta_calls == before);
-    basepage.p_env = 0; aes_library_init();
+    basepage.p_env = 0; capture();
     VERIFY(shel_envrn(&value,"FOO=") == 1 && !value);
-    basepage.p_cmdlin[0] = (char)128; aes_library_init();
+    basepage.p_cmdlin[0] = (char)128; capture();
     strcpy(command,"unchanged"); VERIFY(!shel_read(command,tail) && !strcmp(command,"unchanged"));
     strcpy(executable,"C:/START/APP/TEST.TOS"); basepage.p_cmdlin[0] = 0;
-    aes_library_init();
+    capture();
     VERIFY(shel_read(command,tail) == 1 && !strcmp(command,"C:\\START\\APP\\TEST.TOS"));
+    memcpy(environment,argv_env,sizeof(argv_env));
+    basepage.p_env = PTR_TO_USERPTR(environment); capture();
+    VERIFY(shel_envrn(&value,"PATH=") == 1 && !value);
+    VERIFY(shel_envrn(&value,"ARGV=") == 1 && !value);
+    VERIFY(!search("DATA.TXT","FROM_ARG\\DATA.TXT",NULL,3));
+    for (i = 128; i < AES_SHELL_PATH; i++) {
+        int j;
+        executable[0] = 'C'; executable[1] = ':'; executable[2] = '\\';
+        for (j = 3; j < i-9; j++) executable[j] = 'D';
+        strcpy(executable+i-9,"\\TEST.TOS");
+        capture();
+        VERIFY(launch.ready && shel_read(command,tail) == 1 && !strcmp(command,executable));
+        strcpy(path,executable); strcpy(path+i-8,"DATA.TXT");
+        VERIFY(!search("DATA.TXT",path,path,1));
+    }
     return 0;
 }

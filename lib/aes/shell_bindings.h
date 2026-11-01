@@ -8,9 +8,10 @@
 #define SH_COMMAND aes_shell_command
 #define SH_TAIL aes_shell_tail
 #define SH_ENVIRONMENT aes_shell_environment
+#define SH_ENV_ENTRY(p) (strncmp(p,"ARGV=",5) != 0)
 #define SH_APPDIR aes_resource_directory()
 #define SH_WORK (aes_shell->work)
-#define SH_DTA (aes_shell->dta)
+#define SH_DTA aes_shell_dta
 #define SH_WORK_BYTES AES_SHELL_PATH
 #define SH_COPY aes_shell_copy
 #define SH_APPEND aes_shell_append
