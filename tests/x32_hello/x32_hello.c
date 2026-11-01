@@ -440,7 +440,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             gemdos1(0x4c, 2);
         gemdos1(0x4c, 0);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'O') {
+    if (cmdline[0] == 1 && cmdline[1] == '?') {
         /* without demand paging (CONF_WITH_DEMAND_PAGING off, #562): the
          * default stack is 256 KiB and all there, Malloc(-1) reports only what
          * can be backed and a block that size is given and usable, and a
