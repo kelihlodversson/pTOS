@@ -140,6 +140,12 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     subprocess.run([str(work / "shell-buffer")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-I" + temp, "-Iinclude", "-Ilib/aes",
+                "tests/cuis/shell_metadata.c", "lib/aes/shell_metadata.c", "-o", str(work / "shell-metadata")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "shell-metadata")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Iaes", "-Iaes/shared", "-Ilib/aes",
                 "-DAES_RESOURCE_FSEL", "-DAES_RESOURCE_STRINGS_LOCAL", '-DAES_FSEL_BINDINGS="fsel_bindings.h"',
                 '-DAES_EDIT_BINDINGS="edit_bindings.h"', "tests/cuis/file_selector.c", "lib/aes/fsel.c",
