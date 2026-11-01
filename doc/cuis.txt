@@ -2769,3 +2769,68 @@ client launches two isolated children with ordinary and 126-byte tails. It
 checks inherited environment, captured startup command/tail, concurrent GEM
 message exchange, PID/status results, absence of CH_EXIT, balanced display
 nesting, working-directory preservation and resumed Fsnext searches.
+
+AES4 GEM launch and child-exit messages (#844)
+--------------------------------------------
+
+shel_write/mt_shel_write now also accept SWM_LAUNCH (0), CL_NORMAL (0).
+The graphical selector is ignored for this mode. After classic shel_find
+resolution, .PRG/.APP (case insensitive) are recognized as GEM applications;
+other executable kinds remain unsupported until their console/accessory
+ownership semantics are implemented. Ordinary tails retain the 0..126 bound.
+The call returns the new AES/process ID or zero. SHW_PARALLEL retains its
+separate documented no-CH_EXIT semantics.
+
+For an ordinary mode-0 child, libaes supplies exactly one CH_EXIT message
+when the process actually finishes: words are {90,0,0,child_id,exit_code,0,0,0}.
+appl_exit alone is not process completion. A normal Pterm result keeps its
+full WORD (e.g. 0x1234); faults use the existing native MiNT signal word
+(signal << 8). Children that exit or fault without ever registering with AES
+are included. AES_MESSAGE out1 bit 5 advertises CH_EXIT; other fields are zero.
+AES_SHELL remains unadvertised until its ordinary mode-1/chain semantics are
+implemented. No console, accessory, ARGV, chain/default-shell, shutdown or
+resolution-change support is implied by this slice.
+
+CUIS retains bounded, opaque process completion records, without interpreting
+GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
+
+  CUIS_CHILD_WATCH(session, action, token, pid)
+    RESERVE (0), token=pid=0: reserve one of 16 records; return a positive,
+    never-reused token or a negative error. No allocation is needed.
+    BIND (1): associate the reservation with the caller's direct asynchronous
+    child PID. No allocation is needed; an already completed native child is
+    captured at bind. Duplicate bindings and foreign/non-child PIDs fail.
+    CANCEL (2), pid=0: drop an owned reservation/notice, without killing or
+    reaping a child. Tokens from another session or an earlier lifetime fail.
+  CUIS_CHILD_RESULT(session)
+    Non-consuming FIFO peek. Zero means no completion; a positive scalar has
+    PID in its high WORD and exit status in its low WORD; errors are negative.
+  CUIS_CHILD_PUBLISH(session, expected_result, bytes_address, byte_count)
+    Append 1..32 opaque bytes to the caller's existing application pipe, only
+    if the same completion is still at its head. Failed copies, allocation,
+    or pipe capacity leave it pending; reentrant reservation changes cannot
+    publish or consume a replacement notice. Only a successful publication consumes the record and nonblockingly reaps that
+    specific child if it is still a native zombie. No unrelated child is read.
+
+Capacity is reserved before spawning; load/spawn failures cancel it. A
+successful spawn retains its returned ID if the caller's session is torn
+down before binding. Completed notices survive an explicit application
+Pwaitpid, and hold their PID identity until publication/cancellation/session
+teardown even if the native zombie was already reaped. A session close drops
+its records, releasing PID reservations; it neither kills nor reaps live
+children. Subsequent registrations do not inherit old notifications.
+
+CUIS_READY_CHILD is a public readiness source in CUIS_SESSION_WAIT, alongside
+stream/notice/input/timer readiness. It wakes MU_MESAG immediately, including
+during unfinished multi-click accumulation. There is no maintenance polling
+and no replacement of the application's independent timer. Libaes converts
+notices before/after waits and in blocking/nonblocking appl_read; pipe
+backpressure preserves existing queued bytes ahead of the new message.
+
+Tests cover bounded reservations/tokens, ownership, completion order, early
+completion, copy/allocation/backpressure failures, explicit native waits,
+reentrant cancellation/replacement/session exit, PID retention, a completion
+interrupting a two-click predicate and unchanged caller output on failure.
+Normal-header x32 clients cover full-word exits, exit/fault before appl_init,
+exactly-once messages, automatic selective reaping, explicit Pwaitpid retaining
+a notice, unrelated Pexec children and unchanged SHW_PARALLEL behavior.

@@ -9,7 +9,7 @@ static int combined_checks(void)
     run = &second; b = cuis_service(CUIS_SESSION_START, 0); run = &first;
     CHECK(a >= 0 && b >= 0);
     CHECK(CW(1ULL << 32, 16, 1, 0) == EINVAL && CW(b, 16, 1, 0) == EACCDN);
-    CHECK(CW(a, 16, 0, 0) == EINVAL && CW(a, 16, 2048, 0) == EINVAL);
+    CHECK(CW(a, 16, 0, 0) == EINVAL && CW(a, 16, 4096, 0) == EINVAL);
     CHECK(CW(a, 0, 1, 0) == EINVAL && CW(a, 32768, 1, 0) == EINVAL);
     CHECK(CW(a, 16, 2, 1ULL << 32) == EINVAL);
     input_irqs = TRUE; delay_tick_step = 1;

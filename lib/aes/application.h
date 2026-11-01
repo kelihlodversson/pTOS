@@ -16,4 +16,5 @@ BOOL aes_frames_suspend(void);
 void aes_frames_resume(void);
 BOOL aes_frames_dialog(BOOL begin);
 LONG aes_application_session(short *global);
+LONG aes_child_messages(LONG session);
 #endif

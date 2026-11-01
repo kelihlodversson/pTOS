@@ -72,7 +72,10 @@ static short event_once(short events, short clicks, short button_mask, short but
         mask |= CUIS_READY_RECT2;
     }
     if (((events & MU_MESAG) || frame_work) && messages(session, global) < 0) return 0;
-    if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
+    if (events & MU_MESAG) {
+        if (aes_child_messages(session) < 0) return 0;
+        mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD;
+    }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
     /* A multi-click owns per-call accumulation until completion. Service
@@ -97,6 +100,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     if (aes_controls_repeating()) wait_mask |= CUIS_READY_SERVICE;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
+    if ((ready & CUIS_READY_CHILD) && aes_child_messages(session) < 0) return 0;
     if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) && messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
@@ -122,7 +126,7 @@ static short event_once(short events, short clicks, short button_mask, short but
         ready &= ~CUIS_READY_SURFACE;
         if (!ready) return -1; /* Re-arm user predicates after internal tracking. */
     }
-    if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE)) {
+    if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD)) {
         LONG count = cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0);
         /* A background notice may only repaint, without publishing a GEM
          * message. Keep simultaneous public events and otherwise re-arm. */

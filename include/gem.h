@@ -72,6 +72,7 @@ extern "C" {
 #define AES_PCGEM 5
 #define AES_INQUIRE 6
 #define AES_SHELL 10
+#define AES_MESSAGE 12
 #define AES_OBJECT 13
 #define SV_INQUIRE 0
 #define SV_SET 1
@@ -413,6 +414,9 @@ short shel_read(char *command, char *tail);
 short mt_shel_read(char *command, char *tail, short *global);
 #define SWM_LAUNCH 0
 #define SWM_LAUNCHNOW 1
+#define CL_NORMAL 0
+#define CL_PARSE 1
+#define CH_EXIT 90
 #define SHW_NOEXEC 0
 #define SHW_EXEC 1
 #define TOSAPP 0

@@ -7,6 +7,7 @@
 #include "gem_buffer.h"
 #include "gem_metadata.h"
 #include "gem_launch.h"
+#include "gem_exit.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -26,6 +27,9 @@ int main(int argc, char **argv, char **envp)
     static const char environment[] = "SHELLTEST=value\0PATH=C:\\BAD;C:\\RPATH,C:\\LOOKUP\0\0";
     static const char argv_environment[] = "SHELLTEST=value\0ARGV=\0fake-name\0c\0PATH=C:\\FROM_ARG\0\0";
     (void)envp;
+    /* Exit/fault before AES registration must still notify the shell parent. */
+    if (argc > 1 && argv[1][0] == 'e') return 0x5678;
+    if (argc > 1 && argv[1][0] == 'f') __asm__ volatile ("ud2");
     GEM_TEST_CHECK(argc >= 1 && gl_apid == -1 && aes_global[2] == -1 && aes_global[3] == 0);
     GEM_TEST_CHECK(appl_yield() == 0 && evnt_timer(0) == 0 && appl_exit() == 0);
     pid = PROC(0x10b, 0, 0, 0, 0);
@@ -34,6 +38,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(appl_init() == id && mt_appl_init(globals) == id);
     if (argc > 1 && (argv[1][0] == 'l' || argv[1][0] == 'm'))
         return gem_launch_child(globals,argc,argv,envp);
+    if (argc > 1 && argv[1][0] == 'n') return 0x1234;
     aes_global[3] = 1234;
     GEM_TEST_CHECK(mt_appl_yield(globals) == 1 && mt_evnt_timer(1, globals) == 1);
     GEM_TEST_CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
@@ -41,6 +46,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(gem_buffer_checks(globals,argc > 1) == 0);
     GEM_TEST_CHECK(gem_metadata_checks(globals,argc > 1) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_launch_checks(globals,envp) == 0);
+    if (argc == 1) GEM_TEST_CHECK(gem_exit_checks(globals) == 0);
     if (argc > 1) {
         if (argv[1][0] == 'x') _Exit(41);
         return 37; /* Ordinary CRT finalization closes implicit registration. */
@@ -70,12 +76,14 @@ int main(int argc, char **argv, char **envp)
         static const char buffer_marker[] = "x32 GEM shared shell buffer: PASS\r\n";
         static const char metadata_marker[] = "x32 GEM desktop/clipboard metadata: PASS\r\n";
         static const char launch_marker[] = "x32 GEM parallel shell launch: PASS\r\n";
+        static const char exit_marker[] = "x32 GEM child exit: PASS\r\n";
         static const char shell_marker[] = "x32 GEM shell queries: PASS\r\n";
         ptos_write(1, marker, sizeof(marker)-1);
         ptos_write(1, shell_marker, sizeof(shell_marker)-1);
         ptos_write(1, buffer_marker, sizeof(buffer_marker)-1);
         ptos_write(1, metadata_marker, sizeof(metadata_marker)-1);
         ptos_write(1, launch_marker, sizeof(launch_marker)-1);
+        ptos_write(1, exit_marker, sizeof(exit_marker)-1);
     }
     return 0;
 }

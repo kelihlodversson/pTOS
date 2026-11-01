@@ -22,6 +22,7 @@ static int attempts, dta_calls, cwd_calls;
 static char tried[16][AES_SHELL_PATH];
 static const char *found;
 static LONG launch_result = 42;
+static LONG watch_result = 17, bound_pid, cancellations;
 static int launches;
 static char launched_path[AES_SHELL_PATH], launched_tail[128];
 LONG aes_application_session(short *global)
@@ -49,6 +50,18 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         return found && !search_error && !strcmp(found,(char *)(uintptr_t)a) ? E_OK : (QUAD)EFILNF;
     }
     return (QUAD)EINVFN;
+}
+LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
+{
+    (void)e; (void)f;
+    if (a != 9) return EACCDN;
+    if (fn == CUIS_CHILD_RESULT) return 0;
+    if (fn != CUIS_CHILD_WATCH) return EINVFN;
+    if (b == CUIS_CHILD_RESERVE) return watch_result;
+    if (c != 17) return EACCDN;
+    if (b == CUIS_CHILD_BIND) { bound_pid = d; return E_OK; }
+    if (b == CUIS_CHILD_CANCEL) { cancellations++; return E_OK; }
+    return EINVFN;
 }
 UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -104,7 +117,7 @@ static int launch_checks(short *global)
     for (i = 0; i < 128; i++) VERIFY(!launched_tail[i]);
     before = launches;
     /* Unsupported selectors must not dereference their overloaded arguments. */
-    VERIFY(!shel_write(SWM_LAUNCH,0,0,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCH,0,CL_PARSE,(void *)1,(char *)1));
     VERIFY(!shel_write(0x101,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
     VERIFY(!shel_write(2,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,(void *)1,(char *)1));
@@ -135,6 +148,15 @@ static int launch_checks(short *global)
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal));
     launch_result = 32767;
     VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal) == 32767);
+    launch_result = 42;
+    VERIFY(shel_write(SWM_LAUNCH,99,CL_NORMAL,name,minimal) == 42 && bound_pid == 42);
+    before = launches;
+    watch_result = EAGAIN;
+    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,name,minimal) && launches == before);
+    watch_result = 17; launch_result = ENSMEM;
+    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,name,minimal) && cancellations == 1);
+    found = "GOOD\\NEXT.TOS";
+    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"NEXT.TOS",minimal));
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
     return 0;
 }

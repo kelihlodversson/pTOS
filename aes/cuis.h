@@ -47,6 +47,9 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
 LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds);
 LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD modifiers);
 void cuis_process_exit(PD *owner);
+LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c);
+void cuis_child_completed(PD *parent, WORD pid, UWORD status);
+BOOL cuis_child_pid_reserved(WORD pid);
 #if CONF_WITH_X86_64_MEMTEST
 ULONG cuis_session_count(void);
 BOOL cuis_update_active(void);

@@ -42,6 +42,8 @@ static BOOL input_drop_focus, input_drop_on_validate;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
 static void context_copy_hook(void);
 static void context_read_hook(void);
+static void child_copy_hook(void);
+static void child_idle_hook(void);
 static PD *mouse_release_owner;
 static ULONG mouse_release_steps;
 static BOOL mouse_release_exit;
@@ -180,6 +182,7 @@ void cuis_input_idle(void)
         else cuis_display_lock((*find_owner(run))->handle, 0, 0);
         run = saved;
     }
+    child_idle_hook();
     if (input_drop_focus) { input_drop_focus = FALSE; set_focus(NULL); }
     input_irqs = FALSE;
 }
@@ -227,6 +230,7 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
         cuis_input_unlock(flags);
     }
     context_copy_hook();
+    child_copy_hook();
     memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
 }
 const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
@@ -267,6 +271,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "window_at.c"
 #include "background.c"
 #include "contexts.c"
+#include "child_completion.c"
 int main(void)
 {
     LONG owner, other, reopened;
@@ -361,5 +366,7 @@ int main(void)
     rc = background_keyboard_checks();
     if (rc) return rc;
     rc = background_release_checks();
-    return rc ? rc : context_checks();
+    if (rc) return rc;
+    rc = context_checks();
+    return rc ? rc : child_completion_checks();
 }

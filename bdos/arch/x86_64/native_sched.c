@@ -7,6 +7,9 @@
 #include "kheap.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#endif
 #if CONF_WITH_X86_64_MEMTEST
 #include "kprint.h"
 #endif
@@ -69,6 +72,9 @@ void ksched_context_restore(UQUAD identity)
 BOOL ksched_pid_reserved(WORD pid)
 {
     UWORD i;
+#if CONF_WITH_CUIS
+    if (cuis_child_pid_reserved(pid)) return TRUE;
+#endif
     if (!scheduler.active) return FALSE;
     for (i = 0; i < KSCHED_LIMIT; i++)
         if (scheduler.tasks[i].state != TASK_UNUSED && scheduler.tasks[i].pid == pid) return TRUE;
@@ -140,6 +146,11 @@ static void task_entry(void)
 #endif
     task->program = NULL;
     task->state = task->asynchronous && task->parent ? TASK_ZOMBIE : TASK_DONE;
+#if CONF_WITH_CUIS
+    if (task->state == TASK_ZOMBIE)
+        cuis_child_completed(task->parent,task->pid,
+            task->signal ? (UWORD)task->signal << 8 : (UWORD)task->result);
+#endif
     x86_64_process_save(&task->context);
     longjmp(scheduler.resume, 1);
 }
@@ -203,6 +214,24 @@ LONG ksched_spawn(PD *pd)
 }
 
 typedef struct { PD *parent; WORD pid; } CHILD_WAIT;
+#if CONF_WITH_CUIS
+/* Normal GEM child completion retains the full Pterm WORD, unlike the low
+ * exit byte in MiNT wait status. Faults retain the native signal word. */
+LONG ksched_child_status(WORD pid)
+{
+    UWORD i;
+    if (pid <= 0) return EINVAL;
+    if (!ksched_spawn_allowed()) return EFILNF;
+    for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
+        KERNEL_TASK *task = &scheduler.tasks[i];
+        if (task->state == TASK_UNUSED || task->parent != run || task->pid != pid) continue;
+        if (task->state != TASK_ZOMBIE) return 0;
+        return (LONG)(((ULONG)(UWORD)pid << 16) |
+            (task->signal ? (UWORD)task->signal << 8 : (UWORD)task->result));
+    }
+    return EFILNF;
+}
+#endif
 static BOOL child_ready(void *argument)
 {
     CHILD_WAIT *wait = argument;

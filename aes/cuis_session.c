@@ -87,6 +87,9 @@ typedef struct cuis_client {
     CUIS_PACKET *pending_write;
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
     ULONG stream_head, stream_bytes;
+    struct { ULONG token; WORD pid; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
+    UBYTE child_order[CUIS_CHILDREN_PER_SESSION];
+    UWORD child_count;
     CUIS_POINTER button_edges[CUIS_POINTER_CAPACITY];
     ULONG edge_head, edge_count, recent_count, recent_buttons;
     CUIS_POINTER saved_edges[CUIS_POINTER_CAPACITY];
@@ -104,6 +107,7 @@ typedef struct cuis_client {
     LONG input_result[5]; /* key, count, x, y, packed buttons/modifiers */
 } CUIS_CLIENT;
 static CUIS_CLIENT *clients;
+static ULONG next_child_token;
 static ULONG input_interval = 450;
 static void sample_input_waits(void);
 static ULONG next_handle;
@@ -1224,6 +1228,8 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->stream_head = client->stream_bytes = 0;
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
+        memset(client->children,0,sizeof(client->children));
+        client->child_count = 0;
         client->isolated_mouse = FALSE;
         client->pointer_style_set = FALSE; client->pointer_hidden = 0;
         client->surface_height = client->surface_events = 0; client->surface_next = NULL;
@@ -1926,6 +1932,7 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_STREAM) && wait->client->stream_bytes >= wait->minimum)
         result |= CUIS_READY_STREAM;
     if ((wait->events & CUIS_READY_NOTICE) && notices_ready(wait->client)) result |= CUIS_READY_NOTICE;
+    if ((wait->events & CUIS_READY_CHILD) && wait->client->child_count) result |= CUIS_READY_CHILD;
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
     if ((wait->events & CUIS_READY_DISPLAY) &&
@@ -2497,4 +2504,133 @@ LONG cuis_message_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         return 1;
     }
     return EINVFN;
+}
+
+/* Opaque process completion notices. GEM layout is supplied by libaes. */
+static void child_complete(CUIS_CLIENT *client, UWORD index, LONG result)
+{
+    if (!client->children[index].result) {
+        client->children[index].result = result;
+        client->child_order[client->child_count++] = (UBYTE)index;
+    }
+}
+static void child_remove(CUIS_CLIENT *client, UWORD index)
+{
+    UWORD i, j;
+    for (i = 0; i < client->child_count; i++)
+        if (client->child_order[i] == index) {
+            for (j = i+1; j < client->child_count; j++) client->child_order[j-1] = client->child_order[j];
+            client->child_count--;
+            break;
+        }
+    memset(&client->children[index],0,sizeof(client->children[index]));
+}
+BOOL cuis_child_pid_reserved(WORD pid)
+{
+    CUIS_CLIENT *client;
+    UWORD i;
+    UQUAD flags;
+    if (pid <= 0) return FALSE;
+    flags = cuis_input_lock();
+    for (client = clients; client; client = client->next)
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+            if (client->children[i].token && client->children[i].pid == pid) {
+                cuis_input_unlock(flags); return TRUE;
+            }
+    cuis_input_unlock(flags); return FALSE;
+}
+void cuis_child_completed(PD *parent, WORD pid, UWORD status)
+{
+    CUIS_CLIENT *client;
+    UWORD i;
+    UQUAD flags = cuis_input_lock();
+    client = *find_owner(parent);
+    if (client)
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+            if (client->children[i].token && client->children[i].pid == pid)
+                child_complete(client,i,(LONG)(((ULONG)(UWORD)pid << 16) | status));
+    cuis_input_unlock(flags);
+}
+LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c)
+{
+    CUIS_CLIENT *client;
+    UQUAD flags;
+    UWORD i, j, index = 0, *senders;
+    ULONG token = 0, at;
+    UBYTE data[32], *storage = NULL;
+    BOOL need_storage = FALSE;
+    LONG result;
+    if (session > 0x7fffffffULL) return EINVAL;
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != session) { result = EACCDN; goto child_done; }
+    if (function == CUIS_CHILD_WATCH) {
+        if (a > CUIS_CHILD_CANCEL || b > 0x7fffffffULL || c > 32767) { result = EINVAL; goto child_done; }
+        if (a == CUIS_CHILD_RESERVE) {
+            if (b || c) { result = EINVAL; goto child_done; }
+            for (i = 0; i < CUIS_CHILDREN_PER_SESSION && client->children[i].token; i++) ;
+            if (i == CUIS_CHILDREN_PER_SESSION || next_child_token == 0x7fffffffUL) { result = EAGAIN; goto child_done; }
+            result = client->children[i].token = ++next_child_token;
+            goto child_done;
+        }
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+            if (b && client->children[i].token == b) break;
+        if (i == CUIS_CHILDREN_PER_SESSION) { result = EACCDN; goto child_done; }
+        if (a == CUIS_CHILD_CANCEL) {
+            if (c) { result = EINVAL; goto child_done; }
+            child_remove(client,i); result = E_OK; goto child_done;
+        }
+        if (!c || client->children[i].pid) { result = EINVAL; goto child_done; }
+        for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
+            if (client->children[j].pid == (WORD)c) { result = EACCDN; goto child_done; }
+        result = ksched_child_status((WORD)c);
+        if (result < 0) goto child_done;
+        client->children[i].pid = (WORD)c;
+        if (result) child_complete(client,i,result);
+        result = E_OK; goto child_done;
+    }
+    if (function == CUIS_CHILD_RESULT) {
+        if (a || b || c) { result = EINVAL; goto child_done; }
+        result = client->child_count ? client->children[client->child_order[0]].result : 0;
+        goto child_done;
+    }
+    if (function != CUIS_CHILD_PUBLISH) { result = EINVFN; goto child_done; }
+    if (!a || a > 0x7fffffffULL || !c || c > sizeof(data)) { result = EINVAL; goto child_done; }
+    if (!client->child_count) { result = EACCDN; goto child_done; }
+    index = client->child_order[0];
+    if (client->children[index].result != (LONG)a) { result = EACCDN; goto child_done; }
+    token = client->children[index].token;
+    need_storage = client->stream_data == NULL;
+    cuis_input_unlock(flags);
+    if (!kproc_copy_from_user(data,b,(ULONG)c)) return EIMBA;
+    if (need_storage) {
+        storage = kalloc(CUIS_STREAM_BYTES * (1 + sizeof(UWORD)));
+        if (!storage) return ENSMEM;
+    }
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != session || !client->child_count) { result = EACCDN; goto child_done; }
+    index = client->child_order[0];
+    if (client->children[index].token != token || client->children[index].result != (LONG)a) { result = EACCDN; goto child_done; }
+    if (CUIS_STREAM_BYTES-client->stream_bytes < c) { result = EAGAIN; goto child_done; }
+    if (!client->stream_data) {
+        if (!storage) { result = EACCDN; goto child_done; }
+        client->stream_data = storage; storage = NULL;
+    }
+    at = (client->stream_head+client->stream_bytes) % CUIS_STREAM_BYTES;
+    senders = (UWORD *)(client->stream_data+CUIS_STREAM_BYTES);
+    for (i = 0; i < c; i++) {
+        client->stream_data[(at+i) % CUIS_STREAM_BYTES] = data[i];
+        senders[(at+i) % CUIS_STREAM_BYTES] = (UWORD)client->pid;
+    }
+    client->stream_bytes += (ULONG)c;
+    /* Only this explicitly observed child is reaped. If the application
+     * already collected it through MiNT, its retained notice is still valid. */
+    (void)ksched_wait(client->children[index].pid,1,0);
+    child_remove(client,index);
+    result = E_OK;
+child_done:
+    cuis_input_unlock(flags);
+    if (storage) kfree(storage);
+    return result;
 }
