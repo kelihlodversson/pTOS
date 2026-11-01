@@ -1,4 +1,5 @@
 /* Persistent shell context through standard GEM headers in separate clients. */
+#include <stddef.h>
 #include <gem.h>
 #include "gem_buffer.h"
 #define VERIFY(c) do { if (!(c)) return 0x8800 | __LINE__; } while (0)
