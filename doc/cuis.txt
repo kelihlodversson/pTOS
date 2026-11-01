@@ -2802,6 +2802,9 @@ GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
     is needed. Started, freed/replaced, duplicate or foreign images fail.
     Completion is recorded for synchronous Pexec(4/6) as well as asynchronous
     starts; the ordinary retained/freeing ownership of those modes is kept.
+    Bound synchronous children retain their first fault signal even without
+    a scheduler task slot. CH_EXIT reports signal << 8 for a crash, while an
+    ordinary Pterm(-1) remains the full 0xffff termination result.
     CANCEL (2), image=0: drop an owned reservation/notice, without killing or
     reaping a child. Tokens from another session or an earlier lifetime fail.
   CUIS_CHILD_LAUNCH(session, token, path, tail, environment)

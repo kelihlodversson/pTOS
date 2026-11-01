@@ -138,7 +138,12 @@ void ksched_exiting(PD *pd, UWORD result)
 void ksched_fault(PD *pd, WORD signal)
 {
     UWORD i;
-    if (!scheduler.active) return;
+    if (!scheduler.active) {
+#if CONF_WITH_CUIS
+        cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),signal);
+#endif
+        return;
+    }
     /* A foreign callback changes run, but retains the invoking task's
      * continuation. Attribute its fault to the owner, whose exit is deferred.
      * Nested synchronous children have no task entry of their own. */
@@ -147,9 +152,17 @@ void ksched_fault(PD *pd, WORD signal)
         if ((task->state == TASK_NEW || task->state == TASK_RUNNING ||
              task->state == TASK_BLOCKED) && task->program == pd) {
             if (!task->signal) task->signal = signal;
+#if CONF_WITH_CUIS
+            if (!task->asynchronous)
+                cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),task->signal);
+#endif
             return;
         }
     }
+#if CONF_WITH_CUIS
+    /* Nested synchronous children have no task slot of their own. */
+    cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),signal);
+#endif
 }
 
 static void task_entry(void)

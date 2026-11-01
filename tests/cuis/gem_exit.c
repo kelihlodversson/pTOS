@@ -38,32 +38,38 @@ static int synchronous_exit_checks(short *global)
     int32_t session, token, image, result;
     uint32_t environment;
     short message[8], pid;
-    unsigned mode;
+    unsigned mode, variant;
+    static const char roles[] = { 'n','f','t' };
+    static const short codes[] = { 0x1234,0x0400,-1 };
     session = native_ui(CUIS_SESSION_START,0,0,0,0);
     VERIFY(session >= 0);
     for (mode = 4; mode <= 6; mode += 2) {
-        token = native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
-        VERIFY(token > 0);
-        image = process(0x4b,3,(uintptr_t)"APPS\\GEMCHILD.PRG",(uintptr_t)tail,0);
-        VERIFY(image > 0);
-        environment = (uint32_t)(uintptr_t)((const BASEPAGE *)(uintptr_t)(uint32_t)image)->p_env;
-        VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_BIND,token,(uint32_t)image) == 0);
-        VERIFY(process(0x4b,mode,0,(uint32_t)image,0) == 0x1234);
-        if (mode == 4) {
-            VERIFY(process(0x49,(uint32_t)image,0,0,0) == 0);
-            VERIFY(process(0x49,environment,0,0,0) == 0);
+        for (variant = 0; variant < sizeof(roles); variant++) {
+            tail[1] = roles[variant];
+            token = native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+            VERIFY(token > 0);
+            image = process(0x4b,3,(uintptr_t)"APPS\\GEMCHILD.PRG",(uintptr_t)tail,0);
+            VERIFY(image > 0);
+            environment = (uint32_t)(uintptr_t)((const BASEPAGE *)(uintptr_t)(uint32_t)image)->p_env;
+            VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_BIND,token,(uint32_t)image) == 0);
+            VERIFY(process(0x4b,mode,0,(uint32_t)image,0) == (variant ? 0xffff : 0x1234));
+            if (mode == 4) {
+                VERIFY(process(0x49,(uint32_t)image,0,0,0) == 0);
+                VERIFY(process(0x49,environment,0,0,0) == 0);
+            }
+            result = native_ui(CUIS_CHILD_RESULT,session,0,0,0);
+            VERIFY(result > 0 && (result & 0xffff) == (uint16_t)codes[variant]);
+            pid = (short)((uint32_t)result >> 16);
+            VERIFY(pid > 0 && pid != global[2]);
+            VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,codes[variant]));
+            VERIFY(native_ui(CUIS_CHILD_RESULT,session,0,0,0) == 0);
+            VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == -36);
+            VERIFY(receive(message,0,global) == MU_TIMER);
         }
-        result = native_ui(CUIS_CHILD_RESULT,session,0,0,0);
-        VERIFY(result > 0 && (result & 0xffff) == 0x1234);
-        pid = (short)((uint32_t)result >> 16);
-        VERIFY(pid > 0 && pid != global[2]);
-        VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,0x1234));
-        VERIFY(native_ui(CUIS_CHILD_RESULT,session,0,0,0) == 0);
-        VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == -36);
-        VERIFY(receive(message,0,global) == MU_TIMER);
     }
     return 0;
 }
+
 int gem_exit_checks(short *global)
 {
     char tail[3] = { 1,'n',0 };

@@ -29,6 +29,7 @@ int main(int argc, char **argv, char **envp)
     (void)envp;
     /* Exit/fault before AES registration must still notify the shell parent. */
     if (argc > 1 && argv[1][0] == 'e') return 0x5678;
+    if (argc > 1 && argv[1][0] == 't') return -1;
     if (argc > 1 && argv[1][0] == 'f') __asm__ volatile ("ud2");
     GEM_TEST_CHECK(argc >= 1 && gl_apid == -1 && aes_global[2] == -1 && aes_global[3] == 0);
     GEM_TEST_CHECK(appl_yield() == 0 && evnt_timer(0) == 0 && appl_exit() == 0);

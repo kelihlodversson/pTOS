@@ -90,7 +90,7 @@ typedef struct cuis_client {
     CUIS_PACKET *pending_write;
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
     ULONG stream_head, stream_bytes;
-    struct { ULONG token; WORD pid; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
+    struct { ULONG token; WORD pid, signal; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
     UBYTE child_order[CUIS_CHILDREN_PER_SESSION];
     UWORD child_count;
     CUIS_POINTER button_edges[CUIS_POINTER_CAPACITY];
@@ -2601,6 +2601,21 @@ BOOL cuis_child_pid_reserved(WORD pid)
             }
     cuis_input_unlock(flags); return FALSE;
 }
+/* Keep the first specific fault; proc_fault() may subsequently report its
+ * generic fallback signal before terminating the process with Pterm(-1). */
+void cuis_child_fault(PD *parent, WORD pid, WORD signal)
+{
+    CUIS_CLIENT *client;
+    UWORD i;
+    UQUAD flags = cuis_input_lock();
+    client = *find_owner(parent);
+    if (client && signal > 0 && signal <= 255)
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+            if (client->children[i].token && client->children[i].pid == pid &&
+                !client->children[i].result && !client->children[i].signal)
+                client->children[i].signal = signal;
+    cuis_input_unlock(flags);
+}
 void cuis_child_completed(PD *parent, WORD pid, UWORD status)
 {
     CUIS_CLIENT *client;
@@ -2610,7 +2625,8 @@ void cuis_child_completed(PD *parent, WORD pid, UWORD status)
     if (client)
         for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
             if (client->children[i].token && client->children[i].pid == pid)
-                child_complete(client,i,(LONG)(((ULONG)(UWORD)pid << 16) | status));
+                child_complete(client,i,(LONG)(((ULONG)(UWORD)pid << 16) |
+                    (client->children[i].signal ? (UWORD)client->children[i].signal << 8 : status)));
     cuis_input_unlock(flags);
 }
 LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c)

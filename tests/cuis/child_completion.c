@@ -87,8 +87,11 @@ static int child_completion_checks(void)
     second_status = test_children[1].status = (11L << 16) | 0x1234;
     cuis_child_completed(&first,11,0x1234);
     status = test_children[0].status = (10L << 16) | 0x0400;
-    cuis_child_completed(&first,10,0x0400);
-    cuis_child_completed(&first,10,0x0400);
+    cuis_child_fault(&second,10,7); /* Another parent's watch cannot be modified. */
+    cuis_child_fault(&first,10,4);
+    cuis_child_fault(&first,10,11); /* A generic fallback must not replace SIGILL. */
+    cuis_child_completed(&first,10,0xffff);
+    cuis_child_completed(&first,10,0xffff);
     CHECK(CHILD_R(child_session) == second_status);
     CHECK(cuis_session_wait(child_session,16,CUIS_READY_CHILD|CUIS_READY_TIMER,0) == (CUIS_READY_CHILD|CUIS_READY_TIMER));
     CHECK(CHILD_P(child_session,status,0x10000,16) == EACCDN);
