@@ -13,6 +13,10 @@ LONG cuis_background(UQUAD session, UQUAD action);
 LONG cuis_background_region(UQUAD session, UQUAD index, UQUAD x, UQUAD y, UQUAD width, UQUAD height);
 LONG cuis_display_info(UQUAD selector);
 LONG cuis_windows_reset(UQUAD session);
+#if CONF_WITH_X86_64_MEMTEST
+BOOL cuis_context_test_reset(void);
+#endif
+LONG cuis_context(UQUAD session, UQUAD slot, UQUAD action, UQUAD address, UQUAD bytes, UQUAD offset);
 LONG cuis_setting(UQUAD slot, UQUAD value, UQUAD other, UQUAD other_value, UQUAD mask);
 LONG cuis_keyboard_lock(UQUAD handle, UQUAD acquire);
 LONG cuis_display_redraw(UQUAD handle, UQUAD x, UQUAD y, UQUAD width, UQUAD height);

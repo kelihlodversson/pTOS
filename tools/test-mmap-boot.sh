@@ -185,6 +185,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 async launch/wait: PASS' "$log"
     grep -q 'x32 GEM lifecycle/timers: PASS' "$log"
     grep -q 'x32 GEM shell queries: PASS' "$log"
+    grep -q 'x32 GEM shared shell buffer: PASS' "$log"
     grep -q 'x32 GEM discovery/messages: PASS' "$log"
     grep -q 'x32 GEM window messages/focus: PASS' "$log"
     grep -q 'x32 GEM window lookup: PASS' "$log"
