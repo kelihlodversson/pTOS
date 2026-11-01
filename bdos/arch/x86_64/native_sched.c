@@ -100,7 +100,15 @@ BOOL ksched_parent_pid(PD *pd, WORD *pid)
 void ksched_exiting(PD *pd, UWORD result)
 {
     UWORD i;
+#if CONF_WITH_CUIS
+    BOOL asynchronous = FALSE;
+    if (!scheduler.active) {
+        cuis_child_completed(kproc_get_parent(pd),kproc_pid(pd),result);
+        return;
+    }
+#else
     if (!scheduler.active) return;
+#endif
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
         if (task->state == TASK_UNUSED) continue;
@@ -110,12 +118,21 @@ void ksched_exiting(PD *pd, UWORD result)
         }
         if (task->program == pd) {
             ULONG usage[8];
+#if CONF_WITH_CUIS
+            asynchronous = task->asynchronous;
+#endif
             kproc_usage(pd, usage);
             task->usage[0] = usage[1] + usage[3];
             task->usage[1] = 0;
             task->result = result;
         }
     }
+#if CONF_WITH_CUIS
+    /* Nested synchronous children never return through task_entry(). Their
+     * trusted parent/PID still exist here; async tasks publish at task_entry
+     * after their final result/signal is known. */
+    if (!asynchronous) cuis_child_completed(kproc_get_parent(pd),kproc_pid(pd),result);
+#endif
 }
 
 void ksched_fault(PD *pd, WORD signal)

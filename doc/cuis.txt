@@ -2800,6 +2800,8 @@ GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
     BIND (1): associate the reservation with an owned, live, unlaunched
     Pexec(3) basepage. Kernel image metadata supplies its PID; no allocation
     is needed. Started, freed/replaced, duplicate or foreign images fail.
+    Completion is recorded for synchronous Pexec(4/6) as well as asynchronous
+    starts; the ordinary retained/freeing ownership of those modes is kept.
     CANCEL (2), image=0: drop an owned reservation/notice, without killing or
     reaping a child. Tokens from another session or an earlier lifetime fail.
   CUIS_CHILD_LAUNCH(session, token, path, tail, environment)
