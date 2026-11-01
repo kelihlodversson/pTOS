@@ -1,0 +1,2866 @@
+pTOS - userspace AES and kernel CUIS (#661)
+==========================================
+
+Migration boundary
+------------------
+
+The target is an ordinary per-process libaes.so over native Core User
+Interface Services (CUIS). There is no userspace AES daemon. Kernel CUIS
+owns shared authoritative GUI state; VDI owns drawing/hardware services.
+The initial #675 slice implements sessions and application-local rectangle
+helpers. #679 adds caller-local object-tree editing and coordinate calculation. It does not yet supply a complete GEM AES API or replace the
+existing kernel AES. Existing x32 import clients remain available while
+operations migrate; they are not the native CUIS protocol.
+
+GEM source compatibility is the public contract. Applications use standard
+GEM headers, function names, signatures, structures, constants and return
+conventions (appl_*, evnt_*, wind_*, menu_*, form_*, objc_*, graf_*, rsrc_*,
+shel_* and scrp_*). The aes_session_*, aes_window_*, aes_message_* and similar
+CUIS wrappers currently exported for migration tests are transitional
+implementation helpers, not a replacement application API. Move these behind
+the library boundary as the standard adapters migrate; applications must not
+need CUIS handles, sender grants or other pTOS-specific setup calls.
+
+Preserve GEM behavior as well as syntax: application IDs and discovery,
+message layouts/lengths/ordering, blocking and nonblocking reads, event masks
+and multi-event results, click/rectangle/timer predicates, focus and window
+messages, redraw iteration/update locking, and resource/object ownership.
+Map private CUIS handles/errors to the documented GEM IDs/results; do not
+truncate native handles into WORD application IDs or leak negative CUIS
+errors through APIs whose GEM convention is Boolean. The initial four-word
+transport is a foundation, not a permanent 16-byte limit on appl_write/read.
+
+Inventory meaningful MultiAES, MagiC and XaAES extensions against tos.hyp and
+GEMlib headers, with a per-feature support/semantics/test matrix. Implement
+applicable extensions through the familiar API, including mt_* entry points
+where provided by the chosen GEM binding. Report unsupported features using
+the documented AES conventions and capability queries; never claim support
+through appl_getinfo before it exists. These GEM compatibility queries are
+library behavior, not version negotiation in the CUIS syscall protocol.
+Compile representative existing GEM source against the normal headers and
+link to libaes, then exercise its behavior in isolated x32 clients before
+claiming the migration complete. Kernel primitives must permit these
+semantics; hiding a conflicting protocol behind a renamed wrapper is not
+sufficient.
+
+Inventory of the current implementation and intended ownership:
+
+AES family     Application-local libaes.so       Kernel CUIS responsibility
+----------     --------------------------       --------------------------
+appl_*         GEM API/name/message adapters    Session handles and lifecycle;
+                                                bounded authorized delivery
+evnt_*        GEM predicates/result adapters   Atomic test/wait/wakeup, queues,
+                                                timeouts, input routing
+wind_*         Decorations, layout, local       Window identity/ownership,
+               geometry (wind_calc)             geometry, Z-order, visible regions
+menu_*         Tree layout/rendering, GEM       Active desktop menu ownership,
+               semantics, local interpretation  routed input and grabs
+form_*         Dialog state, validation,        Focus/capture and atomic waits
+               object selection/editing
+objc_*         Trees, traversal, drawing,       No owned copy of a GEM object
+               hit testing, USERDEF callbacks   tree; validate VDI/CUIS requests
+graf_*        Geometry and interaction logic   Pointer snapshot/capture and
+                                                display coordination
+rsrc_*         File parsing, relocation,        None beyond normal safe file/VM
+               resource ownership               services
+shel_*         GEM launch/desktop adapters      Process/desktop ownership and
+                                                privileged coordination only
+scrp_*         Compatibility and file helpers   Any shared selection/ownership
+                                                policy must be explicit
+
+Current sources expose the migration points: gemaplib/gemevlib/gemasync and
+aes_service.c combine registration, scheduling, GEM messages and waits;
+gemwmlib/gemwrect and aes_window.c combine authoritative windows with
+GEM decorations; gemoblib/gemobjop/gemobed, aes_tree.c and
+aes_objects_kernel.c implement tree operations; gemrslib/rsload_portable
+load resources; gemfmlib/gemmnlib/gemgraf implement local interaction and
+rendering with scheduler dependencies. These dependencies must be split,
+not copied wholesale into the shared library. Native CUIS must never expose
+AESPD, EVB, WINDOW, GEM message arrays or kernel pointers.
+
+Initial implementation and deployment
+------------------------------------
+
+CONF_WITH_LIBAES is off by default and initially depends on x32 and
+CONF_WITH_ELF_SHARED. It selects the internal CONF_WITH_CUIS kernel support.
+It does not require the old AES service or a desktop just to use sessions
+and local geometry. Other architectures await their isolated address spaces
+and shared-linker support. Native m68k trap compatibility is a later slice.
+
+The build produces obj/libaes/libaes.so (SONAME libaes.so, SysV hash,
+ordinary PIC ELF32/x32), installed with the LD.SO runtime at:
+
+    obj/ldso/runtime/GEMSYS/LIB/X32/LIBAES.SO
+
+A native executable links to -laes and the dynamic CRT, and records an
+ordinary DT_NEEDED for libaes.so. No PT_PTOS_IMPORTS, fixed client image or
+kernel symbol resolution is used. The transitional test interface is
+include/libaes.h: aes_session_open/query/close and the existing local
+inside/rc_constrain/rc_equal/rc_intersect/rc_union geometry helpers.
+The library remembers its session in private writable data for normal
+finalization. Kernel process teardown is authoritative on faults, _Exit
+and any skipped library cleanup. Starting a session is idempotent for one
+process. Handles never recycle during a boot, including end/restart by the
+same process.
+
+Native scalar session syscalls
+------------------------------
+
+include/cuis.h defines the x32 syscall class 0x103 and individual function
+numbers. RAX contains (0x103ULL << 32) | function. Arguments are passed
+flat in registers using the normal native RDI/RSI/RDX/R10/R8/R9 convention;
+the result is returned in RAX. The session calls use only RDI, for a handle,
+or no arguments at all. Unused registers are ignored. Kernel-mode calls and
+builds without CUIS return EINVFN.
+
+    Function  Call                    Success result
+    --------  ----                    --------------
+    0         session_start()         Non-negative session handle
+    1         session_query(handle)   0 if the caller owns this live handle
+    2         session_end(handle)     0 after revoking the caller's session
+
+All calls return a negative GEMDOS error code on failure. The corresponding
+libaes.so functions are aes_session_open(), aes_session_query(handle) and
+aes_session_close(handle), with the same scalar results. There are no
+parameter blocks, reply structures, version fields or feature negotiation.
+
+Handles range from 0 through 0x7fffffff; zero is a valid handle. Session
+start returns an existing handle if the caller is already registered, or
+allocates one session. The allocator stops at the signed 32-bit limit so
+success can never be mistaken for a negative error. Sessions are bounded
+to one per process; no session call yields or waits.
+
+The kernel validates the full-width handle slot before narrowing it.
+Out-of-range handles return EINVAL; foreign, stale or missing handles
+return EACCDN. Unknown function numbers return EINVFN, and allocation or
+handle-space exhaustion returns ENSMEM. A failed allocation publishes no
+session and consumes no handle. The current kernel process establishes
+ownership; a handle grants no authority over another process's session.
+
+Next slices
+-----------
+
+Specify native event types, bounded authorized delivery and atomic wait
+predicates before migrating evnt_*; define native window handles and redraw
+ownership before moving window/menu rendering. Reuse process scheduling,
+input, timers, copy/VM facilities and VDI. Test two active isolated GUI
+clients, focus, grabs, timeouts, redraw and failure cleanup as those features
+land. The two-session nested-client foundation test does not claim concurrent
+window/event functionality. Full libcmini integration (#673) is independent.
+
+Validation
+----------
+
+    python3 tools/test-cuis.py
+
+This compiles the production session service for host tests of scalar
+arguments, allocation failures, two owners, foreign/stale handles, valid
+zero handles, idempotent start, process cleanup and signed handle exhaustion. Kconfig tests
+require x32 plus the shared linker and keep ARM/m68k disabled.
+
+For the real syscall and dynamic-linker path, configure pc-x86_64 with
+CONF_WITH_ELF_SHARED, CONF_WITH_LIBAES and CONF_WITH_X86_64_MEMTEST, then:
+
+    make CROSS_COMPILE= -j4
+    sh tools/test-mmap-boot.sh
+
+CUIS.TOS is a normal PT_INTERP executable with DT_NEEDED libaes.so and
+libptos.so. A parent keeps its session while children register independently,
+reject its handle and exit normally, via _Exit, or by a user exception.
+The boot test checks shared DSO-page reuse, allocator/session counts after
+teardown, and the CUIS PASS markers. It also exercises high handle bits,
+negative handles, ignored unused registers and local rectangle helpers.
+The disabled-feature memory self-test explicitly requires EINVFN.
+
+Caller-local GEM object operations (#679)
+----------------------------------------
+
+libaes.so exports objc_add(), objc_delete(), objc_order() and objc_offset()
+over the application's own native OBJECT array (24-byte entries on x32).
+These are ordinary C functions and need no CUIS session. No tree, object
+specification or output pointer crosses a syscall boundary. Resource loading,
+rendering and hit testing with display metrics are subsequent slices.
+
+The #730 slice adds objc_find() and mt_objc_find(), plus mt_* forms of the
+editing/offset calls above, with standard GEM signatures. Hit testing uses
+logical object rectangles in screen coordinates, includes the starting object
+at depth zero, excludes hidden subtrees, and gives later siblings precedence.
+Each child list is scanned once before descending into its last matching
+child, keeping traversal linear without recursion or temporary arrays.
+Right/bottom edges are exclusive. A non-root start includes its ancestor
+offsets. No hit (or a negative start/depth) returns -1. The search is iterative
+and does not invoke USERDEF callbacks or dereference object specifications.
+These local mt_* calls ignore the global array and need no registration.
+Trees must have valid GEM parent/sibling links; invalid pointers fault in
+userspace. 3D hit areas follow native expansion rules, including outlined objects and
+the logical hit rectangle used for shadowed objects.
+
+With CONF_WITH_LIBAES enabled, the algorithms in aes/shared/gemobjtree.c are
+also used by kernel AES. With the feature disabled, the original kernel
+implementations and object list are retained unchanged.
+Parent/sibling links retain GEM conventions: a parent's head and tail name
+its first/last child, the last child's next points to the parent, the root's
+next is NIL, and an empty child list has head/tail NIL. Deleting an object
+unlinks its subtree without destroying its contents; adding attaches it at
+the end of the destination parent's children. A detached object's next field
+is not reset by deletion; objc_add assigns its new parent link.
+
+objc_order uses zero-based sibling positions; NIL (-1) means the end.
+Invalid positions return zero before modifying links. Reordering an only
+child preserves both the parent's head/tail and the child's parent link.
+Root deletion/reordering fails. objc_offset accumulates the object's and
+its ancestors' relative coordinates into the caller's WORD outputs. These
+functions return one on success, zero on rejected operations, following the
+GEM C API rather than the CUIS syscall error convention.
+
+As with ordinary GEM C functions, the caller supplies a valid array and tree
+links. Local routines do not copy or register it in the kernel. An invalid
+pointer faults in user mode, and process teardown releases that client's
+CUIS session. The kernel diagnostic wrapper for legacy ob_delete remains
+outside the pure shared core.
+
+The host and real ring-3 tests share tests/cuis/objects.c. They cover nested
+coordinates, subtree relocation, head/middle/tail deletion and ordering,
+invalid positions without mutation, single-child ordering and preservation
+of object specifications. The dynamic client also calls objc_offset with
+an unmapped pointer: only that child faults, and its parent continues.
+
+When CONF_WITH_DYNAMIC_DESK and CONF_WITH_LIBAES are enabled together,
+EmuDesk links its public objc_add/objc_order/objc_offset calls through
+DT_NEEDED libaes.so, rather than defining GEM trap wrappers for them.
+Internal desktop geometry helpers use the same extracted core. Other
+AES operations continue through the existing adapters during migration.
+Static desktops and builds without libaes retain their existing bindings.
+
+Native window metadata (external libaes only)
+-------------------------------------------
+CUIS class 0x103 now reserves these flat-register calls:
+
+  3 CREATE     RDI=x, RSI=y, RDX=width, R10=height
+  4 CONFIGURE  RDI=window, RSI=x, RDX=y, R10=width, R8=height
+  5 DESTROY    RDI=window
+
+CREATE returns a non-negative window handle or a negative GEMDOS error.
+CONFIGURE and DESTROY return zero or a negative GEMDOS error. Unused slots
+are ignored. The current process must have an open CUIS session; a session
+handle is not repeated in these calls. Window and session handles occupy
+separate namespaces. libaes exports aes_window_create/configure/destroy;
+these native calls do not yet implement the GEM wind_* API.
+
+Window handles are never recycled during a boot. Only the owning process
+may configure or destroy a window. A missing session, unknown/stale handle
+or foreign window returns EACCDN; malformed active register slots return
+EINVAL. A maximum of 64 windows per session bounds kernel allocations;
+quota, allocation and handle exhaustion return ENSMEM without consuming a
+handle. Closing a session or exiting/faulting frees all its windows.
+
+Geometry arguments are sign-extended 32-bit integers. Origins may be negative;
+extents must be positive and the exclusive right/bottom edges must fit in a
+signed 32-bit integer. Invalid configuration leaves the old geometry intact.
+These windows are metadata only: creation does not show a window, draw or
+change focus. Visibility, Z-order and redraw polling are described below;
+clipping, rendering coordination and event delivery remain subsequent work. No legacy AES window state is changed by these calls.
+All new kernel paths compile only with CONF_WITH_CUIS, selected by the
+external CONF_WITH_LIBAES feature.
+
+Visibility, stacking and redraw polling
+--------------------------------------
+Additional calls in CUIS class 0x103 each take the window handle in RDI:
+
+  6 SHOW     insert a hidden window at the front
+  7 HIDE     remove a visible window
+  8 RAISE    move a visible window to the front
+  9 LOWER    move a visible window to the back
+ 10 REDRAW   consume a pending redraw indication (1 pending, 0 none)
+
+All return a negative GEMDOS error on failure. SHOW/HIDE/RAISE/LOWER return
+zero on success. libaes exports aes_window_show/hide/raise/lower/redraw.
+Unused registers are ignored; ownership and full-width handle validation
+are identical to the earlier window calls. SHOW on an already-visible
+window and HIDE on a hidden one are no-ops. RAISE/LOWER on a hidden window
+return EINVAL. Raising the front window or lowering the back window is a
+no-op. CONFIGURE with identical validated geometry is also a no-op and
+preserves pending redraws. New windows start hidden with no pending redraw.
+
+CUIS maintains one front-to-back list across registered processes, separate
+from the legacy AES window manager. Showing, hiding, moving, resizing,
+reordering or destroying a visible window conservatively marks every
+remaining visible CUIS window for a full redraw. Showing also marks the
+newly visible window. Hidden windows retain no redraw indication; their
+next SHOW schedules one. Repeated changes coalesce. Invalid operations
+leave both order and pending redraws intact. Closing a session or exiting
+removes all its visible windows and marks surviving windows for redraw.
+
+REDRAW is owner-local, nonblocking polling, not an event wait. It clears
+only that window's pending indication; subsequent changes set it again.
+The syscall runs synchronously in the existing serialized kernel service
+path, without allocating queue entries. It does not authorize framebuffer
+writes. The snapshot/update calls below provide metadata coordination. Physical
+display clipping, VDI enforcement and atomic event waits remain necessary
+for complete concurrent rendering support. No pixels, legacy AES windows or input focus are changed
+by this slice. A full GEM wind_* adapter also remains subsequent work.
+
+Visible-region snapshots and update sections
+-------------------------------------------
+The next CUIS calls retain the flat scalar ABI:
+
+ 11 UPDATE_BEGIN  RDI=window
+ 12 UPDATE_END    RDI=window
+ 13 WINDOW_CLIP   RDI=window, RSI=index,
+                  RDX=LONG *x, R10=LONG *y, R8=LONG *width, R9=LONG *height
+
+libaes exports aes_update_begin(window), aes_update_end(window), and
+aes_window_clip(window, index, x, y, width, height). BEGIN/END return zero
+or a negative error. CLIP returns 1 for a rectangle, 0 at/past the end,
+or a negative error. There is no cursor, request block or negotiation.
+
+BEGIN requires an owned visible window and captures its rectangle minus
+all visible windows above it. Output rectangles are disjoint, have positive
+extents, and remain in the same native coordinate space. Touching edges do
+not occlude. A fully covered window has an empty snapshot. The snapshot
+uses at most 256 rectangles, with two bounded work buffers during capture;
+allocation or intermediate fragmentation overflow returns ENSMEM without
+acquiring the update section or altering window state/redraw flags.
+
+There is one nonblocking update section across CUIS sessions. A successful
+BEGIN freezes geometry/stacking operations until END. While held, all
+window mutations (including creation and otherwise-idempotent operations)
+return EAGAIN after the normal ownership checks. Another BEGIN, including
+a nested BEGIN, also returns EAGAIN. REDRAW polling remains permitted. A
+matching owner/window END releases the snapshot and update section;
+wrong-owner/window END returns EACCDN. This is not a recursive lock or an
+atomic event wait. Callers must finish promptly and retry busy operations.
+
+CLIP requires the matching active owner and window. The index is an unsigned
+32-bit scalar; full-width malformed handles/indices return EINVAL. Outputs
+are native 32-bit LONGs, copied through the existing per-process memory
+validation/copy facilities. Every output destination is validated before
+any value is copied; invalid, supervisor, read-only or high-bit addresses
+return EIMBA. Outputs are written in x,y,width,height order if they alias.
+At/past the end, no output pointers are inspected or written. Copy failures
+never advance a cursor: retry the same index. Output order is deterministic
+for a held snapshot but callers should not depend on a particular tiling.
+
+Session close and process exit/fault release an owned update section before
+freeing windows. Other processes may still terminate: their windows are
+removed and surviving windows marked for redraw. The held snapshot stays
+immutable; removing an occluder can only make it a conservative subset of
+the newly exposed area. Pending redraws survive END so that exposure is not
+lost. Subsequent BEGIN captures the expanded region.
+
+The snapshot/update calls provide the metadata used by the display/VDI
+integration below. They do not lock the legacy AES window manager or grant
+direct framebuffer access. Input/focus and atomic event waits remain later
+epic work. The kernel source and dispatch paths are enabled only by
+CONF_WITH_CUIS, selected by the external CONF_WITH_LIBAES feature.
+
+Physical display and native VDI integration
+-------------------------------------------
+UPDATE_BEGIN now intersects the window with the current physical display
+before subtracting higher windows. Native clip outputs therefore contain
+only physical display coordinates, even for negative origins and windows
+extending past an edge. A fully off-screen window has an empty snapshot.
+An unavailable/zero-sized display returns EINVFN without acquiring an
+update section. The VDI renderer additionally applies its signed-coordinate
+limits and the optional workstation clip to every screen write.
+
+Opening a CUIS session opts that process into region enforcement by the
+existing checked x32 VDI service (when CONF_WITH_X32_VDI is enabled). Lines,
+text, bars and filled rectangles require an active update section owned by
+the process; without one they return EACCDN. Drawing intersects the snapshot
+with the physical screen and workstation clip and renders once per disjoint
+region. Empty intersections draw nothing. Workstation clipping state and
+the associated Line-A globals are restored afterward. Attribute setters
+remain usable without an update. Another process's update section causes
+native screen writes to return EAGAIN, including writes by non-CUIS clients.
+
+Whole-screen reads remain allowed for every app, including screenshot apps:
+VDI pixel reads do not require a CUIS session/update and are not restricted
+to a window or its unoccluded area. Normal physical-coordinate and output
+memory validation still apply. A screenshot may read while another client
+holds an update section. Screen-copy source pixels are likewise unrestricted.
+Screen-to-screen copies by CUIS clients require an owned update and clip
+only the destination. Rows and disjoint row segments are processed in
+memmove order so overlapping copies do not overwrite later source pixels.
+Workstation clipping still restricts destination writes and is restored.
+
+Non-CUIS native VDI clients retain their previous drawing behavior when no
+update section is active. These changes do not retrofit the legacy AES
+service or its direct kernel drawing, and are not a sandbox for all legacy
+interfaces. The external desktop still uses its legacy session path while
+GEM window/form/menu migration continues. Screen-to-memory raster binding
+coverage follows the existing VDI implementation; whole-screen read access
+is permitted independently of that binding's supported operations.
+
+All new VDI policy, clipping and copy paths are under CONF_WITH_CUIS. With
+external libaes disabled, the original native VDI paths remain in use.
+
+Native workstation lifetime under external libaes
+------------------------------------------------
+Native OPEN/CLOSE operate on process-owned virtual workstations. If native
+VDI needs to initialize the physical workstation, it preserves the console
+and framebuffer instead of implicitly entering graphics mode and clearing
+the screen. Once initialized, that physical workstation stays available
+when the last client closes, fails to open a virtual handle, exits or faults.
+Client cleanup still frees every owned virtual workstation and callback.
+
+The kernel display/legacy AES path retains responsibility for explicit
+physical-workstation and console transitions. Before reopening an active
+physical workstation, a production handoff closes the old workstation
+without an intermediate console clear. This removes timer/mouse hooks and
+invalidates old virtual handles before installing new hooks, preventing
+the timer from chaining to itself. Native clients must reopen virtual
+handles after a kernel physical-display reinitialization.
+
+A native screenshot client can
+open a virtual workstation and read the whole screen during another client's
+update without clearing the display or switching console mode. Kernel-only
+memtest fixtures can explicitly reset an idle service-owned physical
+workstation when changing synthetic display dimensions; those resets also
+preserve the console. With external libaes disabled, physical workstation
+lifetime and console transitions retain their original behavior.
+
+Focus ownership foundation
+--------------------------
+CUIS adds three flat calls, each taking an owned window handle in RDI:
+
+ 14 FOCUS_REQUEST  return zero on success or a negative GEMDOS error
+ 15 FOCUS_QUERY    return 1 if focused, 0 if not, or a negative error
+ 16 FOCUS_RELEASE  return zero on success or a negative error
+
+libaes exports aes_window_focus, aes_window_focused and aes_window_unfocus.
+Unused register slots are ignored. Malformed full-width handles return
+EINVAL; absent sessions and unknown/stale/foreign handles return EACCDN.
+A hidden window cannot request focus (EINVAL). Only the currently frontmost
+visible CUIS window may claim focus; a request for another visible window returns
+EACCDN. No foreign focus handle is exposed by QUERY.
+
+Showing, raising and lowering windows do not automatically transfer focus.
+Focus and stacking remain distinct: an already-focused visible window can
+remain focused after being lowered. Repeating a focus request for the focused
+front window is a no-op. Releasing a non-focused owned window is also a no-op;
+releasing the focused window clears focus without selecting a fallback. Actual focus changes mark all visible CUIS
+windows for redraw so future decorations can reflect the change.
+
+Hiding/destroying a focused window transfers focus to the remaining front
+visible window, or clears it if none remains. The same rule applies while
+closing sessions and reclaiming normal, raw-exit or faulted processes. A
+focus pointer is always removed before its window is freed. Removing an
+unfocused window does not change focus.
+
+Focus request/release are mutations and return EAGAIN while an update section
+is held, including otherwise-idempotent requests. QUERY remains available.
+New windows start without focus, and a boot with no focus stays that way
+until a successful request. This slice establishes the authoritative target
+for subsequent bounded input queues and atomic waits; it does not yet route
+hardware input, change legacy AES focus or add event delivery. All kernel
+focus state and paths remain under the external libaes CUIS configuration.
+
+Focused keyboard queues and atomic waits
+---------------------------------------
+CUIS adds flat keyboard calls using only RDI and RSI:
+
+ 17 KEY_READ  RDI=owned window, RSI=ULONG *key
+ 18 KEY_WAIT  RDI=owned window, RSI=sign-extended LONG timeout_ms
+
+libaes exports aes_key_read(window, key) and aes_key_wait(window, timeout_ms).
+READ returns 1 after copying one key, 0 if empty, or a negative GEMDOS error.
+WAIT returns 1 when a key is pending without consuming it, 0 on timeout, or
+a negative error. Zero milliseconds polls; -1 waits indefinitely. Other
+negative or noncanonical timeout values return EINVAL. Unused registers
+are ignored. Unknown/stale/foreign handles and unfocused windows return
+EACCDN; malformed full-width handles return EINVAL.
+
+Each window has a fixed 16-key FIFO. The existing BIOS keyboard translation
+feeds the focused window through an IRQ-safe, allocation-free producer.
+Values retain the BIOS representation: translated character in the low
+word, scan code in bits 16-23, modifier state in the high byte. Interpretation
+belongs in libaes. There is no CUIS syscall for posting synthetic keyboard
+input. Consumed keys do not also enter the legacy BIOS input queue. A full
+focused queue drops the newest key and still consumes it, preventing overflow
+from exposing another application's input to legacy consumers. With no CUIS
+focus, normal BIOS input behavior is retained.
+
+Focus transfer clears both the old and newly focused window's queues;
+release, hide, destruction and exit cannot leave stale input for a later
+focus owner. Repeating a request for the already-focused front window keeps
+its queued input. Publication/removal of the focus pointer and queue updates
+use the selected interrupt backend, so keyboard IRQs cannot retain a pointer
+to a freed window. IRQ code neither traverses client lists nor allocates.
+
+READ validates and backs writable output memory before its short queue
+transaction, then rechecks focus. Copyout failure leaves the oldest key
+queued for retry. Empty reads do not inspect the output pointer. WAIT checks
+focus, queue and deadline with interrupts masked, then uses the x32 atomic
+STI/HLT/CLI sequence to sleep and recheck. Pending input cannot land between
+an empty check and sleep without waking the caller. Entry interrupt state
+is restored on return. Positive timeouts use the 200 Hz monotonic tick with
+a guard for the current partial tick, avoiding early expiry; deadlines use
+unsigned differences so counter wraparound is supported. A queued key takes
+priority over timeout at a wake boundary.
+
+An empty blocking wait while the caller owns a display update returns
+EACCDN; zero-time polls and already-pending input remain available. This
+prevents sleeping indefinitely with the drawing update held. Focus loss
+observed after wake returns EACCDN. Managed kernel tasks block only the caller and
+let another runnable client execute. Outside a managed group, waits retain
+the native IRQ sleep path. No legacy AES scheduler or userspace daemon is
+added; asynchronous public process-launch integration remains later work.
+
+All kernel input state, BIOS hooks and the selected interrupt/wait backend
+compile only with CONF_WITH_CUIS, selected by external CONF_WITH_LIBAES.
+Kernel memtests inject one translated key from a real timer IRQ after the
+wait reaches its sleep path and verify it does not enter the BIOS queue;
+no user-callable test injection interface is exposed.
+
+Pointer routing and combined waits
+----------------------------------
+CUIS extends the flat register ABI with:
+
+ 19 POINTER_READ RDI=owned window, RSI=LONG *x, RDX=LONG *y,
+                 R10=ULONG *buttons, R8=ULONG *state
+ 20 EVENT_WAIT   RDI=owned window, RSI=event mask,
+                 RDX=sign-extended LONG timeout_ms
+
+libaes exports aes_pointer_read(window, x, y, buttons, state) and
+aes_event_wait(window, events, timeout_ms). POINTER_READ returns 1 for one
+snapshot, 0 when empty, or a negative GEMDOS error. Coordinates are absolute
+screen pixels. Buttons use bit 0 for left and bit 1 for right; state bits 0-1
+identify changed buttons and CUIS_POINTER_INSIDE (bit 2) identifies the
+window currently hit by the pointer. Capture can deliver outside snapshots.
+All four outputs are validated before copying; failed copyout retains the
+snapshot. Empty reads do not inspect output pointers.
+
+A trusted relative mouse packet is clamped to the physical display and live
+VDI viewport. Hit testing uses the topmost shown window and half-open bounds.
+Pressing a CUIS window focuses it without raising it and implicitly captures
+all pointer input until every button is released. A legacy drag begun outside
+CUIS remains legacy through release. Hiding, destroying or exiting a capture
+owner suppresses the remaining gesture until release, preventing orphan
+button releases from reaching another recipient. Enter/leave snapshots also
+track window visibility, geometry and Z-order changes. CUIS-owned input keeps
+the visible VDI cursor moving without publishing legacy motion/button or
+native VDI input callbacks. Input outside CUIS retains existing behavior.
+
+Each window has a resident 16-snapshot FIFO. Consecutive pure motion snapshots
+with matching buttons and inside state coalesce. Button edges and inside
+transitions remain ordered. Overflow discards the old FIFO, reports ERANGE
+once, and retains a current-state snapshot with no asserted button changes;
+callers must resynchronize their gesture state after ERANGE. The per-session
+64-window limit remains; a global 256-window limit bounds allocation-free IRQ
+hit testing and focus redraw work. Creation beyond either limit returns
+ENSMEM. No userspace synthetic-input entry point is added.
+
+EVENT_WAIT accepts any nonempty combination of CUIS_EVENT_KEY (1),
+CUIS_EVENT_POINTER (2), and CUIS_EVENT_REDRAW (4). It returns 1 if any requested
+source is pending, 0 on timeout, or a negative error; it consumes nothing and
+returns no event mask. Callers poll their requested sources after waking.
+Pointer overflow counts as pending; redraw remains pending until REDRAW is
+read. KEY-only waits require focus; mixed waits can observe pointer/redraw in
+a background window, while keyboard readiness still requires focus. Windows
+must be shown. Unknown mask bits and malformed timeouts return EINVAL.
+Timeout and owned-update restrictions match KEY_WAIT. Predicate checks and
+sleep use the same IRQ exclusion, avoiding lost wakeups between sources.
+
+Host tests exercise ownership, capture, enter/leave, coalescing, overflow,
+copyout failures, cancellation, legacy drags and global bounds. Kernel tests
+inject press/release packets from a real timer IRQ after an empty mixed wait
+has reached sleep, and check cursor movement, legacy callback isolation and
+owner teardown in both display-backed and headless configurations. Guarded
+show/hide/redefinition keeps logical coordinates synchronized and flushes
+deferred cursor movement when the outer guard ends. CUIS packets invalidate
+queued legacy motion/cursor notifications and advance a generation checked
+before applying an in-flight native motion callback's result. IRQ fixtures
+cover guarded motion and reject an older callback completion after CUIS input.
+
+Bounded peer messages
+---------------------
+CUIS transports opaque peer data separately from trusted input and redraws:
+
+ 21 MESSAGE_SEND  RDI=destination session, RSI/RDX/R10/R8=ULONG words 0-3
+ 22 MESSAGE_READ  RDI=owned session, RSI=LONG *sender,
+                  RDX/R10/R8/R9=ULONG *words 0-3 (four separate outputs)
+ 23 MESSAGE_WAIT  RDI=owned session, RSI=sign-extended LONG timeout_ms
+
+Transitional libaes test wrappers are aes_message_send(destination, a, b,
+c, d), aes_message_read(session, sender, a, b, c, d), and
+aes_message_wait(session, timeout_ms). These are transport helpers, not the
+GEM application API; normal applications use appl_write/read and
+evnt_mesag/multi after their library adapters migrate. No request/reply
+structure or receiver grant handshake is used. Any registered client can
+send to another registered client, as normal GEM messaging requires.
+
+Payload words are unsigned 32-bit values; send slots with upper bits set
+return EINVAL. CUIS does not decode GEM message IDs or payloads. A peer
+message cannot fabricate trusted CUIS keyboard, pointer, focus or redraw
+notifications. Sender identity is assigned by the kernel, never supplied by
+the sender. Session handles are never reused. Peer discovery, mapping to GEM
+application IDs and GEM message adaptation remain later library work.
+
+SEND returns E_OK on acceptance, EAGAIN when the destination's 16-message
+FIFO is full, EACCDN for an absent destination or unregistered caller, or
+EINVAL for malformed slots. It never blocks, allocates or evicts an accepted
+message. Messages from all peers share FIFO acceptance order. These scalar
+results are private transport conventions, not appl_write return values.
+
+READ returns 1 after copying the kernel sender and all four payload words,
+0 when empty, or a negative error. All outputs are validated/backed before
+copyout, and a failed copy leaves the oldest message queued. Empty reads
+ignore output pointers. Reading another session is forbidden. Sender exit
+preserves accepted messages with the historical sender handle. Receiver exit
+discards its queue; no message holds a process/window pointer or file reference.
+
+CUIS_EVENT_MESSAGE (8) extends EVENT_WAIT: any queued message for the window
+owner makes it ready, independently of focus. A successful wait returns 1 and
+consumes nothing. MESSAGE_WAIT uses the same atomic predicate/sleep, timeout
+and owned-update rules without requiring a window or focus. Existing event
+masks retain their behavior. Managed tasks yield to the kernel scheduler; unmanaged callers retain the
+IRQ sleep path. Public asynchronous launch integration remains later work.
+Host tests model a peer posting at the sleep boundary; native boot tests
+verify scalar transport, cross-process delivery without a handshake,
+copyout recovery, queue bounds, ownership, readiness and timeouts.
+
+Kernel-managed native task scheduling
+-------------------------------------
+CONF_WITH_CUIS selects the hidden CONF_WITH_NATIVE_SCHED option. Generic
+process scheduling and MiNT process calls use that option, while GUI
+services retain CONF_WITH_CUIS guards. Initially Kconfig limits the native
+scheduler backend to x32 with separate address spaces. It reuses the
+existing process-context save/restore implementation, without AESPD/EVB/UDA
+state or the legacy AES dispatcher. No userspace daemon or application-facing
+CUIS scheduling syscall is introduced. Standard asynchronous calls within
+managed groups and ordinary launch integration are described below. Full
+GEM appl_*/evnt_* adapters remain separate work.
+
+The kernel-only ksched_run() accepts up to eight distinct, already prepared,
+unlaunched processes and runs the group until all tasks finish. Allocation
+failure before launch leaves all programs with the caller. A successful run
+consumes them and returns each exit status. Every task gets a private kernel
+bootstrap stack, separate from its process's syscall stack; both outlive
+suspended continuations and are reclaimed only from another live stack.
+The synchronous group launcher stays alive until every task exits, so its
+children never retain a freed parent. Dynamic children use the standard
+process calls described below; the kernel group controller stays alive until
+every descendant finishes.
+
+CUIS keyboard, combined event and session-message waits publish a bounded
+kernel-state predicate while IRQs are masked and suspend the current task.
+The scheduler scans at most eight predicates in round-robin order and runs
+another ready task. Message/input/redraw readiness, focus or visibility loss,
+and timeout expiry all resume the waiter, which rechecks its original
+conditions. If every task is blocked, the root context uses STI/HLT/CLI after
+the predicate scan, avoiding a lost IRQ between checking and sleeping.
+Unmanaged waits keep the existing atomic IRQ sleep path. Pending events,
+zero-time polls and owned-update restrictions keep their previous behavior.
+
+Context transfer preserves the active process, page tables, syscall and IRQ
+stacks, saved user RSP, GS syscall state, launch nesting, disk-error recovery
+buffer, FPU/SSE state, IRQ state and managed-task identity. Legacy AES saves
+and restores that identity with its coroutine contexts; new accessory
+coroutines are unmanaged even while a foreground group is active. Their
+Syield is a no-op and async launch is rejected, including from their nested
+synchronous children. Returning to a managed foreground restores its task.
+Identities are never reused across task slots or groups, so an obsolete
+context cannot attach to a later task. Desktop boot tests exercise both the
+unmanaged accessory path and managed launch/wait after AES returns.
+A nested synchronous Pexec stays in the
+same task and may itself block in CUIS; child exit/fault returns through its
+normal launch continuation. Scheduling is cooperative at blocking CUIS
+waits, child waits and explicit Syield calls. Busy clients are not preempted
+and still require cooperative scheduling points.
+
+Boot fixtures run two isolated standard-ELF/libaes clients through 64 message
+exchanges, with private data/library state and SSE checks. They also exercise
+focus-loss wakeup, all-blocked timeouts, a nested child's timed wait, normal
+exit, _Exit, faults, group bounds/duplicate rejection, allocation failure
+before launch and exact allocator/resource reclamation. Test-only kernel
+bootstrap messages supply known peer handles until application discovery
+migrates; no new application API is required.
+
+Standard asynchronous process calls in managed groups
+---------------------------------------------------
+With CONF_WITH_NATIVE_SCHED, managed x32 clients use ordinary MiNT GEMDOS calls:
+
+ Pexec(100, path, tail, env)  load and asynchronously launch; return child PID
+ Pexec(106, name, bp, env)    asynchronously launch/free a caller-owned loaded
+                            basepage; return child PID (name/env unused)
+ Syield()            0x0ff  cooperatively run another ready task, return E_OK
+ Pwait()             0x109  Pwaitpid(-1, 2, NULL)
+ Pwait3(flags, usage) 0x11c  Pwaitpid(-1, flags, usage)
+ Pwaitpid(pid, flags, usage) 0x13a
+
+These are standard process interfaces, not new libaes APIs. Pexec modes
+0/3/4/6 retain their synchronous/load behavior. Pexec(100/106) require a
+managed caller; elsewhere they return EINVFN. Ordinary native Pexec(0/4/6)
+starts a single-root group when none is active, so launched shells and
+applications can use async calls without custom setup. ROM/kernel-code and
+explicit accessory entry paths keep their existing launch behavior; nested
+synchronous Pexec stays in the active task. Mode 104 is EINVFN: its
+FreeMiNT shared-address-space/thread semantics must not be presented as an
+isolated process launch. No fork, signals API, stopped jobs or preemption is
+added. Syield outside a managed task is a successful no-op. Preemption,
+Pfork and other architecture backends are follow-up #713.
+
+Ordinary group startup allocates its task array and bootstrap stack before
+transferring retained basepage/environment ownership or entering user mode.
+Pexec(4) keeps caller ownership and its existing image-return semantics;
+Pexec(6) transfers ownership only at task entry. A startup allocation failure
+leaves retained blocks freeable, and Pexec(0) cleans up its failed launch.
+The controller waits until every descendant exits, even if the root program
+has already terminated. The original root's full synchronous exit status
+is returned, independently of later orphan exits. Boot tests cover all three
+entry modes, retained blocks and failures of both group allocations.
+
+The original group slots stay reserved until group completion. Remaining
+slots admit dynamic children, including zombies, up to the eight-slot group
+bound. A full group returns EAGAIN; allocation failure returns ENSMEM. Mode
+100 unwinds a failed load/launch completely. Mode 106 transfers ownership
+only after successful preparation; pre-publication failure leaves its
+basepage/environment with the caller. As with existing image-adoption
+failures, a preparation failure may invalidate the loaded image, but retained
+blocks remain freeable. A successful launch revokes the loader's mappings
+of the child's basepage/environment before returning, so it cannot rewrite
+those blocks or free them while the child runs.
+
+Pwaitpid currently accepts a positive child PID or -1 for any direct child.
+Process-group selectors (0 and values below -1) return EINVFN until process
+groups exist. Flag bit 0 is WNOHANG: return 0 when matching children exist but
+none has exited. Bit 1 is accepted; there are no stopped children to report.
+Unknown flag bits return EINVAL. With no matching unreaped child, return
+EFILNF, as documented for MiNT. A blocking wait suspends only this task.
+
+On success, the PID occupies bits 16-31 and native MiNT status occupies bits
+0-15: normal Pterm status is narrowed to its low eight bits; CPU/process
+faults report the terminating signal number in bits 8-15. This is MiNT's raw
+format, not the POSIX byte order used by a libc wrapper. Optional usage is
+two 32-bit LONGs (user/kernel milliseconds), using the existing approximate
+process-usage accounting, with system time zero. Invalid output returns
+EIMBA without consuming the zombie, and successful copy/reaping happens once.
+Reaped child usage is charged to the waiting parent. No pointer is inspected
+when there is no status to return.
+
+A child PID remains reserved after KPROC destruction until reaping or orphan
+cleanup, preventing PID reuse from aliasing an unread status. Logical parent
+identity is separate from its kernel launch continuation: Pgetppid reports
+the spawning process while it lives, then the long-lived group controller.
+Only a read-only ancestor snapshot retains historical parent information;
+the child's supervisor exit mapping pins the controller, not the original
+parent. Parent exit clears ownership of live children and zombies. Orphans
+continue running and are automatically reclaimed on exit. The group returns
+only after all runnable/blocked descendants finish; no freed parent basepage
+is used as an exit continuation.
+
+Boot fixtures exercise asynchronous return, Pgetppid, explicit yield,
+blocking/nonblocking/any-child waits, one-time reaping, normal/raw/fault
+status, invalid and read-only usage outputs, loaded-basepage ownership and
+mapping revocation (Maccess), group exhaustion with freeable unlaunched
+blocks, slot reuse, nested or raw-image launch, normal/raw/fault parent exit, and abandoned
+zombies. With native VDI callbacks enabled, a parent invokes its blocked
+child's callback, survives the child's UD2 fault, then reaps SIGILL after
+the child's deferred termination. Every cycle checks process/task memory,
+file/directory references and CUIS sessions.
+
+Public GEM lifecycle and timer bindings (#717)
+-----------------------------------------------
+The ordinary shared library exports appl_init, appl_exit, appl_yield,
+evnt_timer and appl_getinfo, with matching mt_* forms, aes_global[15],
+gl_apid and gl_ap_version. include/gem.h declares this implemented subset;
+the same application fixture also compiles against GEMlib's normal headers.
+This is the first public adapter slice, not a complete GEM AES replacement.
+Discovery and application pipes are described below. Message/timer combinations are described below; window/input event adapters
+remain subsequent work. Existing aes_session_*/aes_window_*/aes_message_* exports
+remain transitional test/migration interfaces, not application requirements.
+
+appl_init implicitly opens the process's CUIS session and returns its kernel
+PID as a positive short application ID (1..32767), or -1 on failure. Opaque
+CUIS handles remain private and are never truncated to produce application
+IDs. Repeated initialization reuses the process registration. The caller's
+15-word global array is initialized with AES global-layout ABI 0x0400,
+multitasking sentinel -1 and its application ID; other slots are
+zero until their facilities migrate. This ABI value does not claim complete
+AES 4 functionality. Unsupported appl_getinfo queries return 0 and clear their output words;
+implemented discovery/polling queries are described below. Optional
+MultiAES/MagiC/XaAES query results follow implementation and behavioral tests.
+
+The mt_* forms use the supplied AES global array and the same process-owned
+registration. Successful exit clears that array and the library's exported
+globals, closes the session and returns 1. Invalid/stale state or transport
+failure returns 0; negative transport errors never escape Boolean GEM APIs.
+Ordinary finalization closes implicit sessions, while kernel teardown remains
+authoritative for faults and _Exit. No new application setup is required.
+
+CUIS_SESSION_DELAY (function 24) takes the owned session handle and an
+unsigned 32-bit millisecond interval in flat registers; E_OK or a negative
+error is its scalar result. It waits for time alone, without a window,
+focus, or input/message consumption. A positive interval is rounded up to
+200-Hz ticks with a guard tick, including tick-counter wrap; all intervals
+through 0xffffffff ms are accepted. Zero yields once. Positive delays while
+owning a display update return EACCDN, matching other blocking CUIS waits.
+The library maps successful delay/yield to 1 and failure to 0. These native
+calls add neither feature negotiation nor versioned request structures.
+
+Host tests cover failure mapping, opaque-handle/application-ID separation,
+caller globals, delay width/rounding/wrap, ownership, IRQ restoration and
+queued messages. Real dynamic parent/child fixtures use the public GEM
+calls, verify private globals, preserve a queued message across a timer,
+and reclaim implicit sessions through finalization and _Exit.
+
+GEM discovery and application byte pipes (#719)
+-------------------------------------------------
+libaes exports appl_find, appl_read, appl_write and evnt_mesag, including
+mt_* forms with GEMlib-compatible prototypes. appl_init publishes the
+executable basename as an eight-byte, space-padded label, folding ASCII
+lowercase to uppercase and stopping at the first extension separator. The
+kernel records only a bounded, unmodified basename (up to 32 bytes) and
+opaque label bytes; GEM normalization remains in userspace. Anonymous
+basepage-only programs need not have a name. Duplicate labels resolve to
+the oldest still-registered session. Exit removes the label; reopening the
+same process uses a fresh private handle and the same PID application ID.
+
+appl_find accepts normal eight-character names (short NUL-terminated names
+are padded), NULL/upper-word-zero self lookup, and the MultiTOS 0xffff/PID
+and 0xfffe/application-ID pointer selectors. Only registered peers convert;
+missing, exited or unregistered applications return -1. Handles are resolved
+and checked before conversion to a positive short PID; they are not narrowed.
+Standard appl_getinfo AES_PROCESS (4) returns 1 with outputs 0,1,0,1:
+cooperative scheduling, PID conversion, no appl_search, native rsrc_rcfix.
+AES_INQUIRE (6) returns 1 with outputs 1,0,0,0, advertising APR_NOWAIT only.
+Other queries remain unsupported; no protocol negotiation is introduced.
+
+appl_write accepts the complete nonnegative short byte-length range
+0..32767 and waits for enough queue space for the whole write. Input bytes
+are captured before waiting. appl_read accepts the same lengths and blocks
+until exactly that many bytes are available; ap_id must be the caller's ID,
+or APR_NOWAIT (-1) to poll without consuming an insufficient prefix. Zero
+lengths succeed without inspecting the buffer. evnt_mesag reads exactly
+16 bytes; appl_read can then retrieve the excess described by the caller's
+message header. Reads may cross write boundaries. All supplied payload
+bytes are preserved, including caller-defined header words; the kernel
+neither interprets GEM message types nor rewrites opaque byte streams.
+Boolean APIs return 1 on success and 0 on error, not native negative errors.
+
+Each receiver has a lazy 65536-byte payload ring and a parallel 16-bit sender
+PID ring (192 KiB total), independent of message/write boundaries. Partial
+reads immediately free capacity. A transfer's 32767-byte maximum is below
+half the byte capacity, avoiding metadata/packet fragmentation deadlocks
+between exact reads and atomic writes. One pending write snapshot per
+sender is bounded by the same transfer limit and is attached to its session
+before user copying can fault. There are no unbounded packet lists. Native
+sender metadata comes from the kernel and survives sender exit; it describes
+the first byte read and is separate from peer-supplied GEM header contents.
+Historical sender PIDs are not authentication of a currently live process.
+Peer bytes do not manufacture trusted keyboard/pointer/redraw events.
+
+All queued storage and pending snapshots are released on session/process
+exit, including faults and _Exit. Failed input copies do not publish data;
+failed read validation/copyout, including wrapped reads, consumes nothing.
+Writer wait predicates retain only the non-reused receiver handle and
+re-resolve it after every switch. Receiver close/exit wakes blocked writers
+with an error; reopening, even under the same PID, cannot receive the old
+pending write. Blocking operations which would sleep while owning a display
+update fail with EACCDN. Ready/zero/poll operations retain their normal behavior.
+
+Native CUIS calls use flat registers and scalar lengths/handles/errors:
+
+ 25 SESSION_NAME(handle, buffer, capacity) -> basename length (NUL appended)
+ 26 SESSION_LABEL(handle, bytes, length)   -> E_OK; opaque labels up to 32 bytes
+ 27 LABEL_FIND(bytes, length)             -> peer handle
+ 28 PEER_PID(handle)                      -> registered peer PID
+ 29 PEER_BY_PID(pid)                      -> registered peer handle
+ 30 STREAM_WRITE(peer, buffer, length, block) -> exact byte count
+ 31 STREAM_READ(own, buffer, length, block, optional_sender_pid) -> exact count
+
+Invalid arguments/ownership and missing peers return ordinary negative
+errors. block is 0 (EAGAIN when not ready) or 1 (wait). These services and
+process-basename storage compile only with CONF_WITH_CUIS. The previous
+four-word opaque queue remains transitional; the public GEM pipe does not
+inherit its fixed size. Message/timer combined waits are described below; input/window integration
+remains subsequent work.
+
+Host tests cover lookup/ownership, capacity and allocation failures,
+wrapped reads and copy failures, partial/cross-writer reads, captured input
+mutation, historical sender metadata, update ownership and receiver exit.
+Real dynamic GEM clients cover named and PID discovery, full-range and
+split transfers, blocking backpressure, registration close/reopen, sender
+exit and a receiver reopening while a pending write still targets its old
+handle. Allocator/session/process snapshots verify complete reclamation.
+
+GEM combined message/timer waits and state reads (#722)
+-------------------------------------------------------
+evnt_multi and mt_evnt_multi retain the complete standard GEM signatures.
+This initially implemented MU_MESAG (0x10), MU_TIMER (0x20) and their
+combination. The #741 input adapters below extend this to all six classic
+GEM event sources. The following describes the original message/timer subset.
+The result is the GEM mask of every ready requested source, including both
+bits together; it is never a native negative error. Unsupported keyboard,
+button, rectangle and extension masks, and an empty mask, return 0 before
+waiting, consuming message bytes or changing caller outputs. Their proper
+adapters follow window/input integration; requested events are not silently
+dropped. Unrequested button/rectangle parameters and timer arguments are
+ignored, as are message pointers when MU_MESAG was not requested.
+
+A message requires at least 16 bytes in the application pipe. A partial
+header cannot wake it, and the transitional four-word queue is a different
+source. Native readiness consumes nothing; the library copies exactly the
+16-byte GEM header only when ready, retaining any excess for appl_read.
+Failed message copyout returns 0 and leaves all bytes unread. A timer-only
+wait never consumes messages, including when its ignored message pointer is
+invalid. Combined waits preserve one deadline across IRQs and scheduler
+wakeups and use unsigned millisecond intervals through 0xffffffff, with
+ceil-to-tick rounding, a guard tick and modulo tick-counter wrap.
+
+With a zero timer, an already ready message returns both bits immediately.
+Otherwise the zero poll yields once to cooperative peers, then checks all
+requested sources again; a message produced during that yield is included
+alongside MU_TIMER. A positive timer can expire alone, a message can arrive
+first, or both can be ready at the same atomic kernel check. Blocking an
+empty wait while owning a display update returns EACCDN; ready and zero
+operations retain the existing behavior.
+
+graf_mkstate and mt_graf_mkstate return a read-only logical mouse/button/
+modifier snapshot for a registered caller. The same state fills successful
+evnt_multi outputs, with key return and click count zero because those
+input events are not implemented in this slice. Coordinates use signed
+GEM shorts (saturated at their range), buttons are left/right bits 0..1,
+and modifiers are the standard right-shift/left-shift/control/alt bits 0..3.
+NULL scalar output pointers are accepted. No window/focus is required;
+state reads neither invoke callbacks nor consume pointer/keyboard events.
+Standard-vector snapshots follow synchronized Line-A state; custom-vector
+snapshots use CUIS's initialized logical position/buttons, falling back to
+Line-A before initialization. This includes packets consumed only by CUIS.
+Invalid non-NULL scalar output pointers are ordinary userspace faults;
+kernel teardown remains authoritative for cleanup.
+
+CUIS_SESSION_WAIT (32) takes (owned_session, minimum_bytes, ready_mask,
+unsigned_milliseconds) in flat registers and returns CUIS_READY_STREAM (1),
+CUIS_READY_TIMER (2), their union, or a negative error. Masks must select
+at least one source. minimum_bytes is 1..32767 when selecting the stream;
+otherwise it is ignored. The interval is validated only when selecting the
+timer. This is generic byte readiness/deadline handling, not a kernel GEM
+mask or event parameter-block interpreter. CUIS_INPUT_STATE (33) takes the
+owned session and four LONG output addresses for x, y, buttons and modifiers,
+returning E_OK or a negative error. It backs all outputs before sampling one
+logical state under IRQ exclusion. Kernel additions remain CUIS-configured;
+there are no versioned blocks, feature negotiation or new public CUIS setup.
+
+Host tests cover all source combinations, simultaneous/early readiness,
+partial headers, opaque-queue separation, zero-yield arrival, full intervals,
+wrap and unchanged deadlines, IRQ restoration, update ownership, snapshots,
+mask/result mapping and copyout failures without consumption. Real dynamic
+GEM clients cover ordinary and mt_* calls, header/excess reads, unsupported
+masks, read-only message buffers, timed peer producers, zero-yield delivery
+and scalar-output user faults with exact resource reclamation. Normal GEMlib
+headers compile the same fixture; other AES/event families remain staged.
+
+Final configuration cutover
+---------------------------
+Once external libaes is complete, Kconfig must make CUIS and in-kernel AES
+mutually exclusive. In-kernel AES must also depend on !CONF_WITH_USER_ASPACE
+on every architecture. Protected GUI kernels use libaes over CUIS; kernels
+without separate address spaces can retain the traditional in-kernel AES.
+Remove the superseded kernel AES entry paths and AES-specific user-object,
+AESPB/tree validation and snapshot machinery at that cutover. Native CUIS
+syscalls continue checking ownership, scalar arguments and user buffers.
+Transitional combinations retain their validation until replacement libaes
+behavior and boot/desktop coverage allow those entry paths to be disabled.
+
+
+GEM plain-window lifecycle and geometry (#732)
+--------------------------------------------
+
+libaes exports wind_create/open/close/delete/get/set/calc and their standard
+mt_* forms. This section describes the metadata/lifecycle foundation for
+kind == 0 windows. Title/info frame rendering is added by #787 below.
+Window messages/focus and stack/owner queries are added by #738 below. Desktop handle 0, foreign-window
+geometry queries, sliders and other
+fields remain unsupported (return 0 without changing outputs). Update locking and rectangle enumeration are added by #734 below. No additional
+appl_getinfo capabilities are advertised by these slices.
+
+Application code uses positive short GEM window identifiers, not CUIS handles.
+CUIS_WINDOW_IDENTIFY (function 34) takes the owned native window handle in the
+first scalar argument and returns a positive, globally unique live-window
+identifier or a negative error. Identifiers range from 1 to the global window
+quota (256); zero is reserved. They are stable while the window exists and may
+be reused after destruction, as with ordinary GEM handles. Knowing an identifier
+never confers ownership of its underlying CUIS window. Unused registers are
+ignored; malformed/foreign/stale native handles fail ordinary ownership checks.
+All kernel additions remain under CONF_WITH_CUIS.
+
+Each library tracks up to 64 owned windows and maps the small identifier to the
+full opaque native handle. Registration is required for window lifecycle and
+queries. Repeated appl_init in the same session retains windows; successful
+appl_exit or registration of a new session clears the local map. Kernel session
+teardown reclaims all windows independently of library finalization, including
+raw process exits. A failed close/delete preserves the map for retry.
+
+wind_create returns -1 on failure, otherwise a positive GEM identifier. Its
+rectangle is saved as WF_FULLXYWH; current and previous rectangles start zero.
+Native hidden metadata uses an invisible positive-size placeholder because
+CUIS geometry requires positive extents. wind_open configures then shows the
+window and initializes both current and previous rectangles to the supplied
+border rectangle. Opening an already open window and closing a closed window
+return 0. A failed show leaves the window closed and its GEM rectangles intact;
+its hidden native geometry may have been prepared for the attempted open.
+wind_close saves the last current rectangle as previous and clears current.
+wind_delete also accepts an open window, hiding and destroying it in CUIS.
+
+wind_get supports WF_KIND, WF_CURRXYWH, WF_PREVXYWH, WF_FULLXYWH and
+WF_WORKXYWH. wind_set supports WF_CURRXYWH, even while closed; only a successful
+configure advances previous/current. Open and configure require positive border
+width/height. Full geometry is retained exactly as provided at creation.
+All ordinary results are GEM 1/0, never negative CUIS error codes.
+
+For kind zero, wind_calc requires no registration. WC_WORK insets
+the border by one pixel on each side, and WC_BORDER reverses that calculation,
+matching classic GEM plain-window geometry. WF_WORKXYWH uses the same rule on
+the current border rectangle. In particular, after wind_close the zero border
+produces (1,1,-2,-2), matching the existing GEM AES close/draw_change/wm_calc
+path; it is not clamped to an invented zero work rectangle. A closed window
+can subsequently receive WF_CURRXYWH and reports the corresponding work area
+without becoming visible. Unrepresentable signed WORD results fail without
+wrapping or changing outputs. Outputs may alias inputs; optional
+NULL outputs are ignored. Non-NULL invalid pointers fault in userspace.
+
+Host tests cover full native handle bits, transport errors, retry/state retention,
+quota exhaustion, session invalidation and standard source signatures. The
+GEMWIN.TOS fixture checks actual flat syscalls, shared-library state, isolated
+identifiers and raw-exit cleanup. Its standard window contract also compiles
+against unmodified GEMlib headers.
+
+
+GEM update locking and visible work rectangles (#734)
+----------------------------------------------------
+
+wind_update/mt_wind_update support END_UPDATE (0), BEG_UPDATE (1), and the
+standard NO_BLOCK (0x100) modifier on BEG_UPDATE. A successful begin returns
+1, a busy nonblocking begin or other failure returns 0. Locks nest per
+registered process, including across different mt_* global arrays: only the
+final matching end releases ownership. Unmatched/foreign ends fail. Mouse
+control (BEG_MCTRL/END_MCTRL) uses independent mouse ownership (see #743 below),
+not the screen update semaphore. Unknown codes return 0.
+
+The screen semaphore freezes competing native window mutations and screen
+writes, rather than tying an application to a single window. Standard window
+mutations acquire/release it internally and nest inside an explicit update
+section, as GEM permits. Ordinary begins block cooperatively; NO_BLOCK does
+not dispatch or sleep. Timer/input/message waits are allowed while owning the
+GEM semaphore, as required for modal interaction; applications remain
+responsible for avoiding circular waits between peers. The older native
+per-window snapshot lock retains its stricter no-blocking-wait rule.
+Session close, normal/raw/fault exits release all nesting levels. Preemption
+and other architecture backends remain future work under #713.
+
+An owner holds the whole-screen update section and may paint dialog/menu
+areas outside its windows. Native VDI writes remain clipped to the captured
+screen bounds; other processes cannot write until release. Read/copy access
+to the entire screen remains available to all apps, including screenshot
+apps. Existing per-window snapshot updates remain separate and mutually
+exclusive with this global section; migration/test helpers must not mix the
+two lock families. Traditional in-kernel AES migration remains incomplete;
+its final exclusion from CUIS kernels is still required at the epic cutover.
+
+wind_get(WF_FIRSTXYWH) restarts a per-window iterator, and WF_NEXTXYWH advances
+it independently of iterators for other windows. Each successful result is
+intersected with the window's GEM work area and the screen, excluding all
+higher windows' visual footprints. Nonempty rectangles do not overlap. A
+closed/offscreen/fully covered window, or the end of the list, returns GEM
+success 1 with width and height zero; x/y at end are not a sentinel contract.
+Native allocation/copy/ownership failures return GEM failure 0 without
+advancing the cursor or changing caller outputs. A new FIRST can retry.
+NEXT before FIRST or after exhaustion returns an empty rectangle. Hold
+BEG_UPDATE through the FIRST/NEXT loop to prevent changes by other apps;
+restart FIRST after changing window geometry/visibility/stacking yourself.
+
+Plain GEM windows reserve a two-pixel right/bottom shadow, matching existing
+AES w_getsize(WS_TRUE)/newrect behavior. This footprint participates in
+occlusion even though frame/shadow painting is still a subsequent rendering
+slice. Work/border geometry returned by wind_get/wind_calc and native pointer
+hit bounds exclude this visual outset. The kernel interprets only generic
+native geometry; libaes sets the GEM shadow policy when creating a window.
+
+Additional flat CUIS calls (all under CONF_WITH_CUIS):
+
+  35 DISPLAY_LOCK(session, acquire, block) -> E_OK / negative error.
+     acquire and block are canonical 0/1; release requires block=0. Ownership
+     is checked against the current process, depth overflow fails, and exit
+     clears ownership before freeing windows. An owned legacy snapshot cannot
+     be waited upon by its own process. Unused register arguments are ignored.
+
+  36 WINDOW_REGION(native_window, index, x*, y*, width*, height*) -> 1/0/error.
+     Produces indexed visible border/visual-footprint rectangles for owned
+     windows. Validated output elements are LONGs, not a request structure.
+     It also works without a global lock, but stability across calls requires
+     the caller to hold DISPLAY_LOCK. Read-only enumeration remains available
+     while another app owns an update section and never grants draw permission.
+     While the caller owns DISPLAY_LOCK, index zero refreshes a per-window
+     snapshot and later indices retain it even if an occluding peer exits.
+     Empty lists retain no array while still being marked valid.
+     Cached arrays are bounded by window/clip quotas and reclaimed on final
+     unlock, window destruction or owner exit. Without the lock, temporary
+     arrays are freed before any faulting output access. Cached arrays are
+     attached to windows before output access, so a user fault reclaims them.
+     A replacement snapshot commits only after successful output. Validation
+     or copy failure discards its candidate and retains the old snapshot for
+     the unchanged GEM cursor. Owner/session/window/candidate identities are
+     rechecked after output access, which can tear down the process.
+     No kernel-side iterator or unowned window metadata is exposed.
+
+  37 WINDOW_OUTSET(native_window, right, bottom) -> E_OK / negative error.
+     Sets generic unsigned 16-bit visual outsets, initially zero. Only the
+     owner may change them; geometry/extent overflow is rejected before
+     mutation. Outsets affect occlusion and VDI region clips, not pointer hit
+     bounds or the stored window geometry. Unused scalar slots are ignored.
+
+Host tests exercise nesting, contention, IRQ-safe blocking, exit handoff,
+malformed arguments, VDI permission/clip bounds, region allocation/copy errors,
+independent/restarted cursors and work clipping. GEMUPD.TOS checks rectangle
+coverage against a pixel-grid oracle including shadows, complete coverage,
+offscreen clipping, owner mutations during nested updates, blocking of another
+process until the final end, and raw/session-exit cleanup. The fixture uses
+standard GEM source calls and also builds against unmodified GEMlib headers.
+
+
+GEM window messages, topping and focus (#738)
+--------------------------------------------
+
+Plain libaes windows now receive standard WM_REDRAW (20) and WM_TOPPED (21)
+through appl_read/APR_NOWAIT, evnt_mesag and evnt_multi(MU_MESAG), including
+mt_* forms. Messages contain eight GEM shorts: AES sender 0, extra length 0,
+and the global short window identifier in word 3. Redraw bounds in words 4-7
+conservatively cover the current work area (nonnegative extents); applications
+still use wind_update and FIRST/NEXT to paint only visible rectangles. Topping
+requests leave words 4-7 zero. Repeated notices for the same window/kind can
+coalesce. Ordinary application pipe bytes keep their FIFO order and original
+contents; converted system messages append to that same byte stream and can
+be read in parts just like other GEM messages.
+
+Opening a standard window makes it frontmost and gives it keyboard focus.
+WF_TOP raises an owned open window and gives it focus, including an already
+frontmost window; WF_BOTTOM lowers it and gives the new top window focus if
+necessary. Hide/delete/normal/raw/fault exit of the focused window falls back
+to the next visible window. Existing native test/migration windows keep their
+previous explicit-focus behavior unless opted into client-managed activation.
+
+Clicking a visible part of a background standard window sends WM_TOPPED; it
+neither raises nor focuses the window automatically. Its application decides
+whether to honor the request with wind_set(WF_TOP). The activating press and
+matching release are consumed as a topping gesture rather than delivered as
+ordinary button input. Existing pointer capture/release suppression remains
+in force when that window hides or exits. Input is routed to the current focus
+until the application actually tops the requested window.
+
+wind_get(WF_TOP) ignores the input handle and returns top ID, owner AES/PID,
+next ID below, and zero. WF_BOTTOM returns the bottom visible window ID,
+excluding the desktop, with other outputs zero. An empty stack returns ID 0.
+WF_OWNER accepts a live global ID (including another app's window) and returns
+owner AES/PID, open status, ID above and ID below; closed windows report no
+neighbors. Queries are read-only; they do not grant permission to mutate a
+foreign window. Invalid/deleted IDs return GEM failure without changing
+outputs. Native metadata is range-checked before conversion to GEM shorts;
+invalid identifiers/PIDs or non-Boolean open status fail without truncation.
+Foreign geometry and desktop handle-0 metadata remain later work.
+No additional appl_getinfo extension bits are advertised in this slice.
+
+Window move/size gadget requests, WM_NEWTOP and optional AES4
+WM_ONTOP/WM_UNTOPPED notifications are not synthesized here. Decoration
+interactions and their applicable GEM/MultiAES semantics migrate with the
+renderer/input adapters. A programmatic geometry change or close does not
+fabricate a user request to perform that same operation.
+
+Native additions, all under CONF_WITH_CUIS:
+
+  38 WINDOW_POLICY(native_window, managed_activation) -> E_OK / error.
+     Canonical 0/1 enables generic coalesced window notices and application-
+     managed activation requests. This is routing policy, not protocol
+     version/feature negotiation. libaes enables it on its own plain windows.
+
+  39 NOTICE_PEEK(session, native_window*, identifier*) -> kind / 0 / error.
+     Generic kinds are REDRAW=1 and ACTIVATE=2; activation takes precedence
+     over redraw for the same window. Outputs are LONGs. Peeking never pops.
+     Hidden/destroyed windows retain no pending native notices.
+
+  40 NOTICE_PUBLISH(session, native_window, kind, source, length) -> E_OK/error.
+     Atomically appends 1-32 captured opaque bytes to the caller's own pipe
+     and acknowledges the specified owned pending notice. No GEM header or
+     format is interpreted in the kernel. Sender metadata remains the current
+     process PID independently of user-generated payload fields. A full pipe
+     returns EAGAIN without consuming the notice; source-copy/allocation or
+     ownership failure likewise leaves it pending. Source access can fault,
+     so client identity is checked again before publication. Notice flag
+     updates and pipe publication use the same short IRQ exclusion.
+
+  41 STACK_QUERY(position, id*, owner_pid*, below_id*) -> E_OK / error.
+     Position 0 selects the front, 1 the back. Requires a registered caller;
+     all three outputs are validated LONGs, with zero for an empty stack.
+
+  42 WINDOW_INFO(identifier, owner_pid*, visible*, above_id*, below_id*)
+     -> E_OK / error. Returns registered global window metadata as LONGs.
+     Read-only stack/owner queries remain available during display updates.
+
+SESSION_WAIT adds READY_NOTICE=4 to the existing stream/timer readiness bits.
+This source is non-consuming and windowless. libaes pumps notices before a
+message read and after a notice wakeup, constructing GEM payloads locally.
+The native pipe append/ack keeps failed public copyout recoverable: converted
+bytes remain queued until a successful read. A full pipe is already large
+enough to satisfy every supported appl_read length, so callers can drain bytes
+without dropping the pending notice. Blocking reads wait for either sufficient
+stream bytes or notices; nonblocking reads pump once then return normally.
+Timer-only waits never pump notices. Combined message/timer waits use one
+native deadline and retain simultaneous readiness; an already pending notice
+also prevents the unnecessary zero-timer yield.
+
+Host tests cover high native handles, message layout, full-pipe backpressure,
+source/destination failures, retained notices, simultaneous timer readiness,
+background-click activation without premature focus, stack queries, display-
+lock ownership and focus fallback. GEMFOC.TOS exercises isolated apps using
+standard GEM source: redraw delivery, top/bottom operations, foreign owner
+queries and close/raw-exit fallback. Existing GEMWIN/GEMUPD fixtures now accept
+real redraw messages while waiting for their application control messages.
+
+
+GEM keyboard, button and mouse rectangle events (#741)
+-----------------------------------------------------
+evnt_keybd, evnt_button, evnt_mouse and evnt_dclick now have standard and
+mt_* bindings. evnt_multi/mt_evnt_multi support every combination of the six
+classic masks: MU_KEYBD, MU_BUTTON, MU_M1, MU_M2, MU_MESAG and MU_TIMER.
+An empty mask or an unknown extension mask fails with GEM 0 before any wait
+or consumption. Unrequested parameters remain ignored. No new appl_getinfo
+extension bits are advertised. Wheel/extended-key masks remain separate work;
+mouse-control grabs are described in #743 below.
+
+Keyboard waits belong to the application, following whichever of its windows
+has focus; they can remain blocked while another application owns focus.
+Native BIOS scan/ASCII keys become GEM words with scan code in bits 8-15 and
+ASCII in bits 0-7. Keys are consumed only when requested and ready. Pointer
+waits follow the focused application or existing pointer capture; background
+activation gestures remain WM_TOPPED requests, not button input. A drag's
+release predicates are sampled before capture is cleared, so another client's
+focus change cannot steal the captured release. Activation-gesture releases
+bypass that sampling. No untrusted application can inject hardware input.
+Applications without focused windows
+can still use message/timer waits and graf_mkstate.
+
+A rectangle is half-open on its right/bottom boundaries. MO_ENTER waits for
+inside, MO_LEAVE for outside; the predicate is also tested immediately, so no
+new movement is needed if it already holds. Zero/negative extents are empty.
+Both rectangles are tested independently and can complete together. Trusted
+packet processing latches a matching crossing during an active wait even
+when another packet reverses it before userspace runs.
+
+Button equality is ((buttons ^ state) & mask) == 0. Clicks' low byte limits
+the returned count; bit 0x100 reverses equality, as in classic GEM. Other
+high-byte extensions (including 0x200) are not advertised and fail with 0.
+A matching current state or queued transition completes the quick check;
+a completed multi-click count is retained while the matching state is held,
+including across later requests with smaller count limits.
+Otherwise a pending multiple-click wait starts its click window on the first
+matching transition. Additional matches extend the original window by three
+200-Hz ticks, with a bounded count. Expiry is checked before admitting a
+new press, so a delayed waiter cannot extend an already expired window.
+Once a button result is ready, later edges enter history for the next wait.
+The wait returns the actual count, capped by the requested maximum, after
+the interval, including a single click when
+a double click was requested. The matching position/button/modifier snapshot
+is retained when a release follows. A bounded 16-edge per-session history
+retains press/release pairs arriving between calls independently of the raw
+native per-window pointer queues. A history scan consumes through the first
+matching edge only, leaving subsequent transitions for later waits in FIFO
+order, including alternating press/release waits. Trusted queued edges are
+matched independently of current focus: a captured release arriving after a
+focus handoff remains available to its original owner when it next waits.
+Live predicates still require current mouse ownership. Overflow discards
+oldest edges; ownership loss/hide clears old history. Zero requested clicks
+return count zero.
+
+evnt_dclick queries/sets the global standard rate index 0..4, corresponding
+to 450, 330, 275, 220 and 165 ms; the initial rate is zero. A running click
+window retains its original interval. Invalid set/rate parameters fail with
+0 without changing it. All six event sources use a single native wait;
+keyboard/message/timer completion cancels unfinished button accumulation.
+Timer deadlines are never restarted by pointer traffic. Input already ready
+also avoids the unnecessary zero-timer cooperative yield. Results include
+all requested sources ready at completion; unrequested key/count outputs are
+zero and optional scalar outputs may be NULL.
+
+Native additions, all built only under CONF_WITH_CUIS:
+
+  43 INPUT_RECT(session, slot_flags, x, y, width, height) -> E_OK / error.
+     Flat signed LONG geometry. Slot_flags bit zero selects rectangle 0/1,
+     bit one selects outside rather than inside. Other bits are rejected.
+
+  44 INPUT_BUTTON(session, mask, state, maximum_count, invert, unused=0)
+     -> E_OK / error. Mask/state are unsigned 16-bit, count 0..255, invert
+     canonical 0/1. Configuration belongs to the calling session.
+
+  45 INPUT_RESULT(session, key*, count*, x*, y*, state*) -> E_OK / error.
+     Five separate validated LONG outputs from the latest input-enabled wait.
+     Key retains native BIOS encoding; state contains button bits 0..15 and
+     modifier bits 16..31. No request/reply structures cross the ABI. Re-reading
+     is non-consuming, including after failed copyout; a later input wait
+     replaces the snapshot. A completed wait transfers a ready key from its
+     focused window queue into this session snapshot under IRQ exclusion.
+
+  46 INPUT_INTERVAL(session, milliseconds, set, 0, 0, 0) -> interval / error.
+     Generic global click interval, 1..5000 ms, canonical set=0/1. Query ignores
+     the milliseconds argument. Public GEM rate indices remain in libaes.
+
+SESSION_WAIT (32) additionally accepts native READY_KEY=8, READY_BUTTON=16,
+READY_RECT1=32 and READY_RECT2=64. Stream minimum and timer interval validation
+still apply only when selecting those sources. Configuration, initial checks,
+IRQ event latching and the scheduler's test-and-sleep use IRQ exclusion; no
+allocation or user-memory access occurs in that critical path. Active wait
+pointers refer to resident syscall stacks and are cleared on completion/error;
+process teardown removes the session before it can outlive that stack.
+
+Host tests exercise full native handles, routing/ownership, historical presses,
+reversed crossings, click timing and wrap, timer cancellation, all six sources,
+GEM key encoding, signed geometry, optional outputs, copy failures, rate sharing
+and teardown. GEMINP.TOS exercises normal shared-library GEM source in ring 3,
+including immediate button/rectangle predicates, simultaneous message/input/
+timer results and key timeouts. Hardware key delivery and delayed pointer
+transitions are tested against the production CUIS core on the host.
+
+
+GEM mouse-control ownership (#743)
+---------------------------------
+wind_update/mt_wind_update now implement BEG_MCTRL (3), END_MCTRL (2), and
+NO_BLOCK (0x100) on begin. They return GEM 1 on success, 0 on error/busy.
+Both standard and mt_* calls share nesting per registered session, independent
+of their global array. The final matching end releases the mouse; unmatched
+or foreign ends and NO_BLOCK on end fail without changing ownership.
+
+Mouse ownership is independent of the drawing semaphore. BEG_MCTRL captures
+pointer input across the entire screen, including outside owned windows and
+for windowless dialogs. It does not grant drawing permission or change
+keyboard focus, window stacking, or geometry. Applications use BEG_UPDATE
+separately when they need to protect drawing. Ordinary message/timer/input
+waits remain available during a mouse grab; whole-screen screenshot reads
+retain their existing permissions. No additional appl_getinfo bits are
+advertised by this slice.
+
+During a grab, new pointer packets reach only the owning session's predicates
+and private button history. Native pointer queues can follow an owned visible
+window when present; no window is required by the standard GEM event bindings.
+Clicks over foreign windows do not change focus, start another client's drag,
+or send WM_TOPPED. A keyboard focus change or hiding the owner's last window
+does not cancel modal mouse ownership or discard its new button history.
+Previously routed input remains valid historical input for its original owner.
+
+A begin blocks cooperatively until the mouse semaphore is free and any
+foreign held drag ends. NO_BLOCK returns immediately with 0 instead. A caller
+may acquire its own normal captured drag without deadlocking; activation
+requests and legacy/foreign held gestures cannot be stolen. Nesting an already
+owned grab succeeds immediately, even while buttons are down. Depth overflow
+fails without wrapping. A wait blocked by contention retains IRQ exclusion
+through scheduler publication, avoiding a lost wakeup. As with existing CUIS
+waits, a legacy per-window update snapshot owner cannot block on contention.
+The global standard update semaphore remains independent.
+
+Final release and normal/raw/fault process exit release every nesting level.
+If the mouse is still down, delivery remains suppressed until the matching
+release; another application never receives an orphan release as new routed
+input. No new grab can steal that held gesture. Once released, ordinary hit
+routing resumes. Session handles are checked on every operation, so reopening
+an application cannot inherit an exited client's grab.
+
+Native call 47, MOUSE_LOCK(session, acquire, block), returns E_OK or a negative
+error. All arguments are flat scalar registers: session is a nonnegative
+31-bit owned handle; acquire/block are canonical 0/1, and block must be zero
+on release. It is compiled and dispatched only under CONF_WITH_CUIS, selected
+by external libaes on the supported backend. Native EAGAIN maps to GEM 0;
+no native handles or errors escape through public wind_update bindings.
+
+Production-core tests cover windowless input, focus and visible-window changes,
+independent draw permissions, keyboard routing, nesting, malformed/foreign
+requests, overflow, foreign-drag contention, owner exit, and held-button final
+release suppression. Public binding tests cover mt forms, NO_BLOCK and failure
+retention. GEMMCTL.TOS uses normal GEM source in isolated shared-library apps:
+a windowless parent holds two levels, a windowed child remains blocked until
+the final end, then raw-exits with a nested grab so the parent can continue.
+Session exit/re-registration also proves cleanup. Resource snapshots and the
+boot suite check that no mouse owner, window, session or allocation remains.
+
+
+Userspace classic object drawing (#745, #748)
+--------------------------------------------
+objc_draw/mt_objc_draw and objc_change/mt_objc_change use their standard GEM
+signatures and Boolean results. OBJECT arrays, INDIRECT specs, strings,
+TEDINFO and USERBLK records remain in the calling application's address
+space. The shared library reuses the original aes/ object painter,
+traversal, state changes and GSX text/border/layout routines as separately
+compiled C units in aes/shared/. Shared resource loaders and object-tree
+helpers live there too. The same drawing sources build into native AES and
+libaes; internal headers declare their interfaces and bind libaes to a
+private drawing context. Only the low-level VDI transport and drawing
+context have userspace bindings; the kernel receives only existing bounded
+VDI primitive requests and never an object-tree or callback pointer. No new
+production kernel service or configuration option is needed.
+
+This first drawing slice supports classic G_BOX, G_IBOX, G_BOXCHAR,
+G_BUTTON, G_STRING, G_TITLE, G_TEXT, G_BOXTEXT, G_FTEXT, G_FBOXTEXT and
+G_USERDEF objects. It implements signed border thickness, box color/pattern
+words, default/exit button borders, IBM/small fonts, text justification,
+formatted underscores, and
+SELECTED/CROSSED/CHECKED/DISABLED/OUTLINED/SHADOWED states. The original
+text routines use bounded buffers: free text is limited to 127 characters,
+and formatted text and templates to 80 characters in this slice. Formatting
+recognizes the '@' empty-text marker without modifying caller text. G_IMAGE
+and monochrome G_ICON are also supported: the original icon painter in
+shared/gemicon.c preserves mask/data layering, labels and character overlays,
+WHITEBAK and selected colour swapping. Native 3D flags and objc_sysvar are
+also supported (see below). A preflight
+checks the requested visible subtree before painting, so an unsupported
+visible descendant does not leave a partly drawn tree; HIDETREE descendants
+are ignored. Each visible payload is checked again immediately before painting,
+since USERDEF can mutate later siblings. An oversized callback-mutated payload
+fails with GEM 0 before buffer copies.
+
+Bitmap words remain in userspace. The GSX adapter clips the destination and
+source bounds before reading, and submits only horizontal runs of set bits
+as existing solid VDI fills. Zero bits leave previous pixels untouched,
+including holes in icon masks; mask and image passes retain their original
+order and colours. BITBLK row widths must be positive even byte counts, no
+more than 4094 bytes (so their bit width fits WORD); source offsets must lie
+inside the form. Icon widths are positive multiples of 16. Each form is
+limited to the existing 1 MB bitmap bound. Invalid descriptors fail with GEM
+0 before painting, and visible descriptors/labels are revalidated after
+USERDEF callbacks. Icon labels use the same 127-character bound as other
+free text. Translated icon bitmap, label and character origins must fit
+WORD before the shared legacy painter stores them; nonempty label rectangles
+must also retain representable extents for text layout. Unrepresentable sums
+return GEM 0 before painting, including geometry changed by USERDEF. This
+check uses the actual traversal coordinates immediately before painting.
+Subtree preflight resolves the starting offset once and carries parent
+coordinates through its linear walk; it does not scan ancestors per node.
+Nonzero image source offsets restrict reads to the remaining
+source rows/columns; no trailing source storage is inferred.
+
+Drawing starts at the requested object using its absolute tree offset,
+visits children in sibling order through the requested depth (0..MAX_DEPTH),
+skips hidden subtrees, and clips to the supplied GEM rectangle and screen
+bounds. Child objects are not implicitly clipped to their parent's logical
+rectangle. Hidden objects are rejected before reading their payload or
+INDIRECT pointer. Fills and oversized border segments are intersected with
+the painter clip before VDI submission, preserving the original edges rather
+than drawing new edges along the clip boundary. Userspace fill endpoints,
+expanded object bounds and box/outline border coordinates remain LONG until
+clipped, including maximum-WORD widths and heights. The shared border loop
+retains the WORD calling convention in native builds. Fully clipped text is
+culled before VDI submission. Partially clipped runs drop complete off-
+screen cells while preserving the original positions of the remaining
+glyphs. An empty clip succeeds without painting. objc_find applies native 3D
+hit expansion.
+
+Drawing reuses an existing per-window update section without upgrading or
+releasing it. Otherwise it obtains a nested standard display update section.
+Each draw opens a private virtual VDI workstation, preserving application
+workstation attributes. The kernel's existing CUIS draw policy still
+enforces display ownership; applications use FIRST/NEXT visible-region clips
+when drawing their windows. Screenshots remain readable across the whole
+screen. The private workstation and implicit update level are released on
+normal/error returns. A captured session handle releases the update even if
+USERDEF changes the GEM global array. Process-exit cleanup reclaims
+workstations and ownership after a user fault. A headless kernel without the
+VDI service returns GEM 0 cleanly. The VDI service removes a visible cursor
+before each framebuffer write and recomposes it afterward using a non-
+resetting show. Already-hidden cursor nesting is preserved. This also
+protects USERDEF VDI drawing; the shared GSX cursor hooks need no
+application-controlled global cursor commands.
+
+objc_change ignores its reserved argument, updates caller-local state, and
+redraws only that object when requested. No-redraw and hidden-object state
+changes require no VDI access. The original classic AES state-change routine
+repaints icons to swap their foreground/background colours. Other classic
+objects use a clipped XOR of the interior whenever SELECTED changes, including
+combined state transitions; otherwise it repaints the object. Deselection
+restores preceding pixels, including transparent objects. A failed redraw
+restores the old state; drawing errors cannot undo pixels that were already
+painted. Unchanged state is a successful no-op.
+
+USERDEF runs as an ordinary user-mode call with the standard PARMBLK tree,
+object, previous/current state, absolute geometry, clipped rectangle and
+ub_parm. Its returned remaining-state mask controls AES overlays. Nested
+object drawing uses a separate local painter/workstation and nests the
+update lock. objc_draw skips callbacks outside the visual clip; objc_change
+follows the original direct callback behavior with the current clip in
+PARMBLK. Hidden callbacks are not invoked. Invalid caller pointers or
+callback faults are ordinary user faults, with kernel process cleanup; no
+in-kernel object validation or callback trampoline is added.
+
+Host tests use a pixel oracle for clipping, traversal/depth, hidden and indirect
+objects, selection round trips, formatted text, callback parameters, mutated
+globals, unsupported types and VDI error cleanup. GEMDRAW.TOS validates actual
+VDI pixels in ring 3, nested USERDEF drawing, and a child callback fault followed
+by successful update acquisition. It also paints a classic GEM demo panel.
+The main fixture builds against unmodified GEMlib headers; a separate typed
+pixel-probe object keeps private VDI headers out of the GEM application source.
+The kernel harness also runs repainting beneath a visible software cursor,
+then moves it through the normal cursor/VBL path and checks the restored
+pixels. A second pass preserves a nested hide count of two. Resource
+snapshots verify workstation/session/update/process reclamation.
+
+To capture the actual QEMU framebuffer, enable external libaes, X32_VDI and
+X86_64_MEMTEST, build the kernel and x32test/import fixtures, then run the boot
+script with MMAP_BOOT_SCREENSHOT=/tmp/ptos-libaes-objects.png. The optional QMP
+helper waits for the demo-ready marker and writes a PNG directly from QEMU;
+no generated or reconstructed UI is used. The checked-in example is in
+doc/screenshots/libaes-objects.png. Window decorations and extended menus remain subsequent slices. Forms, resources,
+bitmap/icon drawing and 3D objects are now supported.
+
+
+Userspace resource and form geometry (#752)
+-----------------------------------------
+rsrc_obfix/mt_rsrc_obfix convert a single OBJECT's encoded resource x/y/w/h
+coordinates to pixels using the system font's cell size. The original
+fix_chpos algorithm is shared in aes/shared/gemlayout.c with native AES and
+the standalone desktop resource loader. Low bytes count character cells;
+high bytes provide the original GEM pixel adjustment, including the native
+0x80 boundary behavior. A width low byte of 80 denotes the physical screen
+width before applying its pixel adjustment. Applications fix each object
+once; this operation does not load resources or relocate their pointers.
+
+form_center/mt_form_center move the root object to the original GEM center,
+using the screen area below the menu bar (system font cell height plus
+three pixels). Their returned save rectangle includes outline and shadow
+extents; root coordinates continue to describe the logical object. The
+original ob_center algorithm is shared in the same C unit. Standard GEMlib
+form_center_grect/mt_form_center_grect convenience functions use that path.
+The userspace wrapper stages changes and rejects negative root dimensions
+or unrepresentable expanded extents with GEM 0, leaving inputs/outputs
+unchanged. Child geometry is not moved or traversed.
+
+These APIs require a registered application and query a private virtual VDI
+workstation without display or mouse ownership. They close the workstation
+before committing caller geometry, preserve application workstation state,
+and return GEM 0 without mutation when graphics are unavailable or a query
+fails. They introduce no new kernel calls, configuration options or capability
+claims. Resource file loading and interactive form/event handling remain
+subsequent migration work.
+
+
+Userspace form keyboard navigation (#755)
+----------------------------------------
+form_keybd/mt_form_keybd use the standard GEM object, proposed-next-object,
+key, next-object and remaining-key arguments. They operate on the caller's
+OBJECT array and return GEM 1 to continue form interaction or GEM 0 when a
+default action terminates it. The original native field search and keyboard
+decisions are shared as ordinary aes/shared/gemformkey.c code. Tab/down
+search forward, up searches backward, and Return/keypad Enter select the
+first enabled, non-hidden DEFAULT object. Navigation keys are consumed;
+other keys and the proposed next-object value pass through for text editing.
+Fields marked DISABLED or HIDETREE are skipped as in the native algorithm.
+Reaching either end retains the current field. Forward navigation from a
+LASTOB record now stops before reading beyond the resource array, including
+in native AES's shared search.
+
+Only default activation draws, through ordinary libaes objc_change, with the
+native form clip below the menu bar. Selection preserves other state bits.
+Already-selected defaults need no repaint. Plain navigation needs no VDI,
+display lock, mouse grab or event wait; a registered application supplies the
+key explicitly. Invalid arguments, unavailable graphics for a needed repaint
+or drawing failures return GEM 0 without committing the output arguments.
+The normal object painter owns workstation/update cleanup. No kernel
+service, scheduler change, capability claim or custom public API is added.
+The full form_do loop, button tracking and text editing remain later slices.
+
+
+Userspace form buttons and watch boxes (#759)
+--------------------------------------------
+graf_watchbox/mt_graf_watchbox and form_button/mt_form_button use standard
+GEM arguments, flags and continuation results. The original native watch
+loop and form-button logic are separately compiled aes/shared/gemwatch.c
+and gemformbutton.c units. Userspace bindings keep OBJECTs, radio siblings,
+USERDEF callbacks and all gesture state in the application.
+
+Watch-box drawing follows inside/outside state transitions until the buttons
+are released. It waits for button/rectangle predicates through the existing
+GEM event adapter, leaving keyboard and message input queued. When release
+and a boundary change arrive together, trusted release coordinates determine
+the final state and inside/outside result. Absolute child bounds include the
+parent offsets and native 3D expansion.
+
+form_button preserves selectable toggling, EXIT continuation, editable-field
+returns, radio sibling deselection and TOUCHEXIT behavior. Exactly two clicks
+on a TOUCHEXIT object set bit 15 of the returned object ID; this signed WORD
+is a GEM object encoding, not a kernel error. Non-radio selected siblings are
+left alone. Pure flag/focus results require neither graphics nor input waits.
+Radio drawing uses the native form area below the menu bar; entering the
+watch loop switches to the original full-screen drawing clip.
+
+A drawing/tracking path lazily acquires one nested mouse-control level,
+retained until its public call completes. Each redraw uses ordinary
+objc_change and a short drawing update; the library holds no additional
+display update across event waits. CUIS rejects a blocking display request
+immediately with EACCDN when its caller owns mouse control and a foreign
+client owns drawing. This prevents display/mouse lock cycles while keeping
+EAGAIN reserved for borrowing an owned per-window section on that path.
+Nonblocking display requests retain their original EAGAIN contention result.
+Callers may retain their own update or
+mouse-control nesting. Cleanup uses a captured session even if a callback
+changes GEM globals, and nested USERDEF interactions restore their enclosing
+private context. Process-fault cleanup reclaims mouse and drawing ownership.
+No kernel service or callback trampoline is added.
+
+Graphics/input/ownership failures return GEM 0; form_button leaves its next-
+object output untouched on failure. Completed state changes/pixels are not
+transactionally undone. Headless callers can still obtain pure flag/focus
+results; a required repaint fails cleanly. Full form_do and text editing
+remain subsequent work.
+
+Standard GEM forms
+------------------
+
+libaes exports objc_edit, form_do, form_dial, form_alert and form_error, including
+mt_* variants, alongside the existing form_center/keybd/button and watchbox
+bindings. The original AES editor, modal loop, animations, alert layout, icons,
+error mapping and system strings are ordinary shared C units in aes/shared/.
+Classic formatted text fields retain validation, templates, insertion/deletion,
+navigation and XOR caret behavior. Editing uses a stack-owned private renderer;
+unsupported payloads, invalid editing indices and strings exceeding its bounded
+scratch space fail before editing. A failed repaint can leave completed text or
+pixel changes, as with the existing object drawing adapters.
+
+form_do acquires nested display and mouse ownership, then explicit keyboard
+capture. It works without an application window and retains the prior window
+focus. Keyboard capture is distinct from BEG_MCTRL, which remains mouse-only.
+The initial capture discards stale keys belonging to the same application's
+focused window. Nested calls preserve the caller's lock levels; final release,
+process termination or fault reclaims capture and pending modal keys. Messages
+remain queued while the modal loop waits for keyboard and button input.
+
+CUIS_KEYBOARD_LOCK (48): session, acquire (0/1). Returns zero or a negative
+error. Acquisition requires the caller to own both the full display lock and
+mouse control. The bounded session keyboard queue takes precedence over window
+focus until the final release; overflow drops new keys without forwarding them
+to BIOS. Releasing the underlying mouse/display ownership also clears capture.
+
+CUIS_DISPLAY_REDRAW (49): session, signed x, signed y, width, height. Returns
+zero or a negative error. Requires full display ownership and marks intersecting
+visible windows (including their shadows) for redraw through the ordinary notice
+path. form_dial(FMD_FINISH) uses this path; FMD_START retains the native no-op
+semantics, while GROW/SHRINK use the original XOR animation. Finish does not
+implement a screen-save stack: applications retain the standard redraw duty.
+Desktop background/menu integration remains part of the desktop migration.
+
+form_alert uses a per-call resource tree and an exact device-format screen
+snapshot, restored on both completion and failure. VDI_SERVICE_SCREEN_BUFFER
+(10, available only with CUIS) takes an owned workstation, a GRECT pointer,
+application buffer and restore flag (0/1). It returns zero or a negative error;
+there are no application MFDBs or pointers passed into the renderer. The buffer
+must hold four bytes per pixel of the rectangle rounded up to 16 pixels wide;
+requests exceeding one MiB of actual device storage are rejected. Reads are
+allowed across the screen and omit the software cursor. Restores obey the
+current CUIS and workstation clips. All native raster storage is kernel-private
+bounded staging memory, freed before return. Library snapshots are limited to
+one MiB of worst-case storage, allocated and freed through GEMDOS.
+
+The library uses native 3D alert buttons and background flags, with English
+system error strings. Locale selection remains separate migration work. form_error keeps the standard positive DOS error-number convention and
+native return behavior, rather than returning the alert button number.
+
+Validation includes the host sanitizer suite and ordinary GEM source compiled
+against unmodified GEMlib headers. To drive the blocking modal checks through
+QEMU's actual keyboard device, run tools/test-mmap-boot.sh with
+MMAP_BOOT_FORM_INPUT=1 on a combined libaes/VDI test build. Optional
+MMAP_BOOT_SCREENSHOT captures the displayed alert in that mode. No production
+input-injection syscall is added.
+
+Classic resource files
+----------------------
+
+libaes exports standard rsrc_load/free/gaddr/saddr and mt_* bindings. It compiles
+the existing aes/shared/rsload_portable.c big-endian parser/materializer and the
+original shared gemrsaddr.c lookup routines. Resource trees, TEDINFOs, strings,
+images and icons remain in application memory. Bitmap words are decoded to
+native order; loading does not convert images into device format. On-disk
+USERDEF addresses are not executable native callbacks: applications install
+their own USERBLK functions after loading, as with other portable resources.
+Colour-icon data remains in standard format for the caller-local icon painter.
+
+The standard GEM globals carry the tree-table pointer in words 5/6, resource
+memory pointer in 7/8 and allocated length in word 9. Application-private words
+3/4 remain untouched. R_TREE follows the tree-table global independently; other
+selectors and freeing follow the resource-image global, as in native AES.
+Multiple successful loads retain their allocations, as
+in native AES: saved copies of the resource globals can select an earlier live
+load. rsrc_free releases only the selected resource, clears its resource fields
+and rejects stale selections. appl_exit also frees unselected retained loads;
+ordinary process exit/fault cleanup reclaims all process-owned memory.
+
+A failed load leaves the selected resource and its globals unchanged. The
+library checks counts, indices and reachable tree sibling rings, including the
+LASTOB boundary, before publishing a new image. String/image-only resources
+are accepted. Materialized resources retain the portable loader's 65535-byte
+limit; large-resource/RSX extensions are not advertised.
+Loading currently requires VDI font metrics for standard character-coordinate
+scaling; resource lookup and address changes themselves require no drawing.
+
+File lookup follows the native search order: application directory, supplied
+path, current drive root, then semicolon/comma-separated PATH entries. The
+library constructor remembers the launch directory using the existing ELF
+AT_EXECFN auxiliary value and GEMDOS directory calls; extended ARGV[0] cannot
+redirect it, and later chdir calls do not change it. The CRT supplies a private
+auxiliary-value accessor to dependent libraries. No new kernel GUI services,
+resource handles or negotiation are introduced. Input paths are bounded to
+127 bytes, and lookup leaves the application's DTA untouched.
+
+Tests include an ordinary big-endian fixture with indirect aliases, TEDINFOs,
+mono images/icons, USERDEF metadata and free strings/images, as well as the
+unaltered aes/gem.rsc file. Host ASan/UBSan checks malformed/truncated files,
+allocation/read/seek/close/free failures and ownership retention. Real x32 GEM
+clients exercise saved globals, isolated images, session/normal/fault cleanup,
+application-directory lookup after chdir with misleading extended ARGV[0],
+and PATH-only lookup. The same fixture compiles with unmodified GEMlib headers.
+
+
+Caller-owned native resources
+----------------------------
+
+rsrc_rcfix/mt_rsrc_rcfix implement the standard in-place resource API, not the
+big-endian disk decoder. AES_PROCESS output 4 now reports this binding. The
+caller supplies writable contiguous storage beginning with a classic RSHDR
+(version 0 or 1), followed by the native C structures, tables and data. Header
+offsets and rsh_rssize count bytes from that header; all fields use native byte
+order and normal ABI alignment/padding. Pointers needing relocation contain
+image-relative offsets in native pointer-sized slots. Use offsetof/sizeof of
+the compiled structures rather than packed Atari disk-record sizes.
+
+On x32, RSHDR is 36 bytes, OBJECT 24, TEDINFO 28, ICONBLK 36, BITBLK 16 and
+USERBLK 8. Pointer slots are four bytes; align pointer-bearing records/tables
+to four bytes, bitmap words to two, and the image itself to pointer alignment.
+Tree entries point by offset into the object array; string/image tables and
+object specifications likewise reference image data or the corresponding
+native record. INDIRECT slots contain an offset specification and may be
+shared. Direct box specifications remain immediate values. USERDEF object
+specifications reference a native USERBLK by offset, while its callback and
+parameter already contain application-native values and are preserved. Image
+words are already native endian; no device-format conversion is claimed.
+
+As required by GEM, release the selected resource before calling rcfix. A live
+image cannot be fixed twice, including through another saved global array.
+Indirect pointer writes cannot overlap strings (including TEDINFO capacity),
+bitmap data or USERBLK records. Shared slots must have compatible specification
+interpretations; unchanged payloads can still share storage.
+Coordinates use the original shared character-to-pixel scaling. Fixup first
+stages and validates relocation and tree topology without changing caller
+storage; only after allocations, metrics and session checks succeed does it
+commit the result to the original image. All resulting addresses point into
+that original image, and a failure leaves data and resource globals unchanged.
+The staging buffer and byte-range classification workspace are discarded after
+the call, with failed frees retained for later cleanup in the same way as
+disk-loader temporary buffers.
+
+Keep the image writable and alive until rsrc_free or session cleanup detaches
+it. rsrc_free clears the resource globals and frees only library bookkeeping;
+it never Mfree's the caller's image. Session cleanup also detaches caller-owned
+images without reading or freeing their contents. Reusing the image for a new
+fixup requires restoring its original offset/character-coordinate form first;
+free does not undo relocation, application edits or scaling. Saved globals
+select registered native images through the same lookup/address bindings as
+disk resources, and become stale when that registration is freed or reset.
+
+This slice accepts classic native resources up to 65535 bytes. Colour-icon
+extension blocks, RSX/large-resource headers and packed big-endian disk images
+are rejected by rcfix; use rsrc_load for disk decoding. No kernel code, CUIS
+opcode or configuration option is added. Native AES builds retain their
+existing resource paths. Tests compile a native-offset fixture with normal
+GEMlib headers, verify pointer identity, aliased specifications, scaling,
+USERDEF callbacks, saved globals and caller ownership, and exercise malformed
+input, headless metrics, allocation failures and failed cleanup retries.
+
+
+Colour-icon drawing
+-------------------
+
+G_CICON now uses the original shared gr_gicon painter for the icon mask,
+selected artwork, selected-without-artwork dithering, character and label.
+The native best-match routine is shared as gemcicon.c: exact plane counts win,
+otherwise the largest lower count wins, with original resource order breaking
+ties. Drawing never rewrites the caller's CICON list, data, masks or ICONBLK.
+The library queries screen planes through the existing read-only VDI inquiry;
+its initial backend covers x32 packed 16/32-bit screens with the standard
+256-entry GEM palette. Native planar AES keeps its existing transform/blit path.
+
+The library colour blit decodes standard plane-major words to palette-index
+runs and submits existing VDI fills, matching native packed-screen icon
+conversion (including palette-index zero outside coloured shapes). Palette
+pen ordering is shared with native VDI initialization. Explicit selected data
+and masks override ordinary artwork; when absent, the original alternating
+5555/aaaa mask darkens selection. Empty colour lists draw the original mono
+icon. Selection changes redraw colour icons rather than using an XOR shortcut.
+
+Visible-subtree preflight validates all variants, rejects cyclic lists and
+invalid counts/pointers, and bounds each colour bitmap to 1 MiB. Native icon
+coordinate/label checks and clipped destinations also apply. Dither allocation
+uses tracked temporary storage, with later cleanup retries after failed frees;
+allocation failure preserves the native undarkened-icon fallback. No kernel
+service or colour protocol is added.
+
+Colour-icon regressions include an eight-plane 16x16 pattern covering every
+raw index 0..255 and its selected complement. Independent one-pixel G_IMAGE
+swatches check all mappings, including index 255 to BLACK, in both the host
+oracle and disk-loaded GEM256.RSC through the real x32 loader and VDI.
+
+
+Userspace 3D objects (#772)
+
+libaes compiles the original aes/shared/gemrender.c 3D painter with caller-local
+bindings. FL3DIND, FL3DACT and FL3DBAK retain the native bevels, fill colours,
+selected text movement and colour changes. Form watch rectangles include the
+same expansion, and alerts use the original 3D button layout. No native kernel
+behaviour or ROM object list changes.
+
+objc_sysvar and mt_objc_sysvar expose the standard SV_INQUIRE/SV_SET interface
+for LK3DIND, LK3DACT, INDBUTCOL, ACTBUTCOL, BACKGRCOL and read-only AD3DVAL.
+Preferences are local to the calling process, including saved-global calls;
+they do not change other applications' appearance. Defaults come from native
+init_3d using the current workstation palette. Invalid modes, selectors and
+colour indices fail without modifying output arguments. AES_OBJECT reports
+3D flags and basic objc_sysvar support, without claiming GDOS object fonts.
+
+The original painter uses WORD intermediates for 3D outlines and shadows.
+Preflight rejects 3D objects whose expanded geometry cannot fit those
+intermediates before painting or changing state. Existing wide-coordinate 2D
+rendering remains available. Shared bounds calculations use LONG intermediates.
+Drawing preflight and the libaes tree walker also keep accumulated ancestor
+and descendant positions in LONG until validated, including callback-mutated
+siblings. Icon bitmap, label and character offsets are checked against the
+actual 3D-adjusted origin. Native traversal keeps its original WORD layout.
+
+Regression coverage includes native bevel/selection pixels, configurable
+colours, saved-global sysvar calls, invalid arguments, expanded and shadowed
+hit rectangles, and overflowing geometry. The same ordinary GEM source runs
+in the host sanitizer suite and in x32 QEMU against unmodified GEMlib headers.
+
+
+Menu item APIs (#774)
+
+menu_icheck, menu_ienable, menu_tnormal and menu_text (and their mt forms)
+operate on the application's own menu tree. State changes compile the native
+do_chg routine from aes/shared/gemmenuchange.c with library draw bindings.
+Checking an item changes only CHECKED. Enabling changes only DISABLED, and
+setting bit 15 of the item number requests immediate redraw, as in native GEM.
+menu_tnormal changes SELECTED and redraws the title, but refuses disabled
+items. Other state bits are preserved. Redraw uses the existing objc_change
+adapter, full-screen clipping and nested display ownership; draw failures
+retain the previous state. Saved-global calls use that registered application.
+
+menu_text copies the supplied NUL-terminated text into the existing menu
+string buffer without drawing or changing its address. As in native AES, the
+caller must provide writable storage large enough for the new text and NUL;
+the object width is not a buffer capacity. Text buffers remain caller-owned.
+
+These item calls do not install a menu bar; use menu_bar, described below.
+Extended-menu capabilities remain unadvertised. No kernel ABI or configuration
+changes were introduced by the item-state slice.
+
+
+Standalone popup menus (#776)
+
+menu_popup and mt_menu_popup use the standard MENU descriptor and return 1 for
+a selection or 0 for cancellation/failure. The output descriptor retains the
+original tree and menu object IDs and reports the selected item and modifier
+state. On cancellation/failure only mn_keystate is cleared. Input and output
+may be the same descriptor; saved globals select the registered application.
+
+This initial adapter accepts a G_BOX/G_IBOX with immediate G_STRING/G_TITLE
+leaves, including disabled/hidden entries and indirect specifications. It
+supports up to 4096 entries. Scrolling/listboxes, attached submenus, nested
+item trees and other item types return 0. Extended-menu capability bits stay
+unadvertised. Standard menu bars are described below; scrolling and submenus
+remain later extensions.
+
+The library makes a bounded private copy of the popup objects, preserving the
+caller's links, coordinates, state and string ownership. The requested point
+locates the starting item; placement retains native font-row adjustment and
+keeps the box below the menu bar. Oversized menus and snapshots above one MiB
+fail. Drawing uses the original shared AES object painter and existing VDI
+operations, clipped to the snapshot rectangle including borders/3D effects.
+
+The separately compiled tracker in aes/shared/gemmenupopup.c is derived from
+the native popup loop. Explicit input/drawing/geometry operations keep it
+independent of kernel globals. It tests click coordinates even without a
+separate motion event, refuses disabled/hidden/root selections, tracks moves
+out of background padding, and cleans transient selection after errors or
+outside cancellation. Native AES retains its existing popup implementation;
+its public MENU layout is shared through include/gemmenu.h. No kernel services
+or new configuration options are added by this slice.
+
+A popup holds nested display and mouse ownership, waits for the opening
+button release, saves the background, tracks the click and waits for release
+before restoring the screen and releasing ownership. Keyboard/messages stay
+queued. Screen snapshots exclude the mouse cursor through the existing VDI
+service. Temporary tree/snapshot frees use the resource allocator's failed-free
+retry list. Selection is published only after restoration and cleanup succeed.
+
+Regressions cover scripted tracking and host ASan/UBSan binding/failure paths.
+The ordinary GEM fixture is also built against unmodified GEMlib headers;
+opt-in QEMU input tests drive the real PS/2 mouse to select, cancel outside,
+click a disabled item and select from a non-root menu with aliased descriptors.
+
+
+Standard menu bars (#779)
+
+menu_bar/mt_menu_bar implement MENU_INSTALL and MENU_REMOVE with ordinary GEM
+OBJECT trees. The first three objects retain the standard screen/bar/active
+roles; the root's last child contains dropdown boxes. Arrays must end with
+LASTOB. The shared gemmenubar.c pairs titles and dropdowns by sibling order,
+including non-contiguous object IDs. Bounded bitset admission rejects cyclic,
+shared or malformed lists and unsupported visible payloads before painting.
+Classic string/title items, hidden/disabled entries and indirect strings are
+supported. Attached submenus, accessory registration and extended menu modes
+remain separate slices; extended-menu capability queries remain unsupported.
+
+Installation extends object 1 to the right screen edge, as in native AES,
+and uses the original shared object painter plus the native black separator.
+The caller keeps the tree and strings alive until removal. States, labels
+and topology are rechecked before later painting/interaction; unsupported
+caller edits fail without invoking USERDEF. The library owns only a temporary
+index, not the caller's resource. Removal and session cleanup discard index
+storage without dereferencing a possibly retired caller tree.
+
+Each process registers a generic top strip with CUIS. Focus changes choose
+the focused window's registered surface; explicit installation activates the
+caller's surface. When its owner exits/removes it, a focused registered client
+wins, otherwise the most recently registered surviving surface is restored.
+Focus-driven ownership changes defer while display/update or surface drag ownership is
+held. Native window regions exclude the strip. Other clients' full-screen
+writes are clipped below it, while screen reads/copies may still read the
+entire screen, including for screenshot applications. Windowless surface
+owners receive keyboard input when no window has focus. Modal mouse control
+suppresses surface handling; menu activation gestures do not enter ordinary
+application button history.
+
+Normal evnt_* and blocking appl_read calls pump menu work in libaes. Hovering
+a title opens its dropdown, moving across titles switches menus, and
+click/drag release selects an enabled item or cancels outside. Existing display
+and mouse locks protect exact background snapshots, including borders and 3D
+margins. Highlight sampling uses one-pixel motion predicates. Successful
+selection queues a standard eight-WORD MN_SELECTED: sender 0, title/item in
+words 3/4, tree pointer in words 5/6, and dropdown root in word 7. The selected
+title stays highlighted until menu_tnormal. A full stream retains one pending
+selection and defers further menu handling or replacement until it can be
+published; it never blocks writing to its own full stream. APR_NOWAIT reads
+flush pending messages without entering a blocking menu interaction.
+
+An unfinished multi-click wait retains its count, snapshot and original click
+deadline in the kernel. Surface-only work waits until click completion or a
+requested application event; menu tracking cannot discard the first click.
+Internal wakes re-arm application predicates and preserve original timer
+expiry across the 200 Hz partial-tick guard and clock wrap. Event results are
+snapshotted before recursive menu tracking can replace input filters/results.
+Failed painting restores the saved pixels; staged installation preserves the
+previous owner and registration order until painting and workstation cleanup
+succeed. Fresh mouse acquisition (MOUSE_LOCK mode 2) suspends application
+button history, tracks only new input, and restores that history on release.
+Failed temporary frees stay on the resource allocator's retry list.
+
+CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
+- 50 SURFACE_REGISTER(session,height): zero removes, positive reserves a top
+  strip and activates it; returns E_OK or a negative error.
+- 51 SURFACE_STATUS(session,action): action 0 queries OWNED/DIRTY/POINTER bits,
+  action 1 acknowledges pending work, action 2 invalidates an owned surface.
+  Acknowledge does not discard work during modal mouse control.
+- 52 CLOCK(session,0): returns the low 31 bits of the 200 Hz tick counter.
+  The maximum supported 32-bit millisecond timeout is shorter than its wrap.
+- 53 SURFACE_BEGIN(session,height): under the display lock, stages a positive
+  strip height and grants painting without changing ownership or fallback order.
+- 54 SURFACE_END(session,commit): commits with 1 or cancels with 0 under the
+  display lock. Releasing the display lock also cancels an unfinished stage.
+READY_SURFACE is bit 128 in SESSION_WAIT. READY_DISPLAY is bit 256: it
+reports when a display acquisition can succeed (including an already-owned
+display scope). It does not acquire ownership. Frame notice pumps try the
+display lock nonblockingly and wait for display availability alongside queued
+messages, so a lock holder blocked writing to the receiver can still progress. CUIS does not interpret GEM object
+pointers, AES opcodes or message formats. It has no feature/version negotiation
+or drawing commands; ordinary streams carry opaque application message bytes.
+
+Validation covers host sanitizer ownership/clipping/exit/input tests, source
+admission and caller mutations, paint-failure restoration, timer wakes/wrap,
+and ordinary GEM source compiled against unmodified GEMlib headers. Real
+QEMU mouse tests select across titles, and isolated clients exercise focus
+handoff, separate menu colours and owner exit. Headless, legacy-AES desktop,
+native ROM and contract configurations are also checked.
+
+Decorated window geometry (#781)
+
+wind_calc/mt_wind_calc also accept the classic NAME, CLOSER, FULLER, MOVER,
+INFO, SIZER, arrow and slider bits, plus PC-GEM HOTCLOSE. Unknown extension
+bits fail. The separately compiled aes/shared/gemframegeom.c derives margins
+from native wm_calc, including its 3D title, info and sizer placement rules.
+External libaes uses the native 3D frame layout. Decorations do not accumulate
+when several gadgets occupy the same row or column.
+
+Decorated calculations require an application session and obtain system font
+cell and pixel aspect metrics from a private workstation. Box height is the
+cell height plus three; width uses the native pixel-aspect calculation with
+its character-width-plus-four minimum. Native TOS4 narrows the adjusted 3D
+box width by one below 640 screen pixels, plus another at 400 or more lines;
+these mode-dependent adjustments affect the vertical bar width. The kind-zero
+calculation remains independent of workstation/session access. Workstation errors leave outputs
+unchanged. Wide intermediate arithmetic rejects results outside signed WORD
+range. Small rectangles retain negative work extents as in native AES, and
+representable frame/work conversions round-trip exactly.
+
+This slice adds calculation only; title/info frames follow in #787 below.
+Capability queries continue to leave unsupported window behavior unadvertised.
+
+Native title and info frames (#787)
+
+wind_create accepts NAME, INFO and their combination, retaining the original
+kind in WF_KIND. The native 3D frame builder is separately compiled from
+aes/shared/gemframe.c by both native AES and libaes. Object indices live in
+aes/shared/gemframeids.h. Native 2D small-ROM construction stays unchanged.
+The shared builder retains native layout, glyphs, colours, title activation
+and shadow appearance for all classic gadgets; this public slice enables only
+those frames that do not require additional gadget actions.
+
+wind_set_str/mt_wind_set_str set WF_NAME and WF_INFO using ordinary GEMlib
+signatures. The traditional wind_set/mt_wind_set high-WORD/low-WORD pointer
+form works too. Labels remain caller-owned and must stay alive until replaced
+or the window is deleted. The bounded object painter supports labels of up to
+127 bytes. NULL labels fail, while an empty string is valid.
+
+Opening and changing a decorated window draw its frame. Redraw notices publish WM_REDRAW
+for the work area and repaint owned frames under the same display lock. The
+notice is acknowledged before drawing, so focus/damage during painting stays
+pending for the next pass. Event waits and
+timers service internal frame notices while preserving user timer deadlines,
+queued messages and unfinished multi-click waits. A full message stream
+suppresses repeated internal wakes until capacity can be freed. APR_NOWAIT
+uses a nonblocking display acquisition and leaves repaint work pending if a
+peer owns the display. Topping/bottoming
+repaints the caller's frame; affected peers receive their normal redraw notices.
+WF_WORKXYWH, visible work rectangles and WM_REDRAW use the registered kind,
+matching wind_calc. WF_FIRSTXYWH copies its complete region snapshot into
+caller-owned storage; WF_NEXTXYWH consumes that copy, so intervening frame
+painting cannot replace an active public traversal. Snapshot allocation failure
+returns GEM 0 without changing outputs or the previous traversal. Remaining
+rectangles are freed on restart, close, deletion, geometry change or application
+reset. The painter uses CUIS visible-region snapshots under the
+display lock and the original object renderer, preserving work pixels and
+occluding clients. A drawing failure leaves the notice available for retry;
+failed opening hides the window and restores local rectangles when cleanup
+succeeds. Failed configuration attempts restore the previous geometry when
+the rollback succeeds; if rollback itself fails, metadata retains the last
+successful CUIS geometry. Text replacement restores its previous label on
+painting failure. Painting failures invalidate the affected display rectangle
+for later redraw. Cleanup attempts release temporary display locks and workstations; errors
+are reported as GEM 0.
+
+Decorated borders must admit a positive work area, title inset and drop shadow
+without WORD overflow. Tiny/overflowing rectangles fail before configuration.
+Kind-zero window behavior is retained. Arrows,
+sliders, HOTCLOSE and other creation flags remain rejected until their actions
+are implemented. No further capability bits are advertised. CUIS gains no GEM
+frame flags, object pointers, drawing commands or architecture-specific code.
+
+Frame painting is suspended throughout caller-local overlay scopes: alerts,
+form_do and watch-box input, FMD_START through matching FMD_FINISH, popup menus
+and menu-bar tracking. Nested scopes resume only after the outer overlay is
+removed or its saved pixels are restored. Redraw notices stay pending and do
+not wake internal waits during suspension. Ordinary stream messages remain
+readable. The event timer's remaining interval is computed immediately before
+the kernel wait, after pre-wait frame painting has consumed its share of the
+original deadline.
+
+Close and fuller window controls (#790)
+--------------------------------------
+
+External libaes accepts CLOSER and FULLER, independently or together with
+NAME/INFO. Native shared frame objects, glyphs and SELECTED rendering provide
+watch-box feedback. A left press selects the original gadget, leaving it
+unselects it, and returning selects it again. Release inside that same gadget
+appends WM_CLOSED (22) or WM_FULLED (23). Words 1/2 are zero, word 3 is the GEM
+window handle, and words 4-7 contain its current border rectangle, matching
+native AES. Neither request closes, destroys, maximizes or otherwise changes
+the window: the application remains responsible for its response. An activation
+click on a background window requests WM_TOPPED only. Other buttons, release
+outside, lost input, geometry/visibility/focus changes and mouse grabs cancel
+the gesture. Scrollbar interactions and HOTCLOSE remain unsupported.
+
+CUIS adds three generic scalar operations under CONF_WITH_CUIS:
+
+- 55 WINDOW_CONTENT(window,left,top,right,bottom): set nonnegative content
+  insets (0..32767), relative to the border. Defaults are zero. Insets may be
+  configured while hidden; sums exceeding an extent leave content empty.
+  Changing them cancels pending border gestures. The same topology/display
+  ownership rules as WINDOW_CONFIGURE apply.
+- 56 CONTROL_READ(window,out_x,out_y,out_buttons,out_changed): read one trusted
+  border-pointer record, returning 1, empty 0, or a negative error. All outputs
+  are LONGs, coordinates are screen-relative, and changed has the same button
+  bits as POINTER_READ. The caller must own the window. Failed output copies
+  do not pop the record. ERANGE cancels tracking after queue overflow or a
+  target invalidation; no GEM gadget IDs, trees or messages enter the kernel.
+
+- 57 WINDOW_CORNER(window,width,height): reserve a bottom-right control
+  rectangle independently of content insets (each dimension 0..32767).
+  Either zero disables it; both default to zero. Hidden windows may be
+  configured before sizing. Changes cancel pending gestures and follow the
+  same ownership rules as WINDOW_CONTENT. Libaes reserves the complete
+  expanded SIZER corner, including its bevel and low-resolution overlap;
+  WF_WORKXYWH and work-area drawing remain unchanged.
+
+READY_CONTROL (512) wakes SESSION_WAIT for these records or cancellation.
+Each window has a bounded 16-record border queue, with adjacent motion records
+coalesced. A press on the border captures that routing until release, keeping
+all gesture edges out of ordinary window pointer queues and session button
+history, even when it crosses the content area. Earlier work-area clicks are
+preserved. As with READY_SURFACE, internal readiness does not interrupt an
+unfinished multi-click accumulation. Modal scopes defer control servicing and
+mouse grabs invalidate pending border gestures. Nonblocking display acquisition
+and a retained completed message prevent drawing or full-stream backpressure
+from blocking ordinary message reads. All public calls remain standard GEM;
+there is no new exported libaes API or feature negotiation.
+
+Control readiness servicing drains records/cancellation for every live GEM
+handle, including plain, title/info-only and hidden windows. Only open windows
+with a supported gadget interpret those records or paint feedback. Border hover
+suppresses live button predicates while focused MU_M1/MU_M2 rectangle predicates
+remain active. Changing the selected top-strip surface or its height invalidates
+queued and captured border gestures even if window focus and stacking stay the
+same. Completed requests retain a release-time rectangle separately from the
+watch box; a later geometry change, close or release-feedback drawing failure
+cannot retract that request while its message waits for stream capacity.
+
+Plain and hidden live windows also participate in control servicing. Nonzero
+GEM timers retain their original deadline across control-only and display-ready
+wakes, including when no decorated window or menu exists. Window show/raise/
+lower/hide operations cancel background border gestures under the topology IRQ
+lock independently of focus; a temporary unmanaged occluder cannot restore an
+old queued release's eligibility by disappearing before CONTROL_READ.
+
+Window move gestures (#793)
+--------------------------
+
+External libaes accepts MOVER, including MOVER without NAME. Dragging the native
+name/title object selects it and draws the original gsx_xbox dotted XOR outline
+from aes/shared/gemgraphutil.c. The window and its work pixels remain fixed.
+Releasing the left button appends standard WM_MOVED (28): sender/extra length
+zero, handle in word 3, proposed x/y and unchanged border width/height in words
+4-7. The application chooses whether to call wind_set(WF_CURRXYWH). Background
+activation still requests only WM_TOPPED. NAME without MOVER is not draggable;
+CLOSER/FULLER retain their existing watch-box semantics.
+
+The press-to-border offset is retained, even when a press and release were
+queued before servicing. Wide-intermediate constraints match native
+hctl_window()/gr_dragbox()/rc_constrain: left edge 0, top at hbox, rightmost
+origin screen_width-wbox-6-2*ADJ3DSTD and the native MAX_COORDINATE vertical
+constraint. WORD outline endpoints cannot wrap for oversized windows. Shared
+geometry lives in aes/shared/gemmovegeom.c; native frame/title/glyph and GSX
+outline drawing sources remain shared without .inc files.
+
+The display lock spans outline drawing, input waits and XOR erasure, as native
+GEM's update scope does. No mouse grab replaces the existing border capture;
+no ordinary button history, key queue, event filters or completed input result
+is consumed by tracking. Other mouse buttons, lost border records, ownership
+cancellation or drawing/input failure abort without WM_MOVED. Successful and
+cancelled outlines are erased before leaving the display scope. A rendering
+failure invalidates the display for application redraw. Completed move requests
+retain proposed geometry independently of later application geometry changes
+and full-stream retries. Modal scopes defer servicing before a drag starts.
+
+CUIS_EVENT_CONTROL (16) extends the existing EVENT_WAIT window-event mask; it
+waits on that owned window's border queue/cancellation rather than all session
+windows. It uses the existing scalar window/events/timeout arguments (0 poll,
+-1 indefinite, positive milliseconds), and never consumes records or changes
+session input predicates/results. Another window's queued records cannot make
+this wait spin. Cancellation remains readable and wakes both window and session
+control waits while a peer owns the mouse, allowing the outline owner to release
+its display lock even if that peer is waiting for display access. These generic
+kernel changes remain compiled only with CONF_WITH_CUIS. There is no new syscall
+opcode or public libaes entry point. Arrows/sliders and HOTCLOSE remain
+subsequent work.
+
+APR_NOWAIT reads and explicit zero-duration event polls never start a blocking
+mover wait. A polled title press retains its original anchor privately, leaving
+held-motion records queued until a blocking event/message service can
+track it. Poll-only applications can finish a released drag without drawing an
+outline or waiting for further input. Queued application messages remain readable while the title is held.
+Move proposals reserve the same two-pixel shadow margin as frame admission, so
+wind_set can apply boundary proposals. Move outlines select VDI line type 7 as
+well as the original shared GSX dotted patterns.
+
+Window sizing gestures (#795)
+----------------------------
+
+External libaes accepts SIZER with the existing NAME/INFO/CLOSER/FULLER/MOVER
+flags, including a lone SIZER without a title. Initial hit testing uses the
+native shared OBJECT tree and its sibling priority. The original corner glyph
+and SELECTED feedback come from aes/shared/gemframe.c. No in-kernel AES or ROM
+frame source is changed for this slice.
+
+Sizing holds the border origin fixed and uses native gr_rubwind's mouse-minus-
+origin-plus-one dimensions. A dotted XOR border box and a second work-area box
+reuse gsx_xbox from aes/shared/gemgraphutil.c, under one display scope. The
+work-area offsets follow the window kind. Release sends standard WM_SIZED (27),
+with sender/extra length zero, handle in word 3, and the proposed border x/y/w/h
+in words 4-7. The application decides whether to apply it with WF_CURRXYWH;
+current, previous and work geometry are not changed by the request itself.
+
+Shared geometry in aes/shared/gemsizegeom.c retains native minimum character
+width/height, four box widths for title/horizontal gadgets, and six box heights
+for explicit vertical gadgets. Additional frame-admission minima keep work and
+title extents positive and the sizing glyph inside its data area. TOS4's lone
+SIZER reserves a vertical bar, rather than both bars. The low-resolution adjusted
+box metric, INFO line, aspect ratio, and two-pixel shadow/WORD limits are retained.
+An impossible minimum/maximum combination cancels instead of producing a
+rectangle the application cannot apply.
+
+Sizing reuses mover border capture and per-window waits without new kernel
+operations or public libaes entry points. It preserves ordinary button history,
+keys and input-result snapshots. Background activation remains WM_TOPPED only;
+other buttons, invalidated ownership or overflow cancel the gesture. Outlines
+erase on completion/cancellation; drawing failures request display redraw.
+APR_NOWAIT and explicit zero-time polls retain held sizing presses without
+waiting, and can complete released sizing requests entirely through polling.
+Completed requests retain their proposed dimensions under stream backpressure
+and later application geometry changes. Slider/page interactions and
+HOTCLOSE remain subsequent work.
+
+Frame admission and sizing now share WM_FRAME_LIMITS. Corner minima include
+both 3D bevel margins, so the full SIZER stays inside its data area rather than
+expanding into the title or above an untitled border. Size maxima include both
+the renderer's padded object dimensions and its absolute WORD scratch endpoints,
+using the same padding calculation as the object renderer. This includes the
+low-resolution FULLER offset. Boundary WM_SIZED proposals therefore remain
+admissible and paintable, rather than relying only on the outer shadow margin.
+
+Window scroll-arrow controls (#797)
+----------------------------------
+
+External libaes accepts UPARROW, DNARROW, LFARROW and RTARROW, separately
+or in combination with the existing title, information and sizing controls.
+The original native aes/shared/gemframe.c builds the bars and glyphs, including
+aspect and low-resolution adjustments and selected appearance. Admission and
+move/size proposals share limits for the actual padded arrow positions, valid
+work/bar extents and opposing glyphs; no kernel frame code is changed.
+
+Pressing an arrow sends standard WM_ARROWED (24), sender/extra length zero,
+window handle in word 3, WA_UPLINE (2), WA_DNLINE (3), WA_LFLINE (6) or
+WA_RTLINE (7) in word 4, and zero words 5-7. The application owns scrolling
+and redraw. Like native handle_arrow_msg(), press sends immediately and the
+original action repeats while held, including outside the arrow rectangle;
+release ends tracking without another action. The selected glyph stays active
+throughout that capture. Background activation, topology/ownership changes,
+queue overflow and mixed-button cancellation use the existing generic CUIS
+control path. Earlier ordinary work-area button edges remain independent.
+
+Repeats are cooperative: each service pass can emit at most one due repeat,
+with a two-tick minimum between repeats and no initial key-repeat delay.
+Blocking GEM reads and event waits request internal service wakeups when a
+held arrow needs service without pointer motion, including calls configured
+for double-click detection with no multi-click currently in progress. The display
+lock is released before waiting. Internal service wakes never return MU_TIMER unless
+the application's own original timer deadline has expired. Unfinished
+multi-click accumulation is not interrupted by repeat timers. APR_NOWAIT and
+zero-time timer polls never wait for input. Stream writes remain nonblocking;
+a full stream retains one pending action and lets the application drain data,
+rather than waiting while holding display ownership or growing a repeat list.
+Release/cancellation records are processed before generating another repeat.
+
+GEMDRAW.TOS and the QEMU input driver exercise all four actions, multiple held
+repeats, dragging outside, release suppression, polling-only completion, normal
+button-history isolation and unchanged window geometry. The source builds
+against unmodified GEMlib headers. Host sanitizer tests also cover full-stream
+progress, batched reads, clock wrap, original timer deadlines, rendering and
+cancellation/failure cleanup, every arrow combination, low-resolution modes,
+minimum geometry and the production painter's positive WORD endpoints.
+VSLIDE/HSLIDE, thumb tracking and WA_*PAGE actions are covered by #801
+below; other unsupported creation flags/fields still return GEM failure.
+
+CUIS READY_SERVICE (1024) adds a generic maintenance wake to SESSION_WAIT,
+without new syscall arguments or GEM-specific kernel state. It becomes ready
+after two native ticks, independently of the requested TIMER deadline. Like
+other internal readiness, it is deferred during unfinished multi-click
+accumulation until a requested public event is ready; that accumulation stays
+resident with its original count and deadline. Libaes consumes SERVICE
+internally, services due controls, then re-arms the public event wait.
+
+Window sliders and page actions (#801)
+-------------------------------------
+
+External libaes accepts HSLIDE and VSLIDE with the existing frame flags.
+The native shared frame builder supplies the bars, tracks and elevators;
+caller-local aes/shared/gemslidegeom.c derives their actual rectangles from
+that same tree. No parallel hand-drawn slider or new public AES API is used.
+WF_HSLIDE/WF_VSLIDE query stored positions, initially 0. WF_HSLSIZE/WF_VSLSIZE
+(and the historic WF_HSLSIZ/WF_VSLSIZ spellings) query thumb sizes, initially
+-1 for the native one-box default. Setters retain native wm_set clamping:
+positions and explicit sizes below 1 become 1, values above 1000 become 1000,
+and -1 remains valid for the default size. Fractions use the original shared
+builder's box minimum, proportional sizing and position arithmetic. Fields
+remain queryable while closed or without the associated gadget; successful
+open/close operations retain them. Painting failures restore the old field.
+
+Clicking an uncovered track sends WM_ARROWED with WA_LFPAGE (4), WA_RTPAGE
+(5), WA_UPPAGE (0) or WA_DNPAGE (1), chosen relative to the elevator's logical
+origin just as native hctl_window does. Page holds retain their original action
+while held, even outside the track or after the application updates a slider.
+They share the bounded repeat/cancellation/service-wake path with line arrows,
+and do not select the track.
+
+Dragging a thumb uses the original patterned XOR gr_dragbox outline and
+native gr_slidebox constraints, including its 3D expansion, low-resolution
+cross-axis adjustment, rounded fraction and one-pixel full-thumb travel.
+Release proposes WM_HSLID (25) or WM_VSLID (26), sender/extra length zero,
+window handle in word 3, position 0..1000 in word 4, and zero words 5-7.
+Stored positions and application content remain unchanged until the owner
+applies its chosen update. Initial hits use native OBJECT-tree sibling
+priority. Blocking drags wait only on their own trusted control queue; held
+APR_NOWAIT/zero-time polls retain the original geometry and remain nonblocking.
+Polling-only clients can complete released drags without drawing an outline.
+Replacing slider geometry during a deferred thumb drag cancels that local
+proposal; an already accepted pending message retains its original value
+under stream backpressure or later field updates.
+
+Admission reserves enough track space for the native default thumb and
+bounds full-sized selected elevators against the production painter's padded
+WORD dimensions/endpoints. The same limits constrain move/size proposals.
+Host sanitizer tests compare proposal math to native rc_constrain and
+mul_div_round across orientations, arrow combinations, default/explicit sizes,
+positions, aspect metrics, low-resolution modes and extreme input coordinates.
+Production painter tests cover minimum/default/full thumbs, hit priority,
+outline restoration/cancellation, positive endpoints and maximum padded
+sizes. Standard GEM clients built against unmodified GEMlib headers exercise
+field semantics, page holds and both orientations in blocking/polling drags.
+The expanded combined QEMU forms/window suite has a 90-second CI budget.
+HOTCLOSE and the remaining unimplemented window extensions are still rejected.
+
+Graphics handle and cursor bindings (#803)
+-----------------------------------------
+
+External libaes provides standard graf_handle/mt_graf_handle and
+graf_mouse/mt_graf_mouse. The graphics handle is a persistent, process-owned
+screen workstation, usable in the ordinary graf_handle/v_opnvwk startup
+sequence. Character and box metrics use the same system-font/aspect calculation
+as resource, form and window layout. Repeated calls retain the handle;
+closing an application's separate virtual workstation does not close it.
+Invalidated handles are reopened, transient checks fail without dropping the
+cached handle, and appl_exit/reset closes the private workstation. Failure
+returns GEM 0 without changing caller metric outputs; optional output pointers
+may be NULL. Headless clients retain the existing failure behavior when typed
+VDI is unavailable.
+
+Cursor forms are generated from the original aes/mform.rsc/.def data with the
+existing mrd tool, rather than copied or redrawn. The eight native forms,
+USER_DEF, counted M_OFF/M_ON, M_SAVE/M_RESTORE and M_LAST/M_PREVIOUS are
+implemented. Form arguments for modes that do not use them are ignored.
+Native invalid-low-mode fallback and unknown-high-mode no-op behavior remain.
+Current, previous and saved forms and the hide depth are private to each
+application; USER_DEF copies caller data before returning. Failed transport
+calls do not replace that state. The public MFORM spelling, colour-field
+order and signed WORD arrays match GEMlib. Native VDI words remain unchanged:
+the internal mask/data colour names differ historically from GEMlib's public
+names. Resource data and custom records pass through in their original word
+order. The native kernel's MFORM view is unchanged.
+
+CUIS_POINTER_STYLE (58) takes (owned_session, form_address, hide_depth), with
+one fixed 74-byte VDI pointer bitmap and depth 0..32767. It returns E_OK or a
+negative native error. It never retains the supplied address, interprets GEM
+mode numbers, or negotiates a protocol. CUIS stores a bounded form copy and
+selects the mouse-grab/capture owner, the input owner of a top strip under the pointer,
+the focused window's client, or the active windowless fallback. Background
+updates remain pending. Focus/strip crossings, grab release, application exit
+and physical display reinitialization restore the appropriate client's form
+and visibility. VDI performs the actual cursor drawing using its original
+form conversion, hide/show and save/restore routines. CUIS contributes one
+balanced visibility overlay, independent of temporary VDI drawing hides;
+nested client hides do not wrap the hardware hide count. No cursor becomes
+visible solely because an old client opens a workstation. The first explicit
+cursor request enters normal pointer display behavior. Ending the last cursor
+owner restores the default form and releases its hide contribution.
+
+All kernel storage, routing and VDI hooks are CONF_WITH_CUIS-gated. Native
+non-CUIS cursor code, resource forms and ROM object lists retain their prior
+behavior. Host sanitizer tests cover metric/handle failures and caching,
+public/native record layouts, copied/saved/previous forms, counted visibility,
+failed mutations, session initialization, foreign ownership, top-strip
+crossings, normal/fresh grabs and teardown. The real x32 GEM fixture builds
+against unmodified GEMlib headers, uses standard graphics/virtual-workstation
+startup signatures over the existing VDI transport, compares cursor pixels
+with native pen swatches, checks background restoration and nested visibility,
+and verifies restoration after an isolated child exits with outstanding hides
+and an open window. The existing input/window/forms/menu/pixel tests continue
+with the application's cursor hidden. Public drag/rubber/slide helper APIs and
+additional graphics extensions remain subsequent work.
+
+Interactive graphics tracking
+-----------------------------
+
+External libaes implements graf_rubberbox, graf_dragbox and graf_slidebox,
+including their mt variants and ordinary GEMlib source signatures. Native AES
+and libaes compile the same tracking loops from aes/shared/gemgrtrack.c, using
+the original patterned XOR outlines. Rubber dimensions use inclusive pointer
+coordinates and the supplied minima. Dragging retains the native pointer offset
+and rectangle constraints. Sliding applies native 3D expansion and rounding to
+0..1000, returning zero for a track with no travel. The object tree is not moved.
+
+The adapter holds whole-screen display and mouse ownership across tracking,
+suspends automatic frame painting, and balances nested caller grabs. A held
+gesture must belong to the application (for example through window content
+capture); a fullscreen application can acquire BEG_MCTRL before waiting for
+its press. Acquisition does not wait on a foreign gesture while excluding its
+drawing. Past release history cannot end a tracker while the button remains
+held. The adapter waits directly for pointer changes and release, without
+recursively dispatching menus or window controls.
+
+Coordinates and caller-local slider trees are checked before tracking. Parent
+relationships are indexed in one bounded pass, with cycle and duplicate-parent
+rejection. Failures leave rubber/drag output pointers unchanged and release
+acquired ownership; a failed XOR operation requests redraw. As in GEM, zero is
+both a valid slider position and its failure return. No new kernel operation
+or public pTOS-specific tracking API is required.
+
+Box animations
+--------------
+
+External libaes exports standard graf_mbox, graf_growbox and graf_shrinkbox,
+with mt variants and GEMlib's grow/shrink grect helpers. Shrink calls take the
+small destination first and the large source second. GRECT inputs are copied;
+aliasing the two rectangles does not modify caller data.
+
+The existing aes/shared/gemformanim.c supplies the same XOR paths used by
+native AES and form_dial. Private workstation metrics preserve patterned lines
+and aspect-dependent corner arms. Native scale calculations admit the complete
+trajectory before painting, including rounding, zero-distance drift and
+intermediate corner coordinates. Nonrepresentable paths fail before drawing.
+
+Whole-screen display ownership and frame suspension span each public animation
+and balance nested caller scopes. No mouse/keyboard grab or input wait is added.
+Failures request window and owned-menu-surface repaint before the outer display
+scope is released. Kernel code and services are unchanged.
+
+Window lookup by screen coordinates (#816)
+-----------------------------------------
+
+External libaes exports standard wind_find(x,y) and mt_wind_find(x,y,global).
+They return the identifier of the frontmost open window containing the point,
+including its border, regardless of application ownership. A point not covered
+by an open window returns desktop identifier 0. Window bounds include their
+left/top edge and exclude their right/bottom edge; visual shadows do not count.
+Hidden or destroyed windows cannot be returned. Invalid registration and native
+query failures return -1, without leaking a CUIS error or narrowing a bad ID.
+
+CUIS_WINDOW_AT (59) takes two flat, sign-extended LONG coordinates and returns a
+non-negative global window identifier, or a negative GEMDOS error. Unused
+registers are ignored. A registered caller can query any visible window; the
+read-only operation requires no display/update ownership and changes neither
+focus, stacking, input queues nor pointer state. Full-width noncanonical LONG
+arguments return EINVAL. The scan uses the same half-open window bounds as
+pointer routing, under the same short IRQ exclusion as topology changes.
+There are no user buffer arguments and no additional capability claims.
+
+Host regressions cover registration, signed LONG extremes and malformed wide
+arguments, cross-session lookup, stack transitions, hidden/destroyed windows,
+shadow exclusion and lookup while another session holds the display lock. GEM
+adapter tests check signed WORD arguments, mt_* globals and result validation.
+GEMFOC.TOS builds against normal GEM headers and checks borders, half-open edges,
+foreign windows, raising/lowering, closing/reopening and process-exit cleanup in
+isolated x32 clients. It emits "x32 GEM window lookup: PASS" on success.
+
+Classic window/desktop completion (#818)
+----------------------------------------
+
+External libaes supplies wind_new/mt_wind_new, desktop handle 0 queries,
+WF_NEWDESK, WF_SCREEN, WF_COLOR/WF_DCOLOR and the standard GEMlib int, pointer
+and GRECT window bindings. Kernel changes remain CONF_WITH_CUIS gated; native
+in-kernel AES drawing and ROM objects are unchanged.
+
+wind_new closes/deletes only the calling application's windows, releases all
+of its update/mouse/keyboard nesting and resets the cursor hide count. Other
+applications' windows, locks and sessions survive. The caller remains
+registered, keeps its graphics workstation and may create new windows. Its
+installed desktop also survives this window-manager reset.
+
+Handle 0 has full-screen current/previous geometry and work/full geometry
+below the active menu strip. FIRSTXYWH/NEXTXYWH return an independent desktop
+work-region iterator, excluding every visible window and its shadow. FIRST
+captures the complete list under an update section before replacing the local
+iterator; failures leave the old iterator intact. A caller can interleave this
+with window rectangle lists and automatic desktop painting.
+
+WF_NEWDESK installs a caller-owned tree/root through wind_set or the standard
+wind_set_ptr[_int] bindings. The library validates its visible subtree before
+publishing ownership; it does not alter the tree's layout. NULL selects the
+original AES default background pattern. No tree or callback pointer enters
+the kernel. The most recently installed background owns the bottom surface;
+removal or process exit falls back to the previous live registrant. Global
+window identifiers continue to exclude the background: wind_find returns 0
+there. Background clicks and mouse predicates belong to its owner, with drag
+capture preserved across windows/menu strips and sampled before release.
+Replacing the active background discards its outgoing owner's unread ordinary
+keys as well as the incoming owner's stale keys. Explicit keyboard-grab queues
+are preserved; modal display ownership continues to exclude foreign transfers.
+
+Rendering runs in the owner's ordinary GEM event/message dispatch, using the
+original AES object painter over the desktop visible regions. Display
+contention is deferred, overlays suspend painting, and failed painting retains
+damage for retry. Damage is acknowledged before calling application USERDEFs,
+so reentrant invalidation is not lost. A sleeping owner wakes on background
+damage using ordinary native notice readiness. WF_NEWDESK queries return a
+pointer only to the caller's current tree; foreign process addresses are never
+exposed. Desktop owner and geometry metadata remain queryable across clients.
+
+WF_COLOR accepts gadget numbers W_BOX through W_HELEV. Top/bottom colour words
+use the native GEM frame format; -1 setters preserve that word. WF_DCOLOR is
+shared across clients and affects subsequently created windows; existing
+windows retain their own colour arrays. A default pair changes atomically.
+Invalid gadgets and failed repaints do not replace per-window colours. Colour
+getters take the gadget through the first output word, as GEMlib requires.
+WF_NAME/WF_INFO setters retain the caller's local string pointer. Their scalar
+wind_get/mt_wind_get getters return that address as high/low WORDs through the
+first two outputs, which must both be non-NULL. Output adjacency never selects
+a string copy. wind_get_ptr/mt_wind_get_ptr provide the explicit pointer helper.
+
+WF_SCREEN returns a private compatibility scratch buffer and byte length in
+high/low WORD pairs. It reserves 640 character cells at four bytes per pixel
+for true-colour capacity, subject to the existing bounded allocation limit.
+The buffer is retained until application exit/reinitialization; applications
+must not free it. It is not a kernel address or shared application memory.
+Menus and forms retain their independent exact screen-save storage.
+
+Additional scalar native services, all requiring a registered caller:
+
+  60 BACKGROUND(session,action): action 0 withdraws this registration, 1
+     installs/reasserts it, 2 reads ownership/damage bits (1/2), 3 acknowledges
+     damage, and 4 invalidates. Mutations require display ownership; replacing
+     a foreign captured background returns EAGAIN.
+  61 BACKGROUND_REGION(session,index,x,y,width,height): four separate LONG
+     output pointers, result 1 for a rectangle or 0 at end, matching the window
+     snapshot/copyout and failure/lifetime rules.
+  62 DISPLAY_INFO(selector): scalar width (0), height (1), reserved top-strip
+     height (2) or active background owner's process ID (3).
+  63 WINDOWS_RESET(session): resets this caller's windows and coordination
+     scopes, acquiring display ownership cooperatively before changing Z-order.
+  64 SETTING(slot,value,other_slot,other_value,mask): bounded generic shared UI
+     preference words. Mask 0 reads the first slot (EFILNF if unset); bits 1/2
+     atomically write the selected slots. Writes require display ownership.
+     The kernel stores 64 uninterpreted UWORD slots; GEM colour interpretation
+     and native fallback defaults remain entirely in libaes.
+
+The host service, adapter and pixel suites cover peer isolation, ownership
+fallback, clipping/menu/shadow bounds, copy/allocation/drawing failures,
+reinitialization and reset. GEMFOC.TOS additionally exercises unmodified
+GEMlib headers, cross-process colour defaults, background pixels and raw-exit
+fallback, pointer buffers and nested wind_new cleanup. Its completion marker
+is "x32 GEM window/desktop APIs: PASS". Iconification, shading, toolbars and
+other extended-window compatibility remain separate work; no additional
+appl_getinfo capability bits are advertised by this slice.
+
+Classic file selectors (#822)
+----------------------------
+
+External libaes implements fsel_input and fsel_exinput, including the standard
+mt_ variants. The public signatures match GEMlib: a writable path/mask buffer
+(at least 128 bytes), a writable 8.3 selection buffer (at least 13 bytes), and
+an output button word. fsel_exinput additionally accepts an optional title.
+Success returns 1, with button 1 for OK or 0 for Cancel; failure returns 0.
+Caller buffers are committed only after successful dialog cleanup.
+
+The implementation shares aes/shared/gemfslib.c and the generated native AES
+file-selector resource. It retains the native layout, drawing, directory and
+drive navigation, wildcard filtering, directory-first ordering, editable
+selection, double-click acceptance and scrolling. The native listing limit
+remains 1600 entries; a full listing is truncated without an error alert.
+Each invocation owns its writable object/TEDINFO/text tables and search DTA.
+It restores the caller's DTA pointer and leaves the current drive/directory
+unchanged. No additional kernel service or syscall is introduced.
+
+The modal selector nests display, mouse and keyboard ownership, suspends frame
+painting and snapshots its complete outlined rectangle before drawing. Cleanup
+restores the pixels, closes its private workstation, releases only its own
+ownership depths and frees temporary storage on success, cancellation or an
+error. Directory and allocation errors use the standard GEM form alerts.
+
+Host tests exercise navigation, filtering/sorting, acceptance/cancellation,
+scrolling, the listing cap and allocation, drawing and transport failures with
+nested ownership. The interactive x32 GEM client also accepts, cancels and
+reopens selectors through normal GEM headers, checking the DTA, current path,
+saved pixels and subsequent wind_update ownership. Its completion marker is
+"x32 GEM file selectors: PASS". Extended fslx_* selectors remain separate work.
+
+Shell startup, environment and file queries (#826)
+------------------------------------------------
+
+External libaes implements shel_read, shel_envrn and shel_find, with their
+standard mt_* counterparts and GEMlib signatures. Shell launching and shared
+shell/desktop context are separate work; these queries add no kernel service.
+They require the caller's registered GEM global array.
+
+shel_read writes the complete startup executable specification and the original
+128-byte GEMDOS command tail, including its leading length byte. The command
+buffer must have at least 260 bytes. With CONF_WITH_LIBAES, the startup stack
+builder saves the original tail in an optional AT_PTOS_LAUNCH record. LD.SO
+qualifies AT_EXECFN in that record before executable preinitializers or any
+dependency constructor. The library consumes the saved command and tail in
+DT_INIT; preinitializer cwd changes or default-DTA searches cannot alter them.
+The resource loader consumes the same captured command with a 260-byte bound.
+Extended ARGV[0] remains independent of the supplied executable pathname.
+Missing or invalid startup metadata returns 0 without changing either output.
+
+shel_envrn performs the native AES prefix search in the process's startup
+GEMDOS environment block. It returns 1 for a completed lookup and writes the
+address immediately following the prefix, or NULL when absent. The result is
+an ordinary process-local pointer into that environment. Lookup stops before
+the ARGV= marker and argument payload, matching the startup envp boundary;
+variable-looking arguments never supply environment values. Empty values remain
+empty; PATH parsing does not treat the next environment variable as a path.
+The snapshot retains the original environment address and actual allocation
+extent, so validation does not scan a short block up to the 32 KB ABI maximum.
+NULL arguments, invalid globals or a malformed unterminated environment return
+0 without changing the output pointer.
+
+shel_find uses the original native AES search core in aes/shared/gemshquery.c:
+first the basename in the launch application directory, then the supplied
+specification in the current directory, then the basename in the current
+drive's root, and finally the semicolon/comma-separated PATH components.
+Drive-relative PATH components retain their colon semantics. Like native TOS,
+a current-directory match leaves the supplied specification unchanged; other
+matches replace it with the successful candidate, retaining wildcard masks.
+The caller provides a writable buffer of at least 260 bytes. Success returns 1;
+missing files, invalid inputs or operational failures return 0 with the input
+buffer unchanged. Overlong PATH candidates are skipped within private bounded
+workspace. Ordinary EFILNF/EPTHNF/ENMFIL results continue the search; other
+Fsfirst errors stop further probes and fail without committing a later match.
+The search uses one stable private DTA address across calls, so lookups at
+different stack depths do not accumulate hidden kernel search-cache entries
+and evict an outstanding caller search. Cleanup restores the original DTA
+pointer without changing its bytes, current drive or current directory.
+
+Native AES uses the same separately compiled query source with its existing
+state and bindings. Startup directory discovery is also shared with libaes's
+resource loader. The shell query fixture exercises native search precedence,
+prefix/missing/empty environment lookup, long paths and DTA failure cleanup
+under host sanitizers. The isolated x32 GEM client covers both short and ARGV
+launches, lookup after cwd changes, wildcard searches and caller DTA protection;
+its completion marker is "x32 GEM shell queries: PASS". No additional shell
+capability bits are advertised until their corresponding operations exist.
+
+Persistent GEM shell buffers (#838)
+----------------------------------
+
+External libaes supplies shel_get/shel_put and mt_* using the standard GEMlib
+char-buffer and signed-WORD length signatures. The initial shell buffer has
+4192 zero bytes. Successful puts replace the specified prefix, preserve the
+remaining bytes and grow storage when necessary, up to 32767 bytes. Shorter
+puts never shrink it. Values belong to the GUI context and survive normal,
+raw and final application/session exits, so a restarted desktop can recall
+its saved context. Native in-kernel AES retains its existing shell storage.
+
+shel_get copies at most the current shell size; excess caller bytes remain
+unchanged. Unwritten bytes inside the initial buffer read as zero. Ordinary
+successful gets/puts return 1, and invalid arguments or operation failures
+return 0. Length zero is a successful no-op, including with a NULL buffer.
+SHEL_BUFSIZE (-1) is the standard getter size inquiry and returns the current
+size without touching the buffer; other negative lengths are unsupported.
+AES_INQUIRE output 2 advertises this size inquiry. No default-desktop, launch
+or clipboard capability is advertised by this slice.
+
+Transfers nest display ownership around their context operation. Getter data
+is staged privately until the operation and ownership cleanup succeed, so a
+failed query/read/release leaves caller output unchanged. Allocation and
+source-copy failures do not replace shared data; temporary storage is released
+or handed to the existing deferred resource cleanup. An enclosing application
+wind_update scope remains owned by the caller.
+
+The generic native primitive is CUIS_CONTEXT (65), with flat registers:
+
+  CONTEXT(session,slot,action,address,length,offset)
+
+Slots 0..3 each hold up to 32767 opaque bytes; libaes uses slot 0 for its shell
+buffer. Action 0 reads a snapshot, 1 writes a range while preserving bytes
+outside it, and 2 returns the stored extent. Read/write return E_OK or a
+negative GEMDOS error. Size returns a nonnegative byte count or a negative
+error and requires address/length/offset all zero. Zero-length transfers are
+no-ops; reads zero-fill unwritten portions of the requested bounded range.
+All calls require the caller's own registered session. Read/write also require
+its display ownership; a size query needs no display grab. These shared slots
+are intentionally accessible to registered GUI clients, not private mailboxes.
+Kernel code never interprets the bytes as GEM structures or pointers.
+
+Read snapshots and write publication use short IRQ exclusion; allocation and
+user copies happen outside that exclusion. A write publishes only after its
+complete source copy and registration/display revalidation, and rejects an
+intervening reentrant update rather than overwriting it with stale data. All
+kernel storage and dispatch remain under CONF_WITH_CUIS, selected by external
+libaes. Persistent values are bounded independently of the number of clients.
+
+Host tests cover maximum extents, zero filling, partial updates, malformed
+calls, allocation/copy failures, peer mutation during a copy and owner exit.
+Library tests check size inquiry, growth, unchanged failed-read outputs and
+nested display cleanup. The isolated GEM client passes a 6000-byte buffer
+between parent and children, checks prefix preservation after normal/_Exit
+termination and validates AES_INQUIRE. Its marker is
+"x32 GEM shared shell buffer: PASS". The boot memory fixture checks that the
+buffer survives the last GUI exit, then explicitly reclaims this intentional
+persistent test state before its ordinary allocator leak comparison.
+
+Shared default desktop and clipboard paths (#840)
+------------------------------------------------
+
+shel_rdef/shel_wdef and their mt_* forms use the standard GEMlib void
+signatures. They read/write the default application filename (up to 12 bytes
+plus NUL) and its directory (up to 113 bytes plus NUL). Both fields are one
+opaque CUIS context record in slot 1, so a reader sees one complete update.
+Until configured, both fields are empty; the upcoming shell/desktop launch
+integration supplies the startup default and consumes this state. This slice
+stores the metadata; it does not yet launch the configured application.
+AES_PCGEM reports out4=1 for these functions; its other fields remain zero.
+
+scrp_read/scrp_write and their mt_* forms read/write an opaque clipboard path
+(up to 127 bytes plus NUL) in slot 2. They follow Atari TOS behavior: no path
+normalization, directory existence check, file enumeration or file deletion.
+A successful read returns 1 even when the path is empty (the initial state).
+The desktop can configure its clipboard directory at startup. This is not
+the PC-GEM scrap-format bitmap extension; scrp_clear is not provided.
+
+All calls require normal AES registration. Setters reject NULL or oversized
+strings without changing shared state. Void functions have no error result;
+on a failed read or malformed shared record they leave both caller buffers
+unchanged. scrp_* return 0 on failure. Writes publish complete staged records;
+a transport failure while releasing ownership can follow a committed write.
+Getters validate bounded NUL termination before committing output, and accept
+a valid fixed prefix in a larger context (CUIS storage does not shrink).
+Nested display ownership is preserved. The records persist across application
+and session exit independently of the shell buffer in slot 0. No new kernel
+services or feature-independent kernel changes are needed.
+
+Host tests cover maximum bounds, shorter replacement, malformed/truncated
+records, transport failures and display nesting. The normal-header GEM test
+checks both API forms, capability reporting, independent shell/default/scrap
+state and updates surviving normal and abrupt child process exit.
+
+Parallel GEM shell launching (#842)
+-----------------------------------
+
+shel_write/mt_shel_write have the standard GEMlib signature (the command is
+const void *, the tail is const char *, and the result is short). Initially
+only SWM_LAUNCHNOW (1), GEMAPP (1), SHW_PARALLEL (100) is supported. This is the
+MagiC parallel execution mode: it returns the new AES/process ID immediately
+and sends no CH_EXIT message when that child exits. The parent can continue
+using ordinary GEM events while its child runs cooperatively. Standard MiNT
+Pwaitpid can collect the child's termination status; this call does not reap
+other children or consume the application's messages.
+
+The command is resolved through the existing classic shel_find search, with
+its private persistent DTA and original PATH rules. The caller's command/tail,
+DTA/search continuation, working directory and display-lock nesting are
+preserved. The library stages a bounded command string and an ordinary tail
+(length byte 0..126, then that many bytes); it reads only those tail bytes and
+zeroes the rest of its private 128-byte tail. Byte 127 and larger are rejected:
+ARGV/extended argument passing needs separate implementation. Pexec mode 100
+receives a null environment argument to inherit the calling process's GEMDOS
+environment and standard files. Its fourth argument uses the ordinary x32
+syscall register, with no new kernel service or legacy AES shell bridge.
+
+Invalid registration, malformed/oversized parameters, search or launch failure
+return zero. Unsupported selectors are rejected before interpreting their
+mode-dependent pointer arguments. The ordinary AES4 SWM_LAUNCH mode 0,
+chain/default-shell execution, console applications, accessory launch, ARGV
+parsing, extended option structures, shutdown and resolution changes remain
+unsupported. AES_SHELL is not advertised until its ordinary launch modes and
+reported semantics are implemented. In particular, this API does not yet
+replace the desktop's classic shell-launch adapter.
+
+Host sanitizer tests cover short/minimum/maximum tails, bounds and selectors,
+search/restore/launch failures and unchanged inputs/DTA. The normal GEM-header
+client launches two isolated children with ordinary and 126-byte tails. It
+checks inherited environment, captured startup command/tail, concurrent GEM
+message exchange, PID/status results, absence of CH_EXIT, balanced display
+nesting, working-directory preservation and resumed Fsnext searches.
+
+AES4 GEM launch and child-exit messages (#844)
+--------------------------------------------
+
+shel_write/mt_shel_write now also accept SWM_LAUNCH (0), CL_NORMAL (0).
+The graphical selector is ignored for this mode. After classic shel_find
+resolution, .PRG/.APP (case insensitive) are recognized as GEM applications;
+other executable kinds remain unsupported until their console/accessory
+ownership semantics are implemented. Ordinary tails retain the 0..126 bound.
+The call returns the new AES/process ID or zero. SHW_PARALLEL retains its
+separate documented no-CH_EXIT semantics.
+
+For an ordinary mode-0 child, libaes supplies exactly one CH_EXIT message
+when the process actually finishes: words are {90,0,0,child_id,exit_code,0,0,0}.
+appl_exit alone is not process completion. A normal Pterm result keeps its
+full WORD (e.g. 0x1234); faults use the existing native MiNT signal word
+(signal << 8). Children that exit or fault without ever registering with AES
+are included. AES_MESSAGE out1 bit 5 advertises CH_EXIT; other fields are zero.
+AES_SHELL remains unadvertised until its ordinary mode-1/chain semantics are
+implemented. No console, accessory, ARGV, chain/default-shell, shutdown or
+resolution-change support is implied by this slice.
+
+CUIS retains bounded, opaque process completion records, without interpreting
+GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
+
+  CUIS_CHILD_WATCH(session, action, token, image)
+    RESERVE (0), token=image=0: reserve one of 16 records; return a positive,
+    never-reused token or a negative error. No allocation is needed.
+    BIND (1): associate the reservation with an owned, live, unlaunched
+    Pexec(3) basepage. Kernel image metadata supplies its PID; no allocation
+    is needed. Started, freed/replaced, duplicate or foreign images fail.
+    Completion is recorded for synchronous Pexec(4/6) as well as asynchronous
+    starts; the ordinary retained/freeing ownership of those modes is kept.
+    Bound synchronous children retain their first fault signal even without
+    a scheduler task slot. CH_EXIT reports signal << 8 for a crash, while an
+    ordinary Pterm(-1) remains the full 0xffff termination result.
+    CANCEL (2), image=0: drop an owned reservation/notice, without killing or
+    reaping a child. Tokens from another session or an earlier lifetime fail.
+  CUIS_CHILD_LAUNCH(session, token, path, tail, environment)
+    Validate ordinary Pexec(100) arguments and load at the executable's link
+    address in private child pages, using the existing GEMDOS loader. Bind
+    the reserved observer inside spawn, before the child can execute. Return
+    its positive PID or a negative error; failures cancel the reservation.
+    The observer is an explicit kernel call argument, never a global latch.
+    Fixed-address ET_EXEC programs need no retained relocation tables.
+  CUIS_CHILD_RESULT(session)
+    Non-consuming FIFO peek. Zero means no completion; a positive scalar has
+    PID in its high WORD and exit status in its low WORD; errors are negative.
+  CUIS_CHILD_PUBLISH(session, expected_result, bytes_address, byte_count)
+    Append 1..32 opaque bytes to the caller's existing application pipe, only
+    if the same completion is still at its head. Failed copies, allocation,
+    or pipe capacity leave it pending; reentrant reservation changes cannot
+    publish or consume a replacement notice. Only a successful publication
+    consumes the record and nonblockingly reaps that specific child if it is still a native zombie. No unrelated child is read.
+
+Capacity is reserved before CUIS_CHILD_LAUNCH, which runs the standard
+asynchronous load-and-go path with a stack-scoped observer. The observer is
+bound before the child can start. Early native waits cannot erase a notice or
+reorder completions through delayed binding. Validation/load/start failures
+cancel the reservation; the GEMDOS loader retains its ordinary image cleanup
+and fixed-address loading behavior. The optional BIND operation remains for
+callers explicitly using editable Pexec(3) images. Completed
+notices survive an explicit application Pwaitpid, and hold their PID identity until publication/cancellation/session
+teardown even if the native zombie was already reaped. A session close drops
+its records, releasing PID reservations; it neither kills nor reaps live
+children. Subsequent registrations do not inherit old notifications.
+
+CUIS_READY_CHILD is a public readiness source in CUIS_SESSION_WAIT, alongside
+stream/notice/input/timer readiness. It wakes MU_MESAG immediately, including
+during unfinished multi-click accumulation. The interrupted button predicate
+retains its original count/deadline in session-owned state and continues
+sampling trusted pointer edges while the message is handled; a compatible
+subsequent button wait resumes it. Changing the button filter starts a new
+predicate. Intervening pointer edges are retained in a bounded private
+history: compatible resumption consumes them once; abandonment restores them
+ahead of later normal history for the new filter. Stream, key and timer
+wakeups preserve a resumed predicate too. A child-publication failure, before
+or after the native wait, does not mask ready keys, buttons or timer events. There is no maintenance polling
+and no replacement of the application's independent timer. Libaes converts
+notices before/after waits and in blocking/nonblocking appl_read; pipe
+backpressure preserves existing queued bytes ahead of the new message.
+
+Tests cover bounded reservations/tokens, ownership, completion order, early
+completion, copy/allocation/backpressure failures, explicit native waits,
+reentrant cancellation/replacement/session exit, PID retention, a completion
+interrupting a two-click predicate and unchanged caller output on failure.
+Normal-header x32 clients cover full-word exits, exit/fault before appl_init,
+exactly-once messages, automatic selective reaping, explicit Pwaitpid retaining
+a notice, unrelated Pexec children and unchanged SHW_PARALLEL behavior.
+
+The transitional native AES binding calls its 16-byte message type
+AES_CLIENT_MESSAGE, avoiding a collision with GEMlib's standard AES_MESSAGE
+capability selector. Legacy-only clients also retain the AES_MESSAGE typedef
+when that macro has not been defined. Its binary layout and service ABI are
+unchanged; tests cover legacy-only source and both public-header orders.

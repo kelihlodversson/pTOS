@@ -1,0 +1,22 @@
+{
+    global: shel_write; mt_shel_write; shel_rdef; mt_shel_rdef; shel_wdef; mt_shel_wdef; scrp_read; mt_scrp_read; scrp_write; mt_scrp_write; shel_get; mt_shel_get; shel_put; mt_shel_put; shel_read; mt_shel_read; shel_find; mt_shel_find; shel_envrn; mt_shel_envrn; fsel_input; mt_fsel_input; fsel_exinput; mt_fsel_exinput; mt_wind_new; wind_new; mt_wind_set_ptr_int; wind_set_ptr_int; mt_wind_set_ptr; wind_set_ptr; mt_wind_get_ptr; wind_get_ptr; mt_wind_get_int; wind_get_int; mt_wind_set_int; wind_set_int; mt_wind_get_grect; wind_get_grect; mt_wind_set_grect; wind_set_grect; mt_wind_create_grect; wind_create_grect; mt_wind_open_grect; wind_open_grect; mt_wind_calc_grect; wind_calc_grect; wind_find; mt_wind_find; graf_mbox; mt_graf_mbox; graf_growbox; mt_graf_growbox; graf_shrinkbox; mt_graf_shrinkbox; graf_growbox_grect; mt_graf_growbox_grect; graf_shrinkbox_grect; mt_graf_shrinkbox_grect; graf_rubberbox; mt_graf_rubberbox; graf_dragbox; mt_graf_dragbox; graf_slidebox; mt_graf_slidebox; graf_handle; mt_graf_handle; graf_mouse; mt_graf_mouse; wind_set_str; mt_wind_set_str; menu_bar; mt_menu_bar; menu_popup; mt_menu_popup; menu_icheck; mt_menu_icheck; menu_ienable; mt_menu_ienable; menu_tnormal; mt_menu_tnormal; menu_text; mt_menu_text; objc_sysvar; mt_objc_sysvar; rsrc_rcfix; mt_rsrc_rcfix; rsrc_load; mt_rsrc_load; rsrc_free; mt_rsrc_free; rsrc_gaddr; mt_rsrc_gaddr; rsrc_saddr; mt_rsrc_saddr; objc_edit; mt_objc_edit; form_do; mt_form_do; form_dial; mt_form_dial; form_alert; mt_form_alert; form_error; mt_form_error; graf_watchbox; mt_graf_watchbox; form_button; mt_form_button; form_keybd; mt_form_keybd; rsrc_obfix; mt_rsrc_obfix; form_center; mt_form_center; form_center_grect; mt_form_center_grect; objc_draw; mt_objc_draw; objc_change; mt_objc_change; evnt_keybd; mt_evnt_keybd; evnt_button; mt_evnt_button; evnt_mouse; mt_evnt_mouse; evnt_dclick; mt_evnt_dclick; wind_update; mt_wind_update; wind_create; wind_open; wind_close; wind_delete; wind_get; wind_set; wind_calc;
+            mt_wind_create; mt_wind_open; mt_wind_close; mt_wind_delete; mt_wind_get; mt_wind_set; mt_wind_calc; appl_init; appl_exit; appl_yield; evnt_timer; appl_getinfo;
+            appl_find; appl_read; appl_write; evnt_mesag;
+            mt_appl_find; mt_appl_read; mt_appl_write; mt_evnt_mesag;
+            evnt_multi; mt_evnt_multi; graf_mkstate; mt_graf_mkstate;
+            mt_appl_init; mt_appl_exit; mt_appl_yield; mt_evnt_timer; mt_appl_getinfo;
+            aes_global; gl_apid; gl_ap_version;
+            aes_session_open; aes_session_query; aes_session_close;
+            inside; rc_constrain; rc_equal; rc_intersect; rc_union;
+            objc_add; objc_delete; objc_order; objc_offset; objc_find;
+            mt_objc_add; mt_objc_delete; mt_objc_order; mt_objc_offset; mt_objc_find;
+            aes_window_create; aes_window_configure; aes_window_destroy;
+            aes_window_show; aes_window_hide; aes_window_raise;
+            aes_window_lower; aes_window_redraw;
+            aes_update_begin; aes_update_end; aes_window_clip;
+            aes_window_focus; aes_window_focused; aes_window_unfocus;
+            aes_key_read; aes_key_wait;
+            aes_pointer_read; aes_event_wait;
+            aes_message_send; aes_message_read; aes_message_wait;
+    local: *;
+};

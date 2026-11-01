@@ -56,6 +56,8 @@ jobs:
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
       - name: Test metadata, corrupt inputs and Kconfig isolation
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
+      - name: Test CUIS ownership and caller-local AES object contracts
+        run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Build the enabled freestanding x32 core
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
@@ -76,20 +78,22 @@ jobs:
           make CROSS_COMPILE= -j2
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
           sh tools/test-mmap-boot.sh
-      - name: Boot-test shared libraries with x32 AES, VDI and callbacks
+      - name: Boot-test shared libraries with x32 AES, VDI, callbacks and CUIS
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
           CONFIG_= python - <<'PY'
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
-          for name in ("CONF_WITH_X32_VDI", "CONF_WITH_X32_AES", "CONF_WITH_USER_CALLBACKS"):
+          for name in ("CONF_WITH_X32_VDI", "CONF_WITH_X32_AES", "CONF_WITH_USER_CALLBACKS", "CONF_WITH_LIBAES"):
               config.syms[name].set_value(2)
           config.write_config()
           PY
           make CROSS_COMPILE= -j2
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
-          sh tools/test-mmap-boot.sh
+          readelf -d obj/libaes/CUIS.TOS | grep 'libaes.so'
+          readelf -l obj/libaes/CUIS.TOS | grep '/GEMSYS/LIB/X32/LD.SO'
+          MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Exercise shared desktop and console consumers
         run: |
@@ -101,12 +105,14 @@ jobs:
           config = kconfiglib.Kconfig()
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.syms["CONF_WITH_LIBAES"].set_value(2)
           config.write_config()
           PY
             make CROSS_COMPILE= -j2
             make CROSS_COMPILE= x32-desktop-test x32-desktop-window-test
             readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
             readelf -d emudesk.prg | grep 'libptos.so'
+            readelf -d emudesk.prg | grep 'libaes.so'
             if [ "$variant" = pc-x86_64-desktop-tests ]; then
               readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
               readelf -d cli/emucon.tos | grep 'libptos.so'

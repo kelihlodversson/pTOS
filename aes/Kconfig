@@ -9,6 +9,23 @@
 
 menu "AES"
 
+config CONF_WITH_CUIS
+    bool
+    depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    select CONF_WITH_NATIVE_SCHED
+
+config CONF_WITH_LIBAES
+    bool "Experimental userspace libaes.so and CUIS foundation"
+    depends on ARCH_X86_64 && CONF_WITH_ELF_SHARED
+    select CONF_WITH_CUIS
+    default n
+    help
+      Build an ordinary PIC libaes.so with local geometry, object-tree
+      editing and private process-owned CUIS sessions. Requires the x32 userspace ELF linker.
+      This is the initial foundation of #661, not a complete GEM AES API.
+      Existing AES paths remain available during migration. Other backends
+      follow their isolated address-space and shared-linker support.
+
 config CONF_WITH_X32_AES
 	bool "Native x32 clients and kernel AES coordination service"
 	depends on ARCH_X86_64 && CONF_WITH_X32_VDI

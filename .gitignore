@@ -31,7 +31,7 @@
 /bios/header.h
 /util/langs.c
 /aes/asm_struct_gen.h
-/aes/gem_rsc.[ch]
+/aes/shared/gem_rsc.[ch]
 /aes/mforms.[ch]
 /desk/desk_rsc.[ch]
 /desk/icons.[ch]
@@ -87,3 +87,4 @@ __pycache__/
 
 # EmuCON as a program (CONF_EXTERNAL_CLI)
 /emucon.tos
+

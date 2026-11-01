@@ -10,12 +10,17 @@
 #ifndef GEMOBJOP_H
 #define GEMOBJOP_H
 
-typedef void (*EVERYOBJ_CALLBACK)(OBJECT *tree, WORD obj, WORD sx, WORD sy);
+/* Native AES retains WORD traversal; libaes validates wide positions before
+ * passing them to the original painter. */
+#ifndef OB_WALK_COORD
+#define OB_WALK_COORD WORD
+#endif
+typedef void (*EVERYOBJ_CALLBACK)(OBJECT *tree, WORD obj, OB_WALK_COORD sx, OB_WALK_COORD sy);
 
 BYTE ob_sst(OBJECT *tree, WORD obj, OBSPEC *pspec, WORD *pstate, WORD *ptype,
             WORD *pflags, GRECT *pt, WORD *pth);
 void everyobj(OBJECT *tree, WORD this, WORD last, EVERYOBJ_CALLBACK routine,
-              WORD startx, WORD starty, WORD maxdep);
+              OB_WALK_COORD startx, OB_WALK_COORD starty, WORD maxdep);
 WORD get_par(OBJECT *tree, WORD obj);
 
 #endif

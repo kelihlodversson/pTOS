@@ -133,8 +133,8 @@ Process calls
 
   call                       no.       decision
   Pgetpid                    0x10b     DONE (group 5): the pid of the process record, 1..32767, never reused
-                                       while it lives; 0 for a context with no record (the kernel's own)
-  Pgetppid                   0x10c     DONE: the launcher's pid, 0 if it was the kernel
+                                       while it lives (or an unread managed-child status remains); 0 for the kernel
+  Pgetppid                   0x10c     DONE: the logical parent pid, 0 for a kernel controller; see managed groups below
   Pgetuid, Pgeteuid,         0x10f     DONE: 0, there are no users (every process is root's)
   Pgetgid, Pgetegid          0x114
                              0x138/9
@@ -175,7 +175,8 @@ Private mapping extensions (#660)
 Not in this issue
 -----------------
 
-Pfork/Pwait/signals (real multitasking), MiNT file systems and device drivers
+Pfork/signals, preemptive multitasking, MiNT file
+systems and device drivers
 (Dcntl, XFS), networking.
 
 Groups and their PRs
@@ -188,3 +189,18 @@ Groups and their PRs
   5  the process calls                                  DONE (#481)
 
   Sconfig() is EINVFN and needs no group.
+
+Managed x32 asynchronous process calls (#711)
+--------------------------------------------
+With CONF_WITH_NATIVE_SCHED (initially selected by external libaes/CUIS),
+kernel-managed native task groups support
+Pexec(100/106), Syield (0xff), Pwait (0x109), Pwait3 (0x11c), and Pwaitpid
+(0x13a). Ordinary native Pexec(0/4/6) bootstraps a group when needed,
+retaining its synchronous return and ownership semantics. Async launch outside a
+managed group, Pexec(104)'s shared-address-space mode, process-group wait
+selectors, and signal/job-control APIs remain unsupported. See doc/cuis.txt
+for precise ownership, wait flags/status/usage, PID reservation, orphan
+cleanup and scheduling limits. References: FreeMiNT sys/k_exec.c,
+sys/k_exit.c and doc/programmer/man/man2/Pwait3.2. Raw MiNT wait status puts
+normal exit in the low byte and a terminating signal in the next byte;
+POSIX libc wrappers perform their normal conversion.

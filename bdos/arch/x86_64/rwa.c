@@ -72,6 +72,9 @@
 #include "kprint.h"
 #include "process.h"
 #include "string.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
 #if CONF_WITH_AES
 #include "aes_accessory.h"
 #endif
@@ -144,6 +147,9 @@ void x86_64_process_save(X86_64_PROCESS_CONTEXT *context)
     context->user_rsp = x86_64_get_saved_user_rsp();
     context->irq_rsp = x86_64_get_irq_stack();
     context->launch = current_launch;
+#if CONF_WITH_NATIVE_SCHED
+    context->native_task = ksched_context_id();
+#endif
     memcpy(context->disk_error, errbuf, sizeof(errbuf));
     context->in_syscall = x86_64_gs_to_user();
     x86_64_write_cr3(x86_64_kernel_pml4_phys());
@@ -155,6 +161,9 @@ void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *context)
     x86_64_syscall_abandoned();
     run = context->pd;
     current_launch = context->launch;
+#if CONF_WITH_NATIVE_SCHED
+    ksched_context_restore(context->native_task);
+#endif
     memcpy(errbuf, context->disk_error, sizeof(errbuf));
     x86_64_write_cr3(context->cr3);
     x86_64_set_kernel_stack(context->kernel_rsp);

@@ -22,6 +22,8 @@
 #define MX_MODEMASK  0x03   /* mask for supported mode bits */
 
 /* Values of 'mode' for Pexec() */
+#define PE_ASYNC_LOADGO 100
+#define PE_ASYNC_GO_FREE 106
 #define PE_LOADGO     0
 #define PE_LOAD       3
 #define PE_GO         4

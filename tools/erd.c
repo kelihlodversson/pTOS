@@ -1362,22 +1362,40 @@ char *basename;
         return -1;
     if (write_include(fp,basename))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#ifndef AES_RESOURCE_FORMS_ONLY\n");
+#endif
     if (write_shared(fp))
         return -1;
     if (write_tedinfo(fp))
         return -1;
     if (write_iconblk(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n");
+#endif
     if (write_bitblk(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#ifndef AES_RESOURCE_FORMS_ONLY\n");
+#endif
     if (write_object(fp))
         return -1;
     if (write_tree(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n");
+#endif
     if (write_freestr(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#ifndef AES_RESOURCE_FORMS_ONLY\n");
+#endif
     if (write_c_epilogue(fp))
         return -1;
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n");
+#endif
 
     fclose(fp);
 
@@ -1618,6 +1636,10 @@ PRIVATE int write_h_extern(FILE *fp)
 
     fprintf(fp,"extern void gem_rsc_init(void);\n");
     fprintf(fp,"extern void gem_rsc_fixit(void);\n\n");
+    fprintf(fp,"#ifdef AES_RESOURCE_FSEL\n");
+    fprintf(fp,"#define RS_TEXT_BYTES %lu\n",te_ptext_len);
+    fprintf(fp,"WORD gem_fsel_copy(OBJECT *objects, TEDINFO *teds, char *text);\n");
+    fprintf(fp,"#endif\n");
 #endif
 #ifdef ICON_RSC
     fprintf(fp,"extern const ICONBLK %srs_iconblk[];\n\n",prefix);
@@ -1648,7 +1670,15 @@ PRIVATE int write_include(FILE *fp,char *name)
     fprintf(fp,"#include \"aesdefs.h\"\n");
 #endif
     fprintf(fp,"#include \"%s.h\"\n",name);
+#ifdef GEM_RSC
+    fprintf(fp,"#ifdef AES_RESOURCE_STRINGS_LOCAL\n#define N_(text) text\n#else\n");
+#endif
+#ifndef MFORM_RSC
     fprintf(fp,"#include \"nls.h\"\n\n");
+#endif
+#ifdef GEM_RSC
+    fprintf(fp,"#endif\n\n");
+#endif
 
     return ferror(fp) ? -1 : 0;
 }
@@ -2266,6 +2296,19 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"}\n\n");
 #endif
 #ifdef GEM_RSC
+    fprintf(fp,"#ifdef AES_RESOURCE_FSEL\n");
+    fprintf(fp,"WORD gem_fsel_copy(OBJECT *objects, TEDINFO *teds, char *text)\n");
+    fprintf(fp,"{\n    WORD i, type;\n");
+    fprintf(fp,"    memcpy(objects,rs_obj_rom,sizeof(rs_obj_rom));\n");
+    fprintf(fp,"    memcpy(teds,rs_tedinfo_rom,sizeof(rs_tedinfo_rom));\n");
+    fprintf(fp,"    memset(text,0,sizeof(rs_te_text));\n");
+    fprintf(fp,"    for (i = 0; i < RS_NTED; i++)\n");
+    fprintf(fp,"        if (teds[i].te_ptext) teds[i].te_ptext = text + (teds[i].te_ptext-rs_te_text);\n");
+    fprintf(fp,"    for (i = 0; i < TR1-TR0; i++) {\n");
+    fprintf(fp,"        type = objects[i].ob_type & 255;\n");
+    fprintf(fp,"        if (type == G_TEXT || type == G_BOXTEXT || type == G_FTEXT || type == G_FBOXTEXT)\n");
+    fprintf(fp,"            objects[i].ob_spec.tedinfo = teds + (objects[i].ob_spec.tedinfo-rs_tedinfo);\n");
+    fprintf(fp,"    }\n    return TR1-TR0;\n}\n#endif\n\n");
     fprintf(fp,"void gem_rsc_init(void)\n");
     fprintf(fp,"{\n");
     fprintf(fp,"    /* Copy data from ROM to RAM: */\n");
@@ -3151,7 +3194,7 @@ PRIVATE int init_status(char **array,int entries)
  */
 PRIVATE short get_short(SHORT *p)
 {
-    return (p->hi<<8) | p->lo;
+    return ((unsigned char)p->hi<<8) | p->lo;
 }
 
 /*
@@ -3159,7 +3202,7 @@ PRIVATE short get_short(SHORT *p)
  */
 PRIVATE unsigned short get_ushort(USHORT *p)
 {
-    return (p->hi<<8) | p->lo;
+    return ((unsigned char)p->hi<<8) | p->lo;
 }
 
 /*

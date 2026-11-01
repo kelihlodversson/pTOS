@@ -12,6 +12,7 @@ char **environ;
 uint32_t ptos_basepage;
 static uint32_t client_argc;
 static char **client_argv;
+static const uint32_t *client_aux;
 static void (*handlers[EXIT_SLOTS])(void);
 static uint32_t count;
 static int exiting;
@@ -29,9 +30,19 @@ void __ptos_client_init(uint32_t argc, char **argv, char **envp)
     for (i = 0; i < 16384 && envp[i]; i++) ;
     if (i == 16384) _Exit(127);
     aux = (const uint32_t *)(envp + i + 1);
+    client_aux = aux;
     for (i = 0; i < 32 && aux[0]; i++, aux += 2)
         if (aux[0] == DL_AT_PTOS_BASEPAGE) ptos_basepage = aux[1];
     if (i == 32 || !ptos_basepage) _Exit(127);
+}
+
+unsigned long __ptos_getauxval(unsigned long type)
+{
+    uint32_t i;
+    if (!client_aux) return 0;
+    for (i = 0; i < 32 && client_aux[i*2]; i++)
+        if (client_aux[i*2] == type) return client_aux[i*2+1];
+    return 0;
 }
 
 int32_t ptos_write(int handle, const void *buffer, uint32_t length)

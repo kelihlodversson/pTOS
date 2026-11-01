@@ -27,14 +27,16 @@
 #include "gemshlib.h"
 #include "gemgraf.h"
 #include "gemrslib.h"
+#include "gemcicon.h"
 #include "gemgsxif.h"
 #include "rsload.h"
+#include "gemlayout.h"
 #include "endian.h"
 
 #include "intmath.h"
 #include "string.h"
 #include "nls.h"
-#include "../vdi/vdi_defs.h"    /* for phys_work stuff */
+#include "../../vdi/vdi_defs.h"    /* for phys_work stuff */
 
 /*
  * defines & typedefs
@@ -52,164 +54,14 @@ RSHDR   *rs_hdr;
 AESGLOBAL *rs_global;
 static char    tmprsfname[128];
 
-/*
- *  Fix up a character position, from offset,row/col to a pixel value.
- *  If width is 80 then convert to full screen width.
- */
-static void fix_chpos(WORD *pfix, WORD offset)
-{
-    WORD coffset;
-    WORD cpos;
-
-    cpos = *pfix;
-    coffset = HIBYTE(cpos);
-    cpos = LOBYTE(cpos);
-
-    switch(offset)
-    {
-    case 0:
-        cpos *= gl_wchar;
-        break;
-    case 1:
-        cpos *= gl_hchar;
-        break;
-    case 2:
-        if (cpos == 80)
-            cpos = gl_width;
-        else
-            cpos *= gl_wchar;
-        break;
-    case 3:
-        cpos *= gl_hchar;
-        break;
-    }
-
-    cpos += ( coffset > 128 ) ? (coffset - 256) : coffset;
-    *pfix = cpos;
-}
-
-
-/************************************************************************/
-/* rs_obfix                                                             */
-/************************************************************************/
 void rs_obfix(OBJECT *tree, WORD curob)
 {
-    WORD offset;
-    WORD *p;
-
-    /* set X,Y,W,H */
-    p = &tree[curob].ob_x;
-
-    for (offset=0; offset<4; offset++)
-        fix_chpos(p+offset, offset);
+    rs_obfix_metrics(tree,curob,gl_wchar,gl_hchar,gl_width);
 }
-
-
-void *get_sub(UWORD rsindex, UWORD offset, UWORD rsize)
-{
-    /* get base of objects and then index in */
-    return (char *)rs_hdr + offset + muls(rsize, rsindex);
-}
-
-
-/*
- *  return address of given type and index, INTERNAL ROUTINE
- */
-void *get_addr(UWORD rstype, UWORD rsindex)
-{
-    WORD size;
-    UWORD offset;
-    OBJECT *obj;
-    TEDINFO *tedinfo;
-    ICONBLK *iconblk;
-    RSHDR *hdr = rs_hdr;
-
-    switch(rstype)
-    {
-    case R_TREE:
-        return rs_global->ap_ptree[rsindex];
-    case R_OBJECT:
-        offset = hdr->rsh_object;
-        size = sizeof(OBJECT);
-        break;
-    case R_TEDINFO:
-    case R_TEPTEXT: /* same, because te_ptext is first field of TEDINFO */
-        offset = hdr->rsh_tedinfo;
-        size = sizeof(TEDINFO);
-        break;
-    case R_ICONBLK:
-    case R_IBPMASK: /* same, because ib_pmask is first field of ICONBLK */
-        offset = hdr->rsh_iconblk;
-        size = sizeof(ICONBLK);
-        break;
-    case R_BITBLK:
-    case R_BIPDATA: /* same, because bi_pdata is first field of BITBLK */
-        offset = hdr->rsh_bitblk;
-        size = sizeof(BITBLK);
-        break;
-    case R_OBSPEC:
-        obj = (OBJECT *)get_addr(R_OBJECT, rsindex);
-        return &obj->ob_spec;
-    case R_TEPTMPLT:
-    case R_TEPVALID:
-        tedinfo = (TEDINFO *)get_addr(R_TEDINFO, rsindex);
-        if (rstype == R_TEPTMPLT)
-            return &tedinfo->te_ptmplt;
-        return &tedinfo->te_pvalid;
-    case R_IBPDATA:
-    case R_IBPTEXT:
-        iconblk = (ICONBLK *)get_addr(R_ICONBLK, rsindex);
-        if (rstype == R_IBPDATA)
-            return &iconblk->ib_pdata;
-        return &iconblk->ib_ptext;
-    case R_STRING:
-        return *((void **)get_sub(rsindex, hdr->rsh_frstr, sizeof(LONG)));
-    case R_IMAGEDATA:
-        return *((void **)get_sub(rsindex, hdr->rsh_frimg, sizeof(LONG)));
-    case R_FRSTR:
-        offset = hdr->rsh_frstr;
-        size = sizeof(LONG);
-        break;
-    case R_FRIMG:
-        offset = hdr->rsh_frimg;
-        size = sizeof(LONG);
-        break;
-    default:
-        return (void *)-1L;
-    }
-
-    return get_sub(rsindex, offset, size);
-} /* get_addr() */
 
 
 #if CONF_WITH_COLOUR_ICONS
 #if !defined(X32_USERLAND)
-/*
- * returns pointer to a CICON that best matches the current resolution
- *
- * the order of preference is as follows:
- *  1. the CICON with the same number of planes as the current resolution
- *  2. of those CICONS with fewer planes than the current resolution, the
- *     one with the most number of planes
- * if neither applies, NULL is returned
- */
-static CICON *best_match(CICONBLK *start)
-{
-    CICON *p, *found = NULL;
-
-    for (p = start->mainlist; p; p = p->next_res)
-    {
-        if (p->num_planes > gl_nplanes)     /* too many planes */
-            continue;
-        if (p->num_planes == gl_nplanes)    /* exact match */
-            return p;
-        if (!found || (p->num_planes > found->num_planes))
-            found = p;                      /* best so far */
-    }
-
-    return found;
-}
-
 /*
  * expand cicon data from S to D planes (S is strictly less than D)
  *
@@ -438,7 +290,7 @@ void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
     for (i = 0; i < num_cicons; i++)
     {
         ciconblk = ciconblkptr[i];
-        cicon = best_match(ciconblk);   /* find a suitable CICON */
+        cicon = rs_cicon_best(ciconblk,gl_nplanes);   /* find a suitable CICON */
         ciconblk->mainlist = cicon;
         if (!cicon)                     /* nothing suitable ... */
             continue;

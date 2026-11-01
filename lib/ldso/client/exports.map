@@ -1,5 +1,5 @@
 {
-    global: __ptos_start; ptos_write; ptos_basepage; environ;
+    global: __ptos_getauxval; __ptos_start; ptos_write; ptos_basepage; environ;
             exit; _Exit; atexit; strlen; strcmp; strncmp; getenv;
             strcpy; strcat; strlcpy; strncasecmp; toupper; memcmp; strchr;
             strlencpy; scasb; expand_string; sprintf; doprintf;

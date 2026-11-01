@@ -14,12 +14,19 @@
 #include "portab.h"
 #include "obdefs.h"
 #include "rsdefs.h"
+#ifndef AES_RSC_BINDINGS
 #include "gemdos.h"
+#endif
 #include "gemrslib.h"
 #include "endian.h"
 #include "string.h"
 
 #include "rsload.h"
+#ifdef AES_RSC_BINDINGS
+#include AES_RSC_BINDINGS
+#else
+#define RSLOAD_COLOUR_ICONS CONF_WITH_COLOUR_ICONS
+#endif
 
 /* RSC records on disk are always big-endian and have these fixed sizes. */
 #define DISK_RSHDR_SIZE     36
@@ -86,6 +93,9 @@ struct native_rsc_layout {
     LONG userblk, trindex, frstr, frimg;
     LONG extension, cicon_table, ciconblks, cicons, raw, total;
     LONG nuserblk;
+#ifdef AES_RSC_BINDINGS
+    LONG indirect;
+#endif
 };
 
 struct disk_cicon_info {
@@ -169,7 +179,11 @@ static BOOL disk_header(struct disk_rsc *disk, const void *base, LONG available)
 
 static LONG align_long(LONG value)
 {
+#ifdef AES_RSC_BINDINGS
+    return (value + (LONG)sizeof(void *) - 1L) & ~((LONG)sizeof(void *) - 1L);
+#else
     return (value + 3L) & ~3L;
+#endif
 }
 
 static BOOL layout_add(LONG *offset, LONG length)
@@ -253,7 +267,7 @@ static BOOL scan_disk_ciconblk(const struct disk_rsc *disk, LONG offset,
         return FALSE;
     pos = offset + DISK_CICONBLK_SIZE + words*4L + 12L;
     count = disk_ulong(disk, offset+D_CICONBLK_MAINLIST);
-    if (!disk_range(disk, pos, 0L) || (count > 0x7fffL-*cicon_count)
+    if (!disk_range(disk, pos, 0L) || (count > (ULONG)(0x7fffL-*cicon_count))
         || (count > (ULONG)((disk->size-pos)/DISK_CICON_SIZE)))
         return FALSE;
     for (i = 0; i < (LONG)count; i++)
@@ -380,6 +394,14 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, const struct disk_cicon
     if (!layout_add(&offset, (LONG)hdr->rsh_nstring * sizeof(void *))) return FALSE;
     layout->frimg = align_long(offset);
     if (!layout_add(&offset, (LONG)hdr->rsh_nimages * sizeof(void *))) return FALSE;
+#ifdef AES_RSC_BINDINGS
+    /* A native indirect spec can be wider than its four-byte disk slot.
+     * Keep those pointers out of raw strings/bitmap data on wide hosts. */
+    if (sizeof(OBSPEC) > sizeof(ULONG)) {
+        layout->indirect = align_long(offset);
+        if (!layout_add(&offset, (LONG)hdr->rsh_nobs * sizeof(OBSPEC))) return FALSE;
+    }
+#endif
     layout->extension = align_long(offset);
     if (!layout_add(&offset, 3L * sizeof(LONG))) return FALSE;
     layout->cicon_table = align_long(offset);
@@ -395,7 +417,7 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, const struct disk_cicon
 }
 
 
-#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND)
+#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND) && !defined(AES_RSC_BINDINGS)
 static void transform_cicons(RSHDR *hdr)
 {
     CICONBLK **ciconblkptr, **p;
@@ -419,7 +441,7 @@ void fix_objects(void)
     WORD ii;
     WORD obtype;
     OBJECT *obj;
-#if CONF_WITH_COLOUR_ICONS
+#if RSLOAD_COLOUR_ICONS && !defined(AES_RSC_BINDINGS)
     OBSPEC *spec;
 #endif
 
@@ -431,7 +453,7 @@ void fix_objects(void)
         switch (obtype)
         {
         case G_CICON:
-#if CONF_WITH_COLOUR_ICONS
+#if RSLOAD_COLOUR_ICONS && !defined(AES_RSC_BINDINGS)
             spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
             spec->ciconblk = get_ciconblkptr(rs_hdr)[spec->index];
 #endif
@@ -651,6 +673,14 @@ static BOOL decode_object_spec(OBSPEC *native, UWORD type, ULONG spec,
             return FALSE;
         native->free_string = native_disk_ptr(image, layout, disk, spec);
         return native->free_string != NULL;
+#ifdef AES_RSC_BINDINGS
+    case G_CICON:
+        /* Resolve from the immutable disk index, never from a shared slot
+         * which another object may already have converted to a pointer.
+         * layout_ordinary() has checked every colour-icon index. */
+        native->ciconblk = ((CICONBLK **)(image + layout->cicon_table))[spec];
+        return TRUE;
+#endif
     case G_USERDEF:
         native->userblk = native_userblk_ptr(image, layout, disk, spec);
         return native->userblk != NULL;
@@ -675,6 +705,9 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     void **frimg;
     ULONG spec;
     LONG i, off, words, bytes;
+#ifdef AES_RSC_BINDINGS
+    LONG j;
+#endif
     USERBLK *userblk;
 
     if (!scan_disk_cicons(disk, &cicons) || !layout_ordinary(disk, &cicons, &layout))
@@ -799,7 +832,22 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         if (obj->ob_flags & INDIRECT)
         {
             if ((spec & 3L) || !disk_range(disk, spec, 4L)) goto fail;
-            obj->ob_spec.indirect = (OBSPEC *)(image + layout.raw + spec);
+#ifdef AES_RSC_BINDINGS
+            if (sizeof(OBSPEC) > sizeof(ULONG)) {
+                obj->ob_spec.indirect = (OBSPEC *)(image + layout.indirect + i*sizeof(OBSPEC));
+                /* Preserve aliases of the same disk slot, not just its value. */
+                for (j = 0; j < i; j++) {
+                    LONG previous = disk->hdr.rsh_object + j*DISK_OBJECT_SIZE;
+                    if ((disk_uword(disk,previous+D_OBJ_FLAGS) & INDIRECT) &&
+                        disk_ulong(disk,previous+D_OBJ_SPEC) == spec) {
+                        OBJECT *objects = (OBJECT *)(image + layout.object);
+                        obj->ob_spec.indirect = objects[j].ob_spec.indirect;
+                        break;
+                    }
+                }
+            } else
+#endif
+                obj->ob_spec.indirect = (OBSPEC *)(image + layout.raw + spec);
             if (!decode_object_spec(obj->ob_spec.indirect, obj->ob_type,
                                     disk_ulong(disk, spec), image, &layout, disk)) goto fail;
         }
@@ -824,7 +872,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         frimg[i] = native_bitblk_ptr(image, &layout, disk, spec);
         if (!frimg[i]) goto fail;
     }
-#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND)
+#if CONF_WITH_COLOUR_ICONS && !defined(X32_USERLAND) && !defined(AES_RSC_BINDINGS)
     transform_cicons(hdr);
 #endif
     pglobal->ap_rscmem = hdr;

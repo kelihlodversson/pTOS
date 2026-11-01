@@ -30,7 +30,7 @@ int main(int argc, char **argv, char **envp)
     AES_APP_INFO info;
 #if ACC_ROLE != 3
     AES_EVENT event;
-    AES_MESSAGE message = { 0 };
+    AES_CLIENT_MESSAGE message = { 0 };
 #endif
     VDICONTROL control = { 0 };
     WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2 };

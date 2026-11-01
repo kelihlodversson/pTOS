@@ -157,7 +157,19 @@ Required auxiliary entries:
     AT_PTOS_BASEPAGE (0x5000)  child's own public GEMDOS basepage
     AT_PTOS_BOOTDRIVE (0x5001) kernel boot filesystem drive, A=0 through Z=25
     AT_PTOS_LOADBIAS (0x5002)  kernel-validated executable load bias (0 for ET_EXEC)
+    AT_PTOS_LAUNCH (0x5003)    optional private DL_LAUNCH startup record
     AT_NULL    terminator
+
+With CONF_WITH_LIBAES, the stack builder reserves an aligned DL_LAUNCH record
+and copies the complete original 128-byte GEMDOS tail before any user code.
+It also records the original environment address and actual allocation extent;
+userspace environment validation never scans beyond that range.
+LD.SO fills its bounded 260-byte qualified command and marks it ready before
+executing PREINIT_ARRAY. This preserves the launch command/directory and tail
+when a preinitializer changes cwd or overwrites the default DTA/basepage tail.
+The optional record is ordinary process-owned startup memory, not a kernel
+pointer or a syscall parameter block. Kernels without the feature omit it.
+Other interpreters may leave the record unprepared; consumers require ready=1.
 
 LD.SO uses AT_PTOS_LOADBIAS independently of optional PT_PHDR headers; both
 ET_EXEC and PIE executables without PT_PHDR are supported. The value comes
