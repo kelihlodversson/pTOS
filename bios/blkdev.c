@@ -473,7 +473,9 @@ BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size)
  * next to each other in physical memory.  The transfer goes through a buffer
  * of the kernel, in pieces of as many sectors as it holds.
  */
-static UBYTE bounce[32768] __attribute__((aligned(16)));
+/* aligned to a cache line (64 bytes on ARM): the invalidation after a DMA read
+ * must not take neighbouring data with it */
+static UBYTE bounce[32768] __attribute__((aligned(64)));
 
 static LONG disk_rw_bounced(WORD unit, WORD rw, LONG lrecnr, WORD scount, UBYTE *buf)
 {
