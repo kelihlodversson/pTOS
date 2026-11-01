@@ -1028,6 +1028,12 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     info.basepage = (ULONG)(uintptr_t)pd;
     info.bootdrive = bootdev;
     info.load_bias = bias;
+    info.capture_launch = 0;
+    info.environment = 0;
+#if CONF_WITH_LIBAES
+    info.capture_launch = 1;
+    info.environment = (ULONG)(uintptr_t)kproc->env_start;
+#endif
     status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
                         (const unsigned char *)pd->p_cmdlin, sizeof(pd->p_cmdlin), kproc->env_start,
                         (ULONG)(kproc->env_end - kproc->env_start), &info, &rsp, &used);
