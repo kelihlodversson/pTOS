@@ -87,6 +87,27 @@ WORD mt_shel_read(char *command, char *tail, WORD *global)
     aes_shell_read_core(command,tail); return 1;
 }
 WORD shel_read(char *command, char *tail) { return mt_shel_read(command,tail,aes_global); }
+WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
+{
+    char path[AES_SHELL_PATH], staged_tail[128] = { 0 };
+    LONG pid;
+    /* MagiC parallel launch intentionally has no CH_EXIT notification. Other
+     * modes need their own lifecycle/screen semantics before being exposed. */
+    if (mode != SWM_LAUNCHNOW || graphical != GEMAPP || execution != SHW_PARALLEL ||
+        aes_application_session(global) < 0 || !tail || (UBYTE)tail[0] >= 127 ||
+        !aes_shell_copy(path,command,sizeof(path)) || !*path) return 0;
+    /* The ordinary tail may be shorter than 128 bytes. Do not read beyond its
+     * length byte and payload; 127 is reserved for extended ARGV passing. */
+    memcpy(staged_tail,tail,(UBYTE)tail[0]+1);
+    if (!mt_shel_find(path,global)) return 0;
+    /* GEMDOS inherits the caller's environment and standard files for env=0.
+     * No display lock may span the child launch or its subsequent execution. */
+    pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)staged_tail,0);
+    /* Kernel PIDs, also used as AES IDs, are bounded to 1..32767. */
+    return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
+}
+WORD shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail)
+{ return mt_shel_write(mode,graphical,execution,command,tail,aes_global); }
 WORD mt_shel_envrn(char **result, const char *prefix, WORD *global)
 {
     char *found;

@@ -21,6 +21,9 @@ static LONG first_error;
 static int attempts, dta_calls, cwd_calls;
 static char tried[16][AES_SHELL_PATH];
 static const char *found;
+static LONG launch_result = 42;
+static int launches;
+static char launched_path[AES_SHELL_PATH], launched_tail[128];
 LONG aes_application_session(short *global)
 { return global && global[2] == 7 && !registration_error ? 9 : EACCDN; }
 unsigned long __ptos_getauxval(unsigned long type)
@@ -46,6 +49,14 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         return found && !search_error && !strcmp(found,(char *)(uintptr_t)a) ? E_OK : (QUAD)EFILNF;
     }
     return (QUAD)EINVFN;
+}
+UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
+{
+    if (function != 0x4b || a != PE_ASYNC_LOADGO || d || current_dta != &caller_dta) return (QUAD)EINVFN;
+    launches++;
+    strcpy(launched_path,(const char *)(uintptr_t)b);
+    memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
+    return (QUAD)launch_result;
 }
 int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
                   uint64_t d, uint64_t e, uint64_t f)
@@ -75,6 +86,58 @@ static int search(const char *input, const char *hit, const char *result, int co
     VERIFY(aes_shell == &sentinel && cwd_calls == before);
     aes_shell = NULL; return 0;
 }
+static int launch_checks(short *global)
+{
+    char name[] = "NEXT.PRG", minimal[] = { 1, 'x' }, empty[] = { 0 };
+    char maximum[127], too_long[AES_SHELL_PATH], invalid[] = { 127 };
+    DTA saved = caller_dta;
+    int before, i;
+    found = "GOOD\\NEXT.PRG";
+    VERIFY(mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal,global) == 42);
+    VERIFY(launches == 1 && !strcmp(launched_path,found) && launched_tail[0] == 1 && launched_tail[1] == 'x');
+    for (i = 2; i < 128; i++) VERIFY(!launched_tail[i]);
+    VERIFY(!strcmp(name,"NEXT.PRG") && minimal[0] == 1 && minimal[1] == 'x');
+    maximum[0] = 126; memset(maximum+1,'a',126);
+    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,maximum) == 42);
+    VERIFY(!memcmp(maximum,launched_tail,127) && !launched_tail[127]);
+    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,empty) == 42);
+    for (i = 0; i < 128; i++) VERIFY(!launched_tail[i]);
+    before = launches;
+    /* Unsupported selectors must not dereference their overloaded arguments. */
+    VERIFY(!shel_write(SWM_LAUNCH,0,0,(void *)1,(char *)1));
+    VERIFY(!shel_write(0x101,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
+    VERIFY(!shel_write(2,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,2,SHW_PARALLEL,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_SINGLE,(void *)1,(char *)1));
+    VERIFY(!mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal,NULL));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,NULL,minimal));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,"",minimal));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,NULL));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,invalid));
+    invalid[0] = (char)255;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,invalid));
+    memset(too_long,'x',sizeof(too_long));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,too_long,minimal));
+    registration_error = TRUE;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal)); registration_error = FALSE;
+    found = NULL;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal));
+    found = "GOOD\\NEXT.PRG"; first_error = EREADF; attempts = 0;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal)); first_error = 0;
+    restore_error = TRUE;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal));
+    VERIFY(launches == before && !restore_error);
+    launch_result = ENSMEM;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal));
+    launch_result = EFILNF;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal));
+    launch_result = 32767;
+    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal) == 32767);
+    VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
+    return 0;
+}
 int main(void)
 {
     static const char argv_env[] = "FOO=value\0ARGV=\0alias\0PATH=FROM_ARG\0\0";
@@ -100,6 +163,7 @@ int main(void)
     VERIFY(shel_envrn(&value,"") == 1 && value == environment);
     value = command; VERIFY(!mt_shel_envrn(&value,"FOO=",NULL) && value == command);
     VERIFY(!shel_envrn(NULL,"FOO=") && !shel_envrn(&value,NULL) && value == command);
+    VERIFY(!launch_checks(global));
     VERIFY(!search("DATA.TXT","C:\\START\\APP\\DATA.TXT","C:\\START\\APP\\DATA.TXT",1));
     VERIFY(!search("DIR\\DATA.TXT","DIR\\DATA.TXT","DIR\\DATA.TXT",2));
     VERIFY(!search("DIR\\DATA.TXT","\\DATA.TXT","\\DATA.TXT",3));
