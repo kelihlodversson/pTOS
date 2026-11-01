@@ -13,11 +13,13 @@
 #endif
 
 #include "portab.h"
+#include "arch/arm/arm_boot.h"
 #include "raspi_io.h"
 #include "raspi_int.h"
 #include "raspi_mbox.h"
 #include "raspi_mmu.h"
 #include "raspi_memory.h"
+#include "raspi_memmap.h"
 #include "tosvars.h"
 #include "asm.h"
 #include "processor.h"
@@ -49,7 +51,9 @@
 #define PAGE_TABLE0_ENTRIES    4096
 #define PAGE_TABLE0_SIZE       (PAGE_TABLE0_ENTRIES* sizeof(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR))
 
+#if !CONF_WITH_HIGHER_HALF
 static void init_mmu(ULONG memory_size);
+#endif
 
 #if CONF_WITH_MMU_TEXT_PROTECT
 /* page-granularity table covering section 0 (0x0-0xFFFFF), so ranges
@@ -57,9 +61,18 @@ static void init_mmu(ULONG memory_size);
  * Populated by init_mmu(), narrowed later (after boot-time
  * initializers have finished writing their targets) by
  * raspi_mmu_protect_range(). */
+#define L2_ENTRIES (ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE / sizeof(struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR))
+#if CONF_WITH_HIGHER_HALF
+/* in the megabyte of the tables, built by raspi_mmu_bootstrap(); the window
+ * is the first megabyte of the RAM, and the addresses are those of the kernel */
+static struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR *text_protect_l2;
+#define TEXT_PROTECT_BASE   RASPI_WINDOW_VBASE
+#else
 static struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR
-    text_protect_l2[ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE / sizeof(struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR)]
+    text_protect_l2[L2_ENTRIES]
     __attribute__((aligned(ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE)));
+#define TEXT_PROTECT_BASE   0UL
+#endif
 
 /*
  * mark [start, end) read-only at page granularity. Both must fall
@@ -69,9 +82,13 @@ static struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR
  */
 void raspi_mmu_protect_range(ULONG start, ULONG end)
 {
-    ULONG protect_start = start & ~(SMALL_PAGE_SIZE - 1);
-    ULONG protect_end   = (end + SMALL_PAGE_SIZE - 1) & ~(SMALL_PAGE_SIZE - 1);
+    ULONG protect_start, protect_end;
     unsigned p;
+
+    start -= TEXT_PROTECT_BASE;
+    end -= TEXT_PROTECT_BASE;
+    protect_start = start & ~(SMALL_PAGE_SIZE - 1);
+    protect_end   = (end + SMALL_PAGE_SIZE - 1) & ~(SMALL_PAGE_SIZE - 1);
 
     /* text_protect_l2[] only has entries for section 0 (the first
      * megabyte); silently protecting just the subset that fits would
@@ -79,9 +96,9 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
      * defeating the point of a feature whose whole job is to fail loudly. */
     if (protect_start >= SECTION_SIZE || protect_end > SECTION_SIZE)
         panic("raspi_mmu_protect_range(%p,%p): outside the first megabyte\n",
-              (void*)start, (void*)end);
+              (void*)(start + TEXT_PROTECT_BASE), (void*)(end + TEXT_PROTECT_BASE));
 
-    for (p = 0; p < ARRAY_SIZE(text_protect_l2); p++)
+    for (p = 0; p < L2_ENTRIES; p++)
     {
         ULONG page_addr = SMALL_PAGE_SIZE * p;
         if (page_addr >= protect_start && page_addr < protect_end)
@@ -97,7 +114,7 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
     data_sync_barrier();
     flush_prefetch_buffer();
 
-    KDEBUG(("mmu: write-protecting [%p,%p)\n", (void*)protect_start, (void*)protect_end));
+    KDEBUG(("mmu: write-protecting [%p,%p)\n", (void*)(protect_start + TEXT_PROTECT_BASE), (void*)(protect_end + TEXT_PROTECT_BASE)));
 }
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
@@ -105,13 +122,109 @@ extern char sysvars_start[];
 extern char sysvars_end[];
 
 static UBYTE* coherent_buffer;
+#if !CONF_WITH_HIGHER_HALF
 struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR* raspi_page_table0;
+#endif
 
 UBYTE* raspi_get_coherent_buffer(int tag)
 {
     return coherent_buffer + (tag * 4096);
 }
 
+#if CONF_WITH_HIGHER_HALF
+/*
+ * The MMU is on, and the kernel runs in the window, when this is called: the
+ * start (startup.S, raspi_mmu_boot.c) switched it on, cleared the BSS, and
+ * found phystop, which is the top of the pool: the RAM below the megabyte
+ * of the tables.  What is left is to find that megabyte, through the window.
+ */
+void raspi_vcmem_init(void)
+{
+#if CONF_WITH_PROCESS_ASPACES
+    UBYTE *tables = phystop;            /* (in the window already) */
+#else
+    UBYTE *tables = phystop + RASPI_WINDOW_VBASE;
+#endif
+
+    /*
+     * Describe the board before anything reads a peripheral register: the
+     * mailbox calls need the peripheral and GPU bases.
+     */
+    raspi_board_init();
+
+    coherent_buffer = tables + RASPI_COHERENT_OFFSET;
+#if CONF_WITH_MMU_TEXT_PROTECT
+    text_protect_l2 = (struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR *)
+                      (tables + RASPI_L2_OFFSET);
+
+    /* [_text, _etext) is .text+.rodata only - see init_mmu() below */
+    raspi_mmu_protect_range((ULONG)_text,
+        (ULONG)_etext & ~(SMALL_PAGE_SIZE - 1));
+#endif
+}
+
+/*
+ * The physical address of RAM the CPU uses: in the window (the kernel's own
+ * memory) or in the pool at virtual 0 (the memory of the programs, which is
+ * at its physical address).  Not meaningful for anything else (peripherals,
+ * unmapped).  That is what a bus master must be given instead of the
+ * pointer (raspi_dma_bus()).
+ */
+ULONG virt_to_phys(const void *va)
+{
+    ULONG a = (ULONG)(uintptr_t)va;
+
+    if (a >= RASPI_WINDOW_VBASE && a - RASPI_WINDOW_VBASE < RASPI_WINDOW_SIZE)
+        return a - RASPI_WINDOW_VBASE;
+#if !CONF_WITH_PROCESS_ASPACES
+    if (a < RASPI_WINDOW_SIZE)
+        return a;
+#endif
+    KDEBUG(("virt_to_phys(%p): not RAM\n", va));
+    return 0;
+}
+
+/*
+ * The pool address (lower half) of the first byte after the kernel: the
+ * memory after the kernel image is the pool, reached through the lower half.
+ */
+UBYTE *virt_pool_start(UBYTE *kernel_end)
+{
+#if CONF_WITH_PROCESS_ASPACES
+    return kernel_end;          /* the memory of the kernel is all in the window */
+#else
+    return kernel_end - RASPI_WINDOW_VBASE;
+#endif
+}
+
+#if CONF_WITH_PROCESS_ASPACES
+extern ULONG boot_ttbr0;        /* startup.S */
+
+/* how the table walk reads the table (raspi_mmu_boot.c) */
+#ifdef TARGET_RPI1
+#define RASPI_TTBR_MODE ( ARM_TTBR_INNER_CACHEABLE | ARM_TTBR_OUTER_NON_CACHEABLE)
+#else
+#define RASPI_TTBR_MODE ( ARM_TTBR_INNER_WRITE_BACK | ARM_TTBR_OUTER_WRITE_BACK)
+#endif
+
+/*
+ * A reset comes back to startup.S with the MMU on, and goes to the physical
+ * alias of the code, which only the table the MMU was first switched on with
+ * has: load it before the jump (the tables of the processes have no identity
+ * mapping).
+ */
+void machine_reset_prepare(void)
+{
+    ULONG zero = 0;
+
+    __asm__ volatile ("mcr p15, 0, %0, c2, c0, 0" : : "r" (boot_ttbr0 | RASPI_TTBR_MODE) : "memory");
+    __asm__ volatile ("mcr p15, 0, %0, c7, c5, 4" : : "r" (zero) : "memory");   /* flush the prefetch buffer */
+    __asm__ volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (zero) : "memory");   /* the whole TLB */
+    __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (zero) : "memory");  /* data synchronization barrier */
+    __asm__ volatile ("mcr p15, 0, %0, c7, c5, 4" : : "r" (zero) : "memory");
+}
+#endif
+#else
 extern long start_in_hyp;
 void raspi_vcmem_init(void)
 {
@@ -329,6 +442,9 @@ static void init_mmu(ULONG memory_size)
         (ULONG)_etext & ~(SMALL_PAGE_SIZE - 1));
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 }
+
+
+#endif /* !CONF_WITH_HIGHER_HALF */
 
 
 #ifdef TARGET_RPI1

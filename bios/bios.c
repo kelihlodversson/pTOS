@@ -444,6 +444,10 @@ static void bios_init(void)
      * Alt-RAM found on those boards will be added later in altram_init().
      */
     amiga_autoconfig();
+#if CONF_WITH_PROCESS_ASPACES
+    /* the RAM of the boards is pages of the processes: the kernel's address space needs it */
+    amiga_process_memory_init();
+#endif
 #endif
 
 #if CONF_WITH_68040_PMMU
@@ -808,8 +812,9 @@ static void bios_init(void)
     osinit_before_xmaddalt();   /* initialize BDOS (part 1) */
     KDEBUG(("after osinit_before_xmaddalt()\n"));
 
-#if CONF_WITH_ALT_RAM
-    /* Add Alt-RAM to BDOS pool */
+#if CONF_WITH_ALT_RAM && !CONF_WITH_PROCESS_ASPACES
+    /* Add Alt-RAM to BDOS pool (with an address space for every process the
+     * RAM is pages: see process_memory_init()) */
     KDEBUG(("altram_init()\n"));
     altram_init();
 #endif
@@ -1519,7 +1524,13 @@ long setexc(WORD num, long vector)
         return oldvector;
     }
 
+#ifdef __arm__
+    /* the emulated vector table is not at address 0 everywhere
+     * (CONF_WITH_HIGHER_HALF) */
+    addr = (LONG *) vector_address(4L * num);
+#else
     addr = (LONG *) (4L * num);
+#endif
     oldvector = *addr;
 
     if(vector != -1) {

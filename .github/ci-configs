@@ -9,6 +9,7 @@
 
 rpi1                                     arm-rpi
 rpi2                                     arm-rpi
+rpi2-aspace                              arm-rpi
 rpi2-kproc                               arm-rpi
 rpi2-sparse                              arm-rpi
 rpi2-test                                arm-rpi
@@ -16,9 +17,14 @@ rpi3                                     arm-rpi
 rpi4                                     arm-rpi
 virt-arm                                 arm-virt
 virt-arm-cli                             arm-virt
+virt-arm-aspace                          arm-virt
 virt-arm-tc32                            arm-virt
 amiga                                    m68k-amiga
 amiga-kickdisk                           m68k-amiga
+amiga-mmu                                m68k-amiga
+amiga-aspace                             m68k-amiga
+amiga-aspace040                          m68k-amiga
+amiga-mmu040                             m68k-amiga
 amiga-vampire                            m68k-amiga
 amigaflop                                m68k-amiga
 amigaflop-vampire                        m68k-amiga
@@ -29,6 +35,9 @@ atari512                                 m68k-atari
 atari512-dispatch                        m68k-atari
 atari512-extdesk                         m68k-atari
 atari512-fastcall                        m68k-atari
+falcon-aspace                           m68k-atari
+falcon-aspace040                         m68k-atari
+falcon-mmu                               m68k-atari
 atari512-kproc                           m68k-atari
 aranym                                   m68k-other
 cartridge                                m68k-other
@@ -40,16 +49,19 @@ m548x-dbug                               m68k-other
 m548x-prg                                m68k-other
 prg                                      m68k-other
 virt-m68k                                m68k-other
+virt-m68k-aspace                         m68k-other
 virt-m68k-cli                            m68k-other
 virt-m68k-cli-elf                        m68k-other
 virt-m68k-cli-fastcall                   m68k-other
 virt-m68k-fastcall                       m68k-other
+virt-m68k-mmu                            m68k-other
 pc-x86_64                                x86-boot-a
 pc-x86_64-accessories                    x86-boot-b
 pc-x86_64-accessories-340                x86-boot-b
 pc-x86_64-aes                            x86-boot-a
 pc-x86_64-callbacks                      x86-boot-b
 pc-x86_64-desktop                        x86-desktop
+pc-x86_64-eager                          x86-boot-b
 pc-x86_64-desktop-tests                  x86-desktop
 pc-x86_64-desktop-tests-340              x86-desktop
 pc-x86_64-desktop-tests-builtin-cli      x86-desktop

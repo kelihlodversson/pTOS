@@ -1,5 +1,5 @@
 /*
- * kcall.c - GEMDOS for kernel code on x86-64
+ * kcall.c - GEMDOS for kernel code with address spaces
  *
  * Kernel code (the boot sequence, the self-tests, the VDI) calls GEMDOS by
  * name: Pexec(), Mfree(), Fsfirst(), ... (include/bdosbind.h).  On this
@@ -69,6 +69,13 @@ long kdos_mxalloc(long amount, long mode)
 {
     return (long)xmxalloc(amount, (int)mode);
 }
+
+#if CONF_WITH_VIDEL
+long kdos_srealloc(long amount)
+{
+    return (long)srealloc(amount);
+}
+#endif
 
 long kdos_malloc(long amount)
 {

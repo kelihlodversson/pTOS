@@ -110,7 +110,6 @@ config CONF_WITH_KPROC
 
 config CONF_WITH_PROCMEM
 	bool
-	default y if ARCH_X86_64
 	select CONF_WITH_KPROC
 	help
 	  The memory blocks of a process (its basepage with the TPA, and its
@@ -118,25 +117,39 @@ config CONF_WITH_PROCMEM
 	  include/procmem.h instead of from the GEMDOS memory descriptor lists:
 	  every block has an owner, a generation and a pin count, so that a
 	  stale or foreign address is recognised, and the blocks are reachable
-	  by a 32-bit address while the kernel itself is 64-bit.  Not
-	  user-selectable: it follows the architecture (and
-	  CONF_WITH_USER_ASPACE, which needs it).
+	  by a 32-bit address (on x86-64, while the kernel itself is 64-bit).
+	  Not user-selectable: CONF_WITH_USER_ASPACE, which needs it, sets it.
 
 config CONF_WITH_USER_ASPACE
 	bool
-	default y if ARCH_X86_64
+	default y if ARCH_HAS_USER_ASPACE
 	select CONF_WITH_PROCMEM
 	select CONF_WITH_KHEAP
 	select CONF_WITH_KPROC
 	select CONF_WITH_USER_COPY
 	help
-	  Processes run in per-process address spaces (ring 3 on x86-64):
+	  Processes run in user mode in per-process address spaces (ring 3
+	  on x86-64; doc/x86_64-address-space.txt, doc/mmu-address-space.txt):
 	  the record also carries the process's page tables, kernel stack,
 	  memory-block identities and loans, and its read-only copies of its
 	  ancestors' basepages, and the DTA pointer in it is the only one
-	  trusted.  Not user-selectable: it follows the architecture, and
-	  requires CONF_WITH_KPROC.  The separate-address-spaces option
-	  (#402) will become the real home of this.
+	  trusted.  Not user-selectable: it is on where the architecture has
+	  an address-space backend (ARCH_HAS_USER_ASPACE, include/procmem.h),
+	  and requires CONF_WITH_KPROC.
+
+config CONF_WITH_DEMAND_PAGING
+	bool "Back user memory when it is first touched"
+	depends on CONF_WITH_USER_ASPACE && ARCH_HAS_DEMAND_PAGING
+	default y
+	help
+	  A process's stack and Malloc() blocks are address space until it
+	  touches them: the page fault handler gives each page its zeroed
+	  physical page then, so untouched memory costs nothing and the
+	  default stack can be 16 MiB.  Without it every page is mapped when
+	  the memory is handed out, and the default stack is 256 KiB.
+	  Offered where the address-space backend can do it
+	  (ARCH_HAS_DEMAND_PAGING); turn it off to run the eager path a
+	  backend without it uses.
 
 config CONF_WITH_FAT_FILE_LIFETIMES
 	bool "Extended native FAT file lifetimes"
@@ -161,7 +174,7 @@ config CONF_WITH_FILE_PINS
 
 config CONF_WITH_MMAP
 	bool "Private anonymous and file-backed process mappings"
-	depends on CONF_WITH_USER_ASPACE && ARCH_X86_64
+	depends on CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING
 	select CONF_WITH_FILE_PINS
 	default n
 	help
@@ -169,19 +182,21 @@ config CONF_WITH_MMAP
 	  file pages in a separate per-process window. File pages are shared
 	  read-only until a private write fault; anonymous pages stay lazy zero.
 	  Enforce W^X, lifetime and memory limits. MAP_SHARED and replacing
-	  MAP_FIXED are not supported. Initially x32 only;
-	  other backends need isolated MMU address spaces first.
+	  MAP_FIXED are not supported.  Needs isolated MMU address spaces
+	  with demand paging: x32, and the 32-bit ARM and m68k backends.
 
 config CONF_WITH_ELF_SHARED
 	bool "Experimental userspace ELF shared-library linker core"
-	depends on CONF_WITH_ELF_LOADER && CONF_WITH_USER_ASPACE && ARCH_X86_64
+	depends on CONF_WITH_ELF_LOADER && CONF_WITH_USER_ASPACE
+	depends on ARCH_X86_64 || ARCH_ARM || ARCH_M68K
+	depends on CONF_WITH_DEMAND_PAGING
 	select CONF_WITH_MMAP
 	default n
 	help
 	  Build the freestanding userspace linker core for standard ELF shared
-	  objects.  Requires isolated, MMU-backed process address spaces; only
-	  x32 provides the necessary backend initially.  ARM and m68k can be
-	  enabled here after their address-space implementations are merged.
+	  objects.  Requires isolated, MMU-backed process address spaces: x32
+	  and ARM (hard-float EABI, ARM state) have the backends, and the 68040
+	  address-space configurations (built with a PIC-capable m68k compiler).
 
 	  Includes a freestanding ld.so and a separate dynamic CRT/client subset.
 	  Private mapping/protection services use Mmap, Munmap and Mprot; interpreter
@@ -194,21 +209,21 @@ config CONF_WITH_ELF_SHARED
 
 config CONF_WITH_KHEAP
 	bool
-	default y if ARCH_X86_64
 	help
 	  A growable heap for kernel-only objects (include/kheap.h):
 	  kernel-private process records (struct kproc) and address-space
 	  metadata come from it instead of the fixed GEMDOS memory descriptor
 	  pool, so their number is bounded by memory, not by that pool.  The
-	  machine provides it.  Not user-selectable: it follows the
-	  architecture, and CONF_WITH_USER_ASPACE requires it.
+	  machine provides it.  Not user-selectable: CONF_WITH_USER_ASPACE,
+	  which needs it, sets it.
 
 config CONF_WITH_KCALL
 	bool
 	default y if ARCH_X86_64
+	default y if CONF_WITH_USER_ASPACE
 	help
 	  Kernel code calls GEMDOS functions as plain C calls to their
-	  implementations (bdos/arch/*/kcall.c) instead of through a
+	  implementations (bdos/kcall.c) instead of through a
 	  trap, because the trap path belongs to the processes.  Only the
 	  calls kernel code makes exist.  Not user-selectable: it follows
 	  the architecture.
@@ -216,6 +231,7 @@ config CONF_WITH_KCALL
 config CONF_WITH_SSYSTEM
 	bool
 	default y if ARCH_ARM || ARCH_X86_64
+	default y if CONF_WITH_USER_ASPACE
 	help
 	  Ssystem() (GEMDOS 0x154, bdos/ssystem.c) is written in C and
 	  dispatched from osif(); on the other architectures it is handled by
@@ -239,7 +255,7 @@ config CONF_WITH_GEMDOS_SHUTDOWN
 	  CONF_WITH_SHUTDOWN (bios/Kconfig) provides where that is set.
 
 config CONF_WITH_USER_COPY
-	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && !ARCH_M68K && CONF_WITH_KPROC
+	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && CONF_WITH_KPROC
 	default y if ARCH_X86_64
 	default n
 	help
@@ -254,9 +270,10 @@ config CONF_WITH_USER_COPY
 	  Mandatory on x86-64, where the kernel runs under the calling
 	  process's page tables and would otherwise touch the system variables
 	  or another block through a pointer it was handed.  Optional and off by
-	  default elsewhere (not offered on m68k, whose packed argument frame is
-	  not handled yet); without per-process address spaces the checks only
-	  look for null pointers and bad lengths.  Other call classes (BIOS,
+	  default elsewhere (on m68k the packed argument frame of the trap is
+	  first unpacked into one value per argument, in bdos/bdosmain.c);
+	  without per-process address spaces the checks only look for null
+	  pointers and bad lengths.  Other call classes (BIOS,
 	  XBIOS, VDI, AES) are guarded by the same option as they are converted.
 
 config CONF_WITH_PRG_LOADER

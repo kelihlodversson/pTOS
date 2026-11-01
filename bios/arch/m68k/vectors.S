@@ -116,6 +116,11 @@ set_vec:
 #else
         dbra    d0, set_vec
 #endif
+#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
+        // the bus error of a process may be a page of its lazy memory
+        lea     buserr_user(pc), a0
+        move.l  a0, 8.w
+#endif
 // The RTS below is shared for other purposes.
 buggy_jit_save_registers_before_bus_error:
         rts
@@ -184,6 +189,8 @@ illg_vec:
 priv_vec:
         bsr.s   any_vec
         bsr.s   any_vec
+        .globl  C_SYM(linea_fault_vec)
+C_SYM(linea_fault_vec):
         bsr.s   any_vec         // vector 10
         bsr.s   any_vec
         bsr.s   any_vec
@@ -284,6 +291,16 @@ any_vec:
 #endif /* CONF_WITH_ADVANCED_CPU && !defined(__mcoldfire__) */
 
 dump_stack:
+#if CONF_WITH_USER_ASPACE && !defined(__mcoldfire__)
+        // a fault in a process in an address space of its own ends that
+        // process, and only that (the frame is at (sp); its status first)
+        btst    #5,(sp)
+        jne     dump_kernel_stack
+        move.l  sp,C_SYM(user_fault_frame)
+        move.w  #0x2000,sr              // supervisor mode, interrupts back on
+        jsr     C_SYM(m68k_user_fault)  // does not return
+dump_kernel_stack:
+#endif
         // dump 16 words from the stack
         movem.l (sp),d0-d7
 #ifdef __mcoldfire__
@@ -302,6 +319,33 @@ dump_stack:
         // may 2015, this is about 460 bytes
         lea     panic_stack,sp
         jmp     C_SYM(dopanic)
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
+/*
+ * Vector 2 in a kernel with address spaces and demand paging.  The frame of the
+ * exception is at (sp), its status register first.  A fault of the kernel is
+ * what it always was; one of a process in user mode may be a page of its memory
+ * that is not there yet, in which case the registers it had come back and the
+ * instruction runs again (m68k_user_busfault(), userfault.c).  Otherwise this
+ * is the default handler, as if the table had sent the exception there.
+ */
+buserr_user:
+        btst    #5,(sp)                 // supervisor mode?
+        jne     buserr_default
+        movem.l d0-d7/a0-a6,-(sp)
+        lea     60(sp),a0               // the exception frame (a global: no argument, for -mfastcall)
+        move.l  a0,C_SYM(user_fault_frame)
+        jsr     C_SYM(m68k_user_busfault)
+        tst.l   d0
+        jeq     buserr_unhandled
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+buserr_unhandled:
+        movem.l (sp)+,d0-d7/a0-a6
+buserr_default:
+        pea     deflt_vec_table+2(pc)   // what the first entry of the table pushes
+        jra     any_vec
+#endif
 
 #if CONF_WITH_ATARI_VIDEO
 
@@ -987,6 +1031,10 @@ iil_back:
  */
 C_SYM(int_priv):
         movem.l d0/a0,-(sp)             // saving d0 and a0 while we test
+#if CONF_WITH_USER_ASPACE
+        btst    #5,8(sp)                // a process in user mode: its code may be
+        jeq     pi_back                 // read-only, so it is not patched, it is a fault
+#endif
         movea.l 10(sp),a0               // the offending address
         move.w  (a0),d0                 // the offending instruction
         andi.w  #0xffc0,d0              // isolate move from SR opcode
@@ -1086,6 +1134,14 @@ C_SYM(int_unimpint):
         btst.b  #0,(a0)                     // quick test for movep
         movea.l (sp)+,a0                    // restore a0, sp (does not change cc)
         jeq     unimp_vec                   // not movep, go to panic handler
+#if CONF_WITH_USER_ASPACE
+        // The accesses below are the supervisor's, with a check of the range that is
+        // the flat model's: for a process in an address space of its own they would
+        // reach the kernel's memory and the I/O.  Its movep ends that process, as any
+        // other exception of a process does (any_vec).
+        btst    #5,(sp)                     // supervisor mode?
+        jeq     unimp_vec                   // no
+#endif
         link    a6,#-SIZE_VARS              // reserve stack space
         movem.l d0-d7/a0-a5,UI_DREGS(a6)    // save d0-d7, a0-a5
         move.l  (a6),UI_A6(a6)              // save a6
@@ -1397,6 +1453,9 @@ mcp_ok:
 C_SYM(biostrap):
         move.w  C_SYM(bios_ent),d1
         lea     C_SYM(bios_vecs),a0
+#if CONF_WITH_USER_ASPACE
+        moveq   #0,d0                   // BIOS
+#endif
         jra     biosxbios
 
 // ==== Trap 14 - XBIOS entry point =========================================
@@ -1404,11 +1463,57 @@ C_SYM(biostrap):
 C_SYM(xbiostrap):
         move.w  C_SYM(xbios_ent),d1
         lea     C_SYM(xbios_vecs),a0
+#if CONF_WITH_USER_ASPACE
+        moveq   #1,d0                   // XBIOS
+#endif
 
 
 // ==== Trap 13+14 handler ==================================================
 
 biosxbios:
+#if CONF_WITH_USER_ASPACE && !defined(__mcoldfire__)
+        /*
+         * A process in an address space of its own does not run the BIOS on
+         * its own stack, nor in the register save area of the kernel: the
+         * call runs on its kernel stack (m68kusertrap.c) and returns with
+         * every register but d0 as the process had it, or cleared.
+         */
+        btst    #5,(sp)                 // the high byte of the status: S
+        jne     bx_kernel
+        move.l  usp,a1
+        and.l   #0xffff,d1
+        move.l  d0,-(sp)                // XBIOS?
+        move.l  a1,-(sp)                // the user stack
+        move.l  d1,-(sp)                // the number of functions
+        move.l  a0,-(sp)                // the table
+#if CONF_WITH_MFASTCALL
+        move.l  sp,a0
+#else
+        move.l  sp,-(sp)
+#endif
+        jsr     C_SYM(m68k_user_biosxbios)
+#if !CONF_WITH_MFASTCALL
+        addq.l  #4,sp
+#endif
+        lea     16(sp),sp
+#if CONF_M68K_ROM_WINDOW && !CONF_M68K_ROM_WINDOW_040
+        // as at the return from a GEMDOS call (uspaceasm.S): the 68030's data
+        // cache is addressed logically, and what the call wrote into the
+        // memory of the process is not what its lines under the user address hold
+        move.l  d0,-(sp)
+        MOVEC_CACR_D0
+        or.l    #0x0800,d0              // CD: clear the data cache
+        MOVEC_D0_CACR
+        move.l  (sp)+,d0
+#endif
+        moveq   #0,d1                   // (nothing of the kernel's is left in a register)
+        moveq   #0,d2
+        sub.l   a0,a0
+        sub.l   a1,a1
+        sub.l   a2,a2
+        rte
+bx_kernel:
+#endif
         move.l  C_SYM(savptr).w, a1
 #ifdef __mcoldfire__
         move.w  (sp)+,d0        // Format/Vector Word

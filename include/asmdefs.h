@@ -51,6 +51,10 @@
 #define MOVEC_D2_PCR        .dc.l 0x4e7b2808        /* 68060 */
 
 #define MOVEC_D0_TC         .dc.l 0x4e7b0003        /* 68040-68060 (except 68ec040) */
+#define MOVEC_D1_TC         .dc.l 0x4e7b1003
+#define MOVEC_D2_TC         .dc.l 0x4e7b2003
+#define MOVEC_TC_D1         .dc.l 0x4e7a1003        /* 68040-68060 (except 68ec040) */
+#define MOVEC_TC_D2         .dc.l 0x4e7a2003
 #define MOVEC_D0_ITT0       .dc.l 0x4e7b0004        /* 68040-68060 */
 #define MOVEC_D0_ITT1       .dc.l 0x4e7b0005        /* 68040-68060 */
 #define MOVEC_D0_DTT0       .dc.l 0x4e7b0006        /* 68040-68060 */
@@ -64,6 +68,8 @@
 #define PMOVE_TO_TTR1(addr) .dc.l 0xf0390c00,addr   /* 68030 */
 
 #define PMOVE_A0_TC         .dc.l 0xf0104000        /* 68030 (except 68ec030) */
+#define PMOVE_A0_CRP        .dc.l 0xf0104c00        /* 68030 (except 68ec030) */
+#define PFLUSHA             .dc.w 0xf000,0x2400     /* 68030 */
 #define PMOVE_A0_TTR0       .dc.l 0xf0100800        /* 68030 */
 #define PMOVE_A0_TTR1       .dc.l 0xf0100c00        /* 68030 */
 

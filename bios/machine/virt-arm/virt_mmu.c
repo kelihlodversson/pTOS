@@ -12,11 +12,13 @@
 #endif
 
 #include "portab.h"
+#include "arch/arm/arm_boot.h"
 #include "raspi_mmu.h"
 #include "processor_arm.h"
 #include "asm.h"
 #include "virt_memmap.h"
 #include "virt_mmu.h"
+#include "kprint.h"
 
 #define MEGABYTE            0x100000UL
 #define PAGE_TABLE_ENTRIES  4096
@@ -39,6 +41,15 @@
  */
 #define IDENTITY_SECTIONS   16
 
+/*
+ * The two tables.  TTBCR.N = 1 makes TTBR0 translate the lower 2 GiB and
+ * TTBR1 the upper 2 GiB (doc/mmu-address-space.txt): TTBR1 holds the kernel
+ * for the whole uptime, and TTBR0 is what a process's own table is later.
+ */
+#define KERNEL_TABLE_BYTES  16384   /* 4096 entries, 8 KiB of them used */
+#define USER_TABLE_BYTES    8192    /* 2048 entries */
+#define HALF_ENTRIES        2048
+
 /* is physical section 'i' (1 MB) of the board's devices, and if so where
  * are they in the virtual address space? */
 static BOOL device_section(ULONG pa_section, ULONG *va_section)
@@ -59,7 +70,11 @@ static void section_entry(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *entry,
     entry->XNBit   = is_ram ? 0 : 1;
     entry->Domain  = 0;
     entry->IMPBit  = 0;
+#if CONF_WITH_PROCESS_ASPACES
+    entry->AP      = AP_SYSTEM_ACCESS;      /* the kernel half is not for user mode */
+#else
     entry->AP      = AP_ALL_ACCESS;
+#endif
     entry->APXBit  = APX_RW_ACCESS;
     entry->NGBit   = 0;
     entry->Value0  = 0;
@@ -90,10 +105,14 @@ static void section_entry(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *entry,
 
 void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
 {
-    struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *table =
+    struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *ktable =
         (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *) pagetable_phys;
+    struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *utable =
+        (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *)
+            ((ULONG)pagetable_phys + KERNEL_TABLE_BYTES);
     ULONG ram_sections = ram_size_bytes / MEGABYTE;
     ULONG ram_base_section = VIRT_RAM_BASE / MEGABYTE;
+    ULONG window_section = VIRT_WINDOW_VBASE / MEGABYTE;
     ULONG i, va_section;
     ULONG control, aux_control;
 
@@ -103,24 +122,37 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
      * (volatile: left alone, the compiler turns this into NEON stores, and
      * the FPU is not enabled yet) */
     for (i = 0; i < PAGE_TABLE_ENTRIES; i++)
-        *(volatile ULONG_ALIAS *)&table[i] = 0;
+        *(volatile ULONG_ALIAS *)&ktable[i] = 0;
+    for (i = 0; i < HALF_ENTRIES; i++)
+        *(volatile ULONG_ALIAS *)&utable[i] = 0;
 
-    /* the RAM, where the TOS system variables need it: at virtual 0 */
+    /* the kernel half (TTBR1): the RAM from its first byte, in the window the
+     * kernel is linked in */
     for (i = 0; i < ram_sections; i++)
-        section_entry(&table[i], i * MEGABYTE + VIRT_RAM_BASE, TRUE);
+        section_entry(&ktable[window_section + i], i * MEGABYTE + VIRT_RAM_BASE, TRUE);
+
+    /* ... and the devices, out of the window's way */
+    for (i = 0; i < ram_base_section; i++)
+        if (device_section(i, &va_section))
+            section_entry(&ktable[va_section], i * MEGABYTE, FALSE);
+
+#if !CONF_WITH_PROCESS_ASPACES
+    /* the lower half (TTBR0): the RAM at virtual 0 as well, the pool the
+     * memory of the programs comes from (their addresses are not kernel
+     * addresses: positive LONGs).  With address spaces of their own the
+     * memory of a process is mapped into its own tables, and nothing is
+     * here but the identity mapping below. */
+    for (i = 0; i < ram_sections; i++)
+        section_entry(&utable[i], i * MEGABYTE + VIRT_RAM_BASE, TRUE);
+#endif
 
     /* the first part of the RAM where it physically is, for the code that
      * is executing there right now, pre-MMU, and must keep executing from
      * immediately after the MMU-enable write below, until startup.S's
-     * explicit jump into virtual addressing, and again on a reset. */
+     * explicit jump into the window, and again on a reset. */
     for (i = 0; i < IDENTITY_SECTIONS && i < ram_sections; i++)
-        section_entry(&table[ram_base_section + i],
+        section_entry(&utable[ram_base_section + i],
                       (ram_base_section + i) * MEGABYTE, TRUE);
-
-    /* the devices, out of the RAM's way */
-    for (i = 0; i < ram_base_section; i++)
-        if (device_section(i, &va_section))
-            section_entry(&table[va_section], i * MEGABYTE, FALSE);
 
     flush_data_cache_all();
 
@@ -128,9 +160,9 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     aux_control |= ARM_AUX_CONTROL_SMP;
     asm volatile ("mcr p15, 0, %0, c1, c0,  1" : : "r" (aux_control));
 
-    asm volatile ("mcr p15, 0, %0, c2, c0,  2" : : "r" (0));
-    asm volatile ("mcr p15, 0, %0, c2, c0,  0" : : "r" ((ULONG)table | TTBR_MODE));
-    asm volatile ("mcr p15, 0, %0, c2, c0,  1" : : "r" ((ULONG)table | TTBR_MODE));
+    asm volatile ("mcr p15, 0, %0, c2, c0,  2" : : "r" (1));  /* TTBCR.N = 1 */
+    asm volatile ("mcr p15, 0, %0, c2, c0,  0" : : "r" ((ULONG)utable | TTBR_MODE));
+    asm volatile ("mcr p15, 0, %0, c2, c0,  1" : : "r" ((ULONG)ktable | TTBR_MODE));
     asm volatile ("mcr p15, 0, %0, c3, c0,  0" : : "r" (DOMAIN_CLIENT << 0));
 
     flush_branch_target_cache();
@@ -149,7 +181,55 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     flush_prefetch_buffer();
 }
 
-ULONG virt_to_phys(void *va)
+/*
+ * The physical address of a RAM address the CPU uses: in the window (the
+ * kernel's own memory) or in the pool at virtual 0 (the memory of the
+ * programs).  Not meaningful for anything else (peripherals, unmapped).
+ */
+ULONG virt_to_phys(const void *va)
 {
-    return (ULONG)va + VIRT_RAM_BASE;
+    ULONG a = (ULONG)va;
+
+    if (a >= VIRT_WINDOW_VBASE && a - VIRT_WINDOW_VBASE < VIRT_MAX_RAM_SIZE)
+        return a - VIRT_WINDOW_VBASE + VIRT_RAM_BASE;
+#if !CONF_WITH_PROCESS_ASPACES
+    if (a < VIRT_MAX_RAM_SIZE)
+        return a + VIRT_RAM_BASE;
+#endif
+    KDEBUG(("virt_to_phys(%p): not RAM\n", va));
+    return 0;
 }
+
+/*
+ * The pool address of the first byte after the kernel: the memory after the
+ * kernel image is the pool, reached through the lower half.
+ */
+UBYTE *virt_pool_start(UBYTE *kernel_end)
+{
+#if CONF_WITH_PROCESS_ASPACES
+    return kernel_end;          /* the memory of the kernel is all in the window */
+#else
+    return kernel_end - VIRT_WINDOW_VBASE;
+#endif
+}
+
+#if CONF_WITH_PROCESS_ASPACES
+extern ULONG boot_ttbr0;        /* startup.S */
+
+/*
+ * A reset comes back to startup.S with the MMU on, and goes to the physical
+ * alias of the code, which only the table the MMU was first switched on with
+ * has: load it before the jump (the tables of the processes have no identity
+ * mapping).
+ */
+void machine_reset_prepare(void)
+{
+    ULONG zero = 0;
+
+    __asm__ volatile ("mcr p15, 0, %0, c2, c0, 0" : : "r" (boot_ttbr0 | TTBR_MODE) : "memory");
+    __asm__ volatile ("isb" : : : "memory");
+    __asm__ volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (zero) : "memory");   /* the whole TLB */
+    __asm__ volatile ("dsb" : : : "memory");
+    __asm__ volatile ("isb" : : : "memory");
+}
+#endif

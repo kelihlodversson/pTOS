@@ -34,7 +34,10 @@ void test_ssystem_info(void)
     long rc;
     char name[8];
     char big[128];
-    struct { unsigned long page_size, phys_pages, free_pages, processes; } mi;
+    struct {
+        unsigned long page_size, phys_pages, free_pages, processes;
+        unsigned long shared_pages, shared_refs, shared_cross;
+    } mi;
 
     ptest_begin("ssystem_info");
 
@@ -145,9 +148,10 @@ void test_ssystem_info(void)
 
     /* where the pointers of a process are checked (private address spaces,
      * S_OSFEATURES bit 0) a buffer that is not the caller's is refused.  The
-     * x86-64 port has them, so the bit has to be there (and the test below
-     * must not be skipped); ARM and m68k do not */
-#ifdef __x86_64__
+     * x86-64 port has them, and ARM and m68k where CONF_WITH_USER_ASPACE
+     * is on, so the bit has to be there (and the test below must not be
+     * skipped); the other configurations do not */
+#if defined(__x86_64__) || defined(TEST_WITH_USER_ASPACE)
     ptest_assert_msg(Ssystem(SS_OSFEATURES, 0L, 0L) & 1,
                      "S_OSFEATURES: memory protection is not reported on x86-64");
 #else

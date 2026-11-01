@@ -37,6 +37,9 @@
 #include "fs.h"            /* OPNFILES */
 #include "biosext.h"       /* phys_pages_total() */
 #include "kproc.h"
+#if CONF_WITH_MMU_PROBE
+#include "mmuprobe.h"
+#endif
 #include "string.h"
 #include "has.h"           /* has_alt_ram */
 #if CONF_WITH_AES
@@ -53,42 +56,44 @@ extern volatile LONG vbclock;
 typedef struct {
     ULONG addr;
     void *ptr;
+    BOOL isptr;         /* the variable holds an address in the kernel's memory */
 } SVAR;
 
-#define SVAR_ENTRY(a, sym) { (a), (void *)&(sym) }
+#define SVAR_ENTRY(a, sym) { (a), (void *)&(sym), FALSE }
+#define SVAR_PTR(a, sym) { (a), (void *)&(sym), TRUE }
 
 static const SVAR lval_table[] = {
-    SVAR_ENTRY(0x400, etv_timer),
-    SVAR_ENTRY(0x404, etv_critic),
-    SVAR_ENTRY(0x408, etv_term),
-    SVAR_ENTRY(0x42e, phystop),
-    SVAR_ENTRY(0x432, membot),
-    SVAR_ENTRY(0x436, memtop),
-    SVAR_ENTRY(0x44e, v_bas_ad),
-    SVAR_ENTRY(0x45a, colorptr),
-    SVAR_ENTRY(0x456, vblqueue),
+    SVAR_PTR(0x400, etv_timer),
+    SVAR_PTR(0x404, etv_critic),
+    SVAR_PTR(0x408, etv_term),
+    SVAR_PTR(0x42e, phystop),
+    SVAR_PTR(0x432, membot),
+    SVAR_PTR(0x436, memtop),
+    SVAR_PTR(0x44e, v_bas_ad),
+    SVAR_PTR(0x45a, colorptr),
+    SVAR_PTR(0x456, vblqueue),
     SVAR_ENTRY(0x462, vbclock),
     SVAR_ENTRY(0x466, frclock),
-    SVAR_ENTRY(0x46a, hdv_init),
-    SVAR_ENTRY(0x472, hdv_bpb),
-    SVAR_ENTRY(0x476, hdv_rw),
-    SVAR_ENTRY(0x47a, hdv_boot),
-    SVAR_ENTRY(0x47e, hdv_mediach),
-    SVAR_ENTRY(0x4a2, savptr),
+    SVAR_PTR(0x46a, hdv_init),
+    SVAR_PTR(0x472, hdv_bpb),
+    SVAR_PTR(0x476, hdv_rw),
+    SVAR_PTR(0x47a, hdv_boot),
+    SVAR_PTR(0x47e, hdv_mediach),
+    SVAR_PTR(0x4a2, savptr),
     SVAR_ENTRY(0x4ba, hz_200),
     SVAR_ENTRY(0x4c2, drvbits),
-    SVAR_ENTRY(0x4c6, dskbufp),
-    SVAR_ENTRY(0x4f2, sysbase),
-    SVAR_ENTRY(0x4fa, end_os),
-    SVAR_ENTRY(0x4fe, exec_os),
-    SVAR_ENTRY(0x502, dump_vec),
-    SVAR_ENTRY(0x506, prt_stat),
-    SVAR_ENTRY(0x50a, prt_vec),
-    SVAR_ENTRY(0x50e, aux_stat),
-    SVAR_ENTRY(0x512, aux_vec),
-    SVAR_ENTRY(0x516, pun_ptr),
-    SVAR_ENTRY(0x5ac, bell_hook),
-    SVAR_ENTRY(0x5b0, kcl_hook),
+    SVAR_PTR(0x4c6, dskbufp),
+    SVAR_PTR(0x4f2, sysbase),
+    SVAR_PTR(0x4fa, end_os),
+    SVAR_PTR(0x4fe, exec_os),
+    SVAR_PTR(0x502, dump_vec),
+    SVAR_PTR(0x506, prt_stat),
+    SVAR_PTR(0x50a, prt_vec),
+    SVAR_PTR(0x50e, aux_stat),
+    SVAR_PTR(0x512, aux_vec),
+    SVAR_PTR(0x516, pun_ptr),
+    SVAR_PTR(0x5ac, bell_hook),
+    SVAR_PTR(0x5b0, kcl_hook),
 };
 
 static const SVAR wval_table[] = {
@@ -112,6 +117,7 @@ static const SVAR bval_table[] = {
 };
 
 #undef SVAR_ENTRY
+#undef SVAR_PTR
 
 
 static void *sval_lookup(const SVAR *table, int count, ULONG addr)
@@ -126,6 +132,27 @@ static void *sval_lookup(const SVAR *table, int count, ULONG addr)
 }
 
 #define SVAL_LOOKUP(table, addr) sval_lookup(table, ARRAY_SIZE(table), (addr))
+
+#if CONF_WITH_USER_ASPACE
+/*
+ * Whether the system variable at the TOS address `addr` holds an address a
+ * user process must not be told (#563): all of them are the kernel's (vectors,
+ * hooks, buffers, the OS header, the screen and the bounds of the memory
+ * pool).  A process asks for the OS version and the build through S_OSVERSION
+ * and S_OSBUILDDATE instead of reading the OS header, and for the memory
+ * through S_MEMINFO.
+ */
+static BOOL sval_is_hidden(const SVAR *table, int count, ULONG addr)
+{
+    int i;
+
+    for (i = 0; i < count; i++)
+        if (table[i].addr == addr)
+            return table[i].isptr;
+
+    return FALSE;
+}
+#endif
 
 
 /*
@@ -152,6 +179,21 @@ static void *sval_lookup(const SVAR *table, int count, ULONG addr)
  * widening: every one of its uses (a tag, a 1-based slot number, or 0)
  * is a plain scalar this function never dereferences as a pointer.
  */
+#if CONF_WITH_USER_ASPACE
+/*
+ * The cookies whose value is a pointer to kernel memory: a structure or a
+ * routine of the kernel's own (#563).  A user process cannot use them, and a
+ * kernel address is a negative LONG on a 32-bit CPU, so it reads them as
+ * missing, which is what a program that tests for the feature takes it to
+ * mean.  (The kernel's own users reach the jar directly, not through here.)
+ */
+static BOOL cookie_is_kernel_pointer(LONG tag)
+{
+    return tag == COOKIE_FRB || tag == COOKIE_MCF || tag == COOKIE_NATFEAT
+        || tag == COOKIE_XHDI || tag == COOKIE_SCSIDRIV || tag == COOKIE__5MS;
+}
+#endif
+
 static LONG ssystem_getcookie(long arg1, long arg2)
 {
     struct cookie *jar = (struct cookie *)p_cookies;
@@ -164,6 +206,10 @@ static LONG ssystem_getcookie(long arg1, long arg2)
         {
             if (jar->tag == arg1)
             {
+#if CONF_WITH_USER_ASPACE
+                if (cookie_is_kernel_pointer(jar->tag))
+                    return ERR;
+#endif
                 /*
                  * with a destination pointer, the documented usage is
                  * Ssystem(S_GETCOOKIE, tag, &value) == E_OK --
@@ -290,6 +336,11 @@ static LONG ssystem_getlval(LONG addr)
     LONG value;
     if (!p)
         return EINVFN;
+#if CONF_WITH_USER_ASPACE
+    /* (a caller in the kernel does not come this way, osif() is the user's) */
+    if (sval_is_hidden(lval_table, ARRAY_SIZE(lval_table), addr))
+        return 0;
+#endif
     svar_copy(&value, p, sizeof(value));
     return value;
 }
@@ -501,11 +552,43 @@ static LONG ssystem_meminfo(long arg1, LONG arg2)
 #else
     info.processes = 0xffffffffUL;      /* not counted: there are no records */
 #endif
+#if CONF_WITH_MMAP
+    info.shared_pages = aspace_file_pages();
+    info.shared_refs = aspace_file_references();
+    info.shared_cross = aspace_file_cross_shares();
+#else
+    info.shared_pages = info.shared_refs = info.shared_cross = 0xffffffffUL;
+#endif
 
     n = arg2 < (LONG)sizeof(info) ? arg2 : (LONG)sizeof(info);
     svar_copy((void *)arg1, &info, n);
     return n;
 }
+
+#if CONF_WITH_MMU_PROBE
+/*
+ * ssystem_mmuprobe - S_MMUPROBE (pTOS extension, see ssystem.h): the struct
+ * is in and out, the address to test is in it
+ */
+static LONG ssystem_mmuprobe(long arg1, LONG arg2)
+{
+    struct mmu_probe p;
+    LONG n;
+
+    if (arg2 == -1)
+        return (LONG)sizeof(p);
+
+    if (!arg1 || arg2 <= 0)
+        return EINVFN;
+
+    n = arg2 < (LONG)sizeof(p) ? arg2 : (LONG)sizeof(p);
+    memset(&p, 0, sizeof(p));
+    svar_copy(&p, (const void *)arg1, n);   /* (a smaller struct has the address and the flags only) */
+    mmu_probe(&p);
+    svar_copy((void *)arg1, &p, n);
+    return n;
+}
+#endif
 
 /*
  * ssystem_deskinfo - S_DESKINFO (pTOS extension, see ssystem.h)
@@ -612,6 +695,9 @@ static BOOL ssystem_has_mode(WORD mode)
     case S_CONSOLE_DIM:
     case S_DESKINFO:
     case S_DESKSET:
+#if CONF_WITH_MMU_PROBE
+    case S_MMUPROBE:
+#endif
         return TRUE;
     default:
         return FALSE;
@@ -717,6 +803,10 @@ LONG xssystem(WORD mode, long arg1, long arg2)
         return ssystem_string(arg1, (LONG)arg2, SSYSTEM_CVERSION, sizeof(SSYSTEM_CVERSION));
     case S_MEMINFO:
         return ssystem_meminfo(arg1, (LONG)arg2);
+#if CONF_WITH_MMU_PROBE
+    case S_MMUPROBE:
+        return ssystem_mmuprobe(arg1, (LONG)arg2);
+#endif
 
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);

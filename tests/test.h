@@ -76,4 +76,10 @@ int ptest_failures(void);
  */
 int ptest_summary(void);
 
+/*
+ * Write what has been printed to the log file, in a build that has one
+ * (TEST_LOG_FILE); nothing otherwise.  runtests.c calls it last.
+ */
+void ptest_log_flush(void);
+
 #endif /* TEST_H */

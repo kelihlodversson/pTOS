@@ -1,7 +1,10 @@
 #
 # Regression tests under Hatari: runtests.tos (tests/, doc in tests/readme.md)
 # on the test disk, on an emulated STE in the three ST screen modes and on an
-# emulated Falcon with a 68030 and with a 68040.  The two blitter suites
+# emulated Falcon with a 68030 and with a 68040, both with the MMU on (#725);
+# falcon-mmu (the Falcon ROM with the kernel in the upper half, #726) runs on
+# the 68030 only; falcon-aspace (#727) is that with an address space for every
+# process, in its own mode, f030a.  The two blitter suites
 # (text_blit and raster_copy) compare the blitter with the CPU path pixel by
 # pixel, and have to run, not skip themselves, on every one of them; the
 # Falcon is the one with a data cache (the blitter paths flush and invalidate
@@ -16,6 +19,13 @@ name: Hatari tests
 on:
   pull_request:
     branches: [master, "epic/**"]
+  # a new pin of Hatari builds it and caches it for the pull requests
+  push:
+    branches: [master, "epic/**"]
+    paths:
+      - tools/hatari-pin.sh
+      - tools/build-hatari.sh
+      - .github/actions/setup-hatari/**
   # every configuration in every screen mode, which a pull request does not
   # run (see the matrix of the test job)
   schedule:
@@ -32,8 +42,9 @@ permissions:
 jobs:
   # One job: the three systems are built (a minute or so each, with their test
   # disk), then the tests run several at a time, one Hatari each, on the four
-  # CPUs of the runner.  The runner is an Ubuntu 26.04, for its Hatari 2.6: the
-  # 2.4.1 of the 24.04 hangs the 68030 address-space runs (#727, #737).
+  # CPUs of the runner.  The Hatari is the pinned build of tools/hatari-pin.sh:
+  # the 2.4.1 of the 24.04 package hangs the 68030 address-space runs (#727,
+  # #737), and the 2.6.1 of the 26.04 one lacks the 68030 MMU fixes of 2026 (#805).
   hatari:
     name: Hatari tests
     runs-on: ubuntu-26.04
@@ -47,21 +58,29 @@ jobs:
         with:
           arch: m68k
 
+      # the Hatari of tools/hatari-pin.sh, built once and cached (#807)
+      - uses: ./.github/actions/setup-hatari
+
       # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh)
-      - name: Install Hatari and the disk image tools
+      - name: Install the disk image tools
         uses: ./.github/actions/apt-install
         with:
-          packages: --no-install-recommends hatari dosfstools mtools
+          packages: --no-install-recommends dosfstools mtools
 
       - name: Report the Hatari version
         run: hatari --version || true     # (it exits with 1)
+
+      # the TT mode reads the screen (tools/run-hatari-tests.py), for the
+      # interpreter that setup-toolchain selected
+      - name: Install the screen reader of the TT mode
+        run: python3 -m pip install pillow
 
       - name: Build the systems and the test disks
         run: |
           mkdir products
           # config:image.  atari192 is the 192 KB ROM, built the way the small
           # ROMs are: -Os, LTO and -mfastcall
-          configs="atari512:ptos512k.img atari512-fastcall:ptos512k.img atari192:ptos192us.img"
+          configs="atari512:ptos512k.img atari512-fastcall:ptos512k.img atari512-kproc:ptos512k.img falcon-mmu:ptos512k.img falcon-aspace:ptos512k.img falcon-aspace040:ptos512k.img atari192:ptos192us.img"
           # a pull request does not run atari512-extdesk (doc/ci.txt)
           [ "${{ github.event_name }}" = pull_request ] || configs="$configs atari512-extdesk:ptos512k.img"
           for entry in $configs; do
@@ -70,17 +89,23 @@ jobs:
             make distclean >/dev/null 2>&1
             make "${config}_defconfig"
             make
-            make test-hd
             mkdir "products/$config"
             cp "$image" "products/$config/system.img"
-            cp test-hd.img "products/$config/"
+            if [ "$config" = falcon-aspace ] || [ "$config" = falcon-aspace040 ]; then
+              # the harness is the shell of the system (#727): no EmuCON, no keyboard
+              make test-hd-shell
+              cp test-hd-shell.img "products/$config/test-hd.img"
+            else
+              make test-hd
+              cp test-hd.img "products/$config/"
+            fi
           done
 
       # What a pull request runs is chosen from what depends on the mode and
       # on the kernel (doc/ci.txt); master's nightly run and a manual one go
       # through every combination (tools/ci-hatari.sh).  A run takes three to
-      # six minutes on a quiet runner, twice that on a busy one; twenty is for one that
-      # hangs, well below the job's time.
+      # eleven minutes on a quiet runner (the 68040 ones are the longest), twice
+      # that on a busy one; forty is for one that hangs (#820), well below the job's time.
       - name: Run the tests under Hatari
         env:
           EVENT: ${{ github.event_name }}

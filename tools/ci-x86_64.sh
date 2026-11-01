@@ -32,10 +32,10 @@ done
 # A build that links is not a build that boots: without this, a regression in
 # the boot path, the trap-dispatch/machine-hook layer, or the exception/panic
 # path would still be a green job, since nothing above actually runs the
-# image.  Only pc-x86_64 boots this way (EFI/OVMF); a future non-EFI x86-64
+# image.  Only pc-x86_64 and pc-x86_64-eager boot this way (EFI/OVMF); a future non-EFI x86-64
 # config would need its own check instead of this one.
 case $config in
-    pc-x86_64|pc-x86_64-vdi|pc-x86_64-aes|pc-x86_64-callbacks|pc-x86_64-accessories*)
+    pc-x86_64|pc-x86_64-vdi|pc-x86_64-aes|pc-x86_64-callbacks|pc-x86_64-accessories*|pc-x86_64-eager)
         tools/ci-x86_64-boot.sh
         ;;
 esac

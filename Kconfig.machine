@@ -61,10 +61,9 @@ config MACHINE_VIRT_ARM
 	  hardware; there is no VideoCore/mailbox interface. Exposes a
 	  PL011 UART, a GICv2 interrupt controller, and RAM starting at
 	  physical 0x40000000 (unlike every other supported machine, whose
-	  RAM starts at 0). Boots a -kernel ELF directly; the fixed
-	  low-address TOS system variables are made to work via a small
-	  statically built MMU translation table set up early in the boot
-	  sequence, not by moving them.
+	  RAM starts at 0). Boots a -kernel ELF directly, with the MMU
+	  switched on by a short start that runs at the physical address
+	  (a higher-half kernel, CONF_WITH_HIGHER_HALF).
 
 config MACHINE_VIRT_M68K
 	bool "QEMU virt (m68k)"
@@ -129,6 +128,62 @@ config ARCH_ARM
 config ARCH_X86_64
 	bool
 	default y if MACHINE_PC_X86_64
+
+# What the architecture's address-space backend (include/procmem.h) provides,
+# #562.  An architecture sets these once its backend exists; the options that
+# use them (CONF_WITH_USER_ASPACE, CONF_WITH_DEMAND_PAGING) never name an
+# architecture.
+config ARCH_HAS_USER_ASPACE
+	bool
+	default y if ARCH_X86_64
+	default y if CONF_WITH_PROCESS_ASPACES
+
+# Every process in an address space of its own, on a 32-bit MMU: the kernel
+# half is supervisor-only and a process sees only its own pages
+# (doc/mmu-address-space.txt, #568 ARM, #570 m68k).  Needs the higher-half
+# kernel, and a command line that is a program: the desktop still runs
+# from the kernel image, in the kernel's own address space.
+config CONF_WITH_PROCESS_ASPACES
+	bool "Every process in an address space of its own (32-bit MMU)"
+	depends on CONF_WITH_HIGHER_HALF
+	depends on (ARCH_ARM || (ARCH_M68K && (MACHINE_VIRT_M68K || CONF_ATARI_HIGHER_HALF || CONF_AMIGA_HIGHER_HALF)))
+	depends on CONF_EXTERNAL_CLI
+	depends on !MACHINE_AMIGA || CONF_WITH_ALT_RAM
+	default n
+	help
+	  Give each process the page tables of its own that doc/mmu-address-
+	  space.txt describes: the memory of a process is mapped into it and
+	  into nothing else, the kernel half of the address space (the
+	  physical-memory window and the devices) is not reachable from user
+	  mode, and a fault in a process ends that process only.  Super() and
+	  Supexec() are refused (EACCDN), and the pointers of the system calls
+	  are checked against the pages of the caller.
+
+	  Needs the kernel to be a higher-half one (CONF_WITH_HIGHER_HALF) and
+	  has no desktop yet: the VDI and the AES cannot be called from user
+	  mode (doc/mmu-address-space.txt, "The screen"), so CONF_WITH_AES is
+	  not offered with this option.
+
+config ARCH_HAS_DEMAND_PAGING
+	bool
+	default y if ARCH_X86_64
+	default y if CONF_WITH_USER_ASPACE
+
+# The kernel is linked in the upper half of a 32-bit address space and the
+# MMU is switched on by a start that runs at the physical address
+# (doc/mmu-address-space.txt, #566, #567).  The TPA pool stays in the lower
+# half.  The Raspberry Pi does it when it sets the MMU up at all.
+# Not user-selectable: the machines that do it set it.
+#
+# On virt-m68k only the image that requires a PMMU does it (the 68040 one;
+# #569): the other virt-m68k configurations are linked and run as before.
+config CONF_WITH_HIGHER_HALF
+	bool
+	default y if MACHINE_VIRT_ARM
+	default y if MACHINE_VIRT_M68K && CONF_REQUIRE_PMMU
+	default y if CONF_ATARI_HIGHER_HALF
+	default y if CONF_AMIGA_HIGHER_HALF
+	default y if MACHINE_RPI && CONF_WITH_ARM_PMMU
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
 # of the first generation Raspberry Pi does not have.
@@ -244,6 +299,7 @@ config CONF_WITH_MMU_TEXT_PROTECT
 config CONF_WITH_68030_PMMU
 	bool "Install a PMMU tree on 68030"
 	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE
+	depends on !CONF_ATARI_HIGHER_HALF
 	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 	help
@@ -253,11 +309,147 @@ config CONF_WITH_68030_PMMU
 config CONF_WITH_68040_PMMU
 	bool "Install a PMMU tree on 68040 (experimental)"
 	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE
+	depends on !CONF_ATARI_HIGHER_HALF
 	default n
 	help
 	  This provides improved performance by allowing the data cache to
 	  be enabled.  It also allows FreeMiNT to be run on a 68040 without
 	  using set_mmu.prg.  This is currently experimental.
+
+# The Falcon ROM that runs with the 68030 MMU on from its first instruction
+# (#726, #571; doc/mmu-address-space.txt).  The tree is a static one in the
+# ROM, so the MMU can be switched on before the RAM is configured.
+config CONF_ATARI_HIGHER_HALF
+	bool "Atari ROM with the kernel in the upper half (68030 MMU, experimental)"
+	depends on MACHINE_ATARI && (TARGET_512 || TARGET_1024)
+	depends on CONF_WITH_ADVANCED_CPU
+	depends on BUILD_TOOLCHAIN_IS_ELF
+	depends on !CONF_WITH_STATIC_ALT_RAM
+	default n
+	help
+	  Link the ROM into the physical-memory window at 0x80000000 (the
+	  ROM is at 0x80e00000, the RAM from 0x80000000) and run it with the
+	  MMU of a 68030 on from the first instruction.  The tree is static
+	  and lives in the ROM, so it is there before the RAM is configured:
+	  the window and the low addresses (where the TOS low memory, the
+	  pool programs are loaded into and the ROM are, as on every Atari)
+	  map the same physical memory, the I/O area is supervisor-only and
+	  not cached, and nothing else is mapped.
+
+	  The image needs a 68030 with its MMU (not a 68EC030, and not a
+	  68040 or 68060, which have a different MMU): it is for the Falcon
+	  and for emulators of it with the MMU on (Hatari: --machine falcon
+	  --cpulevel 3 --mmu on).  It replaces CONF_WITH_68030_PMMU, whose
+	  tree only keeps the I/O area out of the data cache.
+
+# The Amiga ROM that runs with the 68030 MMU on from its first instruction
+# (#737), the way the Atari one does: the same static tree in the ROM, for the
+# memory map of the Amiga.
+config CONF_AMIGA_HIGHER_HALF
+	bool "Amiga ROM with the kernel in the upper half (68030 MMU, experimental)"
+	depends on MACHINE_AMIGA && TARGET_AMIGA_ROM
+	depends on CONF_WITH_ADVANCED_CPU
+	depends on BUILD_TOOLCHAIN_IS_ELF
+	depends on !CONF_WITH_STATIC_ALT_RAM
+	default n
+	help
+	  Link the ROM into the physical-memory window at 0x80000000 (the
+	  ROM is at 0x80fc0000, the RAM from 0x80000000) and run it with the
+	  MMU of a 68030 on from the first instruction.  The tree is static
+	  and lives in the ROM, so it is there before the RAM is configured:
+	  the window and the low addresses (where the TOS low memory, the
+	  pool programs are loaded into and the ROM are) map the same physical
+	  memory, the custom chips, the CIAs and the other I/O areas are
+	  supervisor-only and not cached, and nothing else is mapped: RAM
+	  above 0x00a00000 (Zorro III) is not used.
+
+	  The image needs a 68030 with its MMU (not a 68EC030, and not a 68040
+	  or 68060, which have a different MMU).  For an emulated Amiga with a
+	  68030 and its MMU (tools/run-amiberry.py).
+
+# The Amiga ROM with 512 KB: the tree of the 68040 and the 68060 does not fit
+# the 256 KB one (#737).
+config CONF_AMIGA_ROM_512K
+	bool "512 KB Amiga ROM image (at 0x00f80000, as the ROMs of the A3000 and A4000)"
+	depends on TARGET_AMIGA_ROM
+	default n
+	help
+	  Build the Amiga ROM image of 512 KB instead of 256 KB: it is at
+	  0x00f80000, and its first word is 0x1114.  The static tree of the
+	  68040 and 68060 (CONF_AMIGA_HIGHER_HALF_68040) needs the room.
+
+# The same for a 68040 or a 68060 (#737): their MMU is not the 68030's (see
+# CONF_ATARI_HIGHER_HALF_68040), so the static tree and the start of it are
+# other ones.
+config CONF_AMIGA_HIGHER_HALF_68040
+	bool "... for a 68040 or a 68060, experimental"
+	depends on CONF_AMIGA_HIGHER_HALF && CONF_AMIGA_ROM_512K
+	default n
+	help
+	  Build the higher-half Amiga ROM for the MMU of a 68040 or a 68060
+	  instead of that of a 68030.  The static tree in the ROM maps the first
+	  16 MiB (the RAM of the chip set and of Zorro II, the I/O areas and the
+	  ROM) in the window and at their own addresses, with the I/O areas not
+	  cached; the Zorro III autoconfig space at 0xff000000 is a transparent
+	  window.  The RAM above the 24 bits (the motherboard and processor slot
+	  RAM, the Zorro III boards) is not mapped, and not probed.  The image
+	  does not start on a 68030.
+
+# What the two ROMs that run in the window of the physical memory share
+# (emutos.ld, startup.S): linked at 0x80000000 and up, with the TOS low memory
+# at its own addresses, and the MMU of a 68030 on before the RAM is configured.
+config CONF_M68K_ROM_WINDOW
+	bool
+	default y if CONF_ATARI_HIGHER_HALF
+	default y if CONF_AMIGA_HIGHER_HALF
+
+# ... and the 68040/68060 start they share
+config CONF_M68K_ROM_WINDOW_040
+	bool
+	default y if CONF_ATARI_HIGHER_HALF_68040
+	default y if CONF_AMIGA_HIGHER_HALF_68040
+
+# The same ROM for a 68040 (#728): its MMU is not the 68030's (movec TC, URP
+# and SRP instead of pmove, short descriptors, no early termination), so the
+# static tree and the start of it are other ones, and the page tables of the
+# processes are those of the 68040 backend of the virt-m68k machine.
+config CONF_ATARI_HIGHER_HALF_68040
+	bool "... for a 68040 (Hatari's Falcon or TT with --cpulevel 4), experimental"
+	depends on CONF_ATARI_HIGHER_HALF && CONF_WITH_PROCESS_ASPACES
+	default n
+	help
+	  Build the higher-half Atari ROM for the MMU of a 68040 instead of
+	  that of a 68030.  The static tree in the ROM maps the first 16 MiB
+	  of the RAM (and so the ROM and the I/O area, which are in them) in
+	  the window and at their own addresses, with the I/O area not cached;
+	  the TT-RAM, whose size is not known when the ROM is built, is added to
+	  the window at boot by aspace_hw_init() (so this needs
+	  CONF_WITH_PROCESS_ASPACES: without it nothing would map the TT-RAM).
+	  The page tables of the processes are those of
+	  bios/arch/m68k/aspace_hw.c.
+
+	  For emulators of a Falcon or a TT with a 68040 and the MMU on
+	  (Hatari: --cpulevel 4 --mmu on); the image does not start on a 68030.
+
+config CONF_REQUIRE_PMMU
+	bool "Refuse to start on a CPU without a usable PMMU"
+	depends on MACHINE_VIRT_M68K && CONF_WITH_ADVANCED_CPU
+	default n
+	help
+	  For the m68k configurations that use the PMMU for per-process
+	  address spaces (#549).  The very first thing the startup code does
+	  is check that the CPU is a 68030, 68040 or 68060 with its MMU (not
+	  a 68000/68010/68020, a 68EC030, a 68EC040 or a 68EC060).  If it is
+	  not, it prints a message on the early console saying so and stops
+	  the CPU, instead of crashing in the first page-table instruction.
+
+	  Only virt-m68k so far, where the goldfish TTY can print that
+	  early.  Images that do not depend on the PMMU should say n.
+
+	  The image is a higher-half kernel (CONF_WITH_HIGHER_HALF), which
+	  runs with the 68040 MMU switched on from its first instructions.
+	  QEMU emulates the 68040 MMU only, so the check then accepts a 68040
+	  or a 68060, not a 68030.
 
 config CONF_WITH_BUS_ERROR
 	bool "Hardware generates bus errors"

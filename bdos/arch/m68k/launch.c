@@ -13,6 +13,7 @@
 #include "proc.h"
 #include "asm.h"
 
+#if !CONF_WITH_USER_ASPACE
 /*
  * The stack gouser() (rwa.S) unwinds to start a new process: the registers
  * it reloads, in the order it reads them.  See the excerpt of gouser() in
@@ -64,3 +65,19 @@ void proc_launch_prepare(PD *p, void *super_sp)
     p->p_areg[5-3] = (long)p->p_dbase;  /* a5 to point to the DATA segt */
     p->p_areg[4-3] = (long)p->p_bbase;  /* a4 to point to the BSS segt */
 }
+#else /* CONF_WITH_USER_ASPACE */
+
+void proc_align_stack(PD *p)
+{
+    MAYBE_UNUSED(p);        /* the process has a stack of its own (kproc_user_stack()) */
+}
+
+void proc_launch_prepare(PD *p, void *super_sp)
+{
+    /* nothing to build: gouser() (uspace.c) enters user mode from the record
+     * of the process (entry point, stack, address space) */
+    MAYBE_UNUSED(p);
+    MAYBE_UNUSED(super_sp);
+}
+
+#endif /* CONF_WITH_USER_ASPACE */

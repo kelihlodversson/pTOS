@@ -44,9 +44,18 @@ static LONG file_image(FH h, UBYTE **buffer, ULONG *size)
     return read_at(h, 0, *buffer, *size);
 }
 
-static ULONG word(const UBYTE *p)
+/* a field of the ELF header or of a program header, in the byte order of the
+ * file (EI_DATA: 1 little endian, 2 big endian) */
+static ULONG word(const UBYTE *p, BOOL big)
 {
+    if (big)
+        return ((ULONG)p[0] << 24) | ((ULONG)p[1] << 16) | ((ULONG)p[2] << 8) | (ULONG)p[3];
     return (ULONG)p[0] | ((ULONG)p[1] << 8) | ((ULONG)p[2] << 16) | ((ULONG)p[3] << 24);
+}
+
+static ULONG half(const UBYTE *p, BOOL big)
+{
+    return big ? ((ULONG)p[0] << 8) | p[1] : (ULONG)p[0] | ((ULONG)p[1] << 8);
 }
 
 LONG elf_interp_load(FH h, PD *pd, const char *filename)
@@ -57,15 +66,17 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
     DL_IMAGE main_plan, interp_plan;
     ULONG phoff, entsize, count, i, main_size = 0, interp_size = 0;
     LONG rc, handle = -1;
+    BOOL big;
 
     rc = read_at(h, 0, header, sizeof(header));
     if (rc)
         return rc;
     /* The sizing pass has checked class/machine/endian. Do not parse an
      * unbounded or overflowing program-header table even for dispatch. */
-    phoff = word(header + 28);
-    entsize = header[42] | ((ULONG)header[43] << 8);
-    count = header[44] | ((ULONG)header[45] << 8);
+    big = header[5] == 2;
+    phoff = word(header + 28, big);
+    entsize = half(header + 42, big);
+    count = half(header + 44, big);
     if (!count || entsize < 32 ||
         phoff > 0x7fffffffUL || count * entsize > 0x7fffffffUL - phoff)
         return EPLFMT;
@@ -73,7 +84,7 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
         rc = read_at(h, phoff + i * entsize, ph, sizeof(ph));
         if (rc)
             return rc;
-        if (word(ph) == 3)
+        if (word(ph, big) == 3)
             break;
     }
     if (i == count)
@@ -82,7 +93,7 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
     if (rc)
         goto done;
     if (dl_image_read(&main_plan, program, main_size,
-                        DL_IMAGE_EXECUTABLE, &dl_x32_image_abi)) {
+                        DL_IMAGE_EXECUTABLE, &dl_image_abi)) {
         rc = EPLFMT;
         goto done;
     }
@@ -111,7 +122,7 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
     if (rc)
         goto done;
     if (dl_image_read(&interp_plan, interpreter, interp_size,
-                        DL_IMAGE_INTERPRETER, &dl_x32_image_abi)) {
+                        DL_IMAGE_INTERPRETER, &dl_image_abi)) {
         rc = EPLFMT;
         goto done;
     }

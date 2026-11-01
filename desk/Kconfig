@@ -182,7 +182,7 @@ endmenu
 
 config CONF_WITH_DYNAMIC_DESK
 	bool
-	default y if CONF_WITH_ELF_SHARED && CONF_EXTERNAL_DESK
+	default y if CONF_WITH_ELF_SHARED && CONF_EXTERNAL_DESK && ARCH_X86_64
 	help
 	  Use the standard ELF dynamic CRT and libptos.so for the external
 	  desktop when standard shared libraries are enabled.

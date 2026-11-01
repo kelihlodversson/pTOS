@@ -34,6 +34,7 @@
 #include "disk.h"
 #include "mouse.h"
 #include "../bdos/uaccess.h"
+#include <aspace_types.h>
 #include "biosaccess.h"
 
 #if CONF_WITH_USER_COPY
@@ -50,6 +51,8 @@ long bios_check_user_args(WORD fn, const long *a)
 {
     switch (fn) {
     case 0:                         /* Getmpb(mpb): kernel memory descriptors */
+        return EACCDN;
+    case 7:                         /* Getbpb(dev): a pointer to the kernel's BPB */
         return EACCDN;
     case 5:                         /* Setexc(vecnum, vec) */
         /* a vector set by a user process would be called, or pointed at, by
@@ -83,9 +86,10 @@ long xbios_check_user_args(WORD fn, const long *a)
             return E_OK;
         }
     case 0x05:                      /* Setscreen(log, phys, rez, mode) */
-        /* a positive log or phys address becomes the screen the kernel and
-         * the VDI draw on */
-        if ((LONG)a[0] > 0 || (LONG)a[1] > 0)
+        /* a log or phys address becomes the screen the kernel and the VDI
+         * draw on: only "no change" (0 or -1) is allowed, not an address
+         * of the kernel half any more than one of the process */
+        if ((a[0] != 0 && !IS_MINUS1(a[0])) || (a[1] != 0 && !IS_MINUS1(a[1])))
             return EACCDN;
         return E_OK;
     case 0x06:                      /* Setpalette(pal): read at the next VBL */
@@ -97,8 +101,12 @@ long xbios_check_user_args(WORD fn, const long *a)
         return user_buf_check(a[1], (long)(UWORD)a[0] + 1, FALSE);
     case 0x12:                      /* Protobt(buf, serial, type, exec) */
         return user_buf_check(a[0], SEC_PROTOBT, TRUE);
+    case 0x0E:                      /* Iorec(dev): a pointer to a kernel buffer record */
+    case 0x22:                      /* Kbdvbase(): a pointer to the kernel's vectors */
+        return EACCDN;
     case 0x20:                      /* Dosound(table): kept, read by the timer */
-        if ((LONG)a[0] > 0)
+        /* the whole slot: 0x100000000 is neither 0 nor -1 */
+        if (a[0] != 0 && !IS_MINUS1(a[0]))
             return EACCDN;
         return E_OK;
     case 0x2A:                      /* DMAread(sector, count, buf, major) */
@@ -131,6 +139,37 @@ long xbios_check_user_args(WORD fn, const long *a)
         return E_OK;
     default:
         return E_OK;
+    }
+}
+
+/*
+ * A result that names kernel memory.  A user address lies below
+ * USER_VA_LIMIT; the vectors Setexc() queries and the table Dosound() was
+ * given by the kernel's own code (the bell) are kernel code and data.  The
+ * caller learns nothing of where, only that no user routine is installed.
+ */
+static long user_pointer(long r)
+{
+    return (unsigned long)r >= (unsigned long)USER_VA_LIMIT ? 0L : r;
+}
+
+long bios_user_result(WORD fn, long r)
+{
+    if (fn == 5)                    /* Setexc(): the old vector */
+        return user_pointer(r);
+    return r;
+}
+
+long xbios_user_result(WORD fn, long r)
+{
+    switch (fn) {
+    case 0x20:                      /* Dosound(): the table that was playing */
+        return user_pointer(r);
+    case 0x02:                      /* Physbase() */
+    case 0x03:                      /* Logbase() */
+        return 0;                   /* the screen is not in the process */
+    default:
+        return r;
     }
 }
 

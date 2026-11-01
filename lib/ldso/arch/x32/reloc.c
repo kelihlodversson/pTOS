@@ -63,4 +63,4 @@ static int x32_value(uint32_t type, uint32_t bias, uint32_t symbol,
     return DL_OK;
 }
 
-const DL_RELOC_BACKEND dl_x32_reloc_backend = { x32_kind, x32_value };
+const DL_RELOC_BACKEND dl_reloc_backend = { x32_kind, x32_value, 0 };

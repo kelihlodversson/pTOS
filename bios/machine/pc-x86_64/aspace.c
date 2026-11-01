@@ -33,7 +33,10 @@
 #define ASPACE_MAGIC    0x41535041434531ULL     /* "ASPACE1" */
 #define FIRST_CAPACITY  16
 
-struct x86_64_aspace {
+/* pages of a per-process kernel stack (kstack_alloc()) */
+#define X86_64_KSTACK_PAGES 4
+
+struct aspace {
     UQUAD magic;
     UQUAD pml4_phys;
     UQUAD *pages;               /* kheap vector: PML4 first, then tables */
@@ -100,7 +103,7 @@ static void release_backing(UQUAD entry)
 
 /* Grows the vector and records a page; false (and nothing recorded) if the
  * vector could not grow. */
-static BOOL record_page(struct x86_64_aspace *as, UQUAD phys)
+static BOOL record_page(struct aspace *as, UQUAD phys)
 {
     if (as->count == as->capacity) {
         ULONG cap = as->capacity ? as->capacity * 2 : FIRST_CAPACITY;
@@ -143,7 +146,7 @@ static UQUAD alloc_table_page(void *ctx)
  * all of it, the null guard included -- and placed so as not to overlap
  * anything a process maps for itself (include/procmem.h's layout).
  */
-static BOOL map_kernel_low(struct x86_64_aspace *as)
+static BOOL map_kernel_low(struct aspace *as)
 {
     UQUAD start, end, va, phys;
 
@@ -161,7 +164,7 @@ static BOOL map_kernel_low(struct x86_64_aspace *as)
 
 ASPACE *aspace_create(void)
 {
-    struct x86_64_aspace *as = kalloc(sizeof(*as));
+    struct aspace *as = kalloc(sizeof(*as));
     UQUAD pml4;
 
     if (!as)
@@ -190,7 +193,7 @@ ASPACE *aspace_create(void)
  * leaf entries marked X86_64_PTE_OWNED.  The 2 MiB mappings of the kernel's low
  * data (PS entries) and the process-window pages are not marked and not
  * followed. */
-static void free_owned_pages(struct x86_64_aspace *as)
+static void free_owned_pages(struct aspace *as)
 {
     UQUAD *l4 = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + as->pml4_phys);
     ULONG i4, i3, i2, i1;
@@ -452,7 +455,7 @@ ULONG aspace_private_pages(const ASPACE *as)
 
 /* True iff the table page at phys was allocated at or after index `first`
  * of the address space's table-page record. */
-static BOOL table_is_newer(const struct x86_64_aspace *as, ULONG first, UQUAD phys)
+static BOOL table_is_newer(const struct aspace *as, ULONG first, UQUAD phys)
 {
     ULONG i;
 
@@ -465,7 +468,7 @@ static BOOL table_is_newer(const struct x86_64_aspace *as, ULONG first, UQUAD ph
 /* Walks down toward va and, at the first entry that points at a table
  * allocated since `first`, clears that entry: everything below it is new too,
  * so the whole new subtree is cut off in one step. */
-static void unlink_new_tables(const struct x86_64_aspace *as, ULONG first, UQUAD va)
+static void unlink_new_tables(const struct aspace *as, ULONG first, UQUAD va)
 {
     UQUAD *table = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + as->pml4_phys);
     UQUAD index[3];
@@ -486,6 +489,24 @@ static void unlink_new_tables(const struct x86_64_aspace *as, ULONG first, UQUAD
         }
         table = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + child);
     }
+}
+
+/*
+ * The most aspace_map_private() can map now: the free physical memory less
+ * the reserve and the cost it checks for below (a page of tables per 512
+ * pages, two more), and a few pages for the bookkeeping a caller may grow
+ * first (a kalloc()ed table).
+ */
+VADDR aspace_mappable_bytes(void)
+{
+    UQUAD free = pmem_free_bytes(), keep, pages;
+
+    keep = ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST + 6 * X86_64_PAGE_SIZE;
+    if (free <= keep)
+        return 0;
+    pages = (free - keep) / X86_64_PAGE_SIZE;
+    pages -= pages / 513 + 1;           /* pages + pages / 512 tables fit */
+    return pages * X86_64_PAGE_SIZE;
 }
 
 BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
@@ -697,7 +718,7 @@ BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
 }
 
 /* TRUE iff every page of [va, va + pages) is one of the private pages of `as` */
-static BOOL range_is_private(const struct x86_64_aspace *as, UQUAD va, UQUAD pages)
+static BOOL range_is_private(const struct aspace *as, UQUAD va, UQUAD pages)
 {
     UQUAD i;
 
@@ -850,7 +871,7 @@ BOOL aspace_load_private(ASPACE *as, UQUAD va, UQUAD memsz,
  * pointer starts at the top less 8, as the syscall entry stub expects
  * ("as if a return address had just been pushed").
  */
-UQUAD kstack_alloc(UQUAD *top)
+PADDR kstack_alloc(uintptr_t *top)
 {
     UQUAD phys = x86_64_pmem_try_alloc_pages(X86_64_KSTACK_PAGES, 0);
 
@@ -860,7 +881,7 @@ UQUAD kstack_alloc(UQUAD *top)
     return phys;
 }
 
-void kstack_free(UQUAD phys)
+void kstack_free(PADDR phys)
 {
     if (phys)
         x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);

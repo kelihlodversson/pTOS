@@ -177,14 +177,23 @@ if ! grep -q 'x86-64 pexec go gives back with a gap: PASS' boot.log; then
   exit 1
 fi
 
-if ! grep -q 'x86-64 psetlimit: PASS' boot.log; then
-  echo "::error::Psetlimit did not set, report or pass on the limits and the stack size"
-  exit 1
-fi
+# pc-x86_64-eager is built without demand paging (#562): the Psetlimit and
+# demand-paging probes, which need it, say SKIP, and the eager one runs instead
+if grep -q '^# CONF_WITH_DEMAND_PAGING is not set$' .config; then
+  if ! grep -q 'x86-64 no demand paging: PASS' boot.log; then
+    echo "::error::without demand paging, a process's memory was not backed when handed out, or Malloc(-1) promised more"
+    exit 1
+  fi
+else
+  if ! grep -q 'x86-64 psetlimit: PASS' boot.log; then
+    echo "::error::Psetlimit did not set, report or pass on the limits and the stack size"
+    exit 1
+  fi
 
-if ! grep -q 'x86-64 demand paging: PASS' boot.log; then
-  echo "::error::a process's Malloc() memory and stack were not backed on first touch"
-  exit 1
+  if ! grep -q 'x86-64 demand paging: PASS' boot.log; then
+    echo "::error::a process's Malloc() memory and stack were not backed on first touch"
+    exit 1
+  fi
 fi
 
 if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then

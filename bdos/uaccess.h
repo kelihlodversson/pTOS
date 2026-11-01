@@ -35,6 +35,11 @@ long bdos_check_user_args(const long *pw);
  * (bios/biosaccess.c), which have the same rules as the GEMDOS ones.
  */
 long user_buf_check(long v, long len, BOOL write);
+
+#if CONF_WITH_USER_ASPACE && defined(__m68k__)
+/* n words of the stack of the caller of a trap, from usp: what is not readable is 0 (bdos/arch/m68k/uspace.c) */
+BOOL user_stack_words(ULONG usp, WORD *pw, int n);
+#endif
 #endif
 
 #endif /* UACCESS_H */

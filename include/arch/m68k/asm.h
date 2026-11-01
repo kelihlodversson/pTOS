@@ -33,6 +33,8 @@
 #ifndef ASM_H
 #define ASM_H
 
+#include "config.h"
+
 /* External function doing nothing */
 extern void just_rts(void);
 
@@ -41,8 +43,10 @@ extern void just_rts(void);
  * "extern long trap1(int, ...)" it replaced, it needs no
  * -mshort-independent replacement -- see #300 and the trap1_v()/
  * trap1_w()/... comment below. */
+#if !CONF_WITH_KCALL
 extern long trap1_pexec(short mode, const char *path, const char *tail,
         const char *env);
+#endif
 
 /*
  * Typed trap #1 (GEMDOS) call primitives: trap1_<shape>(function, args...)

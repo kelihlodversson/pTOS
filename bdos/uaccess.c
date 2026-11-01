@@ -39,6 +39,9 @@
 #include "proc.h"
 #include "bdosstub.h"
 #include "ssystem.h"
+#if CONF_WITH_MMU_PROBE
+#include "mmuprobe.h"
+#endif
 #include "uaccess.h"
 
 #if CONF_WITH_USER_COPY
@@ -67,6 +70,9 @@ static const UARG uargs[] = {
     { 0x0A, 1, UA_CONRS,  UD_RW, 0, 0 },                 /* Cconrs */
 #if CONF_WITH_USER_ASPACE
     { 0x14, 0, UA_PRIV,   0,     0, 0 },                 /* Maddalt: not for a user process */
+#if CONF_ATARI_HIGHER_HALF
+    { 0x15, 0, UA_PRIV,   0,     0, 0 },                 /* Srealloc: the screen, and the size is not range-checked (#727) */
+#endif
 #endif
     { 0x1A, 1, UA_DTAPTR, UD_W,  0, 0 },                 /* Fsetdta */
     { 0x36, 1, UA_FIXED,  UD_W,  0, UA_DFREE },          /* Dfree */
@@ -90,10 +96,11 @@ static const UARG uargs[] = {
 /* ------------------------------------------------------------------ */
 
 /* The pointer argument as a user address, or FALSE if it cannot be one:
- * the x32 ABI has 32-bit addresses. */
+ * the x32 ABI has 32-bit addresses.  Where a long is 32 bits (m68k, ARM)
+ * every value is one, a negative long included. */
 static BOOL uaddr(long v, ULONG *a)
 {
-    if ((ULONG)((UQUAD)v >> 32) != 0)
+    if (sizeof(v) > 4 && (ULONG)((UQUAD)v >> 32) != 0)
         return FALSE;
     *a = (ULONG)(UQUAD)v;
     return TRUE;
@@ -151,7 +158,9 @@ static long buf_ok(long v, long len, BOOL write)
 {
     ULONG a;
 
-    if (len < 0 || (UQUAD)len > 0xffffffffULL)
+    /* the count is a LONG: one that is negative there arrives zero-extended
+     * where a long is 64 bits (the x32 ABI), so 0x80000000 and up are too big */
+    if (len < 0 || (UQUAD)len > 0x7fffffffULL)
         return ERANGE;
     if (!len)
         return E_OK;
@@ -197,7 +206,7 @@ static long dtaptr_ok(long v)
 static long curdta_ok(void)
 {
 #if CONF_WITH_USER_ASPACE
-    return kproc_validate_user_dta((UQUAD)(uintptr_t)kproc_get_dta(run)) ? E_OK : EIMBA;
+    return kproc_validate_user_dta((VADDR)(uintptr_t)kproc_get_dta(run)) ? E_OK : EIMBA;
 #else
     /* no address space to check against: a process can still have written a
      * null into the public p_xdta, which Fsfirst()/Fsnext() would use */
@@ -379,6 +388,11 @@ static long ssystem_ok(const long *pw)
     if (mode == (WORD)0xfffe && size > 0)               /* S_CONSOLE_DIM struct */
         return buf_ok(arg1, size < (long)sizeof(struct console_dim) ? size
                             : (long)sizeof(struct console_dim), TRUE);
+#if CONF_WITH_MMU_PROBE
+    if (mode == S_MMUPROBE && size > 0)                 /* S_MMUPROBE struct, in and out */
+        return buf_ok(arg1, size < (long)sizeof(struct mmu_probe) ? size
+                            : (long)sizeof(struct mmu_probe), TRUE);
+#endif
     if (mode == S_DESKINFO && size > 0)                 /* S_DESKINFO struct */
         return buf_ok(arg1, size < (long)sizeof(struct desk_info) ? size
                             : (long)sizeof(struct desk_info), TRUE);

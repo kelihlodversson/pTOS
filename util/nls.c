@@ -60,7 +60,7 @@ const char *etos_gettext(unsigned long msgid)
    * into a resource file, and are not marked with N_() and thus are not
    * translated by "bug translate".
    */
-  if (!(msgid & NLS_MSGID_FLAG))
+  if ((msgid & NLS_MSGID_FLAG) != NLS_MSGID_FLAG)
     return (const char *)msgid;
   msgid &= ~NLS_MSGID_FLAG;
 

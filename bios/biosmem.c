@@ -20,6 +20,17 @@
 #include "bios.h"
 #include "biosext.h"
 #include "../vdi/vdistub.h"
+#if CONF_WITH_HIGHER_HALF
+#ifdef MACHINE_RPI
+#include "raspi_memory.h"
+#elif CONF_ATARI_HIGHER_HALF
+#include "atari_mmu.h"
+#elif CONF_AMIGA_HIGHER_HALF
+#include "amiga_mmu.h"
+#else
+#include "virt_mmu.h"
+#endif
+#endif
 
 #if DBG_BALLOC
 static BOOL bmem_allowed;
@@ -48,6 +59,53 @@ static BOOL bmem_allowed;
  *   LONG memtop     TOS variable in 0x436: top of TPA
  *   LONG phystop    TOS variable in 0x43a: top of ST-RAM
  */
+#if CONF_WITH_PROCESS_ASPACES
+#include "pmem32.h"
+#include "aspace32.h"
+
+/*
+ * With an address space for every process (doc/mmu-address-space.txt) the
+ * memory of the programs is not the pool of the GEMDOS memory descriptors but
+ * pages: the pool is what the kernel's own calls get (a quarter of the RAM,
+ * 8 MiB at most), the pages after it are the physical page allocator's
+ * (include/pmem32.h) up to the top of the RAM, and the kernel's own address
+ * space, with the process window, is made here, before anything allocates
+ * a process.
+ */
+#define POOL_MAX    0x00800000UL
+#define POOL_MIN    0x00100000UL
+
+static void process_memory_init(void)
+{
+    ULONG avail = (ULONG)(phystop - membot);
+    ULONG pool = avail / 4;
+
+    if (pool > POOL_MAX)
+        pool = POOL_MAX;
+    if (pool < POOL_MIN)
+        pool = POOL_MIN;
+    if (pool > avail)                   /* (an Amiga with 1 MiB of chip RAM: the pool is all of it) */
+        pool = avail;
+    memtop = (UBYTE *)(((ULONG)membot + pool) & ~0xfffUL);
+    pmem32_init(pmem32_phys(memtop), pmem32_phys(phystop));
+#if CONF_ATARI_HIGHER_HALF && CONF_WITH_TTRAM
+    /* TT-RAM is pages for the processes too, through the window (which maps
+     * it, doc/mmu-address-space.txt); it is not BDOS alternative RAM, whose
+     * addresses would be the physical ones, in the lower half */
+    if (ramtop) {
+        pmem32_add((PADDR)(uintptr_t)TTRAM_START, (PADDR)(uintptr_t)ramtop);
+        pmem32_prefer((PADDR)(uintptr_t)TTRAM_START);   /* the ST-RAM is for DMA, and the overflow */
+    }
+#endif
+#ifndef MACHINE_AMIGA
+    if (!aspace_kernel_init())
+        panic("no memory for the address spaces\n");
+#endif
+    /* (on the Amiga the chip RAM is too small for the process window: the RAM of the
+     * expansion boards is added and the address space made in amiga_process_memory_init()) */
+}
+#endif
+
 void bmem_init(void)
 {
     KDEBUG(("Memory map before balloc() adjustments:\n"));
@@ -74,12 +132,20 @@ void bmem_init(void)
      * memory" check. Harmless on the ILP32 arches (m68k/ARM), where a
      * pointer already fits in 32 bits. */
     end_os = (UBYTE*)(uintptr_t)(((UQUAD)(uintptr_t)_end_os_stram + 3 ) & ~(UQUAD)3);
+#if CONF_WITH_HIGHER_HALF
+    /* the kernel is in the window, the memory after it is the pool, which a
+     * program sees in the lower half: its addresses are not kernel addresses */
+    end_os = virt_pool_start(end_os);
+#endif
     membot = end_os;
     KDEBUG(("       membot = %p\n", membot));
 
     /* End of available ST-RAM */
     /* The screen buffer will be allocated later */
     memtop = phystop;
+#if CONF_WITH_PROCESS_ASPACES
+    process_memory_init();
+#endif
     KDEBUG(("       memtop = %p\n", memtop));
 
 #if CONF_WITH_STATIC_ALT_RAM

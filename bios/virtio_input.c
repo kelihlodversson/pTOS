@@ -296,7 +296,7 @@ static void virtio_input_setup_eventq(VIRTIO_DEV *dev, struct virtio_input_event
 
     for (i = 0; i < VIRTIO_QUEUE_SIZE; i++)
     {
-        virtio_desc_set(dev, i, (ULONG)&buf[i] + dev->phys_offset,
+        virtio_desc_set(dev, i, VIRTIO_PHYS(dev, &buf[i]),
                          (ULONG)sizeof(buf[i]), VIRTIO_DESC_F_WRITE, 0);
         virtio_submit(dev, i);
     }
@@ -388,7 +388,7 @@ static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, 
             }
         }
 
-        virtio_desc_set(dev, (UWORD)idx, (ULONG)&buf[idx] + dev->phys_offset,
+        virtio_desc_set(dev, (UWORD)idx, VIRTIO_PHYS(dev, &buf[idx]),
                          (ULONG)sizeof(buf[idx]), VIRTIO_DESC_F_WRITE, 0);
         virtio_submit(dev, (UWORD)idx);
     }

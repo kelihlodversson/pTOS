@@ -174,7 +174,10 @@ writes).  The calls that take pointers:
                             modes 4 and 6 look the basepage up in the
                             kernel's records instead (#416)
     Ssystem(mode, ...)      S_GETCOOKIE's value and S_CONSOLE_DIM's buffer,
-                            written; the S_SET*VAL modes are refused
+                            written; the S_SET*VAL modes are refused.  The
+                            S_GETLVAL variables that hold an address read as 0,
+                            and the cookies that point into the kernel are not
+                            found (doc/kernel-pointers.txt)
 
 "Checked" means every page of the range is mapped and user-accessible (and
 writable for an output) in the calling process, the range does not wrap
@@ -217,9 +220,11 @@ does that it is refused (EACCDN), or, for Setpalette(), served from a copy.
     5  Setexc(num, vec)     vec must be -1 (a query), else EACCDN; num must
                             be 0..0x102, else ERANGE (it is scaled and read
                             as a kernel address).  Installing a vector is for
-                            the kernel
+                            the kernel.  An old vector above the user range
+                            comes back as 0 (doc/kernel-pointers.txt)
     6  Tickcal()            scalars
-    7  Getbpb(dev)          scalars (the BPB pointer returned: #351/#372)
+    7  Getbpb(dev)          refused, EACCDN: the result is a kernel pointer
+                            (#351/#372, doc/kernel-pointers.txt)
     8  Bcostat(dev)         scalars
     9  Mediach(dev)         scalars
     10 Drvmap()             scalars
@@ -245,7 +250,8 @@ does that it is refused (EACCDN), or, for Setpalette(), served from a copy.
     10  Flopfmt(...)        argument struct copied in; the buffer and the
                             skew table checked (trap.c)
     12  Midiws(cnt, ptr)    cnt + 1 bytes (cnt unsigned), read
-    14  Iorec(dev)          scalars (result is a kernel pointer: #426)
+    14  Iorec(dev)          refused, EACCDN: the result is a kernel pointer
+                            (#426, doc/kernel-pointers.txt)
     15  Rsconf(...)         argument struct copied in (trap.c)
     17  Random()            scalars
     18  Protobt(buf, ...)   a 512-byte boot sector, written
@@ -258,9 +264,12 @@ does that it is refused (EACCDN), or, for Setpalette(), served from a copy.
     28  Giaccess(d, r)      scalars
     29  Offgibit(b)         scalars
     30  Ongibit(b)          scalars
-    32  Dosound(table)      a positive table would be kept and read by the
-                            timer: EACCDN; 0 and -1 (query) are fine
-    34  Kbdvbase()          scalars (result is a kernel pointer: #426)
+    32  Dosound(table)      a table would be kept and read by the timer:
+                            EACCDN; 0 and -1 (query) are fine.  The table
+                            that was playing comes back as 0 if it is the
+                            kernel's
+    34  Kbdvbase()          refused, EACCDN: the result is a kernel pointer
+                            (#426, doc/kernel-pointers.txt)
     35  Kbrate(i, r)        scalars
     37  Vsync()             scalars
     41  Floprate(d, r)      scalars

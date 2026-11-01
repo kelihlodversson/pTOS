@@ -9,13 +9,15 @@ runtime linker. Kernel PT_INTERP handoff and a freestanding self-relocating
 LD.SO are implemented and verified with filesystem-loaded DSOs under QEMU.
 The implemented core reads ELF32 dynamic metadata, performs SysV-hash
 lookup and ordered-scope symbol resolution, discovers the dependency graph,
-and eagerly applies RELA relocations. The architecture-neutral planner is
-lib/ldso/relocate.c;
-lib/ldso/arch/x32/reloc.c supplies x32 relocation widths and arithmetic.
+and eagerly applies RELA or REL relocations. The architecture-neutral planner
+is lib/ldso/relocate.c; lib/ldso/arch/<arch>/reloc.c supplies the relocation
+widths and arithmetic of the architecture (x32, ARM, m68k) and says which kind
+of table it reads.
 lib/ldso/graph.c builds a bounded dependency closure through mapper callbacks.
 lib/ldso/image_plan.c validates ELF32 load plans; lib/ldso/image.c populates
 private userspace images;
-x32 format policy is selected separately in arch/x32/image_abi.c.
+the format policy (machine, byte order, e_flags) is selected separately in
+arch/<arch>/image_abi.c.
 bdos/elfinterp.c opens the named interpreter, and lib/ldso/startup.c constructs
 the private initial stack. lib/ldso/runtime.c loads dependencies, binds all
 objects eagerly, seals permissions and runs constructors/finalizers.
@@ -30,20 +32,59 @@ ownership; they also support native FAT file-backed COW mappings.
 
 CONF_WITH_ELF_SHARED is an experimental, off-by-default Kconfig option.  It
 builds this core into obj/ldso/libldso.a, separately from the kernel.  It
-requires CONF_WITH_ELF_LOADER, CONF_WITH_USER_ASPACE and, initially,
-ARCH_X86_64.  Both x32 and the address-space prerequisite are intentional:
-standard shared libraries must never fall back to a flat address space.
+requires CONF_WITH_ELF_LOADER, CONF_WITH_USER_ASPACE, demand paging, and
+x32 (ARCH_X86_64), ARM or the 68040 (see "ARM" and "m68k" below).  Both the architecture and
+the address-space prerequisite are intentional: standard shared libraries must
+never fall back to a flat address space.
 
 Shared C code is controlled by the feature/build configuration, not by
 architecture-specific preprocessor tests.  Architecture selection belongs
 in Kconfig and the build rules; relocation and startup backends belong in
-separate files.  Do not widen the Kconfig dependency to ARM or m68k until
-their MMU-backed, separate-process-address-space implementations have merged
-to master and the corresponding linker backend has been tested.  FDPIC and
-non-MMU loading are outside this issue.
+separate files (lib/ldso/arch/<arch>/).  The Kconfig dependency names the
+architectures that have a backend, and a backend is added only with the tests
+that run it.  FDPIC and non-MMU loading are outside this work (#323).
 
 The sections below distinguish implemented kernel startup and userspace core
-operations from the remaining runtime-linker and page-sharing milestones.
+operations from the remaining runtime-linker and page-sharing milestones; the
+sections "ARM" and "m68k" at the end give what is particular to those two.
+
+
+Architectures at a glance
+-------------------------
+
+What a program or library author needs to know, per backend.  The details
+are in the sections named; everything not in the table is the same.
+
+                    x32                    ARM                    m68k
+    configs         pc-x86_64 (+ option)   virt-arm-aspace,       virt-m68k-aspace
+                                           rpi2-aspace
+    CPU             x86-64, ILP32 user     ARMv6K up, ARM state,  68020 and up
+                                           hard-float EABI5       (the 68040 MMU)
+    compiler        native gcc -mx32       arm-none-eabi-gcc      m68k-linux-gnu-gcc
+    object          ELF32 EM_X86_64        ELF32 EM_ARM           ELF32 EM_68K
+                    little endian          little endian          big endian
+    e_flags         0                      0x05000400             0
+    tables          DT_RELA                DT_REL                 DT_RELA
+    PT_GNU_RELRO    yes                    no (the bare-metal     yes
+                                           linker has none)
+    interpreter     /GEMSYS/LIB/X32/       /GEMSYS/LIB/ARM/       /GEMSYS/LIB/M68K/
+                    LD.SO                  LD.SO                  LD.SO
+    libraries in    \GEMSYS\LIB\X32\       \GEMSYS\LIB\ARM\       \GEMSYS\LIB\M68K\
+                    of the boot drive      of the boot drive      of the boot drive
+    system call     syscall, RAX =         svc 1, r0 the          trap #1, frame
+                    (1 << 32) | fn,        function, r1-r6        packed by the widths
+                    RDI RSI RDX R10        the arguments          of the call
+                    R8 R9
+    finalizer       RDX                    r0                     d1
+    libc client     libptos.so (a subset;  none yet               none yet
+                    the rest is #673)
+    runs under      QEMU + OVMF            QEMU virt, raspi2b     QEMU virt (68040)
+
+Common to all: an ordinary fixed-address ET_EXEC (no PIE needed) at 0x400000
+or above, with a PT_INTERP, whose libraries and the interpreter are PIC ET_DYN
+objects with SysV hashing; 4 KiB pages; eager binding; the six-argument Mmap
+(doc/mmap.txt); the same initial stack of the ELF ABI, auxv included (see
+"Kernel responsibilities and process entry").  A PRG is never dynamic.
 
 
 ELF format and toolchains
@@ -334,10 +375,12 @@ specified by the ABI.  Finalizers run in reverse initialization order on
 normal CRT-managed exit; a raw Pterm, crash or forced exit only guarantees
 kernel resource cleanup, never execution of user callbacks.
 
-Initial installation layout:
+Installation layout, one directory per architecture (ARM and M68K the same):
 
     /GEMSYS/LIB/X32/LD.SO      interpreter named by PT_INTERP
     /GEMSYS/LIB/X32/*.SO       trusted system-library directory
+    /GEMSYS/LIB/ARM/...        the ARM ones
+    /GEMSYS/LIB/M68K/...       the m68k ones
 
 These are paths rooted on the pTOS boot filesystem, translated by the file
 interface; they do not presume a Linux root filesystem.  DT_NEEDED and
@@ -522,9 +565,13 @@ Implementation and validation milestones
 6. Reference-counted clean file-page sharing, COW, two-process isolation, W^X
    and permission-fault probes are implemented, plus corrupted ELF, missing libraries/symbols,
    cycles, invalid relocations, rollback and repeated-load leak tests in CI.
-7. ARM/m68k backends only after their isolated-address-space prerequisites
-   merge.  Verify m68k -fpic/-fPIC and emitted relocations then; PIE is not
-   a prerequisite.  FDPIC, non-MMU, TLS and advanced features stay separate.
+7. ARM (#693) and m68k (#694) backends, on the isolated-address-space
+   configurations: a program with two libraries, constructors and finalizers,
+   interposition and a second live copy that shares the library pages; programs
+   that must fail (missing and cut-short library, missing interpreter) leave
+   nothing behind.  m68k -fPIC was verified: the MiNT compilers cannot make it,
+   GNU/Linux's can (see "m68k").  PIE is not a prerequisite.  FDPIC, non-MMU,
+   TLS and advanced features stay separate.
 
 Run the first milestone's tests with:
 
@@ -534,7 +581,16 @@ They require kconfiglib, a native host compiler and an x32-capable gcc/ld;
 CC_HOST and X32_CC can override the compiler commands.  Test outputs are
 temporary and do not modify the active .config or repository files.
 
-To build the userspace core, select pc-x86_64_defconfig, enable
+On ARM and m68k the option is already on in the address-space configurations
+(virt-arm-aspace, rpi2-aspace, virt-m68k-aspace): "make <config>_defconfig",
+"make", "make test-dir", then tools/run-regression-tests.sh virt-arm,
+raspi2b-aspace or virt-m68k-aspace, whose suite includes ldso_dynamic.  The
+m68k build needs m68k-linux-gnu-gcc as well (see "m68k"); the host checks of
+tools/test-elf-shared.py cover the ARM and m68k formulas without any cross
+compiler, and real ARM objects when arm-none-eabi-gcc is there.  Objects of
+one architecture are rebuilt when the configuration changes.
+
+To build the x32 userspace core, select pc-x86_64_defconfig, enable
 CONF_WITH_ELF_SHARED in menuconfig, then make CROSS_COMPILE= on Linux.
 Disabling the option leaves ordinary static builds unchanged.  An archive
 build alone is not proof of runtime behavior. With shared support enabled,
@@ -575,3 +631,114 @@ static entry contract, including when the external desktop is dynamic.
 The shared-library CI boots the real dynamic console and drives the dynamic
 desktop through tests/x32_desktop/run.py. It also tests missing-desktop fallback
 to both a dynamic external console and an embedded static console.
+
+
+ARM (#693)
+----------
+
+The ARM backend is lib/ldso/arch/arm.  It is selected by Kconfig and the build
+rules (lib/ldso/build.mk); the common code has no ARM conditional.
+
+Objects are ELF32 EM_ARM, little endian, EABI version 5 with the hard-float ABI
+(e_flags 0x05000400), in ARM state; the image reader refuses any other
+e_flags.  A program is a fixed-address ET_EXEC linked at 0x400000 or above, a
+page up from the headers (-Wl,-Ttext-segment=0x401000), with PT_INTERP
+/GEMSYS/LIB/ARM/LD.SO, and the libraries it needs are looked up in
+\GEMSYS\LIB\ARM\ of the boot drive.  Programs and libraries are built with
+-fPIC and linked with --hash-style=sysv; the bare-metal GNU toolchain
+(arm-none-eabi-) does.  The libraries are compiled for ARMv6K with VFP, the
+oldest core the system runs on, so that the same files go on every card.
+
+The initial stack is the one of the standard entry, with the finalizer in r0
+as the ELF ABI has it (0 from the kernel; LD.SO passes its own on to the
+program).  LD.SO relocates itself first (lib/ldso/arch/arm/bootstrap.c: only
+R_ARM_RELATIVE, validated before any write), then links the program.
+
+The tables are DT_REL: the addend of a relocation is the word at the place
+(DL_RELOC_BACKEND.rel; the common code reads it).  Supported types:
+
+    R_ARM_ABS32      S + A
+    R_ARM_REL32      S + A - P
+    R_ARM_GLOB_DAT   S
+    R_ARM_JUMP_SLOT  S   (the slot holds the address of the stub until then)
+    R_ARM_RELATIVE   B + A
+
+Everything else (COPY, TLS, the Thumb ones) is refused before the program
+starts, as are DT_TEXTREL, GNU-hash-only objects and the like.  Binding is
+eager.  The system call is svc 1 (r0 the function, r1-r6 the arguments),
+including the six of Mmap().
+
+Limits.  The linker for bare-metal ARM cannot make a PT_GNU_RELRO (its
+emulation has none), so the GOT and the arrays of an ARM program stay
+writable; LD.SO seals RELRO wherever an object has one.  Only ARM state is
+supported and tested; Thumb code in a library has not been tried.  There is no libc client (libptos.so, the
+dynamic CRT) yet (#673); a program starts at _start and makes its own calls.
+
+Tests.  tests/ldso_dynamic launches a program with two libraries, constructors
+and destructors in their order, preinit, interposition and a library with
+partial-page BSS (tests/ldso_runtime), which launches a second copy of itself
+while it lives: Ssystem(S_MEMINFO) must show the clean library pages shared
+between the two address spaces (shared_cross), and the writable data of each
+its own.  Three more programs fail on purpose (a missing library, a cut-short
+one, a missing interpreter); each must be refused, with no process record or
+page left behind.  tools/test-elf-shared.py relocates real ARM objects (DT_REL)
+on the host when an arm-none-eabi- compiler is there.
+
+
+m68k (#694)
+-----------
+
+The m68k backend is lib/ldso/arch/m68k, for the address-space configurations
+(virt-m68k-aspace, 68040).
+
+The compiler.  The MiNT compilers (m68k-atari-mintelf-, -mint-) cannot make
+position-independent code: -fPIC is refused ("not supported on this target"),
+and -mpcrel leaves every reference to another object as a PC-relative text
+relocation (DT_TEXTREL), which cannot be shared and which the linker refuses.
+The runtime linker and the libraries and programs that use it are therefore
+built with GNU/Linux's m68k-linux-gnu-gcc, whose -fPIC uses a GOT and a PLT
+(Ubuntu: gcc-m68k-linux-gnu; LDSO_M68K_PREFIX names another).  Nothing of the
+GNU/Linux system is used: -ffreestanding -nostdlib, no libc, only libgcc.  The
+kernel and the rest are built as before; CI installs the compiler with the
+m68k toolchain (.github/actions/setup-toolchain).
+
+Objects are ELF32 EM_68K, big endian, e_flags 0 (the 68020 and later), linked
+with -z max-page-size=4096 and --build-id=none.  A program is a fixed-address
+ET_EXEC at 0x400000 or above, a page up from the headers
+(-Wl,-Ttext-segment=0x401000), with PT_INTERP /GEMSYS/LIB/M68K/LD.SO; its
+libraries are looked up in \GEMSYS\LIB\M68K\ of the boot drive.  Programs
+and libraries are PIC with --hash-style=sysv, and --no-as-needed where a
+library must be recorded even if nothing refers to it.  The linker makes a
+PT_GNU_RELRO, which LD.SO seals.
+
+A standard entry gets the initial stack of the ELF ABI (argc at the stack
+pointer); the kernel does not push the return address and basepage a PRG gets.
+d1 holds the finalizer (0 from the kernel; LD.SO passes its own on).  The
+tables are DT_RELA.  Supported types:
+
+    R_68K_32         S + A, modulo 2**32
+    R_68K_GLOB_DAT   S + A, modulo 2**32 (the linkers write 0 as the addend)
+    R_68K_JMP_SLOT   S + A, likewise
+    R_68K_RELATIVE   B + A
+
+The PC-relative ones (PC32, PC16, PC8) are text relocations and are refused,
+as are the 16 and 8-bit absolute ones, GOT32 and the rest, before the program
+starts.
+
+The system call is trap #1, and the frame on the stack is packed by the widths
+of the parameters of the call (a WORD one word, a LONG two): lib/ldso/arch/m68k/
+syscall.c names the shape of each call the interpreter and its tests make; the
+mapping calls are LONGs throughout.
+
+Limits.  Only programs in ELF are dynamic: a PRG is not.  The ELF header
+fields the kernel and the interpreter read are taken in the byte order of the
+file.  The 68040 is the only CPU with an address-space backend so far.  A
+tool installed into a user directory (not by the package) needs
+LD_LIBRARY_PATH to the libraries of its binutils.
+
+Tests.  As for ARM: tests/ldso_dynamic launches tests/ldso_runtime/program.c
+with its libraries (start_m68k.S is its entry), it launches a second copy of
+itself and the pages of the libraries must be shared while the data are not,
+and three programs fail on purpose and leave nothing behind.
+tools/test-elf-shared.py checks the formulas of the backend.
+

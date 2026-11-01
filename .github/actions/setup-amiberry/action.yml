@@ -1,0 +1,54 @@
+#
+# Install the pinned Amiberry (tools/amiberry-pin.sh), the emulator the Amiga
+# tests run on (#737): the WinUAE core on Linux, built from source.
+#
+# It is built only when the cache is missing or stale: the key is the hash of
+# the pin file and of the build script, so a bump of either rebuilds it and
+# nothing else does (the build takes a few minutes; restoring it, seconds).
+# What is cached is the installed prefix, not the build tree.  The job that
+# runs this needs the repository checked out first (hashFiles, and the
+# scripts).
+#
+# A cache written by a pull request is only seen by that pull request, so the
+# amiberry.yml workflow also runs on pushes to master and the epics, and weekly
+# (a cache that is not used for seven days is evicted): the pull requests
+# restore the one the base branch has.
+#
+
+name: Set up the pinned Amiberry
+description: Restore, or build and cache, the Amiberry of tools/amiberry-pin.sh, and put it on PATH.
+
+runs:
+  using: composite
+
+  steps:
+    # SDL3 and its image library, FLAC, libpng and libcurl are what it is built
+    # with and links to, so they are installed whether it comes from the cache
+    # or from a build
+    - name: Install what Amiberry builds with and runs on
+      shell: bash
+      run: |
+        . tools/amiberry-pin.sh
+        sudo apt-get update -qq
+        # shellcheck disable=SC2086  # a list
+        sudo apt-get install -y --no-install-recommends $AMIBERRY_APT_PACKAGES
+
+    - name: Cache Amiberry
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/amiberry
+        key: amiberry-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('tools/amiberry-pin.sh', 'tools/build-amiberry.sh') }}
+
+    - name: Build Amiberry
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: tools/build-amiberry.sh "$RUNNER_TEMP/amiberry" "$RUNNER_TEMP/amiberry-src"
+
+    # Whether it came from the cache or from the build: PATH is not cached
+    - name: Add Amiberry to PATH
+      shell: bash
+      run: |
+        echo "$RUNNER_TEMP/amiberry/bin" >>"$GITHUB_PATH"
+        echo "AMIBERRY=$RUNNER_TEMP/amiberry/bin/amiberry" >>"$GITHUB_ENV"
+        "$RUNNER_TEMP/amiberry/bin/amiberry" --help | head -1

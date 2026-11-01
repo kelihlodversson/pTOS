@@ -2389,6 +2389,7 @@ static void test_ring3(void)
     }
     same(&s, "failed PE_LOAD launches");
 
+#if CONF_WITH_DEMAND_PAGING
     /* Psetlimit(): the limits, the stack size, inheritance (#450) */
     {
         snap(&s);
@@ -2414,6 +2415,24 @@ static void test_ring3(void)
         }
         same(&s, "a program that runs out of memory");
     }
+#else
+    /* without demand paging (#562) the Psetlimit() and overcommit probes above
+     * do not apply: they expect the 16 MiB default stack and Malloc() of more
+     * than the machine has.  What does: memory backed when handed out. */
+    kcprintf("x86-64 psetlimit: SKIP (no demand paging)\n");
+    kcprintf("x86-64 demand paging: SKIP (no demand paging)\n");
+    {
+        snap(&s);
+        rc = run_probe('?');
+        if (rc == 0x100) {
+            kcprintf("x86-64 no demand paging: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "without demand paging, memory is backed when it is handed out and Malloc(-1) is no more than that");
+            kcprintf(rc == 0 ? "x86-64 no demand paging: PASS\n" : "x86-64 no demand paging: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program without demand paging");
+    }
+#endif
 
     /* a program loaded from a file gets Malloc() memory of its own (#434) */
     {

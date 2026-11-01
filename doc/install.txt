@@ -183,6 +183,23 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       read/write/execute segment, which is what keeps the program down
       to the one PT_LOAD segment bdos/elfld.c maps.
 
+  Shared libraries and the runtime linker (CONF_WITH_ELF_SHARED)
+      The address-space configurations that have it build the interpreter
+      LD.SO, and libraries and test programs for it, in obj/ldso/ in addition
+      to the kernel.  That userspace is freestanding (no libc) and needs:
+
+        x32     the native gcc with -mx32 (gcc-multilib on Ubuntu), as for the
+                x32 test program above
+        ARM     arm-none-eabi-gcc, the one of the kernel; the userland is built
+                for ARMv6K with VFP, whatever the kernel is built for
+        m68k    m68k-linux-gnu-gcc (Ubuntu: gcc-m68k-linux-gnu) IN ADDITION to
+                the m68k toolchain of the kernel: the MiNT compilers cannot
+                make position-independent code.  LDSO_M68K_PREFIX names another
+                prefix.  Without sudo, see .claude/skills/toolchain-install
+
+      The build stops with the name of the missing compiler.  doc/elf-shared.txt
+      has the format, the paths and the relocation types of each.
+
 If your toolchain is installed under a name other than the one that goes
 with the choice above, fill in "Cross compiler prefix override" in the same
 menu.  It renames the executables only; the flags keep following the
@@ -615,10 +632,81 @@ virt-m68k-fastcall_defconfig is virt-m68k_defconfig (AES/VDI/desktop)
 built the same way, for running the GEM desktop and benchmarks under
 -mfastcall.
 
+virt-m68k-mmu_defconfig is the m68k MMU configuration of #549:
+virt-m68k-cli-elf with CONF_REQUIRE_PMMU set.  Its first instructions
+check for a 68040 or 68060 with an MMU; on any other CPU (-cpu m68000,
+m68010, m68020, and QEMU's m68030, which emulates no PMMU) it prints why it
+cannot run on the serial console and stops.  On -cpu m68040 it is a
+higher-half kernel (#569, doc/mmu-address-space.txt): linked at 0x80000000,
+with the 68040 MMU switched on from its first instructions, and it boots to
+EmuCON as virt-m68k-cli does.  (On m68060 it gets past the check, with the
+-m68060 caveat above, but QEMU's 68060 has no MMU registers.)
+tools/test-pmmu-check.sh boots it on both kinds of CPU, and
+tools/run-regression-tests.sh virt-m68k-mmu runs the regression suite on
+-cpu m68040.
+
+virt-m68k-aspace_defconfig is virt-m68k-mmu with every process in an address
+space of its own (CONF_WITH_PROCESS_ASPACES, #570): EmuCON and the programs it
+starts run in user mode with page tables of their own, and a fault ends only the
+process.  It needs -cpu m68040 and an EmuCON built for the kernel (the build does
+that: CLI_SSYSTEM, cli/Makefile).  tools/run-regression-tests.sh virt-m68k-aspace
+runs the regression suite on it.  The same option on ARM (#568) is
+virt-arm-aspace_defconfig (qemu-system-arm -M virt,highmem=off -cpu cortex-a7)
+and rpi2-aspace_defconfig (a Raspberry Pi 2 with EmuCON on the UART;
+qemu-system-arm -M raspi2b, tools/run-regression-tests.sh raspi2b-aspace).
+doc/mmu-address-space.txt describes what they do.
+
+falcon-mmu_defconfig is the first Atari configuration of the MMU work of #549
+(#571, #726): the 512 KB ROM of the Falcon with CONF_ATARI_HIGHER_HALF.  It is a
+higher-half kernel: linked at 0x80000000 (the ROM runs at 0x80e00000), with the
+68030 MMU switched on by the first instruction of the ROM, through a static
+tree in the ROM (bios/arch/m68k/atari_mmu.S), before the RAM is configured.
+The TOS low memory and the pool the programs are loaded into stay at their
+physical addresses, as on every Atari.  It needs a 68030 with an MMU, not a
+68EC030 and not a 68040 or 68060 (they have another MMU; #728): under Hatari,
+--machine falcon --cpulevel 3 --mmu on, as tools/run-hatari-tests.py's f030
+mode runs it.  It has no address space of its own for a process: that is
+falcon-aspace_defconfig (#727), the same ROM with CONF_WITH_PROCESS_ASPACES.  It
+has no desktop (the shell is the program EMUCON.TOS of the boot drive, or
+SHELL.TOS), and "make test-hd-shell" makes the test disk whose shell is the
+test harness, which tools/run-hatari-tests.py --mode f030a runs under Hatari
+the way CI does (--mode tta runs it on a TT, with TT-RAM).  doc/mmu-address-space.txt describes the start and the
+address spaces.
+
+amiga-mmu_defconfig (#737, #571) is the same start for the Amiga: the 256 KB ROM with
+CONF_AMIGA_HIGHER_HALF, linked at 0x80000000 (the ROM runs at 0x80fc0000), with the
+68030 MMU on from the first instruction through a static tree in the ROM
+(bios/arch/m68k/amiga_mmu.S) that maps the 24-bit address space of the Amiga (the
+custom chips, the CIAs and the other I/O areas in a window of their own at 0xf0000000, not cached and supervisor-only: the lower half has no I/O),
+and, as it is, what a 32-bit Amiga has above it, which the ROM probes.  The
+Copper list, the bit planes and the disk DMA are given physical addresses
+(virt_to_phys(), bios/amiga_window.c).  It needs a 68030 with its MMU: under
+Amiberry, tools/run-amiberry.py --cpu 68030 (doc/debugging.txt).  It has no
+address space of its own for a process yet.  amiga-mmu040_defconfig is the same for the
+MMU of a 68040 or a 68060 (--cpu 68040 or 68060): the ROM is 512 KB, at 0x00f80000
+(CONF_AMIGA_ROM_512K, as the ROMs of the A3000 and A4000: the 256 KB one has no room
+for a tree without early termination), and the RAM above the 24 bits is not used.
+
+amiga-aspace_defconfig (#814) is amiga-mmu with CONF_WITH_PROCESS_ASPACES (every process in
+an address space of its own, the 68030 backend of the Atari), and amiga-aspace040_defconfig
+is amiga-mmu040 with it (the 68040 and 68060 backend).  There is no desktop: the shell
+is the program EMUCON.TOS (or SHELL.TOS) of the boot drive, and "make test-hd-shell" makes
+the test disk whose shell is the harness, which tools/run-amiberry-tests.py --halt runs
+on Amiberry (tools/ci-amiberry.sh does so on the 68030, the 68040 and the 68060, with and
+without the caches of the CPU emulated).  The chip RAM alone is too small for the
+process window (2 MiB of contiguous pages), so the images need Zorro II fast RAM, whose
+boards are pages of the processes once autoconfig has found them; RAM above the 24 bits
+and the slow RAM are not used, and the native features of UAE are not (the traps of
+its Boot ROM only work from the address it is at).  doc/mmu-address-space.txt has the
+details.
+
 PC (x86-64, UEFI boot)
 ----------------------
 
 pc-x86_64           pc-x86_64.efi, a PE32+ EFI application
+pc-x86_64-eager     the same without demand paging (CONF_WITH_DEMAND_PAGING
+                    off): a process's memory is backed when it is handed
+                    out, as with the 32-bit MMU backends of #549 (#562)
 
 Unlike every other pTOS image, this is not loaded directly by an
 emulator's -kernel/-bios flag: it is booted the way real UEFI firmware
@@ -757,9 +845,13 @@ CONF_WITH_USER_COPY checks the pointer arguments of every GEMDOS call
 (bdos/uaccess.c) before the call runs: each pointer a call really uses must
 name memory the process may read, or write for an output, for the whole
 length the call touches, or the call fails with EIMBA (ERANGE for a bad
-length).  It is mandatory on x86-64 and optional on ARM, where without
-per-process address spaces it only rejects null pointers and bad lengths; it
-is not offered on m68k yet.  The rpi2-kproc configuration builds with it.
+length).  It is mandatory on x86-64 and optional on ARM and m68k, where
+without per-process address spaces it only rejects null pointers and bad
+lengths.  On m68k, whose trap frame packs the arguments in 16-bit words, the
+frame is first unpacked into one value per argument, with the widths of the
+call's FSHAPE_* (check_frame_args() in bdos/bdosmain.c).  The rpi2-kproc and
+atari512-kproc configurations build with it, and CI runs the regression
+suite (tests/gemdos_pointers) on the latter.
 
 
 

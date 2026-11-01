@@ -234,10 +234,10 @@ jobs:
       matrix:
         include:
           - arch: arm
-            machines: virt-arm virt-arm-traditional-fat raspi2b
+            machines: virt-arm virt-arm-traditional-fat raspi2b virt-arm-aspace raspi2b-aspace
             qemu: qemu-system-arm
           - arch: m68k
-            machines: virt-m68k virt-m68k-fastcall
+            machines: virt-m68k virt-m68k-fastcall virt-m68k-mmu virt-m68k-aspace
             qemu: qemu-system-misc
     steps:
       - uses: actions/checkout@v4
@@ -269,6 +269,37 @@ jobs:
 
       - name: Run the regression suite
         run: tools/ci-group.sh --names "${{ matrix.machines }}" tools/ci-regression.sh
+
+  pmmu-check:
+    name: PMMU startup check (virt-m68k-mmu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the image loads EmuCON (CONF_EXTERNAL_CLI): libcmini builds it
+          submodules: true
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-misc
+
+      - name: Build virt-m68k-mmu
+        run: |
+          make virt-m68k-mmu_defconfig
+          make
+
+      - name: Boot it with and without a PMMU
+        run: tools/test-pmmu-check.sh virt-m68k.elf
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=PMMU startup check::the virt-m68k-mmu image did not refuse a CPU without a PMMU, or did not boot on the 68040"
 
   release-archives:
     name: Release archives
@@ -375,7 +406,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, x86_64, regression, release-archives, raspi-sdcard]
+    needs: [build, x86_64, regression, pmmu-check, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -396,6 +427,7 @@ jobs:
           echo "m68k and arm builds:   ${{ needs.build.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
+          echo "PMMU startup check:     ${{ needs.pmmu-check.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
@@ -403,6 +435,7 @@ jobs:
           [ '${{ needs.build.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
+          [ '${{ needs.pmmu-check.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 

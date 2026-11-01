@@ -20,6 +20,7 @@
 
 #include "aros.h"
 #include "amiga.h"
+#include "amiga_io.h"
 #include "string.h"
 #include "processor.h"
 #include "gemerror.h"
@@ -350,7 +351,8 @@ static UBYTE ReadExpansionByte(APTR board, ULONG offset)
     volatile UBYTE *p = (UBYTE*)board;
 
     offset *= 4;
-    if (((ULONG)board) & 0xff000000)
+    /* (a board in the I/O window of the kernel is on the bus where it is in the 24 bits) */
+    if (AMIGA_IO_BUS((ULONG)board) & 0xff000000)
         loffset = 0x100;
     else
         loffset = 0x002;
@@ -367,7 +369,8 @@ static void WriteExpansionByte(APTR board, ULONG offset, ULONG byte)
     volatile UBYTE *p = (UBYTE*)board;
 
     offset *= 4;
-    if (((ULONG)board) & 0xff000000)
+    /* (a board in the I/O window of the kernel is on the bus where it is in the 24 bits) */
+    if (AMIGA_IO_BUS((ULONG)board) & 0xff000000)
         loffset = 0x100;
     else
         loffset = 0x002;
@@ -773,7 +776,7 @@ static void ConfigChain(APTR baseAddr)
             gotrom = ReadExpansionRom(baseAddr, configDev);
         }
         if (!gotrom) {
-            baseAddr = (APTR)E_EXPANSIONBASE;
+            baseAddr = (APTR)AMIGA_IO(E_EXPANSIONBASE);
             gotrom = ReadExpansionRom(baseAddr, configDev);
         }
         if (!gotrom) {
@@ -799,7 +802,7 @@ static void ExpansionInit(struct ExpansionBase *ExpansionBase)
     NEWLIST(&ExpansionBase->eb_BoardList);
 
     /* See what expansion hardware we can detect. */
-    ConfigChain((APTR)E_EXPANSIONBASE);
+    ConfigChain((APTR)AMIGA_IO(E_EXPANSIONBASE));
 }
 
 /* EmuTOS to AROS glue for Alternate RAM detection ****************************/

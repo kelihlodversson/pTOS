@@ -34,6 +34,9 @@
 #include "biosext.h"
 #include "bios.h"
 #include "bdosbind.h"
+#if CONF_ATARI_HIGHER_HALF
+#include "atari_mmu.h"
+#endif
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
@@ -1092,6 +1095,10 @@ static const UBYTE *atari_physbase(void)
 
 static void atari_setphys(const UBYTE *addr)
 {
+#if CONF_ATARI_HIGHER_HALF
+    /* the video hardware takes the physical address */
+    addr = (const UBYTE *)(uintptr_t)virt_to_phys(addr);
+#endif
     *(volatile UBYTE *) VIDEOBASE_ADDR_HI = ((ULONG) addr) >> 16;
     *(volatile UBYTE *) VIDEOBASE_ADDR_MID = ((ULONG) addr) >> 8;
 
@@ -1247,8 +1254,10 @@ WORD getrez(void)
  *
  * implementation summary:
  *  . for all hardware:
- *      . sets the logical screen address from logLoc, iff logLoc > 0
- *      . sets the physical screen address from physLoc, iff physLoc > 0
+ *      . sets the logical screen address from logLoc, iff it is an address
+ *      . sets the physical screen address from physLoc, iff it is an address
+ *        (0 and -1 are not; so is no negative LONG, except with a
+ *        higher-half kernel, where the screen may be in the kernel half)
  *  . for videl, if logLoc==0 and physLoc==0:
  *      . reallocates screen memory and updates logical & physical
  *        screen addresses
@@ -1257,15 +1266,22 @@ WORD getrez(void)
  *        setting the mode specified by 'videlmode' if appropriate)
  *      . reinitialises lineA and the VT52 console
  */
+#if CONF_WITH_HIGHER_HALF
+/* a framebuffer in the kernel half is a negative LONG, as Logbase() returns it */
+#define IS_SCREEN_ADDR(p)   ((LONG)(intptr_t)(p) != 0 && (LONG)(intptr_t)(p) != -1)
+#else
+#define IS_SCREEN_ADDR(p)   ((LONG)(intptr_t)(p) > 0)
+#endif
+
 WORD setscreen(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode)
 {
     WORD oldmode = 0;
 
-    if ((LONG)(intptr_t)logLoc > 0) {
+    if (IS_SCREEN_ADDR(logLoc)) {
         v_bas_ad = logLoc;
         KDEBUG(("v_bas_ad = %p\n", v_bas_ad));
     }
-    if ((LONG)(intptr_t)physLoc > 0) {
+    if (IS_SCREEN_ADDR(physLoc)) {
         setphys(physLoc);
     }
 

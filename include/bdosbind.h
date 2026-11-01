@@ -16,10 +16,10 @@
 #include "bdosdefs.h"
 #include "config.h"
 
-#if CONF_WITH_KCALL && defined(__LP64__)
+#if CONF_WITH_KCALL && (defined(__LP64__) || !defined(__x86_64__))   /* (not the x32 programs) */
 /*
  * Kernel code (CONF_WITH_KCALL) does not trap into GEMDOS: these are plain C calls
- * to the implementations (bdos/arch/x86_64/kcall.c).  Only the calls kernel
+ * to the implementations (bdos/kcall.c).  Only the calls kernel
  * code makes exist.
  */
 #define TRAP1_ARG(x) ((long)(x))
@@ -36,6 +36,10 @@ extern long kdos_mfree(long block);
 extern long kdos_mshrink(long block, long newsiz);
 extern long kdos_pexec(long mode, long path, long tail, long env);
 extern void kdos_pterm(long rc);
+#if CONF_WITH_VIDEL
+extern long kdos_srealloc(long amount);
+#define Srealloc(amount) kdos_srealloc(TRAP1_ARG(amount))
+#endif
 
 #define Crawio(w) kdos_crawio(TRAP1_ARG(w))
 #define Dsetdrv(drv) kdos_dsetdrv(TRAP1_ARG(drv))

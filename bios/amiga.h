@@ -13,6 +13,8 @@
 #ifndef AMIGA_H
 #define AMIGA_H
 
+#include "amiga_io.h"
+
 #ifdef MACHINE_AMIGA
 
 struct IDE
@@ -39,7 +41,7 @@ struct IDE
     UWORD data;
 };
 
-#define ide_interface ((volatile struct IDE*)0x00da0000)
+#define ide_interface ((volatile struct IDE*)AMIGA_IO(0x00da0000))
 
 extern const UBYTE scancode_atari_from_amiga[128];
 extern UWORD amiga_screen_width;
@@ -55,6 +57,10 @@ void amiga_autoconfig(void);
 #if CONF_WITH_ALT_RAM
 void amiga_add_alt_ram(void);
 ULONG amiga_detect_ram(void *start, void *end, ULONG step);
+#endif
+#if CONF_WITH_PROCESS_ASPACES
+void amiga_process_memory_init(void);
+extern ULONG amiga_process_ram;     /* the bytes of the boards that are pages of the processes */
 #endif
 ULONG amiga_initial_vram_size(void);
 void amiga_screen_init(void);

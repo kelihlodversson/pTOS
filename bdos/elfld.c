@@ -1170,9 +1170,9 @@ void elf_set_load_into_caller(BOOL wanted)
 
 /* where elf_load_image() put the image if it went into the caller's heap */
 typedef struct {
-    UQUAD va;           /* the block (0: none) */
+    VADDR va;           /* the block (0: none) */
     ULONG pages;
-    UQUAD image_va;     /* where the image's first byte (link_base) is in it */
+    VADDR image_va;     /* where the image's first byte (link_base) is in it */
     BOOL pending;       /* the image is in the new process's own address space,
                          * made for it now (kproc_load_begin()) */
 } ELFPLACE;
@@ -1251,7 +1251,7 @@ LONG elf_pgmld(FH h, PD *p)
             ULONG imgpages = (info.mem_end - lo + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
 
             /* (the rounded image and the startup area must fit the heap, exactly) */
-            if ((UQUAD)imgpages * USER_PAGE_SIZE + USER_IMAGE_SLACK
+            if ((VADDR)imgpages * USER_PAGE_SIZE + USER_IMAGE_SLACK
                 > USER_HEAP_LIMIT - USER_HEAP_BASE)
                 return ENSMEM;
             place->pages = imgpages + USER_IMAGE_SLACK / USER_PAGE_SIZE;
@@ -1263,17 +1263,17 @@ LONG elf_pgmld(FH h, PD *p)
         }
         else
         {
-            if (info.link_base >= USER_IMAGE_BASE
-             && ((ULONG)info.mem_end + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE
-                * USER_PAGE_SIZE <= limit)
+            /* (limit is page-aligned, so the end rounded up to a page is
+             * within it exactly when the end is: no rounding that could wrap
+             * a high-linked image's end to 0 on a 32-bit VADDR) */
+            if (info.link_base >= USER_IMAGE_BASE && info.mem_end <= limit)
                 bias = 0;
             else
                 bias = (LONG)(USER_IMAGE_BASE - lo);
             /* (span first: it keeps the sums below from wrapping) */
             if (span > limit - USER_IMAGE_BASE
              || (ULONG)info.link_base + (ULONG)bias < USER_IMAGE_BASE
-             || ((ULONG)info.mem_end + (ULONG)bias + USER_PAGE_SIZE - 1)
-                / USER_PAGE_SIZE * USER_PAGE_SIZE > limit)
+             || (ULONG)info.mem_end + (ULONG)bias > limit)
             {
                 KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
                 return ENSMEM;

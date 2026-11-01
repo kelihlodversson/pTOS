@@ -440,6 +440,34 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             gemdos1(0x4c, 2);
         gemdos1(0x4c, 0);
     }
+    if (cmdline[0] == 1 && cmdline[1] == '?') {
+        /* without demand paging (CONF_WITH_DEMAND_PAGING off, #562): the
+         * default stack is 256 KiB and all there, Malloc(-1) reports only what
+         * can be backed and a block that size is given and usable, and a
+         * bigger stack limit gets its pages at once */
+        s64 all, p;
+        u64 k;
+        int bad_eager = 0;
+
+        if (gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x40000)
+            bad_eager |= 1;
+        all = gemdos1r(0x48, 0xffffffffULL);
+        if (all <= 0)
+            bad_eager |= 2;
+        p = gemdos1r(0x48, (u64)all);
+        if (p <= 0) {
+            bad_eager |= 4;             /* what Malloc(-1) said is not there */
+        } else {
+            for (k = 0; k < (u64)all; k += 4096)
+                ((volatile unsigned char *)(unsigned long)p)[k] = 1;
+            if (gemdos1r(0x49, (u64)p) != 0)
+                bad_eager |= 8;
+        }
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0x100000) != 0x40000)
+            bad_eager |= 16;
+        deep_stack(8);                  /* 512 KiB, more than the default */
+        gemdos1(0x4c, bad_eager);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'Q') {
         /* the limits of the launcher are this process's (what Psetlimit()
          * set before the launch) */

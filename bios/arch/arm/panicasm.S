@@ -96,4 +96,7 @@ C_SYM(kill_program):
 C_SYM(cold_reset):
 C_SYM(warm_reset):
         bl      C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        bl      C_SYM(machine_reset_prepare)    // the table with the identity mapping
+#endif
         b       C_SYM(main)

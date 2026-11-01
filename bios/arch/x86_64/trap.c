@@ -304,12 +304,16 @@ const UWORD *x86_64_ring3_palette(void)
 
 /*
  * XBIOS calls that return nothing (Initmous(), Setpalette(), Midiws(),
- * Protobt(), Ikbdws()) leave whatever was in RAX; a user process gets 0, so
- * that "the call was accepted" can be told from a refusal.
+ * Protobt(), Scrdmp(), Settime(), Bioskeys(), Ikbdws(), Offgibit(),
+ * Ongibit(), Vsync()) leave whatever was in RAX, possibly a kernel pointer; a
+ * user process gets 0, so that "the call was accepted" can be told from a
+ * refusal and nothing leaks.
  */
 static int xbios_returns_void(ULONG fn)
 {
-    return fn == 0x00 || fn == 0x06 || fn == 0x0C || fn == 0x12 || fn == 0x19;
+    return fn == 0x00 || fn == 0x06 || fn == 0x0C || fn == 0x12 || fn == 0x14
+        || fn == 0x16 || fn == 0x18 || fn == 0x19 || fn == 0x1D || fn == 0x1E
+        || fn == 0x25;
 }
 
 static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
@@ -439,7 +443,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
             native.lfirst = wire.lfirst;
             result = ((LONG (*)(struct bios_lrwabs_args *))bios_vecs[fn])(&native);
             frame->rax = (UQUAD)result;
-        } else if (fn == 5)
+        } else if (fn == 5) {
             /* BIOS function 5 is Setexc(). bios.c's setexc() was widened
              * to return a native `long` (not the fixed-32-bit LONG every
              * other BIOS call still uses) specifically so that its
@@ -456,7 +460,10 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
              * a genuine 64-bit pointer regardless of this cast (#351). */
             frame->rax = (UQUAD)((long (*)(UQUAD, UQUAD, UQUAD, UQUAD))bios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
-        else
+            /* a vector in the kernel is not told to a user process (#563) */
+            if (from_ring3)
+                frame->rax = (UQUAD)bios_user_result((WORD)fn, (long)frame->rax);
+        } else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))bios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
         break;
@@ -576,6 +583,8 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
             if (from_ring3 && xbios_returns_void(fn))
                 frame->rax = 0;
+            else if (from_ring3)
+                frame->rax = (UQUAD)xbios_user_result((WORD)fn, (long)frame->rax);
         }
         break;
     case X86_64_TRAP_GEM:

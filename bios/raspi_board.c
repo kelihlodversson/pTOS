@@ -25,6 +25,7 @@
 
 #include "portab.h"
 #include "raspi_io.h"
+#include "raspi_memmap.h"
 #include "raspi_int.h"
 
 raspi_board_t raspi_board;
@@ -33,8 +34,8 @@ static const raspi_board_t this_board =
 {
 #if defined(TARGET_RPI1)
     "BCM2835",
-    0x20000000UL,               /* peripherals */
-    0,                          /* the ARM1176 has no local registers */
+    RASPI_IO_BASE,              /* peripherals */
+    RASPI_LOCAL_BASE,           /* the ARM1176 has no local registers: 0 */
 #   ifdef GPU_L2_CACHE_ENABLED
     GPU_CACHED_BASE,
 #   else
@@ -54,8 +55,8 @@ static const raspi_board_t this_board =
 #   else
     "BCM2837",
 #   endif
-    0x3f000000UL,               /* peripherals */
-    0x40000000UL,               /* local registers */
+    RASPI_IO_BASE,              /* peripherals */
+    RASPI_LOCAL_BASE,           /* local registers */
     GPU_UNCACHED_BASE,
     RASPI_TIMER_SYSTIMER,
     ARM_IRQ_TIMER3,
@@ -63,8 +64,8 @@ static const raspi_board_t this_board =
     0x6AAAAABUL,
 #elif defined(TARGET_RPI4)
     "BCM2711",
-    0xfe000000UL,               /* peripherals */
-    0xff800000UL,               /* local registers */
+    RASPI_IO_BASE,              /* peripherals */
+    RASPI_LOCAL_BASE,           /* local registers */
     GPU_UNCACHED_BASE,
     /*
      * The BCM2711 system timer is not usable the way the older SoCs' is,

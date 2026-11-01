@@ -25,6 +25,10 @@ config CONF_WITH_X32_AES
 config CONF_WITH_AES
 	bool "Include the AES and the EmuDesk desktop"
 	depends on !ARCH_X86_64 || CONF_WITH_X32_AES
+	# (that CONF_WITH_PROCESS_ASPACES excludes the AES is said here, not
+	# there: x86-64's AES needs CONF_WITH_USER_ASPACE, which would make
+	# the two symbols depend on each other in a circle)
+	depends on !CONF_WITH_PROCESS_ASPACES
 	default n if TARGET_CART || ARCH_X86_64
 	default y
 	help

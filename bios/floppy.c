@@ -33,6 +33,9 @@
 #include "intmath.h"
 #include "amiga.h"
 #include "lisa.h"
+#if CONF_ATARI_HIGHER_HALF
+#include <aspace_types.h>
+#endif
 
 
 /*==== Introduction =======================================================*/
@@ -552,12 +555,46 @@ LONG flop_mediach(WORD dev)
 }
 
 
+#if CONF_ATARI_HIGHER_HALF
+/*
+ * With an address space for every process (#727) a buffer of a process has a
+ * virtual address that the DMA cannot use, and its pages need not be next to
+ * each other: each sector goes through a buffer of the kernel.
+ */
+static UBYTE flop_bounce[SECTOR_SIZE] __attribute__((aligned(16)));
+
+LONG floppy_rw(WORD rw, UBYTE *buf, WORD cnt, LONG recnr, WORD spt,
+               WORD sides, WORD dev);
+
+static LONG floppy_rw_bounced(WORD rw, UBYTE *buf, WORD cnt, LONG recnr, WORD spt,
+                              WORD sides, WORD dev)
+{
+    for ( ; cnt > 0; cnt--, recnr++, buf += SECTOR_SIZE) {
+        LONG err;
+
+        if ((rw & RW_RW) == RW_WRITE)
+            memcpy(flop_bounce, buf, SECTOR_SIZE);
+        err = floppy_rw(rw, flop_bounce, 1, recnr, spt, sides, dev);
+        if (err)
+            return err;
+        if ((rw & RW_RW) == RW_READ)
+            memcpy(buf, flop_bounce, SECTOR_SIZE);
+    }
+    return 0;
+}
+#endif
+
 LONG floppy_rw(WORD rw, UBYTE *buf, WORD cnt, LONG recnr, WORD spt,
                WORD sides, WORD dev)
 {
     WORD start_trkside, end_trkside;
     WORD start_relsec, end_relsec;
     WORD track, side, numsecs, err;
+
+#if CONF_ATARI_HIGHER_HALF
+    if ((ULONG)(uintptr_t)buf < USER_VA_LIMIT)
+        return floppy_rw_bounced(rw, buf, cnt, recnr, spt, sides, dev);
+#endif
 
     KDEBUG(("floppy_rw(): rw=%d, buf=%p, dev=%d, recnr=%ld, cnt=%d, spt=%d, sides=%d\n",
             rw,buf,dev,recnr,cnt,spt,sides));

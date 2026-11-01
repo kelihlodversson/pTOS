@@ -104,6 +104,9 @@ C_SYM(kill_program):
  */
 C_SYM(warm_reset):
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)    // the tree that maps the low alias of the start
+#endif
         jmp     C_SYM(main)
 
 /* void cold_reset(void)
@@ -120,7 +123,14 @@ C_SYM(cold_reset):
 #ifdef MACHINE_AMIGA
         clr.l   C_SYM(memvalid).w      // Invalidate memvalid
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)    // the tree that maps the low alias of the ROM
+#endif
+#if CONF_AMIGA_ROM_512K
+        move.l  0x00f80004,a0   // Get the entry adress from offset 4 in the ROM (it starts at 0x00f80000)
+#else
         move.l  0x00fc0004,a0   // Get the entry adress from offset 4 in the ROM
+#endif
         reset                   // The entry usually points just after reset
         jmp     (a0)
 #elif defined(MACHINE_FIREBEE)
@@ -131,10 +141,16 @@ C_SYM(cold_reset):
 #elif CONF_ATARI_HARDWARE
         clr.l   C_SYM(memvalid).w      // Invalidate memvalid
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)    // the tree that maps the low alias of the ROM
+#endif
         move.l  0x004,a0        // The 2 first longs are mapped to the ROM
         jmp     (a0)
 #else
         jsr     C_SYM(flush_data_cache)
+#if CONF_WITH_PROCESS_ASPACES
+        jsr     C_SYM(machine_reset_prepare)
+#endif
         // We don't know how to cold reset, so just warm reset this OS
         jmp     C_SYM(main)
 #endif

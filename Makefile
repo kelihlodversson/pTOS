@@ -626,6 +626,7 @@ MEMBOT_TOS404_NAME = TOS 4.04
 
 define report-memory
 MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map); \
+$(if $(CONF_WITH_HIGHER_HALF),MEMBOT=$$(($$MEMBOT - 0x80000000));) \
 echo "# RAM used: $$(($$MEMBOT)) bytes$(if $(MEMBOT_REFERENCE), ($$(($$MEMBOT - $(MEMBOT_$(MEMBOT_REFERENCE)))) bytes more than $(MEMBOT_$(MEMBOT_REFERENCE)_NAME)))"
 endef
 
@@ -1119,7 +1120,7 @@ AMIGA_ROM = ptos-amiga.rom
 
 ifdef TARGET_AMIGA_ROM
 $(IMAGE): $(EMUTOS_IMG) mkrom
-	./mkrom amiga $< $@
+	./mkrom $(if $(CONF_AMIGA_ROM_512K),amiga-512,amiga) $< $@
 endif
 
 ifdef TARGET_AMIGA_KICKDISK
@@ -1127,7 +1128,7 @@ $(IMAGE): $(AMIGA_ROM) mkrom
 	./mkrom amiga-kickdisk $< $@
 
 $(AMIGA_ROM): $(EMUTOS_IMG) mkrom
-	./mkrom amiga $< $@
+	./mkrom $(if $(CONF_AMIGA_ROM_512K),amiga-512,amiga) $< $@
 endif
 
 ifdef TARGET_AMIGA_FLOPPY
@@ -1818,7 +1819,7 @@ else
 # stamp) and its own dependencies; the file's time only changes when it builds.
 $(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
 	@echo '  EMUCON'
-	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
 endif
 endif
 
@@ -1868,6 +1869,17 @@ endif
 TEST_WITH_PTOS_RELOC := $(CONF_WITH_ELF_LOADER)
 ifndef TEST_WITH_PTOS_RELOC
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
+endif
+
+# isolation shows from user mode what the per-process address spaces keep out
+# (ISOPROBE.TOS, built below, makes the forbidden accesses); there is nothing
+# to show where the processes share one address space, and x32 has its own
+# ring-3 probe at boot.
+ifndef CONF_WITH_USER_ASPACE
+TEST_SUITES := $(filter-out isolation,$(TEST_SUITES))
+endif
+ifdef ARCH_X86_64
+TEST_SUITES := $(filter-out isolation,$(TEST_SUITES))
 endif
 
 # Shutdown() is an option (the small ROMs have no room for it)
@@ -1942,7 +1954,16 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_FAT_FILE_LIFETIMES),-DTEST_WITH_FAT_FILE_LIFETIMES) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
+              $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
+              $(if $(CONF_M68K_ROM_WINDOW),-DTEST_NO_RMW_FAULTS -DTEST_NO_CROSSING) \
+              $(if $(CONF_WITH_MMU_PROBE),-DTEST_WITH_MMU_PROBE) \
+              $(if $(MACHINE_AMIGA),-DTEST_LOG_FILE) \
+              $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
+              $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
+              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K)),-DTEST_WITH_ELF_SHARED)) \
+              $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
@@ -2049,6 +2070,19 @@ $(eval $(call shutdown-prog,coldboot,2,cold booting))
 $(eval $(call shutdown-prog,halt,3,halting))
 TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
 
+# ISOPROBE.TOS: the payload of the isolation suite (tests/isolation/isoprobe.c),
+# linked like runtests.tos.
+ifneq ($(filter isolation,$(TEST_SUITES)),)
+obj/isoprobe.o: tests/isolation/isoprobe.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ISOPROBE.TOS: $(TEST_STARTUP) obj/isoprobe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/isoprobe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_ISO_FILES = ISOPROBE.TOS
+else
+TEST_ISO_FILES =
+endif
+
 # pBench, the graphics benchmark in tools/pBench (see doc/pbench.txt): a GEM
 # program built exactly like the test harness above (libcmini, userland
 # flags), but not part of it and not run by it.
@@ -2145,7 +2179,11 @@ ifdef TEST_WITH_PTOS_RELOC
 # doc/elfload.txt's own bare m68k recipe does, avoids both: verified
 # directly with this toolchain (a real libcmini-linked binary linked
 # this way, packed by ptos-elf-pack, and its 90 DIR32 relocations
-# decoded correctly).
+# decoded correctly).  The base is 0x10000, above the first 32 KiB: an
+# address space of its own on the m68k keeps the kernel's low memory there,
+# supervisor-only (doc/mmu-address-space.txt), and a program cannot be linked
+# into it, and the data and the bss are on pages of their own (no two segments of a
+# process share a page).
 obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
@@ -2186,7 +2224,7 @@ relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x2000 -e _start \
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
 	  $(TEST_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 endif
@@ -2207,7 +2245,7 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = $(LDSO_RUNTIME_DIR) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
+TEST_HD_FILES = $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2223,12 +2261,29 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(LDSO_RUNTIME_FILES) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd
 test-hd: test-hd.img
+
+# The same disk for an image whose shell is a program (CONF_EXTERNAL_CLI) and
+# that has no console to type into (Hatari, with a Falcon whose image has no AES;
+# tools/run-hatari-tests.py --mode f030a): the test harness is the shell, as
+# SHELL.TOS in the root directory (and still RUNTESTS.TOS, which some tests
+# start themselves), and EmuCON is left off, so that the kernel starts the
+# tests by itself.
+TEST_SHELL_STAGE = obj/test-shell
+test-hd-shell.img: test-hd.img runtests.tos
+	@echo '  MKHD   $@'
+	@rm -rf $(TEST_SHELL_STAGE)
+	@mkdir -p $(TEST_SHELL_STAGE)
+	@cp runtests.tos $(TEST_SHELL_STAGE)/SHELL.TOS
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_SHELL_STAGE)/SHELL.TOS $(filter-out $(EMUCON_TOS),$(TEST_HD_FILES)) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
+
+.PHONY: test-hd-shell
+test-hd-shell: test-hd-shell.img
 
 # The same files as a plain host directory, for QEMU's virtual FAT driver
 # (-drive file=fat:rw:test-dir,format=raw,...): no disk image to build and
@@ -2237,7 +2292,7 @@ test-hd: test-hd.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(LDSO_RUNTIME_FILES) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)
@@ -2272,7 +2327,7 @@ endif
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
-           halt.tos pieprobe.tos LOADFAIL.TOS \
+           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
            test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img

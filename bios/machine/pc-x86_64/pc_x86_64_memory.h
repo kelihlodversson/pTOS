@@ -76,4 +76,11 @@ void x86_64_memtest_run(void);
  * if there is none) -- each process address space maps supervisor-only. */
 void x86_64_low_kernel_range(UQUAD *start, UQUAD *end);
 
+/* The physical memory aspace_fault_in() and aspace_map_private() never dip
+ * into: the kernel's own needs come first (the tables a page may need
+ * counted).  ASPACE_FAULT_COST is the most one page costs: it, 3 tables,
+ * bookkeeping. */
+#define ASPACE_FAULT_RESERVE 0x00400000ULL
+#define ASPACE_FAULT_COST    0x00008000ULL
+
 #endif /* PC_X86_64_MEMORY_H */

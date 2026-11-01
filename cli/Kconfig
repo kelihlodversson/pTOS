@@ -48,7 +48,7 @@ config CONF_EXTERNAL_CLI
 
 config CONF_WITH_DYNAMIC_CLI
 	bool
-	default y if CONF_WITH_ELF_SHARED && CONF_EXTERNAL_CLI
+	default y if CONF_WITH_ELF_SHARED && CONF_EXTERNAL_CLI && ARCH_X86_64
 	help
 	  Use the standard ELF dynamic CRT and libptos.so for the external
 	  x32 console. Embedded consoles retain their static entry contract.
