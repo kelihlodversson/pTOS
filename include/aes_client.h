@@ -61,17 +61,18 @@ typedef struct {
     ULONG features;
 } AES_APP_INFO;
 
+/* Distinct from GEMlib's AES_MESSAGE capability-selector macro. */
 typedef struct {
     WORD type;
     WORD sender;                 /* overwritten by the kernel on send */
     WORD reserved;               /* zero: no pointer or extended payload */
     WORD data[5];                /* opaque values, never kernel pointers */
-} AES_MESSAGE;
+} AES_CLIENT_MESSAGE;
 
 typedef struct {
     UWORD events;
     UWORD reserved;
-    AES_MESSAGE message;
+    AES_CLIENT_MESSAGE message;
 } AES_EVENT;
 
 typedef struct {
@@ -90,7 +91,7 @@ typedef struct {
     UWORD events, reserved;
     WORD mouse_x, mouse_y;
     UWORD buttons, modifiers, key, clicks;
-    AES_MESSAGE message;
+    AES_CLIENT_MESSAGE message;
 } AES_INPUT_EVENT;
 
 typedef struct {
@@ -103,8 +104,8 @@ typedef struct {
 LONG aes_appl_init(const char *name, AES_APP_INFO *info);
 LONG aes_appl_exit(void);
 LONG aes_appl_find(const char *name);
-LONG aes_appl_write(WORD recipient, const AES_MESSAGE *message);
-LONG aes_appl_read(AES_MESSAGE *message);
+LONG aes_appl_write(WORD recipient, const AES_CLIENT_MESSAGE *message);
+LONG aes_appl_read(AES_CLIENT_MESSAGE *message);
 LONG aes_evnt_poll(UWORD mask, AES_EVENT *event);
 LONG aes_wind_update(WORD code);
 /* Cooperative waits/yields are available to loaded AES accessories and
@@ -128,10 +129,10 @@ LONG aes_wind_find(WORD x, WORD y);
 
 #define AES_ASSERT(name, expr) typedef char aes_assert_##name[(expr) ? 1 : -1]
 AES_ASSERT(info_size, sizeof(AES_APP_INFO) == 12);
-AES_ASSERT(message_size, sizeof(AES_MESSAGE) == 16);
+AES_ASSERT(message_size, sizeof(AES_CLIENT_MESSAGE) == 16);
 AES_ASSERT(event_size, sizeof(AES_EVENT) == 20);
 AES_ASSERT(info_features, offsetof(AES_APP_INFO, features) == 8);
-AES_ASSERT(message_data, offsetof(AES_MESSAGE, data) == 6);
+AES_ASSERT(message_data, offsetof(AES_CLIENT_MESSAGE, data) == 6);
 AES_ASSERT(event_message, offsetof(AES_EVENT, message) == 4);
 AES_ASSERT(rect_size_event, sizeof(AES_EVENT_RECT) == 10);
 AES_ASSERT(request_size, sizeof(AES_EVENT_REQUEST) == 36);
@@ -144,7 +145,7 @@ AES_ASSERT(window_top, offsetof(AES_WINDOW_INFO, top) == 48);
 AES_ASSERT(window_align, __alignof__(AES_WINDOW_INFO) == 2);
 AES_ASSERT(rect_size, sizeof(GRECT) == 8);
 AES_ASSERT(info_align, __alignof__(AES_APP_INFO) == 4);
-AES_ASSERT(message_align, __alignof__(AES_MESSAGE) == 2);
+AES_ASSERT(message_align, __alignof__(AES_CLIENT_MESSAGE) == 2);
 AES_ASSERT(event_align, __alignof__(AES_EVENT) == 2);
 AES_ASSERT(rect_align, __alignof__(GRECT) == 2);
 #undef AES_ASSERT

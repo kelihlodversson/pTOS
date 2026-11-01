@@ -363,6 +363,20 @@ static int child_message_checks(void)
     child_on_wait = (11L << 16) | 0x1234;
     CHECK(evnt_multi(MU_MESAG,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
                     NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG && !__builtin_memcmp(message,expected,16));
+    /* A publication allocation/copy failure after the wait must not consume
+     * and then discard a simultaneous key, button or timer result. */
+    child_on_wait = (11L << 16) | 0x1234;
+    child_publish_error = ENSMEM;
+    input_ready = CUIS_READY_KEY | CUIS_READY_BUTTON;
+    input_key = 0x001e0061; input_count = 2;
+    {
+        short key = 0, clicks = 0, sentinel[8] = { 99 };
+        CHECK(evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|MU_TIMER,2,1,1,0,0,0,0,0,0,0,0,0,0,
+                         sentinel,100,NULL,NULL,NULL,NULL,&key,&clicks) == (MU_KEYBD|MU_BUTTON|MU_TIMER));
+        CHECK(key == 0x1e61 && clicks == 2 && sentinel[0] == 99 && child_status);
+    }
+    child_publish_error = 0; input_ready = 0;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && !__builtin_memcmp(message,expected,16));
     return 0;
 }
 static int event_checks(void)

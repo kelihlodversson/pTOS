@@ -171,6 +171,8 @@ BOOL kproc_borrow(PD *launcher, void *block);
 void kproc_set_creator(PD *pd, PD *creator);
 void kproc_hand_over(PD *caller, PD *child);
 LONG kproc_check_launch(PD *pd, PD *caller);
+/* CUIS-only: identify a live unlaunched image belonging to this caller. */
+LONG kproc_child_image_pid(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
 ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);

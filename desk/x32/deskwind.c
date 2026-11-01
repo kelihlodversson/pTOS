@@ -136,7 +136,7 @@ LONG desk_window(UWORD opcode, const UWORD *input, UWORD *out)
 void desk_window_test(void)
 {
     static BOOL done;
-    AES_MESSAGE message = { 652, 0, 0, { 0 } };
+    AES_CLIENT_MESSAGE message = { 652, 0, 0, { 0 } };
     AES_EVENT event;
     UWORD out[7];
     WORD mode;

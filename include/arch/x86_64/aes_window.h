@@ -13,7 +13,7 @@ void x86_64_aes_window_finished(PD *pd, struct aespd *executor);
 void x86_64_aes_window_unregister(PD *pd);
 void x86_64_aes_window_drain(void);
 BOOL x86_64_aes_window_redraw(PD *pd, const WORD *message);
-BOOL x86_64_aes_window_pending(PD *pd, AES_MESSAGE *message);
+BOOL x86_64_aes_window_pending(PD *pd, AES_CLIENT_MESSAGE *message);
 #if CONF_WITH_X32_ACCESSORY_TEST
 void x86_64_aes_window_test(void);
 void x86_64_aes_window_test_return(PD *pd);

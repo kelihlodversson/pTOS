@@ -31,6 +31,12 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                     "--config", "configs/pc-x86_64_defconfig", "--header",
                     str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")],
                    check=True)
+    for order in (0, 1):
+        command = shlex.split(os.environ.get("HOSTCC", "cc"))
+        command += ["-std=gnu90", "-Wall", "-Wextra", "-Werror", "-I" + temp, "-Iinclude",
+                    "-DLEGACY_HEADER_FIRST=" + str(order), "tests/cuis/header_compat.c", "-o", str(work / "headers")]
+        subprocess.run(command, check=True)
+        subprocess.run([str(work / "headers")], check=True)
     subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) + ["-DMFORM_RSC", "tools/erd.c", "-o", str(work / "mrd")], check=True)
     subprocess.run([str(work / "mrd"), "-pmform", "aes/mform", str(work / "mforms")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))

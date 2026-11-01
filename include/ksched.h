@@ -29,8 +29,6 @@ LONG ksched_yield(void);
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
 BOOL ksched_parent_pid(PD *pd, WORD *pid);
-/* CUIS-only non-consuming direct-child snapshot, with IRQs masked. */
-LONG ksched_child_status(WORD pid);
 void ksched_exiting(PD *pd, UWORD status);
 void ksched_fault(PD *pd, WORD signal);
 LONG proc_prepare_scheduled(PD *pd);

@@ -214,24 +214,6 @@ LONG ksched_spawn(PD *pd)
 }
 
 typedef struct { PD *parent; WORD pid; } CHILD_WAIT;
-#if CONF_WITH_CUIS
-/* Normal GEM child completion retains the full Pterm WORD, unlike the low
- * exit byte in MiNT wait status. Faults retain the native signal word. */
-LONG ksched_child_status(WORD pid)
-{
-    UWORD i;
-    if (pid <= 0) return EINVAL;
-    if (!ksched_spawn_allowed()) return EFILNF;
-    for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state == TASK_UNUSED || task->parent != run || task->pid != pid) continue;
-        if (task->state != TASK_ZOMBIE) return 0;
-        return (LONG)(((ULONG)(UWORD)pid << 16) |
-            (task->signal ? (UWORD)task->signal << 8 : (UWORD)task->result));
-    }
-    return EFILNF;
-}
-#endif
 static BOOL child_ready(void *argument)
 {
     CHILD_WAIT *wait = argument;

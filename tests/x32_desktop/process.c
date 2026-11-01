@@ -66,7 +66,7 @@ static void accessory(void)
 {
     AES_APP_INFO app;
     AES_EVENT event;
-    AES_MESSAGE reply = { 651, 0, 0, { 0 } };
+    AES_CLIENT_MESSAGE reply = { 651, 0, 0, { 0 } };
     GRECT rectangle = { 850, 500, 260, 120 };
     LONG h, rc;
     BOOL opened = FALSE;
@@ -81,7 +81,7 @@ static void accessory(void)
     for (;;) {
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
         if (event.message.type == 652) {
-            AES_MESSAGE ack = { 653, 0, 0, { 0 } };
+            AES_CLIENT_MESSAGE ack = { 653, 0, 0, { 0 } };
             AES_EVENT_REQUEST wait = { AES_EVENT_TIMER, 0, 0, 0, 0, 0, { 0 }, { 0 }, 150 };
             AES_INPUT_EVENT input;
             WORD mode = event.message.data[0];
@@ -248,7 +248,7 @@ void desktop_test_start(PD *basepage, LONG kind)
     AES_APP_INFO app;
     AES_WINDOW_INFO info;
     AES_EVENT event;
-    AES_MESSAGE message = { 650, 0, 0, { 0 } };
+    AES_CLIENT_MESSAGE message = { 650, 0, 0, { 0 } };
     AES_SHELL_REQUEST shell = { 0 };
     AES_OBJECT_REQUEST object = { 0 };
     AES_OBJECT_RESULT result;

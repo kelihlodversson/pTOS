@@ -102,7 +102,8 @@ static BOOL gem_application(const char *path)
 WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
 {
     char path[AES_SHELL_PATH], staged_tail[128] = { 0 };
-    LONG pid, session, watch = 0;
+    LONG pid, session, watch = 0, image;
+    ULONG environment;
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
     if (mode == SWM_LAUNCH ? execution != CL_NORMAL : graphical != GEMAPP || execution != SHW_PARALLEL) return 0;
     session = aes_application_session(global);
@@ -116,14 +117,26 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
         watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
         if (watch <= 0) return 0;
     }
-    /* No display lock spans launch. env=0 inherits environment/standard files. */
-    pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)staged_tail,0);
+    /* Load and bind before the child can run. A native wait, including one in
+     * a reentrant callback, can never remove an unobserved completion. */
     if (watch) {
-        if (pid <= 0 || pid > 32767 ||
-            cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_BIND,watch,pid,0,0) != E_OK)
+        image = (LONG)aes_gemdos_call4(0x4b,PE_LOAD,(uintptr_t)path,(uintptr_t)staged_tail,0);
+        if (image <= 0) {
             (void)cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,watch,0,0,0);
-        /* After a successful spawn, preserve its ID even if the caller's AES
-         * session was concurrently torn down before the no-allocation bind. */
+            return 0;
+        }
+        environment = (ULONG)(uintptr_t)((const PD *)(uintptr_t)(ULONG)image)->p_env;
+        pid = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_BIND,watch,(ULONG)image,0,0);
+        if (pid == E_OK) pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_GO_FREE,0,(ULONG)image,0);
+        if (pid <= 0 || pid > 32767) {
+            (void)cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,watch,0,0,0);
+            (void)aes_gemdos_call(0x49,(ULONG)image,0,0);
+            (void)aes_gemdos_call(0x49,environment,0,0);
+            return 0;
+        }
+    } else {
+        /* Parallel mode needs no observer and inherits environment/files. */
+        pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)staged_tail,0);
     }
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
 }

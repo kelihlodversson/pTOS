@@ -45,7 +45,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     LONG session, ready, result = 0, state[4], input[5];
     ULONG mask = 0, wait_mask, elapsed, ticks;
     LONG now;
-    BOOL frame_work = aes_frames_registered();
+    BOOL frame_work = aes_frames_registered(), child_failed = FALSE;
     LONG (*messages)(LONG,short *) = ((events & MU_TIMER) && !interval) ?
         aes_window_messages_poll : aes_window_messages;
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
@@ -100,7 +100,6 @@ static short event_once(short events, short clicks, short button_mask, short but
     if (aes_controls_repeating()) wait_mask |= CUIS_READY_SERVICE;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
-    if ((ready & CUIS_READY_CHILD) && aes_child_messages(session) < 0) return 0;
     if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) && messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
@@ -108,6 +107,12 @@ static short event_once(short events, short clicks, short button_mask, short but
         state[0] = input[2]; state[1] = input[3];
         state[2] = (ULONG)input[4] & 0xffff; state[3] = (ULONG)input[4] >> 16;
     } else if (snapshot(session, state) != E_OK) return 0;
+    /* Input was already consumed by the native wait. A failed child publish
+     * must leave its completion pending without dropping simultaneous input. */
+    if ((ready & CUIS_READY_CHILD) && aes_child_messages(session) < 0) {
+        ready &= ~CUIS_READY_CHILD;
+        child_failed = TRUE;
+    }
     if (frame_work && !(ready & CUIS_READY_NOTICE) && messages(session,global) < 0) return 0;
     if ((ready & CUIS_READY_NOTICE) && aes_frames_wait_display()) {
         ready &= ~CUIS_READY_NOTICE;
@@ -138,7 +143,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     if (ready & CUIS_READY_BUTTON) result |= MU_BUTTON;
     if (ready & CUIS_READY_RECT1) result |= MU_M1;
     if (ready & CUIS_READY_RECT2) result |= MU_M2;
-    if (!result) return -1;
+    if (!result) return child_failed ? 0 : -1;
     output_state(state, mx, my, buttons, modifiers);
     if (key) *key = ready & CUIS_READY_KEY ? (short)(((ULONG)input[0] >> 8 & 0xff00) | (input[0] & 255)) : 0;
     if (click_count) *click_count = ready & CUIS_READY_BUTTON ? (short)input[1] : 0;

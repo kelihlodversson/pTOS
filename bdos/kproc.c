@@ -1129,6 +1129,20 @@ void kproc_hand_over(PD *caller, PD *child)
                           ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER);
 }
 
+#if CONF_WITH_CUIS
+/* Identify from trusted creator/allocation metadata, without reading the
+ * caller-writable basepage or allowing a child to run before observation. */
+LONG kproc_child_image_pid(PD *pd, PD *caller)
+{
+    KPROC *kproc = kproc_find(pd);
+    if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace ||
+        procmem_gen(kproc->user_start) != kproc->tpa_gen ||
+        procmem_gen(kproc->env_start) != kproc->env_gen) return EIMBA;
+    return kproc->pid;
+}
+#endif
+
+
 /*
  * Pexec(PE_GO, PE_GOTHENFREE) from ring 3.  The basepage the caller passes is
  * only a request: it must be one the kernel made for this caller and has not
@@ -1137,6 +1151,7 @@ void kproc_hand_over(PD *caller, PD *child)
  * basepage that is not (or no longer) the caller's, EPLFMT for fields out of
  * bounds.  See doc/x86_64-address-space.txt, "Basepages in ring 3".
  */
+
 LONG kproc_check_launch(PD *pd, PD *caller)
 {
     KPROC *kproc = kproc_find(pd);

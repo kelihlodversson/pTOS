@@ -100,6 +100,8 @@ typedef struct cuis_client {
     MFORM pointer_style;
     CUIS_INPUT_FILTER input_filter;
     CUIS_INPUT_WAIT *input_wait; /* Resident syscall stack, only while blocked. */
+    CUIS_INPUT_WAIT button_resume;
+    BOOL button_resume_active;
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
     UWORD surface_height, surface_events;
@@ -410,10 +412,11 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
     CUIS_POINTER *event;
     LONG x, y;
     ULONG buttons, modifiers;
+    CUIS_INPUT_WAIT *wait = client->input_wait && (client->input_wait->events & CUIS_READY_BUTTON) ?
+        client->input_wait : client->button_resume_active ? &client->button_resume : NULL;
     if (changed) { client->recent_count = 1; client->recent_buttons = pointer_buttons; }
-    expire_button_wait(client->input_wait);
-    if (changed && (!client->input_wait || !(client->input_wait->events & CUIS_READY_BUTTON) ||
-                    (client->input_wait->ready & CUIS_READY_BUTTON))) {
+    expire_button_wait(wait);
+    if (changed && (!wait || (wait->ready & CUIS_READY_BUTTON))) {
         if (client->edge_count == CUIS_POINTER_CAPACITY) {
             client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
             client->edge_count--;
@@ -1116,6 +1119,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
                 memcpy(client->saved_edges,client->button_edges,sizeof(client->button_edges));
                 client->saved_head = client->edge_head; client->saved_count = client->edge_count;
                 client->saved_recent_count = client->recent_count; client->saved_recent_buttons = client->recent_buttons;
+                client->button_resume_active = FALSE;
                 client->edge_head = client->edge_count = client->recent_count = 0;
                 client->recent_buttons = 0; client->isolated_mouse = TRUE;
             }
@@ -1228,6 +1232,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->stream_head = client->stream_bytes = 0;
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
+        client->button_resume_active = FALSE;
         memset(client->children,0,sizeof(client->children));
         client->child_count = 0;
         client->isolated_mouse = FALSE;
@@ -1902,8 +1907,10 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
 static void sample_input_waits(void)
 {
     CUIS_CLIENT *client;
-    for (client = clients; client; client = client->next)
-        if (client->input_wait) sample_input(client, client->input_wait, FALSE);
+    for (client = clients; client; client = client->next) {
+        if (client->button_resume_active) sample_input(client,&client->button_resume,FALSE);
+        if (client->input_wait) sample_input(client,client->input_wait,FALSE);
+    }
 }
 
 static BOOL notices_ready(CUIS_CLIENT *client)
@@ -1977,8 +1984,15 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     flags = cuis_input_lock();
     memset(&wait.input, 0, sizeof(wait.input));
     wait.input.events = (ULONG)events;
+    if ((events & CUIS_READY_BUTTON) && client->button_resume_active) {
+        wait.input = client->button_resume;
+        wait.input.events = (ULONG)events;
+        client->button_resume_active = FALSE;
+        sample_input(client,&wait.input,FALSE);
+    } else if (events & CUIS_READY_INPUT) {
+        sample_input(client,&wait.input,TRUE);
+    }
     if (events & CUIS_READY_INPUT) {
-        sample_input(client, &wait.input, TRUE);
         client->input_wait = &wait.input;
     }
     wait.client = client; wait.events = (ULONG)events; wait.minimum = (ULONG)minimum;
@@ -1997,6 +2011,12 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         if (ready) {
             if (events & CUIS_READY_INPUT) {
                 if (!(ready & CUIS_READY_BUTTON)) {
+                    if ((ready & CUIS_READY_CHILD) && wait.input.tracking) {
+                        client->button_resume = wait.input;
+                        client->button_resume.events = CUIS_READY_BUTTON;
+                        client->button_resume.ready = 0;
+                        client->button_resume_active = TRUE;
+                    }
                     wait.input.tracking = FALSE;
                     sample_input(client, &wait.input, FALSE);
                 }
@@ -2058,6 +2078,9 @@ LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c,
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
     if (function == CUIS_INPUT_RECT) client->input_filter.rect[a & 1] = rect;
     else if (function == CUIS_INPUT_BUTTON) {
+        if (client->input_filter.mask != (ULONG)a || client->input_filter.state != (ULONG)b ||
+            client->input_filter.clicks != (ULONG)c || client->input_filter.invert != (BOOL)d)
+            client->button_resume_active = FALSE;
         client->input_filter.mask = (ULONG)a; client->input_filter.state = (ULONG)b;
         client->input_filter.clicks = (ULONG)c; client->input_filter.invert = (BOOL)d;
     } else if (function == CUIS_INPUT_INTERVAL) {
@@ -2565,7 +2588,7 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
     client = *find_owner(run);
     if (!client || client->handle != session) { result = EACCDN; goto child_done; }
     if (function == CUIS_CHILD_WATCH) {
-        if (a > CUIS_CHILD_CANCEL || b > 0x7fffffffULL || c > 32767) { result = EINVAL; goto child_done; }
+        if (a > CUIS_CHILD_CANCEL || b > 0x7fffffffULL || c > 0xffffffffULL) { result = EINVAL; goto child_done; }
         if (a == CUIS_CHILD_RESERVE) {
             if (b || c) { result = EINVAL; goto child_done; }
             for (i = 0; i < CUIS_CHILDREN_PER_SESSION && client->children[i].token; i++) ;
@@ -2581,12 +2604,11 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
             child_remove(client,i); result = E_OK; goto child_done;
         }
         if (!c || client->children[i].pid) { result = EINVAL; goto child_done; }
-        for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
-            if (client->children[j].pid == (WORD)c) { result = EACCDN; goto child_done; }
-        result = ksched_child_status((WORD)c);
+        result = kproc_child_image_pid((PD *)(uintptr_t)(ULONG)c,run);
         if (result < 0) goto child_done;
-        client->children[i].pid = (WORD)c;
-        if (result) child_complete(client,i,result);
+        for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
+            if (client->children[j].pid == result) { result = EACCDN; goto child_done; }
+        client->children[i].pid = (WORD)result;
         result = E_OK; goto child_done;
     }
     if (function == CUIS_CHILD_RESULT) {

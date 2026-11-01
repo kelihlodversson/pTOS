@@ -151,7 +151,7 @@ static int boundary_resizes(void)
 {
     GRECT small = { 0, 60, 340, 240 }, large;
     AES_WINDOW_INFO state;
-    AES_MESSAGE message;
+    AES_CLIENT_MESSAGE message;
     LONG handle;
     WORD axis, size, redraws;
 
@@ -206,7 +206,7 @@ static int boundary_resizes(void)
 static int redraw_bounds(WORD id)
 {
     AES_WINDOW_INFO desktop, state;
-    AES_MESSAGE message = { 646, 0, 0, { 0 } }, received;
+    AES_CLIENT_MESSAGE message = { 646, 0, 0, { 0 } }, received;
     GRECT offscreen, rectangle, dirty, expected, covered;
     LONG handle;
     WORD axis, full, i;
@@ -407,7 +407,7 @@ int accessory_window_pool(WORD command, WORD *handle)
 
 static int pool_command(WORD peer, WORD command, WORD *handle)
 {
-    AES_MESSAGE message = { 0 };
+    AES_CLIENT_MESSAGE message = { 0 };
     AES_EVENT event;
 
     message.type = command;
@@ -597,7 +597,7 @@ static int closed_geometry(WORD visible_handle, const GRECT *rectangle)
 
 static int deferred_arrows(WORD handle, WORD id)
 {
-    AES_MESSAGE message = { 632, 0, 0, { 0 } };
+    AES_CLIENT_MESSAGE message = { 632, 0, 0, { 0 } };
     AES_EVENT event;
     AES_INPUT_EVENT input;
     AES_EVENT_REQUEST wait = { AES_EVENT_MESSAGE | AES_EVENT_TIMER, 0, 0, 0, 0, 0,
@@ -613,7 +613,7 @@ static int deferred_arrows(WORD handle, WORD id)
         CHECK(aes_appl_write(id, &message) == E_OK);
     }
     CHECK(aes_appl_yield() == E_OK); /* native action 0 while runnable */
-    CHECK(aes_appl_read((AES_MESSAGE *)&immutable_info) == EIMBA);
+    CHECK(aes_appl_read((AES_CLIENT_MESSAGE *)&immutable_info) == EIMBA);
     for (i = 0; i < AES_MESSAGE_QUEUE; i++) {
         CHECK(aes_appl_read(&message) == E_OK);
         CHECK(message.type == 632 && message.sender == id && message.data[0] == i);
@@ -717,7 +717,7 @@ static int borrowed_cleanup(const AES_APP_INFO *info, WORD vdi_handle, const GRE
     AES_APP_INFO renewed;
     AES_WINDOW_INFO state;
     AES_EVENT event;
-    AES_MESSAGE message = { 636, 0, 0, { 0 } };
+    AES_CLIENT_MESSAGE message = { 636, 0, 0, { 0 } };
     VDICONTROL control = { 0 };
     VDIPB pb = { &control, NULL, NULL, NULL, NULL };
     VDI_BUTTON_CALLBACK *old_button;
@@ -794,7 +794,7 @@ int accessory_window_reopen(WORD role, WORD vdi_handle)
 int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle)
 {
     static const char *names[3] = { "ACCONE", "ACCFAULT", "ACCWAIT" };
-    AES_MESSAGE message = { 626, 0, 0, { 0 } }, received;
+    AES_CLIENT_MESSAGE message = { 626, 0, 0, { 0 } }, received;
     AES_EVENT event;
     AES_EVENT_REQUEST wait = { AES_EVENT_MESSAGE | AES_EVENT_TIMER, 0, 0, 0, 0, 0,
                                { 0 }, { 0 }, 3000 };
