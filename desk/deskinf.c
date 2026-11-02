@@ -334,11 +334,13 @@ WORD dr_code(PARMBLK *pparms)
 {
     GRECT oc;
     WORD  state;
-#if CONF_WITH_LIBAES && CONF_WITH_X32_DESKTOP_TEST
-    if (!strcmp(((FNODE *)(uintptr_t)pparms->pb_parm)->f_name,"APPTEST.PRG")) {
+#if CONF_WITH_LIBAES_DESK && CONF_WITH_X32_DESKTOP_TEST
+    if (!strcmp(((FNODE *)(uintptr_t)pparms->pb_parm)->f_name,"APPTEST.PRG") ||
+        !strcmp(((FNODE *)(uintptr_t)pparms->pb_parm)->f_name,"APPTEST.GTP")) {
         char message[80];
         extern void desk_test_record(const char *text);
-        sprintf(message,"x32 desktop program TARGET %d %d\r\n",
+        sprintf(message,"x32 desktop %s TARGET %d %d\r\n",
+                !strcmp(((FNODE *)(uintptr_t)pparms->pb_parm)->f_name,"APPTEST.GTP") ? "GTP" : "program",
                 pparms->pb_x+16,pparms->pb_y+pparms->pb_h/2);
         desk_test_record(message);
     }

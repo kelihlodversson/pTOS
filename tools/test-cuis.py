@@ -25,6 +25,17 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "n"
 
+config = kconfiglib.Kconfig(warn_to_stderr=False)
+config.load_config("configs/pc-x86_64-desktop-tests_defconfig")
+config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+config.syms["CONF_WITH_LIBAES"].set_value(2)
+assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "y"
+config.syms["CONF_EXTERNAL_DESK"].set_value(0)
+assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "n"
+config.syms["CONF_EXTERNAL_DESK"].set_value(2)
+config.syms["CONF_WITH_LIBAES"].set_value(0)
+assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "n"
+
 with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     work = Path(temp)
     subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
@@ -89,6 +100,23 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "tests/cuis/keymap.c", "-o", str(rollback / "keymap")]
     subprocess.run(command, check=True)
     subprocess.run([str(rollback / "keymap")], check=True)
+    # Generate the desktop headers privately as well: these tests run before
+    # a kernel build, and must not pick up stale generated resource headers.
+    for kind, source, prefix in (("DESK_RSC", "desk/desktop", "desk_rsc"),
+                                 ("ICON_RSC", "desk/icon", "icons")):
+        generator = work / (prefix + "-generator")
+        subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) +
+                       ["-D" + kind, "tools/erd.c", "-o", str(generator)], check=True)
+        subprocess.run([str(generator), "-pdesk" if kind == "DESK_RSC" else "-picon",
+                        source, str(work / prefix)], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-iquote", str(rollback), "-iquote", temp, "-iquote", "include",
+                "-iquote", "desk", "-iquote", "aes", "-iquote", "aes/shared",
+                "-iquote", "include/arch/x86_64", "tests/x32_desktop/refresh.c", "desk/deskrefresh.c",
+                "-o", str(work / "desktop-refresh")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "desktop-refresh")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-fno-builtin", "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared",

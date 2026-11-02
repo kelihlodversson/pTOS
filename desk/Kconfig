@@ -186,3 +186,10 @@ config CONF_WITH_DYNAMIC_DESK
 	help
 	  Use the standard ELF dynamic CRT and libptos.so for the external
 	  desktop when standard shared libraries are enabled.
+
+config CONF_WITH_LIBAES_DESK
+	bool
+	default y if CONF_WITH_LIBAES && CONF_EXTERNAL_DESK
+	help
+	  Route the external desktop through standard userspace GEM bindings.
+	  The built-in desktop retains its legacy AES bindings during migration.

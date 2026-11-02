@@ -179,6 +179,13 @@ static int launch_checks(short *global)
     found = "GOOD\\NEXT.TOS";
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"NEXT.TOS",minimal));
     VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,"NEXT.TOS",minimal) == 1);
+    found = "GOOD\\NEXT.gTp";
+    before = observed_launches;
+    VERIFY(shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.gTp",minimal) == 42);
+    VERIFY(observed_launches == before+1 && launched_tail[0] == 1 && launched_tail[1] == 'x');
+    VERIFY(shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.gTp",maximum) == 42);
+    VERIFY(!memcmp(maximum,launched_tail,127) && !launched_tail[127]);
+    VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.gTp",invalid));
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
     return 0;
 }

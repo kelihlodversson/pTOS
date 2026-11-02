@@ -37,6 +37,8 @@ class Guest:
             shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")
             if "CONF_WITH_LIBAES = y" in Path("obj/auto.conf").read_text():
                 shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.PRG")
+                shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.GTP")
+                shutil.copy("extras/emuicon0.rsc",esp / "EMUICON.RSC")
             deep = esp
             for level in range(1, 14):
                 deep = deep / "LONGDIR0"
@@ -430,6 +432,7 @@ def desktop(guest):
 def libaes_desktop(guest):
     text = guest.ready(1)
     assert "x32 desktop LIBAES PASS" in text
+    assert "x32 desktop custom icons PASS" in text
     guest.move(34,45)
     guest.double_click()
     guest.wait("x32 desktop window OPEN")
@@ -468,7 +471,25 @@ def libaes_desktop(guest):
         text = guest.wait("x32 desktop CH_EXIT %d %s" % (pid,status))
         assert text.count("x32 desktop LIBAES PASS") == 1
         assert text.count("x32 desktop window OPEN") == 1
-    # The original directory window remains usable after both terminations.
+    # .GTP is graphical too, with a standard bounded parameter dialog.
+    guest.move(180,105)
+    guest.click()
+    points = re.findall(r"x32 desktop GTP TARGET (\d+) (\d+)",guest.text())
+    guest.move(*map(int,points[-1]))
+    guest.click()
+    forms = guest.text().count("x32 desktop form WAIT")
+    guest.key("ctrl-o")
+    guest.wait("x32 desktop form WAIT",forms+1)
+    for letter in "param": guest.key(letter)
+    guest.key("ret")
+    text = guest.wait(r"x32 desktop client READY \d+ \d+",3,regex=True)
+    third = tuple(map(int,re.findall(r"x32 desktop client READY (\d+) (\d+)",text)[-1]))
+    assert "x32 desktop client PARAMETERS PASS %d " % third[0] in text
+    guest.move(750,110+(third[0]&1)*280)
+    guest.click()
+    guest.key("q")
+    guest.wait("x32 desktop CH_EXIT %d 0025" % third[0])
+    # The original directory window remains usable after all terminations.
     guest.move(180,105)
     guest.click()
     guest.key("alt-c")

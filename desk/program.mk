@@ -36,7 +36,7 @@ DESK_MULTILIBFLAGS = $(subst $(CPUFLAGS),$(DESK_CPUFLAGS),$(MULTILIBFLAGS))
 DESK_CFLAGS = $(subst $(CPUFLAGS),$(DESK_CPUFLAGS),$(CFLAGS)) -ffunction-sections -fdata-sections $(if $(ARCH_ARM),-mword-relocations)
 ifdef ARCH_X86_64
 DESK_CFLAGS = $(X32_CLI_CFLAGS) $(if $(CONF_WITH_DYNAMIC_DESK),$(LDSO_APP_CFLAGS)) -DX32_USERLAND -Idesk/x32 -Iinclude -Iobj -Idesk -Iaes -Iaes/shared -Iutil -Iinclude/arch/x86_64 -ffunction-sections -fdata-sections
-ifeq ($(CONF_WITH_LIBAES),y)
+ifeq ($(CONF_WITH_LIBAES_DESK),y)
 # The desktop's historical bindings/globals are local wrappers. They must
 # not interpose libaes's own standard bindings and private global array.
 DESK_CFLAGS += -fvisibility=hidden
@@ -103,9 +103,9 @@ endif
 
 ifdef ARCH_X86_64
 ifeq ($(CONF_WITH_DYNAMIC_DESK),y)
-DESK_LIBAES = $(if $(CONF_WITH_LIBAES),obj/libaes/libaes.so)
+DESK_LIBAES = $(if $(CONF_WITH_LIBAES_DESK),obj/libaes/libaes.so)
 $(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-aes.a obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/ldso/libptos.so $(DESK_LIBAES)
-	$(X32_CC) $(LDSO_APP_LDFLAGS) -Wl,--gc-sections -o $@ $(filter %.o %.a,$^) $(if $(CONF_WITH_LIBAES),-Lobj/libaes -laes) -Lobj/ldso -lptos
+	$(X32_CC) $(LDSO_APP_LDFLAGS) -Wl,--gc-sections -o $@ $(filter %.o %.a,$^) $(if $(CONF_WITH_LIBAES_DESK),-Lobj/libaes -laes) -Lobj/ldso -lptos
 else
 $(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-aes.a obj/x32/libptos-vdi.a
 	$(X32_CC) $(X32_CLI_LDFLAGS) -Wl,--gc-sections -o $@ $^

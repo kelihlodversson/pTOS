@@ -30,7 +30,7 @@
 #include "aesbind.h"
 #include "desksupp.h"
 #include "deskpro.h"
-#if CONF_WITH_LIBAES && CONF_WITH_X32_DESKTOP_TEST
+#if CONF_WITH_LIBAES_DESK && CONF_WITH_X32_DESKTOP_TEST
 void desk_test_record(const char *message);
 #endif
 
@@ -41,7 +41,7 @@ static WORD pro_exec(WORD isgraf, WORD isover, char *pcmd, char *ptail)
 
     desk_busy_on();
 
-#if CONF_WITH_LIBAES
+#if CONF_WITH_LIBAES_DESK
     /* AES4 launches return a child ID; the desktop keeps its event loop. */
     (void)isover;
     ret = shel_write(0, isgraf, 0, pcmd, ptail);
@@ -75,10 +75,10 @@ WORD pro_run(WORD isgraf, char *cmd, char *tail, WORD wh, WORD curr)
     tail[len+2] = 0x0D;     /* follows the nul byte, just like Atari TOS */
     ret = pro_exec(isgraf, 1, cmd, tail);
 
-    if (wh != -1 && !CONF_WITH_LIBAES)
+    if (wh != -1 && !CONF_WITH_LIBAES_DESK)
         do_wopen(FALSE, wh, curr, &G.g_desk);
 
-    if (ret && CONF_WITH_LIBAES)
+    if (ret && CONF_WITH_LIBAES_DESK)
         return FALSE; /* A launched child does not terminate this desktop. */
     return ret;
 }

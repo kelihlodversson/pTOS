@@ -4,6 +4,7 @@
 #include "gem.h"
 #include "aesdefs.h"
 #include "string.h"
+#include "gemrslib.h"
 #include "cuis.h"
 #include "syscall.h"
 
@@ -21,6 +22,19 @@ extern WORD gl_width, gl_height;
 static BOOL ready;
 #endif
 
+/* The desktop's native AESGLOBAL has alignment/pointer fields of its own.
+ * Translate only the resource fields from GEM's packed two-WORD pointers. */
+static void resource_globals(UWORD *global)
+{
+    AESGLOBAL *legacy = (AESGLOBAL *)global;
+    ULONG pointer;
+    memcpy(&pointer,aes_global+5,sizeof(pointer));
+    legacy->ap_ptree = (OBJECT **)(uintptr_t)pointer;
+    memcpy(&pointer,aes_global+7,sizeof(pointer));
+    legacy->ap_rscmem = (RSHDR *)(uintptr_t)pointer;
+    legacy->ap_rsclen = (UWORD)aes_global[9];
+}
+
 WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *input, UWORD *out,
                        intptr_t *addresses, intptr_t *results)
 {
@@ -36,13 +50,16 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *input, UWORD *out,
     switch (opcode) {
     case APPL_INIT:
         r[0] = mt_appl_init(g);
-        memcpy(global,g,AES_GLOBMAX*sizeof(*g));
+        ((AESGLOBAL *)global)->ap_version = g[0];
+        ((AESGLOBAL *)global)->ap_count = g[1];
+        ((AESGLOBAL *)global)->ap_id = g[2];
+        resource_globals(global);
 #if CONF_WITH_X32_DESKTOP_TEST
         ready = FALSE;
         if (r[0] >= 0) desk_test_record("x32 desktop LIBAES PASS\r\n");
 #endif
         break;
-    case APPL_EXIT: r[0] = mt_appl_exit(g); break;
+    case APPL_EXIT: r[0] = mt_appl_exit(g); resource_globals(global); break;
     case APPL_WRITE: r[0] = mt_appl_write(in[0],in[1],(void *)a[0],g); break;
     case APPL_FIND: r[0] = mt_appl_find((char *)a[0],g); break;
     case EVNT_MULTI:
@@ -77,7 +94,11 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *input, UWORD *out,
     case OBJC_CHANGE: r[0] = mt_objc_change(tree,in[0],in[1],in[2],in[3],in[4],in[5],in[6],in[7],g); break;
     case OBJC_EDIT:
         r[1] = in[2]; r[0] = mt_objc_edit(tree,in[0],in[1],r+1,in[3],g); break;
-    case FORM_DO: r[0] = mt_form_do(tree,in[0],g); break;
+    case FORM_DO:
+#if CONF_WITH_X32_DESKTOP_TEST
+        desk_test_record("x32 desktop form WAIT\r\n");
+#endif
+        r[0] = mt_form_do(tree,in[0],g); break;
     case FORM_CENTER: r[0] = mt_form_center(tree,r+1,r+2,r+3,r+4,g); break;
     case FORM_DIAL: r[0] = mt_form_dial(in[0],in[1],in[2],in[3],in[4],in[5],in[6],in[7],in[8],g); break;
     case FORM_ALERT: r[0] = mt_form_alert(in[0],(char *)a[0],g); break;
@@ -122,8 +143,8 @@ WORD desk_aes_dispatch(UWORD opcode, UWORD *global, UWORD *input, UWORD *out,
         break;
     case WIND_UPDATE: r[0] = mt_wind_update(in[0],g); break;
     case WIND_NEW: r[0] = mt_wind_new(g); break;
-    case RSRC_LOAD: r[0] = mt_rsrc_load((char *)a[0],g); break;
-    case RSRC_FREE: r[0] = mt_rsrc_free(g); break;
+    case RSRC_LOAD: r[0] = mt_rsrc_load((char *)a[0],g); resource_globals(global); break;
+    case RSRC_FREE: r[0] = mt_rsrc_free(g); resource_globals(global); break;
     case RSRC_OBFIX: r[0] = mt_rsrc_obfix(tree,in[0],g); break;
     case SHEL_WRITE: r[0] = mt_shel_write(in[0],in[1],in[2],(void *)a[0],(char *)a[1],g); break;
     case SHEL_GET: r[0] = mt_shel_get((char *)a[0],in[0],g); break;

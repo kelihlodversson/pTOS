@@ -47,10 +47,17 @@ static void draw(short window, short handle)
     }
     VERIFY(wind_update(END_UPDATE));
 }
-int main(void)
+int main(int argc, char **argv)
 {
     short me, window, message[8], events, key, handle, i;
     VERIFY((me = appl_init()) > 0 && appl_find("EMUDESK") > 0);
+    if (argc > 1) {
+        const char *expected = "param", *actual = argv[1];
+        VERIFY(argc == 2);
+        while (*expected && *actual == *expected) { actual++; expected++; }
+        VERIFY(!*expected && !*actual);
+        record("PARAMETERS PASS",me,0);
+    }
     control.code = 100; control.nintin = 11;
     for (i = 0; i < 10; i++) input[i] = 1;
     input[10] = 2;
