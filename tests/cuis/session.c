@@ -276,6 +276,8 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "background.c"
 #include "contexts.c"
 #include "child_completion.c"
+#include "entries.c"
+
 int main(void)
 {
     LONG owner, other, reopened;
@@ -382,5 +384,7 @@ int main(void)
     rc = console_launch_checks();
     if (rc) return rc;
     rc = console_abandoned_launch_checks();
+    if (rc) return rc;
+    rc = entry_checks();
     return rc ? rc : process_defer_checks();
 }

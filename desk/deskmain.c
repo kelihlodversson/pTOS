@@ -2176,6 +2176,38 @@ BOOL deskmain(void)
     desk_cicon_test();
 #endif
 
+#if CONF_WITH_LIBAES_DESK
+    /* Accessories are independent native processes. Collect names before
+     * launching, since child loading must not disturb our search DTA. A
+     * desktop preference reload must not start another set of accessories. */
+    {
+        static BOOL accessories_started;
+        DTA dta;
+        void *saved_dta;
+        char names[6][LEN_ZFNAME], pattern[] = "C:\\*.ACC";
+        char path[3+LEN_ZFNAME], tail[2] = { 0,0 };
+        WORD count = 0, i, result;
+        if (!accessories_started) {
+            accessories_started = TRUE;
+            if (!(desk_bootflags() & BOOTFLAG_SKIP_AUTO_ACC)) {
+                pattern[0] = 'A'+G.g_stdrv;
+                saved_dta = dos_gdta(); dos_sdta(&dta);
+                result = dos_sfirst(pattern,FA_RO);
+                while (result >= 0 && count < 6) {
+                    strlcpy(names[count++],dta.d_fname,LEN_ZFNAME);
+                    result = dos_snext();
+                }
+                dos_sdta(saved_dta);
+                path[0] = pattern[0]; path[1] = ':'; path[2] = '\\';
+                for (i = 0; i < count; i++) {
+                    strcpy(path+3,names[i]);
+                    (void)shel_write(SHW_EXEC,TRUE,SHW_PARALLEL,path,tail);
+                }
+            }
+        }
+    }
+#endif
+
     /* get ready for main loop */
     flags = MU_BUTTON | MU_MESAG | MU_KEYBD;
     done = FALSE;

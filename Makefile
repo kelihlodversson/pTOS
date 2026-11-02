@@ -1080,7 +1080,7 @@ ifdef ARCH_X86_64
 .PHONY: x32-desktop-test
 x32-desktop-test: obj/x32/GEMTEST.PRG obj/x32/DESKACC.ACC
 ifeq ($(CONF_WITH_LIBAES),y)
-x32-desktop-test: obj/libaes/DESKGEM.PRG obj/libaes/DESKCON.TOS
+x32-desktop-test: obj/libaes/DESKGEM.PRG obj/libaes/DESKCON.TOS obj/libaes/DESKACC.ACC
 endif
 
 obj/x32/GEMTEST.PRG: tests/x32_desktop/process.c tests/x32_desktop/entry.S util/arch/x86_64/memmove.c obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32

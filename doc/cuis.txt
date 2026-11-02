@@ -3072,3 +3072,62 @@ in isolated children, checking inherited/explicit environments, 400-byte
 arguments, spaces/quotes/backslashes, empty strings, raw argv[0], console launch
 and exactly one CH_EXIT. ELF tests exercise valid/malformed NULL index lists;
 the combined boot retains final memory accounting and the desktop regressions.
+
+Resident accessories and Desk registration (#863)
+------------------------------------------------
+The external desktop starts up to six .ACC programs from the root of its
+initial drive after installing its own menu bar. It uses ordinary independent
+AES4 shell launches, preserves the parent's DTA, honours the boot skip flag,
+and does not relaunch accessories when reloading desktop preferences. These
+are native x32 ELF programs linked with libaes and the shared runtime, not
+legacy kernel-AES accessory images. dynacccrt.o uses the same shared startup
+as dyncrt.o and sets the standard GEM _app variable to zero before main.
+The ordinary dynamic CRT supplies a weak _app=1 definition for applications.
+
+menu_register/mt_menu_register register the caller's application ID and copy a
+nonempty title of up to 127 bytes. The six classic Desk slots return IDs 0..5;
+full registration, an invalid ID/global array, or an invalid title returns -1.
+Several entries may belong to one session. REG_NEWNAME (-1) instead updates
+the eight-character appl_find label, consumes no Desk slot and returns zero
+on success. A registration disappears at appl_exit or process teardown.
+
+Each application's libaes reads the current directory when tracking a menu.
+It constructs a private Desk dropdown from the caller's About item, a disabled
+separator, and registered titles. The original menu_fixup child linking is
+shared as aes/shared/gemdesk.c; caller resource objects remain unchanged.
+Registered items send AC_OPEN to the original, non-recycled native session:
+word 1 is the sender's AES ID, word 2 is zero and word 4 is the menu ID.
+They do not generate MN_SELECTED for the application displaying the menu.
+The library deselects the Desk title itself. Message delivery happens after
+releasing display/mouse ownership and may wait for recipient stream space.
+A vanished recipient is discarded without selecting a replacement process
+that subsequently occupies the same menu slot. APR_NOWAIT flushes do not block.
+
+Three new flat native calls publish opaque session-owned data, not GEM trees
+or messages. All are under CONF_WITH_CUIS, including trap dispatch:
+  CUIS_ENTRY_PUBLISH (72): session, slot, zero, data, byte count -> slot
+  CUIS_ENTRY_OWNER   (73): session, slot -> owner's session handle
+  CUIS_ENTRY_READ    (74): session, slot, expected owner, data, capacity -> bytes
+The bounded directory has 64 slots of at most 128 bytes. libaes uses slots
+0..5 and includes its terminating NUL; other native slots remain available.
+Publishing an occupied slot returns EAGAIN; reading an owner that changed
+since lookup returns EAGAIN; an empty slot returns EFILNF. Short read buffers
+return ERANGE. Data passes through kernel stack snapshots around user copies,
+with ownership rechecked after copying publication input. Session teardown
+removes every entry before freeing its owner. No GUI server is introduced.
+
+In this multitasking AES, launching, switching or terminating another program
+neither resets accessory windows nor sends AC_CLOSE. An accessory's window
+closer can close its UI while the process remains resident for another
+AC_OPEN. Standard AC_CLOSE is declared and can travel through appl_write;
+a system-generated reset notification must accompany the actual global
+shutdown/resolution reset, which remains a separate cutover gate. This slice
+does not claim to implement those operations or single-tasking DA cleanup.
+
+Host regressions cover registration bounds, caller identity, REG_NEWNAME,
+all directory slots, ownership and teardown, expected-owner stale reads,
+Desk slot-to-message mapping, backpressure and disappeared recipients, and
+unchanged caller menu objects. The native desktop regression starts a shared
+accessory, checks _app, closes/reopens it, keeps its window alive across GUI
+and console child success/fault exits, and exits it without restarting the
+desktop or leaving its registration in the next Desk popup.

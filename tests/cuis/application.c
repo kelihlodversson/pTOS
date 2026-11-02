@@ -135,8 +135,17 @@ LONG cuis_call(ULONG fn, LONG id)
     }
     return EINVFN;
 }
+static UWORD registered_items;
+static char registered_text[CUIS_ENTRY_BYTES];
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_ENTRY_PUBLISH) {
+        if (b >= 6 || c || !e || e > CUIS_ENTRY_BYTES) return EINVAL;
+        if (registered_items & (1U << b)) return EAGAIN;
+        registered_items |= 1U << b;
+        __builtin_memcpy(registered_text,(void *)(uintptr_t)d,e);
+        return (LONG)b;
+    }
     if (fn == CUIS_CHILD_RESULT) return child_status;
     if (fn == CUIS_CHILD_PUBLISH) {
         if (child_publish_error) return child_publish_error;
@@ -1186,6 +1195,17 @@ int main(void)
     CHECK(appl_init() == -1 && gl_ap_version == 0 && !live);
     failure = 0;
     CHECK(appl_init() == 7 && gl_apid == 7 && _AESapid == 7 && _AESnumapps == -1);
+    CHECK(menu_register(8,"Not my identity") == -1 && !registered_items);
+    CHECK(mt_menu_register(7,"Null globals",NULL) == -1 && !registered_items);
+    CHECK(menu_register(7,NULL) == -1 && menu_register(7,"") == -1);
+    CHECK(menu_register(REG_NEWNAME,"RENAMED ") == 0 && !registered_items);
+    label_result = EIMBA;
+    CHECK(menu_register(REG_NEWNAME,"RENAMED ") == -1);
+    label_result = 0;
+    for (count = 0; count < 6; count++) CHECK(menu_register(7,"  Accessory") == (short)count);
+    CHECK(!__builtin_strcmp(registered_text,"  Accessory"));
+    CHECK(menu_register(7,"Full") == -1 && registered_items == 63);
+    registered_items = 0;
     CHECK(gl_ap_version == aes_global[0] && gl_ap_version == 0x0400);
     /* The menu strip is reserved before any application has installed one. */
     CHECK(wind_get(0,WF_WORKXYWH,&a,&b,&c,&d) == 1 && a == 0 && b == 19 && c == 640 && d == 381);

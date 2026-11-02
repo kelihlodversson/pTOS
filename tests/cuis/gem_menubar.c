@@ -61,14 +61,23 @@ int gem_menubar_checks(short handle)
     return 0;
 }
 
-static OBJECT installed[10];
+static OBJECT installed[10], original[10];
+int gem_menubar_unchanged(void)
+{
+    const unsigned char *a = (const unsigned char *)installed, *b = (const unsigned char *)original;
+    unsigned i;
+    for (i = 0; i < sizeof(installed); i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
 int gem_menubar_install(short handle, short colour)
 {
-    short cw, ch;
+    short cw, ch, result, i;
     if (gem_probe_cell(handle,&cw,&ch)) return 0;
     setup(installed,ch);
     installed[1].ob_spec.index = 0x1170 | colour;
-    return menu_bar(installed,MENU_INSTALL);
+    result = menu_bar(installed,MENU_INSTALL);
+    if (result) for (i = 0; i < 10; i++) original[i] = installed[i];
+    return result;
 }
 
 void gem_menubar_mutate(void)

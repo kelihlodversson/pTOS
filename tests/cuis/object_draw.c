@@ -53,6 +53,8 @@ static BOOL bar_stream, bar_line_error, bar_close_error, bar_write_block;
 static int bar_writes;
 static WORD bar_trial_height, bar_snapshot_handle;
 static int bar_failed_closes;
+static BOOL accessory_entry, accessory_gone;
+static LONG bar_recipient;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws, unowned_redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
 static int popup_paints;
@@ -86,13 +88,18 @@ void gem_popup_input_stage(short stage)
 }
 void gem_menubar_input_stage(short stage)
 {
-    (void)stage;
     bar_mode = TRUE; gesture_at = 0; gesture_count = 4;
     gesture[0].events = MU_M1; gesture[0].x = 80; gesture[0].y = 8; gesture[0].buttons = 0;
     gesture[1].events = MU_M1; gesture[1].x = 80; gesture[1].y = 33; gesture[1].buttons = 0;
     gesture[2] = gesture[1]; gesture[2].events = MU_BUTTON; gesture[2].buttons = 1;
     gesture[3] = gesture[2]; gesture[3].buttons = 0;
     mouse_x = 30; mouse_y = 8;
+    if (stage == 1) {
+        gesture_count = 3;
+        gesture[0].x = 30; gesture[0].y = 59;
+        gesture[1] = gesture[0]; gesture[1].events = MU_BUTTON; gesture[1].buttons = 1;
+        gesture[2] = gesture[1]; gesture[2].buttons = 0;
+    }
 }
 static ULONG frame_overlay_depth, frame_dialog_depth, bad_overlay_scope;
 BOOL aes_frames_suspended(void) { return frame_overlay_depth != 0; }
@@ -108,6 +115,12 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_ENTRY_OWNER) return accessory_entry && b == 4 ? 99 : EFILNF;
+    if (fn == CUIS_ENTRY_READ) {
+        if (!accessory_entry || b != 4 || c != 99 || e < 12) return EINVAL;
+        __builtin_memcpy((void *)(uintptr_t)d,"  Accessory",12); return 12;
+    }
+    if (fn == CUIS_PEER_PID && a == 99) return accessory_gone ? EFILNF : 17;
     if (fn == CUIS_BACKGROUND) {
         if (b == 2) return background_state;
         if (!nesting) return EACCDN;
@@ -176,6 +189,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         return value;
     }
     if (fn == CUIS_STREAM_WRITE && bar_mode && c == 16) {
+        bar_recipient = (LONG)a;
+        if (a == 99 && accessory_gone) return EACCDN;
         if (bar_write_block) return EAGAIN;
         bar_writes++;
         __builtin_memcpy(bar_message,(void *)(uintptr_t)b,16); bar_stream = TRUE; return 16;
@@ -1420,6 +1435,32 @@ int main(void)
     if (before) __builtin_printf("menu bar failure: %x\n",before);
     VERIFY(before == 0);
     VERIFY(!nesting && !mouse_nesting && !bar_height);
+    {
+        int mode;
+        for (mode = 0; mode < 3; mode++) {
+            accessory_entry = TRUE;
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(1);
+            bar_write_block = mode == 1; accessory_gone = mode == 2;
+            before = bar_writes;
+            VERIFY(aes_menu_dispatch(aes_global) == E_OK);
+            VERIFY(!nesting && !mouse_nesting && gem_menubar_unchanged());
+            VERIFY(bar_recipient == 99);
+            if (mode == 1) {
+                VERIFY(bar_writes == before && !aes_menu_listening());
+                VERIFY(aes_menu_flush(aes_global) == E_OK && !aes_menu_listening());
+                bar_write_block = FALSE;
+                VERIFY(aes_menu_flush(aes_global) == E_OK && aes_menu_listening());
+            }
+            if (mode != 2) {
+                VERIFY(bar_writes == before+1 && bar_message[0] == AC_OPEN && bar_message[4] == 4);
+                VERIFY(bar_message[1] == aes_global[2] && !bar_message[2] && !bar_message[3]);
+                VERIFY(!bar_message[5] && !bar_message[6] && !bar_message[7]);
+            } else VERIFY(bar_writes == before && aes_menu_listening());
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+            bar_stream = bar_mode = accessory_entry = accessory_gone = FALSE;
+        }
+    }
     before = gem_menu_checks(0);
     if (before) __builtin_printf("menu item failure: %x\n",before);
     VERIFY(before == 0);

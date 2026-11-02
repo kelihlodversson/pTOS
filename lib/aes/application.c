@@ -175,6 +175,31 @@ short mt_appl_find(const char *name, short *global)
 }
 short appl_find(const char *name) { return mt_appl_find(name, aes_global); }
 
+short mt_menu_register(short id, const char *text, short *global)
+{
+    ULONG length, slot;
+    LONG result;
+    char label[8];
+    if (!registered(global) || !text) return -1;
+    if (id == REG_NEWNAME) {
+        application_label(text,label);
+        return cuis_call6(CUIS_SESSION_LABEL,application_session,(uintptr_t)label,8,0,0,0) == E_OK ? 0 : -1;
+    }
+    /* An application may register several entries, but may never publish a
+     * menu item as another application's identity. Native AES also records
+     * the calling process as the recipient. Six is the classic Desk limit. */
+    if (id != application_id) return -1;
+    for (length = 0; length < CUIS_ENTRY_BYTES && text[length]; length++) ;
+    if (!length || length == CUIS_ENTRY_BYTES) return -1;
+    for (slot = 0; slot < 6; slot++) {
+        result = cuis_call6(CUIS_ENTRY_PUBLISH,application_session,slot,0,(uintptr_t)text,length+1,0);
+        if (result >= 0) return (short)result;
+        if (result != EAGAIN) return -1;
+    }
+    return -1;
+}
+short menu_register(short id, const char *text) { return mt_menu_register(id,text,aes_global); }
+
 short mt_appl_write(short id, short length, void *buffer, short *global)
 {
     LONG peer;

@@ -553,6 +553,11 @@ short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global);
 #define MENU_REMOVE 0
 #define MENU_INSTALL 1
 #define MN_SELECTED 10
+#define AC_OPEN 40
+#define AC_CLOSE 41
+#define REG_NEWNAME -1
+short menu_register(short ap_id, const char *text);
+short mt_menu_register(short ap_id, const char *text, short *global);
 short menu_bar(OBJECT *tree, short show);
 short mt_menu_bar(OBJECT *tree, short show, short *global);
 short menu_popup(MENU *menu, short x, short y, MENU *result);
