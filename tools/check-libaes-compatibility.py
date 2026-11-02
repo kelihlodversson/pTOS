@@ -18,7 +18,7 @@ def c_code(text):
 
 def check(root=ROOT):
     matrix = (root / "doc/libaes-compatibility.md").read_text()
-    export_map = (root / "lib/aes/exports.map").read_text()
+    export_map = c_code((root / "lib/aes/exports.map").read_text())
     exports = set(re.findall(r"\b\w+\b", export_map.split("global:")[1].split("local:")[0]))
     # Standard binding globals and the explicitly transitional CUIS interface
     # are documented separately from GEM function bindings.

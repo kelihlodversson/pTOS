@@ -39,6 +39,21 @@ class DeclarationGuard(unittest.TestCase):
     def test_real_headers(self):
         self.check()
 
+    def test_commented_exports(self):
+        path = self.root / "lib/aes/exports.map"
+        original = path.read_text()
+        bindings = r"\b(?:appl_init|mt_appl_init)\s*;"
+        path.write_text(re.sub(bindings, lambda match: "/* " + match[0] + " */", original))
+        with self.assertRaisesRegex(AssertionError, "missing_exports") as failure:
+            self.check()
+        self.assertIn("'appl_init'", str(failure.exception))
+        self.assertIn("'mt_appl_init'", str(failure.exception))
+
+    def test_export_comment_labels(self):
+        path = self.root / "lib/aes/exports.map"
+        path.write_text("/* global: commented_symbol; local: */\n" + path.read_text())
+        self.check()
+
     def test_commented_prototypes(self):
         for header, binding in (("include/gem.h", "mt_appl_init"),
                                 ("include/rectfunc.h", "inside")):
