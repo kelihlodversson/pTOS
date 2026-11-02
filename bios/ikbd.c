@@ -29,6 +29,9 @@
 #include "../aes/cuis.h"
 #include "gemerror.h"
 #endif
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
 #include "country.h"
 #include "acia.h"
 #include "tosvars.h"
@@ -275,6 +278,14 @@ LONG bconstat2(void)
     }
 }
 
+#if CONF_WITH_NATIVE_SCHED && !CONF_SERIAL_CONSOLE_POLLING_MODE
+static BOOL console_key_ready(void *unused)
+{
+    (void)unused;
+    return bconstat2() != 0;
+}
+#endif
+
 LONG bconin2(void)
 {
     ULONG value;
@@ -285,6 +296,11 @@ LONG bconin2(void)
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
+#if CONF_WITH_NATIVE_SCHED
+        if (ksched_wait_ready(console_key_ready,NULL)) {
+            continue;
+        }
+#endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU
         stop_until_interrupt();
 #endif

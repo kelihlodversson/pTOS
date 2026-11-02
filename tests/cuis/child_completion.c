@@ -171,10 +171,21 @@ static int child_completion_checks(void)
 /* Observed load-and-go reuses GEMDOS validation and attaches inside spawn. */
 static LONG child_validate_error, child_start_error;
 static ULONG child_start_calls;
+static BOOL child_stay_live;
+static ULONG console_abort_stage;
+static intptr_t console_launch_escape[5];
+static void abort_console_launch(void)
+{
+    console_abort_stage = 0;
+    cuis_process_exit(run);
+    /* Model process termination: the launch syscall never returns. */
+    __builtin_longjmp(console_launch_escape,1);
+}
 long bdos_check_user_args(const long *args)
 {
     if (args[0] != 0x4b || args[1] != PE_ASYNC_LOADGO || args[2] != 0x11000 ||
         args[3] != 0x12000 || args[4] || args[5] || args[6]) return EIMBA;
+    if (console_abort_stage == 1) abort_console_launch();
     return child_validate_error;
 }
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token)
@@ -185,8 +196,11 @@ long xexec_observed(char *path, char *tail, char *environment, ULONG session, UL
     if (child_start_error) return child_start_error;
     result = cuis_child_bind_spawn(session,token,&third);
     if (result != E_OK) return result;
-    test_children[0].status = (2L << 16) | 0x2468;
-    cuis_child_completed(run,2,0x2468);
+    if (console_abort_stage == 2) abort_console_launch();
+    if (!child_stay_live) {
+        test_children[0].status = (2L << 16) | 0x2468;
+        cuis_child_completed(run,2,0x2468);
+    }
     return 2;
 }
 static int child_launch_checks(void)
@@ -197,23 +211,95 @@ static int child_launch_checks(void)
     session = cuis_service(CUIS_SESSION_START,0);
     run = &second; other = cuis_service(CUIS_SESSION_START,0); run = &first;
     token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
-    CHECK(cuis_child_launch(other,token,0x11000,0x12000,0) == EACCDN && !child_start_calls);
+    CHECK(cuis_child_launch(other,token,0x11000,0x12000,0,0) == EACCDN && !child_start_calls);
     child_validate_error = EIMBA;
-    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == EIMBA && !child_start_calls);
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,0) == EIMBA && !child_start_calls);
     CHECK(cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == EACCDN);
     child_validate_error = 0;
     token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
     child_start_error = ENSMEM;
-    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == ENSMEM && child_start_calls == 1);
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,0) == ENSMEM && child_start_calls == 1);
     CHECK(cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == EACCDN);
     child_start_error = 0;
     token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
-    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == 2 && child_start_calls == 2);
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,0) == 2 && child_start_calls == 2);
     CHECK(cuis_child_service(CUIS_CHILD_RESULT,session,0,0,0) == ((2L << 16) | 0x2468));
     CHECK(cuis_child_pid_reserved(2));
-    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0) == EACCDN && child_start_calls == 2);
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,0) == EACCDN && child_start_calls == 2);
     cuis_process_exit(&first); run = &second; cuis_process_exit(run); run = &first;
     CHECK(!clients && allocations == frees && !cuis_child_pid_reserved(2));
+    return 0;
+}
+
+static int console_launch_checks(void)
+{
+    LONG session, other, token, other_token, child_session;
+    CHECK(!clients && !console_owner && !text_console_active && allocations == frees);
+    run = &first; session = cuis_service(CUIS_SESSION_START,0);
+    run = &second; other = cuis_service(CUIS_SESSION_START,0); run = &first;
+    token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,2) == EINVAL);
+    child_start_error = ENSMEM;
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,1) == ENSMEM);
+    CHECK(!console_owner && !console_launcher && !text_console_active);
+    child_start_error = 0; child_stay_live = TRUE;
+    CHECK(cuis_display_lock(session,1,0) == E_OK);
+    token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,1) == 2);
+    CHECK(console_owner == &third && text_console_active && displayed_hidden);
+    run = &third;
+    child_session = cuis_service(CUIS_SESSION_START,0);
+    CHECK(cuis_service(CUIS_SESSION_END,child_session) == E_OK);
+    CHECK(console_owner == &third && text_console_active);
+    run = &first;
+    CHECK(!cuis_keyboard_event(0x1234));
+    CHECK(cuis_display_lock(session,0,0) == E_OK);
+    CHECK(cuis_vdi_policy() == EAGAIN && cuis_display_lock(session,1,0) == EAGAIN);
+    run = &second;
+    CHECK(cuis_vdi_policy() == EAGAIN && cuis_display_lock(other,1,0) == EAGAIN);
+    other_token = cuis_child_service(CUIS_CHILD_WATCH,other,CUIS_CHILD_RESERVE,0,0);
+    CHECK(cuis_child_launch(other,other_token,0x11000,0x12000,0,1) == EAGAIN);
+    CHECK(cuis_child_service(CUIS_CHILD_WATCH,other,CUIS_CHILD_CANCEL,other_token,0) == EACCDN);
+    /* The text process retains its lease when its launching GUI client exits. */
+    cuis_process_exit(&first);
+    CHECK(console_owner == &third && text_console_active);
+    cuis_process_exit(&third);
+    CHECK(!console_owner && !text_console_active && cuis_display_lock(other,1,0) == E_OK);
+    CHECK(cuis_display_lock(other,0,0) == E_OK);
+    cuis_process_exit(&third); /* fault/normal teardown may both pass here */
+    cuis_process_exit(&second); run = &first; child_stay_live = FALSE;
+    CHECK(!clients && allocations == frees);
+    return 0;
+}
+
+static int console_abandoned_launch_checks(void)
+{
+    LONG session, token;
+    volatile WORD stage;
+    CHECK(!clients && !console_owner && allocations == frees);
+    child_stay_live = TRUE;
+    for (stage = 1; stage <= 2; stage++) {
+        run = &first;
+        session = cuis_service(CUIS_SESSION_START,0);
+        token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+        console_abort_stage = stage;
+        if (!__builtin_setjmp(console_launch_escape)) {
+            (void)cuis_child_launch(session,token,0x11000,0x12000,0,1);
+            CHECK(FALSE);
+        }
+        CHECK(!console_abort_stage && !console_launcher && !console_launch_image);
+        CHECK(!console_owner && !text_console_active && !*find_owner(&first));
+        /* Another client must be able to launch after the abandoned call. */
+        run = &second;
+        session = cuis_service(CUIS_SESSION_START,0);
+        token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+        CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,1) == 2);
+        CHECK(console_owner == &third && text_console_active);
+        cuis_process_exit(&third);
+        cuis_process_exit(&second);
+        CHECK(!clients && !console_owner && !text_console_active && allocations == frees);
+    }
+    child_stay_live = FALSE; run = &first;
     return 0;
 }
 

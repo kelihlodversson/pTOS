@@ -2980,6 +2980,50 @@ and opens another directory window afterward. Screenshots are captured with
 both applications and after their exits. The same runner retains legacy desktop
 coverage when libaes is disabled, and missing-desktop fallback coverage.
 
-Console/ARGV/accessory launch, shutdown and resolution-changing shell policies
-remain later slices. Unsupported console, shutdown and resolution menu actions
-are disabled in this desktop path. AES_SHELL capability remains unadvertised.
+At this slice, console/ARGV/accessory launch, shutdown and resolution-changing
+shell policies were deferred. Classic console launch is added below; shutdown
+and resolution menu actions remain disabled. AES_SHELL stays unadvertised.
+
+Resident console children (#859)
+-------------------------------
+Standard shel_write/mt_shel_write mode 0 classifies PRG/APP/GTP as graphical
+and TOS/TTP as text applications, without treating isgem as authoritative in
+that AES4 mode. It returns the child's ID immediately, retains the launcher's
+registration and delivers the existing single full-word-status CH_EXIT on
+normal/fault exit. Tails still use the ordinary 0..126-byte convention; ARGV,
+accessory and mode-1 text execution are not implied.
+
+CUIS_CHILD_LAUNCH(session, token, path, tail, environment, console) adds a flat
+sixth scalar: 0 keeps graphical behavior, 1 requests the physical text console.
+Other values fail with EINVAL. A second console, foreign drawing ownership or
+modal mouse/keyboard capture rejects launch with EAGAIN and cancels the child
+reservation. The launcher's own update nesting remains balanced. Loader and
+spawn errors cancel the reservation without entering text mode. The existing
+spawn observer retains the new child's identity before user execution; the
+current cooperative scheduler cannot run it before launch setup returns.
+
+The full-screen lease belongs to the child process, independently of the
+launcher's session and of the child's optional AES registration. Native VDI
+screen writes and new GUI display/mouse ownership wait or fail during the
+lease. Keyboard input goes to the existing BIOS console queue; pointer input
+is suppressed for GUI clients and the graphical cursor stays hidden. VDI uses
+its original alpha/graphics escape transitions, including recovery from a
+trailing incomplete console escape. Actual process teardown releases the lease,
+restores cursor policy, invalidates the active menu/background/windows and
+queues ordinary redraw work. Closing an AES session does not release it.
+
+BIOS console reads use the generic CONF_WITH_NATIVE_SCHED wait helper to let
+other managed tasks run while input is unavailable. Legacy configurations keep
+their previous input loop. This does not add preemption or Pfork (#713).
+
+EmuDesk keeps its event loop and directory state while TOS/TTP children run.
+File/Show EmuCON (Ctrl-Z) launches EMUCON.TOS when external CLI support is
+configured, and returns to the same desktop on exit. The embedded-console
+configuration keeps that menu item disabled; exporting an embedded CLI as a
+loadable child is outside this slice. Missing external consoles fail normally.
+
+Host/sanitizer tests cover failed/busy launches, invalid flags, retained update
+nesting, VDI/input exclusion, launcher's exit, child's AES deregistration and
+process cleanup. Real desktop tests launch TOS and TTP programs that use only
+GEMDOS console I/O, send keyboard input/parameters, exercise normal and fault
+exit, run the external EmuCON, and verify one CH_EXIT without restarting EmuDesk.

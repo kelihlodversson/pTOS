@@ -140,6 +140,11 @@ static ULONG mouse_depth;
 static CUIS_CLIENT *display_owner;
 static ULONG display_depth;
 static CUIS_RECT display_clip;
+/* One process owns the physical text console. The launcher remains an
+ * ordinary GUI client; this lease survives its deregistration or exit. */
+static PD *console_owner, *console_launch_image;
+static CUIS_CLIENT *console_launcher;
+extern void vdi_cuis_console(BOOL active);
 
 /* A process-owned top strip is generic display coordination, not a GEM
  * tree/message protocol. Focus chooses among registered surfaces. */
@@ -170,6 +175,10 @@ void cuis_pointer_sync(void)
         surface_owner && pointer_initialized && pointer_y < surface_height ? surface_owner :
         background_front && pointer_initialized && !window_at(pointer_x,pointer_y) ? background_front :
         focus_window ? focus_window->client : surface_owner;
+    if (console_owner) {
+        vdi_cuis_pointer(NULL,TRUE);
+        cuis_input_unlock(flags); return;
+    }
     if (!pointer_fallback || !pointer_fallback->pointer_style_set) {
         for (pointer_fallback = clients; pointer_fallback && !pointer_fallback->pointer_style_set;
              pointer_fallback = pointer_fallback->next) ;
@@ -291,7 +300,7 @@ static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total
 static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
 {
     LONG result;
-    if (update_owner || display_owner) return EAGAIN;
+    if (console_owner || update_owner || display_owner) return EAGAIN;
     if (!window->visible) return EINVAL;
     result = visible_regions(window, &update_clips, &update_count);
     if (result < 0) return result;
@@ -375,6 +384,7 @@ BOOL cuis_keyboard_event(ULONG key)
     CUIS_WINDOW *window = focus_window;
     CUIS_CLIENT *client = keyboard_owner ? keyboard_owner : window ? NULL :
         background_front ? background_front : surface_owner;
+    if (console_owner) { cuis_input_unlock(flags); return FALSE; }
     if (client) {
         if (client->key_count < CUIS_KEY_CAPACITY) {
             client->keys[(client->key_head + client->key_count) % CUIS_KEY_CAPACITY] = key;
@@ -508,6 +518,7 @@ static BOOL route_pointer(ULONG changed)
 {
     CUIS_WINDOW *hit, *target;
     BOOL consumed;
+    if (console_owner) return TRUE;
     if (!pointer_initialized || pointer_suppressed || pointer_legacy_drag) return FALSE;
     hit = window_at(pointer_x, pointer_y);
     if (mouse_owner) {
@@ -665,7 +676,8 @@ BOOL cuis_pointer_packet(WORD dx, WORD dy, ULONG buttons, LONG *out_x, LONG *out
     pointer_y = y < 0 ? 0 : y >= pointer_height ? pointer_height - 1 : y;
     if (out_x) *out_x = pointer_x;
     if (out_y) *out_y = pointer_y;
-    if (pointer_suppressed || pointer_legacy_drag) {
+    if (console_owner) consumed = TRUE;
+    else if (pointer_suppressed || pointer_legacy_drag) {
         consumed = pointer_suppressed;
         if (!pointer_buttons) {
             pointer_suppressed = pointer_legacy_drag = FALSE;
@@ -761,7 +773,7 @@ static void clear_display_regions(CUIS_CLIENT *client)
 static BOOL display_available(void *argument)
 {
     (void)argument;
-    return !display_owner && !update_owner;
+    return !console_owner && !display_owner && !update_owner;
 }
 
 LONG cuis_pointer_style(UQUAD handle, UQUAD address, UQUAD hidden)
@@ -1013,7 +1025,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             display_depth++;
             cuis_input_unlock(flags); return E_OK;
         }
-        if (!display_owner && !update_owner) {
+        if (!console_owner && !display_owner && !update_owner) {
             screen_get_current_mode_desc(&mode);
             if (!mode.width || !mode.height) { cuis_input_unlock(flags); return EINVFN; }
             display_clip.x = display_clip.y = 0;
@@ -1042,7 +1054,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 static BOOL mouse_available(void *argument)
 {
     CUIS_CLIENT *client = argument;
-    return !mouse_owner && (!pointer_buttons ||
+    return !console_owner && !mouse_owner && (!pointer_buttons ||
         surface_capture == client || background_capture == client ||
         (pointer_capture && pointer_capture->client == client && !pointer_activation_drag));
 }
@@ -1171,12 +1183,18 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     }
 }
 
-void cuis_process_exit(PD *owner)
+static void session_exit(PD *owner)
 {
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
     if (client) {
         CUIS_WINDOW *window;
         UQUAD flags = cuis_input_lock();
+        /* A backing fault can terminate a syscall without unwinding its
+         * launch frame. Never retain a session that teardown will free. */
+        if (console_launcher == client) {
+            console_launcher = NULL;
+            console_launch_image = NULL;
+        }
         client->input_wait = NULL;
         background_remove(client);
         client->pointer_style_set = FALSE; client->pointer_hidden = 0;
@@ -1208,6 +1226,20 @@ void cuis_process_exit(PD *owner)
         if (client->pending_write) kfree(client->pending_write);
         kfree(client);
     }
+}
+
+void cuis_process_exit(PD *owner)
+{
+    if (console_owner && console_owner == owner) {
+        UQUAD flags = cuis_input_lock();
+        console_owner = NULL;
+        vdi_cuis_console(FALSE);
+        pointer_suppressed = pointer_buttons != 0;
+        if (surface_owner) surface_owner->surface_events |= CUIS_SURFACE_DIRTY;
+        damage_windows(); cuis_pointer_sync();
+        cuis_input_unlock(flags);
+    }
+    session_exit(owner);
 }
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -1287,7 +1319,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         if (handle > 0x7fffffffULL) return EINVAL;
         client = *find_owner(run);
         if (!client || handle != client->handle) return EACCDN;
-        if (function == CUIS_SESSION_END) cuis_process_exit(run);
+        if (function == CUIS_SESSION_END) session_exit(run);
         return E_OK;
     default:
         return EINVFN;
@@ -1728,6 +1760,7 @@ LONG cuis_background_region(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
  * snapshot. A different update owner blocks native screen writes. */
 LONG cuis_vdi_policy(void)
 {
+    if (console_owner) return EAGAIN;
     if (display_owner) return display_owner->owner == run ? 1 : EAGAIN;
     if (update_owner) return update_owner->owner == run ? 1 : EAGAIN;
     return *find_owner(run) ? EACCDN : 0;
@@ -1870,6 +1903,7 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     BOOL owned, match, inside;
     LONG x, y;
     ULONG buttons, modifiers;
+    if (console_owner) return;
     cuis_input_snapshot(&x, &y, &buttons, &modifiers);
     if (pointer_initialized) { x = pointer_x; y = pointer_y; buttons = pointer_buttons; }
     owned = !pointer_suppressed && !pointer_legacy_drag && !pointer_activation_drag && !pointer_control_drag &&
@@ -1977,16 +2011,16 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_CHILD) && wait->client->child_count) result |= CUIS_READY_CHILD;
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
-    if ((wait->events & CUIS_READY_DISPLAY) &&
+    if ((wait->events & CUIS_READY_DISPLAY) && !console_owner &&
         (display_owner == wait->client || display_available(wait->client)) &&
         (!wait->input.tracking || result)) result |= CUIS_READY_DISPLAY;
     /* Internal work must not end an unfinished multi-click wait. Keep its
      * count, snapshot and original deadline resident until a user event is
      * ready; report the pending surface alongside that event. */
-    if ((wait->events & CUIS_READY_SURFACE) && !mouse_owner && surface_owner == wait->client &&
+    if ((wait->events & CUIS_READY_SURFACE) && !console_owner && !mouse_owner && surface_owner == wait->client &&
         wait->client->surface_events && (!wait->input.tracking || result))
         result |= CUIS_READY_SURFACE;
-    if ((wait->events & CUIS_READY_CONTROL) && (!wait->input.tracking || result)) {
+    if ((wait->events & CUIS_READY_CONTROL) && !console_owner && (!wait->input.tracking || result)) {
         for (control = wait->client->windows; control; control = control->next)
             if (control->control_overflow || (!mouse_owner && control->control_count)) { result |= CUIS_READY_CONTROL; break; }
     }
@@ -2728,18 +2762,19 @@ LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *child)
     for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
         if (client->children[j].pid == pid) goto spawn_bound;
     client->children[i].pid = (WORD)pid;
+    if (console_launcher == client) console_launch_image = child;
     result = E_OK;
 spawn_bound:
     cuis_input_unlock(flags); return result;
 }
-LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment)
+LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console)
 {
     CUIS_CLIENT *client;
     UQUAD flags;
     UWORD i;
     LONG result;
     long args[7];
-    if (session > 0x7fffffffULL || !token || token > 0x7fffffffULL) return EINVAL;
+    if (session > 0x7fffffffULL || !token || token > 0x7fffffffULL || console > 1) return EINVAL;
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
@@ -2747,6 +2782,19 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
         if (client->children[i].token == token && !client->children[i].pid) break;
     cuis_input_unlock(flags);
     if (i == CUIS_CHILDREN_PER_SESSION) return EACCDN;
+    if (console) {
+        /* Own update nesting is released by the resident desktop after the
+         * launch returns. Foreign drawing and all modal grabs must be idle. */
+        flags = cuis_input_lock();
+        if (console_owner || console_launcher || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
+            (update_owner && update_owner != client)) {
+            cuis_input_unlock(flags);
+            (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
+            return EAGAIN;
+        }
+        console_launcher = client; console_launch_image = NULL;
+        cuis_input_unlock(flags);
+    }
     args[0] = 0x4b; args[1] = PE_ASYNC_LOADGO;
     args[2] = (long)path; args[3] = (long)tail; args[4] = (long)environment;
     args[5] = args[6] = 0;
@@ -2756,6 +2804,31 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
                                      (char *)(uintptr_t)environment,(ULONG)session,(ULONG)token);
     if (result < 0)
         (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
+    if (console) {
+        flags = cuis_input_lock();
+        /* Pexec stages a ready task; cooperative scheduling cannot enter it
+         * before this syscall returns. The spawn observer retained identity. */
+        if (result > 0 && console_launch_image) {
+            CUIS_CLIENT *peer;
+            CUIS_WINDOW *window;
+            console_owner = console_launch_image;
+            pointer_capture = pointer_hover = NULL;
+            pointer_activation_drag = pointer_control_drag = FALSE;
+            surface_capture = background_capture = NULL;
+            for (peer = clients; peer; peer = peer->next) {
+                peer->key_head = peer->key_count = 0;
+                peer->edge_count = peer->recent_count = 0;
+                for (window = peer->windows; window; window = window->next) {
+                    window->key_head = window->key_count = 0;
+                    window->pointer_head = window->pointer_count = 0;
+                    cancel_controls(window);
+                }
+            }
+            cuis_pointer_sync(); vdi_cuis_console(TRUE);
+        }
+        console_launcher = NULL; console_launch_image = NULL;
+        cuis_input_unlock(flags);
+    }
     return result;
 }
 

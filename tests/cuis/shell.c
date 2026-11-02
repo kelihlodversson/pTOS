@@ -24,6 +24,7 @@ static const char *found;
 static LONG launch_result = 42;
 static LONG watch_result = 17, cancellations, observed_launches, deferred_calls;
 static LONG deferred_result;
+static UQUAD launched_console;
 static int launches;
 static char launched_path[AES_SHELL_PATH], launched_tail[128];
 LONG aes_application_session(short *global)
@@ -64,7 +65,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         deferred_calls++; return deferred_result;
     }
     if (fn == CUIS_CHILD_LAUNCH) {
-        if (b != 17 || e || f) return EINVAL;
+        if (b != 17 || e || f > 1) return EINVAL;
+        launched_console = f;
         strcpy(launched_path,(const char *)(uintptr_t)c);
         memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
         observed_launches++; launches++;
@@ -177,11 +179,12 @@ static int launch_checks(short *global)
     VERIFY(!mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,name,minimal,global) && deferred_calls == 2);
     deferred_result = E_OK;
     found = "GOOD\\NEXT.TOS";
-    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"NEXT.TOS",minimal));
+    VERIFY(shel_write(SWM_LAUNCH,0,CL_NORMAL,"NEXT.TOS",minimal) == 42 && launched_console == 1);
     VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,"NEXT.TOS",minimal) == 1);
     found = "GOOD\\NEXT.gTp";
     before = observed_launches;
     VERIFY(shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.gTp",minimal) == 42);
+    VERIFY(launched_console == 0);
     VERIFY(observed_launches == before+1 && launched_tail[0] == 1 && launched_tail[1] == 'x');
     VERIFY(shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.gTp",maximum) == 42);
     VERIFY(!memcmp(maximum,launched_tail,127) && !launched_tail[127]);

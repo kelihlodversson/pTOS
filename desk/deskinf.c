@@ -335,12 +335,17 @@ WORD dr_code(PARMBLK *pparms)
     GRECT oc;
     WORD  state;
 #if CONF_WITH_LIBAES_DESK && CONF_WITH_X32_DESKTOP_TEST
-    if (!strcmp(((FNODE *)(uintptr_t)pparms->pb_parm)->f_name,"APPTEST.PRG") ||
-        !strcmp(((FNODE *)(uintptr_t)pparms->pb_parm)->f_name,"APPTEST.GTP")) {
+    const char *test_name = ((FNODE *)(uintptr_t)pparms->pb_parm)->f_name;
+    const char *test_kind = NULL;
+    if (!strcmp(test_name,"APPTEST.PRG")) test_kind = "program";
+    else if (!strcmp(test_name,"APPTEST.GTP")) test_kind = "GTP";
+    else if (!strcmp(test_name,"APPTEST.TOS")) test_kind = "TOS";
+    else if (!strcmp(test_name,"APPTEST.TTP")) test_kind = "TTP";
+    if (test_kind) {
         char message[80];
         extern void desk_test_record(const char *text);
         sprintf(message,"x32 desktop %s TARGET %d %d\r\n",
-                !strcmp(((FNODE *)(uintptr_t)pparms->pb_parm)->f_name,"APPTEST.GTP") ? "GTP" : "program",
+                test_kind,
                 pparms->pb_x+16,pparms->pb_y+pparms->pb_h/2);
         desk_test_record(message);
     }

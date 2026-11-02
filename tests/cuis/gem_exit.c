@@ -79,7 +79,7 @@ int gem_exit_checks(short *global)
     static const short results[] = { 0x1234,0x5678,0x0400 };
     VERIFY(appl_getinfo(AES_MESSAGE,&a,&b,&c,&d) == 1 && (a & 0x20) && !b && !c && !d);
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_PARSE,"APPS\\GEMCHILD.PRG",tail));
-    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMSHELL.TOS",tail));
+    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\ABSENT.TOS",tail));
     for (i = 0; i < 3; i++) {
         tail[1] = roles[i];
         /* Mode 0 infers GEM from the extension; wisgr is ignored. */
@@ -103,6 +103,9 @@ int gem_exit_checks(short *global)
     VERIFY(receive(message,0,global) == MU_TIMER);
     /* A fixed ET_EXEC without relocation tables must keep its link address. */
     pid = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\FIXED.PRG",tail);
+    VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,0x2468));
+    /* The same fixed executable can run without an AES session as text. */
+    pid = shel_write(SWM_LAUNCH,TOSAPP,CL_NORMAL,"APPS\\FIXED.TOS",tail);
     VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,0x2468));
     /* Completion/reaping of A before launching B must preserve exit FIFO. */
     tail[1] = 'e';

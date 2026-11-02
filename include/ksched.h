@@ -21,6 +21,8 @@ void ksched_context_restore(UQUAD identity);
 /* Called with IRQs masked. Predicates run with IRQs masked and must not
  * allocate, block or access user memory. FALSE means no managed task. */
 BOOL ksched_block(BOOL (*ready)(void *), void *argument);
+/* The same wait for callers that do not already hold an IRQ mask. */
+BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
 /* Standard async process calls are admitted only within a managed group.
  * Spawn consumes an unprepared, loaded basepage only on success. */
 BOOL ksched_spawn_allowed(void);

@@ -87,22 +87,25 @@ WORD mt_shel_read(char *command, char *tail, WORD *global)
     aes_shell_read_core(command,tail); return 1;
 }
 WORD shel_read(char *command, char *tail) { return mt_shel_read(command,tail,aes_global); }
-static BOOL gem_application(const char *path)
+static WORD application_kind(const char *path)
 {
     ULONG length = strlen(path), i;
     char extension[4];
-    if (length < 4 || path[length-4] != '.') return FALSE;
+    if (length < 4 || path[length-4] != '.') return -1;
     for (i = 0; i < 3; i++) {
         char c = path[length-3+i];
         extension[i] = c >= 'a' && c <= 'z' ? c-'a'+'A' : c;
     }
     extension[3] = 0;
-    return !strcmp(extension,"PRG") || !strcmp(extension,"APP") || !strcmp(extension,"GTP");
+    if (!strcmp(extension,"PRG") || !strcmp(extension,"APP") || !strcmp(extension,"GTP")) return GEMAPP;
+    if (!strcmp(extension,"TOS") || !strcmp(extension,"TTP")) return TOSAPP;
+    return -1;
 }
 WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
 {
     char path[AES_SHELL_PATH], staged_tail[128] = { 0 };
     LONG pid, session, watch = 0;
+    WORD kind = GEMAPP;
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
     if (mode == SWM_LAUNCH ? execution != CL_NORMAL :
         graphical != GEMAPP || (execution != SHW_PARALLEL && execution != SHW_CHAIN)) return 0;
@@ -116,14 +119,15 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
         return cuis_call6(CUIS_PROCESS_DEFER,session,(uintptr_t)path,
             (uintptr_t)staged_tail,0,0,0) == E_OK ? 1 : 0;
     if (mode == SWM_LAUNCH) {
-        if (!gem_application(path) || aes_child_messages(session) < 0) return 0;
+        kind = application_kind(path);
+        if (kind < 0 || aes_child_messages(session) < 0) return 0;
         watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
         if (watch <= 0) return 0;
     }
     if (watch) {
         /* The ordinary fixed-address loader installs the observer at spawn,
          * atomically with launch, before the child can execute or be reaped. */
-        pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)staged_tail,0,0);
+        pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)staged_tail,0,kind == TOSAPP);
     } else {
         pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)staged_tail,0);
     }
