@@ -60,7 +60,8 @@ def check(root=ROOT):
         "undocumented_exports": sorted(functions - expected),
         "missing_exports": sorted(expected - functions),
     }
-    operations = set(re.findall(r"case ([A-Z][A-Z0-9_]+):", (root / "aes/gemsuper.c").read_text()))
+    dispatcher = c_code((root / "aes/gemsuper.c").read_text())
+    operations = set(re.findall(r"\bcase\s+([A-Z][A-Z0-9_]*)\s*:", dispatcher))
     aliases = {"GRAF_RUBBOX": "graf_rubberbox"}
     missing = {opcode for opcode in operations if aliases.get(opcode, opcode.lower()) not in rows}
     assert not missing, "unclassified legacy operations: " + ", ".join(sorted(missing))

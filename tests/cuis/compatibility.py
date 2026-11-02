@@ -54,6 +54,26 @@ class DeclarationGuard(unittest.TestCase):
         path.write_text("/* global: commented_symbol; local: */\n" + path.read_text())
         self.check()
 
+    def test_legacy_case_spacing(self):
+        path = self.root / "aes/gemsuper.c"
+        original = path.read_text()
+        for label in ("case NEW_OPERATION:", "case NEW_OPERATION :",
+                      "case\tNEW_OPERATION\n:", "case /* application */ NEW_OPERATION:",
+                      "case/**/NEW_OPERATION/**/:", "case\\\n NEW_OPERATION:"):
+            with self.subTest(label=label):
+                path.write_text(original + "\n" + label)
+                with self.assertRaisesRegex(AssertionError, "unclassified legacy operations: NEW_OPERATION"):
+                    self.check()
+
+    def test_inactive_legacy_cases(self):
+        path = self.root / "aes/gemsuper.c"
+        path.write_text(path.read_text() + '''
+/* case NEW_OPERATION: */
+// case NEW_OPERATION:
+const char *example = "case NEW_OPERATION:";
+''')
+        self.check()
+
     def test_commented_prototypes(self):
         for header, binding in (("include/gem.h", "mt_appl_init"),
                                 ("include/rectfunc.h", "inside")):
