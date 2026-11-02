@@ -172,10 +172,20 @@ static int child_completion_checks(void)
 static LONG child_validate_error, child_start_error;
 static ULONG child_start_calls;
 static BOOL child_stay_live;
+static ULONG console_abort_stage;
+static intptr_t console_launch_escape[5];
+static void abort_console_launch(void)
+{
+    console_abort_stage = 0;
+    cuis_process_exit(run);
+    /* Model process termination: the launch syscall never returns. */
+    __builtin_longjmp(console_launch_escape,1);
+}
 long bdos_check_user_args(const long *args)
 {
     if (args[0] != 0x4b || args[1] != PE_ASYNC_LOADGO || args[2] != 0x11000 ||
         args[3] != 0x12000 || args[4] || args[5] || args[6]) return EIMBA;
+    if (console_abort_stage == 1) abort_console_launch();
     return child_validate_error;
 }
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token)
@@ -186,6 +196,7 @@ long xexec_observed(char *path, char *tail, char *environment, ULONG session, UL
     if (child_start_error) return child_start_error;
     result = cuis_child_bind_spawn(session,token,&third);
     if (result != E_OK) return result;
+    if (console_abort_stage == 2) abort_console_launch();
     if (!child_stay_live) {
         test_children[0].status = (2L << 16) | 0x2468;
         cuis_child_completed(run,2,0x2468);
@@ -258,6 +269,37 @@ static int console_launch_checks(void)
     cuis_process_exit(&third); /* fault/normal teardown may both pass here */
     cuis_process_exit(&second); run = &first; child_stay_live = FALSE;
     CHECK(!clients && allocations == frees);
+    return 0;
+}
+
+static int console_abandoned_launch_checks(void)
+{
+    LONG session, token;
+    volatile WORD stage;
+    CHECK(!clients && !console_owner && allocations == frees);
+    child_stay_live = TRUE;
+    for (stage = 1; stage <= 2; stage++) {
+        run = &first;
+        session = cuis_service(CUIS_SESSION_START,0);
+        token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+        console_abort_stage = stage;
+        if (!__builtin_setjmp(console_launch_escape)) {
+            (void)cuis_child_launch(session,token,0x11000,0x12000,0,1);
+            CHECK(FALSE);
+        }
+        CHECK(!console_abort_stage && !console_launcher && !console_launch_image);
+        CHECK(!console_owner && !text_console_active && !*find_owner(&first));
+        /* Another client must be able to launch after the abandoned call. */
+        run = &second;
+        session = cuis_service(CUIS_SESSION_START,0);
+        token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+        CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,1) == 2);
+        CHECK(console_owner == &third && text_console_active);
+        cuis_process_exit(&third);
+        cuis_process_exit(&second);
+        CHECK(!clients && !console_owner && !text_console_active && allocations == frees);
+    }
+    child_stay_live = FALSE; run = &first;
     return 0;
 }
 

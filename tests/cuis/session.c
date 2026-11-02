@@ -380,5 +380,7 @@ int main(void)
     rc = child_launch_checks();
     if (rc) return rc;
     rc = console_launch_checks();
+    if (rc) return rc;
+    rc = console_abandoned_launch_checks();
     return rc ? rc : process_defer_checks();
 }

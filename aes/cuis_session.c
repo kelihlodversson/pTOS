@@ -1189,6 +1189,12 @@ static void session_exit(PD *owner)
     if (client) {
         CUIS_WINDOW *window;
         UQUAD flags = cuis_input_lock();
+        /* A backing fault can terminate a syscall without unwinding its
+         * launch frame. Never retain a session that teardown will free. */
+        if (console_launcher == client) {
+            console_launcher = NULL;
+            console_launch_image = NULL;
+        }
         client->input_wait = NULL;
         background_remove(client);
         client->pointer_style_set = FALSE; client->pointer_hidden = 0;
