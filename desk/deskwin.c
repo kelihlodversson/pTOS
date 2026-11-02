@@ -395,6 +395,16 @@ static void win_icalc(FNODE *pfnode, WNODE *pwin)
             AF_ISDESK|AF_VIEWER, pwin->w_pnode.p_spec, pfnode->f_name, &pfnode->f_isap);
 }
 
+#if CONF_WITH_LIBAES_DESK
+/* A refresh can restore selections that no longer lie in the viewport. */
+void win_classify_selection(WNODE *window)
+{
+    FNODE *node;
+    for (node = window->w_pnode.p_flist; node; node = node->f_next)
+        if (node->f_selected) win_icalc(node,window);
+}
+#endif
+
 
 /*
  *  Build an object tree of the list of files that are currently

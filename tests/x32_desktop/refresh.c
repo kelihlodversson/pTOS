@@ -16,6 +16,7 @@ GLOBES G;
 static WNODE windows[3];
 static unsigned scans, draws, allocations, fail_alloc, again;
 static const unsigned files = 1025;
+static ANODE association;
 
 static void fill(PNODE *path, BOOL initial)
 {
@@ -55,6 +56,12 @@ WNODE *win_find(WORD handle)
     return NULL;
 }
 WNODE *win_ontop(void) { return &windows[1]; }
+void win_classify_selection(WNODE *window)
+{
+    FNODE *node;
+    for (node = window->w_pnode.p_flist; node; node = node->f_next)
+        if (node->f_selected) { node->f_pa = &association; node->f_isap = TRUE; }
+}
 void desk_verify(WORD handle, WORD rebuild)
 {
     FNODE *node;
@@ -65,10 +72,13 @@ void desk_verify(WORD handle, WORD rebuild)
         for (node = window->w_pnode.p_flist; node; node = node->f_next) {
             VERIFY(sscanf(node->f_name,"F%u.TXT",&number) == 1);
             VERIFY(!!node->f_selected == (number < files && !(number%2)));
+            /* No view calculation here: all 1025 entries, including those
+             * outside the viewport, must already have valid associations. */
+            if (node->f_selected) VERIFY(node->f_pa == &association && node->f_isap);
         }
     G.g_cwin = G.g_wlastsel = handle; G.g_croot = window->w_root;
 }
-void win_sinfo(WNODE *window, BOOL selected) { VERIFY(!selected && G.g_cwin == window->w_id); }
+void win_sinfo(WNODE *window, BOOL selected) { VERIFY(selected && G.g_cwin == window->w_id); }
 WORD wind_get_grect(WORD handle, WORD field, GRECT *rect)
 {
     VERIFY(win_find(handle) && field == WF_WXYWH); memset(rect,0,sizeof(*rect)); return 1;

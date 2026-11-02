@@ -72,9 +72,10 @@ static BOOL refresh(WNODE *window)
     for (node = window->w_pnode.p_flist; node; node = node->f_next)
         node->f_selected = selected(names,count,node->f_name);
     if (names) dos_free(names);
+    win_classify_selection(window);
     /* Restore FNODE selection before rebuilding OBJECTs and info text. */
     desk_verify(window->w_id,TRUE);
-    win_sinfo(window,FALSE);
+    win_sinfo(window,TRUE);
     wind_get_grect(window->w_id,WF_WXYWH,&rectangle);
     fun_msg(WM_REDRAW,window->w_id,rectangle.g_x,rectangle.g_y,rectangle.g_w,rectangle.g_h);
     return TRUE;
