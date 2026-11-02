@@ -752,7 +752,13 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #else
         rc = ksched_spawn(cur_p);
 #endif
-        if (rc < 0) proc_discard_accessory(cur_p);
+        if (rc < 0) {
+#if CONF_WITH_CUIS
+            if (deferred) proc_dispose_deferred(cur_p);
+            else
+#endif
+                proc_discard_accessory(cur_p);
+        }
         return rc;
     }
 #endif
