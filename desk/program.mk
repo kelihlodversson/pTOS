@@ -36,6 +36,11 @@ DESK_MULTILIBFLAGS = $(subst $(CPUFLAGS),$(DESK_CPUFLAGS),$(MULTILIBFLAGS))
 DESK_CFLAGS = $(subst $(CPUFLAGS),$(DESK_CPUFLAGS),$(CFLAGS)) -ffunction-sections -fdata-sections $(if $(ARCH_ARM),-mword-relocations)
 ifdef ARCH_X86_64
 DESK_CFLAGS = $(X32_CLI_CFLAGS) $(if $(CONF_WITH_DYNAMIC_DESK),$(LDSO_APP_CFLAGS)) -DX32_USERLAND -Idesk/x32 -Iinclude -Iobj -Idesk -Iaes -Iaes/shared -Iutil -Iinclude/arch/x86_64 -ffunction-sections -fdata-sections
+ifeq ($(CONF_WITH_LIBAES),y)
+# The desktop's historical bindings/globals are local wrappers. They must
+# not interpose libaes's own standard bindings and private global array.
+DESK_CFLAGS += -fvisibility=hidden
+endif
 $(DESK_OBJDIR)/%.o: desk/x32/%.c $(AUTOCONF_H) | $(DESK_OBJDIR)
 	$(X32_CC) $(DESK_CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
 $(DESK_OBJDIR)/%.o: desk/x32/%.S | $(DESK_OBJDIR)

@@ -30,6 +30,9 @@
 #include "aesbind.h"
 #include "desksupp.h"
 #include "deskpro.h"
+#if CONF_WITH_LIBAES && CONF_WITH_X32_DESKTOP_TEST
+void desk_test_record(const char *message);
+#endif
 
 
 static WORD pro_exec(WORD isgraf, WORD isover, char *pcmd, char *ptail)
@@ -38,9 +41,23 @@ static WORD pro_exec(WORD isgraf, WORD isover, char *pcmd, char *ptail)
 
     desk_busy_on();
 
+#if CONF_WITH_LIBAES
+    /* AES4 launches return a child ID; the desktop keeps its event loop. */
+    (void)isover;
+    ret = shel_write(0, isgraf, 0, pcmd, ptail);
+    desk_busy_off();
+#if CONF_WITH_X32_DESKTOP_TEST
+    {
+        char message[160];
+        sprintf(message,"x32 desktop LAUNCH %d %s\r\n",ret,pcmd);
+        desk_test_record(message);
+    }
+#endif
+#else
     ret = shel_write(SHW_EXEC, isgraf, isover, pcmd, ptail);
     if (!ret)
         desk_busy_off();
+#endif
     return ret;
 }
 
@@ -60,5 +77,7 @@ WORD pro_run(WORD isgraf, char *cmd, char *tail, WORD wh, WORD curr)
     if (wh != -1)
         do_wopen(FALSE, wh, curr, &G.g_desk);
 
+    if (ret && CONF_WITH_LIBAES)
+        return FALSE; /* A launched child does not terminate this desktop. */
     return ret;
 }

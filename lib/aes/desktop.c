@@ -40,6 +40,13 @@ BOOL aes_desktop_geometry(GRECT *rect, BOOL work, WORD *global)
     width = cuis_call6(CUIS_DISPLAY_INFO,0,0,0,0,0,0);
     height = cuis_call6(CUIS_DISPLAY_INFO,1,0,0,0,0,0);
     if (work) top = cuis_call6(CUIS_DISPLAY_INFO,2,0,0,0,0,0);
+    if (work && !top) {
+        WORD wbox, hbox;
+        /* GEM reserves its menu strip before the first menu_bar() call.
+         * Desktops query this area while placing their initial objects. */
+        if (!aes_frame_metrics(&wbox,&hbox,NULL,NULL,global)) return FALSE;
+        top = hbox;
+    }
     if (width <= 0 || width > 32767 || height <= 0 || height > 32767 || top < 0 || top > height) return FALSE;
     rect->g_x = 0; rect->g_y = top; rect->g_w = width; rect->g_h = height-top;
     return TRUE;

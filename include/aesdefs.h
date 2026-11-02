@@ -228,6 +228,7 @@
 
 /* message ids: evnt_mesag(), evnt_multi() */
 #define MN_SELECTED 10
+#define CH_EXIT     90
 
 #define WM_REDRAW   20
 #define WM_TOPPED   21

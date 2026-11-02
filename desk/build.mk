@@ -22,6 +22,9 @@ desk-prog-y := $(filter-out deskstart.o,$(desk-prog-y)) deskentry.o deskuser.o \
                gemfslib.o gemformbutton.o gemwatch.o gemformkey.o gem_rsc.o gemobjop.o gemobjwalk.o gemobed.o gemedit.o gemgrlib.o gemgrtrack.o gemformanim.o \
                gemgraphutil.o gemfmerror.o gemformerror.o gemfmalt.o gemalert.o
 desk-prog-y += $(if $(CONF_WITH_LIBAES),gemobjtree.o)
+ifeq ($(CONF_WITH_LIBAES),y)
+desk-prog-y := $(filter-out deskaes.o deskwind.o desktree.o deskfsel.o,$(desk-prog-y)) desklibaes.o
+endif
 ifeq ($(CONF_WITH_DYNAMIC_DESK),y)
 desk-prog-y := $(filter-out deskentry.o doprintf.o memmove.o string.o,$(desk-prog-y))
 endif

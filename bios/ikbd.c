@@ -27,6 +27,7 @@
 #include "emutos.h"
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
+#include "gemerror.h"
 #endif
 #include "country.h"
 #include "acia.h"
@@ -126,6 +127,16 @@ WORD keyboard_shifted(WORD scancode)
 {
     return current_keytbl.shft[(UWORD)scancode & 127];
 }
+
+#if CONF_WITH_CUIS
+LONG keyboard_map_lookup(UQUAD scancode, UQUAD table)
+{
+    const UBYTE *map;
+    if (scancode >= 128 || table > 2) return EINVAL;
+    map = table == 0 ? current_keytbl.norm : table == 1 ? current_keytbl.shft : current_keytbl.caps;
+    return map ? map[scancode] : EINVFN;
+}
+#endif
 
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
 {
