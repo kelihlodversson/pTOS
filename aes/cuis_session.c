@@ -1183,18 +1183,9 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     }
 }
 
-void cuis_process_exit(PD *owner)
+static void session_exit(PD *owner)
 {
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
-    if (console_owner == owner) {
-        UQUAD flags = cuis_input_lock();
-        console_owner = NULL;
-        vdi_cuis_console(FALSE);
-        pointer_suppressed = pointer_buttons != 0;
-        if (surface_owner) surface_owner->surface_events |= CUIS_SURFACE_DIRTY;
-        damage_windows(); cuis_pointer_sync();
-        cuis_input_unlock(flags);
-    }
     if (client) {
         CUIS_WINDOW *window;
         UQUAD flags = cuis_input_lock();
@@ -1229,6 +1220,20 @@ void cuis_process_exit(PD *owner)
         if (client->pending_write) kfree(client->pending_write);
         kfree(client);
     }
+}
+
+void cuis_process_exit(PD *owner)
+{
+    if (console_owner && console_owner == owner) {
+        UQUAD flags = cuis_input_lock();
+        console_owner = NULL;
+        vdi_cuis_console(FALSE);
+        pointer_suppressed = pointer_buttons != 0;
+        if (surface_owner) surface_owner->surface_events |= CUIS_SURFACE_DIRTY;
+        damage_windows(); cuis_pointer_sync();
+        cuis_input_unlock(flags);
+    }
+    session_exit(owner);
 }
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -1308,7 +1313,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         if (handle > 0x7fffffffULL) return EINVAL;
         client = *find_owner(run);
         if (!client || handle != client->handle) return EACCDN;
-        if (function == CUIS_SESSION_END) cuis_process_exit(run);
+        if (function == CUIS_SESSION_END) session_exit(run);
         return E_OK;
     default:
         return EINVFN;
@@ -2802,6 +2807,7 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
             CUIS_WINDOW *window;
             console_owner = console_launch_image;
             pointer_capture = pointer_hover = NULL;
+            pointer_activation_drag = pointer_control_drag = FALSE;
             surface_capture = background_capture = NULL;
             for (peer = clients; peer; peer = peer->next) {
                 peer->key_head = peer->key_count = 0;

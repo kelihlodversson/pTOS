@@ -20,6 +20,7 @@ def firmware(name):
 class Guest:
     def __init__(self, output, args, missing=False):
         self.output = output.resolve()
+        self.embedded_console = args.embedded_console
         self.output.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="ptos-desktop-", dir="/tmp")
         self.root = Path(self.temporary.name)
@@ -496,6 +497,12 @@ def libaes_desktop(guest):
         guest.move(180,105)
         guest.click()
         points = re.findall(r"x32 desktop %s TARGET (\d+) (\d+)" % kind,guest.text())
+        if not points and kind == "TTP":
+            before = len(guest.text())
+            guest.move(308,107)  # Full the directory window to reveal TTP.
+            guest.click()
+            text = guest.wait(r"x32 desktop TTP TARGET \d+ \d+",after=before,regex=True)
+            points = re.findall(r"x32 desktop TTP TARGET (\d+) (\d+)",text[before:])
         assert points, "missing console application target"
         guest.move(*map(int,points[-1]))
         guest.click()
@@ -513,6 +520,17 @@ def libaes_desktop(guest):
         guest.wait("x32 desktop CH_EXIT %d %s" % (pid,status))
         assert guest.text().count("x32 desktop CH_EXIT %d " % pid) == 1
         assert guest.text().count("x32 desktop LIBAES PASS") == 1
+    if not guest.embedded_console:
+        before = len(guest.text())
+        guest.key("ctrl-z")
+        text = guest.wait(r"x32 desktop LAUNCH \d+ (?:C:\\)?EMUCON.TOS",after=before,regex=True)
+        pid = int(re.findall(r"x32 desktop LAUNCH (\d+) (?:C:\\)?EMUCON.TOS",text[before:])[-1])
+        assert pid > 0
+        guest.wait("C:\\>",after=before)
+        guest.screenshot("console-shell")
+        for key in ("e","x","i","t","ret"): guest.key(key)
+        guest.wait("x32 desktop CH_EXIT %d 0000" % pid)
+        assert guest.text().count("x32 desktop LIBAES PASS") == 1
     # The original directory window remains usable after all terminations.
     guest.move(180,105)
     guest.click()
@@ -523,7 +541,7 @@ def libaes_desktop(guest):
     for pid,window in (first,second):
         assert text.count("x32 desktop CH_EXIT %d " % pid) == 1
     guest.screenshot("resident-desktop")
-    print("Resident libaes desktop launches concurrent GEM children and handles normal/fault exits: PASS",flush=True)
+    print("Resident libaes desktop launches GEM/console children, parameters, keyboard input and normal/fault return: PASS",flush=True)
 
 
 def main():

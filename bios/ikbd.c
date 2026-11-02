@@ -27,8 +27,9 @@
 #include "emutos.h"
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
-#include "../aes/cuis_input.h"
 #include "gemerror.h"
+#endif
+#if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
 #include "country.h"
@@ -277,7 +278,7 @@ LONG bconstat2(void)
     }
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED && !CONF_SERIAL_CONSOLE_POLLING_MODE
 static BOOL console_key_ready(void *unused)
 {
     (void)unused;
@@ -295,13 +296,10 @@ LONG bconin2(void)
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
-#if CONF_WITH_CUIS
-        UQUAD flags = cuis_input_lock();
-        if (ksched_block(console_key_ready,NULL)) {
-            cuis_input_unlock(flags);
+#if CONF_WITH_NATIVE_SCHED
+        if (ksched_wait_ready(console_key_ready,NULL)) {
             continue;
         }
-        cuis_input_unlock(flags);
 #endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU
         stop_until_interrupt();

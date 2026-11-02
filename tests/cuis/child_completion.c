@@ -222,7 +222,7 @@ static int child_launch_checks(void)
 
 static int console_launch_checks(void)
 {
-    LONG session, other, token, other_token;
+    LONG session, other, token, other_token, child_session;
     CHECK(!clients && !console_owner && !text_console_active && allocations == frees);
     run = &first; session = cuis_service(CUIS_SESSION_START,0);
     run = &second; other = cuis_service(CUIS_SESSION_START,0); run = &first;
@@ -236,6 +236,11 @@ static int console_launch_checks(void)
     token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
     CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,1) == 2);
     CHECK(console_owner == &third && text_console_active && displayed_hidden);
+    run = &third;
+    child_session = cuis_service(CUIS_SESSION_START,0);
+    CHECK(cuis_service(CUIS_SESSION_END,child_session) == E_OK);
+    CHECK(console_owner == &third && text_console_active);
+    run = &first;
     CHECK(!cuis_keyboard_event(0x1234));
     CHECK(cuis_display_lock(session,0,0) == E_OK);
     CHECK(cuis_vdi_policy() == EAGAIN && cuis_display_lock(session,1,0) == EAGAIN);

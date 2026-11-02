@@ -104,6 +104,9 @@ int gem_exit_checks(short *global)
     /* A fixed ET_EXEC without relocation tables must keep its link address. */
     pid = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\FIXED.PRG",tail);
     VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,0x2468));
+    /* The same fixed executable can run without an AES session as text. */
+    pid = shel_write(SWM_LAUNCH,TOSAPP,CL_NORMAL,"APPS\\FIXED.TOS",tail);
+    VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,0x2468));
     /* Completion/reaping of A before launching B must preserve exit FIFO. */
     tail[1] = 'e';
     earlier = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail);

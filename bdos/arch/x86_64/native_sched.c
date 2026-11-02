@@ -54,6 +54,16 @@ BOOL ksched_spawn_allowed(void)
 }
 BOOL ksched_active(void) { return scheduler.active; }
 
+BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument)
+{
+    UQUAD flags;
+    BOOL managed;
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    managed = ksched_block(ready,argument);
+    if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+    return managed;
+}
+
 UQUAD ksched_context_id(void)
 {
     KERNEL_TASK *task = scheduler.current;

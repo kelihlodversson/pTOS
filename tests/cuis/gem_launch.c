@@ -72,7 +72,7 @@ int gem_launch_checks(short *global, char **envp)
     unsigned pass, i;
     /* Do not claim complete AES_SHELL support for a single launch submode. */
     VERIFY(appl_getinfo(AES_SHELL,&a,&b,&c,&d) == 0 && !a && !b && !c && !d);
-    VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,0,command,tail));
+    VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,command,tail));
     VERIFY(!mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,command,tail,NULL));
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,"ABSENT.PRG",tail));
     VERIFY((int32_t)process_call(0x47,(uintptr_t)cwd,0,0) == 0);
