@@ -237,7 +237,7 @@ UBYTE desk_bootflags(void)
 
 BOOL desk_rez_changeable(void)
 {
-    return info.rez_changeable != 0;
+    return !CONF_WITH_LIBAES_DESK && info.rez_changeable != 0;
 }
 
 BOOL desk_has_alt_ram(void)
@@ -277,7 +277,7 @@ void desk_set_cache(WORD enable)
 
 BOOL desk_can_shutdown(void)
 {
-    return info.can_shutdown != 0;
+    return !CONF_WITH_LIBAES_DESK && info.can_shutdown != 0;
 }
 
 BOOL desk_has_videl(void)

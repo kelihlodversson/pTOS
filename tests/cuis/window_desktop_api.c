@@ -116,7 +116,7 @@ static int window_desktop_api_checks(short *global)
     CHECK(default_colour_checks(global) == 0);
     CHECK(mt_wind_new(NULL) == 0 && mt_wind_set_ptr(0,WF_NEWDESK,&tree,invalid) == 0);
     CHECK(wind_get_grect(0,WF_CURRXYWH,&result) == 1 && result.g_w == 640 && result.g_h == 400);
-    CHECK(mt_wind_get_grect(0,WF_WORKXYWH,&result,global) == 1 && result.g_y == 0);
+    CHECK(mt_wind_get_grect(0,WF_WORKXYWH,&result,global) == 1 && result.g_y == 19 && result.g_h == 381);
     CHECK(wind_get(0,WF_KIND,&a,&b,&c,&d) == 1 && !(a|b|c|d));
     CHECK(wind_get(0,WF_OWNER,&a,&b,&c,&d) == 1 && !a && b == 1);
     CHECK(wind_get_grect(0,WF_FIRSTXYWH,&result) == 1 && result.g_w == 640);

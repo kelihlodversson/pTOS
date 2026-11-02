@@ -114,4 +114,6 @@ void win_dispfile(WNODE *pw, WORD file);
 WNODE *win_onbottom(void);
 #endif
 
+void win_classify_selection(WNODE *window);
+
 #endif  /* _DESKWIN_H */

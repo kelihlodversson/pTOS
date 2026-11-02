@@ -2932,3 +2932,49 @@ shared stdout/stderr, an executable unlinked after staging, and a full native ta
 set rejecting replacement while retaining the old request. Full boot memory
 accounting verifies that successor images and their replaced/cancelled state
 are reclaimed.
+
+Resident external EmuDesk (#855)
+-------------------------------
+With CONF_WITH_LIBAES and CONF_EXTERNAL_DESK, the BIOS starts EmuDesk as an
+ordinary ELF application in a native managed group, without starting the
+legacy kernel AES shell. Missing desktops retain the configured EmuCON
+fallback. The kernel startup change and keymap lookup are gated by CUIS.
+
+EmuDesk's local historical binding arrays now call standard libaes mt_*
+functions. No AESPB or typed legacy AES service handles cross the boundary.
+The local wrappers/globals have hidden visibility so they cannot interpose
+libaes's own functions and private globals. Existing desktop resources and
+drawing remain in the shared AES implementation. Traditional configurations
+keep their existing adapters and shell loop.
+
+Normal GEM application launches use AES4 shel_write mode 0. Launch success
+no longer means that the desktop should exit: its windows, menus, state and
+event loop remain live while children execute. The busy cursor is cleared
+on return from launch. Standard CH_EXIT messages refresh directory listings
+without restarting the desktop. Both normal termination and faults use the
+existing libaes child-completion path. Classic SHW_CHAIN remains separate
+compatibility support; it is not EmuDesk's normal launch policy.
+
+Window zero's work/full area reserves the normal GEM menu strip even before
+the first menu_bar call. The physical/current rectangle remains the complete
+screen. This lets a desktop place its initial objects below the menu bar.
+
+CUIS_KEYMAP_LOOKUP(scancode, table), opcode 71, returns the current unsigned
+byte for a hardware scan code 0..127, using table 0 (normal), 1 (shifted), or
+2 (caps). Invalid full-width scalar arguments return EINVAL; an unavailable
+table returns EINVFN. This read-only hardware-map lookup exposes no pointers
+or queued keystrokes. EmuDesk uses it for Alt-letter drive shortcuts, replacing
+the old AES-shell query. Tests cover all map entries, changed maps, missing
+maps and wide/invalid arguments.
+
+The libaes desktop integration boot opens a real directory window, launches
+two independent dynamically linked standard GEM applications, and keeps the
+desktop active while both wait for input. It checks exactly one CH_EXIT for
+normal and fault exits, preserves the original window and desktop registration,
+and opens another directory window afterward. Screenshots are captured with
+both applications and after their exits. The same runner retains legacy desktop
+coverage when libaes is disabled, and missing-desktop fallback coverage.
+
+Console/ARGV/accessory launch, shutdown and resolution-changing shell policies
+remain later slices. Unsupported console, shutdown and resolution menu actions
+are disabled in this desktop path. AES_SHELL capability remains unadvertised.

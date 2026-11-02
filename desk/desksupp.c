@@ -840,7 +840,7 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
  *  double-clicking an icon, or by pressing a function key, or by
  *  dropping a file on to a desktop shortcut for a program
  *
- *  returns TRUE iff shel_write() was issued successfully
+ *  returns TRUE iff the launch requires the desktop to exit
  */
 WORD do_aopen(ANODE *pa, BOOL isapp, WORD curr, char *pathname, char *pname, char *tail)
 {

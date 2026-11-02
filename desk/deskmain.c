@@ -24,7 +24,7 @@
 
 #include "emutos.h"
 #include "string.h"
-#if defined(X32_USERLAND)
+#if defined(X32_USERLAND) && !CONF_WITH_LIBAES_DESK
 #include "aes_shell.h"
 #endif
 
@@ -44,6 +44,9 @@
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
+#if CONF_WITH_LIBAES_DESK
+#include "deskrefresh.h"
+#endif
 
 #include "biosdefs.h"
 #include "nls.h"
@@ -608,6 +611,10 @@ static void men_update(void)
 #endif
 
     menu_ienable(tree, RESITEM, can_change_resolution);
+#if CONF_WITH_LIBAES_DESK && CONF_WITH_CLI
+    /* Console launch policy is not implemented by libaes yet. */
+    menu_ienable(tree, CLIITEM, FALSE);
+#endif
 
 #if CONF_WITH_BLITTER
     if (blitter_is_present)
@@ -1158,7 +1165,9 @@ static WORD check_function_key(WORD thechar)
  */
 static BOOL check_alt_letter_key(WORD thechar)
 {
-#if !defined(X32_USERLAND)
+#if CONF_WITH_LIBAES_DESK
+    extern WORD desk_shifted_key(WORD scancode);
+#elif !defined(X32_USERLAND)
     KEYTAB *keytab;
 #else
     AES_SHELL_REQUEST request = { 0 };
@@ -1168,7 +1177,9 @@ static BOOL check_alt_letter_key(WORD thechar)
     if (LOBYTE(thechar))        /* not an alt key */
         return FALSE;
 
-#if defined(X32_USERLAND)
+#if CONF_WITH_LIBAES_DESK
+    drive = desk_shifted_key(HIBYTE(thechar));
+#elif defined(X32_USERLAND)
     request.operation = AES_SHELL_KEY;
     request.value = HIBYTE(thechar);
     drive = aes_shell(&request);
@@ -1301,6 +1312,19 @@ WORD hndl_msg(void)
 
     switch(G.g_rmsg[0])
     {
+#if CONF_WITH_LIBAES_DESK
+    case CH_EXIT: /* Refresh listings while keeping windows and state. */
+#if CONF_WITH_X32_DESKTOP_TEST
+        {
+            char message[80];
+            extern void desk_test_record(const char *text);
+            sprintf(message,"x32 desktop CH_EXIT %d %04x\r\n",G.g_rmsg[3],(UWORD)G.g_rmsg[4]);
+            desk_test_record(message);
+        }
+#endif
+        desk_refresh_request();
+        break;
+#endif
     case MN_SELECTED:
         desk_verify(G.g_wlastsel, FALSE);
         done = hndl_menu(handle, G.g_rmsg[4]);
@@ -2197,6 +2221,13 @@ BOOL deskmain(void)
                                 &mx, &my, &button, &kstate, &kret, &bret);
         }
 
+        /* All nested operations have returned; no caller retains FNODEs. */
+#if CONF_WITH_LIBAES_DESK
+        if (!done) {
+            desk_refresh_run();
+            men_update();
+        }
+#endif
         /* free the screen      */
         wind_update(END_UPDATE);
     }

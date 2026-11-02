@@ -1187,6 +1187,9 @@ int main(void)
     failure = 0;
     CHECK(appl_init() == 7 && gl_apid == 7 && _AESapid == 7 && _AESnumapps == -1);
     CHECK(gl_ap_version == aes_global[0] && gl_ap_version == 0x0400);
+    /* The menu strip is reserved before any application has installed one. */
+    CHECK(wind_get(0,WF_WORKXYWH,&a,&b,&c,&d) == 1 && a == 0 && b == 19 && c == 640 && d == 381);
+    CHECK(wind_get(0,WF_CURRXYWH,&a,&b,&c,&d) == 1 && a == 0 && b == 0 && c == 640 && d == 400);
     CHECK(mt_appl_init(other) == 7 && other[2] == 7 && gl_apid == 7);
     CHECK(appl_init() == 7 && closes == 0); /* Repeated registration is idempotent. */
     window_at_result = 0;

@@ -35,6 +35,10 @@ class Guest:
                                    ("desk/emudesk-raspi.inf", "TYPED.INF")):
                 shutil.copy(source, esp / target)
             shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")
+            if "CONF_WITH_LIBAES = y" in Path("obj/auto.conf").read_text():
+                shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.PRG")
+                shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.GTP")
+                shutil.copy("extras/emuicon0.rsc",esp / "EMUICON.RSC")
             deep = esp
             for level in range(1, 14):
                 deep = deep / "LONGDIR0"
@@ -85,7 +89,7 @@ class Guest:
         text = self.log.read_text(errors="replace")
         assert not any(marker in text for marker in ("panic:", " FAIL", "resource snapshot rejected")), text[-5000:]
         faults = re.findall(r"^process fault: (.*)\n", text, re.MULTILINE)
-        expected = text.count("x32 desktop teardown fault READY")
+        expected = text.count("x32 desktop teardown fault READY") + text.count("x32 desktop client fault READY")
         # The early logger and console both report the same expected #UD.
         assert len(set(faults)) <= expected and len(faults) <= 2 * expected, text[-5000:]
         assert all(line.startswith("#UD Invalid Opcode") for line in faults), text[-5000:]
@@ -425,6 +429,79 @@ def desktop(guest):
     print("External x32 desktop, rubber-band selection, bounded shell tails, dialogs, edited file selector, USERDEF, nested ownership, application/accessory and console return: PASS", flush=True)
 
 
+def libaes_desktop(guest):
+    text = guest.ready(1)
+    assert "x32 desktop LIBAES PASS" in text
+    assert "x32 desktop custom icons PASS" in text
+    guest.move(34,45)
+    guest.double_click()
+    guest.wait("x32 desktop window OPEN")
+    guest.move(135,8)
+    time.sleep(0.25)
+    guest.move(135,44)
+    guest.click()
+    guest.wait("x32 desktop program TARGET")
+
+    def launch(count):
+        time.sleep(0.6)  # Each Open is an independent gesture, beyond dclick time.
+        text = guest.text()
+        points = re.findall(r"x32 desktop program TARGET (\d+) (\d+)",text)
+        # Focus the existing directory window before selecting a file. GEM
+        # consumes the activation click when another application's window tops it.
+        guest.move(180,105)
+        guest.click()
+        guest.move(*map(int,points[-1]))
+        guest.click()
+        guest.key("ctrl-o")
+        text = guest.wait(r"x32 desktop client READY \d+ \d+",count,regex=True)
+        pairs = re.findall(r"x32 desktop client READY (\d+) (\d+)",text)
+        assert text.count("x32 desktop LIBAES PASS") == 1
+        return tuple(map(int,pairs[-1]))
+
+    first = launch(1)
+    # Launch another process while the first remains blocked for GEM input.
+    second = launch(2)
+    assert first[0] != second[0] and first[1] != second[1]
+    assert "x32 desktop client EXIT" not in guest.text()
+    guest.screenshot("two-applications")
+    for (pid,window),key,status in ((first,"q","0025"),(second,"f","0400")):
+        guest.move(750,110+(pid&1)*280)
+        guest.click()
+        guest.key(key)
+        text = guest.wait("x32 desktop CH_EXIT %d %s" % (pid,status))
+        assert text.count("x32 desktop LIBAES PASS") == 1
+        assert text.count("x32 desktop window OPEN") == 1
+    # .GTP is graphical too, with a standard bounded parameter dialog.
+    guest.move(180,105)
+    guest.click()
+    points = re.findall(r"x32 desktop GTP TARGET (\d+) (\d+)",guest.text())
+    guest.move(*map(int,points[-1]))
+    guest.click()
+    forms = guest.text().count("x32 desktop form WAIT")
+    guest.key("ctrl-o")
+    guest.wait("x32 desktop form WAIT",forms+1)
+    for letter in "param": guest.key(letter)
+    guest.key("ret")
+    text = guest.wait(r"x32 desktop client READY \d+ \d+",3,regex=True)
+    third = tuple(map(int,re.findall(r"x32 desktop client READY (\d+) (\d+)",text)[-1]))
+    assert "x32 desktop client PARAMETERS PASS %d " % third[0] in text
+    guest.move(750,110+(third[0]&1)*280)
+    guest.click()
+    guest.key("q")
+    guest.wait("x32 desktop CH_EXIT %d 0025" % third[0])
+    # The original directory window remains usable after all terminations.
+    guest.move(180,105)
+    guest.click()
+    guest.key("alt-c")
+    guest.wait("x32 desktop window OPEN",2)
+    text = guest.text()
+    assert text.count("x32 desktop LIBAES PASS") == 1
+    for pid,window in (first,second):
+        assert text.count("x32 desktop CH_EXIT %d " % pid) == 1
+    guest.screenshot("resident-desktop")
+    print("Resident libaes desktop launches concurrent GEM children and handles normal/fault exits: PASS",flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
@@ -434,7 +511,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--embedded-console", action="store_true",
                         help="omit EMUCON.TOS and require the embedded x32 console")
-    parser.add_argument("--mode", choices=("desktop", "missing", "both"), default="both")
+    parser.add_argument("--mode", choices=("desktop", "missing", "both", "libaes"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:
         parser.error("supply --ovmf-code and --ovmf-vars for this host")
@@ -443,7 +520,12 @@ def main():
         guest = Guest(args.output / mode, args, missing=mode == "missing")
         try:
             if mode == "desktop":
-                desktop(guest)
+                if "CONF_WITH_LIBAES = y" in Path("obj/auto.conf").read_text():
+                    libaes_desktop(guest)
+                else:
+                    desktop(guest)
+            elif mode == "libaes":
+                libaes_desktop(guest)
             else:
                 text = guest.wait("C:\\>", timeout=25)
                 if args.embedded_console:

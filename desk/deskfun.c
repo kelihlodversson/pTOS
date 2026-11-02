@@ -1034,7 +1034,7 @@ static void fun_win2win(WORD src_wh, WORD dst_wh, WORD dst_ob, WORD keystate)
         {
             if (build_selected_path(&psw->w_pnode, destpath))
             {
-                /* set global so desktop will exit if do_aopen() succeeds */
+                /* Exit only if the launch requires replacing the desktop. */
                 exit_desktop = do_aopen(pda, TRUE, dst_ob, pdw->w_pnode.p_spec, pdf->f_name, destpath);
                 return;
             }
@@ -1101,7 +1101,7 @@ static WORD fun_file2desk(PNODE *pn_src, WORD icontype_src, ANODE *an_dest, WORD
             strcpy(pathname, an_dest->a_pappl);
             del_fname(pathname);
 
-            /* set global so desktop will exit if do_aopen() succeeds */
+            /* Exit only if the launch requires replacing the desktop. */
             exit_desktop = do_aopen(an_dest, TRUE, dobj, pathname, filename_start(an_dest->a_pappl), tail);
             break;
         case AT_ISFOLD:     /* dropping file on folder - copy or move */

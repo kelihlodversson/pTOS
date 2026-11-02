@@ -97,7 +97,7 @@ static BOOL gem_application(const char *path)
         extension[i] = c >= 'a' && c <= 'z' ? c-'a'+'A' : c;
     }
     extension[3] = 0;
-    return !strcmp(extension,"PRG") || !strcmp(extension,"APP");
+    return !strcmp(extension,"PRG") || !strcmp(extension,"APP") || !strcmp(extension,"GTP");
 }
 WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
 {
