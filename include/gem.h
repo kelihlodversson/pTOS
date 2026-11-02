@@ -1,6 +1,6 @@
 /* Public GEM AES bindings for the implemented libaes subset.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later.
- * Further resource, colour-image and decoration adapters follow in later slices. */
+ * Current operation/extension support is listed in doc/libaes-compatibility.md. */
 #ifndef PTOS_GEM_H
 #define PTOS_GEM_H
 #include "obdefs.h"

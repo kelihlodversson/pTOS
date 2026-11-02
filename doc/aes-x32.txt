@@ -1,6 +1,11 @@
 Native x32 AES clients and kernel service (#404, #613, #626, #659, #651)
 ==========================================================
 
+This document describes the legacy typed kernel AES service. External
+libaes over CUIS (#661) uses the standard GEM API instead; see cuis.txt and
+libaes-compatibility.md for its implementation, support matrix and cutover
+gates. Legacy service capability is not external libaes capability.
+
 CONF_WITH_X32_AES enables typed ring-3 clients and kernel-owned application
 registration, messages, input events, windows, object snapshots and update
 ownership. It depends on

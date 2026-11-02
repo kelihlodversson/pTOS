@@ -4,6 +4,11 @@ pTOS - userspace AES and kernel CUIS (#661)
 Migration boundary
 ------------------
 
+The current source API/extension matrix and remaining cutover gates are in
+doc/libaes-compatibility.md. That matrix describes external libaes, separately
+from the legacy kernel AES service documented in aes-x32.txt. RCS's x32/libaes
+target is merged and its resource load/edit/save/reload regression passes.
+
 The target is an ordinary per-process libaes.so over native Core User
 Interface Services (CUIS). There is no userspace AES daemon. Kernel CUIS
 owns shared authoritative GUI state; VDI owns drawing/hardware services.
