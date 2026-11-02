@@ -48,6 +48,7 @@ static void context_copy_hook(void);
 static void context_read_hook(void);
 static void child_copy_hook(void);
 static void child_idle_hook(void);
+static void cohort_idle_hook(void);
 static PD *mouse_release_owner;
 static ULONG mouse_release_steps;
 static BOOL mouse_release_exit;
@@ -187,6 +188,7 @@ void cuis_input_idle(void)
         run = saved;
     }
     child_idle_hook();
+    cohort_idle_hook();
     if (input_drop_focus) { input_drop_focus = FALSE; set_focus(NULL); }
     input_irqs = FALSE;
 }
@@ -392,5 +394,9 @@ int main(void)
     rc = peer_checks();
     if (rc) return rc;
     rc = cohort_checks();
+    if (rc) return rc;
+    rc = cohort_click_checks();
+    if (rc) return rc;
+    rc = cohort_origin_checks();
     return rc ? rc : process_defer_checks();
 }

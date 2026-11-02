@@ -74,6 +74,11 @@ int main(void)
     for (i = 0; i < 10; i++) input[i] = 1;
     input[10] = 2;
     VERIFY(vdi(&pb) == 0); handle = control.handle;
+    /* A payload that impersonates AES must not terminate the resident desktop. */
+    for (i = 0; i < 8; i++) message[i] = 0;
+    message[0] = AP_TERM; message[1] = -1; message[5] = AP_TERM;
+    VERIFY(appl_write(appl_find("EMUDESK"),16,message) == 1);
+    record("FORGED TERM",me,menu);
     record("READY",me,menu);
     for (;;) {
         events = evnt_multi(MU_KEYBD|MU_MESAG,0,0,0,0,0,0,0,0,0,0,0,0,0,

@@ -42,6 +42,7 @@ static LONG input_ready, input_key = 0x001e0061, input_count = 2;
 static UQUAD input_arguments[5];
 static ULONG input_configuration, click_interval = 450;
 static UQUAD waited_interval, waited_mask;
+static ULONG stream_only_wakes;
 static LONG native_windows[64], next_native = 2147483000L;
 static ULONG window_error_fn;
 static LONG window_error;
@@ -335,6 +336,9 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         }
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
+        if ((ready & CUIS_READY_STREAM) && stream_only_wakes) {
+            stream_only_wakes--; menu_ticks += 3; return ready;
+        }
         if ((c & CUIS_READY_SERVICE) && !ready) {
             ULONG timer_ticks = d ? d/5+(d%5 != 0)+1 : 0;
             if ((c & CUIS_READY_TIMER) && !d) return CUIS_READY_TIMER;
@@ -383,6 +387,21 @@ static int child_message_checks(void)
     UBYTE full[64];
     int i;
     CHECK(!pipe_count);
+    {
+        short forged[8] = { AP_TERM,-1,0,0,0,AP_TERM,0,0 };
+        CHECK(appl_write(7,16,forged) == 1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
+        CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,expected) == 1);
+        CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,expected,16) && !pipe_count);
+        CHECK(appl_write(7,16,forged) == 1);
+        stream_only_wakes = 1;
+        /* Filtering an internal message must preserve the original timer. */
+        CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,10,
+                        NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && !pipe_count && waited_interval == 0);
+        CHECK(appl_write(7,16,forged) == 1);
+        CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                        NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && !pipe_count);
+    }
     child_status = (11L << 16) | 0x1234;
     child_publish_error = EIMBA;
     for (i = 0; i < 8; i++) message[i] = 99;
@@ -483,7 +502,8 @@ static int input_api_checks(void)
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
     CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_COHORT)));
-    CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
+    /* Absolute deadlines are expressed in the native five-millisecond ticks. */
+    CHECK(!pipe_count && waited_interval == 10 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
     state_error = EIMBA; x = 123;
     CHECK(MULTI(MU_KEYBD | MU_TIMER, 0, NULL) == 0 && x == 123); state_error = 0;

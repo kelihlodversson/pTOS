@@ -47,6 +47,24 @@ static int peer_checks(void)
     CHECK(cuis_peer_service(CUIS_PEER_QUERY,first_handle,first_handle,CUIS_PEER_STATE,0,0) ==
           (CUIS_PEER_HAS_SURFACE|CUIS_PEER_HAS_BACKGROUND));
     CHECK(cuis_peer_service(CUIS_PEER_QUERY,first_handle,0,CUIS_PEER_BACKGROUND,0,0) == first_handle);
+    /* A caller may own the display while activating a windowless menu client.
+     * Releasing that lock must not put the desktop menu over the client's keys. */
+    run = &second;
+    CHECK(cuis_display_lock(second_handle,1,0) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,second_handle,20) == E_OK);
+    CHECK(cuis_display_lock(second_handle,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_HIDE,other_window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_HIDE,second_window,0,0,0,0) == E_OK);
+    run = &first;
+    CHECK(cuis_display_lock(first_handle,1,0) == E_OK);
+    CHECK(cuis_peer_service(CUIS_PEER_RAISE,first_handle,second_handle,0,0,0) == E_OK);
+    CHECK(surface_focus_pending && windowless_focus->handle == (ULONG)second_handle);
+    CHECK(cuis_display_lock(first_handle,0,0) == E_OK);
+    CHECK(surface_owner && surface_owner->handle == (ULONG)second_handle && !surface_focus_pending);
+    CHECK(cuis_keyboard_event(0x1e0061));
+    run = &second;
+    CHECK(cuis_session_wait(second_handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0) & CUIS_READY_KEY);
+    run = &first;
     region_exit_on_output = TRUE;
     CHECK(cuis_peer_service(CUIS_PEER_QUERY,first_handle,second_handle,CUIS_PEER_LABEL,0x20000,32) == EIMBA);
     CHECK(!*find_owner(&first));

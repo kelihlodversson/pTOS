@@ -1342,7 +1342,7 @@ WORD hndl_msg(void)
     {
 #if CONF_WITH_LIBAES_DESK
     case AP_TERM:
-        if (G.g_rmsg[1] == -1) done = TRUE;
+        if (G.g_rmsg[1] == -1 && desk_termination_ready()) done = TRUE;
         break;
     case SHUT_COMPLETED:
         if (shutdown_pending && desk_shutdown_ready()) {

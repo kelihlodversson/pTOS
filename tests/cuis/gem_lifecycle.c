@@ -51,7 +51,7 @@ static int stop(short pid)
 int gem_lifecycle_checks(void)
 {
     short app, acc, a[8], b[8], message[8], type, id, top;
-    int mode, closed, exited, completed, seen;
+    int mode, closed, exited, completed, seen, opened;
     unsigned tries;
     char name[9];
     app = launch('u',0); VERIFY(app > 0);
@@ -72,10 +72,16 @@ int gem_lifecycle_checks(void)
             if (id == acc) { VERIFY(type == APP_ACCESSORY); seen |= 2; }
         } while (appl_search(APP_NEXT,name,&type,&id));
         VERIFY(seen == 3);
+        /* Queue a new opening before the lifecycle packet. Its window must
+         * also be gone when AC_CLOSE reaches the accessory. */
+        for (tries = 0; tries < 8; tries++) message[tries] = 0;
+        message[0] = AC_OPEN; message[4] = b[4];
+        VERIFY(appl_write(acc,16,message));
         VERIFY(shel_write(SWM_SHUTDOWN,0,mode,0,0) == 1);
-        closed = exited = completed = 0;
+        closed = exited = completed = opened = 0;
         for (tries = 0; tries < 96 && (!completed || exited != (mode == SD_COMPLETE ? 3 : 1) || closed != 2); tries++) {
             VERIFY(receive(message));
+            if (message[0] == LIFE_OPENED) { VERIFY(!closed); opened++; }
             if (message[0] == LIFE_CLOSED) {
                 VERIFY(message[1] == acc && (message[3] == b[4] || message[3] == b[7]) && !message[4]);
                 closed++;
@@ -88,7 +94,7 @@ int gem_lifecycle_checks(void)
             if (message[0] == SHUT_COMPLETED) completed++;
             VERIFY(message[0] != AP_TFAIL);
         }
-        VERIFY(closed == 2 && completed == 1 && exited == (mode == SD_COMPLETE ? 3 : 1));
+        VERIFY(opened == 1 && closed == 2 && completed == 1 && exited == (mode == SD_COMPLETE ? 3 : 1));
         VERIFY(shel_write(SWM_SHUTDOWN,0,SD_ABORT,0,0) == 1);
         if (mode == SD_PARTIAL) VERIFY(stop(acc));
     }

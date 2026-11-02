@@ -290,7 +290,12 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
         if ((id == APR_NOWAIT ? aes_window_messages_poll(application_session,global) :
              aes_window_messages(application_session,global)) < 0) return 0;
         result = cuis_call6(CUIS_STREAM_READ, application_session, (uintptr_t)buffer, length, 0, 0, 0);
-        if (result == length) return 1;
+        if (result == length) {
+            result = aes_lifecycle_deliver(buffer,length,global);
+            if (result == E_OK) return 1;
+            if (result == EAGAIN) continue;
+            return 0;
+        }
         if (result != EAGAIN || id == APR_NOWAIT) return 0;
         {
             BOOL repeat = aes_controls_repeating();

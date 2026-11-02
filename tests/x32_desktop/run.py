@@ -438,6 +438,7 @@ def libaes_desktop(guest):
     assert "x32 desktop LIBAES PASS" in text
     assert "x32 desktop custom icons PASS" in text
     guest.wait("x32 libaes accessory READY")
+    guest.wait("x32 libaes accessory FORGED TERM")
 
     def accessory_open(count):
         guest.move(38,8)
@@ -586,6 +587,7 @@ def shutdown_desktop(guest):
     text = guest.ready(1)
     assert "x32 desktop LIBAES PASS" in text
     guest.wait("x32 libaes accessory READY")
+    guest.wait("x32 libaes accessory FORGED TERM")
     guest.move(38,8)
     time.sleep(0.25)
     guest.move(70,59)

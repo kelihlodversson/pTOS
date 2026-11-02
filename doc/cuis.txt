@@ -3228,7 +3228,7 @@ bytes per client. Calls 79..87 take the following flat arguments:
   BEGIN: session -> positive token; fails if a cohort or GUI grab/lock is active
   STAGE: session, token, peer, address, bytes, wait_exit -> E_OK
   COMMIT: session, token, completion_address, completion_bytes -> E_OK
-  QUERY: session, selector -> ID, WORK or owner-only STATE
+  QUERY: session, selector -> ID, WORK, owner-only STATE, READ_OFFSET or READ_BYTES
   READ: session, token, address, capacity -> request/result bytes
   PUBLISH: session, token -> append the pending bytes to the caller's stream
   ACK: session, token -> acknowledge an entirely consumed non-exiting request
@@ -3247,6 +3247,21 @@ publication. A nonzero value requires that many request bytes already consumed;
 libaes uses 16 for AP_TFAIL to reject premature/stale replies. Tokens never
 recycle. Successful result publication sets owner STATE to FINISHED (4), which
 the desktop checks before accepting a queued SHUT_COMPLETED notification.
+READ_OFFSET and READ_BYTES authenticate the last successful stream read wholly
+inside a current participant request. Prefix/overlapping ordinary messages,
+failed reads and cancelled generations do not gain request provenance. Native
+CUIS still treats the payload as opaque bytes.
+
+libaes preflights the complete request against its private accessory status,
+NM_APTERM consent and registered entry IDs before publication. A malformed
+suffix cannot cause an earlier AC_CLOSE to reset windows. Standard 16-byte
+message reads ignore AP_TERM/AC_CLOSE without current native request provenance;
+unframed appl_read transfers retain their byte-stream semantics. The desktop
+also checks native delivery provenance before honoring AP_TERM. Window reset
+happens immediately before returning the first authenticated AC_CLOSE, after
+any queued AC_OPEN and earlier window messages have been processed. The
+remaining AC_CLOSE messages do not repeat that reset. Cohort maintenance does
+not interrupt an accumulating multi-click or restart a public timer deadline.
 
 Host tests cover metadata, stable enumeration/activation and opaque cohort
 ownership, staging, split consumption, cancellation, refusal, teardown and copy

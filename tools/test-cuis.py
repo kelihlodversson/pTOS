@@ -136,6 +136,12 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     subprocess.run([str(work / "application")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-I" + temp, "-Iinclude", "-Ilib/aes", "tests/cuis/lifecycle.c",
+                "lib/aes/lifecycle.c", "-o", str(work / "lifecycle")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(work / "lifecycle")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "-Iaes/shared", "tests/cuis/popup_track.c",
                 "aes/shared/gemmenupopup.c", "lib/aes/objects.c", "aes/shared/gemobjtree.c",
                 "aes/shared/gemobjbounds.c", "-DLIBAES_OBJECT_HOST_TEST", "-o", str(work / "popup-track")]

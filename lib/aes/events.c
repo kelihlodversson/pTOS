@@ -142,7 +142,11 @@ static short event_once(short events, short clicks, short button_mask, short but
         LONG count = cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0);
         /* A background notice may only repaint, without publishing a GEM
          * message. Keep simultaneous public events and otherwise re-arm. */
-        if (count == 16) result |= MU_MESAG;
+        if (count == 16) {
+            count = aes_lifecycle_deliver(message,16,global);
+            if (count == E_OK) result |= MU_MESAG;
+            else if (count != EAGAIN) return 0;
+        }
         else if (count != EAGAIN) return 0;
     }
     if (ready & CUIS_READY_TIMER) result |= MU_TIMER;
@@ -166,7 +170,7 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     ULONG duration;
     short result;
     BOOL clocked = (events & MU_TIMER) &&
-        (aes_menu_registered() || aes_frames_registered() ||
+        ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered() ||
          aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening());
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     session = aes_application_session(global);

@@ -10,10 +10,10 @@
 
 static BOOL accessory, coordinator;
 static WORD capabilities;
-static LONG reset_token;
+static LONG reset_token, request_token;
 void aes_lifecycle_reset(BOOL acc)
 {
-    accessory = acc; coordinator = FALSE; capabilities = 0; reset_token = 0;
+    accessory = acc; coordinator = FALSE; capabilities = 0; reset_token = request_token = 0;
 }
 BOOL aes_lifecycle_listening(void) { return accessory || coordinator || (capabilities & NM_APTERM); }
 
@@ -26,7 +26,8 @@ LONG aes_lifecycle_messages(WORD *global)
 {
     WORD data[CUIS_COHORT_BYTES/2];
     LONG session, token, work, bytes, result;
-    ULONG i;
+    ULONG i, entries = 0;
+    BOOL term = FALSE;
     if (!aes_lifecycle_listening()) return E_OK;
     session = aes_application_session(global);
     if (session < 0) return session;
@@ -44,16 +45,52 @@ LONG aes_lifecycle_messages(WORD *global)
         if (work == CUIS_COHORT_REQUEST) {
             if (!bytes || bytes % 16) { (void)reject(session,token); return E_OK; }
             for (i = 0; i < (ULONG)bytes/2; i += 8) {
-                if (data[i] != AC_CLOSE && data[i] != AP_TERM) { (void)reject(session,token); return E_OK; }
-                if (data[i] == AC_CLOSE && reset_token != token) {
-                    if (!mt_wind_new(global)) { (void)reject(session,token); return E_OK; }
-                    reset_token = token;
-                }
+                /* Validate the whole request before publishing any of it.
+                 * Native clients can supply arbitrary bytes and tags. */
+                if (data[i+2] || term) { (void)reject(session,token); return E_OK; }
+                if (data[i] == AC_CLOSE) {
+                    WORD slot = data[i+3];
+                    if (!accessory || slot < 0 || slot >= 6 || (entries & (1UL << slot)) ||
+                        cuis_call6(CUIS_ENTRY_OWNER,session,slot,0,0,0,0) != session) {
+                        (void)reject(session,token); return E_OK;
+                    }
+                    entries |= 1UL << slot;
+                } else if (data[i] == AP_TERM) {
+                    if (!(capabilities & NM_APTERM) || data[i+1] != -1 || data[i+5] != AP_TERM ||
+                        (accessory && !entries)) { (void)reject(session,token); return E_OK; }
+                    term = TRUE;
+                } else { (void)reject(session,token); return E_OK; }
             }
         }
         result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
+        if (result == E_OK && work == CUIS_COHORT_REQUEST) request_token = token;
     }
     return result == EAGAIN || result == EACCDN ? E_OK : result;
+}
+
+/* Only standard 16-byte message reads interpret reserved system messages;
+ * arbitrary byte transfers retain the ordinary appl_read stream contract. */
+LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global)
+{
+    WORD message[8];
+    LONG session, token, offset, length;
+    if (bytes != 16) return E_OK;
+    memcpy(message,buffer,16);
+    if (message[0] != AP_TERM && message[0] != AC_CLOSE) return E_OK;
+    session = aes_application_session(global);
+    if (session < 0) return session;
+    token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
+    if (token <= 0 || token != request_token) return EAGAIN;
+    offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_OFFSET,0,0,0,0);
+    length = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_BYTES,0,0,0,0);
+    if (offset < 0 || offset % 16 || length != 16) return EAGAIN;
+    if (message[0] == AC_CLOSE && reset_token != token) {
+        /* Earlier queued AC_OPEN and window messages have now been delivered.
+         * Reset immediately before the first actual AC_CLOSE reaches the app. */
+        if (!mt_wind_new(global)) { (void)reject(session,token); return EAGAIN; }
+        reset_token = token;
+    }
+    return E_OK;
 }
 
 WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command, WORD *global)

@@ -5,5 +5,6 @@
 void aes_lifecycle_reset(BOOL accessory);
 BOOL aes_lifecycle_listening(void);
 LONG aes_lifecycle_messages(WORD *global);
+LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global);
 WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command, WORD *global);
 #endif
