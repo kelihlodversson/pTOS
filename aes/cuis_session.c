@@ -1420,7 +1420,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
     UBYTE data[CUIS_COHORT_BYTES];
     ULONG length = 0, work;
     LONG result = E_OK;
-    BOOL copying = FALSE, owner;
+    BOOL owner;
     UQUAD address = 0;
     if (session > 0x7fffffffULL || token > 0x7fffffffULL) return EINVAL;
     flags = cuis_input_lock();
@@ -1429,8 +1429,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
     owner = cohort.owner == client;
     if (function == CUIS_COHORT_BEGIN) {
         if (cohort.owner || console_owner || mouse_owner || keyboard_owner || pointer_capture ||
-            background_capture || surface_capture || (update_owner && update_owner != client) ||
-            (display_owner && display_owner != client)) { result = EAGAIN; goto out; }
+            background_capture || surface_capture || update_owner || display_owner) { result = EAGAIN; goto out; }
         if (next_cohort == 0x7fffffffUL) { result = ENSMEM; goto out; }
         if (!client->stream_data) client->stream_data = kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
         if (!client->stream_data) { result = ENSMEM; goto out; }
@@ -1444,8 +1443,9 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         result = (LONG)cohort.token; goto out;
     }
     if (function == CUIS_COHORT_QUERY) {
-        if (token > CUIS_COHORT_WORK) result = EINVAL;
+        if (token > CUIS_COHORT_STATE) result = EINVAL;
         else if (!cohort.owner || (!owner && client->cohort_id != cohort.token)) result = EFILNF;
+        else if (token == CUIS_COHORT_STATE) result = owner ? (LONG)cohort.phase : EACCDN;
         else result = token == CUIS_COHORT_ID ? (LONG)cohort.token : (LONG)cohort_work(client);
         goto out;
     }
@@ -1494,18 +1494,20 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         if (!owner || cohort.phase != 1 || a > 0x7fffffffULL || !c || c > CUIS_COHORT_BYTES || d > 1) {
             result = EINVAL; goto out;
         }
-        address = b; length = (ULONG)c; copying = TRUE;
+        address = b; length = (ULONG)c;
     } else if (function == CUIS_COHORT_COMMIT) {
         if (!owner || cohort.phase != 1 || !b || b > CUIS_COHORT_BYTES) { result = EINVAL; goto out; }
-        address = a; length = (ULONG)b; copying = TRUE;
+        address = a; length = (ULONG)b;
     } else if (function == CUIS_COHORT_REJECT) {
-        if (owner || cohort.phase != 2 || !client->cohort_bytes || !b || b > CUIS_COHORT_BYTES) {
+        if (owner || cohort.phase != 2 || !client->cohort_bytes || !b || b > CUIS_COHORT_BYTES ||
+            c > client->cohort_bytes || (c && (!client->cohort_delivered ||
+            client->cohort_unread > client->cohort_bytes-c))) {
             result = EACCDN; goto out;
         }
-        address = a; length = (ULONG)b; copying = TRUE;
+        address = a; length = (ULONG)b;
     } else { result = EINVFN; goto out; }
     cuis_input_unlock(flags);
-    if (copying && !kproc_copy_from_user(data,address,length)) return EIMBA;
+    if (!kproc_copy_from_user(data,address,length)) return EIMBA;
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session || !cohort.owner || cohort.token != token) {
@@ -1532,7 +1534,9 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
                 memcpy(cohort.data,data,length); cohort.bytes = length; cohort.phase = 2;
             }
         }
-    } else if (client->cohort_id != token || cohort.phase != 2 || !client->cohort_bytes)
+    } else if (client->cohort_id != token || cohort.phase != 2 || !client->cohort_bytes ||
+        c > client->cohort_bytes || (c && (!client->cohort_delivered ||
+        client->cohort_unread > client->cohort_bytes-c)))
         result = EACCDN;
     else {
         memcpy(cohort.data,data,length); cohort.bytes = length;

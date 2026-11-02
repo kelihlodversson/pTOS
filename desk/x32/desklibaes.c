@@ -14,6 +14,13 @@ void desk_poweroff(void)
 {
     (void)desk_syscall(1,GEMDOS_SHUTDOWN,SHUT_POWER,0,0,0);
 }
+BOOL desk_shutdown_ready(void);
+BOOL desk_shutdown_ready(void)
+{
+    LONG session = desk_syscall(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0);
+    return session >= 0 && desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,
+        session,CUIS_COHORT_STATE,0,0) == CUIS_COHORT_FINISHED;
+}
 
 WORD desk_shifted_key(WORD scancode);
 WORD desk_shifted_key(WORD scancode)

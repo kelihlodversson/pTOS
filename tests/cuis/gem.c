@@ -10,6 +10,7 @@
 #include "gem_exit.h"
 #include "gem_chain.h"
 #include "gem_argv.h"
+#include "gem_lifecycle.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -63,6 +64,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(gem_buffer_checks(globals,argc > 1) == 0);
     GEM_TEST_CHECK(gem_metadata_checks(globals,argc > 1) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_launch_checks(globals,envp) == 0);
+    if (argc == 1) GEM_TEST_CHECK(gem_lifecycle_checks() == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_exit_checks(globals) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_argv_checks(globals,envp) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_chain_checks(globals) == 0);

@@ -106,6 +106,7 @@ jobs:
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
           config.syms["CONF_WITH_LIBAES"].set_value(2)
+          config.syms["CONF_WITH_SHUTDOWN"].set_value(2)
           config.write_config()
           PY
             make CROSS_COMPILE= -j2
@@ -117,6 +118,7 @@ jobs:
               readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
               readelf -d cli/emucon.tos | grep 'libptos.so'
               python3 tests/x32_desktop/run.py --output obj/shared-desktop-runtime
+              python3 tests/x32_desktop/run.py --mode shutdown --output obj/shared-desktop-shutdown
             else
               if readelf -l obj/x32/emucon.elf | grep 'INTERP'; then
                 echo 'Embedded EmuCON must retain its static entry path' >&2
@@ -131,6 +133,7 @@ jobs:
           name: shared-x32-consumers
           path: |
             obj/shared-desktop-runtime/
+            obj/shared-desktop-shutdown/
             obj/shared-desktop-builtin-cli/
           if-no-files-found: ignore
           retention-days: 14

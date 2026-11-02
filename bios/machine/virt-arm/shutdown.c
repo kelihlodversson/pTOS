@@ -44,3 +44,10 @@ void machine_reset(BOOL cold)
     (void)cold;
     psci(PSCI_SYSTEM_RESET);
 }
+
+#if CONF_WITH_CUIS
+BOOL machine_can_poweroff(void)
+{
+    return FALSE;
+}
+#endif

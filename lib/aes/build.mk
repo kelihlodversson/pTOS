@@ -157,7 +157,7 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/ASYNC.TOS
 endif
 
-obj/libaes/GEM.TOS: tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEM.TOS: tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -337,3 +337,10 @@ obj/libaes/DESKACC.ACC: tests/x32_desktop/accessory.c obj/x32/libptos-vdi.a obj/
 obj/libaes/lifecycle.o: lib/aes/lifecycle.c lib/aes/lifecycle.h lib/aes/application.h lib/aes/transport.h include/gem.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
+
+obj/libaes/GEMLIFE.PRG: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+obj/libaes/GEMLIFE.ACC: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle.h obj/ldso/dynacccrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos

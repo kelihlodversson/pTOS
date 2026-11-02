@@ -582,6 +582,54 @@ def libaes_desktop(guest):
     print("Resident libaes desktop, registered accessory lifetime, GEM/console launches and normal/fault return: PASS",flush=True)
 
 
+def shutdown_desktop(guest):
+    text = guest.ready(1)
+    assert "x32 desktop LIBAES PASS" in text
+    guest.wait("x32 libaes accessory READY")
+    guest.move(38,8)
+    time.sleep(0.25)
+    guest.move(70,59)
+    guest.click()
+    guest.wait("x32 libaes accessory OPEN")
+    guest.move(34,45)
+    guest.click()  # Activate the background before the opening gesture.
+    time.sleep(0.6)
+    guest.double_click()
+    guest.wait("x32 desktop window OPEN")
+    guest.move(135,8)
+    time.sleep(0.25)
+    guest.move(135,44)
+    guest.click()
+    text = guest.wait(r"x32 desktop program TARGET \d+ \d+",regex=True)
+    x,y = map(int,re.findall(r"x32 desktop program TARGET (\d+) (\d+)",text)[-1])
+    guest.move(x,y)
+    guest.click()
+    guest.key("ctrl-o")
+    guest.wait("x32 desktop client READY")
+    guest.move(180,105)
+    guest.click()
+    guest.move(85,8)
+    time.sleep(0.3)
+    guest.screenshot("shutdown-menu")
+    guest.move(100,252)
+    guest.click()
+    deadline = min(guest.deadline,time.monotonic()+20)
+    while guest.process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert guest.process.poll() == 0, "desktop did not power off cleanly: " + guest.log.read_text()[-3000:]
+    text = guest.log.read_text()
+    assert "x32 desktop client EXIT" in text, text[-3000:]
+    assert "x32 libaes accessory CLOSE" in text, text[-3000:]
+    assert "x32 libaes accessory EXIT" in text, text[-3000:]
+    assert "x32 desktop shutdown completed" in text, text[-3000:]
+    assert "x32 desktop shutdown poweroff" in text, text[-3000:]
+    assert text.index("x32 libaes accessory EXIT") < text.index("x32 desktop shutdown completed")
+    assert text.index("x32 desktop client EXIT") < text.index("x32 desktop shutdown completed")
+    assert text.count("x32 desktop LIBAES PASS") == 1 and " FAIL" not in text
+    assert "panic:" not in text and "process fault:" not in text
+    print("Resident desktop waits for GEM application/accessory shutdown before poweroff: PASS",flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
@@ -591,7 +639,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--embedded-console", action="store_true",
                         help="omit EMUCON.TOS and require the embedded x32 console")
-    parser.add_argument("--mode", choices=("desktop", "missing", "both", "libaes"), default="both")
+    parser.add_argument("--mode", choices=("desktop", "missing", "both", "libaes", "shutdown"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:
         parser.error("supply --ovmf-code and --ovmf-vars for this host")
@@ -604,6 +652,8 @@ def main():
                     libaes_desktop(guest)
                 else:
                     desktop(guest)
+            elif mode == "shutdown":
+                shutdown_desktop(guest)
             elif mode == "libaes":
                 libaes_desktop(guest)
             else:

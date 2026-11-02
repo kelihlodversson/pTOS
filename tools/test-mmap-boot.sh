@@ -49,6 +49,8 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         cp obj/libaes/CUISCHED.TOS "$work/CUISCHED.TOS"
         cp obj/libaes/ASYNC.TOS "$work/ASYNC.TOS"
         cp obj/libaes/GEM.TOS "$work/GEM.TOS"
+        cp obj/libaes/GEMLIFE.PRG "$work/GEMLIFE.PRG"
+        cp obj/libaes/GEMLIFE.ACC "$work/GEMLIFE.ACC"
         cp obj/libaes/GEMMSG.TOS "$work/GEMMSG.TOS"
         cp obj/libaes/GEMMSG.TOS "$work/GEMPEER.TOS"
         cp obj/libaes/GEMFOC.TOS "$work/GEMFOC.TOS"
@@ -112,7 +114,7 @@ if [ -d "$work/GEMSYS" ]; then
     set -- "$@" "$work/GEMSYS" "$work"/SO*.TOS "$work"/CLIENT*.TOS "$work/STATICPH.TOS"
 fi
 if [ -f "$work/CUIS.TOS" ]; then
-    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS" "$work/GEMTEST.RSC" "$work/GEMORIG.RSC" "$work/GEMCOLOR.RSC" "$work/GEM256.RSC" "$work/APPS" "$work/RPATH" "$work/WORK" "$work/FROM_ARG" "$work/ROOT.DAT"
+    set -- "$@" "$work/CUIS.TOS" "$work/CUISCHED.TOS" "$work/ASYNC.TOS" "$work/GEM.TOS" "$work/GEMLIFE.PRG" "$work/GEMLIFE.ACC" "$work/GEMMSG.TOS" "$work/GEMPEER.TOS" "$work/GEMEVNT.TOS" "$work/GEMEVPE.TOS" "$work/GEMWIN.TOS" "$work/GEMUPD.TOS" "$work/GEMFOC.TOS" "$work/GEMINP.TOS" "$work/GEMMCTL.TOS" "$work/GEMDRAW.TOS" "$work/GEMTEST.RSC" "$work/GEMORIG.RSC" "$work/GEMCOLOR.RSC" "$work/GEM256.RSC" "$work/APPS" "$work/RPATH" "$work/WORK" "$work/FROM_ARG" "$work/ROOT.DAT"
 fi
 if [ -f "$work/DYNTEST.TOS" ]; then
     set -- "$@" "$work"/DYN*.TOS
@@ -193,6 +195,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM lifecycle/timers: PASS' "$log"
     grep -q 'x32 GEM shell queries: PASS' "$log"
     grep -q 'x32 GEM accessory registration: PASS' "$log"
+    grep -q 'x32 GEM discovery/control/shutdown: PASS' "$log"
     grep -q 'x32 GEM shared shell buffer: PASS' "$log"
     grep -q 'x32 GEM desktop/clipboard metadata: PASS' "$log"
     grep -q 'x32 GEM parallel shell launch: PASS' "$log"

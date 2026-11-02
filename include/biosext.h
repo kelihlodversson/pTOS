@@ -74,6 +74,9 @@ void halt(void) NORETURN;
  * bios/machine/<name>/shutdown.c. */
 void machine_reset(BOOL cold);
 void machine_poweroff(void);
+#if CONF_WITH_CUIS && CONF_WITH_GEMDOS_SHUTDOWN
+BOOL machine_can_poweroff(void);
+#endif
 
 /* physical memory in pages of 4096 bytes, for Sysconf(): the whole, and what is
  * free; negative where the machine cannot say.  bios/physmem.c, replaced per

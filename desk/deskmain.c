@@ -809,8 +809,15 @@ static WORD do_filemenu(WORD item)
 #if CONF_WITH_SHUTDOWN
     case QUITITEM:
 #if CONF_WITH_LIBAES_DESK
-        if (!shutdown_pending && shel_write(SHW_SHUTDOWN,FALSE,SD_COMPLETE,NULL,NULL))
-            shutdown_pending = TRUE;
+        if (shutdown_pending) {
+            (void)shel_write(SHW_SHUTDOWN,FALSE,SD_ABORT,NULL,NULL);
+            shutdown_pending = FALSE;
+        } else {
+            /* The cohort cannot start while a GUI drawing/grab lock is held. */
+            wind_update(END_UPDATE);
+            shutdown_pending = shel_write(SHW_SHUTDOWN,FALSE,SD_COMPLETE,NULL,NULL) != 0;
+            wind_update(BEG_UPDATE);
+        }
 #else
         desk_set_ceh(FALSE); /* avoid possibility of useless form_alert()s */
         display_free_stack();
@@ -1321,6 +1328,15 @@ WORD hndl_msg(void)
     }
 
     handle = G.g_rmsg[3];
+#if CONF_WITH_LIBAES_DESK
+    if (shutdown_pending && G.g_rmsg[0] != SHUT_COMPLETED && G.g_rmsg[0] != AP_TFAIL &&
+        G.g_rmsg[0] != AP_TERM && G.g_rmsg[0] != WM_REDRAW && G.g_rmsg[0] != CH_EXIT
+#if CONF_WITH_SHUTDOWN
+        && !(G.g_rmsg[0] == MN_SELECTED && G.g_rmsg[4] == QUITITEM)
+#endif
+        )
+        return FALSE;
+#endif
 
     switch(G.g_rmsg[0])
     {
@@ -1329,12 +1345,19 @@ WORD hndl_msg(void)
         if (G.g_rmsg[1] == -1) done = TRUE;
         break;
     case SHUT_COMPLETED:
-        if (shutdown_pending) {
+        if (shutdown_pending && desk_shutdown_ready()) {
+#if CONF_WITH_X32_DESKTOP_TEST
+            {
+                extern void desk_test_record(const char *text);
+                desk_test_record("x32 desktop shutdown completed\r\n");
+            }
+#endif
             shutdown_poweroff = TRUE; done = TRUE;
             desk_set_ceh(FALSE);
         }
         break;
     case AP_TFAIL:
+        if (shutdown_pending) (void)shel_write(SHW_SHUTDOWN,FALSE,SD_ABORT,NULL,NULL);
         shutdown_pending = FALSE;
         break;
     case CH_EXIT: /* Refresh listings while keeping windows and state. */
@@ -2248,6 +2271,9 @@ BOOL deskmain(void)
     /* loop handling user input until done */
     while(!done)
     {
+#if CONF_WITH_LIBAES_DESK
+        flags = shutdown_pending ? MU_MESAG|MU_KEYBD : MU_BUTTON|MU_MESAG|MU_KEYBD;
+#endif
         /* block for input */
         ev_which = evnt_multi(flags, 0x02, 0x01, 0x01,
                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -2258,6 +2284,15 @@ BOOL deskmain(void)
         wind_update(BEG_UPDATE);
 
         /* handle keybd message */
+#if CONF_WITH_LIBAES_DESK
+        if (shutdown_pending && (ev_which & MU_KEYBD)) {
+            if ((kret & 255) == 27) {
+                (void)shel_write(SHW_SHUTDOWN,FALSE,SD_ABORT,NULL,NULL);
+                shutdown_pending = FALSE;
+            }
+            ev_which &= ~MU_KEYBD;
+        }
+#endif
         if (ev_which & MU_KEYBD)
             if (hndl_kbd(kret))
                 done = TRUE;
@@ -2339,7 +2374,15 @@ BOOL deskmain(void)
     /* exit the gem AES */
     appl_exit();
 #if CONF_WITH_LIBAES_DESK
-    if (shutdown_poweroff) desk_poweroff();
+    if (shutdown_poweroff) {
+#if CONF_WITH_X32_DESKTOP_TEST
+        {
+            extern void desk_test_record(const char *text);
+            desk_test_record("x32 desktop shutdown poweroff\r\n");
+        }
+#endif
+        desk_poweroff();
+    }
 #endif
 
     if (rc == FALSE)                /* restarting */

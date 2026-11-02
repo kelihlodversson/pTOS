@@ -32,6 +32,7 @@ void desk_set_cache(WORD enable);       /* the CPU caches on or off */
 BOOL desk_can_shutdown(void);           /* Shutdown() can power off or reset */
 #if CONF_WITH_LIBAES_DESK
 void desk_poweroff(void);               /* native GEMDOS Shutdown(SHUT_POWER) */
+BOOL desk_shutdown_ready(void);         /* verify native cohort completion */
 #endif
 BOOL desk_has_videl(void);              /* a Falcon VIDEL */
 BOOL desk_has_tt_shifter(void);         /* a TT shifter */

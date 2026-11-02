@@ -25,7 +25,7 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 --- | --- | --- | ---
 `appl_init`, `appl_exit`, `appl_yield` | available | Per-process globals and lifecycle; cooperative execution. Preemption/Pfork are #713. | `tests/cuis/application.c`, `tests/cuis/gem.c`
 `appl_find`, `appl_read`, `appl_write` | available | GEM IDs/names, MiNT ID conversion, variable-length bounded streams, blocking reads and APR_NOWAIT. | `tests/cuis/application.c`, `tests/cuis/streams.c`
-`appl_getinfo` | partial | AES_PROCESS ID conversion/rsrc_rcfix, AES_OBJECT 3D/objc_sysvar, AES_PCGEM shell defaults, AES_MESSAGE CH_EXIT and AES_INQUIRE APR_NOWAIT/shell buffers. Other queries return zero with zero outputs; AES_SHELL remains unadvertised. | `lib/aes/application.c`, `tests/cuis/gem_launch.c`
+`appl_getinfo` | partial | AES_PROCESS ID conversion/appl_search/rsrc_rcfix, AES_OBJECT 3D/objc_sysvar, AES_PCGEM shell defaults, AES_MESSAGE AP_TERM/CH_EXIT and AES_INQUIRE APR_NOWAIT/shell buffers. Other queries return zero with zero outputs; AES_SHELL remains unadvertised. | `lib/aes/application.c`, `tests/cuis/gem_launch.c`
 `appl_tplay`, `appl_trecord` | unavailable | Trusted input recording/replay needs an explicit ownership and injection policy. | `include/cuis.h`
 `appl_search` | available | Standard APP_FIRST/NEXT/DESK enumeration with eight-character names, GEM IDs and application/accessory/current-desktop types; negative-mode extended descriptions are not advertised. | `lib/aes/application.c`, `tests/cuis/application.c`
 `appl_control` | partial | APC_TOP raises a client preserving per-client window order; APC_INFO reports its menu/background. Visibility hiding, foreign menu pointers and other extended control modes return GEM failure. | `lib/aes/application.c`, `tests/cuis/application.c`
@@ -33,7 +33,7 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 `evnt_multi` | partial | Six classic GEM masks, simultaneous results and one timer deadline. Extended wheel/rectangle masks are not implemented. | `tests/cuis/input_events.c`, `tests/cuis/application.c`
 `menu_bar`, `menu_icheck`, `menu_ienable`, `menu_tnormal`, `menu_text` | available | Owned standard menu bars, native painting, title tracking and MN_SELECTED. | `tests/cuis/menu_bar.c`, `tests/cuis/menu_items.c`
 `menu_popup` | partial | Standalone classic popup tracking and cancellation. No scrolling or attached/nested submenus. | `tests/cuis/popup_track.c`, `tests/cuis/popup_menu.c`
-`menu_register` | available | Six session-owned Desk entries, standard AC_OPEN menu IDs and REG_NEWNAME lookup labels. Accessories remain resident across ordinary application exits; global shutdown/reset AC_CLOSE policy is deferred with those operations. | `lib/aes/application.c`, `lib/aes/menubar.c`, `tests/cuis/application.c`, `tests/cuis/session.c`
+`menu_register` | available | Six session-owned Desk entries, standard AC_OPEN menu IDs and REG_NEWNAME lookup labels. Accessories remain resident across ordinary application exits. Shutdown sends one AC_CLOSE per Desk entry after resetting accessory windows; complete shutdown also sends AP_TERM. | `lib/aes/application.c`, `lib/aes/menubar.c`, `tests/cuis/application.c`, `tests/cuis/session.c`
 `menu_attach`, `menu_istart`, `menu_settings` | unavailable | AES 3.30 attached-submenu/start-item/settings extensions. Extended menu capabilities are not advertised. | `lib/aes/popup.c`
 `objc_add`, `objc_delete`, `objc_order`, `objc_find`, `objc_offset` | available | Caller-local tree editing/traversal assumes valid indices and acyclic parent/sibling links; malformed links can loop or fault. Offset accumulation and find origins use WORD coordinates and can wrap outside their range. These calls do not inherit the drawing preflight's topology or LONG geometry checks. | `tests/cuis/objects.c`
 `objc_draw`, `objc_change` | partial | Shared native painter, classic text/boxes/images/icons, USERDEF, colour icons and 3D flags. Extended object types/GDOS object fonts need separate coverage. | `tests/cuis/object_draw.c`, `tests/cuis/colour_objects.c`, `tests/cuis/three_d.c`
@@ -49,7 +49,7 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 `rsrc_load`, `rsrc_free`, `rsrc_gaddr`, `rsrc_saddr`, `rsrc_obfix`, `rsrc_rcfix` | partial | Classic disk/native resources, colour icons, caller-owned rcfix and GEM globals. RSX and additional extended resource formats remain separate work. | `tests/cuis/resources.c`, `tests/cuis/gem_resources.c`
 `fsel_input`, `fsel_exinput` | available | Shared native file selector, caller DTA restoration, wildcard/path handling and extended title. No fslx selector API. | `tests/cuis/gem_selector.c`
 `shel_read`, `shel_find`, `shel_envrn`, `shel_get`, `shel_put`, `shel_rdef`, `shel_wdef` | available | Standard startup/tail, search/environment queries, persistent desktop buffers and default desktop paths. | `tests/cuis/shell.c`, `tests/cuis/shell_buffer.c`, `tests/cuis/shell_metadata.c`
-`shel_write` | partial | AES4 mode 0 GEM or classic full-screen TOS/TTP launch with CH_EXIT; mode 1 GEM parallel (SHW_PARALLEL) and deferred SHW_CHAIN. CL_PARSE prepares ARGV, including long tails and empty arguments; SW_ENVIRON supplies a private launch environment. Accessories, mode 1 text execution, other extended command flags, single-task execution, shutdown and resolution changes remain missing. Resident EmuDesk launches children without chain loading. | `tests/cuis/gem_launch.c`, `tests/cuis/gem_argv.c`, `tests/cuis/gem_chain.c`, `tests/x32_desktop/run.py`
+`shel_write` | partial | AES4 mode 0 GEM or classic full-screen TOS/TTP launch with CH_EXIT; mode 1 GEM parallel (SHW_PARALLEL) and deferred SHW_CHAIN. CL_PARSE prepares ARGV, including long tails and empty arguments; SW_ENVIRON supplies a private launch environment. Accessory launch, NM_APTERM consent, partial/complete shutdown, AP_TFAIL refusal and owner cancellation are supported. Live resolution changes return failure before disruption. Mode 1 text execution, other extended command flags and single-task execution remain missing. Resident EmuDesk launches children without chain loading. | `tests/cuis/gem_launch.c`, `tests/cuis/gem_argv.c`, `tests/cuis/gem_chain.c`, `tests/cuis/gem_lifecycle.c`, `tests/x32_desktop/run.py`
 `scrp_read`, `scrp_write` | available | Shared standard scrap-directory state; this does not imply extended clipboard ownership/data-transfer protocols. | `tests/cuis/shell_metadata.c`
 `scrp_clear` | unavailable | PC-GEM scrap clearing is not exported. | `lib/aes/desktop.c`
 `inside`, `rc_constrain`, `rc_equal`, `rc_intersect`, `rc_union` | helper | Existing caller-local rectangle helpers, declared in rectfunc.h. | `tests/cuis/program.c`
@@ -92,13 +92,15 @@ parameters and normal/fault cleanup.
    and per-launch SW_ENVIRON are implemented in #861. Preserve the resident desktop;
    use standard GEM shell modes and process lifetime/CH_EXIT semantics.
 2. Accessory startup, independent process/window lifetime, menu_register,
-   AC_OPEN and exit cleanup are implemented in #863. Complete AC_CLOSE reset
-   delivery together with the actual shutdown/resolution policy in gate 4;
-   ordinary multitasking application exits must not close accessories.
+   AC_OPEN and exit cleanup are implemented in #863. AC_CLOSE resets accompany
+   the shutdown protocol; ordinary multitasking application exits do not close
+   accessories.
 3. Resolve the remaining API/extension rows above: implement the applicable
    subset and record explicit follow-ups for deliberately deferred extensions.
    Keep appl_getinfo honest. Replay/injection needs a policy before enabling it.
-4. Define shutdown/resolution-change behavior and desktop menu availability.
+4. Shutdown preparation, consent/refusal, cancellation and desktop poweroff
+   are implemented. Live resolution switching requires a platform backend and
+   remains disabled without terminating clients.
 5. Move external desktop/resources/options out of kernel-AES dependencies and
    migrate remaining native test clients away from the typed legacy service.
    Hide the transitional aes_* library exports behind the library boundary.

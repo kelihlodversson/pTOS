@@ -3127,9 +3127,9 @@ In this multitasking AES, launching, switching or terminating another program
 neither resets accessory windows nor sends AC_CLOSE. An accessory's window
 closer can close its UI while the process remains resident for another
 AC_OPEN. Standard AC_CLOSE is declared and can travel through appl_write;
-a system-generated reset notification must accompany the actual global
-shutdown/resolution reset, which remains a separate cutover gate. This slice
-does not claim to implement those operations or single-tasking DA cleanup.
+a system-generated reset accompanies partial/complete shutdown as described
+below. Live resolution switching and single-tasking DA cleanup remain
+unavailable.
 
 Host regressions cover registration bounds, caller identity, REG_NEWNAME,
 all directory slots, ownership and teardown, expected-owner stale reads,
@@ -3138,3 +3138,120 @@ unchanged caller menu objects. The native desktop regression starts a shared
 accessory, checks _app, closes/reopens it, keeps its window alive across GUI
 and console child success/fault exits, and exits it without restarting the
 desktop or leaving its registration in the next Desk popup.
+
+
+Application discovery and activation (#865)
+------------------------------------------
+
+Applications use standard appl_search(APP_FIRST/APP_NEXT/APP_DESK). Successful
+calls write an eight-character padded executable/REG_NEWNAME label plus NUL,
+the GEM application ID, and APP_APPLICATION or APP_ACCESSORY. The currently
+registered desktop additionally has APP_SHELL. APP_DESK does not disturb the
+FIRST/NEXT cursor. Enumeration uses monotonically increasing native handles;
+closed sessions disappear and no old handle names a new session. Negative
+extended-description modes fail without changing caller outputs.
+
+appl_control(APC_TOP) raises all the selected client's open windows while
+preserving their relative order. A windowless client can receive keyboard
+focus, including a menu-only application. APC_INFO returns APCI_HASMBAR and
+APCI_HASDESK; ID -1 queries the active application. Hiding/showing applications,
+remote menu pointers, widget/configuration and signal modes are not supported.
+These modes fail without reading or writing the mode-specific output pointer.
+AES_PROCESS advertises appl_search. AES_MESSAGE advertises AP_TERM and CH_EXIT;
+AES_SHELL and the combined shutdown/resolution capability remain unadvertised.
+
+Native metadata calls use flat arguments after the CUIS opcode:
+
+  75 PEER_NEXT: session, after -> next live handle; -1 starts, EFILNF ends
+  76 PEER_QUERY: session, peer, field, address, capacity -> scalar or byte count
+  77 SESSION_TAG: session, opaque nonnegative 31-bit tag -> E_OK
+  78 PEER_RAISE: session, peer -> E_OK
+
+PEER_QUERY LABEL copies up to 32 opaque bytes without adding a terminator;
+TAG returns the tag, STATE returns HAS_SURFACE/HAS_BACKGROUND flags. BACKGROUND
+and ACTIVE return those peers' handles and require peer/address/capacity zero.
+LABEL requires enough buffer space. The library publishes eight-byte labels
+and stores its GEM type and NM_APTERM consent in the opaque tag. Native code
+does not interpret the tag or impose GEM naming/type policy. Raising rejects
+conflicting grabs, pointer captures, console ownership and foreign rendering
+locks rather than breaking a live GUI interaction.
+
+
+Shutdown lifecycle (#865)
+-------------------------
+
+Standard shel_write uses flat GEM arguments, including the normal third
+argument wiscr for SD_ABORT (0), SD_PARTIAL (1) or SD_COMPLETE (2):
+
+  shel_write(SWM_NEWMSG, NM_APTERM, 0, NULL, NULL)
+  shel_write(SWM_SHUTDOWN, 0, SD_COMPLETE, NULL, NULL)
+  shel_write(SWM_AESMSG, 0, 0, failure_message, NULL)
+
+Consent is per live AES session and resets on appl_exit/reinitialization.
+Shutdown first captures the registered clients and validates every participant
+before publishing requests. Ordinary applications must opt into AP_TERM;
+complete shutdown also requires accessories to opt in. Unsupported/raw clients
+and accessories still registering their Desk entries cause immediate failure,
+with no termination messages. New AES registrations fail while coordination
+is active; existing sessions remain usable for cleanup and rendering.
+
+Partial shutdown terminates applications and closes accessory UIs, leaving
+the accessory processes resident. Complete shutdown terminates both classes.
+Each registered accessory entry receives AC_CLOSE with its ID in word 3;
+libaes resets that accessory's windows before delivering the first AC_CLOSE.
+AP_TERM has sender word 1 equal to -1 and reason word 5 equal to AP_TERM.
+Applications finish normal cleanup and leave AES. An application can refuse
+through shel_write(SWM_AESMSG) with an AP_TFAIL message; its opaque error word
+is preserved for the initiating program. A refusal is accepted only after
+that participant has read at least one message from the current request.
+A non-exiting accessory acknowledges after consuming all its AC_CLOSE messages
+and entering its next library wait/read, allowing it to report refusal first.
+
+The initiator receives exactly one SHUT_COMPLETED when all required clients
+have left AES or acknowledged. Success retains the registration barrier until
+the initiator leaves AES or calls SD_ABORT. Refusal clears the barrier when its
+result is published. Only the initiator can abort; its exit also cancels the
+operation. Cancellation cannot retract messages already read by applications.
+No kernel code decodes AP_TERM, AC_CLOSE or any other GEM message.
+
+The resident desktop opts in, starts complete shutdown from its menu, remains
+alive through preparation and completion, and calls GEMDOS Shutdown(SHUT_POWER)
+only after its own native operation has completed and desktop cleanup finishes.
+Escape cancels pending coordination. The menu remains unavailable when the
+configuration or machine lacks poweroff support. Live resolution changes
+currently return GEM failure before starting coordination or affecting clients;
+the desktop resolution command remains disabled on this x32 backend.
+
+The native closed-cohort transport is bounded to 128 opaque request/result
+bytes per client. Calls 79..87 take the following flat arguments:
+
+  BEGIN: session -> positive token; fails if a cohort or GUI grab/lock is active
+  STAGE: session, token, peer, address, bytes, wait_exit -> E_OK
+  COMMIT: session, token, completion_address, completion_bytes -> E_OK
+  QUERY: session, selector -> ID, WORK or owner-only STATE
+  READ: session, token, address, capacity -> request/result bytes
+  PUBLISH: session, token -> append the pending bytes to the caller's stream
+  ACK: session, token -> acknowledge an entirely consumed non-exiting request
+  REJECT: session, token, address, bytes, consumed_bytes -> E_OK
+  CANCEL: session, token -> E_OK (owner only)
+
+STAGE and COMMIT snapshot bounded data with identities rechecked after user
+copies. COMMIT requires every remaining captured participant to be staged;
+exiting participants leave the cohort automatically. WORK returns REQUEST,
+ACCEPT or RESULT only when actionable, and zero otherwise; CUIS_READY_COHORT
+wakes ordinary native waits for that internal work. Publication never blocks
+and waits for sufficient caller stream space. Reads preserve normal byte-stream
+ordering and track request consumption across preexisting data and split reads.
+REJECT with consumed_bytes zero allows rejecting unknown opaque requests before
+publication. A nonzero value requires that many request bytes already consumed;
+libaes uses 16 for AP_TFAIL to reject premature/stale replies. Tokens never
+recycle. Successful result publication sets owner STATE to FINISHED (4), which
+the desktop checks before accepting a queued SHUT_COMPLETED notification.
+
+Host tests cover metadata, stable enumeration/activation and opaque cohort
+ownership, staging, split consumption, cancellation, refusal, teardown and copy
+failures. Native GEM tests cover unaware, accepting and refusing applications,
+an accessory with two entries, partial/complete requests and abort. Desktop
+integration opens a real application and accessory and verifies both leave
+before actual emulated poweroff. The combined boot also verifies final memory
+accounting and existing message/event/window regressions.

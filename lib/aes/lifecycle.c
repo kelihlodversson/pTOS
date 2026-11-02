@@ -77,7 +77,7 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
         memcpy(data,command,16);
         if (data[0] != AP_TFAIL) return 0;
         token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
-        return token > 0 && cuis_call6(CUIS_COHORT_REJECT,session,token,(uintptr_t)data,16,0,0) == E_OK;
+        return token > 0 && cuis_call6(CUIS_COHORT_REJECT,session,token,(uintptr_t)data,16,16,0) == E_OK;
     }
     if (mode != SWM_SHUTDOWN || action < SD_ABORT || action > SD_COMPLETE) return 0;
     if (action == SD_ABORT) {
