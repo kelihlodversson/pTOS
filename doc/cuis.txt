@@ -2864,3 +2864,71 @@ AES_CLIENT_MESSAGE, avoiding a collision with GEMlib's standard AES_MESSAGE
 capability selector. Legacy-only clients also retain the AES_MESSAGE typedef
 when that macro has not been defined. Its binary layout and service ABI are
 unchanged; tests cover legacy-only source and both public-header orders.
+
+Deferred classic GEM handoff (#853)
+----------------------------------
+
+shel_write/mt_shel_write now accept SWM_LAUNCHNOW (1), GEMAPP (1),
+SHW_CHAIN (1). This is the classic TOS/MagiC deferred handoff: return 1 after
+preparing the requested executable, then start it only when the calling
+process terminates. A failed request returns 0 and keeps the earlier pending
+handoff. Subsequent successful calls replace it. The graphical selector is
+explicit; filenames are not restricted to .PRG/.APP suffixes in this mode.
+Ordinary command tails remain bounded to 0..126 bytes.
+
+This first chain slice supplies the successor handoff. Configured desktop
+restoration/startup policy follows separately; this slice does not yet reload
+the default desktop after the successor ends. TOS/console mode, ARGV/extended
+options and SHW_SINGLE remain unsupported. AES_SHELL remains unadvertised
+until the complete launch/default-shell semantics are in place. Existing
+ordinary AES4 launches and SHW_PARALLEL keep their behavior.
+
+CUIS_PROCESS_DEFER(session, path, tail, environment) uses flat scalar/pointer
+arguments and the ordinary GEMDOS Pexec(100) validation/loader. The caller
+must own the live session and run in a managed native group. The loader keeps
+fixed-address executables at their link address and prepares a separate
+address space, command/environment snapshot, inherited standard files and
+working directory before returning. Native success is E_OK, errors negative;
+libaes translates those into the standard Boolean GEM result. A null path
+with null tail/environment cancels the caller's pending request, idempotently
+within the managed group; it does not add a new public GEM function.
+
+The native scheduler owns at most one dormant successor per requesting
+process. It uses an ordinary bounded task slot/kernel stack; preparation
+finishes before replacing the previous request. Resource exhaustion, invalid
+paths and loading/preparation errors preserve the old request. Replacement
+and cancellation release the unused image, inherited file/directory refs and
+kernel stacks, using the existing kernel close wrapper for disk-error-safe
+handle cleanup. No public basepage is dereferenced after the caller's borrowed
+mapping has been revoked.
+
+CUIS process cleanup snapshots all live standard-handle aliases before closing
+files. An SFT slot can retain its original owner after that owner's explicit
+handle has been closed; only a reference beyond the aliases is an explicit
+handle for the owner sweep to release. This preserves redirected standard
+files in a staged successor, including shared stdout/stderr references.
+
+Dormant tasks never run on yield, delay or appl_exit. Actual normal, raw or
+fault termination activates the successor only after process teardown has
+finished, including file/directory cleanup of unlaunched owned children.
+CUIS process cleanup uses the kernel close wrapper so an interrupted disk
+close cannot return to the exiting caller. Nested synchronous callers also
+use that process-lifetime trigger. The handoff is detached: its PPID names
+the group's stable controller, not the former process. It holds no pointer
+to the dead caller and sends no child-exit notification to it. AES session
+teardown and re-registration do not remove the process-owned request. All
+kernel additions remain under CONF_WITH_CUIS; there is no kernel GEM shell
+policy, format negotiation or AES request block.
+
+Host tests cover native ownership/argument validation, cancellation and GEM
+Boolean/error translation. Real loader, termination and scheduler host tests
+inject interrupted/returned close errors during rejection and exit, checking
+resource release and successor activation after complete owner/child cleanup.
+Isolated standard GEM clients exercise yield and
+AES deregistration before real exit, successful/failed replacement, native
+cancellation, normal/_Exit/fault and nested synchronous callers, copied
+environment/CWD, redirected stdout with the explicit handle open or closed,
+shared stdout/stderr, an executable unlinked after staging, and a full native task
+set rejecting replacement while retaining the old request. Full boot memory
+accounting verifies that successor images and their replaced/cancelled state
+are reclaimed.

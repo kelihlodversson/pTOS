@@ -423,6 +423,22 @@ SBYTE *kproc_uft(PD *pd)
     return kproc ? kproc->uft : pd->p_uft;
 }
 
+#if CONF_WITH_CUIS
+void kproc_standard_file_refs(ULONG *references)
+{
+    KPROC *kproc;
+    WORD i;
+
+    bzero(references,OPNFILES*sizeof(*references));
+    for (kproc = kproc_list; kproc; kproc = kproc->next)
+        for (i = 0; i < NUMSTD; i++) {
+            WORD handle = kproc->uft[i];
+            if (handle >= NUMSTD && handle < NUMHANDLES)
+                references[handle-NUMSTD]++;
+        }
+}
+#endif
+
 UBYTE *kproc_curdir(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);

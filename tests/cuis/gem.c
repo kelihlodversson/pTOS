@@ -8,6 +8,7 @@
 #include "gem_metadata.h"
 #include "gem_launch.h"
 #include "gem_exit.h"
+#include "gem_chain.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -48,6 +49,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(gem_metadata_checks(globals,argc > 1) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_launch_checks(globals,envp) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_exit_checks(globals) == 0);
+    if (argc == 1) GEM_TEST_CHECK(gem_chain_checks(globals) == 0);
     if (argc > 1) {
         if (argv[1][0] == 'x') _Exit(41);
         return 37; /* Ordinary CRT finalization closes implicit registration. */
@@ -77,6 +79,7 @@ int main(int argc, char **argv, char **envp)
         static const char buffer_marker[] = "x32 GEM shared shell buffer: PASS\r\n";
         static const char metadata_marker[] = "x32 GEM desktop/clipboard metadata: PASS\r\n";
         static const char launch_marker[] = "x32 GEM parallel shell launch: PASS\r\n";
+        static const char chain_marker[] = "x32 GEM chain handoff: PASS\r\n";
         static const char exit_marker[] = "x32 GEM child exit: PASS\r\n";
         static const char shell_marker[] = "x32 GEM shell queries: PASS\r\n";
         ptos_write(1, marker, sizeof(marker)-1);
@@ -85,6 +88,7 @@ int main(int argc, char **argv, char **envp)
         ptos_write(1, metadata_marker, sizeof(metadata_marker)-1);
         ptos_write(1, launch_marker, sizeof(launch_marker)-1);
         ptos_write(1, exit_marker, sizeof(exit_marker)-1);
+        ptos_write(1, chain_marker, sizeof(chain_marker)-1);
     }
     return 0;
 }

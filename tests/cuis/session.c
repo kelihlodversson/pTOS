@@ -3,6 +3,7 @@
 #include "bdosdefs.h"
 const char *kproc_executable_name(PD *pd);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
+long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
 #include "../../aes/cuis_session.c"
 
 static MFORM displayed_pointer;
@@ -373,5 +374,7 @@ int main(void)
     rc = child_completion_checks();
     if (rc) return rc;
     rc = button_resume_checks();
-    return rc ? rc : child_launch_checks();
+    if (rc) return rc;
+    rc = child_launch_checks();
+    return rc ? rc : process_defer_checks();
 }

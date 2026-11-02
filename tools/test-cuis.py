@@ -55,6 +55,29 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-o", str(work / "sessions")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "sessions")], check=True)
+    # Compile the real loader, termination, scheduler and close wrapper. Use the
+    # hosted setjmp ABI so an injected disk longjmp also works under ASan.
+    rollback = work / "deferred-rollback"
+    rollback.mkdir()
+    native = kconfiglib.Kconfig(warn_to_stderr=False)
+    native.load_config("configs/pc-x86_64_defconfig")
+    native.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+    native.syms["CONF_WITH_LIBAES"].set_value(2)
+    native.write_config(str(rollback / "config"))
+    subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
+                    "--config", str(rollback / "config"), "--header",
+                    str(rollback / "autoconf.h"), "--makefile", str(rollback / "auto.conf")],
+                   check=True)
+    (rollback / "setjmp.h").write_text("#include <setjmp.h>\n")
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-cast-function-type", "-Wno-clobbered",
+                "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections",
+                "-iquote", str(rollback), "-iquote", "include", "-iquote", "include/arch/x86_64", "-iquote", "bdos",
+                "bdos/proc.c", "bdos/kfile.c", "-Wl,--gc-sections"]
+    for test in ("deferred_rollback", "deferred_exit"):
+        subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)
+        subprocess.run([str(rollback / test)], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-fno-builtin", "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared",

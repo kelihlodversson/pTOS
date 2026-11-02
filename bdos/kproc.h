@@ -64,6 +64,8 @@ WORD kproc_pid(PD *pd);                 /* 0: no record */
 #if CONF_WITH_CUIS
 void kproc_set_executable_name(PD *pd, const char *path);
 const char *kproc_executable_name(PD *pd);
+/* Snapshot all live standard-handle aliases into OPNFILES counters. */
+void kproc_standard_file_refs(ULONG *references);
 #endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
 SBYTE kproc_get_prio(PD *pd);
