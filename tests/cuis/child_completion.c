@@ -272,3 +272,33 @@ static int button_resume_checks(void)
     CHECK(!clients && allocations == frees);
     return 0;
 }
+
+static LONG defer_result;
+static ULONG defer_calls, defer_cancels;
+long xexec_deferred(char *path, char *tail, char *environment, ULONG session)
+{
+    (void)session;
+    if ((uintptr_t)path != 0x11000 || (uintptr_t)tail != 0x12000 || environment || !input_irqs) return EINVAL;
+    defer_calls++; return defer_result;
+}
+LONG ksched_defer_cancel(void) { defer_cancels++; return E_OK; }
+static int process_defer_checks(void)
+{
+    LONG session, other;
+    CHECK(!clients && allocations == frees);
+    run = &first; session = cuis_service(CUIS_SESSION_START,0);
+    run = &second; other = cuis_service(CUIS_SESSION_START,0); run = &first;
+    CHECK(cuis_process_defer(other,0x11000,0x12000,0) == EACCDN && !defer_calls);
+    CHECK(cuis_process_defer(1ULL << 32,0x11000,0x12000,0) == EINVAL);
+    CHECK(cuis_process_defer(session,0,1,0) == EINVAL && !defer_cancels);
+    CHECK(cuis_process_defer(session,0,0,0) == E_OK && defer_cancels == 1);
+    child_validate_error = EIMBA;
+    CHECK(cuis_process_defer(session,0x11000,0x12000,0) == EIMBA && !defer_calls);
+    child_validate_error = 0; defer_result = ENSMEM;
+    CHECK(cuis_process_defer(session,0x11000,0x12000,0) == ENSMEM && defer_calls == 1);
+    defer_result = E_OK;
+    CHECK(cuis_process_defer(session,0x11000,0x12000,0) == E_OK && defer_calls == 2);
+    cuis_process_exit(&first); run = &second; cuis_process_exit(run); run = &first;
+    CHECK(!clients && allocations == frees);
+    return 0;
+}

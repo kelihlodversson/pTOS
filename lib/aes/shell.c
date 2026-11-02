@@ -104,13 +104,17 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     char path[AES_SHELL_PATH], staged_tail[128] = { 0 };
     LONG pid, session, watch = 0;
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
-    if (mode == SWM_LAUNCH ? execution != CL_NORMAL : graphical != GEMAPP || execution != SHW_PARALLEL) return 0;
+    if (mode == SWM_LAUNCH ? execution != CL_NORMAL :
+        graphical != GEMAPP || (execution != SHW_PARALLEL && execution != SHW_CHAIN)) return 0;
     session = aes_application_session(global);
     if (session < 0 || !tail || (UBYTE)tail[0] >= 127 ||
         !aes_shell_copy(path,command,sizeof(path)) || !*path) return 0;
     /* Read only the length byte/payload; 127 denotes extended ARGV passing. */
     memcpy(staged_tail,tail,(UBYTE)tail[0]+1);
     if (!mt_shel_find(path,global)) return 0;
+    if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN)
+        return cuis_call6(CUIS_PROCESS_DEFER,session,(uintptr_t)path,
+            (uintptr_t)staged_tail,0,0,0) == E_OK ? 1 : 0;
     if (mode == SWM_LAUNCH) {
         if (!gem_application(path) || aes_child_messages(session) < 0) return 0;
         watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);

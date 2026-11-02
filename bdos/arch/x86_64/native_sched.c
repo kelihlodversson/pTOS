@@ -15,9 +15,16 @@
 #endif
 extern PD *run;
 
-typedef enum { TASK_UNUSED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DONE, TASK_ZOMBIE } TASK_STATE;
+typedef enum { TASK_UNUSED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DONE, TASK_ZOMBIE
+#if CONF_WITH_CUIS
+    , TASK_DEFERRED
+#endif
+} TASK_STATE;
 typedef struct {
     PD *program, *parent;
+#if CONF_WITH_CUIS
+    PD *deferred_owner;
+#endif
     WORD pid, signal;
     BOOL asynchronous, take_ownership;
     UQUAD identity;
@@ -112,6 +119,12 @@ void ksched_exiting(PD *pd, UWORD result)
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
         if (task->state == TASK_UNUSED) continue;
+#if CONF_WITH_CUIS
+        if (task->state == TASK_DEFERRED && task->deferred_owner == pd) {
+            task->deferred_owner = NULL;
+            task->state = TASK_NEW;
+        }
+#endif
         if (task->parent == pd) {
             task->parent = NULL;
             if (task->state == TASK_ZOMBIE) task->state = TASK_DONE;
@@ -210,8 +223,32 @@ LONG ksched_yield(void)
 }
 
 #if CONF_WITH_CUIS
-LONG ksched_spawn(PD *pd) { return ksched_spawn_observed(pd,0,0); }
+static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred);
+static void discard_deferred(KERNEL_TASK *task)
+{
+    PD *program = task->program;
+    UQUAD stack = task->stack_phys;
+    /* It never entered user mode; resource ownership is already the child's.
+     * Do not read its basepage after revoking the loader's borrowed mapping. */
+    memset(task,0,sizeof(*task));
+    proc_dispose_deferred(program);
+    kstack_free(stack);
+}
+LONG ksched_defer_cancel(void)
+{
+    UWORD i;
+    if (!ksched_spawn_allowed()) return EINVFN;
+    for (i = scheduler.initial; i < KSCHED_LIMIT; i++)
+        if (scheduler.tasks[i].state == TASK_DEFERRED && scheduler.tasks[i].deferred_owner == run)
+            discard_deferred(&scheduler.tasks[i]);
+    return E_OK;
+}
+LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0,FALSE); }
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
+{ return spawn_configured(pd,session,token,FALSE); }
+LONG ksched_defer(PD *pd, ULONG session)
+{ return spawn_configured(pd,session,0,TRUE); }
+static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
 #else
 LONG ksched_spawn(PD *pd)
 #endif
@@ -219,6 +256,9 @@ LONG ksched_spawn(PD *pd)
     UWORD i;
     KERNEL_TASK *task;
     if (!ksched_spawn_allowed()) return EINVFN;
+#if CONF_WITH_CUIS
+    if (deferred && cuis_service(CUIS_SESSION_QUERY,session) != E_OK) return EACCDN;
+#endif
     if (next_identity == ~0ULL) return EAGAIN;
     if (!kproc_unlaunched(pd) || kproc_user_root(pd)) return EIMBA;
     for (i = 0; i < KSCHED_LIMIT; i++)
@@ -254,6 +294,17 @@ LONG ksched_spawn(PD *pd)
     task->identity = ++next_identity;
     task->take_ownership = TRUE;
     kproc_commit_async(pd);
+#if CONF_WITH_CUIS
+    if (deferred) {
+        /* Publish only after every fallible preparation. Requests are detached
+         * shell handoffs, not children the exiting caller must later reap. */
+        ksched_defer_cancel();
+        task->parent = NULL;
+        task->deferred_owner = run;
+        task->state = TASK_DEFERRED;
+        return E_OK;
+    }
+#endif
     task->state = TASK_NEW;
     return task->pid;
 }
@@ -381,6 +432,9 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
             KERNEL_TASK *task = &scheduler.tasks[slot];
             if (task->state == TASK_UNUSED || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
             pending = TRUE;
+#if CONF_WITH_CUIS
+            if (task->state == TASK_DEFERRED) continue;
+#endif
             if (task->state == TASK_BLOCKED && !task->ready(task->argument)) continue;
             scheduler.next = (slot + 1) % KSCHED_LIMIT;
             scheduler.current = task;

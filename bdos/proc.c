@@ -33,6 +33,9 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#if CONF_WITH_CUIS
+#include "bdosbind.h"
+#endif
 #endif
 #include "../bios/vectors.h"
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
@@ -330,7 +333,13 @@ static void free_all_owned(PD *p, MPB *mpb)
  * a process holds.  Called when the process terminates and, on x86-64, for
  * a basepage discarded before it ever ran.
  */
+#if CONF_WITH_CUIS
+static void release_pd_files_mode(PD *r, BOOL safely);
+static void release_pd_files(PD *r) { release_pd_files_mode(r,FALSE); }
+static void release_pd_files_mode(PD *r, BOOL safely)
+#else
 static void release_pd_files(PD *r)
+#endif
 {
     WORD h;
     WORD i;
@@ -338,12 +347,22 @@ static void release_pd_files(PD *r)
     /* check the standard devices in both file tables  */
 
     for (i = 0; i < NUMSTD; i++)
-        if ((h = PD_UFT(r)[i]) > 0)
-            xclose(h);
+        if ((h = PD_UFT(r)[i]) > 0) {
+#if CONF_WITH_CUIS
+            if (safely) Fclose(h); /* The kernel close wrapper completes after disk longjmp. */
+            else
+#endif
+                xclose(h);
+        }
 
     for (i = 0; i < OPNFILES; i++)
-        if (r == sft[i].f_own)
-            xclose(i+NUMSTD);
+        if (r == sft[i].f_own) {
+#if CONF_WITH_CUIS
+            if (safely) Fclose(i+NUMSTD);
+            else
+#endif
+                xclose(i+NUMSTD);
+        }
 
 
     /* decrement usage counts for current directories */
@@ -424,16 +443,20 @@ static WORD envsize(char *env)
 static PD *cur_p;
 
 #if CONF_WITH_CUIS
-static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token);
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_observed(flag,path,tail,env,0,0);
+    return exec_observed(flag,path,tail,env,0,0,FALSE);
 }
 long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
 {
-    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token));
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE));
 }
-static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token)
+long xexec_deferred(char *path, char *tail, char *env, ULONG session)
+{
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE));
+}
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred)
 #else
 long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
@@ -725,7 +748,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #if CONF_WITH_NATIVE_SCHED
     if (flag == PE_ASYNC_LOADGO) {
 #if CONF_WITH_CUIS
-        rc = ksched_spawn_observed(cur_p,session,token);
+        rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
 #else
         rc = ksched_spawn(cur_p);
 #endif
@@ -1086,6 +1109,17 @@ void proc_discard_accessory(PD *p)
     set_owner(USERPTR_TO_PTR(p->p_env), p);
     proc_dispose_detached(p);
 }
+
+#if CONF_WITH_CUIS
+/* Pending successors were loaded with child-owned allocations. Their public
+ * basepage is not mapped in the requesting process after async preparation. */
+void proc_dispose_deferred(PD *p)
+{
+    release_pd_files_mode(p,TRUE);
+    kproc_destroy(p);
+    ixterm(p);
+}
+#endif
 
 void proc_dispose_detached(PD *p)
 {

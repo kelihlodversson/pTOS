@@ -22,7 +22,8 @@ static int attempts, dta_calls, cwd_calls;
 static char tried[16][AES_SHELL_PATH];
 static const char *found;
 static LONG launch_result = 42;
-static LONG watch_result = 17, cancellations, observed_launches;
+static LONG watch_result = 17, cancellations, observed_launches, deferred_calls;
+static LONG deferred_result;
 static int launches;
 static char launched_path[AES_SHELL_PATH], launched_tail[128];
 LONG aes_application_session(short *global)
@@ -56,6 +57,12 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     (void)e; (void)f;
     if (a != 9) return EACCDN;
     if (fn == CUIS_CHILD_RESULT) return 0;
+    if (fn == CUIS_PROCESS_DEFER) {
+        if (d || e || f) return EINVAL;
+        strcpy(launched_path,(const char *)(uintptr_t)b);
+        memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
+        deferred_calls++; return deferred_result;
+    }
     if (fn == CUIS_CHILD_LAUNCH) {
         if (b != 17 || e || f) return EINVAL;
         strcpy(launched_path,(const char *)(uintptr_t)c);
@@ -130,7 +137,7 @@ static int launch_checks(short *global)
     VERIFY(!shel_write(2,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,2,SHW_PARALLEL,(void *)1,(char *)1));
-    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_IMMED,(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_SINGLE,(void *)1,(char *)1));
     VERIFY(!mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal,NULL));
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,NULL,minimal));
@@ -164,8 +171,14 @@ static int launch_checks(short *global)
     watch_result = 17; launch_result = ENSMEM;
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,name,minimal) && cancellations == 1);
     launch_result = 42;
+    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,name,minimal) == 1 && deferred_calls == 1);
+    VERIFY(!strcmp(launched_path,"GOOD\\NEXT.PRG") && launched_tail[0] == 1 && launched_tail[1] == 'x');
+    deferred_result = ENSMEM;
+    VERIFY(!mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,name,minimal,global) && deferred_calls == 2);
+    deferred_result = E_OK;
     found = "GOOD\\NEXT.TOS";
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"NEXT.TOS",minimal));
+    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,"NEXT.TOS",minimal) == 1);
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
     return 0;
 }
