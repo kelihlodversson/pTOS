@@ -62,6 +62,15 @@ void procmem_free_owned(const void *owner, void (*before)(void *))
     disposals++;
 }
 SBYTE *kproc_uft(PD *p) { CHECK(p == &parent || (p == &image && records)); return p == &parent ? parent_files : child_files; }
+void kproc_standard_file_refs(ULONG *refs)
+{
+    unsigned i;
+    memset(refs,0,OPNFILES*sizeof(*refs));
+    for (i = 0; i < NUMSTD; i++) {
+        if (parent_files[i] >= NUMSTD) refs[parent_files[i]-NUMSTD]++;
+        if (records && child_files[i] >= NUMSTD) refs[child_files[i]-NUMSTD]++;
+    }
+}
 UBYTE *kproc_curdir(PD *p) { CHECK(p == &parent || (p == &image && records)); return p == &parent ? parent_dirs : child_dirs; }
 BOOL kproc_create(PD *p) { CHECK(p == &image && !records); records++; return TRUE; }
 void kproc_destroy(PD *p)

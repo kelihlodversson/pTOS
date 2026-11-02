@@ -337,6 +337,18 @@ static void release_pd_files(PD *r)
 {
     WORD h;
     WORD i;
+#if CONF_WITH_CUIS
+    ULONG explicit_refs[OPNFILES];
+
+    /* An SFT slot retains f_own after its explicit handle is closed while
+     * standard aliases remain. Snapshot before dropping this process's
+     * aliases: only a reference beyond all live aliases is an explicit
+     * handle the owner sweep may close. Fdup uses a separate SFT slot. */
+    kproc_standard_file_refs(explicit_refs);
+    for (i = 0; i < OPNFILES; i++)
+        explicit_refs[i] = r == sft[i].f_own && sft[i].f_use > 0 &&
+                          (ULONG)sft[i].f_use > explicit_refs[i];
+#endif
 
     /* check the standard devices in both file tables  */
 
@@ -350,7 +362,11 @@ static void release_pd_files(PD *r)
         }
 
     for (i = 0; i < OPNFILES; i++)
-        if (r == sft[i].f_own) {
+        if (r == sft[i].f_own
+#if CONF_WITH_CUIS
+            && explicit_refs[i]
+#endif
+        ) {
 #if CONF_WITH_CUIS
             Fclose(i+NUMSTD);
 #else

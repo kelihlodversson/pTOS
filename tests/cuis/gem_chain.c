@@ -40,7 +40,7 @@ int gem_chain_client(int argc, char **argv)
 {
     char role, target[128] = { 25 }, state[5] = { 0 }, directory[128], *value;
     short parent, me = gl_apid, message[8] = { 0x7d10,0,0,0,0,0,0,0 };
-    int32_t session;
+    int32_t session, output = -1;
     const char *program;
     VERIFY(argc == 2);
     role = argv[1][0]; parent = (short)decode(argv[1]+1);
@@ -49,23 +49,34 @@ int gem_chain_client(int argc, char **argv)
         VERIFY(receive(message,5000,aes_global) & MU_MESAG);
         return 0;
     }
-    if (role == 't' || role == 'u') {
+    if (role == 't' || role == 'u' || role == 'v' || role == 'w') {
         VERIFY(shel_envrn(&value,"CHAIN_ENV=") == 1 && value && equal(value,"original"));
         VERIFY(call(1,0x47,(uintptr_t)directory,0,0,0) == 0 && equal(directory,"\\APPS"));
         VERIFY(call(1,0x10c,0,0,0,0) == (int32_t)decode(argv[1]+17)); /* Stable controller. */
-        VERIFY(shel_put(role == 't' ? "DONE" : "WRNG",4) == 1);
-        message[0] = role == 't' ? 0x7d12 : 0x7d99;
+        if (role == 'v' || role == 'w') {
+            VERIFY(call(1,0x40,1,5,(uintptr_t)"CHAIN",0) == 5);
+            if (role == 'w') VERIFY(call(1,0x40,2,3,(uintptr_t)"ERR",0) == 3);
+        }
+        VERIFY(shel_put(role == 'u' ? "WRNG" : "DONE",4) == 1);
+        message[0] = role == 'u' ? 0x7d99 : 0x7d12;
         message[1] = me; message[3] = (short)decode(argv[1]+9);
         VERIFY(appl_write(parent,sizeof(message),message) == 1);
         return 0;
     }
     VERIFY(call(1,0x3b,(uintptr_t)"C:\\APPS",0,0,0) == 0);
     VERIFY(shel_put("PEND",4) == 1);
+    if (role == 'o' || role == 'p' || role == 'q') {
+        output = call(1,0x3c,(uintptr_t)"C:\\WORK\\CHAIN.OUT",0,0,0);
+        VERIFY(output >= 6 && call(1,0x46,1,output,0,0) == 0);
+        if (role == 'q') VERIFY(call(1,0x46,2,output,0,0) == 0);
+    }
     target[1] = role == 'r' ? 'u' : 't';
+    if (output >= 0) target[1] = role == 'q' ? 'w' : 'v';
     encode(target+2,(uint32_t)parent); encode(target+10,(uint32_t)me);
     encode(target+18,decode(argv[1]+9));
     program = role == 'j' ? "DELETED.PRG" : "CHAIN.PRG";
     VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target) == 1);
+    if (role == 'o' || role == 'q') VERIFY(call(1,0x3e,output,0,0,0) == 0);
     if (role == 'r') {
         target[1] = 't';
         VERIFY(mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target,aes_global) == 1);
@@ -93,9 +104,9 @@ int gem_chain_client(int argc, char **argv)
 }
 int gem_chain_checks(short *global)
 {
-    static const char roles[] = { 's','r','c','f','x','d','j','e' };
+    static const char roles[] = { 's','r','c','f','x','d','j','e','o','p','q' };
     static const char environment[] = "CHAIN_ENV=original\0\0";
-    char tail[128] = { 17 };
+    char tail[128] = { 17 }, contents[9];
     short source, message[8], helpers[5];
     unsigned i, j;
     int32_t status;
@@ -140,6 +151,15 @@ int gem_chain_checks(short *global)
             }
         }
         VERIFY(receive(message,0,global) == MU_TIMER);
+        if (roles[i] == 'o' || roles[i] == 'p' || roles[i] == 'q') {
+            status = call(1,0x3d,(uintptr_t)"C:\\WORK\\CHAIN.OUT",0,0,0);
+            VERIFY(status >= 6);
+            VERIFY(call(1,0x3f,status,sizeof(contents),(uintptr_t)contents,0) == (roles[i] == 'q' ? 8 : 5));
+            contents[roles[i] == 'q' ? 8 : 5] = 0;
+            VERIFY(equal(contents,roles[i] == 'q' ? "CHAINERR" : "CHAIN"));
+            VERIFY(call(1,0x3e,status,0,0,0) == 0);
+            VERIFY(call(1,0x41,(uintptr_t)"C:\\WORK\\CHAIN.OUT",0,0,0) == 0);
+        }
     }
     return 0;
 }

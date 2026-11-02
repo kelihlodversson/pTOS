@@ -2902,6 +2902,12 @@ kernel stacks, using the existing kernel close wrapper for disk-error-safe
 handle cleanup. No public basepage is dereferenced after the caller's borrowed
 mapping has been revoked.
 
+CUIS process cleanup snapshots all live standard-handle aliases before closing
+files. An SFT slot can retain its original owner after that owner's explicit
+handle has been closed; only a reference beyond the aliases is an explicit
+handle for the owner sweep to release. This preserves redirected standard
+files in a staged successor, including shared stdout/stderr references.
+
 Dormant tasks never run on yield, delay or appl_exit. Actual normal, raw or
 fault termination activates the successor only after process teardown has
 finished, including file/directory cleanup of unlaunched owned children.
@@ -2921,7 +2927,8 @@ resource release and successor activation after complete owner/child cleanup.
 Isolated standard GEM clients exercise yield and
 AES deregistration before real exit, successful/failed replacement, native
 cancellation, normal/_Exit/fault and nested synchronous callers, copied
-environment/CWD, an executable unlinked after staging, and a full native task
+environment/CWD, redirected stdout with the explicit handle open or closed,
+shared stdout/stderr, an executable unlinked after staging, and a full native task
 set rejecting replacement while retaining the old request. Full boot memory
 accounting verifies that successor images and their replaced/cancelled state
 are reclaimed.
