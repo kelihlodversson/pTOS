@@ -8,13 +8,16 @@
 
 /* Desk menu construction shared with the original menu_fixup(). Inlining
  * lets the fixed native layout avoid argument/frame overhead in 256 KB ROMs.
+ * LONG indices preserve the known adjacent positions during arithmetic;
+ * narrowing them before pointer arithmetic prevents that size optimization.
  * The accessory objects immediately follow the separator; labels may have
  * empty slots, while the linked menu items are compact. Indices and storage
  * have already been admitted by the caller. */
-static __inline__ __attribute__((always_inline)) void mn_desk_items(OBJECT *tree, WORD box, WORD about, WORD separator,
+static __inline__ __attribute__((always_inline)) void mn_desk_items(OBJECT *tree, LONG box, LONG about, LONG separator,
                    const char *const *labels, WORD slots, WORD hchar)
 {
-    WORD count = 0, first = separator+1;
+    WORD count = 0;
+    LONG first = separator+1;
     OBJECT *parent = tree+box, *previous = tree+about, *item = tree+first;
     const char *label;
     parent->ob_head = about;

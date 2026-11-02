@@ -3099,7 +3099,9 @@ Registered items send AC_OPEN to the original, non-recycled native session:
 word 1 is the sender's AES ID, word 2 is zero and word 4 is the menu ID.
 They do not generate MN_SELECTED for the application displaying the menu.
 The library deselects the Desk title itself. Message delivery happens after
-releasing display/mouse ownership and may wait for recipient stream space.
+releasing display/mouse ownership and may wait for a different recipient's
+stream space. Self-directed AC_OPEN stays nonblocking: the event loop drains
+earlier messages before retrying the pending write, just as for MN_SELECTED.
 A vanished recipient is discarded without selecting a replacement process
 that subsequently occupies the same menu slot. APR_NOWAIT flushes do not block.
 
@@ -3115,6 +3117,10 @@ since lookup returns EAGAIN; an empty slot returns EFILNF. Short read buffers
 return ERANGE. Data passes through kernel stack snapshots around user copies,
 with ownership rechecked after copying publication input. Session teardown
 removes every entry before freeing its owner. No GUI server is introduced.
+Opaque entries that are empty or lack one nonempty NUL-terminated label are
+ignored when building GEM menus, including embedded-NUL payloads. Genuine
+directory read failures still propagate; unrelated binary entries cannot
+abort another application's File or Desk menu tracking.
 
 In this multitasking AES, launching, switching or terminating another program
 neither resets accessory windows nor sends AC_CLOSE. An accessory's window

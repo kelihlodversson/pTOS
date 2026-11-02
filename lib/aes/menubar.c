@@ -92,7 +92,7 @@ static BOOL flush(LONG session, BOOL block)
     LONG result;
     if (!bar.pending) return TRUE;
     result = cuis_call6(CUIS_STREAM_WRITE,bar.message[0] == AC_OPEN ? bar.recipient : session,
-                        (uintptr_t)bar.message,16,bar.message[0] == AC_OPEN && block,0,0);
+                        (uintptr_t)bar.message,16,bar.message[0] == AC_OPEN && bar.recipient != session && block,0,0);
     if (result == 16) { bar.pending = FALSE; return TRUE; }
     /* A selected accessory may exit while its queue is full. Its session
      * handle is never recycled; discard instead of opening a replacement. */
@@ -242,8 +242,12 @@ static BOOL desk_menu(LONG session, DESK_MENU *desk)
         if (owner < 0) return FALSE;
         bytes = cuis_call6(CUIS_ENTRY_READ,session,i,owner,(uintptr_t)desk->labels[desk->count],CUIS_ENTRY_BYTES,0);
         if (bytes == EFILNF || bytes == EAGAIN) continue;
-        if (bytes <= 0 || bytes > (LONG)CUIS_ENTRY_BYTES || desk->labels[desk->count][bytes-1] ||
-            strlen(desk->labels[desk->count]) != (ULONG)bytes-1) return FALSE;
+        if (bytes < 0) return FALSE;
+        /* Native entries are opaque. Only a nonempty, terminated GEM title
+         * belongs in the Desk menu; unrelated binary data is not an error
+         * in the application currently tracking its own menus. */
+        if (bytes <= 1 || bytes > (LONG)CUIS_ENTRY_BYTES || desk->labels[desk->count][bytes-1] ||
+            strlen(desk->labels[desk->count]) != (ULONG)bytes-1) continue;
         desk->owners[desk->count] = owner; desk->slots[desk->count++] = i;
     }
     if (bar.count > 32759 || bar.metrics.hchar <= 0 || bar.metrics.hchar > 4095) return FALSE;

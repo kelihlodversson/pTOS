@@ -33,7 +33,7 @@ short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
-static struct { WORD mode, color, interior, clip[4], line, line_type, line_pattern; } workstation[1024];
+static struct { WORD mode, color, interior, clip[4], line, line_type, line_pattern; } workstation[4096];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update, allocation_error, release_error;
 static ULONG background_state;
@@ -54,6 +54,8 @@ static int bar_writes;
 static WORD bar_trial_height, bar_snapshot_handle;
 static int bar_failed_closes;
 static BOOL accessory_entry, accessory_gone;
+static BOOL accessory_self, self_blocked;
+static int opaque_entry;
 static LONG bar_recipient;
 static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws, unowned_redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
@@ -115,11 +117,28 @@ LONG aes_application_session(short *global) { return global && global[2] >= 0 &&
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
-    if (fn == CUIS_ENTRY_OWNER) return accessory_entry && b == 4 ? 99 : EFILNF;
+    if (fn == CUIS_ENTRY_OWNER) {
+        if (opaque_entry && b == 0) return 88;
+        return accessory_entry && b == 4 ? accessory_self ? 7 : 99 : EFILNF;
+    }
     if (fn == CUIS_ENTRY_READ) {
-        if (!accessory_entry || b != 4 || c != 99 || e < 12) return EINVAL;
+        char *data = (char *)(uintptr_t)d;
+        if (opaque_entry && b == 0 && c == 88 && e == CUIS_ENTRY_BYTES) {
+            switch (opaque_entry) {
+            case 1: return 0;
+            case 2: data[0] = 0; return 1;
+            case 3: __builtin_memset(data,'X',12); return 12;
+            case 4: __builtin_memcpy(data," Bad\0tail",10); return 10;
+            case 5: return CUIS_ENTRY_BYTES+1;
+            case 6: return EAGAIN;
+            case 7: return EFILNF;
+            default: return EIMBA;
+            }
+        }
+        if (!accessory_entry || b != 4 || c != (accessory_self ? 7U : 99U) || e < 12) return EINVAL;
         __builtin_memcpy((void *)(uintptr_t)d,"  Accessory",12); return 12;
     }
+    if (fn == CUIS_PEER_PID && a == 7) return 7;
     if (fn == CUIS_PEER_PID && a == 99) return accessory_gone ? EFILNF : 17;
     if (fn == CUIS_BACKGROUND) {
         if (b == 2) return background_state;
@@ -190,6 +209,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (fn == CUIS_STREAM_WRITE && bar_mode && c == 16) {
         bar_recipient = (LONG)a;
+        if (a == 7 && bar_write_block && d) { self_blocked = TRUE; return EACCDN; }
         if (a == 99 && accessory_gone) return EACCDN;
         if (bar_write_block) return EAGAIN;
         bar_writes++;
@@ -318,6 +338,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     if (graphics_error) return graphics_error;
     if (fn == VDI_SERVICE_OPEN) {
         VDI_SERVICE_WORKSTATION *ws = (void *)(uintptr_t)b;
+        if (opens+1 >= (int)(sizeof(workstation)/sizeof(workstation[0]))) return ENSMEM;
         __builtin_memset(ws,0,sizeof(*ws));
         ws->handle = ++opens; ws->intout[0] = display_width-1; ws->intout[1] = display_height-1;
         ws->ptsout[1] = 4;
@@ -325,10 +346,9 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         ws->intout[3] = pixel_width; ws->intout[4] = pixel_height;
         workstation[ws->handle].line_type = 1;
         workstation[ws->handle].line_pattern = (WORD)0xffff;
-        if (opens >= 1024) return ENSMEM;
         return E_OK;
     }
-    if (a <= 0 || a >= 1024) return EACCDN;
+    if (a <= 0 || a >= sizeof(workstation)/sizeof(workstation[0])) return EACCDN;
     if (!nesting && !window_update && !(fn == VDI_SERVICE_DRAW && r->code == 38)) return EACCDN;
     if (fn == VDI_SERVICE_SCREEN_BUFFER) {
         GRECT *rect = (void *)(uintptr_t)b;
@@ -1460,6 +1480,54 @@ int main(void)
             VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
             bar_stream = bar_mode = accessory_entry = accessory_gone = FALSE;
         }
+        /* A registered application may select its own Desk entry. With a
+         * full self queue, consume the earlier message before retrying the
+         * pending AC_OPEN, without ever issuing a blocking self write. */
+        {
+            WORD message[8];
+            accessory_entry = accessory_self = TRUE;
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(1);
+            bar_write_block = bar_stream = TRUE;
+            bar_message[0] = WM_REDRAW;
+            before = bar_writes;
+            VERIFY(aes_menu_dispatch(aes_global) == E_OK && !self_blocked);
+            VERIFY(bar_recipient == 7 && bar_writes == before && !aes_menu_listening());
+            VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                              NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
+            VERIFY(message[0] == WM_REDRAW && !self_blocked && !aes_menu_listening());
+            bar_write_block = FALSE;
+            VERIFY(aes_menu_flush(aes_global) == E_OK && bar_writes == before+1);
+            mouse_x = 30; mouse_y = 59; /* The completed gesture left the menu bar. */
+            VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                              NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
+            VERIFY(message[0] == AC_OPEN && message[4] == 4 && !self_blocked);
+            VERIFY(aes_menu_listening() && gem_menubar_unchanged());
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !nesting && !mouse_nesting);
+            bar_stream = bar_mode = accessory_entry = accessory_self = FALSE;
+        }
+        /* A separate native client can publish binary data in a directory
+         * slot. Skip invalid/stale labels, retain the later valid slot and
+         * preserve unrelated File-menu selections. Genuine read failures
+         * still fail the dispatch and release its display/mouse resources. */
+        for (opaque_entry = 1; opaque_entry <= 8; opaque_entry++) {
+            accessory_entry = TRUE;
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(1);
+            before = bar_writes;
+            if (opaque_entry == 8) {
+                VERIFY(aes_menu_dispatch(aes_global) == EACCDN && bar_writes == before);
+            } else {
+                VERIFY(aes_menu_dispatch(aes_global) == E_OK && bar_writes == before+1);
+                VERIFY(bar_recipient == 99 && bar_message[0] == AC_OPEN && bar_message[4] == 4);
+            }
+            VERIFY(gem_menubar_unchanged() && !nesting && !mouse_nesting);
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+            bar_stream = bar_mode = accessory_entry = FALSE;
+            if (opaque_entry != 8) VERIFY(gem_menubar_checks(0) == 0);
+        }
+        opaque_entry = 0;
+        bar_stream = bar_mode = FALSE; gesture_count = gesture_at = 0;
     }
     before = gem_menu_checks(0);
     if (before) __builtin_printf("menu item failure: %x\n",before);
