@@ -64,7 +64,8 @@ static WORD pro_exec(WORD isgraf, WORD isover, char *pcmd, char *ptail)
 
 /*
  * run a program via shel_write()
- * optionally, deselect the current icon & zoom to desktop size
+ * when leaving the desktop, deselect the icon & zoom to desktop size.
+ * Return TRUE only when the desktop must exit for the launched program.
  */
 WORD pro_run(WORD isgraf, char *cmd, char *tail, WORD wh, WORD curr)
 {
@@ -74,7 +75,7 @@ WORD pro_run(WORD isgraf, char *cmd, char *tail, WORD wh, WORD curr)
     tail[len+2] = 0x0D;     /* follows the nul byte, just like Atari TOS */
     ret = pro_exec(isgraf, 1, cmd, tail);
 
-    if (wh != -1)
+    if (wh != -1 && !CONF_WITH_LIBAES)
         do_wopen(FALSE, wh, curr, &G.g_desk);
 
     if (ret && CONF_WITH_LIBAES)

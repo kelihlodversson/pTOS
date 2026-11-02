@@ -69,6 +69,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                     str(rollback / "autoconf.h"), "--makefile", str(rollback / "auto.conf")],
                    check=True)
     (rollback / "setjmp.h").write_text("#include <setjmp.h>\n")
+    # country.h includes this generated header; the keymap fixture installs
+    # its own active maps and must also build before the first kernel make.
+    (rollback / "i18nconf.h").write_text("/* Host fixture supplies its own keyboard maps. */\n")
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-cast-function-type", "-Wno-clobbered",
