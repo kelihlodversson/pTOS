@@ -119,12 +119,6 @@ void ksched_exiting(PD *pd, UWORD result)
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
         if (task->state == TASK_UNUSED) continue;
-#if CONF_WITH_CUIS
-        if (task->state == TASK_DEFERRED && task->deferred_owner == pd) {
-            task->deferred_owner = NULL;
-            task->state = TASK_NEW;
-        }
-#endif
         if (task->parent == pd) {
             task->parent = NULL;
             if (task->state == TASK_ZOMBIE) task->state = TASK_DONE;
@@ -147,6 +141,23 @@ void ksched_exiting(PD *pd, UWORD result)
     if (!asynchronous) cuis_child_completed(kproc_get_parent(pd),kproc_pid(pd),result);
 #endif
 }
+
+#if CONF_WITH_CUIS
+/* The record and allocations have gone. Compare the old identity only;
+ * neither the exiting process nor its cleanup can resume after this hook. */
+void ksched_exited(PD *pd)
+{
+    UWORD i;
+    if (!scheduler.active) return;
+    for (i = 0; i < KSCHED_LIMIT; i++) {
+        KERNEL_TASK *task = &scheduler.tasks[i];
+        if (task->state == TASK_DEFERRED && task->deferred_owner == pd) {
+            task->deferred_owner = NULL;
+            task->state = TASK_NEW;
+        }
+    }
+}
+#endif
 
 void ksched_fault(PD *pd, WORD signal)
 {

@@ -35,6 +35,8 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
 BOOL ksched_parent_pid(PD *pd, WORD *pid);
 void ksched_exiting(PD *pd, UWORD status);
+/* CUIS successor activation after complete teardown; pd is identity only. */
+void ksched_exited(PD *pd);
 void ksched_fault(PD *pd, WORD signal);
 LONG proc_prepare_scheduled(PD *pd);
 LONG proc_start_scheduled(PD *pd, BOOL take_ownership);

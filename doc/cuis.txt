@@ -2903,7 +2903,10 @@ handle cleanup. No public basepage is dereferenced after the caller's borrowed
 mapping has been revoked.
 
 Dormant tasks never run on yield, delay or appl_exit. Actual normal, raw or
-fault termination activates the successor; nested synchronous callers also
+fault termination activates the successor only after process teardown has
+finished, including file/directory cleanup of unlaunched owned children.
+CUIS process cleanup uses the kernel close wrapper so an interrupted disk
+close cannot return to the exiting caller. Nested synchronous callers also
 use that process-lifetime trigger. The handoff is detached: its PPID names
 the group's stable controller, not the former process. It holds no pointer
 to the dead caller and sends no child-exit notification to it. AES session
@@ -2912,7 +2915,10 @@ kernel additions remain under CONF_WITH_CUIS; there is no kernel GEM shell
 policy, format negotiation or AES request block.
 
 Host tests cover native ownership/argument validation, cancellation and GEM
-Boolean/error translation. Isolated standard GEM clients exercise yield and
+Boolean/error translation. Real loader, termination and scheduler host tests
+inject interrupted/returned close errors during rejection and exit, checking
+resource release and successor activation after complete owner/child cleanup.
+Isolated standard GEM clients exercise yield and
 AES deregistration before real exit, successful/failed replacement, native
 cancellation, normal/_Exit/fault and nested synchronous callers, copied
 environment/CWD, an executable unlinked after staging, and a full native task

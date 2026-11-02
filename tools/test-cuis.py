@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-o", str(work / "sessions")]
     subprocess.run(command, check=True)
     subprocess.run([str(work / "sessions")], check=True)
-    # Compile the real loader, disposal path and disk-close wrapper. Use the
+    # Compile the real loader, termination, scheduler and close wrapper. Use the
     # hosted setjmp ABI so an injected disk longjmp also works under ASan.
     rollback = work / "deferred-rollback"
     rollback.mkdir()
@@ -74,10 +74,10 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-cast-function-type", "-Wno-clobbered",
                 "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections",
                 "-iquote", str(rollback), "-iquote", "include", "-iquote", "include/arch/x86_64", "-iquote", "bdos",
-                "tests/cuis/deferred_rollback.c", "bdos/proc.c", "bdos/kfile.c",
-                "-Wl,--gc-sections", "-o", str(rollback / "test")]
-    subprocess.run(command, check=True)
-    subprocess.run([str(rollback / "test")], check=True)
+                "bdos/proc.c", "bdos/kfile.c", "-Wl,--gc-sections"]
+    for test in ("deferred_rollback", "deferred_exit"):
+        subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)
+        subprocess.run([str(rollback / test)], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-fno-builtin", "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared",

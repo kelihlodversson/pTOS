@@ -333,13 +333,7 @@ static void free_all_owned(PD *p, MPB *mpb)
  * a process holds.  Called when the process terminates and, on x86-64, for
  * a basepage discarded before it ever ran.
  */
-#if CONF_WITH_CUIS
-static void release_pd_files_mode(PD *r, BOOL safely);
-static void release_pd_files(PD *r) { release_pd_files_mode(r,FALSE); }
-static void release_pd_files_mode(PD *r, BOOL safely)
-#else
 static void release_pd_files(PD *r)
-#endif
 {
     WORD h;
     WORD i;
@@ -349,19 +343,19 @@ static void release_pd_files(PD *r)
     for (i = 0; i < NUMSTD; i++)
         if ((h = PD_UFT(r)[i]) > 0) {
 #if CONF_WITH_CUIS
-            if (safely) Fclose(h); /* The kernel close wrapper completes after disk longjmp. */
-            else
+            Fclose(h); /* Complete cleanup even after a disk-error longjmp. */
+#else
+            xclose(h);
 #endif
-                xclose(h);
         }
 
     for (i = 0; i < OPNFILES; i++)
         if (r == sft[i].f_own) {
 #if CONF_WITH_CUIS
-            if (safely) Fclose(i+NUMSTD);
-            else
+            Fclose(i+NUMSTD);
+#else
+            xclose(i+NUMSTD);
 #endif
-                xclose(i+NUMSTD);
         }
 
 
@@ -1121,7 +1115,7 @@ void proc_discard_accessory(PD *p)
  * basepage is not mapped in the requesting process after async preparation. */
 void proc_dispose_deferred(PD *p)
 {
-    release_pd_files_mode(p,TRUE);
+    release_pd_files(p);
     kproc_destroy(p);
     ixterm(p);
 }
@@ -1188,6 +1182,11 @@ void xterm(UWORD rc)
     }
 #endif
     ixterm(p);
+#if CONF_WITH_CUIS
+    /* All process resources are gone. No cleanup can return to the caller
+     * through the disk-error handler after making its successor runnable. */
+    ksched_exited(p);
+#endif
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.
      * termuser() will enter the gouser() code at the proper place.
