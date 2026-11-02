@@ -9,6 +9,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
+subprocess.run([sys.executable, "tools/check-libaes-compatibility.py"], check=True)
+subprocess.run([sys.executable, "tests/cuis/compatibility.py"], check=True)
 os.environ["CONFIG_"] = ""
 import kconfiglib
 
