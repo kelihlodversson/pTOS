@@ -55,6 +55,7 @@ static void save_environment(UQUAD address)
         if (!source[i] && !source[i+1]) break;
     }
 }
+short mt_wind_new(short *global) { (void)global; return 1; }
 LONG aes_application_session(short *global)
 { return global && global[2] == 7 && !registration_error ? 9 : EACCDN; }
 unsigned long __ptos_getauxval(unsigned long type)

@@ -67,6 +67,7 @@ int main(void)
     short me, menu, window = -1, message[8], events, key, handle, i;
     VERIFY(startup_order == 2 && preinit_app == 0 && constructor_app == 0 && _app == 0);
     VERIFY((me = appl_init()) > 0 && appl_find("EMUDESK") > 0);
+    VERIFY(shel_write(SWM_NEWMSG,NM_APTERM,0,NULL,NULL) == 1);
     menu = menu_register(me,"  Resident accessory");
     VERIFY(menu >= 0);
     control.code = 100; control.nintin = 11;
@@ -79,7 +80,12 @@ int main(void)
                             message,0,NULL,NULL,NULL,NULL,&key,NULL);
         VERIFY(events);
         if (events & MU_MESAG) {
-            VERIFY(message[0] != AC_CLOSE); /* No single-task close on app exit. */
+            if (message[0] == AC_CLOSE) {
+                short kind;
+                VERIFY(message[3] == menu && (window < 0 || !wind_get(window,WF_KIND,&kind,NULL,NULL,NULL)));
+                window = -1; record("CLOSE",me,menu);
+            }
+            if (message[0] == AP_TERM) break;
             if (message[0] == AC_OPEN) {
                 VERIFY(message[4] == menu && message[1] > 0 && !message[2]);
                 if (window < 0) {

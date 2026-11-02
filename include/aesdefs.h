@@ -11,6 +11,7 @@
 #define _AESDEFS_H
 
 #include "mform.h"
+#include "gem_lifecycle.h"
 
 /*
  * AES opcodes

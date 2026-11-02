@@ -7,6 +7,13 @@
 #include "gemrslib.h"
 #include "cuis.h"
 #include "syscall.h"
+#include "shutdown.h"
+
+void desk_poweroff(void);
+void desk_poweroff(void)
+{
+    (void)desk_syscall(1,GEMDOS_SHUTDOWN,SHUT_POWER,0,0,0);
+}
 
 WORD desk_shifted_key(WORD scancode);
 WORD desk_shifted_key(WORD scancode)

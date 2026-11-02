@@ -113,6 +113,29 @@ short appl_yield(void);
 short evnt_timer(unsigned long interval);
 short appl_getinfo(short type, short *out1, short *out2, short *out3, short *out4);
 short appl_find(const char *name);
+short appl_search(short mode, char *name, short *type, short *id);
+short mt_appl_search(short mode, char *name, short *type, short *id, short *global_aes);
+short appl_control(short id, short mode, void *output);
+short mt_appl_control(short id, short mode, void *output, short *global_aes);
+#define APC_HIDE 10
+#define APC_SHOW 11
+#define APC_TOP 12
+#define APC_HIDENOT 13
+#define APC_INFO 14
+#define APC_MENU 15
+#define APC_WIDGETS 16
+#define APC_APP_CONFIG 17
+#define APC_INFORM_MESAG 18
+#define APCI_HIDDEN 0x01
+#define APCI_HASMBAR 0x02
+#define APCI_HASDESK 0x04
+#define APP_FIRST 0
+#define APP_NEXT 1
+#define APP_DESK 2
+#define APP_SYSTEM 0x01
+#define APP_APPLICATION 0x02
+#define APP_ACCESSORY 0x04
+#define APP_SHELL 0x08
 short appl_write(short id, short length, void *buffer);
 short appl_read(short id, short length, void *buffer);
 short evnt_mesag(short message[8]);
@@ -414,6 +437,7 @@ short shel_read(char *command, char *tail);
 short mt_shel_read(char *command, char *tail, short *global);
 #define SWM_LAUNCH 0
 #define SWM_LAUNCHNOW 1
+#include "gem_lifecycle.h"
 #define CL_NORMAL 0
 #define CL_PARSE 1
 #define CH_EXIT 90

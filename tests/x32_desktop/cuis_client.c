@@ -53,6 +53,7 @@ int main(int argc, char **argv)
     short me, window, message[8], events, key, handle, i;
     VERIFY(_app == 1);
     VERIFY((me = appl_init()) > 0 && appl_find("EMUDESK") > 0);
+    VERIFY(shel_write(SWM_NEWMSG,NM_APTERM,0,NULL,NULL) == 1);
     if (argc > 1) {
         const char *expected = "param", *actual = argv[1];
         VERIFY(argc == 2);
@@ -75,6 +76,7 @@ int main(int argc, char **argv)
         if ((events & MU_MESAG) && message[0] == WM_REDRAW) draw(window,handle);
         if ((events & MU_MESAG) && message[0] == WM_TOPPED) VERIFY(wind_set(window,WF_TOP,0,0,0,0));
         if ((events & MU_MESAG) && message[0] == WM_CLOSED) break;
+        if ((events & MU_MESAG) && message[0] == AP_TERM) break;
         if (events & MU_KEYBD) {
             if ((key & 255) == 'q') break;
             if ((key & 255) == 'f') {

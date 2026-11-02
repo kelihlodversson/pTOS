@@ -46,6 +46,8 @@
 #include "deskwin.h"
 #if CONF_WITH_LIBAES_DESK
 #include "deskrefresh.h"
+#include "shutdown.h"
+static BOOL shutdown_pending, shutdown_poweroff;
 #endif
 
 #include "biosdefs.h"
@@ -806,10 +808,15 @@ static WORD do_filemenu(WORD item)
 
 #if CONF_WITH_SHUTDOWN
     case QUITITEM:
+#if CONF_WITH_LIBAES_DESK
+        if (!shutdown_pending && shel_write(SHW_SHUTDOWN,FALSE,SD_COMPLETE,NULL,NULL))
+            shutdown_pending = TRUE;
+#else
         desk_set_ceh(FALSE); /* avoid possibility of useless form_alert()s */
         display_free_stack();
         shel_write(SHW_SHUTDOWN, FALSE, 2, NULL, NULL);
         done = TRUE;
+#endif
         break;
 #endif
     }
@@ -1318,6 +1325,18 @@ WORD hndl_msg(void)
     switch(G.g_rmsg[0])
     {
 #if CONF_WITH_LIBAES_DESK
+    case AP_TERM:
+        if (G.g_rmsg[1] == -1) done = TRUE;
+        break;
+    case SHUT_COMPLETED:
+        if (shutdown_pending) {
+            shutdown_poweroff = TRUE; done = TRUE;
+            desk_set_ceh(FALSE);
+        }
+        break;
+    case AP_TFAIL:
+        shutdown_pending = FALSE;
+        break;
     case CH_EXIT: /* Refresh listings while keeping windows and state. */
 #if CONF_WITH_X32_DESKTOP_TEST
         {
@@ -2040,6 +2059,10 @@ BOOL deskmain(void)
 
     /* initialize libraries */
     gl_apid = appl_init();
+#if CONF_WITH_LIBAES_DESK
+    shutdown_pending = shutdown_poweroff = FALSE;
+    (void)shel_write(SWM_NEWMSG,NM_APTERM,0,NULL,NULL);
+#endif
 
     /* get GEM's gsx handle */
     gl_handle = graf_handle(&gl_wchar, &gl_hchar, &gl_wbox, &gl_hbox);
@@ -2315,6 +2338,9 @@ BOOL deskmain(void)
 
     /* exit the gem AES */
     appl_exit();
+#if CONF_WITH_LIBAES_DESK
+    if (shutdown_poweroff) desk_poweroff();
+#endif
 
     if (rc == FALSE)                /* restarting */
         wind_new();                 /* clean up AES windows */

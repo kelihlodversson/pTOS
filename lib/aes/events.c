@@ -4,6 +4,7 @@
 #include "transport.h"
 #include "application.h"
 #include "menubar.h"
+#include "lifecycle.h"
 
 static short coordinate(LONG value)
 {
@@ -78,6 +79,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
+    if (aes_lifecycle_listening()) wait_mask |= CUIS_READY_COHORT;
     /* A multi-click owns per-call accumulation until completion. Service
      * frame work afterward rather than interrupting that unfinished count. */
     if (aes_frames_listening() && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
@@ -100,6 +102,11 @@ static short event_once(short events, short clicks, short button_mask, short but
     if (aes_controls_repeating()) wait_mask |= CUIS_READY_SERVICE;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
+    if (ready & CUIS_READY_COHORT) {
+        if (aes_lifecycle_messages(global) < 0) return 0;
+        ready &= ~CUIS_READY_COHORT;
+        if (!ready) return -1;
+    }
     if ((ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) && messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
@@ -160,7 +167,7 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     short result;
     BOOL clocked = (events & MU_TIMER) &&
         (aes_menu_registered() || aes_frames_registered() ||
-         aes_controls_listening() || aes_frames_wait_display());
+         aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening());
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     session = aes_application_session(global);
     duration = interval/5 + (interval%5 != 0) + (interval != 0);
@@ -169,6 +176,7 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
         if (start < 0) return 0;
     }
     for (;;) {
+        if (aes_lifecycle_messages(global) < 0) return 0;
         if (aes_menu_dispatch(global) < 0) return 0;
         result = event_once(events,clicks,button_mask,button_state,m1_leave,m1_x,m1_y,m1_w,m1_h,
                             m2_leave,m2_x,m2_y,m2_w,m2_h,message,interval,mx,my,buttons,modifiers,key,click_count,global,clocked,start,duration);

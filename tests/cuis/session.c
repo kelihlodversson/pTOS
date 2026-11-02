@@ -277,6 +277,8 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "contexts.c"
 #include "child_completion.c"
 #include "entries.c"
+#include "peers.c"
+#include "cohorts.c"
 
 int main(void)
 {
@@ -386,5 +388,9 @@ int main(void)
     rc = console_abandoned_launch_checks();
     if (rc) return rc;
     rc = entry_checks();
+    if (rc) return rc;
+    rc = peer_checks();
+    if (rc) return rc;
+    rc = cohort_checks();
     return rc ? rc : process_defer_checks();
 }

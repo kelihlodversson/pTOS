@@ -1,0 +1,74 @@
+/* Opaque all-or-nothing requests and exit/consumption acknowledgements. */
+#define CJ(fn,s,t,a,b,c,d) cuis_cohort_service(fn,s,t,a,b,c,d)
+static int cohort_checks(void)
+{
+    LONG a, b, c, token;
+    stream_ring_count = 0;
+    run = &first; a = cuis_service(CUIS_SESSION_START,0);
+    run = &second; b = cuis_service(CUIS_SESSION_START,0);
+    run = &third; c = cuis_service(CUIS_SESSION_START,0);
+    run = &first;
+    fail_allocation = TRUE;
+    CHECK(CJ(CUIS_COHORT_BEGIN,a,0,0,0,0,0) == ENSMEM && !cohort.owner);
+    fail_allocation = FALSE;
+    token = CJ(CUIS_COHORT_BEGIN,a,0,0,0,0,0);
+    CHECK(token > 0 && cohort.remaining == 2);
+    run = &fourth; CHECK(cuis_service(CUIS_SESSION_START,0) == EAGAIN);
+    run = &second;
+    CHECK(CJ(CUIS_COHORT_CANCEL,b,token,0,0,0,0) == EACCDN);
+    CHECK(CJ(CUIS_COHORT_QUERY,b,CUIS_COHORT_WORK,0,0,0,0) == 0);
+    run = &first;
+    memset(stream_input,0x35,16);
+    CHECK(CJ(CUIS_COHORT_STAGE,a,token,b,0x10000,16,0) == E_OK);
+    CHECK(CJ(CUIS_COHORT_COMMIT,a,token,0x10000,16,0,0) == EAGAIN);
+    CHECK(CJ(CUIS_COHORT_STAGE,a,token,c,0x10000,16,1) == E_OK);
+    CHECK(CJ(CUIS_COHORT_COMMIT,a,token,0x10000,16,0,0) == E_OK);
+    run = &second;
+    CHECK(CJ(CUIS_COHORT_QUERY,b,CUIS_COHORT_WORK,0,0,0,0) == CUIS_COHORT_REQUEST);
+    CHECK(CJ(CUIS_COHORT_READ,b,token,0x20000,15,0,0) == ERANGE);
+    CHECK(CJ(CUIS_COHORT_READ,b,token,0x20000,16,0,0) == 16 && stream_output[0] == 0x35);
+    CHECK(CJ(CUIS_COHORT_PUBLISH,b,token,0,0,0,0) == E_OK);
+    CHECK(cuis_session_wait(b,16,CUIS_READY_COHORT|CUIS_READY_STREAM,0) == CUIS_READY_STREAM);
+    CHECK(CJ(CUIS_COHORT_ACK,b,token,0,0,0,0) == EAGAIN);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,b,0x20000,8,0,0) == 8);
+    CHECK(CJ(CUIS_COHORT_ACK,b,token,0,0,0,0) == EAGAIN);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,b,0x20000,8,0,0) == 8);
+    CHECK(CJ(CUIS_COHORT_QUERY,b,CUIS_COHORT_WORK,0,0,0,0) == CUIS_COHORT_ACCEPT);
+    CHECK(CJ(CUIS_COHORT_ACK,b,token,0,0,0,0) == E_OK && cohort.remaining == 1);
+    CHECK(CJ(CUIS_COHORT_ACK,b,token,0,0,0,0) == EAGAIN && cohort.remaining == 1);
+    run = &third; CHECK(cuis_service(CUIS_SESSION_END,c) == E_OK);
+    run = &first;
+    CHECK(CJ(CUIS_COHORT_QUERY,a,CUIS_COHORT_WORK,0,0,0,0) == CUIS_COHORT_RESULT);
+    CHECK(CJ(CUIS_COHORT_PUBLISH,a,token,0,0,0,0) == E_OK);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,a,0x20000,16,0,0) == 16);
+    run = &fourth; CHECK(cuis_service(CUIS_SESSION_START,0) == EAGAIN);
+    run = &first; CHECK(CJ(CUIS_COHORT_CANCEL,a,token,0,0,0,0) == E_OK);
+    run = &fourth; CHECK(cuis_service(CUIS_SESSION_START,0) >= 0); cuis_process_exit(&fourth);
+    run = &first;
+    token = CJ(CUIS_COHORT_BEGIN,a,0,0,0,0,0);
+    CHECK(token > 0 && CJ(CUIS_COHORT_STAGE,a,token,b,0x10000,16,1) == E_OK);
+    CHECK(CJ(CUIS_COHORT_COMMIT,a,token,0x10000,16,0,0) == E_OK);
+    run = &second;
+    memset(stream_input,0x71,16);
+    CHECK(CJ(CUIS_COHORT_REJECT,b,token,0x10000,16,0,0) == E_OK);
+    run = &first;
+    CHECK(CJ(CUIS_COHORT_READ,a,token,0x20000,16,0,0) == 16 && stream_output[0] == 0x71);
+    CHECK(CJ(CUIS_COHORT_PUBLISH,a,token,0,0,0,0) == E_OK && !cohort.owner);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,a,0x20000,16,0,0) == 16);
+    token = CJ(CUIS_COHORT_BEGIN,a,0,0,0,0,0);
+    fail_copy = TRUE;
+    CHECK(CJ(CUIS_COHORT_STAGE,a,token,b,0x10000,16,0) == EIMBA);
+    fail_copy = FALSE;
+    CHECK(CJ(CUIS_COHORT_STAGE,a,token,b,0x10000,16,0) == E_OK);
+    CHECK(CJ(CUIS_COHORT_COMMIT,a,token,0x10000,16,0,0) == E_OK);
+    run = &second;
+    region_exit_on_output = TRUE;
+    CHECK(CJ(CUIS_COHORT_READ,b,token,0x20000,16,0,0) == EIMBA);
+    CHECK(!*find_owner(&second) && cohort.remaining == 0);
+    run = &first;
+    CHECK(CJ(CUIS_COHORT_QUERY,a,CUIS_COHORT_WORK,0,0,0,0) == CUIS_COHORT_RESULT);
+    cuis_process_exit(&first);
+    CHECK(!cohort.owner && !cuis_session_count() && allocations == frees && input_irqs);
+    return 0;
+}
+#undef CJ
