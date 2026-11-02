@@ -492,6 +492,7 @@ def libaes_desktop(guest):
     guest.click()
     guest.key("q")
     guest.wait("x32 desktop CH_EXIT %d 0025" % third[0])
+    background = launch(4)
     # Full-screen text children do not terminate or restart the desktop.
     for count,kind,key,status in ((1,"TOS","q","0025"),(2,"TOS","f","0400"),(3,"TTP","q","0025")):
         guest.move(180,105)
@@ -520,6 +521,13 @@ def libaes_desktop(guest):
         guest.wait("x32 desktop CH_EXIT %d %s" % (pid,status))
         assert guest.text().count("x32 desktop CH_EXIT %d " % pid) == 1
         assert guest.text().count("x32 desktop LIBAES PASS") == 1
+        if count == 2:
+            # A second GUI client stays registered across both text exits,
+            # handles the restored redraw, and still accepts its own input.
+            guest.move(750,110+(background[0]&1)*280)
+            guest.click()
+            guest.key("q")
+            guest.wait("x32 desktop CH_EXIT %d 0025" % background[0])
     if not guest.embedded_console:
         before = len(guest.text())
         guest.key("ctrl-z")
