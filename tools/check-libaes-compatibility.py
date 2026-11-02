@@ -7,6 +7,15 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def c_code(text):
+    # C removes escaped newlines before recognizing comments. Tokenize quoted
+    # literals too, so a comment marker in a string cannot end/start a comment
+    # and a prototype quoted in a string cannot count as a declaration.
+    text = re.sub(r"\\\r?\n", "", text)
+    tokens = r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*.*?\*/|//[^\n]*'
+    return re.sub(tokens, lambda match: " " + "\n" * match[0].count("\n"), text, flags=re.S)
+
+
 def check(root=ROOT):
     matrix = (root / "doc/libaes-compatibility.md").read_text()
     export_map = (root / "lib/aes/exports.map").read_text()
@@ -16,8 +25,8 @@ def check(root=ROOT):
     state = {"aes_global", "gl_apid", "gl_ap_version"}
     assert state <= exports, "missing standard binding globals: " + ", ".join(sorted(state - exports))
     functions = {name for name in exports if name not in state and not name.startswith("aes_")}
-    declarations = (root / "include/gem.h").read_text()
-    helpers = (root / "include/rectfunc.h").read_text()
+    declarations = c_code((root / "include/gem.h").read_text())
+    helpers = c_code((root / "include/rectfunc.h").read_text())
     rows = {}
     for line in matrix.splitlines():
         if not line.startswith("`") or " | " not in line:

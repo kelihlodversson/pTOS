@@ -34,7 +34,7 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 `menu_popup` | partial | Standalone classic popup tracking and cancellation. No scrolling or attached/nested submenus. | `tests/cuis/popup_track.c`, `tests/cuis/popup_menu.c`
 `menu_register` | unavailable | Accessory menu registration and AC_OPEN/AC_CLOSE lifecycle remain to be implemented. | `lib/aes/menubar.c`
 `menu_attach`, `menu_istart`, `menu_settings` | unavailable | AES 3.30 attached-submenu/start-item/settings extensions. Extended menu capabilities are not advertised. | `lib/aes/popup.c`
-`objc_add`, `objc_delete`, `objc_order`, `objc_find`, `objc_offset` | available | Caller-local tree editing/traversal with bounded topology and LONG accumulated coordinates. | `tests/cuis/objects.c`
+`objc_add`, `objc_delete`, `objc_order`, `objc_find`, `objc_offset` | available | Caller-local tree editing/traversal assumes valid indices and acyclic parent/sibling links; malformed links can loop or fault. Offset accumulation and find origins use WORD coordinates and can wrap outside their range. These calls do not inherit the drawing preflight's topology or LONG geometry checks. | `tests/cuis/objects.c`
 `objc_draw`, `objc_change` | partial | Shared native painter, classic text/boxes/images/icons, USERDEF, colour icons and 3D flags. Extended object types/GDOS object fonts need separate coverage. | `tests/cuis/object_draw.c`, `tests/cuis/colour_objects.c`, `tests/cuis/three_d.c`
 `objc_edit` | available | Standard text/template/validation editing and caret control. | `tests/cuis/gem_forms.c`
 `objc_sysvar` | partial | Native MultiTOS 3D colour/offset selectors; extended selectors are rejected. | `tests/cuis/three_d.c`
