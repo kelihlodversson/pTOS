@@ -226,6 +226,7 @@ static int launch_checks(short *global)
 static int argument_checks(void)
 {
     char name[] = "NEXT.PRG", tail[512] = { 0 };
+    char marker[] = { 127 }, empty_environment[] = { 0,0 };
     char custom[] = "ONLY=child\0ARGV=\0old\0old-argument\0\0";
     SHELW extended = { name,0,0,NULL,custom,0,0 };
     static const char expected[] = "ONLY=child\0ARGV=NULL:2\0GOOD\\NEXT.PRG\0one two\0 \0a'b\0C:\\test\0\0";
@@ -240,7 +241,7 @@ static int argument_checks(void)
     VERIFY(launched_tail[0] == 127 && !allocation_balance);
     /* Explicit ARGV is copied unchanged for CL_NORMAL, including argv[0]. */
     tail[0] = 127;
-    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail) == 42);
+    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,marker) == 42);
     VERIFY(!memcmp(launched_environment,custom,sizeof(custom)) && !allocation_balance);
     tail[0] = 0;
     VERIFY(shel_write(SWM_LAUNCHNOW|SW_ENVIRON,GEMAPP,SHW_PARALLEL,&extended,tail) == 42);
@@ -255,6 +256,16 @@ static int argument_checks(void)
     fail_allocation = FALSE; launch_result = ENSMEM;
     VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) && !allocation_balance);
     launch_result = 42;
+    extended.env = empty_environment;
+    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
+    VERIFY(!memcmp(launched_environment,"ARGV=\0GOOD\\NEXT.PRG\0\0",21) && !allocation_balance);
+    memset(long_prefix,'X',sizeof(long_prefix)); long_prefix[32764] = long_prefix[32765] = 0;
+    extended.env = long_prefix;
+    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail) == 42 && !allocation_balance);
+    before = launches;
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) && launches == before);
+    long_prefix[32765] = 'X';
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail) && launches == before);
     return 0;
 }
 int main(void)
