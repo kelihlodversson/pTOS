@@ -3081,7 +3081,8 @@ AES4 shell launches, preserves the parent's DTA, honours the boot skip flag,
 and does not relaunch accessories when reloading desktop preferences. These
 are native x32 ELF programs linked with libaes and the shared runtime, not
 legacy kernel-AES accessory images. dynacccrt.o uses the same shared startup
-as dyncrt.o and sets the standard GEM _app variable to zero before main.
+as dyncrt.o and initializes the standard GEM _app variable to zero in the
+image, so preinitializers and constructors already see accessory state.
 The ordinary dynamic CRT supplies a weak _app=1 definition for applications.
 
 menu_register/mt_menu_register register the caller's application ID and copy a

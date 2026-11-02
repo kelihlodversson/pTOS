@@ -48,10 +48,24 @@ static void draw(short window, short handle)
     VERIFY(wind_update(END_UPDATE));
 }
 extern short _app;
+static short preinit_app = -1, constructor_app = -1;
+static unsigned startup_order;
+static void accessory_preinit(void)
+{
+    preinit_app = _app;
+    startup_order = 1;
+}
+__attribute__((used,section(".preinit_array")))
+static void (*const preinitializer)(void) = accessory_preinit;
+__attribute__((constructor)) static void accessory_init(void)
+{
+    constructor_app = _app;
+    startup_order = startup_order == 1 ? 2 : 3;
+}
 int main(void)
 {
     short me, menu, window = -1, message[8], events, key, handle, i;
-    VERIFY(_app == 0);
+    VERIFY(startup_order == 2 && preinit_app == 0 && constructor_app == 0 && _app == 0);
     VERIFY((me = appl_init()) > 0 && appl_find("EMUDESK") > 0);
     menu = menu_register(me,"  Resident accessory");
     VERIFY(menu >= 0);

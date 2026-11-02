@@ -21,5 +21,10 @@ _start:
         .type _app,@object
         .size _app,2
 _app:
+#ifdef PTOS_ACCESSORY_CRT
+        /* The interpreter invokes initialization arrays before _start. */
+        .short 0
+#else
         .short 1
+#endif
         .section .note.GNU-stack,"",@progbits
