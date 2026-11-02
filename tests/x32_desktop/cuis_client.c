@@ -3,6 +3,7 @@
 #include <gem.h>
 #include "ptos.h"
 #include "vdipb.h"
+extern short _app;
 #define VERIFY(c) do { if (!(c)) { record("FAIL",__LINE__,0); _Exit(99); } } while (0)
 static void record(const char *event, unsigned number, unsigned window)
 {
@@ -50,6 +51,7 @@ static void draw(short window, short handle)
 int main(int argc, char **argv)
 {
     short me, window, message[8], events, key, handle, i;
+    VERIFY(_app == 1);
     VERIFY((me = appl_init()) > 0 && appl_find("EMUDESK") > 0);
     if (argc > 1) {
         const char *expected = "param", *actual = argv[1];

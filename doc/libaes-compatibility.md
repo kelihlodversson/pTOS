@@ -32,7 +32,7 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 `evnt_multi` | partial | Six classic GEM masks, simultaneous results and one timer deadline. Extended wheel/rectangle masks are not implemented. | `tests/cuis/input_events.c`, `tests/cuis/application.c`
 `menu_bar`, `menu_icheck`, `menu_ienable`, `menu_tnormal`, `menu_text` | available | Owned standard menu bars, native painting, title tracking and MN_SELECTED. | `tests/cuis/menu_bar.c`, `tests/cuis/menu_items.c`
 `menu_popup` | partial | Standalone classic popup tracking and cancellation. No scrolling or attached/nested submenus. | `tests/cuis/popup_track.c`, `tests/cuis/popup_menu.c`
-`menu_register` | unavailable | Accessory menu registration and AC_OPEN/AC_CLOSE lifecycle remain to be implemented. | `lib/aes/menubar.c`
+`menu_register` | available | Six session-owned Desk entries, standard AC_OPEN menu IDs and REG_NEWNAME lookup labels. Accessories remain resident across ordinary application exits; global shutdown/reset AC_CLOSE policy is deferred with those operations. | `lib/aes/application.c`, `lib/aes/menubar.c`, `tests/cuis/application.c`, `tests/cuis/session.c`
 `menu_attach`, `menu_istart`, `menu_settings` | unavailable | AES 3.30 attached-submenu/start-item/settings extensions. Extended menu capabilities are not advertised. | `lib/aes/popup.c`
 `objc_add`, `objc_delete`, `objc_order`, `objc_find`, `objc_offset` | available | Caller-local tree editing/traversal assumes valid indices and acyclic parent/sibling links; malformed links can loop or fault. Offset accumulation and find origins use WORD coordinates and can wrap outside their range. These calls do not inherit the drawing preflight's topology or LONG geometry checks. | `tests/cuis/objects.c`
 `objc_draw`, `objc_change` | partial | Shared native painter, classic text/boxes/images/icons, USERDEF, colour icons and 3D flags. Extended object types/GDOS object fonts need separate coverage. | `tests/cuis/object_draw.c`, `tests/cuis/colour_objects.c`, `tests/cuis/three_d.c`
@@ -79,8 +79,10 @@ RCS integration is merged in kelihlodversson/rcs#40, with libcmini#24 fixing
 x32 cookie lookup. Its GUI test uses normal GEMlib headers and the shared CRT,
 loads its resources, compares a save with ARM golden output, edits and reloads
 the result, and returns cleanly to the resident desktop. These tests establish
-that application path; they do not cover accessory policy. The desktop tests
-also cover classic console launch/return, parameters and normal/fault cleanup.
+that application path. The desktop tests also cover a native accessory started
+once with EmultiDesk, Desk-menu AC_OPEN, close/reopen, window survival across
+GEM/console children and termination, plus classic console launch/return,
+parameters and normal/fault cleanup.
 
 ## Remaining cutover gates, in implementation order
 
@@ -88,8 +90,10 @@ also cover classic console launch/return, parameters and normal/fault cleanup.
    flags. Classic AES4 console launch/return is implemented in #859; CL_PARSE
    and per-launch SW_ENVIRON are implemented in #861. Preserve the resident desktop;
    use standard GEM shell modes and process lifetime/CH_EXIT semantics.
-2. Implement accessory process lifetime, standard menu_register and
-   AC_OPEN/AC_CLOSE delivery, including startup, interaction and exit cleanup.
+2. Accessory startup, independent process/window lifetime, menu_register,
+   AC_OPEN and exit cleanup are implemented in #863. Complete AC_CLOSE reset
+   delivery together with the actual shutdown/resolution policy in gate 4;
+   ordinary multitasking application exits must not close accessories.
 3. Resolve the remaining API/extension rows above: implement the applicable
    subset and record explicit follow-ups for deliberately deferred extensions.
    Keep appl_getinfo honest. Replay/injection needs a policy before enabling it.

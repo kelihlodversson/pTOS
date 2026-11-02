@@ -114,6 +114,11 @@ typedef struct cuis_client {
     LONG input_result[5]; /* key, count, x, y, packed buttons/modifiers */
 } CUIS_CLIENT;
 static CUIS_CLIENT *clients;
+static struct {
+    CUIS_CLIENT *owner;
+    ULONG bytes;
+    UBYTE data[CUIS_ENTRY_BYTES];
+} directory_entries[CUIS_ENTRY_LIMIT];
 static ULONG next_child_token;
 static ULONG input_interval = 450;
 static void sample_input_waits(void);
@@ -1188,7 +1193,10 @@ static void session_exit(PD *owner)
     CUIS_CLIENT **link = find_owner(owner), *client = *link;
     if (client) {
         CUIS_WINDOW *window;
+        ULONG i;
         UQUAD flags = cuis_input_lock();
+        for (i = 0; i < CUIS_ENTRY_LIMIT; i++)
+            if (directory_entries[i].owner == client) directory_entries[i].owner = NULL;
         /* A backing fault can terminate a syscall without unwinding its
          * launch frame. Never retain a session that teardown will free. */
         if (console_launcher == client) {
@@ -1331,6 +1339,51 @@ static CUIS_CLIENT *find_handle(UQUAD handle)
     CUIS_CLIENT *client;
     for (client = clients; client && client->handle != handle; client = client->next) ;
     return client;
+}
+
+/* Copy through a stack snapshot: user access may schedule, fault, or remove
+ * a session. Never carry a client pointer across a user copy. Session handles
+ * are never recycled, including after an explicit deregistration. */
+LONG cuis_entry_service(ULONG function, UQUAD session, UQUAD slot, UQUAD peer, UQUAD address, UQUAD bytes)
+{
+    CUIS_CLIENT *client, *owner;
+    UBYTE data[CUIS_ENTRY_BYTES];
+    UQUAD flags;
+    ULONG length;
+    LONG result;
+    if (slot >= CUIS_ENTRY_LIMIT || session > 0x7fffffffULL) return EINVAL;
+    if (function != CUIS_ENTRY_PUBLISH && function != CUIS_ENTRY_OWNER && function != CUIS_ENTRY_READ) return EINVFN;
+    client = *find_owner(run);
+    if (!client || client->handle != session) return EACCDN;
+    if (function == CUIS_ENTRY_PUBLISH) {
+        if (!bytes || bytes > CUIS_ENTRY_BYTES || peer) return EINVAL;
+        if (!kproc_copy_from_user(data,address,(ULONG)bytes)) return EIMBA;
+    } else if (function == CUIS_ENTRY_READ && (peer > 0x7fffffffULL || bytes > CUIS_ENTRY_BYTES)) return EINVAL;
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
+    owner = directory_entries[slot].owner;
+    if (function == CUIS_ENTRY_PUBLISH) {
+        if (owner) result = EAGAIN;
+        else {
+            memcpy(directory_entries[slot].data,data,(ULONG)bytes);
+            directory_entries[slot].bytes = (ULONG)bytes;
+            directory_entries[slot].owner = client;
+            result = (LONG)slot;
+        }
+    } else if (!owner) result = EFILNF;
+    else if (function == CUIS_ENTRY_OWNER) result = (LONG)owner->handle;
+    else if (owner->handle != peer) result = EAGAIN;
+    else if (bytes < directory_entries[slot].bytes) result = ERANGE;
+    else {
+        length = directory_entries[slot].bytes;
+        memcpy(data,directory_entries[slot].data,length);
+        result = (LONG)length;
+    }
+    cuis_input_unlock(flags);
+    if (function == CUIS_ENTRY_READ && result >= 0 &&
+        !kproc_copy_to_user(address,data,(ULONG)result)) return EIMBA;
+    return result;
 }
 
 /* Labels are opaque bytes. Filename/GEM naming policy belongs to libaes. */

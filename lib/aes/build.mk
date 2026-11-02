@@ -252,7 +252,7 @@ obj/libaes/gemmenupopup.o: aes/shared/gemmenupopup.c aes/shared/gemmenupopup.h $
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
 
-obj/libaes/menubar.o: lib/aes/menubar.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h lib/aes/layout.h lib/aes/resource_context.h aes/shared/gemobjtree.h aes/shared/gemobjbounds.h aes/shared/gemmenubar.h include/vdi_service.h include/gem.h $(AUTOCONF_H)
+obj/libaes/menubar.o: lib/aes/menubar.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h lib/aes/layout.h lib/aes/resource_context.h aes/shared/gemobjtree.h aes/shared/gemobjbounds.h aes/shared/gemmenubar.h aes/shared/gemdesk.h include/vdi_service.h include/gem.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/gemmenubar.o: aes/shared/gemmenubar.c aes/shared/gemmenubar.h $(AUTOCONF_H)
@@ -329,3 +329,7 @@ obj/libaes/shell_arguments.o: lib/aes/shell_arguments.c lib/aes/shell_arguments.
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/shell.o: lib/aes/shell_arguments.h
+
+obj/libaes/DESKACC.ACC: tests/x32_desktop/accessory.c obj/x32/libptos-vdi.a obj/ldso/dynacccrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
+	  -o $@ $(filter %.c %.o %.a,$^) -Lobj/libaes -laes -Lobj/ldso -lptos

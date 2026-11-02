@@ -13,4 +13,5 @@ WORD mn_bar_index(const OBJECT *tree, WORD count, MENU_BAR_ENTRY *output, WORD c
  * accepts classic string/title leaves; hidden payloads are not dereferenced.
  * Returns the pair count or zero. Only scratch is modified. */
 WORD mn_bar_admit(const OBJECT *tree, WORD count, UBYTE *scratch, ULONG bytes);
+#include "gemdesk.h"
 #endif

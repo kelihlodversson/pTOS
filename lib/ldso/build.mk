@@ -138,6 +138,9 @@ LDSO_DYNCRT-$(ARCH_X86_64) = lib/ldso/arch/x32/dyncrt.S
 obj/ldso/dyncrt.o: $(LDSO_DYNCRT-y) $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LDSO_CFLAGS) -c $< -o $@
+obj/ldso/dynacccrt.o: $(LDSO_DYNCRT-y) $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LDSO_CFLAGS) -DPTOS_ACCESSORY_CRT -c $< -o $@
 obj/ldso/libptos.so: lib/ldso/client/client.c lib/ldso/client/ptos.h \
                     lib/ldso/client/exports.map $(LDSO_CLIENT_MINI) lib/ldso/arch/x32/syscall.c \
                     obj/ldso/sharedutil.o obj/ldso/sharedprint.o obj/ldso/sharedmemory.o \
@@ -146,7 +149,7 @@ obj/ldso/libptos.so: lib/ldso/client/client.c lib/ldso/client/ptos.h \
 	$(CC) $(LDSO_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-soname,libptos.so,-init,__ptos_client_init \
 	  -Wl,--version-script,lib/ldso/client/exports.map -o $@ $(filter %.c %.o,$^)
-all: obj/ldso/dyncrt.o obj/ldso/libptos.so
+all: obj/ldso/dyncrt.o obj/ldso/dynacccrt.o obj/ldso/libptos.so
 
 obj/ldso/test/libuse.so: tests/ldso_client/library.c obj/ldso/libptos.so lib/ldso/client/ptos.h
 	@mkdir -p $(@D)

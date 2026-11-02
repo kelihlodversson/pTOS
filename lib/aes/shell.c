@@ -98,7 +98,7 @@ static WORD application_kind(const char *path)
         extension[i] = c >= 'a' && c <= 'z' ? c-'a'+'A' : c;
     }
     extension[3] = 0;
-    if (!strcmp(extension,"PRG") || !strcmp(extension,"APP") || !strcmp(extension,"GTP")) return GEMAPP;
+    if (!strcmp(extension,"PRG") || !strcmp(extension,"APP") || !strcmp(extension,"GTP") || !strcmp(extension,"ACC")) return GEMAPP;
     if (!strcmp(extension,"TOS") || !strcmp(extension,"TTP")) return TOSAPP;
     return -1;
 }

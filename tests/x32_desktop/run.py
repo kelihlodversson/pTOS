@@ -37,6 +37,7 @@ class Guest:
                 shutil.copy(source, esp / target)
             shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")
             if "CONF_WITH_LIBAES = y" in Path("obj/auto.conf").read_text():
+                shutil.copy("obj/libaes/DESKACC.ACC",esp / "DESKACC.ACC")
                 shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.PRG")
                 shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.GTP")
                 shutil.copy("obj/libaes/DESKCON.TOS",esp / "APPTEST.TOS")
@@ -436,6 +437,20 @@ def libaes_desktop(guest):
     text = guest.ready(1)
     assert "x32 desktop LIBAES PASS" in text
     assert "x32 desktop custom icons PASS" in text
+    guest.wait("x32 libaes accessory READY")
+
+    def accessory_open(count):
+        guest.move(38,8)
+        time.sleep(0.25)
+        guest.move(70,59)
+        guest.click()
+        guest.wait("x32 libaes accessory OPEN",count)
+
+    accessory_open(1)
+    guest.screenshot("resident-accessory")
+    guest.move(588,498)
+    guest.click()
+    guest.wait("x32 libaes accessory CLOSED")
     guest.move(34,45)
     guest.double_click()
     guest.wait("x32 desktop window OPEN")
@@ -467,6 +482,7 @@ def libaes_desktop(guest):
     assert first[0] != second[0] and first[1] != second[1]
     assert "x32 desktop client EXIT" not in guest.text()
     guest.screenshot("two-applications")
+    accessory_open(2)  # Same resident process survives other applications.
     for (pid,window),key,status in ((first,"q","0025"),(second,"f","0400")):
         guest.move(750,110+(pid&1)*280)
         guest.click()
@@ -548,8 +564,22 @@ def libaes_desktop(guest):
     assert text.count("x32 desktop LIBAES PASS") == 1
     for pid,window in (first,second):
         assert text.count("x32 desktop CH_EXIT %d " % pid) == 1
+    assert text.count("x32 libaes accessory READY") == 1
+    assert "x32 libaes accessory FAIL" not in text
+    assert "x32 libaes accessory EXIT" not in text
+    accessory_open(3)
+    records = re.findall(r"x32 libaes accessory OPEN (\d+) (\d+)",guest.text())
+    assert records[1] == records[2], records  # Window survived every child exit.
+    guest.key("q")
+    guest.wait("x32 libaes accessory EXIT")
+    # A fresh Desk popup must no longer contain the terminated accessory.
+    guest.move(38,8)
+    time.sleep(0.25)
+    guest.screenshot("accessory-removed")
+    guest.move(400,80)
+    guest.click()
     guest.screenshot("resident-desktop")
-    print("Resident libaes desktop launches GEM/console children, parameters, keyboard input and normal/fault return: PASS",flush=True)
+    print("Resident libaes desktop, registered accessory lifetime, GEM/console launches and normal/fault return: PASS",flush=True)
 
 
 def main():

@@ -76,6 +76,12 @@
 #define CUIS_CHILD_LAUNCH 69UL
 #define CUIS_PROCESS_DEFER 70UL
 #define CUIS_KEYMAP_LOOKUP 71UL
+#define CUIS_ENTRY_PUBLISH 72UL
+#define CUIS_ENTRY_OWNER 73UL
+#define CUIS_ENTRY_READ 74UL
+/* Session-owned opaque directory entries, independent of GEM policy. */
+#define CUIS_ENTRY_LIMIT 64UL
+#define CUIS_ENTRY_BYTES 128UL
 #define CUIS_CHILD_RESERVE 0UL
 #define CUIS_CHILD_BIND 1UL
 #define CUIS_CHILD_CANCEL 2UL

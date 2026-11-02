@@ -19,6 +19,7 @@ typedef struct {
     WORD count, pairs, height;
     LAYOUT_METRICS metrics;
     BOOL busy, pending;
+    LONG recipient;
     WORD message[8];
 } BAR;
 static BAR bar;
@@ -86,12 +87,17 @@ static WORD title_at(WORD x, WORD y)
         !(bar.tree[title].ob_state & DISABLED) && !(bar.tree[title].ob_flags & HIDETREE)) return i;
     return NIL;
 }
-static BOOL flush(LONG session)
+static BOOL flush(LONG session, BOOL block)
 {
     LONG result;
     if (!bar.pending) return TRUE;
-    result = cuis_call6(CUIS_STREAM_WRITE,session,(uintptr_t)bar.message,16,0,0,0);
+    result = cuis_call6(CUIS_STREAM_WRITE,bar.message[0] == AC_OPEN ? bar.recipient : session,
+                        (uintptr_t)bar.message,16,bar.message[0] == AC_OPEN && bar.recipient != session && block,0,0);
     if (result == 16) { bar.pending = FALSE; return TRUE; }
+    /* A selected accessory may exit while its queue is full. Its session
+     * handle is never recycled; discard instead of opening a replacement. */
+    if (bar.message[0] == AC_OPEN && result == EACCDN &&
+        cuis_call6(CUIS_PEER_PID,bar.recipient,0,0,0,0,0) < 0) { bar.pending = FALSE; return TRUE; }
     return result == EAGAIN;
 }
 static BOOL refresh(void)
@@ -117,7 +123,7 @@ static BOOL refresh(void)
 LONG aes_menu_flush(WORD *global)
 {
     LONG session = aes_application_session(global);
-    return !bar.tree || (session >= 0 && flush(session)) ? E_OK : EACCDN;
+    return !bar.tree || (session >= 0 && flush(session,FALSE)) ? E_OK : EACCDN;
 }
 void aes_menu_reset(void)
 {
@@ -137,7 +143,7 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
     void *buffer = NULL;
     BOOL locked = FALSE, opened = FALSE, staged = FALSE, installed = FALSE, ok = FALSE;
     if (session < 0 || (show != 0 && show != 1) || bar.busy) return 0;
-    if (!flush(session) || bar.pending) return 0;
+    if (!flush(session,FALSE) || bar.pending) return 0;
     old = bar;
     if (!show) {
         if (cuis_call6(CUIS_SURFACE_REGISTER,session,0,0,0,0,0) != E_OK) return 0;
@@ -214,6 +220,70 @@ done:
 }
 WORD menu_bar(OBJECT *tree, WORD show) { return mt_menu_bar(tree,show,aes_global); }
 
+typedef struct {
+    OBJECT *tree;
+    LONG owners[6];
+    WORD slots[6], count, first;
+    char labels[6][CUIS_ENTRY_BYTES];
+} DESK_MENU;
+
+static BOOL desk_menu(LONG session, DESK_MENU *desk)
+{
+    WORD i, box = bar.entries[0].menu, about = bar.tree[box].ob_head;
+    WORD separator, width, x, y;
+    LONG owner, bytes, needed;
+    const char *labels[6];
+    OBJECT *tree;
+    memset(desk,0,sizeof(*desk));
+    if (about < 0 || about >= bar.count) return TRUE; /* Empty custom Desk menu. */
+    for (i = 0; i < 6; i++) {
+        owner = cuis_call6(CUIS_ENTRY_OWNER,session,i,0,0,0,0);
+        if (owner == EFILNF) continue;
+        if (owner < 0) return FALSE;
+        bytes = cuis_call6(CUIS_ENTRY_READ,session,i,owner,(uintptr_t)desk->labels[desk->count],CUIS_ENTRY_BYTES,0);
+        if (bytes == EFILNF || bytes == EAGAIN) continue;
+        if (bytes < 0) return FALSE;
+        /* Native entries are opaque. Only a nonempty, terminated GEM title
+         * belongs in the Desk menu; unrelated binary data is not an error
+         * in the application currently tracking its own menus. */
+        if (bytes <= 1 || bytes > (LONG)CUIS_ENTRY_BYTES || desk->labels[desk->count][bytes-1] ||
+            strlen(desk->labels[desk->count]) != (ULONG)bytes-1) continue;
+        desk->owners[desk->count] = owner; desk->slots[desk->count++] = i;
+    }
+    if (bar.count > 32759 || bar.metrics.hchar <= 0 || bar.metrics.hchar > 4095) return FALSE;
+    tree = aes_temporary_alloc(((LONG)bar.count+8)*sizeof(*tree));
+    if (!tree) return FALSE;
+    memcpy(tree,bar.tree,(LONG)bar.count*sizeof(*tree));
+    desk->tree = tree;
+    /* Keep the caller's resource and its object IDs intact. Only the private
+     * tracking tree replaces reserved Desk placeholders with live entries. */
+    separator = bar.count; desk->first = separator+1;
+    width = tree[box].ob_width;
+    ob_offset(tree,box,&x,&y);
+    if (x < 0 || x >= bar.metrics.width) return FALSE;
+    for (i = 0; i < desk->count; i++) {
+        needed = ((LONG)strlen(desk->labels[i])+1)*bar.metrics.wchar;
+        if (needed > width) width = needed < bar.metrics.width-x ? needed : bar.metrics.width-x;
+    }
+    tree[about].ob_height = bar.metrics.hchar;
+    for (i = 0; i <= desk->count; i++) {
+        tree[separator+i] = tree[about];
+        tree[separator+i].ob_flags = 0;
+        tree[separator+i].ob_type = G_STRING;
+        tree[separator+i].ob_state = i ? 0 : DISABLED;
+        tree[separator+i].ob_x = tree[about].ob_x;
+        tree[separator+i].ob_y = (i+1)*bar.metrics.hchar;
+        tree[separator+i].ob_width = width;
+        tree[separator+i].ob_spec.free_string = "--------------------";
+        if (i) labels[i-1] = desk->labels[i-1];
+    }
+    tree[box].ob_width = width;
+    tree[bar.count-1].ob_flags &= ~LASTOB;
+    tree[separator+desk->count].ob_flags |= LASTOB;
+    mn_desk_items(tree,box,about,separator,labels,desk->count,bar.metrics.hchar);
+    return TRUE;
+}
+
 LONG aes_menu_dispatch(WORD *global)
 {
     LONG session = aes_application_session(global), flags;
@@ -223,8 +293,10 @@ LONG aes_menu_dispatch(WORD *global)
     BOOL locked = FALSE, grabbed = FALSE, opened = FALSE, copied = FALSE, overlay = FALSE, ok = TRUE, pressed;
     GRECT rect;
     void *buffer = NULL;
+    DESK_MENU desk = { 0 };
+    OBJECT *original;
     if (!bar.tree || bar.busy || session < 0) return E_OK;
-    if (!flush(session)) return EACCDN;
+    if (!flush(session,FALSE)) return EACCDN;
     if (bar.pending) return E_OK;
     flags = cuis_call6(CUIS_SURFACE_STATUS,session,0,0,0,0,0);
     if (flags < 0) return flags;
@@ -232,6 +304,7 @@ LONG aes_menu_dispatch(WORD *global)
     /* Recheck caller edits before any drawing can invoke an unsupported
      * payload or use stale title/dropdown correspondence. */
     if (!refresh()) return EACCDN;
+    original = bar.tree;
     bar.busy = TRUE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) { ok = FALSE; goto done; }
     locked = TRUE;
@@ -244,6 +317,8 @@ LONG aes_menu_dispatch(WORD *global)
     opened = TRUE;
     if ((flags & CUIS_SURFACE_DIRTY) && !paint(global,ws.handle)) { ok = FALSE; goto done; }
     if (!(flags & CUIS_SURFACE_POINTER)) goto done;
+    if (!desk_menu(session,&desk)) { ok = FALSE; goto done; }
+    if (desk.tree) bar.tree = desk.tree;
     if (!mt_graf_mkstate(&mx,&my,&buttons,&modifiers,global)) { ok = FALSE; goto done; }
     pair = title_at(mx,my);
     if (pair == NIL) goto done;
@@ -288,8 +363,14 @@ LONG aes_menu_dispatch(WORD *global)
                 title = bar.entries[current].title;
                 memset(bar.message,0,sizeof(bar.message));
                 bar.message[0] = MN_SELECTED; bar.message[3] = title; bar.message[4] = item;
-                bar.message[5] = (uintptr_t)bar.tree >> 16; bar.message[6] = (uintptr_t)bar.tree;
+                bar.message[5] = (uintptr_t)original >> 16; bar.message[6] = (uintptr_t)original;
                 bar.message[7] = bar.entries[current].menu;
+                if (current == 0 && desk.tree && item >= desk.first && item < desk.first+desk.count) {
+                    bar.message[0] = AC_OPEN; bar.message[1] = global[2];
+                    bar.message[3] = 0; bar.message[4] = desk.slots[item-desk.first];
+                    bar.message[5] = bar.message[6] = bar.message[7] = 0;
+                    bar.recipient = desk.owners[item-desk.first];
+                }
                 bar.pending = TRUE;
             }
             break;
@@ -298,12 +379,14 @@ LONG aes_menu_dispatch(WORD *global)
 done:
     if (active != NIL) bar.tree[active].ob_state &= ~SELECTED;
     if (copied && aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&rect,(uintptr_t)buffer,1) != E_OK) ok = FALSE;
-    if (current != NIL && (!bar.pending || !ok) && !change(bar.entries[current].title,FALSE,global,NULL)) ok = FALSE;
+    if (current != NIL && (!bar.pending || !ok || bar.message[0] == AC_OPEN) && !change(bar.entries[current].title,FALSE,global,NULL)) ok = FALSE;
     if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) ok = FALSE;
     if (grabbed && cuis_call6(CUIS_MOUSE_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (locked && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (buffer && aes_resource_discard(buffer) != E_OK) ok = FALSE;
     if (overlay) aes_frames_resume();
+    bar.tree = original;
+    if (desk.tree) (void)aes_resource_discard(desk.tree);
     bar.busy = FALSE;
     if (!ok) {
         bar.pending = FALSE;
@@ -311,5 +394,7 @@ done:
         (void)cuis_call6(CUIS_SURFACE_STATUS,session,2,0,0,0,0);
         return EACCDN;
     }
-    return flush(session) ? E_OK : EACCDN;
+    if (current != NIL && bar.pending && bar.message[0] == MN_SELECTED)
+        original[bar.entries[current].title].ob_state |= SELECTED;
+    return flush(session,TRUE) ? E_OK : EACCDN;
 }
