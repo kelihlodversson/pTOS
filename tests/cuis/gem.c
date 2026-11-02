@@ -9,6 +9,7 @@
 #include "gem_launch.h"
 #include "gem_exit.h"
 #include "gem_chain.h"
+#include "gem_argv.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -28,6 +29,8 @@ int main(int argc, char **argv, char **envp)
     static const char environment[] = "SHELLTEST=value\0PATH=C:\\BAD;C:\\RPATH,C:\\LOOKUP\0\0";
     static const char argv_environment[] = "SHELLTEST=value\0ARGV=\0fake-name\0c\0PATH=C:\\FROM_ARG\0\0";
     (void)envp;
+    if (argc > 1 && (argv[1][0] == 'a' || argv[1][0] == 'r'))
+        return gem_argv_child(argc,argv,envp);
     /* Exit/fault before AES registration must still notify the shell parent. */
     if (argc > 1 && argv[1][0] == 'e') return 0x5678;
     if (argc > 1 && argv[1][0] == 't') return -1;
@@ -49,6 +52,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(gem_metadata_checks(globals,argc > 1) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_launch_checks(globals,envp) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_exit_checks(globals) == 0);
+    if (argc == 1) GEM_TEST_CHECK(gem_argv_checks(globals,envp) == 0);
     if (argc == 1) GEM_TEST_CHECK(gem_chain_checks(globals) == 0);
     if (argc > 1) {
         if (argv[1][0] == 'x') _Exit(41);

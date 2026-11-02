@@ -8,6 +8,7 @@
 #include "gemerror.h"
 #include "ptos.h"
 #include "launch.h"
+#include "shell_arguments.h"
 #include "string.h"
 
 SHELL_CONTEXT *aes_shell;
@@ -103,34 +104,51 @@ static WORD application_kind(const char *path)
 }
 WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
 {
-    char path[AES_SHELL_PATH], staged_tail[128] = { 0 };
-    LONG pid, session, watch = 0;
+    char path[AES_SHELL_PATH];
+    SHELL_ARGUMENTS arguments;
+    const char *environment = NULL;
+    LONG pid = 0, session, watch = 0;
+    UWORD extensions = (UWORD)mode & 0xff00;
+    BOOL parse;
     WORD kind = GEMAPP;
+    mode = (UWORD)mode & 255;
+    if (extensions & ~SW_ENVIRON) return 0;
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
-    if (mode == SWM_LAUNCH ? execution != CL_NORMAL :
+    if (mode == SWM_LAUNCH ? (execution != CL_NORMAL && execution != CL_PARSE) :
         graphical != GEMAPP || (execution != SHW_PARALLEL && execution != SHW_CHAIN)) return 0;
     session = aes_application_session(global);
-    if (session < 0 || !tail || (UBYTE)tail[0] >= 127 ||
-        !aes_shell_copy(path,command,sizeof(path)) || !*path) return 0;
-    /* Read only the length byte/payload; 127 denotes extended ARGV passing. */
-    memcpy(staged_tail,tail,(UBYTE)tail[0]+1);
+    if (session < 0 || !command || !tail || (UBYTE)tail[0] > 127) return 0;
+    if (extensions) {
+        const SHELW *extended = command;
+        environment = extended->env;
+        command = extended->newcmd;
+    }
+    if (!aes_shell_copy(path,command,sizeof(path)) || !*path) return 0;
     if (!mt_shel_find(path,global)) return 0;
-    if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN)
-        return cuis_call6(CUIS_PROCESS_DEFER,session,(uintptr_t)path,
-            (uintptr_t)staged_tail,0,0,0) == E_OK ? 1 : 0;
+    parse = mode == SWM_LAUNCH && execution == CL_PARSE;
+    if (!aes_shell_arguments(path,tail,parse,
+            environment ? environment : parse || (UBYTE)tail[0] == 127 ? aes_shell_environment : NULL,
+            environment ? 32766UL : environment_bytes,&arguments)) return 0;
+    if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN) {
+        pid = cuis_call6(CUIS_PROCESS_DEFER,session,(uintptr_t)path,
+            (uintptr_t)arguments.tail,(uintptr_t)arguments.environment,0,0) == E_OK ? 1 : 0;
+        goto finished;
+    }
     if (mode == SWM_LAUNCH) {
         kind = application_kind(path);
-        if (kind < 0 || aes_child_messages(session) < 0) return 0;
+        if (kind < 0 || aes_child_messages(session) < 0) goto finished;
         watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
-        if (watch <= 0) return 0;
+        if (watch <= 0) goto finished;
     }
     if (watch) {
         /* The ordinary fixed-address loader installs the observer at spawn,
          * atomically with launch, before the child can execute or be reaped. */
-        pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)staged_tail,0,kind == TOSAPP);
+        pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment,kind == TOSAPP);
     } else {
-        pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)staged_tail,0);
+        pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment);
     }
+finished:
+    if (arguments.environment) (void)aes_resource_discard(arguments.environment);
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
 }
 WORD shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail)

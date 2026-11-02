@@ -27,6 +27,34 @@ static LONG deferred_result;
 static UQUAD launched_console;
 static int launches;
 static char launched_path[AES_SHELL_PATH], launched_tail[128];
+static char launched_environment[AES_SHELL_ENV];
+static LONG allocation_balance;
+static BOOL fail_allocation;
+UQUAD aes_memory_call(ULONG function, UQUAD argument)
+{
+    void *memory;
+    if (function == 0x48) {
+        if (fail_allocation) return (QUAD)ENSMEM;
+        memory = __builtin_malloc((size_t)argument);
+        if (!memory) return (QUAD)ENSMEM;
+        allocation_balance++; return (uintptr_t)memory;
+    }
+    if (function == 0x49) {
+        allocation_balance--; __builtin_free((void *)(uintptr_t)argument); return E_OK;
+    }
+    return (QUAD)EINVFN;
+}
+static void save_environment(UQUAD address)
+{
+    const char *source = (const char *)(uintptr_t)address;
+    ULONG i;
+    memset(launched_environment,0,sizeof(launched_environment));
+    if (!source) return;
+    for (i = 0; i+1 < sizeof(launched_environment); i++) {
+        launched_environment[i] = source[i];
+        if (!source[i] && !source[i+1]) break;
+    }
+}
 LONG aes_application_session(short *global)
 { return global && global[2] == 7 && !registration_error ? 9 : EACCDN; }
 unsigned long __ptos_getauxval(unsigned long type)
@@ -59,13 +87,15 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (a != 9) return EACCDN;
     if (fn == CUIS_CHILD_RESULT) return 0;
     if (fn == CUIS_PROCESS_DEFER) {
-        if (d || e || f) return EINVAL;
+        if (e || f) return EINVAL;
+        save_environment(d);
         strcpy(launched_path,(const char *)(uintptr_t)b);
         memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
         deferred_calls++; return deferred_result;
     }
     if (fn == CUIS_CHILD_LAUNCH) {
-        if (b != 17 || e || f > 1) return EINVAL;
+        if (b != 17 || f > 1) return EINVAL;
+        save_environment(e);
         launched_console = f;
         strcpy(launched_path,(const char *)(uintptr_t)c);
         memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
@@ -81,7 +111,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 }
 UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
-    if (function != 0x4b || a != PE_ASYNC_LOADGO || d || current_dta != &caller_dta) return (QUAD)EINVFN;
+    if (function != 0x4b || a != PE_ASYNC_LOADGO || current_dta != &caller_dta) return (QUAD)EINVFN;
+    save_environment(d);
     launches++;
     strcpy(launched_path,(const char *)(uintptr_t)b);
     memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
@@ -134,7 +165,7 @@ static int launch_checks(short *global)
     for (i = 0; i < 128; i++) VERIFY(!launched_tail[i]);
     before = launches;
     /* Unsupported selectors must not dereference their overloaded arguments. */
-    VERIFY(!shel_write(SWM_LAUNCH,0,CL_PARSE,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCH,0,2,(void *)1,(char *)1));
     VERIFY(!shel_write(0x101,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
     VERIFY(!shel_write(2,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,(void *)1,(char *)1));
@@ -192,6 +223,40 @@ static int launch_checks(short *global)
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
     return 0;
 }
+static int argument_checks(void)
+{
+    char name[] = "NEXT.PRG", tail[512] = { 0 };
+    char custom[] = "ONLY=child\0ARGV=\0old\0old-argument\0\0";
+    SHELW extended = { name,0,0,NULL,custom,0,0 };
+    static const char expected[] = "ONLY=child\0ARGV=NULL:2\0GOOD\\NEXT.PRG\0one two\0 \0a'b\0C:\\test\0\0";
+    int before;
+    found = "GOOD\\NEXT.PRG";
+    strcpy(tail+1,"\"one two\" '' 'a''b' C:\\test"); tail[0] = strlen(tail+1);
+    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
+    VERIFY(launched_tail[0] == 127 && !memcmp(launched_environment,expected,sizeof(expected)-1));
+    VERIFY(!allocation_balance && !strcmp(name,"NEXT.PRG") && !strcmp(custom,"ONLY=child"));
+    tail[0] = 127; memset(tail+1,'x',400); tail[401] = 0;
+    VERIFY(mt_shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,name,tail,aes_global) == 42);
+    VERIFY(launched_tail[0] == 127 && !allocation_balance);
+    /* Explicit ARGV is copied unchanged for CL_NORMAL, including argv[0]. */
+    tail[0] = 127;
+    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail) == 42);
+    VERIFY(!memcmp(launched_environment,custom,sizeof(custom)) && !allocation_balance);
+    tail[0] = 0;
+    VERIFY(shel_write(SWM_LAUNCHNOW|SW_ENVIRON,GEMAPP,SHW_PARALLEL,&extended,tail) == 42);
+    VERIFY(!memcmp(launched_environment,custom,sizeof(custom)) && !allocation_balance);
+    VERIFY(shel_write(SWM_LAUNCHNOW|SW_ENVIRON,GEMAPP,SHW_CHAIN,&extended,tail) == 1);
+    VERIFY(!memcmp(launched_environment,custom,sizeof(custom)) && !allocation_balance);
+    before = launches;
+    strcpy(tail+1,"'unclosed"); tail[0] = strlen(tail+1);
+    VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,name,tail) && launches == before);
+    tail[0] = 0; fail_allocation = TRUE;
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail));
+    fail_allocation = FALSE; launch_result = ENSMEM;
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) && !allocation_balance);
+    launch_result = 42;
+    return 0;
+}
 int main(void)
 {
     static const char argv_env[] = "FOO=value\0ARGV=\0alias\0PATH=FROM_ARG\0\0";
@@ -218,6 +283,7 @@ int main(void)
     value = command; VERIFY(!mt_shel_envrn(&value,"FOO=",NULL) && value == command);
     VERIFY(!shel_envrn(NULL,"FOO=") && !shel_envrn(&value,NULL) && value == command);
     VERIFY(!launch_checks(global));
+    VERIFY(!argument_checks());
     VERIFY(!search("DATA.TXT","C:\\START\\APP\\DATA.TXT","C:\\START\\APP\\DATA.TXT",1));
     VERIFY(!search("DIR\\DATA.TXT","DIR\\DATA.TXT","DIR\\DATA.TXT",2));
     VERIFY(!search("DIR\\DATA.TXT","\\DATA.TXT","\\DATA.TXT",3));

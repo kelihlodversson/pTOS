@@ -426,6 +426,13 @@ short mt_shel_read(char *command, char *tail, short *global);
 #define SHW_DOS 2
 #define SHW_PARALLEL 100
 #define SHW_SINGLE 101
+#define SW_ENVIRON 0x0800
+typedef struct {
+    char *newcmd;
+    long psetlimit, prenice;
+    char *defdir, *env;
+    short uid, gid;
+} SHELW;
 short shel_write(short mode, short graphical, short execution, const void *command, const char *tail);
 short mt_shel_write(short mode, short graphical, short execution, const void *command, const char *tail, short *global);
 short shel_find(char *path);

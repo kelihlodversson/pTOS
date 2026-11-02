@@ -20,7 +20,8 @@ typedef struct {
  * are removed, and preserve empty arguments. Backslashes remain literal.
  * An unmatched quote is invalid. ARGV= with tail length 127 supplies the
  * NUL-separated argument list (including argv[0]); the marker and everything
- * after it are omitted from envp. ARGV=NULL: extensions are unsupported.
+ * after it are omitted from envp. ARGV=NULL:index,... marks empty arguments
+ * using nonempty placeholders; indices are checked against the final argc.
  * With a short tail, ARGV= and its payload are omitted but not used as argv.
  * Without extended ARGV, argv[0] and AT_EXECFN are the supplied filename.
  * capture_launch reserves a DL_LAUNCH auxiliary record and copies the complete
