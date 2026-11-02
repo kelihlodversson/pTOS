@@ -25,7 +25,7 @@ config CONF_WITH_LIBAES
       Requires the userspace ELF linker and kernel CUIS coordination.
       External EmuDesk remains resident while GEM applications run.
 
-      Extended ARGV/accessory launch and additional GEM extensions
+      Accessory launch and additional GEM extensions
       remain incomplete; see doc/libaes-compatibility.md. Existing kernel
       AES paths remain available during migration. Other backends follow
       their isolated address-space and shared-linker support.

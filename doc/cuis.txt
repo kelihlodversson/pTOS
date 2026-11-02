@@ -3027,3 +3027,48 @@ nesting, VDI/input exclusion, launcher's exit, child's AES deregistration and
 process cleanup. Real desktop tests launch TOS and TTP programs that use only
 GEMDOS console I/O, send keyboard input/parameters, exercise normal and fault
 exit, run the external EmuCON, and verify one CH_EXIT without restarting EmuDesk.
+
+Standard ARGV and launch environments (#861)
+------------------------------------------
+AES4 shel_write/mt_shel_write mode 0 accepts CL_PARSE as well as CL_NORMAL.
+CL_PARSE converts the command text into a private ARGV environment: ordinary
+tails retain their counted 0..126-byte format; byte 127 selects a NUL-terminated
+long string at tail+1. Space/tab delimit arguments, matching single/double
+quotes group them, doubled matching quotes represent literal quotes, and
+backslashes remain literal. Unmatched quotes and embedded NULs in counted
+text fail before launch. Empty quoted arguments use the standard ARGV=NULL:
+index list with nonempty placeholders; LD.SO validates that list and restores
+empty strings on the child's private initial stack. Indices include argv[0],
+and may be repeated or unordered. AT_EXECFN retains the executable identity.
+
+SW_ENVIRON (0x0800) combines with the implemented mode 0/1 calls. Command then
+points to the standard GEMlib SHELW layout; newcmd names the executable and
+env supplies its ordinary double-NUL environment. NULL means inherit, while
+an empty double-NUL block supplies no variables. Other upper-byte flags fail
+before the overloaded command is dereferenced. Default-directory, memory/
+priority, UID/GID and MagiC flags are not silently accepted. SWM_ENVIRON, the
+separate AES environment-management mode, is not implemented by this slice.
+
+CL_PARSE retains ordinary inherited/explicit variables up to the ARGV marker,
+replaces an old argument payload and supplies argv[0] from the shel_find result.
+It does not expand variables, interpret redirection or run another shell.
+CL_NORMAL with byte 127 instead copies an existing ARGV environment unchanged,
+without reading command text beyond that marker byte. The MagiC byte-255 tail
+shorthand remains unsupported. Mode 1 keeps its existing SHW_PARALLEL/SHW_CHAIN
+meaning; CL_PARSE is a mode-0 selector, not a replacement for MagiC's modes.
+
+Preparation uses bounded caller-local allocations. The total encoded block,
+including filename, empty-index list and terminators, must fit the existing
+32766-byte GEMDOS environment limit. Copies include padding for the loader's
+even-size read. Temporary storage is released after immediate or deferred
+loading and on failure, without changing parent buffers, DTA, CWD, environment
+or descriptors. Console ownership and full-word CH_EXIT remain the existing
+launch policies; there is no new CUIS syscall or request structure.
+
+Host/sanitizer cases cover quoting/empty arguments, long tails, explicit/raw
+ARGV, empty and maximum-size environments, allocation and launch failures and
+cleanup. Ordinary GEM source compiled against unmodified GEMlib headers runs
+in isolated children, checking inherited/explicit environments, 400-byte
+arguments, spaces/quotes/backslashes, empty strings, raw argv[0], console launch
+and exactly one CH_EXIT. ELF tests exercise valid/malformed NULL index lists;
+the combined boot retains final memory accounting and the desktop regressions.

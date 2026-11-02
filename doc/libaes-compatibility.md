@@ -48,7 +48,7 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 `rsrc_load`, `rsrc_free`, `rsrc_gaddr`, `rsrc_saddr`, `rsrc_obfix`, `rsrc_rcfix` | partial | Classic disk/native resources, colour icons, caller-owned rcfix and GEM globals. RSX and additional extended resource formats remain separate work. | `tests/cuis/resources.c`, `tests/cuis/gem_resources.c`
 `fsel_input`, `fsel_exinput` | available | Shared native file selector, caller DTA restoration, wildcard/path handling and extended title. No fslx selector API. | `tests/cuis/gem_selector.c`
 `shel_read`, `shel_find`, `shel_envrn`, `shel_get`, `shel_put`, `shel_rdef`, `shel_wdef` | available | Standard startup/tail, search/environment queries, persistent desktop buffers and default desktop paths. | `tests/cuis/shell.c`, `tests/cuis/shell_buffer.c`, `tests/cuis/shell_metadata.c`
-`shel_write` | partial | AES4 mode 0 GEM or classic full-screen TOS/TTP launch with CH_EXIT; mode 1 GEM parallel (SHW_PARALLEL) and deferred SHW_CHAIN. Tail lengths 0..126. ARGV, accessories, mode 1 text execution, single-task execution, shutdown and resolution changes remain missing. Resident EmuDesk launches children without chain loading. | `tests/cuis/gem_launch.c`, `tests/cuis/gem_chain.c`, `tests/x32_desktop/run.py`
+`shel_write` | partial | AES4 mode 0 GEM or classic full-screen TOS/TTP launch with CH_EXIT; mode 1 GEM parallel (SHW_PARALLEL) and deferred SHW_CHAIN. CL_PARSE prepares ARGV, including long tails and empty arguments; SW_ENVIRON supplies a private launch environment. Accessories, mode 1 text execution, other extended command flags, single-task execution, shutdown and resolution changes remain missing. Resident EmuDesk launches children without chain loading. | `tests/cuis/gem_launch.c`, `tests/cuis/gem_argv.c`, `tests/cuis/gem_chain.c`, `tests/x32_desktop/run.py`
 `scrp_read`, `scrp_write` | available | Shared standard scrap-directory state; this does not imply extended clipboard ownership/data-transfer protocols. | `tests/cuis/shell_metadata.c`
 `scrp_clear` | unavailable | PC-GEM scrap clearing is not exported. | `lib/aes/desktop.c`
 `inside`, `rc_constrain`, `rc_equal`, `rc_intersect`, `rc_union` | helper | Existing caller-local rectangle helpers, declared in rectfunc.h. | `tests/cuis/program.c`
@@ -84,8 +84,9 @@ also cover classic console launch/return, parameters and normal/fault cleanup.
 
 ## Remaining cutover gates, in implementation order
 
-1. Complete extended ARGV/environment handling and the remaining text execution
-   modes. Classic AES4 console launch/return is implemented in #859. Preserve the resident desktop;
+1. Complete remaining text execution modes and applicable extended command
+   flags. Classic AES4 console launch/return is implemented in #859; CL_PARSE
+   and per-launch SW_ENVIRON are implemented in #861. Preserve the resident desktop;
    use standard GEM shell modes and process lifetime/CH_EXIT semantics.
 2. Implement accessory process lifetime, standard menu_register and
    AC_OPEN/AC_CLOSE delivery, including startup, interaction and exit cleanup.

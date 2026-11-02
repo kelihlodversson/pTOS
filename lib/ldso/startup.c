@@ -55,7 +55,7 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
 {
     STACK s;
     uint32_t pos, n, argc = 0, envend, argstart = 0, execfn, i, at, vectors;
-    uint32_t aux[24], auxwords = 22, launch = 0;
+    uint32_t aux[24], auxwords = 22, launch = 0, nullstart = 0, nullend = 0;
     unsigned char token[128], quote;
 
     *rsp = *used = 0;
@@ -100,8 +100,12 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
             env[pos+3] == 'V' && env[pos+4] == '=') {
             envend = pos;
             if (tail[0] == 127) {
-                if (n != 5)
-                    return DL_UNSUPPORTED;
+                if (n != 5) {
+                    if (n < 10 || env[pos+5] != 'N' || env[pos+6] != 'U' ||
+                        env[pos+7] != 'L' || env[pos+8] != 'L' || env[pos+9] != ':')
+                        return DL_UNSUPPORTED;
+                    nullstart = pos+10; nullend = pos+n;
+                }
                 argstart = pos + n + 1;
             }
             break;
@@ -126,6 +130,23 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
         }
         if (pos >= envsize)
             return DL_BAD_ELF;
+        /* The standard NULL:index,... suffix represents empty arguments with
+         * nonempty placeholders, so the environment still ends in a NUL pair.
+         * Apply the list to the private stack strings after argv is built. */
+        pos = nullstart;
+        while (pos < nullend) {
+            uint32_t index = 0, address = 0;
+            if (env[pos] < '0' || env[pos] > '9') return DL_BAD_ELF;
+            do {
+                if (index > argc/10) return DL_BAD_ELF;
+                index = index*10 + env[pos++]-'0';
+                if (index >= argc) return DL_BAD_ELF;
+            } while (pos < nullend && env[pos] >= '0' && env[pos] <= '9');
+            for (i = 0; i < 4; i++)
+                ((unsigned char *)&address)[i] = s.buffer[4+index*4+i];
+            s.buffer[address-s.base] = 0;
+            if (pos < nullend && (env[pos++] != ',' || pos == nullend)) return DL_BAD_ELF;
+        }
     } else {
         if (tail[0] > 126 || (uint32_t)tail[0] + 1 > tailsize || !word(&s, execfn))
             return DL_BAD_ELF;

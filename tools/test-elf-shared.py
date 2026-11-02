@@ -662,10 +662,24 @@ class Metadata(unittest.TestCase):
         self.assertEqual(self.startup(tail=b'\x05abc')[0], -1)
         self.assertEqual(self.startup(env=b'A=B')[0], -1)
         self.assertEqual(self.startup(env=b'\0x')[0], -1)
-        self.assertEqual(self.startup(env=b'ARGV=NULL:1\0app\0a\0\0', tail=b'\x7f')[0], -2)
+        rc, result = self.startup(env=b'ARGV=NULL:1\0app\0a\0\0', tail=b'\x7f')
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'app', b''])
+        for indices in (b'-1', b'2', b'1,', b'1,,0', b'999999999999999999999'):
+            self.assertEqual(self.startup(env=b'ARGV=NULL:'+indices+b'\0app\0a\0\0', tail=b'\x7f')[0], -1)
         self.assertEqual(self.startup(capacity=64)[0], -1)
         self.assertEqual(self.startup(b'x' * 126, capacity=128)[0], -4)
         self.assertEqual(self.startup(filename=b'x' * 1024)[0], -1)
+
+    def test_standard_initial_stack_empty_argv_indices(self):
+        env = b'CHECK=1\0ARGV=NULL:3,1,3,0\0name\0 \0tail\0 \0\0'
+        rc, result = self.startup(env=env, tail=b'\x7f', capture=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'', b'', b'tail', b''])
+        self.assertEqual(result[1], [b'CHECK=1'])
+        rc, result = self.startup(env=b'ARGV=NULL:\0name\0arg\0\0', tail=b'\x7f')
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'name', b'arg'])
 
     def test_standard_initial_stack_large_environment(self):
         rc, result = self.startup(env=b'X\0' * 16383 + b'\0')
