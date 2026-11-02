@@ -13,6 +13,8 @@ void vdi_cuis_pointer(const MFORM *form, BOOL hidden)
     displayed_style = form != NULL; displayed_hidden = hidden;
     if (form) displayed_pointer = *form;
 }
+static BOOL text_console_active;
+void vdi_cuis_console(BOOL active) { text_console_active = active; }
 static PD first, second, third, fourth, fifth;
 PD *run = &first;
 static union {
@@ -376,5 +378,7 @@ int main(void)
     rc = button_resume_checks();
     if (rc) return rc;
     rc = child_launch_checks();
+    if (rc) return rc;
+    rc = console_launch_checks();
     return rc ? rc : process_defer_checks();
 }

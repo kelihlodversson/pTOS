@@ -612,8 +612,9 @@ static void men_update(void)
 
     menu_ienable(tree, RESITEM, can_change_resolution);
 #if CONF_WITH_LIBAES_DESK && CONF_WITH_CLI
-    /* Console launch policy is not implemented by libaes yet. */
-    menu_ienable(tree, CLIITEM, FALSE);
+    /* The resident desktop can launch the external console as a child.
+     * Embedded-console export to a loadable program is a separate policy. */
+    menu_ienable(tree, CLIITEM, CONF_EXTERNAL_CLI);
 #endif
 
 #if CONF_WITH_BLITTER
@@ -780,7 +781,11 @@ static WORD do_filemenu(WORD item)
 #if CONF_WITH_CLI != 0
     case CLIITEM:                         /* Start EmuCON */
         G.g_work[1] = '\0';
-        done = pro_run(FALSE, DEF_CONSOLE, G.g_work, -1, -1);
+        done = pro_run(FALSE, DEF_CONSOLE
+#if CONF_WITH_LIBAES_DESK
+                       ".TOS"
+#endif
+                       , G.g_work, -1, -1);
         if (done && pw)
         {
 #if CONF_WITH_PCGEM

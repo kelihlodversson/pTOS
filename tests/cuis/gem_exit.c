@@ -79,7 +79,7 @@ int gem_exit_checks(short *global)
     static const short results[] = { 0x1234,0x5678,0x0400 };
     VERIFY(appl_getinfo(AES_MESSAGE,&a,&b,&c,&d) == 1 && (a & 0x20) && !b && !c && !d);
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_PARSE,"APPS\\GEMCHILD.PRG",tail));
-    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMSHELL.TOS",tail));
+    VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\ABSENT.TOS",tail));
     for (i = 0; i < 3; i++) {
         tail[1] = roles[i];
         /* Mode 0 infers GEM from the extension; wisgr is ignored. */

@@ -27,7 +27,9 @@
 #include "emutos.h"
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
+#include "../aes/cuis_input.h"
 #include "gemerror.h"
+#include "ksched.h"
 #endif
 #include "country.h"
 #include "acia.h"
@@ -275,6 +277,14 @@ LONG bconstat2(void)
     }
 }
 
+#if CONF_WITH_CUIS
+static BOOL console_key_ready(void *unused)
+{
+    (void)unused;
+    return bconstat2() != 0;
+}
+#endif
+
 LONG bconin2(void)
 {
     ULONG value;
@@ -285,6 +295,14 @@ LONG bconin2(void)
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
+#if CONF_WITH_CUIS
+        UQUAD flags = cuis_input_lock();
+        if (ksched_block(console_key_ready,NULL)) {
+            cuis_input_unlock(flags);
+            continue;
+        }
+        cuis_input_unlock(flags);
+#endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU
         stop_until_interrupt();
 #endif

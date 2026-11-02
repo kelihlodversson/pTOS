@@ -38,6 +38,8 @@ class Guest:
             if "CONF_WITH_LIBAES = y" in Path("obj/auto.conf").read_text():
                 shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.PRG")
                 shutil.copy("obj/libaes/DESKGEM.PRG",esp / "APPTEST.GTP")
+                shutil.copy("obj/libaes/DESKCON.TOS",esp / "APPTEST.TOS")
+                shutil.copy("obj/libaes/DESKCON.TOS",esp / "APPTEST.TTP")
                 shutil.copy("extras/emuicon0.rsc",esp / "EMUICON.RSC")
             deep = esp
             for level in range(1, 14):
@@ -89,7 +91,7 @@ class Guest:
         text = self.log.read_text(errors="replace")
         assert not any(marker in text for marker in ("panic:", " FAIL", "resource snapshot rejected")), text[-5000:]
         faults = re.findall(r"^process fault: (.*)\n", text, re.MULTILINE)
-        expected = text.count("x32 desktop teardown fault READY") + text.count("x32 desktop client fault READY")
+        expected = text.count("x32 desktop teardown fault READY") + text.count("x32 desktop client fault READY") + text.count("x32 console fault READY")
         # The early logger and console both report the same expected #UD.
         assert len(set(faults)) <= expected and len(faults) <= 2 * expected, text[-5000:]
         assert all(line.startswith("#UD Invalid Opcode") for line in faults), text[-5000:]
@@ -489,6 +491,28 @@ def libaes_desktop(guest):
     guest.click()
     guest.key("q")
     guest.wait("x32 desktop CH_EXIT %d 0025" % third[0])
+    # Full-screen text children do not terminate or restart the desktop.
+    for count,kind,key,status in ((1,"TOS","q","0025"),(2,"TOS","f","0400"),(3,"TTP","q","0025")):
+        guest.move(180,105)
+        guest.click()
+        points = re.findall(r"x32 desktop %s TARGET (\d+) (\d+)" % kind,guest.text())
+        assert points, "missing console application target"
+        guest.move(*map(int,points[-1]))
+        guest.click()
+        forms = guest.text().count("x32 desktop form WAIT")
+        guest.key("ctrl-o")
+        if kind == "TTP":
+            guest.wait("x32 desktop form WAIT",forms+1)
+            for letter in "param": guest.key(letter)
+            guest.key("ret")
+        text = guest.wait(r"x32 console READY \d+",count,regex=True)
+        pid = int(re.findall(r"x32 console READY (\d+)",text)[-1])
+        if kind == "TTP": assert "x32 console PARAMETERS PASS %d" % pid in text
+        guest.screenshot("console-%d" % count)
+        guest.key(key)
+        guest.wait("x32 desktop CH_EXIT %d %s" % (pid,status))
+        assert guest.text().count("x32 desktop CH_EXIT %d " % pid) == 1
+        assert guest.text().count("x32 desktop LIBAES PASS") == 1
     # The original directory window remains usable after all terminations.
     guest.move(180,105)
     guest.click()

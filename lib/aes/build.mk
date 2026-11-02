@@ -168,6 +168,10 @@ obj/libaes/DESKGEM.PRG: tests/x32_desktop/cuis_client.c obj/x32/libptos-vdi.a ob
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o %.a,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 
+obj/libaes/DESKCON.TOS: tests/x32_desktop/console.c obj/ldso/dyncrt.o obj/ldso/libptos.so
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/ldso -lptos
+
 obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
