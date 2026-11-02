@@ -105,5 +105,17 @@ int main(void)
         setup(tree); tree[11].ob_head = tree[11].ob_tail = NIL;
         VERIFY(mn_bar_admit(tree,12,seen,2) == 2);
     }
+    {
+        const char *labels[6] = { NULL,"First",NULL,NULL,"Second",NULL };
+        /* Native AES has sparse registered slots, while the displayed
+         * objects are compact and retain the About/separator positions. */
+        mn_desk_items(tree,0,1,2,labels,6,16);
+        VERIFY(tree[0].ob_head == 1 && tree[0].ob_tail == 4 && tree[0].ob_height == 64);
+        VERIFY(tree[1].ob_next == 2 && tree[2].ob_next == 3 && tree[3].ob_next == 4 && tree[4].ob_next == 0);
+        VERIFY(tree[3].ob_spec.free_string == labels[1] && tree[4].ob_spec.free_string == labels[4]);
+        labels[1] = labels[4] = NULL;
+        mn_desk_items(tree,0,1,2,labels,6,16);
+        VERIFY(tree[0].ob_head == 1 && tree[0].ob_tail == 1 && tree[0].ob_height == 16 && tree[1].ob_next == 0);
+    }
     return 0;
 }

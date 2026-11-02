@@ -230,7 +230,7 @@ typedef struct {
 static BOOL desk_menu(LONG session, DESK_MENU *desk)
 {
     WORD i, box = bar.entries[0].menu, about = bar.tree[box].ob_head;
-    WORD items[6], separator, width, x, y;
+    WORD separator, width, x, y;
     LONG owner, bytes, needed;
     const char *labels[6];
     OBJECT *tree;
@@ -271,12 +271,12 @@ static BOOL desk_menu(LONG session, DESK_MENU *desk)
         tree[separator+i].ob_y = (i+1)*bar.metrics.hchar;
         tree[separator+i].ob_width = width;
         tree[separator+i].ob_spec.free_string = "--------------------";
-        if (i) { items[i-1] = separator+i; labels[i-1] = desk->labels[i-1]; }
+        if (i) labels[i-1] = desk->labels[i-1];
     }
     tree[box].ob_width = width;
     tree[bar.count-1].ob_flags &= ~LASTOB;
     tree[separator+desk->count].ob_flags |= LASTOB;
-    mn_desk_items(tree,box,about,separator,items,labels,desk->count,bar.metrics.hchar);
+    mn_desk_items(tree,box,about,separator,labels,desk->count,bar.metrics.hchar);
     return TRUE;
 }
 

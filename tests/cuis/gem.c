@@ -44,6 +44,18 @@ int main(int argc, char **argv, char **envp)
     if (argc > 1 && (argv[1][0] == 'l' || argv[1][0] == 'm'))
         return gem_launch_child(globals,argc,argv,envp);
     if (argc > 1 && argv[1][0] == 'n') return 0x1234;
+    if (argc == 1) {
+        GEM_TEST_CHECK(menu_register(id+1,"Wrong identity") == -1);
+        GEM_TEST_CHECK(menu_register(REG_NEWNAME,"ACCTEST ") == 0);
+        GEM_TEST_CHECK(appl_find("ACCTEST ") == id);
+        for (i = 0; i < 6; i++) GEM_TEST_CHECK(mt_menu_register(id,"  Accessory",globals) == (short)i);
+        GEM_TEST_CHECK(menu_register(id,"Full") == -1);
+        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(globals) == id);
+        GEM_TEST_CHECK(appl_find("ACCTEST ") == -1);
+        /* All six old registrations disappeared when the session ended. */
+        for (i = 0; i < 6; i++) GEM_TEST_CHECK(menu_register(id,"  Replacement") == (short)i);
+        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(globals) == id);
+    }
     aes_global[3] = 1234;
     GEM_TEST_CHECK(mt_appl_yield(globals) == 1 && mt_evnt_timer(1, globals) == 1);
     GEM_TEST_CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
@@ -86,8 +98,10 @@ int main(int argc, char **argv, char **envp)
         static const char chain_marker[] = "x32 GEM chain handoff: PASS\r\n";
         static const char exit_marker[] = "x32 GEM child exit: PASS\r\n";
         static const char shell_marker[] = "x32 GEM shell queries: PASS\r\n";
+        static const char accessory_marker[] = "x32 GEM accessory registration: PASS\r\n";
         ptos_write(1, marker, sizeof(marker)-1);
         ptos_write(1, shell_marker, sizeof(shell_marker)-1);
+        ptos_write(1, accessory_marker, sizeof(accessory_marker)-1);
         ptos_write(1, buffer_marker, sizeof(buffer_marker)-1);
         ptos_write(1, metadata_marker, sizeof(metadata_marker)-1);
         ptos_write(1, launch_marker, sizeof(launch_marker)-1);

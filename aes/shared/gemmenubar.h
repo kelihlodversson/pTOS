@@ -13,8 +13,5 @@ WORD mn_bar_index(const OBJECT *tree, WORD count, MENU_BAR_ENTRY *output, WORD c
  * accepts classic string/title leaves; hidden payloads are not dereferenced.
  * Returns the pair count or zero. Only scratch is modified. */
 WORD mn_bar_admit(const OBJECT *tree, WORD count, UBYTE *scratch, ULONG bytes);
-/* Link the About item, optional separator and compact accessory list.
- * Indices and storage have already been admitted by the caller. */
-void mn_desk_items(OBJECT *tree, WORD box, WORD about, WORD separator,
-                   const WORD *items, const char *const *labels, WORD count, WORD hchar);
+#include "gemdesk.h"
 #endif

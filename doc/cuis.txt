@@ -3094,7 +3094,7 @@ on success. A registration disappears at appl_exit or process teardown.
 Each application's libaes reads the current directory when tracking a menu.
 It constructs a private Desk dropdown from the caller's About item, a disabled
 separator, and registered titles. The original menu_fixup child linking is
-shared as aes/shared/gemdesk.c; caller resource objects remain unchanged.
+shared as aes/shared/gemdesk.h; caller resource objects remain unchanged.
 Registered items send AC_OPEN to the original, non-recycled native session:
 word 1 is the sender's AES ID, word 2 is zero and word 4 is the menu ID.
 They do not generate MN_SELECTED for the application displaying the menu.

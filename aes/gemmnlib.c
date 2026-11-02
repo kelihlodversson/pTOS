@@ -93,8 +93,6 @@ static WORD menu_sub(OBJECT *tree, WORD ititle)
 static void menu_fixup(void)
 {
     WORD    themenus, dabox;
-    WORD    i, count = 0, items[NUM_ACCS];
-    const char *labels[NUM_ACCS];
     OBJECT  *tree;
 
     if ((tree=gl_mntree) == NULL)
@@ -106,12 +104,8 @@ static void menu_fixup(void)
     themenus = tree[THESCREEN].ob_tail;
     dabox = tree[themenus].ob_head;
     gl_dafirst = dabox + 3;
-    for (i = 0; i < NUM_ACCS; i++) {
-        if (!D.g_acctitle[i]) continue;
-        items[count] = gl_dafirst+count;
-        labels[count++] = D.g_acctitle[i];
-    }
-    mn_desk_items(tree,dabox,dabox+1,dabox+2,items,labels,count,gl_hchar);
+    mn_desk_items(tree,dabox,dabox+1,dabox+2,
+                  (const char *const *)D.g_acctitle,NUM_ACCS,gl_hchar);
 #if ARCH_X86_64
     x86_64_aes_objects_menu_fixup(tree, dabox);
 #endif
