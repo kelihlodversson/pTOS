@@ -29,6 +29,8 @@ int main(int argc, char **argv)
     for (;;) {
         VERIFY(evnt_mesag(message) == 1);
         if (message[0] == LIFE_STOP) break;
+        if (message[0] >= WM_REDRAW && message[0] <= WM_MOVED && message[3] > 0)
+            VERIFY(wind_get(message[3],WF_KIND,&kind,0,0,0));
         if (message[0] == AC_OPEN) {
             VERIFY(!_app && windows[2] < 0);
             windows[2] = wind_create(0,150,150,120,80);
@@ -48,6 +50,7 @@ int main(int argc, char **argv)
         }
         if (message[0] == AP_TERM) {
             VERIFY(role != 'u' && message[1] == -1 && message[5] == AP_TERM);
+            if (role == 'f') { VERIFY(gem_lifecycle_false_success()); continue; }
             if (role != 'n') break;
             for (i = 0; i < 8; i++) message[i] = 0;
             message[0] = AP_TFAIL; message[1] = 23;

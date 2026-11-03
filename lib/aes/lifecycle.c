@@ -8,13 +8,16 @@
 #include "lifecycle.h"
 #include "string.h"
 
-static BOOL accessory, coordinator;
+#define DELIVERY_DEFERRED 1L
+static BOOL accessory, coordinator, reset_wait_display;
+static ULONG stale_window_bytes;
 static WORD capabilities;
 static LONG reset_token, request_token, owner_token;
 void aes_lifecycle_reset(BOOL acc)
 {
-    accessory = acc; coordinator = FALSE; capabilities = 0; reset_token = request_token = owner_token = 0;
+    accessory = acc; coordinator = reset_wait_display = FALSE; stale_window_bytes = 0; capabilities = 0; reset_token = request_token = owner_token = 0;
 }
+BOOL aes_lifecycle_wait_display(void) { return reset_wait_display; }
 BOOL aes_lifecycle_listening(void) { return accessory || coordinator || (capabilities & NM_APTERM); }
 
 static LONG reject(LONG session, LONG token)
@@ -32,8 +35,9 @@ LONG aes_lifecycle_messages(WORD *global)
     session = aes_application_session(global);
     if (session < 0) return session;
     token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
-    if (token == EFILNF) { coordinator = FALSE; return E_OK; }
+    if (token == EFILNF) { coordinator = reset_wait_display = FALSE; return E_OK; }
     if (token < 0) return token;
+    if (reset_wait_display && token != request_token) reset_wait_display = FALSE;
     work = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_WORK,0,0,0,0);
     if (work < 0) return work == EACCDN ? E_OK : work;
     if (!work) return E_OK;
@@ -62,6 +66,11 @@ LONG aes_lifecycle_messages(WORD *global)
                 } else { (void)reject(session,token); return E_OK; }
             }
         }
+        if (work == CUIS_COHORT_REQUEST) {
+            result = aes_window_messages_poll(session,global);
+            if (result < 0) return result;
+            if (aes_frames_wait_display() || aes_windows_pending()) return E_OK;
+        }
         result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
         if (result == E_OK && work == CUIS_COHORT_REQUEST) request_token = token;
     }
@@ -70,10 +79,10 @@ LONG aes_lifecycle_messages(WORD *global)
 
 /* Only standard 16-byte message reads interpret reserved system messages;
  * arbitrary byte transfers retain the ordinary appl_read stream contract. */
-LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global)
+LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global, BOOL polling)
 {
     WORD message[8];
-    LONG session, token, offset, length;
+    LONG session, token, offset, length, result;
     if (bytes != 16) return E_OK;
     memcpy(message,buffer,16);
     if (message[0] != AP_TERM && message[0] != AC_CLOSE &&
@@ -85,6 +94,12 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global)
         offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_OFFSET,0,0,0,0);
         length = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_BYTES,0,0,0,0);
         if (token <= 0 || token != owner_token || offset != 0 || length != 16) return EAGAIN;
+        if (message[0] == SHUT_COMPLETED && cuis_call6(CUIS_COHORT_QUERY,session,
+            CUIS_COHORT_STATE,0,0,0,0) != CUIS_COHORT_FINISHED) {
+            /* A native rejection is opaque; its bytes cannot assert success. */
+            memset(message,0,sizeof(message)); message[0] = AP_TFAIL; message[1] = 1;
+            memcpy(buffer,message,sizeof(message));
+        }
         if (message[0] == AP_TFAIL) { coordinator = FALSE; owner_token = 0; }
         return E_OK;
     }
@@ -96,10 +111,48 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global)
     if (message[0] == AC_CLOSE && reset_token != token) {
         /* Earlier queued AC_OPEN and window messages have now been delivered.
          * Reset immediately before the first actual AC_CLOSE reaches the app. */
-        if (!mt_wind_new(global)) { (void)reject(session,token); return EAGAIN; }
+        result = aes_windows_reset_policy(global,polling,token);
+        if (result == EAGAIN) { reset_wait_display = TRUE; return DELIVERY_DEFERRED; }
+        reset_wait_display = FALSE;
+        if (result != E_OK) { (void)reject(session,token); return EAGAIN; }
         reset_token = token;
+        result = cuis_call6(CUIS_STREAM_PENDING,session,0,0,0,0,0);
+        if (result < 0) return result;
+        stale_window_bytes = (ULONG)result;
     }
     return E_OK;
+}
+
+/* Peek leaves a reset blocked by another client queued in the native stream.
+ * Consume only after policy/cleanup succeeds, preserving byte order and the
+ * trusted read metadata used by the desktop's lifecycle checks. */
+LONG aes_lifecycle_read(void *buffer, LONG bytes, WORD *global, BOOL polling)
+{
+    WORD message[8], consumed[8];
+    LONG session = aes_application_session(global), result, policy = E_OK;
+    if (session < 0) return session;
+    reset_wait_display = FALSE;
+    if (bytes == 16) {
+        /* Preserve the native whole-buffer validation of appl_read: an
+         * invalid destination must fail before cleanup or consumption. */
+        result = cuis_call6(CUIS_STREAM_PEEK,session,(uintptr_t)buffer,16,0,0,0);
+        if (result != 16) return result;
+        memcpy(message,buffer,sizeof(message));
+        if (stale_window_bytes && message[0] >= WM_REDRAW && message[0] <= WM_MOVED && message[3] > 0)
+            policy = EAGAIN;
+        else policy = aes_lifecycle_deliver(message,16,global,polling);
+        if (policy == DELIVERY_DEFERRED) return EAGAIN; /* Deferred; do not consume the head. */
+        if (policy != E_OK && policy != EAGAIN) return policy;
+        result = cuis_call6(CUIS_STREAM_READ,session,(uintptr_t)consumed,16,0,0,0);
+    } else result = cuis_call6(CUIS_STREAM_READ,session,(uintptr_t)buffer,bytes,0,0,0);
+    if (result > 0) {
+        stale_window_bytes = (ULONG)result >= stale_window_bytes ? 0 : stale_window_bytes-(ULONG)result;
+        if (bytes == 16) {
+            if (policy == EAGAIN) return 0; /* Obsolete/internal packet consumed. */
+            memcpy(buffer,message,sizeof(message));
+        }
+    }
+    return result;
 }
 
 WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command, WORD *global)

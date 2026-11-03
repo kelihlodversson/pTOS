@@ -11,13 +11,28 @@ static WORD packet[CUIS_COHORT_BYTES/2], stream[256];
 static LONG token, work, tag, read_offset, read_bytes;
 static LONG result_id = EFILNF, result_offset, result_bytes;
 static ULONG bytes, queued, consumed, request_start, published, rejected, resets, windows;
-static BOOL reset_fails;
-LONG aes_application_session(WORD *global) { (void)global; return 42; }
-WORD mt_wind_new(WORD *global)
+static BOOL reset_fails, reset_busy, last_poll, pending_notice, notice_blocked;
+static LONG phase;
+LONG aes_window_messages_poll(LONG session, WORD *global)
 {
-    (void)global; resets++;
-    if (reset_fails) return 0;
-    windows = 0; return 1;
+    (void)session; (void)global;
+    if (pending_notice && !notice_blocked) {
+        memset((UBYTE *)stream+queued,0,16);
+        stream[queued/2] = WM_REDRAW; stream[queued/2+3] = 7;
+        queued += 16; pending_notice = FALSE;
+    }
+    return E_OK;
+}
+BOOL aes_frames_wait_display(void) { return notice_blocked; }
+BOOL aes_windows_pending(void) { return FALSE; }
+LONG aes_application_session(WORD *global) { (void)global; return 42; }
+LONG aes_windows_reset_policy(WORD *global, BOOL polling, LONG token)
+{
+    (void)global; (void)token; last_poll = polling;
+    if (reset_busy) return EAGAIN;
+    resets++;
+    if (reset_fails) return EACCDN;
+    windows = 0; return E_OK;
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -26,6 +41,16 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_PEER_NEXT) return EFILNF;
     if (fn == CUIS_COHORT_COMMIT) return E_OK;
     if (fn == CUIS_COHORT_CANCEL) { token = 0; return E_OK; }
+    if (fn == CUIS_STREAM_PENDING) return queued-consumed;
+    if (fn == CUIS_STREAM_PEEK || fn == CUIS_STREAM_READ) {
+        if (queued-consumed < c) return EAGAIN;
+        memcpy((void *)(uintptr_t)b,(UBYTE *)stream+consumed,c);
+        read_offset = consumed >= request_start && consumed+c <= request_start+bytes ?
+            (LONG)(consumed-request_start) : EFILNF;
+        read_bytes = c;
+        if (fn == CUIS_STREAM_READ) consumed += c;
+        return c;
+    }
     if (fn == CUIS_PEER_QUERY) return tag;
     if (fn == CUIS_SESSION_TAG) { tag = (LONG)b; return E_OK; }
     if (fn == CUIS_ENTRY_OWNER) return b < 2 ? 42 : EFILNF;
@@ -36,6 +61,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (!token) return EFILNF;
         if (b == CUIS_COHORT_ID) return token;
         if (b == CUIS_COHORT_WORK) return work;
+        if (b == CUIS_COHORT_STATE) return phase;
         if (b == CUIS_COHORT_READ_OFFSET) return read_offset;
         if (b == CUIS_COHORT_READ_BYTES) return read_bytes;
     }
@@ -54,16 +80,13 @@ static void begin(BOOL acc, WORD consent, const WORD *request, ULONG size)
     token++; work = CUIS_COHORT_REQUEST; tag = acc ? APP_ACCESSORY : APP_APPLICATION;
     bytes = size; memcpy(packet,request,size);
     queued = consumed = published = rejected = resets = 0;
-    read_offset = EFILNF; read_bytes = 0; reset_fails = FALSE; windows = 2;
+    read_offset = EFILNF; read_bytes = 0; reset_fails = reset_busy = pending_notice = notice_blocked = FALSE; phase = 2; windows = 2;
     aes_lifecycle_write(SWM_NEWMSG,consent,0,NULL,NULL);
 }
 static LONG next(WORD message[8])
 {
-    memcpy(message,(UBYTE *)stream+consumed,16);
-    read_offset = consumed >= request_start && consumed+16 <= request_start+bytes ?
-        (LONG)(consumed-request_start) : EFILNF;
-    read_bytes = 16; consumed += 16;
-    return aes_lifecycle_deliver(message,16,NULL);
+    LONG result = aes_lifecycle_read(message,16,NULL,FALSE);
+    return result == 16 ? E_OK : result == 0 ? EAGAIN : result;
 }
 int main(void)
 {
@@ -96,40 +119,76 @@ int main(void)
     VERIFY(next(message) == E_OK && message[0] == AP_TERM && resets == 1);
     /* Identical payloads without authenticated stream provenance are ignored. */
     read_offset = EFILNF;
-    VERIFY(aes_lifecycle_deliver(term,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(term,16,NULL,FALSE) == EAGAIN);
     read_offset = 0; read_bytes = 8;
-    VERIFY(aes_lifecycle_deliver(term,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(term,16,NULL,FALSE) == EAGAIN);
     read_bytes = 16; read_offset = 1;
-    VERIFY(aes_lifecycle_deliver(term,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(term,16,NULL,FALSE) == EAGAIN);
     token = 0;
-    VERIFY(aes_lifecycle_deliver(term,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(term,16,NULL,FALSE) == EAGAIN);
     begin(FALSE,NM_APTERM,term,16);
     VERIFY(aes_lifecycle_messages(NULL) == E_OK && published == 1 && next(message) == E_OK && !resets);
     begin(TRUE,NM_APTERM,request,48); reset_fails = TRUE;
     VERIFY(aes_lifecycle_messages(NULL) == E_OK && next(message) == EAGAIN && rejected == 1);
     VERIFY(windows == 2);
+    /* Pending native notices are flushed before the lifecycle append. */
+    begin(TRUE,0,request,32); pending_notice = notice_blocked = TRUE;
+    VERIFY(aes_lifecycle_messages(NULL) == E_OK && !published && !resets);
+    notice_blocked = FALSE;
+    VERIFY(aes_lifecycle_messages(NULL) == E_OK && published == 1);
+    VERIFY(next(message) == E_OK && message[0] == WM_REDRAW && !resets);
+    /* A late notice behind the request is obsolete even if its ID is reused. */
+    memset((UBYTE *)stream+queued,0,32);
+    stream[queued/2] = WM_REDRAW; stream[queued/2+3] = 7;
+    stream[queued/2+8] = 1234; queued += 32;
+    reset_busy = TRUE;
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == EAGAIN && last_poll);
+    VERIFY(consumed == 16 && !resets && aes_lifecycle_wait_display() && !rejected);
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == EAGAIN && consumed == 16);
+    reset_busy = FALSE;
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == 16 && message[0] == AC_CLOSE && resets == 1);
+    VERIFY(!aes_lifecycle_wait_display()); windows = 1; /* A new window reused ID 7. */
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == 16 && message[0] == AC_CLOSE);
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == 0 && windows == 1);
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == 16 && message[0] == 1234);
+    begin(TRUE,0,request,32);
+    VERIFY(aes_lifecycle_messages(NULL) == E_OK);
+    reset_busy = TRUE;
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == EAGAIN && aes_lifecycle_wait_display());
+    token = 0;
+    VERIFY(aes_lifecycle_messages(NULL) == E_OK && !aes_lifecycle_wait_display());
+    VERIFY(aes_lifecycle_read(message,16,NULL,TRUE) == 0 && !resets);
     aes_lifecycle_reset(FALSE);
     VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,NULL) == 1);
     old_token = token;
     /* Ordinary-write refusals cannot bypass native participant checks. */
     result_id = EFILNF; result_offset = 0; result_bytes = 16;
-    VERIFY(aes_lifecycle_deliver(refusal,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(refusal,16,NULL,FALSE) == EAGAIN);
     VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_ABORT,NULL,NULL) == 1);
     token = old_token; /* The transport never recycles tokens. */
     VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,NULL) == 1);
     new_token = token; VERIFY(new_token > old_token);
     result_id = old_token;
-    VERIFY(aes_lifecycle_deliver(refusal,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(refusal,16,NULL,FALSE) == EAGAIN);
     result_id = new_token; result_bytes = 8;
-    VERIFY(aes_lifecycle_deliver(refusal,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(refusal,16,NULL,FALSE) == EAGAIN);
     result_bytes = 16; result_offset = 8;
-    VERIFY(aes_lifecycle_deliver(refusal,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(refusal,16,NULL,FALSE) == EAGAIN);
     result_offset = 0;
     /* The correct refusal survives global cohort teardown before delivery. */
     token = 0;
     VERIFY(aes_lifecycle_messages(NULL) == E_OK);
-    VERIFY(aes_lifecycle_deliver(refusal,16,NULL) == E_OK);
-    VERIFY(aes_lifecycle_deliver(refusal,16,NULL) == EAGAIN);
+    VERIFY(aes_lifecycle_deliver(refusal,16,NULL,FALSE) == E_OK);
+    VERIFY(aes_lifecycle_deliver(refusal,16,NULL,FALSE) == EAGAIN);
+    /* Authenticated rejection bytes are not a successful completion. */
+    token = new_token;
+    VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,NULL) == 1);
+    result_id = token; phase = 3;
+    message[0] = SHUT_COMPLETED;
+    VERIFY(aes_lifecycle_deliver(message,16,NULL,FALSE) == E_OK && message[0] == AP_TFAIL);
+    VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,NULL) == 1);
+    result_id = token; phase = CUIS_COHORT_FINISHED; message[0] = SHUT_COMPLETED;
+    VERIFY(aes_lifecycle_deliver(message,16,NULL,FALSE) == E_OK && message[0] == SHUT_COMPLETED);
     puts("Lifecycle receiver consent, complete preflight, provenance and ordered reset: PASS");
     return 0;
 }

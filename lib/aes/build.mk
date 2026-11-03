@@ -338,9 +338,9 @@ obj/libaes/lifecycle.o: lib/aes/lifecycle.c lib/aes/lifecycle.h lib/aes/applicat
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 
-obj/libaes/GEMLIFE.PRG: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMLIFE.PRG: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
-obj/libaes/GEMLIFE.ACC: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle.h obj/ldso/dynacccrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
+obj/libaes/GEMLIFE.ACC: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dynacccrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos

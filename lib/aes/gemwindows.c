@@ -69,6 +69,7 @@ BOOL aes_controls_repeating(void)
     return FALSE;
 }
 BOOL aes_frames_suspended(void) { return frame_overlays != 0; }
+BOOL aes_windows_pending(void) { return frame_notice_blocked || control_pipe_blocked; }
 BOOL aes_frames_wait_display(void) { return (frame_display_blocked || control_display_blocked) && !frame_overlays; }
 BOOL aes_frames_suspend(void)
 {
@@ -636,6 +637,9 @@ static LONG window_messages(LONG session, short *global, BOOL polling)
         if (result == EAGAIN) { frame_notice_blocked = TRUE; return E_OK; }
         if (result < 0) return result;
     }
+    /* Exhausting the pump budget is not proof that all notices were flushed.
+     * A lifecycle packet waits for a later pass to observe the empty queue. */
+    frame_notice_blocked = TRUE;
     return E_OK;
 }
 
@@ -957,12 +961,28 @@ short wind_set_str(short id, short field, const char *text)
     return mt_wind_set_str(id,field,text,aes_global);
 }
 
+LONG aes_windows_reset_policy(short *global, BOOL polling, LONG token)
+{
+    LONG session = aes_application_session(global), result;
+    if (session < 0) return session;
+    if (polling || token > 0) {
+        result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,!polling,0,0,0);
+        if (result != E_OK) return result;
+    }
+    if (token > 0 && cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0) != token) {
+        (void)cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0); return EACCDN;
+    }
+    result = cuis_call6(CUIS_WINDOWS_RESET,session,0,0,0,0,0);
+    if (result != E_OK) {
+        if (polling || token > 0) (void)cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0);
+        return result;
+    }
+    aes_windows_reset(); aes_graphics_wind_new();
+    return E_OK;
+}
 short mt_wind_new(short *global)
 {
-    LONG session = aes_application_session(global);
-    if (session < 0 || cuis_call6(CUIS_WINDOWS_RESET,session,0,0,0,0,0) != E_OK) return 0;
-    aes_windows_reset(); aes_graphics_wind_new();
-    return 1;
+    return aes_windows_reset_policy(global,FALSE,0) == E_OK;
 }
 short wind_new(void) { return mt_wind_new(aes_global); }
 short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, short *global)

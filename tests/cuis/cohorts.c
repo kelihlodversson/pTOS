@@ -45,6 +45,11 @@ static int cohort_checks(void)
     CHECK(CJ(CUIS_COHORT_READ,b,token,0x20000,16,0,0) == 16 && stream_output[0] == 0x35);
     CHECK(CJ(CUIS_COHORT_PUBLISH,b,token,0,0,0,0) == E_OK);
     CHECK(cuis_session_wait(b,16,CUIS_READY_COHORT|CUIS_READY_STREAM,0) == CUIS_READY_STREAM);
+    CHECK(cuis_stream_service(CUIS_STREAM_PENDING,b,0,0,0,0) == 16);
+    CHECK(cuis_stream_service(CUIS_STREAM_PEEK,b,0x20000,16,0,0) == 16);
+    CHECK(cuis_stream_service(CUIS_STREAM_PENDING,b,0,0,0,0) == 16);
+    CHECK(CJ(CUIS_COHORT_QUERY,b,CUIS_COHORT_READ_OFFSET,0,0,0,0) == 0);
+    CHECK(CJ(CUIS_COHORT_QUERY,b,CUIS_COHORT_READ_BYTES,0,0,0,0) == 16);
     CHECK(CJ(CUIS_COHORT_ACK,b,token,0,0,0,0) == EAGAIN);
     CHECK(cuis_stream_service(CUIS_STREAM_READ,b,0x20000,8,0,0) == 8);
     CHECK(CJ(CUIS_COHORT_QUERY,b,CUIS_COHORT_READ_OFFSET,0,0,0,0) == 0);

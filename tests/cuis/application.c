@@ -144,9 +144,28 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 static UWORD registered_items;
 static char registered_text[CUIS_ENTRY_BYTES];
+static BOOL lifecycle_test;
+static LONG lifecycle_work, lifecycle_offset, lifecycle_read_bytes;
+static ULONG lifecycle_unread;
+static short lifecycle_packet[16] = { AC_CLOSE,0,0,0,0,0,0,0, AC_CLOSE,0,0,1,0,0,0,0 };
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
-    if (fn == CUIS_COHORT_QUERY) return EFILNF;
+    if (fn == CUIS_COHORT_QUERY) {
+        if (!lifecycle_test) return EFILNF;
+        if (b == CUIS_COHORT_ID) return 900;
+        if (b == CUIS_COHORT_WORK) return lifecycle_work;
+        if (b == CUIS_COHORT_READ_OFFSET) return lifecycle_offset;
+        if (b == CUIS_COHORT_READ_BYTES) return lifecycle_read_bytes;
+        return EFILNF;
+    }
+    if (lifecycle_test && fn == CUIS_COHORT_READ) {
+        __builtin_memcpy((void *)(uintptr_t)c,lifecycle_packet,32); return 32;
+    }
+    if (lifecycle_test && fn == CUIS_COHORT_PUBLISH) {
+        __builtin_memcpy(pipe_data+pipe_count,lifecycle_packet,32);
+        pipe_count += 32; lifecycle_unread = pipe_count; lifecycle_work = 0; return E_OK;
+    }
+    if (fn == CUIS_ENTRY_OWNER) return b < 6 && (registered_items & (1U << b)) ? handle : EFILNF;
     if (fn == CUIS_PEER_RAISE) {
         if (a != (UQUAD)handle || b != (UQUAD)handle) return EACCDN;
         active_peer = handle; return E_OK;
@@ -358,7 +377,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         *(LONG *)(uintptr_t)d = state_values[2]; *(LONG *)(uintptr_t)e = state_values[3];
         return E_OK;
     }
-    if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ) {
+    if (fn == CUIS_STREAM_PENDING) return pipe_count;
+    if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK) {
         if (failure) return failure;
         pipe_block = (ULONG)d;
         if (a != (UQUAD)handle) return EACCDN;
@@ -370,6 +390,12 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
             if (read_error) return read_error;
             if (pipe_count < c) return EAGAIN;
             if (c) __builtin_memcpy((void *)(uintptr_t)b, pipe_data, (ULONG)c);
+            if (lifecycle_test) {
+                lifecycle_offset = lifecycle_unread <= 32 && lifecycle_unread >= c ? 32-lifecycle_unread : EFILNF;
+                lifecycle_read_bytes = c;
+                if (fn == CUIS_STREAM_READ) lifecycle_unread = c >= lifecycle_unread ? 0 : lifecycle_unread-c;
+            }
+            if (fn == CUIS_STREAM_PEEK) return (LONG)c;
             pipe_count -= (ULONG)c;
             __builtin_memmove(pipe_data, pipe_data + c, pipe_count);
         }
@@ -1228,6 +1254,30 @@ static int metadata_checks(void)
     return 0;
 }
 #include "window_desktop_api.c"
+static int lifecycle_poll_checks(void)
+{
+    short window, message[8], kind;
+    executable_name = "Poll.ACC"; registered_items = 0;
+    CHECK(appl_init() == 7 && menu_register(7,"One") == 0 && menu_register(7,"Two") == 1);
+    window = wind_create(0,10,10,100,100);
+    CHECK(window > 0 && wind_open(window,10,10,100,100));
+    lifecycle_test = TRUE; lifecycle_work = CUIS_COHORT_REQUEST;
+    CHECK(aes_lifecycle_messages(aes_global) == E_OK && pipe_count == 32);
+    display_error = EAGAIN;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && pipe_count == 32 && !display_nesting);
+    CHECK(aes_lifecycle_wait_display() && wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                     NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && pipe_count == 32);
+    display_error = 0;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                     NULL,NULL,NULL,NULL,NULL,NULL) == (MU_MESAG|MU_TIMER));
+    CHECK(message[0] == AC_CLOSE && !aes_lifecycle_wait_display() && pipe_count == 16);
+    CHECK(!wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == AC_CLOSE && !pipe_count);
+    lifecycle_test = FALSE;
+    CHECK(appl_exit()); executable_name = "GemTest.Prg";
+    return 0;
+}
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
@@ -1363,5 +1413,6 @@ int main(void)
         CHECK(appl_exit() == 1);
         executable_name = "GemTest.Prg";
     }
+    CHECK(lifecycle_poll_checks() == 0);
     return 0;
 }

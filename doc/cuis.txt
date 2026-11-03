@@ -3277,3 +3277,33 @@ an accessory with two entries, partial/complete requests and abort. Desktop
 integration opens a real application and accessory and verifies both leave
 before actual emulated poweroff. The combined boot also verifies final memory
 accounting and existing message/event/window regressions.
+
+
+Lifecycle delivery ordering and polls
+------------------------------------
+
+CUIS_STREAM_PEEK (88) has the STREAM_READ arguments and copies/provides native
+provenance without consuming bytes or acknowledging the request. It validates
+the entire user destination just as READ does. CUIS_STREAM_PENDING (89) takes
+only the owned session, with other arguments zero, and returns the byte count.
+These remain opaque native stream operations; the kernel decodes no GEM data.
+
+libaes flushes pending window notices before appending a lifecycle request.
+At the first AC_CLOSE it resets the accessory immediately before delivery and
+records the already-queued byte range. Window messages for positive handles
+inside that old range are discarded after reset, even if a new window reuses
+an old GEM ID. Other messages, window-zero redraws and subsequent notices keep
+their normal order.
+
+Nonblocking appl_read and evnt_multi polls do not consume AC_CLOSE when its
+reset cannot acquire the display lock. Combined event waits also use a
+nonblocking reset, preserving independent input and timer deadlines. Internal
+waiting switches from the queued stream head to display availability until
+reset can proceed; cancellation clears that deferred state. The generation is
+checked again after acquiring a contended lock. Raw transfers of lengths other
+than 16 retain their byte-stream contract.
+
+A result's token authenticates its origin, not its meaning. SHUT_COMPLETED is
+accepted only in native FINISHED state; a native rejection carrying that opcode
+is reported as generic AP_TFAIL. Repeated APC_TOP on the already-active
+windowless client preserves its queued keyboard input.

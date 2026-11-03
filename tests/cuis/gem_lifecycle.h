@@ -5,4 +5,5 @@
 #define LIFE_CLOSED 0x6d11
 #define LIFE_STOP 0x6d12
 int gem_lifecycle_checks(void);
+int gem_lifecycle_false_success(void);
 #endif

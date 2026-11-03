@@ -287,23 +287,19 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
         if (aes_lifecycle_messages(global) < 0) return 0;
         if (aes_child_messages(application_session) < 0) return 0;
         if ((id == APR_NOWAIT ? aes_menu_flush(global) : aes_menu_dispatch(global)) < 0) return 0;
-        if ((id == APR_NOWAIT ? aes_window_messages_poll(application_session,global) :
+        if (!aes_lifecycle_wait_display() && (id == APR_NOWAIT ? aes_window_messages_poll(application_session,global) :
              aes_window_messages(application_session,global)) < 0) return 0;
-        result = cuis_call6(CUIS_STREAM_READ, application_session, (uintptr_t)buffer, length, 0, 0, 0);
-        if (result == length) {
-            result = aes_lifecycle_deliver(buffer,length,global);
-            if (result == E_OK) return 1;
-            if (result == EAGAIN) continue;
-            return 0;
-        }
+        result = aes_lifecycle_read(buffer,length,global,id == APR_NOWAIT);
+        if (result == length) return 1;
+        if (!result) continue;
         if (result != EAGAIN || id == APR_NOWAIT) return 0;
         {
             BOOL repeat = aes_controls_repeating();
             if (cuis_call6(CUIS_SESSION_WAIT, application_session, length,
-                           CUIS_READY_STREAM | CUIS_READY_CHILD | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
+                           (aes_lifecycle_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_STREAM | CUIS_READY_CHILD) | (aes_frames_suspended() ? 0 : aes_frames_wait_display() ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
                            (aes_menu_listening() ? CUIS_READY_SURFACE : 0) | (aes_controls_listening() ? CUIS_READY_CONTROL : 0) |
                            (repeat ? CUIS_READY_SERVICE : 0) |
-                           (aes_lifecycle_listening() ? CUIS_READY_COHORT : 0), 0, 0, 0) <= 0) return 0;
+                           (aes_lifecycle_listening() && !aes_lifecycle_wait_display() && !aes_frames_wait_display() ? CUIS_READY_COHORT : 0), 0, 0, 0) <= 0) return 0;
         }
     }
 }

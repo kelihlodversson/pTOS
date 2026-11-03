@@ -1697,7 +1697,7 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
                 *tail = window_front; window_front = selected_windows;
                 set_focus(selected_windows);
             } else {
-                set_focus(NULL); windowless_focus = peer;
+                if (windowless_focus != peer) { set_focus(NULL); windowless_focus = peer; }
                 surface_focus_pending = TRUE; surface_focus();
             }
             cancel_background_controls(); route_pointer(0); damage_windows();
@@ -2578,10 +2578,15 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
     ULONG bytes, at, i;
     UWORD *senders;
     LONG result, pid;
-    if (function != CUIS_STREAM_READ && function != CUIS_STREAM_WRITE) return EINVFN;
+    if (function != CUIS_STREAM_READ && function != CUIS_STREAM_WRITE &&
+        function != CUIS_STREAM_PEEK && function != CUIS_STREAM_PENDING) return EINVFN;
     if (handle > 0x7fffffffULL || length > CUIS_STREAM_MAX || block > 1) return EINVAL;
     if (!client) return EACCDN;
-    if (function == CUIS_STREAM_READ && handle != client->handle) return EACCDN;
+    if (function != CUIS_STREAM_WRITE && handle != client->handle) return EACCDN;
+    if (function == CUIS_STREAM_PENDING) {
+        if (buffer || length || block || sender) return EINVAL;
+        return (LONG)client->stream_bytes;
+    }
     peer = find_handle(handle);
     if (!peer) return EACCDN;
     if (!length) return 0;
@@ -2660,6 +2665,9 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
                 client->cohort_read_token = client->cohort_result_token;
                 client->cohort_read_offset = client->cohort_result_bytes-client->cohort_result_unread;
                 client->cohort_read_bytes = (ULONG)length; client->cohort_read_result = TRUE;
+            }
+            if (function == CUIS_STREAM_PEEK) {
+                cuis_input_unlock(flags); return (LONG)length;
             }
             client->cohort_result_unread = length >= client->cohort_result_unread ?
                 0 : client->cohort_result_unread-(ULONG)length;

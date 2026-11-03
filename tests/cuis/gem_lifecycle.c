@@ -98,6 +98,15 @@ int gem_lifecycle_checks(void)
         VERIFY(shel_write(SWM_SHUTDOWN,0,SD_ABORT,0,0) == 1);
         if (mode == SD_PARTIAL) VERIFY(stop(acc));
     }
+    app = launch('f',0); VERIFY(app > 0 && ready(app,a));
+    VERIFY(shel_write(SWM_SHUTDOWN,0,SD_COMPLETE,0,0) == 1);
+    completed = 0;
+    for (tries = 0; tries < 64; tries++) {
+        VERIFY(receive(message));
+        VERIFY(message[0] != SHUT_COMPLETED && message[0] != CH_EXIT);
+        if (message[0] == AP_TFAIL) { VERIFY(message[1] == 1); completed = 1; break; }
+    }
+    VERIFY(completed && stop(app));
     app = launch('n',0); VERIFY(app > 0 && ready(app,a));
     VERIFY(shel_write(SWM_SHUTDOWN,0,SD_COMPLETE,0,0) == 1);
     completed = 0;
