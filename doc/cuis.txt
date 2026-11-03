@@ -3501,6 +3501,11 @@ raw malformed-input probes and generic callback protections remain in place.
 The generic ring-3 GEM trap and retired typed AES class reject calls without
 inspecting supplied pointers. ARM/m68k single-address-space kernel AES remains.
 
+Non-shell extension follow-ups are #884 (events, replay and application
+control), #885 (menus, objects and windowed forms), #886 (window and clipboard
+extensions), and #836/#849 (extended resource formats). They do not advertise
+unimplemented capabilities or prevent the scoped initial cutover.
+
 Complete the desktop/accessory, standard GEM, RCS, callback/fault/cleanup,
 CLI/fallback, legacy architecture and release matrix before integration. Merge
 current master into the epic and resolve conflicts before marking #681 ready.

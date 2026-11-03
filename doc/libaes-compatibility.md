@@ -20,7 +20,10 @@ not semantic correctness; the referenced tests and behavioral documentation
 are the evidence for behavior. `doc/cuis.txt` gives detailed limits and modes.
 The [shell audit](libaes-shell-compatibility.md) classifies every shell mode,
 execution selector, extended launch flag and tail encoding, with explicit
-follow-ups #873–#877 for deferred behavior.
+follow-ups #873–#877 for deferred behavior. Remaining non-shell extensions
+are scoped in #884 (events, replay and application control), #885 (menus,
+objects and windowed forms), and #886 (window and clipboard extensions).
+Extended resource formats remain tracked in #836 and #849.
 
 ## Source API and extension matrix
 
