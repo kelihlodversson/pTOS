@@ -3228,7 +3228,7 @@ bytes per client. Calls 79..87 take the following flat arguments:
   BEGIN: session -> positive token; fails if a cohort or GUI grab/lock is active
   STAGE: session, token, peer, address, bytes, wait_exit -> E_OK
   COMMIT: session, token, completion_address, completion_bytes -> E_OK
-  QUERY: session, selector -> ID, WORK, owner-only STATE, READ_OFFSET or READ_BYTES
+  QUERY: session, selector -> ID, WORK, owner-only STATE or read provenance
   READ: session, token, address, capacity -> request/result bytes
   PUBLISH: session, token -> append the pending bytes to the caller's stream
   ACK: session, token -> acknowledge an entirely consumed non-exiting request
@@ -3250,7 +3250,13 @@ the desktop checks before accepting a queued SHUT_COMPLETED notification.
 READ_OFFSET and READ_BYTES authenticate the last successful stream read wholly
 inside a current participant request. Prefix/overlapping ordinary messages,
 failed reads and cancelled generations do not gain request provenance. Native
-CUIS still treats the payload as opaque bytes.
+CUIS still treats the payload as opaque bytes. RESULT_ID, RESULT_OFFSET and
+RESULT_BYTES identify a read wholly inside a published result, including after
+a refusal has cleared the cohort. That identity retains the producing token
+when a new operation starts. Ordinary writes and overlapping reads have no
+result provenance. libaes matches shutdown completion/refusal to its initiating
+token; the desktop also checks that token before clearing pending shutdown and
+does not cancel another operation on receipt of a refusal.
 
 libaes preflights the complete request against its private accessory status,
 NM_APTERM consent and registered entry IDs before publication. A malformed
@@ -3260,7 +3266,8 @@ unframed appl_read transfers retain their byte-stream semantics. The desktop
 also checks native delivery provenance before honoring AP_TERM. Window reset
 happens immediately before returning the first authenticated AC_CLOSE, after
 any queued AC_OPEN and earlier window messages have been processed. The
-remaining AC_CLOSE messages do not repeat that reset. Cohort maintenance does
+remaining AC_CLOSE messages do not repeat that reset. Peer activation defers menu ownership and clipping changes until the caller
+releases its display lock. Cohort maintenance does
 not interrupt an accumulating multi-click or restart a public timer deadline.
 
 Host tests cover metadata, stable enumeration/activation and opaque cohort

@@ -163,4 +163,51 @@ static int cohort_origin_checks(void)
     CHECK(!cuis_session_count() && allocations == frees && input_irqs);
     return 0;
 }
+/* A published refusal outlives the cohort, but never inherits a new token. */
+static int cohort_result_checks(void)
+{
+    LONG owner, member, old_token, new_token;
+    stream_ring_count = 0;
+    run = &first; owner = cuis_service(CUIS_SESSION_START,0);
+    run = &second; member = cuis_service(CUIS_SESSION_START,0);
+    run = &first;
+    old_token = CJ(CUIS_COHORT_BEGIN,owner,0,0,0,0,0);
+    CHECK(old_token > 0 && CJ(CUIS_COHORT_STAGE,owner,old_token,member,0x10000,16,1) == E_OK);
+    CHECK(CJ(CUIS_COHORT_COMMIT,owner,old_token,0x10000,16,0,0) == E_OK);
+    run = &second;
+    CHECK(cuis_stream_service(CUIS_STREAM_WRITE,owner,0x10000,16,0,0) == 16);
+    CHECK(CJ(CUIS_COHORT_REJECT,member,old_token,0x10000,16,0,0) == E_OK);
+    run = &first;
+    CHECK(CJ(CUIS_COHORT_PUBLISH,owner,old_token,0,0,0,0) == E_OK && !cohort.owner);
+    new_token = CJ(CUIS_COHORT_BEGIN,owner,0,0,0,0,0);
+    CHECK(new_token > old_token);
+    CHECK(CJ(CUIS_COHORT_STAGE,owner,new_token,member,0x10000,16,1) == E_OK);
+    CHECK(CJ(CUIS_COHORT_COMMIT,owner,new_token,0x10000,16,0,0) == E_OK);
+    /* An identical ordinary-write prefix has no result provenance. */
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,16,0,0) == 16);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_ID,0,0,0,0) == EFILNF);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,16,0,0) == 16);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_ID,0,0,0,0) == old_token);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_OFFSET,0,0,0,0) == 0);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_BYTES,0,0,0,0) == 16);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_ID,0,0,0,0) == new_token);
+    run = &second;
+    CHECK(CJ(CUIS_COHORT_QUERY,member,CUIS_COHORT_RESULT_ID,0,0,0,0) == EFILNF);
+    CHECK(CJ(CUIS_COHORT_REJECT,member,new_token,0x10000,16,0,0) == E_OK);
+    run = &first;
+    CHECK(CJ(CUIS_COHORT_PUBLISH,owner,new_token,0,0,0,0) == E_OK && !cohort.owner);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,8,0,0) == 8);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_ID,0,0,0,0) == new_token);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_BYTES,0,0,0,0) == 8);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,8,0,0) == 8);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_OFFSET,0,0,0,0) == 8);
+    run = &second;
+    CHECK(cuis_stream_service(CUIS_STREAM_WRITE,owner,0x10000,16,0,0) == 16);
+    run = &first;
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,16,0,0) == 16);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_ID,0,0,0,0) == EFILNF);
+    cuis_process_exit(&first); cuis_process_exit(&second);
+    CHECK(!cuis_session_count() && allocations == frees && input_irqs);
+    return 0;
+}
 #undef CJ

@@ -398,5 +398,7 @@ int main(void)
     rc = cohort_click_checks();
     if (rc) return rc;
     rc = cohort_origin_checks();
+    if (rc) return rc;
+    rc = cohort_result_checks();
     return rc ? rc : process_defer_checks();
 }

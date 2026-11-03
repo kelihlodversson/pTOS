@@ -89,6 +89,11 @@ int main(void)
                 short kind;
                 VERIFY(message[3] == menu && (window < 0 || !wind_get(window,WF_KIND,&kind,NULL,NULL,NULL)));
                 window = -1; record("CLOSE",me,menu);
+                {
+                    short refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
+                    VERIFY(appl_write(appl_find("EMUDESK"),16,refusal));
+                    record("FORGED REFUSAL",me,menu);
+                }
             }
             if (message[0] == AP_TERM) break;
             if (message[0] == AC_OPEN) {

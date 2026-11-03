@@ -10,10 +10,10 @@
 
 static BOOL accessory, coordinator;
 static WORD capabilities;
-static LONG reset_token, request_token;
+static LONG reset_token, request_token, owner_token;
 void aes_lifecycle_reset(BOOL acc)
 {
-    accessory = acc; coordinator = FALSE; capabilities = 0; reset_token = request_token = 0;
+    accessory = acc; coordinator = FALSE; capabilities = 0; reset_token = request_token = owner_token = 0;
 }
 BOOL aes_lifecycle_listening(void) { return accessory || coordinator || (capabilities & NM_APTERM); }
 
@@ -76,9 +76,18 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global)
     LONG session, token, offset, length;
     if (bytes != 16) return E_OK;
     memcpy(message,buffer,16);
-    if (message[0] != AP_TERM && message[0] != AC_CLOSE) return E_OK;
+    if (message[0] != AP_TERM && message[0] != AC_CLOSE &&
+        message[0] != AP_TFAIL && message[0] != SHUT_COMPLETED) return E_OK;
     session = aes_application_session(global);
     if (session < 0) return session;
+    if (message[0] == AP_TFAIL || message[0] == SHUT_COMPLETED) {
+        token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_ID,0,0,0,0);
+        offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_OFFSET,0,0,0,0);
+        length = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_BYTES,0,0,0,0);
+        if (token <= 0 || token != owner_token || offset != 0 || length != 16) return EAGAIN;
+        if (message[0] == AP_TFAIL) { coordinator = FALSE; owner_token = 0; }
+        return E_OK;
+    }
     token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
     if (token <= 0 || token != request_token) return EAGAIN;
     offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_OFFSET,0,0,0,0);
@@ -120,11 +129,11 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
     if (action == SD_ABORT) {
         token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
         if (token <= 0 || cuis_call6(CUIS_COHORT_CANCEL,session,token,0,0,0,0) != E_OK) return 0;
-        coordinator = FALSE; return 1;
+        coordinator = FALSE; owner_token = 0; return 1;
     }
     token = cuis_call6(CUIS_COHORT_BEGIN,session,0,0,0,0,0);
     if (token <= 0) return 0;
-    coordinator = TRUE; after = -1;
+    coordinator = TRUE; owner_token = token; after = -1;
     for (;;) {
         peer = cuis_call6(CUIS_PEER_NEXT,session,(QUAD)after,0,0,0,0);
         if (peer == EFILNF) break;
@@ -155,5 +164,5 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
     return 1;
 failed:
     (void)cuis_call6(CUIS_COHORT_CANCEL,session,token,0,0,0,0);
-    coordinator = FALSE; return 0;
+    coordinator = FALSE; owner_token = 0; return 0;
 }

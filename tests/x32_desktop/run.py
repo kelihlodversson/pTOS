@@ -622,6 +622,7 @@ def shutdown_desktop(guest):
     text = guest.log.read_text()
     assert "x32 desktop client EXIT" in text, text[-3000:]
     assert "x32 libaes accessory CLOSE" in text, text[-3000:]
+    assert "x32 libaes accessory FORGED REFUSAL" in text, text[-3000:]
     assert "x32 libaes accessory EXIT" in text, text[-3000:]
     assert "x32 desktop shutdown completed" in text, text[-3000:]
     assert "x32 desktop shutdown poweroff" in text, text[-3000:]

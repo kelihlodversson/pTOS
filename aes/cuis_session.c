@@ -90,6 +90,8 @@ typedef struct cuis_client {
     ULONG tag; /* Opaque library metadata; native CUIS does not interpret it. */
     ULONG cohort_id, cohort_bytes, cohort_unread;
     ULONG cohort_read_token, cohort_read_offset, cohort_read_bytes;
+    ULONG cohort_result_token, cohort_result_bytes, cohort_result_unread;
+    BOOL cohort_read_result;
     BOOL cohort_exit, cohort_delivered, cohort_accepted;
     UBYTE cohort_data[CUIS_COHORT_BYTES];
     LONG pid;
@@ -1330,6 +1332,8 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->tag = 0;
         client->cohort_id = client->cohort_bytes = client->cohort_unread = 0;
         client->cohort_read_token = client->cohort_read_offset = client->cohort_read_bytes = 0;
+        client->cohort_result_token = client->cohort_result_bytes = client->cohort_result_unread = 0;
+        client->cohort_read_result = FALSE;
         client->cohort_exit = client->cohort_delivered = client->cohort_accepted = FALSE;
         client->pid = kproc_pid(run);
         client->pending_write = NULL; client->stream_data = NULL;
@@ -1447,11 +1451,18 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         result = (LONG)cohort.token; goto out;
     }
     if (function == CUIS_COHORT_QUERY) {
-        if (token > CUIS_COHORT_READ_BYTES) result = EINVAL;
+        if (token > CUIS_COHORT_RESULT_BYTES) result = EINVAL;
+        else if (token >= CUIS_COHORT_RESULT_ID) {
+            /* Results remain attributable after refusal clears the cohort,
+             * and retain their old generation if a new operation starts. */
+            if (!client->cohort_read_result || !client->cohort_read_token) result = EFILNF;
+            else if (token == CUIS_COHORT_RESULT_ID) result = (LONG)client->cohort_read_token;
+            else result = token == CUIS_COHORT_RESULT_OFFSET ? (LONG)client->cohort_read_offset : (LONG)client->cohort_read_bytes;
+        }
         else if (!cohort.owner || (!owner && client->cohort_id != cohort.token)) result = EFILNF;
         else if (token == CUIS_COHORT_STATE) result = owner ? (LONG)cohort.phase : EACCDN;
         else if (token == CUIS_COHORT_READ_OFFSET || token == CUIS_COHORT_READ_BYTES) {
-            if (owner || cohort.phase != 2 || client->cohort_read_token != cohort.token) result = EFILNF;
+            if (owner || cohort.phase != 2 || client->cohort_read_result || client->cohort_read_token != cohort.token) result = EFILNF;
             else result = token == CUIS_COHORT_READ_OFFSET ? (LONG)client->cohort_read_offset : (LONG)client->cohort_read_bytes;
         }
         else result = token == CUIS_COHORT_ID ? (LONG)cohort.token : (LONG)cohort_work(client);
@@ -1488,6 +1499,9 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         if (work != CUIS_COHORT_REQUEST && work != CUIS_COHORT_RESULT) { result = EAGAIN; goto out; }
         if (owner) {
             BOOL failed = cohort.phase == 3;
+            client->cohort_result_token = cohort.token;
+            client->cohort_result_bytes = cohort.bytes;
+            client->cohort_result_unread = client->stream_bytes+cohort.bytes;
             cohort_append(client,cohort.data,cohort.bytes,cohort.sender);
             if (failed) cohort_clear();
             else cohort.phase = 4; /* Keep registration closed until caller leaves/aborts. */
@@ -1684,7 +1698,7 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
                 set_focus(selected_windows);
             } else {
                 set_focus(NULL); windowless_focus = peer;
-                if (peer->surface_height) surface_choose(peer);
+                surface_focus_pending = TRUE; surface_focus();
             }
             cancel_background_controls(); route_pointer(0); damage_windows();
             result = E_OK;
@@ -2630,10 +2644,10 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
                 (sender && !kproc_copy_to_user(sender, &pid, sizeof(pid)))) {
                 cuis_input_unlock(flags); return EIMBA;
             }
-            /* Authenticate a read wholly inside the current opaque request.
-             * Prefix messages, partial overlap, ordinary writes and cancelled
-             * generations must not inherit lifecycle delivery provenance. */
-            client->cohort_read_token = 0;
+            /* Authenticate whole-range reads of opaque requests and results.
+             * Prefix messages and partial overlap are ordinary bytes. A
+             * result retains its producing token after cohort teardown. */
+            client->cohort_read_token = 0; client->cohort_read_result = FALSE;
             if (cohort.owner && cohort.phase == 2 && client->cohort_id == cohort.token &&
                 client->cohort_delivered && client->cohort_unread <= client->cohort_bytes &&
                 client->cohort_unread >= length) {
@@ -2641,6 +2655,14 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
                 client->cohort_read_offset = client->cohort_bytes-client->cohort_unread;
                 client->cohort_read_bytes = (ULONG)length;
             }
+            if (client->cohort_result_token && client->cohort_result_unread <= client->cohort_result_bytes &&
+                client->cohort_result_unread >= length) {
+                client->cohort_read_token = client->cohort_result_token;
+                client->cohort_read_offset = client->cohort_result_bytes-client->cohort_result_unread;
+                client->cohort_read_bytes = (ULONG)length; client->cohort_read_result = TRUE;
+            }
+            client->cohort_result_unread = length >= client->cohort_result_unread ?
+                0 : client->cohort_result_unread-(ULONG)length;
             client->stream_head = (client->stream_head + (ULONG)length) % CUIS_STREAM_BYTES;
             client->stream_bytes -= (ULONG)length;
             if (client->cohort_id && client->cohort_delivered)

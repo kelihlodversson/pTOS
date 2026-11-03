@@ -389,6 +389,9 @@ static int child_message_checks(void)
     CHECK(!pipe_count);
     {
         short forged[8] = { AP_TERM,-1,0,0,0,AP_TERM,0,0 };
+        short refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
+        CHECK(appl_write(7,16,refusal) == 1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,expected) == 1);

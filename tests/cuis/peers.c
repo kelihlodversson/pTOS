@@ -2,6 +2,7 @@
 static int peer_checks(void)
 {
     LONG first_handle, second_handle, replacement;
+    CUIS_RECT before, during;
     LONG first_window, second_window, other_window;
     run = &first; first_handle = cuis_service(CUIS_SESSION_START,0);
     run = &second; second_handle = cuis_service(CUIS_SESSION_START,0);
@@ -57,7 +58,11 @@ static int peer_checks(void)
     CHECK(cuis_window_service(CUIS_WINDOW_HIDE,second_window,0,0,0,0) == E_OK);
     run = &first;
     CHECK(cuis_display_lock(first_handle,1,0) == E_OK);
+    CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,first_handle,20) == E_OK);
+    CHECK(cuis_vdi_clip(0,&before) && before.y == 0);
     CHECK(cuis_peer_service(CUIS_PEER_RAISE,first_handle,second_handle,0,0,0) == E_OK);
+    CHECK(surface_owner && surface_owner->handle == (ULONG)first_handle);
+    CHECK(cuis_vdi_clip(0,&during) && !memcmp(&before,&during,sizeof(before)));
     CHECK(surface_focus_pending && windowless_focus->handle == (ULONG)second_handle);
     CHECK(cuis_display_lock(first_handle,0,0) == E_OK);
     CHECK(surface_owner && surface_owner->handle == (ULONG)second_handle && !surface_focus_pending);

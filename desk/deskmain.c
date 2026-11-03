@@ -48,6 +48,7 @@
 #include "deskrefresh.h"
 #include "shutdown.h"
 static BOOL shutdown_pending, shutdown_poweroff;
+static LONG shutdown_token;
 #endif
 
 #include "biosdefs.h"
@@ -816,6 +817,7 @@ static WORD do_filemenu(WORD item)
             /* The cohort cannot start while a GUI drawing/grab lock is held. */
             wind_update(END_UPDATE);
             shutdown_pending = shel_write(SHW_SHUTDOWN,FALSE,SD_COMPLETE,NULL,NULL) != 0;
+            shutdown_token = shutdown_pending ? desk_shutdown_token() : 0;
             wind_update(BEG_UPDATE);
         }
 #else
@@ -1357,8 +1359,11 @@ WORD hndl_msg(void)
         }
         break;
     case AP_TFAIL:
-        if (shutdown_pending) (void)shel_write(SHW_SHUTDOWN,FALSE,SD_ABORT,NULL,NULL);
-        shutdown_pending = FALSE;
+        if (shutdown_pending && desk_shutdown_refused(shutdown_token)) {
+            /* Publishing a native refusal already releases its own barrier.
+             * Never cancel a newer operation because of an old queued reply. */
+            shutdown_pending = FALSE; shutdown_token = 0;
+        }
         break;
     case CH_EXIT: /* Refresh listings while keeping windows and state. */
 #if CONF_WITH_X32_DESKTOP_TEST
@@ -2083,7 +2088,7 @@ BOOL deskmain(void)
     /* initialize libraries */
     gl_apid = appl_init();
 #if CONF_WITH_LIBAES_DESK
-    shutdown_pending = shutdown_poweroff = FALSE;
+    shutdown_pending = shutdown_poweroff = FALSE; shutdown_token = 0;
     (void)shel_write(SWM_NEWMSG,NM_APTERM,0,NULL,NULL);
 #endif
 
