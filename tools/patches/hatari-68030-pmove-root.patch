@@ -1,0 +1,30 @@
+diff --git a/src/cpu/cpummu030.c b/src/cpu/cpummu030.c
+index b53d2d6..befb838 100644
+--- a/src/cpu/cpummu030.c
++++ b/src/cpu/cpummu030.c
+@@ -408,8 +408,10 @@ int mmu_op30_pmove(uaecptr pc, uae_u32 opcode, uae_u16 next, uaecptr extra)
+                 x_put_long (extra, srp_030 >> 32);
+                 x_put_long (extra + 4, (uae_u32)srp_030);
+             } else {
+-                srp_030 = (uae_u64)x_get_long (extra) << 32;
+-                srp_030 |= x_get_long (extra + 4);
++                /* Both reads must use the old root, including on a fault. */
++                uae_u64 root = (uae_u64)x_get_long (extra) << 32;
++                root |= x_get_long (extra + 4);
++                srp_030 = root;
+                 if (mmu030_decode_rp(srp_030))
+ 					return -1;
+             }
+@@ -419,8 +421,10 @@ int mmu_op30_pmove(uaecptr pc, uae_u32 opcode, uae_u16 next, uaecptr extra)
+                 x_put_long (extra, crp_030 >> 32);
+                 x_put_long (extra + 4, (uae_u32)crp_030);
+             } else {
+-                crp_030 = (uae_u64)x_get_long (extra) << 32;
+-                crp_030 |= x_get_long (extra + 4);
++                /* Both reads must use the old root, including on a fault. */
++                uae_u64 root = (uae_u64)x_get_long (extra) << 32;
++                root |= x_get_long (extra + 4);
++                crp_030 = root;
+                 if (mmu030_decode_rp(crp_030))
+ 					return -1;
+             }

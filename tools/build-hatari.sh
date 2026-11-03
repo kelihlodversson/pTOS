@@ -38,6 +38,16 @@ if [ "$head" != "$HATARI_COMMIT" ]; then
     exit 1
 fi
 
+# Complete both PMOVE memory reads before changing the translation root.
+# Accept a checkout already patched by an earlier invocation.
+patch="$here/patches/hatari-68030-pmove-root.patch"
+if git -C "$src" apply --check "$patch" 2>/dev/null; then
+    git -C "$src" apply "$patch"
+elif ! git -C "$src" apply --reverse --check "$patch" 2>/dev/null; then
+    echo "build-hatari: cannot apply or verify the 68030 PMOVE patch in $src" >&2
+    exit 1
+fi
+
 # shellcheck disable=SC2086  # the options are a list
 cmake -S "$src" -B "$src/build" $HATARI_CMAKE_OPTIONS \
     -DCMAKE_INSTALL_PREFIX="$prefix" >/dev/null
