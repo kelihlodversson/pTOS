@@ -3422,3 +3422,23 @@ Native boot tests check the directory in executable preinitializers for
 GEM/console immediate and parallel launches, custom environments and NULL
 or relative defdir, caller isolation, invalid-directory console recovery,
 and explicit/NULL-directory deferred handoffs.
+
+Shell compatibility scope audit (#871)
+-------------------------------------
+
+The complete mode/flag/tail inventory is in doc/libaes-shell-compatibility.md.
+It distinguishes existing .ACC startup from forced SWM_LAUNCHACC (mode 3),
+which remains unavailable. Missing launch/classification/tail forms are
+tracked by #873; broadcast/shared shell environment by #874; child resource,
+priority and identity flags by #875; vendor execution/thread/lifecycle
+profiles by #876; live x32 mode switching by #877. These are explicit
+follow-ups after the initial x32 cutover. The other API-family audit and
+kernel-AES configuration/removal gates remain open in #661.
+
+Public standard selector constants do not establish runtime capabilities.
+AES_SHELL remains unadvertised. Unsupported modes and launch flags return
+GEM failure before their overloaded command/tail/output pointers are read.
+Unknown supported-mode message payloads are inspected only according to the
+implemented mode's contract; this does not validate arbitrary user pointers.
+The host shell regression checks rejected modes/flags/tails without launch,
+search/DTA, current-directory, allocation or native-service side effects.

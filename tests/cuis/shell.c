@@ -25,7 +25,7 @@ static LONG launch_result = 42;
 static LONG watch_result = 17, cancellations, observed_launches, deferred_calls;
 static LONG deferred_result;
 static UQUAD launched_console;
-static int launches;
+static int launches, native_calls;
 static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
 static char launched_environment[AES_SHELL_ENV];
 static LONG allocation_balance;
@@ -88,6 +88,7 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)e; (void)f;
+    native_calls++;
     if (a != 9) return EACCDN;
     if (fn == CUIS_CHILD_RESULT) return 0;
     if (fn == CUIS_PROCESS_DEFER || fn == CUIS_PROCESS_DEFER_DIRECTORY) {
@@ -156,6 +157,47 @@ static int search(const char *input, const char *hit, const char *result, int co
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved_dta,sizeof(DTA)));
     VERIFY(aes_shell == &sentinel && cwd_calls == before);
     aes_shell = NULL; return 0;
+}
+/* Unsupported standard/vendor selectors must reject before interpreting
+ * their different command structures, tail buffers or output arguments. */
+static int unsupported_checks(void)
+{
+    static const UWORD flags[] = { SW_PSETLIMIT,SW_PRENICE,SW_UID,SW_GID,0x4000,XSHD_FLAGS };
+    static const WORD executions[] = { SHW_DOS,SHW_SINGLE,-1,3,99,102 };
+    UWORD mode;
+    ULONG i, j;
+    char tail;
+    WORD message[8] = { AP_AESTERM,0,0,0,0,0,0,0 };
+    int before = launches, before_dta = dta_calls, before_cwd = cwd_calls, before_native = native_calls;
+    LONG before_defer = deferred_calls, before_cancel = cancellations;
+    for (mode = 0; mode < 256; mode++) {
+        if (mode == SWM_LAUNCH || mode == SWM_LAUNCHNOW || mode == SWM_SHUTDOWN ||
+            mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG) continue;
+        VERIFY(!shel_write(mode,0,0,(void *)1,(char *)1));
+        VERIFY(!mt_shel_write(mode|SW_DEFDIR,GEMAPP,0,(void *)1,(char *)1,aes_global));
+    }
+    for (i = 0; i < sizeof(flags)/sizeof(flags[0]); i++) {
+        for (mode = SWM_LAUNCH; mode <= SWM_LAUNCHNOW; mode++) {
+            VERIFY(!shel_write(flags[i]|mode,GEMAPP,0,(void *)1,(char *)1));
+            VERIFY(!shel_write(flags[i]|SW_DEFDIR|SW_ENVIRON|mode,GEMAPP,0,(void *)1,(char *)1));
+        }
+    }
+    for (i = 0; i < sizeof(executions)/sizeof(executions[0]); i++)
+        for (j = TOSAPP; j <= GEMAPP; j++)
+            VERIFY(!shel_write(SWM_LAUNCHNOW,j,executions[i],(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_CHAIN,(void *)1,(char *)1));
+    for (mode = 128; mode < 256; mode++) {
+        tail = (char)mode;
+        VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,(void *)1,&tail));
+    }
+    VERIFY(!shel_write(SWM_SHUTDOWN,0,-1,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_SHUTDOWN,0,3,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_REZCHANGE,2,0,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_NEWMSG,NM_INHIBIT_HIDE,0,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_AESMSG,0,0,message,(char *)1));
+    VERIFY(launches == before && deferred_calls == before_defer && cancellations == before_cancel);
+    VERIFY(dta_calls == before_dta && cwd_calls == before_cwd && !allocation_balance && native_calls == before_native);
+    return 0;
 }
 static int launch_checks(short *global)
 {
@@ -338,6 +380,7 @@ int main(void)
     VERIFY(shel_envrn(&value,"") == 1 && value == environment);
     value = command; VERIFY(!mt_shel_envrn(&value,"FOO=",NULL) && value == command);
     VERIFY(!shel_envrn(NULL,"FOO=") && !shel_envrn(&value,NULL) && value == command);
+    VERIFY(!unsupported_checks());
     VERIFY(!launch_checks(global));
     VERIFY(!argument_checks());
     VERIFY(!directory_checks());
