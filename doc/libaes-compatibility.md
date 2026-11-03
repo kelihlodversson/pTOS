@@ -18,6 +18,9 @@ the export map, public declarations and legacy AES opcode inventory. It also
 checks that the evidence paths exist. This catches missing inventory entries,
 not semantic correctness; the referenced tests and behavioral documentation
 are the evidence for behavior. `doc/cuis.txt` gives detailed limits and modes.
+The [shell audit](libaes-shell-compatibility.md) classifies every shell mode,
+execution selector, extended launch flag and tail encoding, with explicit
+follow-ups #873–#877 for deferred behavior.
 
 ## Source API and extension matrix
 
@@ -49,7 +52,7 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 `rsrc_load`, `rsrc_free`, `rsrc_gaddr`, `rsrc_saddr`, `rsrc_obfix`, `rsrc_rcfix` | partial | Classic disk/native resources, colour icons, caller-owned rcfix and GEM globals. RSX and additional extended resource formats remain separate work. | `tests/cuis/resources.c`, `tests/cuis/gem_resources.c`
 `fsel_input`, `fsel_exinput` | available | Shared native file selector, caller DTA restoration, wildcard/path handling and extended title. No fslx selector API. | `tests/cuis/gem_selector.c`
 `shel_read`, `shel_find`, `shel_envrn`, `shel_get`, `shel_put`, `shel_rdef`, `shel_wdef` | available | Standard startup/tail, search/environment queries, persistent desktop buffers and default desktop paths. | `tests/cuis/shell.c`, `tests/cuis/shell_buffer.c`, `tests/cuis/shell_metadata.c`
-`shel_write` | partial | AES4 mode 0 GEM or classic full-screen TOS/TTP launch with CH_EXIT; mode 1 explicit GEM/TOS immediate launch (SHW_IMMED), GEM/TOS parallel launch (SHW_PARALLEL), and deferred GEM SHW_CHAIN. Immediate launches send CH_EXIT; parallel launches leave child reaping to the caller and send no CH_EXIT. CL_PARSE prepares ARGV, including long tails and empty arguments; SW_ENVIRON supplies a private launch environment; SW_DEFDIR selects the child directory before execution. Immediate launches default to the executable directory; parallel/deferred launches otherwise inherit caller paths. Accessory launch, NM_APTERM consent, partial/complete shutdown, AP_TFAIL refusal and owner cancellation are supported. Live resolution changes return failure before disruption. Text-mode chain handoff, other extended command flags and single-task execution remain missing. Resident EmuDesk launches children without chain loading. | `tests/cuis/gem_launch.c`, `tests/cuis/gem_argv.c`, `tests/cuis/gem_chain.c`, `tests/cuis/gem_explicit.c`, `tests/cuis/gem_lifecycle.c`, `tests/x32_desktop/run.py`
+`shel_write` | partial | AES4 mode 0 GEM or classic full-screen TOS/TTP launch with CH_EXIT; mode 1 explicit GEM/TOS immediate launch (SHW_IMMED), GEM/TOS parallel launch (SHW_PARALLEL), and deferred GEM SHW_CHAIN. Immediate launches send CH_EXIT; parallel launches leave child reaping to the caller and send no CH_EXIT. CL_PARSE prepares ARGV, including long tails and empty arguments; SW_ENVIRON supplies a private launch environment; SW_DEFDIR selects the child directory before execution. Immediate launches default to the executable directory; parallel/deferred launches otherwise inherit caller paths. Existing .ACC startup/launch (not forced SWM_LAUNCHACC), NM_APTERM consent, partial/complete shutdown, AP_TFAIL refusal and owner cancellation are supported. Live resolution changes return failure before disruption. Explicit accessory mode, classification environment overrides, text-mode chain handoff, broadcast/shared environment, other extended command flags and vendor-specific execution modes are deferred in #873–#877. See the detailed shell audit. Resident EmuDesk launches children without chain loading. | `tests/cuis/gem_launch.c`, `tests/cuis/gem_argv.c`, `tests/cuis/gem_chain.c`, `tests/cuis/gem_explicit.c`, `tests/cuis/gem_lifecycle.c`, `tests/x32_desktop/run.py`
 `scrp_read`, `scrp_write` | available | Shared standard scrap-directory state; this does not imply extended clipboard ownership/data-transfer protocols. | `tests/cuis/shell_metadata.c`
 `scrp_clear` | unavailable | PC-GEM scrap clearing is not exported. | `lib/aes/desktop.c`
 `inside`, `rc_constrain`, `rc_equal`, `rc_intersect`, `rc_union` | helper | Existing caller-local rectangle helpers, declared in rectfunc.h. | `tests/cuis/program.c`
@@ -87,11 +90,14 @@ parameters and normal/fault cleanup.
 
 ## Remaining cutover gates, in implementation order
 
-1. Complete remaining text execution modes and applicable extended command
-   flags. Classic AES4 console launch/return is implemented in #859; CL_PARSE
-   and per-launch SW_ENVIRON are implemented in #861; explicit immediate/parallel
-   modes in #867 and launch directories/SW_DEFDIR in #869. Preserve the resident desktop;
-   use standard GEM shell modes and process lifetime/CH_EXIT semantics.
+1. Merge the shell-scope audit #871. The initial baseline includes classic
+   console launch/return (#859), CL_PARSE/SW_ENVIRON (#861), explicit
+   immediate/parallel modes (#867) and launch directories/SW_DEFDIR (#869).
+   The [selector audit](libaes-shell-compatibility.md) records the missing
+   launch forms (#873), shared services (#874), child policy (#875), vendor
+   profiles (#876) and live display backend (#877) as explicit follow-ups.
+   This scopes shell work for the initial cutover without advertising those
+   missing operations. Ordinary desktop launches remain concurrent.
 2. Accessory startup, independent process/window lifetime, menu_register,
    AC_OPEN and exit cleanup are implemented in #863. AC_CLOSE resets accompany
    the shutdown protocol; ordinary multitasking application exits do not close

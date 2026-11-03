@@ -13,8 +13,10 @@
 #define SD_PARTIAL 1
 #define SD_COMPLETE 2
 #define NM_APTERM 0x0001
+#define NM_INHIBIT_HIDE 0x0002
 #define AP_TERM 50
 #define AP_TFAIL 51
+#define AP_AESTERM 52
 #define AP_RESCHG 57
 #define SHUT_COMPLETED 60
 #define RESCHG_COMPLETED 61

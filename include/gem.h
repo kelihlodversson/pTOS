@@ -437,6 +437,12 @@ short shel_read(char *command, char *tail);
 short mt_shel_read(char *command, char *tail, short *global);
 #define SWM_LAUNCH 0
 #define SWM_LAUNCHNOW 1
+#define SWM_LAUNCHACC 3
+#define SWM_BROADCAST 7
+#define SWM_ENVIRON 8
+#define SWM_THRCREATE 20
+#define SWM_THREXIT 21
+#define SWM_THRKILL 22
 #include "gem_lifecycle.h"
 #define CL_NORMAL 0
 #define CL_PARSE 1
@@ -450,9 +456,21 @@ short mt_shel_read(char *command, char *tail, short *global);
 #define SHW_DOS 2
 #define SHW_PARALLEL 100
 #define SHW_SINGLE 101
-/* Standard extended command layout; currently only SW_ENVIRON is accepted. */
+/* Standard selectors/layout; declarations do not advertise runtime support.
+ * Only SW_DEFDIR and SW_ENVIRON are currently accepted launch flags. */
+#define SW_PSETLIMIT 0x0100
+#define SW_PRENICE   0x0200
 #define SW_DEFDIR  0x0400
 #define SW_ENVIRON 0x0800
+#define SW_UID     0x1000
+#define SW_GID     0x2000
+#define XSHW_RUNANY 0x00e0
+#define XSHW_RUNAPP 0x00e1
+#define XSHW_RUNACC 0x00e3
+#define XSHD_FLAGS  0x8000
+#define ENVIRON_SIZE 0
+#define ENVIRON_CHANGE 1
+#define ENVIRON_COPY 2
 typedef struct {
     char *newcmd;
     long psetlimit, prenice;
