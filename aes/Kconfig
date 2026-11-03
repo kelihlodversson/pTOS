@@ -25,7 +25,7 @@ config CONF_WITH_LIBAES
       Requires the userspace ELF linker and kernel CUIS coordination.
       External EmuDesk remains resident while GEM applications run.
 
-      Accessory launch and additional GEM extensions
+      Explicit forced-accessory launch and additional GEM extensions
       remain incomplete; see doc/libaes-compatibility.md. Existing kernel
       AES paths remain available during migration. Other backends follow
       their isolated address-space and shared-linker support.
@@ -44,15 +44,16 @@ config CONF_WITH_X32_AES
 	  Generic ring-3 GEM trap class 2 stays disabled.
 
 config CONF_WITH_AES
-	bool "Include the AES and the EmuDesk desktop"
+	bool "Include kernel AES and its EmuDesk integration"
 	depends on !ARCH_X86_64 || CONF_WITH_X32_AES
 	default n if TARGET_CART || ARCH_X86_64
 	default y
 	help
-	  Without the AES there is no graphical desktop; EmuTOS boots
-	  straight into EmuCON or runs the program found on the boot device.
-	  This is only useful when the image size is severely restricted,
-	  such as for the diagnostic cartridge.
+	  Build the in-kernel AES and its built-in or legacy external desktop
+	  path. Disabling this leaves the independent external libaes desktop
+	  available when configured; otherwise EmuTOS boots into EmuCON or
+	  runs the program found on the boot device. Small images such as the
+	  diagnostic cartridge also leave kernel AES out.
 
 	  On x86-64 the native AES runs in the kernel; loaded applications,
 	  accessories and the optional external EmuDesk use the typed ring-3
@@ -106,6 +107,11 @@ config AES_STACK_SIZE
 	  without the blitter.  The 768 chosen for BUILD_LTO is the 631 plus
 	  the margin that CONF_DEBUG_AES_STACK adds.
 
+endif # CONF_WITH_AES
+
+# Shared rendering/resource options also configure userspace libaes.
+if CONF_WITH_AES || CONF_WITH_LIBAES
+
 config CONF_WITH_PCGEM
 	bool "PC-GEM compatible AES functions"
 	default n if TARGET_192
@@ -149,6 +155,7 @@ config CONF_WITH_EXTENDED_OBJECTS
 
 config CONF_WITH_LOADABLE_CURSORS
 	bool "Loadable mouse cursors"
+	depends on CONF_WITH_AES
 	default y
 	help
 	  Allow the mouse cursors to be loaded from A:\EMUCURS.RSC instead

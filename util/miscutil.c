@@ -58,7 +58,7 @@ void set_all_files(char *target)
 }
 
 
-#if CONF_WITH_AES
+#if CONF_WITH_AES || CONF_WITH_LIBAES
 /*
  *  The xlate_obj_array() function below is used by
  *  the generated GEM rsc code in aes/shared/gem_rsc.c, and by the desktop
@@ -100,4 +100,4 @@ void xlate_obj_array(OBJECT *obj_array, int nobj)
         }
     }
 }
-#endif /* CONF_WITH_AES */
+#endif /* CONF_WITH_AES || CONF_WITH_LIBAES */

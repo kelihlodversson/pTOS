@@ -53,4 +53,5 @@ pc-x86_64-desktop                        x86-desktop
 pc-x86_64-desktop-tests                  x86-desktop
 pc-x86_64-desktop-tests-340              x86-desktop
 pc-x86_64-desktop-tests-builtin-cli      x86-desktop
+pc-x86_64-libaes-desktop                 x86-desktop
 pc-x86_64-vdi                            x86-boot-a

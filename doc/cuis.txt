@@ -3442,3 +3442,28 @@ Unknown supported-mode message payloads are inspected only according to the
 implemented mode's contract; this does not validate arbitrary user pointers.
 The host shell regression checks rejected modes/flags/tails without launch,
 search/DTA, current-directory, allocation or native-service side effects.
+
+External desktop without kernel AES (#878)
+------------------------------------------
+
+pc-x86_64-libaes-desktop_defconfig builds the resident shared desktop with
+CONF_WITH_AES=n, CONF_WITH_X32_AES=n, CONF_WITH_LIBAES=y and the native VDI
+service. Shared GEM rendering/resource and desktop options are available
+without linking the kernel AES; its stack and loadable-cursor configuration
+remain legacy-only. Normal non-GUI and ARM/m68k legacy defaults are preserved.
+
+The desktop links only its resource/layout helpers and standard GEM adapter,
+libaes.so and libptos.so, alongside the VDI client. It neither links the typed
+AES client archive nor compiles unused local legacy AES resource/form/object
+adapters. The existing BIOS CUIS desktop path starts it directly. Missing
+external desktop files fall back to external or embedded EmuCON, according
+to configuration. No single-task desktop handoff is introduced.
+
+The shared-consumer CI configurations explicitly disable both kernel AES
+implementations, assert CUIS is present and legacy AES service symbols are
+absent, then run desktop/accessory/GEM/console, shutdown and CLI fallback
+checks. Kconfig tests cover resource defaults, unavailable desktop without
+VDI/libaes, legacy ARM/m68k defaults and the independent desktop preset.
+Final AES/CUIS exclusion, address-space constraints and old service/client
+removal remain separate #661 gates; this slice enables the independent path
+needed to validate that cutover.
