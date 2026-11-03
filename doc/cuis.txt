@@ -89,8 +89,9 @@ Initial implementation and deployment
 CONF_WITH_LIBAES is off by default and initially depends on x32 and
 CONF_WITH_ELF_SHARED. It selects the internal CONF_WITH_CUIS kernel support.
 It does not require the old AES service or a desktop just to use sessions
-and local geometry. Other architectures await their isolated address spaces
-and shared-linker support. Native m68k trap compatibility is a later slice.
+and local geometry. ARM and m68k now have separate-address-space and
+shared-linker configurations, but libaes and CUIS remain x32-only. Extending
+them to those architectures and native m68k trap compatibility are later slices.
 
 The build produces obj/libaes/libaes.so (SONAME libaes.so, SysV hash,
 ordinary PIC ELF32/x32), installed with the LD.SO runtime at:
