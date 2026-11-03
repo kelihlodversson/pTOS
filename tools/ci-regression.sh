@@ -4,7 +4,8 @@
 #
 # Usage: tools/ci-regression.sh MACHINE
 #   MACHINE: virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k,
-#            virt-m68k-fastcall or pc-x86_64
+#            virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace,
+#            virt-arm-aspace, raspi2b-aspace or pc-x86_64
 #
 # The regression suite (tests/, `make test-dir`) under QEMU.  The virt
 # machines are built without the AES (the *-cli configurations) so that they
@@ -48,12 +49,29 @@ case $machine in
         config=virt-m68k-cli-fastcall
         script_machine=virt-m68k
         ;;
+    virt-m68k-mmu)
+        # the higher-half kernel with the 68040 MMU on (#569)
+        config=virt-m68k-mmu
+        ;;
+    virt-m68k-aspace)
+        # every process in an address space of its own, user mode and page
+        # tables per process (#568, #570)
+        config=virt-m68k-aspace
+        ;;
+    virt-arm-aspace)
+        config=virt-arm-aspace
+        script_machine=virt-arm
+        ;;
+    raspi2b-aspace)
+        # EmuCON on the UART; no shutdown checks (QEMU's raspi2b does not switch off)
+        config=rpi2-aspace
+        ;;
     pc-x86_64)
         config=pc-x86_64-desktop
         make_args=CROSS_COMPILE=     # native gcc, as in the x86_64 job
         ;;
     *)
-        echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, pc-x86_64)" >&2
+        echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, raspi2b-aspace, pc-x86_64)" >&2
         exit 2
         ;;
 esac

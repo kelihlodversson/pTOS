@@ -11,6 +11,7 @@
 #ifdef MACHINE_RPI
 
 #include "arm_boot.h"
+#include "raspi_memmap.h"
 
 #define GPU_L2_CACHE_ENABLED
 
@@ -37,7 +38,7 @@
  */
 typedef struct {
     const char *name;       /* SoC name, reported by machine_name() */
-    ULONG io_base;          /* ARM view of the peripheral block */
+    ULONG io_base;          /* the peripheral block, as the kernel addresses it */
     ULONG local_base;       /* per core registers, 0 if the SoC has none */
     ULONG gpu_mem_base;     /* bus address window the GPU sees RAM through */
     UWORD timer_kind;       /* one of RASPI_TIMER_* above */
@@ -62,6 +63,42 @@ static inline ULONG phys_to_bus(ULONG phys)
 static inline ULONG bus_to_phys(ULONG bus)
 {
     return bus & ~GPU_MEM_BASE;
+}
+
+/*
+ * What the VideoCore, the USB controllers and the other bus masters are given
+ * is a bus address, made from the physical address of the memory.  In the
+ * higher-half kernel (CONF_WITH_HIGHER_HALF) the address the CPU uses is not
+ * the physical one: an address of the kernel is in the physical-memory window
+ * and one of a program in the pool, which is the RAM at virtual 0.  So
+ * virt_to_phys() (bios/machine/raspi/memory.c) is the explicit step between
+ * the two, and phys_to_window() goes the other way for what the hardware
+ * hands back (the framebuffer).  Where the RAM is mapped at its physical
+ * address they are the identity.
+ */
+#if CONF_WITH_HIGHER_HALF
+ULONG virt_to_phys(const void *va);
+
+static inline void *phys_to_window(ULONG phys)
+{
+    return (void *)(phys + RASPI_WINDOW_VBASE);
+}
+#else
+static inline ULONG virt_to_phys(const void *va)
+{
+    return (ULONG)(uintptr_t)va;
+}
+
+static inline void *phys_to_window(ULONG phys)
+{
+    return (void *)(uintptr_t)phys;
+}
+#endif
+
+/* the bus address of the RAM at 'va' */
+static inline ULONG raspi_dma_bus(const void *va)
+{
+    return phys_to_bus(virt_to_phys(va));
 }
 
 #endif /* MACHINE_RPI */

@@ -51,14 +51,27 @@ ENTRY(C_SYM(os_entry))
  * though EMUTOS_LIVES_IN_RAM is set for it: unlike EmuTOS's other
  * RAM-resident targets, its .text is still placed at a fixed address
  * (the ARM kernel load address) rather than following REGION_RAM. */
-#if defined(MACHINE_AMIGA)
+#if defined(MACHINE_AMIGA) && CONF_AMIGA_HIGHER_HALF && CONF_AMIGA_ROM_512K
+/* the ROM is at 0x00f80000, and runs in the window, 0x80000000 above */
+# define ROM_ORIGIN 0x80f80000
+#elif defined(MACHINE_AMIGA) && CONF_AMIGA_HIGHER_HALF
+/* the ROM is at 0x00fc0000, and runs in the window, 0x80000000 above */
+# define ROM_ORIGIN 0x80fc0000
+#elif defined(MACHINE_AMIGA) && CONF_AMIGA_ROM_512K
+# define ROM_ORIGIN 0x00f80000
+#elif defined(MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
+#elif defined (MACHINE_RPI) && CONF_WITH_HIGHER_HALF
+# define ROM_ORIGIN 0x80008000
 #elif defined (MACHINE_RPI)
 # define ROM_ORIGIN 0x00008000
 #elif defined (TARGET_CART)
 # define ROM_ORIGIN 0x00fa0000
 #elif defined(TARGET_192)
 # define ROM_ORIGIN 0x00fc0000
+#elif CONF_ATARI_HIGHER_HALF
+/* the ROM is at 0x00e00000, and runs in the window, 0x80000000 above */
+# define ROM_ORIGIN 0x80e00000
 #else
 # define ROM_ORIGIN 0x00e00000
 #endif
@@ -78,7 +91,25 @@ ENTRY(C_SYM(os_entry))
  */
 MEMORY
 {
+#if CONF_M68K_ROM_WINDOW
+    /* the TOS low memory, at its fixed addresses (the ROM is in the window as
+     * well, and the rest of the RAM) */
+    stram : ORIGIN = 0x00000000, LENGTH = 32K
+    window : ORIGIN = 0x80000000, LENGTH = 14M
+#elif CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+    /* the TOS low memory, at its fixed addresses: the vectors, the system
+     * variables, the BIOS stack and the low ST-RAM variables */
+    stram : ORIGIN = 0x00000000, LENGTH = 32K
+    /* the rest of the kernel: the RAM, from its first byte, at the
+     * window (bios/machine/virt-m68k/virt_mmu.h) */
+    window : ORIGIN = 0x80000000, LENGTH = 1024M
+#elif CONF_WITH_HIGHER_HALF
+    /* the physical-memory window: the RAM, from its first byte, at
+     * VIRT_WINDOW_VBASE (include/machine/virt-arm/virt_memmap.h) */
+    stram : ORIGIN = 0x80000000, LENGTH = 14M
+#else
     stram : ORIGIN = 0x00000000, LENGTH = 14M
+#endif
 #if !EMUTOS_LIVES_IN_RAM
     rom : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
 #endif
@@ -90,6 +121,8 @@ MEMORY
 /* Region used as read/write memory */
 #if CONF_WITH_STATIC_ALT_RAM
 REGION_ALIAS("REGION_RAM", altram)
+#elif (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
+REGION_ALIAS("REGION_RAM", window)
 #else
 REGION_ALIAS("REGION_RAM", stram)
 #endif
@@ -102,15 +135,15 @@ REGION_ALIAS("REGION_READ_ONLY", rom)
 #endif
 REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
 
-/* On the QEMU ARM 'virt' machine, RAM starts at physical 0x40000000, but
- * the image is still linked (VMA) at the same low addresses as every
- * other machine so the fixed-address TOS system variables keep working.
- * LMA_AT(section) makes QEMU load that stram section's bytes at
- * link_address + 0x40000000; a static MMU table built early in
- * startup.S then maps virtual 0x0-and-up back onto that physical
- * window. See docs/superpowers/plans/2026-07-30-arm-virt-support.md.
+/* On the QEMU ARM 'virt' machine, RAM starts at physical 0x40000000.  The
+ * kernel is linked in the physical-memory window (VMA from 0x80000000, the
+ * RAM's first byte) and loaded where the RAM is: LMA_AT(section) makes QEMU
+ * load that section's bytes at its link address - 0x40000000.  A static MMU
+ * table built early in startup.S maps the window onto that physical memory
+ * (see virt_mmu.c); the part of the start that runs before the MMU is on is
+ * position independent.
  *
- * This is deliberately AT(ADDR(section) + 0x40000000) -- an explicit
+ * This is deliberately AT(ADDR(section) - 0x40000000) -- an explicit
  * per-section load address -- rather than a shared "AT>stram_lma"
  * load memory region: several of these sections (.first_stram,
  * .low_stram, .stack, .laststram) hold no actual data, just
@@ -118,36 +151,67 @@ REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
  * A load memory region's address only advances by the sections
  * explicitly assigned to it, but NOBITS sections do not consume any
  * of that region's space, so a shared AT>region silently stops
- * tracking "VMA + 0x40000000" as soon as a NOBITS section intervenes
+ * tracking "VMA - 0x40000000" as soon as a NOBITS section intervenes
  * -- every later section collapses back onto the region's origin
- * instead of its correct offset. AT(ADDR(section) + ...) computes
+ * instead of its correct offset. AT(ADDR(section) - ...) computes
  * each section's own load address directly and is immune to that.
  *
  * This also relies on an implicit fixup in QEMU's -kernel ELF loader:
- * the image's e_entry is a *virtual* address (low ST-RAM, which pre-MMU
- * is flash on this board, not RAM), and QEMU rewrites it to the matching
+ * the image's e_entry is a *virtual* address (in the window, which pre-MMU
+ * is not RAM on this board), and QEMU rewrites it to the matching
  * physical address whenever a segment has p_vaddr != p_paddr, i.e. by
- * the same +0x40000000 offset LMA_AT applies here.  That rewrite only
+ * the same offset LMA_AT applies here.  That rewrite only
  * happens when the entry point falls inside an executable (PF_X),
  * non-empty (p_filesz-covered) segment.  If a future layout change ever
  * breaks that condition -- an empty or non-executable first segment, or
  * an entry point outside it -- QEMU silently jumps to the unmapped
  * virtual address instead, with no diagnostic of any kind. */
 #if defined (MACHINE_VIRT_ARM)
-# define LMA_AT(section) AT(ADDR(section) + 0x40000000)
+# define LMA_AT(section) AT(ADDR(section) - 0x40000000)
+# define LMA_LOW(section) LMA_AT(section)
+#elif defined (MACHINE_RPI) && CONF_WITH_HIGHER_HALF
+/* The same on the Raspberry Pi, where the RAM is at physical 0 and the
+ * firmware loads the flat image (objcopy -O binary takes the load addresses)
+ * at 0x8000: the kernel is linked in the physical-memory window, 0x80000000
+ * above, and the start code up to the switch is position independent
+ * (startup.S, raspi_mmu_boot.c). */
+# define LMA_AT(section) AT(ADDR(section) - 0x80000000)
+# define LMA_LOW(section) LMA_AT(section)
+#elif (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
+/* virt-m68k: the RAM is at physical 0, so the window is 0x80000000 above
+ * where the bytes are loaded.  The TOS low memory is at its physical
+ * addresses, and has no LMA_AT.  The Atari ROM: the same, for the ROM, which
+ * is loaded where it is, 0x00e00000. */
+# define LMA_AT(section) AT(ADDR(section) - 0x80000000)
+# define LMA_LOW(section)
 #else
 # define LMA_AT(section)
+# define LMA_LOW(section)
+#endif
+
+/* A higher-half kernel with no TOS low memory at all (the ARM one) */
+#if CONF_WITH_HIGHER_HALF && !defined(MACHINE_VIRT_M68K) && !CONF_M68K_ROM_WINDOW
+# define NO_LOW_MEMORY 1
+#else
+# define NO_LOW_MEMORY 0
 #endif
 
 SECTIONS
 {
     /* First section in ST-RAM */
-    .first_stram : LMA_AT(.first_stram)
+    .first_stram : LMA_LOW(.first_stram)
     {
         /* System variables are located at fixed addresses */
 #include "tosvars.ld"
+#if NO_LOW_MEMORY
+        /* ... except in a higher-half kernel, which has none: the region
+         * is empty */
+         C_SYM(sysvars_start) = .;
+         C_SYM(sysvars_end) = .;
+#else
          . = 0x800; /* Extend sysvars area upto end of supervisor-only RAM */
          C_SYM(sysvars_end) = .;
+#endif
     } >stram
 
 #if CONF_WITH_STATIC_ALT_RAM
@@ -162,12 +226,16 @@ SECTIONS
     /* This section is the internal BIOS stack.
      * It will *not* be cleared on startup or reset.
      */
-    .stack : LMA_AT(.stack)
+    .stack : LMA_LOW(.stack)
     {
         C_SYM(stkbot) = .;
         . += 2K;
          C_SYM(stktop) = .;
+#if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
+    } >stram                    /* in the low memory, like the rest of it */
+#else
     } >REGION_READ_WRITE
+#endif
 #endif
     /* SUBALIGN doesn't just bound the gap between input sections here --
      * per the ld manual it *overrides* each input section's own requested
@@ -193,21 +261,28 @@ SECTIONS
      * Variables requiring very low addresses, while being accessible
      * from user mode, can be put here.
      */
-    .low_stram : LMA_AT(.low_stram) MIN_SUBALIGN
+    .low_stram : LMA_LOW(.low_stram) MIN_SUBALIGN
     {
          __low_stram_start = .;
          obj/lowstram.o(.bss COMMON)
          __low_stram_end = .;
+#if !NO_LOW_MEMORY
          ASSERT(ABSOLUTE(C_SYM(shifty)) < 0x8000, "error: bad _shifty address");
+#endif
         ASSERT((ABSOLUTE(C_SYM(dskbuf)) & 3) == 0, "error: bad _dskbuf alignment");
+#if !NO_LOW_MEMORY
         ASSERT(ABSOLUTE(__low_stram_end) <= 0x8000, "error: .low_stram section extends beyond 32k");
+#endif
     } >stram
 
     /* The TEXT segment contains EmuTOS executable code and read-only data.
      * It is always read-only, so it can safely live in ROM.
      */
 #if defined (MACHINE_RPI)
-     .text ROM_ORIGIN : MIN_SUBALIGN
+     .text ROM_ORIGIN : LMA_AT(.text) MIN_SUBALIGN
+#elif CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+     /* in the window, right after the low memory: the same physical bytes */
+     .text (0x80000000 + ALIGN(__low_stram_end, 4)) : LMA_AT(.text) MIN_SUBALIGN
 #else
      .text : LMA_AT(.text) MIN_SUBALIGN
 #endif
@@ -239,10 +314,24 @@ SECTIONS
         C_SYM(_edata) = __edata;
     } >REGION_READ_ONLY
 
+#if CONF_M68K_ROM_WINDOW
+    /* The static MMU tree of the ROM (bios/arch/m68k/atari_mmu.S).  Its own
+     * section, because the tables must be on 16-byte boundaries. */
+    .mmutree : LMA_AT(.mmutree) ALIGN(16)
+    {
+        *(.mmutree)
+    } >REGION_READ_ONLY
+#endif
+
     /* The BSS segment contains uninitialized global variables.
      * It will be cleared by the startup code.
      */
+#if CONF_M68K_ROM_WINDOW
+    /* in the window, right after the low memory: the same physical bytes */
+    .bss (0x80000000 + ALIGN(__low_stram_end, 4)) : LMA_AT(.bss) MIN_SUBALIGN
+#else
     .bss : LMA_AT(.bss) MIN_SUBALIGN
+#endif
     {
          __bss = .;
          C_SYM(_bss) = __bss;
@@ -281,7 +370,11 @@ SECTIONS
     {
          __end_os_stram = .;
          C_SYM(_end_os_stram) = __end_os_stram;
+#if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
+    } >window
+#else
     } >stram
+#endif
 
 #if CONF_WITH_STATIC_ALT_RAM
     /* Last section in static Alt-RAM */

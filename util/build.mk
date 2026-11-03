@@ -16,9 +16,15 @@ obj-$(CONF_WITH_VIRTIO) += virtio.o
 
 obj-$(ARCH_M68K) += memset.o stringasm.o
 
+# The GEMDOS calls by name that the VDI and the DSP loader make (the Atari
+# image with an address space for every process has no AES)
+ifneq ($(CONF_WITH_AES)$(CONF_ATARI_HIGHER_HALF),)
+obj-y += gemdos.o
+endif
+
 # The routines below are only used by the AES and by EmuDesk.
 ifdef CONF_WITH_AES
-obj-y += gemdos.o optimize.o rectfunc.o
+obj-y += optimize.o rectfunc.o
 obj-$(ARCH_M68K) += optimopt.o
 endif
 

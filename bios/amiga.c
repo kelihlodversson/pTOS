@@ -14,6 +14,14 @@
 
 #include "emutos.h"
 #include "amiga.h"
+#include "amiga_io.h"
+#if CONF_WITH_PROCESS_ASPACES
+#include "pmem32.h"
+#include "aspace32.h"
+#endif
+#if CONF_AMIGA_HIGHER_HALF
+#include "amiga_mmu.h"
+#endif
 #include "vectors.h"
 #include "tosvars.h"
 #include "bios.h"
@@ -36,77 +44,77 @@
 #ifdef MACHINE_AMIGA
 
 /* Custom registers */
-#define CUSTOM_BASE ((void *)0xdff000)
-#define VPOSR   *(volatile UWORD*)0xdff004
-#define VHPOSR  *(volatile UWORD*)0xdff006
-#define JOY0DAT *(volatile UWORD*)0xdff00a
-#define JOY1DAT *(volatile UWORD*)0xdff00c
-#define ADKCONR *(volatile UWORD*)0xdff010
-#define POTGOR  *(volatile UWORD*)0xdff016 /* = POTINP */
-#define SERDATR *(volatile UWORD*)0xdff018
-#define DSKBYTR *(volatile UWORD*)0xdff01a
-#define INTENAR *(volatile UWORD*)0xdff01c
-#define INTREQR *(volatile UWORD*)0xdff01e
-#define DSKPTH  *(void* volatile*)0xdff020
-#define DSKLEN  *(volatile UWORD*)0xdff024
-#define SERDAT  *(volatile UWORD*)0xdff030
-#define SERPER  *(volatile UWORD*)0xdff032
-#define POTGO   *(volatile UWORD*)0xdff034
-#define DSKSYNC *(volatile UWORD*)0xdff07e
-#define COP1LCH *(UWORD* volatile*)0xdff080
-#define COPJMP1 *(volatile UWORD*)0xdff088
-#define DIWSTRT *(volatile UWORD*)0xdff08e
-#define DIWSTOP *(volatile UWORD*)0xdff090
-#define DDFSTRT *(volatile UWORD*)0xdff092
-#define DDFSTOP *(volatile UWORD*)0xdff094
-#define DMACON  *(volatile UWORD*)0xdff096
-#define INTENA  *(volatile UWORD*)0xdff09a
-#define INTREQ  *(volatile UWORD*)0xdff09c
-#define ADKCON  *(volatile UWORD*)0xdff09e
-#define BPLCON0 *(volatile UWORD*)0xdff100
-#define BPLCON1 *(volatile UWORD*)0xdff102
-#define BPL1MOD *(volatile UWORD*)0xdff108
-#define COLOR00 *(volatile UWORD*)0xdff180
-#define COLOR01 *(volatile UWORD*)0xdff182
+#define CUSTOM_BASE ((void *)AMIGA_IO(0xdff000))
+#define VPOSR   *(volatile UWORD*)AMIGA_IO(0xdff004)
+#define VHPOSR  *(volatile UWORD*)AMIGA_IO(0xdff006)
+#define JOY0DAT *(volatile UWORD*)AMIGA_IO(0xdff00a)
+#define JOY1DAT *(volatile UWORD*)AMIGA_IO(0xdff00c)
+#define ADKCONR *(volatile UWORD*)AMIGA_IO(0xdff010)
+#define POTGOR  *(volatile UWORD*)AMIGA_IO(0xdff016) /* = POTINP */
+#define SERDATR *(volatile UWORD*)AMIGA_IO(0xdff018)
+#define DSKBYTR *(volatile UWORD*)AMIGA_IO(0xdff01a)
+#define INTENAR *(volatile UWORD*)AMIGA_IO(0xdff01c)
+#define INTREQR *(volatile UWORD*)AMIGA_IO(0xdff01e)
+#define DSKPTH  *(void* volatile*)AMIGA_IO(0xdff020)
+#define DSKLEN  *(volatile UWORD*)AMIGA_IO(0xdff024)
+#define SERDAT  *(volatile UWORD*)AMIGA_IO(0xdff030)
+#define SERPER  *(volatile UWORD*)AMIGA_IO(0xdff032)
+#define POTGO   *(volatile UWORD*)AMIGA_IO(0xdff034)
+#define DSKSYNC *(volatile UWORD*)AMIGA_IO(0xdff07e)
+#define COP1LCH *(UWORD* volatile*)AMIGA_IO(0xdff080)
+#define COPJMP1 *(volatile UWORD*)AMIGA_IO(0xdff088)
+#define DIWSTRT *(volatile UWORD*)AMIGA_IO(0xdff08e)
+#define DIWSTOP *(volatile UWORD*)AMIGA_IO(0xdff090)
+#define DDFSTRT *(volatile UWORD*)AMIGA_IO(0xdff092)
+#define DDFSTOP *(volatile UWORD*)AMIGA_IO(0xdff094)
+#define DMACON  *(volatile UWORD*)AMIGA_IO(0xdff096)
+#define INTENA  *(volatile UWORD*)AMIGA_IO(0xdff09a)
+#define INTREQ  *(volatile UWORD*)AMIGA_IO(0xdff09c)
+#define ADKCON  *(volatile UWORD*)AMIGA_IO(0xdff09e)
+#define BPLCON0 *(volatile UWORD*)AMIGA_IO(0xdff100)
+#define BPLCON1 *(volatile UWORD*)AMIGA_IO(0xdff102)
+#define BPL1MOD *(volatile UWORD*)AMIGA_IO(0xdff108)
+#define COLOR00 *(volatile UWORD*)AMIGA_IO(0xdff180)
+#define COLOR01 *(volatile UWORD*)AMIGA_IO(0xdff182)
 
 /* CIA A registers */
-#define CIAAPRA    *(volatile UBYTE*)0xbfe001
-#define CIAAPRB    *(volatile UBYTE*)0xbfe101
-#define CIAADDRA   *(volatile UBYTE*)0xbfe201
-#define CIAADDRB   *(volatile UBYTE*)0xbfe301
-#define CIAATALO   *(volatile UBYTE*)0xbfe401
-#define CIAATAHI   *(volatile UBYTE*)0xbfe501
-#define CIAATBLO   *(volatile UBYTE*)0xbfe601
-#define CIAATBHI   *(volatile UBYTE*)0xbfe701
-#define CIAATODLO  *(volatile UBYTE*)0xbfe801
-#define CIAATODMID *(volatile UBYTE*)0xbfe901
-#define CIAATODHI  *(volatile UBYTE*)0xbfea01
-#define CIAASDR    *(volatile UBYTE*)0xbfec01
-#define CIAAICR    *(volatile UBYTE*)0xbfed01
-#define CIAACRA    *(volatile UBYTE*)0xbfee01
-#define CIAACRB    *(volatile UBYTE*)0xbfef01
+#define CIAAPRA    *(volatile UBYTE*)AMIGA_IO(0xbfe001)
+#define CIAAPRB    *(volatile UBYTE*)AMIGA_IO(0xbfe101)
+#define CIAADDRA   *(volatile UBYTE*)AMIGA_IO(0xbfe201)
+#define CIAADDRB   *(volatile UBYTE*)AMIGA_IO(0xbfe301)
+#define CIAATALO   *(volatile UBYTE*)AMIGA_IO(0xbfe401)
+#define CIAATAHI   *(volatile UBYTE*)AMIGA_IO(0xbfe501)
+#define CIAATBLO   *(volatile UBYTE*)AMIGA_IO(0xbfe601)
+#define CIAATBHI   *(volatile UBYTE*)AMIGA_IO(0xbfe701)
+#define CIAATODLO  *(volatile UBYTE*)AMIGA_IO(0xbfe801)
+#define CIAATODMID *(volatile UBYTE*)AMIGA_IO(0xbfe901)
+#define CIAATODHI  *(volatile UBYTE*)AMIGA_IO(0xbfea01)
+#define CIAASDR    *(volatile UBYTE*)AMIGA_IO(0xbfec01)
+#define CIAAICR    *(volatile UBYTE*)AMIGA_IO(0xbfed01)
+#define CIAACRA    *(volatile UBYTE*)AMIGA_IO(0xbfee01)
+#define CIAACRB    *(volatile UBYTE*)AMIGA_IO(0xbfef01)
 
 /* CIA B registers */
-#define CIABPRA    *(volatile UBYTE*)0xbfd000
-#define CIABPRB    *(volatile UBYTE*)0xbfd100
-#define CIABDDRA   *(volatile UBYTE*)0xbfd200
-#define CIABDDRB   *(volatile UBYTE*)0xbfd300
-#define CIABTALO   *(volatile UBYTE*)0xbfd400
-#define CIABTAHI   *(volatile UBYTE*)0xbfd500
-#define CIABTBLO   *(volatile UBYTE*)0xbfd600
-#define CIABTBHI   *(volatile UBYTE*)0xbfd700
-#define CIABTODLO  *(volatile UBYTE*)0xbfd800
-#define CIABTODMID *(volatile UBYTE*)0xbfd900
-#define CIABTODHI  *(volatile UBYTE*)0xbfda00
-#define CIABSDR    *(volatile UBYTE*)0xbfdc00
-#define CIABICR    *(volatile UBYTE*)0xbfdd00
-#define CIABCRA    *(volatile UBYTE*)0xbfde00
-#define CIABCRB    *(volatile UBYTE*)0xbfdf00
+#define CIABPRA    *(volatile UBYTE*)AMIGA_IO(0xbfd000)
+#define CIABPRB    *(volatile UBYTE*)AMIGA_IO(0xbfd100)
+#define CIABDDRA   *(volatile UBYTE*)AMIGA_IO(0xbfd200)
+#define CIABDDRB   *(volatile UBYTE*)AMIGA_IO(0xbfd300)
+#define CIABTALO   *(volatile UBYTE*)AMIGA_IO(0xbfd400)
+#define CIABTAHI   *(volatile UBYTE*)AMIGA_IO(0xbfd500)
+#define CIABTBLO   *(volatile UBYTE*)AMIGA_IO(0xbfd600)
+#define CIABTBHI   *(volatile UBYTE*)AMIGA_IO(0xbfd700)
+#define CIABTODLO  *(volatile UBYTE*)AMIGA_IO(0xbfd800)
+#define CIABTODMID *(volatile UBYTE*)AMIGA_IO(0xbfd900)
+#define CIABTODHI  *(volatile UBYTE*)AMIGA_IO(0xbfda00)
+#define CIABSDR    *(volatile UBYTE*)AMIGA_IO(0xbfdc00)
+#define CIABICR    *(volatile UBYTE*)AMIGA_IO(0xbfdd00)
+#define CIABCRA    *(volatile UBYTE*)AMIGA_IO(0xbfde00)
+#define CIABCRB    *(volatile UBYTE*)AMIGA_IO(0xbfdf00)
 
 /* Gayle registers */
-#define GAYLE_BASE ((void *)0xde1000)
-#define GAYLE_ID *(volatile UBYTE*)0xde1000
-#define FAT_GARY_TIMEOUT *(volatile UBYTE*)0xde0000
+#define GAYLE_BASE ((void *)AMIGA_IO(0xde1000))
+#define GAYLE_ID *(volatile UBYTE*)AMIGA_IO(0xde1000)
+#define FAT_GARY_TIMEOUT *(volatile UBYTE*)AMIGA_IO(0xde0000)
 
 /* Generic Set/Clear bit */
 #define SETBITS  (1U << 15)
@@ -158,7 +166,7 @@
 #if CONF_WITH_APOLLO_68080
 
 /* Board_id register for Vampire machine detection */
-#define VREG_BOARD          *(volatile UWORD*)0xdff3fc
+#define VREG_BOARD          *(volatile UWORD*)AMIGA_IO(0xdff3fc)
 #define VREG_BOARD_Unknown  0x00
 #define VREG_BOARD_V600     0x01
 #define VREG_BOARD_V500     0x02
@@ -417,6 +425,8 @@ ULONG amiga_detect_ram(void *start, void *end, ULONG step)
     return p - pbyte_start;
 }
 
+#if !CONF_AMIGA_HIGHER_HALF_68040     /* (the probes of the RAM above the 24 bits: its tree maps no more, amiga_mmu040.S) */
+
 /* Reverse RAM detection, when actual RAM is located at the end of the range. */
 static ULONG amiga_detect_ram_reverse(void *start, void *end, ULONG step)
 {
@@ -430,6 +440,8 @@ static ULONG amiga_detect_ram_reverse(void *start, void *end, ULONG step)
     return pbyte_end - (p + step);
 }
 
+#endif /* !CONF_AMIGA_HIGHER_HALF_68040 */
+
 /* Detect Slow RAM, a.k.a A500 trapdoor RAM, a.k.a pseudo-fast RAM.
  * Max = 1.5 MB (standard)
  *   or 1.75 MB (requires Gary adapter, incompatible with Gayle IDE). */
@@ -440,7 +452,7 @@ static void add_slow_ram(void)
     ULONG size;
 
     /* There may be a custom chips mirror instead of Slow RAM */
-    if (is_custom_chips_mirror(start))
+    if (is_custom_chips_mirror((void *)AMIGA_IO((ULONG)start)))
         return;
 
     if (has_gayle)
@@ -461,6 +473,8 @@ static void add_slow_ram(void)
     KDEBUG(("Slow RAM detected at %p, size=%lu\n", start, size));
     xmaddalt(start, size);
 }
+
+#if !CONF_AMIGA_HIGHER_HALF_68040
 
 /* Detect A3000/A4000 Processor Slot Fast RAM, a.k.a. Ramsey High MBRAM.
  * Max = 128 MB, theoretical max = 1904 MB? */
@@ -501,6 +515,8 @@ static void add_motherboard_fast_ram(void)
     xmaddalt(end - size, size);
 }
 
+#endif /* !CONF_AMIGA_HIGHER_HALF_68040 */
+
 /* Forward declarations */
 static void add_expansion_ram(void);
 #if CONF_WITH_UAE
@@ -510,13 +526,22 @@ static void add_uae_32bit_chip_ram(void);
 /* Detect Alt-RAM directly from hardware */
 static void add_alt_ram_from_hardware(void)
 {
+#if CONF_WITH_PROCESS_ASPACES
+    /* the RAM of the expansion boards is pages of the processes (amiga_process_memory_init());
+     * the slow RAM and the RAM of the motherboard are not used with address spaces yet */
+    return;
+#endif
     /* 24-bit RAM is really SLOW since GOLD 2.12, don't use it. */
     if (!IS_APOLLO_68080)
     {
         /* Add the slowest RAM first to put it at the end of the Alt-RAM pool */
         add_slow_ram();
+#if !CONF_AMIGA_HIGHER_HALF_68040
+        /* the tree of the 68040 and the 68060 maps the 24 bits only
+         * (amiga_mmu040.S): a probe above would fault */
         add_processor_slot_fast_ram();
         add_motherboard_fast_ram();
+#endif
     }
 
     add_expansion_ram();
@@ -1144,7 +1169,7 @@ void amiga_extra_vbl(void)
 /* Clock                                                                      */
 /******************************************************************************/
 
-#define BATTCLOCK ((volatile UBYTE*)0x00dc0000)
+#define BATTCLOCK ((volatile UBYTE*)AMIGA_IO(0xdc0000))
 
 #define AMIGA_CLOCK_NONE 0
 #define AMIGA_CLOCK_MSM6242B 1
@@ -1292,11 +1317,20 @@ static UBYTE *uae_boot_rom; /* Pointer to UAE Boot ROM */
  * If found, update uae_boot_rom global variable. */
 static void detect_uae_boot_rom(void *p)
 {
-    UBYTE *pbyte = (UBYTE *)p;
+#if CONF_WITH_PROCESS_ASPACES
+    /* The traps of the UAE Boot ROM work from the address it is at: a Line-A
+     * opcode there, with the ROM at 0x00f00000, which is in the lower half, that
+     * belongs to the processes once they have address spaces.  The kernel runs in
+     * the window (0x80f00000), where the emulator does not see the ROM, so the
+     * native features of UAE are not used with address spaces yet. */
+    MAYBE_UNUSED(p);
+#else
+    UBYTE *pbyte = (UBYTE *)AMIGA_IO_ADDR((ULONG)p);    /* (it may be in the I/O range) */
 
     /* If uaelib_demux trap is found, assume this is the UAE Boot ROM */
     if (IS_TRAP(pbyte + OFFSET_UAELIB_DEMUX))
         uae_boot_rom = pbyte;
+#endif
 }
 
 /* Look for UAE Boot ROM at all well-known locations */
@@ -1426,6 +1460,11 @@ static ULONG uae_getchipmemsize(void **pz3chipmem_start, ULONG *pz3chipmem_size)
 /* Register eventual 32-bit Chip RAM to the OS */
 static void add_uae_32bit_chip_ram(void)
 {
+#if CONF_AMIGA_HIGHER_HALF_68040
+    /* the tree of the 68040 and the 68060 maps the 24 bits only (amiga_mmu040.S):
+     * RAM above them would fault when it is used */
+    MAYBE_UNUSED(uae_getchipmemsize);
+#else
     void *z3chipmem_start;
     ULONG z3chipmem_size;
 
@@ -1436,6 +1475,7 @@ static void add_uae_32bit_chip_ram(void)
 
     KDEBUG(("UAE 32-bit Chip RAM detected at %p, size=%lu\n", z3chipmem_start, z3chipmem_size));
     xmaddalt(z3chipmem_start, z3chipmem_size);
+#endif
 }
 
 /******************************************************************************/
@@ -1789,7 +1829,13 @@ static WORD amiga_floppy_read_raw_track(void)
     KDEBUG(("DMA start...\n"));
 
     /* Set DMA address */
+#if CONF_AMIGA_HIGHER_HALF
+    /* the buffer is in the kernel image, in the window: the disk DMA takes
+     * the physical address */
+    DSKPTH = (void *)(uintptr_t)virt_to_phys(mfm_track);
+#else
     DSKPTH = mfm_track;
+#endif
 
     /* Start DMA read */
     dsklen = DK_DMAEN | (MFM_TRACK_SIZE / 2); /* Read + size in words */
@@ -2391,7 +2437,8 @@ static void get_nybble_offsets(APTR board, ULONG offset, volatile UBYTE **pphigh
     offset *= 4;
 
     /* Low nybble offset depends on bus type */
-    if (IS_32BIT_POINTER(board))
+    /* (a board in the I/O window of the kernel is on the bus where it is in the 24 bits) */
+    if (IS_32BIT_POINTER((APTR)AMIGA_IO_BUS((ULONG)board)))
         low_nybble_offset = 0x100; /* Zorro III */
     else
         low_nybble_offset = 0x002; /* Zorro II */
@@ -2731,12 +2778,23 @@ static BOOL configure_zorro2_board(APTR board, struct ConfigDev *configDev)
 #define ZORRO3_SPACE_END    (EZ3_CONFIGAREAEND + 1UL)
 #define ZORRO3_SLOT_SIZE    0x01000000
 
+#if CONF_AMIGA_HIGHER_HALF_68040
+/* The tree of the 68040 and the 68060 maps the 24 bits only (amiga_mmu040.S):
+ * a board above them (Zorro III) cannot be probed, nor used as RAM */
+#define BOARD_UNMAPPED(configDev) ((ULONG)(configDev)->cd_BoardAddr >= 0x01000000UL)
+#else
+#define BOARD_UNMAPPED(configDev) 0
+#endif
+
 /* Probe a board for actual RAM size */
 static void autosize_ramboard(struct ConfigDev *configDev)
 {
     UBYTE *start;
     ULONG maxsize;
     ULONG actualsize;
+
+    if (BOARD_UNMAPPED(configDev))
+        return;
 
     KDEBUG(("autosize_ramboard() configDev=%p cd_BoardSize=0x%08lx\n",
         configDev, configDev->cd_BoardSize));
@@ -2876,7 +2934,7 @@ void amiga_autoconfig(void)
         /* If not found, look for the board on Zorro II bus. */
         if (!found)
         {
-            base = (APTR)E_EXPANSIONBASE;
+            base = (APTR)AMIGA_IO(E_EXPANSIONBASE);
             found = ReadExpansionRom(base, configDev);
         }
 
@@ -2929,7 +2987,7 @@ static void init_driver_uae_board(struct ConfigDev *configDev)
      * Its non-standard address is indicated here in the UAE Board.
      * See UAE expansion.cpp, function add_rtarea_pointer().
      * https://github.com/tonioni/WinUAE/blob/master/expansion.cpp */
-    p = (UBYTE *)ULONG_AT((UBYTE *)configDev->cd_BoardAddr + 0x48);
+    p = (UBYTE *)ULONG_AT((UBYTE *)AMIGA_IO_ADDR((ULONG)configDev->cd_BoardAddr) + 0x48);
     detect_uae_boot_rom(p);
     if (!uae_boot_rom)
     {
@@ -2987,6 +3045,15 @@ static void add_ram_from_board(struct ConfigDev *configDev)
     if (configDev->cd_Flags & (CDF_SHUTUP | CDF_PROCESSED))
         return;
 
+    /* Skip the RAM that the tree of the 68040 and the 68060 does not map */
+    if (BOARD_UNMAPPED(configDev))
+    {
+        KDEBUG(("*** Expansion RAM not used: configDev=%p cd_BoardAddr=%p is not mapped\n",
+            configDev, configDev->cd_BoardAddr));
+        configDev->cd_Flags |= CDF_PROCESSED;
+        return;
+    }
+
     KDEBUG(("*** Expansion RAM found: configDev=%p cd_BoardAddr=%p cd_BoardSize=%lu\n",
         configDev, configDev->cd_BoardAddr, configDev->cd_BoardSize));
 
@@ -2996,6 +3063,60 @@ static void add_ram_from_board(struct ConfigDev *configDev)
     /* This board has been processed */
     configDev->cd_Flags |= CDF_PROCESSED;
 }
+
+#if CONF_WITH_PROCESS_ASPACES
+ULONG amiga_process_ram;
+
+/*
+ * With an address space for every process the RAM of the boards is not BDOS
+ * alternative RAM but pages that the processes are given (include/pmem32.h),
+ * reached through the window of the kernel, which maps the first 16 MiB: the
+ * boards of the Zorro II space (up to 0x00a00000).  The chip RAM alone is too
+ * small for the process window, so this is where the address space of the
+ * kernel is made, once those pages are known.
+ */
+void amiga_process_memory_init(void)
+{
+    PADDR first = 0;
+
+    /* in ascending order of the addresses: pmem32_add() takes RAM above what it has,
+     * and the boards are in the order autoconfig found them in */
+    for (;;)
+    {
+        struct Node *node;
+        struct ConfigDev *lowest = NULL;
+
+        for (node = boardList.lh_Head; node->ln_Succ; node = node->ln_Succ)
+        {
+            struct ConfigDev *configDev = (struct ConfigDev *)node;
+            PADDR start = (PADDR)(uintptr_t)configDev->cd_BoardAddr;
+
+            if (!(configDev->cd_Rom.er_Type & ERTF_MEMLIST)
+                || (configDev->cd_Flags & (CDF_SHUTUP | CDF_PROCESSED)))
+                continue;
+            if (start < 0x00200000UL || start + configDev->cd_BoardSize > 0x00a00000UL)
+                continue;               /* not in the window: left as it is */
+            if (!lowest || start < (PADDR)(uintptr_t)lowest->cd_BoardAddr)
+                lowest = configDev;
+        }
+        if (!lowest)
+            break;
+
+        KDEBUG(("amiga_process_memory_init() RAM %p size=%lu\n",
+            lowest->cd_BoardAddr, (unsigned long)lowest->cd_BoardSize));
+        pmem32_add((PADDR)(uintptr_t)lowest->cd_BoardAddr,
+                   (PADDR)(uintptr_t)lowest->cd_BoardAddr + lowest->cd_BoardSize);
+        amiga_process_ram += lowest->cd_BoardSize;
+        if (!first)
+            first = (PADDR)(uintptr_t)lowest->cd_BoardAddr;
+        lowest->cd_Flags |= CDF_PROCESSED;
+    }
+    if (first)
+        pmem32_prefer(first);           /* the chip RAM is what the custom chips reach */
+    if (!aspace_kernel_init())
+        panic("no memory for the address spaces\n");
+}
+#endif
 
 /* Look for RAM on Expansion boards. This must be done after AUTOCONFIG. */
 static void add_expansion_ram(void)

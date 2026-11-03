@@ -25,6 +25,16 @@
  */
 long bios_check_user_args(WORD fn, const long *a);
 long xbios_check_user_args(WORD fn, const long *a);
+
+/*
+ * The result `r` of the BIOS or XBIOS call `fn` that a user process made,
+ * once it has run, as the process may see it: a result that is, or holds, a
+ * kernel address is 0 (doc/kernel-pointers.txt).  The calls whose result is
+ * a pointer to kernel data (Getbpb(), Iorec(), Kbdvbase()) are refused
+ * before they run instead, with EACCDN, in the check above.
+ */
+long bios_user_result(WORD fn, long r);
+long xbios_user_result(WORD fn, long r);
 #endif
 
 #endif /* BIOSACCESS_H */

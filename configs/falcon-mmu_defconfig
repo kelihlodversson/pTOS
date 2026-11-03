@@ -1,0 +1,8 @@
+# 512 KB Atari ROM image for the Falcon with the kernel in the upper half and the
+# 68030 MMU on from the first instruction (#726, #571): the ROM runs at
+# 0x80e00000 and the RAM at 0x80000000 (doc/mmu-address-space.txt).  No address
+# space of its own for a process yet (#727).  Boots under Hatari with
+# --machine falcon --cpulevel 3 --mmu on.
+TARGET_512=y
+BUILD_UNIQUE_COUNTRY=y
+CONF_ATARI_HIGHER_HALF=y

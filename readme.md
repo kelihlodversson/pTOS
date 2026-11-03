@@ -28,6 +28,7 @@ The exact level of runtime support varies between targets. Some configurations a
 Current work includes:
 
 - shared ARM and m68k operating-system infrastructure;
+- every process in an address space of its own on ARM (Raspberry Pi 2, QEMU `virt`) and on m68k with an MMU (QEMU `virt`, Hatari's Falcon and TT, Amiberry's Amiga: 68030, 68040, 68060), on a kernel linked in the upper half (`doc/mmu-address-space.txt`);
 - native ARM and m68k ELF32 loading;
 - QEMU `virt` support;
 - shared modern virtio-mmio transport support;

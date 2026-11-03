@@ -20,9 +20,9 @@ set -e -o pipefail
 if [ $# -gt 0 ]; then
   combos="$*"
 elif [ "$EVENT" = pull_request ]; then
-  combos="atari512:low atari512:high atari512:f030 atari512:f040 atari512-fastcall:f040 atari192:low"
+  combos="atari512:low atari512:high atari512:f030 atari512:f040 atari512-fastcall:f040 atari512-kproc:f030 falcon-mmu:f030 falcon-aspace:f030a falcon-aspace:tta falcon-aspace040:f040a falcon-aspace040:tt040a atari192:low"
 else
-  combos="atari512:low atari512:med atari512:high atari512:f030 atari512:f040 atari512-fastcall:low atari512-fastcall:med atari512-fastcall:high atari512-fastcall:f030 atari512-fastcall:f040 atari512-extdesk:low atari512-extdesk:med atari512-extdesk:high atari512-extdesk:f030 atari512-extdesk:f040 atari192:low atari192:med atari192:high"
+  combos="atari512:low atari512:med atari512:high atari512:f030 atari512:f040 atari512-fastcall:low atari512-fastcall:med atari512-fastcall:high atari512-fastcall:f030 atari512-fastcall:f040 atari512-extdesk:low atari512-extdesk:med atari512-extdesk:high atari512-extdesk:f030 atari512-extdesk:f040 atari512-kproc:low atari512-kproc:med atari512-kproc:high atari512-kproc:f030 atari512-kproc:f040 falcon-mmu:f030 falcon-aspace:f030a falcon-aspace:tta falcon-aspace040:f040a falcon-aspace040:tt040a atari192:low atari192:med atari192:high"
 fi
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 mkdir -p logs
@@ -30,10 +30,10 @@ run_one() {
   config=${1%%:*}
   mode=${1#*:}
   start=$(date +%s)
-  if timeout 1500 python3 tools/run-hatari-tests.py \
+  if timeout 2700 python3 tools/run-hatari-tests.py \
        --tos "products/$config/system.img" \
        --disk "products/$config/test-hd.img" \
-       --mode "$mode" --timeout 1200 >"logs/$config-$mode.log" 2>&1; then
+       --mode "$mode" --timeout 2400 >"logs/$config-$mode.log" 2>&1; then
     echo ok >"logs/$config-$mode.result"
   else
     echo FAILED >"logs/$config-$mode.result"

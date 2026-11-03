@@ -374,7 +374,8 @@ static void xbios_d(WORD interno, LONG vector)
 
 static LONG iorec(WORD devno)
 {
-    /* a kernel pointer in a 32-bit result: truncated on x86-64 (#563) */
+    /* a kernel pointer in a 32-bit result: truncated on x86-64.  A user
+     * process is refused the call (biosaccess.c, doc/kernel-pointers.txt) */
     switch(devno) {
     case 0:
         return (LONG)(uintptr_t)rs232iorecptr;
@@ -777,7 +778,8 @@ static WORD xbios_21(WORD config)
 
 static LONG kbdvbase(void)
 {
-    return (LONG)(uintptr_t)&kbdvecs;  /* truncated on x86-64 (#563) */
+    /* truncated on x86-64; refused to a user process (doc/kernel-pointers.txt) */
+    return (LONG)(uintptr_t)&kbdvecs;
 }
 
 #if DBG_XBIOS
@@ -1406,11 +1408,13 @@ static LONG wrap_rsconf(WORD *pw)
 {
     return (LONG)rsconf(pw[0], pw[1], pw[2], pw[3], pw[4], pw[5]);
 }
+#if !CONF_WITH_USER_ASPACE      /* (Keytbl() is not offered then, below) */
 static LONG wrap_keytbl(WORD *pw)
 {
     return keytbl((const UBYTE *)PWLONG(pw, 0), (const UBYTE *)PWLONG(pw, 2),
                    (const UBYTE *)PWLONG(pw, 4));
 }
+#endif
 static LONG wrap_protobt(WORD *pw)
 {
     protobt((UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4], pw[5]);

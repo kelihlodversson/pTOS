@@ -44,6 +44,7 @@
 /coldboot.tos
 /halt.tos
 /LOADFAIL.TOS
+/ISOPROBE.TOS
 /relocprobe-unpacked.tos
 /PTRELOC.TOS
 /relocprobe2-unpacked.tos

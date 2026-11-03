@@ -54,8 +54,8 @@ static void gpu_rect(GPU_RECT *rect)
 
 static void gpu_submit(ULONG size)
 {
-    virtio_desc_set(&gpu_dev, 0, (ULONG)&gpu_command + gpu_dev.phys_offset, size, VIRTIO_DESC_F_NEXT, 1);
-    virtio_desc_set(&gpu_dev, 1, (ULONG)&gpu_response + gpu_dev.phys_offset, sizeof(gpu_response), VIRTIO_DESC_F_WRITE, 0);
+    virtio_desc_set(&gpu_dev, 0, VIRTIO_PHYS(&gpu_dev, &gpu_command), size, VIRTIO_DESC_F_NEXT, 1);
+    virtio_desc_set(&gpu_dev, 1, VIRTIO_PHYS(&gpu_dev, &gpu_response), sizeof(gpu_response), VIRTIO_DESC_F_WRITE, 0);
     virtio_submit(&gpu_dev, 0);
     virtio_flush_buffer(&gpu_command, size);
     virtio_notify(&gpu_dev);
@@ -112,7 +112,7 @@ static BOOL gpu_create_resource(UBYTE *framebuffer)
     if (!gpu_submit_wait(sizeof(gpu_command.resource), VIRTIO_GPU_RESP_OK_NODATA)) return FALSE;
     gpu_header(&gpu_command.attach.hdr, VIRTIO_GPU_CMD_ATTACH_BACKING);
     gpu_command.attach.resource_id = cpu2le32(1); gpu_command.attach.nr_entries = cpu2le32(1);
-    gpu_command.attach.addr_lo = cpu2le32((ULONG)framebuffer + gpu_dev.phys_offset); gpu_command.attach.addr_hi = 0;
+    gpu_command.attach.addr_lo = cpu2le32(VIRTIO_PHYS(&gpu_dev, framebuffer)); gpu_command.attach.addr_hi = 0;
     gpu_command.attach.length = cpu2le32(gpu_size); gpu_command.attach.entry_padding = 0;
     if (!gpu_submit_wait(sizeof(gpu_command.attach), VIRTIO_GPU_RESP_OK_NODATA)) return FALSE;
     gpu_header(&gpu_command.scanout.hdr, VIRTIO_GPU_CMD_SET_SCANOUT);

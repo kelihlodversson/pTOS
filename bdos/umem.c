@@ -182,6 +182,10 @@ long xsetblk(WORD n, void *blk, long len)
 
     KDEBUG(("BDOS: Mshrink(%p,%ld)\n",blk,len));
 
+#if KPROC_LEGACY_PRG
+    if (procmem_contains(blk))
+        return kproc_shrink_tpa(run, blk, len);
+#endif
     mpb = find_mpb(blk);
     if (!mpb)
         return EIMBA;

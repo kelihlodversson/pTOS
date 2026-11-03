@@ -13,6 +13,9 @@
 #include "portab.h"
 #include "goldfish_tty.h"
 #include "ikbd.h"
+#if CONF_WITH_HIGHER_HALF
+#include "virt_mmu.h"
+#endif
 
 #define GOLDFISH_TTY_BASE  0xff008000UL
 
@@ -27,8 +30,10 @@
 /* Scratch buffer for the DMA-style single-byte read below: the Goldfish
  * TTY has no direct "get char" register, only PUT_CHAR for output; input
  * always goes through CMD_READ_BUFFER copying into a RAM address we
- * supply via DATA_PTR/DATA_LEN. RAM sits 1:1 at its physical address on
- * this board (no MMU), so a plain address-of is already correct. */
+ * supply via DATA_PTR/DATA_LEN.  The device is given a physical address:
+ * RAM sits 1:1 at it, so a plain address-of is correct -- except in a
+ * higher-half kernel (CONF_WITH_HIGHER_HALF), where a variable of the kernel
+ * is in the window and virt_to_phys() has the address. */
 static UBYTE goldfish_tty_rx_byte;
 
 BOOL goldfish_tty_can_write(void)
@@ -51,7 +56,11 @@ UBYTE goldfish_tty_read_byte(void)
     while (!goldfish_tty_can_read())
         ;
 
+#if CONF_WITH_HIGHER_HALF
+    TTY_DATA_PTR = virt_to_phys(&goldfish_tty_rx_byte);
+#else
     TTY_DATA_PTR = (ULONG)&goldfish_tty_rx_byte;
+#endif
     TTY_DATA_LEN = 1;
     TTY_CMD = TTY_CMD_READ_BUFFER;
 

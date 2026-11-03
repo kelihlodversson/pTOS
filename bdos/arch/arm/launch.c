@@ -16,6 +16,7 @@
 #include "arch/arm/fpusave.h"
 #include "string.h"
 
+#if !CONF_WITH_USER_ASPACE
 /* The stack gouser() (rwa.S) unwinds to start a new process. */
 struct gouser_stack {
     LONG regs[8];    /* argument registers from previous call (r7, r0-r6) */
@@ -64,3 +65,21 @@ void proc_launch_prepare(PD *p, void *super_sp)
     /* store this new stack in the saved sp field of the PD */
     p->p_areg[7-3] = (long) sp;
 }
+#else /* CONF_WITH_USER_ASPACE */
+
+void proc_align_stack(PD *p)
+{
+    /* the process has a private stack of its own (kproc_user_stack()); p_hitpa
+     * is the end of its TPA, which is no stack */
+    (void)p;
+}
+
+void proc_launch_prepare(PD *p, void *super_sp)
+{
+    /* nothing to build: gouser() (uspace.c) enters user mode from the process's
+     * own record (entry point, stack, address space) */
+    (void)p;
+    (void)super_sp;
+}
+
+#endif /* CONF_WITH_USER_ASPACE */

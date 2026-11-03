@@ -78,7 +78,18 @@ LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 else
 LDFLAGS = -s
 endif
+# CLI_SSYSTEM=1: for a kernel with an address space for every process
+# (CONF_WITH_USER_ASPACE), which a program cannot read the system variables or
+# the cookie jar of, nor call Supexec() or the Line-A: it asks Ssystem(), as the
+# ARM one does.
+CLI_SSYSTEM ?= 0
+ifeq ($(CLI_SSYSTEM),1)
+CLI_DEFS = -DCLI_FORCE_SSYSTEM
+OBJECTS = cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o cmdgetwh.o version.o
+else
+CLI_DEFS =
 OBJECTS = cmdasm.o cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o version.o
+endif
 else
 # Falling through to m68k on a typo'd ARCH (e.g. "am") would still build
 # something, just silently the wrong thing -- into its own
@@ -91,7 +102,7 @@ endif
 # for the couple of headers libcmini doesn't have, e.g. version.h,
 # scancode.h), which would otherwise shadow libcmini's <string.h> since
 # both provide one.
-CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE
+CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE $(CLI_DEFS)
 # -fno-tree-loop-distribute-patterns: matches the kernel's own OTHERFLAGS
 # (see ../Makefile) for the same reason -- GCC can silently rewrite an
 # ordinary loop (e.g. cmdutil.c's convulong()) into a call to memset()/
@@ -137,7 +148,7 @@ HEADERS = cmd.h
 # up to date, and creating it must force them to be rebuilt.  Only objects go:
 # the generated sources in ml/ do not depend on any of the three, and removing
 # them while a parallel make has already looked at their times would break it.
-STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)
+STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)$(if $(filter 1,$(CLI_SSYSTEM)),-ss)
 $(OBJECTS) version.c: $(STAMP)
 $(STAMP):
 	-rm -f ml/*.o *.o version.c $(TARGET) .arch-*

@@ -60,7 +60,7 @@ static int load(SAMPLE *s, const unsigned char *file, uint32_t length)
     int64_t mapped;
     uint32_t i;
 
-    if (dl_image_read(&s->plan, file, length, DL_IMAGE_DSO, &dl_x32_image_abi) ||
+    if (dl_image_read(&s->plan, file, length, DL_IMAGE_DSO, &dl_image_abi) ||
         s->plan.align > 4096)
         return 0;                       /* large alignment reservation is future work */
     s->size = s->plan.size;
@@ -184,12 +184,12 @@ int x32_ldso_probe(void)
         }
         if (dl_relocate(&leaf.object, (unsigned char *)(uintptr_t)leaf.address,
                          graph.scope, graph.count, leaf.writable, leaf.nwritable, work, 32, &written,
-                         &dl_x32_reloc_backend)) {
+                         &dl_reloc_backend)) {
             rc = 3; goto done;
         }
         if (dl_relocate(&library.object, (unsigned char *)(uintptr_t)library.address,
                          graph.scope, graph.count, library.writable, library.nwritable, work, 32, &written,
-                         &dl_x32_reloc_backend)) {
+                         &dl_reloc_backend)) {
             rc = 4; goto done;
         }
         if (!seal(&leaf) || !seal(&library)) {

@@ -7,6 +7,7 @@
 #ifndef VIRTIO_H
 #define VIRTIO_H
 
+#include "config.h"
 #include "portab.h"
 
 #define VIRTIO_QUEUE_SIZE  8   /* descriptors/ring slots per queue; power of two */
@@ -95,6 +96,19 @@ typedef struct
     volatile BOOL done;     /* set by virtio_handle_interrupt(), cleared by virtio_submit() */
 } __attribute__((aligned(16))) VIRTIO_DEV;
 
+/* The physical address of a RAM address, for the device to DMA to or from:
+ * the address of a ring or of a buffer.  With a flat kernel the difference is
+ * a constant per board (dev->phys_offset).  With a higher-half kernel it is
+ * not -- the kernel's own memory is in the physical-memory window and the
+ * buffers of the programs are in the pool -- so the machine converts by where
+ * the address is (virt_to_phys(), bios/machine/virt-arm/virt_mmu.c). */
+#if CONF_WITH_HIGHER_HALF
+ULONG virt_to_phys(const void *va);
+#define VIRTIO_PHYS(dev, p)     virt_to_phys(p)
+#else
+#define VIRTIO_PHYS(dev, p)     ((ULONG)(p) + (dev)->phys_offset)
+#endif
+
 /* Probes one virtio-mmio slot: checks magic/version/device-id, negotiates
  * VIRTIO_F_VERSION_1 only. On success dev->base/last_used_idx/done are
  * initialized, dev->phys_offset is zeroed (the caller must set it before
@@ -110,15 +124,16 @@ BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev);
 BOOL virtio_find_device(UWORD want_device_id, WORD nth, VIRTIO_DEV *dev, WORD *slot);
 
 /* Configures queue 0 from dev->desc/avail/used and sets DRIVER_OK.  The
- * three queue base registers are programmed with dev->phys_offset applied,
- * so the caller must have set that field first (see virtio_probe()).
+ * three queue base registers are programmed with VIRTIO_PHYS() applied,
+ * so the caller must have set dev->phys_offset first where that is used
+ * (see virtio_probe()).
  * Must be called exactly once after a successful virtio_probe(). */
 BOOL virtio_setup_queue(VIRTIO_DEV *dev);
 
 /* Writes one descriptor slot (LE-encoded). addr must already be the
  * physical address the device should DMA to/from -- on boards where the
  * kernel's own addresses are not physical addresses, the caller is
- * responsible for the translation (adding dev->phys_offset) before
+ * responsible for the translation (VIRTIO_PHYS()) before
  * calling this. addr_hi is always 0 (neither virt board needs a 64-bit
  * DMA address). */
 void virtio_desc_set(VIRTIO_DEV *dev, UWORD index, ULONG addr, ULONG len, UWORD flags, UWORD next);

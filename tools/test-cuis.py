@@ -62,6 +62,17 @@ for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
 for name in ("CONF_WITH_AES", "CONF_WITH_X86_64_MEMTEST"):
     assert config.syms[name].str_value == "n", name
 
+# Master's 32-bit address-space presets must not enable kernel AES; they
+# retain the external CLI until libaes is ported to those architectures.
+for preset in ("virt-arm-aspace", "virt-m68k-aspace", "falcon-aspace", "amiga-aspace"):
+    config = kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config("configs/" + preset + "_defconfig")
+    config.syms["CONF_WITH_AES"].set_value(2)
+    for name in ("CONF_WITH_PROCESS_ASPACES", "CONF_WITH_USER_ASPACE", "CONF_WITH_CLI", "CONF_EXTERNAL_CLI"):
+        assert config.syms[name].str_value == "y", (preset, name)
+    assert config.syms["CONF_WITH_AES"].str_value == "n", preset
+    assert config.syms["CONF_WITH_LIBAES"].str_value == "n", preset
+
 # The existing legacy GUI keeps its resource/desktop defaults on ARM/m68k.
 for preset in ("virt-arm", "virt-m68k"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
@@ -109,7 +120,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 "-ffunction-sections", "-fdata-sections", "-fno-builtin",
-                "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Ibdos",
+                "-I" + temp, "-Iinclude/arch/x86_64", "-Iinclude", "-Ibdos",
                 "-Iaes", "-Iaes/shared", "tests/cuis/session.c", "aes/cuis_region.c", "aes/shared/gemframegeom.c", "-Wl,--gc-sections",
                 "-o", str(work / "sessions")]
     subprocess.run(command, check=True)
@@ -135,7 +146,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-cast-function-type", "-Wno-clobbered",
                 "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections",
-                "-iquote", str(rollback), "-iquote", "include", "-iquote", "include/arch/x86_64", "-iquote", "bdos",
+                "-Iinclude/arch/x86_64", "-iquote", str(rollback), "-iquote", "include", "-iquote", "include/arch/x86_64", "-iquote", "bdos",
                 "bdos/proc.c", "bdos/kfile.c", "-Wl,--gc-sections"]
     for test in ("deferred_rollback", "deferred_exit"):
         subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)

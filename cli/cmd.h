@@ -31,8 +31,10 @@
  #define MAXPATHLEN      256
  #define BLKDEVNUM       26
  /* a native-ABI program cannot read the system variables or the cookie
-    jar, or call Supexec(): it asks Ssystem() (x86-64 x32, ARM) */
- #if defined(__arm__) || defined(__x86_64__)
+    jar, or call Supexec(): it asks Ssystem() (x86-64 x32, ARM), and so does
+    an m68k program built for a kernel with CONF_WITH_USER_ASPACE
+    (CLI_FORCE_SSYSTEM, from the Makefile) */
+ #if defined(__arm__) || defined(__x86_64__) || defined(CLI_FORCE_SSYSTEM)
   #define CLI_USE_SSYSTEM       1
   #include <mint/mintbind.h>    /* Ssystem() */
  #endif
@@ -75,8 +77,11 @@
     ports and the x86-64 one, which have no Atari-style video hardware
     to switch resolution on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
     CONF_WITH_ATARI_VIDEO fallback), so exposing MODE's resolution
-    switching would just look broken rather than doing anything real */
- #if defined(__arm__) || defined(X32_USERLAND)
+    switching would just look broken rather than doing anything real.
+    The same goes for the m68k build for a kernel that gives every process
+    an address space of its own (CLI_FORCE_SSYSTEM, below), which runs on
+    the virt machine. */
+ #if defined(__arm__) || defined(X32_USERLAND) || defined(CLI_FORCE_SSYSTEM)
   #define CLI_WITH_RESOLUTION    0
   #define CLI_WITH_TT_RESOLUTION 0
  #else

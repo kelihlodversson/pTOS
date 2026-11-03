@@ -87,11 +87,16 @@ os_dummy:
  * _main -- two-phase boot: a physical-mode "hello" (proves the CPU
  * reached here and the UART works before the MMU is on), then the
  * MMU bring-up (bios/machine/virt-arm/virt_mmu.c) using only literal
- * physical constants, then a long jump into virtual addressing, then
- * a second "hello" plus a sysvars round-trip check using ordinary
- * symbol-based addressing to prove the low fixed-address TOS system
- * variables (tosvars.ld) are correctly mapped via the low MMU window,
- * then hands off to _biosmain.
+ * physical constants, then a long jump into the window, where the kernel
+ * is linked, then a second "hello" plus a round-trip check of a kernel
+ * variable using ordinary symbol-based addressing, then hands off to
+ * _biosmain.
+ *
+ * Until the jump, the code runs at its physical address: it is linked in the
+ * window (VIRT_WINDOW_VBASE and up), so everything before it has to be
+ * position independent -- relative branches, adr, and literal pools holding
+ * constants, never the address of a symbol -- and the C functions it calls
+ * (virt_uart0_init(), virt_mmu_bootstrap()) touch no global.
  */
 .balign 4
 C_SYM(main):
@@ -128,11 +133,14 @@ C_SYM(main):
     bl  C_SYM(flush_data_cache_all)
     ldr r4, =C_SYM(phystop)
     ldr r11, [r4]
+#if CONF_WITH_PROCESS_ASPACES
+    sub r11, r11, #(VIRT_WINDOW_VBASE & 0xff000000)     /* phystop is in the window */
+#endif
     add r11, r11, #0x100000     /* the RAM window */
     ldr r4, =C_SYM(arm_boot_regs)
     ldmia r4, {r8-r10}
     ldr r4, =0f
-    add r4, r4, #VIRT_RAM_BASE
+    sub r4, r4, #(VIRT_WINDOW_VBASE - VIRT_RAM_BASE)
     bx  r4
 0:  mrc p15, 0, r3, c1, c0, 0
     ldr r4, =0x1805             /* M, C, Z and I */
@@ -197,31 +205,36 @@ C_SYM(main):
 
 virt_arm_post_mmu:
     /*
-     * Running at the virtual address now, with the RAM at virtual 0: the
-     * scratch stack is a new one, growing down from 64 KiB below the top of
-     * the RAM (not the early stack of the first 8 MiB, which is only mapped
-     * for the MMU switch itself), until the switch to C_SYM(stktop) below.
-     * The physical alias of the start of the RAM is not needed any more.
+     * Running in the window now, with the RAM also at virtual 0 (the pool):
+     * the scratch stack is a new one, growing down from 64 KiB below the top
+     * of the RAM as the pool sees it (not the early stack of the first
+     * 8 MiB, which is only mapped for the MMU switch itself), until the
+     * switch to C_SYM(stktop) below.  The physical alias of the start of the
+     * RAM is not needed any more, except for a reset.
      */
+#if CONF_WITH_PROCESS_ASPACES
+    ldr sp, =VIRT_WINDOW_VBASE  /* no pool: the kernel is all there is in the window */
+    add sp, sp, r11
+    sub sp, sp, #0x10000
+#else
     sub sp, r11, #0x10000
+#endif
     ldr r4, =hello_msg_virt
     bl  print_string
 
-    /* sysvars round-trip: _phystop is just an ordinary global on ARM
-     * now (bios/arch/arm/tosvars.c -- see kelihlodversson/pTOS#219), so
-     * this no longer proves anything specific to sysvars, but it's a
-     * convenient, already-linked address to sanity-check that the low
-     * MMU window actually maps virtual low addresses onto real RAM
-     * before anything else here relies on memory access working at
-     * all. */
+    /* round-trip: _phystop is just an ordinary global on ARM (see
+     * kelihlodversson/pTOS#219), a convenient, already-linked address to
+     * sanity-check that the window actually maps the kernel's addresses
+     * onto real RAM before anything else here relies on memory access
+     * working at all. */
     ldr r0, =C_SYM(phystop)
     ldr r1, =0x12345678
     str r1, [r0]
     ldr r2, [r0]
     cmp r1, r2
-    bne sysvars_check_failed
+    bne window_check_failed
 
-    ldr r4, =sysvars_ok_msg
+    ldr r4, =window_ok_msg
     bl  print_string
 
     /* Clear the BSS segment now that virtual addressing is live. */
@@ -253,6 +266,17 @@ virt_arm_post_mmu:
      */
     ldr r0, =C_SYM(phystop)
     sub r1, r11, #0x100000
+#if CONF_WITH_PROCESS_ASPACES
+    ldr r2, =VIRT_WINDOW_VBASE  /* the top of the RAM in the window */
+    add r1, r1, r2
+    ldr r0, =C_SYM(boot_ttbr0)  /* the table the MMU was switched on with: for a reset */
+    ldr r2, =VIRT_RAM_BASE
+    add r2, r2, r11
+    sub r2, r2, #0x100000
+    add r2, r2, #0x4000         /* behind the 16 KiB of the kernel half */
+    str r2, [r0]
+    ldr r0, =C_SYM(phystop)
+#endif
     str r1, [r0]
 
     /*
@@ -276,7 +300,12 @@ virt_arm_post_mmu:
     sub r0, r10, r0
     cmp r0, r11
     movhs r10, #0
+#if CONF_WITH_PROCESS_ASPACES
+    ldrlo r2, =VIRT_WINDOW_VBASE
+    addlo r10, r0, r2           /* the window address of the same bytes */
+#else
     movlo r10, r0
+#endif
 3:
     ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r8-r10}
@@ -466,13 +495,13 @@ print_string:
     bx  lr
 
 /*
- * If the low MMU window is wrong, ordinary memory access doesn't
+ * If the window is wrong, ordinary memory access doesn't
  * actually reach real RAM the way everything from here on depends on.
  * Continuing (BSS clear, _biosmain) would silently corrupt or misread
  * memory instead of failing loudly, so halt here instead.
  */
-sysvars_check_failed:
-    ldr r4, =sysvars_fail_msg
+window_check_failed:
+    ldr r4, =window_fail_msg
     bl  print_string
 1:  b   1b
 
@@ -480,10 +509,10 @@ hello_msg_phys:
     .asciz "virt-arm: pre-MMU boot OK\r\n"
 hello_msg_virt:
     .asciz "virt-arm: post-MMU boot OK\r\n"
-sysvars_ok_msg:
-    .asciz "virt-arm: sysvars alias OK\r\n"
-sysvars_fail_msg:
-    .asciz "virt-arm: sysvars alias FAILED\r\n"
+window_ok_msg:
+    .asciz "virt-arm: kernel window OK\r\n"
+window_fail_msg:
+    .asciz "virt-arm: kernel window FAILED\r\n"
     .align 2
 
     .globl C_SYM(arm_dispatch_undef)
@@ -502,12 +531,17 @@ C_SYM(arm_dispatch_undef):
     moveq  r0, #0x28
     movne  r0, #0x10
     mov    r1, sp
-    FPU_PUSH_SCRATCH ip             /* below the frame r1 points to */
-    ldr    ip, [r0]
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
+    FPU_PUSH_SCRATCH ip             /* below the frame r1 points to (keeps the flags) */
+    ldreq  ip, =C_SYM(tos_vec_linea)
+    ldrne  ip, =C_SYM(tos_vec_undef)
+    ldr    ip, [ip]
     blx ip
     FPU_POP_SCRATCH ip
-    add    sp, #4*15
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!
 
     .globl C_SYM(arm_dispatch_svc)
@@ -517,11 +551,20 @@ C_SYM(arm_dispatch_svc):
     // TRAP #n this would leave any handler that blocks waiting for an
     // interrupt (e.g. bconin2()'s stop_until_interrupt() loop) unable to
     // ever be woken (#185).
-    cpsie i
-    ldr ip, [lr, #-4]
+    // The handler of TRAP #n is tos_vec_svc[n] (bios/arch/arm/vectors.c):
+    // r3 is borrowed to reach the array and restored from the stack (with IRQ
+    // still masked, as the exception left it), as every argument register is
+    // live.
+    str r3, [sp, #-4]!
+    mrs ip, spsr
+    tst ip, #0x20          // Thumb: the SVC is the halfword before lr
+    ldrneh ip, [lr, #-2]
+    ldreq ip, [lr, #-4]
     and ip, ip, #0xF
-    lsl ip, ip, #0x2
-    ldr ip, [ip, #+0x80]
+    ldr r3, =C_SYM(tos_vec_svc)
+    ldr ip, [r3, ip, lsl #2]
+    ldr r3, [sp], #4
+    cpsie i
     bx  ip
 
     .globl C_SYM(arm_dispatch_prefetch_abort)
@@ -535,10 +578,16 @@ C_SYM(arm_dispatch_prefetch_abort):
     mrc p15, 0, r3, c6, c0,  2
     mov r0, #0x08
     mov r1, sp
-    ldr ip, [r0]
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
+    FPU_PUSH_SCRATCH ip    /* the FPU registers the handler may change: the process runs again */
+    ldr ip, =C_SYM(tos_vec_prefetch)
+    ldr ip, [ip]
     blx ip
-    add    sp, #4*15
+    FPU_POP_SCRATCH ip
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!
 
     .globl C_SYM(arm_dispatch_data_abort)
@@ -548,14 +597,20 @@ C_SYM(arm_dispatch_data_abort):
     cps    #0x13
     sub    sp, #4*15
     stmia  sp, {r0-r14}^
-    mrc p15, 0, r2, c6, c0,  0
-    mrc p15, 0, r3, c5, c0,  0
+    mrc p15, 0, r2, c5, c0,  0      /* DFSR, then DFAR: the order of any_vec() */
+    mrc p15, 0, r3, c6, c0,  0
     mov r0, #0x0c
     mov r1, sp
-    ldr ip, [r0]
+    sub    sp, sp, #4      /* pad: srs (8) + frame (60) leave sp 4 mod 8 (AAPCS) */
+    FPU_PUSH_SCRATCH ip    /* the FPU registers the handler may change: the process runs again */
+    ldr ip, =C_SYM(tos_vec_data)
+    ldr ip, [ip]
     blx ip
-    add    sp, #4*15
+    FPU_POP_SCRATCH ip
+    add    sp, sp, #4              /* the pad */
     ldmfd  sp, {r0-r14}^
+    nop                            /* (nothing may touch a banked register right after) */
+    add    sp, sp, #4*15           /* then the frame is gone */
     rfefd  sp!
 
     .extern C_SYM(virt_int_handler)
@@ -595,3 +650,8 @@ C_SYM(start_in_hyp): .word 0
 .balign 4
 .global C_SYM(arm_boot_regs)
 C_SYM(arm_boot_regs): .ds.l 3
+/* the physical address of the table of the lower half that the MMU was
+ * switched on with (identity mapping of the start of the RAM), which a
+ * reset needs back (CONF_WITH_PROCESS_ASPACES) */
+.global C_SYM(boot_ttbr0)
+C_SYM(boot_ttbr0): .ds.l 1

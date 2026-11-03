@@ -23,7 +23,9 @@
 
 void test_pie_load(void);
 
-#if defined(__arm__) || defined(__mc68000__)
+/* the segments follow the basepage back to back only where the image is loaded
+ * into the TPA: in an address space of its own it is at the image address */
+#if (defined(__arm__) || defined(__mc68000__)) && !defined(TEST_WITH_USER_ASPACE)
 
 /*
  * The sizes in the basepage of a loaded program add up (with the basepage) to
@@ -82,7 +84,7 @@ void test_pie_load(void)
                       "PIEPROBE.TOS exited nonzero "
                       "(PIE dynamic relocations not applied?)");
 
-#if defined(__arm__) || defined(__mc68000__)
+#if (defined(__arm__) || defined(__mc68000__)) && !defined(TEST_WITH_USER_ASPACE)
     {
         const char *failure = check_footprint();
 
