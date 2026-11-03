@@ -316,7 +316,8 @@ char *scan_str(char *pcurr, char **ppstr)
 /*
  *  Parse a single line from the EMUDESK.INF file
  */
-static char *app_parse(char *pcurr, ANODE *pa)
+/* Keep this large, startup-only parser separate from app_start in small ROMs. */
+static char * __attribute__((noinline)) app_parse(char *pcurr, ANODE *pa)
 {
     WORD temp;
 
