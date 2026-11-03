@@ -27,16 +27,50 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "n"
 
+# The external GEM desktop/resources must survive removal of both kernel
+# AES implementations. Shared options retain their normal desktop defaults.
 config = kconfiglib.Kconfig(warn_to_stderr=False)
 config.load_config("configs/pc-x86_64-desktop-tests_defconfig")
 config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
 config.syms["CONF_WITH_LIBAES"].set_value(2)
-assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "y"
+config.syms["CONF_WITH_AES"].set_value(0)
+config.syms["CONF_WITH_X32_AES"].set_value(0)
+for name in ("CONF_WITH_LIBAES_DESK", "CONF_WITH_DYNAMIC_DESK", "CONF_WITH_READ_INF",
+             "CONF_WITH_WINDOW_ICONS", "CONF_WITH_BACKGROUNDS", "CONF_WITH_COLOUR_ICONS",
+             "CONF_WITH_3D_OBJECTS", "CONF_WITH_PORTABLE_RSC_LOAD", "CONF_WITH_X32_DESKTOP_TEST"):
+    assert config.syms[name].str_value == "y", name
+assert config.syms["AES_STACK_SIZE"].str_value == ""
+assert config.syms["CONF_WITH_LOADABLE_CURSORS"].str_value == "n"
+assert config.syms["CONF_WITH_LEGACY_RSC_LOAD"].str_value == "n"
 config.syms["CONF_EXTERNAL_DESK"].set_value(0)
 assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "n"
+assert config.syms["CONF_WITH_DYNAMIC_DESK"].str_value == "n"
 config.syms["CONF_EXTERNAL_DESK"].set_value(2)
+config.syms["CONF_WITH_X32_VDI"].set_value(0)
+assert config.syms["CONF_EXTERNAL_DESK"].str_value == "n"
+config.syms["CONF_WITH_X32_VDI"].set_value(2)
+assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "y"
 config.syms["CONF_WITH_LIBAES"].set_value(0)
+assert config.syms["CONF_EXTERNAL_DESK"].str_value == "n"
+assert config.syms["CONF_WITH_READ_INF"].str_value == "n"
 assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "n"
+
+config = kconfiglib.Kconfig(warn_to_stderr=False)
+config.load_config("configs/pc-x86_64-libaes-desktop_defconfig")
+for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
+             "CONF_WITH_DYNAMIC_DESK", "CONF_WITH_X32_VDI"):
+    assert config.syms[name].str_value == "y", name
+for name in ("CONF_WITH_AES", "CONF_WITH_X32_AES", "CONF_WITH_X86_64_MEMTEST"):
+    assert config.syms[name].str_value == "n", name
+
+# The existing legacy GUI keeps its resource/desktop defaults on ARM/m68k.
+for preset in ("virt-arm", "virt-m68k"):
+    config = kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config("configs/" + preset + "_defconfig")
+    for name in ("CONF_WITH_AES", "CONF_EXTERNAL_DESK", "CONF_WITH_READ_INF",
+                 "CONF_WITH_COLOUR_ICONS", "CONF_WITH_PORTABLE_RSC_LOAD"):
+        assert config.syms[name].str_value == "y", (preset, name)
+    assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "n"
 
 with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     work = Path(temp)

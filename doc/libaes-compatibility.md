@@ -66,13 +66,17 @@ standard binding state, not CUIS session handles.
 
 These are transitional configurations, not the desired final constraints.
 Kconfig still permits kernel AES with CUIS and with separate address spaces.
-The resident desktop currently relies on options nested below CONF_WITH_AES;
-setting that symbol to n is not yet a complete external-desktop cutover.
+The external libaes desktop, resources and shared rendering options now work
+with both CONF_WITH_AES=n and CONF_WITH_X32_AES=n. Kernel-AES-only stack and
+loadable-cursor options remain scoped to that implementation. This establishes
+an independent external GUI path; final exclusion rules and legacy-service
+removal are subsequent gates.
 
 Configuration | Current path | Validation
 --- | --- | ---
 x32, AES=n, LIBAES=n | Native CLI; no GUI library | `configs/pc-x86_64_defconfig`, x86 boot CI
-x32, AES=n, ELF_SHARED=y, LIBAES=y | Ordinary shared GEM applications over CUIS; no desktop required | `tests/cuis/gem.c`, combined/headless shared-library boot CI
+x32, AES=n, ELF_SHARED=y, LIBAES=y, EXTERNAL_DESK=n | Ordinary shared GEM applications over CUIS; no desktop required | `tests/cuis/gem.c`, combined/headless shared-library boot CI
+x32, AES=n, X32_AES=n, LIBAES=y, EXTERNAL_DESK=y | Resident shared EmuDesk and libaes, with no legacy kernel AES service | `configs/pc-x86_64-libaes-desktop_defconfig`, shared-desktop CI, `tests/x32_desktop/run.py`
 x32, AES=y, LIBAES=n, EXTERNAL_DESK=y | Transitional kernel AES and typed ring-3 desktop | `tests/x32_desktop/run.py`, feature-disabled desktop CI
 x32, AES=y, LIBAES=y, EXTERNAL_DESK=y | BIOS launches resident libaes EmuDesk directly; kernel AES is still linked but not its shell | `tests/x32_desktop/run.py`, RCS x32 GUI CI
 x32, AES=y, LIBAES=y, EXTERNAL_DESK=n | Built-in desktop retains legacy AES integration | Transitional link validation; not external-desktop acceptance evidence
@@ -108,9 +112,11 @@ parameters and normal/fault cleanup.
 4. Shutdown preparation, consent/refusal, cancellation and desktop poweroff
    are implemented. Live resolution switching requires a platform backend and
    remains disabled without terminating clients.
-5. Move external desktop/resources/options out of kernel-AES dependencies and
-   migrate remaining native test clients away from the typed legacy service.
-   Hide the transitional aes_* library exports behind the library boundary.
+5. External desktop/resources/options are independent of kernel AES (#878).
+   Migrate remaining native test clients away from the typed legacy service
+   and hide transitional aes_* library exports behind the library boundary.
+   Shared-desktop CI now runs with both kernel AES implementations disabled;
+   legacy desktop jobs remain until their explicit migration/removal.
 6. Test the resulting external GUI and CLI/fallback configurations, then make
    CUIS/kernel AES mutually exclusive and kernel AES unavailable with
    USER_ASPACE on every architecture. Architectures without external libaes

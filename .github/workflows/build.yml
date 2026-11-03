@@ -106,6 +106,10 @@ jobs:
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
           config.syms["CONF_WITH_LIBAES"].set_value(2)
+          config.syms["CONF_WITH_AES"].set_value(0)
+          config.syms["CONF_WITH_X32_AES"].set_value(0)
+          assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "y"
+          assert config.syms["CONF_WITH_X32_DESKTOP_TEST"].str_value == "y"
           config.syms["CONF_WITH_SHUTDOWN"].set_value(2)
           config.write_config()
           PY
@@ -114,6 +118,12 @@ jobs:
             readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
             readelf -d emudesk.prg | grep 'libptos.so'
             readelf -d emudesk.prg | grep 'libaes.so'
+            nm emutos.efi > obj/shared-desktop-kernel.symbols
+            grep -q ' T cuis_service$' obj/shared-desktop-kernel.symbols
+            if grep -Eq ' [Tt] (ui_start|aes_service|aes_tree_validate)$' obj/shared-desktop-kernel.symbols; then
+              echo 'External libaes desktop must not link kernel AES services' >&2
+              exit 1
+            fi
             if [ "$variant" = pc-x86_64-desktop-tests ]; then
               readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
               readelf -d cli/emucon.tos | grep 'libptos.so'

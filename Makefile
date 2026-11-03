@@ -127,6 +127,7 @@ ifneq ($(CONF_WITH_AES),y)
 ifneq ($(filter y,$(CONF_WITH_X32_AES) $(CONF_WITH_CUIS)),)
 optional-dirs-y += aes
 endif
+optional-dirs-$(CONF_EXTERNAL_DESK) += desk
 endif
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
