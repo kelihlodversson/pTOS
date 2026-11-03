@@ -141,11 +141,11 @@ config CONF_EXTERNAL_DESK
 	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
 	help
 	  Build the desktop as an ordinary program, emudesk.prg, and leave it
-	  out of the kernel image.  The AES starts it with Pexec() from the
-	  root directory of the boot drive (EMUDESK.PRG) when it runs the
-	  desktop, and reads its settings from EMUDESK.INF there as before.
-	  If the file is not there, the AES says so on the console and runs
-	  EmuCON instead.
+	  out of the kernel image. With libaes, the BIOS starts it directly
+	  as the resident GUI. The legacy kernel AES starts it with Pexec()
+	  when it runs the desktop. Both load EMUDESK.PRG from the root of
+	  the boot drive and read EMUDESK.INF there. A missing desktop falls
+	  back to EmuCON.
 
 	  The program is made of the objects of desk/, the helpers of util/
 	  and a small runtime (desk/deskrt.c) that gets what the kernel's own
@@ -161,7 +161,8 @@ config CONF_EXTERNAL_DESK
 	  x86-64 uses an x32 executable and the native VDI library. With
 	  CONF_WITH_LIBAES it uses shared libaes and runs without kernel AES;
 	  otherwise it uses the transitional typed kernel AES library. The
-	  pc-x86_64-desktop_defconfig selects the legacy configuration. ARM/m68k
+	  pc-x86_64-desktop_defconfig selects the legacy configuration;
+	  pc-x86_64-libaes-desktop_defconfig omits kernel AES. ARM/m68k
 	  MMU kernels still need validated GEM entry points (see above).
 
 	  On by default for the images that are loaded into RAM from a disk
