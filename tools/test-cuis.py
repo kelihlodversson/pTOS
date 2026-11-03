@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -77,13 +78,36 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                     "--config", "configs/pc-x86_64_defconfig", "--header",
                     str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")],
                    check=True)
-    for preset in ("pc-x86_64", "virt-arm", "virt-m68k"):
-        rejected = kconfiglib.Kconfig(warn_to_stderr=False)
-        rejected.load_config("configs/" + preset + "_defconfig")
-        rejected.syms["CONF_WITH_USER_ASPACE"].set_value(2)
-        rejected.syms["CONF_WITH_AES"].set_value(2)
-        if rejected.syms["CONF_WITH_USER_ASPACE"].str_value == "y":
+    # Before the 32-bit MMU backend is merged, USER_ASPACE is a hidden
+    # x32-only default. Force that hidden default in a private Kconfig copy
+    # so ARM and m68k exercise the real AES dependency as future backends.
+    fixture = work / "aspace-kconfig"
+    paths = ("Kconfig", "Kconfig.machine", "Kconfig.image", "Kconfig.i18n", "Kconfig.debug",
+             "bios/Kconfig", "bdos/Kconfig", "fs/Kconfig", "vdi/Kconfig", "aes/Kconfig",
+             "desk/Kconfig", "cli/Kconfig", "usb/Kconfig", "tests/Kconfig")
+    for name in paths:
+        destination = fixture / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, destination)
+    bdos = fixture / "bdos/Kconfig"
+    source = bdos.read_text()
+    original = "config CONF_WITH_USER_ASPACE\n\tbool\n"
+    assert original in source
+    bdos.write_text(source.replace(original, original + "\tdefault y\n", 1))
+    previous_srctree = os.environ.get("srctree")
+    try:
+        os.environ["srctree"] = str(fixture)
+        for preset in ("pc-x86_64", "virt-arm", "virt-m68k"):
+            rejected = kconfiglib.Kconfig(str(fixture / "Kconfig"), warn_to_stderr=False)
+            rejected.load_config(str(ROOT / "configs" / (preset + "_defconfig")))
+            rejected.syms["CONF_WITH_AES"].set_value(2)
+            assert rejected.syms["CONF_WITH_USER_ASPACE"].str_value == "y", preset
             assert rejected.syms["CONF_WITH_AES"].str_value == "n", preset
+    finally:
+        if previous_srctree is None:
+            os.environ.pop("srctree", None)
+        else:
+            os.environ["srctree"] = previous_srctree
     geometry = shlex.split(os.environ.get("HOSTCC", "cc"))
     geometry += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-I" + temp,
                  "-Iinclude", "-Iaes", "-Iaes/shared", "tests/cuis/graph_geometry.c",
