@@ -29,11 +29,13 @@ static int launches, native_calls;
 static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
 static char launched_environment[AES_SHELL_ENV];
 static LONG allocation_balance;
+static ULONG allocation_attempts;
 static BOOL fail_allocation;
 UQUAD aes_memory_call(ULONG function, UQUAD argument)
 {
     void *memory;
     if (function == 0x48) {
+        allocation_attempts++;
         if (fail_allocation) return (QUAD)ENSMEM;
         memory = __builtin_malloc((size_t)argument);
         if (!memory) return (QUAD)ENSMEM;
@@ -170,6 +172,7 @@ static int unsupported_checks(void)
     WORD message[8] = { AP_AESTERM,0,0,0,0,0,0,0 };
     int before = launches, before_dta = dta_calls, before_cwd = cwd_calls, before_native = native_calls;
     LONG before_defer = deferred_calls, before_cancel = cancellations;
+    ULONG before_allocation = allocation_attempts;
     for (mode = 0; mode < 256; mode++) {
         if (mode == SWM_LAUNCH || mode == SWM_LAUNCHNOW || mode == SWM_SHUTDOWN ||
             mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG) continue;
@@ -197,6 +200,7 @@ static int unsupported_checks(void)
     VERIFY(!shel_write(SWM_AESMSG,0,0,message,(char *)1));
     VERIFY(launches == before && deferred_calls == before_defer && cancellations == before_cancel);
     VERIFY(dta_calls == before_dta && cwd_calls == before_cwd && !allocation_balance && native_calls == before_native);
+    VERIFY(allocation_attempts == before_allocation);
     return 0;
 }
 static int launch_checks(short *global)

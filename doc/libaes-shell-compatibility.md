@@ -14,7 +14,7 @@ support from the version number or a constant's presence. `AES_MESSAGE` reports
 AP_TERM and CH_EXIT, without claiming live resolution switching.
 
 References: [tos.hyp shel_write](https://freemint.github.io/tos.hyp/en/shel_write.html)
-and [upstream GEMlib selectors/layouts](https://github.com/freemint/gemlib/blob/master/mt_gem.h).
+and [upstream GEMlib selectors/layouts](https://github.com/freemint/gemlib/blob/master/mt_gem.h.in).
 Numeric coincidences between reference AES profiles do not establish identical
 semantics: mode 0's `CL_PARSE=1` is distinct from mode 1's `SHW_CHAIN=1`.
 
