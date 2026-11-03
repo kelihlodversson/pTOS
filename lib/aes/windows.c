@@ -1,5 +1,5 @@
 /* Native window metadata; GEM decoration and compatibility stay in libaes. */
-#include "libaes.h"
+#include "native_bindings.h"
 #include "transport.h"
 
 LONG aes_window_create(LONG x, LONG y, LONG width, LONG height)

@@ -57,10 +57,12 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 `scrp_clear` | unavailable | PC-GEM scrap clearing is not exported. | `lib/aes/desktop.c`
 `inside`, `rc_constrain`, `rc_equal`, `rc_intersect`, `rc_union` | helper | Existing caller-local rectangle helpers, declared in rectfunc.h. | `tests/cuis/program.c`
 
-The `aes_*` transport/session/window/message exports in `exports.map` remain
-migration-test interfaces. They must become private as their tests move to
-standard GEM entry points. `aes_global`, `gl_apid` and `gl_ap_version` are
-standard binding state, not CUIS session handles.
+Native `aes_*` transport/session/window/message helpers are library-private
+and declared only in `lib/aes/native_bindings.h`. Applications use the standard
+GEM exports and `gem.h`/GEMlib; `aes_global`, `gl_apid` and `gl_ap_version` are
+standard binding state, not CUIS session handles. Raw ownership/fault/scheduling
+probes use `tests/cuis/native_probe.h` with direct syscalls, while ordinary GEM
+clients import only standard bindings. The API inventory rejects private exports.
 
 ## Boot/configuration audit
 
@@ -113,8 +115,9 @@ parameters and normal/fault cleanup.
    are implemented. Live resolution switching requires a platform backend and
    remains disabled without terminating clients.
 5. External desktop/resources/options are independent of kernel AES (#878).
-   Migrate remaining native test clients away from the typed legacy service
-   and hide transitional aes_* library exports behind the library boundary.
+   Transitional aes_* helpers are private and native probes use test-only
+   direct syscalls (#880). Migrate the remaining clients/tests away from the
+   older typed kernel AES service; that service is a separate migration gate.
    Shared-desktop CI now runs with both kernel AES implementations disabled;
    legacy desktop jobs remain until their explicit migration/removal.
 6. Test the resulting external GUI and CLI/fallback configurations, then make

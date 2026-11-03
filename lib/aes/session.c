@@ -1,6 +1,6 @@
 /* Per-process writable state in ordinary PIC data; kernel exit is the
  * authoritative cleanup for faults and _Exit, independent of destructors. */
-#include "libaes.h"
+#include "native_bindings.h"
 #include "gemerror.h"
 #include "transport.h"
 static LONG session = -1;

@@ -1,6 +1,6 @@
 /* Real VDI service writes must stay inside the active CUIS visible region. */
 #include "emutos.h"
-#include "libaes.h"
+#include "native_probe.h"
 #include "gemerror.h"
 #include "ptos.h"
 #if CONF_WITH_X32_VDI
@@ -99,6 +99,7 @@ static int copy_checks(WORD handle)
     VDI_SERVICE_SCREEN_REQUEST copy = { 0 };
     WORD output[2], expected;
     int c, x, y;
+#undef CHECK
 #define CHECK(condition) do { if (!(condition)) return 0x5000 | __LINE__; } while (0)
     for (c = 0; c < 6; c++) {
         CHECK(bar(handle) == E_OK);
@@ -159,21 +160,21 @@ int libaes_drawing_checks(void)
     CHECK(bar(handle) == EACCDN);
     CHECK(service(VDI_SERVICE_LINE, handle, 2, (uintptr_t)line, 0) == EACCDN);
     CHECK(pixel(handle, 0, 0, output) == E_OK);
-    audit = aes_window_create(0, 0, 64, 64);
-    CHECK(audit >= 0 && aes_window_show(audit) == E_OK);
-    CHECK(aes_update_begin(audit) == E_OK);
+    audit = probe_window_create(0, 0, 64, 64);
+    CHECK(audit >= 0 && probe_window_show(audit) == E_OK);
+    CHECK(probe_update_begin(audit) == E_OK);
     CHECK(attribute(handle, 23, 1) == E_OK);  /* solid */
     CHECK(attribute(handle, 32, 1) == E_OK);  /* replace */
     CHECK(attribute(handle, 25, 1) == E_OK);  /* black */
     CHECK(bar(handle) == E_OK);
     CHECK(pixel(handle, 4, 4, output) == E_OK);
     black = output[1];
-    CHECK(aes_update_end(audit) == E_OK && aes_window_hide(audit) == E_OK);
-    target = aes_window_create(8, 8, 40, 40);
-    cover = aes_window_create(16, 16, 16, 16);
+    CHECK(probe_update_end(audit) == E_OK && probe_window_hide(audit) == E_OK);
+    target = probe_window_create(8, 8, 40, 40);
+    cover = probe_window_create(16, 16, 16, 16);
     CHECK(target >= 0 && cover >= 0);
-    CHECK(aes_window_show(target) == E_OK && aes_window_show(cover) == E_OK);
-    CHECK(aes_update_begin(target) == E_OK);
+    CHECK(probe_window_show(target) == E_OK && probe_window_show(cover) == E_OK);
+    CHECK(probe_update_begin(target) == E_OK);
     CHECK(service(VDI_SERVICE_CLIP, handle, 0, (uintptr_t)clip, 0) == E_OK);
     CHECK(service(VDI_SERVICE_COLOR, handle, 0, 0, 0) == 0);
     CHECK(service(VDI_SERVICE_LINE, handle, 2, (uintptr_t)line, 0) == E_OK);
@@ -193,8 +194,8 @@ int libaes_drawing_checks(void)
     CHECK(service(VDI_SERVICE_CLIP, handle, 1, (uintptr_t)clip, 0) == E_OK);
     CHECK(attribute(handle, 25, 1) == E_OK);
     CHECK(bar(handle) == E_OK);
-    CHECK(aes_update_end(target) == E_OK);
-    CHECK(aes_window_show(audit) == E_OK && aes_update_begin(audit) == E_OK);
+    CHECK(probe_update_end(target) == E_OK);
+    CHECK(probe_window_show(audit) == E_OK && probe_update_begin(audit) == E_OK);
     CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 47, 47, output) == E_OK && output[1] != black);
@@ -202,15 +203,15 @@ int libaes_drawing_checks(void)
     CHECK(pixel(handle, 20, 50, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 11, 11, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 13, 13, output) == E_OK && output[1] != black);
-    CHECK(aes_update_end(audit) == E_OK);
-    CHECK(aes_window_hide(audit) == E_OK);
-    CHECK(aes_window_configure(target, -100, -100, 10, 10) == E_OK);
-    CHECK(aes_update_begin(target) == E_OK);
+    CHECK(probe_update_end(audit) == E_OK);
+    CHECK(probe_window_hide(audit) == E_OK);
+    CHECK(probe_window_configure(target, -100, -100, 10, 10) == E_OK);
+    CHECK(probe_update_begin(target) == E_OK);
     CHECK(service(VDI_SERVICE_CLIP, handle, 0, (uintptr_t)clip, 0) == E_OK);
     CHECK(attribute(handle, 25, 0) == E_OK);
     CHECK(bar(handle) == E_OK); /* empty screen intersection must not draw */
-    CHECK(aes_update_end(target) == E_OK);
-    CHECK(aes_window_show(audit) == E_OK && aes_update_begin(audit) == E_OK);
+    CHECK(probe_update_end(target) == E_OK);
+    CHECK(probe_window_show(audit) == E_OK && probe_update_begin(audit) == E_OK);
     CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
     /* Last close and the next client open must not clear the display, even
@@ -220,9 +221,9 @@ int libaes_drawing_checks(void)
     handle = workstation.handle;
     CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
     CHECK(pixel(handle, 47, 47, output) == E_OK && output[1] != black);
-    CHECK(aes_update_end(audit) == E_OK);
-    CHECK(aes_window_destroy(audit) == E_OK && aes_window_destroy(target) == E_OK);
-    CHECK(aes_window_destroy(cover) == E_OK);
+    CHECK(probe_update_end(audit) == E_OK);
+    CHECK(probe_window_destroy(audit) == E_OK && probe_window_destroy(target) == E_OK);
+    CHECK(probe_window_destroy(cover) == E_OK);
     CHECK(service(VDI_SERVICE_CLOSE, handle, 0, 0, 0) == E_OK);
     CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
 #undef CHECK

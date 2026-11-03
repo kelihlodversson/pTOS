@@ -20,11 +20,13 @@ def check(root=ROOT):
     matrix = (root / "doc/libaes-compatibility.md").read_text()
     export_map = c_code((root / "lib/aes/exports.map").read_text())
     exports = set(re.findall(r"\b\w+\b", export_map.split("global:")[1].split("local:")[0]))
-    # Standard binding globals and the explicitly transitional CUIS interface
-    # are documented separately from GEM function bindings.
+    # Only standard binding state is outside the GEM/helper function inventory.
+    # Native CUIS coordination must stay inside the library boundary.
     state = {"aes_global", "gl_apid", "gl_ap_version"}
     assert state <= exports, "missing standard binding globals: " + ", ".join(sorted(state - exports))
-    functions = {name for name in exports if name not in state and not name.startswith("aes_")}
+    private = {name for name in exports if name.startswith("aes_") and name not in state}
+    assert not private, "private CUIS exports: " + ", ".join(sorted(private))
+    functions = exports - state
     declarations = c_code((root / "include/gem.h").read_text())
     helpers = c_code((root / "include/rectfunc.h").read_text())
     rows = {}

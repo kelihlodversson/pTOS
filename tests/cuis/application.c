@@ -1,6 +1,6 @@
 /* Exercise the public GEM bindings against a failing/private transport. */
 #include "gem.h"
-#include "libaes.h"
+#include "../../lib/aes/native_bindings.h"
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/application.h"

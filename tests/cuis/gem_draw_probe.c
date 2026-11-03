@@ -1,7 +1,7 @@
 #include "vdi_service.h"
 #include "gem.h"
 #include "gemerror.h"
-#include "libaes.h"
+#include "native_probe.h"
 #include "gem_draw_probe.h"
 static LONG service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -29,17 +29,17 @@ int gem_probe_pixel(WORD handle, WORD x, WORD y)
 /* Transitional native per-window update API, isolated from GEM headers. */
 LONG gem_probe_update_begin(void)
 {
-    LONG window = aes_window_create(8,8,40,40), rc;
+    LONG window = probe_window_create(8,8,40,40), rc;
     if (window < 0) return window;
-    rc = aes_window_show(window);
-    if (rc == 0) rc = aes_update_begin(window);
+    rc = probe_window_show(window);
+    if (rc == 0) rc = probe_update_begin(window);
     return rc < 0 ? rc : window;
 }
 LONG gem_probe_update_end(LONG window)
 {
-    LONG rc = aes_update_end(window);
-    if (rc == 0) rc = aes_window_hide(window);
-    if (rc == 0) rc = aes_window_destroy(window);
+    LONG rc = probe_update_end(window);
+    if (rc == 0) rc = probe_window_hide(window);
+    if (rc == 0) rc = probe_window_destroy(window);
     return rc;
 }
 
