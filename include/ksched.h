@@ -21,15 +21,24 @@ void ksched_context_restore(UQUAD identity);
 /* Called with IRQs masked. Predicates run with IRQs masked and must not
  * allocate, block or access user memory. FALSE means no managed task. */
 BOOL ksched_block(BOOL (*ready)(void *), void *argument);
+/* The same wait for callers that do not already hold an IRQ mask. */
+BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
 /* Standard async process calls are admitted only within a managed group.
  * Spawn consumes an unprepared, loaded basepage only on success. */
 BOOL ksched_spawn_allowed(void);
 LONG ksched_spawn(PD *pd);
+/* Internal observed launch, available only with CUIS. */
+LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token);
+LONG ksched_defer(PD *pd, ULONG session);
+LONG ksched_defer_cancel(void);
+void proc_dispose_deferred(PD *program);
 LONG ksched_yield(void);
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
 BOOL ksched_parent_pid(PD *pd, WORD *pid);
 void ksched_exiting(PD *pd, UWORD status);
+/* CUIS successor activation after complete teardown; pd is identity only. */
+void ksched_exited(PD *pd);
 void ksched_fault(PD *pd, WORD signal);
 LONG proc_prepare_scheduled(PD *pd);
 LONG proc_start_scheduled(PD *pd, BOOL take_ownership);

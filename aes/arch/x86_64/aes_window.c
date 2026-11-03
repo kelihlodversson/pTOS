@@ -495,7 +495,7 @@ BOOL x86_64_aes_window_redraw(PD *pd, const WORD *message)
     return TRUE;
 }
 
-BOOL x86_64_aes_window_pending(PD *pd, AES_MESSAGE *message)
+BOOL x86_64_aes_window_pending(PD *pd, AES_CLIENT_MESSAGE *message)
 {
     WORD h;
     CLIENT_WINDOW *w;

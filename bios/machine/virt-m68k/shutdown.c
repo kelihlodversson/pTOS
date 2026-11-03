@@ -34,3 +34,10 @@ void machine_reset(BOOL cold)
     (void)cold;
     VIRT_CTRL_CMD = CMD_RESET;
 }
+
+#if CONF_WITH_CUIS
+BOOL machine_can_poweroff(void)
+{
+    return FALSE;
+}
+#endif

@@ -423,6 +423,22 @@ SBYTE *kproc_uft(PD *pd)
     return kproc ? kproc->uft : pd->p_uft;
 }
 
+#if CONF_WITH_CUIS
+void kproc_standard_file_refs(ULONG *references)
+{
+    KPROC *kproc;
+    WORD i;
+
+    bzero(references,OPNFILES*sizeof(*references));
+    for (kproc = kproc_list; kproc; kproc = kproc->next)
+        for (i = 0; i < NUMSTD; i++) {
+            WORD handle = kproc->uft[i];
+            if (handle >= NUMSTD && handle < NUMHANDLES)
+                references[handle-NUMSTD]++;
+        }
+}
+#endif
+
 UBYTE *kproc_curdir(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
@@ -1028,6 +1044,12 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     info.basepage = (ULONG)(uintptr_t)pd;
     info.bootdrive = bootdev;
     info.load_bias = bias;
+    info.capture_launch = 0;
+    info.environment = 0;
+#if CONF_WITH_LIBAES
+    info.capture_launch = 1;
+    info.environment = (ULONG)(uintptr_t)kproc->env_start;
+#endif
     status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
                         (const unsigned char *)pd->p_cmdlin, sizeof(pd->p_cmdlin), kproc->env_start,
                         (ULONG)(kproc->env_end - kproc->env_start), &info, &rsp, &used);
@@ -1123,6 +1145,20 @@ void kproc_hand_over(PD *caller, PD *child)
                           ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER);
 }
 
+#if CONF_WITH_CUIS
+/* Identify from trusted creator/allocation metadata, without reading the
+ * caller-writable basepage or allowing a child to run before observation. */
+LONG kproc_child_image_pid(PD *pd, PD *caller)
+{
+    KPROC *kproc = kproc_find(pd);
+    if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace ||
+        procmem_gen(kproc->user_start) != kproc->tpa_gen ||
+        procmem_gen(kproc->env_start) != kproc->env_gen) return EIMBA;
+    return kproc->pid;
+}
+#endif
+
+
 /*
  * Pexec(PE_GO, PE_GOTHENFREE) from ring 3.  The basepage the caller passes is
  * only a request: it must be one the kernel made for this caller and has not
@@ -1131,6 +1167,7 @@ void kproc_hand_over(PD *caller, PD *child)
  * basepage that is not (or no longer) the caller's, EPLFMT for fields out of
  * bounds.  See doc/x86_64-address-space.txt, "Basepages in ring 3".
  */
+
 LONG kproc_check_launch(PD *pd, PD *caller)
 {
     KPROC *kproc = kproc_find(pd);

@@ -3,6 +3,8 @@
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
+#include "menubar.h"
+#include "lifecycle.h"
 
 static short coordinate(LONG value)
 {
@@ -35,14 +37,18 @@ short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers)
     return mt_graf_mkstate(mx, my, buttons, modifiers, aes_global);
 }
 
-short mt_evnt_multi(short events, short clicks, short button_mask, short button_state,
+static short event_once(short events, short clicks, short button_mask, short button_state,
                     short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                     short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
                     short message[], unsigned long interval, short *mx, short *my,
-                    short *buttons, short *modifiers, short *key, short *click_count, short *global)
+                    short *buttons, short *modifiers, short *key, short *click_count, short *global, BOOL clocked, LONG start, ULONG duration)
 {
     LONG session, ready, result = 0, state[4], input[5];
-    ULONG mask = 0;
+    ULONG mask = 0, wait_mask, elapsed, ticks;
+    LONG now;
+    BOOL frame_work = aes_frames_registered(), child_failed = FALSE, retry_display = FALSE;
+    LONG (*messages)(LONG,short *) = ((events & MU_TIMER) && !interval) ?
+        aes_window_messages_poll : aes_window_messages;
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
         ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL) ||
         ((events & MU_BUTTON) && ((UWORD)clicks & 0xfe00)) ||
@@ -66,32 +72,124 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                        (QUAD)m2_w, (QUAD)m2_h) < 0) return 0;
         mask |= CUIS_READY_RECT2;
     }
-    if ((events & MU_MESAG) && aes_window_messages(session, global) < 0) return 0;
-    if (events & MU_MESAG) mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE;
+    if (!aes_lifecycle_wait_display() && ((events & MU_MESAG) || frame_work) && messages(session, global) < 0) return 0;
+    if (events & MU_MESAG) {
+        child_failed = aes_child_messages(session) < 0;
+        mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD;
+    }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
-    ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, mask, interval, 0, 0);
-    if (ready <= 0 || ((ULONG)ready & ~mask)) return 0;
-    if ((ready & CUIS_READY_NOTICE) && aes_window_messages(session, global) < 0) return 0;
+    wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
+    if (aes_lifecycle_listening() && !aes_frames_wait_display() && !aes_lifecycle_wait_display()) wait_mask |= CUIS_READY_COHORT;
+    /* A multi-click owns per-call accumulation until completion. Service
+     * frame work afterward rather than interrupting that unfinished count. */
+    if (aes_frames_listening() && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
+        wait_mask |= CUIS_READY_NOTICE;
+    if (aes_controls_listening()) wait_mask |= CUIS_READY_CONTROL;
+    if (aes_frames_suspended()) wait_mask &= ~CUIS_READY_NOTICE;
+    else if (aes_frames_wait_display()) {
+        wait_mask &= ~(CUIS_READY_NOTICE|CUIS_READY_CONTROL); wait_mask |= CUIS_READY_DISPLAY;
+    }
+    if (aes_lifecycle_wait_display()) {
+        wait_mask &= ~(CUIS_READY_STREAM|CUIS_READY_NOTICE|CUIS_READY_CHILD|CUIS_READY_COHORT|
+                       CUIS_READY_CONTROL|CUIS_READY_SURFACE|CUIS_READY_SERVICE);
+        if (events & MU_MESAG) wait_mask |= CUIS_READY_DISPLAY;
+    }
+    if (clocked) {
+        now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+        if (now < 0) return 0;
+        elapsed = ((ULONG)now-(ULONG)start) & 0x7fffffffUL;
+        ticks = elapsed >= duration ? 0 : duration-elapsed;
+        interval = ticks > 1 ? (ticks-1)*5 : ticks ? 1 : 0;
+    }
+    /* Internal service wakes also work with double-click-capable calls.
+     * CUIS defers them while a real multi-click is accumulating, without
+     * replacing the application's independent timer deadline. */
+    if (aes_controls_repeating()) wait_mask |= CUIS_READY_SERVICE;
+    ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
+    if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
+    if (ready & CUIS_READY_COHORT) {
+        if (aes_lifecycle_messages(global) < 0) return 0;
+        ready &= ~CUIS_READY_COHORT;
+        if (!ready) return -1;
+    }
+    if (!aes_lifecycle_wait_display() && (ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) && messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
                        (uintptr_t)&input[2], (uintptr_t)&input[3], (uintptr_t)&input[4]) != E_OK) return 0;
         state[0] = input[2]; state[1] = input[3];
         state[2] = (ULONG)input[4] & 0xffff; state[3] = (ULONG)input[4] >> 16;
     } else if (snapshot(session, state) != E_OK) return 0;
-    if (ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE)) {
-        if (cuis_call6(CUIS_STREAM_READ, session, (uintptr_t)message, 16, 0, 0, 0) != 16) return 0;
-        result |= MU_MESAG;
+    /* Input was already consumed by the native wait. A failed child publish
+     * must leave its completion pending without dropping simultaneous input. */
+    if ((ready & CUIS_READY_CHILD) && aes_child_messages(session) < 0) {
+        ready &= ~CUIS_READY_CHILD;
+        child_failed = TRUE;
+    }
+    if (!aes_lifecycle_wait_display() && frame_work && !(ready & CUIS_READY_NOTICE) && messages(session,global) < 0) return 0;
+    if ((ready & CUIS_READY_NOTICE) && aes_frames_wait_display()) {
+        ready &= ~CUIS_READY_NOTICE;
+        if (!ready) return -1;
+    }
+    retry_display = (ready & CUIS_READY_DISPLAY) && aes_lifecycle_wait_display() && (events & MU_MESAG);
+    if (ready & (CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) {
+        ready &= ~(CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE);
+        if (!ready && !retry_display) return -1;
+    }
+    if ((ready & CUIS_READY_NOTICE) && !(mask & CUIS_READY_NOTICE)) {
+        ready &= ~CUIS_READY_NOTICE;
+        if (!ready) return -1;
+    }
+    if (ready & CUIS_READY_SURFACE) {
+        if (aes_menu_dispatch(global) < 0) return 0;
+        ready &= ~CUIS_READY_SURFACE;
+        if (!ready) return -1; /* Re-arm user predicates after internal tracking. */
+    }
+    if ((ready & (CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD)) || retry_display) {
+        LONG count = aes_lifecycle_read(message,16,global,TRUE);
+        /* A background notice may only repaint, without publishing a GEM
+         * message. Keep simultaneous public events and otherwise re-arm. */
+        if (count == 16) result |= MU_MESAG;
+        else if (count != EAGAIN && count != 0) return 0;
     }
     if (ready & CUIS_READY_TIMER) result |= MU_TIMER;
-    output_state(state, mx, my, buttons, modifiers);
     if (ready & CUIS_READY_KEY) result |= MU_KEYBD;
     if (ready & CUIS_READY_BUTTON) result |= MU_BUTTON;
     if (ready & CUIS_READY_RECT1) result |= MU_M1;
     if (ready & CUIS_READY_RECT2) result |= MU_M2;
+    if (!result) return child_failed ? 0 : -1;
+    output_state(state, mx, my, buttons, modifiers);
     if (key) *key = ready & CUIS_READY_KEY ? (short)(((ULONG)input[0] >> 8 & 0xff00) | (input[0] & 255)) : 0;
     if (click_count) *click_count = ready & CUIS_READY_BUTTON ? (short)input[1] : 0;
     return (short)result;
 }
+short mt_evnt_multi(short events, short clicks, short button_mask, short button_state,
+                    short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
+                    short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
+                    short message[], unsigned long interval, short *mx, short *my,
+                    short *buttons, short *modifiers, short *key, short *click_count, short *global)
+{
+    LONG start = 0, session;
+    ULONG duration;
+    short result;
+    BOOL clocked = (events & MU_TIMER) &&
+        ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered() ||
+         aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening());
+    if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
+    session = aes_application_session(global);
+    duration = interval/5 + (interval%5 != 0) + (interval != 0);
+    if (clocked) {
+        start = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+        if (start < 0) return 0;
+    }
+    for (;;) {
+        if (aes_lifecycle_messages(global) < 0) return 0;
+        if (aes_menu_dispatch(global) < 0) return 0;
+        result = event_once(events,clicks,button_mask,button_state,m1_leave,m1_x,m1_y,m1_w,m1_h,
+                            m2_leave,m2_x,m2_y,m2_w,m2_h,message,interval,mx,my,buttons,modifiers,key,click_count,global,clocked,start,duration);
+        if (result >= 0) return result;
+    }
+}
+
 short evnt_multi(short events, short clicks, short button_mask, short button_state,
                  short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                  short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,

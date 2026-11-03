@@ -35,11 +35,11 @@ LONG aes_appl_find(const char *name)
 {
     return service(AES_SERVICE_FIND, (uintptr_t)name, 0);
 }
-LONG aes_appl_write(WORD recipient, const AES_MESSAGE *message)
+LONG aes_appl_write(WORD recipient, const AES_CLIENT_MESSAGE *message)
 {
     return service(AES_SERVICE_WRITE, (UWORD)recipient, (uintptr_t)message);
 }
-LONG aes_appl_read(AES_MESSAGE *message)
+LONG aes_appl_read(AES_CLIENT_MESSAGE *message)
 {
     return service(AES_SERVICE_READ, (uintptr_t)message, 0);
 }

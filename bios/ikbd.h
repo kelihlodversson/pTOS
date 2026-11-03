@@ -114,6 +114,9 @@ LONG kbshift(WORD flag);
 
 /* some xbios functions */
 WORD keyboard_shifted(WORD scancode);
+#if CONF_WITH_CUIS
+LONG keyboard_map_lookup(UQUAD scancode, UQUAD table);
+#endif
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps);
 WORD kbrate(WORD initial, WORD repeat);
 void bioskeys(void);

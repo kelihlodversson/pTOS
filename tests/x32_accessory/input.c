@@ -45,7 +45,7 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
     AES_EVENT_REQUEST request = { 0 };
     AES_INPUT_EVENT event;
     static const AES_INPUT_EVENT immutable = { 0 };
-    AES_MESSAGE message = { 613, 0, 0, { 548 } };
+    AES_CLIENT_MESSAGE message = { 613, 0, 0, { 548 } };
     AES_APP_INFO renewed;
     VDICONTROL control = { 0 };
     VDIPB pb = { &control, NULL, NULL, NULL, NULL };

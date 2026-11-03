@@ -9,24 +9,49 @@
 #include "layout.h"
 #include "gemobjop.h"
 
-BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
+BOOL aes_workstation_metrics(WORD handle, const WORD device[45], LAYOUT_METRICS *m, WORD *wbox)
+{
+    VDI_SERVICE_DRAW_REQUEST request = { 0 };
+    VDI_SERVICE_DRAW_RESULT result = { 0 };
+    LONG width;
+    request.code = 38;
+    if (aes_graphics_call(VDI_SERVICE_DRAW,handle,(uintptr_t)&request,(uintptr_t)&result,0) != E_OK ||
+        device[0] < 0 || device[0] >= 32767 || device[1] < 0 || device[1] >= 32767 ||
+        result.ptsout[2] <= 0 || result.ptsout[3] <= 0 || result.ptsout[3] > 32764) return FALSE;
+    m->width = device[0]+1; m->height = device[1]+1;
+    m->wchar = result.ptsout[2]; m->hchar = result.ptsout[3]; m->hbox = m->hchar+3;
+    if (wbox) {
+        if (device[3] <= 0 || device[4] <= 0) return FALSE;
+        width = (LONG)m->hbox*device[4]/device[3];
+        if (width < (LONG)m->wchar+4) width = (LONG)m->wchar+4;
+        if (width > 32767) return FALSE;
+        *wbox = width;
+    }
+    return TRUE;
+}
+static BOOL layout_metrics(LAYOUT_METRICS *m, WORD *wbox, WORD *global)
 {
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 };
     VDI_SERVICE_WORKSTATION ws;
-    VDI_SERVICE_DRAW_REQUEST request = { 0 };
-    VDI_SERVICE_DRAW_RESULT result = { 0 };
-    LONG status, closed;
-    if (aes_application_session(global) < 0) return FALSE;
-    if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) return FALSE;
-    request.code = 38; /* vqt_attributes: current system font cell metrics. */
-    status = aes_graphics_call(VDI_SERVICE_DRAW,ws.handle,(uintptr_t)&request,(uintptr_t)&result,0);
-    closed = aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0);
-    if (status != E_OK || closed != E_OK || ws.intout[0] < 0 || ws.intout[0] >= 32767 ||
-        ws.intout[1] < 0 || ws.intout[1] >= 32767 || result.ptsout[2] <= 0 ||
-        result.ptsout[3] <= 0 || result.ptsout[3] > 32764) return FALSE;
-    m->width = ws.intout[0]+1; m->height = ws.intout[1]+1;
-    m->wchar = result.ptsout[2]; m->hchar = result.ptsout[3];
-    m->hbox = m->hchar+3; /* Original gsx_start() menu/box height. */
+    BOOL ok;
+    if (aes_application_session(global) < 0 ||
+        aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) return FALSE;
+    ok = aes_workstation_metrics(ws.handle,ws.intout,m,wbox);
+    return aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) == E_OK && ok;
+}
+
+BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
+{
+    return layout_metrics(m,NULL,global);
+}
+BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *screen_width, WORD *screen_height, WORD *global)
+{
+    LAYOUT_METRICS m;
+    WORD width;
+    if (!layout_metrics(&m,&width,global)) return FALSE;
+    *wbox = width; *hbox = m.hbox;
+    if (screen_width) *screen_width = m.width;
+    if (screen_height) *screen_height = m.height;
     return TRUE;
 }
 

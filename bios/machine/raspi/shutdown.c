@@ -47,3 +47,10 @@ void machine_reset(BOOL cold)
     (void)cold;
     watchdog_reset();
 }
+
+#if CONF_WITH_CUIS
+BOOL machine_can_poweroff(void)
+{
+    return FALSE;
+}
+#endif

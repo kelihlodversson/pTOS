@@ -2509,6 +2509,7 @@ static void test_ring3(void)
         result = Pexec(PE_LOADGO, "C:\\GEM.TOS", "", NULL);
         CHECK(result == 0, "standard GEM lifecycle, private globals and windowless timers");
         CHECK(cuis_session_count() == sessions, "implicit GEM sessions reclaimed on exit and _Exit");
+        CHECK(cuis_context_test_reset(), "shared shell context persists after the final GUI client exits");
         same(&s, "GEM API processes and their async children reclaimed");
         snap(&s);
         result = Pexec(PE_LOADGO, "C:\\GEMMSG.TOS", "", NULL);

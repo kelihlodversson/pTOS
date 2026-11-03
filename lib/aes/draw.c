@@ -18,6 +18,13 @@
 #include "intmath.h"
 #include "string.h"
 #include "rectfunc.h"
+#include "frames.h"
+#include "animation.h"
+#include "gemmovegeom.h"
+#include "gemslidegeom.h"
+#include "gemsizegeom.h"
+#include "gemobjbounds.h"
+#include "gemframegeom.h"
 
 #include "render_context.h"
 #include "resource_context.h"
@@ -409,7 +416,7 @@ static BOOL supported(OBJECT *object, LONG x, LONG y)
     if (!word_position(x,y) || !supported_payload(object,payload_x,payload_y)) return FALSE;
     if (object->ob_flags & FL3DMASK) {
         OBSPEC effective = object->ob_flags & INDIRECT ? *object->ob_spec.indirect : object->ob_spec;
-        LONG pad = 8, w = object->ob_width, h = object->ob_height;
+        LONG pad, w = object->ob_width, h = object->ob_height;
         /* The original 3D painter uses WORD rectangles/line points. Keep
          * every outline, bevel and selected-text addition representable. */
         WORD border, dummy;
@@ -417,7 +424,7 @@ static BOOL supported(OBJECT *object, LONG x, LONG y)
         OBSPEC ignored;
         if (effective.index == -1L) return TRUE;
         ob_sst(object,0,&ignored,&dummy,&dummy,&dummy,&logical,&border);
-        if (border < 0) pad -= 3L*border; else pad += 3L*border;
+        pad = ob_3d_padding(border);
         if (w <= 0 || h <= 0 || (LONG)x-pad < -32768L || (LONG)y-pad < -32768L ||
             (LONG)x+w+pad > 32767L || (LONG)y+h+pad > 32767L ||
             w+2*pad > 32767L || h+2*pad > 32767L) return FALSE;
@@ -591,6 +598,49 @@ WORD objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
 }
 
 typedef struct { WORD kind; GRECT small, large; } FORM_ANIMATION;
+/* A native trajectory is linear in position/size. Validate its endpoints
+ * with wide intermediates, including xcbox's aspect-dependent corner arms. */
+static BOOL animation_rect(LONG x, LONG y, LONG w, LONG h, BOOL corners)
+{
+    LONG right = x+w, bottom = y+h;
+    LONG wa = 2L*aes_painter->wbox, ha = 2L*aes_painter->hbox;
+    if (x < -32768L || x > 32767L || y < -32768L || y > 32767L ||
+        w < -32768L || w > 32767L || h < -32768L || h > 32767L ||
+        right-1 < -32768L || right-1 > 32767L || bottom-1 < -32768L || bottom-1 > 32767L) return FALSE;
+    return !corners || (right <= 32767L && bottom <= 32767L &&
+        x+wa <= 32767L && right-wa >= -32768L && y+ha <= 32767L && bottom-ha >= -32768L);
+}
+static BOOL animation_move(const GRECT *source, WORD dx, WORD dy)
+{
+    LONG xdist = (LONG)dx-source->g_x, ydist = (LONG)dy-source->g_y;
+    WORD count, xstep, ystep;
+    if (xdist < -32767L || xdist > 32767L || ydist < -32767L || ydist > 32767L) return FALSE;
+    aes_animation_scale(xdist < 0 ? -xdist : xdist, ydist < 0 ? -ydist : ydist,&count,&xstep,&ystep);
+    return animation_rect(source->g_x,source->g_y,source->g_w,source->g_h,FALSE) &&
+        animation_rect((LONG)source->g_x+(xdist > 0 ? 1L : -1L)*count*xstep,
+                       (LONG)source->g_y+(ydist > 0 ? 1L : -1L)*count*ystep,source->g_w,source->g_h,FALSE);
+}
+static BOOL animation_valid(FORM_ANIMATION *a)
+{
+    GRECT centered = a->small;
+    WORD x, y, count, xstep, ystep;
+    LONG delta;
+    if (a->kind == AES_ANIMATION_MOVE) return animation_move(&a->small,a->large.g_x,a->large.g_y);
+    if (!animation_rect(a->small.g_x,a->small.g_y,a->small.g_w,a->small.g_h,FALSE) ||
+        !animation_rect(a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
+    gr_stepcalc(a->small.g_w,a->small.g_h,&a->large,&x,&y,&count,&xstep,&ystep);
+    centered.g_x = x; centered.g_y = y;
+    if (a->kind == FMD_GROW) {
+        if (!animation_move(&a->small,x,y) || !animation_rect(x,y,centered.g_w,centered.g_h,TRUE)) return FALSE;
+        delta = -1;
+    } else {
+        if (!animation_move(&centered,a->small.g_x,a->small.g_y) ||
+            !animation_rect(a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
+        centered = a->large; delta = 1;
+    }
+    return animation_rect(centered.g_x+delta*count*xstep, centered.g_y+delta*count*ystep,
+        centered.g_w-2*delta*count*xstep,centered.g_h-2*delta*count*ystep,TRUE);
+}
 static void animate_form(void *argument)
 {
     FORM_ANIMATION *a = argument;
@@ -605,17 +655,134 @@ static void animate_form(void *argument)
     if (wbox < (LONG)p->wchar + 4) wbox = (LONG)p->wchar + 4;
     if (wbox > 16383) { p->ok = FALSE; return; }
     p->wbox = wbox; p->hbox = hbox;
-    if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
+    if (!animation_valid(a) || !p->ok) { p->ok = FALSE; return; }
+    if (a->kind == AES_ANIMATION_MOVE) gr_movebox(a->small.g_w,a->small.g_h,a->small.g_x,a->small.g_y,a->large.g_x,a->large.g_y);
+    else if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
     else gr_shrinkbox(&a->small,&a->large);
 }
 WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD *global)
 {
     OBJECT dummy = { 0 };
     FORM_ANIMATION a;
+    WORD result;
+    LONG session = aes_application_session(global);
+    /* form_dial and public graphics calls both need ownership through error
+     * recovery, after render() releases its own nested display scope. */
+    if (session < 0 || cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
     dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
     dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
     a.kind = kind; a.small = *small; a.large = *large;
-    return render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
+    result = render(&dummy,0,0,0,0,32767,32767,global,FALSE,0,0,NULL,0,animate_form,&a);
+    if (!result && session >= 0) {
+        (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
+        (void)cuis_call6(CUIS_SURFACE_STATUS,session,2,0,0,0,0);
+    }
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) result = 0;
+    return result;
+}
+
+typedef struct {
+    LONG native, session, press_x, press_y;
+    const WM_FRAME_STATE *state;
+    GRECT result;
+    BOOL completed, sizing, sliding;
+    WORD slider_value;
+    WM_SLIDER_GEOMETRY slider;
+    WORD wchar, hchar, width, height;
+    WM_FRAME_INSETS insets;
+} FRAME_DRAG;
+static BOOL drag_position(FRAME_DRAG *drag, LONG x, LONG y, GRECT *outline)
+{
+    if (drag->sliding) return wm_slider_position(&drag->slider,drag->press_x,drag->press_y,x,y,&drag->slider_value,outline);
+    if (drag->sizing) return wm_size_position(&drag->state->border,drag->state->kind,x,y,
+        drag->wchar,drag->hchar,drag->state->wbox,drag->state->hbox,drag->width,drag->height,outline);
+    return wm_move_position(&drag->state->border,drag->state->kind,drag->press_x,drag->press_y,x,y,
+        drag->width,drag->height,drag->state->wbox,drag->state->hbox,outline);
+}
+static void drag_outline(FRAME_DRAG *drag, GRECT *outline)
+{
+    GRECT work;
+    gsx_xbox(outline);
+    if (drag->sizing) {
+        work.g_x = outline->g_x+drag->insets.left; work.g_y = outline->g_y+drag->insets.top;
+        work.g_w = outline->g_w-drag->insets.left-drag->insets.right;
+        work.g_h = outline->g_h-drag->insets.top-drag->insets.bottom;
+        gsx_xbox(&work); /* Native gr_rubwind's second, work-area box. */
+    }
+}
+static void drag_frame(void *argument)
+{
+    FRAME_DRAG *drag = argument;
+    PAINTER *p = aes_painter;
+    GRECT outline;
+    LONG event[4], result;
+    drag->width = p->workstation.ws_xres+1; drag->height = p->workstation.ws_yres+1;
+    drag->wchar = p->wchar; drag->hchar = p->hchar;
+    if (!wm_frame_insets(drag->state->kind,drag->state->wbox,drag->state->hbox,TRUE,
+                         drag->width,drag->height,&drag->insets) ||
+        !drag_position(drag,drag->press_x,drag->press_y,&outline)) {
+        p->ok = FALSE; return;
+    }
+    gsx_attr(FALSE,MD_XOR,BLACK);
+    vsl_type(7); /* gsx_xbox supplies user-defined dotted line patterns. */
+    for (;;) {
+        /* Native gr_dragbox uses this same patterned XOR outline. Display
+         * ownership spans the wait, so peers cannot overwrite its pixels. */
+        drag_outline(drag,&outline);
+        if (!p->ok) break;
+        result = cuis_call6(CUIS_CONTROL_READ,drag->native,(uintptr_t)&event[0],
+            (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        while (!result) {
+            result = cuis_call6(CUIS_EVENT_WAIT,drag->native,CUIS_EVENT_CONTROL,(QUAD)-1,0,0,0);
+            if (result <= 0) break;
+            result = cuis_call6(CUIS_CONTROL_READ,drag->native,(uintptr_t)&event[0],
+                (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
+        }
+        drag_outline(drag,&outline);
+        if (!p->ok || result <= 0 || (event[2] & ~1L)) break;
+        if (!drag_position(drag,event[0],event[1],&outline)) {
+            p->ok = FALSE; break;
+        }
+        if (!(event[2] & 1)) {
+            drag->completed = (event[3] & 1) != 0; drag->result = outline; break;
+        }
+    }
+}
+static BOOL track_frame(WORD object, LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y,
+                         GRECT *result, WORD *global)
+{
+    OBJECT dummy = { 0 };
+    FRAME_DRAG drag;
+    BOOL ok;
+    dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
+    dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
+    drag.native = native; drag.session = aes_application_session(global);
+    drag.state = state; drag.press_x = press_x; drag.press_y = press_y;
+    drag.completed = FALSE; drag.sizing = object == W_SIZER;
+    drag.sliding = object == W_HELEV || object == W_VELEV;
+    if (drag.sliding && !wm_slider_geometry(state,object,&drag.slider)) return FALSE;
+    ok = render(&dummy,0,0,0,state->hbox,32767,32767-state->hbox,global,
+                FALSE,0,0,NULL,0,drag_frame,&drag) != 0;
+    if (!ok) (void)cuis_call6(CUIS_DISPLAY_REDRAW,drag.session,0,0,32767,32767,0);
+    if (ok && drag.completed) {
+        *result = drag.result;
+        if (drag.sliding) { result->g_x = drag.slider_value; result->g_y = result->g_w = result->g_h = 0; }
+    }
+    return ok && drag.completed;
+}
+
+BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+{
+    return track_frame(W_NAME,native,state,press_x,press_y,result,global);
+}
+BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+{
+    return track_frame(W_SIZER,native,state,press_x,press_y,result,global);
+}
+
+BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+{
+    return (object == W_HELEV || object == W_VELEV) && track_frame(object,native,state,press_x,press_y,result,global);
 }
 
 
@@ -642,3 +809,99 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
 }
 WORD objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
 { return mt_objc_sysvar(mode,which,in1,in2,out1,out2,aes_global); }
+
+/* Public graphics calls share the native XOR tracking loops. The renderer
+ * lends its private workstation; whole-screen and mouse ownership span waits. */
+#include "tracking.h"
+#include "../../aes/gemgrlib.h"
+AES_TRACK *aes_tracker;
+void aes_track_setup(void)
+{
+    gsx_attr(FALSE,MD_XOR,BLACK);
+    vsl_type(7);
+}
+void aes_track_parent(OBJECT *tree, WORD object, GRECT *rect)
+{
+    (void)tree; (void)object;
+    *rect = aes_tracker->bounds;
+}
+void aes_track_child(OBJECT *tree, WORD object, GRECT *rect)
+{
+    memcpy(rect,&tree[object].ob_x,sizeof(*rect));
+}
+static BOOL track_pointer_valid(void)
+{
+    AES_TRACK *t = aes_tracker;
+    LONG dx = (LONG)t->mouse[0]-t->box.g_x, dy = (LONG)t->mouse[1]-t->box.g_y;
+    return dx < 32767 && dy < 32767;
+}
+BOOL aes_track_wait(void)
+{
+    AES_TRACK *t = aes_tracker;
+    LONG session = aes_application_session(t->global), ready, input[5];
+    ULONG mask = CUIS_READY_RECT1|CUIS_READY_BUTTON;
+    if (!aes_painter->ok) return FALSE;
+    if (cuis_call6(CUIS_INPUT_BUTTON,session,255,0,1,0,0) < 0 ||
+        cuis_call6(CUIS_INPUT_RECT,session,2,(QUAD)t->mouse[0],(QUAD)t->mouse[1],1,1) < 0) goto failed;
+    ready = cuis_call6(CUIS_SESSION_WAIT,session,16,mask,0,0,0);
+    if (ready <= 0 || ((ULONG)ready & ~mask) ||
+        cuis_call6(CUIS_INPUT_RESULT,session,(uintptr_t)&input[0],(uintptr_t)&input[1],
+            (uintptr_t)&input[2],(uintptr_t)&input[3],(uintptr_t)&input[4]) != E_OK ||
+        input[2] < 0 || input[2] > 32766 || input[3] < 0 || input[3] > 32766) goto failed;
+    t->mouse[0] = input[2]; t->mouse[1] = input[3]; t->mouse[2] = input[4] & 3;
+    /* A caller may already own BEG_MCTRL and retain an older release in
+     * its FIFO. Native tracking follows the currently held gesture, rather
+     * than finishing it from history while the button is still down. */
+    if (ready & CUIS_READY_BUTTON) {
+        if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global)) goto failed;
+        if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid()) goto failed;
+        return (t->mouse[2] & 255) != 0;
+    }
+    /* Drag/slide offsets were validated and captured once at entry. Only
+     * rubber dimensions continue growing relative to the original origin. */
+    if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid()) goto failed;
+    return TRUE;
+failed:
+    aes_painter->ok = FALSE;
+    return FALSE;
+}
+static void track_graphics(void *argument)
+{
+    AES_TRACK *t = argument;
+    if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global) || !track_pointer_valid()) {
+        aes_painter->ok = FALSE; return;
+    }
+    if (t->kind == AES_TRACK_RUBBER)
+        gr_rubbox(t->box.g_x,t->box.g_y,t->box.g_w,t->box.g_h,&t->result1,&t->result2);
+    else if (t->kind == AES_TRACK_SLIDE) t->result1 = gr_slidebox(t->tree,0,1,t->vertical);
+    else gr_dragbox(t->box.g_w,t->box.g_h,t->box.g_x,t->box.g_y,&t->bounds,&t->result1,&t->result2);
+}
+BOOL aes_graphics_track(AES_TRACK *t)
+{
+    AES_TRACK *saved = aes_tracker;
+    OBJECT dummy = { 0 };
+    LONG session = aes_application_session(t->global);
+    BOOL mouse = FALSE, ok = FALSE;
+    if (session < 0 || !aes_frames_suspend()) return FALSE;
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto resume;
+    /* Do not wait on another client's gesture while excluding its drawing. */
+    mouse = cuis_call6(CUIS_MOUSE_LOCK,session,1,0,0,0,0) == E_OK;
+    if (mouse) {
+        dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
+        dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
+        aes_tracker = t;
+        ok = render(&dummy,0,0,0,0,32767,32767,t->global,FALSE,0,0,NULL,0,track_graphics,t) != 0;
+        aes_tracker = saved;
+    }
+    if (!ok) {
+        (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
+        /* Whole-screen XOR outlines can also touch our registered menu bar;
+         * window damage alone does not schedule that surface's repaint. */
+        (void)cuis_call6(CUIS_SURFACE_STATUS,session,2,0,0,0,0);
+    }
+    if (mouse && cuis_call6(CUIS_MOUSE_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
+    if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
+resume:
+    aes_frames_resume();
+    return ok;
+}

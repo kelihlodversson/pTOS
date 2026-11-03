@@ -432,7 +432,7 @@ int accessory_object_checks(WORD vdi_handle)
     AES_OBJECT_RESULT out;
     static const AES_OBJECT_RESULT readonly = { 0 };
     AES_APP_INFO info;
-    AES_MESSAGE message = { 663, 0, 0, { 0 } };
+    AES_CLIENT_MESSAGE message = { 663, 0, 0, { 0 } };
     AES_EVENT event;
     ULONG tree, menu_tree;
     LONG peer;

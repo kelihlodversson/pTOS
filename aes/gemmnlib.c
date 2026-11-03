@@ -39,6 +39,7 @@
 #include "gempd.h"
 #include "rectfunc.h"
 #include "gemmnlib.h"
+#include "gemmenubar.h"
 #include "gemmnext.h"
 #if ARCH_X86_64
 #include "aes_objects_kernel.h"
@@ -91,8 +92,7 @@ static WORD menu_sub(OBJECT *tree, WORD ititle)
 
 static void menu_fixup(void)
 {
-    WORD    themenus, dabox, ob;
-    WORD    i, cnt, st, height;
+    WORD    themenus, dabox;
     OBJECT  *tree;
 
     if ((tree=gl_mntree) == NULL)
@@ -103,28 +103,9 @@ static void menu_fixup(void)
      */
     themenus = tree[THESCREEN].ob_tail;
     dabox = tree[themenus].ob_head;
-    tree[dabox].ob_head = tree[dabox].ob_tail = NIL;
     gl_dafirst = dabox + 3;
-
-    cnt = (D.g_accreg) ? (2 + D.g_accreg) : 1;
-
-    for (i = 1, st = 0, height = 0; i <= cnt; i++)
-    {
-        ob = dabox + i;
-        ob_add(tree, dabox, ob);
-        if (i > 2)      /* the DAs come after the accessory separator line */
-        {
-            for ( ; st < NUM_ACCS; st++)
-                if (D.g_acctitle[st])
-                    break;
-            if (st >= NUM_ACCS)     /* should not happen */
-                break;
-            tree[ob].ob_spec.free_string = D.g_acctitle[st++];
-        }
-        height += gl_hchar;
-    }
-
-    tree[dabox].ob_height = height;
+    mn_desk_items(tree,dabox,dabox+1,dabox+2,
+                  (const char *const *)D.g_acctitle,NUM_ACCS,gl_hchar);
 #if ARCH_X86_64
     x86_64_aes_objects_menu_fixup(tree, dabox);
 #endif

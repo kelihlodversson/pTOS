@@ -73,7 +73,7 @@ class Image(C.Structure):
 
 
 class StartInfo(C.Structure):
-    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias")]
+    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias", "capture_launch", "environment")]
 
 
 class Mapping(C.Structure):
@@ -563,10 +563,12 @@ class Metadata(unittest.TestCase):
         self.assertEqual(self.lookup(obj)[2], 0x1400200)
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
-                capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0):
+                capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False):
         tail = bytes([len(args)]) + args if tail is None else tail
+        if capture:
+            tail = tail.ljust(128, b'\0')
         memory = C.create_string_buffer(capacity)
-        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias)
+        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, int(capture), 0x202000 if capture else 0)
         rsp, used = C.c_uint32(123), C.c_uint32(456)
         rc = self.lib.dl_start_stack(memory, capacity, 0x80000000,
             C.create_string_buffer(filename), len(filename) + 1,
@@ -611,7 +613,21 @@ class Metadata(unittest.TestCase):
         self.assertEqual(string(aux[31]), filename)
         self.assertEqual(aux[0x5001], 2)
         self.assertEqual(aux[0x5002], info.load_bias)
+        if capture:
+            launch = aux[0x5003] - base
+            self.assertEqual(struct.unpack_from('=III', data, launch), (0, 0x202000, len(env)))
+            self.assertEqual(data[launch+12:launch+272], bytes(260))
+            self.assertEqual(data[launch+272:launch+400], tail[:128])
+            self.assertEqual(aux[0x5003] & 3, 0)
+        else:
+            self.assertNotIn(0x5003, aux)
         return rc, (argv, envp, aux)
+
+    def test_standard_initial_stack_launch_capture(self):
+        self.assertEqual(self.startup(b'hello', capture=True)[0], 0)
+        self.assertEqual(self.startup(tail=b'\x7f',
+            env=b'FOO=bar\0ARGV=\0alias\0PATH=from-arg\0\0', capture=True)[0], 0)
+        self.assertEqual(self.startup(capture=True, capacity=256)[0], -4)
 
     def test_standard_initial_stack_load_bias(self):
         for bias in (0, 0x400000):
@@ -646,10 +662,24 @@ class Metadata(unittest.TestCase):
         self.assertEqual(self.startup(tail=b'\x05abc')[0], -1)
         self.assertEqual(self.startup(env=b'A=B')[0], -1)
         self.assertEqual(self.startup(env=b'\0x')[0], -1)
-        self.assertEqual(self.startup(env=b'ARGV=NULL:1\0app\0a\0\0', tail=b'\x7f')[0], -2)
+        rc, result = self.startup(env=b'ARGV=NULL:1\0app\0a\0\0', tail=b'\x7f')
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'app', b''])
+        for indices in (b'-1', b'2', b'1,', b'1,,0', b'999999999999999999999'):
+            self.assertEqual(self.startup(env=b'ARGV=NULL:'+indices+b'\0app\0a\0\0', tail=b'\x7f')[0], -1)
         self.assertEqual(self.startup(capacity=64)[0], -1)
         self.assertEqual(self.startup(b'x' * 126, capacity=128)[0], -4)
         self.assertEqual(self.startup(filename=b'x' * 1024)[0], -1)
+
+    def test_standard_initial_stack_empty_argv_indices(self):
+        env = b'CHECK=1\0ARGV=NULL:3,1,3,0\0name\0 \0tail\0 \0\0'
+        rc, result = self.startup(env=env, tail=b'\x7f', capture=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'', b'', b'tail', b''])
+        self.assertEqual(result[1], [b'CHECK=1'])
+        rc, result = self.startup(env=b'ARGV=NULL:\0name\0arg\0\0', tail=b'\x7f')
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[0], [b'name', b'arg'])
 
     def test_standard_initial_stack_large_environment(self):
         rc, result = self.startup(env=b'X\0' * 16383 + b'\0')

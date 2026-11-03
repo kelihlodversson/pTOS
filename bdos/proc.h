@@ -24,6 +24,10 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+#if CONF_WITH_CUIS
+long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
+long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
+#endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
 WORD xtermres(long blkln, WORD rc);

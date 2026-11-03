@@ -35,7 +35,7 @@ static WORD *volatile fault_address;
 static int edge_buffer_checks(void)
 {
     AES_APP_INFO info = { 0 };
-    AES_MESSAGE message = { 77, 999, 0, { 42 } }, received;
+    AES_CLIENT_MESSAGE message = { 77, 999, 0, { 42 } }, received;
     UBYTE *buffer;
     LONG allocation;
     int failure = 0;
@@ -57,7 +57,7 @@ static int edge_buffer_checks(void)
     buffer[4091] = 'X';                  /* the kernel kept its own name copy */
     CHECK(aes_appl_find("EDGE") == info.id);
     CHECK(aes_appl_write(info.id, &message) == E_OK);
-    CHECK(aes_appl_read((AES_MESSAGE *)(buffer + 4088)) == EIMBA);
+    CHECK(aes_appl_read((AES_CLIENT_MESSAGE *)(buffer + 4088)) == EIMBA);
     CHECK(aes_evnt_poll(AES_EVENT_MESSAGE, (AES_EVENT *)(buffer + 4088)) == EIMBA);
     CHECK(aes_appl_read(&received) == E_OK && received.data[0] == 42 && received.sender == info.id);
     CHECK(aes_appl_exit() == E_OK);
@@ -68,7 +68,7 @@ static int edge_buffer_checks(void)
 static int child_checks(char mode)
 {
     AES_APP_INFO info;
-    AES_MESSAGE message = { 77, -123, 0, { 0 } };
+    AES_CLIENT_MESSAGE message = { 77, -123, 0, { 0 } };
     LONG parent;
     int failure = 0;
 
@@ -119,7 +119,7 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
 {
 #if CONF_WITH_X32_AES || defined(AES_IMPORT_TEST)
     AES_APP_INFO info, saved;
-    AES_MESSAGE message = { 77, 999, 0, { 10, 11, 12, 13, 14 } }, received;
+    AES_CLIENT_MESSAGE message = { 77, 999, 0, { 10, 11, 12, 13, 14 } }, received;
     AES_EVENT event;
     AES_EVENT_REQUEST input_request = { AES_EVENT_TIMER };
     AES_INPUT_EVENT input_event;

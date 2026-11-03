@@ -123,6 +123,7 @@ void vdi_cuis_cursor_flush(void)
 {
     UQUAD flags;
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    vdi_cuis_pointer_flush();
     if (cuis_cursor_pending && !linea_vars.mouse_flag) {
         cuis_cursor_pending = FALSE;
         linea_vars.user_cur(linea_vars.GCURX, linea_vars.GCURY);

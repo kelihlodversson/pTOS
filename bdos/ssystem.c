@@ -533,7 +533,9 @@ static LONG ssystem_deskinfo(long arg1, LONG arg2)
 #else
     info.cache_exists = 0;
 #endif
-#if CONF_WITH_SHUTDOWN
+#if CONF_WITH_CUIS && CONF_WITH_GEMDOS_SHUTDOWN
+    info.can_shutdown = machine_can_poweroff();
+#elif CONF_WITH_SHUTDOWN
     info.can_shutdown = can_shutdown();
 #else
     info.can_shutdown = 0;

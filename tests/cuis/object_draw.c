@@ -1,18 +1,30 @@
 /* Public object-drawing contracts against a small independent pixel oracle. */
 #include "gem.h"
+#include "desktop.h"
+#include "gemmovegeom.h"
+#include "gemframegeom.h"
+#include "gemslidegeom.h"
 #include "gemerror.h"
 #include "mono_objects.h"
 #include "colour_objects.h"
 #include "three_d.h"
 #include "menu_items.h"
 #include "popup_menu.h"
+#include "gem_menubar.h"
+#include "../../lib/aes/menubar.h"
 #include "../../aes/shared/gemcicon.h"
 #include "../../lib/aes/resource_context.h"
 #include "../../lib/aes/render_context.h"
 #include "gem_layout.h"
+#include "../../lib/aes/layout.h"
+#include "../../lib/aes/frames.h"
+#include "gemsizegeom.h"
+#include "gemobjbounds.h"
+#include "../../lib/aes/application.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
+#include "box_animations.h"
 #include "gem_draw_probe.h"
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
@@ -21,17 +33,31 @@ short aes_global[15];
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
-static struct { WORD mode, color, interior, clip[4], line, line_type, line_pattern; } workstation[1024];
+static struct { WORD mode, color, interior, clip[4], line, line_type, line_pattern; } workstation[4096];
 static PARMBLK callback_parameters;
 static BOOL draw_error, window_update, allocation_error, release_error;
+static ULONG background_state;
 static WORD screen_planes = 32;
 static WORD pixel_width = 1, pixel_height = 1;
-static BOOL trace_animation;
+static WORD display_width = 160, display_height = 120;
+static BOOL trace_animation, move_test;
+static int animation_fail_after = -1;
+static LONG move_records[4][4], move_error;
+static WORD move_count, move_at, move_waits;
 static WORD corner_x, corner_y, corner_width;
 static int corner_vertical, corner_horizontal, patterned_segments, bad_line_type;
 static int releases, mouse_nesting, mouse_releases;
-static BOOL input_error, mouse_error, foreign_display, popup_mode;
-static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws;
+static BOOL input_error, mouse_error, foreign_display, popup_mode, bar_mode;
+static WORD bar_height, bar_events, bar_message[8];
+static BOOL bar_stream, bar_line_error, bar_close_error, bar_write_block;
+static int bar_writes;
+static WORD bar_trial_height, bar_snapshot_handle;
+static int bar_failed_closes;
+static BOOL accessory_entry, accessory_gone;
+static BOOL accessory_self, self_blocked;
+static int opaque_entry;
+static LONG bar_recipient;
+static int display_waits, keyboard_nesting, snapshot_reads, snapshot_writes, redraws, unowned_redraws;
 static BOOL keyboard_error, snapshot_error, popup_paint_failure, popup_changed_before_failure;
 static int popup_paints;
 static WORD modal_keys[16];
@@ -47,6 +73,8 @@ UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
 static struct { WORD events, x, y, buttons; } gesture[8];
 static int gesture_count, gesture_at, bad_gesture;
 static WORD mouse_x = 50, mouse_y = 50;
+static BOOL tracking_mode, tracking_stale;
+static WORD tracking_buttons;
 static BOOL invalidate_global, bad_layout_font, fail_layout_close;
 static ULONG callbacks;
 static OBJECT *mutation_target;
@@ -60,17 +88,142 @@ void gem_popup_input_stage(short stage)
     gesture[0].y = (stage == 0 || stage == 3) ? 55 : stage == 1 ? 5 : 35;
     mouse_x = 35; mouse_y = 35;
 }
+void gem_menubar_input_stage(short stage)
+{
+    bar_mode = TRUE; gesture_at = 0; gesture_count = 4;
+    gesture[0].events = MU_M1; gesture[0].x = 80; gesture[0].y = 8; gesture[0].buttons = 0;
+    gesture[1].events = MU_M1; gesture[1].x = 80; gesture[1].y = 33; gesture[1].buttons = 0;
+    gesture[2] = gesture[1]; gesture[2].events = MU_BUTTON; gesture[2].buttons = 1;
+    gesture[3] = gesture[2]; gesture[3].buttons = 0;
+    mouse_x = 30; mouse_y = 8;
+    if (stage == 1) {
+        gesture_count = 3;
+        gesture[0].x = 30; gesture[0].y = 59;
+        gesture[1] = gesture[0]; gesture[1].events = MU_BUTTON; gesture[1].buttons = 1;
+        gesture[2] = gesture[1]; gesture[2].buttons = 0;
+    }
+}
+static ULONG frame_overlay_depth, frame_dialog_depth, bad_overlay_scope;
+BOOL aes_frames_suspended(void) { return frame_overlay_depth != 0; }
+BOOL aes_frames_suspend(void) { frame_overlay_depth++; return TRUE; }
+void aes_frames_resume(void) { if (frame_overlay_depth) frame_overlay_depth--; else bad_overlay_scope++; }
+BOOL aes_frames_dialog(BOOL begin)
+{
+    if (begin) { frame_dialog_depth++; return aes_frames_suspend(); }
+    if (frame_dialog_depth) { frame_dialog_depth--; aes_frames_resume(); }
+    return TRUE;
+}
 LONG aes_application_session(short *global) { return global && global[2] >= 0 && !session_error ? 7 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
+    if (fn == CUIS_ENTRY_OWNER) {
+        if (opaque_entry && b == 0) return 88;
+        return accessory_entry && b == 4 ? accessory_self ? 7 : 99 : EFILNF;
+    }
+    if (fn == CUIS_ENTRY_READ) {
+        char *data = (char *)(uintptr_t)d;
+        if (opaque_entry && b == 0 && c == 88 && e == CUIS_ENTRY_BYTES) {
+            switch (opaque_entry) {
+            case 1: return 0;
+            case 2: data[0] = 0; return 1;
+            case 3: __builtin_memset(data,'X',12); return 12;
+            case 4: __builtin_memcpy(data," Bad\0tail",10); return 10;
+            case 5: return CUIS_ENTRY_BYTES+1;
+            case 6: return EAGAIN;
+            case 7: return EFILNF;
+            default: return EIMBA;
+            }
+        }
+        if (!accessory_entry || b != 4 || c != (accessory_self ? 7U : 99U) || e < 12) return EINVAL;
+        __builtin_memcpy((void *)(uintptr_t)d,"  Accessory",12); return 12;
+    }
+    if (fn == CUIS_PEER_PID && a == 7) return 7;
+    if (fn == CUIS_PEER_PID && a == 99) return accessory_gone ? EFILNF : 17;
+    if (fn == CUIS_BACKGROUND) {
+        if (b == 2) return background_state;
+        if (!nesting) return EACCDN;
+        if (b == 1) background_state = 3;
+        if (b == 3) background_state &= ~2;
+        if (b == 4) background_state |= 2;
+        return E_OK;
+    }
+    if (fn == CUIS_DISPLAY_INFO) return a == 0 ? display_width : a == 1 ? display_height : bar_height;
+    if (fn == CUIS_BACKGROUND_REGION) {
+        if (b) return 0;
+        *(LONG *)(uintptr_t)c = 20; *(LONG *)(uintptr_t)d = 40;
+        *(LONG *)(uintptr_t)e = 40; *(LONG *)(uintptr_t)f = 20;
+        return 1;
+    }
+    if (tracking_mode && (fn == CUIS_INPUT_BUTTON || fn == CUIS_INPUT_RECT))
+        return nesting >= 2 && mouse_nesting && !input_error ? E_OK : EACCDN;
+    if (tracking_mode && fn == CUIS_SESSION_WAIT) {
+        if (!mouse_nesting || nesting < 2 || gesture_at >= gesture_count || input_error) return EACCDN;
+        return gesture[gesture_at].events & MU_BUTTON ? CUIS_READY_BUTTON : CUIS_READY_RECT1;
+    }
+    if (tracking_mode && fn == CUIS_INPUT_RESULT) {
+        if (gesture_at >= gesture_count) return EACCDN;
+        *(LONG *)(uintptr_t)b = *(LONG *)(uintptr_t)c = 0;
+        *(LONG *)(uintptr_t)d = gesture[gesture_at].x;
+        *(LONG *)(uintptr_t)e = gesture[gesture_at].y;
+        *(LONG *)(uintptr_t)f = gesture[gesture_at].buttons;
+        if (!(tracking_stale && !gesture_at)) {
+            mouse_x = gesture[gesture_at].x; mouse_y = gesture[gesture_at].y;
+            tracking_buttons = gesture[gesture_at].buttons;
+        }
+        gesture_at++;
+        return E_OK;
+    }
+    if (move_test && fn == CUIS_CONTROL_READ && a == 99) {
+        if (move_error) { LONG result = move_error; move_error = 0; return result; }
+        if (move_at == move_count) return 0;
+        *(LONG *)(uintptr_t)b = move_records[move_at][0]; *(LONG *)(uintptr_t)c = move_records[move_at][1];
+        *(LONG *)(uintptr_t)d = move_records[move_at][2]; *(LONG *)(uintptr_t)e = move_records[move_at++][3];
+        return 1;
+    }
+    if (move_test && fn == CUIS_EVENT_WAIT && a == 99 && b == CUIS_EVENT_CONTROL && c == (UQUAD)(QUAD)-1) {
+        if (!nesting) return EACCDN;
+        move_waits++; move_count = 2;
+        return 1;
+    }
+    if (fn == CUIS_FOCUS_QUERY && a == 99) return 1;
+    if (fn == CUIS_WINDOW_REGION && a == 99) {
+        if (b) return 0;
+        *(LONG *)(uintptr_t)c = 20; *(LONG *)(uintptr_t)d = 20;
+        *(LONG *)(uintptr_t)e = 100; *(LONG *)(uintptr_t)f = 80;
+        return 1;
+    }
+    if (fn == CUIS_SURFACE_BEGIN) { if (!nesting || bar_trial_height) return EACCDN; bar_trial_height = b; return E_OK; }
+    if (fn == CUIS_SURFACE_END) {
+        if (!bar_trial_height) return EACCDN;
+        if (b) { bar_height = bar_trial_height; bar_events = CUIS_SURFACE_DIRTY; }
+        bar_trial_height = 0; return E_OK;
+    }
+    if (fn == CUIS_SURFACE_REGISTER) { bar_height = b; bar_events = b ? CUIS_SURFACE_DIRTY : 0; return E_OK; }
+    if (fn == CUIS_SURFACE_STATUS) {
+        LONG value = bar_height ? CUIS_SURFACE_OWNED | bar_events : 0;
+        if (bar_mode && bar_height) value |= CUIS_SURFACE_POINTER;
+        if (b == 1) bar_events = 0;
+        if (b == 2) bar_events |= CUIS_SURFACE_DIRTY;
+        return value;
+    }
+    if (fn == CUIS_STREAM_WRITE && bar_mode && c == 16) {
+        bar_recipient = (LONG)a;
+        if (a == 7 && bar_write_block && d) { self_blocked = TRUE; return EACCDN; }
+        if (a == 99 && accessory_gone) return EACCDN;
+        if (bar_write_block) return EAGAIN;
+        bar_writes++;
+        __builtin_memcpy(bar_message,(void *)(uintptr_t)b,16); bar_stream = TRUE; return 16;
+    }
     if (fn == CUIS_KEYBOARD_LOCK && a == 7) {
         if (keyboard_error || !nesting || !mouse_nesting || (!b && !keyboard_nesting)) return EACCDN;
         keyboard_nesting += b ? 1 : -1;
         return E_OK;
     }
-    if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; return nesting ? E_OK : EACCDN; }
+    if (fn == CUIS_DISPLAY_REDRAW && a == 7) { redraws++; if (!nesting) unowned_redraws++; return nesting ? E_OK : EACCDN; }
     if (fn == CUIS_MOUSE_LOCK && a == 7) {
+        if (tracking_mode && b && c) return EINVAL;
+        if (bar_mode && b && b != CUIS_MOUSE_FRESH) return EINVAL;
         if (b && mouse_error) return EACCDN;
         if (!b && !mouse_nesting) return EACCDN;
         if (!b) mouse_releases++;
@@ -91,6 +244,9 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 short mt_wind_update(short code, short *global)
 {
     if (aes_application_session(global) < 0) return 0;
+    if (code == END_UPDATE) return cuis_call6(CUIS_DISPLAY_LOCK,7,0,0,0,0,0) == E_OK;
+    if (code == BEG_UPDATE || code == (BEG_UPDATE|NO_BLOCK))
+        return cuis_call6(CUIS_DISPLAY_LOCK,7,1,!(code & NO_BLOCK),0,0,0) == E_OK;
     if (code == END_MCTRL) return cuis_call6(CUIS_MOUSE_LOCK,7,0,0,0,0,0) == E_OK;
     if (code == BEG_MCTRL || code == (BEG_MCTRL|NO_BLOCK))
         return cuis_call6(CUIS_MOUSE_LOCK,7,1,!(code & NO_BLOCK),0,0,0) == E_OK;
@@ -100,7 +256,7 @@ short wind_update(short code) { return mt_wind_update(code,aes_global); }
 short mt_graf_mkstate(short *mx, short *my, short *buttons, short *mods, short *global)
 {
     if (aes_application_session(global) < 0) return 0;
-    *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
+    *mx = mouse_x; *my = mouse_y; *buttons = tracking_mode ? tracking_buttons : 0; *mods = 0;
     return 1;
 }
 short graf_mkstate(short *mx, short *my, short *buttons, short *mods)
@@ -117,13 +273,18 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
     BOOL inside;
     (void)leave2; (void)x2; (void)y2; (void)w2; (void)h2; (void)message; (void)interval;
     if (input_error || aes_application_session(global) < 0) return 0;
+    if (bar_mode && events == (MU_MESAG|MU_TIMER)) {
+        if (aes_menu_dispatch(global) < 0 || !bar_stream) return 0;
+        __builtin_memcpy(message,bar_message,16); bar_stream = FALSE; return MU_MESAG;
+    }
+    if (!frame_overlay_depth) { bad_overlay_scope++; return 0; }
     if (events == (MU_KEYBD|MU_BUTTON) && clicks == 2 && mask == 255 && state == 1) {
         if (!keyboard_nesting || !nesting || !mouse_nesting || modal_at == modal_count) return 0;
         *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
         *key = modal_keys[modal_at++]; *count = 0;
         return MU_KEYBD;
     }
-    if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || state != (popup_mode ? 1 : 0)) {
+    if (!mouse_nesting || events != (MU_BUTTON|MU_M1) || clicks != 1 || mask != 255 || (!bar_mode && state != (popup_mode ? 1 : 0))) {
         bad_gesture++; return 0;
     }
     ready = MU_BUTTON;
@@ -134,7 +295,7 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
         sb = gesture[gesture_at].buttons; ready = gesture[gesture_at++].events;
     }
     inside = w > 0 && h > 0 && sx >= x && sy >= y && (LONG)sx < (LONG)x+w && (LONG)sy < (LONG)y+h;
-    if (((ready & MU_BUTTON) && sb != (popup_mode ? 1 : 0)) || ((ready & MU_M1) && (inside == leave))) {
+    if (((ready & MU_BUTTON) && sb != (bar_mode ? state : popup_mode ? 1 : 0)) || ((ready & MU_M1) && (inside == leave))) {
         bad_gesture++; return 0;
     }
     *mx = sx; *my = sy; *buttons = sb; *mods = 0;
@@ -142,9 +303,21 @@ short mt_evnt_multi(short events, short clicks, short mask, short state,
     if (count) *count = ready & MU_BUTTON ? 1 : 0;
     return ready;
 }
+short evnt_multi(short events, short clicks, short button_mask, short button_state,
+                 short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
+                 short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
+                 short message[], unsigned long interval, short *mx, short *my,
+                 short *buttons, short *modifiers, short *key, short *click_count)
+{
+    return mt_evnt_multi(events, clicks, button_mask, button_state,
+                         m1_leave, m1_x, m1_y, m1_w, m1_h, m2_leave, m2_x, m2_y, m2_w, m2_h,
+                         message, interval, mx, my, buttons, modifiers, key, click_count, aes_global);
+}
+
 short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my,
                       short *buttons, short *mods, short *global)
 {
+    if (!frame_overlay_depth) { bad_overlay_scope++; return 0; }
     if (input_error || aes_application_session(global) < 0) return 0;
     if (!mouse_nesting || clicks != 1 || mask != 1 || state) { bad_gesture++; return 0; }
     *mx = mouse_x; *my = mouse_y; *buttons = *mods = 0;
@@ -156,26 +329,32 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     VDI_SERVICE_DRAW_RESULT *out = (void *)(uintptr_t)c;
     LONG x,y;
     (void)d;
-    if (fn == VDI_SERVICE_CLOSE) { closes++; return fail_layout_close ? EACCDN : E_OK; }
+    if (fn == VDI_SERVICE_CLOSE) {
+        if (bar_close_error && a == (UWORD)bar_snapshot_handle) {
+            bar_close_error = FALSE; bar_failed_closes++; return EACCDN;
+        }
+        closes++; return fail_layout_close ? EACCDN : E_OK;
+    }
     if (graphics_error) return graphics_error;
     if (fn == VDI_SERVICE_OPEN) {
         VDI_SERVICE_WORKSTATION *ws = (void *)(uintptr_t)b;
+        if (opens+1 >= (int)(sizeof(workstation)/sizeof(workstation[0]))) return ENSMEM;
         __builtin_memset(ws,0,sizeof(*ws));
-        ws->handle = ++opens; ws->intout[0] = 159; ws->intout[1] = 119;
+        ws->handle = ++opens; ws->intout[0] = display_width-1; ws->intout[1] = display_height-1;
         ws->ptsout[1] = 4;
         ws->intout[13] = 256;
         ws->intout[3] = pixel_width; ws->intout[4] = pixel_height;
         workstation[ws->handle].line_type = 1;
         workstation[ws->handle].line_pattern = (WORD)0xffff;
-        if (opens >= 1024) return ENSMEM;
         return E_OK;
     }
-    if (a <= 0 || a >= 1024) return EACCDN;
+    if (a <= 0 || a >= sizeof(workstation)/sizeof(workstation[0])) return EACCDN;
     if (!nesting && !window_update && !(fn == VDI_SERVICE_DRAW && r->code == 38)) return EACCDN;
     if (fn == VDI_SERVICE_SCREEN_BUFFER) {
         GRECT *rect = (void *)(uintptr_t)b;
         WORD *buffer = (void *)(uintptr_t)c;
         if (snapshot_error) return EACCDN;
+        if (bar_close_error && !d) bar_snapshot_handle = a;
         for (y = 0; y < rect->g_h; y++) for (x = 0; x < rect->g_w; x++) {
             if (d) image[y+rect->g_y][x+rect->g_x] = buffer[y*rect->g_w+x];
             else buffer[y*rect->g_w+x] = image[y+rect->g_y][x+rect->g_x];
@@ -189,6 +368,9 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     if (fn == VDI_SERVICE_COLOR) { workstation[a].line = b; return (LONG)b; }
     if (fn == VDI_SERVICE_LINE) {
+        if (!animation_fail_after) return EACCDN;
+        if (animation_fail_after > 0) animation_fail_after--;
+        if (bar_line_error) return EACCDN;
         WORD *points = (void *)(uintptr_t)c;
         LONG i, x2, y2, dx, dy, sx, sy, error, twice;
         if (trace_animation) {
@@ -201,7 +383,7 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
                 points[2] == corner_x+corner_width && points[3] == corner_y) corner_horizontal++;
         }
         for (i = 0; i < (LONG)b*2; i++)
-            if (points[i] < -10000 || points[i] > 10000) return EINVAL;
+            if (!tracking_mode && (points[i] < -10000 || points[i] > 10000)) return EINVAL;
         for (i = 1; i < (LONG)b; i++) {
             x = points[(i-1)*2]; y = points[(i-1)*2+1];
             x2 = points[i*2]; y2 = points[i*2+1];
@@ -429,10 +611,313 @@ static int form_interactions(void)
     VERIFY(opens == closes && !nesting && !mouse_nesting && !bad_gesture);
     return 0;
 }
+static int frame_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    GRECT border = { 20,20,100,80 };
+    WORD saved[120][160], unselected[120][160];
+    int x,y, changed = 0;
+    __builtin_memcpy(saved,image,sizeof(image));
+    VERIFY(aes_frame_prepare(&state,NAME|INFO,&border,"Title","Info",aes_global));
+    VERIFY(aes_frame_paint(99,&state,aes_global));
+    /* Frame clipping must not touch application work pixels or its neighbour. */
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) {
+        if (x < 20 || x >= 120 || y < 20 || y >= 100 ||
+            (x >= 21 && x < 119 && y >= 62 && y < 99))
+            VERIFY(image[y][x] == saved[y][x]);
+        else if (image[y][x] != saved[y][x]) changed++;
+    }
+    VERIFY(changed > 100 && !nesting && opens == closes);
+    VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER,&border,"Title","",aes_global));
+    VERIFY(aes_frame_control(&state,25,25) == W_CLOSER);
+    /* 160-pixel mode reduces adjusted_width: the later title sibling
+     * overlaps the closer at x=42 and must win the initial tree hit. */
+    VERIFY(aes_frame_control(&state,42,25) == 0);
+    VERIFY(aes_frame_control_inside(&state,W_CLOSER,42,25));
+    VERIFY(!aes_frame_control_inside(&state,W_CLOSER,43,25));
+    VERIFY(aes_frame_control(&state,65578,25) == 0);
+    VERIFY(aes_frame_control(&state,110,25) == W_FULLER);
+    VERIFY(aes_frame_control(&state,70,70) == 0);
+    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,FALSE,aes_global));
+    __builtin_memcpy(unselected,image,sizeof(image));
+    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,TRUE,aes_global));
+    changed = 0;
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) {
+        if (image[y][x] != unselected[y][x]) {
+            VERIFY(x >= 20 && x < 43 && y >= 20 && y < 43);
+            changed++;
+        }
+    }
+    VERIFY(changed > 0 && !nesting && opens == closes);
+    __builtin_memcpy(image,saved,sizeof(image));
+    return 0;
+}
+static int move_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    GRECT border = { 20,20,100,80 }, result = { 99,99,99,99 };
+    WORD saved[120][160];
+    int before;
+    VERIFY(aes_frame_prepare(&state,NAME|MOVER,&border,"Mover","",aes_global));
+    VERIFY(aes_frame_control(&state,70,25) == W_NAME);
+    __builtin_memcpy(saved,image,sizeof(image));
+    move_records[0][0] = 70; move_records[0][1] = 60; move_records[0][2] = 1; move_records[0][3] = 0;
+    move_records[1][0] = 90; move_records[1][1] = 80; move_records[1][2] = 0; move_records[1][3] = 1;
+    move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
+    before = patterned_segments; bad_line_type = 0;
+    VERIFY(aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(result.g_x == 70 && result.g_y == 75 && result.g_w == 100 && result.g_h == 80);
+    VERIFY(move_waits == 1 && move_at == 2 && patterned_segments > before && !bad_line_type);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_error = ERANGE; result.g_x = 99;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global) && result.g_x == 99);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_error = EACCDN;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_at = 0; move_count = 1; move_records[0][2] = 3;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    before = redraws; bar_line_error = TRUE;
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(redraws > before && !nesting && opens == closes);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+    bar_line_error = FALSE;
+    move_test = trace_animation = FALSE;
+    VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER|MOVER,&border,"Mover","",aes_global));
+    VERIFY(aes_frame_control(&state,42,25) == W_NAME);
+    VERIFY(aes_frame_control(&state,25,25) == W_CLOSER);
+    return 0;
+}
+static int size_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    GRECT border = { 20,20,100,80 }, result = { 99,99,99,99 };
+    WORD saved[120][160];
+    int before;
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&border,"Sizer","",aes_global));
+    VERIFY(aes_frame_control(&state,110,90) == W_SIZER);
+    __builtin_memcpy(saved,image,sizeof(image));
+    move_records[0][0] = 70; move_records[0][1] = 60; move_records[0][2] = 1; move_records[0][3] = 0;
+    move_records[1][0] = 90; move_records[1][1] = 80; move_records[1][2] = 0; move_records[1][3] = 1;
+    move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
+    before = patterned_segments; bad_line_type = 0;
+    VERIFY(aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(result.g_x == 20 && result.g_y == 20 && result.g_w == 76 && result.g_h == 61);
+    VERIFY(move_waits == 1 && move_at == 2 && patterned_segments >= before+32 && !bad_line_type);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&result,"Sizer","",aes_global));
+    move_error = ERANGE; result.g_x = 99;
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global) && result.g_x == 99);
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    move_error = EACCDN;
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
+    before = redraws; bar_line_error = TRUE;
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(redraws > before && !nesting && opens == closes);
+    bar_line_error = FALSE; move_test = trace_animation = FALSE;
+    return 0;
+}
+static int size_frame_limits_checks(void)
+{
+    static const struct { UWORD kind; GRECT border; LONG x,y; } cases[] = {
+        { NAME|SIZER, { -32120,30,32320,140 }, 639,160 },
+        { NAME|SIZER, { 32600,30,100,140 }, 32767,160 },
+        { NAME|SIZER, { 20,32600,200,100 }, 160,32767 },
+        { NAME|CLOSER|FULLER|SIZER, { 20,30,200,140 }, 2147483647L,2147483647L },
+        { SIZER, { -32766,-32766,100,100 }, 2147483647L,2147483647L },
+        { NAME|FULLER|SIZER, { 32600,30,100,140 }, 32767,160 }
+    };
+    UWORD kinds[] = { SIZER,NAME|SIZER,NAME|INFO|SIZER };
+    WM_FRAME_STATE state;
+    WM_FRAME frame;
+    GRECT start = { 20,20,100,100 }, proposed;
+    WORD saved[120][160];
+    LONG x,y,w,h;
+    unsigned i;
+    __builtin_memcpy(saved,image,sizeof(image));
+    start.g_x = 20; start.g_y = 30; start.g_w = 100; start.g_h = 80;
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&start,"Title","",aes_global));
+    VERIFY(aes_frame_control(&state,97,87) == W_SIZER);
+    VERIFY(aes_frame_control(&state,97,90) == W_SIZER);
+    start.g_y = 20; start.g_h = 100;
+    for (i = 0; i < sizeof(kinds)/sizeof(kinds[0]); i++) {
+        VERIFY(wm_size_position(&start,kinds[i],-100,-100,8,16,19,19,160,120,&proposed));
+        VERIFY(proposed.g_h == (i == 0 ? 23 : i == 1 ? 46 : 65));
+        VERIFY(aes_frame_prepare(&state,kinds[i],&proposed,"Title","Info",aes_global));
+        wm_frame_init(&frame); wm_frame_build(frame.tree,&frame.name,&frame.info,&state);
+        x = (LONG)frame.tree[ROOT].ob_x+frame.tree[W_DATA].ob_x+frame.tree[W_SIZER].ob_x;
+        y = (LONG)frame.tree[ROOT].ob_y+frame.tree[W_DATA].ob_y+frame.tree[W_SIZER].ob_y;
+        ob_3d_bounds(&frame.tree[W_SIZER],1,FALSE,&x,&y,&w,&h);
+        VERIFY(x >= proposed.g_x && x+w <= (LONG)proposed.g_x+proposed.g_w);
+        VERIFY(y >= proposed.g_y+frame.tree[W_DATA].ob_y && y+h <= (LONG)proposed.g_y+proposed.g_h);
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
+        proposed.g_h--;
+        VERIFY(!aes_frame_prepare(&state,kinds[i],&proposed,"Title","Info",aes_global));
+    }
+    for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        VERIFY(aes_frame_prepare(&state,cases[i].kind,&cases[i].border,"Title","Info",aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
+        VERIFY(wm_size_position(&cases[i].border,cases[i].kind,cases[i].x,cases[i].y,
+                               8,16,19,19,160,120,&proposed));
+        VERIFY(aes_frame_prepare(&state,cases[i].kind,&proposed,"Title","Info",aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
+    }
+    start.g_x = 0; start.g_y = 30; start.g_w = 32758; start.g_h = 140;
+    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&start,"","",aes_global));
+    VERIFY(wm_move_position(&start,MOVER|SIZER,80,35,130,35,160,120,19,19,&proposed));
+    VERIFY(proposed.g_x == 0 && proposed.g_y == 30 && proposed.g_w == start.g_w && proposed.g_h == start.g_h);
+    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&proposed,"","",aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
+    VERIFY(!nesting && opens == closes);
+    __builtin_memcpy(image,saved,sizeof(image));
+    return 0;
+}
+static int arrow_frame_checks(void)
+{
+    static const UWORD flags[] = { UPARROW,DNARROW,LFARROW,RTARROW };
+    static const WORD objects[] = { W_UPARROW,W_DNARROW,W_LFARROW,W_RTARROW };
+    static const WORD actions[] = { WA_UPLINE,WA_DNLINE,WA_LFLINE,WA_RTLINE };
+    WM_FRAME_STATE state;
+    WM_FRAME frame;
+    WM_FRAME_LIMITS limits;
+    GRECT border;
+    WORD saved[120][160], modes[3][2] = { {320,200},{320,400},{640,400} };
+    UWORD kind;
+    unsigned mask, mode, i;
+    LONG x,y;
+    __builtin_memcpy(saved,image,sizeof(image));
+    for (mode = 0; mode < 3; mode++) {
+        display_width = modes[mode][0]; display_height = modes[mode][1];
+        for (mask = 1; mask < 16; mask++) {
+            kind = NAME|INFO|SIZER;
+            for (i = 0; i < 4; i++) if (mask & (1U << i)) kind |= flags[i];
+            VERIFY(wm_frame_limits(kind,20,30,19,19,display_width,display_height,&limits));
+            border.g_x = 20; border.g_y = 30; border.g_w = limits.min_w; border.g_h = limits.min_h;
+            VERIFY(aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+            VERIFY(aes_frame_paint(99,&state,aes_global));
+            wm_frame_init(&frame); wm_frame_build(frame.tree,&frame.name,&frame.info,&state);
+            for (i = 0; i < 4; i++) if (mask & (1U << i)) {
+                WORD object = objects[i], bar = i < 2 ? W_VBAR : W_HBAR;
+                x = (LONG)border.g_x+frame.tree[W_DATA].ob_x+frame.tree[bar].ob_x+frame.tree[object].ob_x+9;
+                y = (LONG)border.g_y+frame.tree[W_DATA].ob_y+frame.tree[bar].ob_y+frame.tree[object].ob_y+9;
+                VERIFY(wm_arrow_action(aes_frame_control(&state,x,y)) == actions[i]);
+            }
+            VERIFY(aes_frame_paint_control(99,&state,objects[mask & 1 ? 0 : mask & 2 ? 1 : mask & 4 ? 2 : 3],TRUE,aes_global));
+            border.g_w--;
+            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+            border.g_w++; border.g_h--;
+            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+        }
+        /* Actual production preflight/painting at positive WORD endpoints,
+         * with both bars and all fixed/relative arrow positions present. */
+        kind = UPARROW|DNARROW|LFARROW|RTARROW;
+        VERIFY(wm_frame_limits(kind,32600,32600,19,19,display_width,display_height,&limits));
+        border.g_x = border.g_y = 32600; border.g_w = limits.max_w; border.g_h = limits.max_h;
+        VERIFY(aes_frame_prepare(&state,kind,&border,"","",aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_RTARROW,TRUE,aes_global));
+    }
+    VERIFY(wm_arrow_action(W_SIZER) == -1 && wm_arrow_action(W_VSLIDE) == -1 && wm_arrow_action(W_WORK) == -1);
+    display_width = 160; display_height = 120;
+    VERIFY(!nesting && opens == closes);
+    __builtin_memcpy(image,saved,sizeof(image));
+    return 0;
+}
+static int slider_paint_checks(void)
+{
+    WM_FRAME_STATE state;
+    WM_FRAME_LIMITS limits;
+    WM_SLIDER_GEOMETRY slider;
+    GRECT border = { 20,20,120,95 }, result;
+    WORD saved[120][160], value;
+    WORD sizes[] = { -1,1,250,1000 }, positions[] = { 0,500,1000 };
+    WORD mode, size, position;
+    __builtin_memcpy(saved,image,sizeof(image));
+    for (mode = 0; mode < 3; mode++) {
+        display_width = mode < 2 ? 320 : 640; display_height = mode ? 400 : 200;
+        for (size = 0; size < 4; size++) for (position = 0; position < 3; position++) {
+            VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE|SIZER,&border,"Sliders","",aes_global));
+            state.hslsiz = state.vslsiz = sizes[size]; state.hslide = state.vslide = positions[position];
+            VERIFY(wm_slider_geometry(&state,W_HELEV,&slider));
+            VERIFY(aes_frame_control(&state,slider.thumb.g_x+3,slider.thumb.g_y+3) == W_HELEV);
+            VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+            VERIFY(wm_slider_geometry(&state,W_VELEV,&slider));
+            VERIFY(aes_frame_control(&state,slider.thumb.g_x+3,slider.thumb.g_y+3) == W_VELEV);
+            VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+        }
+        VERIFY(wm_frame_limits(HSLIDE|VSLIDE,32600,32600,19,19,display_width,display_height,&limits));
+        border.g_x = border.g_y = 32600; border.g_w = limits.max_w; border.g_h = limits.max_h;
+        VERIFY(aes_frame_prepare(&state,HSLIDE|VSLIDE,&border,"","",aes_global));
+        state.hslsiz = state.vslsiz = 1000; state.hslide = state.vslide = 1000;
+        VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+        border.g_x = border.g_y = 20; border.g_w = 120; border.g_h = 95;
+    }
+    display_width = 160; display_height = 120;
+    VERIFY(wm_frame_limits(HSLIDE,-32000,20,19,19,160,120,&limits));
+    border.g_x = -32000; border.g_y = 20; border.g_w = limits.max_w; border.g_h = 95;
+    VERIFY(aes_frame_prepare(&state,HSLIDE,&border,"","",aes_global));
+    state.hslsiz = state.hslide = 1000;
+    VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+    VERIFY(wm_frame_limits(VSLIDE,20,-32000,19,19,160,120,&limits));
+    border.g_x = 20; border.g_y = -32000; border.g_w = 120; border.g_h = limits.max_h;
+    VERIFY(aes_frame_prepare(&state,VSLIDE,&border,"","",aes_global));
+    state.vslsiz = state.vslide = 1000;
+    VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+    border.g_x = border.g_y = 20; border.g_w = 120; border.g_h = 95;
+    VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE,&border,"Sliders","",aes_global));
+    VERIFY(wm_slider_geometry(&state,W_HELEV,&slider));
+    move_records[0][0] = slider.thumb.g_x+10; move_records[0][1] = slider.thumb.g_y+3;
+    move_records[0][2] = 1; move_records[0][3] = 0;
+    move_records[1][0] = 200; move_records[1][1] = slider.thumb.g_y+3;
+    move_records[1][2] = 0; move_records[1][3] = 1;
+    move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
+    __builtin_memcpy(image,saved,sizeof(image));
+    VERIFY(aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,aes_global));
+    VERIFY(result.g_x == 1000 && !result.g_y && !result.g_w && !result.g_h && move_waits == 1);
+    VERIFY(!__builtin_memcmp(image,saved,sizeof(image)) && !nesting && opens == closes);
+    move_error = ERANGE; result.g_x = 99;
+    VERIFY(!aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,aes_global) && result.g_x == 99);
+    VERIFY(!__builtin_memcmp(image,saved,sizeof(image)) && !nesting && opens == closes);
+    move_test = trace_animation = FALSE;
+    VERIFY(wm_slider_position(&slider,0,0,0,0,&value,&result));
+    return 0;
+}
+static int frame_metric_checks(void)
+{
+    WORD wbox = 99, hbox = 99, width = 99, height = 99;
+    VERIFY(aes_frame_metrics(&wbox,&hbox,&width,&height,aes_global) && wbox == 19 && hbox == 19);
+    VERIFY(width == 160 && height == 120);
+    pixel_height = 2;
+    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 38 && hbox == 19);
+    pixel_width = 3; pixel_height = 1;
+    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    pixel_width = 0;
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    pixel_width = 1; pixel_height = 32767;
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    pixel_height = 1; fail_layout_close = TRUE;
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    fail_layout_close = FALSE;
+    VERIFY(opens == closes);
+    return 0;
+}
 static int animation_checks(void)
 {
     static const WORD aspects[3][3] = { { 1,1,38 }, { 1,2,76 }, { 3,1,24 } };
-    int aspect, kind;
+    int aspect, kind, damaged, pointer_releases, pixel, result, nested, rejected;
+    static WORD original[120][160];
+    __builtin_memcpy(original,image,sizeof(image));
+    result = gem_box_animation_checks(0);
+    if (result) __builtin_printf("box animation failure: %x\n",result);
+    VERIFY(result == 0);
+    VERIFY(!__builtin_memcmp(original,image,sizeof(image)));
+    VERIFY(graf_mbox(4,4,20,30,60,40) == 1 && graf_growbox(20,30,4,4,0,0,120,80) == 1 &&
+           graf_shrinkbox(20,30,4,4,0,0,120,80) == 1);
+    VERIFY(!__builtin_memcmp(original,image,sizeof(image)));
     for (aspect = 0; aspect < 3; aspect++) for (kind = FMD_GROW; kind <= FMD_SHRINK; kind++) {
         pixel_width = aspects[aspect][0]; pixel_height = aspects[aspect][1];
         corner_width = aspects[aspect][2];
@@ -441,6 +926,10 @@ static int animation_checks(void)
         corner_vertical = corner_horizontal = patterned_segments = bad_line_type = 0;
         trace_animation = TRUE;
         VERIFY(form_dial(kind,20,30,4,4,0,0,120,80) == 1);
+        VERIFY(corner_vertical >= 2 && corner_horizontal >= 2);
+        corner_vertical = corner_horizontal = 0;
+        VERIFY((kind == FMD_GROW ? graf_growbox(20,30,4,4,0,0,120,80) :
+                                  graf_shrinkbox(20,30,4,4,0,0,120,80)) == 1);
         trace_animation = FALSE;
         VERIFY(corner_vertical >= 2 && corner_horizontal >= 2);
         VERIFY(patterned_segments > 0 && !bad_line_type);
@@ -451,6 +940,38 @@ static int animation_checks(void)
     pixel_width = 1; pixel_height = 0;
     VERIFY(form_dial(FMD_SHRINK,20,30,4,4,0,0,120,80) == 0 && opens == closes && !nesting);
     pixel_height = 1;
+    VERIFY(graf_mbox(4,4,-20000,0,20000,0) == 0);
+    VERIFY(graf_mbox(4,4,-32768,0,-32768,10) == 0);
+    VERIFY(graf_growbox(0,0,1,1,32760,0,7,80) == 0);
+    window_update = TRUE; damaged = opens;
+    VERIFY(graf_growbox(20,30,4,4,0,0,120,80) == 0 && opens == damaged);
+    window_update = FALSE;
+    graphics_error = EACCDN;
+    VERIFY(graf_mbox(4,4,20,30,60,40) == 0);
+    graphics_error = E_OK;
+    /* Fail after one XOR segment over the menu strip. Both window and
+     * menu damage must be queued before the outer display scope is released. */
+    damaged = redraws; pointer_releases = mouse_releases;
+    bar_height = 19; bar_events = 0; pixel = image[0][21]; animation_fail_after = 1;
+    VERIFY(graf_mbox(4,4,20,0,60,0) == 0);
+    VERIFY(image[0][21] != pixel && redraws == damaged+1 && (bar_events & CUIS_SURFACE_DIRTY));
+    animation_fail_after = -1; bar_height = bar_events = 0;
+    for (kind = FMD_GROW; kind <= FMD_SHRINK; kind++) for (nested = 0; nested < 2; nested++) {
+        if (nested) VERIFY(wind_update(BEG_UPDATE) == 1);
+        damaged = redraws; rejected = unowned_redraws;
+        bar_height = 19; bar_events = 0; animation_fail_after = 1;
+        __builtin_memcpy(original,image,sizeof(image));
+        VERIFY(form_dial(kind,20,0,4,4,0,0,120,80) == 0);
+        VERIFY(__builtin_memcmp(original,image,sizeof(image)) != 0);
+        VERIFY(redraws == damaged+1 && unowned_redraws == rejected && (bar_events & CUIS_SURFACE_DIRTY));
+        VERIFY(nesting == nested && !frame_overlay_depth && opens == closes);
+        animation_fail_after = -1; bar_height = bar_events = 0;
+        if (nested) VERIFY(wind_update(END_UPDATE) == 1);
+    }
+    window_update = TRUE; damaged = opens;
+    VERIFY(form_dial(FMD_GROW,20,0,4,4,0,0,120,80) == 0 && opens == damaged);
+    window_update = FALSE;
+    VERIFY(mouse_releases == pointer_releases && !nesting && !frame_overlay_depth && opens == closes);
     return 0;
 }
 void gem_form_input_stage(short stage) { (void)stage; }
@@ -484,6 +1005,140 @@ static int modal_checks(void)
     snapshot_error = FALSE;
     return 0;
 }
+static void tracking_events(WORD x, WORD y)
+{
+    tracking_mode = TRUE; tracking_stale = FALSE; tracking_buttons = 1;
+    gesture_at = 0; gesture_count = 2;
+    mouse_x = mouse_y = 50;
+    gesture[0].events = MU_M1; gesture[0].x = x; gesture[0].y = y; gesture[0].buttons = 1;
+    gesture[1] = gesture[0]; gesture[1].events = MU_BUTTON; gesture[1].buttons = 0;
+}
+static int tracking_checks(void)
+{
+    OBJECT tree[2] = { { 0 } };
+    WORD x,y,rx = -1,ry = -1;
+    int damaged, display_releases, pointer_releases;
+    VERIFY(OF_FL3DMASK == 0x600);
+    VERIFY((OF_FL3DIND & OF_FL3DMASK) == OF_FL3DIND);
+    VERIFY((OF_FL3DBAK & OF_FL3DMASK) == OF_FL3DBAK);
+    VERIFY((OF_FL3DACT & OF_FL3DMASK) == OF_FL3DACT);
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) image[y][x] = (x+y)&15;
+    tracking_events(80,70);
+    VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 1 && rx == 71 && ry == 61);
+    tracking_events(150,110);
+    VERIFY(mt_graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry,aes_global) == 1 && rx == 80 && ry == 70);
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) VERIFY(image[y][x] == ((x+y)&15));
+    tree[0].ob_head = tree[0].ob_tail = 1; tree[0].ob_next = NIL;
+    tree[0].ob_x = tree[0].ob_y = 20; tree[0].ob_width = 100; tree[0].ob_height = 60; tree[0].ob_type = G_BOX;
+    tree[1].ob_next = 0; tree[1].ob_head = tree[1].ob_tail = NIL;
+    tree[1].ob_width = tree[1].ob_height = 20; tree[1].ob_flags = LASTOB; tree[1].ob_type = G_BOX;
+    tracking_events(90,50);
+    VERIFY(graf_slidebox(tree,0,1,0) == 500 && !tree[1].ob_x && !tree[1].ob_y);
+    tree[1].ob_flags |= FL3DACT;
+    tracking_events(90,50);
+    VERIFY(mt_graf_slidebox(tree,0,1,0,aes_global) == 526);
+    tree[1].ob_flags = LASTOB; tree[1].ob_width = 100;
+    tracking_events(90,50);
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && gesture_at == 2);
+    tree[1].ob_width = 20;
+    tracking_events(90,50); tree[1].ob_next = 1;
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && !gesture_at);
+    tree[1].ob_next = 0;
+    allocation_error = TRUE;
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && !gesture_at);
+    allocation_error = FALSE;
+    tracking_events(80,70); nesting = mouse_nesting = 1;
+    VERIFY(graf_rubberbox(10,10,0,0,&rx,&ry) == 1 && nesting == 1 && mouse_nesting == 1);
+    nesting = mouse_nesting = 0;
+    tracking_events(80,70); tracking_stale = TRUE;
+    gesture[2] = gesture[1]; gesture[1] = gesture[0];
+    gesture[0].events = MU_BUTTON; gesture[0].buttons = 0;
+    gesture[0].x = 5; gesture[0].y = 5; gesture_count = 3;
+    VERIFY(graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry) == 1 && rx == 70 && ry == 60 && gesture_at == 3);
+    rx = ry = -1;
+    tracking_events(80,70); input_error = TRUE;
+    VERIFY(graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    input_error = FALSE;
+    /* Fail after painting over our own menu strip. Recovery must dirty the
+     * surface independently of window damage and retain balanced ownership. */
+    bar_height = 19; bar_events = 0; damaged = redraws;
+    tracking_events(80,70); input_error = TRUE;
+    VERIFY(image[0][1] == 1);
+    VERIFY(graf_rubberbox(0,0,10,10,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    VERIFY(image[0][1] != 1 && (bar_events & CUIS_SURFACE_DIRTY) && redraws == damaged+1);
+    VERIFY(!nesting && !mouse_nesting && opens == closes);
+    input_error = FALSE; bar_height = bar_events = 0;
+    tracking_events(80,70); mouse_error = TRUE;
+    VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    mouse_error = FALSE;
+    VERIFY(graf_dragbox(0,20,0,0,0,0,100,90,&rx,&ry) == 0);
+    /* Oversized public drag boxes cannot fit. Reject before acquiring any
+     * ownership or drawing, with caller outputs and input history untouched. */
+    tracking_events(80,70); damaged = opens;
+    display_releases = releases; pointer_releases = mouse_releases;
+    VERIFY(graf_dragbox(100,20,0,0,0,0,50,90,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    VERIFY(mt_graf_dragbox(20,100,0,0,0,0,100,90,&rx,&ry,aes_global) == 0 && rx == -1 && ry == -1);
+    VERIFY(opens == damaged && !gesture_at && !nesting && !mouse_nesting && !frame_overlay_depth);
+    VERIFY(releases == display_releases && mouse_releases == pointer_releases);
+    tracking_events(80,70);
+    VERIFY(graf_dragbox(100,90,0,0,0,0,100,90,&rx,&ry) == 1 && rx == 0 && ry == 0);
+    /* The initial wide offset fits a WORD. Subsequent motion exceeds that
+     * offset range, but the constrained box still fits at the same origin. */
+    tracking_events(10,10); mouse_x = mouse_y = 0; damaged = redraws;
+    VERIFY(graf_dragbox(32767,20,-32760,0,-32760,0,32767,20,&rx,&ry) == 1);
+    VERIFY(rx == -32760 && ry == 0 && gesture_at == 2 && redraws == damaged);
+    tree[0].ob_x = -32760; tree[0].ob_y = 0;
+    tree[0].ob_width = tree[1].ob_width = 32767;
+    tree[0].ob_height = tree[1].ob_height = 20;
+    tracking_events(10,10); mouse_x = mouse_y = 0;
+    VERIFY(graf_slidebox(tree,0,1,0) == 0 && gesture_at == 2 && redraws == damaged);
+    /* Exercise the release branch without a preceding motion wakeup too. */
+    tracking_events(10,10); mouse_x = mouse_y = 0;
+    gesture[0] = gesture[1]; gesture_count = 1;
+    VERIFY(graf_dragbox(32767,20,-32760,0,-32760,0,32767,20,&rx,&ry) == 1);
+    VERIFY(rx == -32760 && ry == 0 && gesture_at == 1 && redraws == damaged);
+    /* Initial offsets and continuously growing rubber sizes remain checked. */
+    tracking_events(10,10); mouse_x = 10; mouse_y = 0; rx = ry = -1;
+    VERIFY(graf_dragbox(32767,20,-32760,0,-32760,0,32767,20,&rx,&ry) == 0 && !gesture_at);
+    VERIFY(rx == -1 && ry == -1);
+    tracking_events(10,10); mouse_x = mouse_y = 0;
+    VERIFY(graf_rubberbox(-32760,0,1,1,&rx,&ry) == 0 && rx == -1 && ry == -1);
+    VERIFY(!nesting && !mouse_nesting && opens == closes && !bad_overlay_scope && !frame_overlay_depth);
+    tracking_mode = FALSE; gesture_count = gesture_at = 0;
+    mouse_x = mouse_y = 50;
+    __builtin_memset(image,0,sizeof(image));
+    return 0;
+}
+
+static int desktop_drawing_checks(void)
+{
+    OBJECT tree = { NIL,NIL,NIL,G_BOX,LASTOB,NORMAL,{0x1173},0,0,160,120 };
+    WORD x, y, saved[120][160];
+    int before;
+    __builtin_memcpy(saved,image,sizeof(saved));
+    VERIFY(aes_desktop_set(&tree,0,aes_global) == 1 && !nesting);
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && !nesting && background_state == 1);
+    for (y = 0; y < 120; y++) for (x = 0; x < 160; x++)
+        VERIFY(image[y][x] == (x >= 20 && x < 60 && y >= 40 && y < 60 ? 3 : saved[y][x]));
+    background_state |= 2; draw_error = TRUE;
+    VERIFY(aes_desktop_dispatch(aes_global) == EACCDN && background_state == 3 && !nesting);
+    draw_error = FALSE;
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 1 && !nesting);
+    background_state |= 2; allocation_error = TRUE;
+    VERIFY(aes_desktop_dispatch(aes_global) == ENSMEM && background_state == 3 && !nesting);
+    allocation_error = FALSE;
+    before = calls;
+    VERIFY(aes_frames_suspend());
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 3 && calls == before);
+    aes_frames_resume();
+    foreign_display = TRUE;
+    VERIFY(aes_desktop_dispatch(aes_global) == EAGAIN && background_state == 3 && !nesting);
+    foreign_display = FALSE;
+    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 1);
+    aes_desktop_reset(); background_state = 0;
+    return 0;
+}
+
 int main(void)
 {
     OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
@@ -494,6 +1149,14 @@ int main(void)
     USERBLK user;
     TEDINFO changed = { 0 };
     char raw[] = "AB", pattern[] = "__.__", big[258];
+    VERIFY(tracking_checks() == 0);
+    VERIFY(frame_metric_checks() == 0);
+    VERIFY(frame_paint_checks() == 0);
+    VERIFY(move_paint_checks() == 0);
+    VERIFY(size_paint_checks() == 0);
+    VERIFY(size_frame_limits_checks() == 0);
+    VERIFY(arrow_frame_checks() == 0);
+    VERIFY(slider_paint_checks() == 0);
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 3;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1100;
     tree[0].ob_x = 10; tree[0].ob_y = 12; tree[0].ob_width = 100; tree[0].ob_height = 80;
@@ -745,6 +1408,127 @@ int main(void)
     popup_mode = FALSE; gesture_count = gesture_at = 0;
     if (before) __builtin_printf("popup menu failure: %x\n",before);
     VERIFY(before == 0);
+    {
+        WORD saved[120][160];
+        int reads = snapshot_reads, writes = snapshot_writes;
+        __builtin_memcpy(saved,image,sizeof(image));
+        bar_line_error = TRUE;
+        VERIFY(gem_menubar_install(0,2) == 0);
+        bar_line_error = FALSE;
+        VERIFY(!nesting && !mouse_nesting && !bar_height && !aes_menu_registered());
+        VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+        VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+        reads = snapshot_reads; writes = snapshot_writes;
+        bar_close_error = TRUE; bar_snapshot_handle = 0;
+        VERIFY(gem_menubar_install(0,3) == 0);
+        VERIFY(bar_failed_closes == 1 && !bar_close_error && !bar_trial_height);
+        VERIFY(!bar_height && !aes_menu_registered() && !nesting && !mouse_nesting);
+        VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
+        VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
+    }
+    {
+        int mode;
+        for (mode = 0; mode < 2; mode++) {
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(0);
+            bar_write_block = TRUE;
+            VERIFY(aes_menu_dispatch(aes_global) == E_OK && !aes_menu_listening());
+            before = bar_writes;
+            bar_write_block = FALSE;
+            if (mode) { bar_close_error = TRUE; bar_snapshot_handle = 0; }
+            else bar_line_error = TRUE;
+            VERIFY(gem_menubar_install(0,3) == 0);
+            bar_line_error = FALSE;
+            VERIFY(bar_writes == before+1 && aes_menu_listening());
+            VERIFY(aes_menu_flush(aes_global) == E_OK && bar_writes == before+1);
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+            bar_stream = bar_mode = FALSE;
+        }
+    }
+    VERIFY(gem_menubar_install(0,2) == 1);
+    gem_menubar_mutate();
+    before = snapshot_reads;
+    VERIFY(aes_menu_dispatch(aes_global) < 0 && snapshot_reads == before);
+    VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !aes_menu_registered());
+    before = gem_menubar_checks(0);
+    bar_mode = FALSE; gesture_count = gesture_at = 0;
+    if (before) __builtin_printf("menu bar failure: %x\n",before);
+    VERIFY(before == 0);
+    VERIFY(!nesting && !mouse_nesting && !bar_height);
+    {
+        int mode;
+        for (mode = 0; mode < 3; mode++) {
+            accessory_entry = TRUE;
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(1);
+            bar_write_block = mode == 1; accessory_gone = mode == 2;
+            before = bar_writes;
+            VERIFY(aes_menu_dispatch(aes_global) == E_OK);
+            VERIFY(!nesting && !mouse_nesting && gem_menubar_unchanged());
+            VERIFY(bar_recipient == 99);
+            if (mode == 1) {
+                VERIFY(bar_writes == before && !aes_menu_listening());
+                VERIFY(aes_menu_flush(aes_global) == E_OK && !aes_menu_listening());
+                bar_write_block = FALSE;
+                VERIFY(aes_menu_flush(aes_global) == E_OK && aes_menu_listening());
+            }
+            if (mode != 2) {
+                VERIFY(bar_writes == before+1 && bar_message[0] == AC_OPEN && bar_message[4] == 4);
+                VERIFY(bar_message[1] == aes_global[2] && !bar_message[2] && !bar_message[3]);
+                VERIFY(!bar_message[5] && !bar_message[6] && !bar_message[7]);
+            } else VERIFY(bar_writes == before && aes_menu_listening());
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+            bar_stream = bar_mode = accessory_entry = accessory_gone = FALSE;
+        }
+        /* A registered application may select its own Desk entry. With a
+         * full self queue, consume the earlier message before retrying the
+         * pending AC_OPEN, without ever issuing a blocking self write. */
+        {
+            WORD message[8];
+            accessory_entry = accessory_self = TRUE;
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(1);
+            bar_write_block = bar_stream = TRUE;
+            bar_message[0] = WM_REDRAW;
+            before = bar_writes;
+            VERIFY(aes_menu_dispatch(aes_global) == E_OK && !self_blocked);
+            VERIFY(bar_recipient == 7 && bar_writes == before && !aes_menu_listening());
+            VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                              NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
+            VERIFY(message[0] == WM_REDRAW && !self_blocked && !aes_menu_listening());
+            bar_write_block = FALSE;
+            VERIFY(aes_menu_flush(aes_global) == E_OK && bar_writes == before+1);
+            mouse_x = 30; mouse_y = 59; /* The completed gesture left the menu bar. */
+            VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                              NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
+            VERIFY(message[0] == AC_OPEN && message[4] == 4 && !self_blocked);
+            VERIFY(aes_menu_listening() && gem_menubar_unchanged());
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !nesting && !mouse_nesting);
+            bar_stream = bar_mode = accessory_entry = accessory_self = FALSE;
+        }
+        /* A separate native client can publish binary data in a directory
+         * slot. Skip invalid/stale labels, retain the later valid slot and
+         * preserve unrelated File-menu selections. Genuine read failures
+         * still fail the dispatch and release its display/mouse resources. */
+        for (opaque_entry = 1; opaque_entry <= 8; opaque_entry++) {
+            accessory_entry = TRUE;
+            VERIFY(gem_menubar_install(0,2) == 1);
+            gem_menubar_input_stage(1);
+            before = bar_writes;
+            if (opaque_entry == 8) {
+                VERIFY(aes_menu_dispatch(aes_global) == EACCDN && bar_writes == before);
+            } else {
+                VERIFY(aes_menu_dispatch(aes_global) == E_OK && bar_writes == before+1);
+                VERIFY(bar_recipient == 99 && bar_message[0] == AC_OPEN && bar_message[4] == 4);
+            }
+            VERIFY(gem_menubar_unchanged() && !nesting && !mouse_nesting);
+            VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+            bar_stream = bar_mode = accessory_entry = FALSE;
+            if (opaque_entry != 8) VERIFY(gem_menubar_checks(0) == 0);
+        }
+        opaque_entry = 0;
+        bar_stream = bar_mode = FALSE; gesture_count = gesture_at = 0;
+    }
     before = gem_menu_checks(0);
     if (before) __builtin_printf("menu item failure: %x\n",before);
     VERIFY(before == 0);
@@ -794,6 +1578,8 @@ int main(void)
     before = gem_mono_checks(0);
     if (before) __builtin_printf("mono object failure: %x\n",before);
     VERIFY(before == 0);
+    VERIFY(desktop_drawing_checks() == 0);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
+    VERIFY(!frame_overlay_depth && !frame_dialog_depth && !bad_overlay_scope);
     return 0;
 }

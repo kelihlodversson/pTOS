@@ -10,9 +10,10 @@
 #include "gemlayout.h"
 #include "string.h"
 #include "ptos.h"
+#include "launch.h"
 
 extern char *getenv(const char *name);
-#define RESOURCE_PATH 128
+#define RESOURCE_PATH DL_LAUNCH_PATH
 RESOURCE_CONTEXT *aes_resource;
 static RESOURCE_CONTEXT *resources;
 static RESOURCE_CONTEXT *retired_resources;
@@ -25,6 +26,7 @@ typedef union resource_allocation {
 static RESOURCE_ALLOCATION *discarded_allocations;
 static LONG pending_close = -1;
 static char application_directory[RESOURCE_PATH];
+const char *aes_resource_directory(void) { return application_directory; }
 
 void *aes_temporary_alloc(LONG bytes)
 {
@@ -135,7 +137,17 @@ void aes_resources_init(void)
     char cwd[RESOURCE_PATH], directory[RESOURCE_PATH];
     LONG drive;
     size_t prefix, length, i, at = 0;
+    const DL_LAUNCH *launch = (const DL_LAUNCH *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH);
     application_directory[0] = 0;
+    if (launch) {
+        if (launch->ready != 1) return;
+        name = launch->command;
+        for (i = 0, prefix = 0; i < RESOURCE_PATH && name[i]; i++)
+            if (name[i] == '\\' || name[i] == '/') prefix = i+1;
+        if (i == RESOURCE_PATH || !prefix) return;
+        memcpy(application_directory,name,prefix); application_directory[prefix] = 0;
+        return;
+    }
     if (!name) return;
     length = strlen(name);
     if (length >= RESOURCE_PATH) return;

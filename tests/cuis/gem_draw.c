@@ -1,3 +1,5 @@
+#include "box_animations.h"
+#include "gem_tracking.h"
 /* Standard GEM source, real VDI pixel checks, and a userspace object demo. */
 #include <gem.h>
 #include "portab.h"
@@ -8,10 +10,12 @@
 #include "three_d.h"
 #include "menu_items.h"
 #include "popup_menu.h"
+#include "gem_menubar.h"
 #include "gem_layout.h"
 #include "form_keys.h"
 #include "gem_buttons.h"
 #include "gem_forms.h"
+#include "gem_selector.h"
 #include "gem_resources.h"
 #include "control_message.h"
 #define VERIFY(c) do { if (!(c)) return 0x7900 | __LINE__; } while (0)
@@ -36,6 +40,225 @@ void gem_popup_input_stage(short stage)
     message[14] = '0'+stage;
     ptos_write(1,message,sizeof(message)-1);
 }
+void gem_menubar_input_stage(short stage)
+{
+    static const char message[] = "x32 GEM menu bar: READY\r\n";
+    (void)stage;
+    ptos_write(1,message,sizeof(message)-1);
+}
+/* Compiles against unmodified GEMlib as well as the kernel's GEM header. */
+static int graphics_checks(void)
+{
+    short physical, virtual_handle, w,h,bw,bh,x,y, color, pen, background, i;
+    short input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, output[57], global[15];
+    MFORM custom = { 0 };
+    short native_form[37] = { 0 };
+    static const char ready[] = "x32 GEM graphics: READY\r\n";
+    static const char pass[] = "x32 GEM graphics setup/cursors: PASS\r\n";
+    for (i = 0; i < 15; i++) global[i] = aes_global[i];
+    physical = mt_graf_handle(&w,&h,&bw,&bh,global);
+    VERIFY(physical > 0 && w > 0 && h > 0 && bw >= w+4 && bh == h+3);
+    VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
+    virtual_handle = physical; v_opnvwk(input,&virtual_handle,output);
+    VERIFY(virtual_handle > 0 && virtual_handle != physical && output[0] > 0 && output[1] > 0);
+    v_clsvwk(virtual_handle);
+    VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
+    ptos_write(1,ready,sizeof(ready)-1);
+    do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(&x,&y,NULL,NULL) == 1); } while (x != 300 || y != 250);
+    VERIFY(evnt_timer(20) == 1);
+    /* Earlier GUI clients may have made the default cursor visible. Sample
+     * its backing pixel, independently of their final cursor state. */
+    VERIFY(graf_mouse(M_OFF,NULL) == 1);
+    background = gem_probe_pixel(physical,x,y);
+    VERIFY(graf_mouse(M_ON,NULL) == 1);
+    pen = 1;
+    VERIFY(gem_probe_swatch(physical,x+30,y,pen,&color) == 0);
+    if (background == color) { pen = 0; VERIFY(gem_probe_swatch(physical,x+30,y,pen,&color) == 0); }
+    VERIFY(color != background);
+    /* Keep native VDI word order explicit: GEMlib's historical colour
+     * field names differ from the internal VDI names. Bytes are unchanged. */
+    native_form[2] = 1; native_form[4] = pen;
+    __builtin_memcpy(&custom,native_form,sizeof(custom));
+    custom.mf_mask[0] = custom.mf_data[0] = (short)0x8000;
+    VERIFY(mt_graf_mouse(USER_DEF,&custom,global) == 1);
+    VERIFY(gem_probe_pixel(physical,x,y) == color);
+    VERIFY(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1);
+    VERIFY(gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_ON,NULL) == 1 && gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_ON,NULL) == 1 && gem_probe_pixel(physical,x,y) == color);
+    VERIFY(graf_mouse(M_SAVE,NULL) == 1);
+    custom.mf_data[0] = custom.mf_mask[0] = 0;
+    VERIFY(graf_mouse(USER_DEF,&custom) == 1 && gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_RESTORE,NULL) == 1 && gem_probe_pixel(physical,x,y) == color);
+    VERIFY(graf_mouse(M_PREVIOUS,NULL) == 1 && gem_probe_pixel(physical,x,y) == background);
+    VERIFY(graf_mouse(M_PREVIOUS,NULL) == 1 && gem_probe_pixel(physical,x,y) == color);
+    {
+        char child_tail[3] = { 1,'g',0 };
+        VERIFY(process(0x4b,0,(uintptr_t)"\\GEMDRAW.TOS",(uintptr_t)child_tail,0) == 0);
+        VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
+        VERIFY(gem_probe_pixel(physical,x,y) == color);
+    }
+    for (i = 0; i < 8; i++) VERIFY(graf_mouse(i,NULL) == 1);
+    VERIFY(graf_mouse(M_OFF,NULL) == 1); /* Keep pixel fixtures cursor-free. */
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
+static int control_checks(void)
+{
+    short id, stage, result, message[8], x,y,w,h, buttons;
+    short queued[8] = { 0x4712,0,0,0,0,0,0,0 };
+    char ready[] = "x32 GEM frame control 0: READY\r\n";
+    static const char pass[] = "x32 GEM frame controls: PASS\r\n";
+    id = wind_create(NAME|CLOSER|FULLER|MOVER|SIZER,0,0,200,140);
+    VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Close and full") == 1);
+    VERIFY(wind_open(id,20,30,200,140) == 1);
+    while (appl_read(-1,16,message) == 1) { }
+    for (stage = 0; stage < 7; stage++) {
+        ready[22] = '0'+stage;
+        ptos_write(1,ready,sizeof(ready)-1);
+        if (stage == 3 || stage == 5) {
+            static const char poll_pass[] = "x32 GEM mover poll: PASS\r\n";
+            static const char size_poll[] = "x32 GEM sizer poll: PASS\r\n";
+            do {
+                VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1);
+            } while (!(buttons & 1));
+            VERIFY(appl_write(aes_global[2],16,queued) == 1);
+            VERIFY(appl_read(-1,16,message) == 1 && message[0] == 0x4712);
+            VERIFY(appl_read(-1,16,message) == 0);
+            if (stage == 5) ptos_write(1,size_poll,sizeof(size_poll)-1);
+            else ptos_write(1,poll_pass,sizeof(poll_pass)-1);
+        }
+        for (;;) {
+            if (stage == 4 || stage == 6) {
+                result = appl_read(-1,16,message) == 1 ? MU_MESAG : 0;
+                if (!result) { VERIFY(evnt_timer(0) == 1); continue; }
+            } else result = evnt_multi(MU_MESAG|MU_BUTTON|MU_KEYBD|MU_TIMER,1,1,1,
+                0,0,0,0,0,0,0,0,0,0,message,10000,NULL,NULL,NULL,NULL,NULL,NULL);
+            VERIFY(result && !(result & (MU_BUTTON|MU_TIMER)));
+            if (result & MU_MESAG) {
+                if (message[0] == WM_REDRAW) continue;
+                VERIFY(stage && message[0] == (stage == 1 ? WM_FULLED : stage == 2 ? WM_CLOSED : stage >= 5 ? WM_SIZED : WM_MOVED));
+                VERIFY(message[3] == id && message[4] == (stage == 3 || stage == 4 ? 80 : 20) && message[5] == (stage == 3 || stage == 4 ? 70 : 30) &&
+                    message[6] == (stage >= 5 ? 241 : 200) && message[7] == (stage >= 5 ? 171 : 140));
+                break;
+            }
+            if (result & MU_KEYBD) { VERIFY(!stage); break; }
+        }
+        VERIFY(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 140);
+        VERIFY(evnt_multi(MU_BUTTON|MU_TIMER,1,1,1,0,0,0,0,0,0,0,0,0,0,NULL,0,
+            NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER);
+    }
+    VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
+/* The original arrow stays selected and repeats even after leaving its
+ * rectangle. These are standard GEM calls, including the polling stage. */
+static int arrow_checks(void)
+{
+    short id, stage, message[8], result, count, x,y,w,h, buttons;
+    const short actions[] = { WA_UPLINE,WA_DNLINE,WA_LFLINE,WA_RTLINE };
+    char ready[] = "x32 GEM arrow 0: READY\r\n";
+    char held[] = "x32 GEM arrow 0: HELD\r\n";
+    char outside[] = "x32 GEM arrow 0: OUTSIDE\r\n";
+    static const char pass[] = "x32 GEM scroll arrows: PASS\r\n";
+    id = wind_create(NAME|UPARROW|DNARROW|LFARROW|RTARROW,0,0,200,160);
+    VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Native scroll arrows") == 1);
+    VERIFY(wind_open(id,20,30,200,160) == 1);
+    while (appl_read(-1,16,message) == 1) { }
+    for (stage = 0; stage < 4; stage++) {
+        ready[14] = held[14] = outside[14] = '0'+stage;
+        ptos_write(1,ready,sizeof(ready)-1);
+        count = 0;
+        for (;;) {
+            if (stage == 1) {
+                result = appl_read(-1,16,message) == 1 ? MU_MESAG : 0;
+                if (!result) { VERIFY(evnt_timer(0) == 1); continue; }
+            } else result = evnt_multi(MU_MESAG|MU_BUTTON|(stage ? MU_TIMER : 0),2,1,1,
+                0,0,0,0,0,0,0,0,0,0,message,stage ? 4000 : 0,NULL,NULL,NULL,NULL,NULL,NULL);
+            VERIFY(result == MU_MESAG);
+            if (message[0] == WM_REDRAW) continue;
+            VERIFY(message[0] == WM_ARROWED && message[3] == id && message[4] == actions[stage]);
+            VERIFY(!message[1] && !message[2] && !message[5] && !message[6] && !message[7]);
+            count++;
+            if (count == 3) ptos_write(1,held,sizeof(held)-1);
+            VERIFY(graf_mkstate(&x,&y,&buttons,NULL) == 1);
+            if (count >= 3 && x >= 280 && y >= 220 && (buttons & 1)) break;
+        }
+        ptos_write(1,outside,sizeof(outside)-1);
+        do {
+            VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1);
+        } while (buttons & 1);
+        while (appl_read(-1,16,message) == 1) VERIFY(message[0] == WM_ARROWED && message[4] == actions[stage]);
+        VERIFY(evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,1,1,1,
+            0,0,0,0,0,0,0,0,0,0,message,20,NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER);
+        VERIFY(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 160);
+    }
+    VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
+static int slider_checks(void)
+{
+    short id, stage, message[8], result, count, x,y,w,h, buttons, position;
+    const short actions[] = { WA_LFPAGE,WA_RTPAGE,WA_UPPAGE,WA_DNPAGE };
+    short queued[8] = { 0x4713,0,0,0,0,0,0,0 };
+    char ready[] = "x32 GEM slider 0: READY\r\n";
+    char held[] = "x32 GEM slider 0: HELD\r\n";
+    char outside[] = "x32 GEM slider 0: OUTSIDE\r\n";
+    static const char pass[] = "x32 GEM sliders: PASS\r\n";
+    id = wind_create(NAME|VSLIDE|HSLIDE,0,0,200,160);
+    VERIFY(id > 0 && wind_set_str(id,WF_NAME,"Native sliders") == 1);
+    VERIFY(wind_set(id,WF_HSLIDE,500,0,0,0) == 1 && wind_set(id,WF_VSLIDE,500,0,0,0) == 1);
+    VERIFY(wind_open(id,20,30,200,160) == 1);
+    while (appl_read(-1,16,message) == 1) { }
+    for (stage = 0; stage < 8; stage++) {
+        ready[15] = held[15] = outside[15] = '0'+stage;
+        ptos_write(1,ready,sizeof(ready)-1);
+        if (stage >= 6) {
+            do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1); } while (!(buttons & 1));
+            VERIFY(appl_write(aes_global[2],16,queued) == 1);
+            VERIFY(appl_read(-1,16,message) == 1 && message[0] == 0x4713);
+            VERIFY(appl_read(-1,16,message) == 0);
+            ptos_write(1,held,sizeof(held)-1);
+        }
+        count = 0;
+        for (;;) {
+            if (stage >= 6) {
+                result = appl_read(-1,16,message) == 1 ? MU_MESAG : 0;
+                if (!result) { VERIFY(evnt_timer(0) == 1); continue; }
+            } else result = evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,2,1,1,
+                0,0,0,0,0,0,0,0,0,0,message,4000,NULL,NULL,NULL,NULL,NULL,NULL);
+            VERIFY(result == MU_MESAG);
+            if (message[0] == WM_REDRAW) continue;
+            VERIFY(message[3] == id && !message[1] && !message[2] && !message[5] && !message[6] && !message[7]);
+            if (stage >= 4) {
+                VERIFY(message[0] == ((stage & 1) ? WM_VSLID : WM_HSLID));
+                VERIFY(message[4] == ((stage == 4 || stage == 7) ? 1000 : 0));
+                break;
+            }
+            VERIFY(message[0] == WM_ARROWED && message[4] == actions[stage]);
+            if (++count == 3) ptos_write(1,held,sizeof(held)-1);
+            VERIFY(graf_mkstate(&x,&y,&buttons,NULL) == 1);
+            if (count >= 3 && x >= 280 && y >= 220 && (buttons & 1)) break;
+        }
+        if (stage < 4) ptos_write(1,outside,sizeof(outside)-1);
+        do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1); } while (buttons & 1);
+        while (appl_read(-1,16,message) == 1) VERIFY(stage < 4 && message[0] == WM_ARROWED && message[4] == actions[stage]);
+        VERIFY(evnt_multi(MU_MESAG|MU_BUTTON|MU_TIMER,1,1,1,
+            0,0,0,0,0,0,0,0,0,0,message,20,NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER);
+        VERIFY(wind_get(id,WF_HSLIDE,&position,NULL,NULL,NULL) == 1 && position == 500);
+        VERIFY(wind_get(id,WF_VSLIDE,&position,NULL,NULL,NULL) == 1 && position == 500);
+        VERIFY(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 160);
+    }
+    VERIFY(wind_close(id) == 1 && wind_delete(id) == 1);
+    ptos_write(1,pass,sizeof(pass)-1);
+    return 0;
+}
+
 static void object(OBJECT *o, short type, short x, short y, short w, short h)
 {
     o->ob_next = o->ob_head = o->ob_tail = -1;
@@ -170,6 +393,8 @@ static int demo(WORD width, WORD height)
     OBJECT scene[16] = { { 0 } };
     static TEDINFO title, field;
     short i, x = (width-580)/2, y = (height-380)/2;
+    short frame, wx, wy, ww, wh;
+    OBJECT work = { 0 };
     object(&scene[0],G_BOX,0,0,width,height); scene[0].ob_spec.index = 0x1143;
     object(&scene[1],G_BOX,x,y,580,380); scene[1].ob_spec.index = 0x11178;
     scene[1].ob_state = OS_OUTLINED|OS_SHADOWED;
@@ -199,6 +424,14 @@ static int demo(WORD width, WORD height)
     for (i = 8; i <= 12; i++) VERIFY(objc_add(scene,7,i) == 1);
     for (i = 13; i <= 15; i++) VERIFY(objc_add(scene,1,i) == 1);
     VERIFY(objc_draw(scene,0,8,0,0,width,height) == 1);
+    frame = wind_create(NAME|INFO,0,0,width,height);
+    VERIFY(frame > 0 && wind_set_str(frame,WF_NAME,"Native GEM window") == 1);
+    VERIFY(wind_set_str(frame,WF_INFO,"Shared AES frame builder") == 1);
+    VERIFY(wind_open(frame,width-300,height-190,260,140) == 1);
+    VERIFY(wind_get(frame,WF_WORKXYWH,&wx,&wy,&ww,&wh) == 1);
+    object(&work,G_BOX,wx,wy,ww,wh); work.ob_spec.index = 0x1170;
+    VERIFY(objc_draw(&work,0,0,wx,wy,ww,wh) == 1);
+
     {
         static const char ready[] = "x32 GEM object screenshot: READY\r\n";
         ptos_write(1,ready,sizeof(ready)-1);
@@ -206,6 +439,7 @@ static int demo(WORD width, WORD height)
     /* Keep the serial test marker out of the visual framebuffer. */
     VERIFY(objc_draw(scene,0,0,0,height-32,width,32) == 1);
     VERIFY(evnt_timer(1800) == 1);
+    VERIFY(wind_close(frame) == 1 && wind_delete(frame) == 1);
     return 0;
 }
 int main(int argc, char **argv, char **envp)
@@ -221,6 +455,15 @@ int main(int argc, char **argv, char **envp)
     (void)argv; (void)envp;
     VERIFY(appl_init() > 0 && mt_appl_init(global) > 0);
     object(&box,G_BOX,0,0,100,100); box.ob_spec.index = 0x1170;
+    if (argc > 1 && argv[1][0] == 'g') {
+        short window = wind_create(0,0,0,80,70);
+        VERIFY(window > 0 && graf_mouse(HOURGLASS,NULL) == 1);
+        VERIFY(wind_open(window,280,230,80,70) == 1 && wind_set(window,WF_TOP,0,0,0,0) == 1);
+        VERIFY(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1);
+        /* Deliberately exit with outstanding hides and an open window. */
+        VERIFY(appl_exit() == 1);
+        return 0;
+    }
     if (argc > 1 && argv[1][0] == 'l') {
         short parent = (short)process(0x10c,0,0,0,0);
         VERIFY(parent > 0 && wind_update(BEG_UPDATE) == 1);
@@ -251,6 +494,7 @@ int main(int argc, char **argv, char **envp)
         box.ob_x = 7; box.ob_y = 9;
         VERIFY(rsrc_obfix(&box,0) == 0 && box.ob_x == 7 && box.ob_y == 9);
         VERIFY(form_center_grect(&box,&untouched) == 0 && box.ob_x == 7 && untouched.g_x == 1);
+        VERIFY(menu_bar(&box,MENU_INSTALL) == 0 && menu_bar(NULL,MENU_REMOVE) == 1);
         VERIFY(objc_draw(&box,0,0,0,0,100,100) == 0 && appl_exit() == 1);
         {
             static const char marker[] = "x32 GEM object drawing: unavailable\r\n";
@@ -293,16 +537,95 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
         return 0;
     }
+    if (argc > 1 && argv[1][0] == 'm') {
+        short parent = (short)process(0x10c,0,0,0,0), window;
+        VERIFY(gem_menubar_install(handle,3) == 1);
+        window = wind_create(0,300,100,100,80);
+        VERIFY(window > 0 && wind_open(window,300,100,100,80) == 1);
+        control[0] = 0x7020; control[1] = global[2];
+        VERIFY(appl_write(parent,16,control) == 1);
+        VERIFY(control_message(control) == 1 && control[0] == 0x7021);
+        VERIFY(wind_set(window,WF_TOP,0,0,0,0) == 1 && evnt_timer(0) == 1);
+        control[0] = 0x7022;
+        VERIFY(appl_write(parent,16,control) == 1);
+        VERIFY(control_message(control) == 1 && control[0] == 0x7023);
+        VERIFY(appl_exit() == 1); /* Exit while owning the surface. */
+        return 0;
+    }
     status = process(0x3d,(uintptr_t)"FORMTEST.ON",0,0,0);
     if (status >= 0) {
+        short overlay_window;
         static const char pass[] = "x32 GEM modal forms: PASS\r\n";
         VERIFY(process(0x3e,status,0,0,0) == 0);
+        status = graphics_checks(); if (status) return status;
+        status = gem_box_animation_checks(graf_handle(NULL,NULL,NULL,NULL)); if (status) return status;
+        {
+            static const char pass[] = "x32 GEM box animations: PASS\r\n";
+            ptos_write(1,pass,sizeof(pass)-1);
+        }
+        status = gem_tracking_checks(); if (status) return status;
+        status = control_checks(); if (status) return status;
+        status = arrow_checks(); if (status) return status;
+        status = slider_checks(); if (status) return status;
+        /* Leave a decorated redraw pending beneath the alert and subsequent
+         * modal scopes. Their recursive waits must not repaint its frame. */
+        overlay_window = wind_create(NAME|INFO,0,0,240,140);
+        VERIFY(overlay_window > 0 && wind_set_str(overlay_window,WF_NAME,"Behind overlays") == 1);
+        VERIFY(wind_open(overlay_window,width/2-100,height/2-30,240,140) == 1);
         status = gem_form_interactive(); if (status) return status;
         ptos_write(1,pass,sizeof(pass)-1);
+        status = gem_selector_checks(handle); if (status) return status;
         status = gem_popup_checks(handle); if (status) return status;
         {
             static const char popup_pass[] = "x32 GEM popup menus: PASS\r\n";
             ptos_write(1,popup_pass,sizeof(popup_pass)-1);
+            {
+                short queued = wind_create(0,0,19,200,120);
+                short message[8], mx, my, buttons, keys, key, clicks;
+                short state;
+                VERIFY(queued > 0 && wind_open(queued,0,19,200,120) == 1);
+                VERIFY(wind_set(queued,WF_TOP,0,0,0,0) == 1);
+                while (appl_read(-1,16,message) == 1) { }
+                status = gem_menubar_checks(handle); if (status) return status;
+                /* Menu tracking must preserve the earlier application click. */
+                for (state = 1; state >= 0; state--) {
+                    VERIFY(evnt_multi(MU_BUTTON|MU_TIMER,1,1,state,
+                        0,0,0,0,0,0,0,0,0,0,message,0,
+                        &mx,&my,&buttons,&keys,&key,&clicks) & MU_BUTTON);
+                    VERIFY(mx == 80 && my == 33 && buttons == state);
+                }
+                VERIFY(wind_close(queued) == 1 && wind_delete(queued) == 1);
+            }
+            {
+                static const char menu_pass[] = "x32 GEM menu bar: PASS\r\n";
+                VERIFY(wind_close(overlay_window) == 1 && wind_delete(overlay_window) == 1);
+                ptos_write(1,menu_pass,sizeof(menu_pass)-1);
+                {
+                    short window = wind_create(0,20,100,100,80);
+                    VERIFY(window > 0 && wind_open(window,20,100,100,80) == 1);
+                    VERIFY(gem_menubar_install(handle,2) == 1);
+                    tail[1] = 'm';
+                    child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+                    VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7020);
+                    VERIFY(gem_probe_pixel(handle,130,5) == 3);
+                    VERIFY(wind_set(window,WF_TOP,0,0,0,0) == 1 && evnt_timer(0) == 1);
+                    VERIFY(gem_probe_pixel(handle,130,5) == 2);
+                    control[0] = 0x7021;
+                    VERIFY(appl_write((short)child,16,control) == 1);
+                    VERIFY(control_message(control) == 1 && control[0] == 0x7022);
+                    VERIFY(gem_probe_pixel(handle,130,5) == 3);
+                    control[0] = 0x7023;
+                    VERIFY(appl_write((short)child,16,control) == 1);
+                    VERIFY(process(0x13a,child,0,0,0) == (LONG)((ULONG)child<<16));
+                    VERIFY(evnt_timer(0) == 1 && gem_probe_pixel(handle,130,5) == 2);
+                    VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
+                    VERIFY(wind_close(window) == 1 && wind_delete(window) == 1);
+                    {
+                        static const char handoff[] = "x32 GEM menu handoff: PASS\r\n";
+                        ptos_write(1,handoff,sizeof(handoff)-1);
+                    }
+                }
+            }
         }
     }
     VERIFY(gem_probe_cell(handle,&cellw,&cellh) == 0);

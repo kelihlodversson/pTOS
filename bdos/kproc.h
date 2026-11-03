@@ -64,6 +64,8 @@ WORD kproc_pid(PD *pd);                 /* 0: no record */
 #if CONF_WITH_CUIS
 void kproc_set_executable_name(PD *pd, const char *path);
 const char *kproc_executable_name(PD *pd);
+/* Snapshot all live standard-handle aliases into OPNFILES counters. */
+void kproc_standard_file_refs(ULONG *references);
 #endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
 SBYTE kproc_get_prio(PD *pd);
@@ -171,6 +173,8 @@ BOOL kproc_borrow(PD *launcher, void *block);
 void kproc_set_creator(PD *pd, PD *creator);
 void kproc_hand_over(PD *caller, PD *child);
 LONG kproc_check_launch(PD *pd, PD *caller);
+/* CUIS-only: identify a live unlaunched image belonging to this caller. */
+LONG kproc_child_image_pid(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
 ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);

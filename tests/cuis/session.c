@@ -2,8 +2,19 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 const char *kproc_executable_name(PD *pd);
+long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
+long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
 #include "../../aes/cuis_session.c"
 
+static MFORM displayed_pointer;
+static BOOL displayed_hidden, displayed_style;
+void vdi_cuis_pointer(const MFORM *form, BOOL hidden)
+{
+    displayed_style = form != NULL; displayed_hidden = hidden;
+    if (form) displayed_pointer = *form;
+}
+static BOOL text_console_active;
+void vdi_cuis_console(BOOL active) { text_console_active = active; }
 static PD first, second, third, fourth, fifth;
 PD *run = &first;
 static union {
@@ -33,6 +44,11 @@ static LONG stream_peer_handle;
 static ULONG input_packet_mode;
 static BOOL input_drop_focus, input_drop_on_validate;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
+static void context_copy_hook(void);
+static void context_read_hook(void);
+static void child_copy_hook(void);
+static void child_idle_hook(void);
+static void cohort_idle_hook(void);
 static PD *mouse_release_owner;
 static ULONG mouse_release_steps;
 static BOOL mouse_release_exit;
@@ -110,7 +126,15 @@ void cuis_input_idle(void)
         stream_change_after = 0;
     }
     if (input_packet_mode) {
-        if (input_packet_mode == 8) {
+        if (input_packet_mode == 9) {
+            if (input_sleeps == 1)
+                cuis_pointer_packet((WORD)(40-pointer_x),(WORD)(60-pointer_y),1,NULL,NULL);
+            if (input_sleeps == 2) {
+                cuis_pointer_packet(0,0,0,NULL,NULL);
+                cuis_pointer_packet((WORD)(5-pointer_x),(WORD)(5-pointer_y),0,NULL,NULL);
+                input_packet_mode = 0;
+            }
+        } else if (input_packet_mode == 8) {
             cuis_pointer_packet((WORD)(210 - pointer_x), (WORD)(210 - pointer_y), 0, NULL, NULL);
             input_packet_mode = 0;
         } else if (input_packet_mode == 5 || input_packet_mode == 6) {
@@ -163,6 +187,8 @@ void cuis_input_idle(void)
         else cuis_display_lock((*find_owner(run))->handle, 0, 0);
         run = saved;
     }
+    child_idle_hook();
+    cohort_idle_hook();
     if (input_drop_focus) { input_drop_focus = FALSE; set_focus(NULL); }
     input_irqs = FALSE;
 }
@@ -190,6 +216,7 @@ BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
 {
     if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
+    context_read_hook();
     if (address >= 0x20000) {
         memcpy(stream_output + address - 0x20000, source, size); return TRUE;
     }
@@ -208,6 +235,8 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
         for (window = (*find_owner(run))->windows; window; window = window->next) window->notices = 0;
         cuis_input_unlock(flags);
     }
+    context_copy_hook();
+    child_copy_hook();
     memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
 }
 const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
@@ -218,9 +247,7 @@ void *kalloc(ULONG bytes)
         if (fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) || stream_ring_count == 8) return NULL;
         allocations++; return stream_rings[stream_ring_count++];
     }
-    if ((bytes != sizeof(CUIS_CLIENT) && bytes != sizeof(CUIS_WINDOW) &&
-         bytes != CUIS_CLIP_LIMIT * sizeof(CUIS_RECT) &&
-         (bytes < sizeof(CUIS_PACKET) || bytes > sizeof(CUIS_PACKET) + CUIS_STREAM_MAX)) ||
+    if (!bytes || bytes > sizeof(pool[0]) ||
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
         allocations == 1024)
         return NULL;
@@ -244,6 +271,17 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "notices.c"
 #include "input_events.c"
 #include "mouse_control.c"
+#include "surfaces.c"
+#include "controls.c"
+#include "pointer_style.c"
+#include "window_at.c"
+#include "background.c"
+#include "contexts.c"
+#include "child_completion.c"
+#include "entries.c"
+#include "peers.c"
+#include "cohorts.c"
+
 int main(void)
 {
     LONG owner, other, reopened;
@@ -318,5 +356,49 @@ int main(void)
     rc = input_event_checks();
     if (rc) return rc;
     rc = input_capture_checks();
-    return rc ? rc : mouse_control_checks();
+    if (rc) return rc;
+    rc = mouse_control_checks();
+    if (rc) return rc;
+    rc = fresh_mouse_checks();
+    if (rc) return rc;
+    rc = surface_checks();
+    if (rc) return rc;
+    rc = surface_cleanup_checks();
+    if (rc) return rc;
+    rc = control_checks();
+    if (rc) return rc;
+    rc = pointer_style_checks();
+    if (rc) return rc;
+    rc = window_at_checks();
+    if (rc) return rc;
+    rc = background_checks();
+    if (rc) return rc;
+    rc = background_keyboard_checks();
+    if (rc) return rc;
+    rc = background_release_checks();
+    if (rc) return rc;
+    rc = context_checks();
+    if (rc) return rc;
+    rc = child_completion_checks();
+    if (rc) return rc;
+    rc = button_resume_checks();
+    if (rc) return rc;
+    rc = child_launch_checks();
+    if (rc) return rc;
+    rc = console_launch_checks();
+    if (rc) return rc;
+    rc = console_abandoned_launch_checks();
+    if (rc) return rc;
+    rc = entry_checks();
+    if (rc) return rc;
+    rc = peer_checks();
+    if (rc) return rc;
+    rc = cohort_checks();
+    if (rc) return rc;
+    rc = cohort_click_checks();
+    if (rc) return rc;
+    rc = cohort_origin_checks();
+    if (rc) return rc;
+    rc = cohort_result_checks();
+    return rc ? rc : process_defer_checks();
 }

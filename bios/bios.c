@@ -291,7 +291,7 @@ static void vecs_init(void)
 
 extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
-#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+#if (CONF_WITH_CLI && CONF_EXTERNAL_CLI) || (CONF_WITH_CUIS && CONF_EXTERNAL_DESK)
 /*
  * The shell of an image without the AES is a program, loaded from the root
  * directory of the boot drive like any other: EmuCON (cli/Makefile), or the
@@ -302,7 +302,9 @@ static LONG try_shell(const char *path, void *env)
 {
     return Pexec(PE_LOADGO, path, "", (char *)env);
 }
+#endif
 
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
 static void start_external_cli(char *env)
 {
     char path[SHELL_PATH_SIZE], drives[12];
@@ -1202,7 +1204,21 @@ void biosmain(void)
          * like Atari TOS, it inherits an empty environment
          */
         Pexec(PE_LOADGO, "COMMAND.PRG", "", NULL);
-    } else if (exec_os) {
+    }
+#if CONF_WITH_CUIS && CONF_EXTERNAL_DESK
+    else if (CONF_WITH_CUIS && CONF_EXTERNAL_DESK) {
+        char path[SHELL_PATH_SIZE];
+        LONG result = shell_start(shell_names_desk, try_shell, default_env, path);
+        if (result < 0)
+            kcprintf("Desktop: cannot start (error %ld)\n", (long)result);
+#if CONF_WITH_CLI && CONF_EXTERNAL_CLI
+        start_external_cli(default_env);
+#elif CONF_WITH_CLI
+        start_builtin_cli(default_env);
+#endif
+    }
+#endif
+    else if (exec_os) {
         /*
          * start the default (ROM) shell
          * like Atari TOS, we pass the default environment

@@ -25,7 +25,7 @@ struct aes_client_state {
     WORD id;
     char name[AES_NAME_MAX + 1];
     UWORD head, count;
-    AES_MESSAGE queue[AES_MESSAGE_QUEUE];
+    AES_CLIENT_MESSAGE queue[AES_MESSAGE_QUEUE];
 };
 
 static AES_CLIENT_STATE *clients;
@@ -164,7 +164,7 @@ static LONG register_client(UQUAD address, UQUAD output)
 static LONG send_message(AES_CLIENT_STATE *sender, UQUAD id, UQUAD input)
 {
     AES_CLIENT_STATE *receiver;
-    AES_MESSAGE message;
+    AES_CLIENT_MESSAGE message;
 
     if (!id || id > 32767)
         return EINVAL;
@@ -189,7 +189,7 @@ static LONG send_message(AES_CLIENT_STATE *sender, UQUAD id, UQUAD input)
 static void flush_native_messages(AES_CLIENT_STATE *p)
 {
 #if CONF_WITH_AES
-    AES_MESSAGE message;
+    AES_CLIENT_MESSAGE message;
 
     x86_64_aes_pending_message(p->owner);
     while (p->count < AES_MESSAGE_QUEUE && x86_64_aes_window_pending(p->owner, &message)) {
@@ -204,7 +204,7 @@ static void flush_native_messages(AES_CLIENT_STATE *p)
 static LONG receive_message(AES_CLIENT_STATE *p, UQUAD output, BOOL poll)
 {
     AES_EVENT event = { 0 };
-    ULONG size = poll ? sizeof(event) : sizeof(AES_MESSAGE);
+    ULONG size = poll ? sizeof(event) : sizeof(AES_CLIENT_MESSAGE);
 
     if ((output & 1) || !kproc_validate_user_write(output, size))
         return EIMBA;
@@ -546,7 +546,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d,
 LONG aes_service_kernel_message(PD *pd, const WORD *words)
 {
     AES_CLIENT_STATE *p = kproc_aes_get(pd);
-    AES_MESSAGE message;
+    AES_CLIENT_MESSAGE message;
 
     if (!p)
         return EACCDN;

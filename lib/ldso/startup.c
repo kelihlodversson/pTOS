@@ -55,7 +55,7 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
 {
     STACK s;
     uint32_t pos, n, argc = 0, envend, argstart = 0, execfn, i, at, vectors;
-    uint32_t aux[22];
+    uint32_t aux[24], auxwords = 22, launch = 0, nullstart = 0, nullend = 0;
     unsigned char token[128], quote;
 
     *rsp = *used = 0;
@@ -77,6 +77,19 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     s.buffer = buffer; s.front = 0; s.back = capacity; s.base = top - capacity;
     if (!word(&s, 0) || !string(&s, (const unsigned char *)filename, n, &execfn))
         return DL_NO_SPACE;
+    if (info->capture_launch) {
+        if (tailsize < DL_LAUNCH_TAIL || !info->environment) return DL_BAD_ELF;
+        s.back &= ~3U;
+        if (s.back < s.front || s.back-s.front < sizeof(DL_LAUNCH)) return DL_NO_SPACE;
+        s.back -= sizeof(DL_LAUNCH);
+        launch = s.base+s.back;
+        for (i = 0; i < sizeof(uint32_t); i++) {
+            buffer[s.back+sizeof(uint32_t)+i] = ((const unsigned char *)&info->environment)[i];
+            buffer[s.back+2*sizeof(uint32_t)+i] = ((const unsigned char *)&envsize)[i];
+        }
+        for (i = 0; i < DL_LAUNCH_TAIL; i++)
+            buffer[s.back+3*sizeof(uint32_t)+DL_LAUNCH_PATH+i] = tail[i];
+    }
     /* Locate the end of ordinary environment entries and the extended argv. */
     pos = 0; envend = 0;
     while (pos < envsize && env[pos]) {
@@ -87,8 +100,12 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
             env[pos+3] == 'V' && env[pos+4] == '=') {
             envend = pos;
             if (tail[0] == 127) {
-                if (n != 5)
-                    return DL_UNSUPPORTED;
+                if (n != 5) {
+                    if (n < 10 || env[pos+5] != 'N' || env[pos+6] != 'U' ||
+                        env[pos+7] != 'L' || env[pos+8] != 'L' || env[pos+9] != ':')
+                        return DL_UNSUPPORTED;
+                    nullstart = pos+10; nullend = pos+n;
+                }
                 argstart = pos + n + 1;
             }
             break;
@@ -113,6 +130,23 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
         }
         if (pos >= envsize)
             return DL_BAD_ELF;
+        /* The standard NULL:index,... suffix represents empty arguments with
+         * nonempty placeholders, so the environment still ends in a NUL pair.
+         * Apply the list to the private stack strings after argv is built. */
+        pos = nullstart;
+        while (pos < nullend) {
+            uint32_t index = 0, address = 0;
+            if (env[pos] < '0' || env[pos] > '9') return DL_BAD_ELF;
+            do {
+                if (index > argc/10) return DL_BAD_ELF;
+                index = index*10 + env[pos++]-'0';
+                if (index >= argc) return DL_BAD_ELF;
+            } while (pos < nullend && env[pos] >= '0' && env[pos] <= '9');
+            for (i = 0; i < 4; i++)
+                ((unsigned char *)&address)[i] = s.buffer[4+index*4+i];
+            s.buffer[address-s.base] = 0;
+            if (pos < nullend && (env[pos++] != ',' || pos == nullend)) return DL_BAD_ELF;
+        }
     } else {
         if (tail[0] > 126 || (uint32_t)tail[0] + 1 > tailsize || !word(&s, execfn))
             return DL_BAD_ELF;
@@ -165,8 +199,12 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     aux[14] = DL_AT_PTOS_BASEPAGE; aux[15] = info->basepage;
     aux[16] = DL_AT_PTOS_BOOTDRIVE; aux[17] = info->bootdrive;
     aux[18] = DL_AT_PTOS_LOADBIAS; aux[19] = info->load_bias;
-    aux[20] = aux[21] = 0;
-    for (i = 0; i < sizeof(aux) / sizeof(aux[0]); i++)
+    if (launch) {
+        aux[20] = DL_AT_PTOS_LAUNCH; aux[21] = launch;
+        auxwords += 2;
+    }
+    aux[auxwords-2] = aux[auxwords-1] = 0;
+    for (i = 0; i < auxwords; i++)
         if (!word(&s, aux[i]))
             return DL_NO_SPACE;
     for (i = 0; i < 4; i++)
