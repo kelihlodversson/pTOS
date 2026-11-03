@@ -1,7 +1,7 @@
 /* Ordinary GEM C calls over the application's own OBJECT array.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later.
  */
-#include "libaes.h"
+#include "gem.h"
 #include "../../aes/shared/gemobjbounds.h"
 #include "../../aes/shared/gemobjtree.h"
 

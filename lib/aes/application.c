@@ -1,6 +1,6 @@
 /* GEM result conventions and per-process globals; transport stays private. */
 #include "gem.h"
-#include "libaes.h"
+#include "native_bindings.h"
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"

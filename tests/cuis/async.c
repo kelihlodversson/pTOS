@@ -1,6 +1,6 @@
 /* Exercise standard MiNT process calls; no custom scheduling syscall. */
 #include "config.h"
-#include "libaes.h"
+#include "native_probe.h"
 #include "gemerror.h"
 #include "sysconf.h"
 #include "bdosdefs.h"
@@ -18,6 +18,7 @@ static LONG vcall(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 static void fault_button(WORD state) { (void)state; __asm__ volatile ("ud2"); }
 static void safe_button(WORD state) { (void)state; }
 #endif
+#undef CHECK
 #define CHECK(c) do { if (!(c)) return 0x6000 | __LINE__; } while (0)
 static LONG call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -63,7 +64,7 @@ int main(int argc, char **argv, char **envp)
     char command[20];
     (void)envp;
     CHECK(argc == 2);
-    session = aes_session_open(); me = call(0x10b, 0, 0, 0, 0);
+    session = probe_session_open(); me = call(0x10b, 0, 0, 0, 0);
     CHECK(session >= 0 && me > 0);
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
     if (argv[1][0] == 'b') {
@@ -72,8 +73,8 @@ int main(int argc, char **argv, char **envp)
         WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
         CHECK(vcall(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&ws, 0, 0) == E_OK);
         CHECK(vcall(VDI_SERVICE_VECTOR, ws.handle, 125, (uintptr_t)fault_button, (uintptr_t)&old) == E_OK);
-        CHECK(aes_message_send((LONG)unhex(argv[1]+2), me, 0, 0, 0) == E_OK);
-        CHECK(aes_message_wait(session, -1) == 1);
+        CHECK(probe_message_send((LONG)unhex(argv[1]+2), me, 0, 0, 0) == E_OK);
+        CHECK(probe_message_wait(session, -1) == 1);
         return 0x6000; /* The foreign callback must terminate us before returning. */
     }
 #endif
@@ -83,8 +84,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(call(0x3d, (uintptr_t)argv[0], 0, 0, 0) >= 0); /* exit must close this */
         if (mode == 'd') {
             CHECK(call(0x10c, 0, 0, 0, 0) != parent);
-            CHECK(aes_message_send((LONG)unhex(argv[1]+2), 1, 2, 3, 4) == EACCDN);
-            CHECK(aes_message_wait(session, 5) == 0);
+            CHECK(probe_message_send((LONG)unhex(argv[1]+2), 1, 2, 3, 4) == EACCDN);
+            CHECK(probe_message_wait(session, 5) == 0);
             {
                 static const char marker[] = "x32 async orphan: PASS\r\n";
                 ptos_write(1, marker, sizeof(marker)-1);
@@ -92,10 +93,10 @@ int main(int argc, char **argv, char **envp)
             return 0;
         }
         CHECK(call(0x10c, 0, 0, 0, 0) == parent);
-        CHECK(aes_message_send((LONG)unhex(argv[1]+2), me, parent, 3, 4) == E_OK);
+        CHECK(probe_message_send((LONG)unhex(argv[1]+2), me, parent, 3, 4) == E_OK);
         if (mode == '1') _Exit(77);
         if (mode == '2') __asm__ volatile ("ud2");
-        CHECK(aes_message_wait(session, 5) == 0);
+        CHECK(probe_message_wait(session, 5) == 0);
         return 0x1234;
     }
     if (argv[1][0] == 'o' || argv[1][0] == 'z' || argv[1][0] == 'v' || argv[1][0] == 'f') {
@@ -119,13 +120,13 @@ int main(int argc, char **argv, char **envp)
         CHECK(vcall(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&ws, 0, 0) == E_OK);
         tail(command, '0', session, me); command[1] = 'b';
         pid = spawn(argv[0], command); CHECK(pid > 0);
-        CHECK(aes_message_wait(session, -1) == 1);
-        CHECK(aes_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == (ULONG)pid);
+        CHECK(probe_message_wait(session, -1) == 1);
+        CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == (ULONG)pid);
         CHECK(vcall(VDI_SERVICE_VECTOR, ws.handle, 125, (uintptr_t)safe_button, (uintptr_t)&old) == E_OK);
         CHECK(old.old_handler != 0);
         ((void (*)(WORD))(uintptr_t)old.old_handler)(0x1234);
         CHECK(call(0x10b, 0, 0, 0, 0) == me); /* The invoking parent survives. */
-        CHECK(aes_message_send(sender, 0, 0, 0, 0) == E_OK); /* Resume the owner for deferred exit. */
+        CHECK(probe_message_send(sender, 0, 0, 0, 0) == E_OK); /* Resume the owner for deferred exit. */
         CHECK(waitpid(pid, 0, 0) == (LONG)(((ULONG)pid << 16) | 0x0400));
         CHECK(vcall(VDI_SERVICE_CLOSE, ws.handle, 0, 0, 0) == E_OK);
         {
@@ -152,8 +153,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(waitpid(pid, 1, ~0ULL) == 0); /* Child has not run yet. */
         CHECK(waitpid(me, 1, 0) == EFILNF);
         CHECK(call(0xff, 0, 0, 0, 0) == 0);
-        CHECK(aes_message_wait(session, -1) == 1);
-        CHECK(aes_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == (ULONG)pid && b == (ULONG)me);
+        CHECK(probe_message_wait(session, -1) == 1);
+        CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == (ULONG)pid && b == (ULONG)me);
         CHECK(waitpid(pid, 0, (1ULL << 32) | (uintptr_t)usage) == EIMBA);
         CHECK(waitpid(pid, 0, (uintptr_t)main) == EIMBA);
         if (i == 3) status = call(0x11c, 0, (uintptr_t)usage, ~0ULL, ~0ULL);
@@ -179,11 +180,11 @@ int main(int argc, char **argv, char **envp)
         for (j = 0; j < 7 && children[j] != (LONG)((ULONG)status >> 16); j++) ;
         CHECK(j < 7); children[j] = 0;
     }
-    for (i = 0; i < 7; i++) CHECK(aes_message_read(session, &sender, &a, &b, &c, &d) == 1);
+    for (i = 0; i < 7; i++) CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1);
     for (i = 0; i < 16; i++) {
         pid = spawn(argv[0], command); CHECK(pid > 0);
         CHECK(((ULONG)waitpid(pid, 0, 0) >> 16) == (ULONG)pid);
-        CHECK(aes_message_read(session, &sender, &a, &b, &c, &d) == 1);
+        CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1);
     }
     {
         static const char empty_tail[] = { 0, 0 };
@@ -196,7 +197,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(pid > 0 && waitpid(pid, 0, 0) == (LONG)((ULONG)pid << 16));
         CHECK(call(0x4b, 0, (uintptr_t)argv[0], (uintptr_t)nested_tail, (uintptr_t)environment) == 0);
         CHECK(call(0xff, 0, 0, 0, 0) == E_OK);
-        CHECK(aes_message_wait(session, 10) == 0);
+        CHECK(probe_message_wait(session, 10) == 0);
     }
     CHECK(call(0x109, 0, 0, 0, 0) == EFILNF);
     {

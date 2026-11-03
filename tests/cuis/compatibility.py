@@ -39,6 +39,12 @@ class DeclarationGuard(unittest.TestCase):
     def test_real_headers(self):
         self.check()
 
+    def test_private_native_export(self):
+        path = self.root / "lib/aes/exports.map"
+        path.write_text(path.read_text().replace("global:", "global: aes_session_open;", 1))
+        with self.assertRaisesRegex(AssertionError, "private CUIS exports: aes_session_open"):
+            self.check()
+
     def test_commented_exports(self):
         path = self.root / "lib/aes/exports.map"
         original = path.read_text()
