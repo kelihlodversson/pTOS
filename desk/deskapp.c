@@ -71,6 +71,23 @@
  */
 #define MAX_ICONS       256
 
+#if CONF_WITH_LIBAES_DESK
+static char autorun_path[MAXPATHLEN];
+static WORD autorun_graphical;
+
+void app_launch_autorun(void)
+{
+    static BOOL started;
+    char tail[2] = { 0, 0 };
+
+    if (started)
+        return;
+    started = TRUE;
+    if (autorun_path[0] && !(desk_bootflags() & BOOTFLAG_SKIP_AUTO_ACC))
+        (void)shel_write(SHW_EXEC, autorun_graphical, SHW_IMMED, autorun_path, tail);
+}
+#endif
+
 
 /*
  *  maximum allowed text width for icons (excluding trailing null)
@@ -872,7 +889,17 @@ void app_start(void)
             pcurr = scan_2(pcurr,&inf_rev_level);
             break;
         case 'Z':                       /* autorun: Z nn pathname@ */
+#if CONF_WITH_LIBAES_DESK
+            scan_2(pcurr+2, &autorun_graphical);
+            autorun_graphical = !!autorun_graphical;
+#endif
             pcurr = scan_str(pcurr+5,&pauto);   /* save pathname in buffer */
+#if CONF_WITH_LIBAES_DESK
+            if (strlen(pauto) < sizeof(autorun_path))
+                strcpy(autorun_path, pauto);
+            else
+                autorun_path[0] = '\0';
+#endif
             break;                              /* (a bit wasteful)        */
         case 'T':                       /* Trash */
         case 'M':                       /* Media (Hard/Floppy)  */

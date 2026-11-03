@@ -2,9 +2,9 @@
 
 This is the current **x32 `CONF_WITH_LIBAES`** source API inventory for #661.
 Applications use normal GEMlib headers and `libaes.so`, without CUIS setup or
-a userspace AES server. The older typed kernel AES service documented in
-`aes-x32.txt` is a separate, transitional implementation. Its availability
-does not establish that a feature works through external libaes.
+a userspace AES server. The earlier typed x32 kernel AES service and its
+client ABI have been retired; classic kernel AES remains for single-address-
+space systems.
 
 `available` means the named classic operation is implemented, within the
 documented resource/queue limits. `partial` identifies selectors or extensions
@@ -20,7 +20,10 @@ not semantic correctness; the referenced tests and behavioral documentation
 are the evidence for behavior. `doc/cuis.txt` gives detailed limits and modes.
 The [shell audit](libaes-shell-compatibility.md) classifies every shell mode,
 execution selector, extended launch flag and tail encoding, with explicit
-follow-ups #873–#877 for deferred behavior.
+follow-ups #873–#877 for deferred behavior. Remaining non-shell extensions
+are scoped in #884 (events, replay and application control), #885 (menus,
+objects and windowed forms), and #886 (window and clipboard extensions).
+Extended resource formats remain tracked in #836 and #849.
 
 ## Source API and extension matrix
 
@@ -66,24 +69,18 @@ clients import only standard bindings. The API inventory rejects private exports
 
 ## Boot/configuration audit
 
-These are transitional configurations, not the desired final constraints.
-Kconfig still permits kernel AES with CUIS and with separate address spaces.
-The external libaes desktop, resources and shared rendering options now work
-with both CONF_WITH_AES=n and CONF_WITH_X32_AES=n. Kernel-AES-only stack and
-loadable-cursor options remain scoped to that implementation. This establishes
-an independent external GUI path; final exclusion rules and legacy-service
-removal are subsequent gates.
+Kconfig excludes kernel AES whenever CUIS or per-process address spaces are
+selected. The external x32 desktop uses shared libaes and native VDI. ARM and
+m68k retain the traditional kernel AES on single-address-space configurations;
+backends without external libaes must retain a usable non-GUI path.
 
 Configuration | Current path | Validation
 --- | --- | ---
 x32, AES=n, LIBAES=n | Native CLI; no GUI library | `configs/pc-x86_64_defconfig`, x86 boot CI
-x32, AES=n, ELF_SHARED=y, LIBAES=y, EXTERNAL_DESK=n | Ordinary shared GEM applications over CUIS; no desktop required | `tests/cuis/gem.c`, combined/headless shared-library boot CI
-x32, AES=n, X32_AES=n, LIBAES=y, EXTERNAL_DESK=y | Resident shared EmuDesk and libaes, with no legacy kernel AES service | `configs/pc-x86_64-libaes-desktop_defconfig`, shared-desktop CI, `tests/x32_desktop/run.py`
-x32, AES=y, LIBAES=n, EXTERNAL_DESK=y | Transitional kernel AES and typed ring-3 desktop | `tests/x32_desktop/run.py`, feature-disabled desktop CI
-x32, AES=y, LIBAES=y, EXTERNAL_DESK=y | BIOS launches resident libaes EmuDesk directly; kernel AES is still linked but not its shell | `tests/x32_desktop/run.py`, RCS x32 GUI CI
-x32, AES=y, LIBAES=y, EXTERNAL_DESK=n | Built-in desktop retains legacy AES integration | Transitional link validation; not external-desktop acceptance evidence
-ARM/m68k, USER_ASPACE=n | Existing kernel AES/trap/desktop paths | Native builds and ARM/m68k regression CI
-ARM/m68k, USER_ASPACE=y | libaes unavailable; no completed external GUI path | Architecture follow-ups; not evidence for removing kernel AES yet
+x32, AES=n, LIBAES=y, EXTERNAL_DESK=n | Shared GEM applications over CUIS | `tests/cuis/gem.c`, combined boot CI
+x32, AES=n, LIBAES=y, EXTERNAL_DESK=y | Resident shared desktop, no kernel AES | `configs/pc-x86_64-libaes-desktop_defconfig`, `tests/x32_desktop/run.py`
+ARM/m68k, USER_ASPACE=n | Traditional kernel AES/trap/desktop | Native builds and ARM/m68k regression CI
+ARM/m68k, USER_ASPACE=y | Kernel AES unavailable; external libaes is not yet ported | Architecture follow-ups and CLI configuration checks
 
 RCS integration is merged in kelihlodversson/rcs#40, with libcmini#24 fixing
 x32 cookie lookup. Its GUI test uses normal GEMlib headers and the shared CRT,
@@ -115,18 +112,14 @@ parameters and normal/fault cleanup.
    are implemented. Live resolution switching requires a platform backend and
    remains disabled without terminating clients.
 5. External desktop/resources/options are independent of kernel AES (#878).
-   Transitional aes_* helpers are private and native probes use test-only
-   direct syscalls (#880). Migrate the remaining clients/tests away from the
-   older typed kernel AES service; that service is a separate migration gate.
-   Shared-desktop CI now runs with both kernel AES implementations disabled;
-   legacy desktop jobs remain until their explicit migration/removal.
-6. Test the resulting external GUI and CLI/fallback configurations, then make
-   CUIS/kernel AES mutually exclusive and kernel AES unavailable with
-   USER_ASPACE on every architecture. Architectures without external libaes
-   must retain a usable non-GUI configuration. Verify rejected combinations.
-7. Remove the now-unreachable legacy AES service and AESPB/object validation/
-   snapshot machinery, preserving native CUIS ownership/buffer checks. Run
-   the full desktop, standard GEM/RCS, malformed-input and release matrix.
+   Transitional libaes helpers are private (#880). The typed x32 kernel AES
+   service, its clients and its snapshot validation are retired in #882.
+6. Kconfig enforces CUIS/kernel-AES exclusion and disallows kernel AES with
+   USER_ASPACE. Preserve usable non-GUI configurations for backends without
+   external libaes.
+7. Complete the full desktop, standard GEM/RCS, malformed-input, fault/cleanup,
+   CLI/fallback, architecture and release acceptance matrix, and integrate
+   current master before the epic is ready for review.
 
 No API inventory check proves these gates complete. The final configuration
 and validation removal must wait for the corresponding behavioral tests.

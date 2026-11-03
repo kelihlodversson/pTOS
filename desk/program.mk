@@ -102,13 +102,12 @@ DESK_LDFLAGS = -Wl,-q -Wl,-Ttext=0
 endif
 
 ifdef ARCH_X86_64
-DESK_AES_CLIENT = $(if $(CONF_WITH_LIBAES_DESK),,obj/x32/libptos-aes.a)
 ifeq ($(CONF_WITH_DYNAMIC_DESK),y)
 DESK_LIBAES = $(if $(CONF_WITH_LIBAES_DESK),obj/libaes/libaes.so)
-$(DESK_PRG): $(DESK_OBJ) $(DESK_AES_CLIENT) obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/ldso/libptos.so $(DESK_LIBAES)
+$(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/ldso/libptos.so $(DESK_LIBAES)
 	$(X32_CC) $(LDSO_APP_LDFLAGS) -Wl,--gc-sections -o $@ $(filter %.o %.a,$^) $(if $(CONF_WITH_LIBAES_DESK),-Lobj/libaes -laes) -Lobj/ldso -lptos
 else
-$(DESK_PRG): $(DESK_OBJ) $(DESK_AES_CLIENT) obj/x32/libptos-vdi.a
+$(DESK_PRG): $(DESK_OBJ) obj/x32/libptos-vdi.a
 	$(X32_CC) $(X32_CLI_LDFLAGS) -Wl,--gc-sections -o $@ $^
 endif
 else

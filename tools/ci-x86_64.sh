@@ -29,20 +29,29 @@ for product in *.efi emutos.map cli/emucon.tos emudesk.prg; do
     fi
 done
 
+# Shared desktop and console executables need the loader and libraries on
+# their boot drive.  Keep the GEMSYS layout relative to the artifact root.
+if grep -q '^CONF_WITH_ELF_SHARED=y$' .config; then
+    runtime=obj/ldso/runtime/GEMSYS
+    test -d "$runtime"
+    rm -rf "products/$config/GEMSYS"
+    cp -R "$runtime" "products/$config/"
+fi
+
 # A build that links is not a build that boots: without this, a regression in
 # the boot path, the trap-dispatch/machine-hook layer, or the exception/panic
 # path would still be a green job, since nothing above actually runs the
 # image.  Only pc-x86_64 boots this way (EFI/OVMF); a future non-EFI x86-64
 # config would need its own check instead of this one.
 case $config in
-    pc-x86_64|pc-x86_64-vdi|pc-x86_64-aes|pc-x86_64-callbacks|pc-x86_64-accessories*)
+    pc-x86_64|pc-x86_64-vdi|pc-x86_64-callbacks)
         tools/ci-x86_64-boot.sh
         ;;
 esac
 
 case $config in
     pc-x86_64-desktop-tests*)
-        make CROSS_COMPILE= -j2 x32-desktop-test x32-desktop-window-test
+        make CROSS_COMPILE= -j2 x32-desktop-test
         console_args=()
         if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
             console_args+=(--embedded-console)

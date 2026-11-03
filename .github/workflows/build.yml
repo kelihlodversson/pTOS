@@ -76,21 +76,21 @@ jobs:
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
           make CROSS_COMPILE= -j2
-          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
+          make CROSS_COMPILE= x32test x32-vdi-import-test
           sh tools/test-mmap-boot.sh
-      - name: Boot-test shared libraries with x32 AES, VDI, callbacks and CUIS
+      - name: Boot-test standard GEM shared libraries, VDI, callbacks and CUIS
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
           CONFIG_= python - <<'PY'
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
-          for name in ("CONF_WITH_X32_VDI", "CONF_WITH_X32_AES", "CONF_WITH_USER_CALLBACKS", "CONF_WITH_LIBAES"):
+          for name in ("CONF_WITH_X32_VDI", "CONF_WITH_USER_CALLBACKS", "CONF_WITH_LIBAES"):
               config.syms[name].set_value(2)
           config.write_config()
           PY
           make CROSS_COMPILE= -j2
-          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test
+          make CROSS_COMPILE= x32test x32-vdi-import-test
           readelf -d obj/libaes/CUIS.TOS | grep 'libaes.so'
           readelf -l obj/libaes/CUIS.TOS | grep '/GEMSYS/LIB/X32/LD.SO'
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
@@ -107,14 +107,13 @@ jobs:
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
           config.syms["CONF_WITH_LIBAES"].set_value(2)
           config.syms["CONF_WITH_AES"].set_value(0)
-          config.syms["CONF_WITH_X32_AES"].set_value(0)
           assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "y"
           assert config.syms["CONF_WITH_X32_DESKTOP_TEST"].str_value == "y"
           config.syms["CONF_WITH_SHUTDOWN"].set_value(2)
           config.write_config()
           PY
             make CROSS_COMPILE= -j2
-            make CROSS_COMPILE= x32-desktop-test x32-desktop-window-test
+            make CROSS_COMPILE= x32-desktop-test
             readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
             readelf -d emudesk.prg | grep 'libptos.so'
             readelf -d emudesk.prg | grep 'libaes.so'

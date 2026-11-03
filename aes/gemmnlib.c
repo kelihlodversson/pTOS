@@ -41,9 +41,6 @@
 #include "gemmnlib.h"
 #include "gemmenubar.h"
 #include "gemmnext.h"
-#if ARCH_X86_64
-#include "aes_objects_kernel.h"
-#endif
 #include "geminit.h"
 
 
@@ -106,9 +103,6 @@ static void menu_fixup(void)
     gl_dafirst = dabox + 3;
     mn_desk_items(tree,dabox,dabox+1,dabox+2,
                   (const char *const *)D.g_acctitle,NUM_ACCS,gl_hchar);
-#if ARCH_X86_64
-    x86_64_aes_objects_menu_fixup(tree, dabox);
-#endif
 }
 
 
@@ -162,9 +156,6 @@ static void menu_sr(WORD saveit, OBJECT *tree, WORD imenu)
 
     /* A disabled title can be tracked without ever opening a popup. */
     if (imenu == NIL) {
-#if CONF_WITH_X32_ACCESSORY_TEST
-        kcprintf("x32 disabled menu popup cleanup: PASS\n");
-#endif
         return;
     }
 
@@ -203,21 +194,6 @@ static WORD menu_down(OBJECT *tree, WORD ititle)
     return imenu;
 }
 
-#if CONF_WITH_X32_ACCESSORY_TEST
-static BOOL disabled_waiting;
-
-BOOL mn_test_disabled_waiting(void)
-{
-    return disabled_waiting;
-}
-
-static void test_disabled_wait(OBJECT *tree, WORD title, WORD menu)
-{
-    disabled_waiting = title != NIL && menu == NIL &&
-        x86_64_aes_tree_managed(tree) && !x86_64_aes_tree_cancelled(tree) &&
-        (tree[title].ob_state & DISABLED);
-}
-#endif
 
 
 #if CONF_WITH_MENU_EXTENSION
@@ -328,20 +304,7 @@ static WORD mn_do_native(WORD *ptitle, WORD *pitem, OBJECT **ptree)
          */
 
         /* wait for something */
-#if CONF_WITH_X32_ACCESSORY_TEST
-        test_disabled_wait(tree, cur_title, cur_menu);
-#endif
-#if ARCH_X86_64
-        if (x86_64_aes_tree_cancelled(tree))
-            break;
-        if (x86_64_aes_tree_managed(tree))
-            mnu_flags |= MU_KEYBD;
-#endif
         ev_which = ev_multi(mnu_flags, &p1mor, &p2mor, &p3mor, 0x0L, buparm, NULL, rets);
-#if ARCH_X86_64
-        if (x86_64_aes_tree_cancelled(tree))
-            break;
-#endif
 
         /*
          * if it's a button. first check if we are still in the initial state.
@@ -582,20 +545,7 @@ static WORD mn_do_native(WORD *ptitle, WORD *pitem)
          */
 
         /* wait for something */
-#if CONF_WITH_X32_ACCESSORY_TEST
-        test_disabled_wait(tree, cur_title, cur_menu);
-#endif
-#if ARCH_X86_64
-        if (x86_64_aes_tree_cancelled(tree))
-            break;
-        if (x86_64_aes_tree_managed(tree))
-            mnu_flags |= MU_KEYBD;
-#endif
         ev_which = ev_multi(mnu_flags, &p1mor, &p2mor, 0x0L, buparm, NULL, rets);
-#if ARCH_X86_64
-        if (x86_64_aes_tree_cancelled(tree))
-            break;
-#endif
 
         /*
          * if it's a button. first check if we are still in the initial state.
@@ -703,21 +653,10 @@ WORD mn_do(WORD *ptitle, WORD *pitem)
 #endif
 {
     WORD result;
-#if ARCH_X86_64
-    AES_TREE_STATE *guard = x86_64_aes_tree_pin(gl_mntree);
-#endif
 #if CONF_WITH_MENU_EXTENSION
     result = mn_do_native(ptitle, pitem, ptree);
 #else
     result = mn_do_native(ptitle, pitem);
-#endif
-#if ARCH_X86_64
-    if (!x86_64_aes_tree_alive(guard))
-        result = FALSE;
-    x86_64_aes_tree_unpin(guard);
-#endif
-#if CONF_WITH_X32_ACCESSORY_TEST
-    disabled_waiting = FALSE;
 #endif
     return result;
 }
@@ -732,9 +671,6 @@ void mn_bar(OBJECT *tree, WORD showit)
     AESPD   *p;
     OBJECT  *obj;
 
-#if ARCH_X86_64
-    x86_64_aes_objects_menu_change(tree, showit);
-#endif
     p = fpdnm(NULL, rlr->p_pid);
 
     if (showit)

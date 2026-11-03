@@ -26,26 +26,13 @@ config CONF_WITH_LIBAES
       External EmuDesk remains resident while GEM applications run.
 
       Explicit forced-accessory launch and additional GEM extensions
-      remain incomplete; see doc/libaes-compatibility.md. Existing kernel
-      AES paths remain available during migration. Other backends follow
+      remain incomplete; see doc/libaes-compatibility.md. Kernel AES is mutually
+      exclusive with CUIS and unavailable on address-space kernels. Other backends follow
       their isolated address-space and shared-linker support.
-
-config CONF_WITH_X32_AES
-	bool "Native x32 clients and kernel AES coordination service"
-	depends on ARCH_X86_64 && CONF_WITH_X32_VDI
-	default n
-	help
-	  Enable the typed client library and kernel-owned registrations,
-	  message queues, message-event polling and update ownership for x32
-	  graphical applications. Application-local rectangle helpers run in
-	  ring 3. With CONF_WITH_AES, associated graphical applications and
-	  accessories use the native scheduler, windows and owned object trees.
-	  CONF_EXTERNAL_DESK builds EmuDesk as a loaded x32 ring-3 program.
-	  Generic ring-3 GEM trap class 2 stays disabled.
 
 config CONF_WITH_AES
 	bool "Include kernel AES and its EmuDesk integration"
-	depends on !ARCH_X86_64 || CONF_WITH_X32_AES
+	depends on !CONF_WITH_USER_ASPACE && !CONF_WITH_CUIS
 	default n if TARGET_CART || ARCH_X86_64
 	default y
 	help
@@ -55,9 +42,9 @@ config CONF_WITH_AES
 	  runs the program found on the boot device. Small images such as the
 	  diagnostic cartridge also leave kernel AES out.
 
-	  On x86-64 the native AES runs in the kernel; loaded applications,
-	  accessories and the optional external EmuDesk use the typed ring-3
-	  AES and VDI services.
+	  Kernel AES and CUIS are mutually exclusive. Kernel AES is unavailable
+	  with per-process address spaces on every architecture; a backend
+	  without external libaes retains its non-GUI CLI configuration.
 
 if CONF_WITH_AES
 

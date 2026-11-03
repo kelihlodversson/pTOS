@@ -612,9 +612,12 @@
 /* 'doex' (mode): shel_write() */
 #define SHW_NOEXEC  0                       /* just return to desktop */
 #define SHW_EXEC    1                       /* run another program after this */
-#define SHW_PARALLEL 100                    /* AES4 independent child */
 #define SHW_SHUTDOWN 4                      /* shutdown system */
 #define SHW_RESCHNG 5                       /* change resolution */
+
+/* 'isover' (execution): shel_write(SHW_EXEC, ...) */
+#define SHW_IMMED    0                      /* start and report child exit */
+#define SHW_PARALLEL 100                    /* AES4 independent child */
 
 
 /*

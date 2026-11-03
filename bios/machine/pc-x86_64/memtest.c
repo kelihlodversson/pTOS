@@ -2054,40 +2054,6 @@ static void test_callback_foreign_failure(char mode, UWORD phase)
 }
 #endif
 
-static void test_aes_imports(void)
-{
-    SNAP s;
-    char name[] = "AESBAD1.TOS";
-    long rc;
-    int i, before = failures;
-
-    snap(&s);
-    rc = Pexec(PE_LOADGO, "AESIMP.TOS", "", NULL);
-    if (rc == EFILNF) {
-        same(&s, "absent AES imported client fixture");
-        kcprintf("x86-64 AES imports: SKIP (no AESIMP.TOS)\n");
-        return;
-    }
-#if CONF_WITH_X32_AES
-    CHECK(rc == 0, "loaded application imports AES and VDI client libraries");
-    rc = Pexec(PE_LOADGO, "AESREL.TOS", "", NULL);
-    CHECK(rc == 0, "relocated imported AES client");
-    rc = Pexec(PE_LOADGO, "AESIMP.TOS", "w", NULL);
-    CHECK(rc == 0xffff, "imported AES client code is read-only");
-#else
-    CHECK(rc == EPLFMT, "optional AES imports are refused when disabled");
-#endif
-    for (i = 0; i < 7; i++) {
-        name[6] = '1' + i;
-        CHECK(Pexec(PE_LOADGO, name, "", NULL) == EPLFMT, "invalid AES import metadata is refused");
-    }
-    same(&s, "AES imported clients, malformed metadata and fault teardown");
-    if (failures == before)
-        kcprintf("x86-64 AES imports: PASS\n");
-}
-
-/* Like the other disk-loader tests, this can be absent from a minimal
- * boot disk. The dedicated PC CI boots require the PASS marker. */
 static void test_vdi_imports(void)
 {
     SNAP s;
@@ -2389,11 +2355,10 @@ static void test_ring3(void)
     {
         int before = failures;
 
-        probe_expect('#', 0, "AES local helpers, registration, isolated messaging/events, update ownership and cleanup");
+        probe_expect('#', 0, "retired typed AES and generic AES trap are rejected before pointer access");
         if (failures == before)
-            kcprintf("x86-64 AES client: PASS\n");
+            kcprintf("x86-64 retired AES boundary: PASS\n");
     }
-    test_aes_imports();
     test_vdi_imports();
     probe_expect('V', 0, "x32 VDI control layout, opcode tags and bitmap bounds");
 #if CONF_WITH_X32_VDI

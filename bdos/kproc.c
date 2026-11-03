@@ -29,10 +29,6 @@
 #include "vdi_service.h"
 #include "x32vdi_image.h"
 #endif
-#if CONF_WITH_X32_AES
-#include "aes_service.h"
-#include "x32aes_image.h"
-#endif
 #if CONF_WITH_KHEAP
 #include "kheap.h"
 #include "kprint.h"
@@ -79,9 +75,6 @@ struct kproc {
 #if CONF_WITH_USER_CALLBACKS
     USER_CALLBACK_STATE *callbacks;
     UQUAD resume_rsp;
-#endif
-#if CONF_WITH_X32_AES
-    AES_CLIENT_STATE *aes;
 #endif
     PD *pd;
     DTAINFO *dta;
@@ -274,9 +267,6 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_CUIS
             cuis_process_exit(pd);
 #endif
-#if CONF_WITH_X32_AES
-            aes_service_process_exit(pd);
-#endif
 #if CONF_WITH_X32_VDI
             vdi_service_process_exit(pd);
 #endif
@@ -316,24 +306,6 @@ void kproc_destroy(PD *pd)
         }
 }
 
-#if CONF_WITH_X32_AES
-AES_CLIENT_STATE *kproc_aes_get(PD *pd)
-{
-    KPROC *p = kproc_find(pd);
-
-    return p ? p->aes : NULL;
-}
-
-BOOL kproc_aes_set(PD *pd, AES_CLIENT_STATE *state)
-{
-    KPROC *p = kproc_find(pd);
-
-    if (!p)
-        return FALSE;
-    p->aes = state;
-    return TRUE;
-}
-#endif
 
 WORD kproc_pid(PD *pd)
 {
@@ -716,10 +688,6 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!build_ancestors(kproc, as, parent)) {
         return prepare_failed(kproc, as);
     }
-#if CONF_WITH_X32_AES
-    if (!x32_aes_image_load(as))
-        return prepare_failed(kproc, as);
-#endif
 #if CONF_WITH_USER_CALLBACKS
     if (!user_callback_image_load(as))
         return prepare_failed(kproc, as);

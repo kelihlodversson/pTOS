@@ -18,7 +18,7 @@ def firmware(name):
 
 
 class Guest:
-    def __init__(self, output, args, missing=False):
+    def __init__(self, output, args, missing=False, autorun=False):
         self.output = output.resolve()
         self.embedded_console = args.embedded_console
         self.output.mkdir(parents=True, exist_ok=True)
@@ -31,8 +31,8 @@ class Guest:
             shutil.copy("cli/emucon.tos", esp / "EMUCON.TOS")
         if not missing:
             for source, target in (("emudesk.prg", "EMUDESK.PRG"),
-                                   ("obj/x32/GEMTEST.PRG", "APPTEST.PRG"),
-                                   ("obj/x32/DESKACC.ACC", "DESKACC.ACC"),
+                                   ("obj/libaes/DESKGEM.PRG", "APPTEST.PRG"),
+                                   ("obj/libaes/DESKACC.ACC", "DESKACC.ACC"),
                                    ("desk/emudesk-raspi.inf", "TYPED.INF")):
                 shutil.copy(source, esp / target)
             shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")
@@ -54,6 +54,16 @@ class Guest:
             for number in reversed(range(14)):
                 shutil.copy("desk/emudesk-raspi.inf", files / ("FILE%02d.INF" % number))
             (files / "NOISE.TXT").write_text("This must not appear in an INF listing.\n")
+            if autorun:
+                apps = esp / "APPS"
+                apps.mkdir()
+                shutil.copy("obj/libaes/AUTORUN.TOS", apps / "AUTORUN.TOS")
+                (apps / "AUTORUN.DAT").write_text("autorun working directory\n")
+                inf = Path("tests/emudesk.inf").read_text().splitlines()
+                assert sum(line.startswith("#Z ") for line in inf) == 1
+                (esp / "EMUDESK.INF").write_bytes(("\r\n".join(
+                    "#Z 00 C:\\APPS\\AUTORUN.TOS@" if line.startswith("#Z ") else line
+                    for line in inf) + "\r\n").encode("ascii"))
         shared_runtime = "CONF_WITH_ELF_SHARED = y" in Path("obj/auto.conf").read_text()
         if shared_runtime:
             shutil.copytree("obj/ldso/runtime/GEMSYS", esp / "GEMSYS", dirs_exist_ok=True)
@@ -650,13 +660,13 @@ def main():
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--embedded-console", action="store_true",
                         help="omit EMUCON.TOS and require the embedded x32 console")
-    parser.add_argument("--mode", choices=("desktop", "missing", "both", "libaes", "shutdown"), default="both")
+    parser.add_argument("--mode", choices=("desktop", "missing", "both", "libaes", "shutdown", "autorun"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:
         parser.error("supply --ovmf-code and --ovmf-vars for this host")
-    modes = ("desktop", "missing") if args.mode == "both" else (args.mode,)
+    modes = ("desktop", "missing", "autorun") if args.mode == "both" else (args.mode,)
     for mode in modes:
-        guest = Guest(args.output / mode, args, missing=mode == "missing")
+        guest = Guest(args.output / mode, args, missing=mode == "missing", autorun=mode == "autorun")
         try:
             if mode == "desktop":
                 if "CONF_WITH_LIBAES = y" in Path("obj/auto.conf").read_text():
@@ -667,6 +677,11 @@ def main():
                 shutdown_desktop(guest)
             elif mode == "libaes":
                 libaes_desktop(guest)
+            elif mode == "autorun":
+                guest.wait("x32 autorun relative file PASS", timeout=40)
+                text = guest.wait(r"x32 desktop CH_EXIT \d+ 0025", timeout=20, regex=True)
+                assert len(re.findall(r"x32 desktop CH_EXIT \d+ 0025", text)) == 1
+                print("Autorun uses its executable directory and delivers child exit: PASS", flush=True)
             else:
                 text = guest.wait("C:\\>", timeout=25)
                 if args.embedded_console:

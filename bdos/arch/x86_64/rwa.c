@@ -75,9 +75,6 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
-#if CONF_WITH_AES
-#include "aes_accessory.h"
-#endif
 
 extern jmp_buf errbuf;
 
@@ -207,38 +204,7 @@ void x86_64_process_cancel(X86_64_PROCESS_CONTEXT *context, PD *root)
     context->launch = NULL;
 }
 
-#if CONF_WITH_AES
-extern void accdesk_start(void) NORETURN;      /* aes/arch/x86_64/gemstart.c */
-extern void deskstart(PD *) NORETURN;          /* desk/arch/x86_64/deskstart.c */
-#endif
 
-#if CONF_WITH_AES
-/*
- * Captures sym's own address via `lea` (never a plain C address-of --
- * see bios.c's own comment on why: a plain `exec_os = coma_start`-style
- * assignment was seen reading back a garbage 64-bit value under this
- * arch's -mcmodel=large + non-ELF-relaxed-PE-link combination) and,
- * if its low 32 bits match `want` (an already-truncated PD->p_tbase
- * value -- see this function's own comment on why p_tbase can only ever
- * hold that much), updates *ptarget to the real, untruncated address.
- * Used below to recover which specific ROM entry a zero-length PD
- * launched via aes_run_rom_program()/coma_start's own Pexec(PE_GOTHENFREE)
- * path (aes/gemshlib.c) actually names, since p_tbase itself cannot
- * carry more than those low 32 bits on this arch.
- */
-static void x86_64_match_rom_candidate(void (**ptarget)(PD *), ULONG want,
-                                        void *candidate_addr)
-{
-    if ((ULONG)(uintptr_t)candidate_addr == want)
-        *ptarget = (void (*)(PD *))candidate_addr;
-}
-#define X86_64_ROM_CANDIDATE(ptarget, want, sym) \
-    do { \
-        void *_addr; \
-        __asm__("lea " #sym "(%%rip), %0" : "=r"(_addr)); \
-        x86_64_match_rom_candidate((ptarget), (want), _addr); \
-    } while (0)
-#endif
 
 void gouser(void)
 {
@@ -300,9 +266,6 @@ void gouser_entry(WORD entry_type)
          * Pterm0() finds its way back via current_launch.
          */
         void (*target)(PD *) = (void (*)(PD *))exec_os;
-#if CONF_WITH_AES
-        ULONG want = p->p_tbase;
-#endif
         X86_64_PROCESS_LAUNCH launch;
 
         launch.previous = current_launch;
@@ -310,12 +273,6 @@ void gouser_entry(WORD entry_type)
         launch.stack_phys = 0;
         launch.entry_type = entry_type;
 
-#if CONF_WITH_AES
-        X86_64_ROM_CANDIDATE(&target, want, accdesk_start);
-#if !CONF_EXTERNAL_DESK
-        X86_64_ROM_CANDIDATE(&target, want, deskstart);
-#endif
-#endif
 
         current_launch = &launch;
         if (setjmp(launch.resume) == 0) {
@@ -368,9 +325,6 @@ void gouser_entry(WORD entry_type)
         UQUAD launcher_flags;
         int launcher_in_syscall;
 
-#if CONF_WITH_AES
-        x86_64_aes_launch_process(p, kproc_get_parent(p));
-#endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys || !kstack_phys || !user_rsp)
