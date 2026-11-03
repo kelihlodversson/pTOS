@@ -172,6 +172,10 @@ obj/libaes/DESKCON.TOS: tests/x32_desktop/console.c obj/ldso/dyncrt.o obj/ldso/l
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/ldso -lptos
 
+obj/libaes/AUTORUN.TOS: tests/x32_desktop/autorun.c obj/ldso/dyncrt.o obj/ldso/libptos.so
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) \
+	  -o $@ $(filter %.c %.o,$^) -Lobj/ldso -lptos
+
 obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos

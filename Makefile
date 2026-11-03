@@ -1032,7 +1032,7 @@ endif
 
 ifdef ARCH_X86_64
 .PHONY: x32-desktop-test
-x32-desktop-test: obj/libaes/DESKGEM.PRG obj/libaes/DESKCON.TOS obj/libaes/DESKACC.ACC
+x32-desktop-test: obj/libaes/DESKGEM.PRG obj/libaes/DESKCON.TOS obj/libaes/DESKACC.ACC obj/libaes/AUTORUN.TOS
 endif
 
 .PHONY: vdi-contract-test
