@@ -34,7 +34,6 @@ config.load_config("configs/pc-x86_64-desktop-tests_defconfig")
 config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
 config.syms["CONF_WITH_LIBAES"].set_value(2)
 config.syms["CONF_WITH_AES"].set_value(0)
-config.syms["CONF_WITH_X32_AES"].set_value(0)
 for name in ("CONF_WITH_LIBAES_DESK", "CONF_WITH_DYNAMIC_DESK", "CONF_WITH_READ_INF",
              "CONF_WITH_WINDOW_ICONS", "CONF_WITH_BACKGROUNDS", "CONF_WITH_COLOUR_ICONS",
              "CONF_WITH_3D_OBJECTS", "CONF_WITH_PORTABLE_RSC_LOAD", "CONF_WITH_X32_DESKTOP_TEST"):
@@ -60,7 +59,7 @@ config.load_config("configs/pc-x86_64-libaes-desktop_defconfig")
 for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
              "CONF_WITH_DYNAMIC_DESK", "CONF_WITH_X32_VDI"):
     assert config.syms[name].str_value == "y", name
-for name in ("CONF_WITH_AES", "CONF_WITH_X32_AES", "CONF_WITH_X86_64_MEMTEST"):
+for name in ("CONF_WITH_AES", "CONF_WITH_X86_64_MEMTEST"):
     assert config.syms[name].str_value == "n", name
 
 # The existing legacy GUI keeps its resource/desktop defaults on ARM/m68k.
@@ -78,10 +77,23 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                     "--config", "configs/pc-x86_64_defconfig", "--header",
                     str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")],
                    check=True)
-    for order in (0, 1, 2):
+    for preset in ("pc-x86_64", "virt-arm", "virt-m68k"):
+        rejected = kconfiglib.Kconfig(warn_to_stderr=False)
+        rejected.load_config("configs/" + preset + "_defconfig")
+        rejected.syms["CONF_WITH_USER_ASPACE"].set_value(2)
+        rejected.syms["CONF_WITH_AES"].set_value(2)
+        if rejected.syms["CONF_WITH_USER_ASPACE"].str_value == "y":
+            assert rejected.syms["CONF_WITH_AES"].str_value == "n", preset
+    geometry = shlex.split(os.environ.get("HOSTCC", "cc"))
+    geometry += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-I" + temp,
+                 "-Iinclude", "-Iaes", "-Iaes/shared", "tests/cuis/graph_geometry.c",
+                 "aes/shared/gemgraphutil.c", "-o", str(work / "graph-geometry")]
+    subprocess.run(geometry, check=True)
+    subprocess.run([str(work / "graph-geometry")], check=True)
+    for order in (0, 1):
         command = shlex.split(os.environ.get("HOSTCC", "cc"))
         command += ["-std=gnu90", "-Wall", "-Wextra", "-Werror", "-I" + temp, "-Iinclude",
-                    "-DLEGACY_HEADER_FIRST=" + str(order), "tests/cuis/header_compat.c", "-o", str(work / "headers")]
+                    "-DVDI_HEADER_FIRST=" + str(order), "tests/cuis/header_compat.c", "-o", str(work / "headers")]
         subprocess.run(command, check=True)
         subprocess.run([str(work / "headers")], check=True)
     subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) + ["-DMFORM_RSC", "tools/erd.c", "-o", str(work / "mrd")], check=True)

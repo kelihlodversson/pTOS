@@ -13,8 +13,5 @@
 void or_start(void);
 ORECT *get_orect(void);
 void newrect(OBJECT *tree, WORD wh);
-#if CONF_WITH_X32_ACCESSORY_TEST
-WORD or_test_peak(void);
-#endif
 
 #endif

@@ -24,9 +24,6 @@
 
 #include "emutos.h"
 #include "string.h"
-#if defined(X32_USERLAND) && !CONF_WITH_LIBAES_DESK
-#include "aes_shell.h"
-#endif
 
 #include "xbiosbind.h"
 #include "aesext.h"
@@ -2277,13 +2274,6 @@ BOOL deskmain(void)
     /* enable graphical critical error handler */
     desk_set_ceh(TRUE);
 
-#if CONF_WITH_X32_ACCESSORY_TEST
-    {
-        extern void x86_64_aes_test_desktop(OBJECT *desktop, WORD root);
-        x86_64_aes_test_desktop(G.g_screen, 1);
-    }
-    kcprintf("x32 accessory desktop: PASS\n");
-#endif
     /* loop handling user input until done */
     while(!done)
     {

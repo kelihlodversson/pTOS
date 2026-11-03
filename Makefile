@@ -124,7 +124,7 @@ core-dirs-y = bios bdos fs util
 optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 ifneq ($(CONF_WITH_AES),y)
-ifneq ($(filter y,$(CONF_WITH_X32_AES) $(CONF_WITH_CUIS)),)
+ifeq ($(CONF_WITH_CUIS),y)
 optional-dirs-y += aes
 endif
 optional-dirs-$(CONF_EXTERNAL_DESK) += desk
@@ -967,52 +967,6 @@ obj/x32/VDIPLT.TOS: obj/x32/vdi-import-plt.elf ptos-elf-pack
 x32-vdi-import-test: obj/x32/VDIIMP.TOS obj/x32/VDIREL.TOS obj/x32/VDIPLT.TOS
 	python3 tests/x32_vdi_import/check_imports.py obj/x32
 
-# Native AES client stubs and the existing application-local rectangle helpers.
-X32_AES_OBJ = obj/x32/aes_client.o obj/x32/aes_rectfunc.o obj/x32/aes_object_client.o obj/x32/aes_tree.o
-obj/x32/aes_object_client.o: aes/x32/aes_object_client.c include/aes_objects.h include/aes_service.h $(AUTOCONF_H) | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
-obj/x32/aes_tree.o: aes/aes_tree.c include/aes_objects.h $(AUTOCONF_H) | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
-obj/x32/aes_client.o: aes/x32/aes_client.c include/aes_client.h include/aes_service.h $(AUTOCONF_H) | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
-obj/x32/aes_rectfunc.o: util/rectfunc.c include/grect.h include/rectfunc.h $(AUTOCONF_H) | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
-obj/x32/libptos-aes.a: $(X32_AES_OBJ)
-	$(X32_CROSS_COMPILE)ar rcs $@ $^
-obj/x32/libptos-aes.so.1: aes/x32/aes_import_stub.S include/aes_client_exports.h | obj/x32
-	$(X32_CC) $(X32_CFLAGS) -Iinclude -nostdlib -shared -Wl,-shared,-m,elf32_x86_64 \
-	  -Wl,--build-id=none -Wl,-soname,libptos-aes.so.1 -o $@ $<
-obj/x32/aes_image.ld: aes/x32/aes_image.ld.S include/x32aes_image.h include/aes_client_exports.h | obj/x32
-	$(X32_CC) -E -P -x c -Iinclude $< -o $@
-obj/x32/aes_client.elf: $(X32_AES_OBJ) obj/x32/aes_image.ld
-	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
-	  -Wl,--build-id=none,-z,noexecstack -Wl,-T,obj/x32/aes_image.ld -o $@ $(X32_AES_OBJ)
-obj/x32/aes_client.bin: obj/x32/aes_client.elf
-	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
-obj/aes_image.o: obj/x32/aes_client.bin
-.PHONY: x32-aes
-x32-aes: obj/x32/libptos-aes.a obj/x32/libptos-aes.so.1
-# Loaded AES applications import both native client namespaces.
-obj/x32/aes-import-reloc.elf: X32_AES_IMPORT_BASE = -Wl,-Ttext-segment=0x20000000
-obj/x32/aes-import.elf obj/x32/aes-import-reloc.elf: \
-  tests/aes_contract/aes_import.c tests/aes_contract/aes_roundtrip.c \
-  tests/aes_contract/aes_contract.c tests/x32_probe/x32_probe_start.S \
-  obj/x32/libptos-aes.so.1 obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
-	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DAES_IMPORT_TEST -Iinclude -Iobj \
-	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
-	  -Wl,-z,max-page-size=0x1000,-z,noseparate-code -Wl,-e,_start \
-	  $(X32_AES_IMPORT_BASE) -o $@ $(filter %.c %.S,$^) -Lobj/x32 \
-	  -l:libptos-aes.so.1 -l:libptos-vdi.so.1
-obj/x32/AESIMP.TOS: obj/x32/aes-import.elf ptos-elf-pack
-	./ptos-elf-pack --strip-shdr $< $@
-obj/x32/AESREL.TOS: obj/x32/aes-import-reloc.elf ptos-elf-pack
-	./ptos-elf-pack --strip-shdr $< $@
-.PHONY: x32-aes-import-test
-x32-aes-import-test: obj/x32/AESIMP.TOS obj/x32/AESREL.TOS
-	python3 tests/aes_contract/check_imports.py obj/x32
-
--include $(X32_AES_OBJ:.o=.d)
-
 -include $(X32_VDI_OBJ:.o=.d)
 
 
@@ -1065,10 +1019,8 @@ obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_star
                     tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
-                    tests/aes_contract/aes_contract.c tests/aes_contract/aes_roundtrip.c \
-                    include/aes_client.h include/aes_service.h include/rectfunc.h include/grect.h \
                     include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
-                    obj/x32/libptos-vdi.a obj/x32/libptos-aes.a include/mman.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
+                    obj/x32/libptos-vdi.a include/mman.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -include $(AUTOCONF_H) -o $@ \
 	  $(filter %.c %.S %.a,$^)
 
@@ -1077,18 +1029,10 @@ endif
 endif
 
 
+
 ifdef ARCH_X86_64
 .PHONY: x32-desktop-test
-x32-desktop-test: obj/x32/GEMTEST.PRG obj/x32/DESKACC.ACC
-ifeq ($(CONF_WITH_LIBAES),y)
 x32-desktop-test: obj/libaes/DESKGEM.PRG obj/libaes/DESKCON.TOS obj/libaes/DESKACC.ACC
-endif
-
-obj/x32/GEMTEST.PRG: tests/x32_desktop/process.c tests/x32_desktop/entry.S util/arch/x86_64/memmove.c obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -Idesk/x32 -Iinclude/arch/x86_64 $(X32_CLI_LDFLAGS) -o $@ $(filter %.c %.S %.a,$^)
-
-obj/x32/DESKACC.ACC: obj/x32/GEMTEST.PRG
-	cp $< $@
 endif
 
 .PHONY: vdi-contract-test
@@ -1097,29 +1041,6 @@ vdi-contract-test: $(AUTOCONF_H)
 	  tests/vdi_contract/vdi_contract.c vdi/vdi_user.c vdi/vdi_user_raster.c vdi/vdi_user_draw.c -o obj/vdi-contract-test
 	./obj/vdi-contract-test
 	python3 tests/vdi_contract/check_inventory.py
-
-.PHONY: x32-desktop-window-test
-x32-desktop-window-test: $(AUTOCONF_H)
-	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Idesk/x32 -DDESK_WINDOW_HOST_TEST \
-	  tests/x32_desktop/window_adapter.c desk/x32/deskwind.c util/rectfunc.c -o obj/desktop-window-test
-	./obj/desktop-window-test
-
-TOCLEAN += obj/desktop-window-test
-
-.PHONY: aes-contract-test
-aes-contract-test: $(AUTOCONF_H)
-	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_CONTRACT_HOST_TEST \
-	  tests/aes_contract/aes_contract.c util/rectfunc.c -o obj/aes-contract-test
-	./obj/aes-contract-test
-	python3 tests/aes_contract/check_inventory.py
-	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_TREE_HOST_TEST \
-	  tests/aes_contract/tree_contract.c aes/aes_tree.c -o obj/aes-tree-contract-test
-	./obj/aes-tree-contract-test
-	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -Iaes -Iaes/shared \
-	  tests/aes_contract/graph_geometry.c aes/shared/gemgraphutil.c -o obj/aes-graph-contract-test
-	./obj/aes-graph-contract-test
-
-TOCLEAN += obj/aes-contract-test obj/aes-tree-contract-test obj/aes-graph-contract-test
 
 TOCLEAN += obj/vdi-contract-test
 
@@ -1225,7 +1146,7 @@ mkflop: tools/mkflop.c
 
 # post-link tool packing an ELF's load relocations for bdos/elfld.c, see
 # doc/elfload.txt; not needed to build EmuTOS itself, built on demand
-ptos-elf-pack: tools/ptos-elf-pack.c include/aes_client_exports.h
+ptos-elf-pack: tools/ptos-elf-pack.c
 	$(NATIVECC) $< -o $@
 
 erd: tools/erd.c
@@ -2021,31 +1942,6 @@ endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
-
-# Loaded accessory ABI/lifecycle consumers (#389/#407). Full and minimal
-# startup objects both come from the pinned libcmini dependency.
-obj/x32/ACCONE.ACC: ACC_TEST_ROLE = 1
-obj/x32/ACCTWO.ACC: ACC_TEST_ROLE = 2
-obj/x32/ACCFAULT.ACC: ACC_TEST_ROLE = 3
-obj/x32/ACCWAIT.ACC: ACC_TEST_ROLE = 4
-obj/x32/ACCONE.ACC: ACC_TEST_CRT = $(LIBCMINI_OBJDIR)/crt0.o
-obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: ACC_TEST_CRT = $(LIBCMINI_CRT0)
-$(LIBCMINI_OBJDIR)/crt0.o: $(LIBCMINI_LIB)
-	$(LIBCMINI_MAKE) $@
-obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: \
-  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/objects.c tests/x32_accessory/entry.S \
-  $(LIBCMINI_LIB) $(LIBCMINI_CRT0) $(LIBCMINI_OBJDIR)/crt0.o \
-  obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) -I$(LIBCMINI_INC) -Iinclude -Iobj \
-	  -DACC_ROLE=$(ACC_TEST_ROLE) -DACC_NAME='"$(basename $(notdir $@))"' \
-	  $(X32_LDFLAGS) -Wl,-e,acc_probe_entry -o $@ \
-  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/window.c tests/x32_accessory/objects.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
-	  -Lobj/x32 -lptos-aes -lptos-vdi $(LIBCMINI_LIB)
-.PHONY: x32-accessory-test
-x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC obj/x32/BADACC.ACC
-	python3 tests/x32_accessory/test_drive_input.py
-obj/x32/BADACC.ACC: | obj/x32
-	printf 'invalid executable\n' > $@
 
 # poweroff.tos, reboot.tos, coldboot.tos and halt.tos: Shutdown() with each
 # mode, programs of their own because the machine does not come back (see

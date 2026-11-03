@@ -4,12 +4,10 @@
 
 obj-$(CONF_WITH_CUIS) += cuis_session.o cuis_region.o cuis_input_wait.o
 
-obj-$(CONF_WITH_X32_AES) += aes_service.o aes_image.o
 
 ifeq ($(CONF_WITH_AES),y)
 obj-y += gemasm.o gemstart.o gemdosif.o
 obj-$(ARCH_ARM) += gemdosifc.o
-obj-$(ARCH_X86_64) += aes_accessory.o aes_window.o aes_objects_kernel.o aes_tree.o aes_shell.o
 
 obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
 	 gemfmalt.o gemalert.o gemfmerror.o gemformerror.o gemfmlib.o gemformdo.o gemformbutton.o gemwatch.o gemformkey.o gemfslib.o gemgraf.o gemlayout.o gemicon.o gemrender_graphics.o gemgraphutil.o gemgrlib.o gemgrtrack.o gemformanim.o gemgsxif.o \

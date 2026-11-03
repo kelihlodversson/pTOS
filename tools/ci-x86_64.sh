@@ -35,14 +35,14 @@ done
 # image.  Only pc-x86_64 boots this way (EFI/OVMF); a future non-EFI x86-64
 # config would need its own check instead of this one.
 case $config in
-    pc-x86_64|pc-x86_64-vdi|pc-x86_64-aes|pc-x86_64-callbacks|pc-x86_64-accessories*)
+    pc-x86_64|pc-x86_64-vdi|pc-x86_64-callbacks)
         tools/ci-x86_64-boot.sh
         ;;
 esac
 
 case $config in
     pc-x86_64-desktop-tests*)
-        make CROSS_COMPILE= -j2 x32-desktop-test x32-desktop-window-test
+        make CROSS_COMPILE= -j2 x32-desktop-test
         console_args=()
         if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
             console_args+=(--embedded-console)

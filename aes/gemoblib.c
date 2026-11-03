@@ -39,19 +39,12 @@
 
 #include "string.h"
 #include "gemrender.h"
-#if ARCH_X86_64
-#include "aes_objects_kernel.h"
-#endif
 
 
 BOOL ob_render_cancelled(OBJECT *tree)
 {
-#if ARCH_X86_64
-    return x86_64_aes_tree_cancelled(tree);
-#else
     (void)tree;
     return FALSE;
-#endif
 }
 
 
@@ -63,22 +56,7 @@ void ob_draw(OBJECT *tree, WORD obj, WORD depth)
     WORD pobj;
     WORD last = NIL;
     WORD sx, sy;
-#if ARCH_X86_64
-    AES_TREE_STATE *guard = x86_64_aes_tree_pin(tree);
-    GRECT saved, bounded;
-#endif
 
-#if ARCH_X86_64
-    if (guard) {
-        gsx_gclip(&saved);
-        bounded = saved.g_w && saved.g_h ? saved : gl_rscreen;
-        if (!rc_intersect(&gl_rscreen, &bounded)) {
-            x86_64_aes_tree_unpin(guard);
-            return;
-        }
-        gsx_sclip(&bounded);
-    }
-#endif
     if (obj != ROOT)
         last = tree[obj].ob_next;
     pobj = get_par(tree, obj);
@@ -91,11 +69,6 @@ void ob_draw(OBJECT *tree, WORD obj, WORD depth)
     gsx_moff();
     everyobj(tree, obj, last, ob_render_object, sx, sy, depth);
     gsx_mon();
-#if ARCH_X86_64
-    if (guard)
-        gsx_sclip(&saved);
-    x86_64_aes_tree_unpin(guard);
-#endif
 }
 
 
@@ -384,25 +357,7 @@ BOOL ob_order(OBJECT *tree, WORD mov_obj, WORD new_pos)
 
 void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
 {
-#if ARCH_X86_64
-    AES_TREE_STATE *guard = x86_64_aes_tree_pin(tree);
-    GRECT saved, bounded;
-
-    if (guard) {
-        gsx_gclip(&saved);
-        bounded = saved.g_w && saved.g_h ? saved : gl_rscreen;
-        if (!rc_intersect(&gl_rscreen, &bounded))
-            redraw = FALSE;
-        else
-            gsx_sclip(&bounded);
-    }
-#endif
     ob_render_change(tree, obj, new_state, redraw);
-#if ARCH_X86_64
-    if (guard)
-        gsx_sclip(&saved);
-    x86_64_aes_tree_unpin(guard);
-#endif
 }
 
 

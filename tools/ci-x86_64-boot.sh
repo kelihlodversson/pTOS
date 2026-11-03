@@ -23,13 +23,8 @@ cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
 cp cli/emucon.tos esp/EMUCON.TOS
 # a real x32 ELF on the boot drive: the self-test runs it through
 # Pexec() from a ring-3 process (nested launch), as EmuCON does
-make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
-if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
-  make CROSS_COMPILE= -j2 x32-accessory-test
-  cp obj/x32/*.ACC esp/
-fi
-cp obj/x32/VDI*.TOS obj/x32/AES*.TOS esp/
-cp obj/x32/x32probe.elf esp/X32AES.TOS
+make CROSS_COMPILE= x32test x32-vdi-import-test
+cp obj/x32/VDI*.TOS esp/
 cp obj/x32/x32probe.elf esp/X32CB.TOS
 cp x32hello.elf esp/X32HELLO.TOS
 # The optional VDI self-test loads a second client while the first
@@ -49,11 +44,6 @@ head -c 2000 x32hello.elf > esp/X32TRUNC.TOS
 cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
 rm -f boot.log boot-monitor.sock
-aes_input_pid=
-if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
-  python3 tests/x32_accessory/drive_input.py boot.log boot-monitor.sock &
-  aes_input_pid=$!
-fi
 set +e
 timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
@@ -62,21 +52,12 @@ timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
   -serial file:boot.log -display none \
   -monitor unix:boot-monitor.sock,server=on,wait=off
 qemu_exit=$?
-aes_input_exit=0
-if [ -n "$aes_input_pid" ]; then
-  wait "$aes_input_pid"
-  aes_input_exit=$?
-fi
 set -e
 
 echo "::group::Serial console log"
 cat boot.log
 echo "::endgroup::"
 
-if [ "$aes_input_exit" != 0 ]; then
-  echo "::error::typed AES PS/2 input regression failed"
-  exit 1
-fi
 if [ "$qemu_exit" != 124 ]; then
   echo "::error::qemu-system-x86_64 exited with code $qemu_exit instead of running until the timeout killed it -- that means it never reached the shell (where it would otherwise wait for input forever)"
   exit 1
@@ -110,8 +91,8 @@ if ! grep -q 'x86-64 memtest: PASS' boot.log; then
   echo "::error::the boot-time memory-management self-test never reported PASS"
   exit 1
 fi
-if ! grep -q 'x86-64 AES client: PASS' boot.log || ! grep -q 'x86-64 AES imports: PASS' boot.log; then
-  echo "::error::AES clients, process coordination, imports or baseline refusal did not pass"
+if ! grep -q 'x86-64 retired AES boundary: PASS' boot.log; then
+  echo "::error::Retired AES syscall/trap rejection did not pass"
   exit 1
 fi
 if ! grep -q 'x86-64 user callbacks: PASS' boot.log; then
@@ -141,8 +122,7 @@ fi
 # Its deliberate faults print "process fault:" lines BEFORE the
 # PASS line; any such line after it is the built-in EmuCON itself
 # faulting.
-if ! grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config &&
-   sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
+if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
   echo "::error::the ring-3 EmuCON faulted"
   exit 1
 fi
@@ -210,11 +190,6 @@ fi
 if ! grep -q 'x86-64 nested ptermres: PASS' boot.log; then
   echo "::error::a ring-3 process could not keep launching children that stay resident"
   exit 1
-fi
-
-if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
-  python3 tests/x32_accessory/check_boot.py boot.log
-  exit 0
 fi
 
 # EmuCON is an x32 program run in ring 3 -- not linked into the

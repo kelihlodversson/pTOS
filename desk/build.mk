@@ -18,15 +18,7 @@ desk-prog-y += $(if $(ARCH_M68K),pexec.o memset.o stringasm.o optimopt.o)
 desk-prog-y += $(if $(ARCH_ARM),miscasm.o)
 ifdef ARCH_X86_64
 desk-prog-y := $(filter-out deskstart.o,$(desk-prog-y)) deskentry.o deskuser.o gemlayout.o
-ifeq ($(CONF_WITH_LIBAES_DESK),y)
-# Standard GEM calls use libaes's resource/object/form implementations;
-# compiling their old in-process adapters would pull in kernel AES state.
 desk-prog-y += desklibaes.o deskrefresh.o
-else
-desk-prog-y += deskaes.o deskwind.o desktree.o deskfsel.o gemrslib.o gemrsaddr.o rsload_portable.o \
-               gemfslib.o gemformbutton.o gemwatch.o gemformkey.o gem_rsc.o gemobjop.o gemobjwalk.o gemobed.o gemedit.o gemgrlib.o gemgrtrack.o gemformanim.o \
-               gemgraphutil.o gemfmerror.o gemformerror.o gemfmalt.o gemalert.o
-endif
 ifeq ($(CONF_WITH_DYNAMIC_DESK),y)
 desk-prog-y := $(filter-out deskentry.o doprintf.o memmove.o string.o,$(desk-prog-y))
 endif

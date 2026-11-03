@@ -60,9 +60,6 @@
 #if CONF_WITH_X32_VDI
 #include "x32vdi_image.h"
 #endif
-#if CONF_WITH_X32_AES
-#include "x32aes_image.h"
-#endif
 #include "kproc.h"
 #include "bdosstub.h"
 #if CONF_WITH_USER_ASPACE
@@ -828,17 +825,6 @@ static LONG ptosabi_resolve(const char *namespace_name, const char *name,
     if (!strcmp(namespace_name, "vdi") && !strcmp(name, "vdi") &&
         abi_major == 1 && abi_minor == 0) {
         ULONG entry = x32_vdi_image_entry();
-
-        if (!entry)
-            return EPLFMT;
-        out_addr->func = (PFLONG)(uintptr_t)entry;
-        *out_kind = PTOSABI_KIND_FUNCTION;
-        return E_OK;
-    }
-#endif
-#if CONF_WITH_X32_AES
-    if (!strcmp(namespace_name, "aes") && abi_major == 1 && abi_minor == 0) {
-        ULONG entry = x32_aes_image_entry(name);
 
         if (!entry)
             return EPLFMT;

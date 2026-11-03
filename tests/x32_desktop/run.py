@@ -31,8 +31,8 @@ class Guest:
             shutil.copy("cli/emucon.tos", esp / "EMUCON.TOS")
         if not missing:
             for source, target in (("emudesk.prg", "EMUDESK.PRG"),
-                                   ("obj/x32/GEMTEST.PRG", "APPTEST.PRG"),
-                                   ("obj/x32/DESKACC.ACC", "DESKACC.ACC"),
+                                   ("obj/libaes/DESKGEM.PRG", "APPTEST.PRG"),
+                                   ("obj/libaes/DESKACC.ACC", "DESKACC.ACC"),
                                    ("desk/emudesk-raspi.inf", "TYPED.INF")):
                 shutil.copy(source, esp / target)
             shutil.copy("desk/emudesk-raspi.inf", esp / "EDITED.INF")

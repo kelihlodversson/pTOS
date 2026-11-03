@@ -42,9 +42,6 @@
 #include "gemfmlib.h"
 #include "gemformkey.h"
 #include "scancode.h"
-#if ARCH_X86_64
-#include "aes_objects_kernel.h"
-#endif
 
 
 
@@ -55,9 +52,6 @@ WORD     ml_ocnt;    /* Needs to be 0 initially! */
 
 /* Local variables: */
 static OBJECT   *ml_mnhold;
-#if ARCH_X86_64
-static AES_TREE_STATE *ml_tree_guard;
-#endif
 static GRECT    ml_ctrl;
 static AESPD    *ml_pmown;
 
@@ -90,9 +84,6 @@ void fm_own(WORD beg_ownit)
         if (ml_ocnt == 0)
         {
             ml_mnhold = gl_mntree;
-#if ARCH_X86_64
-            ml_tree_guard = x86_64_aes_tree_pin(ml_mnhold);
-#endif
             gl_mntree = NULL;
             get_ctrl(&ml_ctrl);
             get_mown(&ml_pmown);
@@ -107,12 +98,6 @@ void fm_own(WORD beg_ownit)
         {
             ct_chgown(ml_pmown, &ml_ctrl);
             gl_mntree = ml_mnhold;
-#if ARCH_X86_64
-            if (!x86_64_aes_tree_alive(ml_tree_guard))
-                gl_mntree = NULL;
-            x86_64_aes_tree_unpin(ml_tree_guard);
-            ml_tree_guard = NULL;
-#endif
         }
         wm_update(END_UPDATE);
     }

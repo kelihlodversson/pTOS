@@ -60,9 +60,6 @@
 #include "../cli/clistub.h"
 #endif
 
-#if CONF_WITH_USER_ASPACE
-extern void mark_kernel_code_pd(PD *p);
-#endif
 
 /*
  * clear screen value for ob_spec:
@@ -398,9 +395,6 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
     /* Create a basepage with the standard Pexec() */
     pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
     pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)entry);
-#if CONF_WITH_USER_ASPACE
-    mark_kernel_code_pd(pd);
-#endif
 
     /* Run the program with dos_exec() for AES reentrancy issues */
     return dos_exec(PE_GOTHENFREE, NULL, (const char *)pd, NULL);
@@ -511,14 +505,7 @@ static WORD sh_ldapp(SHELL *psh)
                 KINFO(("sh_ldapp(): no desktop in the root directory of the boot drive\n"));
                 psh->sh_isgem = FALSE;      /* EmuCON is a console program */
                 sh_chgrf(psh);
-#if ARCH_X86_64
-                {
-                    extern void start_builtin_cli(char *env);
-                    start_builtin_cli(NULL);
-                }
-#else
                 aes_run_rom_program(coma_start);
-#endif
                 ret = 0;
             }
 #else

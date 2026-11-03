@@ -45,13 +45,9 @@ virt-m68k-cli-elf                        m68k-other
 virt-m68k-cli-fastcall                   m68k-other
 virt-m68k-fastcall                       m68k-other
 pc-x86_64                                x86-boot-a
-pc-x86_64-accessories                    x86-boot-b
-pc-x86_64-accessories-340                x86-boot-b
-pc-x86_64-aes                            x86-boot-a
 pc-x86_64-callbacks                      x86-boot-b
 pc-x86_64-desktop                        x86-desktop
 pc-x86_64-desktop-tests                  x86-desktop
-pc-x86_64-desktop-tests-340              x86-desktop
 pc-x86_64-desktop-tests-builtin-cli      x86-desktop
 pc-x86_64-libaes-desktop                 x86-desktop
 pc-x86_64-vdi                            x86-boot-a
