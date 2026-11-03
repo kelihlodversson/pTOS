@@ -129,6 +129,14 @@ endif
 
 # Standalone interpreter, independent of libc and the kernel link engine.
 LDSO_START-$(ARCH_X86_64) = lib/ldso/arch/x32/start.S lib/ldso/arch/x32/bootstrap.c lib/ldso/arch/x32/syscall.c
+LDSO_START-$(ARCH_ARM) = lib/ldso/arch/arm/start.S lib/ldso/arch/arm/bootstrap.c lib/ldso/arch/arm/syscall.c \
+                         lib/ldso/arch/arm/support.c
+LDSO_START_FLAGS-$(ARCH_ARM) = -fno-tree-loop-distribute-patterns -fno-builtin -Wl,-z,noexecstack
+LDSO_START_LIBS-$(ARCH_ARM) = -lgcc
+LDSO_START-$(ARCH_M68K) = lib/ldso/arch/m68k/start.S lib/ldso/arch/m68k/bootstrap.c lib/ldso/arch/m68k/syscall.c \
+                          lib/ldso/arch/m68k/support.c
+LDSO_START_FLAGS-$(ARCH_M68K) = -fno-tree-loop-distribute-patterns -fno-builtin
+LDSO_START_LIBS-$(ARCH_M68K) = -lgcc
 obj/ldso/ld.so: lib/ldso/runtime.c lib/ldso/launch.c lib/ldso/launch.h $(LDSO_START-y) obj/ldso/libldso.a $(AUTOCONF_H) \
                 lib/ldso/runtime.h lib/ldso/exports.map $(X32_PROBE_LDSO_HEADERS) lib/ldso/startup.h
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_START_FLAGS-y) -fvisibility=hidden -nostdlib -shared \
