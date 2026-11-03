@@ -277,7 +277,11 @@ void desk_set_cache(WORD enable)
 
 BOOL desk_can_shutdown(void)
 {
-    return !CONF_WITH_LIBAES_DESK && info.can_shutdown != 0;
+#if CONF_WITH_LIBAES_DESK && !CONF_WITH_GEMDOS_SHUTDOWN
+    return FALSE;
+#else
+    return info.can_shutdown != 0;
+#endif
 }
 
 BOOL desk_has_videl(void)

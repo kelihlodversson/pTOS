@@ -6,6 +6,7 @@
 #include "../../lib/aes/application.h"
 #include "../../lib/aes/frames.h"
 #include "../../lib/aes/desktop.h"
+#include "../../lib/aes/lifecycle.h"
 #include "gemmovegeom.h"
 #include "gemsizegeom.h"
 #include "gemframegeom.h"
@@ -19,6 +20,11 @@ static BOOL region_alloc_failure;
 void *aes_temporary_alloc(LONG bytes) { return region_alloc_failure ? NULL : malloc(bytes); }
 WORD aes_resource_discard(void *memory) { free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
+static ULONG published_tag;
+static char published_label[8];
+static const char *executable_name = "GemTest.Prg";
+static LONG active_peer = EFILNF;
+static ULONG peer_state_flags;
 static BOOL live;
 static LONG child_status, child_on_wait, child_publish_error;
 static ULONG starts, closes, yields, delays;
@@ -36,6 +42,7 @@ static LONG input_ready, input_key = 0x001e0061, input_count = 2;
 static UQUAD input_arguments[5];
 static ULONG input_configuration, click_interval = 450;
 static UQUAD waited_interval, waited_mask;
+static ULONG stream_only_wakes;
 static LONG native_windows[64], next_native = 2147483000L;
 static ULONG window_error_fn;
 static LONG window_error;
@@ -137,8 +144,45 @@ LONG cuis_call(ULONG fn, LONG id)
 }
 static UWORD registered_items;
 static char registered_text[CUIS_ENTRY_BYTES];
+static BOOL lifecycle_test;
+static LONG lifecycle_work, lifecycle_offset, lifecycle_read_bytes;
+static ULONG lifecycle_unread;
+static short lifecycle_packet[16] = { AC_CLOSE,0,0,0,0,0,0,0, AC_CLOSE,0,0,1,0,0,0,0 };
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    if (fn == CUIS_COHORT_QUERY) {
+        if (!lifecycle_test) return EFILNF;
+        if (b == CUIS_COHORT_ID) return 900;
+        if (b == CUIS_COHORT_WORK) return lifecycle_work;
+        if (b == CUIS_COHORT_READ_OFFSET) return lifecycle_offset;
+        if (b == CUIS_COHORT_READ_BYTES) return lifecycle_read_bytes;
+        return EFILNF;
+    }
+    if (lifecycle_test && fn == CUIS_COHORT_READ) {
+        __builtin_memcpy((void *)(uintptr_t)c,lifecycle_packet,32); return 32;
+    }
+    if (lifecycle_test && fn == CUIS_COHORT_PUBLISH) {
+        __builtin_memcpy(pipe_data+pipe_count,lifecycle_packet,32);
+        pipe_count += 32; lifecycle_unread = pipe_count; lifecycle_work = 0; return E_OK;
+    }
+    if (fn == CUIS_ENTRY_OWNER) return b < 6 && (registered_items & (1U << b)) ? handle : EFILNF;
+    if (fn == CUIS_PEER_RAISE) {
+        if (a != (UQUAD)handle || b != (UQUAD)handle) return EACCDN;
+        active_peer = handle; return E_OK;
+    }
+    if (fn == CUIS_SESSION_TAG) { published_tag = (ULONG)b; return E_OK; }
+    if (fn == CUIS_PEER_NEXT) return b == ~0ULL || b < (UQUAD)handle ? handle : EFILNF;
+    if (fn == CUIS_PEER_QUERY) {
+        if (c == CUIS_PEER_BACKGROUND) return EFILNF;
+        if (c == CUIS_PEER_ACTIVE) return active_peer;
+        if (b != (UQUAD)handle) return EFILNF;
+        if (c == CUIS_PEER_TAG) return published_tag;
+        if (c == CUIS_PEER_LABEL) {
+            if (e < 8) return ERANGE;
+            __builtin_memcpy((void *)(uintptr_t)d,published_label,8); return 8;
+        }
+        return (LONG)peer_state_flags;
+    }
     if (fn == CUIS_ENTRY_PUBLISH) {
         if (b >= 6 || c || !e || e > CUIS_ENTRY_BYTES) return EINVAL;
         if (registered_items & (1U << b)) return EAGAIN;
@@ -265,10 +309,14 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
         return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
-        __builtin_memcpy((void *)(uintptr_t)b, "GemTest.Prg", 12); return 11;
+        ULONG length = __builtin_strlen(executable_name);
+        __builtin_memcpy((void *)(uintptr_t)b,executable_name,length+1); return length;
     }
-    if (fn == CUIS_SESSION_LABEL) return label_result;
-    if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a, "GEMTEST ", 8) ? EFILNF : handle;
+    if (fn == CUIS_SESSION_LABEL) {
+        if (!label_result) __builtin_memcpy(published_label,(void *)(uintptr_t)b,8);
+        return label_result;
+    }
+    if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a,published_label,8) ? EFILNF : handle;
     if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
     if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
     if (fn == CUIS_CLOCK) return menu_ticks & 0x7fffffffUL;
@@ -307,6 +355,9 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         }
         if (wait_error) return wait_error;
         if ((c & CUIS_READY_STREAM) && pipe_count >= b) ready |= CUIS_READY_STREAM;
+        if ((ready & CUIS_READY_STREAM) && stream_only_wakes) {
+            stream_only_wakes--; menu_ticks += 3; return ready;
+        }
         if ((c & CUIS_READY_SERVICE) && !ready) {
             ULONG timer_ticks = d ? d/5+(d%5 != 0)+1 : 0;
             if ((c & CUIS_READY_TIMER) && !d) return CUIS_READY_TIMER;
@@ -326,7 +377,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         *(LONG *)(uintptr_t)d = state_values[2]; *(LONG *)(uintptr_t)e = state_values[3];
         return E_OK;
     }
-    if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ) {
+    if (fn == CUIS_STREAM_PENDING) return pipe_count;
+    if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK) {
         if (failure) return failure;
         pipe_block = (ULONG)d;
         if (a != (UQUAD)handle) return EACCDN;
@@ -338,6 +390,12 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
             if (read_error) return read_error;
             if (pipe_count < c) return EAGAIN;
             if (c) __builtin_memcpy((void *)(uintptr_t)b, pipe_data, (ULONG)c);
+            if (lifecycle_test) {
+                lifecycle_offset = lifecycle_unread <= 32 && lifecycle_unread >= c ? 32-lifecycle_unread : EFILNF;
+                lifecycle_read_bytes = c;
+                if (fn == CUIS_STREAM_READ) lifecycle_unread = c >= lifecycle_unread ? 0 : lifecycle_unread-c;
+            }
+            if (fn == CUIS_STREAM_PEEK) return (LONG)c;
             pipe_count -= (ULONG)c;
             __builtin_memmove(pipe_data, pipe_data + c, pipe_count);
         }
@@ -355,6 +413,24 @@ static int child_message_checks(void)
     UBYTE full[64];
     int i;
     CHECK(!pipe_count);
+    {
+        short forged[8] = { AP_TERM,-1,0,0,0,AP_TERM,0,0 };
+        short refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
+        CHECK(appl_write(7,16,refusal) == 1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
+        CHECK(appl_write(7,16,forged) == 1);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
+        CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,expected) == 1);
+        CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,expected,16) && !pipe_count);
+        CHECK(appl_write(7,16,forged) == 1);
+        stream_only_wakes = 1;
+        /* Filtering an internal message must preserve the original timer. */
+        CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,10,
+                        NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && !pipe_count && waited_interval == 0);
+        CHECK(appl_write(7,16,forged) == 1);
+        CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                        NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && !pipe_count);
+    }
     child_status = (11L << 16) | 0x1234;
     child_publish_error = EIMBA;
     for (i = 0; i < 8; i++) message[i] = 99;
@@ -454,8 +530,9 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)));
-    CHECK(!pipe_count && waited_interval == 9 && key == 0x1e61 && clicks == 2);
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_COHORT)));
+    /* Absolute deadlines are expressed in the native five-millisecond ticks. */
+    CHECK(!pipe_count && waited_interval == 10 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
     state_error = EIMBA; x = 123;
     CHECK(MULTI(MU_KEYBD | MU_TIMER, 0, NULL) == 0 && x == 123); state_error = 0;
@@ -1177,6 +1254,30 @@ static int metadata_checks(void)
     return 0;
 }
 #include "window_desktop_api.c"
+static int lifecycle_poll_checks(void)
+{
+    short window, message[8], kind;
+    executable_name = "Poll.ACC"; registered_items = 0;
+    CHECK(appl_init() == 7 && menu_register(7,"One") == 0 && menu_register(7,"Two") == 1);
+    window = wind_create(0,10,10,100,100);
+    CHECK(window > 0 && wind_open(window,10,10,100,100));
+    lifecycle_test = TRUE; lifecycle_work = CUIS_COHORT_REQUEST;
+    CHECK(aes_lifecycle_messages(aes_global) == E_OK && pipe_count == 32);
+    display_error = EAGAIN;
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && pipe_count == 32 && !display_nesting);
+    CHECK(aes_lifecycle_wait_display() && wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                     NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && pipe_count == 32);
+    display_error = 0;
+    CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
+                     NULL,NULL,NULL,NULL,NULL,NULL) == (MU_MESAG|MU_TIMER));
+    CHECK(message[0] == AC_CLOSE && !aes_lifecycle_wait_display() && pipe_count == 16);
+    CHECK(!wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
+    CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == AC_CLOSE && !pipe_count);
+    lifecycle_test = FALSE;
+    CHECK(appl_exit()); executable_name = "GemTest.Prg";
+    return 0;
+}
 int main(void)
 {
     short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
@@ -1206,6 +1307,7 @@ int main(void)
     CHECK(!__builtin_strcmp(registered_text,"  Accessory"));
     CHECK(menu_register(7,"Full") == -1 && registered_items == 63);
     registered_items = 0;
+    CHECK(menu_register(REG_NEWNAME,"GEMTEST ") == 0);
     CHECK(gl_ap_version == aes_global[0] && gl_ap_version == 0x0400);
     /* The menu strip is reserved before any application has installed one. */
     CHECK(wind_get(0,WF_WORKXYWH,&a,&b,&c,&d) == 1 && a == 0 && b == 19 && c == 640 && d == 381);
@@ -1237,9 +1339,9 @@ int main(void)
     if (sizeof(unsigned long) > 4) CHECK(evnt_timer((unsigned long)(1ULL << 32)) == 0 && delays == count);
     failure = EACCDN; CHECK(evnt_timer(1) == 0); failure = 0;
     CHECK(appl_getinfo(32767, &a, &b, &c, &d) == 0 && !(a | b | c | d));
-    CHECK(appl_getinfo(AES_PROCESS, &a, &b, &c, &d) == 1 && a == 0 && b == 1 && c == 0 && d == 1);
+    CHECK(appl_getinfo(AES_PROCESS, &a, &b, &c, &d) == 1 && a == 0 && b == 1 && c == 1 && d == 1);
     CHECK(appl_getinfo(AES_OBJECT, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && c == 0 && d == 0);
-    CHECK(appl_getinfo(AES_MESSAGE, &a, &b, &c, &d) == 1 && a == 0x20 && !b && !c && !d);
+    CHECK(appl_getinfo(AES_MESSAGE, &a, &b, &c, &d) == 1 && a == 0x28 && !b && !c && !d);
     CHECK(appl_getinfo(AES_PCGEM, &a, &b, &c, &d) == 1 && a == 0 && b == 0 && c == 0 && d == 1);
     CHECK(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && c == 0 && d == 0);
     CHECK(appl_find(NULL) == 7 && appl_find("gemtest") == 7 && mt_appl_find("GEMTEST ", other) == 7);
@@ -1280,5 +1382,37 @@ int main(void)
     CHECK(appl_init() == 32767 && gl_apid == 32767 && appl_exit() == 1 && closes == 3);
     label_result = EACCDN;
     CHECK(mt_appl_init(other) == -1 && !live && gl_apid == -1 && other[2] == -1 && closes == 4);
+    {
+        char name[9] = "untouched";
+        short type = -7, found = -7;
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 0 && type == -7 && found == -7);
+        label_result = 0; pid = 7;
+        CHECK(appl_init() == 7);
+        CHECK(appl_control(7,APC_INFO,&type) == 1 && type == 0);
+        CHECK(appl_control(7,APC_TOP,NULL) == 1);
+        peer_state_flags = CUIS_PEER_HAS_SURFACE|CUIS_PEER_HAS_BACKGROUND;
+        CHECK(appl_control(-1,APC_INFO,&type) == 1 && type == (APCI_HASMBAR|APCI_HASDESK));
+        CHECK(appl_control(8,APC_TOP,NULL) == 0 && appl_control(7,APC_INFO,NULL) == 0);
+        CHECK(appl_control(7,APC_HIDE,NULL) == 0 && appl_control(7,APC_MENU,(void *)1) == 0);
+        peer_state_flags = 0;
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && found == 7 && type == APP_APPLICATION);
+        CHECK(!__builtin_memcmp(name,"GEMTEST ",9));
+        CHECK(appl_search(APP_NEXT,name,&type,&found) == 0 && found == 7);
+        CHECK(appl_search(APP_DESK,name,&type,&found) == 0);
+        CHECK(appl_search(-7,name,&type,&found) == 0 && appl_search(3,name,&type,&found) == 0);
+        CHECK(appl_search(APP_FIRST,NULL,&type,&found) == 0);
+        CHECK(appl_search(APP_FIRST,name,NULL,NULL) == 1);
+        CHECK(menu_register(REG_NEWNAME,"RENAMED ") == 0);
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && !__builtin_memcmp(name,"RENAMED ",9));
+        CHECK(appl_find("RENAMED ") == 7 && appl_exit() == 1);
+        executable_name = "Clock.ACC";
+        CHECK(appl_init() == 7);
+        CHECK(aes_lifecycle_write(SWM_NEWMSG,NM_APTERM,0,NULL,aes_global) == 1);
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && type == APP_ACCESSORY && found == 7);
+        CHECK(!__builtin_memcmp(name,"CLOCK   ",9));
+        CHECK(appl_exit() == 1);
+        executable_name = "GemTest.Prg";
+    }
+    CHECK(lifecycle_poll_checks() == 0);
     return 0;
 }

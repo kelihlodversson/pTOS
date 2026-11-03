@@ -8,6 +8,7 @@
 #include "gemerror.h"
 #include "ptos.h"
 #include "launch.h"
+#include "lifecycle.h"
 #include "shell_arguments.h"
 #include "string.h"
 
@@ -113,6 +114,8 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     WORD kind = GEMAPP;
     mode = (UWORD)mode & 255;
     if (extensions & ~SW_ENVIRON) return 0;
+    if (mode == SWM_SHUTDOWN || mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG)
+        return extensions ? 0 : aes_lifecycle_write(mode,graphical,execution,command,global);
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
     if (mode == SWM_LAUNCH ? (execution != CL_NORMAL && execution != CL_PARSE) :
         graphical != GEMAPP || (execution != SHW_PARALLEL && execution != SHW_CHAIN)) return 0;

@@ -68,6 +68,13 @@ static BOOL running_on_qemu(void)
     return i == 12;
 }
 
+#if CONF_WITH_CUIS
+BOOL machine_can_poweroff(void)
+{
+    return running_on_qemu();
+}
+#endif
+
 void machine_poweroff(void)
 {
     if (!running_on_qemu())

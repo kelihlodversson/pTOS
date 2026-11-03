@@ -43,6 +43,8 @@ LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout);
 LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds);
 LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c);
 LONG cuis_entry_service(ULONG function, UQUAD session, UQUAD slot, UQUAD peer, UQUAD address, UQUAD bytes);
+LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD peer, UQUAD field, UQUAD address, UQUAD bytes);
+LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD length,
                          UQUAD block, UQUAD sender);
 LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds);

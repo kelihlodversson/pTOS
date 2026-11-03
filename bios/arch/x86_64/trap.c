@@ -374,6 +374,10 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
              fn == CUIS_BACKGROUND_REGION ? cuis_background_region(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
              fn == CUIS_DISPLAY_INFO ? cuis_display_info(frame->rdi) :
              fn == CUIS_KEYMAP_LOOKUP ? keyboard_map_lookup(frame->rdi,frame->rsi) :
+             (fn >= CUIS_COHORT_BEGIN && fn <= CUIS_COHORT_CANCEL) ?
+                 cuis_cohort_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
+             (fn >= CUIS_PEER_NEXT && fn <= CUIS_PEER_RAISE) ?
+                 cuis_peer_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
              (fn >= CUIS_ENTRY_PUBLISH && fn <= CUIS_ENTRY_READ) ?
                  cuis_entry_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
              fn == CUIS_WINDOWS_RESET ? cuis_windows_reset(frame->rdi) :
@@ -391,7 +395,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
                  frame->r10, frame->r8, frame->r9) :
              fn == CUIS_SESSION_WAIT ? cuis_session_wait(frame->rdi, frame->rsi, frame->rdx, frame->r10) :
              fn == CUIS_INPUT_STATE ? cuis_state_service(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
-             (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ) ?
+             (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK || fn == CUIS_STREAM_PENDING) ?
                  cuis_stream_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              (fn >= CUIS_SESSION_NAME && fn <= CUIS_PEER_BY_PID) ?
                  cuis_directory_service(fn, frame->rdi, frame->rsi, frame->rdx) :

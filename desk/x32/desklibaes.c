@@ -7,6 +7,45 @@
 #include "gemrslib.h"
 #include "cuis.h"
 #include "syscall.h"
+#include "shutdown.h"
+
+void desk_poweroff(void);
+void desk_poweroff(void)
+{
+    (void)desk_syscall(1,GEMDOS_SHUTDOWN,SHUT_POWER,0,0,0);
+}
+LONG desk_shutdown_token(void);
+LONG desk_shutdown_token(void)
+{
+    LONG session = desk_syscall(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0);
+    return session < 0 ? session : desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,
+        session,CUIS_COHORT_ID,0,0);
+}
+BOOL desk_shutdown_refused(LONG token);
+BOOL desk_shutdown_refused(LONG token)
+{
+    LONG session = desk_syscall(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0);
+    return token > 0 && session >= 0 && desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,
+        session,CUIS_COHORT_RESULT_ID,0,0) == token &&
+        desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_OFFSET,0,0) == 0 &&
+        desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_BYTES,0,0) == 16;
+}
+BOOL desk_termination_ready(void);
+BOOL desk_termination_ready(void)
+{
+    LONG session = desk_syscall(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0), offset;
+    if (session < 0) return FALSE;
+    offset = desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_OFFSET,0,0);
+    return offset >= 0 && offset % 16 == 0 && desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,
+        session,CUIS_COHORT_READ_BYTES,0,0) == 16;
+}
+BOOL desk_shutdown_ready(void);
+BOOL desk_shutdown_ready(void)
+{
+    LONG session = desk_syscall(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0);
+    return session >= 0 && desk_syscall(CUIS_SERVICE_CLASS,CUIS_COHORT_QUERY,
+        session,CUIS_COHORT_STATE,0,0) == CUIS_COHORT_FINISHED;
+}
 
 WORD desk_shifted_key(WORD scancode);
 WORD desk_shifted_key(WORD scancode)

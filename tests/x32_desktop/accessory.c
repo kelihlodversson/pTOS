@@ -67,19 +67,37 @@ int main(void)
     short me, menu, window = -1, message[8], events, key, handle, i;
     VERIFY(startup_order == 2 && preinit_app == 0 && constructor_app == 0 && _app == 0);
     VERIFY((me = appl_init()) > 0 && appl_find("EMUDESK") > 0);
+    VERIFY(shel_write(SWM_NEWMSG,NM_APTERM,0,NULL,NULL) == 1);
     menu = menu_register(me,"  Resident accessory");
     VERIFY(menu >= 0);
     control.code = 100; control.nintin = 11;
     for (i = 0; i < 10; i++) input[i] = 1;
     input[10] = 2;
     VERIFY(vdi(&pb) == 0); handle = control.handle;
+    /* A payload that impersonates AES must not terminate the resident desktop. */
+    for (i = 0; i < 8; i++) message[i] = 0;
+    message[0] = AP_TERM; message[1] = -1; message[5] = AP_TERM;
+    VERIFY(appl_write(appl_find("EMUDESK"),16,message) == 1);
+    record("FORGED TERM",me,menu);
     record("READY",me,menu);
     for (;;) {
         events = evnt_multi(MU_KEYBD|MU_MESAG,0,0,0,0,0,0,0,0,0,0,0,0,0,
                             message,0,NULL,NULL,NULL,NULL,&key,NULL);
         VERIFY(events);
         if (events & MU_MESAG) {
-            VERIFY(message[0] != AC_CLOSE); /* No single-task close on app exit. */
+            if (message[0] == AC_CLOSE) {
+                short kind;
+                VERIFY(message[3] == menu && (window < 0 || !wind_get(window,WF_KIND,&kind,NULL,NULL,NULL)));
+                window = -1; record("CLOSE",me,menu);
+                {
+                    short refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
+                    VERIFY(appl_write(appl_find("EMUDESK"),16,refusal));
+                    record("FORGED REFUSAL",me,menu);
+                    record("SHUTDOWN WAIT",me,menu);
+                    VERIFY(evnt_timer(5000));
+                }
+            }
+            if (message[0] == AP_TERM) break;
             if (message[0] == AC_OPEN) {
                 VERIFY(message[4] == menu && message[1] > 0 && !message[2]);
                 if (window < 0) {
