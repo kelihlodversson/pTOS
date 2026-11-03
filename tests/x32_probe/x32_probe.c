@@ -573,7 +573,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case '$':
         /* Retired typed AES namespace and generic AES trap: never inspect
          * the deliberately invalid user buffer. GEM applications use libaes. */
-        pterm(sys4(0x101,0,1,~0ULL,~0ULL,~0ULL) == -32 &&
+        pterm(sys4(0x101,0,1,~0ULL,~0ULL,~0ULL) == -1 &&
               sys4(2,0xc8,1,~0ULL,~0ULL,~0ULL) == -1 &&
               sys4(2,0xc9,1,~0ULL,~0ULL,~0ULL) == -1 ? 0 : 1);
         break;

@@ -3489,3 +3489,18 @@ aes_global state, with a regression for attempted reintroduction. Dynamic
 fixture links and full native boots verify no private helper imports remain.
 This does not remove the older typed kernel AES service or its legacy tests;
 that migration and final configuration/service removal remain #661 gates.
+
+Kernel AES cutover (#882)
+------------------------
+
+Kernel AES is selectable only without per-process address spaces and without
+CUIS. The old typed x32 AES service, its native client/import namespace and
+kernel-owned object snapshot/validation machinery are retired. Standard GEM
+clients use libaes; native CUIS/VDI syscall ownership and buffer validation,
+raw malformed-input probes and generic callback protections remain in place.
+The generic ring-3 GEM trap and retired typed AES class reject calls without
+inspecting supplied pointers. ARM/m68k single-address-space kernel AES remains.
+
+Complete the desktop/accessory, standard GEM, RCS, callback/fault/cleanup,
+CLI/fallback, legacy architecture and release matrix before integration. Merge
+current master into the epic and resolve conflicts before marking #681 ready.
