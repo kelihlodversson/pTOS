@@ -1,6 +1,7 @@
 /* Exercise the production scalar CUIS service and allocation failures. */
 #include "emutos.h"
 #include "bdosdefs.h"
+long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
 const char *kproc_executable_name(PD *pd);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);

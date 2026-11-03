@@ -137,6 +137,12 @@ LONG ksched_defer(PD *p, ULONG session)
     CHECK(dirtbl[3].use == 2 && dirtbl[4].use == 2);
     return rejection; /* No task slot, or preparation failed before commit. */
 }
+LONG fs_set_process_directory(char *directory, PD *process)
+{
+    CHECK(process == &image && !strcmp(directory,"C:\\MISSING"));
+    CHECK(run == &parent && pending_request == &pending);
+    return EPTHNF;
+}
 void elf_set_load_into_caller(BOOL wanted) { CHECK(!wanted); }
 void proc_align_stack(PD *p) { CHECK(p == &image); }
 void invalidate_instruction_cache(const UBYTE *address, ULONG length) { }
@@ -189,6 +195,13 @@ int main(void)
         }
     }
     CHECK(disposals == 12);
+    references[0] = 2; references[1] = 1;
+    dirtbl[3].use = dirtbl[4].use = 1;
+    directory_releases = attempts = interrupted = invalidations = 0;
+    inject_errors = 0; return_close_error = FALSE;
+    CHECK(xexec_directory("NEXT.PRG",tail,env,23,0,TRUE,"C:\\MISSING") == EPTHNF);
+    CHECK(pending_request == &pending && run == &parent);
+    CHECK(!allocations && !records && disposals == 13);
     puts("Deferred rejection releases all references after interrupted close: PASS");
     return 0;
 }

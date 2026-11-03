@@ -453,20 +453,24 @@ static WORD envsize(char *env)
 static PD *cur_p;
 
 #if CONF_WITH_CUIS
-static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred);
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_observed(flag,path,tail,env,0,0,FALSE);
+    return exec_observed(flag,path,tail,env,0,0,FALSE,NULL);
 }
 long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
 {
-    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE));
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL));
 }
 long xexec_deferred(char *path, char *tail, char *env, ULONG session)
 {
-    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE));
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL));
 }
-static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred)
+long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
+{
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory));
+}
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
 #else
 long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
@@ -758,7 +762,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #if CONF_WITH_NATIVE_SCHED
     if (flag == PE_ASYNC_LOADGO) {
 #if CONF_WITH_CUIS
-        rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
+        rc = directory ? fs_set_process_directory(directory,cur_p) : E_OK;
+        if (rc == E_OK)
+            rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
 #else
         rc = ksched_spawn(cur_p);
 #endif

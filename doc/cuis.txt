@@ -3359,7 +3359,7 @@ SHW_IMMED still reserve/bind their completion before execution. All kernel
 changes remain gated by CONF_WITH_CUIS.
 
 SHW_CHAIN retains the existing deferred GEM handoff. Explicit TOSAPP chain
-handoff, SHW_DOS, SHW_SINGLE, SW_DEFDIR and further extended launch flags remain
+handoff, SHW_DOS, SHW_SINGLE and further extended launch flags remain
 unsupported; these selectors fail before touching overloaded command/tail
 arguments. CL_PARSE remains the mode 0 argument policy, not a reinterpretation
 of the numeric SHW_CHAIN selector. AES_SHELL remains conservatively
@@ -3373,3 +3373,52 @@ reap normal/fault console children through Pwaitpid and verify display access
 before and after each launch. The combined boot checks its pass marker and
 final process/memory accounting; the resident desktop launch/return regression
 continues to exercise ordinary mode 0 behavior.
+
+Shell launch directories (#869)
+--------------------------------
+
+libaes accepts standard SW_DEFDIR (0x0400) on the implemented mode 0/1
+launches. SHELW.defdir is read only with that bit set; SHELW.env is read
+only with SW_ENVIRON. Both flags may be combined. A non-NULL defdir is
+resolved against the caller's drive and per-drive directories. NULL
+selects the executable directory. Mode 0 and SHW_IMMED default to the
+executable directory; SHW_PARALLEL and deferred SHW_CHAIN otherwise retain
+the inherited paths. No temporary Dsetpath/Dsetdrv is performed in the
+caller. Empty, invalid, missing or oversized directories fail the launch.
+
+For directory-changing launches libaes first makes the executable name
+absolute. The loader opens that executable relative to the caller, then
+sets only the child's current directory/default drive after taking its
+inherited directory references, before scheduler publication or any
+executable preinitializer. Startup command/resource metadata therefore
+still identifies the executable when defdir differs from its directory.
+A failed directory setup releases the child image, environment, handles
+and inherited directory references; a previous deferred successor survives.
+Console failure also releases its tentative lease and child observation.
+
+Native calls remain flat and carry no GEM flags or SHELW structures:
+
+  CUIS_CHILD_LAUNCH_DIRECTORY (90)
+      (session, token, path, tail, environment, directory) -> child PID/error
+  CUIS_CONSOLE_LAUNCH_DIRECTORY (91)
+      (session, token, path, tail, environment, directory) -> child PID/error
+  CUIS_PROCESS_DEFER_DIRECTORY (92)
+      (session, path, tail, environment, directory) -> zero/error
+
+The directory address must name a nonempty terminated string of at most
+259 bytes, copied before loader I/O. Filesystem path limits still apply.
+A zero observation token is allowed on either directory-aware immediate
+call; such children remain available to Pwait/Pwaitpid without CH_EXIT.
+The console opcode acquires the existing exclusive display/input lease.
+The original calls 69/70 keep their argument counts and inherited-directory
+behavior; unused registers never become implicit arguments. All native
+loader/directory support is guarded by CONF_WITH_CUIS, currently available
+only on x32 with the built-in FAT filesystem.
+
+Host regressions exercise flag isolation, absolute/drive-relative directory
+resolution, caller drive/path isolation, directory-reference replacement,
+failed setup disposal and retention of a pending deferred successor.
+Native boot tests check the directory in executable preinitializers for
+GEM/console immediate and parallel launches, custom environments and NULL
+or relative defdir, caller isolation, invalid-directory console recovery,
+and explicit/NULL-directory deferred handoffs.

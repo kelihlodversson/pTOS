@@ -4,7 +4,16 @@
 #include "cuis.h"
 #include "ptos.h"
 #include "gem_chain.h"
-#define VERIFY(c) do { if (!(c)) return 0x8d00 | __LINE__; } while (0)
+static int failure(unsigned line)
+{
+    const char *digits = "0123456789abcdef";
+    char text[] = "x32 GEM chain failure: 0000\r\n";
+    unsigned i;
+    for (i = 0; i < 4; i++) text[23+i] = digits[(line >> (12-i*4)) & 15];
+    ptos_write(2,text,sizeof(text)-1);
+    return 0x8d00 | line;
+}
+#define VERIFY(c) do { if (!(c)) return failure(__LINE__); } while (0)
 static const char digits[] = "0123456789abcdef";
 static int32_t call(uint32_t cls, uint32_t fn, uint64_t a, uint64_t b, uint64_t c, uint64_t d)
 {
@@ -49,9 +58,9 @@ int gem_chain_client(int argc, char **argv)
         VERIFY(receive(message,5000,aes_global) & MU_MESAG);
         return 0;
     }
-    if (role == 't' || role == 'u' || role == 'v' || role == 'w') {
+    if (role == 't' || role == 'u' || role == 'v' || role == 'w' || role == 'k') {
         VERIFY(shel_envrn(&value,"CHAIN_ENV=") == 1 && value && equal(value,"original"));
-        VERIFY(call(1,0x47,(uintptr_t)directory,0,0,0) == 0 && equal(directory,"\\APPS"));
+        VERIFY(call(1,0x47,(uintptr_t)directory,0,0,0) == 0 && equal(directory,role == 'k' ? "\\WORK" : "\\APPS"));
         VERIFY(call(1,0x10c,0,0,0,0) == (int32_t)decode(argv[1]+17)); /* Stable controller. */
         if (role == 'v' || role == 'w') {
             VERIFY(call(1,0x40,1,5,(uintptr_t)"CHAIN",0) == 5);
@@ -75,7 +84,14 @@ int gem_chain_client(int argc, char **argv)
     encode(target+2,(uint32_t)parent); encode(target+10,(uint32_t)me);
     encode(target+18,decode(argv[1]+9));
     program = role == 'j' ? "DELETED.PRG" : "CHAIN.PRG";
-    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target) == 1);
+    if (role == 'z' || role == 'n') {
+        SHELW extended = { "C:\\APPS\\CHAIN.PRG",0,0,role == 'z' ? "C:\\WORK" : NULL,(char *)1,0,0 };
+        if (role == 'z') target[1] = 'k';
+        else VERIFY(call(1,0x3b,(uintptr_t)"C:\\WORK",0,0,0) == 0);
+        VERIFY(shel_write(SWM_LAUNCHNOW|SW_DEFDIR,GEMAPP,SHW_CHAIN,&extended,target) == 1);
+        extended.defdir = "C:\\MISSING";
+        VERIFY(!shel_write(SWM_LAUNCHNOW|SW_DEFDIR,GEMAPP,SHW_CHAIN,&extended,target));
+    } else VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target) == 1);
     if (role == 'o' || role == 'q') VERIFY(call(1,0x3e,output,0,0,0) == 0);
     if (role == 'r') {
         target[1] = 't';
@@ -104,7 +120,7 @@ int gem_chain_client(int argc, char **argv)
 }
 int gem_chain_checks(short *global)
 {
-    static const char roles[] = { 's','r','c','f','x','d','j','e','o','p','q' };
+    static const char roles[] = { 's','r','c','f','x','d','j','e','o','p','q','z','n' };
     static const char environment[] = "CHAIN_ENV=original\0\0";
     char tail[128] = { 17 }, contents[9];
     short source, message[8], helpers[5];

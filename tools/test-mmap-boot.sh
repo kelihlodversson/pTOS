@@ -201,6 +201,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM shared shell buffer: PASS' "$log"
     grep -q 'x32 GEM desktop/clipboard metadata: PASS' "$log"
     grep -q 'x32 GEM parallel shell launch: PASS' "$log"
+    grep -q 'x32 GEM shell launch directories: PASS' "$log"
     grep -q 'x32 GEM explicit immediate/parallel launches: PASS' "$log"
     grep -q 'x32 GEM child exit: PASS' "$log"
     grep -q 'x32 GEM chain handoff: PASS' "$log"
