@@ -292,7 +292,7 @@ LONG ksched_spawn(PD *pd)
     task->stack_phys = kstack_alloc(&task->stack_top);
     if (!task->stack_phys) return ENSMEM;
 #if CONF_WITH_CUIS
-    if (token) {
+    if (!deferred && (session || token)) {
         LONG result = cuis_child_bind_spawn(session,token,pd);
         if (result != E_OK) {
             kstack_free(task->stack_phys);

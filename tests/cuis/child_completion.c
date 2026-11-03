@@ -233,7 +233,8 @@ static int child_launch_checks(void)
 
 static int console_launch_checks(void)
 {
-    LONG session, other, token, other_token, child_session;
+    LONG session, other, token, other_token, child_session, slots[CUIS_CHILDREN_PER_SESSION];
+    unsigned index;
     CHECK(!clients && !console_owner && !text_console_active && allocations == frees);
     run = &first; session = cuis_service(CUIS_SESSION_START,0);
     run = &second; other = cuis_service(CUIS_SESSION_START,0); run = &first;
@@ -269,6 +270,28 @@ static int console_launch_checks(void)
     cuis_process_exit(&third); /* fault/normal teardown may both pass here */
     cuis_process_exit(&second); run = &first; child_stay_live = FALSE;
     CHECK(!clients && allocations == frees);
+    /* Parallel TOS children attach the console without an AES exit observer.
+     * A full observation table cannot prevent that independent launch. */
+    run = &first; session = cuis_service(CUIS_SESSION_START,0);
+    for (index = 0; index < CUIS_CHILDREN_PER_SESSION; index++) {
+        slots[index] = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+        CHECK(slots[index] > 0);
+    }
+    CHECK(cuis_child_launch(session,0,0x11000,0x12000,0,0) == EINVAL);
+    child_start_error = ENSMEM;
+    CHECK(cuis_child_launch(session,0,0x11000,0x12000,0,1) == ENSMEM);
+    CHECK(!console_owner && !console_launcher && !text_console_active);
+    child_start_error = 0; child_stay_live = TRUE;
+    CHECK(cuis_child_launch(session,0,0x11000,0x12000,0,1) == 2);
+    CHECK(console_owner == &third && text_console_active && !cuis_child_pid_reserved(2));
+    cuis_process_exit(&third);
+    CHECK(!console_owner && !text_console_active);
+    CHECK(cuis_child_service(CUIS_CHILD_RESULT,session,0,0,0) == 0);
+    CHECK(cuis_display_lock(session,1,0) == E_OK && cuis_display_lock(session,0,0) == E_OK);
+    for (index = 0; index < CUIS_CHILDREN_PER_SESSION; index++)
+        CHECK(cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,slots[index],0) == E_OK);
+    cuis_process_exit(&first); child_stay_live = FALSE;
+    CHECK(!clients && allocations == frees);
     return 0;
 }
 
@@ -278,11 +301,11 @@ static int console_abandoned_launch_checks(void)
     volatile WORD stage;
     CHECK(!clients && !console_owner && allocations == frees);
     child_stay_live = TRUE;
-    for (stage = 1; stage <= 2; stage++) {
+    for (stage = 1; stage <= 4; stage++) {
         run = &first;
         session = cuis_service(CUIS_SESSION_START,0);
-        token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
-        console_abort_stage = stage;
+        token = stage <= 2 ? cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0) : 0;
+        console_abort_stage = stage <= 2 ? stage : stage-2;
         if (!__builtin_setjmp(console_launch_escape)) {
             (void)cuis_child_launch(session,token,0x11000,0x12000,0,1);
             CHECK(FALSE);

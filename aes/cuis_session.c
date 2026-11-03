@@ -3156,6 +3156,12 @@ LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *child)
     UQUAD flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session || pid <= 0) goto spawn_bound;
+    if (!token) {
+        /* An unobserved launch may attach the console lease, without
+         * reserving an AES completion or collecting the child's exit. */
+        if (console_launcher == client) { console_launch_image = child; result = E_OK; }
+        goto spawn_bound;
+    }
     for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
         if (token && client->children[i].token == token && !client->children[i].pid) break;
     if (i == CUIS_CHILDREN_PER_SESSION) goto spawn_bound;
@@ -3174,14 +3180,16 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
     UWORD i;
     LONG result;
     long args[7];
-    if (session > 0x7fffffffULL || !token || token > 0x7fffffffULL || console > 1) return EINVAL;
+    if (session > 0x7fffffffULL || token > 0x7fffffffULL || console > 1 || (!token && !console)) return EINVAL;
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
-    for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
-        if (client->children[i].token == token && !client->children[i].pid) break;
+    if (token) {
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+            if (client->children[i].token == token && !client->children[i].pid) break;
+        if (i == CUIS_CHILDREN_PER_SESSION) { cuis_input_unlock(flags); return EACCDN; }
+    }
     cuis_input_unlock(flags);
-    if (i == CUIS_CHILDREN_PER_SESSION) return EACCDN;
     if (console) {
         /* Own update nesting is released by the resident desktop after the
          * launch returns. Foreign drawing and all modal grabs must be idle. */
@@ -3189,7 +3197,7 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
         if (console_owner || console_launcher || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
             (update_owner && update_owner != client)) {
             cuis_input_unlock(flags);
-            (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
+            if (token) (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
             return EAGAIN;
         }
         console_launcher = client; console_launch_image = NULL;
@@ -3202,7 +3210,7 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
     if (!result)
         result = (LONG)xexec_observed((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
                                      (char *)(uintptr_t)environment,(ULONG)session,(ULONG)token);
-    if (result < 0)
+    if (result < 0 && token)
         (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
     if (console) {
         flags = cuis_input_lock();

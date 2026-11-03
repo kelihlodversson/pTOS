@@ -118,7 +118,9 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
         return extensions ? 0 : aes_lifecycle_write(mode,graphical,execution,command,global);
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
     if (mode == SWM_LAUNCH ? (execution != CL_NORMAL && execution != CL_PARSE) :
-        graphical != GEMAPP || (execution != SHW_PARALLEL && execution != SHW_CHAIN)) return 0;
+        (graphical != GEMAPP && graphical != TOSAPP) ||
+        (execution != SHW_IMMED && execution != SHW_PARALLEL && execution != SHW_CHAIN) ||
+        (execution == SHW_CHAIN && graphical == TOSAPP)) return 0;
     session = aes_application_session(global);
     if (session < 0 || !command || !tail || (UBYTE)tail[0] > 127) return 0;
     if (extensions) {
@@ -137,13 +139,14 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
             (uintptr_t)arguments.tail,(uintptr_t)arguments.environment,0,0) == E_OK ? 1 : 0;
         goto finished;
     }
-    if (mode == SWM_LAUNCH) {
-        kind = application_kind(path);
-        if (kind < 0 || aes_child_messages(session) < 0) goto finished;
+    kind = mode == SWM_LAUNCH ? application_kind(path) : graphical;
+    if (kind < 0) goto finished;
+    if (mode == SWM_LAUNCH || execution == SHW_IMMED) {
+        if (aes_child_messages(session) < 0) goto finished;
         watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
         if (watch <= 0) goto finished;
     }
-    if (watch) {
+    if (watch || kind == TOSAPP) {
         /* The ordinary fixed-address loader installs the observer at spawn,
          * atomically with launch, before the child can execute or be reaped. */
         pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment,kind == TOSAPP);

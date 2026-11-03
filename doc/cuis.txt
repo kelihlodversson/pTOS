@@ -3332,3 +3332,44 @@ The desktop UI regression selects an ignored View action while an accessory
 is delaying termination, checks title normalization, then completes poweroff.
 Native lifecycle tests exercise unknown, short, odd, oversized and extended
 rejection payloads and verify ordinary operation/launches afterward.
+
+
+Explicit immediate and parallel shell launches (#867)
+----------------------------------------------------
+
+SWM_LAUNCHNOW (1) accepts SHW_IMMED (0) and SHW_PARALLEL (100) with either
+GEMAPP (1) or TOSAPP (0). This explicit kind overrides the filename extension:
+a .TOS image may run as a GEM client, and a .PRG image may own the console.
+SHW_IMMED launches concurrently and reports its standard CH_EXIT completion;
+SHW_PARALLEL sends no CH_EXIT and leaves ordinary MiNT child waits/reaping to
+the parent. Both return the positive child ID or GEM failure zero.
+
+TOS launches use the existing exclusive native console lease, including before
+the child's first timeslice. The desktop and GUI peers remain resident. Normal
+exit and faults restore their drawing/input access. No single-task scheduler
+freeze or normal desktop chain load is introduced. ARGV and SW_ENVIRON use the
+same launch snapshots and caller ownership as the existing shell modes.
+
+CUIS_CHILD_LAUNCH keeps its flat session, observer-token, path, tail,
+environment, console arguments. A zero token is permitted only for a console
+launch: the scheduler's spawn hook attaches the console identity without an
+AES child observation, queue entry or automatic reap. Other owned reserved
+observations remain intact, even when that table is full. Normal mode 0 and
+SHW_IMMED still reserve/bind their completion before execution. All kernel
+changes remain gated by CONF_WITH_CUIS.
+
+SHW_CHAIN retains the existing deferred GEM handoff. Explicit TOSAPP chain
+handoff, SHW_DOS, SHW_SINGLE, SW_DEFDIR and further extended launch flags remain
+unsupported; these selectors fail before touching overloaded command/tail
+arguments. CL_PARSE remains the mode 0 argument policy, not a reinterpretation
+of the numeric SHW_CHAIN selector. AES_SHELL remains conservatively
+unadvertised while its other modes and flags are incomplete.
+
+Host tests cover explicit launch selection, empty/full observation tables,
+errors, lease restoration, retained observations and interrupted-launch
+cleanup. Isolated GEM tests use both public bindings, override both filename
+classes, check immediate notifications and the absence of parallel notices,
+reap normal/fault console children through Pwaitpid and verify display access
+before and after each launch. The combined boot checks its pass marker and
+final process/memory accounting; the resident desktop launch/return regression
+continues to exercise ordinary mode 0 behavior.
