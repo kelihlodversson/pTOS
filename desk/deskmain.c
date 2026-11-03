@@ -2265,6 +2265,7 @@ BOOL deskmain(void)
             }
         }
     }
+    app_launch_autorun();
 #endif
 
     /* get ready for main loop */
