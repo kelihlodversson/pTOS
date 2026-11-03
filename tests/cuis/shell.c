@@ -98,13 +98,13 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         deferred_calls++; return deferred_result;
     }
     if (fn == CUIS_CHILD_LAUNCH) {
-        if (b != 17 || f > 1) return EINVAL;
+        if ((b != 17 && b != 0) || (!b && !f) || f > 1) return EINVAL;
         save_environment(e);
         launched_console = f;
         strcpy(launched_path,(const char *)(uintptr_t)c);
         memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
         observed_launches++; launches++;
-        if (launch_result < 0) cancellations++;
+        if (launch_result < 0 && b) cancellations++;
         return launch_result;
     }
     if (fn != CUIS_CHILD_WATCH) return EINVFN;
@@ -172,9 +172,9 @@ static int launch_checks(short *global)
     VERIFY(!shel_write(SWM_LAUNCH,0,2,(void *)1,(char *)1));
     VERIFY(!shel_write(0x101,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
     VERIFY(!shel_write(2,GEMAPP,SHW_PARALLEL,(void *)1,(char *)1));
-    VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_CHAIN,(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,2,SHW_PARALLEL,(void *)1,(char *)1));
-    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_IMMED,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_DOS,(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_SINGLE,(void *)1,(char *)1));
     VERIFY(!mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,name,minimal,NULL));
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,NULL,minimal));
@@ -224,6 +224,17 @@ static int launch_checks(short *global)
     VERIFY(shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.gTp",maximum) == 42);
     VERIFY(!memcmp(maximum,launched_tail,127) && !launched_tail[127]);
     VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.gTp",invalid));
+    before = observed_launches;
+    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_IMMED,"NEXT.gTp",minimal) == 42 && !launched_console);
+    VERIFY(shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_IMMED,"NEXT.gTp",minimal) == 42 && launched_console);
+    /* Explicit kind overrides the .gTp suffix; a parallel console launch
+     * does not reserve an AES child-watch or require a free watch slot. */
+    watch_result = EAGAIN;
+    VERIFY(shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,"NEXT.gTp",minimal) == 42 && launched_console);
+    VERIFY(observed_launches == before+3);
+    before = cancellations; launch_result = ENSMEM;
+    VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,"NEXT.gTp",minimal) && cancellations == before);
+    launch_result = 42; watch_result = 17;
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
     return 0;
 }
