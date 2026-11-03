@@ -1812,7 +1812,7 @@ endif
 
 # Standalone boot probes and the host/x32 contract checks are not ptest
 # suites, so they must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import aes_contract user_callback,$(TEST_SUITES))
+TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import user_callback,$(TEST_SUITES))
 
 # raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
 # processes until #548 (and tools/pBench/gem.c, their bindings, has none for
