@@ -95,6 +95,13 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
         subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)
         subprocess.run([str(rollback / test)], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-iquote", str(rollback), "-iquote", "include", "-iquote", "bdos", "-iquote", "fs",
+                "tests/cuis/process_directory.c", "-o", str(rollback / "directory")]
+    subprocess.run(command, check=True)
+    subprocess.run([str(rollback / "directory")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Werror", "-fno-builtin",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
                 "-iquote", str(rollback), "-iquote", "include", "-iquote", "include/arch/x86_64",

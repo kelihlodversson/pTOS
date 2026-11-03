@@ -103,9 +103,38 @@ static WORD application_kind(const char *path)
     if (!strcmp(extension,"TOS") || !strcmp(extension,"TTP")) return TOSAPP;
     return -1;
 }
+/* Resolve against the caller before choosing a different child directory.
+ * Absolute executable metadata also keeps interpreter/resource startup from
+ * interpreting a relative command a second time in the child's new cwd. */
+static BOOL shell_absolute(char *result, const char *source)
+{
+    char current[AES_SHELL_PATH];
+    LONG drive, status;
+    ULONG i;
+    if (!source || !*source) return FALSE;
+    if (source[1] == ':') {
+        char letter = source[0];
+        if (letter >= 'a' && letter <= 'z') letter -= 'a'-'A';
+        drive = letter-'A'; source += 2;
+    } else drive = (LONG)aes_gemdos_call(0x19,0,0,0);
+    if (drive < 0 || drive >= 26) return FALSE;
+    result[0] = 'A'+drive; result[1] = ':'; result[2] = '\\'; result[3] = 0;
+    if (*source != '\\' && *source != '/') {
+        status = (LONG)aes_gemdos_call(0x47,(uintptr_t)current,drive+1,0);
+        if (status != E_OK) return FALSE;
+        if (*current && !aes_shell_append(result,current+(*current == '\\'),AES_SHELL_PATH)) return FALSE;
+        i = strlen(result);
+        if (result[i-1] != '\\' && !aes_shell_append(result,"\\",AES_SHELL_PATH)) return FALSE;
+    } else source++;
+    if (!aes_shell_append(result,source,AES_SHELL_PATH)) return FALSE;
+    for (i = 2; result[i]; i++) if (result[i] == '/') result[i] = '\\';
+    return TRUE;
+}
 WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
 {
-    char path[AES_SHELL_PATH];
+    char path[AES_SHELL_PATH], absolute[AES_SHELL_PATH], directory[AES_SHELL_PATH];
+    const char *requested_directory = NULL;
+    BOOL set_directory;
     SHELL_ARGUMENTS arguments;
     const char *environment = NULL;
     LONG pid = 0, session, watch = 0;
@@ -113,7 +142,7 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     BOOL parse;
     WORD kind = GEMAPP;
     mode = (UWORD)mode & 255;
-    if (extensions & ~SW_ENVIRON) return 0;
+    if (extensions & ~(SW_ENVIRON|SW_DEFDIR)) return 0;
     if (mode == SWM_SHUTDOWN || mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG)
         return extensions ? 0 : aes_lifecycle_write(mode,graphical,execution,command,global);
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
@@ -125,18 +154,33 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     if (session < 0 || !command || !tail || (UBYTE)tail[0] > 127) return 0;
     if (extensions) {
         const SHELW *extended = command;
-        environment = extended->env;
+        if (extensions & SW_ENVIRON) environment = extended->env;
+        if (extensions & SW_DEFDIR) requested_directory = extended->defdir;
         command = extended->newcmd;
     }
     if (!aes_shell_copy(path,command,sizeof(path)) || !*path) return 0;
     if (!mt_shel_find(path,global)) return 0;
+    set_directory = (extensions & SW_DEFDIR) || mode == SWM_LAUNCH || execution == SHW_IMMED;
+    if (set_directory) {
+        ULONG end;
+        if (!shell_absolute(absolute,path)) return 0;
+        strcpy(path,absolute);
+        if (requested_directory) {
+            if (!shell_absolute(directory,requested_directory)) return 0;
+        } else {
+            strcpy(directory,path);
+            end = strlen(directory);
+            while (end > 3 && directory[end-1] != '\\') end--;
+            directory[end] = 0;
+        }
+    }
     parse = mode == SWM_LAUNCH && execution == CL_PARSE;
     if (!aes_shell_arguments(path,tail,parse,
             environment ? environment : parse || (UBYTE)tail[0] == 127 ? aes_shell_environment : NULL,
             environment ? 32766UL : environment_bytes,&arguments)) return 0;
     if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN) {
-        pid = cuis_call6(CUIS_PROCESS_DEFER,session,(uintptr_t)path,
-            (uintptr_t)arguments.tail,(uintptr_t)arguments.environment,0,0) == E_OK ? 1 : 0;
+        pid = cuis_call6(set_directory ? CUIS_PROCESS_DEFER_DIRECTORY : CUIS_PROCESS_DEFER,session,(uintptr_t)path,
+            (uintptr_t)arguments.tail,(uintptr_t)arguments.environment,set_directory ? (uintptr_t)directory : 0,0) == E_OK ? 1 : 0;
         goto finished;
     }
     kind = mode == SWM_LAUNCH ? application_kind(path) : graphical;
@@ -146,7 +190,10 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
         watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
         if (watch <= 0) goto finished;
     }
-    if (watch || kind == TOSAPP) {
+    if (set_directory) {
+        pid = cuis_call6(kind == TOSAPP ? CUIS_CONSOLE_LAUNCH_DIRECTORY : CUIS_CHILD_LAUNCH_DIRECTORY,
+            session,watch,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment,(uintptr_t)directory);
+    } else if (watch || kind == TOSAPP) {
         /* The ordinary fixed-address loader installs the observer at spawn,
          * atomically with launch, before the child can execute or be reaped. */
         pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment,kind == TOSAPP);

@@ -3173,14 +3173,26 @@ LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *child)
 spawn_bound:
     cuis_input_unlock(flags); return result;
 }
-LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console)
+/* Copy before loader I/O can yield or fault. No user pointer survives launch. */
+static LONG launch_directory(UQUAD address, char *directory, ULONG size)
+{
+    ULONG i;
+    if (!address) return E_OK;
+    for (i = 0; i < size; i++) {
+        if (address+i < address || !kproc_copy_from_user(directory+i,address+i,1)) return EIMBA;
+        if (!directory[i]) return i ? E_OK : EPTHNF;
+    }
+    return ERANGE;
+}
+static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console, UQUAD directory, BOOL unobserved)
 {
     CUIS_CLIENT *client;
     UQUAD flags;
     UWORD i;
     LONG result;
     long args[7];
-    if (session > 0x7fffffffULL || token > 0x7fffffffULL || console > 1 || (!token && !console)) return EINVAL;
+    char dir[260];
+    if (session > 0x7fffffffULL || token > 0x7fffffffULL || console > 1 || (!token && !console && !unobserved)) return EINVAL;
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
@@ -3206,8 +3218,12 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
     args[0] = 0x4b; args[1] = PE_ASYNC_LOADGO;
     args[2] = (long)path; args[3] = (long)tail; args[4] = (long)environment;
     args[5] = args[6] = 0;
-    result = (LONG)bdos_check_user_args(args);
-    if (!result)
+    result = launch_directory(directory,dir,sizeof(dir));
+    if (!result) result = (LONG)bdos_check_user_args(args);
+    if (!result && directory)
+        result = (LONG)xexec_directory((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
+            (char *)(uintptr_t)environment,token || console ? (ULONG)session : 0,(ULONG)token,FALSE,dir);
+    else if (!result)
         result = (LONG)xexec_observed((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
                                      (char *)(uintptr_t)environment,(ULONG)session,(ULONG)token);
     if (result < 0 && token)
@@ -3240,23 +3256,49 @@ LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD
     return result;
 }
 
+LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console)
+{
+    return child_launch(session,token,path,tail,environment,console,0,FALSE);
+}
+LONG cuis_child_launch_directory(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory, BOOL console)
+{
+    if (!directory) return EINVAL;
+    return child_launch(session,token,path,tail,environment,console,directory,TRUE);
+}
+
 /* Privately prepare a detached successor. AES deregistration is deliberately
  * unrelated to the process-lifetime trigger held by the native scheduler. */
-LONG cuis_process_defer(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment)
+static LONG process_defer(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory)
 {
+    char dir[260];
     long args[7];
     LONG result;
     if (session > 0x7fffffffULL) return EINVAL;
     if (cuis_service(CUIS_SESSION_QUERY,session) != E_OK) return EACCDN;
     if (!path) {
-        if (tail || environment) return EINVAL;
+        if (tail || environment || directory) return EINVAL;
         return ksched_defer_cancel();
     }
     args[0] = 0x4b; args[1] = PE_ASYNC_LOADGO;
     args[2] = (long)path; args[3] = (long)tail; args[4] = (long)environment;
     args[5] = args[6] = 0;
-    result = (LONG)bdos_check_user_args(args);
+    result = launch_directory(directory,dir,sizeof(dir));
+    if (!result) result = (LONG)bdos_check_user_args(args);
     if (result) return result;
+    if (directory)
+        return (LONG)xexec_directory((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
+            (char *)(uintptr_t)environment,(ULONG)session,0,TRUE,dir);
     return (LONG)xexec_deferred((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
                                 (char *)(uintptr_t)environment,(ULONG)session);
+}
+
+LONG cuis_process_defer(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment)
+{
+    return process_defer(session,path,tail,environment,0);
+}
+
+LONG cuis_process_defer_directory(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory)
+{
+    if (!directory) return EINVAL;
+    return process_defer(session,path,tail,environment,directory);
 }

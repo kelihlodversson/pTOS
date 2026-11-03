@@ -451,6 +451,7 @@ short mt_shel_read(char *command, char *tail, short *global);
 #define SHW_PARALLEL 100
 #define SHW_SINGLE 101
 /* Standard extended command layout; currently only SW_ENVIRON is accepted. */
+#define SW_DEFDIR  0x0400
 #define SW_ENVIRON 0x0800
 typedef struct {
     char *newcmd;

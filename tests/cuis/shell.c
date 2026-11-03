@@ -26,7 +26,7 @@ static LONG watch_result = 17, cancellations, observed_launches, deferred_calls;
 static LONG deferred_result;
 static UQUAD launched_console;
 static int launches;
-static char launched_path[AES_SHELL_PATH], launched_tail[128];
+static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
 static char launched_environment[AES_SHELL_ENV];
 static LONG allocation_balance;
 static BOOL fail_allocation;
@@ -90,15 +90,21 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     (void)e; (void)f;
     if (a != 9) return EACCDN;
     if (fn == CUIS_CHILD_RESULT) return 0;
-    if (fn == CUIS_PROCESS_DEFER) {
-        if (e || f) return EINVAL;
+    if (fn == CUIS_PROCESS_DEFER || fn == CUIS_PROCESS_DEFER_DIRECTORY) {
+        if (f) return EINVAL;
+        if (e) strcpy(launched_directory,(const char *)(uintptr_t)e); else launched_directory[0] = 0;
         save_environment(d);
         strcpy(launched_path,(const char *)(uintptr_t)b);
         memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
         deferred_calls++; return deferred_result;
     }
+    if (fn == CUIS_CHILD_LAUNCH_DIRECTORY || fn == CUIS_CONSOLE_LAUNCH_DIRECTORY) {
+        strcpy(launched_directory,(const char *)(uintptr_t)f);
+        f = fn == CUIS_CONSOLE_LAUNCH_DIRECTORY;
+        fn = CUIS_CHILD_LAUNCH;
+    } else launched_directory[0] = 0;
     if (fn == CUIS_CHILD_LAUNCH) {
-        if ((b != 17 && b != 0) || (!b && !f) || f > 1) return EINVAL;
+        if ((b != 17 && b != 0) || f > 1) return EINVAL;
         save_environment(e);
         launched_console = f;
         strcpy(launched_path,(const char *)(uintptr_t)c);
@@ -238,13 +244,37 @@ static int launch_checks(short *global)
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
     return 0;
 }
+static int directory_checks(void)
+{
+    char tail[1] = { 0 };
+    SHELW command = { "NEXT.PRG",0,0,"C:\\WORK",(char *)1,0,0 };
+    found = "GOOD\\NEXT.PRG";
+    VERIFY(shel_write(SWM_LAUNCH|SW_DEFDIR,GEMAPP,CL_NORMAL,&command,tail) == 42);
+    VERIFY(!strcmp(launched_path,"D:\\CHANGED\\GOOD\\NEXT.PRG") && !strcmp(launched_directory,"C:\\WORK"));
+    VERIFY(!launched_environment[0]); /* SW_DEFDIR must not read SHELW.env. */
+    command.defdir = NULL;
+    VERIFY(shel_write(SWM_LAUNCHNOW|SW_DEFDIR,GEMAPP,SHW_PARALLEL,&command,tail) == 42);
+    VERIFY(!strcmp(launched_directory,"D:\\CHANGED\\GOOD\\"));
+    command.defdir = "RELATIVE";
+    VERIFY(shel_write(SWM_LAUNCHNOW|SW_DEFDIR,GEMAPP,SHW_CHAIN,&command,tail) == 1);
+    VERIFY(!strcmp(launched_directory,"D:\\CHANGED\\RELATIVE"));
+    command.defdir = "C:WORK";
+    VERIFY(shel_write(SWM_LAUNCHNOW|SW_DEFDIR,TOSAPP,SHW_PARALLEL,&command,tail) == 42 && launched_console);
+    VERIFY(!strcmp(launched_directory,"C:\\CHANGED\\WORK"));
+    command.defdir = "";
+    VERIFY(!shel_write(SWM_LAUNCH|SW_DEFDIR,GEMAPP,CL_NORMAL,&command,tail));
+    command.defdir = "!:invalid";
+    VERIFY(!shel_write(SWM_LAUNCH|SW_DEFDIR,GEMAPP,CL_NORMAL,&command,tail));
+    VERIFY(drive == 3 && !strcmp(cwd,"\\CHANGED"));
+    return 0;
+}
 static int argument_checks(void)
 {
     char name[] = "NEXT.PRG", tail[512] = { 0 };
     char marker[] = { 127 }, empty_environment[] = { 0,0 };
     char custom[] = "ONLY=child\0ARGV=\0old\0old-argument\0\0";
     SHELW extended = { name,0,0,NULL,custom,0,0 };
-    static const char expected[] = "ONLY=child\0ARGV=NULL:2\0GOOD\\NEXT.PRG\0one two\0 \0a'b\0C:\\test\0\0";
+    static const char expected[] = "ONLY=child\0ARGV=NULL:2\0D:\\CHANGED\\GOOD\\NEXT.PRG\0one two\0 \0a'b\0C:\\test\0\0";
     int before;
     found = "GOOD\\NEXT.PRG";
     strcpy(tail+1,"\"one two\" '' 'a''b' C:\\test"); tail[0] = strlen(tail+1);
@@ -273,7 +303,7 @@ static int argument_checks(void)
     launch_result = 42;
     extended.env = empty_environment;
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
-    VERIFY(!memcmp(launched_environment,"ARGV=\0GOOD\\NEXT.PRG\0\0",21) && !allocation_balance);
+    VERIFY(!memcmp(launched_environment,"ARGV=\0D:\\CHANGED\\GOOD\\NEXT.PRG\0\0",32) && !allocation_balance);
     memset(long_prefix,'X',sizeof(long_prefix)); long_prefix[32764] = long_prefix[32765] = 0;
     extended.env = long_prefix;
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail) == 42 && !allocation_balance);
@@ -310,6 +340,7 @@ int main(void)
     VERIFY(!shel_envrn(NULL,"FOO=") && !shel_envrn(&value,NULL) && value == command);
     VERIFY(!launch_checks(global));
     VERIFY(!argument_checks());
+    VERIFY(!directory_checks());
     VERIFY(!search("DATA.TXT","C:\\START\\APP\\DATA.TXT","C:\\START\\APP\\DATA.TXT",1));
     VERIFY(!search("DIR\\DATA.TXT","DIR\\DATA.TXT","DIR\\DATA.TXT",2));
     VERIFY(!search("DIR\\DATA.TXT","\\DATA.TXT","\\DATA.TXT",3));
