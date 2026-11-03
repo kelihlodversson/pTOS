@@ -84,7 +84,7 @@ void app_launch_autorun(void)
         return;
     started = TRUE;
     if (autorun_path[0] && !(desk_bootflags() & BOOTFLAG_SKIP_AUTO_ACC))
-        (void)shel_write(SHW_EXEC, autorun_graphical, SHW_PARALLEL, autorun_path, tail);
+        (void)shel_write(SHW_EXEC, autorun_graphical, SHW_IMMED, autorun_path, tail);
 }
 #endif
 
