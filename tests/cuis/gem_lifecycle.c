@@ -52,6 +52,8 @@ int gem_lifecycle_checks(void)
 {
     short app, acc, a[8], b[8], message[8], type, id, top;
     int mode, closed, exited, completed, seen, opened;
+    unsigned rejection;
+    static const char bad_results[] = "fxsole";
     unsigned tries;
     char name[9];
     app = launch('u',0); VERIFY(app > 0);
@@ -98,15 +100,17 @@ int gem_lifecycle_checks(void)
         VERIFY(shel_write(SWM_SHUTDOWN,0,SD_ABORT,0,0) == 1);
         if (mode == SD_PARTIAL) VERIFY(stop(acc));
     }
-    app = launch('f',0); VERIFY(app > 0 && ready(app,a));
-    VERIFY(shel_write(SWM_SHUTDOWN,0,SD_COMPLETE,0,0) == 1);
-    completed = 0;
-    for (tries = 0; tries < 64; tries++) {
-        VERIFY(receive(message));
-        VERIFY(message[0] != SHUT_COMPLETED && message[0] != CH_EXIT);
-        if (message[0] == AP_TFAIL) { VERIFY(message[1] == 1); completed = 1; break; }
+    for (rejection = 0; bad_results[rejection]; rejection++) {
+        app = launch(bad_results[rejection],0); VERIFY(app > 0 && ready(app,a));
+        VERIFY(shel_write(SWM_SHUTDOWN,0,SD_COMPLETE,0,0) == 1);
+        completed = 0;
+        for (tries = 0; tries < 64; tries++) {
+            VERIFY(receive(message));
+            VERIFY(message[0] != SHUT_COMPLETED && message[0] != CH_EXIT);
+            if (message[0] == AP_TFAIL) { VERIFY(message[1] == 1); completed = 1; break; }
+        }
+        VERIFY(completed && stop(app));
     }
-    VERIFY(completed && stop(app));
     app = launch('n',0); VERIFY(app > 0 && ready(app,a));
     VERIFY(shel_write(SWM_SHUTDOWN,0,SD_COMPLETE,0,0) == 1);
     completed = 0;

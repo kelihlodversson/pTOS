@@ -50,7 +50,9 @@ int main(int argc, char **argv)
         }
         if (message[0] == AP_TERM) {
             VERIFY(role != 'u' && message[1] == -1 && message[5] == AP_TERM);
-            if (role == 'f') { VERIFY(gem_lifecycle_false_success()); continue; }
+            if (role == 'f' || role == 'x' || role == 's' || role == 'o' || role == 'l' || role == 'e') {
+                VERIFY(gem_lifecycle_false_success(role)); continue;
+            }
             if (role != 'n') break;
             for (i = 0; i < 8; i++) message[i] = 0;
             message[0] = AP_TFAIL; message[1] = 23;

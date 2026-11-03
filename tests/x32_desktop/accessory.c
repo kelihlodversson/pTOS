@@ -93,6 +93,8 @@ int main(void)
                     short refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
                     VERIFY(appl_write(appl_find("EMUDESK"),16,refusal));
                     record("FORGED REFUSAL",me,menu);
+                    record("SHUTDOWN WAIT",me,menu);
+                    VERIFY(evnt_timer(5000));
                 }
             }
             if (message[0] == AP_TERM) break;

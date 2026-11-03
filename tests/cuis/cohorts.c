@@ -211,6 +211,26 @@ static int cohort_result_checks(void)
     run = &first;
     CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,16,0,0) == 16);
     CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_RESULT_ID,0,0,0,0) == EFILNF);
+    /* Re-encoding a short opaque rejection must obey the normalized size's
+     * backpressure, and a failed copy must leave the original result intact. */
+    run = &second;
+    CHECK(cuis_stream_service(CUIS_STREAM_WRITE,owner,0x10000,32767,0,0) == 32767);
+    CHECK(cuis_stream_service(CUIS_STREAM_WRITE,owner,0x10000,32761,0,0) == 32761);
+    run = &first;
+    new_token = CJ(CUIS_COHORT_BEGIN,owner,0,0,0,0,0);
+    CHECK(new_token > 0 && CJ(CUIS_COHORT_STAGE,owner,new_token,member,0x10000,16,1) == E_OK);
+    CHECK(CJ(CUIS_COHORT_COMMIT,owner,new_token,0x10000,16,0,0) == E_OK);
+    run = &second;
+    CHECK(CJ(CUIS_COHORT_REJECT,member,new_token,0x10000,1,0,0) == E_OK);
+    run = &first;
+    CHECK(CJ(CUIS_COHORT_PUBLISH,owner,new_token,0x10000,129,0,0) == EINVAL);
+    fail_copy = TRUE;
+    CHECK(CJ(CUIS_COHORT_PUBLISH,owner,new_token,0x10000,16,0,0) == EIMBA && cohort.bytes == 1);
+    fail_copy = FALSE;
+    CHECK(CJ(CUIS_COHORT_PUBLISH,owner,new_token,0x10000,16,0,0) == EAGAIN && cohort.bytes == 16);
+    CHECK(CJ(CUIS_COHORT_QUERY,owner,CUIS_COHORT_WORK,0,0,0,0) == 0);
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,16,0,0) == 16);
+    CHECK(CJ(CUIS_COHORT_PUBLISH,owner,new_token,0,0,0,0) == E_OK && !cohort.owner);
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(!cuis_session_count() && allocations == frees && input_irqs);
     return 0;

@@ -3230,7 +3230,7 @@ bytes per client. Calls 79..87 take the following flat arguments:
   COMMIT: session, token, completion_address, completion_bytes -> E_OK
   QUERY: session, selector -> ID, WORK, owner-only STATE or read provenance
   READ: session, token, address, capacity -> request/result bytes
-  PUBLISH: session, token -> append the pending bytes to the caller's stream
+  PUBLISH: session, token, optional rejection_address, rejection_bytes -> E_OK
   ACK: session, token -> acknowledge an entirely consumed non-exiting request
   REJECT: session, token, address, bytes, consumed_bytes -> E_OK
   CANCEL: session, token -> E_OK (owner only)
@@ -3307,3 +3307,28 @@ A result's token authenticates its origin, not its meaning. SHUT_COMPLETED is
 accepted only in native FINISHED state; a native rejection carrying that opcode
 is reported as generic AP_TFAIL. Repeated APC_TOP on the already-active
 windowless client preserves its queued keyboard input.
+
+
+Malformed rejection adaptation and pending menus
+-----------------------------------------------
+
+An initiating adapter may pass replacement opaque rejection bytes to PUBLISH
+while it owns a refused cohort. Native code bounds/copies those bytes,
+rechecks the owner/token after the user copy, and uses the replacement length
+for stream backpressure and provenance. A failed copy preserves the original;
+insufficient stream space retains the replacement for a later publication.
+Participants cannot replace their requests or another owner's result. No GEM
+message is interpreted in the kernel.
+
+Before publishing a refused shutdown, libaes accepts only one 16-byte AP_TFAIL
+with no extended payload. Other opcodes, lengths and extended headers become
+a single AP_TFAIL with generic error 1. This preserves message alignment and
+ensures the initiating desktop receives a refusal after the native barrier is
+released. Ordinary valid AP_TFAIL errors retain their original value.
+
+While the desktop waits for shutdown, ignored MN_SELECTED actions still call
+menu_tnormal so their titles do not remain selected after refusal/cancellation.
+The desktop UI regression selects an ignored View action while an accessory
+is delaying termination, checks title normalization, then completes poweroff.
+Native lifecycle tests exercise unknown, short, odd, oversized and extended
+rejection payloads and verify ordinary operation/launches afterward.

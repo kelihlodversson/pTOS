@@ -1481,6 +1481,19 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         else { client->cohort_accepted = TRUE; if (cohort.remaining) cohort.remaining--; }
         goto out;
     }
+    /* The owner may adapt opaque rejection bytes before they enter its
+     * stream. The kernel enforces bounds/identity, never a GUI wire format. */
+    if (function == CUIS_COHORT_PUBLISH && (a || b)) {
+        if (!owner || cohort.phase != 3 || !b || b > CUIS_COHORT_BYTES) { result = EINVAL; goto out; }
+        length = (ULONG)b;
+        cuis_input_unlock(flags);
+        if (!kproc_copy_from_user(data,a,length)) return EIMBA;
+        flags = cuis_input_lock();
+        client = *find_owner(run);
+        if (!client || client->handle != session || cohort.owner != client ||
+            cohort.token != token || cohort.phase != 3) { result = EACCDN; goto out; }
+        memcpy(cohort.data,data,length); cohort.bytes = length;
+    }
     work = cohort_work(client);
     if (function == CUIS_COHORT_READ) {
         if (work != CUIS_COHORT_REQUEST && work != CUIS_COHORT_RESULT) { result = EAGAIN; goto out; }

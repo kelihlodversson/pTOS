@@ -1336,8 +1336,19 @@ WORD hndl_msg(void)
 #if CONF_WITH_SHUTDOWN
         && !(G.g_rmsg[0] == MN_SELECTED && G.g_rmsg[4] == QUITITEM)
 #endif
-        )
+        ) {
+        if (G.g_rmsg[0] == MN_SELECTED) {
+            menu_tnormal(desk_rs_trees[ADMENU],handle,TRUE);
+#if CONF_WITH_X32_DESKTOP_TEST
+            if (handle == DESKMENU || handle == FILEMENU || handle == VIEWMENU || handle == OPTNMENU) {
+                extern void desk_test_record(const char *text);
+                desk_test_record(desk_rs_trees[ADMENU][handle].ob_state & SELECTED ?
+                    "x32 desktop shutdown menu FAIL\r\n" : "x32 desktop shutdown menu normalized\r\n");
+            }
+#endif
+        }
         return FALSE;
+    }
 #endif
 
     switch(G.g_rmsg[0])

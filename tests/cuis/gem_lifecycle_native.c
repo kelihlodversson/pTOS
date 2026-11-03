@@ -10,11 +10,17 @@ static LONG native(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
                       : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
-int gem_lifecycle_false_success(void)
+int gem_lifecycle_false_success(char mode)
 {
-    short result[8] = { 60,0,0,0,0,0,0,0 }; /* SHUT_COMPLETED as opaque rejection. */
+    short result[64] = { 60,0,0,0,0,0,0,0 }; /* SHUT_COMPLETED as opaque rejection. */
+    unsigned bytes = 16;
     LONG session = native(CUIS_SESSION_START,0,0,0,0), token;
+    if (mode != 'f') result[0] = 1234;
+    if (mode == 's') bytes = 1;
+    if (mode == 'o') bytes = 17;
+    if (mode == 'l') bytes = sizeof(result);
+    if (mode == 'e') { result[0] = 51; result[2] = 1; }
     if (session < 0) return 0;
     token = native(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0);
-    return token > 0 && native(CUIS_COHORT_REJECT,session,token,(uintptr_t)result,16) == 0;
+    return token > 0 && native(CUIS_COHORT_REJECT,session,token,(uintptr_t)result,bytes) == 0;
 }

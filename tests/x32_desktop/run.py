@@ -615,6 +615,14 @@ def shutdown_desktop(guest):
     guest.screenshot("shutdown-menu")
     guest.move(100,252)
     guest.click()
+    guest.wait("x32 libaes accessory SHUTDOWN WAIT")
+    # A rejected menu action must still release the selected title highlight.
+    guest.move(135,8)
+    time.sleep(0.25)
+    guest.move(135,28)
+    guest.click()
+    guest.wait("x32 desktop shutdown menu normalized")
+    guest.screenshot("pending-shutdown-menu-normalized")
     deadline = min(guest.deadline,time.monotonic()+20)
     while guest.process.poll() is None and time.monotonic() < deadline:
         time.sleep(0.05)

@@ -28,7 +28,7 @@ static LONG reject(LONG session, LONG token)
 LONG aes_lifecycle_messages(WORD *global)
 {
     WORD data[CUIS_COHORT_BYTES/2];
-    LONG session, token, work, bytes, result;
+    LONG session, token, work, bytes, result, phase;
     ULONG i, entries = 0;
     BOOL term = FALSE;
     if (!aes_lifecycle_listening()) return E_OK;
@@ -71,7 +71,15 @@ LONG aes_lifecycle_messages(WORD *global)
             if (result < 0) return result;
             if (aes_frames_wait_display() || aes_windows_pending()) return E_OK;
         }
-        result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
+        if (work == CUIS_COHORT_RESULT) {
+            phase = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_STATE,0,0,0,0);
+            if (phase == 3 && (bytes != 16 || data[0] != AP_TFAIL || data[2])) {
+                /* Adapt the complete opaque result before publication: bad
+                 * lengths must not strand a read or misalign the GEM stream. */
+                memset(data,0,sizeof(data)); data[0] = AP_TFAIL; data[1] = 1;
+                result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,(uintptr_t)data,16,0,0);
+            } else result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
+        } else result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
         if (result == E_OK && work == CUIS_COHORT_REQUEST) request_token = token;
     }
     return result == EAGAIN || result == EACCDN ? E_OK : result;

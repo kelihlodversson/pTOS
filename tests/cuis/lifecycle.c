@@ -12,7 +12,8 @@ static LONG token, work, tag, read_offset, read_bytes;
 static LONG result_id = EFILNF, result_offset, result_bytes;
 static ULONG bytes, queued, consumed, request_start, published, rejected, resets, windows;
 static BOOL reset_fails, reset_busy, last_poll, pending_notice, notice_blocked;
-static LONG phase;
+static LONG phase, published_result_token;
+static BOOL published_result;
 LONG aes_window_messages_poll(LONG session, WORD *global)
 {
     (void)session; (void)global;
@@ -48,6 +49,10 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         read_offset = consumed >= request_start && consumed+c <= request_start+bytes ?
             (LONG)(consumed-request_start) : EFILNF;
         read_bytes = c;
+        if (published_result) {
+            result_id = read_offset >= 0 ? published_result_token : EFILNF;
+            result_offset = read_offset; result_bytes = c;
+        }
         if (fn == CUIS_STREAM_READ) consumed += c;
         return c;
     }
@@ -69,8 +74,13 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_COHORT_READ) { memcpy((void *)(uintptr_t)c,packet,bytes); return bytes; }
     if (fn == CUIS_COHORT_REJECT) { rejected++; work = 0; return E_OK; }
     if (fn == CUIS_COHORT_PUBLISH) {
+        if (c || d) { bytes = d; memcpy(packet,(void *)(uintptr_t)c,bytes); }
+        published_result = work == CUIS_COHORT_RESULT;
+        published_result_token = token;
         request_start = queued; memcpy((UBYTE *)stream+queued,packet,bytes);
-        queued += bytes; published++; work = 0; return E_OK;
+        queued += bytes; published++; work = 0;
+        if (published_result && phase == 3) token = 0;
+        return E_OK;
     }
     (void)d; return EINVFN;
 }
@@ -80,7 +90,7 @@ static void begin(BOOL acc, WORD consent, const WORD *request, ULONG size)
     token++; work = CUIS_COHORT_REQUEST; tag = acc ? APP_ACCESSORY : APP_APPLICATION;
     bytes = size; memcpy(packet,request,size);
     queued = consumed = published = rejected = resets = 0;
-    read_offset = EFILNF; read_bytes = 0; reset_fails = reset_busy = pending_notice = notice_blocked = FALSE; phase = 2; windows = 2;
+    read_offset = EFILNF; read_bytes = 0; reset_fails = reset_busy = pending_notice = notice_blocked = published_result = FALSE; phase = 2; windows = 2;
     aes_lifecycle_write(SWM_NEWMSG,consent,0,NULL,NULL);
 }
 static LONG next(WORD message[8])
@@ -94,6 +104,8 @@ int main(void)
                          AC_CLOSE,0,0,1,0,0,0,0,
                          AP_TERM,-1,0,0,0,AP_TERM,0,0 };
     LONG old_token, new_token;
+    unsigned i;
+    static const ULONG malformed_lengths[] = { 1,15,16,17,32,128 };
     WORD refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
     WORD message[8], term[8] = { AP_TERM,-1,0,0,0,AP_TERM,0,0 };
     begin(FALSE,NM_APTERM,request,16); /* AC_CLOSE cannot reset an application. */
@@ -189,6 +201,17 @@ int main(void)
     VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,NULL) == 1);
     result_id = token; phase = CUIS_COHORT_FINISHED; message[0] = SHUT_COMPLETED;
     VERIFY(aes_lifecycle_deliver(message,16,NULL,FALSE) == E_OK && message[0] == SHUT_COMPLETED);
+    for (i = 0; i < sizeof(malformed_lengths)/sizeof(malformed_lengths[0]); i++) {
+        begin(FALSE,0,request,16);
+        VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,NULL) == 1);
+        memset(packet,0,sizeof(packet)); packet[0] = 1234;
+        bytes = malformed_lengths[i]; phase = 3; work = CUIS_COHORT_RESULT;
+        VERIFY(aes_lifecycle_messages(NULL) == E_OK && published == 1 && queued == 16 && !token);
+        VERIFY(next(message) == E_OK && message[0] == AP_TFAIL && message[1] == 1);
+        /* Normalization preserves the next message boundary for all lengths. */
+        memset(stream+8,0,16); stream[8] = 4321; queued += 16;
+        VERIFY(next(message) == E_OK && message[0] == 4321);
+    }
     puts("Lifecycle receiver consent, complete preflight, provenance and ordered reset: PASS");
     return 0;
 }
