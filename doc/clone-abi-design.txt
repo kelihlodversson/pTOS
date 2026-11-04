@@ -61,10 +61,10 @@ The following sources were checked on 2026-11-04:
 * tos.hyp gemdos/gemdos_f.u at 03a0abd16b8a1619918c70ae97f0ccf3da07a57a
   lists GEMDOS calls from TOS, MiNT, MagiC and other extensions.  Its next
   listed calls after 0x183 are Atari Network Service calls at 0x1f7-0x1f9.
-  MagiC source at 90ae7dcc28c9dc45c3d1986a796ba7f71c2188d8 contains no
-  Pclone or GEMDOS 0x190 assignment found in a source search.
+  MagiC source at 90ae7dcc28c9dc45c3d1986a796ba7f71c2188d8 rejects GEMDOS
+  function numbers above 0x153 in kernel/dos/magidos.s.
   https://github.com/th-otto/tos.hyp/blob/03a0abd16b8a1619918c70ae97f0ccf3da07a57a/gemdos/gemdos_f.u
-  https://github.com/th-otto/MagicMac/tree/90ae7dcc28c9dc45c3d1986a796ba7f71c2188d8
+  https://github.com/th-otto/MagicMac/blob/90ae7dcc28c9dc45c3d1986a796ba7f71c2188d8/kernel/dos/magidos.s
 
 tos.hyp lists an XBIOS 0x190 call; XBIOS uses trap #14, a different namespace
 from GEMDOS trap #1.  These checks do not guarantee that undocumented or
