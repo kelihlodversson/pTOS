@@ -161,6 +161,21 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
         subprocess.run([str(rollback / test)], check=True)
     subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_reference.c", "-o", str(rollback / "deferred_reference")], check=True)
     subprocess.run([str(rollback / "deferred_reference")], check=True)
+    noncuis = work / "noncuis-cleanup"
+    noncuis.mkdir()
+    plain = kconfiglib.Kconfig(warn_to_stderr=False)
+    plain.load_config("configs/pc-x86_64_defconfig")
+    assert plain.syms["CONF_WITH_PROCMEM"].str_value == "y"
+    assert plain.syms["CONF_WITH_CUIS"].str_value == "n"
+    plain.write_config(str(noncuis / "config"))
+    subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
+                    "--config", str(noncuis / "config"), "--header", str(noncuis / "autoconf.h"),
+                    "--makefile", str(noncuis / "auto.conf")], check=True)
+    (noncuis / "setjmp.h").write_text("#include <setjmp.h>\n")
+    (noncuis / "i18nconf.h").write_text("/* Host fixture. */\n")
+    plain_command = [str(noncuis) if arg == str(rollback) else arg for arg in command]
+    subprocess.run(plain_command + ["tests/cuis/noncuis_cleanup.c", "-o", str(noncuis / "test")], check=True)
+    subprocess.run([str(noncuis / "test")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",

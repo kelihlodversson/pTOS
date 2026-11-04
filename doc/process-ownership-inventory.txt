@@ -89,6 +89,19 @@ state, and PD/basepage and image-loan cleanup have separate lifetimes. A live
 resource owner must preserve these dependencies while allowing an identity-only
 observer to outlive them; the existing identity reference alone cannot do so.
 
+On a non-CUIS address-space build, an unwrapped disk-error longjmp from xclose
+could previously leave this sequence midway: earlier handles might already be
+closed, while the record, remaining directory references and owned allocations
+remained. A hard error returns through osif without an automatic cleanup retry;
+a media-change retry can instead revisit partially completed work. The
+process-memory cleanup path now uses kdos_fclose for each real handle, catching
+the disk error and retrying the interrupted close before moving to the next
+reference. A regression exercises proc_free_owned, its real child-record
+callback and the real close wrapper with an injected disk-error longjmp.
+The wrapper has a bounded retry count; repeated errors beyond that bound and
+non-local exits from unrelated filesystem callbacks are not a general
+transactional cleanup guarantee and need separate handling if encountered.
+
 KASPACE sharing is not yet exposed to KPROC or processes. Do not share live
 process mappings until those metadata, loans and cleanup relationships and the
 calling-thread validation context have moved to consistent owners. Scheduler
@@ -165,3 +178,9 @@ The last live-resource owner may then release process resources and its ASPACE
 reference; identity remains until observers/reap references are gone. Mapping
 metadata and image-loan ownership must move or otherwise be retained before
 that sequence can be implemented safely.
+
+Generation-based traversal assumes the 64-bit allocation generation counter
+does not wrap during a boot. The existing allocators do not detect wraparound;
+they must fail closed or acquire a wider/epoch-qualified identity before that
+assumption can be removed. This is separate from ordinary window-address reuse,
+which receives a different generation on reallocation.

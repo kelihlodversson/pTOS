@@ -25,6 +25,9 @@
 #include "biosbind.h"
 #include "string.h"
 #include "biosext.h"
+#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+#include "bdosstub.h"
+#endif
 #include "asm.h"
 #include "tosvars.h"
 #include "has.h"
@@ -354,8 +357,8 @@ static void release_pd_files(PD *r)
 
     for (i = 0; i < NUMSTD; i++)
         if ((h = PD_UFT(r)[i]) > 0) {
-#if CONF_WITH_CUIS
-            Fclose(h); /* Complete cleanup even after a disk-error longjmp. */
+#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+            kdos_fclose(h); /* Catch disk errors and finish the interrupted close. */
 #else
             xclose(h);
 #endif
@@ -367,8 +370,8 @@ static void release_pd_files(PD *r)
             && explicit_refs[i]
 #endif
         ) {
-#if CONF_WITH_CUIS
-            Fclose(i+NUMSTD);
+#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+            kdos_fclose(i+NUMSTD);
 #else
             xclose(i+NUMSTD);
 #endif
