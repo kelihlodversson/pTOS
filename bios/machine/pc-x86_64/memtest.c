@@ -1071,6 +1071,7 @@ static void test_process_validation(void)
 }
 
 /* Exercise the production pending/active ownership transition and unwind. */
+#include "../../../bdos/kaspace.h"
 static void test_kproc_pending_ownership(void)
 {
     SNAP s;
@@ -1084,6 +1085,9 @@ static void test_kproc_pending_ownership(void)
     env = USERPTR_TO_PTR(pd->p_env);
     set_owner(pd, pd);
     set_owner(env, pd);
+    kaspace_test_fail_next();
+    CHECK(!kproc_load_begin(pd, ISO_VA, PAGE), "pending adoption allocation failure is reported");
+    CHECK(!kproc_user_aspace(pd), "failed pending adoption publishes no active space");
     CHECK(!kproc_load_begin(pd, ISO_VA + 1, PAGE), "failed pending image mapping rolls back");
     CHECK(kproc_load_begin(pd, ISO_VA, PAGE), "pending image is created after failed mapping");
     kproc_load_enter(pd);
@@ -1114,6 +1118,20 @@ static void test_kproc_pending_ownership(void)
     proc_free_owned(pd);
     proc_free_owned(pd);
     same(&s, "pending address-space preparation rollback");
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    kaspace_test_fail_next();
+    CHECK(!kproc_prepare_user(pd, run), "fresh address-space adoption failure is reported");
+    CHECK(!kproc_user_aspace(pd), "failed fresh adoption publishes no active space");
+    CHECK(kproc_prepare_user(pd, run), "fresh preparation succeeds after failed adoption");
+    proc_free_owned(pd);
+    proc_free_owned(pd);
+    same(&s, "fresh address-space adoption rollback");
 }
 
 /* ---- KPROC records and the real process lifecycle ------------------ */

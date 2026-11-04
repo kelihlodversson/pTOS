@@ -19,4 +19,9 @@ void kaspace_put(KASPACE *space);
 /* Independent cloning requires an architecture backend; none exists yet. */
 LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 
+#if CONF_WITH_X86_64_MEMTEST
+/* Fail the next adoption, leaving backend ownership with its caller. */
+void kaspace_test_fail_next(void);
+#endif
+
 #endif

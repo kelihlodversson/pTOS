@@ -10,10 +10,18 @@ struct kaspace {
     ULONG refs;
 };
 
+#if CONF_WITH_X86_64_MEMTEST
+static BOOL fail_next_adoption;
+void kaspace_test_fail_next(void) { fail_next_adoption = TRUE; }
+#endif
+
 KASPACE *kaspace_adopt(ASPACE *backend)
 {
     KASPACE *space;
     if (!backend) return NULL;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_next_adoption) { fail_next_adoption = FALSE; return NULL; }
+#endif
     space = kalloc(sizeof(*space));
     if (!space) return NULL;
     space->backend = backend;
