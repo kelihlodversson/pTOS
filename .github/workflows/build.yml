@@ -183,6 +183,10 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
 
+      - name: Check clone user ABI layout
+        if: matrix.group == 'arm-virt' || matrix.group == 'm68k-other'
+        run: sh tools/check-clone-layout.sh "${{ matrix.arch }}"
+
       - name: Build the configurations
         run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
 

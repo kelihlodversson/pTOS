@@ -80,6 +80,13 @@ multiples of 16 on x32, 8 on ARM and 2 on m68k. The minimum length is 256 on
 x32 (including space for ABI startup and red zone), and 16 on ARM/m68k. The
 backend will derive the initial SP from the exclusive upper end and install
 the architecture-specific entry/return frame; it must not exceed this region.
+These minimums are initial ABI validation floors, not recommended application
+stack sizes. They do not establish that a final startup frame fits: context
+startup and its trampoline are not implemented here. #892 must calculate the
+complete frame, ABI argument/return slots, alignment adjustment and red-zone
+requirements before creating contexts, and fail closed if the supplied stack
+cannot accommodate them. It must resolve any additional minimum requirement
+without silently accepting an undersized region.
 
 child_tid is an optional native-aligned writable int32_t output. A future
 successful creation returns a nonnegative TID, distinct from a PID, and writes
@@ -106,6 +113,18 @@ overflow, alignment, and failure without child or output side effects.  The
 unsupported backend fails explicitly until a trusted proc_clone exists.
 Non-MMU behavior and races with address-space changes need explicit treatment;
 range checking alone is not a lifetime guarantee.
+
+Reproducing the ABI checks
+-------------------------
+With the project's existing toolchains on PATH:
+  sh tools/check-clone-layout.sh x32
+  sh tools/check-clone-layout.sh arm
+  sh tools/check-clone-layout.sh m68k
+CI runs x32 in the host clone suite, ARM in arm-virt and m68k in m68k-other,
+reusing each build job's installed compiler. These compile-only assertions
+check exact field offsets, size, pointer widths and target alignment. They do
+not establish runtime coverage. Production handler mocks and x32 QEMU cover
+runtime failure behavior; ARM/m68k runtime negative matrices remain unrun.
 
 GEMDOS opcode
 -------------

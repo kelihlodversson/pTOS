@@ -7,6 +7,5 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 ${HOSTCC:-cc} -std=c99 -Wall -Wextra -Werror -iquote include -Ibdos \
     tests/clone/decode.c bdos/clone_args.c -o "$work/decode"
 "$work/decode"
-${X32CC:-cc} -mx32 -ffreestanding -std=c99 -Wall -Wextra -Werror \
-    -Iinclude -Ibdos -c tests/clone/abi_layout.c -o "$work/layout.o"
+sh tools/check-clone-layout.sh x32
 echo 'Pclone ABI layout, snapshot and argument validation: PASS'
