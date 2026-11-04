@@ -1205,6 +1205,9 @@ void xterm(UWORD rc)
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
+#if CONF_WITH_KPROC
+    kproc_complete(p, rc);
+#endif
 #if CONF_WITH_NATIVE_SCHED
     ksched_exiting(p, rc);
 #endif

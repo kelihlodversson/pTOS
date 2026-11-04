@@ -7,8 +7,8 @@ user-writable and is not trusted for those relationships. kproc_destroy()
 unlinks the record before destroying its active and pending address spaces,
 heap metadata and remaining syscall stack; it also invokes CUIS, VDI and
 callback cleanup when configured. The active and pending ASPACE pointers are
-currently exclusive, not independently reference-counted. PE_GO's page loan
-and give-back are separate from address-space sharing.
+borrowed from reference-counted KASPACE owners. PE_GO's page loan and give-back
+are separate from address-space sharing.
 
 kproc_prepare_user() adopts a pending loader ASPACE or allocates one, then
 allocates the process syscall stack. Its failure path destroys the adopted or
@@ -88,13 +88,30 @@ own the execution-context storage; the scheduler controls readiness and must
 reclaim continuation stacks only after switching away. The syscall stack has
 a separate owner and cannot be merged into that stack by assumption.
 
-Current KPROC teardown cannot yet satisfy that contract. xterm() destroys its
-KPROC while the scheduled task's kernel continuation is still unwinding, and
-proc_free_owned() may release the public PD allocation during process cleanup.
-Merely adding a reference count to KPROC would therefore retain pointers to
-released PD or mapping metadata. Before attaching generic THREAD objects,
-split logical process exit from final reference release, define membership
-detachment and resource cleanup ordering, and retain the PD and associated
-metadata for every user of them. No THREAD-to-KPROC retaining API or TID is
-exposed until that transition is implemented and tested. Shared ASPACEs must
-also retain their own mapping metadata, not merely the backend page tables.
+Process completion and retained identities
+------------------------------------------
+The live PD lookup owns one KPROC reference. A scheduler task acquires another
+before it is published; no process-to-task reference is created. Pterm records
+the status and ksched_exiting() snapshots usage, orphans children and discards
+the task's borrowed PD before files and the KPROC's live resources are released.
+The retained KPROC becomes a PID/status snapshot with all other fields cleared;
+its PID remains reserved until its final reference is released. The scheduler
+root frees a finished continuation's stack and releases a done task's reference;
+a zombie retains its identity until wait/reap or orphan cleanup. Deferred
+cancellation disposes the program before releasing its reference and stack.
+Synchronous nested children retain their existing immediate cleanup path.
+
+The retained identity does not keep the PD or mappings alive and cannot be used
+to access them. Observed child completion still uses the scheduler's trusted
+PID/status snapshot and CUIS token, with notification ordering unchanged. Parent
+PD links are removed by ksched_exiting before the parent allocation is freed;
+loader image give-back happens during live-record cleanup, before the PD can be
+released. Other borrowed PD users continue to obey the existing live-lookup and
+loan rules; no new long-lived PD access is permitted through a KPROC reference.
+
+This is not yet a complete THREAD/PROCESS lifetime implementation. A running
+thread would require live process resources and mapping metadata to outlive it,
+not merely this completed-identity snapshot. Membership, independently owned
+ASPACE metadata and thread-aware termination remain to be designed and tested
+before attaching generic THREAD objects. Shared ASPACEs must retain their own
+mapping metadata, not merely the backend page tables.

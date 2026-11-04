@@ -60,6 +60,17 @@ void kproc_destroy(PD *pd);
 void kproc_set_dta(PD *pd, DTAINFO *dta);
 DTAINFO *kproc_get_dta(PD *pd);
 #if CONF_WITH_KPROC
+typedef struct kproc KPROC;
+/* A successful retain owns one reference. The live PD lookup holds another.
+ * After destruction the retained record is an identity/completion snapshot:
+ * it does not retain or provide access to the PD or live process resources.
+ * References are serialized by the current cooperative kernel. */
+KPROC *kproc_retain(PD *pd);
+void kproc_release(KPROC *process);
+WORD kproc_ref_pid(const KPROC *process);
+BOOL kproc_ref_live(const KPROC *process);
+BOOL kproc_ref_status(const KPROC *process, UWORD *status);
+void kproc_complete(PD *pd, UWORD status);
 /* The launching process, recorded by proc_go() and used by Pterm() instead
  * of the user-writable p_parent field.  kproc_get_parent() halts if there
  * is no record (like kproc_get_dta()). */

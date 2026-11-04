@@ -56,7 +56,6 @@ enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
 
 #if CONF_WITH_KPROC
 
-typedef struct kproc KPROC;
 #if CONF_WITH_MMAP
 #include "fileback.h"
 typedef struct mmap_region {
@@ -70,6 +69,9 @@ typedef struct mmap_region {
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
 struct kproc {
+    ULONG references;            /* live lookup plus explicit retained references */
+    BOOL completed;
+    UWORD exit_status;
 #if CONF_WITH_CUIS
     char executable_name[33]; /* Bounded basename; GUI normalization stays in userspace. */
 #endif
@@ -153,6 +155,7 @@ struct kproc {
 };
 
 static KPROC *kproc_list;
+static KPROC *retired_processes; /* identities retained after removal from lookup */
 
 /* KPROC records are kernel-only objects.  On x86-64 they live in the
  * growable kernel heap, so the number of processes is bounded by memory
@@ -180,6 +183,10 @@ static WORD new_pid(void)
         for (k = kproc_list; k; k = k->next)
             if (k->pid == pid)
                 break;
+        if (!k)
+            for (k = retired_processes; k; k = k->next)
+                if (k->pid == pid)
+                    break;
         if (!k
 #if CONF_WITH_NATIVE_SCHED
             && !ksched_pid_reserved(pid)
@@ -218,6 +225,7 @@ BOOL kproc_create(PD *pd)
     if (!kproc)
         return FALSE;
     bzero(kproc, sizeof *kproc);
+    kproc->references = 1;       /* the live lookup owns this reference */
     kproc->pd = pd;
     kproc->pid = new_pid();
     kproc->start_tick = (ULONG)hz_200;
@@ -259,6 +267,46 @@ static void give_image_back(KPROC *kproc);
 static void release_loaded(KPROC *kproc);
 #endif
 
+KPROC *kproc_retain(PD *pd)
+{
+    KPROC *process = kproc_find(pd);
+    if (!process || process->references == ~(ULONG)0)
+        return NULL;
+    process->references++;
+    return process;
+}
+
+void kproc_release(KPROC *process)
+{
+    KPROC **link;
+    if (!process || --process->references)
+        return;
+    /* Only the live lookup owns its reference; final release is retired. */
+    for (link = &retired_processes; *link; link = &(*link)->next)
+        if (*link == process) {
+            *link = process->next;
+            KPROC_FREE(process);
+            return;
+        }
+}
+
+WORD kproc_ref_pid(const KPROC *process) { return process ? process->pid : 0; }
+BOOL kproc_ref_live(const KPROC *process) { return process && process->pd != NULL; }
+BOOL kproc_ref_status(const KPROC *process, UWORD *status)
+{
+    if (!process || !process->completed) return FALSE;
+    if (status) *status = process->exit_status;
+    return TRUE;
+}
+void kproc_complete(PD *pd, UWORD status)
+{
+    KPROC *process = kproc_find(pd);
+    if (process && !process->completed) {
+        process->exit_status = status;
+        process->completed = TRUE;
+    }
+}
+
 void kproc_destroy(PD *pd)
 {
     KPROC **link;
@@ -278,6 +326,9 @@ void kproc_destroy(PD *pd)
             user_callback_process_exit(pd);
 #endif
             *link = kproc->next;
+            /* Keep the PID reserved even if cleanup re-enters allocation. */
+            kproc->next = retired_processes;
+            retired_processes = kproc;
             if (launcher)                   /* what it used is its launcher's children's */
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;
 #if CONF_WITH_USER_ASPACE
@@ -305,7 +356,22 @@ void kproc_destroy(PD *pd)
             }
 #endif
 #endif
-            KPROC_FREE(kproc);
+            /* Only immutable identity and completion survive. In particular,
+             * no retained reference may dereference the now-releasable PD. */
+            {
+                ULONG references = kproc->references;
+                WORD pid = kproc->pid;
+                BOOL completed = kproc->completed;
+                UWORD status = kproc->exit_status;
+                KPROC *next = kproc->next;
+                bzero(kproc, sizeof *kproc);
+                kproc->references = references;
+                kproc->pid = pid;
+                kproc->completed = completed;
+                kproc->exit_status = status;
+                kproc->next = next;
+            }
+            kproc_release(kproc); /* drop the lookup's ownership */
             return;
         }
 }

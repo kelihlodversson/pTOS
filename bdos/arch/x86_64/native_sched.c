@@ -23,11 +23,12 @@ typedef enum { TASK_UNUSED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DONE, TAS
 } TASK_STATE;
 typedef struct {
     PD *program, *parent;
+    KPROC *process;              /* retained identity, including after exit */
 #if CONF_WITH_CUIS
     PD *deferred_owner;
 #endif
     WORD pid, signal;
-    BOOL asynchronous, take_ownership;
+    BOOL asynchronous, take_ownership, exited;
     KTHREAD_CONTEXT execution;
     TASK_STATE state;
     BOOL (*ready)(void *);
@@ -140,6 +141,10 @@ void ksched_exiting(PD *pd, UWORD result)
             task->usage[0] = usage[1] + usage[3];
             task->usage[1] = 0;
             task->result = result;
+            task->exited = TRUE;
+            /* The continuation only needs the trusted PID/result from now
+             * on; process cleanup is about to release the basepage. */
+            task->program = NULL;
         }
     }
 #if CONF_WITH_CUIS
@@ -201,7 +206,8 @@ static void task_entry(void)
 {
     KERNEL_TASK *task = scheduler.current;
     task->result = proc_start_scheduled(task->program, task->take_ownership);
-    proc_discard_accessory(task->program); /* also consumes a refused start */
+    if (!task->exited)
+        proc_discard_accessory(task->program); /* consumes a refused start */
 #if CONF_WITH_X86_64_MEMTEST
     if (task->asynchronous && !task->parent && task->result)
         kcprintf("orphan PID %d returned %ld\n", task->pid, (long)task->result);
@@ -246,11 +252,13 @@ static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred);
 static void discard_deferred(KERNEL_TASK *task)
 {
     PD *program = task->program;
+    KPROC *process = task->process;
     KTHREAD_STACK stack = kthread_stack_detach(&task->execution.stack);
     /* It never entered user mode; resource ownership is already the child's.
      * Do not read its basepage after revoking the loader's borrowed mapping. */
     memset(task,0,sizeof(*task));
     proc_dispose_deferred(program);
+    kproc_release(process);
     kthread_stack_release(&stack);
 }
 LONG ksched_defer_cancel(void)
@@ -288,10 +296,16 @@ LONG ksched_spawn(PD *pd)
     task = &scheduler.tasks[i];
     memset(task, 0, sizeof(*task));
     if (!kthread_stack_allocate(&task->execution.stack)) return ENSMEM;
+    task->process = kproc_retain(pd);
+    if (!task->process) {
+        kthread_stack_release(&task->execution.stack);
+        return ENSMEM;
+    }
 #if CONF_WITH_CUIS
     if (!deferred && (session || token)) {
         LONG result = cuis_child_bind_spawn(session,token,pd);
         if (result != E_OK) {
+            kproc_release(task->process);
             kthread_stack_release(&task->execution.stack);
             memset(task,0,sizeof(*task));
             return result;
@@ -301,6 +315,7 @@ LONG ksched_spawn(PD *pd)
     /* Allocate the task stack before adopting the image. Preparation maps
      * the stable controller for exit, while ancestor copies retain PPID. */
     if (!kproc_prepare_async(pd, run, scheduler.root.pd)) {
+        kproc_release(task->process);
         kthread_stack_release(&task->execution.stack);
         memset(task, 0, sizeof(*task));
         return ENSMEM;
@@ -373,6 +388,8 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
                      (task->signal ? ((ULONG)task->signal << 8) : (task->result & 255));
             task->parent = NULL;
             task->pid = 0;
+            kproc_release(task->process);
+            task->process = NULL;
             task->state = TASK_UNUSED;
             if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
             return (LONG)status;
@@ -406,8 +423,13 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         task->execution.identity = ++next_identity;
         task->take_ownership = take_ownership;
         task->state = TASK_NEW;
-        if (!kthread_stack_allocate(&task->execution.stack)) {
-            for (j = 0; j < i; j++) kthread_stack_release(&scheduler.tasks[j].execution.stack);
+        task->process = kproc_retain(programs[i]);
+        if (!task->process || !kthread_stack_allocate(&task->execution.stack)) {
+            kproc_release(task->process);
+            for (j = 0; j < i; j++) {
+                kthread_stack_release(&scheduler.tasks[j].execution.stack);
+                kproc_release(scheduler.tasks[j].process);
+            }
             kfree(scheduler.tasks);
             scheduler.tasks = NULL;
             return ENSMEM;
@@ -416,7 +438,10 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
     /* Ordinary launches allocate every scheduler resource before adopting
      * the image or pinning the caller's retained basepage/environment. */
     if (prepare && !kproc_prepare_user(programs[0], run)) {
-        for (i = 0; i < count; i++) kthread_stack_release(&scheduler.tasks[i].execution.stack);
+        for (i = 0; i < count; i++) {
+            kthread_stack_release(&scheduler.tasks[i].execution.stack);
+            kproc_release(scheduler.tasks[i].process);
+        }
         kfree(scheduler.tasks);
         scheduler.tasks = NULL;
         return ENSMEM;
@@ -437,6 +462,10 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
             KERNEL_TASK *task = &scheduler.tasks[i];
             if (task->state == TASK_DONE || task->state == TASK_ZOMBIE) {
                 kthread_stack_release(&task->execution.stack);
+                if (task->state == TASK_DONE && task->process) {
+                    kproc_release(task->process);
+                    task->process = NULL;
+                }
                 if (task->asynchronous && task->state == TASK_DONE) {
                     task->pid = 0;
                     task->state = TASK_UNUSED;

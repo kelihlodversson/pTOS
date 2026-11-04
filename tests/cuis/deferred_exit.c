@@ -55,6 +55,11 @@ UBYTE *kproc_curdir(PD *p)
 }
 PD *kproc_get_parent(PD *p) { CHECK(p == &owner && owner_record); return &parent; }
 WORD kproc_pid(PD *p) { CHECK(p == &owner && owner_record); return 11; }
+void kproc_complete(PD *p, UWORD status)
+{
+    CHECK(p == &owner && owner_record && status == 37);
+    still_deferred();
+}
 void kproc_usage(PD *p, ULONG usage[8])
 {
     CHECK(p == &owner && owner_record); still_deferred();

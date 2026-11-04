@@ -1143,6 +1143,9 @@ static void test_kproc(void)
 {
     SNAP s;
     PD **pds;
+    KPROC *retained, *second;
+    WORD retained_pid;
+    UWORD status;
     ULONG i;
 
     snap(&s);
@@ -1157,7 +1160,25 @@ static void test_kproc(void)
     }
     CHECK(i == FAKE_PDS, "KPROC records past the fixed pool");
     CHECK(kproc_count() == s.kprocs + FAKE_PDS, "KPROC count");
-    for (i = 0; i < FAKE_PDS && pds[i]; i++) {
+    retained = kproc_retain(pds[0]);
+    second = kproc_retain(pds[0]);
+    CHECK(retained && second && retained == second, "retain live process twice");
+    retained_pid = kproc_pid(pds[0]);
+    CHECK(kproc_ref_live(retained) && kproc_ref_pid(retained) == retained_pid,
+          "retained process has live identity");
+    CHECK(!kproc_ref_status(retained, &status), "live process has no exit status");
+    kproc_complete(pds[0], 42);
+    kproc_destroy(pds[0]);
+    kfree(pds[0]);
+    pds[0] = NULL;
+    CHECK(!kproc_ref_live(retained) && kproc_ref_pid(retained) == retained_pid &&
+          kproc_ref_status(retained, &status) && status == 42,
+          "retained completion survives record removal and basepage release");
+    kproc_release(retained);
+    CHECK(kproc_ref_status(second, &status) && status == 42,
+          "second reference retains completed process");
+    kproc_release(second);
+    for (i = 1; i < FAKE_PDS && pds[i]; i++) {
         kproc_destroy(pds[i]);
         kproc_destroy(pds[i]);                  /* second destroy is a no-op */
         kfree(pds[i]);
