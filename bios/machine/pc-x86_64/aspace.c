@@ -908,11 +908,12 @@ void aspace_unborrow(ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD page, end;
     ULONG i;
+    BOOL pinned = FALSE;
 
     for (i = as->npins; i-- > 0; )
         if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
             as->pins[i] = as->pins[--as->npins];
-            procmem_pin(va, bytes, -1);
+            pinned = TRUE;
             break;
         }
     page = va & ~(X86_64_PAGE_SIZE - 1);
@@ -921,6 +922,7 @@ void aspace_unborrow(ASPACE *as, UQUAD va, UQUAD bytes)
         x86_64_unmap_user_page(as->pml4_phys, page);
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
+    if (pinned) procmem_pin(va, bytes, -1);
 }
 
 /*

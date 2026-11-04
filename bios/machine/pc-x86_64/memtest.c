@@ -450,9 +450,17 @@ static void test_kheap(void)
 /* ---- process window ------------------------------------------------ */
 
 static ULONG pre_free_calls;
+static void *callback_unpin_block;
 static void count_pre_free(void *base)
 {
     (void)base;
+    pre_free_calls++;
+}
+static void unpin_during_cleanup(void *base)
+{
+    (void)base;
+    procmem_pin((VADDR)(uintptr_t)callback_unpin_block, PAGE, -1);
+    CHECK(procmem_size(callback_unpin_block), "callback traversal defers reclamation");
     pre_free_calls++;
 }
 
@@ -543,6 +551,52 @@ static void test_procmem(void)
         CHECK(procmem_size(b1), "kept block is resident");
         procmem_free(b1);
         procmem_free(perm);
+    }
+
+    /* A deferred block carries its own decision, not a reusable owner PD. */
+    {
+        void *owner = procmem_alloc(PAGE, 0);
+        void *held = procmem_alloc(PAGE, 0);
+        void *replacement;
+        UQUAD generation = procmem_gen(owner);
+
+        procmem_set_owner(owner, owner);
+        procmem_set_owner(held, owner);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(owner, NULL);
+        CHECK(!procmem_size(owner) && procmem_size(held), "pinned owned block defers release");
+        replacement = procmem_alloc(PAGE, 0);
+        CHECK(replacement == owner && procmem_gen(replacement) != generation,
+              "former owner address is reused with a new generation");
+        procmem_set_owner(replacement, replacement);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, -1);
+        CHECK(!procmem_size(held) && procmem_size(replacement),
+              "last unpin reclaims only the original allocation");
+        procmem_free_owned(replacement, NULL);
+    }
+    {
+        void *held = procmem_alloc(PAGE, 0);
+        procmem_set_owner(held, &owner_a);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(&owner_a, NULL);
+        procmem_set_owner(held, &owner_b);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, -1);
+        CHECK(procmem_size(held) && procmem_owner(held) == &owner_b,
+              "ownership transfer cancels deferred reclamation");
+        procmem_free_owned(&owner_b, NULL);
+    }
+    {
+        void *held = procmem_alloc(PAGE, 0);
+        void *other = procmem_alloc(PAGE, 0);
+        procmem_set_owner(held, &owner_a);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(&owner_a, NULL);
+        procmem_set_owner(other, &owner_b);
+        callback_unpin_block = held;
+        pre_free_calls = 0;
+        procmem_free_owned(&owner_b, unpin_during_cleanup);
+        CHECK(pre_free_calls == 1 && !procmem_size(held) && !procmem_size(other),
+              "cleanup reclaims deferred blocks after callback traversal");
     }
 
     /* Ptermres: the owner's block is cut back to the requested pages and
@@ -1080,6 +1134,32 @@ static void test_kproc_pending_ownership(void)
     void *env;
     ASPACE *active;
     KASPACE *retained;
+    KASPACE *second;
+    LONG saved_value;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    pd->p_dreg[0] = 0x12345678L;
+    CHECK(kproc_prepare_user(pd, run), "prepare active space for independent owner");
+    retained = kproc_test_retain_active(pd);
+    second = kaspace_share(retained);
+    CHECK(retained && second, "retain active space twice");
+    proc_free_owned(pd);
+    CHECK(procmem_size(pd) && procmem_size(env) && procmem_pinned(pd) &&
+          retained && aspace_translate(kaspace_backend(retained), (VADDR)(uintptr_t)pd, NULL, NULL),
+          "active mappings keep process blocks after logical cleanup");
+    CHECK(retained && aspace_copy_from_user(kaspace_backend(retained), &saved_value,
+          (VADDR)(uintptr_t)pd + offsetof(PD, p_dreg), sizeof(saved_value)) &&
+          saved_value == 0x12345678L, "retained mapping preserves process data");
+    kaspace_put(retained);
+    CHECK(procmem_size(pd) && procmem_size(env), "first independent release keeps mappings");
+    kaspace_put(second);
+    CHECK(!procmem_size(pd) && !procmem_size(env), "last release reclaims deferred blocks");
+    same(&s, "independently retained active space and deferred blocks");
 
     snap(&s);
     pd = new_basepage();

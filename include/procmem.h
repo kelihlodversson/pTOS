@@ -87,8 +87,9 @@ BOOL procmem_range_live(VADDR va, VADDR bytes);
  * pinned: it cannot be released while the mapping exists, because the pages
  * would be handed to a new owner while the old process could still reach
  * them.  procmem_free() returns FALSE for a pinned block and leaves
- * it allocated; procmem_free_owned() skips it.  The address space
- * unpins when it is destroyed.
+ * it allocated; procmem_free_owned() schedules pinned blocks for reclamation
+ * after their last pin is dropped. Ownership transfer cancels that decision.
+ * The address space unpins only after the mapping is inaccessible.
  */
 BOOL procmem_pinned(const void *p);
 ULONG procmem_pins(const void *p);      /* the pin count itself */
@@ -99,8 +100,10 @@ PADDR procmem_phys_of(VADDR va);
 
 /*
  * Ownership, mirroring the GEMDOS memory descriptor owner: set_owner()
- * names the process that dies with the block, NULL (the initial state)
- * means permanent.  free_owned() releases every block owned by `owner`,
+ * names the process that dies with the block; setting it to NULL makes a
+ * block permanent. After owner cleanup a pinned block has no owner and is
+ * marked for deferred release; its allocation record carries that decision.
+ * free_owned() releases every block owned by `owner`,
  * calling pre_free(base) first for each (so the caller can drop anything
  * keyed by that address, such as a KPROC record).  keep() is Ptermres: the
  * owner's blocks become permanent, and the owner's own block -- the one
@@ -111,7 +114,7 @@ PADDR procmem_phys_of(VADDR va);
  * dereferenced.
  */
 void procmem_set_owner(const void *p, const void *owner);
-const void *procmem_owner(const void *p);   /* NULL: none, or not an allocation */
+const void *procmem_owner(const void *p);   /* NULL: no live owner, or not allocated */
 void procmem_free_owned(const void *owner, void (*pre_free)(void *base));
 void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
 

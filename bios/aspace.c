@@ -890,11 +890,12 @@ void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes)
 {
     VADDR page, end;
     ULONG i;
+    BOOL pinned = FALSE;
 
     for (i = as->npins; i-- > 0; )
         if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
             as->pins[i] = as->pins[--as->npins];
-            procmem_pin(va, bytes, -1);
+            pinned = TRUE;
             break;
         }
     page = va & ~(PAGE - 1);
@@ -902,6 +903,7 @@ void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes)
     for (; page < end; page += PAGE)
         aspace_hw_unmap(as->root, page);
     flush_if_current(as);
+    if (pinned) procmem_pin(va, bytes, -1);
 }
 
 /*

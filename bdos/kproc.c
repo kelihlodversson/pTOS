@@ -288,6 +288,11 @@ KASPACE *kproc_test_retain_pending(PD *pd)
     KPROC *process = kproc_find(pd);
     return process ? kaspace_share(process->pending_space) : NULL;
 }
+KASPACE *kproc_test_retain_active(PD *pd)
+{
+    KPROC *process = kproc_find(pd);
+    return process ? kaspace_share(process->active_space) : NULL;
+}
 #endif
 #endif
 

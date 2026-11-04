@@ -79,6 +79,7 @@ void kproc_test_pid_search(WORD previous, UWORD candidates);
 /* Test private pending images only; this does not enable active VM sharing. */
 struct kaspace;
 struct kaspace *kproc_test_retain_pending(PD *pd);
+struct kaspace *kproc_test_retain_active(PD *pd);
 #endif
 #endif
 /* The launching process, recorded by proc_go() and used by Pterm() instead

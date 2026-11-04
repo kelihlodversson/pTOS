@@ -120,15 +120,17 @@ ASPACE metadata and thread-aware termination remain to be designed and tested
 before attaching generic THREAD objects. Shared ASPACEs must retain their own
 mapping metadata, not merely the backend page tables.
 
-The x32 process-memory cleanup pass leaves blocks allocated when an address
-space still pins them. Dropping the last pin does not itself retry cleanup.
-Retaining an active address space beyond process cleanup therefore needs an
-explicit deferred-reclamation owner; simply retaining KASPACE can leave the
-former process's blocks allocated indefinitely. Pending loader spaces differ:
-before preparation their private image pages do not pin the PD and environment.
-A production-path test retains such a pending space across KPROC destruction
-and checks its private image survives until final put. This does not authorize
-retention or sharing of active process spaces.
+Process-memory cleanup marks still-pinned blocks for deferred reclamation in
+their allocation records and discards the former owner address. The last unpin
+reclaims that exact record; ownership transfer cancels the deferred decision.
+Cleanup callbacks cannot trigger a reclamation sweep while allocation lists are
+being traversed. Borrowed mappings are unmapped and translation caches flushed
+before unpin can reclaim their pages. Ptermres explicitly makes its kept blocks
+permanent. A production x32 test retains an active KASPACE across KPROC cleanup
+and checks its process blocks survive until the last reference is released;
+another test covers a separately retained pending private image. This does not
+yet authorize runnable threads or sharing active spaces between processes:
+mapping metadata and process-wide resources still need lifetime ownership.
 
 The target reference graph is THREAD -> PROCESS and THREAD -> ASPACE, with
 PROCESS -> ASPACE and borrowed PROCESS -> THREAD membership links. That graph
