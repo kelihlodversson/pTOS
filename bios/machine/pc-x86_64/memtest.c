@@ -1204,6 +1204,15 @@ static void test_kproc_pending_ownership(void)
           kaspace_mmap(retained)->regions &&
           kaspace_mmap(retained)->regions->address == PTOS_MMAP_BASE,
           "retained active space preserves its mapping metadata");
+    CHECK(retained && kaspace_mmap_fault(retained, PTOS_MMAP_BASE, ASPACE_PROT_EXEC) == 0 &&
+          kaspace_mmap_fault(retained, PTOS_MMAP_BASE + PAGE, 0) == -1 &&
+          !aspace_translate(kaspace_backend(retained), PTOS_MMAP_BASE, NULL, NULL),
+          "retained reservations reject disallowed and unreserved faults");
+    saved_value = -1;
+    CHECK(retained && kaspace_mmap_fault(retained, PTOS_MMAP_BASE, 0) == 1 &&
+          aspace_copy_from_user(kaspace_backend(retained), &saved_value,
+                                PTOS_MMAP_BASE, sizeof(saved_value)) && !saved_value,
+          "retained anonymous reservation faults after process destruction");
 #endif
     kaspace_put(retained);
     CHECK(procmem_size(pd) && procmem_size(env), "first independent release keeps mappings");
@@ -2008,6 +2017,9 @@ static void test_file_mmap(void)
     CHECK(kproc_mmap(a, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE &&
           kproc_mmap(b, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE,
           "reserve lazy private file mappings in two processes");
+    CHECK(kproc_mmap(a, 0, PAGE, PROT_READ | PROT_WRITE,
+          MAP_PRIVATE | MAP_ANONYMOUS, 0, 0) == PTOS_MMAP_BASE + 5 * PAGE,
+          "reserve anonymous mapping alongside retained file mapping");
     CHECK(aspace_file_pages() == 0 && kproc_demand_page(a, PTOS_MMAP_BASE, 0) == 1 &&
           kproc_demand_page(b, PTOS_MMAP_BASE, 0) == 1, "file mappings fault lazily");
     CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) &&
@@ -2067,15 +2079,21 @@ static void test_file_mmap(void)
           kaspace_mmap(retained)->regions->backing &&
           aspace_copy_from_user(kaspace_backend(retained), &readback, PTOS_MMAP_BASE, 1) && readback == 'Z',
           "file mapping metadata and private page survive process destruction");
-    kaspace_put(retained);
-    retained = NULL;
+    CHECK(retained && kaspace_mmap_fault(retained, PTOS_MMAP_BASE + PAGE, 0) == 1 &&
+          aspace_copy_from_user(kaspace_backend(retained), &readback, PTOS_MMAP_BASE + PAGE, 1) &&
+          readback == 'B', "retained unlinked file reservation faults after process destruction");
     {
         UQUAD previous = aspace_enter(bs);
         kproc_shutdown_file_mappings();
         aspace_leave(previous);
-        CHECK(!aspace_translate(bs, PTOS_MMAP_BASE, NULL, NULL) && !aspace_file_pages() &&
+        CHECK(retained && kaspace_mmap(retained)->regions &&
+              kaspace_mmap(retained)->regions->address == PTOS_MMAP_BASE + 5 * PAGE &&
+              !kaspace_mmap(retained)->regions->backing &&
+              kaspace_mmap(retained)->bytes == PAGE &&
+              !aspace_translate(kaspace_backend(retained), PTOS_MMAP_BASE, NULL, NULL) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE, NULL, NULL) && !aspace_file_pages() &&
               DISK_CALL(getrealcl(head, media)) == FREECLUSTER,
-              "shutdown releases all file views and unlinked chains while retaining active kernel stack");
+              "shutdown releases file views in both retained and process-owned spaces");
     }
 done:
     run = parent;

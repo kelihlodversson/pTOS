@@ -1665,22 +1665,7 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
  * Keep address spaces and kernel stacks intact while the syscall finishes. */
 void kproc_shutdown_file_mappings(void)
 {
-    KPROC *kproc;
-    for (kproc = kproc_list; kproc; kproc = kproc->next) {
-        MMAP_REGION **link, *region;
-        if (!kproc->active_space) continue;
-        link = &kaspace_mmap(kproc->active_space)->regions;
-        while ((region = *link)) {
-            if (!region->backing || !kproc->aspace ||
-                !aspace_release_lazy(kproc->aspace, region->address, region->length)) {
-                link = &region->next; continue;
-            }
-            *link = region->next;
-            kaspace_mmap(kproc->active_space)->bytes -= region->length;
-            fileback_put(region->backing); kfree(region);
-        }
-    }
-    fileback_reap();
+    kaspace_shutdown_file_mappings();
 }
 
 LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
@@ -1999,13 +1984,8 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
     if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER)) return 0;
 #if CONF_WITH_MMAP
     {
-        MMAP_REGION *region;
-        for (region = kaspace_mmap(kproc->active_space)->regions; region; region = region->next)
-            if (region->backing && va >= region->address &&
-                va < (UQUAD)region->address + region->length)
-                return aspace_fault_file(kproc->aspace, va, region->backing,
-                    region->offset + (ULONG)((va & ~(USER_PAGE_SIZE - 1)) - region->address),
-                    prot, (access & ASPACE_PROT_WRITE) != 0);
+        int rc = kaspace_mmap_fault(kproc->active_space, va, access);
+        if (rc >= 0) return rc;
     }
 #endif
     if (!aspace_fault_in(kproc->aspace, va, prot)) return 2;

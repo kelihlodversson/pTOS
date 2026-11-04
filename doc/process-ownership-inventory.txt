@@ -74,6 +74,11 @@ Metadata classification before actual sharing:
 * PID, parent, descriptors, current directories and process completion remain
   process-owned. Limits and accounting require an explicit policy for shared
   mappings rather than blindly charging one process's existing KPROC fields.
+  Proposed shared-ASPACE policy: limits remain per PROCESS; a growth request
+  is checked against the calling PROCESS's limits using the whole shared
+  address-space reservation total. Other processes can observe the growth,
+  and lowering a limit never revokes existing mappings. The policy and races
+  between processes are not implemented; shared process spaces remain disabled.
 * Completion observers need PID and exit status, not the descriptor tables,
   current directories, PD or page tables. The currently embedded `uft`,
   `curdir`, priority and usage fields are process-wide live state. Signal
@@ -153,6 +158,13 @@ not merely this completed-identity snapshot. Membership, independently owned
 ASPACE metadata and thread-aware termination remain to be designed and tested
 before attaching generic THREAD objects. Shared ASPACEs must retain their own
 mapping metadata, not merely the backend page tables.
+
+Mmap first-touch and file COW now consult KASPACE's retained reservations and
+backing references, including after the original KPROC is destroyed. The
+shutdown registry is non-owning and tracks all live KASPACE objects, so shutdown
+can release file mappings even when no KPROC remains; anonymous reservations
+stay intact. Heap reservations, loader-image loans, thread stack growth and
+PROCESS execution resources remain outside that retained mmap view.
 
 Process-memory cleanup marks still-pinned blocks for deferred reclamation in
 their allocation records and discards the former owner address. The last unpin
