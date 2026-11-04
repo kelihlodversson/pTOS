@@ -21,11 +21,11 @@ int main(void)
     CLONE_ARGS decoded;
     clone_decode_v1(&decoded, &wire);
     assert(decoded.flags == 0x1234 && decoded.stack_size == 0x4321);
-    assert(decoded.entry == UINT64_C(0x80000001));
-    assert(decoded.argument == UINT64_C(0xffffffff));
-    assert(decoded.stack_base == UINT64_C(0x80000000));
-    assert(decoded.tls == UINT64_C(0xf1234567));
-    assert(decoded.child_tid == UINT64_C(0x87654321));
+    assert((uintptr_t)decoded.entry == UINT32_C(0x80000001));
+    assert((uintptr_t)decoded.argument == UINT32_C(0xffffffff));
+    assert((uintptr_t)decoded.stack_base == UINT32_C(0x80000000));
+    assert((uintptr_t)decoded.tls == UINT32_C(0xf1234567));
+    assert((uintptr_t)decoded.child_tid == UINT32_C(0x87654321));
     {
         struct fixture f = { { 0 }, 0, 1, UINT64_C(0x80000000) };
         CLONE_ARGS before;
@@ -44,11 +44,11 @@ int main(void)
         assert(f.calls == 1 && memcmp(&decoded, &before, sizeof(decoded)) == 0);
         f.readable = 1;
         assert(clone_copy_v1(&decoded, f.address, 28, copy_from_user, &f) == CLONE_COPY_OK);
-        assert(f.calls == 2 && decoded.entry == UINT64_C(0x80000001));
-        assert(decoded.child_tid == UINT64_C(0x87654321));
+        assert(f.calls == 2 && (uintptr_t)decoded.entry == UINT32_C(0x80000001));
+        assert((uintptr_t)decoded.child_tid == UINT32_C(0x87654321));
         /* A later caller may append fields; only the known prefix is read. */
         assert(clone_copy_v1(&decoded, f.address, 36, copy_from_user, &f) == CLONE_COPY_OK);
-        assert(f.calls == 3 && decoded.entry == UINT64_C(0x80000001));
+        assert(f.calls == 3 && (uintptr_t)decoded.entry == UINT32_C(0x80000001));
         f.address = UINT64_C(0xffffffe4);
         assert(clone_copy_v1(&decoded, f.address, 28, copy_from_user, &f) == CLONE_COPY_OK);
         assert(f.calls == 4);

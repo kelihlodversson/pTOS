@@ -38,7 +38,8 @@ argument, stack base, TLS and optional child TID, and a 32-bit stack size.
 The structure address and size are separate syscall arguments.  The native
 layout is 28 bytes on x32, ARM and m68k, as verified by cross-compilation.
 The kernel's CLONE_USER_V1 is a separate 32-bit native-endian snapshot; the
-decoder widens addresses to uint64_t and does not dereference them.  The
+decoder converts addresses through uintptr_t to native pointer types and does
+not dereference them. These pointers remain untrusted user addresses. The
 snapshot helper checks the minimum size, 32-bit address bounds and copy result
 before publishing decoded arguments. It takes a caller-supplied copy
 function; it is not yet connected to an address-space backend.

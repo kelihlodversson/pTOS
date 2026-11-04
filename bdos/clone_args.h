@@ -10,10 +10,13 @@ typedef struct {
     uint32_t flags, entry, argument, stack_base, stack_size, tls, child_tid;
 } CLONE_USER_V1;
 
-/* Decoded pointers remain addresses, never trusted kernel pointers. */
+/* Native pointer types describe user addresses. They are untrusted and must
+ * never be dereferenced as kernel pointers without validation. */
 typedef struct {
     uint32_t flags, stack_size;
-    uint64_t entry, argument, stack_base, tls, child_tid;
+    void (*entry)(void *);
+    void *argument, *stack_base, *tls;
+    int32_t *child_tid;
 } CLONE_ARGS;
 
 /* Decode a kernel-owned snapshot. This does not validate or retain user memory. */

@@ -4,12 +4,12 @@
 void clone_decode_v1(CLONE_ARGS *out, const CLONE_USER_V1 *snapshot)
 {
     out->flags = snapshot->flags;
-    out->entry = snapshot->entry;
-    out->argument = snapshot->argument;
-    out->stack_base = snapshot->stack_base;
+    out->entry = (void (*)(void *))(uintptr_t)snapshot->entry;
+    out->argument = (void *)(uintptr_t)snapshot->argument;
+    out->stack_base = (void *)(uintptr_t)snapshot->stack_base;
     out->stack_size = snapshot->stack_size;
-    out->tls = snapshot->tls;
-    out->child_tid = snapshot->child_tid;
+    out->tls = (void *)(uintptr_t)snapshot->tls;
+    out->child_tid = (int32_t *)(uintptr_t)snapshot->child_tid;
 }
 
 enum clone_copy_result clone_copy_v1(CLONE_ARGS *out, uint64_t address,
