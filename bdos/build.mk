@@ -22,7 +22,7 @@ ifneq ($(CONF_WITH_KCALL)$(CONF_WITH_VDI_SCALABLE_FONTS)$(CONF_WITH_ELF_SHARED),
 obj-y += kfile.o
 endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
-obj-$(CONF_WITH_PCLONE) += clone.o clone_dispatch.o
+obj-$(CONF_WITH_PCLONE) += clone.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
 # The kernel shares only load-plan validation and stack construction with

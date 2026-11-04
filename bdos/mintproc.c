@@ -154,9 +154,10 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
 #if CONF_WITH_PCLONE
     case GEMDOS_PCLONE:
 #if CONF_WITH_NATIVE_ABI
-        return clone_dispatch_native((const long *)pw);
+        return xclone((UQUAD)(unsigned long)((const long *)pw)[1],
+                      (UQUAD)(unsigned long)((const long *)pw)[2]);
 #else
-        return clone_dispatch_m68k((const int16_t *)pw);
+        return xclone(ARG_P(1), ARG_P(3));
 #endif
 #endif
 #if CONF_WITH_NATIVE_SCHED

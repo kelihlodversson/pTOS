@@ -3,12 +3,17 @@
 #define CLONE_ARGS_H
 
 #include <stdint.h>
+#include "pclone.h"
 
-/* The kernel must copy this native-endian 32-bit user layout, not a kernel
- * instance of struct ptos_clone_args, from the calling address space. */
+/* A 32-bit kernel shares the application's native structure layout.  The
+ * 64-bit kernel needs a separate description of its 32-bit x32 user ABI. */
+#if UINTPTR_MAX == UINT32_MAX
+typedef struct ptos_clone_args CLONE_USER_V1;
+#else
 typedef struct {
     uint32_t flags, entry, argument, stack_base, stack_size, tls, child_tid;
 } CLONE_USER_V1;
+#endif
 
 /* Native pointer types describe user addresses. They are untrusted and must
  * never be dereferenced as kernel pointers without validation. */
