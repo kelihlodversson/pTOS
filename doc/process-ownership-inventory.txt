@@ -1,0 +1,40 @@
+Existing process ownership baseline (#891)
+==========================================
+
+KPROC is allocated by kproc_create() and indexed by the public PD/basepage.
+It owns the trusted PID, parent, descriptor and directory state. The PD is
+user-writable and is not trusted for those relationships. kproc_destroy()
+unlinks the record before destroying its active and pending address spaces,
+heap metadata and remaining syscall stack; it also invokes CUIS, VDI and
+callback cleanup when configured. The active and pending ASPACE pointers are
+currently exclusive, not independently reference-counted. PE_GO's page loan
+and give-back are separate from address-space sharing.
+
+kproc_prepare_user() adopts a pending loader ASPACE or allocates one, then
+allocates the process syscall stack. Its failure path destroys the adopted or
+new address space and releases the stack. On x32, gouser() takes the syscall
+stack from KPROC; the launcher restores its own context before freeing it.
+The running stack must never be freed from itself.
+
+The cooperative x32 scheduler allocates separate KERNEL_TASK records and
+scheduler stacks in run_group() and ksched_spawn(). It records process/parent
+PDs, PID, execution context and state. Failed construction releases allocated
+task stacks. Finished task stacks are reclaimed by the scheduler root context,
+not by the task. These stacks have different continuations and lifetimes from
+KPROC's syscall stack; unification needs proof, not a field rename.
+
+xterm() calls ksched_exiting() before process resources disappear, releases
+files, destroys KPROC, and only then invokes ksched_exited() for deferred CUIS
+handoff. Observed launch binds the CUIS child token before publication; child
+completion, console and session ownership must survive any refactor. Faults,
+orphaning, nested synchronous launches and deferred successors share these
+paths. The launcher and scheduler retain borrowed PD identities only within
+their existing lifetime rules.
+
+Initial extraction: KASPACE provides explicitly owned, reference-counted
+backend ownership and fail-closed independent cloning. Its references are
+serialized under current process-context scheduling; it introduces no locks.
+Existing KPROC and scheduler paths have not yet been migrated to it. Their
+direct destruction and the thread/process split remain required work in #891.
+Do not use KASPACE to share a live process mapping until mapping metadata,
+loans, cleanup and the calling-thread address-space context move with it.
