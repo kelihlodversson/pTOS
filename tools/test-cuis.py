@@ -159,6 +159,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     for test in ("deferred_rollback", "deferred_exit"):
         subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)
         subprocess.run([str(rollback / test)], check=True)
+    subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_reference.c", "-o", str(rollback / "deferred_reference")], check=True)
+    subprocess.run([str(rollback / "deferred_reference")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",

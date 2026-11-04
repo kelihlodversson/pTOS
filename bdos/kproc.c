@@ -282,6 +282,13 @@ BOOL kproc_create(PD *pd)
 #if CONF_WITH_USER_ASPACE
 static void give_image_back(KPROC *kproc);
 static void release_loaded(KPROC *kproc);
+#if CONF_WITH_X86_64_MEMTEST
+KASPACE *kproc_test_retain_pending(PD *pd)
+{
+    KPROC *process = kproc_find(pd);
+    return process ? kaspace_share(process->pending_space) : NULL;
+}
+#endif
 #endif
 
 KPROC *kproc_retain(PD *pd)

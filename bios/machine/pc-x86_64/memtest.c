@@ -1079,6 +1079,22 @@ static void test_kproc_pending_ownership(void)
     PD *pd;
     void *env;
     ASPACE *active;
+    KASPACE *retained;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_load_begin(pd, ISO_VA, PAGE), "pending image for independent owner");
+    retained = kproc_test_retain_pending(pd);
+    CHECK(retained != NULL, "retain pending image space independently");
+    proc_free_owned(pd);
+    CHECK(retained && aspace_translate(kaspace_backend(retained), ISO_VA, NULL, NULL),
+          "private image remains mapped after owning process is destroyed");
+    kaspace_put(retained);
+    same(&s, "independently retained pending image ownership");
 
     snap(&s);
     pd = new_basepage();

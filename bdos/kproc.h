@@ -75,6 +75,11 @@ void kproc_complete(PD *pd, UWORD status);
 #if CONF_WITH_X86_64_MEMTEST
 /* Restrict the next PID search to a bounded number of candidates for tests. */
 void kproc_test_pid_search(WORD previous, UWORD candidates);
+#if CONF_WITH_USER_ASPACE
+/* Test private pending images only; this does not enable active VM sharing. */
+struct kaspace;
+struct kaspace *kproc_test_retain_pending(PD *pd);
+#endif
 #endif
 /* The launching process, recorded by proc_go() and used by Pterm() instead
  * of the user-writable p_parent field.  kproc_get_parent() halts if there
