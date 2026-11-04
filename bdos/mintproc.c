@@ -20,6 +20,10 @@
 #include "kproc.h"
 #include "bdosstub.h"
 #include "mintproc.h"
+#if CONF_WITH_PCLONE
+#include "pclone.h"
+#include "clone.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
@@ -147,6 +151,14 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     *handled = TRUE;
     switch (fn)
     {
+#if CONF_WITH_PCLONE
+    case GEMDOS_PCLONE:
+#if CONF_WITH_NATIVE_ABI
+        return clone_dispatch_native((const long *)pw);
+#else
+        return clone_dispatch_m68k((const int16_t *)pw);
+#endif
+#endif
 #if CONF_WITH_NATIVE_SCHED
     case GEMDOS_SYIELD: return ksched_yield();
     case GEMDOS_PWAIT: return ksched_wait(-1, 2, 0);

@@ -77,6 +77,7 @@
  */
 
 #include "../../include/mman.h"
+#include "../../include/pclone.h"
 #include "config.h"
 
 typedef unsigned long long u64;
@@ -337,6 +338,13 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+#if CONF_WITH_PCLONE
+    case '^':
+        /* The unavailable backend must not dereference even a bad address. */
+        pterm(gemdos(GEMDOS_PCLONE, 1, sizeof(struct ptos_clone_args)) == EINVFN &&
+              gemdos(GEMDOS_PCLONE, 0x100000000LL, -1) == EINVFN ? 0 : 1);
+        break;
+#endif
 #if CONF_WITH_LIBAES
     case ':': {
         static const char empty[] = { 0, 0 };

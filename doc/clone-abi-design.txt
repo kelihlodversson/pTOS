@@ -41,7 +41,14 @@ The kernel's CLONE_USER_V1 is a separate 32-bit native-endian snapshot; the
 decoder widens addresses to uint64_t and does not dereference them.  The
 snapshot helper checks the minimum size, 32-bit address bounds and copy result
 before publishing decoded arguments. It takes a caller-supplied copy
-function; it is not yet connected to a syscall or an address-space backend.
+function; it is not yet connected to an address-space backend.
+
+The optional CONF_WITH_PCLONE configuration routes GEMDOS 0x190 through
+mintproc_call() to xclone(). Native ARM and x32 trap frames have one slot per
+argument; m68k trap frames contain two big-endian words per argument. Native
+slots retain their full width so later validation can reject out-of-range
+values. The current xclone() returns EINVFN without reading the supplied
+structure. The option defaults off and does not provide a working clone call.
 
 The size parameter determines which append-only fields are present; there is
 no version field. An implementation reads only fields it understands and

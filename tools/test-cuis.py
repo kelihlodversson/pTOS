@@ -62,6 +62,14 @@ for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
 for name in ("CONF_WITH_AES", "CONF_WITH_X86_64_MEMTEST"):
     assert config.syms[name].str_value == "n", name
 
+# Pclone dispatch is opt-in, including on the address-space architectures.
+for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
+    config = kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config("configs/" + preset + "_defconfig")
+    assert config.syms["CONF_WITH_PCLONE"].str_value == "n", preset
+    config.syms["CONF_WITH_PCLONE"].set_value(2)
+    assert config.syms["CONF_WITH_PCLONE"].str_value == "y", preset
+
 # Master's 32-bit address-space presets must not enable kernel AES; they
 # retain the external CLI until libaes is ported to those architectures.
 for preset in ("virt-arm-aspace", "virt-m68k-aspace", "falcon-aspace", "amiga-aspace"):

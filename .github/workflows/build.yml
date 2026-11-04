@@ -71,6 +71,8 @@ jobs:
           config = kconfiglib.Kconfig()
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.syms["CONF_WITH_PCLONE"].set_value(2)
+          assert config.syms["CONF_WITH_PCLONE"].str_value == "y"
           config.write_config()
           PY
           make CROSS_COMPILE= obj/ldso/libldso.a
