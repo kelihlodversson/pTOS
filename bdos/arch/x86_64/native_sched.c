@@ -287,13 +287,12 @@ LONG ksched_spawn(PD *pd)
     if (i == KSCHED_LIMIT) return EAGAIN;
     task = &scheduler.tasks[i];
     memset(task, 0, sizeof(*task));
-    task->execution.stack_phys = kstack_alloc(&task->execution.stack_top);
-    if (!task->execution.stack_phys) return ENSMEM;
+    if (!kthread_stack_allocate(&task->execution)) return ENSMEM;
 #if CONF_WITH_CUIS
     if (!deferred && (session || token)) {
         LONG result = cuis_child_bind_spawn(session,token,pd);
         if (result != E_OK) {
-            kstack_free(task->execution.stack_phys);
+            kthread_stack_release(&task->execution);
             memset(task,0,sizeof(*task));
             return result;
         }
@@ -302,7 +301,7 @@ LONG ksched_spawn(PD *pd)
     /* Allocate the task stack before adopting the image. Preparation maps
      * the stable controller for exit, while ancestor copies retain PPID. */
     if (!kproc_prepare_async(pd, run, scheduler.root.pd)) {
-        kstack_free(task->execution.stack_phys);
+        kthread_stack_release(&task->execution);
         memset(task, 0, sizeof(*task));
         return ENSMEM;
     }
@@ -407,9 +406,8 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         task->execution.identity = ++next_identity;
         task->take_ownership = take_ownership;
         task->state = TASK_NEW;
-        task->execution.stack_phys = kstack_alloc(&task->execution.stack_top);
-        if (!task->execution.stack_phys) {
-            for (j = 0; j < i; j++) kstack_free(scheduler.tasks[j].execution.stack_phys);
+        if (!kthread_stack_allocate(&task->execution)) {
+            for (j = 0; j < i; j++) kthread_stack_release(&scheduler.tasks[j].execution);
             kfree(scheduler.tasks);
             scheduler.tasks = NULL;
             return ENSMEM;
@@ -418,7 +416,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
     /* Ordinary launches allocate every scheduler resource before adopting
      * the image or pinning the caller's retained basepage/environment. */
     if (prepare && !kproc_prepare_user(programs[0], run)) {
-        for (i = 0; i < count; i++) kstack_free(scheduler.tasks[i].execution.stack_phys);
+        for (i = 0; i < count; i++) kthread_stack_release(&scheduler.tasks[i].execution);
         kfree(scheduler.tasks);
         scheduler.tasks = NULL;
         return ENSMEM;
@@ -438,8 +436,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         for (i = 0; i < KSCHED_LIMIT; i++) {
             KERNEL_TASK *task = &scheduler.tasks[i];
             if (task->state == TASK_DONE || task->state == TASK_ZOMBIE) {
-                kstack_free(task->execution.stack_phys);
-                task->execution.stack_phys = 0;
+                kthread_stack_release(&task->execution);
                 if (task->asynchronous && task->state == TASK_DONE) {
                     task->pid = 0;
                     task->state = TASK_UNUSED;

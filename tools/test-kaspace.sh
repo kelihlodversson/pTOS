@@ -9,4 +9,10 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 -iquote bdos \
     tests/kaspace_lifetime.c bdos/kaspace.c -o "$work/test"
 "$work/test"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 -iquote bdos \
+    -iquote bdos/arch/x86_64 tests/kthread_stack.c \
+    bdos/arch/x86_64/kthread_context.c -o "$work/thread-test"
+"$work/thread-test"
 echo 'KASPACE ownership and failed adoption: PASS'
+echo 'KTHREAD_CONTEXT stack allocation and release: PASS'

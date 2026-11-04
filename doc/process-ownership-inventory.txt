@@ -21,7 +21,11 @@ scheduler stacks in run_group() and ksched_spawn(). It records process/parent
 PDs, PID, execution context and state. The scheduler's saved CPU context,
 continuation, internal context identity and scheduler stack are grouped in an
 embedded KTHREAD_CONTEXT. This is a compatibility bridge, not a TID or an
-independently retained PROCESS/THREAD relationship. Failed construction releases allocated
+independently retained PROCESS/THREAD relationship. The context allocates and
+releases its scheduler stack through kthread_stack_allocate/release; the caller
+must release from a different stack after the continuation can no longer run.
+The scheduler continues to decide when that condition holds. Deferred-launch
+cancellation retains its existing detached-stack cleanup order. Failed construction releases allocated
 task stacks. Finished task stacks are reclaimed by the scheduler root context,
 not by the task. These stacks have different continuations and lifetimes from
 KPROC's syscall stack; unification needs proof, not a field rename.

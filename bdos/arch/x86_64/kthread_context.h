@@ -16,4 +16,9 @@ typedef struct {
     jmp_buf resume;
 } KTHREAD_CONTEXT;
 
+/* The context owns this scheduler stack after successful allocation. Release
+ * is only permitted from another stack, after its continuation cannot run. */
+BOOL kthread_stack_allocate(KTHREAD_CONTEXT *thread);
+void kthread_stack_release(KTHREAD_CONTEXT *thread);
+
 #endif
