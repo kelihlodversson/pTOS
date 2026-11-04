@@ -19,4 +19,16 @@ typedef struct {
 /* Decode a kernel-owned snapshot. This does not validate or retain user memory. */
 void clone_decode_v1(CLONE_ARGS *out, const CLONE_USER_V1 *snapshot);
 
+enum clone_copy_result {
+    CLONE_COPY_OK, CLONE_COPY_BAD_SIZE, CLONE_COPY_BAD_ADDRESS,
+    CLONE_COPY_BAD_VERSION
+};
+
+/* copy reads from the caller's address space.  The output is published only
+ * after the entire snapshot has been copied and its version checked. */
+enum clone_copy_result clone_copy_v1(CLONE_ARGS *out, uint64_t address,
+                                    uint64_t size,
+                                    int (*copy)(void *, uint64_t, void *, uint32_t),
+                                    void *context);
+
 #endif

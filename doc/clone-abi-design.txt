@@ -38,12 +38,17 @@ argument, stack base, TLS and optional child TID, and a 32-bit stack size.
 The structure address and size are separate syscall arguments.  The native
 layout is 32 bytes on x32, ARM and m68k, as verified by cross-compilation.
 The kernel's CLONE_USER_V1 is a separate 32-bit native-endian snapshot; the
-decoder widens addresses to uint64_t and does not dereference them.
+decoder widens addresses to uint64_t and does not dereference them.  The
+snapshot helper checks its exact size, 32-bit address bounds, copy result and
+version before publishing decoded arguments.  It takes a caller-supplied copy
+function; it is not yet connected to a syscall or an address-space backend.
 
 Specify size extension rules, scalar flag combinations, entry/stack/TLS
 contracts, optional outputs, return values and errors together with the
-lifecycle model before making the call available.  The decoder performs no
-validation; in particular, decoding an address does not authorize access.
+lifecycle model before making the call available.  The snapshot helper does
+not validate flags or referenced addresses; decoding an address does not
+authorize access.  Exact-size acceptance is an initial v1 rule, not a claim
+that future structure extensions can be safely ignored.
 
 Validation must cover x32, ARM and m68k structure layouts, high-bit 32-bit
 pointers, short/oversized input, invalid flags and ranges, unwritable outputs,

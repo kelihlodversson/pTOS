@@ -1,6 +1,18 @@
 #include <assert.h>
 #include <stdint.h>
+#include <string.h>
 #include "clone_args.h"
+
+struct fixture { CLONE_USER_V1 wire; int calls, readable; uint64_t address; };
+static int copy_from_user(void *context, uint64_t address, void *dst, uint32_t size)
+{
+    struct fixture *fixture = context;
+    fixture->calls++;
+    if (!fixture->readable || address != fixture->address || size != sizeof(fixture->wire))
+        return 0;
+    memcpy(dst, &fixture->wire, size);
+    return 1;
+}
 
 int main(void)
 {
@@ -14,5 +26,27 @@ int main(void)
     assert(decoded.stack_base == UINT64_C(0x80000000));
     assert(decoded.tls == UINT64_C(0xf1234567));
     assert(decoded.child_tid == UINT64_C(0x87654321));
+    {
+        struct fixture f = { { 0 }, 0, 1, UINT64_C(0x80000000) };
+        CLONE_ARGS before;
+        f.wire = wire;
+        memset(&decoded, 0xa5, sizeof(decoded));
+        before = decoded;
+        assert(clone_copy_v1(&decoded, f.address, 31, copy_from_user, &f) == CLONE_COPY_BAD_SIZE);
+        assert(clone_copy_v1(&decoded, 0, 32, copy_from_user, &f) == CLONE_COPY_BAD_ADDRESS);
+        assert(clone_copy_v1(&decoded, UINT64_C(0xfffffff0), 32, copy_from_user, &f) == CLONE_COPY_BAD_ADDRESS);
+        assert(clone_copy_v1(&decoded, UINT64_C(0x100000000), 32, copy_from_user, &f) == CLONE_COPY_BAD_ADDRESS);
+        assert(f.calls == 0 && memcmp(&decoded, &before, sizeof(decoded)) == 0);
+        f.readable = 0;
+        assert(clone_copy_v1(&decoded, f.address, 32, copy_from_user, &f) == CLONE_COPY_BAD_ADDRESS);
+        assert(f.calls == 1 && memcmp(&decoded, &before, sizeof(decoded)) == 0);
+        f.readable = 1; f.wire.version = 2;
+        assert(clone_copy_v1(&decoded, f.address, 32, copy_from_user, &f) == CLONE_COPY_BAD_VERSION);
+        assert(f.calls == 2 && memcmp(&decoded, &before, sizeof(decoded)) == 0);
+        f.wire.version = 1;
+        assert(clone_copy_v1(&decoded, f.address, 32, copy_from_user, &f) == CLONE_COPY_OK);
+        assert(f.calls == 3 && decoded.entry == UINT64_C(0x80000001));
+        assert(decoded.child_tid == UINT64_C(0x87654321));
+    }
     return 0;
 }
