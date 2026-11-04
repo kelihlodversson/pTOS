@@ -37,6 +37,7 @@
 #include "kheap.h"
 #include "procmem.h"
 #include "kprint.h"
+#include "setjmp.h"
 #include "pgtable.h"
 #include "pmem.h"
 #include "pc_x86_64_memory.h"
@@ -451,6 +452,9 @@ static void test_kheap(void)
 
 static ULONG pre_free_calls;
 static void *callback_unpin_block;
+static void *callback_replacement;
+static void *callback_replacement_owner;
+static jmp_buf cleanup_test_resume;
 static void count_pre_free(void *base)
 {
     (void)base;
@@ -460,8 +464,20 @@ static void unpin_during_cleanup(void *base)
 {
     (void)base;
     procmem_pin((VADDR)(uintptr_t)callback_unpin_block, PAGE, -1);
-    CHECK(procmem_size(callback_unpin_block), "callback traversal defers reclamation");
+    CHECK(!procmem_size(callback_unpin_block), "callback unpin reclaims deferred allocation");
     pre_free_calls++;
+}
+static void jump_during_cleanup(void *base)
+{
+    (void)base;
+    longjmp(cleanup_test_resume, 1);
+}
+static void replace_during_keep(void *base)
+{
+    CHECK(procmem_free(base), "keep callback frees prior allocation");
+    callback_replacement = procmem_alloc(PAGE, 0);
+    CHECK(callback_replacement == base, "keep callback reuses address");
+    procmem_set_owner(callback_replacement, callback_replacement_owner);
 }
 
 static void test_procmem(void)
@@ -586,6 +602,16 @@ static void test_procmem(void)
         procmem_free_owned(&owner_b, NULL);
     }
     {
+        void *block = procmem_alloc(PAGE, 0);
+        procmem_set_owner(block, &owner_a);
+        callback_replacement = NULL;
+        callback_replacement_owner = &owner_b;
+        procmem_keep(&owner_a, 0, replace_during_keep);
+        CHECK(callback_replacement == block && procmem_owner(block) == &owner_b,
+              "keep ignores a replacement allocation with a new generation");
+        procmem_free_owned(&owner_b, NULL);
+    }
+    {
         void *held = procmem_alloc(PAGE, 0);
         void *other = procmem_alloc(PAGE, 0);
         procmem_set_owner(held, &owner_a);
@@ -596,7 +622,20 @@ static void test_procmem(void)
         pre_free_calls = 0;
         procmem_free_owned(&owner_b, unpin_during_cleanup);
         CHECK(pre_free_calls == 1 && !procmem_size(held) && !procmem_size(other),
-              "cleanup reclaims deferred blocks after callback traversal");
+              "cleanup traversal tolerates reclamation during callback");
+    }
+    {
+        void *held = procmem_alloc(PAGE, 0);
+        void *other = procmem_alloc(PAGE, 0);
+        procmem_set_owner(held, &owner_a);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(&owner_a, NULL);
+        procmem_set_owner(other, &owner_b);
+        if (!setjmp(cleanup_test_resume))
+            procmem_free_owned(&owner_b, jump_during_cleanup);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, -1);
+        CHECK(!procmem_size(held), "non-local callback exit does not inhibit reclamation");
+        procmem_free_owned(&owner_b, NULL);
     }
 
     /* Ptermres: the owner's block is cut back to the requested pages and

@@ -63,7 +63,6 @@ static struct alloc *allocs;
 static ULONG live_allocs;
 static ULONG free_pages;
 static ULONG bad_frees;
-static ULONG cleanup_depth;     /* callbacks may unpin while traversing allocs */
 
 static BOOL page_used(ULONG i)
 {
@@ -201,13 +200,11 @@ static void release(struct alloc **link)
 }
 
 /* A deferred decision belongs to this allocation record, not its former
- * owner's reusable basepage address. Never unlink during a cleanup callback
- * traversal; the outermost traversal performs the pending sweep. */
+ * owner's reusable basepage address. */
 static void reclaim_unpinned(void)
 {
     struct alloc **link = &allocs;
 
-    if (cleanup_depth) return;
     while (*link) {
         if ((*link)->reclaim && !(*link)->pins)
             release(link);
@@ -326,10 +323,24 @@ void procmem_set_owner(const void *p, const void *owner)
     }
 }
 
+/* Callbacks can unpin or free allocation records, or leave through a disk
+ * error longjmp. Resume by generation, never by a pointer held across one.
+ * Generations are unique; allocations made by a callback are not visited. */
+static struct alloc *owned_before(const void *owner, UQUAD before)
+{
+    struct alloc *a, *best = NULL;
+    for (a = allocs; a; a = a->next)
+        if (a->owner == owner && a->gen < before &&
+            (!best || a->gen > best->gen))
+            best = a;
+    return best;
+}
+
 void procmem_free_owned(const void *owner, void (*pre_free)(void *base))
 {
     struct alloc **link;
     struct alloc *a;
+    UQUAD before = ~(UQUAD)0;
 
     if (!owner)                 /* NULL means "permanent", never "any" */
         return;
@@ -337,11 +348,11 @@ void procmem_free_owned(const void *owner, void (*pre_free)(void *base))
     /* First let the caller drop whatever is keyed by each block (a basepage's
      * KPROC record, and with it that process's address space and the pins
      * it holds), so the second pass sees which blocks are really free to go. */
-    cleanup_depth++;
     if (pre_free)
-        for (a = allocs; a; a = a->next)
-            if (a->owner == owner)
-                pre_free((void *)(uintptr_t)a->va);
+        while ((a = owned_before(owner, before)) != NULL) {
+            before = a->gen;
+            pre_free((void *)(uintptr_t)a->va);
+        }
 
     /* Mapped blocks remain allocated until the final pin is dropped. */
     link = &allocs;
@@ -358,20 +369,21 @@ void procmem_free_owned(const void *owner, void (*pre_free)(void *base))
         }
         link = &(*link)->next;
     }
-    cleanup_depth--;
     reclaim_unpinned();
 }
 
 void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base))
 {
     struct alloc *a;
+    struct alloc **link;
+    UQUAD before = ~(UQUAD)0, generation;
+    void *base;
 
     if (!owner)
         return;
-    cleanup_depth++;
-    for (a = allocs; a; a = a->next) {
-        if (a->owner != owner)
-            continue;
+    while ((a = owned_before(owner, before)) != NULL) {
+        before = generation = a->gen;
+        base = (void *)(uintptr_t)a->va;
         if (a->va == (UQUAD)(uintptr_t)owner) {
             /* the owner's own block: keep only the requested prefix, in
              * whole pages, and give the tail back -- unless a live address
@@ -385,12 +397,16 @@ void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *ba
                 a->pages = keep;
             }
         } else if (pre_keep) {
-            pre_keep((void *)(uintptr_t)a->va);
+            pre_keep(base);
+            /* It may have freed, reused, or transferred this allocation. */
+            link = find_link(base);
+            if (!link || (*link)->gen != generation || (*link)->owner != owner)
+                continue;
+            a = *link;
         }
         a->owner = NULL;
         a->reclaim = FALSE;       /* Ptermres keeps these blocks permanent */
     }
-    cleanup_depth--;
     reclaim_unpinned();
 }
 

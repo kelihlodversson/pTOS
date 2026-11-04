@@ -72,6 +72,22 @@ Metadata classification before actual sharing:
 * PID, parent, descriptors, current directories and process completion remain
   process-owned. Limits and accounting require an explicit policy for shared
   mappings rather than blindly charging one process's existing KPROC fields.
+* Completion observers need PID and exit status, not the descriptor tables,
+  current directories, PD or page tables. The currently embedded `uft`,
+  `curdir`, priority and usage fields are process-wide live state. Signal
+  dispositions would also be process-wide, but are not implemented by this
+  KPROC; the scheduler's existing `signal` is a fault-status snapshot.
+* CPU/FPU state and scheduler continuation live in KTHREAD_CONTEXT. The
+  scheduler stack is released from its root context; the syscall stack is
+  transferred to and reclaimed by the launcher. Future TLS and signal masks
+  are per-thread and are not currently provided by these records.
+
+The current exit path closes descriptors and drops directories before it
+destroys KPROC. Deferring only kproc_destroy() would therefore not retain live
+process resources: descriptor closing also depends on process-specific handle
+state, and PD/basepage and image-loan cleanup have separate lifetimes. A live
+resource owner must preserve these dependencies while allowing an identity-only
+observer to outlive them; the existing identity reference alone cannot do so.
 
 KASPACE sharing is not yet exposed to KPROC or processes. Do not share live
 process mappings until those metadata, loans and cleanup relationships and the
@@ -123,8 +139,13 @@ mapping metadata, not merely the backend page tables.
 Process-memory cleanup marks still-pinned blocks for deferred reclamation in
 their allocation records and discards the former owner address. The last unpin
 reclaims that exact record; ownership transfer cancels the deferred decision.
-Cleanup callbacks cannot trigger a reclamation sweep while allocation lists are
-being traversed. Borrowed mappings are unmapped and translation caches flushed
+Cleanup callbacks may reclaim allocations or exit non-locally; traversal resumes
+by allocation generation rather than retaining a list pointer across a callback.
+This uses repeated list scans, and reclamation also scans the allocation list;
+both have linear per-iteration cost. Before preemption or SMP, protect allocation
+records, pins, owner transfers, traversal and address-space switches together
+with an appropriate synchronization and lifetime scheme. Borrowed mappings are
+unmapped and translation caches flushed
 before unpin can reclaim their pages. Ptermres explicitly makes its kept blocks
 permanent. A production x32 test retains an active KASPACE across KPROC cleanup
 and checks its process blocks survive until the last reference is released;
