@@ -1856,6 +1856,7 @@ static void test_mmap(void)
     PD *a, *b, *parent = run;
     ASPACE *as, *bs;
     UQUAD pa, pb;
+    UQUAD cross_page = 0x12345678ULL;
     ULONG value, private_a, private_b;
     UWORD prot;
     LONG rc;
@@ -1899,6 +1900,11 @@ static void test_mmap(void)
               "prepare read-only lazy mapping for kernel copies");
         run = b;
         value = 7;
+        CHECK(!kproc_copy_to_user(PTOS_MMAP_BASE + 2 * PAGE - 4,
+                                  &cross_page, sizeof(cross_page)) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
+              "cross-page write rejects read-only tail before backing either page");
         CHECK(!kproc_copy_to_user(PTOS_MMAP_BASE + 2 * PAGE, &value, sizeof(value)) &&
               !aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
               "kernel write rejects untouched read-only reservation without faulting");

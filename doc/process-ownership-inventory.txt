@@ -96,6 +96,17 @@ state, and PD/basepage and image-loan cleanup have separate lifetimes. A live
 resource owner must preserve these dependencies while allowing an identity-only
 observer to outlive them; the existing identity reference alone cannot do so.
 
+The heap ledger also mixes ordinary Malloc reservations with UH_LOADED,
+UH_IMAGE and UH_LENT loader-image entries. The loaded/lent entries carry a
+borrowed child PD and are searched by release_loaded() and give_image_back();
+the child records a borrowed loader PD in turn. A retained address space can
+outlive either PD, so moving the ledger wholesale would leave stale loan
+identities and would not preserve give-back. Image preparation also allocates
+the child's ledger before publishing its active KASPACE. Safe migration needs
+independently retained loan identities, an explicit staging-to-ASPACE transfer
+and rollback, and a policy for a loader that has already exited. Until then,
+the existing ledger stays process-owned and is not shared.
+
 On a non-CUIS address-space build, an unwrapped disk-error longjmp from xclose
 could previously leave this sequence midway: earlier handles might already be
 closed, while the record, remaining directory references and owned allocations
