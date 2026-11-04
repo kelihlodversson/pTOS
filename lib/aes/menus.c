@@ -31,11 +31,14 @@ WORD menu_tnormal(OBJECT *tree, WORD item, WORD normal)
 { return mt_menu_tnormal(tree,item,normal,aes_global); }
 WORD mt_menu_text(OBJECT *tree, WORD item, const char *text, WORD *global)
 {
-    if (!tree || item < 0 || !text || aes_application_session(global) < 0 ||
-        !tree[item].ob_spec.free_string) return 0;
+    OBSPEC *spec;
+    if (!tree || item < 0 || !text || aes_application_session(global) < 0) return 0;
+    spec = &tree[item].ob_spec;
+    if (tree[item].ob_flags & OF_INDIRECT) spec = spec->indirect;
+    if (!spec || !spec->free_string) return 0;
     /* Like native AES, copy into the existing caller-owned menu buffer.
      * The caller supplies enough room, including the terminating NUL. */
-    strcpy(tree[item].ob_spec.free_string,text);
+    strcpy(spec->free_string,text);
     return 1;
 }
 WORD menu_text(OBJECT *tree, WORD item, const char *text)
