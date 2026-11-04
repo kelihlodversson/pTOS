@@ -124,7 +124,18 @@ CI runs x32 in the host clone suite, ARM in arm-virt and m68k in m68k-other,
 reusing each build job's installed compiler. These compile-only assertions
 check exact field offsets, size, pointer widths and target alignment. They do
 not establish runtime coverage. Production handler mocks and x32 QEMU cover
-runtime failure behavior; ARM/m68k runtime negative matrices remain unrun.
+runtime failure behavior. The pclone regression suite invokes the real ARM
+svc and m68k packed trap interfaces. Run it with the existing regression flow:
+  bash tools/ci-regression.sh virt-arm-aspace
+  bash tools/ci-regression.sh virt-m68k-aspace
+These two regression configurations explicitly enable CONF_WITH_PCLONE. The
+test checks valid-but-unsupported and malformed requests, unchanged TID output,
+and that the supplied entry never executes. In restricted workspaces the runner
+supports REGRESSION_RAW_DISK=1 and QEMU_DATA_DIR for a local QEMU installation.
+The trap test has been executed on virt-arm-aspace (QEMU cortex-a7, 32-bit EABI)
+and virt-m68k-aspace (QEMU m68040, packed GEMDOS trap ABI). Other ARM boards,
+m68k CPU variants and the m68k fastcall configuration have not been exercised
+by this new test.
 
 GEMDOS opcode
 -------------

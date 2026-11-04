@@ -261,6 +261,9 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
             set -- qemu-system-m68k -M virt -cpu m68020 -m 128 \
                 -kernel "$top/virt-m68k.elf"
         fi
+        if [ -n "${QEMU_DATA_DIR:-}" ]; then
+            set -- "$@" -L "$QEMU_DATA_DIR"
+        fi
         # a host directory over virtio-9p as well (Q:), for the suites
         # that test the pluggable file system (pfs_seek)
         host=$work/host-$label
@@ -270,9 +273,17 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         rm -f "$work/in"
         mkfifo "$work/in"
         exec 3<>"$work/in"
+        # Raw sectors are useful where vvfat's /var/tmp backing is unavailable.
+        if [ "${REGRESSION_RAW_DISK:-0}" = 1 ]; then
+            disk_image=$work/disk-$label.img
+            "$tools/mkhdisk.sh" "$disk_image" 33554432 "$disk"/* >"$work/image-$label.log" 2>&1 ||
+                die "cannot create regression disk" "disk creation failed"
+            set -- "$@" -drive "if=none,id=hd0,format=raw,file=$disk_image"
+        else
+            set -- "$@" -drive "if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=$disk,file.rw=on"
+        fi
         # shellcheck disable=SC2086
         "$@" -global virtio-mmio.force-legacy=false \
-            -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir="$disk",file.rw=on \
             -device virtio-blk-device,drive=hd0 \
             -fsdev local,id=host0,path="$host",security_model=none \
             -device virtio-9p-device,fsdev=host0,mount_tag=host \
