@@ -6,6 +6,7 @@
 int gem_menu_checks(short handle)
 {
     OBJECT title = { 0 }, background = { 0 };
+    OBSPEC indirect;
     char text[32] = " Menu ";
     short global[15], i, before[40], changed = 0;
     title.ob_next = title.ob_head = title.ob_tail = -1;
@@ -34,6 +35,20 @@ int gem_menu_checks(short handle)
     VERIFY(menu_text(&title,0,"New") == 1 && title.ob_spec.free_string == text);
     VERIFY(text[0] == 'N' && text[1] == 'e' && text[2] == 'w' && !text[3]);
     VERIFY(mt_menu_text(&title,0,"",global) == 1 && !text[0]);
+    indirect.free_string = text;
+    title.ob_flags = OF_INDIRECT;
+    title.ob_spec.indirect = &indirect;
+    VERIFY(menu_text(&title,0,"Indirect") == 1);
+    VERIFY(title.ob_spec.indirect == &indirect && indirect.free_string == text);
+    VERIFY(text[0] == 'I' && text[7] == 't' && !text[8]);
+    VERIFY(objc_draw(&title,0,0,0,0,100,100) == 1);
+    VERIFY(mt_menu_text(&title,0,"",global) == 1 && !text[0]);
+    indirect.free_string = 0;
+    VERIFY(menu_text(&title,0,"Bad") == 0 && !text[0]);
+    title.ob_spec.indirect = 0;
+    VERIFY(menu_text(&title,0,"Bad") == 0 && !text[0]);
+    title.ob_flags = 0;
+    title.ob_spec.free_string = text;
     VERIFY(mt_menu_icheck(&title,0,CHECK,global) == 1 && (title.ob_state & OS_CHECKED));
     global[2] = -1;
     VERIFY(mt_menu_icheck(&title,0,UNCHECK,global) == 0 && (title.ob_state & OS_CHECKED));
