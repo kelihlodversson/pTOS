@@ -3,24 +3,35 @@
 #include "procmem.h"
 #include "kthread_context.h"
 
-BOOL kthread_stack_allocate(KTHREAD_CONTEXT *thread)
+BOOL kthread_stack_allocate(KTHREAD_STACK *stack)
 {
     PADDR physical;
     uintptr_t top;
-    if (!thread || thread->stack_phys) return FALSE;
+    if (!stack || stack->physical) return FALSE;
     physical = kstack_alloc(&top);
     if (!physical) return FALSE;
-    thread->stack_phys = physical;
-    thread->stack_top = top;
+    stack->physical = physical;
+    stack->top = top;
     return TRUE;
 }
 
-void kthread_stack_release(KTHREAD_CONTEXT *thread)
+void kthread_stack_release(KTHREAD_STACK *stack)
 {
     PADDR physical;
-    if (!thread) return;
-    physical = thread->stack_phys;
-    thread->stack_phys = 0;
-    thread->stack_top = 0;
+    if (!stack) return;
+    physical = stack->physical;
+    stack->physical = 0;
+    stack->top = 0;
     if (physical) kstack_free(physical);
+}
+
+KTHREAD_STACK kthread_stack_detach(KTHREAD_STACK *stack)
+{
+    KTHREAD_STACK detached = { 0, 0 };
+    if (stack) {
+        detached = *stack;
+        stack->physical = 0;
+        stack->top = 0;
+    }
+    return detached;
 }

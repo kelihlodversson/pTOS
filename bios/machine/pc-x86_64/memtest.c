@@ -2350,11 +2350,16 @@ static void test_cuis_scheduler(void)
                 PD *duplicate[2] = { programs[0], programs[0] };
                 CHECK(ksched_run(duplicate, 2, results) == EINVAL, "scheduler rejects duplicate programs");
             }
-            x86_64_pmem_test_fail_after(1);
-            rc = ksched_run(programs, 2, results);
-            x86_64_pmem_test_fail_after(0);
-            CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
-                  "scheduler allocation failure preserves both unlaunched programs");
+            {
+                UWORD attempt;
+                for (attempt = 1; attempt <= 2; attempt++) {
+                    x86_64_pmem_test_fail_after(attempt);
+                    rc = ksched_run(programs, 2, results);
+                    x86_64_pmem_test_fail_after(0);
+                    CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
+                          "scheduler allocation failure preserves both unlaunched programs");
+                }
+            }
             rc = ksched_run(programs, 2, results);
             CHECK(rc == E_OK, "scheduler completes all managed clients");
             if (rc == E_OK) {
