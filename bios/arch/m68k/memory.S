@@ -143,6 +143,9 @@ memchk:
         // They will stay in safe place in case we clear the sysvars.
         move.b  C_SYM(memctrl).w, d6
         move.l  C_SYM(phystop).w, d5
+#if CONF_WITH_PROCESS_ASPACES
+        sub.l   #0x80000000, d5         // (an address of the window, below: see biosmem.c)
+#endif
 
 #if CONF_WITH_TTRAM
         move.l  C_SYM(ramvalid).w, d3
@@ -574,7 +577,16 @@ stram_detected:
 
         /* Store the ST-RAM parameters in the ST-RAM itself */
         move.b  d6, C_SYM(memctrl).w           // set copy of hw memory config
+#if CONF_WITH_PROCESS_ASPACES
+        // the RAM of the kernel and of the programs is reached through the window
+        // (bios/biosmem.c): phystop is an address of it, as on the other
+        // machines with an address space for every process
+        add.l   #0x80000000, d5
+#endif
         move.l  d5, C_SYM(phystop).w          // highest address as phystop
+#if CONF_WITH_PROCESS_ASPACES
+        sub.l   #0x80000000, d5
+#endif
 
         /* Make ST-RAM configuration valid */
 #ifdef __mcoldfire__

@@ -8,6 +8,19 @@
 #include "asmdefs.h"
 #include "header.h"
 #include "memory.h"
+#include "virt_mmu.h"
+
+#if CONF_WITH_HIGHER_HALF
+/*
+ * The code is linked in the window (emutos.ld) but runs, until the MMU is on,
+ * where QEMU loaded it: at the physical address, the link address less
+ * VIRT_WINDOW_VBASE.  So up to jumping to high_start, nothing may use the
+ * address of a symbol of the window as it stands: PHYS() has it converted.
+ * The TOS low memory (the vectors, the system variables, the stack) is at the
+ * same address in both and needs no conversion.
+ */
+#define PHYS(sym)       (sym - VIRT_WINDOW_VBASE).l
+#endif
 
         .globl  C_SYM(os_entry)
 
@@ -50,7 +63,14 @@ C_SYM(os_entry):
 os_version:
         .dc.w   TOS_VERSION // os_version, TOS version
 reseth:
+#if CONF_WITH_HIGHER_HALF
+        // The physical address: QEMU 6.2 starts the CPU at a reset from the
+        // copy of this longword at address 4 (bios.c vecs_init()), with the
+        // MMU off; main goes on at the physical alias in any case.
+        .dc.l   C_SYM(main) - VIRT_WINDOW_VBASE
+#else
         .dc.l   C_SYM(main)       // reseth, pointer to reset handler
+#endif
 C_SYM(os_beg):
         .dc.l   C_SYM(os_entry)   // os_beg, base of os = _sysbase
 os_end:
@@ -101,6 +121,18 @@ C_SYM(osxhbootdelay):
         .even
 C_SYM(main):
         move.w  #0x2700,sr              // supervisor mode, interrupts masked
+#if CONF_WITH_HIGHER_HALF
+        // Entered at the physical address at the first boot, with the MMU
+        // off, and at the window by a software reset (warm_reset(): jmp
+        // main) with the MMU on; both reach the low alias of the code, where
+        // it is and where the tables map it too.
+        lea     main_low(pc),a0
+        move.l  a0,d0
+        bclr    #31,d0
+        move.l  d0,a0
+        jmp     (a0)
+main_low:
+#endif
 
         // Clear low memory: the exception vectors, the system variables, the
         // BIOS stack and the low ST-RAM section, everything from address 0 to
@@ -120,6 +152,42 @@ clear_low:
         jlo     clear_low
 
         lea     C_SYM(stktop),sp              // initial supervisor stack (.stack section, tosvars.ld)
+#if CONF_REQUIRE_PMMU
+        // An image that needs the PMMU (#564): before anything can depend
+        // on it, make sure there is one, and if not, say so on the goldfish
+        // TTY (its PUT_CHAR register needs no set-up) and stop.  Only
+        // 68000 instructions until the check is done: jsr, not the bsr.l a
+        // jbsr becomes for -m68020.
+#if CONF_WITH_HIGHER_HALF
+        lea     PHYS(C_SYM(pmmu_present)),a0
+        jsr     (a0)
+#else
+        jsr     C_SYM(pmmu_present)
+#endif
+        tst.l   d0
+        jne     pmmu_ok
+        lea     no_pmmu_msg(pc),a0
+        move.l  #0xff008000,a1          // GOLDFISH_TTY_BASE: PUT_CHAR
+no_pmmu_putc:
+        moveq   #0,d0
+        move.b  (a0)+,d0
+        jeq     no_pmmu_stop
+        move.l  d0,(a1)
+        jra     no_pmmu_putc
+no_pmmu_stop:
+        stop    #0x2700                 // stays stopped: interrupts masked
+        jra     no_pmmu_stop
+no_pmmu_msg:
+#if CONF_WITH_HIGHER_HALF
+        .ascii  "\r\npTOS: this image needs a 68040 or 68060 with an MMU,\r\n"
+#else
+        .ascii  "\r\npTOS: this image needs a 68030, 68040 or 68060 with an MMU,\r\n"
+#endif
+        .ascii  "and this CPU has none. Use an image built without\r\n"
+        .asciz  "CONF_REQUIRE_PMMU, such as virt-m68k_defconfig.\r\n"
+        .even
+pmmu_ok:
+#endif
 
         // RAM size: QEMU's -m.  The machine puts a Linux-style bootinfo list
         // right after the end of the loaded image (hw/m68k/virt.c: the
@@ -142,12 +210,22 @@ clear_low:
         // then.  The size found the first time is kept in two words in .data
         // (which nothing clears, unlike the .bss and _warm_magic), and used
         // when the first one holds its marker.
+#if CONF_WITH_HIGHER_HALF
+        cmp.l   #0x52414D53,PHYS(ram_size_valid)        // 'RAMS'
+        jne     bi_scan
+        move.l  PHYS(ram_size_saved),d1
+#else
         cmp.l   #0x52414D53,ram_size_valid      // 'RAMS'
         jne     bi_scan
         move.l  ram_size_saved,d1
+#endif
         jra     bi_done
 bi_scan:
+#if CONF_WITH_HIGHER_HALF
+        lea     PHYS(__ebss),a0                 // where the list is: physical
+#else
         lea     __ebss,a0
+#endif
         move.l  a0,d0
         addq.l  #1,d0
         and.l   #-2,d0
@@ -169,9 +247,15 @@ bi_next:
         move.l  8(a0),d0
         cmp.l   #0x00100000,d0          // anything below 1 MB is nonsense
         jcs     bi_skip
+#if CONF_WITH_HIGHER_HALF
+        cmp.l   #VIRT_MAX_RAM_SIZE,d0   // what the window holds
+        jls     bi_size_ok
+        move.l  #VIRT_MAX_RAM_SIZE,d0
+#else
         cmp.l   #0x7f000000,d0          // keep the size in a positive LONG,
         jls     bi_size_ok              // clear of the devices at 0xff000000
         move.l  #0x7f000000,d0
+#endif
 bi_size_ok:
         move.l  d0,d1
         jra     bi_done
@@ -179,8 +263,27 @@ bi_skip:
         adda.w  d3,a0
         dbra    d2,bi_next
 bi_done:
+#if CONF_WITH_HIGHER_HALF
+        move.l  d1,PHYS(ram_size_saved)
+        move.l  #0x52414D53,PHYS(ram_size_valid)
+
+        // The MMU: the tables are built at the top of the RAM, and the RAM
+        // that is left is what phystop says.  Back from there the code is
+        // still at its physical address, which the tables map too; go to
+        // the window.
+        move.l  d1,d0
+        lea     PHYS(C_SYM(virt_mmu_early)),a0
+        jsr     (a0)
+        move.l  d0,d1
+#if CONF_WITH_PROCESS_ASPACES
+        move.l  d0,PHYS(C_SYM(boot_root))       // the tree the MMU was switched on with: a reset needs it back
+#endif
+        jmp     (high_start).l
+high_start:
+#else
         move.l  d1,ram_size_saved
         move.l  #0x52414D53,ram_size_valid
+#endif
 
         // Clear .bss: unlike the classic Atari boot, there is no meminit
         // pass to do this for us here (that routine tests and clears
@@ -195,6 +298,11 @@ clear_bss:
         jra     clear_bss
 clear_bss_done:
 
+#if CONF_WITH_PROCESS_ASPACES
+        // the top of the RAM that is left, as an address in the window: with an
+        // address space for every process there is no pool at virtual 0
+        add.l   #VIRT_WINDOW_VBASE,d1
+#endif
         move.l  d1,C_SYM(phystop)       // the RAM size found above
 
         // The classic meminit code is not used here, so decide first boot
@@ -218,5 +326,7 @@ not_first_boot:
 
         .data
         .even
+        .globl  C_SYM(boot_root)
+C_SYM(boot_root): .dc.l 0               // (CONF_WITH_PROCESS_ASPACES, see above)
 ram_size_valid: .dc.l   0
 ram_size_saved: .dc.l   0

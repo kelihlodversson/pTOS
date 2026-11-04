@@ -241,7 +241,6 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
     struct virtio_blk_req *hdr;
     UBYTE *status;
     UBYTE *sectbuf;
-    ULONG phys_offset;
     WORD i;
     LONG ret = 0;
 
@@ -252,7 +251,6 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
 
     hdr = &virtio_blk_hdr[dev];
     status = &virtio_blk_status[dev].value;
-    phys_offset = virtio_blk_dev[dev].phys_offset;
 
     /* Walk a byte pointer rather than computing buf + i*SECTOR_SIZE: before
      * #300 removed -mshort, int was 16 bits on m68k, so that multiply would
@@ -268,11 +266,11 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
         hdr->sector = (QUAD)cpu2le64((UQUAD)(sector + i));
         *status = 0xff;
 
-        virtio_desc_set(&virtio_blk_dev[dev], 0, (ULONG)hdr + phys_offset,
+        virtio_desc_set(&virtio_blk_dev[dev], 0, VIRTIO_PHYS(&virtio_blk_dev[dev], hdr),
                          (ULONG)sizeof(*hdr), VIRTIO_DESC_F_NEXT, 1);
-        virtio_desc_set(&virtio_blk_dev[dev], 1, (ULONG)sectbuf + phys_offset, SECTOR_SIZE,
+        virtio_desc_set(&virtio_blk_dev[dev], 1, VIRTIO_PHYS(&virtio_blk_dev[dev], sectbuf), SECTOR_SIZE,
                          (UWORD)(VIRTIO_DESC_F_NEXT | ((rw & RW_RW) ? 0 : VIRTIO_DESC_F_WRITE)), 2);
-        virtio_desc_set(&virtio_blk_dev[dev], 2, (ULONG)status + phys_offset, 1, VIRTIO_DESC_F_WRITE, 0);
+        virtio_desc_set(&virtio_blk_dev[dev], 2, VIRTIO_PHYS(&virtio_blk_dev[dev], status), 1, VIRTIO_DESC_F_WRITE, 0);
 
 #if ARCH_ARM
         /* Everything the device will look at has to reach RAM first, so

@@ -169,11 +169,11 @@ BOOL virtio_setup_queue(VIRTIO_DEV *dev)
      * three queue base registers take physical addresses; dev->phys_offset
      * turns our own linked addresses into those (0 where they coincide). */
     vreg_write(&regs->queue_num, VIRTIO_QUEUE_SIZE);
-    vreg_write(&regs->queue_desc_low,   (ULONG)dev->desc + dev->phys_offset);
+    vreg_write(&regs->queue_desc_low,   VIRTIO_PHYS(dev, dev->desc));
     vreg_write(&regs->queue_desc_high,  0);
-    vreg_write(&regs->queue_driver_low, (ULONG)&dev->avail + dev->phys_offset);
+    vreg_write(&regs->queue_driver_low, VIRTIO_PHYS(dev, &dev->avail));
     vreg_write(&regs->queue_driver_high,0);
-    vreg_write(&regs->queue_device_low, (ULONG)&dev->used + dev->phys_offset);
+    vreg_write(&regs->queue_device_low, VIRTIO_PHYS(dev, &dev->used));
     vreg_write(&regs->queue_device_high,0);
     vreg_write(&regs->queue_ready, 1);
 

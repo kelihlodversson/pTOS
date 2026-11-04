@@ -52,8 +52,67 @@ typedef struct {
     ULONG spsr;
 } exception_frame_t;
 
-static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
+void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
+extern void arm_svc_unhandled(void);   /* vectorsasm.S */
 
+#if CONF_WITH_HIGHER_HALF
+/*
+ * A higher-half kernel has nothing at the low addresses where the TOS vector
+ * table and the crash page of the system variables are on m68k, and it does
+ * not keep a table of 256 vectors for the sake of the 62 that an m68k has:
+ * the ARM exception handlers (startup.S) dispatch to a handful of them, and
+ * those are ordinary variables.  The crash page is made of ordinary
+ * variables too (tosvars.ld).  The native exception table (VBAR) is in
+ * startup.S.
+ *
+ * The TOS vector numbers that mean something on ARM, with their m68k
+ * addresses (Setexc() takes the number, address / 4):
+ *   0x08 bus error: here the prefetch abort   0x0c address error: data abort
+ *   0x10 illegal instruction: undefined       0x28 Line-A
+ *   0x80 + 4 * n   TRAP #n, reached by SVC n  (n = 1 GEMDOS, 2 GEM, 13, 14)
+ * Any other vector does not exist: Setexc() of it does nothing and returns 0.
+ */
+PFVOID tos_vec_prefetch, tos_vec_data, tos_vec_undef, tos_vec_linea;
+PFVOID tos_vec_svc[16];
+
+LONG proc_lives;
+LONG proc_dregs[16];                    /* proc_aregs is the second half */
+LONG proc_enum;
+LONG proc_usp;
+UWORD proc_stk[32];
+
+volatile PFVOID *vector_address(ULONG address)
+{
+    static volatile PFVOID none;
+
+    switch (address)
+    {
+    case 0x08: return &tos_vec_prefetch;
+    case 0x0c: return &tos_vec_data;
+    case 0x10: return &tos_vec_undef;
+    case 0x28: return &tos_vec_linea;
+    }
+    if (address >= 0x80 && address < 0x80 + 4 * ARRAY_SIZE(tos_vec_svc))
+        return &tos_vec_svc[(address - 0x80) / 4];
+    none = NULL;                        /* no such vector: reads 0, a set is lost */
+    return &none;
+}
+
+void init_exc_vec(void)
+{
+    int i;
+
+    proc_lives = 0;
+    tos_vec_prefetch = tos_vec_data = tos_vec_undef = tos_vec_linea = (PFVOID)any_vec;
+    for (i = 0; i < (int)ARRAY_SIZE(tos_vec_svc); i++)
+        tos_vec_svc[i] = (PFVOID)arm_svc_unhandled;
+}
+
+void init_user_vec(UWORD first_boot)
+{
+    MAYBE_UNUSED(first_boot);
+}
+#else
 volatile PFVOID *vector_address(ULONG address)
 {
     return (volatile PFVOID *)address;
@@ -82,6 +141,7 @@ void init_user_vec(UWORD first_boot)
     }
 
 }
+#endif
 
 /*
  * int_vbl - Int 0x70 - VBL interrupt
@@ -151,9 +211,57 @@ void int_timerc(void)
 
 // A side effect of that we are using a dispatch routine to calculate the correct
 // vector number, the r0 register should contain the (simulated) vector address.
-static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)
+#if CONF_WITH_USER_ASPACE
+/* bdos/proc.c: ends the process that is running, and resumes its launcher */
+extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
+/* bdos/arch/arm/uspace.c: lazy pages (see there for the answers) */
+extern int arm_demand_page(ULONG address, ULONG fsr, int fetch);
+#endif
+
+void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)
 {
     int i;
+
+#if CONF_WITH_USER_ASPACE
+    /*
+     * A fault in a process in user mode is the process's own: it ends, and
+     * its launcher goes on, instead of the machine stopping (only a fault of
+     * the kernel is fatal).  The exception left the interrupts off, and the
+     * launcher may be the kernel, which has nothing else to turn them on.
+     */
+    if ((stack_frame->spsr & 0x1f) == 0x10)
+    {
+        const char *cause;
+
+        switch (vector_addr >> 2)
+        {
+        case 2:  cause = "prefetch abort"; break;
+        case 3:  cause = "data abort"; break;
+        case 4:  cause = "undefined instruction"; break;
+        default: cause = "exception"; break;
+        }
+        __asm__ volatile ("cpsie i" : : : "memory");
+#if CONF_WITH_DEMAND_PAGING
+        /* a page of its lazy memory that is not there (or a write to a private
+         * copy of a file page): back it, and the instruction runs again */
+        if ((vector_addr >> 2) == 2 || (vector_addr >> 2) == 3)
+        {
+            int answer = arm_demand_page(far, fsr, (vector_addr >> 2) == 2);
+
+            if (answer == 1)
+                return;
+            if (answer == 2)
+                proc_fault("no physical page left", fsr, far,
+                           (UQUAD)(ULONG)stack_frame->user_pc, (UQUAD)stack_frame->user_sp);
+            if (answer == 3)
+                proc_fault("file mapping I/O error", fsr, far,
+                           (UQUAD)(ULONG)stack_frame->user_pc, (UQUAD)stack_frame->user_sp);
+        }
+#endif
+        proc_fault(cause, fsr, far, (UQUAD)(ULONG)stack_frame->user_pc,
+                   (UQUAD)stack_frame->user_sp);
+    }
+#endif
     cpsr_id(); // Disable interrupts
     for(i = 0; i<12; i++)
     {

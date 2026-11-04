@@ -20,6 +20,9 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#if CONF_WITH_PROCESS_ASPACES
+#include "pmem32.h"
+#endif
 #include "nls.h"
 #include "bios.h"
 #include "ikbd.h"
@@ -302,7 +305,7 @@ WORD initinfo(ULONG *pshiftbits)
 #endif
     int i;
     WORD olddev, dev = bootdev;
-#ifndef MACHINE_PC_X86_64
+#if !defined(MACHINE_PC_X86_64) && !CONF_WITH_PROCESS_ASPACES
     long stramsize = (long)phystop;
 #endif
 #if CONF_WITH_ALT_RAM
@@ -373,6 +376,9 @@ WORD initinfo(ULONG *pshiftbits)
      * memory allocator has free instead.
      */
     pair_start(_("Free RAM")); cprintf("%lu %s", (unsigned long)(pmem_free_bytes() >> 20), _("MB")); pair_end();
+#elif CONF_WITH_PROCESS_ASPACES
+    /* the memory of the processes is pages, not the pool that phystop ends */
+    pair_start(_("Free RAM")); cprintf("%lu %s", (unsigned long)(pmem32_free_bytes() >> 20), _("MB")); pair_end();
 #else
     pair_start("ST-RAM"); cprintf_bytesize(stramsize); pair_end();
 #endif

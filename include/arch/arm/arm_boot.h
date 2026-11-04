@@ -33,5 +33,13 @@ typedef struct {
 
 extern arm_boot_regs_t arm_boot_regs;
 
+#if CONF_WITH_PROCESS_ASPACES
+/* The physical address of the table of the lower half that the MMU was switched
+ * on with (startup.S), and what a reset (panicasm.S) does before it jumps to the
+ * physical alias of the start: loads it again, the tables of the processes have
+ * no identity mapping.  Implemented by the machine. */
+void machine_reset_prepare(void);
+#endif
+
 #endif /* MACHINE_RPI || MACHINE_VIRT_ARM */
 #endif /* ARM_BOOT_H */

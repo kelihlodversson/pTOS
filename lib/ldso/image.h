@@ -14,8 +14,11 @@
 #define DL_PF_W 2
 #define DL_PF_R 4
 
+/* eflags_required are the e_flags bits every admitted object must have, and
+ * eflags_allowed all those it may (a superset of the required ones). */
 typedef struct {
     uint32_t machine, endian, page_size, max_span;
+    uint32_t eflags_required, eflags_allowed;
 } DL_IMAGE_ABI;
 
 typedef struct {
@@ -29,7 +32,7 @@ typedef struct {
     DL_LOAD loads[DL_MAX_LOADS];
 } DL_IMAGE;
 
-extern const DL_IMAGE_ABI dl_x32_image_abi;
+extern const DL_IMAGE_ABI dl_image_abi;
 
 /* Inspect a complete immutable ELF file without section headers or allocation.
  * Output is cleared on error. DSO/interpreter roles require ET_DYN without

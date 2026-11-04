@@ -31,6 +31,9 @@
 #include "has.h"        /* for blitter-related items */
 #include "biosdefs.h"   /* for FALCON_REZ */
 #include "biosext.h"
+#if CONF_WITH_HIGHER_HALF
+#include "biosbind.h"
+#endif
 #include "asm.h"
 
 #include "cookie.h"
@@ -258,7 +261,12 @@ static void gsx_resetmb(void)
  */
 static BOOL aestrap_intercepted(void)
 {
+#if CONF_WITH_HIGHER_HALF
+    /* the vector table is not at address 0 */
+    void *trap2_handler = (void *)(uintptr_t)Setexc(0x22, -1L);
+#else
     void *trap2_handler = (void *)ULONG_AT(0x88);
+#endif
     return (!is_text_pointer(trap2_handler)) || nvdi_cookie_present();
 }
 

@@ -117,6 +117,8 @@
 #include "asmdefs.h"
 #include "asmpd.h"
 
+#if !CONF_WITH_USER_ASPACE
+
 // ==== Definitions ==========================================================
 
         .globl  C_SYM(termuser)
@@ -408,3 +410,5 @@ fix_rte:
 #endif
 fr_exit:
         rte
+
+#endif /* !CONF_WITH_USER_ASPACE */

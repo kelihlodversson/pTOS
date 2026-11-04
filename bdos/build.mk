@@ -6,6 +6,8 @@ obj-y += bdosmain.o console.o fsbuf.o fsdir.o fsdrive.o fsfat.o fsglob.o \
 	 fshand.o fsio.o fsmain.o fsopnclo.o iumem.o kpgmld.o kproc.o osmem.o \
 	 proc.o time.o umem.o rwa.o launch.o
 obj-$(CONF_WITH_ELF_LOADER) += elfld.o
+# a process in an address space of its own: its entry, its switching
+obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(or $(ARCH_ARM),$(ARCH_M68K)),uspaceasm.o uspace.o) $(if $(ARCH_M68K),fpuctx.o)
 obj-$(CONF_WITH_USER_COPY) += uaccess.o
 obj-$(CONF_WITH_USER_CALLBACKS) += user_callback.o callback_entry.o
 
@@ -29,6 +31,8 @@ obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o elfstartup.o
 obj/elfimage.o: lib/ldso/image_plan.c lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
 ELFIMAGE_ABI-$(ARCH_X86_64) = lib/ldso/arch/x32/image_abi.c
+ELFIMAGE_ABI-$(ARCH_ARM) = lib/ldso/arch/arm/image_abi.c
+ELFIMAGE_ABI-$(ARCH_M68K) = lib/ldso/arch/m68k/image_abi.c
 obj/elfimageabi.o: $(ELFIMAGE_ABI-y) lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@
 obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)

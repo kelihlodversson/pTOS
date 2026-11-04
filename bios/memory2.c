@@ -87,6 +87,29 @@ static ULONG detect_ttram_size(void)
 
 #endif /* CONF_WITH_TTRAM */
 
+#if CONF_ATARI_HIGHER_HALF_68040 && CONF_WITH_TTRAM
+/*
+ * The static tree of the 68040 (atari_mmu040.S) maps the first 16 MiB only,
+ * so the probes of the TT-RAM, at its physical addresses, would all fault.
+ * While they run, DTT1 passes 0x00000000-0x3fffffff through to the physical
+ * memory, not cached, for the supervisor; afterwards it is off again and the
+ * data cache pushed, as the stack that was used meanwhile bypassed it.  Only
+ * a TT has TT-RAM: on a Falcon, Hatari answers the reads of the window and
+ * then faults on a write, which the probe does not expect.
+ */
+static void ttram_window(BOOL on)
+{
+    ULONG v = on ? 0x003fa040UL : 0;
+
+    if (on && !check_read_byte((long)TT_PALETTE_REGS))  /* (detect_video() has not run yet) */
+        return;
+
+    __asm__ volatile ("move.l %0,%%d0\n\t.long 0x4e7b0007"        /* movec d0,dtt1 */
+                      : : "g" (v) : "d0", "memory");
+    __asm__ volatile (".word 0xf478" : : : "memory");              /* cpusha dc */
+}
+#endif
+
 /* Detect TT-RAM and set ramtop/ramvalid */
 void ttram_detect(void)
 {
@@ -94,6 +117,9 @@ void ttram_detect(void)
  * sysvars layout (see tosvars.ld), so there is nothing to report there. */
 #if !ARCH_ARM && !ARCH_X86_64
 #if CONF_WITH_TTRAM
+#if CONF_ATARI_HIGHER_HALF_68040
+    ttram_window(TRUE);
+#endif
     if (ramvalid == RAMVALID_MAGIC)
     {
         /* Previous TT-RAM settings were valid. */
@@ -126,6 +152,9 @@ void ttram_detect(void)
         /* Always validate ramvalid even if ramtop == 0, like TOS 1.6+ */
         ramvalid = RAMVALID_MAGIC;
     }
+#if CONF_ATARI_HIGHER_HALF_68040
+    ttram_window(FALSE);
+#endif
 #else
     /* Force no TT-RAM */
     ramtop = NULL;

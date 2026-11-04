@@ -55,6 +55,9 @@
 #include "string.h"
 #include "tosvars.h"
 #include "vectors.h"
+#if CONF_ATARI_HIGHER_HALF
+#include "atari_mmu.h"
+#endif
 
 #if CONF_WITH_SCSI
 
@@ -613,8 +616,15 @@ static void set_input_phase(UBYTE phase)
 static void setup_tt_dma(CMDINFO *info)
 {
     UBYTE *p;
+    ULONG dmaaddr = (ULONG)(uintptr_t)info->bufptr;
 
-    p = (UBYTE *)&info->bufptr;     /* move data address to DMA pointer */
+#if CONF_ATARI_HIGHER_HALF
+    /* a buffer of the kernel image is in the window: the DMA takes the
+     * physical address */
+    dmaaddr = virt_to_phys(info->bufptr);
+#endif
+
+    p = (UBYTE *)&dmaaddr;          /* move data address to DMA pointer */
     SCSIDMA_BASE->ptr_upper = *p++;
     SCSIDMA_BASE->ptr_uprmiddle = *p++;
     SCSIDMA_BASE->ptr_lwrmiddle = *p++;
@@ -797,6 +807,13 @@ static void cleanup_tt_dma(CMDINFO *info)
     u.byte[1] = SCSIDMA_BASE->ptr_uprmiddle;
     u.byte[2] = SCSIDMA_BASE->ptr_lwrmiddle;
     u.byte[3] = SCSIDMA_BASE->ptr_lower & 0xfc;
+
+#if CONF_ATARI_HIGHER_HALF
+    /* the DMA pointer is a physical address: the residue goes to the buffer
+     * of the kernel at the same offset from its start */
+    u.ptr = (UBYTE *)info->bufptr
+            + ((ULONG)(uintptr_t)u.ptr - virt_to_phys(info->bufptr));
+#endif
 
     for (p = u.ptr, q = (UBYTE *)&residue; bytes_remaining; bytes_remaining--)
         *p++ = *q++;

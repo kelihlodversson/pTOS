@@ -33,6 +33,8 @@
 #ifndef ASM_H
 #define ASM_H
 
+#include "config.h"
+
 /*
  * values of 'mode' for Pexec()
  *
@@ -46,10 +48,13 @@
 #define PE_BASEPAGEFLAGS 7
 #define PE_RELOCATE   50    /* required for NatFeats support only, not in Atari TOS */
 
-/* OS entry points implemented in util/miscasm.S */
+/* OS entry points implemented in util/miscasm.S (kernel code with address
+ * spaces calls GEMDOS directly instead: include/bdosbind.h) */
+#if !CONF_WITH_KCALL
 extern long trap1(int, ...);
 extern long trap1_pexec(short mode, const char * path,
   const char * tail, const char * env);
+#endif
 
 /* External function doing nothing */
 extern void just_rts(void);

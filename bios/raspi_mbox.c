@@ -109,7 +109,7 @@ BOOL raspi_prop_get_tags(void *tags, ULONG tags_size)
     prop_buffer_t* buffer = (prop_buffer_t*)raspi_get_coherent_buffer(COHERENT_TAG_MAILBOX);
     ULONG buffer_size = sizeof (prop_buffer_t) + tags_size + sizeof (ULONG);
     ULONG *end_tag = (ULONG *) (buffer->tags + tags_size);
-    ULONG gpu_buffer_address = (GPU_MEM_BASE + (ULONG) buffer)>>4;
+    ULONG gpu_buffer_address = raspi_dma_bus(buffer)>>4;
 
     buffer->size = buffer_size;
     buffer->status = CODE_REQUEST;

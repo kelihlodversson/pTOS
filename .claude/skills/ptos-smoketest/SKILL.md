@@ -872,3 +872,19 @@ but with `-machine pc` this normally is not needed.
 | x86-64 UEFI boot log repeats the same `pTOS x86-64: ...` lines | A triple fault (bad page table, ABI/stack bug) makes OVMF silently reset and retry — `grep -c 'EFI entry reached' <log>` must be 1, not more |
 | Expecting a desktop from `pc-x86_64_defconfig` | The defconfig deliberately sets `CONF_WITH_AES=n`; enable **AES -> Include the AES and the EmuDesk desktop** in `make menuconfig`, rebuild, and use a graphical QEMU display |
 | Expecting OVMF firmware messages on `-serial` before pTOS's own output | The Debian/Ubuntu `ovmf` package is a release build with no serial debug log; an empty serial log up to the point pTOS's own lines start is normal, not a hang |
+
+## Amiga: Amiberry (the WinUAE core), headless
+
+For the Amiga ROM (`amiga_defconfig`, which needs Thorsten Otto's toolchain) on
+a 68030, 68040 or 68060 with an emulated MMU, use the pinned Amiberry build of
+`doc/debugging.txt` through `tools/run-amiberry.py`:
+
+```sh
+tools/run-amiberry.py --rom ptos-amiga.rom --cpu 68040 --wait 12 \
+    --cmd GET_CPU_REGS --cmd "READ_MEM 0x400 4" --screenshot desktop.png
+```
+
+It runs with SDL's dummy video driver (no display needed) and answers over
+Amiberry's IPC socket: registers, memory, breakpoints, screenshots. The
+emulator's MMU setting is not proof that pTOS enabled paging: read the
+registers or tables from the guest.

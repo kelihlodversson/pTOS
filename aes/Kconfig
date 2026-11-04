@@ -32,7 +32,7 @@ config CONF_WITH_LIBAES
 
 config CONF_WITH_AES
 	bool "Include kernel AES and its EmuDesk integration"
-	depends on !CONF_WITH_USER_ASPACE && !CONF_WITH_CUIS
+	depends on !CONF_WITH_USER_ASPACE && !CONF_WITH_PROCESS_ASPACES && !CONF_WITH_CUIS
 	default n if TARGET_CART || ARCH_X86_64
 	default y
 	help

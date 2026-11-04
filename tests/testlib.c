@@ -10,15 +10,76 @@
 #include "test.h"
 #include <mint/osbind.h>
 
+#ifdef TEST_LOG_FILE
+/*
+ * The console is the only way a program has to say anything, and under an
+ * emulator with no way to read it (the Amiga's, where the desktop shows what
+ * a program prints on a screen that nobody reads) the results are written to
+ * a file on the disk too, which the host reads from the image
+ * (tools/run-amiberry-tests.py).  The text is kept and written when a test
+ * ends and at the summary, so what has run is on the disk if a later test
+ * hangs: Fclose() is what puts a file's data on the disk.
+ */
+#define LOG_NAME        "RUNTESTS.LOG"
+#define LOG_SIZE        4096
+
+static char logbuf[LOG_SIZE];
+static int logn;
+static int log_started;
+
+static void log_flush(void)
+{
+    long fd;
+
+    if (!logn)
+        return;
+    if (!log_started) {
+        fd = Fcreate(LOG_NAME, 0);
+        log_started = 1;
+    } else {
+        fd = Fopen(LOG_NAME, 2);
+        if (fd >= 0)
+            Fseek(0L, (short)fd, 2);
+    }
+    if (fd >= 0) {
+        Fwrite((short)fd, (long)logn, logbuf);
+        Fclose((short)fd);
+    }
+    logn = 0;
+}
+
+static void log_char(int ch)
+{
+    if (logn >= LOG_SIZE)
+        log_flush();
+    logbuf[logn++] = (char)ch;
+}
+#else
+#define log_flush()
+#define log_char(ch)
+#endif
+
+void ptest_log_flush(void)
+{
+    log_flush();
+}
+
 /* Output a NUL-terminated string to the console */
 void conws(const char *s)
 {
+#ifdef TEST_LOG_FILE
+    const char *p;
+
+    for (p = s; *p; p++)
+        log_char(*p);
+#endif
     Cconws(s);
 }
 
 /* Output a single character to the console */
 static void conout(int ch)
 {
+    log_char(ch);
     Cconout(ch);
 }
 
@@ -100,6 +161,7 @@ void ptest_pass(void)
             conws("\r\n");
         }
     }
+    log_flush();
 }
 
 void ptest_fail(const char *msg)
@@ -123,5 +185,6 @@ int ptest_summary(void)
     conws(" failed, ");
     print_num(total_tests);
     conws(" total ---\r\n");
+    log_flush();
     return failed_tests;
 }

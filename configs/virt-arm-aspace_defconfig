@@ -1,0 +1,14 @@
+# virt-arm-cli_defconfig with a process address space of its own for every
+# process (CONF_WITH_PROCESS_ASPACES, #568): EmuCON and the programs it runs
+# are in user mode, each in its own page tables, the kernel half of the address
+# space is supervisor-only, and a fault in a process ends that process only.
+MACHINE_VIRT_ARM=y
+CPUFLAGS="-march=armv7-a -mtune=cortex-a7 -marm -mfpu=neon-vfpv4 -mfloat-abi=hard"
+CONF_WITH_IDE=n
+CONF_WITH_LINEA=n
+CONF_WITH_XHDI=n
+CONF_WITH_AES=n
+CONF_WITH_PLUGGABLE_FS=y
+CONF_WITH_PROCESS_ASPACES=y
+CONF_WITH_MMAP=y
+CONF_WITH_ELF_SHARED=y
