@@ -1,0 +1,48 @@
+Pclone ABI implementation notes (work in progress)
+=================================================
+
+Scope
+-----
+The combined scheduling and process-model epic (#713, #889) needs one clone
+path shared by public Pclone and the kernel's Pexec/Pfork/Pvfork paths.  The
+public entry must not pass a caller-owned argument structure to that path.
+This document records constraints on the first ABI slice (#890); it does not
+assign an opcode, define a public structure, or advertise a working call.
+
+Current boundaries
+------------------
+* x32 applications use 32-bit pointers while the x86-64 kernel is LP64.
+  ARM and m68k users also use 32-bit pointers, but their trap argument layouts
+  differ.  The public structure's pointer fields must use the caller's native
+  representation; the kernel must decode that representation explicitly.
+* bdos/mintproc.c reads native call arguments from long-sized slots but m68k
+  arguments from the packed trap frame.  This is distinct from decoding the
+  structure addressed by one of those arguments.  A 32-bit pointer field on
+  x32 must be zero-extended, including when bit 31 is set.
+* bdos/uaccess.c checks syscall buffers and bdos/kproc.c provides user-range
+  validation and copies.  Checks and copies must apply to the calling address
+  space, with overflow-safe range and alignment checks.  Copy the structure
+  once to kernel storage before interpreting its fields; user storage is not
+  a durable snapshot when multiple threads can share an address space.
+* The current scheduler already has task records and per-task scheduler stacks
+  in bdos/arch/x86_64/native_sched.c.  KPROC separately owns its address space,
+  process resources and syscall stack.  The new design must define ownership
+  and cleanup for both stacks before a thread can share a process or VM.
+  Process completion, CUIS child notifications, orphaning and wait state
+  cannot be emitted merely because one thread exits.
+
+ABI decisions still needed
+--------------------------
+Specify the structure size and extension rules, scalar flag combinations,
+entry/stack/TLS contracts, optional outputs, return values and errors together
+with the lifecycle model.  Check opcode assignments against FreeMiNT and pTOS
+before publishing a number: FreeMiNT reserves 0x17c and 0x184-0x18f, assigns
+Maccess 0x17d, and reserves 0x17e/0x17f for mmap/munmap; pTOS already uses
+0x17c for Mprot.  A reserved slot is not an existing Pclone assignment.
+
+Validation must cover x32, ARM and m68k structure layouts, high-bit 32-bit
+pointers, short/oversized input, invalid flags and ranges, unwritable outputs,
+overflow, alignment, and failure without child or output side effects.  The
+unsupported backend must fail explicitly until a trusted proc_clone exists.
+Non-MMU behavior and races with address-space changes need explicit treatment;
+range checking alone is not a lifetime guarantee.
