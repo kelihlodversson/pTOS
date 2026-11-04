@@ -105,7 +105,8 @@ static void hand_over(PD *p)
         kproc_hand_over(run, p);
 }
 
-/* PE_GO: a program PE_LOAD put in the caller's heap goes back there at the end */
+/* Preserve the legacy give-back path for kernel/ROM compatibility. User
+ * address-space callers cannot request PE_GO until shared-VM mode 4 exists. */
 static void give_back_image(PD *p, BOOL give_back)
 {
     kproc_set_give_back(p, give_back);
@@ -585,6 +586,12 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
+#if CONF_WITH_USER_ASPACE
+        /* Ring-3 mode 4 will return as shared-VM Pexec in #894. Refuse it
+         * before touching the staged image or changing any ownership. */
+        if (flag == PE_GO && caller_has_aspace())
+            return EINVFN;
+#endif
         p = (PD *) tail;
 #if CONF_WITH_USER_ASPACE
         if (flag == PE_GO && (rc = check_launch(p)) != E_OK)

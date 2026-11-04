@@ -50,6 +50,11 @@ int main(void)
 
     owner = kaspace_adopt(&backend);
     assert(owner && (retained = kaspace_share(owner)) == owner);
+    kaspace_heap(owner)->blocks = kalloc(sizeof(*kaspace_heap(owner)->blocks));
+    assert(kaspace_heap(owner)->blocks);
+    kaspace_heap(owner)->blocks[0].va = 0x4000;
+    kaspace_heap(owner)->blocks[0].pages = 1;
+    kaspace_heap(owner)->count = kaspace_heap(owner)->capacity = 1;
     anonymous = kalloc(sizeof(*anonymous)); file = kalloc(sizeof(*file));
     assert(anonymous && file);
     anonymous->address = 0x1000; anonymous->length = USER_PAGE_SIZE;
@@ -62,10 +67,13 @@ int main(void)
     kaspace_mmap(owner)->bytes = 2 * USER_PAGE_SIZE;
     kaspace_put(owner);
     assert(!backend.destroyed && kaspace_mmap_protection(retained, 0x1000, &prot));
+    assert(kaspace_heap_contains(retained, 0x4000));
+    assert(kaspace_heap_demand_page(retained, 0x4000, ASPACE_PROT_EXEC) == 0 && !pages);
+    assert(kaspace_heap_demand_page(retained, 0x4000, 0) == 1 && pages == 1);
     assert(prot == (ASPACE_PROT_USER | ASPACE_PROT_WRITE));
-    assert(kaspace_mmap_demand_page(retained, 0x1000, ASPACE_PROT_EXEC) == 0 && !pages);
-    assert(kaspace_mmap_demand_page(retained, 0x1000, 0) == 1 && pages == 1);
-    assert(kaspace_mmap_demand_page(retained, 0x1000, 0) == 0 && pages == 1);
+    assert(kaspace_mmap_demand_page(retained, 0x1000, ASPACE_PROT_EXEC) == 0 && pages == 1);
+    assert(kaspace_mmap_demand_page(retained, 0x1000, 0) == 1 && pages == 2);
+    assert(kaspace_mmap_demand_page(retained, 0x1000, 0) == 0 && pages == 2);
     assert(kaspace_mmap_demand_page(retained, 0x2000, ASPACE_PROT_WRITE) == 0 && !file_pages);
     assert(kaspace_mmap_demand_page(retained, 0x2000, 0) == 1 && file_pages == 1);
     file->prot |= ASPACE_PROT_WRITE;

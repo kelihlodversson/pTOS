@@ -8,6 +8,7 @@
 struct kaspace {
     ASPACE *backend;
     ULONG refs;
+    KASPACE_HEAP heap;
 #if CONF_WITH_MMAP
     KASPACE_MMAP mmap;
     struct kaspace *next;
@@ -34,6 +35,8 @@ KASPACE *kaspace_adopt(ASPACE *backend)
     if (!space) return NULL;
     space->backend = backend;
     space->refs = 1;
+    space->heap.blocks = NULL;
+    space->heap.count = space->heap.capacity = 0;
 #if CONF_WITH_MMAP
     space->mmap.regions = NULL;
     space->mmap.bytes = 0;
@@ -53,6 +56,38 @@ KASPACE *kaspace_share(KASPACE *space)
 ASPACE *kaspace_backend(const KASPACE *space)
 {
     return space ? space->backend : NULL;
+}
+
+KASPACE_HEAP *kaspace_heap(KASPACE *space)
+{
+    return space ? &space->heap : NULL;
+}
+
+BOOL kaspace_heap_contains(KASPACE *space, UQUAD address)
+{
+    ULONG i;
+    if (!space) return FALSE;
+    for (i = 0; i < space->heap.count; i++) {
+        const KASPACE_HEAP_BLOCK *b = &space->heap.blocks[i];
+        if (address >= b->va && address < (UQUAD)b->va + (UQUAD)b->pages * USER_PAGE_SIZE)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+int kaspace_heap_demand_page(KASPACE *space, UQUAD address, UWORD access)
+{
+#if CONF_WITH_DEMAND_PAGING
+    VADDR va;
+    if (!kaspace_heap_contains(space, address)) return -1;
+    if (access & ~(ASPACE_PROT_USER | ASPACE_PROT_WRITE)) return 0;
+    va = (VADDR)address;
+    if (aspace_translate(space->backend, va, NULL, NULL)) return 0;
+    return aspace_fault_in(space->backend, va, ASPACE_PROT_USER | ASPACE_PROT_WRITE) ? 1 : 2;
+#else
+    UNUSED(space); UNUSED(address); UNUSED(access);
+    return -1;
+#endif
 }
 
 #if CONF_WITH_MMAP
@@ -142,6 +177,7 @@ void kaspace_put(KASPACE *space)
     }
 #endif
     aspace_destroy(space->backend);
+    kfree(space->heap.blocks);
 #if CONF_WITH_MMAP
     while (space->mmap.regions) {
         MMAP_REGION *region = space->mmap.regions;

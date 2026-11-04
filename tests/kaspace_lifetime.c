@@ -19,6 +19,12 @@ void *kalloc(ULONG size)
 }
 void kfree(void *p) { if (p) { frees++; free(p); } }
 void aspace_destroy(ASPACE *as) { assert(as && as->marker == 42); destroys++; }
+#if CONF_WITH_DEMAND_PAGING
+BOOL aspace_translate(const ASPACE *as, VADDR va, PADDR *physical, UWORD *protection)
+{ (void)as; (void)va; (void)physical; (void)protection; return FALSE; }
+BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD protection)
+{ (void)as; (void)va; (void)protection; return TRUE; }
+#endif
 
 int main(void)
 {

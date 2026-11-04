@@ -3,8 +3,23 @@
 #define KASPACE_H
 
 #include "portab.h"
+#include <aspace_types.h>
 struct aspace;
 typedef struct kaspace KASPACE;
+/* Ordinary Malloc reservations only. Loader image staging and loans remain
+ * separately owned by KPROC and never put borrowed PDs in this table. */
+typedef struct {
+    VADDR va;
+    ULONG pages;
+} KASPACE_HEAP_BLOCK;
+typedef struct {
+    KASPACE_HEAP_BLOCK *blocks;
+    ULONG count, capacity;
+} KASPACE_HEAP;
+KASPACE_HEAP *kaspace_heap(KASPACE *space);
+BOOL kaspace_heap_contains(KASPACE *space, UQUAD address);
+/* -1: not reserved; otherwise the usual demand-fault result. */
+int kaspace_heap_demand_page(KASPACE *space, UQUAD address, UWORD access);
 #if CONF_WITH_MMAP
 #include "fileback.h"
 typedef struct mmap_region {

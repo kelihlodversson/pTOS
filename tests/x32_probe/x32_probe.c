@@ -23,12 +23,8 @@
  *      (already running) basepage a second time with PE_GO and PE_GOTHENFREE,
  *      and to use the kernel-internal Pexec mode 50: all must be refused;
  *      exits with 0 if they were
- *   g  basepages (#416): Pexec(PE_BASEPAGE) hands this process a basepage it
- *      can read and write; machine code placed in it runs with PE_GO and
- *      exits with 0x42; a launch of a copy of it, of a basepage with a field
- *      pointing elsewhere, of one already launched or freed, and of this
- *      process's own is refused; PE_BASEPAGEFLAGS works; exits with a bit
- *      mask of what was wrong (0 = all well)
+ *   g  basepages (#416): mode 4 is rejected without consuming the basepage;
+ *      mode 6 validates it and runs its code, then consumes its allocations.
  *   n  run another program from inside this one, twice: Pexec(PE_LOADGO) of
  *      C:\X32HELLO.TOS, which must exit with 0, after which this process
  *      must still be able to make system calls; exits with 0 if so, 0x100 if
@@ -478,10 +474,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             ((volatile u32 *)(unsigned long)child)[2] = 0;
             ((volatile unsigned char *)(unsigned long)child)[0x80] = 0;
             *(volatile char *)(unsigned long)child_env = '|';
-            if (sys4(GEMDOS, 0x4b, 4, 0, child, 0) != 37)
+            if (sys4(GEMDOS, 0x4b, 6, 0, child, 0) != 37)
                 pterm(3);
-            if (gemdos(0x49, child, 0) || gemdos(0x49, child_env, 0))
-                pterm(4);
         }
         child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
                      (s64)(unsigned long)args, (s64)(unsigned long)env);
@@ -620,7 +614,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             rc = sys4(GEMDOS, 0x4b, 3, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0);
             if (rc <= 0)
                 pterm(0x110 + i);
-            if (sys4(GEMDOS, 0x4b, 4, 0, rc, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+            if (sys4(GEMDOS, 0x4b, 6, 0, rc, 0) != 0)
                 pterm(0x120 + i);
 #else
             if (rc != -66)             /* EPLFMT: optional import unavailable */
@@ -696,7 +690,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(BIOS, 5, 0x102, 0x500000, 0) != EACCDN)
             bad |= 1;                   /* Setexc(etv_term, user address) */
         /* this very (running) basepage a second time, and mode 50 */
-        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EIMBA ||
+        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
             sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EIMBA ||
             sys4(GEMDOS, 0x4b, 50, 0, 0, 0) != EINVFN)
             bad |= 32;
@@ -765,125 +759,52 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'g': {
-        /* movabs rax, (GEMDOS << 32) | Pterm; mov edi, 0x42; xor esi,esi;
-         * xor edx,edx; xor r10,r10; syscall; jmp . */
+        /* Mode 4 is rejected before inspecting a basepage; mode 6 retains
+         * the normal validation and consuming execution semantics. */
         static const unsigned char code[] = {
             0x48, 0xb8, 0x4c, 0, 0, 0, 1, 0, 0, 0,
             0xbf, 0x42, 0, 0, 0, 0x31, 0xf6, 0x31, 0xd2,
             0x4d, 0x31, 0xd2, 0x0f, 0x05, 0xeb, 0xfe
         };
-        static volatile u32 forged[64];     /* a basepage-sized copy */
+        static volatile u32 forged[64];
         const s64 none = (s64)(int)(unsigned long)"";
-        volatile u32 *bp, *bp2;
-        s64 rc, bp_addr, bp2_addr, env;
+        volatile u32 *bp;
+        s64 bp_addr, bp2_addr, env;
         u32 hitpa;
         unsigned i;
 
         bp_addr = sys4(GEMDOS, 0x4b, 5, 0, none, 0);
-        if (bp_addr <= 0 || bp_addr > 0x7fffffffLL)
-            pterm(1);
+        if (bp_addr <= 0 || bp_addr > 0x7fffffffLL) pterm(1);
         bp = (volatile u32 *)(unsigned long)bp_addr;
-        if (bp[0] != (u32)bp_addr)
-            bad |= 2;                       /* p_lowtpa */
-        bp[1] = bp[0] + 0x7f1;              /* (unaligned) grow the TPA within its block */
-        for (i = 0; i < sizeof(code); i++)
-            ((volatile unsigned char *)bp)[0x100 + i] = code[i];
-        bp[2] = (u32)bp_addr + 0x100;       /* p_tbase */
-        env = bp[11];                       /* p_env */
-        hitpa = bp[1];                      /* p_hitpa */
-
-        /* a copy of it is a forgery, a bad p_env or p_hitpa is not a launch */
-        for (i = 0; i < 64; i++)
-            forged[i] = bp[i];
-        if (sys4(GEMDOS, 0x4b, 4, none, (s64)(int)(unsigned long)forged, 0) != EIMBA)
+        bp[1] = bp[0] + 0x7f1;
+        for (i = 0; i < sizeof(code); i++) ((volatile unsigned char *)bp)[0x100+i] = code[i];
+        bp[2] = (u32)bp_addr + 0x100;
+        env = bp[11]; hitpa = bp[1];
+        for (i = 0; i < 64; i++) forged[i] = bp[i];
+        if (sys4(GEMDOS, 0x4b, 4, none, (s64)(int)(unsigned long)forged, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 104, 0, bp_addr, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 6, none, (s64)(int)(unsigned long)forged, 0) != EIMBA)
             bad |= 8;
         bp[11] = 0x1000;
-        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != -66)
-            bad |= 16;                      /* EPLFMT */
+        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != -66) bad |= 16;
         bp[11] = (u32)env;
         bp[1] = 0xfffff000u;
-        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != -66)
-            bad |= 16;
+        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != -66) bad |= 16;
         bp[1] = hitpa;
-        /* p_tbase out of the TPA */
         bp[2] = 0x1000;
-        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != -66)
-            bad |= 16;
+        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != -66) bad |= 16;
         bp[2] = (u32)bp_addr + 0x100;
-
-        /* the real launch: the child exits with 0x42 */
-        rc = sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0);
-        if (rc != 0x42)
+        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != EINVFN || bp[0] != (u32)bp_addr)
             bad |= 32;
-        /* once launched it is not launchable again, freed or not */
-        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != EIMBA)
-            bad |= 64;
-        rc = gemdos(0x49, bp_addr, 0);
-        if (rc != 0)
-            bad |= 128;
-        if (gemdos(0x49, env, 0) != 0)
-            bad |= 1024;
-        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != EIMBA)
-            bad |= 64;
-
-        /* PE_GOTHENFREE: runs the code, frees its own blocks, and is gone */
-        bp_addr = sys4(GEMDOS, 0x4b, 5, 0, none, 0);
-        if (bp_addr <= 0) {
-            bad |= 2048;
-        } else {
-            bp = (volatile u32 *)(unsigned long)bp_addr;
-            bp[1] = bp[0] + 0x7f1;
-            for (i = 0; i < sizeof(code); i++)
-                ((volatile unsigned char *)bp)[0x100 + i] = code[i];
-            bp[2] = (u32)bp_addr + 0x100;
-            env = bp[11];
-            if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != 0x42)
-                bad |= 2048;
-            if (gemdos(0x49, bp_addr, 0) == 0 || gemdos(0x49, env, 0) == 0)
-                bad |= 4096;                /* already given back */
-            if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != EIMBA)
-                bad |= 64;
-        }
-
-        /* PE_GO of a child that stays resident (Ptermres): the basepage and
-         * environment remain this process's, readable and freeable */
-        {
-            static const unsigned char rescode[] = {
-                0x48, 0xb8, 0x31, 0, 0, 0, 1, 0, 0, 0,      /* Ptermres */
-                0xbf, 0, 1, 0, 0, 0x31, 0xf6, 0x31, 0xd2,
-                0x4d, 0x31, 0xd2, 0x0f, 0x05, 0xeb, 0xfe
-            };
-
-            bp_addr = sys4(GEMDOS, 0x4b, 5, 0, none, 0);
-            if (bp_addr <= 0) {
-                bad |= 8192;
-            } else {
-                bp = (volatile u32 *)(unsigned long)bp_addr;
-                bp[1] = bp[0] + 0x7f1;
-                for (i = 0; i < sizeof(rescode); i++)
-                    ((volatile unsigned char *)bp)[0x100 + i] = rescode[i];
-                bp[2] = (u32)bp_addr + 0x100;
-                env = bp[11];
-                if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != 0)
-                    bad |= 8192;
-                if (bp[0] != (u32)bp_addr)
-                    bad |= 8192;            /* still readable */
-                if (gemdos(0x49, bp_addr, 0) != 0 || gemdos(0x49, env, 0) != 0)
-                    bad |= 16384;
-            }
-        }
-
-        /* PE_BASEPAGEFLAGS, and a launch of somebody else's block */
+        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != 0x42) bad |= 64;
+        if (gemdos(0x49, bp_addr, 0) == 0 || gemdos(0x49, env, 0) == 0) bad |= 128;
         bp2_addr = sys4(GEMDOS, 0x4b, 7, 0, none, 0);
-        if (bp2_addr <= 0)
+        if (bp2_addr <= 0) {
             bad |= 256;
-        else {
-            bp2 = (volatile u32 *)(unsigned long)bp2_addr;
-            env = bp2[11];
-            if (sys4(GEMDOS, 0x4b, 6, none, env, 0) != EIMBA)
-                bad |= 512;                 /* the env block is no basepage */
-            if (gemdos(0x49, bp2_addr, 0) != 0 || gemdos(0x49, env, 0) != 0)
-                bad |= 128;
+        } else {
+            env = ((volatile u32 *)(unsigned long)bp2_addr)[11];
+            if (sys4(GEMDOS, 0x4b, 6, none, env, 0) != EIMBA) bad |= 512;
+            if (gemdos(0x49, bp2_addr, 0) || gemdos(0x49, env, 0)) bad |= 1024;
         }
         pterm(bad);
         break;
@@ -1363,7 +1284,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             }
         }
         /* a launch of a basepage needs one: null is refused up front */
-        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != EIMBA) bad |= 512;
+        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != EINVFN) bad |= 512;
         if (sys4(GEMDOS, 0x4b, 6, 0, 0, 0) != EIMBA) bad |= 512;
         /* no environment given: the caller's own is inherited through its
          * basepage's p_env, which it can have rewritten */
@@ -1513,73 +1434,42 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     }
-    case 'G': {
-        /* PE_LOAD, patch, then PE_GO (not PE_GOTHENFREE): when the program has
-         * ended its pages are this process's again, with what it left in them,
-         * and are Malloc() memory to free */
+    case 'G': case 'H': {
+        /* A rejected mode-4 launch leaves a mode-3 image and basepage
+         * untouched. Exercise both discard and a later consuming launch. */
         static const char patch_tail[] = { 1, 'P', 0 };
-        s64 bpa, rc;
+        s64 bpa, env, rc, ordinary, gap = 0;
         volatile u32 *bpp, *w;
         u32 first, last;
-
+        if (tail[0] == 'H') {
+            gap = gemdos(0x48, 0x10000, 0);
+            if (gap <= 0) pterm(64);
+        }
         bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)patch_tail, 0);
+        if (bpa == -33) { if (gap) gemdos(0x49, gap, 0); pterm(0x100); }
+        if (bpa <= 0) { if (gap) gemdos(0x49, gap, 0); pterm(0x200 | (int)(-bpa & 0xff)); }
         bpp = (volatile u32 *)(unsigned long)bpa;
-        if (bpa == -33)
-            pterm(0x100);
-        if (bpa <= 0)
-            pterm(0x200 | (int)(-bpa & 0xff));
+        env = bpp[11];
         first = (bpp[4] - bpp[3]) & ~3u;
         last = bpp[6] + bpp[7];
+        ordinary = gemdos(0x48, 4096, 0);
+        if (ordinary <= 0 || ((u32)ordinary < last && (u32)ordinary + 4096 > first))
+            bad |= 256;
+        if (ordinary > 0 && gemdos(0x49, ordinary, 0) != 0) bad |= 256;
         for (w = (volatile u32 *)(unsigned long)first; (unsigned long)w < last; w++)
-            if (*w == 0x11111111u) {
-                *w = 0x22222222u;
-                break;
-            }
-        if ((unsigned long)w >= last)
-            pterm(32);
+            if (*w == 0x11111111u) { *w = 0x22222222u; break; }
+        if ((unsigned long)w >= last) bad |= 32;
+        if (gap && gemdos(0x49, gap, 0) != 0) bad |= 128;
         rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", bpa, 0);
-        if (rc != 0)
-            bad |= 4;                       /* the program's own exit code */
-        if (*w != 0x22222222u)
-            bad |= 2;                       /* readable again, as it was left */
-        if (gemdos(0x49, first & ~0xfffu, 0) != 0)
-            bad |= 8;                       /* a block of ours now */
-        if (gemdos(0x49, first & ~0xfffu, 0) == 0)
-            bad |= 16;                      /* and only once */
-        pterm(bad);
-        break;
-    }
-    case 'H': {
-        /* the same with the child leaving a block of its own below the image */
-        static const char patch_tail[] = { 1, 'm', 0 };
-        s64 bpa, rc, gap;
-        volatile u32 *bpp, *w;
-        u32 first;
-
-        /* a gap below the program: the heap's first block is freed again */
-        gap = gemdos(0x48, 0x10000, 0);
-        if (gap <= 0)
-            pterm(64);
-        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)patch_tail, 0);
-        bpp = (volatile u32 *)(unsigned long)bpa;
-        if (bpa == -33)
-            pterm(0x100);
-        if (bpa <= 0)
-            pterm(0x200 | (int)(-bpa & 0xff));
-        first = (bpp[4] - bpp[3]) & ~3u;
-        w = (volatile u32 *)(unsigned long)first;
-        if (gemdos(0x49, gap, 0) != 0)
-            bad |= 128;
-        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", bpa, 0);
-        if (rc != 0)
-            bad |= 4;                       /* the program's own exit code */
-        (void)*w;                           /* readable again */
-        if (gemdos(0x49, first & ~0xfffu, 0) != 0)
-            bad |= 8;                       /* a block of ours now, though the child put its own below it */
-        if (gemdos(0x49, first & ~0xfffu, 0) == 0)
-            bad |= 16;                      /* and only once */
+        if (rc != EINVFN || bpp[0] != (u32)bpa || (unsigned long)w >= last ||
+            *w != 0x22222222u) bad |= 4;
+        if (tail[0] == 'H') {
+            if (sys4(GEMDOS, 0x4b, 6, 0, bpa, 0) != 0) bad |= 8;
+        } else {
+            if (gemdos(0x49, bpa, 0) != 0 || gemdos(0x49, env, 0) != 0) bad |= 8;
+            if (gemdos(0x49, first & ~0xfffu, 0) == 0) bad |= 16;
+        }
         pterm(bad);
         break;
     }

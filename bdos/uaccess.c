@@ -284,9 +284,10 @@ static long env_ok(long v)
 /*
  * Pexec(mode, path, tail, env): which arguments are pointers depends on the
  * mode.  Modes 0 and 3 load a file (path is a string); 5 and 7 only create a
- * basepage (the path slot holds flags); 4 and 6 launch a basepage the caller
+ * basepage (the path slot holds flags); 6 launches a basepage the caller
  * made, which is looked up in the kernel's own records and never dereferenced
- * here.  The tail is copied from the user and must end (with its NUL) within
+ * here. Mode 4 is temporarily unavailable to user-address-space callers.
+ * The tail is copied from the user and must end (with its NUL) within
  * PDCLSIZE bytes, as the kernel adds a terminator of its own after the copy;
  * the environment, if given, is a list of strings ending with a double NUL.
  */
@@ -295,6 +296,12 @@ static long pexec_ok(const long *pw)
     WORD mode = (WORD)pw[1];
     long rc;
 
+#if CONF_WITH_USER_ASPACE
+    /* Reject before validating or touching the staged image. Kernel/ROM
+     * callers without a user address space retain the classic mode. */
+    if (mode == PE_GO && kproc_user_aspace(run))
+        return EINVFN;
+#endif
     if (mode == 4 || mode == 6
 #if CONF_WITH_NATIVE_SCHED
         || mode == PE_ASYNC_GO_FREE

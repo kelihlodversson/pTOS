@@ -4,11 +4,11 @@ Existing process ownership baseline (#891)
 KPROC is allocated by kproc_create() and indexed by the public PD/basepage.
 It owns the trusted PID, parent, descriptor and directory state. The PD is
 user-writable and is not trusted for those relationships. kproc_destroy()
-unlinks the record before destroying its active and pending address spaces,
-heap metadata and remaining syscall stack; it also invokes CUIS, VDI and
-callback cleanup when configured. The active and pending ASPACE pointers are
-borrowed from reference-counted KASPACE owners. PE_GO's page loan and give-back
-are separate from address-space sharing.
+unlinks the record before releasing its active and pending KASPACE references,
+loader metadata and remaining syscall stack; it also invokes CUIS, VDI and
+callback cleanup when configured. KASPACE destroys its backend and ordinary
+heap metadata on final release. Its active and pending ASPACE pointers are
+borrowed. PE_GO's legacy give-back is separate from address-space sharing.
 
 kproc_prepare_user() adopts a pending loader ASPACE or allocates one, then
 allocates the process syscall stack. Its failure path destroys the adopted or
@@ -60,11 +60,12 @@ Other architecture runtime tests remain to be added.
 
 Metadata classification before actual sharing:
 
-* Mmap reservations, permissions, backing references and mapped-byte totals
-  belong to KASPACE and survive until its final reference is released. Heap
-  reservations and the rest of lazy fault metadata still reside in KPROC;
-  fault, heap and copy validation must all use consistently retained metadata
-  before distinct processes can share a space.
+* Mmap reservations, permissions, backing references, mapped-byte totals and
+  ordinary Malloc heap reservations belong to KASPACE and survive until its
+  final reference. Loader staging remains in KPROC; one gap search considers
+  both ledgers so their reservations cannot overlap. Stack and loader fault
+  metadata still need independent lifetime ownership before distinct processes
+  can share a space.
 * Stack reservation/growth state follows the particular stack mapping in that
   address space, while the live stack pointer and execution context belong to
   an individual thread. Multiple stacks must not reuse one process-wide limit.
@@ -96,16 +97,14 @@ state, and PD/basepage and image-loan cleanup have separate lifetimes. A live
 resource owner must preserve these dependencies while allowing an identity-only
 observer to outlive them; the existing identity reference alone cannot do so.
 
-The heap ledger also mixes ordinary Malloc reservations with UH_LOADED,
-UH_IMAGE and UH_LENT loader-image entries. The loaded/lent entries carry a
-borrowed child PD and are searched by release_loaded() and give_image_back();
-the child records a borrowed loader PD in turn. A retained address space can
-outlive either PD, so moving the ledger wholesale would leave stale loan
-identities and would not preserve give-back. Image preparation also allocates
-the child's ledger before publishing its active KASPACE. Safe migration needs
-independently retained loan identities, an explicit staging-to-ASPACE transfer
-and rollback, and a policy for a loader that has already exited. Until then,
-the existing ledger stays process-owned and is not shared.
+The loader ledger retains UH_LOADED, UH_IMAGE and the legacy UH_LENT entries,
+including borrowed PD identities, separately from the ordinary KASPACE heap.
+Ring-3 PE_GO is rejected before image validation or ownership changes, so it
+cannot create a new give-back loan; PE_LOAD staging and consuming mode 6/106
+remain supported. The historical give-back branch stays for existing kernel
+compatibility paths, not as a shared-VM contract. Kernel/ROM callers without a
+user address space retain mode 4. Shared-VM modes 4/104 belong to #894 and
+must create a separate PROCESS, not a same-process thread.
 
 On a non-CUIS address-space build, an unwrapped disk-error longjmp from xclose
 could previously leave this sequence midway: earlier handles might already be
@@ -179,8 +178,8 @@ its KPROC through the current PD before dispatching; a future THREAD must
 supply its own retained KASPACE rather than relying on another process's PD. The
 shutdown registry is non-owning and tracks all live KASPACE objects, so shutdown
 can release file mappings even when no KPROC remains; anonymous reservations
-stay intact. Heap reservations, loader-image loans, thread stack growth and
-PROCESS execution resources remain outside that retained mmap view.
+stay intact. Ordinary heap reservations also have a retained KASPACE view;
+loader staging, thread stack growth and PROCESS execution resources do not.
 
 Process-memory cleanup marks still-pinned blocks for deferred reclamation in
 their allocation records and discards the former owner address. The last unpin
@@ -209,8 +208,8 @@ needed by remaining threads. A thread releases its references only after it
 cannot resume and the scheduler has switched away from its execution stack.
 The last live-resource owner may then release process resources and its ASPACE
 reference; identity remains until observers/reap references are gone. Mapping
-metadata and image-loan ownership must move or otherwise be retained before
-that sequence can be implemented safely.
+metadata and staged-image ownership must be resolved before that sequence can
+be implemented safely. Ring-3 mode 4 no longer requires durable give-back loans.
 
 Generation-based traversal assumes the 64-bit allocation generation counter
 does not wrap during a boot. The existing allocators do not detect wraparound;

@@ -1175,6 +1175,7 @@ static void test_kproc_pending_ownership(void)
     KASPACE *retained;
     KASPACE *second;
     LONG saved_value;
+    VADDR heap_va;
 
     snap(&s);
     pd = new_basepage();
@@ -1184,6 +1185,8 @@ static void test_kproc_pending_ownership(void)
     set_owner(env, pd);
     pd->p_dreg[0] = 0x12345678L;
     CHECK(kproc_prepare_user(pd, run), "prepare active space for independent owner");
+    heap_va = kproc_uheap_alloc(pd, PAGE);
+    CHECK(heap_va, "allocate ordinary heap in active space");
 #if CONF_WITH_MMAP
     CHECK(kproc_mmap(pd, 0, PAGE, PROT_READ | PROT_WRITE,
           MAP_PRIVATE | MAP_ANONYMOUS, 0, 0) == PTOS_MMAP_BASE,
@@ -1199,6 +1202,18 @@ static void test_kproc_pending_ownership(void)
     CHECK(retained && aspace_copy_from_user(kaspace_backend(retained), &saved_value,
           (VADDR)(uintptr_t)pd + offsetof(PD, p_dreg), sizeof(saved_value)) &&
           saved_value == 0x12345678L, "retained mapping preserves process data");
+    CHECK(retained && kaspace_heap_contains(retained, heap_va),
+          "ordinary heap reservation survives KPROC destruction");
+#if CONF_WITH_DEMAND_PAGING
+    saved_value = -1;
+    CHECK(retained && kaspace_heap_demand_page(retained, heap_va, ASPACE_PROT_EXEC) == 0 &&
+          !aspace_translate(kaspace_backend(retained), heap_va, NULL, NULL),
+          "retained ordinary heap rejects execution before first touch");
+    CHECK(retained && kaspace_heap_demand_page(retained, heap_va, 0) == 1 &&
+          aspace_copy_from_user(kaspace_backend(retained), &saved_value,
+                                heap_va, sizeof(saved_value)) && !saved_value,
+          "retained ordinary heap faults a zero page after process destruction");
+#endif
 #if CONF_WITH_MMAP
     CHECK(retained && kaspace_mmap(retained)->bytes == PAGE &&
           kaspace_mmap(retained)->regions &&
@@ -3029,17 +3044,17 @@ static void test_ring3(void)
         same(&s, "a program loaded into the caller");
     }
 
-    /* PE_LOAD then PE_GO: the program's pages come back when it ends (#434) */
+    /* PE_LOAD then rejected PE_GO: the staged image remains reclaimable. */
     {
         snap(&s);
         rc = run_probe('G');
         if (rc == 0x100) {
-            kcprintf("x86-64 pexec go gives back: SKIP (no C:\\X32HELLO.TOS)\n");
+            kcprintf("x86-64 pexec go rejected: SKIP (no C:\\X32HELLO.TOS)\n");
         } else {
-            CHECK(rc == 0, "PE_GO gives the program's pages back to the caller when it ends");
-            kcprintf(rc == 0 ? "x86-64 pexec go gives back: PASS\n" : "x86-64 pexec go gives back: FAIL (0x%lx)\n", rc);
+            CHECK(rc == 0, "PE_GO rejects without altering the staged program");
+            kcprintf(rc == 0 ? "x86-64 pexec go rejected: PASS\n" : "x86-64 pexec go rejected: FAIL (0x%lx)\n", rc);
         }
-        same(&s, "PE_LOAD and PE_GO from ring 3");
+        same(&s, "PE_LOAD and rejected PE_GO from ring 3");
     }
 
     /* a program bigger than the image window, loaded by PE_LOAD (#434) */
@@ -3067,15 +3082,15 @@ static void test_ring3(void)
         same(&s, "a failed load");
     }
 
-    /* the same with the child leaving a block below its image */
+    /* A heap gap and rejected PE_GO followed by consuming mode 6. */
     {
         snap(&s);
         rc = run_probe('H');
         if (rc != 0x100) {
-            CHECK(rc == 0, "PE_GO gives the image back although the child put a block below it");
-            kcprintf(rc == 0 ? "x86-64 pexec go gives back with a gap: PASS\n" : "x86-64 pexec go gives back with a gap: FAIL (0x%lx)\n", rc);
+            CHECK(rc == 0, "PE_GO rejection preserves a staged image for mode 6");
+            kcprintf(rc == 0 ? "x86-64 pexec go rejected with a gap: PASS\n" : "x86-64 pexec go rejected with a gap: FAIL (0x%lx)\n", rc);
         }
-        same(&s, "PE_LOAD and PE_GO with a gap");
+        same(&s, "rejected PE_GO and PE_GOTHENFREE with a gap");
     }
 
     /* PE_LOAD, PE_GO(THENFREE) and mode 0 with a physical allocation failing at every

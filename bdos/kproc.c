@@ -112,10 +112,10 @@ struct kproc {
     ULONG load_pages;           /* and how many pages (startup area included) */
     BOOL give_back;             /* PE_GO: the image goes back to its loader when this ends */
     PD *lender;                 /* ... the process whose heap it came from, once moved */
-    struct uheap_block {        /* Malloc() memory: private pages at USER_HEAP_*, */
+    struct uheap_block {        /* loader staging and legacy returned-image blocks */
         VADDR va;               /* sorted by address */
         ULONG pages;
-        UBYTE kind;             /* UH_MALLOC, or a program image, which Mfree() leaves alone */
+        UBYTE kind;             /* UH_MALLOC here is only legacy PE_GO give-back */
         PD *pd;                 /* UH_LOADED: the process it is loaded for */
     } *heap;
     ULONG nheap, heap_capacity;
@@ -1488,6 +1488,11 @@ static VADDR heap_malloc_bytes(const KPROC *kproc)
 {
     VADDR bytes = 0;
     ULONG i;
+    KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+
+    if (heap)
+        for (i = 0; i < heap->count; i++)
+            bytes += (VADDR)heap->blocks[i].pages * USER_PAGE_SIZE;
 
     for (i = 0; i < kproc->nheap; i++)
         if (kproc->heap[i].kind == UH_MALLOC)
@@ -1882,16 +1887,41 @@ static BOOL heap_room(KPROC *kproc)
     return TRUE;
 }
 
-/* First gap of at least `bytes` (0: the largest one): its address and the
- * index at which a block there goes in the sorted table. */
+static BOOL ordinary_heap_room(KPROC *kproc)
+{
+    KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+    KASPACE_HEAP_BLOCK *grown;
+    ULONG cap;
+
+    if (!heap) return FALSE;
+    if (heap->count < heap->capacity) return TRUE;
+    cap = heap->capacity ? heap->capacity * 2 : 16;
+    grown = kalloc(cap * sizeof(*grown));
+    if (!grown) return FALSE;
+    if (heap->blocks) {
+        memcpy(grown, heap->blocks, heap->count * sizeof(*grown));
+        kfree(heap->blocks);
+    }
+    heap->blocks = grown;
+    heap->capacity = cap;
+    return TRUE;
+}
+
+/* Merge ordinary and loader reservations into one address-order search.
+ * For a new staged image, index is its insertion point in the loader table. */
 static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *largest)
 {
     VADDR at = USER_HEAP_BASE, found = 0;
-    ULONG i;
+    ULONG i = 0, j = 0;
+    KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
 
     *largest = 0;
-    for (i = 0; i <= kproc->nheap; i++) {
-        VADDR end = i < kproc->nheap ? kproc->heap[i].va : heap_limit(kproc);
+    for (;;) {
+        BOOL staged = i < kproc->nheap &&
+            (!heap || j >= heap->count || kproc->heap[i].va < heap->blocks[j].va);
+        BOOL ordinary = heap && j < heap->count && !staged;
+        VADDR end = staged ? kproc->heap[i].va :
+                    ordinary ? heap->blocks[j].va : heap_limit(kproc);
 
         if (end - at > *largest)
             *largest = end - at;
@@ -1899,8 +1929,12 @@ static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *larg
             found = at;
             *index = i;
         }
-        if (i < kproc->nheap)
-            at = end + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE;
+        if (staged)
+            at = end + (VADDR)kproc->heap[i++].pages * USER_PAGE_SIZE;
+        else if (ordinary)
+            at = end + (VADDR)heap->blocks[j++].pages * USER_PAGE_SIZE;
+        else
+            break;
     }
     return found;
 }
@@ -1916,7 +1950,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
     size = ((VADDR)bytes + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
     if (kind == UH_MALLOC && size > alloc_room(kproc))
         return 0;                       /* over a Psetlimit() limit */
-    if (!heap_room(kproc))
+    if (!(kind == UH_MALLOC ? ordinary_heap_room(kproc) : heap_room(kproc)))
         return 0;
     va = heap_gap(kproc, size, &index, &largest);
     /* (Malloc() memory is lazy with CONF_WITH_DEMAND_PAGING; a program image
@@ -1927,6 +1961,16 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
     if (!va || (eager && !aspace_map_private(kproc->aspace, va, size,
                                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER)))
         return 0;
+    if (kind == UH_MALLOC) {
+        KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+        for (index = 0; index < heap->count && heap->blocks[index].va < va; index++) ;
+        memmove(&heap->blocks[index + 1], &heap->blocks[index],
+                (heap->count - index) * sizeof(heap->blocks[0]));
+        heap->blocks[index].va = va;
+        heap->blocks[index].pages = (ULONG)(size / USER_PAGE_SIZE);
+        heap->count++;
+        return va;
+    }
     memmove(&kproc->heap[index + 1], &kproc->heap[index],
             (kproc->nheap - index) * sizeof(kproc->heap[0]));
     kproc->heap[index].va = va;
@@ -1955,6 +1999,8 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
         return TRUE;
 #endif
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP)
+        return TRUE;
+    if (kaspace_heap_contains(kproc->active_space, va))
         return TRUE;
     for (i = 0; i < kproc->nheap; i++)
         if (va >= kproc->heap[i].va &&
@@ -2005,6 +2051,10 @@ int kproc_demand_page(PD *pd, VADDR va, UWORD access)
         if (rc >= 0) return rc;
     }
 #endif
+    {
+        int rc = kaspace_heap_demand_page(kproc->active_space, va, access);
+        if (rc >= 0) return rc;
+    }
     if (!lazy_area(kproc, va, &prot) ||
         !(prot & ASPACE_PROT_USER) || (access & ~prot))
         return 0;
@@ -2153,6 +2203,14 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
 
             highest = b->va + (VADDR)b->pages * USER_PAGE_SIZE;
         }
+        {
+            KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+            if (heap && heap->count) {
+                const KASPACE_HEAP_BLOCK *b = &heap->blocks[heap->count - 1];
+                VADDR end = b->va + (VADDR)b->pages * USER_PAGE_SIZE;
+                if (end > highest) highest = end;
+            }
+        }
         if (USER_STACK_TOP - size - USER_PAGE_SIZE < highest)
             return ENSMEM;
         if (kproc->stack_low && USER_STACK_TOP - size > kproc->stack_low)
@@ -2252,7 +2310,7 @@ ULONG kproc_uheap_largest(PD *pd)
      * is not counted as the block's: the answer is then what that Malloc()
      * gets. */
     if (!CONF_WITH_DEMAND_PAGING) {
-        if (!heap_room(kproc))
+        if (!ordinary_heap_room(kproc))
             return 0;
         if (largest > aspace_mappable_bytes())
             largest = aspace_mappable_bytes();
@@ -2267,6 +2325,16 @@ static struct uheap_block *heap_find(KPROC *kproc, VADDR va)
     for (i = 0; i < kproc->nheap; i++)
         if (kproc->heap[i].va == va)
             return &kproc->heap[i];
+    return NULL;
+}
+
+static KASPACE_HEAP_BLOCK *ordinary_heap_find(KPROC *kproc, VADDR va)
+{
+    KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+    ULONG i;
+    if (!heap) return NULL;
+    for (i = 0; i < heap->count; i++)
+        if (heap->blocks[i].va == va) return &heap->blocks[i];
     return NULL;
 }
 
@@ -2287,8 +2355,9 @@ BOOL kproc_callback_mfree_allowed(PD *pd, UQUAD address)
     KPROC *kproc = kproc_find(pd);
     struct uheap_block *b;
 
-    return kproc && kproc->aspace && (b = heap_find(kproc, address)) != NULL &&
-        b->kind == UH_MALLOC;
+    return kproc && kproc->aspace &&
+        (ordinary_heap_find(kproc, address) ||
+         ((b = heap_find(kproc, address)) != NULL && b->kind == UH_MALLOC));
 }
 
 BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size)
@@ -2333,13 +2402,27 @@ LONG kproc_uheap_free(PD *pd, VADDR va)
 {
     KPROC *kproc = kproc_find(pd);
     struct uheap_block *b;
+    KASPACE_HEAP_BLOCK *ordinary;
+    KASPACE_HEAP *heap;
 
-    if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)) || b->kind != UH_MALLOC)
+    if (!kproc || !kproc->aspace)
         return EIMBA;
+    ordinary = ordinary_heap_find(kproc, va);
+    b = ordinary ? NULL : heap_find(kproc, va);
+    if (!ordinary && (!b || b->kind != UH_MALLOC)) return EIMBA;
 #if CONF_WITH_USER_CALLBACKS
-    if (user_callback_pinned(pd, va, (UQUAD)b->pages * USER_PAGE_SIZE))
+    if (user_callback_pinned(pd, va, (UQUAD)(ordinary ? ordinary->pages : b->pages) * USER_PAGE_SIZE))
         return EACCDN;
 #endif
+    if (ordinary) {
+        heap = kaspace_heap(kproc->active_space);
+        if (!release_pages(kproc->aspace, va, (VADDR)ordinary->pages * USER_PAGE_SIZE))
+            return ERR;
+        memmove(ordinary, ordinary + 1,
+                (heap->count - 1 - (ULONG)(ordinary - heap->blocks)) * sizeof(*ordinary));
+        heap->count--;
+        return E_OK;
+    }
     return heap_release(kproc, b);
 }
 
@@ -2349,28 +2432,35 @@ LONG kproc_uheap_shrink(PD *pd, VADDR va, long len)
 {
     KPROC *kproc = kproc_find(pd);
     struct uheap_block *b;
+    KASPACE_HEAP_BLOCK *ordinary;
+    ULONG pages;
     VADDR keep;
 
-    if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)) || b->kind != UH_MALLOC)
+    if (!kproc || !kproc->aspace)
         return EIMBA;
+    ordinary = ordinary_heap_find(kproc, va);
+    b = ordinary ? NULL : heap_find(kproc, va);
+    if (!ordinary && (!b || b->kind != UH_MALLOC)) return EIMBA;
+    pages = ordinary ? ordinary->pages : b->pages;
     if (len < 0)
         return ERANGE;
     if (len == 0)
         return kproc_uheap_free(pd, va);
     keep = ((VADDR)len + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
-    if (keep > b->pages)
+    if (keep > pages)
         return EGSBF;
-    if (keep == b->pages)
+    if (keep == pages)
         return E_OK;
 #if CONF_WITH_USER_CALLBACKS
     if (user_callback_pinned(pd, va + keep * USER_PAGE_SIZE,
-                            (VADDR)(b->pages - keep) * USER_PAGE_SIZE))
+                            (VADDR)(pages - keep) * USER_PAGE_SIZE))
         return EACCDN;
 #endif
     if (!release_pages(kproc->aspace, va + keep * USER_PAGE_SIZE,
-                                     (VADDR)(b->pages - keep) * USER_PAGE_SIZE))
+                                     (VADDR)(pages - keep) * USER_PAGE_SIZE))
         return ERR;
-    b->pages = (ULONG)keep;
+    if (ordinary) ordinary->pages = (ULONG)keep;
+    else b->pages = (ULONG)keep;
     return E_OK;
 }
 

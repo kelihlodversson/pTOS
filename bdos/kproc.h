@@ -163,19 +163,18 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
  * being made and records it with the child, so that destroying the child, a
  * failed load included, gives it back (0: none), the loader reads the file into it, in place, and
  * kproc_set_moved_image() makes it the child's image, laid out as `layout`.
- * Nothing is mapped for the child yet: PE_GO moves the block's pages, at the
+ * Nothing is mapped for the child yet: PE_GOTHENFREE moves the block's pages, at the
  * same addresses, from the caller's address space to the child's, with each
  * segment's permissions.  The caller cannot free the block (Mfree() leaves it
  * alone); freeing the child's basepage unlaunched gives it back, and so does
- * kproc_load_release().  With PE_GOTHENFREE the pages stay with the child;
- * with PE_GO (kproc_set_give_back()) they only are lent, and move back to the
- * caller as Malloc() memory when the child ends.
+ * kproc_load_release().  With PE_GOTHENFREE the pages stay with the child.
+ * Ring-3 PE_GO is currently rejected. The legacy give-back path remains for
+ * compatible internal callers.
  */
 VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
 void kproc_load_release(PD *caller, VADDR va);
 BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages);
-/* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
- * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
+/* Legacy PE_GO give-back: call before kproc_prepare_user(). */
 void kproc_set_give_back(PD *pd, BOOL give_back);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
