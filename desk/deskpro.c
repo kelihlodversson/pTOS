@@ -30,6 +30,10 @@
 #include "aesbind.h"
 #include "desksupp.h"
 #include "deskpro.h"
+#if CONF_WITH_LIBAES_DESK
+#include "gemdos.h"
+#include "gem_shelw.h"
+#endif
 #if CONF_WITH_LIBAES_DESK && CONF_WITH_X32_DESKTOP_TEST
 void desk_test_record(const char *message);
 #endif
@@ -38,13 +42,34 @@ void desk_test_record(const char *message);
 static WORD pro_exec(WORD isgraf, WORD isover, char *pcmd, char *ptail)
 {
     WORD ret;
+#if CONF_WITH_LIBAES_DESK
+    char directory[MAXPATHLEN];
+    WORD drive;
+    SHELW request = { 0 };
+#endif
 
     desk_busy_on();
 
 #if CONF_WITH_LIBAES_DESK
-    /* AES4 launches return a child ID; the desktop keeps its event loop. */
+    /* do_aopen() has selected the drive and directory according to the
+     * application preferences; pass it explicitly to the child. */
     (void)isover;
-    ret = shel_write(0, isgraf, 0, pcmd, ptail);
+    drive = dos_gdrv();
+    ret = 0;
+    if (drive >= 0 && drive < 26) {
+        directory[0] = 'A' + drive;
+        directory[1] = ':';
+        if (dos_gdir(0, directory+2) == 0) {
+            if (!directory[2]) {
+                directory[2] = '\\';
+                directory[3] = '\0';
+            }
+            request.newcmd = pcmd;
+            request.defdir = directory;
+            ret = shel_write(SHW_EXEC|SW_DEFDIR, !!isgraf, SHW_IMMED,
+                             (char *)&request, ptail);
+        }
+    }
     desk_busy_off();
 #if CONF_WITH_X32_DESKTOP_TEST
     {

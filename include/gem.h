@@ -460,7 +460,7 @@ short mt_shel_read(char *command, char *tail, short *global);
  * Only SW_DEFDIR and SW_ENVIRON are currently accepted launch flags. */
 #define SW_PSETLIMIT 0x0100
 #define SW_PRENICE   0x0200
-#define SW_DEFDIR  0x0400
+#include "gem_shelw.h"
 #define SW_ENVIRON 0x0800
 #define SW_UID     0x1000
 #define SW_GID     0x2000
@@ -471,12 +471,6 @@ short mt_shel_read(char *command, char *tail, short *global);
 #define ENVIRON_SIZE 0
 #define ENVIRON_CHANGE 1
 #define ENVIRON_COPY 2
-typedef struct {
-    char *newcmd;
-    long psetlimit, prenice;
-    char *defdir, *env;
-    short uid, gid;
-} SHELW;
 short shel_write(short mode, short graphical, short execution, const void *command, const char *tail);
 short mt_shel_write(short mode, short graphical, short execution, const void *command, const char *tail, short *global);
 short shel_find(char *path);
