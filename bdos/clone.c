@@ -28,10 +28,12 @@ long xclone(uint64_t address, uint64_t size)
     CLONE_ARGS args;
     enum clone_copy_result copied;
     enum clone_validate_result valid;
+    static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
+        CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
     copied = clone_copy_v1(&args, address, size, clone_copy, NULL);
     if (copied == CLONE_COPY_BAD_SIZE) return EINVAL;
     if (copied != CLONE_COPY_OK) return EIMBA;
-    valid = clone_validate_v1(&args, clone_access, NULL);
+    valid = clone_validate_v1(&args, &abi, clone_access, NULL);
     if (valid == CLONE_INVALID) return EINVAL;
     if (valid != CLONE_VALID) return EIMBA;
 #else

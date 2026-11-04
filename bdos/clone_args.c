@@ -31,7 +31,7 @@ enum clone_copy_result clone_copy_v1(CLONE_ARGS *out, uint64_t address,
 }
 
 enum clone_validate_result clone_validate_v1(const CLONE_ARGS *args,
-    int (*access)(void *, uintptr_t, uint32_t, int), void *context)
+    const CLONE_ABI *abi, int (*access)(void *, uintptr_t, uint32_t, int), void *context)
 {
     uintptr_t entry = (uintptr_t)args->entry;
     uintptr_t stack = (uintptr_t)args->stack_base;
@@ -39,16 +39,17 @@ enum clone_validate_result clone_validate_v1(const CLONE_ARGS *args,
     uintptr_t tid = (uintptr_t)args->child_tid;
 
     /* No flag combinations are exposed by the unsupported backend. */
-    if (args->flags || !args->stack_size) return CLONE_INVALID;
+    if (args->flags || tls || args->stack_size < abi->minimum_stack) return CLONE_INVALID;
     if (!entry || !stack || stack > UINT32_MAX ||
         (uint64_t)stack + args->stack_size > UINT64_C(0x100000000) ||
         entry > UINT32_MAX || tls > UINT32_MAX || tid > UINT32_MAX)
         return CLONE_BAD_MEMORY;
     if ((tid && (tid & (__alignof__(int32_t) - 1))) ||
-        (stack & (__alignof__(uint32_t) - 1))) return CLONE_INVALID;
+        (stack & (abi->stack_alignment - 1)) ||
+        (args->stack_size & (abi->stack_alignment - 1)) ||
+        (entry & (abi->entry_alignment - 1))) return CLONE_INVALID;
     if (!access(context, entry, 1, CLONE_ACCESS_EXEC) ||
         !access(context, stack, args->stack_size, CLONE_ACCESS_WRITE) ||
-        (tls && !access(context, tls, 1, CLONE_ACCESS_WRITE)) ||
         (tid && !access(context, tid, sizeof(int32_t), CLONE_ACCESS_WRITE)))
         return CLONE_BAD_MEMORY;
     return CLONE_VALID;

@@ -62,13 +62,43 @@ accepts a larger size. New fields that request behavior unavailable to older
 kernels must be accompanied by a flag that older kernels reject; silently
 ignoring an unknown tail must not silently grant different clone semantics.
 
-No flags are accepted until the lifecycle model defines their combinations.
-The initial validation checks a readable executable entry, a nonempty writable
-stack, optional writable TLS and TID locations, and basic word alignment. The
-opaque entry argument is not dereferenced. Architecture-specific initial-stack,
-TLS and entry alignment, resource lifetime and revalidation at the point of
-use must be completed with the backend; a successful check alone does not pin
-the memory or authorize its later use.
+Field contract
+--------------
+flags is reserved and must be zero. tls is reserved and must be NULL: target
+thread-pointer initialization and runtime TLS layout belong to #892. Nonzero
+values fail closed with EINVAL rather than promising a TLS convention.
+
+entry is the mandatory user function called with the opaque argument value.
+argument is optional and is not dereferenced by the kernel. Entry must be
+executable and aligned to 1 byte on x32, 4 on ARM (ARM instruction mode), and
+2 on m68k. Returning from entry will require a termination trampoline in
+#892/#893; no entry executes in this phase.
+
+stack_base is the lowest byte of a caller-allocated writable stack region;
+stack_size is its length, not an initial SP. Both base and length must be
+multiples of 16 on x32, 8 on ARM and 2 on m68k. The minimum length is 256 on
+x32 (including space for ABI startup and red zone), and 16 on ARM/m68k. The
+backend will derive the initial SP from the exclusive upper end and install
+the architecture-specific entry/return frame; it must not exceed this region.
+
+child_tid is an optional native-aligned writable int32_t output. A future
+successful creation returns a nonnegative TID, distinct from a PID, and writes
+that TID to this output only at its successful commit point. This phase never
+writes it. Failure must leave the output unchanged. The caller owns the buffer;
+the future backend must pin or otherwise secure its lifetime until commit and
+must not retain it after the initial write. Join and exit notification are
+separate contracts in #893; child_tid is not an exit-status or clear-on-exit
+location. The same future backend must secure stack and entry mapping lifetime
+before exposing a runnable child. A validation result does not pin mappings.
+
+Errors and limits
+-----------------
+EINVAL reports a short or non-32-bit size, nonzero flags/TLS, insufficient stack
+length, or invalid alignment. EIMBA reports invalid/wrapping structure addresses,
+copy failure, non-executable entry, or inaccessible/non-writable referenced
+memory. A well-formed request returns EINVFN until #891-#893 provide the backend.
+Without user address spaces this phase returns EINVFN without dereferencing
+arguments; validated non-MMU creation remains a backend dependency.
 
 Validation covers x32, ARM and m68k structure layouts, high-bit 32-bit
 pointers, short/oversized input, invalid flags and ranges, unwritable outputs,
@@ -80,7 +110,7 @@ range checking alone is not a lifetime guarantee.
 GEMDOS opcode
 -------------
 Reserve 0x190 for pTOS Pclone (include/pclone.h).  It is a pTOS extension,
-not a FreeMiNT assignment.  No Pclone implementation is exposed yet.
+not a FreeMiNT assignment. Creation is unavailable in this phase.
 
 The following sources were checked on 2026-11-04:
 

@@ -17,7 +17,7 @@ struct ptos_clone_args {
     void *argument;
     void *stack_base;
     uint32_t stack_size;
-    void *tls;
+    void *tls;                 /* reserved: must be NULL until startup ABI is defined */
     int32_t *child_tid;
 };
 

@@ -67,25 +67,26 @@ int main(void)
     {
         CLONE_ARGS a = { 0 };
         int calls = 0;
+        const CLONE_ABI abi = { 16, 256, 1 };
         a.entry = (void (*)(void *))(uintptr_t)0x1000;
         a.stack_base = (void *)(uintptr_t)0x2000;
         a.stack_size = 256;
-        a.tls = (void *)(uintptr_t)0x3000;
+        a.tls = 0;
         a.child_tid = (int32_t *)(uintptr_t)0x4000;
         a.argument = (void *)(uintptr_t)0xffffffffU; /* opaque, not dereferenced */
-        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_VALID && calls == 4);
+        assert(clone_validate_v1(&a, &abi, access_user, &calls) == CLONE_VALID && calls == 3);
         a.flags = 1; calls = 0;
-        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        assert(clone_validate_v1(&a, &abi, access_user, &calls) == CLONE_INVALID && !calls);
         a.flags = 0; a.stack_size = 0;
-        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        assert(clone_validate_v1(&a, &abi, access_user, &calls) == CLONE_INVALID && !calls);
         a.stack_size = 256; a.stack_base = (void *)(uintptr_t)0xfffffffcU;
-        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_BAD_MEMORY && !calls);
+        assert(clone_validate_v1(&a, &abi, access_user, &calls) == CLONE_BAD_MEMORY && !calls);
         a.stack_base = (void *)(uintptr_t)0x2001;
-        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        assert(clone_validate_v1(&a, &abi, access_user, &calls) == CLONE_INVALID && !calls);
         a.stack_base = (void *)(uintptr_t)0x2000; a.child_tid = (int32_t *)(uintptr_t)0x4001;
-        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        assert(clone_validate_v1(&a, &abi, access_user, &calls) == CLONE_INVALID && !calls);
         a.child_tid = (int32_t *)(uintptr_t)0x4000; a.entry = (void (*)(void *))(uintptr_t)0x5000;
-        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_BAD_MEMORY && calls == 1);
+        assert(clone_validate_v1(&a, &abi, access_user, &calls) == CLONE_BAD_MEMORY && calls == 1);
     }
     return 0;
 }

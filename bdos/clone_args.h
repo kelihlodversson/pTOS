@@ -43,8 +43,11 @@ enum clone_copy_result clone_copy_v1(CLONE_ARGS *out, uint64_t address,
 enum clone_validate_result {
     CLONE_VALID, CLONE_INVALID, CLONE_BAD_MEMORY
 };
+typedef struct {
+    uint32_t stack_alignment, minimum_stack, entry_alignment;
+} CLONE_ABI;
 enum clone_validate_result clone_validate_v1(const CLONE_ARGS *args,
-    int (*access)(void *, uintptr_t, uint32_t, int), void *context);
+    const CLONE_ABI *abi, int (*access)(void *, uintptr_t, uint32_t, int), void *context);
 
 enum { CLONE_ACCESS_WRITE = 1, CLONE_ACCESS_EXEC = 2 };
 
