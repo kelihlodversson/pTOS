@@ -2603,7 +2603,7 @@ static void test_ring3(void)
     }
 
 #if CONF_WITH_PCLONE
-    probe_expect('^', 0, "unavailable Pclone rejects a ring-3 call without reading its arguments");
+    probe_expect('^', 0, "Pclone validates ring-3 arguments before rejecting the unavailable backend");
 #endif
     /* a Pexec() that runs out of loan slots half way gives back what it took */
     probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");

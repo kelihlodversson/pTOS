@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 struct ptos_clone_args {
-    uint32_t flags;
+    uint32_t flags;             /* reserved: must be zero in this initial slice */
     void (*entry)(void *);
     void *argument;
     void *stack_base;

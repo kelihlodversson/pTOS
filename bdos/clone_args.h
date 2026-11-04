@@ -38,4 +38,14 @@ enum clone_copy_result clone_copy_v1(CLONE_ARGS *out, uint64_t address,
                                     int (*copy)(void *, uint64_t, void *, uint32_t),
                                     void *context);
 
+/* Validate the addresses the initial entry contract actually uses. Argument
+ * is opaque and is passed to the entry point, not dereferenced by the kernel. */
+enum clone_validate_result {
+    CLONE_VALID, CLONE_INVALID, CLONE_BAD_MEMORY
+};
+enum clone_validate_result clone_validate_v1(const CLONE_ARGS *args,
+    int (*access)(void *, uintptr_t, uint32_t, int), void *context);
+
+enum { CLONE_ACCESS_WRITE = 1, CLONE_ACCESS_EXEC = 2 };
+
 #endif

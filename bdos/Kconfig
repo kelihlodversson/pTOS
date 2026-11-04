@@ -10,13 +10,14 @@
 menu "GEMDOS (BDOS)"
 
 config CONF_WITH_PCLONE
-    bool "Experimental Pclone syscall dispatch"
+    bool "Experimental Pclone argument validation"
     depends on CONF_WITH_KPROC
     default n
     help
-      Route the reserved Pclone GEMDOS call through its architecture ABI
-      dispatcher. The clone backend is not implemented yet: every request
-      returns EINVFN without reading the caller's argument structure.
+      Route Pclone through its architecture ABI dispatcher and validate its
+      initial arguments on address-space kernels. A valid request returns
+      EINVFN because the clone backend is not implemented yet. On kernels
+      without user address spaces, all requests currently return EINVFN.
 
 config CONF_WITH_NATIVE_SCHED
     bool

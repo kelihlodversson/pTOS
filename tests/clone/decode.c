@@ -14,6 +14,17 @@ static int copy_from_user(void *context, uint64_t address, void *dst, uint32_t s
     return 1;
 }
 
+static int access_user(void *context, uintptr_t address, uint32_t size, int kind)
+{
+    int *calls = context;
+    (*calls)++;
+    if (kind == CLONE_ACCESS_EXEC) return address == 0x1000 && size == 1;
+    if (kind != CLONE_ACCESS_WRITE) return 0;
+    return (address == 0x2000 && size == 256) ||
+           (address == 0x3000 && size == 1) ||
+           (address == 0x4000 && size == 4);
+}
+
 int main(void)
 {
     CLONE_USER_V1 wire = { 0x1234, 0x80000001U, 0xffffffffU,
@@ -52,6 +63,29 @@ int main(void)
         f.address = UINT64_C(0xffffffe4);
         assert(clone_copy_v1(&decoded, f.address, 28, copy_from_user, &f) == CLONE_COPY_OK);
         assert(f.calls == 4);
+    }
+    {
+        CLONE_ARGS a = { 0 };
+        int calls = 0;
+        a.entry = (void (*)(void *))(uintptr_t)0x1000;
+        a.stack_base = (void *)(uintptr_t)0x2000;
+        a.stack_size = 256;
+        a.tls = (void *)(uintptr_t)0x3000;
+        a.child_tid = (int32_t *)(uintptr_t)0x4000;
+        a.argument = (void *)(uintptr_t)0xffffffffU; /* opaque, not dereferenced */
+        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_VALID && calls == 4);
+        a.flags = 1; calls = 0;
+        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        a.flags = 0; a.stack_size = 0;
+        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        a.stack_size = 256; a.stack_base = (void *)(uintptr_t)0xfffffffcU;
+        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_BAD_MEMORY && !calls);
+        a.stack_base = (void *)(uintptr_t)0x2001;
+        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        a.stack_base = (void *)(uintptr_t)0x2000; a.child_tid = (int32_t *)(uintptr_t)0x4001;
+        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_INVALID && !calls);
+        a.child_tid = (int32_t *)(uintptr_t)0x4000; a.entry = (void (*)(void *))(uintptr_t)0x5000;
+        assert(clone_validate_v1(&a, access_user, &calls) == CLONE_BAD_MEMORY && calls == 1);
     }
     return 0;
 }

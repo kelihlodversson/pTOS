@@ -244,6 +244,10 @@ BOOL kproc_validate_user_dta(VADDR address);
 /* valid user memory of the current process: mapped, user-accessible and (for
  * _write) writable in its own address space */
 BOOL kproc_validate_user_range(VADDR address, ULONG size);
+#if CONF_WITH_PCLONE
+/* Validate that a user entry point is mapped and executable. */
+BOOL kproc_validate_user_exec(VADDR address);
+#endif
 /* the same question for Maccess()/Mvalidate(): the process's own access, with
  * no page backed for the answer */
 BOOL kproc_user_access(PD *pd, VADDR address, ULONG size, BOOL write);
