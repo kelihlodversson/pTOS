@@ -81,6 +81,18 @@ make distclean >/dev/null 2>&1
 # request (.github/pr-skip-configs), so the warning check of those jobs is
 # made here.
 make "${config}_defconfig" 2>&1 | tee build.log
+case "$machine" in
+    virt-arm-aspace|virt-m68k-aspace)
+        CONFIG_= python3 - <<'PY'
+import kconfiglib
+config = kconfiglib.Kconfig()
+config.load_config()
+config.syms['CONF_WITH_PCLONE'].set_value(2)
+assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'
+config.write_config()
+PY
+        ;;
+esac
 if [ "$traditional_fat" = true ]; then
     sed -i 's/^CONF_WITH_FAT_FILE_LIFETIMES=y$/# CONF_WITH_FAT_FILE_LIFETIMES is not set/' .config
 fi

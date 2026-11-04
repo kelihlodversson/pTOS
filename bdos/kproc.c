@@ -2520,6 +2520,21 @@ BOOL kproc_validate_user_range(VADDR address, ULONG size)
     return validate_user(address, size, FALSE);
 }
 
+#if CONF_WITH_PCLONE
+BOOL kproc_validate_user_exec(VADDR address)
+{
+    KPROC *kproc = kproc_find(run);
+    PADDR phys;
+    UWORD prot;
+
+    if (!kproc || !kproc->aspace || address >= USER_VA_LIMIT) return FALSE;
+    if (!aspace_translate(kproc->aspace, address, &phys, &prot) &&
+        !lazy_area(kproc, address & ~(USER_PAGE_SIZE - 1), &prot)) return FALSE;
+    return (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) ==
+           (ASPACE_PROT_USER | ASPACE_PROT_EXEC);
+}
+#endif
+
 BOOL kproc_validate_user_write(VADDR address, ULONG size)
 {
     return validate_user(address, size, TRUE);

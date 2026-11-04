@@ -77,6 +77,7 @@
  */
 
 #include "../../include/mman.h"
+#include "../../include/pclone.h"
 #include "config.h"
 
 typedef unsigned long long u64;
@@ -337,6 +338,34 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+#if CONF_WITH_PCLONE
+    case '^': {
+        static char child_stack[256] __attribute__((aligned(16)));
+        static int32_t child_tid;
+        struct ptos_clone_args args = { 0 };
+        args.entry = (void (*)(void *))x32_probe_main;
+        args.stack_base = child_stack;
+        args.stack_size = sizeof(child_stack);
+        args.child_tid = &child_tid;
+        bad |= (gemdos(GEMDOS_PCLONE, 1, sizeof(args)) != EIMBA) ? 1 : 0;
+        bad |= (gemdos(GEMDOS_PCLONE, (s64)(unsigned long)&args, 1) != EINVAL) ? 2 : 0;
+        bad |= (gemdos(GEMDOS_PCLONE, 0x100000000LL, sizeof(args)) != EIMBA) ? 4 : 0;
+        bad |= (gemdos(GEMDOS_PCLONE, (s64)(unsigned long)&args, sizeof(args)) != EINVFN) ? 8 : 0;
+        args.flags = 1;
+        bad |= (gemdos(GEMDOS_PCLONE, (s64)(unsigned long)&args, sizeof(args)) != EINVAL) ? 16 : 0;
+        args.flags = 0;
+        args.stack_base = (void *)1;
+        bad |= (gemdos(GEMDOS_PCLONE, (s64)(unsigned long)&args, sizeof(args)) != EINVAL) ? 32 : 0;
+        args.stack_base = child_stack;
+        args.entry = (void (*)(void *))child_stack;
+        bad |= (gemdos(GEMDOS_PCLONE, (s64)(unsigned long)&args, sizeof(args)) != EIMBA) ? 64 : 0;
+        args.entry = (void (*)(void *))x32_probe_main;
+        args.child_tid = (int32_t *)((unsigned long)x32_probe_main & ~3UL);
+        bad |= (gemdos(GEMDOS_PCLONE, (s64)(unsigned long)&args, sizeof(args)) != EIMBA) ? 128 : 0;
+        pterm(bad);
+        break;
+    }
+#endif
 #if CONF_WITH_LIBAES
     case ':': {
         static const char empty[] = { 0, 0 };
