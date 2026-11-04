@@ -25,6 +25,7 @@ on:
     paths:
       - tools/hatari-pin.sh
       - tools/build-hatari.sh
+      - tools/patches/hatari-68030-pmove-root.patch
       - .github/actions/setup-hatari/**
   # every configuration in every screen mode, which a pull request does not
   # run (see the matrix of the test job)

@@ -408,6 +408,7 @@ WORD menu_register(WORD pid, const char *pstr)
 /*
  *  Object Manager
  */
+#if !CONF_WITH_LIBAES || !CONF_WITH_DYNAMIC_DESK
 WORD objc_add(OBJECT *tree, WORD parent, WORD child)
 {
     OB_TREE = (intptr_t)tree;
@@ -415,6 +416,7 @@ WORD objc_add(OBJECT *tree, WORD parent, WORD child)
     OB_CHILD = child;
     return gem_if(AES_CTRL_CODE(OBJC_ADD, 2, 1, 1));
 }
+#endif
 
 
 /* unused
@@ -452,6 +454,7 @@ WORD objc_find(OBJECT *tree, WORD startob, WORD depth, WORD mx, WORD my)
 }
 
 
+#if !CONF_WITH_LIBAES || !CONF_WITH_DYNAMIC_DESK
 WORD objc_offset(OBJECT *tree, WORD obj, WORD *poffx, WORD *poffy)
 {
     OB_TREE = (intptr_t)tree;
@@ -461,8 +464,10 @@ WORD objc_offset(OBJECT *tree, WORD obj, WORD *poffx, WORD *poffy)
     *poffy = OB_YOFF;
     return (WORD)RET_CODE;
 }
+#endif
 
 
+#if !CONF_WITH_LIBAES || !CONF_WITH_DYNAMIC_DESK
 WORD objc_order(OBJECT *tree, WORD mov_obj, WORD newpos)
 {
     OB_TREE = (intptr_t)tree;
@@ -470,6 +475,7 @@ WORD objc_order(OBJECT *tree, WORD mov_obj, WORD newpos)
     OB_NEWPOS = newpos;
     return gem_if(AES_CTRL_CODE(OBJC_ORDER, 2, 1, 1));
 }
+#endif
 
 
 /* unused

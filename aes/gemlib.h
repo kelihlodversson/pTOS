@@ -45,28 +45,7 @@ typedef struct moblk
 
 /*      WINDLIB.H       05/05/84 - 01/26/85     Lee Lorenzen            */
 
-/* indexes of elements in AES window */
-#define W_BOX       0
-#define W_TITLE     1
-#define W_CLOSER    2
-#define W_NAME      3
-#define W_FULLER    4
-#define W_INFO      5
-#define W_DATA      6
-#define W_WORK      7
-#define W_SIZER     8
-#define W_VBAR      9
-#define W_UPARROW   10
-#define W_DNARROW   11
-#define W_VSLIDE    12
-#define W_VELEV     13
-#define W_HBAR      14
-#define W_LFARROW   15
-#define W_RTARROW   16
-#define W_HSLIDE    17
-#define W_HELEV     18
-
-#define NUM_ELEM    19
+#include "shared/gemframeids.h"
 
 /* values used in w_flags field of window structure */
 #define VF_INUSE    0x0001      /* the window has been created */
@@ -96,20 +75,7 @@ typedef struct window
     ORECT *w_rnext;             /* used for search first, search next */
 } WINDOW;
 
-#if ARCH_X86_64
-/* Each list starts with one rectangle and is cut by at most NUM_WIN-1
- * windows. Their edges divide each axis into at most 2*NUM_WIN-1 bands.
- * Disjoint pieces each contain a grid cell, so one list cannot exceed
- * the square of that bound. Include every handle: closed windows may
- * retain old lists. Rebuilding frees a window's previous list before
- * replacing it; lower lists are cut only by windows already rebuilt.
- * Four spare nodes cover mkpiece() allocating before returning its parent.
- * Reserve this bound up front, including transient splits and any stacking
- * order, so untrusted geometry cannot exhaust the fixed native allocator. */
-#define NUM_ORECT (NUM_WIN * (2 * NUM_WIN - 1) * (2 * NUM_WIN - 1) + 4)
-#else
 #define NUM_ORECT (NUM_WIN * 10)
-#endif
 
 #define WS_FULL 0
 #define WS_CURR 1

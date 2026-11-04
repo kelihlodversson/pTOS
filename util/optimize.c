@@ -23,7 +23,6 @@
 #include "optimize.h"
 
 #include "string.h"
-#include "xbiosbind.h"
 
 
 /*

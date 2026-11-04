@@ -21,7 +21,7 @@ ULONG virt_to_phys(const void *va)
     if (a < 0x8000UL)                   /* the low memory, where it is (the disk buffer) */
         return a;
 #else
-    if (a < 0x20000000UL)               /* the pool and the low memory */
+    if (a < ATARI_WINDOW_VBASE)          /* identity-mapped pool and low memory */
         return a;
 #endif
 

@@ -13,13 +13,7 @@
 /*
  * the structure used to pass data to menu_popup(), menu_attach()
  */
-typedef struct {
-        OBJECT  *mn_tree;       /* submenu tree */
-        WORD    mn_menu;        /* parent object of menu items (enclosing box) */
-        WORD    mn_item;        /* starting item number */
-        WORD    mn_scroll;      /* menu scroll flag */
-        WORD    mn_keystate;    /* current shiftkey state */
-} MENU;
+#include "gemmenu.h"
 
 /*
  * the structure used to pass data to menu_settings()

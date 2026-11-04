@@ -3,7 +3,7 @@
 # run on (#807), built from source.
 #
 # It is built only when the cache is missing or stale: the key is the hash of
-# the pin file and of the build script, so a bump of either rebuilds it and
+# the pin file, build script and patch, so a change to any rebuilds it and
 # nothing else does (the build takes a few minutes; restoring it, seconds).
 # What is cached is the installed prefix, not the build tree.  The job that
 # runs this needs the repository checked out first (hashFiles, and the
@@ -37,7 +37,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/hatari
-        key: hatari-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('tools/hatari-pin.sh', 'tools/build-hatari.sh') }}
+        key: hatari-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('tools/hatari-pin.sh', 'tools/build-hatari.sh', 'tools/patches/hatari-68030-pmove-root.patch') }}
 
     - name: Build Hatari
       if: steps.cache.outputs.cache-hit != 'true'

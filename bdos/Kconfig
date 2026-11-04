@@ -9,6 +9,16 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_NATIVE_SCHED
+    bool
+    depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    help
+      Kernel-owned cooperative native process scheduling and standard MiNT
+      asynchronous launch, yield and child waits. Selected by CUIS initially;
+      independent of GUI session and input services. No preemption or Pfork.
+      Other architecture backends follow their isolated address spaces.
+
+
 config CONF_LOGSEC_SIZE
 	int "Maximum logical sector size, in bytes"
 	default 512
@@ -75,8 +85,9 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  x32 programs. That entry executes in a read-only user client image
 	  mapped privately into each process, with narrow syscalls for hardware
 	  access. No LP64 kernel code or data address is bound into x32 code.
-	  CONF_WITH_X32_AES adds the typed aes: client exports. Other
-	  namespaces, including the retired gemdos imports, are refused.
+	  AES applications use the standard userspace libaes shared library.
+	  Other native namespaces, including retired aes: and gemdos imports,
+	  are refused.
 
 config CONF_WITH_USER_CALLBACKS
 	bool "Typed callbacks on x32 user stacks"

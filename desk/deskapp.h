@@ -169,6 +169,9 @@ void app_free(ANODE *pa);
 char *scan_str(char *pcurr, char **ppstr);
 void app_tran(WORD bi_num);
 void app_start(void);
+#if CONF_WITH_LIBAES_DESK
+void app_launch_autorun(void);
+#endif
 void app_save(WORD todisk);
 void app_blddesk(void);
 ANODE *app_afind_by_id(WORD obid);

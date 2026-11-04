@@ -11,6 +11,7 @@
 #define _AESDEFS_H
 
 #include "mform.h"
+#include "gem_lifecycle.h"
 
 /*
  * AES opcodes
@@ -228,6 +229,7 @@
 
 /* message ids: evnt_mesag(), evnt_multi() */
 #define MN_SELECTED 10
+#define CH_EXIT     90
 
 #define WM_REDRAW   20
 #define WM_TOPPED   21
@@ -612,6 +614,10 @@
 #define SHW_EXEC    1                       /* run another program after this */
 #define SHW_SHUTDOWN 4                      /* shutdown system */
 #define SHW_RESCHNG 5                       /* change resolution */
+
+/* 'isover' (execution): shel_write(SHW_EXEC, ...) */
+#define SHW_IMMED    0                      /* start and report child exit */
+#define SHW_PARALLEL 100                    /* AES4 independent child */
 
 
 /*

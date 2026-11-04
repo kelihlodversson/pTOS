@@ -74,7 +74,7 @@ obj/ldso/image_plan.o: lib/ldso/image_plan.c lib/ldso/image.h lib/ldso/dynamic.h
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_CFLAGS) -c $< -o $@
 
-obj/ldso/startup.o: lib/ldso/startup.c lib/ldso/startup.h lib/ldso/dynamic.h $(AUTOCONF_H)
+obj/ldso/startup.o: lib/ldso/startup.c lib/ldso/launch.h lib/ldso/startup.h lib/ldso/dynamic.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_CFLAGS) -c $< -o $@
 
@@ -99,9 +99,9 @@ obj/ldso/test/libleaf.so: tests/ldso_reloc/leaf.c
 obj/ldso/test/libtest.so: tests/ldso_reloc/library.c obj/ldso/test/libleaf.so
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,libtest.so $< -Lobj/ldso/test -lleaf -o $@
 
-obj/ldso/test/probe.so: tests/interp_probe/start.S tests/interp_probe/check.c
+obj/ldso/test/probe.so: tests/interp_probe/start.S tests/interp_probe/check.c lib/ldso/launch.h
 	@mkdir -p $(@D)
-	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -fvisibility=hidden -nostdlib -shared -Wl,--hash-style=sysv,-e,_start -o $@ $^
+	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -fvisibility=hidden -nostdlib -shared -Wl,--hash-style=sysv,-e,_start -o $@ $(filter %.c %.S,$^)
 
 obj/ldso/test/dyntest.elf: tests/interp_probe/program.S obj/ldso/test/libtest.so
 	$(LDSO_CC) $(LDSO_LDFLAGS) -mx32 -nostdlib -no-pie -Wl,--no-as-needed,--hash-style=sysv,-e,_start \
@@ -131,14 +131,13 @@ endif
 LDSO_START-$(ARCH_X86_64) = lib/ldso/arch/x32/start.S lib/ldso/arch/x32/bootstrap.c lib/ldso/arch/x32/syscall.c
 LDSO_START-$(ARCH_ARM) = lib/ldso/arch/arm/start.S lib/ldso/arch/arm/bootstrap.c lib/ldso/arch/arm/syscall.c \
                          lib/ldso/arch/arm/support.c
-# no libc: the compiler's own calls are supplied (support.c, libgcc), and must not be loops that call themselves
 LDSO_START_FLAGS-$(ARCH_ARM) = -fno-tree-loop-distribute-patterns -fno-builtin -Wl,-z,noexecstack
 LDSO_START_LIBS-$(ARCH_ARM) = -lgcc
 LDSO_START-$(ARCH_M68K) = lib/ldso/arch/m68k/start.S lib/ldso/arch/m68k/bootstrap.c lib/ldso/arch/m68k/syscall.c \
                           lib/ldso/arch/m68k/support.c
 LDSO_START_FLAGS-$(ARCH_M68K) = -fno-tree-loop-distribute-patterns -fno-builtin
 LDSO_START_LIBS-$(ARCH_M68K) = -lgcc
-obj/ldso/ld.so: lib/ldso/runtime.c $(LDSO_START-y) obj/ldso/libldso.a $(AUTOCONF_H) \
+obj/ldso/ld.so: lib/ldso/runtime.c lib/ldso/launch.c lib/ldso/launch.h $(LDSO_START-y) obj/ldso/libldso.a $(AUTOCONF_H) \
                 lib/ldso/runtime.h lib/ldso/exports.map $(X32_PROBE_LDSO_HEADERS) lib/ldso/startup.h
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_START_FLAGS-y) -fvisibility=hidden -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-e,_start,--version-script,lib/ldso/exports.map \
@@ -228,6 +227,9 @@ LDSO_DYNCRT-$(ARCH_X86_64) = lib/ldso/arch/x32/dyncrt.S
 obj/ldso/dyncrt.o: $(LDSO_DYNCRT-y) $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_CFLAGS) -c $< -o $@
+obj/ldso/dynacccrt.o: $(LDSO_DYNCRT-y) $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(LDSO_CC) $(LDSO_CFLAGS) -DPTOS_ACCESSORY_CRT -c $< -o $@
 obj/ldso/libptos.so: lib/ldso/client/client.c lib/ldso/client/ptos.h \
                     lib/ldso/client/exports.map $(LDSO_CLIENT_MINI) lib/ldso/arch/x32/syscall.c \
                     obj/ldso/sharedutil.o obj/ldso/sharedprint.o obj/ldso/sharedmemory.o \
@@ -236,7 +238,7 @@ obj/ldso/libptos.so: lib/ldso/client/client.c lib/ldso/client/ptos.h \
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-soname,libptos.so,-init,__ptos_client_init \
 	  -Wl,--version-script,lib/ldso/client/exports.map -o $@ $(filter %.c %.o,$^)
-all: obj/ldso/dyncrt.o obj/ldso/libptos.so
+all: obj/ldso/dyncrt.o obj/ldso/dynacccrt.o obj/ldso/libptos.so
 
 obj/ldso/test/libuse.so: tests/ldso_client/library.c obj/ldso/libptos.so lib/ldso/client/ptos.h
 	@mkdir -p $(@D)

@@ -25,7 +25,7 @@
 #include "rsdefs.h"
 #include "aesdefs.h"
 #if ARCH_X86_64
-#include "../aes/gemrslib.h"
+#include "../aes/shared/gemrslib.h"
 #endif
 #include "aesext.h"
 #include "intmath.h"
@@ -70,6 +70,23 @@
  *    ICONBLK has a unique data & mask, this gives a limit of 225)
  */
 #define MAX_ICONS       256
+
+#if CONF_WITH_LIBAES_DESK
+static char autorun_path[MAXPATHLEN];
+static WORD autorun_graphical;
+
+void app_launch_autorun(void)
+{
+    static BOOL started;
+    char tail[2] = { 0, 0 };
+
+    if (started)
+        return;
+    started = TRUE;
+    if (autorun_path[0] && !(desk_bootflags() & BOOTFLAG_SKIP_AUTO_ACC))
+        (void)shel_write(SHW_EXEC, autorun_graphical, SHW_IMMED, autorun_path, tail);
+}
+#endif
 
 
 /*
@@ -299,7 +316,8 @@ char *scan_str(char *pcurr, char **ppstr)
 /*
  *  Parse a single line from the EMUDESK.INF file
  */
-static char *app_parse(char *pcurr, ANODE *pa)
+/* Keep this large, startup-only parser separate from app_start in small ROMs. */
+static char * __attribute__((noinline)) app_parse(char *pcurr, ANODE *pa)
 {
     WORD temp;
 
@@ -610,6 +628,12 @@ static WORD setup_mono_icons(void)
 
     rsrc_free();
 
+#if CONF_WITH_LIBAES_DESK && CONF_WITH_X32_DESKTOP_TEST
+    if (rc == 0 && !((AESGLOBAL *)global)->ap_rscmem && !((AESGLOBAL *)global)->ap_ptree) {
+        extern void desk_test_record(const char *text);
+        desk_test_record("x32 desktop custom icons PASS\r\n");
+    }
+#endif
     return rc;
 }
 
@@ -866,7 +890,17 @@ void app_start(void)
             pcurr = scan_2(pcurr,&inf_rev_level);
             break;
         case 'Z':                       /* autorun: Z nn pathname@ */
+#if CONF_WITH_LIBAES_DESK
+            scan_2(pcurr+2, &autorun_graphical);
+            autorun_graphical = !!autorun_graphical;
+#endif
             pcurr = scan_str(pcurr+5,&pauto);   /* save pathname in buffer */
+#if CONF_WITH_LIBAES_DESK
+            if (strlen(pauto) < sizeof(autorun_path))
+                strcpy(autorun_path, pauto);
+            else
+                autorun_path[0] = '\0';
+#endif
             break;                              /* (a bit wasteful)        */
         case 'T':                       /* Trash */
         case 'M':                       /* Media (Hard/Floppy)  */

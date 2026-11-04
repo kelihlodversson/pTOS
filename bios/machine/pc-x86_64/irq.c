@@ -22,6 +22,9 @@
 #include "vectors.h"
 #include "earlycon.h"
 #include "ikbd.h"
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+#include "pc_x86_64_memtest.h"
+#endif
 
 /* The 200 Hz rate every other pTOS machine's own hardware timer drives
  * vector_5ms()/int_timerc() at (see bios/arch/x86_64/vectors.c's own
@@ -46,6 +49,9 @@ void x86_64_pc_irq_dispatch(int vector)
     switch (vector) {
     case X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_TIMER:
         vector_5ms();
+#if CONF_WITH_CUIS && CONF_WITH_X86_64_MEMTEST
+        x86_64_memtest_cuis_tick();
+#endif
         break;
     case X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_KEYBOARD:
         x86_64_ps2_keyboard_irq();

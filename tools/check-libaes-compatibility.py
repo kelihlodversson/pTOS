@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Keep the external libaes API matrix distinct from the legacy AES inventory."""
+from pathlib import Path
+import re
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def c_code(text):
+    # C removes escaped newlines before recognizing comments. Tokenize quoted
+    # literals too, so a comment marker in a string cannot end/start a comment
+    # and a prototype quoted in a string cannot count as a declaration.
+    text = re.sub(r"\\\r?\n", "", text)
+    tokens = r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*.*?\*/|//[^\n]*'
+    return re.sub(tokens, lambda match: " " + "\n" * match[0].count("\n"), text, flags=re.S)
+
+
+def check(root=ROOT):
+    matrix = (root / "doc/libaes-compatibility.md").read_text()
+    export_map = c_code((root / "lib/aes/exports.map").read_text())
+    exports = set(re.findall(r"\b\w+\b", export_map.split("global:")[1].split("local:")[0]))
+    # Only standard binding state is outside the GEM/helper function inventory.
+    # Native CUIS coordination must stay inside the library boundary.
+    state = {"aes_global", "gl_apid", "gl_ap_version"}
+    assert state <= exports, "missing standard binding globals: " + ", ".join(sorted(state - exports))
+    private = {name for name in exports if name.startswith("aes_") and name not in state}
+    assert not private, "private CUIS exports: " + ", ".join(sorted(private))
+    functions = exports - state
+    declarations = c_code((root / "include/gem.h").read_text())
+    helpers = c_code((root / "include/rectfunc.h").read_text())
+    rows = {}
+    for line in matrix.splitlines():
+        if not line.startswith("`") or " | " not in line:
+            continue
+        cells = line.split(" | ")
+        assert len(cells) == 4, "API row must have four columns: " + line
+        names, status, semantics, evidence = cells
+        assert status in {"available", "partial", "unavailable", "helper"}, status
+        assert semantics.strip() and evidence.strip(), "missing semantics/evidence"
+        paths = re.findall(r"`([^`]+)`", evidence)
+        assert paths, "missing evidence paths: " + names
+        for path in paths:
+            assert (root / path).is_file(), "missing evidence: " + path
+        if status != "unavailable":
+            assert any(path.startswith("tests/") for path in paths), "missing test evidence: " + names
+        for name in re.findall(r"`(\w+)`", names):
+            assert name not in rows, "duplicate API: " + name
+            rows[name] = status
+    assert rows, "empty API matrix"
+    expected = set()
+    for name, status in rows.items():
+        if status == "unavailable":
+            assert name not in exports and "mt_" + name not in exports, "update support status: " + name
+            continue
+        bindings = [name] if status == "helper" else [name, "mt_" + name]
+        for binding in bindings:
+            expected.add(binding)
+            header = helpers if status == "helper" else declarations
+            assert re.search(r"\b" + re.escape(binding) + r"\s*\(", header), "missing public declaration: " + binding
+    assert functions == expected, {
+        "undocumented_exports": sorted(functions - expected),
+        "missing_exports": sorted(expected - functions),
+    }
+    dispatcher = c_code((root / "aes/gemsuper.c").read_text())
+    operations = set(re.findall(r"\bcase\s+([A-Z][A-Z0-9_]*)\s*:", dispatcher))
+    aliases = {"GRAF_RUBBOX": "graf_rubberbox"}
+    missing = {opcode for opcode in operations if aliases.get(opcode, opcode.lower()) not in rows}
+    assert not missing, "unclassified legacy operations: " + ", ".join(sorted(missing))
+    print("libaes compatibility: %d GEM/helper exports and %d legacy operations classified" %
+          (len(functions), len(operations)))
+
+
+if __name__ == "__main__":
+    check()

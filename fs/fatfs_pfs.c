@@ -1096,7 +1096,11 @@ LONG fat_rmdir_path(char *p)
     return fat_rmdir_dnd(d);
 }
 
+#if CONF_WITH_CUIS
+static LONG fat_chdir_process(char *p, PD *process)
+#else
 LONG fat_chdir_path(char *p)
+#endif
 {
     DND *dnd;
     int olddir, newdir, dlog;
@@ -1110,7 +1114,12 @@ LONG fat_chdir_path(char *p)
     else
         dlog = run->p_curdrv;
 
+#if CONF_WITH_CUIS
+    if (dlog < 0 || dlog >= BLKDEVNUM) return EDRIVE;
+    olddir = PD_CURDIR(process)[dlog];
+#else
     olddir = PD_CURDIR(run)[dlog];
+#endif
 
     dnd = findit(p, &s, 1);
     if (DND_IS_ERRCODE(dnd))
@@ -1121,13 +1130,31 @@ LONG fat_chdir_path(char *p)
     newdir = incr_curdir_usage(dnd);
     if (newdir < 0)
         return EPTHNF;
+#if CONF_WITH_CUIS
+    PD_CURDIR(process)[dlog] = newdir;
+#else
     PD_CURDIR(run)[dlog] = newdir;
+#endif
 
     if (olddir)
         decr_curdir_usage(olddir);
 
     return E_OK;
 }
+
+#if CONF_WITH_CUIS
+LONG fat_chdir_path(char *p)
+{
+    return fat_chdir_process(p, run);
+}
+LONG fat_set_process_directory(char *path, PD *process)
+{
+    WORD drive = path[1] == ':' ? toupper(path[0])-'A' : run->p_curdrv;
+    LONG result = fat_chdir_process(path, process);
+    if (result == E_OK) process->p_curdrv = drive;
+    return result;
+}
+#endif
 
 LONG fat_getdir_path(char *buf, int drv)
 {

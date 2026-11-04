@@ -329,7 +329,6 @@ extern int vdi_contract_checks(void);
 extern int vdi_roundtrip_checks(short inherited_handle, int fault_after_open);
 extern int vdi_coordinate_bounds_checks(void);
 
-extern int aes_roundtrip_checks(const char *tail, const char *child_path);
 extern int callback_roundtrip_checks(const char *tail);
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
@@ -338,6 +337,19 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+#if CONF_WITH_LIBAES
+    case ':': {
+        static const char empty[] = { 0, 0 };
+        s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\CUIS.TOS",
+                         (s64)(unsigned long)empty, (s64)(unsigned long)empty);
+        pterm(child == 77 ? 0 : 0x100 | ((int)child & 0xff));
+        break;
+    }
+#else
+    case ':':
+        pterm(sys4(0x103, 0, 0, 0, 0, 0) == EINVFN ? 0 : 1);
+        break;
+#endif
 #if CONF_WITH_ELF_SHARED
     case '1': {
         static const char empty_tail[] = { 0, 0 };
@@ -559,7 +571,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     case '#':
     case '$':
-        pterm(aes_roundtrip_checks(tail, "X32AES.TOS"));
+        /* Retired typed AES namespace and generic AES trap: never inspect
+         * the deliberately invalid user buffer. GEM applications use libaes. */
+        pterm(sys4(0x101,0,1,~0ULL,~0ULL,~0ULL) == -1 &&
+              sys4(2,0xc8,1,~0ULL,~0ULL,~0ULL) == -1 &&
+              sys4(2,0xc9,1,~0ULL,~0ULL,~0ULL) == -1 ? 0 : 1);
         break;
     case 'I': {
         const char *files[] = { "VDIIMP.TOS", "VDIREL.TOS", "VDIPLT.TOS" };

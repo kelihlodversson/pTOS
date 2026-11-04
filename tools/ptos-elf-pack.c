@@ -171,9 +171,7 @@
  * come from (doc/elfload.txt); its SONAME's trailing version number is
  * read directly as the ABI major version every symbol pulled from it is
  * imported at. */
-#include "../include/aes_client_exports.h"
 #define ABI_NS_VDI 1
-#define ABI_NS_AES 2
 #define ABI_NS_LEGACY 4
 
 #define PTOS_ABI_SONAME_PREFIX  "libptos-abi.so."
@@ -766,9 +764,7 @@ static void find_abi_needed(const unsigned char *in, uint32_t in_size,
                 if (!strcmp(name, "libptos-vdi.so.1")) {
                     major = 1;
                     flag = ABI_NS_VDI;
-                } else if (!strcmp(name, "libptos-aes.so.1")) {
-                    major = 1;
-                    flag = ABI_NS_AES;
+
                 } else if (parse_abi_soname(name, &major))
                     flag = ABI_NS_LEGACY;
                 else
@@ -922,21 +918,12 @@ static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
 static const char *symbol_namespace(const char *name, unsigned namespaces,
                                      const char *in_path)
 {
-#define AES_EXPORT_NAME(index, symbol) #symbol,
-    static const char *const aes_names[] = { AES_CLIENT_EXPORTS(AES_EXPORT_NAME) };
-#undef AES_EXPORT_NAME
-    size_t i;
-
     if ((namespaces & ABI_NS_VDI) && !strcmp(name, "vdi"))
         return "vdi";
-    if (namespaces & ABI_NS_AES)
-        for (i = 0; i < sizeof(aes_names) / sizeof(aes_names[0]); i++)
-            if (!strcmp(name, aes_names[i]))
-                return "aes";
     if (namespaces == ABI_NS_LEGACY)
         return "gemdos";
     die("'%s' imports unsupported %s symbol '%s'", in_path,
-        namespaces == ABI_NS_VDI ? "VDI" : "AES", name);
+        namespaces == ABI_NS_VDI ? "VDI" : "native ABI", name);
     return NULL;
 }
 

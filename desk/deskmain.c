@@ -24,9 +24,6 @@
 
 #include "emutos.h"
 #include "string.h"
-#if defined(X32_USERLAND)
-#include "aes_shell.h"
-#endif
 
 #include "xbiosbind.h"
 #include "aesext.h"
@@ -44,6 +41,12 @@
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
+#if CONF_WITH_LIBAES_DESK
+#include "deskrefresh.h"
+#include "shutdown.h"
+static BOOL shutdown_pending, shutdown_poweroff;
+static LONG shutdown_token;
+#endif
 
 #include "biosdefs.h"
 #include "nls.h"
@@ -51,7 +54,7 @@
 #include "../bios/header.h"
 
 #if CONF_WITH_VDI_CICON_TEST
-#include "../aes/gemrslib.h"    /* rs_loadmem() */
+#include "../aes/shared/gemrslib.h"    /* rs_loadmem() */
 extern const UBYTE cicontest_rsc[];
 extern const LONG cicontest_rsc_size;
 #endif
@@ -608,6 +611,11 @@ static void men_update(void)
 #endif
 
     menu_ienable(tree, RESITEM, can_change_resolution);
+#if CONF_WITH_LIBAES_DESK && CONF_WITH_CLI
+    /* The resident desktop can launch the external console as a child.
+     * Embedded-console export to a loadable program is a separate policy. */
+    menu_ienable(tree, CLIITEM, CONF_EXTERNAL_CLI);
+#endif
 
 #if CONF_WITH_BLITTER
     if (blitter_is_present)
@@ -773,7 +781,11 @@ static WORD do_filemenu(WORD item)
 #if CONF_WITH_CLI != 0
     case CLIITEM:                         /* Start EmuCON */
         G.g_work[1] = '\0';
-        done = pro_run(FALSE, DEF_CONSOLE, G.g_work, -1, -1);
+        done = pro_run(FALSE, DEF_CONSOLE
+#if CONF_WITH_LIBAES_DESK
+                       ".TOS"
+#endif
+                       , G.g_work, -1, -1);
         if (done && pw)
         {
 #if CONF_WITH_PCGEM
@@ -794,10 +806,23 @@ static WORD do_filemenu(WORD item)
 
 #if CONF_WITH_SHUTDOWN
     case QUITITEM:
+#if CONF_WITH_LIBAES_DESK
+        if (shutdown_pending) {
+            (void)shel_write(SHW_SHUTDOWN,FALSE,SD_ABORT,NULL,NULL);
+            shutdown_pending = FALSE;
+        } else {
+            /* The cohort cannot start while a GUI drawing/grab lock is held. */
+            wind_update(END_UPDATE);
+            shutdown_pending = shel_write(SHW_SHUTDOWN,FALSE,SD_COMPLETE,NULL,NULL) != 0;
+            shutdown_token = shutdown_pending ? desk_shutdown_token() : 0;
+            wind_update(BEG_UPDATE);
+        }
+#else
         desk_set_ceh(FALSE); /* avoid possibility of useless form_alert()s */
         display_free_stack();
         shel_write(SHW_SHUTDOWN, FALSE, 2, NULL, NULL);
         done = TRUE;
+#endif
         break;
 #endif
     }
@@ -1158,7 +1183,9 @@ static WORD check_function_key(WORD thechar)
  */
 static BOOL check_alt_letter_key(WORD thechar)
 {
-#if !defined(X32_USERLAND)
+#if CONF_WITH_LIBAES_DESK
+    extern WORD desk_shifted_key(WORD scancode);
+#elif !defined(X32_USERLAND)
     KEYTAB *keytab;
 #else
     AES_SHELL_REQUEST request = { 0 };
@@ -1168,7 +1195,9 @@ static BOOL check_alt_letter_key(WORD thechar)
     if (LOBYTE(thechar))        /* not an alt key */
         return FALSE;
 
-#if defined(X32_USERLAND)
+#if CONF_WITH_LIBAES_DESK
+    drive = desk_shifted_key(HIBYTE(thechar));
+#elif defined(X32_USERLAND)
     request.operation = AES_SHELL_KEY;
     request.value = HIBYTE(thechar);
     drive = aes_shell(&request);
@@ -1298,9 +1327,64 @@ WORD hndl_msg(void)
     }
 
     handle = G.g_rmsg[3];
+#if CONF_WITH_LIBAES_DESK
+    if (shutdown_pending && G.g_rmsg[0] != SHUT_COMPLETED && G.g_rmsg[0] != AP_TFAIL &&
+        G.g_rmsg[0] != AP_TERM && G.g_rmsg[0] != WM_REDRAW && G.g_rmsg[0] != CH_EXIT
+#if CONF_WITH_SHUTDOWN
+        && !(G.g_rmsg[0] == MN_SELECTED && G.g_rmsg[4] == QUITITEM)
+#endif
+        ) {
+        if (G.g_rmsg[0] == MN_SELECTED) {
+            menu_tnormal(desk_rs_trees[ADMENU],handle,TRUE);
+#if CONF_WITH_X32_DESKTOP_TEST
+            if (handle == DESKMENU || handle == FILEMENU || handle == VIEWMENU || handle == OPTNMENU) {
+                extern void desk_test_record(const char *text);
+                desk_test_record(desk_rs_trees[ADMENU][handle].ob_state & SELECTED ?
+                    "x32 desktop shutdown menu FAIL\r\n" : "x32 desktop shutdown menu normalized\r\n");
+            }
+#endif
+        }
+        return FALSE;
+    }
+#endif
 
     switch(G.g_rmsg[0])
     {
+#if CONF_WITH_LIBAES_DESK
+    case AP_TERM:
+        if (G.g_rmsg[1] == -1 && desk_termination_ready()) done = TRUE;
+        break;
+    case SHUT_COMPLETED:
+        if (shutdown_pending && desk_shutdown_ready()) {
+#if CONF_WITH_X32_DESKTOP_TEST
+            {
+                extern void desk_test_record(const char *text);
+                desk_test_record("x32 desktop shutdown completed\r\n");
+            }
+#endif
+            shutdown_poweroff = TRUE; done = TRUE;
+            desk_set_ceh(FALSE);
+        }
+        break;
+    case AP_TFAIL:
+        if (shutdown_pending && desk_shutdown_refused(shutdown_token)) {
+            /* Publishing a native refusal already releases its own barrier.
+             * Never cancel a newer operation because of an old queued reply. */
+            shutdown_pending = FALSE; shutdown_token = 0;
+        }
+        break;
+    case CH_EXIT: /* Refresh listings while keeping windows and state. */
+#if CONF_WITH_X32_DESKTOP_TEST
+        {
+            char message[80];
+            extern void desk_test_record(const char *text);
+            sprintf(message,"x32 desktop CH_EXIT %d %04x\r\n",G.g_rmsg[3],(UWORD)G.g_rmsg[4]);
+            desk_test_record(message);
+        }
+#endif
+        desk_refresh_request();
+        break;
+#endif
     case MN_SELECTED:
         desk_verify(G.g_wlastsel, FALSE);
         done = hndl_menu(handle, G.g_rmsg[4]);
@@ -2011,6 +2095,10 @@ BOOL deskmain(void)
 
     /* initialize libraries */
     gl_apid = appl_init();
+#if CONF_WITH_LIBAES_DESK
+    shutdown_pending = shutdown_poweroff = FALSE; shutdown_token = 0;
+    (void)shel_write(SWM_NEWMSG,NM_APTERM,0,NULL,NULL);
+#endif
 
     /* get GEM's gsx handle */
     gl_handle = graf_handle(&gl_wchar, &gl_hchar, &gl_wbox, &gl_hbox);
@@ -2147,6 +2235,39 @@ BOOL deskmain(void)
     desk_cicon_test();
 #endif
 
+#if CONF_WITH_LIBAES_DESK
+    /* Accessories are independent native processes. Collect names before
+     * launching, since child loading must not disturb our search DTA. A
+     * desktop preference reload must not start another set of accessories. */
+    {
+        static BOOL accessories_started;
+        DTA dta;
+        void *saved_dta;
+        char names[6][LEN_ZFNAME], pattern[] = "C:\\*.ACC";
+        char path[3+LEN_ZFNAME], tail[2] = { 0,0 };
+        WORD count = 0, i, result;
+        if (!accessories_started) {
+            accessories_started = TRUE;
+            if (!(desk_bootflags() & BOOTFLAG_SKIP_AUTO_ACC)) {
+                pattern[0] = 'A'+G.g_stdrv;
+                saved_dta = dos_gdta(); dos_sdta(&dta);
+                result = dos_sfirst(pattern,FA_RO);
+                while (result >= 0 && count < 6) {
+                    strlcpy(names[count++],dta.d_fname,LEN_ZFNAME);
+                    result = dos_snext();
+                }
+                dos_sdta(saved_dta);
+                path[0] = pattern[0]; path[1] = ':'; path[2] = '\\';
+                for (i = 0; i < count; i++) {
+                    strcpy(path+3,names[i]);
+                    (void)shel_write(SHW_EXEC,TRUE,SHW_PARALLEL,path,tail);
+                }
+            }
+        }
+    }
+    app_launch_autorun();
+#endif
+
     /* get ready for main loop */
     flags = MU_BUTTON | MU_MESAG | MU_KEYBD;
     done = FALSE;
@@ -2154,16 +2275,12 @@ BOOL deskmain(void)
     /* enable graphical critical error handler */
     desk_set_ceh(TRUE);
 
-#if CONF_WITH_X32_ACCESSORY_TEST
-    {
-        extern void x86_64_aes_test_desktop(OBJECT *desktop, WORD root);
-        x86_64_aes_test_desktop(G.g_screen, 1);
-    }
-    kcprintf("x32 accessory desktop: PASS\n");
-#endif
     /* loop handling user input until done */
     while(!done)
     {
+#if CONF_WITH_LIBAES_DESK
+        flags = shutdown_pending ? MU_MESAG|MU_KEYBD : MU_BUTTON|MU_MESAG|MU_KEYBD;
+#endif
         /* block for input */
         ev_which = evnt_multi(flags, 0x02, 0x01, 0x01,
                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -2174,6 +2291,15 @@ BOOL deskmain(void)
         wind_update(BEG_UPDATE);
 
         /* handle keybd message */
+#if CONF_WITH_LIBAES_DESK
+        if (shutdown_pending && (ev_which & MU_KEYBD)) {
+            if ((kret & 255) == 27) {
+                (void)shel_write(SHW_SHUTDOWN,FALSE,SD_ABORT,NULL,NULL);
+                shutdown_pending = FALSE;
+            }
+            ev_which &= ~MU_KEYBD;
+        }
+#endif
         if (ev_which & MU_KEYBD)
             if (hndl_kbd(kret))
                 done = TRUE;
@@ -2197,6 +2323,13 @@ BOOL deskmain(void)
                                 &mx, &my, &button, &kstate, &kret, &bret);
         }
 
+        /* All nested operations have returned; no caller retains FNODEs. */
+#if CONF_WITH_LIBAES_DESK
+        if (!done) {
+            desk_refresh_run();
+            men_update();
+        }
+#endif
         /* free the screen      */
         wind_update(END_UPDATE);
     }
@@ -2247,6 +2380,17 @@ BOOL deskmain(void)
 
     /* exit the gem AES */
     appl_exit();
+#if CONF_WITH_LIBAES_DESK
+    if (shutdown_poweroff) {
+#if CONF_WITH_X32_DESKTOP_TEST
+        {
+            extern void desk_test_record(const char *text);
+            desk_test_record("x32 desktop shutdown poweroff\r\n");
+        }
+#endif
+        desk_poweroff();
+    }
+#endif
 
     if (rc == FALSE)                /* restarting */
         wind_new();                 /* clean up AES windows */

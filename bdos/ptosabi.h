@@ -14,9 +14,8 @@
  *
  * The optional x32 VDI namespace resolves vdi:vdi, ABI 1.0, to an entry
  * in the process's read-only user client image. It never exports an LP64
- * kernel function. CONF_WITH_X32_AES additionally registers the typed AES
- * client and caller-local helpers in the aes: namespace, also ABI 1.0.
- * Other namespaces remain unavailable. The table types below describe
+ * kernel function. AES applications use the ordinary userspace libaes.so.
+ * Other native namespaces, including retired aes: imports, remain unavailable. The table types below describe
  * future namespaces; elfld.c resolves the explicit native client entries.
  */
 

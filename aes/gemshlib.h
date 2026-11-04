@@ -15,17 +15,12 @@ extern char     *ad_stail;
 extern WORD     gl_changerez;
 extern WORD     gl_nextrez;
 
-void sh_read(char *pcmd, char *ptail);
+#include "gemshquery.h"
 WORD sh_write(WORD doex, WORD isgem, WORD isover, const char *pcmd, const char *ptail);
 void sh_get(void *pbuffer, WORD len);
 void sh_put(const void *pdata, WORD len);
 void sh_tographic(void);
 BOOL sh_graphics_active(void);
-
-char *sh_name(char *ppath);
-void sh_envrn(char **ppath, const char *psrch);
-
-WORD sh_find(char *pspec);
 
 void sh_rdef(char *lpcmd, char *lpdir);
 void sh_wdef(const char *lpcmd, const char *lpdir);

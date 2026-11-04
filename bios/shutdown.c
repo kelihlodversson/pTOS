@@ -32,3 +32,14 @@ void machine_poweroff(void)
     shutdown();
 #endif
 }
+
+#if CONF_WITH_CUIS
+BOOL machine_can_poweroff(void)
+{
+#if CONF_WITH_SHUTDOWN
+    return can_shutdown();
+#else
+    return FALSE;
+#endif
+}
+#endif

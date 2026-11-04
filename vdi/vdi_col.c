@@ -32,8 +32,8 @@ WORD REV_MAP_COL[MAXCOLOURS];   /* maps hardware register -> vdi pen */
  */
 WORD req_col2[240][3];
 
-static const WORD MAP_COL_ROM[] =
-    { 0, 15, 1, 2, 4, 6, 3, 5, 7, 8, 9, 10, 12, 14, 11, 13 };
+#include "vdi_colmap.h"
+#define MAP_COL_ROM vdi_pen_order
 
 /*
  * the following factors are used in adjust_mono_values()

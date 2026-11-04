@@ -25,6 +25,7 @@ enum { VDI_CALLBACK_TIMER, VDI_CALLBACK_BUTTON, VDI_CALLBACK_MOTION,
 #define VDI_SERVICE_PIXEL 7
 #define VDI_SERVICE_DRAW 8
 #define VDI_SERVICE_SCREEN_COPY 9
+#define VDI_SERVICE_SCREEN_BUFFER 10
 #define VDI_SERVICE_MAX_TEXT 256
 #define VDI_SERVICE_MAX_POINTS 256
 #define VDI_SERVICE_MAX_BITMAP (1024UL * 1024UL)
@@ -87,8 +88,25 @@ void vdi_user_raster_execute(const VDI_SERVICE_RASTER_REQUEST *request,
 LONG vdi_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 void vdi_service_process_exit(PD *pd);
 void vdi_service_physical_state(BOOL opened);
+#if CONF_WITH_CUIS
+BOOL vdi_service_preserve_console(void);
+void vdi_service_prepare_physical_open(void);
+#if CONF_WITH_X86_64_MEMTEST
+BOOL vdi_service_test_reset(void);
+BOOL vdi_service_test_reopen(void);
+void vdi_service_test_watch(volatile ULONG *pixel);
+BOOL vdi_service_test_preserved(void);
+#endif
+#endif
 #if CONF_WITH_USER_CALLBACKS
 void vdi_service_callback_work(void);
+#if CONF_WITH_CUIS
+void vdi_service_callback_supersede_motion(void);
+#if CONF_WITH_X86_64_MEMTEST
+void vdi_service_test_motion_begin(void);
+BOOL vdi_service_test_motion_end(void);
+#endif
+#endif
 void vdi_service_callback_event(UWORD signature, LONG a, LONG b);
 #endif
 #endif

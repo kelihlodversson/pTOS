@@ -31,6 +31,12 @@
 #if ARCH_X86_64
 #include "process.h"
 #endif
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#if CONF_WITH_CUIS
+#include "bdosbind.h"
+#endif
+#endif
 #include "../bios/vectors.h"
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
 #include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
@@ -124,6 +130,21 @@ BOOL take_kernel_code_pd(PD *p)
     return TRUE;
 }
 #endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_NATIVE_SCHED
+static BOOL schedule_launch(PD *p)
+{
+    /* ROM entry points and explicit accessory starts retain their existing
+     * launch path. A nested Pexec already has a stable group controller. */
+    return kernel_code_pd != p && !ksched_active();
+}
+
+static LONG run_scheduled(PD *p, BOOL take_ownership)
+{
+    LONG result, rc = ksched_exec(p, take_ownership, &result);
+    return rc < 0 ? rc : result;
+}
+#endif
 
 #if CONF_WITH_PROCMEM
 static void release_pd_files(PD *r);
@@ -316,16 +337,42 @@ static void release_pd_files(PD *r)
 {
     WORD h;
     WORD i;
+#if CONF_WITH_CUIS
+    ULONG explicit_refs[OPNFILES];
+
+    /* An SFT slot retains f_own after its explicit handle is closed while
+     * standard aliases remain. Snapshot before dropping this process's
+     * aliases: only a reference beyond all live aliases is an explicit
+     * handle the owner sweep may close. Fdup uses a separate SFT slot. */
+    kproc_standard_file_refs(explicit_refs);
+    for (i = 0; i < OPNFILES; i++)
+        explicit_refs[i] = r == sft[i].f_own && sft[i].f_use > 0 &&
+                          (ULONG)sft[i].f_use > explicit_refs[i];
+#endif
 
     /* check the standard devices in both file tables  */
 
     for (i = 0; i < NUMSTD; i++)
-        if ((h = PD_UFT(r)[i]) > 0)
+        if ((h = PD_UFT(r)[i]) > 0) {
+#if CONF_WITH_CUIS
+            Fclose(h); /* Complete cleanup even after a disk-error longjmp. */
+#else
             xclose(h);
+#endif
+        }
 
     for (i = 0; i < OPNFILES; i++)
-        if (r == sft[i].f_own)
+        if (r == sft[i].f_own
+#if CONF_WITH_CUIS
+            && explicit_refs[i]
+#endif
+        ) {
+#if CONF_WITH_CUIS
+            Fclose(i+NUMSTD);
+#else
             xclose(i+NUMSTD);
+#endif
+        }
 
 
     /* decrement usage counts for current directories */
@@ -405,7 +452,28 @@ static WORD envsize(char *env)
  */
 static PD *cur_p;
 
+#if CONF_WITH_CUIS
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory);
 long xexec(WORD flag, char *path, char *tail, char *env)
+{
+    return exec_observed(flag,path,tail,env,0,0,FALSE,NULL);
+}
+long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
+{
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL));
+}
+long xexec_deferred(char *path, char *tail, char *env, ULONG session)
+{
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL));
+}
+long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
+{
+    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory));
+}
+static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
+#else
+long xexec(WORD flag, char *path, char *tail, char *env)
+#endif
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -413,6 +481,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     ULONG hdrflags;
     LONG rc;
     LONG max;
+#if CONF_WITH_NATIVE_SCHED
+    LONG scheduled_result;
+#endif
     long needed;
     FH fh;
 
@@ -474,6 +545,19 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
 
         return (long)p;
+#if CONF_WITH_NATIVE_SCHED
+    case PE_ASYNC_GO_FREE:
+        if (!ksched_spawn_allowed()) return EINVFN;
+        p = (PD *)tail;
+        rc = check_launch(p);
+        if (rc) return rc;
+        if (!kproc_create(p)) return ENSMEM;
+        give_back_image(p, FALSE);
+        return ksched_spawn(p);
+    case PE_ASYNC_LOADGO:
+        if (!ksched_spawn_allowed()) return EINVFN;
+        break;
+#endif
     case PE_GOTHENFREE:
         p = (PD *) tail;
 #if CONF_WITH_USER_ASPACE
@@ -487,6 +571,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
         give_back_image(p, FALSE);      /* (a PE_GO that failed before may have asked) */
+#if CONF_WITH_NATIVE_SCHED
+        if (schedule_launch(p)) return run_scheduled(p, TRUE);
+#endif
         if (!prepare_launch(p))
             return ENSMEM;
 #endif
@@ -504,6 +591,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
         give_back_image(p, flag == PE_GO);
+#if CONF_WITH_NATIVE_SCHED
+        if (schedule_launch(p)) return run_scheduled(p, FALSE);
+#endif
         if (flag == PE_GO && !prepare_launch(p))
             return ENSMEM;
 #endif
@@ -599,7 +689,11 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* memory ownership - the owner is either the new process being created,
      * or the parent
      */
-    owner = (flag == PE_LOADGO) ? p : run;
+    owner = (flag == PE_LOADGO
+#if CONF_WITH_NATIVE_SCHED
+             || flag == PE_ASYNC_LOADGO
+#endif
+            ) ? p : run;
     set_owner(p, owner);
     set_owner(env_ptr, owner);
 
@@ -652,15 +746,23 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return rc;
     }
 
+#if CONF_WITH_CUIS
+    kproc_set_executable_name(cur_p, path);
+#endif
     /* at this point the program has been correctly loaded in memory, and
      * more I/O errors cannot occur, so it is safe now to finish initializing
      * the new process.
      */
-    /* Anything that can still fail for lack of memory is done before
-     * init_pd_files(): that takes references on inherited files and
-     * directories, which an ENSMEM return here would otherwise leak. */
+    /* Direct launches prepare before taking inherited file/directory
+     * references. Managed launches allocate the group before preparation;
+     * their later failure path disposes these references explicitly. */
 #if CONF_WITH_USER_ASPACE
-    if (flag != PE_LOAD && !prepare_launch(cur_p)) {
+    if (flag != PE_LOAD
+#if CONF_WITH_NATIVE_SCHED
+        && flag != PE_ASYNC_LOADGO
+        && !schedule_launch(cur_p)
+#endif
+        && !prepare_launch(cur_p)) {
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
@@ -679,7 +781,33 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
+#if CONF_WITH_NATIVE_SCHED
+    if (flag == PE_ASYNC_LOADGO) {
+#if CONF_WITH_CUIS
+        rc = directory ? fs_set_process_directory(directory,cur_p) : E_OK;
+        if (rc == E_OK)
+            rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
+#else
+        rc = ksched_spawn(cur_p);
+#endif
+        if (rc < 0) {
+#if CONF_WITH_CUIS
+            if (deferred) proc_dispose_deferred(cur_p);
+            else
+#endif
+                proc_discard_accessory(cur_p);
+        }
+        return rc;
+    }
+#endif
     if (flag != PE_LOAD) {
+#if CONF_WITH_NATIVE_SCHED
+        if (schedule_launch(cur_p)) {
+            rc = ksched_exec(cur_p, TRUE, &scheduled_result);
+            if (rc < 0) proc_discard_accessory(cur_p);
+            return rc < 0 ? rc : scheduled_result;
+        }
+#endif
         proc_go(cur_p, 0);
 #if CONF_WITH_USER_ASPACE
         /* Returns here, unlike without CONF_WITH_USER_ASPACE (see the PE_GO case above), once
@@ -979,6 +1107,25 @@ static void proc_go(PD *p, WORD entry_type)
 #endif
 }
 
+#if CONF_WITH_NATIVE_SCHED
+LONG proc_prepare_scheduled(PD *p)
+{
+    if (!kproc_unlaunched(p)) return EIMBA;
+    give_back_image(p, FALSE);
+    return kproc_prepare_user(p, run) ? E_OK : ENSMEM;
+}
+LONG proc_start_scheduled(PD *p, BOOL take_ownership)
+{
+    if (!kproc_unlaunched(p) || !kproc_user_root(p)) return EIMBA;
+    if (take_ownership) {
+        set_owner(p, p);
+        set_owner(USERPTR_TO_PTR(p->p_env), p);
+    }
+    proc_go(p, ENTRY_PROGRAM);
+    return run->p_dreg[0];
+}
+#endif
+
 #if ARCH_X86_64
 LONG proc_prepare_accessory(PD *p)
 {
@@ -1006,6 +1153,17 @@ void proc_discard_accessory(PD *p)
     set_owner(USERPTR_TO_PTR(p->p_env), p);
     proc_dispose_detached(p);
 }
+
+#if CONF_WITH_CUIS
+/* Pending successors were loaded with child-owned allocations. Their public
+ * basepage is not mapped in the requesting process after async preparation. */
+void proc_dispose_deferred(PD *p)
+{
+    release_pd_files(p);
+    kproc_destroy(p);
+    ixterm(p);
+}
+#endif
 
 void proc_dispose_detached(PD *p)
 {
@@ -1047,6 +1205,9 @@ void xterm(UWORD rc)
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
+#if CONF_WITH_NATIVE_SCHED
+    ksched_exiting(p, rc);
+#endif
 
 #if CONF_WITH_KPROC
     /* not run->p_parent: that field is in the process's own writable
@@ -1065,6 +1226,11 @@ void xterm(UWORD rc)
     }
 #endif
     ixterm(p);
+#if CONF_WITH_CUIS
+    /* All process resources are gone. No cleanup can return to the caller
+     * through the disk-error handler after making its successor runnable. */
+    ksched_exited(p);
+#endif
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.
      * termuser() will enter the gouser() code at the proper place.
@@ -1082,6 +1248,9 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 
     kcprintf("process fault: %s code=0x%lx addr=0x%lx pc=0x%lx sp=0x%lx\n",
              cause, (long)code, (long)address, (long)pc, (long)sp);
+#if CONF_WITH_NATIVE_SCHED
+    ksched_fault(run, 11); /* Keep a specific CPU/paging signal if already recorded. */
+#endif
 #if CONF_WITH_USER_CALLBACKS
     user_callback_fault();
 #endif

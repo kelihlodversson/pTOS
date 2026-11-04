@@ -25,6 +25,13 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#if CONF_WITH_CUIS
+#include "../aes/cuis.h"
+#include "gemerror.h"
+#endif
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
 #include "country.h"
 #include "acia.h"
 #include "tosvars.h"
@@ -124,6 +131,16 @@ WORD keyboard_shifted(WORD scancode)
     return current_keytbl.shft[(UWORD)scancode & 127];
 }
 
+#if CONF_WITH_CUIS
+LONG keyboard_map_lookup(UQUAD scancode, UQUAD table)
+{
+    const UBYTE *map;
+    if (scancode >= 128 || table > 2) return EINVAL;
+    map = table == 0 ? current_keytbl.norm : table == 1 ? current_keytbl.shft : current_keytbl.caps;
+    return map ? map[scancode] : EINVFN;
+}
+#endif
+
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
 {
 #if CONF_WITH_USER_ASPACE
@@ -169,6 +186,9 @@ static void push_ikbdiorec(ULONG value)
 {
     short tail;
 
+#if CONF_WITH_CUIS
+    if (cuis_keyboard_event(value)) return;
+#endif
     KDEBUG(("KBD iorec: Pushing value 0x%08lx\n", value));
 
     tail = ikbdiorec.tail + 4;
@@ -258,6 +278,14 @@ LONG bconstat2(void)
     }
 }
 
+#if CONF_WITH_NATIVE_SCHED && !CONF_SERIAL_CONSOLE_POLLING_MODE
+static BOOL console_key_ready(void *unused)
+{
+    (void)unused;
+    return bconstat2() != 0;
+}
+#endif
+
 LONG bconin2(void)
 {
     ULONG value;
@@ -268,6 +296,11 @@ LONG bconin2(void)
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
+#if CONF_WITH_NATIVE_SCHED
+        if (ksched_wait_ready(console_key_ready,NULL)) {
+            continue;
+        }
+#endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU
         stop_until_interrupt();
 #endif

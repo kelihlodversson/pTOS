@@ -19,9 +19,10 @@
 #include "pgtable.h"
 #include "trap.h"
 #include "vdi_service.h"
-#include "aes_service.h"
-#if CONF_WITH_X32_ACCESSORY_TEST
-#include "aes_window.h"
+#include "cuis.h"
+#if CONF_WITH_CUIS
+#include "../../../aes/cuis.h"
+#include "../../ikbd.h"
 #endif
 #include "user_callback.h"
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
@@ -64,14 +65,7 @@ static ULONG x86_64_flopfmt_buffer_size(LONG spt)
  */
 #include "../../../vdi/vdi_defs.h"
 #include "../../../vdi/vdi_gdos.h"
-#include "../../../aes/gemsuper.h"
 
-#if CONF_WITH_AES
-/* Not declared in gemsuper.h itself (aes/gemsuper.c's own comment says
- * "called only from gemdosif.S" -- true on every other arch; this file is
- * x86-64's equivalent of that call site). */
-extern LONG super(WORD cx, AESPB *pcrys_blk);
-#endif
 
 /*
  * osif() (bdos/bdosmain.c) is GEMDOS's own C-level trap #1 handler,
@@ -160,8 +154,7 @@ static x86_64_percpu_t percpu;
 #define SYSCALL_STACK_BYTES 8192
 static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
 
-static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
-                           BOOL *defer_return_work);
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
 /*
  * Set while a real ring-3 `syscall` is being serviced: its entry stub did
@@ -176,7 +169,6 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     /* Stack-local policy belongs to this invocation across nested callbacks,
      * Pexec and AES dispatch. No global latch can leak to another return. */
-    BOOL defer_return_work = FALSE;
 
     if (from_ring3)
         syscall_gs_swapped = 1;
@@ -194,14 +186,10 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     if (from_ring3)
         x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
 #endif
-    trap_dispatch(frame, from_ring3, &defer_return_work);
+    trap_dispatch(frame, from_ring3);
 #if CONF_WITH_USER_CALLBACKS
     if (from_ring3)
-        user_callback_return_work(x86_64_get_saved_user_rsp(), !defer_return_work);
-#endif
-#if CONF_WITH_X32_ACCESSORY_TEST
-    if (from_ring3 && defer_return_work)
-        x86_64_aes_window_test_return(run);
+        user_callback_return_work(x86_64_get_saved_user_rsp(), TRUE);
 #endif
     if (from_ring3)
         syscall_gs_swapped = 0;
@@ -316,17 +304,13 @@ static int xbios_returns_void(ULONG fn)
         || fn == 0x25;
 }
 
-static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
-                           BOOL *defer_return_work)
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;
     long cargs[4];
     long crc;
 
-#if !CONF_WITH_X32_AES
-    (void)defer_return_work;
-#endif
 
     /*
      * The raw argument registers are not inspected here: which of them a
@@ -357,11 +341,67 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
         frame->rax = (UQUAD)(QUAD)EINVFN;
 #endif
         break;
-    case AES_SERVICE_CLASS:
-#if CONF_WITH_X32_AES
+    case CUIS_SERVICE_CLASS:
+#if CONF_WITH_CUIS
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
-            aes_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10,
-                          defer_return_work) : EINVFN);
+            ((fn >= CUIS_SURFACE_REGISTER && fn <= CUIS_SURFACE_END) ?
+                 cuis_surface_service(fn, frame->rdi, frame->rsi) :
+             (fn >= CUIS_INPUT_RECT && fn <= CUIS_INPUT_INTERVAL) ?
+                 cuis_input_config(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
+             (fn == CUIS_NOTICE_PEEK || fn == CUIS_NOTICE_PUBLISH) ?
+                 cuis_notice_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             (fn == CUIS_STACK_QUERY || fn == CUIS_WINDOW_INFO) ?
+                 cuis_stack_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             fn == CUIS_WINDOW_AT ? cuis_window_at(frame->rdi, frame->rsi) :
+             fn == CUIS_BACKGROUND ? cuis_background(frame->rdi, frame->rsi) :
+             fn == CUIS_BACKGROUND_REGION ? cuis_background_region(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
+             fn == CUIS_DISPLAY_INFO ? cuis_display_info(frame->rdi) :
+             fn == CUIS_KEYMAP_LOOKUP ? keyboard_map_lookup(frame->rdi,frame->rsi) :
+             (fn >= CUIS_COHORT_BEGIN && fn <= CUIS_COHORT_CANCEL) ?
+                 cuis_cohort_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
+             (fn >= CUIS_PEER_NEXT && fn <= CUIS_PEER_RAISE) ?
+                 cuis_peer_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
+             (fn >= CUIS_ENTRY_PUBLISH && fn <= CUIS_ENTRY_READ) ?
+                 cuis_entry_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
+             fn == CUIS_WINDOWS_RESET ? cuis_windows_reset(frame->rdi) :
+             fn == CUIS_CONTEXT ? cuis_context(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
+             fn == CUIS_PROCESS_DEFER ? cuis_process_defer(frame->rdi,frame->rsi,frame->rdx,frame->r10) :
+             fn == CUIS_PROCESS_DEFER_DIRECTORY ? cuis_process_defer_directory(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
+             fn == CUIS_CHILD_LAUNCH_DIRECTORY || fn == CUIS_CONSOLE_LAUNCH_DIRECTORY ?
+                cuis_child_launch_directory(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9,fn == CUIS_CONSOLE_LAUNCH_DIRECTORY) :
+             fn == CUIS_CHILD_LAUNCH ? cuis_child_launch(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
+             (fn == CUIS_CHILD_WATCH || fn == CUIS_CHILD_RESULT || fn == CUIS_CHILD_PUBLISH) ?
+                 cuis_child_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10) :
+             fn == CUIS_SETTING ? cuis_setting(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             fn == CUIS_KEYBOARD_LOCK ? cuis_keyboard_lock(frame->rdi, frame->rsi) :
+             fn == CUIS_DISPLAY_REDRAW ? cuis_display_redraw(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             fn == CUIS_MOUSE_LOCK ? cuis_mouse_lock(frame->rdi, frame->rsi, frame->rdx) :
+             fn == CUIS_DISPLAY_LOCK ? cuis_display_lock(frame->rdi, frame->rsi, frame->rdx) :
+             fn == CUIS_WINDOW_REGION ? cuis_region_service(frame->rdi, frame->rsi, frame->rdx,
+                 frame->r10, frame->r8, frame->r9) :
+             fn == CUIS_SESSION_WAIT ? cuis_session_wait(frame->rdi, frame->rsi, frame->rdx, frame->r10) :
+             fn == CUIS_INPUT_STATE ? cuis_state_service(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK || fn == CUIS_STREAM_PENDING) ?
+                 cuis_stream_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             (fn >= CUIS_SESSION_NAME && fn <= CUIS_PEER_BY_PID) ?
+                 cuis_directory_service(fn, frame->rdi, frame->rsi, frame->rdx) :
+             fn == CUIS_SESSION_DELAY ? cuis_delay_service(frame->rdi, frame->rsi) :
+             fn >= CUIS_MESSAGE_SEND && fn <= CUIS_MESSAGE_WAIT ?
+                 cuis_message_service(fn, frame->rdi, frame->rsi, frame->rdx,
+                                      frame->r10, frame->r8, frame->r9) :
+             fn == CUIS_POINTER_STYLE ? cuis_pointer_style(frame->rdi, frame->rsi, frame->rdx) :
+             fn == CUIS_CONTROL_READ ? cuis_control_service(frame->rdi,
+                 frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             fn == CUIS_POINTER_READ ? cuis_pointer_service(frame->rdi,
+                 frame->rsi, frame->rdx, frame->r10, frame->r8) :
+             fn == CUIS_EVENT_WAIT ? cuis_event_service(frame->rdi, frame->rsi, frame->rdx) :
+             (fn == CUIS_KEY_READ || fn == CUIS_KEY_WAIT) ?
+                 cuis_input_service(fn, frame->rdi, frame->rsi) :
+             fn == CUIS_WINDOW_CLIP ? cuis_clip_service(frame->rdi, frame->rsi,
+                 frame->rdx, frame->r10, frame->r8, frame->r9) :
+             fn <= CUIS_SESSION_END ? cuis_service(fn, frame->rdi) :
+             cuis_window_service(fn, frame->rdi, frame->rsi, frame->rdx,
+                                 frame->r10, frame->r8)) : EINVFN);
 #else
         frame->rax = (UQUAD)(QUAD)EINVFN;
 #endif
@@ -607,16 +647,12 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3,
          * ultimately resolves to.
          */
         if (fn == 0xC8 || fn == 0xC9)
-#if CONF_WITH_AES
-            frame->rax = (UQUAD)super((WORD)fn, (AESPB *)(uintptr_t)frame->rdi);
-#else
             /* AES isn't built: these two opcodes can't occur legitimately
              * (nothing on this image ever issues them), but a stray call
              * with the right opcode should still get a harmless answer
              * rather than being misrouted into GSX_ENTRY() as if it were
              * ordinary VDI opcode 0xC8/0xC9. */
             frame->rax = (UQUAD)-1L;
-#endif
 #if CONF_WITH_VDI_SCALABLE_FONTS
         else if (fn == 0xFFFFFFFEUL)    /* vq_gdos(): the built-in GDOS */
             frame->rax = vdi_gdos_id ? (UQUAD)vdi_gdos_id : (UQUAD)-2L;

@@ -7,6 +7,7 @@
 #ifndef X86_64_PROCESS_H
 #define X86_64_PROCESS_H
 
+#include "config.h"
 #include "portab.h"
 #include "bdosdefs.h"
 #include "setjmp.h"
@@ -22,6 +23,9 @@ typedef struct {
     PD *pd;
     UQUAD cr3, kernel_rsp, user_rsp, irq_rsp, flags;
     X86_64_PROCESS_LAUNCH *launch;
+#if CONF_WITH_NATIVE_SCHED
+    UQUAD native_task;
+#endif
     jmp_buf disk_error;
     int in_syscall;
     UBYTE fpu[512] __attribute__((aligned(16)));

@@ -389,11 +389,22 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
  *      the ptr to the ANODE
  *      the flag that indicates whether this is an application or not
  */
-static void win_icalc(FNODE *pfnode, WNODE *pwin)
+/* The icon and text views share this classification; avoid duplicating it. */
+static void __attribute__((noinline)) win_icalc(FNODE *pfnode, WNODE *pwin)
 {
     pfnode->f_pa = app_afind_by_name((pfnode->f_attr&FA_SUBDIR) ? AT_ISFOLD : AT_ISFILE,
             AF_ISDESK|AF_VIEWER, pwin->w_pnode.p_spec, pfnode->f_name, &pfnode->f_isap);
 }
+
+#if CONF_WITH_LIBAES_DESK
+/* A refresh can restore selections that no longer lie in the viewport. */
+void win_classify_selection(WNODE *window)
+{
+    FNODE *node;
+    for (node = window->w_pnode.p_flist; node; node = node->f_next)
+        if (node->f_selected) win_icalc(node,window);
+}
+#endif
 
 
 /*

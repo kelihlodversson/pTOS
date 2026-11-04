@@ -1,0 +1,128 @@
+/* Global update ownership is independent of the legacy window snapshot. */
+#define REGION(h,i) cuis_region_service(h,i,0x1000,0x1004,0x1008,0x100c)
+static int display_checks(void)
+{
+    LONG a, b, cover, first_session, second_session;
+    ULONG before;
+    CUIS_RECT clip;
+    next_handle = next_window_handle = 0;
+    run = &first;
+    first_session = cuis_service(CUIS_SESSION_START, 0);
+    a = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 20, 20, 0);
+    CHECK(a >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, a, 0, 0, 0, 0) == E_OK);
+    CHECK(cuis_display_lock(first_session, 2, 0) == EINVAL);
+    CHECK(cuis_display_lock(first_session, 0, 1) == EINVAL);
+    CHECK(cuis_display_lock(first_session, 1, 2) == EINVAL);
+    CHECK(cuis_display_lock(0x100000000ULL, 1, 1) == EINVAL);
+    CHECK(cuis_display_lock(first_session, 0, 0) == EACCDN);
+    CHECK(cuis_display_lock(first_session, 1, 1) == E_OK);
+    CHECK(cuis_display_lock(first_session, 1, 0) == E_OK && display_depth == 2);
+    CHECK(cuis_vdi_policy() == 1 && cuis_vdi_clip(0, &clip));
+    CHECK(!clip.x && !clip.y && clip.width == display_width && clip.height == display_height);
+    CHECK(!cuis_vdi_clip(1, &clip));
+    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN, a, 0, 0, 0, 0) == EAGAIN);
+    CHECK(cuis_delay_service(first_session, 1) == E_OK && display_depth == 2);
+    CHECK(cuis_window_service(CUIS_WINDOW_OUTSET, a, 65536, 0, 0, 0) == EINVAL);
+    CHECK(cuis_window_service(CUIS_WINDOW_OUTSET, a, 2, 2, 0, 0) == E_OK);
+    CHECK(REGION(a, 0) == 1 && copied[2] == 22 && copied[3] == 22);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 0, 0, 0x7fffffff, 20) == EINVAL);
+    CHECK(cuis_window_service(CUIS_WINDOW_OUTSET, a, 0, 0, 0, 0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 2000, 2000, 20, 20) == E_OK);
+    CHECK(REGION(a, 0) == 0);
+    CHECK(!(*find_owner(run))->windows->display_regions && (*find_owner(run))->windows->display_regions_valid);
+    CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, a, 0, 0, 20, 20) == E_OK);
+    cover = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 20, 20, 0);
+    CHECK(cover >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, cover, 0, 0, 0, 0) == E_OK);
+    before = allocations - frees;
+    CHECK(REGION(a, 0) == 0 && allocations - frees == before);
+    CHECK(!(*find_owner(run))->windows->next->display_regions && (*find_owner(run))->windows->next->display_regions_valid);
+    CHECK(cuis_window_service(CUIS_WINDOW_DESTROY, cover, 0, 0, 0, 0) == E_OK);
+    run = &second;
+    second_session = cuis_service(CUIS_SESSION_START, 0);
+    CHECK(cuis_session_wait(second_session,0,CUIS_READY_DISPLAY|CUIS_READY_TIMER,0) == CUIS_READY_TIMER);
+    run = &first;
+    CHECK(cuis_stream_service(CUIS_STREAM_WRITE,second_session,0x10000,16,0,0) == 16);
+    run = &second;
+    CHECK(cuis_session_wait(second_session,16,CUIS_READY_STREAM|CUIS_READY_DISPLAY|CUIS_READY_TIMER,0) ==
+          (CUIS_READY_STREAM|CUIS_READY_TIMER));
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,second_session,0x20000,16,0,0) == 16);
+    CHECK(cuis_display_lock(first_session, 1, 0) == EACCDN);
+    CHECK(cuis_display_lock(second_session, 1, 0) == EAGAIN);
+    CHECK(cuis_display_lock(second_session, 0, 0) == EACCDN);
+    CHECK(cuis_vdi_policy() == EAGAIN && !cuis_vdi_clip(0, &clip));
+    CHECK(cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0) == EAGAIN);
+    run = &first;
+    CHECK(cuis_display_lock(first_session, 0, 0) == E_OK && display_depth == 1);
+    run = &second;
+    CHECK(cuis_display_lock(second_session, 1, 0) == EAGAIN);
+    run = &first;
+    CHECK(cuis_display_lock(first_session, 0, 0) == E_OK && !display_owner);
+    run = &second;
+    b = cuis_window_service(CUIS_WINDOW_CREATE, 5, 5, 10, 10, 0);
+    CHECK(b >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, b, 0, 0, 0, 0) == E_OK);
+    CHECK(cuis_session_wait(second_session,0,CUIS_READY_DISPLAY,0) == CUIS_READY_DISPLAY);
+    CHECK(cuis_display_lock(second_session, 1, 1) == E_OK);
+    CHECK(cuis_session_wait(second_session,0,CUIS_READY_DISPLAY,0) == CUIS_READY_DISPLAY);
+    display_release_owner = &second;
+    run = &first;
+    input_sleeps = 0;
+    CHECK(cuis_session_wait(first_session,0,CUIS_READY_DISPLAY,0) == CUIS_READY_DISPLAY);
+    CHECK(!display_owner && input_sleeps == 1);
+    CHECK(cuis_display_lock(first_session, 1, 1) == E_OK && input_sleeps == 1 && !input_bad_idle);
+    CHECK(REGION(a, 0) == 1 && copied[0] == 0 && copied[1] == 0 && copied[2] == 20 && copied[3] == 5);
+    before = allocations - frees;
+    CHECK(REGION(a, 4) == 0 && allocations - frees == before);
+    fail_copy = TRUE;
+    CHECK(REGION(a, 0) == EIMBA && allocations - frees == before);
+    fail_copy = FALSE; fail_allocation = TRUE;
+    CHECK(REGION(a, 0) == ENSMEM && allocations - frees == before);
+    fail_allocation = FALSE;
+    CHECK(REGION(b, 0) == EACCDN);
+    CHECK(cuis_region_service(a, 0x100000000ULL, 0, 0, 0, 0) == EINVAL);
+    cuis_process_exit(&second);
+    before = allocations - frees;
+    /* A failed FIRST must not replace the four-piece list with the now
+     * unobscured single rectangle while the library keeps its old cursor. */
+    CHECK(cuis_region_service(a, 0, 0, 0x1004, 0x1008, 0x100c) == EIMBA);
+    CHECK(REGION(a, 3) == 1 && allocations - frees == before);
+    fail_copy = TRUE;
+    CHECK(REGION(a, 0) == EIMBA);
+    fail_copy = FALSE;
+    CHECK(REGION(a, 3) == 1 && allocations - frees == before);
+    fail_copy_address = 0x1008; /* Earlier LONG outputs have already copied. */
+    CHECK(REGION(a, 0) == EIMBA);
+    fail_copy_address = 0;
+    CHECK(REGION(a, 3) == 1 && allocations - frees == before);
+    CHECK(!(*find_owner(run))->windows->pending_regions);
+    CHECK(REGION(a, 0) == 1 && copied[2] == 20 && copied[3] == 20);
+    CHECK(REGION(a, 1) == 0);
+    CHECK(cuis_display_lock(first_session, 0, 0) == E_OK);
+    run = &second;
+    second_session = cuis_service(CUIS_SESSION_START, 0);
+    b = cuis_window_service(CUIS_WINDOW_CREATE, 5, 5, 10, 10, 0);
+    CHECK(b >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, b, 0, 0, 0, 0) == E_OK);
+    run = &first;
+    CHECK(cuis_window_service(CUIS_WINDOW_HIDE, a, 0, 0, 0, 0) == E_OK);
+    CHECK(REGION(a, 0) == 0);
+    CHECK(cuis_display_lock(first_session, 1, 0) == E_OK);
+    run = &second;
+    CHECK(REGION(b, 0) == 1 && display_owner == *find_owner(&first));
+    display_release_owner = &first; display_release_exit = TRUE;
+    input_sleeps = 0;
+    CHECK(cuis_display_lock(second_session, 1, 1) == E_OK && input_sleeps == 1);
+    CHECK(!*find_owner(&first) && display_owner == *find_owner(&second));
+    cuis_process_exit(&second);
+    CHECK(!display_owner && !display_depth && !cuis_update_active());
+    /* A fatal output fault must reclaim both the cached and pending lists. */
+    run = &first;
+    first_session = cuis_service(CUIS_SESSION_START, 0);
+    a = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 20, 20, 0);
+    CHECK(a >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, a, 0, 0, 0, 0) == E_OK);
+    CHECK(cuis_display_lock(first_session, 1, 1) == E_OK && REGION(a, 0) == 1);
+    region_exit_on_output = TRUE;
+    CHECK(REGION(a, 0) == EIMBA);
+    CHECK(!*find_owner(run) && !display_owner && !display_depth);
+    CHECK(allocations == frees);
+    return 0;
+}
+#undef REGION

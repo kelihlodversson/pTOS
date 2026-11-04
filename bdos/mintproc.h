@@ -10,6 +10,10 @@
 
 #include "portab.h"
 
+#define GEMDOS_SYIELD       0x0ff
+#define GEMDOS_PWAIT        0x109
+#define GEMDOS_PWAIT3       0x11c
+#define GEMDOS_PWAITPID     0x13a
 #define GEMDOS_PGETPID      0x10b
 #define GEMDOS_PGETPPID     0x10c
 #define GEMDOS_PGETUID      0x10f

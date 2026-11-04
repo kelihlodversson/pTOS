@@ -60,9 +60,6 @@
 #include "../cli/clistub.h"
 #endif
 
-#if CONF_WITH_USER_ASPACE
-extern void mark_kernel_code_pd(PD *p);
-#endif
 
 /*
  * clear screen value for ob_spec:
@@ -115,13 +112,6 @@ extern void deskstart(void) NORETURN;   /* see ../desk/deskstart.S */
 #if CONF_WITH_CLI != 0 && !CONF_EXTERNAL_CLI
 extern void coma_start(void) NORETURN;  /* see cli/cmdasm.S */
 #endif
-
-void sh_read(char *pcmd, char *ptail)
-{
-    strcpy(pcmd, D.s_cmd);
-    memcpy(ptail, ad_stail, CMDTAILSIZE);
-}
-
 
 static void sh_curdrvdir(char *ppath)
 {
@@ -315,192 +305,6 @@ static void sh_show(const char *lcmd)
 }
 
 
-/*
- *  Return a pointer to the start of the filename in a path
- *  (assumed to be the last component of the path)
- */
-char *sh_name(char *ppath)
-{
-    char *pname = ppath;
-
-    /*
-     * note: filename_start() assumes that there is a filename separator
-     * within the path, so we handle a path like X:AAAAAAAA.BBB before
-     * calling the general function
-     */
-    if (extract_drive_number(pname) >= 0)   /* valid prefix exists */
-        pname += 2;
-
-    return filename_start(pname);
-}
-
-
-/*
- *  Search for a particular string in the DOS environment and return a
- *  value in the pointer pointed to by the first argument.  If the string
- *  is found, the value is a pointer to the first character after the
- *  string; otherwise it is a NULL pointer.
- */
-void sh_envrn(char **ppath, const char *psrch)
-{
-    char *p;
-    WORD len;
-
-    len = strlen(psrch);
-    *ppath = NULL;
-
-    /*
-     * scan environment string until double nul
-     */
-    for (p = ad_envrn; *p; )
-    {
-        if (strncmp(p, psrch, len) == 0)
-        {
-            *ppath = p + len;
-            break;
-        }
-        while(*p++) /* skip to end of current env variable */
-            ;
-    }
-}
-
-
-/*
- *  Search next style routine to pick up each path in the PATH= portion
- *  of the DOS environment.  It returns a pointer to the start of the
- *  following path until there are no more paths to find.
- */
-static char *sh_path(char *src, char *dest, char *pname)
-{
-    char last = 0;
-    char *p;
-
-    if (!src)           /* precautionary */
-        return NULL;
-
-    /* check for end of PATH= env var */
-    if (!*src)
-        return NULL;
-
-    /* copy over path */
-    for (p = src; *p; )
-    {
-        if ((*p == ';') || (*p == ','))
-            break;
-        last = *p;
-        *dest++ = *p++;
-    }
-
-    /* see if extra path separator is needed */
-    if ((last != PATHSEP) && (last != DRIVESEP))
-        *dest++ = PATHSEP;
-
-    /* append file name */
-    strcpy(dest, pname);
-
-    /* point past terminating separator or nul */
-    return p + 1;
-}
-
-
-/*
- *  Routine to verify that a file is present.  Note that this routine
- *  tolerates the presence of wildcards in the filespec.
- *
- *  The directory search order is the same as that in TOS2/TOS3/TOS4, as
- *  deduced from tests on those systems:
- *      (1) isolate the filename portion of pspec, and search for it in the
- *          application directory; if found, return the fully-qualified
- *          name, else continue.
- *      (2) search for pspec in the current directory; if found, return
- *          with pspec unchanged, else continue.
- *      (3) search for pspec in the root directory of the current drive;
- *          if found, return pspec with '\' prefixed, else continue.
- *      (4) search for pspec in each path of the AES path string; if found,
- *          return the fully-qualified name.
- *      (5) if still not found, return with error.
- */
-static WORD findfile(char *pspec)
-{
-    char *path;
-    char *pname;
-
-    KDEBUG(("sh_find(): input pspec='%s'\n",pspec));
-    pname = sh_name(pspec);                 /* get ptr to name      */
-
-    dos_sdta(&D.g_dta);
-
-    /* (1) search in the application directory */
-    if (rlr->p_appdir[0] != '\0')
-    {
-        strcpy(D.g_work, rlr->p_appdir);
-        strcat(D.g_work, pname);
-        if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
-        {
-            strcpy(pspec, D.g_work);
-            KDEBUG(("sh_find(1): returning pspec='%s'\n",pspec));
-            return 1;
-        }
-    }
-
-    /* (2) search in the current directory */
-    strcpy(D.g_work, pspec);
-    if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
-    {
-        KDEBUG(("sh_find(2): returning pspec='%s'\n",pspec));
-        return 1;
-    }
-
-    /* (3) search in the root directory of the current drive */
-    D.g_work[0] = PATHSEP;
-    strcpy(D.g_work+1, pname);
-    if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
-    {
-        strcpy(pspec, D.g_work);
-        KDEBUG(("sh_find(3): returning pspec='%s'\n",pspec));
-        return 1;
-    }
-
-    /* (4) search in the AES path */
-    sh_envrn(&path, PATH_ENV);      /* find PATH= in the command tail */
-    if (!path)
-    {
-        KDEBUG(("sh_find(): no AES path, '%s' not found\n",pspec));
-        return 0;
-    }
-    if (!*path)                     /* skip nul after PATH= */
-        path++;
-
-    while(1)
-    {
-        path = sh_path(path, D.g_work, pname);
-        if (!path)                  /* end of PATH= */
-            break;
-        if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
-        {
-            strcpy(pspec, D.g_work);
-            KDEBUG(("sh_find(4): returning pspec='%s'\n",pspec));
-            return 1;
-        }
-    }
-
-    KDEBUG(("sh_find(): '%s' not found\n",pspec));
-    return 0;
-}
-
-WORD sh_find(char *pspec)
-{
-    DTA *save_dta;
-    WORD ret;
-
-    save_dta = dos_gdta();      /* save, findfile() modifies it */
-    ret = findfile(pspec);      /* do the actual shel_find() */
-    dos_sdta(save_dta);         /* restore */
-
-    return ret;
-}
-
-
 #if CONF_WITH_PCGEM
 /*
  *  Read the default application to invoke.
@@ -591,9 +395,6 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
     /* Create a basepage with the standard Pexec() */
     pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
     pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)entry);
-#if CONF_WITH_USER_ASPACE
-    mark_kernel_code_pd(pd);
-#endif
 
     /* Run the program with dos_exec() for AES reentrancy issues */
     return dos_exec(PE_GOTHENFREE, NULL, (const char *)pd, NULL);
@@ -704,14 +505,7 @@ static WORD sh_ldapp(SHELL *psh)
                 KINFO(("sh_ldapp(): no desktop in the root directory of the boot drive\n"));
                 psh->sh_isgem = FALSE;      /* EmuCON is a console program */
                 sh_chgrf(psh);
-#if ARCH_X86_64
-                {
-                    extern void start_builtin_cli(char *env);
-                    start_builtin_cli(NULL);
-                }
-#else
                 aes_run_rom_program(coma_start);
-#endif
                 ret = 0;
             }
 #else

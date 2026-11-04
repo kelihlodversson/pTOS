@@ -95,6 +95,17 @@ static void escfn3(Vwk * vwk)
     bios_conws("\033E\033e\015");   /* clear-and-home, then show alpha cursor */
 }
 
+#if CONF_WITH_CUIS
+/* Physical console ownership uses the same native alpha/graphics transition
+ * as classic AES, without entering the legacy AES shell or its scheduler. */
+void vdi_cuis_console(BOOL active);
+void vdi_cuis_console(BOOL active)
+{
+    if (active) escfn3(NULL);
+    else escfn2(NULL);
+}
+#endif
+
 
 /*
  * escfn4: v_curup() - moves the alpha cursor up one line
