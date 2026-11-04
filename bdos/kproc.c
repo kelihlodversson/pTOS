@@ -1951,15 +1951,8 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
 
     *prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
 #if CONF_WITH_MMAP
-    {
-        const MMAP_REGION *region;
-
-        for (region = kaspace_mmap(kproc->active_space)->regions; region; region = region->next)
-            if (va >= region->address && va < (UQUAD)region->address + region->length) {
-                *prot = region->prot;
-                return TRUE;
-            }
-    }
+    if (kaspace_mmap_protection(kproc->active_space, va, prot))
+        return TRUE;
 #endif
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP)
         return TRUE;
@@ -1981,13 +1974,13 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
 {
     UWORD prot;
 
-    if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER)) return 0;
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_fault(kproc->active_space, va, access);
         if (rc >= 0) return rc;
     }
 #endif
+    if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER)) return 0;
     if (!aspace_fault_in(kproc->aspace, va, prot)) return 2;
     va &= ~(USER_PAGE_SIZE - 1);
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP &&
@@ -2016,10 +2009,6 @@ int kproc_demand_page(PD *pd, VADDR va, UWORD access)
         !(prot & ASPACE_PROT_USER) || (access & ~prot))
         return 0;
     if (aspace_translate(kproc->aspace, va, NULL, NULL)) {
-#if CONF_WITH_MMAP
-        if ((access & ASPACE_PROT_WRITE) && aspace_file_cow(kproc->aspace, va))
-            return back_page(kproc, va, access);
-#endif
         return 0;
     }
     return back_page(kproc, va, access);
@@ -2065,7 +2054,8 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
             if (!(prot & ASPACE_PROT_USER)) return FALSE;
             if (write && !(prot & ASPACE_PROT_WRITE)) {
 #if CONF_WITH_MMAP
-                if (aspace_file_cow(kproc->aspace, page) && lazy_area(kproc, page, &prot) &&
+                if (aspace_file_cow(kproc->aspace, page) &&
+                    kaspace_mmap_protection(kproc->active_space, page, &prot) &&
                     (prot & ASPACE_PROT_USER) && (prot & ASPACE_PROT_WRITE)) continue;
 #endif
                 return FALSE;

@@ -71,6 +71,14 @@ static MMAP_REGION *mmap_find(KASPACE *space, UQUAD address)
     return NULL;
 }
 
+BOOL kaspace_mmap_protection(KASPACE *space, UQUAD address, UWORD *protection)
+{
+    MMAP_REGION *region = mmap_find(space, address);
+    if (!region) return FALSE;
+    if (protection) *protection = region->prot;
+    return TRUE;
+}
+
 static int mmap_back(KASPACE *space, MMAP_REGION *region, VADDR va, UWORD access)
 {
     if (region->backing)

@@ -1853,7 +1853,7 @@ static void free_mapping_process(PD *pd)
 static void test_mmap(void)
 {
     SNAP s;
-    PD *a, *b;
+    PD *a, *b, *parent = run;
     ASPACE *as, *bs;
     UQUAD pa, pb;
     ULONG value, private_a, private_b;
@@ -1895,6 +1895,18 @@ static void test_mmap(void)
         value = 1;
         CHECK(aspace_copy_from_user(bs, &value, PTOS_MMAP_BASE, sizeof(value)) && !value,
               "second process private data stays zero");
+        CHECK(kproc_mprot(b, PTOS_MMAP_BASE + 2 * PAGE, PAGE, PROT_READ) == 0,
+              "prepare read-only lazy mapping for kernel copies");
+        run = b;
+        value = 7;
+        CHECK(!kproc_copy_to_user(PTOS_MMAP_BASE + 2 * PAGE, &value, sizeof(value)) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
+              "kernel write rejects untouched read-only reservation without faulting");
+        CHECK(kproc_copy_from_user(&value, PTOS_MMAP_BASE + 2 * PAGE, sizeof(value)) && !value &&
+              aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, &prot) &&
+              (prot & ASPACE_PROT_USER) && !(prot & ASPACE_PROT_WRITE),
+              "kernel read faults the same reservation with its logical protection");
+        run = parent;
         CHECK(kproc_psetlimit(a, PSETLIMIT_DATA, PAGE) == 0,
               "set anonymous allocation limit");
         CHECK(kproc_mmap(a, 0, PAGE, PROT_READ,

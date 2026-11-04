@@ -20,6 +20,8 @@ typedef struct {
 } KASPACE_MMAP;
 /* Borrowed metadata, valid only while holding the containing space. */
 KASPACE_MMAP *kaspace_mmap(KASPACE *space);
+/* Return the logical protection of a reservation without faulting it in. */
+BOOL kaspace_mmap_protection(KASPACE *space, UQUAD address, UWORD *protection);
 /* Shutdown drops file mappings from every live space, including spaces with
  * no remaining process. The registry itself holds no ownership references. */
 void kaspace_shutdown_file_mappings(void);
