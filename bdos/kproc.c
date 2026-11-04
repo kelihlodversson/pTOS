@@ -36,6 +36,7 @@
 #endif
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"
+#include "kaspace.h"
 #include "progimage.h"
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/startup.h"
@@ -96,7 +97,8 @@ struct kproc {
     UQUAD tpa_gen;              /* a freed-and-reused address is not trusted */
     UBYTE *user_start;
     UBYTE *user_end;
-    ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
+    ASPACE *aspace;      /* borrowed from active_space */
+    KASPACE *active_space; /* owning reference, NULL until prepared */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
 #if CONF_WITH_NATIVE_SCHED
     PD *async_parent;           /* stable controller for exit, not logical PPID */
@@ -109,7 +111,8 @@ struct kproc {
     BOOL standard_entry;
     UQUAD interp_entry, initial_rsp, interp_bytes;
 #endif
-    ASPACE *pending_as;  /* a program loaded from a file: the address space made for it */
+    ASPACE *pending_as;  /* borrowed from pending_space */
+    KASPACE *pending_space; /* owning reference while the image is loaded */
                                 /* at load time, with its image in it; the launch adopts it */
     BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
     PD *load_parent;            /* PE_LOAD: the process whose heap holds the image */
@@ -285,11 +288,11 @@ void kproc_destroy(PD *pd)
             if (kproc->lender)
                 give_image_back(kproc);
             kproc_load_leave();             /* (a disk error jumped out of a load) */
-            aspace_destroy(kproc->pending_as);
+            kaspace_put(kproc->pending_space);
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
              * PD finds nothing and cannot free either twice. */
-            aspace_destroy(kproc->aspace);
+            kaspace_put(kproc->active_space);
             kstack_free(kproc->kstack_phys);
             kfree(kproc->heap);
 #if CONF_WITH_MMAP
@@ -573,14 +576,15 @@ static VADDR stack_bytes(const KPROC *kproc);
 /* A launch that cannot be completed: the address space is gone.  One that was
  * made at load time holds the program's only copy, so there is nothing left
  * to launch (`lost`): the basepage can only be freed. */
-static BOOL prepare_failed(KPROC *kproc, ASPACE *as)
+static BOOL prepare_failed(KPROC *kproc, KASPACE *owner)
 {
-    if (as == kproc->pending_as) {
+    if (owner == kproc->pending_space) {
         kproc->pending_as = NULL;
+        kproc->pending_space = NULL;
         kproc->has_image = FALSE;
         kproc->lost = TRUE;
     }
-    aspace_destroy(as);
+    kaspace_put(owner);
     if (kproc->kstack_phys)
         kstack_free(kproc->kstack_phys);
     kproc->kstack_phys = 0;
@@ -621,6 +625,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
     ASPACE *as;
+    KASPACE *owner;
     VADDR env, tpa, hitpa;
     ULONG envbytes;
 
@@ -651,13 +656,19 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 
     /* a program loaded from a file already has its address space, with its
      * image in it (kproc_load_begin()) */
-    as = kproc->pending_as ? kproc->pending_as : aspace_create();
-    if (!as)
-        return FALSE;
+    owner = kproc->pending_space;
+    if (owner) {
+        as = kaspace_backend(owner);
+    } else {
+        as = aspace_create();
+        if (!as) return FALSE;
+        owner = kaspace_adopt(as);
+        if (!owner) { aspace_destroy(as); return FALSE; }
+    }
     kproc->kstack_phys = kstack_alloc(&kproc->kstack_top);
     if (!kproc->kstack_phys) {
-        if (as != kproc->pending_as)
-            aspace_destroy(as);
+        if (owner != kproc->pending_space)
+            kaspace_put(owner);
         return FALSE;
     }
 
@@ -686,20 +697,20 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 #endif
                                    sizeof(PD),
                                    ASPACE_PROT_WRITE)) {
-        return prepare_failed(kproc, as);
+        return prepare_failed(kproc, owner);
     }
     if (!build_ancestors(kproc, as, parent)) {
-        return prepare_failed(kproc, as);
+        return prepare_failed(kproc, owner);
     }
 #if CONF_WITH_USER_CALLBACKS
     if (!user_callback_image_load(as))
-        return prepare_failed(kproc, as);
+        return prepare_failed(kproc, owner);
 #endif
 #if CONF_WITH_X32_VDI
     /* Before moving a PE_LOAD image: every allocation that can fail must
      * precede that irreversible transfer from the launcher's address space. */
     if (!x32_vdi_image_load(as))
-        return prepare_failed(kproc, as);
+        return prepare_failed(kproc, owner);
 #endif
     /* the limits of Psetlimit() are the launcher's at this moment (a stack
      * that would run into the image the loader put in the heap stays the
@@ -733,7 +744,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!kproc->legacy &&
         !aspace_map_private(as, USER_STACK_TOP - stack_bytes(kproc), stack_bytes(kproc),
                             ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
-        return prepare_failed(kproc, as);
+        return prepare_failed(kproc, owner);
     }
     if (!kproc->legacy)
         kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
@@ -752,12 +763,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (kproc->has_image && !kproc->pending_as &&
         (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
                             : !layout_load(as, &kproc->layout))) {
-        return prepare_failed(kproc, as);
+        return prepare_failed(kproc, owner);
     }
 #if CONF_WITH_ELF_SHARED
     if (kproc->standard_entry && USER_STACK_TOP - kproc->stack_low >
         (kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE))
-        return prepare_failed(kproc, as);
+        return prepare_failed(kproc, owner);
 #endif
     if (kproc->legacy)
         kproc->stack_top = hitpa & ~3UL;    /* the top of the TPA: the program sets its own stack */
@@ -771,8 +782,10 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         kproc->stack_top = kproc->initial_rsp;
     }
 #endif
+    kproc->active_space = owner;
     kproc->aspace = as;
     kproc->pending_as = NULL;               /* (the address space is the process's now) */
+    kproc->pending_space = NULL;            /* transfer, not an additional reference */
     return TRUE;
 }
 
@@ -883,17 +896,21 @@ BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes)
 {
     KPROC *kproc = kproc_find(pd);
     ASPACE *as;
+    KASPACE *owner;
 
     if (!kproc || kproc->aspace || kproc->pending_as || kproc->has_image || kproc->lost)
         return FALSE;
     as = aspace_create();
     if (!as)
         return FALSE;
+    owner = kaspace_adopt(as);
+    if (!owner) { aspace_destroy(as); return FALSE; }
     if (!aspace_map_private(as, va, bytes, ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
-        aspace_destroy(as);
+        kaspace_put(owner);
         return FALSE;
     }
     kproc->pending_as = as;
+    kproc->pending_space = owner;
     return TRUE;
 }
 

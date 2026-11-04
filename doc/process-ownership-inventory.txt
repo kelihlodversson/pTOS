@@ -31,10 +31,38 @@ orphaning, nested synchronous launches and deferred successors share these
 paths. The launcher and scheduler retain borrowed PD identities only within
 their existing lifetime rules.
 
-Initial extraction: KASPACE provides explicitly owned, reference-counted
-backend ownership and fail-closed independent cloning. Its references are
-serialized under current process-context scheduling; it introduces no locks.
-Existing KPROC and scheduler paths have not yet been migrated to it. Their
-direct destruction and the thread/process split remain required work in #891.
-Do not use KASPACE to share a live process mapping until mapping metadata,
-loans, cleanup and the calling-thread address-space context move with it.
+KASPACE provides reference-counted backend ownership and fail-closed cloning.
+KPROC owns one reference for a pending or active space and keeps the matching
+ASPACE pointer only as a borrowed backend pointer. Successful preparation moves
+the pending reference to the active slot without incrementing it. Failed
+adoption keeps backend ownership with the creator; failed preparation drops
+the acquired reference. A syscall-stack allocation failure preserves a loaded
+pending image. References remain serialized in process context; no locks or
+new concurrent semantics are introduced.
+
+The x32 kernel self-test exercises the production load-begin, load-enter/leave,
+pending-to-active transfer, failed pending mapping, syscall-stack allocation
+failure, preparation rollback after stack allocation, and repeated process
+cleanup. It checks that the image survives transfer and that the original
+memory/heap counts return after each path. Other architecture runtime tests and
+allocation failure specifically at wrapper adoption remain to be added.
+
+Metadata classification before actual sharing:
+
+* Heap reservations, lazy mapping regions, permissions and backing references
+  describe virtual mappings and must move to the shared address-space owner.
+  Fault, Mmap/Munmap/Mprot and copy validation must use that same metadata.
+* Stack reservation/growth state follows the particular stack mapping in that
+  address space, while the live stack pointer and execution context belong to
+  an individual thread. Multiple stacks must not reuse one process-wide limit.
+* Loader images, pending transfers, PE_GO page loans and give-back track image
+  and lender ownership; they are not a shared-ASPACE reference. Their release
+  ordering needs an explicit mapping/image lifetime before sharing is enabled.
+* PID, parent, descriptors, current directories and process completion remain
+  process-owned. Limits and accounting require an explicit policy for shared
+  mappings rather than blindly charging one process's existing KPROC fields.
+
+KASPACE sharing is not yet exposed to KPROC or processes. Do not share live
+process mappings until those metadata, loans and cleanup relationships and the
+calling-thread validation context have moved to consistent owners. Scheduler
+and syscall-stack ownership and the thread/process split remain #891 work.

@@ -1070,6 +1070,52 @@ static void test_process_validation(void)
     same(&s, "process validation");
 }
 
+/* Exercise the production pending/active ownership transition and unwind. */
+static void test_kproc_pending_ownership(void)
+{
+    SNAP s;
+    PD *pd;
+    void *env;
+    ASPACE *active;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(!kproc_load_begin(pd, ISO_VA + 1, PAGE), "failed pending image mapping rolls back");
+    CHECK(kproc_load_begin(pd, ISO_VA, PAGE), "pending image is created after failed mapping");
+    kproc_load_enter(pd);
+    kproc_load_leave();
+    x86_64_pmem_test_fail_after(1);
+    CHECK(!kproc_prepare_user(pd, run), "syscall stack allocation failure is reported");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(!kproc_load_begin(pd, ISO_VA, PAGE), "stack failure preserves the pending image");
+    CHECK(kproc_prepare_user(pd, run), "pending image transfers to active ownership");
+    active = kproc_user_aspace(pd);
+    CHECK(active && aspace_translate(active, ISO_VA, NULL, NULL), "transferred image remains mapped");
+    proc_free_owned(pd);
+    proc_free_owned(pd);
+    same(&s, "pending address-space ownership");
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_load_begin(pd, ISO_VA, PAGE), "pending image for preparation rollback");
+    x86_64_pmem_test_fail_after(2);
+    CHECK(!kproc_prepare_user(pd, run), "preparation fails after stack allocation");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(!kproc_load_begin(pd, ISO_VA, PAGE), "failed preparation marks the adopted image lost");
+    CHECK(!kproc_user_aspace(pd), "failed preparation publishes no active space");
+    proc_free_owned(pd);
+    proc_free_owned(pd);
+    same(&s, "pending address-space preparation rollback");
+}
+
 /* ---- KPROC records and the real process lifecycle ------------------ */
 
 #define FAKE_PDS 1000
@@ -3143,6 +3189,7 @@ void x86_64_memtest_run(void)
     test_aspace();
     test_isolation();
     test_process_validation();
+    test_kproc_pending_ownership();
     test_kproc();
     test_kproc_ranges();
     test_lifecycle();
