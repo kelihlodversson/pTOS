@@ -169,17 +169,29 @@ static KPROC *retired_processes; /* identities retained after removal from looku
 #endif
 
 #define KPROC_PID_MAX   32767
+static WORD last_pid;
+#if CONF_WITH_X86_64_MEMTEST
+static UWORD test_pid_candidates;
+void kproc_test_pid_search(WORD previous, UWORD candidates)
+{
+    last_pid = previous;
+    test_pid_candidates = candidates;
+}
+#endif
 
 /* a process id no record has */
 static WORD new_pid(void)
 {
-    static WORD last;
     KPROC *k;
     WORD pid;
+    UWORD attempts, limit = KPROC_PID_MAX;
 
-    for (;;) {
-        last = (last >= KPROC_PID_MAX) ? 1 : last + 1;
-        pid = last;
+#if CONF_WITH_X86_64_MEMTEST
+    if (test_pid_candidates) limit = test_pid_candidates;
+#endif
+    for (attempts = 0; attempts < limit; attempts++) {
+        last_pid = (last_pid >= KPROC_PID_MAX) ? 1 : last_pid + 1;
+        pid = last_pid;
         for (k = kproc_list; k; k = k->next)
             if (k->pid == pid)
                 break;
@@ -193,6 +205,7 @@ static WORD new_pid(void)
 #endif
         ) return pid;
     }
+    return 0;                    /* all candidates are reserved */
 }
 
 static KPROC *kproc_find(PD *pd)
@@ -228,6 +241,10 @@ BOOL kproc_create(PD *pd)
     kproc->references = 1;       /* the live lookup owns this reference */
     kproc->pd = pd;
     kproc->pid = new_pid();
+    if (!kproc->pid) {
+        KPROC_FREE(kproc);
+        return FALSE;
+    }
     kproc->start_tick = (ULONG)hz_200;
     kproc->dta = (DTAINFO *)pd->p_cmdlin;
     /* Take over the tables the basepage may already hold; from now on the
@@ -279,8 +296,19 @@ KPROC *kproc_retain(PD *pd)
 void kproc_release(KPROC *process)
 {
     KPROC **link;
-    if (!process || --process->references)
+    if (!process)
         return;
+    if (!process->references)
+        panic("kproc_release: reference underflow");
+    if (process->references > 1) {
+        process->references--;
+        return;
+    }
+    for (link = &kproc_list; *link; link = &(*link)->next)
+        if (*link == process)
+            panic("kproc_release: final live reference");
+    if (process->pd)
+        panic("kproc_release: final live reference");
     /* Only the live lookup owns its reference; final release is retired. */
     for (link = &retired_processes; *link; link = &(*link)->next)
         if (*link == process) {
@@ -288,10 +316,11 @@ void kproc_release(KPROC *process)
             KPROC_FREE(process);
             return;
         }
+    panic("kproc_release: unregistered final reference");
 }
 
 WORD kproc_ref_pid(const KPROC *process) { return process ? process->pid : 0; }
-BOOL kproc_ref_live(const KPROC *process) { return process && process->pd != NULL; }
+BOOL kproc_ref_has_basepage(const KPROC *process) { return process && process->pd != NULL; }
 BOOL kproc_ref_status(const KPROC *process, UWORD *status)
 {
     if (!process || !process->completed) return FALSE;

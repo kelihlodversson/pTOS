@@ -108,6 +108,10 @@ PD links are removed by ksched_exiting before the parent allocation is freed;
 loader image give-back happens during live-record cleanup, before the PD can be
 released. Other borrowed PD users continue to obey the existing live-lookup and
 loan rules; no new long-lived PD access is permitted through a KPROC reference.
+The basepage-presence query describes only that allocation, not whether logical
+completion has been recorded: completion precedes basepage cleanup. PID search
+checks live records, retained identities and scheduler/CUIS reservations, and
+returns failure after a full namespace scan rather than reusing a reserved PID.
 
 This is not yet a complete THREAD/PROCESS lifetime implementation. A running
 thread would require live process resources and mapping metadata to outlive it,
@@ -115,3 +119,16 @@ not merely this completed-identity snapshot. Membership, independently owned
 ASPACE metadata and thread-aware termination remain to be designed and tested
 before attaching generic THREAD objects. Shared ASPACEs must retain their own
 mapping metadata, not merely the backend page tables.
+
+The target reference graph is THREAD -> PROCESS and THREAD -> ASPACE, with
+PROCESS -> ASPACE and borrowed PROCESS -> THREAD membership links. That graph
+is not operational yet. In particular, an outstanding runnable THREAD must
+keep its process-wide resources and execution mappings usable; the current
+completion snapshot intentionally cannot do so. Once that ownership exists,
+completion must detach publication and record status, then retain resources
+needed by remaining threads. A thread releases its references only after it
+cannot resume and the scheduler has switched away from its execution stack.
+The last live-resource owner may then release process resources and its ASPACE
+reference; identity remains until observers/reap references are gone. Mapping
+metadata and image-loan ownership must move or otherwise be retained before
+that sequence can be implemented safely.

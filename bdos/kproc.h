@@ -68,9 +68,14 @@ typedef struct kproc KPROC;
 KPROC *kproc_retain(PD *pd);
 void kproc_release(KPROC *process);
 WORD kproc_ref_pid(const KPROC *process);
-BOOL kproc_ref_live(const KPROC *process);
+/* Completion may already have been recorded while the PD is still present. */
+BOOL kproc_ref_has_basepage(const KPROC *process);
 BOOL kproc_ref_status(const KPROC *process, UWORD *status);
 void kproc_complete(PD *pd, UWORD status);
+#if CONF_WITH_X86_64_MEMTEST
+/* Restrict the next PID search to a bounded number of candidates for tests. */
+void kproc_test_pid_search(WORD previous, UWORD candidates);
+#endif
 /* The launching process, recorded by proc_go() and used by Pterm() instead
  * of the user-writable p_parent field.  kproc_get_parent() halts if there
  * is no record (like kproc_get_dta()). */

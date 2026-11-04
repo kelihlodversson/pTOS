@@ -1143,6 +1143,7 @@ static void test_kproc(void)
 {
     SNAP s;
     PD **pds;
+    PD *candidate;
     KPROC *retained, *second;
     WORD retained_pid;
     UWORD status;
@@ -1164,16 +1165,34 @@ static void test_kproc(void)
     second = kproc_retain(pds[0]);
     CHECK(retained && second && retained == second, "retain live process twice");
     retained_pid = kproc_pid(pds[0]);
-    CHECK(kproc_ref_live(retained) && kproc_ref_pid(retained) == retained_pid,
+    candidate = kalloc(sizeof(PD));
+    CHECK(candidate != NULL, "PID exhaustion test basepage");
+    if (candidate) {
+        bzero(candidate, sizeof *candidate);
+        candidate->p_uft[0] = 7;
+        kproc_test_pid_search(retained_pid - 1, 1);
+        CHECK(!kproc_create(candidate) && candidate->p_uft[0] == 7,
+              "PID exhaustion rejects live identity without modifying basepage");
+        kproc_test_pid_search(0, 0);
+    }
+    CHECK(kproc_ref_has_basepage(retained) && kproc_ref_pid(retained) == retained_pid,
           "retained process has live identity");
     CHECK(!kproc_ref_status(retained, &status), "live process has no exit status");
     kproc_complete(pds[0], 42);
+    CHECK(kproc_ref_has_basepage(retained) && kproc_ref_status(retained, &status),
+          "completion may precede basepage release");
     kproc_destroy(pds[0]);
     kfree(pds[0]);
     pds[0] = NULL;
-    CHECK(!kproc_ref_live(retained) && kproc_ref_pid(retained) == retained_pid &&
+    CHECK(!kproc_ref_has_basepage(retained) && kproc_ref_pid(retained) == retained_pid &&
           kproc_ref_status(retained, &status) && status == 42,
           "retained completion survives record removal and basepage release");
+    if (candidate) {
+        kproc_test_pid_search(retained_pid - 1, 1);
+        CHECK(!kproc_create(candidate), "retired identity reserves its PID");
+        kproc_test_pid_search(0, 0);
+        kfree(candidate);
+    }
     kproc_release(retained);
     CHECK(kproc_ref_status(second, &status) && status == 42,
           "second reference retains completed process");
