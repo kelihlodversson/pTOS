@@ -28,4 +28,9 @@ void kthread_stack_release(KTHREAD_STACK *stack);
  * be released from a different execution stack. */
 KTHREAD_STACK kthread_stack_detach(KTHREAD_STACK *stack);
 
+#if CONF_WITH_X86_64_MEMTEST
+/* Fail the nth subsequent scheduler-stack allocation; zero disables. */
+void kthread_stack_test_fail_after(UWORD count);
+#endif
+
 #endif

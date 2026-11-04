@@ -20,7 +20,7 @@ void kstack_free(PADDR physical)
 }
 int main(void)
 {
-    KTHREAD_STACK thread, detached;
+    KTHREAD_STACK thread, detached, second = { 0, 0 };
     memset(&thread, 0, sizeof(thread));
     detached = kthread_stack_detach(NULL);
     assert(!detached.physical && !detached.top);
@@ -40,5 +40,13 @@ int main(void)
     kthread_stack_release(&thread);
     kthread_stack_release(NULL);
     assert(releases == 1);
+#if CONF_WITH_X86_64_MEMTEST
+    kthread_stack_test_fail_after(2);
+    assert(kthread_stack_allocate(&thread));
+    assert(!kthread_stack_allocate(&second) && !second.physical);
+    kthread_stack_test_fail_after(0);
+    kthread_stack_release(&thread);
+    assert(allocations == 2 && releases == 2);
+#endif
     return 0;
 }

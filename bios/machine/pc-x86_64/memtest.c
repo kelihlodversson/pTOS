@@ -47,6 +47,7 @@
 #include "pc_x86_64_memtest.h"
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
+#include "../../../bdos/arch/x86_64/kthread_context.h"
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
 #if CONF_WITH_CUIS
@@ -2360,6 +2361,11 @@ static void test_cuis_scheduler(void)
                           "scheduler allocation failure preserves both unlaunched programs");
                 }
             }
+            kthread_stack_test_fail_after(2);
+            rc = ksched_run(programs, 2, results);
+            kthread_stack_test_fail_after(0);
+            CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
+                  "second scheduler stack failure rolls back the first task stack");
             rc = ksched_run(programs, 2, results);
             CHECK(rc == E_OK, "scheduler completes all managed clients");
             if (rc == E_OK) {

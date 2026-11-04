@@ -77,3 +77,24 @@ KASPACE sharing is not yet exposed to KPROC or processes. Do not share live
 process mappings until those metadata, loans and cleanup relationships and the
 calling-thread validation context have moved to consistent owners. Scheduler
 and syscall-stack ownership and the thread/process split remain #891 work.
+
+Required THREAD/PROCESS lifetime boundary
+-----------------------------------------
+The intended generic THREAD owns a PROCESS reference and an ASPACE reference;
+its process membership is a non-owning list link held by PROCESS, so there is
+no strong-reference cycle. TID allocation and lifetime must be independent of
+both PID and the scheduler's existing context token. Architecture backends
+own the execution-context storage; the scheduler controls readiness and must
+reclaim continuation stacks only after switching away. The syscall stack has
+a separate owner and cannot be merged into that stack by assumption.
+
+Current KPROC teardown cannot yet satisfy that contract. xterm() destroys its
+KPROC while the scheduled task's kernel continuation is still unwinding, and
+proc_free_owned() may release the public PD allocation during process cleanup.
+Merely adding a reference count to KPROC would therefore retain pointers to
+released PD or mapping metadata. Before attaching generic THREAD objects,
+split logical process exit from final reference release, define membership
+detachment and resource cleanup ordering, and retain the PD and associated
+metadata for every user of them. No THREAD-to-KPROC retaining API or TID is
+exposed until that transition is implemented and tested. Shared ASPACEs must
+also retain their own mapping metadata, not merely the backend page tables.
