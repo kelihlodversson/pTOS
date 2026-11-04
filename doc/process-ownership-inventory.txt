@@ -101,6 +101,9 @@ callback and the real close wrapper with an injected disk-error longjmp.
 The wrapper has a bounded retry count; repeated errors beyond that bound and
 non-local exits from unrelated filesystem callbacks are not a general
 transactional cleanup guarantee and need separate handling if encountered.
+When the close retry bound is exhausted, its handle reference may remain
+unreleased even though process-memory cleanup has proceeded. The exhausted
+case is tested explicitly; no general deferred handle-reaper is provided here.
 
 KASPACE sharing is not yet exposed to KPROC or processes. Do not share live
 process mappings until those metadata, loans and cleanup relationships and the

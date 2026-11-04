@@ -8,6 +8,7 @@
 #include "proc.h"
 #include "kproc.h"
 #include "procmem.h"
+#include "bdosstub.h"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"non-CUIS cleanup:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD owner, child;
@@ -15,6 +16,7 @@ static SBYTE child_files[NUMSTD];
 static UBYTE child_dirs[NUMCURDIR];
 static unsigned record, allocations, references, attempts, invalidations, directories;
 static unsigned first_closes;
+static BOOL exhaust;
 jmp_buf errbuf;
 long errcode;
 int errdrv;
@@ -30,7 +32,7 @@ void procmem_free_owned(const void *pd, void (*before)(void *))
 {
     CHECK(pd == &owner && allocations == 1);
     before(&child);
-    CHECK(!record && !references && directories == 1);
+    CHECK(!record && references == (exhaust ? 1U : 0U) && directories == 1);
     allocations = 0;
 }
 void decr_curdir_usage(int index) { CHECK(index == 3); directories++; }
@@ -45,7 +47,7 @@ long xclose(WORD handle)
         return E_OK;
     }
     CHECK(references == 1);
-    if (++attempts == 1) {
+    if (++attempts == 1 || exhaust) {
         errdrv = 0;
         errcode = EWRITF;
         longjmp(errbuf, 1);
@@ -64,5 +66,17 @@ int main(void)
     CHECK(!allocations && !record && !references && first_closes == 1 &&
           attempts == 2 && invalidations == 1);
     puts("Non-CUIS process cleanup completes after a disk-error longjmp: PASS");
+    record = allocations = 1;
+    references = 2;
+    attempts = invalidations = directories = first_closes = 0;
+    exhaust = TRUE;
+    proc_free_owned(&owner);
+    CHECK(!allocations && !record && references == 1 && first_closes == 1 &&
+          attempts == BLKDEVNUM + 1 && invalidations == BLKDEVNUM + 1);
+    /* The final interrupted close still owns its reference. A later successful
+     * close releases it once; the earlier handle is never closed twice. */
+    exhaust = FALSE;
+    CHECK(kdos_fclose(NUMSTD + 1) == E_OK && !references && first_closes == 1);
+    puts("Exhausted close retries leave one reference without double release: PASS");
     return 0;
 }
