@@ -6,8 +6,8 @@ Scope
 The combined scheduling and process-model epic (#713, #889) needs one clone
 path shared by public Pclone and the kernel's Pexec/Pfork/Pvfork paths.  The
 public entry must not pass a caller-owned argument structure to that path.
-This document records constraints on the first ABI slice (#890); it does not
-define a public structure or advertise a working call.
+This document records constraints on the first ABI slice (#890).  The draft
+v1 structure is in include/pclone.h; no working call is advertised yet.
 
 Current boundaries
 ------------------
@@ -33,9 +33,17 @@ Current boundaries
 
 ABI decisions still needed
 --------------------------
-Specify the structure size and extension rules, scalar flag combinations,
-entry/stack/TLS contracts, optional outputs, return values and errors together
-with the lifecycle model.
+The v1 candidate has version and flags, native user pointers for entry,
+argument, stack base, TLS and optional child TID, and a 32-bit stack size.
+The structure address and size are separate syscall arguments.  The native
+layout is 32 bytes on x32, ARM and m68k, as verified by cross-compilation.
+The kernel's CLONE_USER_V1 is a separate 32-bit native-endian snapshot; the
+decoder widens addresses to uint64_t and does not dereference them.
+
+Specify size extension rules, scalar flag combinations, entry/stack/TLS
+contracts, optional outputs, return values and errors together with the
+lifecycle model before making the call available.  The decoder performs no
+validation; in particular, decoding an address does not authorize access.
 
 Validation must cover x32, ARM and m68k structure layouts, high-bit 32-bit
 pointers, short/oversized input, invalid flags and ranges, unwritable outputs,
