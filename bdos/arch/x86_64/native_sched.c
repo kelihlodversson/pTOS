@@ -4,6 +4,7 @@
 #include "ksched.h"
 #include "kproc.h"
 #include "process.h"
+#include "kthread_context.h"
 #include "kheap.h"
 #include "gemerror.h"
 #include "string.h"
@@ -27,10 +28,7 @@ typedef struct {
 #endif
     WORD pid, signal;
     BOOL asynchronous, take_ownership;
-    UQUAD identity;
-    UQUAD stack_phys, stack_top;
-    X86_64_PROCESS_CONTEXT context;
-    jmp_buf resume;
+    KTHREAD_CONTEXT execution;
     TASK_STATE state;
     BOOL (*ready)(void *);
     void *argument;
@@ -68,7 +66,7 @@ UQUAD ksched_context_id(void)
 {
     KERNEL_TASK *task = scheduler.current;
     return scheduler.active && task &&
-           (task->state == TASK_RUNNING || task->state == TASK_BLOCKED) ? task->identity : 0;
+           (task->state == TASK_RUNNING || task->state == TASK_BLOCKED) ? task->execution.identity : 0;
 }
 
 void ksched_context_restore(UQUAD identity)
@@ -78,7 +76,7 @@ void ksched_context_restore(UQUAD identity)
     if (!scheduler.active || !identity) return;
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->identity == identity &&
+        if (task->execution.identity == identity &&
             (task->state == TASK_RUNNING || task->state == TASK_BLOCKED)) {
             scheduler.current = task;
             return;
@@ -215,7 +213,7 @@ static void task_entry(void)
         cuis_child_completed(task->parent,task->pid,
             task->signal ? (UWORD)task->signal << 8 : (UWORD)task->result);
 #endif
-    x86_64_process_save(&task->context);
+    x86_64_process_save(&task->execution.cpu);
     longjmp(scheduler.resume, 1);
 }
 
@@ -226,8 +224,8 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     task->ready = ready;
     task->argument = argument;
     task->state = TASK_BLOCKED;
-    x86_64_process_save(&task->context);
-    if (!setjmp(task->resume)) longjmp(scheduler.resume, 1);
+    x86_64_process_save(&task->execution.cpu);
+    if (!setjmp(task->execution.resume)) longjmp(scheduler.resume, 1);
     task->ready = NULL;
     task->argument = NULL;
     return TRUE;
@@ -248,7 +246,7 @@ static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred);
 static void discard_deferred(KERNEL_TASK *task)
 {
     PD *program = task->program;
-    UQUAD stack = task->stack_phys;
+    UQUAD stack = task->execution.stack_phys;
     /* It never entered user mode; resource ownership is already the child's.
      * Do not read its basepage after revoking the loader's borrowed mapping. */
     memset(task,0,sizeof(*task));
@@ -289,13 +287,13 @@ LONG ksched_spawn(PD *pd)
     if (i == KSCHED_LIMIT) return EAGAIN;
     task = &scheduler.tasks[i];
     memset(task, 0, sizeof(*task));
-    task->stack_phys = kstack_alloc(&task->stack_top);
-    if (!task->stack_phys) return ENSMEM;
+    task->execution.stack_phys = kstack_alloc(&task->execution.stack_top);
+    if (!task->execution.stack_phys) return ENSMEM;
 #if CONF_WITH_CUIS
     if (!deferred && (session || token)) {
         LONG result = cuis_child_bind_spawn(session,token,pd);
         if (result != E_OK) {
-            kstack_free(task->stack_phys);
+            kstack_free(task->execution.stack_phys);
             memset(task,0,sizeof(*task));
             return result;
         }
@@ -304,7 +302,7 @@ LONG ksched_spawn(PD *pd)
     /* Allocate the task stack before adopting the image. Preparation maps
      * the stable controller for exit, while ancestor copies retain PPID. */
     if (!kproc_prepare_async(pd, run, scheduler.root.pd)) {
-        kstack_free(task->stack_phys);
+        kstack_free(task->execution.stack_phys);
         memset(task, 0, sizeof(*task));
         return ENSMEM;
     }
@@ -312,7 +310,7 @@ LONG ksched_spawn(PD *pd)
     task->program = pd;
     task->parent = run;
     task->asynchronous = TRUE;
-    task->identity = ++next_identity;
+    task->execution.identity = ++next_identity;
     task->take_ownership = TRUE;
     kproc_commit_async(pd);
 #if CONF_WITH_CUIS
@@ -406,12 +404,12 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         KERNEL_TASK *task = &scheduler.tasks[i];
         task->program = programs[i];
         task->pid = kproc_pid(programs[i]);
-        task->identity = ++next_identity;
+        task->execution.identity = ++next_identity;
         task->take_ownership = take_ownership;
         task->state = TASK_NEW;
-        task->stack_phys = kstack_alloc(&task->stack_top);
-        if (!task->stack_phys) {
-            for (j = 0; j < i; j++) kstack_free(scheduler.tasks[j].stack_phys);
+        task->execution.stack_phys = kstack_alloc(&task->execution.stack_top);
+        if (!task->execution.stack_phys) {
+            for (j = 0; j < i; j++) kstack_free(scheduler.tasks[j].execution.stack_phys);
             kfree(scheduler.tasks);
             scheduler.tasks = NULL;
             return ENSMEM;
@@ -420,7 +418,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
     /* Ordinary launches allocate every scheduler resource before adopting
      * the image or pinning the caller's retained basepage/environment. */
     if (prepare && !kproc_prepare_user(programs[0], run)) {
-        for (i = 0; i < count; i++) kstack_free(scheduler.tasks[i].stack_phys);
+        for (i = 0; i < count; i++) kstack_free(scheduler.tasks[i].execution.stack_phys);
         kfree(scheduler.tasks);
         scheduler.tasks = NULL;
         return ENSMEM;
@@ -440,8 +438,8 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         for (i = 0; i < KSCHED_LIMIT; i++) {
             KERNEL_TASK *task = &scheduler.tasks[i];
             if (task->state == TASK_DONE || task->state == TASK_ZOMBIE) {
-                kstack_free(task->stack_phys);
-                task->stack_phys = 0;
+                kstack_free(task->execution.stack_phys);
+                task->execution.stack_phys = 0;
                 if (task->asynchronous && task->state == TASK_DONE) {
                     task->pid = 0;
                     task->state = TASK_UNUSED;
@@ -461,11 +459,11 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
             scheduler.current = task;
             if (task->state == TASK_NEW) {
                 task->state = TASK_RUNNING;
-                native_sched_enter(task->stack_top, task_entry);
+                native_sched_enter(task->execution.stack_top, task_entry);
             }
             task->state = TASK_RUNNING;
-            x86_64_process_restore(&task->context);
-            longjmp(task->resume, 1);
+            x86_64_process_restore(&task->execution.cpu);
+            longjmp(task->execution.resume, 1);
         }
         if (!pending) break;
         __asm__ volatile ("sti; hlt; cli" ::: "memory");

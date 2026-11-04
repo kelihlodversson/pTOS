@@ -18,7 +18,10 @@ The running stack must never be freed from itself.
 
 The cooperative x32 scheduler allocates separate KERNEL_TASK records and
 scheduler stacks in run_group() and ksched_spawn(). It records process/parent
-PDs, PID, execution context and state. Failed construction releases allocated
+PDs, PID, execution context and state. The scheduler's saved CPU context,
+continuation, internal context identity and scheduler stack are grouped in an
+embedded KTHREAD_CONTEXT. This is a compatibility bridge, not a TID or an
+independently retained PROCESS/THREAD relationship. Failed construction releases allocated
 task stacks. Finished task stacks are reclaimed by the scheduler root context,
 not by the task. These stacks have different continuations and lifetimes from
 KPROC's syscall stack; unification needs proof, not a field rename.
@@ -44,8 +47,10 @@ The x32 kernel self-test exercises the production load-begin, load-enter/leave,
 pending-to-active transfer, failed pending mapping, syscall-stack allocation
 failure, preparation rollback after stack allocation, and repeated process
 cleanup. It checks that the image survives transfer and that the original
-memory/heap counts return after each path. Other architecture runtime tests and
-allocation failure specifically at wrapper adoption remain to be added.
+memory/heap counts return after each path. A test-only failure hook forces
+wrapper adoption failure in both pending-image and fresh-preparation paths;
+each is followed by a successful retry and complete resource-count comparison.
+Other architecture runtime tests remain to be added.
 
 Metadata classification before actual sharing:
 
