@@ -60,9 +60,11 @@ Other architecture runtime tests remain to be added.
 
 Metadata classification before actual sharing:
 
-* Heap reservations, lazy mapping regions, permissions and backing references
-  describe virtual mappings and must move to the shared address-space owner.
-  Fault, Mmap/Munmap/Mprot and copy validation must use that same metadata.
+* Mmap reservations, permissions, backing references and mapped-byte totals
+  belong to KASPACE and survive until its final reference is released. Heap
+  reservations and the rest of lazy fault metadata still reside in KPROC;
+  fault, heap and copy validation must all use consistently retained metadata
+  before distinct processes can share a space.
 * Stack reservation/growth state follows the particular stack mapping in that
   address space, while the live stack pointer and execution context belong to
   an individual thread. Multiple stacks must not reuse one process-wide limit.

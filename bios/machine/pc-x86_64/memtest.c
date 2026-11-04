@@ -1184,6 +1184,11 @@ static void test_kproc_pending_ownership(void)
     set_owner(env, pd);
     pd->p_dreg[0] = 0x12345678L;
     CHECK(kproc_prepare_user(pd, run), "prepare active space for independent owner");
+#if CONF_WITH_MMAP
+    CHECK(kproc_mmap(pd, 0, PAGE, PROT_READ | PROT_WRITE,
+          MAP_PRIVATE | MAP_ANONYMOUS, 0, 0) == PTOS_MMAP_BASE,
+          "reserve mapping in retained active space");
+#endif
     retained = kproc_test_retain_active(pd);
     second = kaspace_share(retained);
     CHECK(retained && second, "retain active space twice");
@@ -1194,6 +1199,12 @@ static void test_kproc_pending_ownership(void)
     CHECK(retained && aspace_copy_from_user(kaspace_backend(retained), &saved_value,
           (VADDR)(uintptr_t)pd + offsetof(PD, p_dreg), sizeof(saved_value)) &&
           saved_value == 0x12345678L, "retained mapping preserves process data");
+#if CONF_WITH_MMAP
+    CHECK(retained && kaspace_mmap(retained)->bytes == PAGE &&
+          kaspace_mmap(retained)->regions &&
+          kaspace_mmap(retained)->regions->address == PTOS_MMAP_BASE,
+          "retained active space preserves its mapping metadata");
+#endif
     kaspace_put(retained);
     CHECK(procmem_size(pd) && procmem_size(env), "first independent release keeps mappings");
     kaspace_put(second);
@@ -1970,6 +1981,7 @@ static void test_file_mmap(void)
     char block[64], value, readback;
     PD *a = NULL, *b = NULL, *c = NULL, *parent = run;
     ASPACE *as, *bs, *cs;
+    KASPACE *retained = NULL;
     SNAP snapshot;
     UQUAD pa, pb, pc;
     DMD *media = NULL;
@@ -2047,16 +2059,27 @@ static void test_file_mmap(void)
           "middle unmap preserves backing offsets and references");
     fresh = DISK_CALL(xcreat(path, 0));
     CHECK(fresh >= NUMSTD && DISK_CALL(xwrite(fresh, 1, &value)) == 1, "recreate mapped pathname");
+    retained = kproc_test_retain_active(a);
+    CHECK(retained != NULL, "retain file mapping space independently");
+    free_mapping_process(a);
+    a = NULL;
+    CHECK(retained && kaspace_mmap(retained)->regions &&
+          kaspace_mmap(retained)->regions->backing &&
+          aspace_copy_from_user(kaspace_backend(retained), &readback, PTOS_MMAP_BASE, 1) && readback == 'Z',
+          "file mapping metadata and private page survive process destruction");
+    kaspace_put(retained);
+    retained = NULL;
     {
-        UQUAD previous = aspace_enter(as);
+        UQUAD previous = aspace_enter(bs);
         kproc_shutdown_file_mappings();
         aspace_leave(previous);
-        CHECK(!aspace_translate(as, PTOS_MMAP_BASE, NULL, NULL) && !aspace_file_pages() &&
+        CHECK(!aspace_translate(bs, PTOS_MMAP_BASE, NULL, NULL) && !aspace_file_pages() &&
               DISK_CALL(getrealcl(head, media)) == FREECLUSTER,
               "shutdown releases all file views and unlinked chains while retaining active kernel stack");
     }
 done:
     run = parent;
+    kaspace_put(retained);
     if (fd >= NUMSTD) kdos_fclose(fd);
     free_mapping_process(a); free_mapping_process(b); free_mapping_process(c);
     CHECK(aspace_file_pages() == 0 && aspace_file_references() == 0, "last mapping frees cached file pages");

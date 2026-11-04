@@ -8,6 +8,9 @@
 struct kaspace {
     ASPACE *backend;
     ULONG refs;
+#if CONF_WITH_MMAP
+    KASPACE_MMAP mmap;
+#endif
 };
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -26,6 +29,10 @@ KASPACE *kaspace_adopt(ASPACE *backend)
     if (!space) return NULL;
     space->backend = backend;
     space->refs = 1;
+#if CONF_WITH_MMAP
+    space->mmap.regions = NULL;
+    space->mmap.bytes = 0;
+#endif
     return space;
 }
 
@@ -41,11 +48,26 @@ ASPACE *kaspace_backend(const KASPACE *space)
     return space ? space->backend : NULL;
 }
 
+#if CONF_WITH_MMAP
+KASPACE_MMAP *kaspace_mmap(KASPACE *space)
+{
+    return space ? &space->mmap : NULL;
+}
+#endif
+
 void kaspace_put(KASPACE *space)
 {
     if (!space) return;
     if (--space->refs) return;
     aspace_destroy(space->backend);
+#if CONF_WITH_MMAP
+    while (space->mmap.regions) {
+        MMAP_REGION *region = space->mmap.regions;
+        space->mmap.regions = region->next;
+        fileback_put(region->backing);
+        kfree(region);
+    }
+#endif
     kfree(space);
 }
 
