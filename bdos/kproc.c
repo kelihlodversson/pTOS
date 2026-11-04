@@ -2004,7 +2004,15 @@ int kproc_demand_page(PD *pd, VADDR va, UWORD access)
     KPROC *kproc = kproc_find(pd);
     UWORD prot;
 
-    if (!kproc || !kproc->aspace || !lazy_area(kproc, va, &prot) ||
+    if (!kproc || !kproc->aspace)
+        return 0;
+#if CONF_WITH_MMAP
+    {
+        int rc = kaspace_mmap_demand_page(kproc->active_space, va, access);
+        if (rc >= 0) return rc;
+    }
+#endif
+    if (!lazy_area(kproc, va, &prot) ||
         !(prot & ASPACE_PROT_USER) || (access & ~prot))
         return 0;
     if (aspace_translate(kproc->aspace, va, NULL, NULL)) {

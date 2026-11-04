@@ -1204,14 +1204,15 @@ static void test_kproc_pending_ownership(void)
           kaspace_mmap(retained)->regions &&
           kaspace_mmap(retained)->regions->address == PTOS_MMAP_BASE,
           "retained active space preserves its mapping metadata");
-    CHECK(retained && kaspace_mmap_fault(retained, PTOS_MMAP_BASE, ASPACE_PROT_EXEC) == 0 &&
-          kaspace_mmap_fault(retained, PTOS_MMAP_BASE + PAGE, 0) == -1 &&
+    CHECK(retained && kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, ASPACE_PROT_EXEC) == 0 &&
+          kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE + PAGE, 0) == -1 &&
           !aspace_translate(kaspace_backend(retained), PTOS_MMAP_BASE, NULL, NULL),
           "retained reservations reject disallowed and unreserved faults");
     saved_value = -1;
-    CHECK(retained && kaspace_mmap_fault(retained, PTOS_MMAP_BASE, 0) == 1 &&
+    CHECK(retained && kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, 0) == 1 &&
           aspace_copy_from_user(kaspace_backend(retained), &saved_value,
-                                PTOS_MMAP_BASE, sizeof(saved_value)) && !saved_value,
+                                PTOS_MMAP_BASE, sizeof(saved_value)) && !saved_value &&
+          kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, 0) == 0,
           "retained anonymous reservation faults after process destruction");
 #endif
     kaspace_put(retained);
@@ -2079,7 +2080,7 @@ static void test_file_mmap(void)
           kaspace_mmap(retained)->regions->backing &&
           aspace_copy_from_user(kaspace_backend(retained), &readback, PTOS_MMAP_BASE, 1) && readback == 'Z',
           "file mapping metadata and private page survive process destruction");
-    CHECK(retained && kaspace_mmap_fault(retained, PTOS_MMAP_BASE + PAGE, 0) == 1 &&
+    CHECK(retained && kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE + PAGE, 0) == 1 &&
           aspace_copy_from_user(kaspace_backend(retained), &readback, PTOS_MMAP_BASE + PAGE, 1) &&
           readback == 'B', "retained unlinked file reservation faults after process destruction");
     {

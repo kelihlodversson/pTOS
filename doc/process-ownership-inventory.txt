@@ -159,8 +159,11 @@ ASPACE metadata and thread-aware termination remain to be designed and tested
 before attaching generic THREAD objects. Shared ASPACEs must retain their own
 mapping metadata, not merely the backend page tables.
 
-Mmap first-touch and file COW now consult KASPACE's retained reservations and
-backing references, including after the original KPROC is destroyed. The
+Mmap fault dispatch, first-touch and file COW now consult KASPACE's retained
+reservations and backing references, including after the original KPROC is
+destroyed. The existing architecture trap still finds its KPROC through the
+current PD before dispatching; a future THREAD must supply its own retained
+KASPACE rather than relying on another process's PD. The
 shutdown registry is non-owning and tracks all live KASPACE objects, so shutdown
 can release file mappings even when no KPROC remains; anonymous reservations
 stay intact. Heap reservations, loader-image loans, thread stack growth and

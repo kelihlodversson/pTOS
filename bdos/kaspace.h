@@ -26,6 +26,8 @@ void kaspace_shutdown_file_mappings(void);
 /* Back a reserved mmap page using this space's metadata: -1 if the address
  * is not an mmap reservation, otherwise the normal demand-fault result. */
 int kaspace_mmap_fault(KASPACE *space, UQUAD address, UWORD access);
+/* Complete mmap fault dispatch: -1 means it is not an mmap reservation. */
+int kaspace_mmap_demand_page(KASPACE *space, UQUAD address, UWORD access);
 #endif
 
 /* backend must be exclusively owned by the caller and not previously adopted.

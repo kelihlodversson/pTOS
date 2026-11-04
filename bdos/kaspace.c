@@ -61,23 +61,44 @@ KASPACE_MMAP *kaspace_mmap(KASPACE *space)
     return space ? &space->mmap : NULL;
 }
 
-int kaspace_mmap_fault(KASPACE *space, UQUAD address, UWORD access)
+static MMAP_REGION *mmap_find(KASPACE *space, UQUAD address)
 {
     MMAP_REGION *region;
-    if (!space) return -1;
-    for (region = space->mmap.regions; region; region = region->next) {
-        VADDR va;
-        if (address < region->address || address >= (UQUAD)region->address + region->length)
-            continue;
-        if (!(region->prot & ASPACE_PROT_USER) || (access & ~region->prot)) return 0;
-        va = (VADDR)address;
-        if (region->backing)
-            return aspace_fault_file(space->backend, va, region->backing,
-                    region->offset + (ULONG)((va & ~(USER_PAGE_SIZE - 1)) - region->address),
-                    region->prot, (access & ASPACE_PROT_WRITE) != 0);
-        return aspace_fault_in(space->backend, va, region->prot) ? 1 : 2;
-    }
-    return -1;
+    if (!space) return NULL;
+    for (region = space->mmap.regions; region; region = region->next)
+        if (address >= region->address && address < (UQUAD)region->address + region->length)
+            return region;
+    return NULL;
+}
+
+static int mmap_back(KASPACE *space, MMAP_REGION *region, VADDR va, UWORD access)
+{
+    if (region->backing)
+        return aspace_fault_file(space->backend, va, region->backing,
+                region->offset + (ULONG)((va & ~(USER_PAGE_SIZE - 1)) - region->address),
+                region->prot, (access & ASPACE_PROT_WRITE) != 0);
+    return aspace_fault_in(space->backend, va, region->prot) ? 1 : 2;
+}
+
+int kaspace_mmap_fault(KASPACE *space, UQUAD address, UWORD access)
+{
+    MMAP_REGION *region = mmap_find(space, address);
+    if (!region) return -1;
+    if (!(region->prot & ASPACE_PROT_USER) || (access & ~region->prot)) return 0;
+    return mmap_back(space, region, (VADDR)address, access);
+}
+
+int kaspace_mmap_demand_page(KASPACE *space, UQUAD address, UWORD access)
+{
+    MMAP_REGION *region = mmap_find(space, address);
+    VADDR va;
+    if (!region) return -1;
+    if (!(region->prot & ASPACE_PROT_USER) || (access & ~region->prot)) return 0;
+    va = (VADDR)address;
+    if (aspace_translate(space->backend, va, NULL, NULL) &&
+        !((access & ASPACE_PROT_WRITE) && aspace_file_cow(space->backend, va)))
+        return 0;
+    return mmap_back(space, region, va, access);
 }
 
 void kaspace_shutdown_file_mappings(void)
