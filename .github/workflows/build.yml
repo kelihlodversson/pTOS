@@ -39,9 +39,10 @@ permissions:
   contents: read
 
 jobs:
+  # Temporary: pin the build matrix until Ubuntu 26.04 compatibility is validated.
   elf-shared-core:
     name: x32 ELF shared-library metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -162,7 +163,7 @@ jobs:
   # in the annotations and in the job's summary.
   build:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -203,7 +204,7 @@ jobs:
   # (tools/ci-x86_64.sh, tools/ci-regression.sh).
   x86_64:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -257,7 +258,7 @@ jobs:
   # x86_64 job above): the machines of an architecture to a job.
   regression:
     name: regression ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -301,7 +302,7 @@ jobs:
 
   pmmu-check:
     name: PMMU startup check (virt-m68k-mmu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -332,7 +333,7 @@ jobs:
 
   release-archives:
     name: Release archives
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # release-emucon (part of "make release") builds against the
       # lib/libcmini submodule.
@@ -363,7 +364,7 @@ jobs:
   raspi-sdcard:
     name: Raspberry Pi SD card image
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -440,7 +441,7 @@ jobs:
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
