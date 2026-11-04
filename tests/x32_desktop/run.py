@@ -18,7 +18,7 @@ def firmware(name):
 
 
 class Guest:
-    def __init__(self, output, args, missing=False, autorun=False):
+    def __init__(self, output, args, missing=False, autorun=False, launch_case=None):
         self.output = output.resolve()
         self.embedded_console = args.embedded_console
         self.output.mkdir(parents=True, exist_ok=True)
@@ -64,6 +64,21 @@ class Guest:
                 (esp / "EMUDESK.INF").write_bytes(("\r\n".join(
                     "#Z 00 C:\\APPS\\AUTORUN.TOS@" if line.startswith("#Z ") else line
                     for line in inf) + "\r\n").encode("ascii"))
+            if launch_case:
+                apps = esp / "APPS"
+                apps.mkdir()
+                (esp / "TOP.MRK").write_text("top window\n")
+                (apps / "APP.MRK").write_text("application directory\n")
+                inf = [line for line in Path("tests/emudesk.inf").read_text().splitlines()
+                       if not line.startswith("#Z ")]
+                if launch_case == "gem":
+                    shutil.copy("obj/libaes/DESKGEM.PRG", esp / "APPTEST.TOS")
+                    inf.append("#G 06 FF C:\\APPTEST.TOS@ @ 000 @")
+                else:
+                    shutil.copy("obj/libaes/LAUNCH.TOS", apps / "RUN.PRG")
+                    setting = "100" if launch_case == "app" else "000"
+                    inf.append("#F 06 FF C:\\APPS\\RUN.PRG@ *.TOS@ " + setting + " @")
+                (esp / "EMUDESK.INF").write_bytes(("\r\n".join(inf) + "\r\n").encode("ascii"))
         shared_runtime = "CONF_WITH_ELF_SHARED = y" in Path("obj/auto.conf").read_text()
         if shared_runtime:
             shutil.copytree("obj/ldso/runtime/GEMSYS", esp / "GEMSYS", dirs_exist_ok=True)
@@ -660,13 +675,14 @@ def main():
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--embedded-console", action="store_true",
                         help="omit EMUCON.TOS and require the embedded x32 console")
-    parser.add_argument("--mode", choices=("desktop", "missing", "both", "libaes", "shutdown", "autorun"), default="both")
+    parser.add_argument("--mode", choices=("desktop", "missing", "both", "libaes", "shutdown", "autorun", "launch-top", "launch-app", "launch-gem"), default="both")
     args = parser.parse_args()
     if not args.ovmf_code or not args.ovmf_vars:
         parser.error("supply --ovmf-code and --ovmf-vars for this host")
-    modes = ("desktop", "missing", "autorun") if args.mode == "both" else (args.mode,)
+    modes = ("desktop", "missing", "autorun", "launch-top", "launch-app", "launch-gem") if args.mode == "both" else (args.mode,)
     for mode in modes:
-        guest = Guest(args.output / mode, args, missing=mode == "missing", autorun=mode == "autorun")
+        launch_case = mode[7:] if mode.startswith("launch-") else None
+        guest = Guest(args.output / mode, args, missing=mode == "missing", autorun=mode == "autorun", launch_case=launch_case)
         try:
             if mode == "desktop":
                 if "CONF_WITH_LIBAES = y" in Path("obj/auto.conf").read_text():
@@ -682,6 +698,34 @@ def main():
                 text = guest.wait(r"x32 desktop CH_EXIT \d+ 0025", timeout=20, regex=True)
                 assert len(re.findall(r"x32 desktop CH_EXIT \d+ 0025", text)) == 1
                 print("Autorun uses its executable directory and delivers child exit: PASS", flush=True)
+            elif launch_case:
+                guest.ready(1)
+                guest.move(135, 8)
+                time.sleep(0.25)
+                guest.move(135, 44)
+                guest.click()
+                guest.move(308, 107)
+                guest.click()
+                text = guest.wait(r"x32 desktop TOS TARGET \d+ \d+", timeout=30, regex=True)
+                points = re.findall(r"x32 desktop TOS TARGET (\d+) (\d+)", text)
+                guest.move(*map(int, points[-1]))
+                guest.click()
+                guest.key("ctrl-o")
+                text = guest.wait(r"x32 desktop LAUNCH \d+ ", timeout=30, regex=True)
+                pid = int(re.findall(r"x32 desktop LAUNCH (\d+) ", text)[-1])
+                assert pid > 0
+                if launch_case == "gem":
+                    guest.wait(r"x32 desktop client READY \d+ \d+", timeout=30, regex=True)
+                    guest.move(750, 110+(pid & 1)*280)
+                    guest.click()
+                else:
+                    guest.wait("x32 launch directory " + launch_case.upper(), timeout=30)
+                    guest.wait("x32 launch console READY", timeout=30)
+                guest.key("q")
+                if launch_case != "gem":
+                    guest.wait("x32 launch console INPUT PASS", timeout=30)
+                guest.wait("x32 desktop CH_EXIT %d 0025" % pid, timeout=30)
+                print("Desktop launch type and %s directory: PASS" % launch_case, flush=True)
             else:
                 text = guest.wait("C:\\>", timeout=25)
                 if args.embedded_console:
