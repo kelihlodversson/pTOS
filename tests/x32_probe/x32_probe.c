@@ -1733,11 +1733,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* the program PE_LOAD put in this process's heap is not Malloc()
          * memory: Mfree() leaves it alone; freeing the basepage unlaunched
          * gives it back (#434) */
-        s64 a, bpa, b;
+        s64 a, bpa, b, gap;
         volatile u32 *bpp;
         u32 image;
 
-        a = sys4(GEMDOS, 0x48, 4096, 0, 0, 0);
+        a = sys4(GEMDOS, 0x48, 3 * 4096, 0, 0, 0);
         bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)"", 0);
         if (bpa == -33)
@@ -1746,8 +1746,13 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             pterm(1);
         bpp = (volatile u32 *)(unsigned long)bpa;
         image = (bpp[4] - bpp[3]) & ~0xfffu;        /* the image's first page */
-        if (image != (u32)a + 4096)
+        if (image != (u32)a + 3 * 4096)
             bad |= 2;                       /* first fit: right after the first block */
+        if (sys4(GEMDOS, 0x4a, 0, a, 4096, 0) != 0)
+            bad |= 32;
+        gap = sys4(GEMDOS, 0x48, 2 * 4096, 0, 0, 0);
+        if (gap != a + 4096)
+            bad |= 64; /* first fit reuses the tail without overlapping the image */
         if (sys4(GEMDOS, 0x49, image, 0, 0, 0) != -40)
             bad |= 4;                       /* Mfree() leaves it alone */
         if (sys4(GEMDOS, 0x49, bpa, 0, 0, 0) != 0)
@@ -1755,6 +1760,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         b = sys4(GEMDOS, 0x48, 4096, 0, 0, 0);
         if (b != image)
             bad |= 16;                      /* and the address space is free again */
+        if (gap > 0 && sys4(GEMDOS, 0x49, gap, 0, 0, 0) != 0)
+            bad |= 128;
         pterm(bad);
         break;
     }

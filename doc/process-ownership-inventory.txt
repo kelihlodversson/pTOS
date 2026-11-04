@@ -78,8 +78,13 @@ Metadata classification before actual sharing:
   Proposed shared-ASPACE policy: limits remain per PROCESS; a growth request
   is checked against the calling PROCESS's limits using the whole shared
   address-space reservation total. Other processes can observe the growth,
-  and lowering a limit never revokes existing mappings. The policy and races
-  between processes are not implemented; shared process spaces remain disabled.
+  and lowering a limit never revokes existing mappings. Malloc reservations
+  belong to the shared space, so Mfree and Mshrink by any process sharing it
+  would operate on that same reservation set, with the normal exact-base and
+  size validation; they would not be restricted to the allocating PID. Loader
+  staging is separate and cannot be freed as ordinary heap memory. A shared
+  space must serialize reservation changes and limit checks before preemption
+  or SMP. This policy is not implemented; shared process spaces remain disabled.
 * Completion observers need PID and exit status, not the descriptor tables,
   current directories, PD or page tables. The currently embedded `uft`,
   `curdir`, priority and usage fields are process-wide live state. Signal
@@ -96,6 +101,17 @@ process resources: descriptor closing also depends on process-specific handle
 state, and PD/basepage and image-loan cleanup have separate lifetimes. A live
 resource owner must preserve these dependencies while allowing an identity-only
 observer to outlive them; the existing identity reference alone cannot do so.
+In particular, xterm() switches run to the parent before release_pd_files(),
+which obtains standard handles and directories through the still-live KPROC.
+The owner sweep matches SFT f_own against the PD address, and pluggable-FS
+cleanup also takes that PD. The subsequent ixterm() can release the allocation
+containing the PD. A future live-resource owner must therefore retain or
+replace those identities through the last execution-resource release, and
+must arrange filesystem cleanup while the necessary handle context is valid.
+Merely keeping the descriptor arrays, KASPACE, or KPROC snapshot alive does
+not meet that contract. Cleanup of unlaunched and deferred basepages also
+calls release_pd_files(), so partial construction and cancellation must use
+the same exactly-once ownership transition.
 
 The loader ledger retains UH_LOADED, UH_IMAGE and the legacy UH_LENT entries,
 including borrowed PD identities, separately from the ordinary KASPACE heap.
