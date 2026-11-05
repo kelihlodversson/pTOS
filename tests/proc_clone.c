@@ -88,7 +88,7 @@ static void exercise(BOOL source_first)
     KPROC source, target;
     PROC_CLONE_ARGS args;
     PROC_CLONE_TRANSACTION *tx = NULL, *unchanged;
-    PROC_CLONE_RESULT a, b, sentinel;
+    PROC_CLONE_RESULT a = PROC_CLONE_RESULT_INIT, b = PROC_CLONE_RESULT_INIT, sentinel;
     KTHREAD *survivor;
     KASPACE_HEAP *heap;
     unsigned i, before;
@@ -100,8 +100,18 @@ static void exercise(BOOL source_first)
     heap = kaspace_heap(source.space);
     heap->blocks = kalloc(sizeof(*heap->blocks)); assert(heap->blocks);
     heap->count = heap->capacity = 1; heap->blocks[0].va = 0x1000; heap->blocks[0].pages = 1;
+    memset(&args,0,sizeof(args));
     args.source = &source; args.prepared_process = NULL;
     args.process_policy = PROC_CLONE_SAME_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
+    for (i = 1; i <= PROC_CLONE_RESOURCE_MASK + 1; i++) {
+        before = allocations - frees; args.resources = i;
+        assert(proc_clone(&args,&tx) == EINVAL && !tx);
+        args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.prepared_process = &target;
+        assert(proc_clone(&args,&tx) == EINVAL && !tx);
+        assert(source.refs == 1 && target.refs == 1 && allocations - frees == before);
+        args.process_policy = PROC_CLONE_SAME_PROCESS; args.prepared_process = NULL;
+    }
+    args.resources = 0;
     for (i = 1; i <= 2; i++) {
         before = allocations - frees; fail_alloc_after = i;
         unchanged = NULL;
@@ -142,6 +152,11 @@ static void exercise(BOOL source_first)
     args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.prepared_process = &target;
     args.vm_policy = PROC_CLONE_SHARE_VM;
     assert(proc_clone(&args,&tx) == E_OK && !target.space);
+    {
+        THREAD_STARTUP_ARGS startup;
+        memset(&startup,0,sizeof(startup));
+        assert(proc_clone_prepare_startup(tx,&startup) == EINVFN && !proc_clone_startup(tx));
+    }
     unchanged = tx; before = allocations - frees;
     assert(proc_clone(&args,&tx) == EINVAL && tx == unchanged);
     assert(allocations - frees == before && !target.space);
@@ -151,17 +166,23 @@ static void exercise(BOOL source_first)
     args.process_policy = PROC_CLONE_SAME_PROCESS; args.prepared_process = NULL;
     assert(proc_clone(&args,&tx) == E_OK);
     assert(proc_clone_commit(&tx,&a) == E_OK && !tx);
-    memset(&sentinel,0xa5,sizeof(sentinel)); b = sentinel;
+    memset(&sentinel,0xa5,sizeof(sentinel)); memcpy(&b,&sentinel,sizeof(b));
     assert(proc_clone_commit(&tx,&b) == EINVAL && !memcmp(&b,&sentinel,sizeof(b)));
     proc_clone_abort(&tx);
+    memset(&b,0,sizeof(b));
     assert(proc_clone(&args,&tx) == E_OK);
+    unchanged = tx; memcpy(&sentinel,&a,sizeof(a)); before = allocations - frees;
+    assert(proc_clone_commit(&tx,&a) == EINVAL && tx == unchanged && !memcmp(&a,&sentinel,sizeof(a)));
+    assert(allocations - frees == before);
     assert(proc_clone_commit(&tx,&b) == E_OK && !tx);
     assert(a.pid == source.pid && b.pid == a.pid && a.tid != b.tid);
     assert(kthread_aspace(a.thread) == source.space && kthread_aspace(b.thread) == source.space);
     assert(!kthread_set_execution(a.thread,&source,dummy_reclaim) && !kthread_start(a.thread));
-    kthread_destroy(source_first ? a.thread : b.thread);
+    proc_clone_release(source_first ? &a : &b);
     assert(source.live && source.threads && source.space);
     survivor = source_first ? b.thread : a.thread;
+    /* The remaining THREAD is explicitly owned through survivor below. */
+    memset(&a,0,sizeof(a)); memset(&b,0,sizeof(b));
 
     args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.prepared_process = &target;
     assert(proc_clone(&args,&tx) == E_OK && !target.space);
@@ -192,7 +213,7 @@ static void exercise(BOOL source_first)
     source.space = kaspace_adopt(&backend); assert(source.space);
     args.source = &source; args.prepared_process = NULL; args.process_policy = PROC_CLONE_SAME_PROCESS;
     assert(proc_clone(&args,&tx) == E_OK);
-    memset(&sentinel,0xa5,sizeof(sentinel)); b = sentinel;
+    memset(&sentinel,0,sizeof(sentinel)); memcpy(&b,&sentinel,sizeof(b));
     proc_dispose_process(&source); assert(source.live && source.pending);
     assert(proc_clone_commit(&tx,&b) == EACCDN && tx && !memcmp(&b,&sentinel,sizeof(b)));
     proc_clone_abort(&tx); assert(!tx && !source.live && source.refs == 1);

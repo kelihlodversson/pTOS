@@ -3,6 +3,7 @@
 #define PROC_CLONE_H
 
 #include "portab.h"
+#include "thread_startup.h"
 struct kproc;
 struct kthread;
 typedef struct proc_clone_transaction PROC_CLONE_TRANSACTION;
@@ -28,7 +29,7 @@ typedef struct {
     struct kproc *prepared_process; /* NULL for SAME_PROCESS and NEW_PROCESS */
     PROC_CLONE_PROCESS_POLICY process_policy;
     PROC_CLONE_VM_POLICY vm_policy;
-    /* NEW_PROCESS only: independently select Pexec-style standard-handle and
+    /* Must be zero except for NEW_PROCESS. Independently select Pexec-style standard-handle and
      * CWD inheritance. Explicit/nonstandard SFT handles are not duplicated.
      * Environment is initially empty; loader/image/startup remain separate. */
     UWORD resources;
@@ -42,6 +43,9 @@ typedef struct {
      * Use proc_clone_release(), not just kthread_destroy(), for this result. */
     struct kproc *owned_process;
 } PROC_CLONE_RESULT;
+/* Initialize before first commit. Release before reuse; commit never replaces
+ * any live ownership or nonzero identity. */
+#define PROC_CLONE_RESULT_INIT { NULL, 0, 0, NULL }
 
 /* Prepare only: *transaction must be NULL. A nonempty handle returns EINVAL
  * without acquisitions or replacement. Success owns a transaction, retaining identities, shared VM
@@ -52,10 +56,17 @@ typedef struct {
  * or user code. Teardown callbacks obey the existing no-unwind/bounded-close
  * contract. Commit revalidates live state. */
 LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transaction);
-/* Commit transfers the non-runnable THREAD to result. A new or prepared target
+/* Commit requires an initialized, empty result (PROC_CLONE_RESULT_INIT).
+ * A nonempty result returns EINVAL before any ownership transfer.
+ * Commit transfers the non-runnable THREAD to result. A new or prepared target
  * also adopts an owning VM reference; NEW_PROCESS transfers factory ownership. No CPU context/stack/startup is installed.
  * Failure leaves result and transaction unchanged and rollback remains valid. */
 LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *result);
+/* Internal startup draft only. Success acquires context/stacks, never THREAD
+ * execution ownership. Commit deliberately returns EINVFN while a draft is
+ * attached: mapping leases, exit bridge and atomic publication are not ready. */
+LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *transaction, const THREAD_STARTUP_ARGS *args);
+const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *transaction);
 /* Abort is idempotent through this handle and never completes a PROCESS.
  * Caller-prepared PROCESS resources remain with their original release owner;
  * NEW_PROCESS resources are disposed by rollback. */

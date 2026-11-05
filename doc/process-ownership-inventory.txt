@@ -555,3 +555,116 @@ The factory remains identity-only and all startup guards remain. CPU/FPU setup,
 entry/stack/output mapping leases and observer registration/publication are later
 #892 work; #893 termination, #909 waits, #713 scheduling, #894 Pexec shared VM and
 #908 TLS remain separate. There is still no functional public CLONE_VM or Pclone.
+
+
+Phase 3 owned-result hardening and first startup-context draft
+-----------------------------------------------------------
+PROC_CLONE_RESULT must be initialized with PROC_CLONE_RESULT_INIT before its
+first commit. Every ownership pointer and PID/TID must be empty. Commit rejects
+any nonempty result before acquiring/transferring ownership; the transaction,
+existing result, THREAD and optional factory PROCESS remain unchanged. Release
+clears the result before callbacks and consumes each owned reference once.
+Callers must release (or explicitly transfer all ownership) before resetting
+storage. Consumed transaction handles cannot commit twice; abort/release remain
+idempotent through their cleared handles.
+
+resources is now validated for every process policy. SAME_PROCESS and
+PREPARED_PROCESS require zero: neither can request inheritance of resources
+already supplied by that PROCESS. NEW_PROCESS accepts only the existing two
+supported bits. Unknown/meaningless bits return EINVAL before allocation, PID
+selection or reference acquisition. Host and production tests check all policy
+variants and preserve allocator/resource baselines.
+
+The teardown audit follows these production paths:
+- Partial descriptor inheritance: a valid stdout alias is acquired before a
+  deliberately invalid later slot. Checked failure disposes the child, closing
+  only its acquired aliases. The original source's explicit/standard references
+  remain unchanged; no second owner is invented for the SFT slot.
+- CWD/PFS: init_pd_cwd_from uses the existing directory/addref operations.
+  Generic disposal enters DISPOSING once, calls release_pd_files while the
+  exact PD/KPROC identity is still valid, and invokes pfs_proc_exit once for
+  searches/CWD before retirement. Repeated result/transaction release cannot
+  restart that lifecycle. Native and PFS inheritance remain one implementation.
+- Temporary mappings: raw allocation failure uses xexec_free/proc_release_block;
+  record-backed failure uses generic disposal/ixterm and generation-safe owned
+  allocation cleanup. Both revoke borrowed mappings before final unpin/free.
+  Success explicitly revokes environment/basepage construction grants.
+- Parent/owner identity: retained parent KPROC governs notification, never a
+  re-lookup through parent PD. Factory source-first tests verify no notification
+  target after parent retirement and a still-usable inherited file. Existing
+  PD-reuse/orphan-SFT tests remain. Source resources and mappings have independent
+  child references; retained parent identity alone keeps no heavy resources.
+- Unstarted factory children still do not charge parent execution time. Release
+  owns no executing stack. Bounded close retries/no-unwind callbacks retain
+  their existing limitations; this is not transactional filesystem recovery.
+
+The first startup implementation is intentionally a DRAFT, not startup-ready.
+THREAD_STARTUP_ARGS is a kernel-owned native-address snapshot: function entry,
+opaque argument, stack base/size and a kernel-selected user return-bridge entry.
+No user structure or TLS is consumed here. Resident USER executable entry/return
+mappings and a resident USER writable stack are checked without lazy allocation,
+COW or user writes. ARM/m68k currently return EINVFN for this backend operation.
+The current source==run restriction of the PROCESS factory is unchanged. A
+future foreign-source factory needs an explicit construction/mapping context;
+switching global run is not an implementation strategy.
+
+The x32 draft contains a deterministic initial user-register image, distinct
+from the saved kernel-coroutine continuation. GPRs start zero except normalized,
+zero-extended RDI; RIP/RSP, CR3, user selectors and RFLAGS=0x202 are explicit.
+FS/GS selectors/bases are zero (no TLS). The aligned 512-byte FXSAVE image has
+FCW=0x037f, empty x87 tags, zero ST/XMM values, MXCSR=0x1f80 and its architectural
+fallback mask. No hardware restore or new user instruction is executed.
+
+The planned function-entry frame reserves an eight-byte return address with
+(RSP+8) divisible by 16 and the entire 128-byte red zone inside the supplied
+stack. Aligning the upper bound can discard up to 15 bytes. The layout, not just
+its numeric size floor, is checked (136 bytes may fail alignment; a suitably
+aligned 144-byte region can fit this initial frame). These are frame floors,
+not recommended application sizes; the public initial 256-byte validation floor
+remains unchanged. This is a function-entry plan, not an ELF argc/env stack.
+The planned return PC is kernel-owned metadata; prepare never writes its slot.
+Its executable mapping is not proof of a safe THREAD-exit bridge.
+
+The draft separately allocates a syscall stack through kstack_alloc and a
+scheduler stack through the existing KTHREAD_STACK helper. It owns both until
+cancellation. Neither stack is ever entered, and source CPU/scheduler execution
+is unchanged. Transaction abort cancels the draft first, then existing THREAD,
+VM and PROCESS construction resources, including factory-owned children.
+Production assertions verify current SP is outside both stacks, each release
+occurs once, and all allocation counts return to baseline.
+
+ASPACE lifetime retention is NOT an entry/stack mapping lease. Mprot, Munmap,
+Mfree or a remap may still invalidate a draft. Revalidation is only a current
+permission check, not proof that a mapping retained its identity. Tests change
+protection/remove mappings and cancel safely. Because no mapping lease, safe
+exit bridge or runnable continuation is installed, proc_clone_commit returns
+EINVFN for every attached startup draft without transferring identity or writing
+outputs. Existing KTHREAD identity-only/backend-installation/start guards are
+unchanged. The draft cannot be used as a scheduler publication token.
+
+The required controlled transition before execution is:
+1. Secure mapping identity/permissions for entry, return bridge, complete stack
+   lifetime and any child-TID output; fault/COW preparation must be rollback-safe.
+2. Establish the trusted internal termination bridge and backend continuation,
+   transferring syscall/scheduler stack owners only after safe handoff is proven.
+3. Register reversible generic lifecycle observers and resource leases; failure
+   must undo registrations before releasing IDs and execution resources.
+4. Revalidate/retain writable outputs and prepare the user frame. Keep every
+   fallible step before the no-fail publication boundary.
+5. Under the scheduler/ASPACE synchronization contract, atomically commit outputs,
+   promote the constructed THREAD to backend-owned execution, and publish its
+   existing scheduler slot. No independent second completion/dispatch path.
+
+Those promotion/publication steps are not implemented by this draft. They must
+not be enabled by removing identity_only checks. In particular, runnable sibling
+THREADs require safe thread-private termination/reclamation with #893; generic
+wait/reap remains #909, scheduling/preemption #713, shared-VM Pexec #894 and TLS
+#908. The current cooperative/no-yield context is not a preemption/SMP mapping
+lock. Public Pclone remains validation-only and valid requests return EINVFN.
+
+Native x32 tests exercise preparation, CPU/FPU/frame inspection, no user-stack
+write, partial context/stack allocation failure, both ordinary and factory-owned
+transaction cancellation, rejected publication, and real mapping invalidation.
+The placeholder executable/return mapping in the test is never executed and is
+not a validated #893 trampoline. Host tests use the real builder with modeled
+mappings/stacks under sanitizers. Neither is a claim of runnable clone execution.

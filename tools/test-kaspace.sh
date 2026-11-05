@@ -46,10 +46,29 @@ PYCONFIG
         --header "$work/autoconf.h" --makefile "$work/auto.conf"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        -iquote fs tests/proc_clone.c bdos/proc_clone.c bdos/kthread.c bdos/kaspace.c \
+        -iquote fs tests/proc_clone.c bdos/proc_clone.c bdos/thread_startup.c bdos/kthread.c bdos/kaspace.c \
         -Wl,--gc-sections -o "$work/proc-clone"
     "$work/proc-clone"
     echo "Trusted clone construction ($preset configuration, host execution): PASS"
 done
 echo 'KASPACE ownership and failed adoption: PASS'
 echo 'KTHREAD_CONTEXT stack allocation and release: PASS'
+# x32 backend planning and cancellation with host-owned mapping/stack models.
+CONFIG_= python3 - "$work/config" <<'PY'
+import kconfiglib, sys
+k = kconfiglib.Kconfig(warn_to_stderr=False)
+k.load_config('configs/pc-x86_64_defconfig')
+k.syms['CONF_WITH_ELF_SHARED'].set_value(2)
+k.syms['CONF_WITH_LIBAES'].set_value(2)
+assert k.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'y'
+k.write_config(sys.argv[1])
+PY
+CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
+    --header "$work/autoconf.h" --makefile "$work/auto.conf"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+    -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
+    -iquote bdos/arch/x86_64 tests/thread_startup.c bdos/thread_startup.c bdos/kaspace.c \
+    bdos/arch/x86_64/thread_startup_x32.c bdos/arch/x86_64/kthread_context.c \
+    -Wl,--gc-sections -o "$work/startup"
+"$work/startup"
+echo 'x32 startup CPU/FPU/frame planning and stack rollback (host model): PASS'

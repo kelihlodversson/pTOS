@@ -29,6 +29,7 @@
 #if CONF_WITH_X86_64_MEMTEST
 
 #include "emutos.h"
+#include "biosext.h"
 #include "string.h"
 #include "bdosdefs.h"
 #include "bdosbind.h"
@@ -53,6 +54,9 @@
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc_clone.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "../../../bdos/arch/x86_64/thread_startup_x32.h"
+#endif
 #include "../../../bdos/proc.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
@@ -1606,7 +1610,7 @@ static void test_proc_clone(void)
     KPROC *source, *target;
     PROC_CLONE_ARGS args;
     PROC_CLONE_TRANSACTION *tx;
-    PROC_CLONE_RESULT first, second, unchanged;
+    PROC_CLONE_RESULT first = PROC_CLONE_RESULT_INIT, second = PROC_CLONE_RESULT_INIT, unchanged;
     KTHREAD *survivor;
     KASPACE *space;
     VADDR heap;
@@ -1635,8 +1639,21 @@ static void test_proc_clone(void)
                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         CHECK(mapping > 0, "reserve anonymous mapping before clone construction");
 #endif
+        bzero(&args, sizeof(args));
+        bzero(&first, sizeof(first)); bzero(&second, sizeof(second));
         args.source = source;
         args.vm_policy = PROC_CLONE_SHARE_VM;
+        for (policy = 0; policy < 2; policy++) {
+            args.process_policy = policy ? PROC_CLONE_PREPARED_PROCESS : PROC_CLONE_SAME_PROCESS;
+            args.prepared_process = policy ? target : NULL;
+            for (stage = 1; stage <= PROC_CLONE_RESOURCE_MASK + 1; stage++) {
+                args.resources = stage; tx = NULL; snap(&acquired);
+                CHECK(proc_clone(&args, &tx) == EINVAL && !tx,
+                      "resource policies must be zero for existing PROCESS resources");
+                same(&acquired, "meaningless resource flags have no acquisition side effects");
+            }
+        }
+        args.resources = 0;
         for (policy = 0; policy < 2; policy++) {
             args.process_policy = policy ? PROC_CLONE_PREPARED_PROCESS : PROC_CLONE_SAME_PROCESS;
             args.prepared_process = policy ? target : NULL;
@@ -1665,11 +1682,19 @@ static void test_proc_clone(void)
         }
         CHECK(proc_clone_commit(&tx, &first) == E_OK && !tx,
               "commit first same-PROCESS non-runnable clone identity");
-        bzero(&unchanged, sizeof(unchanged)); second = unchanged;
+        bzero(&unchanged, sizeof(unchanged)); memcpy(&second, &unchanged, sizeof(second));
         CHECK(proc_clone_commit(&tx, &second) == EINVAL && !memcmp(&second, &unchanged, sizeof(second)),
               "repeated commit preserves result and cannot consume an identity twice");
         proc_clone_abort(&tx);
-        CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &second) == E_OK && !tx,
+        CHECK(proc_clone(&args, &tx) == E_OK, "prepare second same-PROCESS clone identity");
+        {
+            PROC_CLONE_TRANSACTION *saved = tx;
+            memcpy(&unchanged, &first, sizeof(first)); snap(&acquired);
+            CHECK(proc_clone_commit(&tx, &first) == EINVAL && tx == saved &&
+                  !memcmp(&first, &unchanged, sizeof(first)), "commit cannot replace a live result");
+            same(&acquired, "nonempty result rejection retains both ownership handles");
+        }
+        CHECK(proc_clone_commit(&tx, &second) == E_OK && !tx,
               "commit second same-PROCESS non-runnable clone identity");
         CHECK(first.pid == kproc_ref_pid(source) && second.pid == first.pid &&
               first.tid != second.tid && kthread_process(first.thread) == source &&
@@ -1678,6 +1703,8 @@ static void test_proc_clone(void)
         CHECK(!kthread_start(first.thread), "committed clone identity cannot execute");
         kthread_destroy(order ? first.thread : second.thread);
         survivor = order ? second.thread : first.thread;
+        /* survivor owns the remaining non-runnable THREAD from now on. */
+        bzero(&first, sizeof(first)); bzero(&second, sizeof(second));
 
         args.process_policy = PROC_CLONE_PREPARED_PROCESS;
         args.prepared_process = target;
@@ -1740,7 +1767,7 @@ static void test_proc_clone(void)
     args.process_policy = PROC_CLONE_SAME_PROCESS;
     tx = NULL;
     CHECK(proc_clone(&args, &tx) == E_OK, "prepare clone before disposal request");
-    bzero(&unchanged, sizeof(unchanged)); first = unchanged;
+    bzero(&unchanged, sizeof(unchanged)); memcpy(&first, &unchanged, sizeof(first));
     proc_dispose_process(source);
     CHECK(proc_clone_commit(&tx, &first) == EACCDN && tx &&
           !memcmp(&first, &unchanged, sizeof(first)), "rejected commit leaves result and abort ownership intact");
@@ -1776,6 +1803,7 @@ static void test_proc_clone_invalidation(void)
         CHECK(kproc_prepare_user(source_pd, run), "prepare invalidation source");
         source = kproc_retain(source_pd); target = kproc_retain(target_pd);
         space = kproc_test_retain_active(source_pd);
+        bzero(&args, sizeof(args));
         args.source = source; args.prepared_process = target;
         args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
         tx = NULL; extra = NULL; target_space = NULL;
@@ -1796,7 +1824,7 @@ static void test_proc_clone_invalidation(void)
         case 4: kproc_complete(source_pd, 33); break;
         case 5: proc_dispose_process(source); break;
         }
-        bzero(&sentinel, sizeof(sentinel)); result = sentinel;
+        bzero(&sentinel, sizeof(sentinel)); memcpy(&result, &sentinel, sizeof(result));
         snap(&invalidated);
         CHECK(proc_clone_commit(&tx, &result) == EACCDN && tx == saved &&
               !memcmp(&result, &sentinel, sizeof(result)), "invalidated commit preserves handle and result");
@@ -1837,11 +1865,12 @@ static void test_proc_clone_factory(void)
     KPROC *source, *child;
     PROC_CLONE_ARGS args;
     PROC_CLONE_TRANSACTION *tx;
-    PROC_CLONE_RESULT result;
+    PROC_CLONE_RESULT result = PROC_CLONE_RESULT_INIT;
     LONG handle, rc;
     ULONG directories, child_ticks;
     UWORD stage, policy, i, status;
     int uses;
+    SBYTE saved_stderr;
     char byte;
     int before = failures;
 
@@ -1906,9 +1935,11 @@ static void test_proc_clone_factory(void)
     }
     /* A checked inheritance failure cannot leave references from earlier slots. */
     snap(&acquired); tx = NULL;
-    kproc_uft(pd)[1] = NUMSTD - 1;
-    CHECK(proc_clone(&args, &tx) == EIHNDL && !tx, "invalid inherited standard handle fails before commit");
-    kproc_uft(pd)[1] = handle;
+    saved_stderr = kproc_uft(pd)[2];
+    kproc_uft(pd)[2] = NUMSTD - 1; /* stdout acquired successfully before this failure */
+    CHECK(proc_clone(&args, &tx) == EIHNDL && !tx, "partial standard-handle inheritance fails before commit");
+    kproc_uft(pd)[2] = saved_stderr;
+    CHECK(sft[handle-NUMSTD].f_use == uses, "earlier inherited stdout reference is unwound exactly once");
     same(&acquired, "checked resource-inheritance failure cleanup");
 
     for (policy = 0; policy <= PROC_CLONE_RESOURCE_MASK; policy++) {
@@ -1917,6 +1948,18 @@ static void test_proc_clone_factory(void)
         CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &result) == E_OK && !tx,
               "factory commits an explicitly selected resource policy");
         child = result.owned_process;
+        if (policy == PROC_CLONE_RESOURCE_MASK) {
+            PROC_CLONE_RESULT held;
+            PROC_CLONE_TRANSACTION *other = NULL, *held_tx;
+            SNAP held_resources;
+            CHECK(proc_clone(&args, &other) == E_OK, "prepare while an owned factory result remains live");
+            held_tx = other; snap(&held_resources);
+            memcpy(&held, &result, sizeof(held));
+            CHECK(proc_clone_commit(&other, &result) == EINVAL && other == held_tx &&
+                  !memcmp(&held, &result, sizeof(result)), "factory result cannot lose THREAD/PROCESS ownership on overwrite");
+            same(&held_resources, "owned result overwrite changes no resources");
+            proc_clone_abort(&other);
+        }
         child_pd = kproc_live_pd(child);
         CHECK(child && child_pd && result.pid != kproc_ref_pid(source) &&
               kthread_process(result.thread) == child && !kthread_start(result.thread),
@@ -1953,6 +1996,8 @@ static void test_proc_clone_factory(void)
     proc_dispose_process(source);
     CHECK(!kproc_ref_has_basepage(source) && kproc_ref_has_basepage(child) &&
           sft[handle-NUMSTD].f_use == 1, "source exit preserves child's inherited file reference");
+    CHECK(!kproc_notification_parent(child_pd) && !kproc_parent_pid(child_pd),
+          "factory child cannot notify a replacement through a retired parent PD");
     run = child_pd;
     CHECK(DISK_CALL(xread(1, 1, &byte)) == 1, "inherited standard handle remains usable after source retirement");
     run = saved;
@@ -1963,6 +2008,154 @@ static void test_proc_clone_factory(void)
     same(&baseline, "factory source-first cleanup and final owned-result release");
     kcprintf("x86-64 clone PROCESS factory: %s\n", failures == before ? "PASS" : "FAIL");
 }
+
+#if CONF_WITH_NATIVE_SCHED
+/* Prepare/cancel only. The executable mapping is a placeholder, not a tested
+ * #893 return trampoline. No user instruction or backend stack is entered. */
+static void forbidden_startup_reclaim(void *resource)
+{
+    UNUSED(resource);
+    panic("identity-only THREAD unexpectedly accepted a backend");
+}
+
+static void test_proc_clone_startup(void)
+{
+    SNAP baseline, prepared;
+    PD *pd;
+    KPROC *source;
+    KASPACE *space;
+    ASPACE *backend;
+    KTHREAD *identity;
+    PROC_CLONE_ARGS args;
+    THREAD_STARTUP_ARGS startup, bad;
+    PROC_CLONE_TRANSACTION *tx = NULL, *held;
+    PROC_CLONE_RESULT result = PROC_CLONE_RESULT_INIT;
+    const THREAD_STARTUP_DRAFT *draft;
+    const X32_THREAD_STARTUP_DRAFT *image;
+    UQUAD rsp, old_slot = 0xa59b2e4c13579bdfULL, observed, regs[15];
+    VADDR stack;
+    UWORD stage, i;
+    int before = failures;
+
+    snap(&baseline);
+    pd = new_basepage();
+    if (!pd) return;
+    set_owner(pd, pd); set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+    CHECK(kproc_prepare_user(pd, run), "prepare startup source mappings");
+    source = kproc_retain(pd); space = kproc_active_space(source); backend = kaspace_backend(space);
+#if CONF_WITH_MMAP
+    stack = kproc_mmap(pd, 0, 2 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#else
+    stack = kproc_uheap_alloc(pd, 2 * PAGE);
+#endif
+    CHECK(stack && stack < USER_VA_LIMIT, "reserve internal startup test stack");
+    if (!stack || stack >= USER_VA_LIMIT) {
+        proc_dispose_process(source); kproc_release(source); return;
+    }
+    for (i = 0; i < 2; i++) {
+        CHECK(CONF_WITH_DEMAND_PAGING ? kproc_demand_page(pd, stack + i * PAGE,
+              ASPACE_PROT_USER | ASPACE_PROT_WRITE) == 1 : aspace_translate(backend, stack + i * PAGE, NULL, NULL),
+              "caller supplies resident writable startup stack mappings");
+    }
+    startup.entry = (VADDR)(uintptr_t)pd; startup.return_entry = startup.entry + 16;
+    startup.argument = 0xfedcba98UL; startup.stack_base = stack; startup.stack_size = 2 * PAGE;
+    rsp = ((stack + 2 * PAGE) & ~15ULL) - 8;
+    CHECK(aspace_copy_to_user(backend, rsp, &old_slot, sizeof(old_slot)), "seed prospective return slot");
+    bzero(&args, sizeof(args)); args.source = source;
+    args.process_policy = PROC_CLONE_SAME_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
+    CHECK(proc_clone(&args, &tx) == E_OK, "construct non-runnable identity before startup planning");
+    snap(&prepared);
+    bad = startup; bad.stack_size = 136;
+    CHECK(proc_clone_prepare_startup(tx, &bad) == EINVAL && !proc_clone_startup(tx),
+          "startup frame rejects insufficient red zone/alignment space");
+    same(&prepared, "invalid startup frame acquires no context");
+    for (stage = 1; stage <= 3; stage++) {
+        thread_startup_x32_test_fail_after(stage);
+        CHECK(proc_clone_prepare_startup(tx, &startup) == ENSMEM && !proc_clone_startup(tx),
+              "partial startup context/stack construction rolls back");
+        same(&prepared, "startup metadata and both independent stack owners roll back");
+    }
+    kthread_stack_test_fail_after(1);
+    CHECK(proc_clone_prepare_startup(tx, &startup) == ENSMEM && !proc_clone_startup(tx),
+          "existing scheduler-stack allocation failure is recoverable");
+    kthread_stack_test_fail_after(0);
+    x86_64_pmem_test_fail_after(1);
+    CHECK(proc_clone_prepare_startup(tx, &startup) == ENSMEM && !proc_clone_startup(tx),
+          "physical allocation failure cannot publish a startup image");
+    x86_64_pmem_test_fail_after(0);
+    same(&prepared, "startup physical failure preserves the construction transaction");
+    CHECK(proc_clone_prepare_startup(tx, &startup) == E_OK, "build internal x32 CPU/FPU startup draft");
+    draft = proc_clone_startup(tx); image = thread_startup_image(draft);
+    CHECK(draft && image && thread_startup_validate(draft) == E_OK, "inspect immutable unpublished startup image");
+    if (image) {
+        CHECK(image->user.rip == startup.entry && image->user.rdi == 0xfedcba98ULL &&
+              image->user.rsp == rsp && (rsp & 15) == 8 && rsp - stack >= 128 &&
+              image->return_pc == startup.return_entry && image->user.cr3 == aspace_root(backend),
+              "x32 function-entry frame and high-bit argument are normalized");
+        CHECK(!((uintptr_t)image->user.fpu & 15), "FXSAVE startup image is 16-byte aligned");
+        CHECK(image->user.rflags == 0x202 && image->user.cs == X86_64_USER_CODE_SEL &&
+              image->user.ss == X86_64_USER_DATA_SEL && !image->user.fs_base && !image->user.gs_base,
+              "initial privilege, interrupt and TLS state contains no kernel context");
+        memcpy(regs, &image->user, sizeof(regs));
+        for (i = 0; i < 15; i++)
+            CHECK(regs[i] == (i == 5 ? 0xfedcba98ULL : 0), "all other user GPRs start zero");
+        for (i = 0; i < 512; i++) {
+            UBYTE expected = i == 0 ? 0x7f : i == 1 ? 3 : i == 24 ? 0x80 : i == 25 ? 0x1f : i == 28 ? 0xbf : i == 29 ? 0xff : 0;
+            CHECK(image->user.fpu[i] == expected, "deterministic architectural FXSAVE initial image");
+        }
+        __asm__ volatile ("movq %%rsp,%0" : "=r"(observed));
+        CHECK(image->syscall_physical && image->scheduler_stack.physical &&
+              image->syscall_physical != image->scheduler_stack.physical &&
+              !x86_64_memtest_kstack_contains(image->syscall_physical, observed) &&
+              !x86_64_memtest_kstack_contains(image->scheduler_stack.physical, observed),
+              "draft owns two separate never-executed stacks");
+    }
+    CHECK(aspace_copy_from_user(backend, &observed, rsp, sizeof(observed)) && observed == old_slot,
+          "startup planning never writes a prospective user return frame");
+    held = tx; snap(&prepared);
+    CHECK(proc_clone_prepare_startup(tx, &startup) == EINVAL && proc_clone_startup(tx) == draft,
+          "startup draft cannot be overwritten");
+    CHECK(proc_clone_commit(&tx, &result) == EINVFN && tx == held && !result.thread && !result.owned_process,
+          "a draft is never a runnable publication token or identity commit");
+    same(&prepared, "unready publication changes no ownership or output");
+    {
+        PROC_CLONE_TRANSACTION *factory_tx = NULL;
+        PROC_CLONE_ARGS factory_args = args;
+        PD *saved_run = run;
+        SNAP factory_baseline;
+        snap(&factory_baseline);
+        factory_args.process_policy = PROC_CLONE_NEW_PROCESS;
+        run = pd; /* production factory still requires the current source */
+        CHECK(proc_clone(&factory_args, &factory_tx) == E_OK, "construct owned PROCESS for startup cancellation");
+        run = saved_run;
+        CHECK(proc_clone_prepare_startup(factory_tx, &startup) == E_OK,
+              "owned PROCESS transaction can retain an unpublished backend draft");
+        CHECK(proc_clone_commit(&factory_tx, &result) == EINVFN && !result.thread,
+              "factory startup also requires the missing publication gates");
+        proc_clone_abort(&factory_tx); proc_clone_abort(&factory_tx);
+        same(&factory_baseline, "startup abort also disposes factory-owned PROCESS resources");
+    }
+    identity = kthread_construct_identity(source, space);
+    CHECK(identity && !kthread_set_execution(identity, &startup, forbidden_startup_reclaim) && !kthread_start(identity),
+          "controlled startup planning does not remove identity-only execution guards");
+    kthread_destroy(identity);
+#if CONF_WITH_MMAP
+    CHECK(kproc_mprot(pd, stack, 2 * PAGE, PROT_READ) == E_OK, "ordinary Mprot can invalidate an unleased draft");
+    CHECK(thread_startup_validate(draft) == EIMBA, "draft recheck detects protection change");
+    CHECK(kproc_munmap(pd, stack, 2 * PAGE) == E_OK, "ordinary Munmap can discard draft stack mapping");
+#else
+    CHECK(aspace_protect_private(backend, stack, 2 * PAGE, ASPACE_PROT_USER), "change draft mapping protection");
+    CHECK(thread_startup_validate(draft) == EIMBA, "eager draft detects protection change");
+    CHECK(kproc_uheap_free(pd, stack) == E_OK, "release unleased eager draft stack mapping");
+#endif
+    CHECK(thread_startup_validate(draft) == EIMBA, "removed mapping invalidates startup draft without authorizing execution");
+    proc_clone_abort(&tx); proc_clone_abort(&tx);
+    CHECK(!tx && kproc_ref_has_basepage(source), "safe cancellation reclaims both stacks without completing source");
+    proc_dispose_process(source); kproc_release(source);
+    same(&baseline, "startup planning, invalidation and complete rollback");
+    kcprintf("x86-64 startup draft: %s\n", failures == before ? "PASS" : "FAIL");
+}
+#endif
 
 static void test_kproc_pending_ownership(void)
 {
@@ -4382,6 +4575,9 @@ void x86_64_memtest_run(void)
     test_proc_clone();
     test_proc_clone_invalidation();
     test_proc_clone_factory();
+#if CONF_WITH_NATIVE_SCHED
+    test_proc_clone_startup();
+#endif
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();

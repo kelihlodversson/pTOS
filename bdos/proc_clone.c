@@ -13,6 +13,7 @@ struct proc_clone_transaction {
     KTHREAD *thread;         /* owns execution-resource retention, not runnable */
     PROC_CLONE_PROCESS_POLICY policy;
     BOOL owns_process;
+    THREAD_STARTUP_DRAFT *startup;
 };
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -30,6 +31,7 @@ static BOOL injected(UWORD stage)
 
 static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 {
+    thread_startup_abort(&tx->startup);
     if (tx->owns_process) proc_dispose_process(tx->process);
     kthread_destroy(tx->thread);
     kaspace_put(tx->space);
@@ -51,6 +53,8 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
          args->process_policy != PROC_CLONE_NEW_PROCESS) ||
         (args->vm_policy != PROC_CLONE_SHARE_VM && args->vm_policy != PROC_CLONE_PRIVATE_VM))
         return EINVAL;
+    if (args->process_policy != PROC_CLONE_NEW_PROCESS && args->resources)
+        return EINVAL;
     if (args->process_policy == PROC_CLONE_SAME_PROCESS) {
         if (args->prepared_process) return EINVAL;
         target = args->source;
@@ -71,6 +75,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     tx->source = tx->process = NULL;
     tx->space = NULL;
     tx->thread = NULL;
+    tx->startup = NULL;
     tx->policy = args->process_policy;
     tx->owns_process = FALSE;
     tx->source = kproc_retain_live(args->source);
@@ -101,10 +106,14 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
 {
     PROC_CLONE_TRANSACTION *tx;
     PROC_CLONE_RESULT ready;
-    if (!transaction || !*transaction || !result) return EINVAL;
+    if (!transaction || !*transaction || !result || result->thread ||
+        result->owned_process || result->pid || result->tid) return EINVAL;
     tx = *transaction;
     if (kproc_active_space(tx->source) != tx->space)
         return EACCDN;
+    /* A draft is not a mapping lease, safe exit bridge or runnable token.
+     * Do not transfer ownership/publish outputs until all gates are supplied. */
+    if (tx->startup) return EINVFN;
     if (tx->policy != PROC_CLONE_SAME_PROCESS) {
         if (!kproc_clone_adopt_space(tx->process, tx->thread, tx->space))
             return EACCDN;
@@ -123,6 +132,20 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     release_transaction(tx);
     *result = ready; /* kernel-owned result only; never a user child-TID write */
     return E_OK;
+}
+
+LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP_ARGS *args)
+{
+    if (!tx || !args || tx->startup) return EINVAL;
+    if (kproc_active_space(tx->source) != tx->space ||
+        (tx->policy != PROC_CLONE_SAME_PROCESS && !kproc_clone_target_ready(tx->process, tx->thread)))
+        return EACCDN;
+    return thread_startup_prepare(tx->space, args, &tx->startup);
+}
+
+const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *tx)
+{
+    return tx ? tx->startup : NULL;
 }
 
 void proc_clone_abort(PROC_CLONE_TRANSACTION **transaction)
