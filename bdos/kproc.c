@@ -2011,6 +2011,7 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
         return rc;
     if (!mapping_range(address, length))
         return EIMBA;
+    if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
     end = address + length;
     for (link = &kaspace_mmap(kproc->active_space)->regions; *link;) {
         region = *link;
@@ -2120,6 +2121,7 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
     rc = mapping_protection(protection, &prot);
     if (rc)
         return rc;
+    if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
     if (!mapping_range(address, length)) {
 #if CONF_WITH_ELF_SHARED
         if (standard_image_range(kproc, address, length))

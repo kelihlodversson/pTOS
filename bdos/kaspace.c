@@ -9,18 +9,104 @@ struct kaspace {
     ASPACE *backend;
     ULONG refs;
     KASPACE_HEAP heap;
+    KASPACE_LEASE *leases;
+    struct kaspace *next;
 #if CONF_WITH_MMAP
     KASPACE_MMAP mmap;
-    struct kaspace *next;
 #endif
 };
 
-#if CONF_WITH_MMAP
 static KASPACE *spaces; /* borrowed registry; serialized with retain/release */
+struct kaspace_lease {
+    KASPACE *space; /* owning; list membership is non-owning */
+    VADDR first, last; /* inclusive page addresses; no end-address overflow */
+    UWORD access;
+    BOOL revoked, sealed;
+    KASPACE_LEASE *next;
+};
+
+#if CONF_WITH_X86_64_MEMTEST
+static UWORD fail_lease_after;
 #endif
+
+BOOL kaspace_lease_valid(const KASPACE_LEASE *lease)
+{
+    VADDR page;
+    if (!lease || lease->revoked) return FALSE;
+    for (page = lease->first; ; page += USER_PAGE_SIZE) {
+        UWORD prot;
+        if (!aspace_translate(lease->space->backend, page, NULL, &prot) ||
+            (prot & lease->access) != lease->access) return FALSE;
+        if (page == lease->last) return TRUE;
+    }
+}
+
+LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
+                          UWORD access, KASPACE_LEASE **result)
+{
+    KASPACE_LEASE *lease;
+    if (!result || *result || !space || !bytes || address >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - address || !(access & ASPACE_PROT_USER) ||
+        (access & ~(ASPACE_PROT_USER | ASPACE_PROT_WRITE | ASPACE_PROT_EXEC))) return EINVAL;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_lease_after && !--fail_lease_after) return ENSMEM;
+#endif
+    lease = kalloc(sizeof(*lease));
+    if (!lease) return ENSMEM;
+    lease->space = space;
+    lease->first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
+    lease->last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    lease->access = access;
+    lease->revoked = lease->sealed = FALSE;
+    if (!kaspace_lease_valid(lease)) { kfree(lease); return EIMBA; }
+    if (!kaspace_share(space)) { kfree(lease); return ENSMEM; }
+    lease->next = space->leases;
+    space->leases = lease;
+    *result = lease;
+    return E_OK;
+}
+
+BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count)
+{
+    UWORD i;
+    if (!leases || !count) return FALSE;
+    for (i = 0; i < count; i++) if (!kaspace_lease_valid(leases[i])) return FALSE;
+    for (i = 0; i < count; i++) leases[i]->sealed = TRUE;
+    return TRUE;
+}
+
+void kaspace_lease_release(KASPACE_LEASE **handle)
+{
+    KASPACE_LEASE *lease, **link;
+    KASPACE *space;
+    if (!handle || !*handle) return;
+    lease = *handle; *handle = NULL; space = lease->space;
+    for (link = &space->leases; *link != lease; link = &(*link)->next) { }
+    *link = lease->next;
+    kfree(lease);
+    kaspace_put(space);
+}
+
+BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
+{
+    KASPACE *space;
+    KASPACE_LEASE *lease;
+    VADDR first, last;
+    if (!bytes || address >= USER_VA_LIMIT || bytes > USER_VA_LIMIT - address) return FALSE;
+    first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
+    last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    for (space = spaces; space && space->backend != backend; space = space->next) { }
+    if (!space) return TRUE; /* backend not yet adopted */
+    for (lease = space->leases; lease; lease = lease->next)
+        if (lease->sealed && first <= lease->last && lease->first <= last) return FALSE;
+    for (lease = space->leases; lease; lease = lease->next)
+        if (first <= lease->last && lease->first <= last) lease->revoked = TRUE;
+    return TRUE;
+}
 
 #if CONF_WITH_X86_64_MEMTEST
 static BOOL fail_next_adoption;
+void kaspace_test_fail_lease_after(UWORD count) { fail_lease_after = count; }
 void kaspace_test_fail_next(void) { fail_next_adoption = TRUE; }
 #endif
 
@@ -35,13 +121,14 @@ KASPACE *kaspace_adopt(ASPACE *backend)
     if (!space) return NULL;
     space->backend = backend;
     space->refs = 1;
+    space->leases = NULL;
+    space->next = spaces;
+    spaces = space;
     space->heap.blocks = NULL;
     space->heap.count = space->heap.capacity = 0;
 #if CONF_WITH_MMAP
     space->mmap.regions = NULL;
     space->mmap.bytes = 0;
-    space->next = spaces;
-    spaces = space;
 #endif
     return space;
 }
@@ -169,13 +256,11 @@ void kaspace_put(KASPACE *space)
 {
     if (!space) return;
     if (--space->refs) return;
-#if CONF_WITH_MMAP
     {
         KASPACE **link;
         for (link = &spaces; *link; link = &(*link)->next)
             if (*link == space) { *link = space->next; break; }
     }
-#endif
     aspace_destroy(space->backend);
     kfree(space->heap.blocks);
 #if CONF_WITH_MMAP

@@ -33,6 +33,11 @@ PY
         tests/kaspace_mmap_policy.c bdos/kaspace.c -o "$work/mmap-policy"
     "$work/mmap-policy"
     echo "KASPACE mmap policy ($preset configuration, host execution): PASS"
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+        -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
+        tests/kaspace_lease.c bdos/kaspace.c -Wl,--gc-sections -o "$work/lease"
+    "$work/lease"
+    echo "KASPACE startup leases ($preset configuration, host execution): PASS"
     # The clone transaction owns real KTHREAD/KASPACE objects. This harness
     # models PROCESS resources; native x32 tests use production KPROC instead.
     CONFIG_= python3 - "$preset" "$work/config" <<'PYCONFIG'

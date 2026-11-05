@@ -2018,6 +2018,20 @@ static void forbidden_startup_reclaim(void *resource)
     panic("identity-only THREAD unexpectedly accepted a backend");
 }
 
+typedef struct { UWORD acquired, released; BOOL fail; } STARTUP_OBSERVER_TEST;
+static LONG startup_observer_acquire(void *context)
+{
+    STARTUP_OBSERVER_TEST *test = context;
+    if (test->fail) return ENSMEM;
+    test->acquired++;
+    return E_OK;
+}
+static void startup_observer_release(void *context)
+{
+    STARTUP_OBSERVER_TEST *test = context;
+    test->released++;
+}
+
 static void test_proc_clone_startup(void)
 {
     SNAP baseline, prepared;
@@ -2074,6 +2088,12 @@ static void test_proc_clone_startup(void)
         CHECK(proc_clone_prepare_startup(tx, &startup) == ENSMEM && !proc_clone_startup(tx),
               "partial startup context/stack construction rolls back");
         same(&prepared, "startup metadata and both independent stack owners roll back");
+    }
+    for (stage = 1; stage <= 3; stage++) {
+        kaspace_test_fail_lease_after(stage);
+        CHECK(proc_clone_prepare_startup(tx, &startup) == ENSMEM && !proc_clone_startup(tx),
+              "each startup mapping lease failure rolls back both stacks");
+        same(&prepared, "failed lease acquisition preserves PROCESS and transaction baseline");
     }
     kthread_stack_test_fail_after(1);
     CHECK(proc_clone_prepare_startup(tx, &startup) == ENSMEM && !proc_clone_startup(tx),
@@ -2135,18 +2155,79 @@ static void test_proc_clone_startup(void)
         proc_clone_abort(&factory_tx); proc_clone_abort(&factory_tx);
         same(&factory_baseline, "startup abort also disposes factory-owned PROCESS resources");
     }
+    {
+        PROC_CLONE_TRANSACTION *sealed_tx = NULL;
+        STARTUP_OBSERVER_TEST observer_test = { 0, 0, TRUE };
+        THREAD_STARTUP_OBSERVER observer = { startup_observer_acquire, startup_observer_release };
+        VADDR output = kproc_uheap_alloc(pd, PAGE);
+        ULONG sentinels[2] = { 0x12345678, 0x9abcdef0 }, outputs[2] = { 0, 0 };
+        CHECK(output && (CONF_WITH_DEMAND_PAGING ? kproc_demand_page(pd, output,
+              ASPACE_PROT_USER | ASPACE_PROT_WRITE) == 1 : TRUE), "back output destinations before preparation");
+        CHECK(aspace_copy_to_user(backend, output, sentinels, sizeof(sentinels)), "seed publication sentinels");
+        CHECK(proc_clone(&args, &sealed_tx) == E_OK &&
+              proc_clone_prepare_startup(sealed_tx, &startup) == E_OK, "prepare lease-seal transaction");
+        snap(&prepared);
+        for (stage = 1; stage <= 2; stage++) {
+            kaspace_test_fail_lease_after(stage);
+            CHECK(proc_clone_prepare_outputs(sealed_tx, output, output + 4) == ENSMEM,
+                  "each output lease failure preserves empty output ownership");
+            same(&prepared, "partial output lease rollback");
+        }
+        CHECK(proc_clone_prepare_outputs(sealed_tx, output, USER_VA_LIMIT - 4) == EIMBA,
+              "unmapped final output rejects all destinations");
+        same(&prepared, "invalid output releases earlier acquired destination");
+        CHECK(proc_clone_prepare_outputs(sealed_tx, output, output + 4) == E_OK, "prepare both writable identity destinations");
+        snap(&prepared);
+        CHECK(proc_clone_observe_startup(sealed_tx, &observer, &observer_test) == ENSMEM && !observer_test.acquired,
+              "observer failure leaves draft prepared and unregistered");
+        same(&prepared, "observer failure does not leak publication resources");
+        observer_test.fail = FALSE;
+        CHECK(proc_clone_observe_startup(sealed_tx, &observer, &observer_test) == E_OK &&
+              proc_clone_seal_startup(sealed_tx) == E_OK, "register observer then atomically seal all startup/output ranges");
+        CHECK(proc_clone_seal_startup(sealed_tx) == EINVAL &&
+              proc_clone_prepare_outputs(sealed_tx, output, output + 4) == EINVAL,
+              "sealed startup rejects duplicate seal or output replacement");
+        CHECK(!aspace_protect_private(backend, stack, 2 * PAGE, ASPACE_PROT_USER) &&
+              kproc_uheap_free(pd, output) != E_OK, "sealed frame and outputs reject protection/free without mutation");
+#if CONF_WITH_MMAP
+        CHECK(kproc_munmap(pd, stack, 2 * PAGE) == EACCDN, "sealed startup rejects whole Munmap before metadata changes");
+#endif
+        CHECK(thread_startup_validate(proc_clone_startup(sealed_tx)) == E_OK &&
+              proc_clone_commit(&sealed_tx, &result) == EINVFN && !result.thread,
+              "even sealed observed startup lacks a trusted return bridge and stays unpublished");
+        CHECK(aspace_copy_from_user(backend, outputs, output, sizeof(outputs)) &&
+              !memcmp(outputs, sentinels, sizeof(outputs)), "failed publication leaves every identity output unchanged");
+        proc_clone_abort(&sealed_tx); proc_clone_abort(&sealed_tx);
+        CHECK(observer_test.acquired == 1 && observer_test.released == 1 &&
+              kproc_uheap_free(pd, output) == E_OK, "cancellation unseals before exactly-once observer/resource cleanup");
+    }
     identity = kthread_construct_identity(source, space);
     CHECK(identity && !kthread_set_execution(identity, &startup, forbidden_startup_reclaim) && !kthread_start(identity),
           "controlled startup planning does not remove identity-only execution guards");
     kthread_destroy(identity);
 #if CONF_WITH_MMAP
-    CHECK(kproc_mprot(pd, stack, 2 * PAGE, PROT_READ) == E_OK, "ordinary Mprot can invalidate an unleased draft");
+    CHECK(kproc_mprot(pd, stack, 2 * PAGE, PROT_READ) == E_OK, "ordinary Mprot revokes preparation leases");
     CHECK(thread_startup_validate(draft) == EIMBA, "draft recheck detects protection change");
+    CHECK(kproc_mprot(pd, stack, 2 * PAGE, PROT_READ | PROT_WRITE) == E_OK &&
+          thread_startup_validate(draft) == EIMBA, "restored permissions cannot revive a revoked lease");
     CHECK(kproc_munmap(pd, stack, 2 * PAGE) == E_OK, "ordinary Munmap can discard draft stack mapping");
+    CHECK(kproc_mmap(pd, stack, 2 * PAGE, PROT_READ | PROT_WRITE,
+          MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == (LONG)stack,
+          "remap same address with identical logical permissions");
+    for (i = 0; i < 2; i++)
+        CHECK(kproc_demand_page(pd, stack + i * PAGE, ASPACE_PROT_WRITE) == 1,
+              "back replacement mapping before stale lease revalidation");
+    CHECK(thread_startup_validate(draft) == EIMBA &&
+          proc_clone_commit(&tx, &result) == EIMBA && !result.thread,
+          "same-address resident replacement cannot authorize stale publication");
+    CHECK(kproc_munmap(pd, stack, 2 * PAGE) == E_OK, "release replacement mapping");
 #else
     CHECK(aspace_protect_private(backend, stack, 2 * PAGE, ASPACE_PROT_USER), "change draft mapping protection");
     CHECK(thread_startup_validate(draft) == EIMBA, "eager draft detects protection change");
     CHECK(kproc_uheap_free(pd, stack) == E_OK, "release unleased eager draft stack mapping");
+    CHECK(kproc_uheap_alloc(pd, 2 * PAGE) == stack && thread_startup_validate(draft) == EIMBA,
+          "eager heap reuse cannot revive an old startup lease");
+    CHECK(kproc_uheap_free(pd, stack) == E_OK, "release replacement eager heap");
 #endif
     CHECK(thread_startup_validate(draft) == EIMBA, "removed mapping invalidates startup draft without authorizing execution");
     proc_clone_abort(&tx); proc_clone_abort(&tx);
@@ -3076,7 +3157,8 @@ static void test_file_mmap(void)
     char block[64], value, readback;
     PD *a = NULL, *b = NULL, *c = NULL, *parent = run;
     ASPACE *as, *bs, *cs;
-    KASPACE *retained = NULL;
+    KASPACE *retained = NULL, *lease_space = NULL;
+    KASPACE_LEASE *cow_lease = NULL;
     SNAP snapshot;
     UQUAD pa, pb, pc;
     DMD *media = NULL;
@@ -3120,9 +3202,21 @@ static void test_file_mmap(void)
           aspace_file_pages() == 1 && aspace_file_references() == 2,
           "backing I/O error leaves no partial mapping, page or cache reference");
     getofd(fd)->o_dfd->o_flag &= ~O_MEDIA_LOST;
+    lease_space = kproc_test_retain_active(a);
+    CHECK(kaspace_lease_acquire(lease_space, PTOS_MMAP_BASE, PAGE,
+          ASPACE_PROT_USER, &cow_lease) == E_OK && kaspace_lease_seal(&cow_lease, 1),
+          "lease clean file mapping before COW");
+    CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 2 &&
+          kaspace_lease_valid(cow_lease) && aspace_translate(as, PTOS_MMAP_BASE, &pc, NULL) && pc == pa,
+          "sealed COW rejects replacement without changing shared backing");
+    kaspace_lease_release(&cow_lease);
+    CHECK(kaspace_lease_acquire(lease_space, PTOS_MMAP_BASE, PAGE,
+          ASPACE_PROT_USER, &cow_lease) == E_OK, "acquire revocable file-mapping lease");
     x86_64_pmem_test_fail_after(1);
     CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 2, "injected COW allocation failure");
     x86_64_pmem_test_fail_after(0);
+    CHECK(!kaspace_lease_valid(cow_lease), "attempted file COW conservatively revokes preparation lease");
+    kaspace_lease_release(&cow_lease);
     CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pc, NULL) && pc == pa &&
           aspace_file_references() == 2, "failed COW preserves original mapping and references");
     CHECK(kproc_demand_page(a, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 1 &&
@@ -3183,6 +3277,8 @@ static void test_file_mmap(void)
     }
 done:
     run = parent;
+    kaspace_lease_release(&cow_lease);
+    kaspace_put(lease_space);
     kaspace_put(retained);
     if (fd >= NUMSTD) kdos_fclose(fd);
     free_mapping_process(a); free_mapping_process(b); free_mapping_process(c);

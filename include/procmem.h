@@ -387,6 +387,9 @@ BOOL aspace_user_range_ok(const ASPACE *as, VADDR va, VADDR bytes, BOOL write);
  * safe direct-map alias; it needs a separate access mechanism).
  */
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes);
+/* No-fault/no-write preflight, including direct-map RAM safety. A sealed
+ * mapping lease must protect this result until the corresponding copy. */
+BOOL aspace_copy_to_user_ok(const ASPACE *as, VADDR va, ULONG bytes);
 BOOL aspace_copy_to_user(const ASPACE *as, VADDR va, const void *src, ULONG bytes);
 
 /*

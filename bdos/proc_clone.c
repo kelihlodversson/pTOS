@@ -111,9 +111,9 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     tx = *transaction;
     if (kproc_active_space(tx->source) != tx->space)
         return EACCDN;
-    /* A draft is not a mapping lease, safe exit bridge or runnable token.
+    /* Leased drafts still lack a trusted exit bridge or runnable token.
      * Do not transfer ownership/publish outputs until all gates are supplied. */
-    if (tx->startup) return EINVFN;
+    if (tx->startup) return thread_startup_publication_check(tx->startup);
     if (tx->policy != PROC_CLONE_SAME_PROCESS) {
         if (!kproc_clone_adopt_space(tx->process, tx->thread, tx->space))
             return EACCDN;
@@ -141,6 +141,31 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
         (tx->policy != PROC_CLONE_SAME_PROCESS && !kproc_clone_target_ready(tx->process, tx->thread)))
         return EACCDN;
     return thread_startup_prepare(tx->space, args, &tx->startup);
+}
+
+static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
+{
+    return tx && tx->startup && kproc_active_space(tx->source) == tx->space &&
+        (tx->policy == PROC_CLONE_SAME_PROCESS || kproc_clone_target_ready(tx->process, tx->thread));
+}
+
+LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *tx, VADDR pid, VADDR tid)
+{
+    if (!startup_target_live(tx)) return EACCDN;
+    return thread_startup_prepare_outputs(tx->startup, pid, tid);
+}
+
+LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *tx,
+                                 const THREAD_STARTUP_OBSERVER *observer, void *context)
+{
+    if (!startup_target_live(tx)) return EACCDN;
+    return thread_startup_observe(tx->startup, observer, context);
+}
+
+LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *tx)
+{
+    if (!startup_target_live(tx)) return EACCDN;
+    return thread_startup_seal(tx->startup);
 }
 
 const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *tx)

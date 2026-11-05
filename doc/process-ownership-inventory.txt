@@ -668,3 +668,13 @@ transaction cancellation, rejected publication, and real mapping invalidation.
 The placeholder executable/return mapping in the test is never executed and is
 not a validated #893 trampoline. Host tests use the real builder with modeled
 mappings/stacks under sanitizers. Neither is a claim of runnable clone execution.
+
+Startup mapping lease/publication follow-up
+-----------------------------------------
+
+The preceding startup-draft limitation about absent mapping leases is now
+superseded by doc/thread-startup.txt. KASPACE owns revocable/sealable range
+leases; backend mutations cannot silently replace a leased identity. Output
+preparation, reversible generic observer registration and atomic group sealing
+are implemented, but COMMITTED/RUNNABLE remain unreachable. The trusted thread-
+return bridge and execution-lifetime stack transfer remain gates, not features.

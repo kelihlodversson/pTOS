@@ -22,6 +22,8 @@
 #include "string.h"
 #include "kheap.h"
 #include "procmem.h"
+#include "../../../bdos/kaspace.h"
+#include "biosext.h"
 #include "gemerror.h"
 #include "pgtable.h"
 #include "pmem.h"
@@ -278,6 +280,7 @@ ULONG aspace_table_pages(const ASPACE *as)
 
 BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
 {
+    if (!kaspace_mapping_change(as, va, X86_64_PAGE_SIZE)) return FALSE;
     if ((va | phys) & (X86_64_PAGE_SIZE - 1))
         return FALSE;
     /* The 32-bit ABI constraint, checked where the mapping is made: the
@@ -295,6 +298,7 @@ BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD page, end;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if (!bytes || va + bytes < va || !procmem_range_live(va, bytes))
         return FALSE;
     /* Pin before mapping, and remember it before pinning, so every pin has
@@ -435,6 +439,11 @@ static BOOL range_copyable(const ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
     return TRUE;
 }
 
+BOOL aspace_copy_to_user_ok(const ASPACE *as, UQUAD va, ULONG bytes)
+{
+    return range_copyable(as, va, bytes, TRUE);
+}
+
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, UQUAD va, ULONG bytes)
 {
     if (!range_copyable(as, va, bytes, FALSE))
@@ -517,6 +526,7 @@ BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     UQUAD pages, i, mapped = 0, backing;
     ULONG first_tables = as->count;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -591,6 +601,7 @@ int aspace_fault_file(ASPACE *as, UQUAD va, FILE_BACKING *backing, ULONG offset,
         if (!copy || !(*pte & PTE_FILE)) return 3;
         old = *pte & PTE_ADDR;
     }
+    if (!kaspace_mapping_change(as, va, X86_64_PAGE_SIZE)) return 2;
     for (p = file_pages; p; p = p->next)
         if ((old && p->physical == old) ||
             (!old && p->backing == backing && p->offset == offset)) break;
@@ -639,6 +650,7 @@ BOOL aspace_unmap_private(ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD pages, i;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -672,6 +684,7 @@ BOOL aspace_fault_in(ASPACE *as, UQUAD va, UWORD prot)
         return FALSE;
     if (aspace_translate(as, page, NULL, NULL))
         return TRUE;                    /* (a racing mapping: nothing to do) */
+    if (!kaspace_mapping_change(as, page, X86_64_PAGE_SIZE)) return FALSE;
     /* the page, the tables it may need (three) and the bookkeeping's growth must
      * all leave the reserve alone */
     if (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST)
@@ -694,6 +707,7 @@ BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD pages, i;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -743,6 +757,8 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
     if (from == to || (va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
+    if (!kaspace_mapping_change(from, va, bytes) ||
+        !kaspace_mapping_change(to, va, bytes)) return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
     if (!range_is_private(from, va, pages))
         return FALSE;
@@ -785,6 +801,7 @@ static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL 
 {
     UQUAD pages, i;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -913,6 +930,7 @@ UQUAD x86_64_memtest_kstack_bytes(void)
  */
 BOOL aspace_borrow(ASPACE *as, UQUAD va, UQUAD bytes)
 {
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if (aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
         return TRUE;
     aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
@@ -925,6 +943,8 @@ void aspace_unborrow(ASPACE *as, UQUAD va, UQUAD bytes)
     ULONG i;
     BOOL pinned = FALSE;
 
+    if (!kaspace_mapping_change(as, va, bytes))
+        panic("unborrow during sealed startup");
     for (i = as->npins; i-- > 0; )
         if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
             as->pins[i] = as->pins[--as->npins];
@@ -954,6 +974,7 @@ BOOL aspace_regrant(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     UQUAD end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
     BOOL ok = TRUE;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     for (; page < end; page += X86_64_PAGE_SIZE)
         if (!aspace_translate(as, page, NULL, NULL) ||
             !aspace_map_page(as, page, procmem_phys_of(page), prot))

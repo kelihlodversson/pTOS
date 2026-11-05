@@ -6,6 +6,26 @@
 #include <aspace_types.h>
 struct aspace;
 typedef struct kaspace KASPACE;
+typedef struct kaspace_lease KASPACE_LEASE;
+/* Startup leases require resident mappings and retain the containing ASPACE.
+ * Preparation leases are revocable: ANY overlapping mapping/permission change
+ * permanently invalidates them, including same-address/same-permission remaps.
+ * No translation snapshot or wrapping generation counter can revive a lease.
+ * All calls/mutations are serialized in cooperative process context. */
+LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
+                          UWORD access, KASPACE_LEASE **result);
+BOOL kaspace_lease_valid(const KASPACE_LEASE *lease);
+/* Atomic, allocation-free group seal. Failure changes none of the leases.
+ * Success excludes overlapping mutations until release. This short critical
+ * section MUST NOT yield, invoke callbacks, or enter user mode. Future running
+ * stack retention requires a separate execution-lifetime policy (#892/#893). */
+BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count);
+void kaspace_lease_release(KASPACE_LEASE **lease);
+/* Backend mutation barrier, called BEFORE changing leaves or lazy metadata.
+ * FALSE means a sealed lease rejects the entire operation, nothing revoked.
+ * TRUE revokes overlapping preparation leases even if the mutation later fails.
+ * Inputs are rounded out to pages. Backend lifetime is retained by each lease. */
+BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
 /* Ordinary Malloc reservations only. Loader image staging and loans remain
  * separately owned by KPROC and never put borrowed PDs in this table. */
 typedef struct {
@@ -64,6 +84,8 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 #if CONF_WITH_X86_64_MEMTEST
 /* Fail the next adoption, leaving backend ownership with its caller. */
 void kaspace_test_fail_next(void);
+/* Fail the Nth lease acquisition before allocation/reference retention. */
+void kaspace_test_fail_lease_after(UWORD count);
 #endif
 
 #endif

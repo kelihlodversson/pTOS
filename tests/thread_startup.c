@@ -18,6 +18,7 @@ static UWORD code_prot = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
 static UWORD stack_prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
 #define CODE 0x400000UL
 #define STACK 0x10000000UL
+#define OUTPUT 0x20000000UL
 void *kalloc(ULONG size)
 {
     void *p;
@@ -33,6 +34,7 @@ BOOL aspace_translate(const ASPACE *as, VADDR address, PADDR *physical, UWORD *p
     (void)as; (void)physical;
     if (address >= CODE && address < CODE + 4096) bits = code_prot;
     else if (stack_present && address >= STACK && address < STACK + 8192) bits = stack_prot;
+    else if (address >= OUTPUT && address < OUTPUT + 4096) bits = stack_prot;
     else return FALSE;
     if (prot) *prot = bits;
     return TRUE;
@@ -42,6 +44,12 @@ BOOL aspace_user_range_ok(const ASPACE *as, VADDR va, VADDR size, BOOL write)
     (void)as;
     return stack_present && va >= STACK && va < STACK + 8192 && size <= STACK + 8192 - va &&
         (stack_prot & ASPACE_PROT_USER) && (!write || (stack_prot & ASPACE_PROT_WRITE));
+}
+BOOL aspace_copy_to_user_ok(const ASPACE *as, VADDR va, ULONG size)
+{
+    UWORD prot;
+    return va >= OUTPUT && va < OUTPUT + 4096 && size <= OUTPUT + 4096 - va &&
+        aspace_translate(as, va, NULL, &prot) && (prot & ASPACE_PROT_WRITE);
 }
 BOOL aspace_copy_to_user(const ASPACE *as, VADDR va, const void *p, ULONG size)
 { (void)as; (void)va; (void)p; (void)size; abort(); }
@@ -64,6 +72,22 @@ void kstack_free(PADDR physical)
     i = physical / 4096;
     assert(i < 8 && live[i] && stacks); live[i] = FALSE; stacks--;
 }
+static unsigned observers, acquire_calls, release_calls;
+static BOOL fail_observer, revoke_observer;
+static KASPACE *observed_space;
+static LONG observer_acquire(void *context)
+{
+    assert(context == &observers); acquire_calls++;
+    if (fail_observer) return ENSMEM;
+    if (revoke_observer) assert(kaspace_mapping_change(kaspace_backend(observed_space), CODE, 1));
+    observers++; return E_OK;
+}
+static void observer_release(void *context)
+{
+    assert(context == &observers && observers); observers--; release_calls++;
+    /* Abort must leave the sealed window BEFORE invoking this callback. */
+    assert(kaspace_mapping_change(kaspace_backend(observed_space), CODE, 1));
+}
 int main(void)
 {
     ASPACE backend = { 42 };
@@ -72,10 +96,19 @@ int main(void)
     THREAD_STARTUP_DRAFT *draft = NULL, *held;
     const X32_THREAD_STARTUP_DRAFT *image;
     unsigned i, before;
+    THREAD_STARTUP_OBSERVER observer = { observer_acquire, observer_release };
+    KASPACE_LEASE *lease = NULL, *old;
     UQUAD regs[15];
     assert(space);
     args.entry = CODE; args.return_entry = CODE + 16; args.argument = 0xfedcba98UL;
     args.stack_base = STACK; args.stack_size = 8192;
+    observed_space = space;
+    /* draft, image, entry lease, bridge lease, stack lease */
+    for (i = 1; i <= 5; i++) {
+        before = allocations - frees; fail_alloc = i;
+        assert(thread_startup_prepare(space,&args,&draft) == ENSMEM && !draft);
+        assert(!stacks && allocations - frees == before);
+    }
     for (i = 1; i <= 2; i++) {
         before = allocations - frees; fail_alloc = i;
         assert(thread_startup_prepare(space,&args,&draft) == ENSMEM && !draft);
@@ -95,6 +128,14 @@ int main(void)
     assert(thread_startup_prepare(space,&bad,&draft) == EINVAL && !draft);
     bad = args; bad.stack_size = 136;
     assert(thread_startup_prepare(space,&bad,&draft) == EINVAL && !draft);
+    bad = args; bad.stack_base++;
+    assert(thread_startup_prepare(space,&bad,&draft) == EINVAL && !draft);
+    bad = args; bad.stack_size = 143;
+    assert(thread_startup_prepare(space,&bad,&draft) == EINVAL && !draft);
+    bad = args; bad.stack_size = 144;
+    assert(thread_startup_prepare(space,&bad,&draft) == E_OK);
+    assert(((const X32_THREAD_STARTUP_DRAFT *)thread_startup_image(draft))->user.rsp == STACK + 136);
+    thread_startup_abort(&draft);
     bad = args; bad.entry = STACK;
     assert(thread_startup_prepare(space,&bad,&draft) == EIMBA && !draft);
     assert(thread_startup_prepare(space,&args,&draft) == E_OK && draft && stacks == 2);
@@ -112,6 +153,52 @@ int main(void)
         unsigned expected = i == 0 ? 0x7f : i == 1 ? 3 : i == 24 ? 0x80 : i == 25 ? 0x1f : i == 28 ? 0xbf : i == 29 ? 0xff : 0;
         assert(image->user.fpu[i] == expected);
     }
+    assert(thread_startup_state(draft) == THREAD_STARTUP_PREPARED);
+    assert(thread_startup_seal(draft) == EINVAL);
+    assert(thread_startup_publication_check(draft) == EINVFN);
+    before = allocations - frees;
+    for (i = 1; i <= 2; i++) {
+        fail_alloc = i;
+        assert(thread_startup_prepare_outputs(draft,OUTPUT,OUTPUT+4) == ENSMEM);
+        assert(allocations - frees == before && thread_startup_validate(draft) == E_OK);
+    }
+    assert(thread_startup_prepare_outputs(draft,OUTPUT,OUTPUT+2) == EINVAL);
+    assert(thread_startup_prepare_outputs(draft,OUTPUT,OUTPUT+4096) == EIMBA);
+    assert(allocations - frees == before);
+    assert(thread_startup_prepare_outputs(draft,STACK,CODE) == EINVAL);
+    assert(thread_startup_prepare_outputs(draft,OUTPUT,OUTPUT+4) == E_OK);
+    assert(thread_startup_prepare_outputs(draft,OUTPUT,OUTPUT+4) == EINVAL);
+    fail_observer = TRUE;
+    assert(thread_startup_observe(draft,&observer,&observers) == ENSMEM);
+    assert(!observers && thread_startup_state(draft) == THREAD_STARTUP_PREPARED);
+    fail_observer = FALSE;
+    assert(thread_startup_observe(draft,&observer,&observers) == E_OK && observers == 1);
+    assert(thread_startup_observe(draft,&observer,&observers) == EINVAL);
+    assert(thread_startup_seal(draft) == E_OK);
+    assert(thread_startup_state(draft) == THREAD_STARTUP_SEALED);
+    assert(thread_startup_seal(draft) == EINVAL);
+    assert(!kaspace_mapping_change(&backend, STACK + 4096, 1));
+    assert(!kaspace_mapping_change(&backend, OUTPUT, 4));
+    assert(!kaspace_mapping_change(&backend, CODE, 1));
+    assert(thread_startup_validate(draft) == E_OK);
+    assert(thread_startup_publication_check(draft) == EINVFN);
+    thread_startup_abort(&draft); thread_startup_abort(&draft);
+    assert(!draft && !observers && release_calls == 1 && acquire_calls == 2 && !stacks);
+    /* Same address and permissions can never resurrect a revoked lease. */
+    assert(thread_startup_prepare(space,&args,&draft) == E_OK);
+    assert(kaspace_mapping_change(&backend, STACK, 8192));
+    stack_present = FALSE; stack_present = TRUE;
+    assert(thread_startup_validate(draft) == EIMBA);
+    assert(thread_startup_observe(draft,&observer,&observers) == EIMBA && !observers);
+    assert(thread_startup_publication_check(draft) == EIMBA);
+    thread_startup_abort(&draft);
+    /* A callback mutation is detected and its successful registration undone. */
+    assert(thread_startup_prepare(space,&args,&draft) == E_OK);
+    revoke_observer = TRUE;
+    assert(thread_startup_observe(draft,&observer,&observers) == EIMBA && !observers);
+    revoke_observer = FALSE;
+    thread_startup_abort(&draft);
+    assert(thread_startup_prepare(space,&args,&draft) == E_OK);
     code_prot = ASPACE_PROT_USER;
     assert(thread_startup_validate(draft) == EIMBA);
     code_prot |= ASPACE_PROT_EXEC;
@@ -120,7 +207,16 @@ int main(void)
     stack_present = FALSE;
     thread_startup_abort(&draft); thread_startup_abort(&draft);
     assert(!draft && !stacks && !destroys);
-    kaspace_put(space);
+    /* Generic lease ownership and sticky revocation, including occupied handle. */
+    assert(kaspace_lease_acquire(space,CODE,1,ASPACE_PROT_USER|ASPACE_PROT_EXEC,&lease) == E_OK);
+    old = lease; before = allocations - frees;
+    assert(kaspace_lease_acquire(space,CODE,1,ASPACE_PROT_USER,&lease) == EINVAL && lease == old);
+    assert(allocations - frees == before);
+    assert(kaspace_mapping_change(&backend,CODE,4096) && !kaspace_lease_valid(lease));
+    assert(!kaspace_lease_seal(&lease,1));
+    kaspace_put(space); /* lease independently keeps backend alive */
+    assert(!destroys);
+    kaspace_lease_release(&lease); kaspace_lease_release(&lease);
     assert(destroys == 1 && allocations == frees);
     return 0;
 }

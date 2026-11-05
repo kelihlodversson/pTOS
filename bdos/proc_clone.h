@@ -64,8 +64,12 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
 LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *result);
 /* Internal startup draft only. Success acquires context/stacks, never THREAD
  * execution ownership. Commit deliberately returns EINVFN while a draft is
- * attached: mapping leases, exit bridge and atomic publication are not ready. */
+ * attached: a trusted exit bridge and atomic publication are not ready. */
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *transaction, const THREAD_STARTUP_ARGS *args);
+LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *transaction, VADDR pid, VADDR tid);
+LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *transaction,
+                                 const THREAD_STARTUP_OBSERVER *observer, void *context);
+LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *transaction);
 const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *transaction);
 /* Abort is idempotent through this handle and never completes a PROCESS.
  * Caller-prepared PROCESS resources remain with their original release owner;
