@@ -39,9 +39,10 @@ permissions:
   contents: read
 
 jobs:
+  # Temporary: pin the build matrix until Ubuntu 26.04 compatibility is validated.
   elf-shared-core:
     name: x32 ELF shared-library metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +59,10 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
       - name: Test CUIS ownership and caller-local AES object contracts
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
+      - name: Test clone ABI layout and pointer decoding
+        run: sh tools/test-clone-abi.sh
+      - name: Test address-space ownership
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
       - name: Build the enabled freestanding x32 core
@@ -69,9 +74,12 @@ jobs:
           config = kconfiglib.Kconfig()
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.syms["CONF_WITH_PCLONE"].set_value(2)
+          assert config.syms["CONF_WITH_PCLONE"].str_value == "y"
           config.write_config()
           PY
           make CROSS_COMPILE= obj/ldso/libldso.a
+          sh tools/test-clone-handler.sh
           ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
           test -z "$(nm -u /tmp/ldso-core.o)"
       - name: Build and boot-test enabled mapping syscalls
@@ -157,7 +165,7 @@ jobs:
   # in the annotations and in the job's summary.
   build:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -178,6 +186,10 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
 
+      - name: Check clone user ABI layout
+        if: matrix.group == 'arm-virt' || matrix.group == 'm68k-other'
+        run: sh tools/check-clone-layout.sh "${{ matrix.arch }}"
+
       - name: Build the configurations
         run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
 
@@ -194,7 +206,7 @@ jobs:
   # (tools/ci-x86_64.sh, tools/ci-regression.sh).
   x86_64:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -248,7 +260,7 @@ jobs:
   # x86_64 job above): the machines of an architecture to a job.
   regression:
     name: regression ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -292,7 +304,7 @@ jobs:
 
   pmmu-check:
     name: PMMU startup check (virt-m68k-mmu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -323,7 +335,7 @@ jobs:
 
   release-archives:
     name: Release archives
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # release-emucon (part of "make release") builds against the
       # lib/libcmini submodule.
@@ -354,7 +366,7 @@ jobs:
   raspi-sdcard:
     name: Raspberry Pi SD card image
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -431,7 +443,7 @@ jobs:
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

@@ -60,11 +60,40 @@ void kproc_destroy(PD *pd);
 void kproc_set_dta(PD *pd, DTAINFO *dta);
 DTAINFO *kproc_get_dta(PD *pd);
 #if CONF_WITH_KPROC
+typedef struct kproc KPROC;
+/* A successful retain owns one reference. The live PD lookup holds another.
+ * After destruction the retained record is an identity/completion snapshot:
+ * it does not retain or provide access to the PD or live process resources.
+ * References are serialized by the current cooperative kernel. */
+KPROC *kproc_retain(PD *pd);
+void kproc_release(KPROC *process);
+WORD kproc_ref_pid(const KPROC *process);
+/* Completion may already have been recorded while the PD is still present. */
+BOOL kproc_ref_has_basepage(const KPROC *process);
+BOOL kproc_ref_status(const KPROC *process, UWORD *status);
+void kproc_complete(PD *pd, UWORD status);
+#if CONF_WITH_X86_64_MEMTEST
+/* Restrict the next PID search to a bounded number of candidates for tests. */
+void kproc_test_pid_search(WORD previous, UWORD candidates);
+#if CONF_WITH_USER_ASPACE
+/* Test private pending images only; this does not enable active VM sharing. */
+struct kaspace;
+struct kaspace *kproc_test_retain_pending(PD *pd);
+struct kaspace *kproc_test_retain_active(PD *pd);
+/* Non-runnable ownership test only; does not establish VM sharing policy. */
+BOOL kproc_test_share_active(PD *pd, struct kaspace *space);
+#endif
+#endif
 /* The launching process, recorded by proc_go() and used by Pterm() instead
  * of the user-writable p_parent field.  kproc_get_parent() halts if there
  * is no record (like kproc_get_dta()). */
 void kproc_set_parent(PD *pd, PD *parent);
 PD *kproc_get_parent(PD *pd);
+#if CONF_WITH_USER_ASPACE
+/* Borrowed only for immediate notification; NULL if the tracked parent has
+ * retired. Does not keep its PD or heavyweight resources alive. */
+PD *kproc_notification_parent(PD *pd);
+#endif
 void kproc_mark_started(PD *pd);        /* proc_go() launched it */
 /* The process-id calls (bdos/mintproc.c).  A pid is 1..32767 and names a record;
  * 0 is the kernel's own context, which has none and is every boot-time basepage's
@@ -89,6 +118,34 @@ BOOL kproc_discard(PD *pd);
 BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched */
 #endif
 #if CONF_WITH_USER_ASPACE
+struct kthread;
+struct kaspace;
+/* Non-runnable association only. Both returned references are owned by the
+ * thread; cleanup must not begin until all such associations are detached. */
+BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,
+                         struct kaspace **space, struct kthread **next);
+/* Return TRUE when the last association must finish deferred disposal. */
+BOOL kproc_thread_detach(KPROC *process, struct kthread *thread,
+                         struct kthread *next);
+/* Borrowed retained process; commit cleanup once or return FALSE. */
+BOOL kproc_begin_disposal(KPROC *process, PD **pd);
+/* Reserve a single-thread launcher handoff; only its owner can commit it. */
+/* Architecture launcher: FALSE leaves legacy single-thread teardown safe.
+ * Success retains identity and commits to its safe continuation. */
+BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len);
+/* Borrow handoff reference on success. Escaping disk errors consume it and
+ * panic; other teardown callbacks must not exit non-locally. */
+void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len);
+BOOL kproc_prepare_exit_handoff(KPROC *process);
+BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd);
+/* Commit the existing single-thread xterm cleanup while lookup owns KPROC. */
+BOOL kproc_begin_exit(PD *pd);
+/* Prepare completion only for the sole stopped association of a started
+ * process; the caller must immediately reap it from a safe context. */
+BOOL kproc_request_completion(KPROC *process, struct kthread *thread, UWORD status);
+BOOL kproc_pending_completion(const KPROC *process, UWORD *status);
+/* Normal xterm is not thread-aware; reject it before any cleanup begins. */
+void kproc_require_no_threads(PD *pd);
 /*
  * Builds the ring-3 address space for a process about to be launched:
  * its environment block and its basepage..p_hitpa range, and `parent`'s
@@ -141,19 +198,18 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
  * being made and records it with the child, so that destroying the child, a
  * failed load included, gives it back (0: none), the loader reads the file into it, in place, and
  * kproc_set_moved_image() makes it the child's image, laid out as `layout`.
- * Nothing is mapped for the child yet: PE_GO moves the block's pages, at the
+ * Nothing is mapped for the child yet: PE_GOTHENFREE moves the block's pages, at the
  * same addresses, from the caller's address space to the child's, with each
  * segment's permissions.  The caller cannot free the block (Mfree() leaves it
  * alone); freeing the child's basepage unlaunched gives it back, and so does
- * kproc_load_release().  With PE_GOTHENFREE the pages stay with the child;
- * with PE_GO (kproc_set_give_back()) they only are lent, and move back to the
- * caller as Malloc() memory when the child ends.
+ * kproc_load_release().  With PE_GOTHENFREE the pages stay with the child.
+ * Ring-3 PE_GO is currently rejected. The legacy give-back path remains for
+ * compatible internal callers.
  */
 VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
 void kproc_load_release(PD *caller, VADDR va);
 BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages);
-/* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
- * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
+/* Legacy PE_GO give-back: call before kproc_prepare_user(). */
 void kproc_set_give_back(PD *pd, BOOL give_back);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
@@ -244,6 +300,10 @@ BOOL kproc_validate_user_dta(VADDR address);
 /* valid user memory of the current process: mapped, user-accessible and (for
  * _write) writable in its own address space */
 BOOL kproc_validate_user_range(VADDR address, ULONG size);
+#if CONF_WITH_PCLONE
+/* Validate that a user entry point is mapped and executable. */
+BOOL kproc_validate_user_exec(VADDR address);
+#endif
 /* the same question for Maccess()/Mvalidate(): the process's own access, with
  * no page backed for the answer */
 BOOL kproc_user_access(PD *pd, VADDR address, ULONG size, BOOL write);

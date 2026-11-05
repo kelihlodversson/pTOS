@@ -1,0 +1,338 @@
+Existing process ownership baseline (#891)
+==========================================
+
+KPROC is allocated by kproc_create() and indexed by the public PD/basepage.
+It owns the trusted PID, parent, descriptor and directory state. The PD is
+user-writable and is not trusted for those relationships. kproc_destroy()
+unlinks the record before releasing its active and pending KASPACE references,
+loader metadata and remaining syscall stack; it also invokes CUIS, VDI and
+callback cleanup when configured. KASPACE destroys its backend and ordinary
+heap metadata on final release. Its active and pending ASPACE pointers are
+borrowed. PE_GO's legacy give-back is separate from address-space sharing.
+
+kproc_prepare_user() adopts a pending loader ASPACE or allocates one, then
+allocates the process syscall stack. Its failure path destroys the adopted or
+new address space and releases the stack. On x32, gouser() takes the syscall
+stack from KPROC; the launcher restores its own context before freeing it.
+The running stack must never be freed from itself.
+
+The cooperative x32 scheduler allocates separate KERNEL_TASK records and
+scheduler stacks in run_group() and ksched_spawn(). It records process/parent
+PDs, PID, execution context and state. The scheduler's saved CPU context,
+continuation, internal context identity and scheduler stack are grouped in an
+embedded KTHREAD_CONTEXT. This is a compatibility bridge, not a TID or an
+independently retained PROCESS/THREAD relationship. The context allocates and
+releases its scheduler stack through kthread_stack_allocate/release; the caller
+must release from a different stack after the continuation can no longer run.
+The scheduler continues to decide when that condition holds. Deferred-launch
+cancellation detaches the stack owner before clearing its task, disposes of
+the program, then releases that detached owner from the caller's stack.
+Failed construction releases allocated
+task stacks. Finished task stacks are reclaimed by the scheduler root context,
+not by the task. These stacks have different continuations and lifetimes from
+KPROC's syscall stack; unification needs proof, not a field rename.
+
+x32 user-process xterm() records a retained KPROC identity, status and optional
+residency request in its launcher continuation. It switches away through
+termuser() without destroying the process. The launcher restores its own stack
+and address space, frees the transferred syscall stack, commits the handoff,
+calls ksched_exiting(), releases process resources and only then invokes
+ksched_exited() for deferred CUIS handoff. Kernel/ROM launches and other
+architectures keep their legacy exit path. The scheduler task stack remains
+separate and is reclaimed later by scheduler root. Tracked deferred owners also
+retain their KPROC identities so successor activation cannot be redirected by
+PD reuse. Observed launch binds the CUIS child token before publication; child
+completion, console and session ownership must survive any refactor. Faults,
+orphaning, nested synchronous launches and deferred successors share these
+paths. The launcher and scheduler retain borrowed PD identities only within
+their existing lifetime rules.
+
+KASPACE provides reference-counted backend ownership and fail-closed cloning.
+KPROC owns one reference for a pending or active space and keeps the matching
+ASPACE pointer only as a borrowed backend pointer. Successful preparation moves
+the pending reference to the active slot without incrementing it. Failed
+adoption keeps backend ownership with the creator; failed preparation drops
+the acquired reference. A syscall-stack allocation failure preserves a loaded
+pending image. References remain serialized in process context; no locks or
+new concurrent semantics are introduced.
+
+The x32 kernel self-test exercises the production load-begin, load-enter/leave,
+pending-to-active transfer, failed pending mapping, syscall-stack allocation
+failure, preparation rollback after stack allocation, and repeated process
+cleanup. It checks that the image survives transfer and that the original
+memory/heap counts return after each path. A test-only failure hook forces
+wrapper adoption failure in both pending-image and fresh-preparation paths;
+each is followed by a successful retry and complete resource-count comparison.
+Other architecture runtime tests remain to be added.
+
+Metadata classification before actual sharing:
+
+* Mmap reservations, permissions, backing references, mapped-byte totals and
+  ordinary Malloc heap reservations belong to KASPACE and survive until its
+  final reference. Loader staging remains in KPROC; one gap search considers
+  both ledgers so their reservations cannot overlap. Stack and loader fault
+  metadata still need independent lifetime ownership before distinct processes
+  can share a space.
+* Stack reservation/growth state follows the particular stack mapping in that
+  address space, while the live stack pointer and execution context belong to
+  an individual thread. Multiple stacks must not reuse one process-wide limit.
+* Loader images, pending transfers, PE_GO page loans and give-back track image
+  and lender ownership; they are not a shared-ASPACE reference. Their release
+  ordering needs an explicit mapping/image lifetime before sharing is enabled.
+* PID, parent, descriptors, current directories and process completion remain
+  process-owned. Limits and accounting require an explicit policy for shared
+  mappings rather than blindly charging one process's existing KPROC fields.
+  Proposed shared-ASPACE policy: limits remain per PROCESS; a growth request
+  is checked against the calling PROCESS's limits using the whole shared
+  address-space reservation total. Other processes can observe the growth,
+  and lowering a limit never revokes existing mappings. Malloc reservations
+  belong to the shared space, so Mfree and Mshrink by any process sharing it
+  would operate on that same reservation set, with the normal exact-base and
+  size validation; they would not be restricted to the allocating PID. Loader
+  staging is separate and cannot be freed as ordinary heap memory. A shared
+  space must serialize reservation changes and limit checks before preemption
+  or SMP. This policy is not implemented; shared process spaces remain disabled.
+* Completion observers need PID and exit status, not the descriptor tables,
+  current directories, PD or page tables. The currently embedded `uft`,
+  `curdir`, priority and usage fields are process-wide live state. Signal
+  dispositions would also be process-wide, but are not implemented by this
+  KPROC; the scheduler's existing `signal` is a fault-status snapshot.
+* CPU/FPU state and scheduler continuation live in KTHREAD_CONTEXT. The
+  scheduler stack is released from its root context; the syscall stack is
+  transferred to and reclaimed by the launcher. Future TLS and signal masks
+  are per-thread and are not currently provided by these records.
+
+The current exit path closes descriptors and drops directories before it
+destroys KPROC. Deferring only kproc_destroy() would therefore not retain live
+process resources: descriptor closing also depends on process-specific handle
+state, and PD/basepage and image-loan cleanup have separate lifetimes. A live
+resource owner must preserve these dependencies while allowing an identity-only
+observer to outlive them; the existing identity reference alone cannot do so.
+In particular, xterm() switches run to the parent before release_pd_files(),
+which obtains standard handles and directories through the still-live KPROC.
+The owner sweep matches SFT f_own against the PD address, and pluggable-FS
+cleanup also takes that PD. The subsequent ixterm() can release the allocation
+containing the PD. A future live-resource owner must therefore retain or
+replace those identities through the last execution-resource release, and
+must arrange filesystem cleanup while the necessary handle context is valid.
+Merely keeping the descriptor arrays, KASPACE, or KPROC snapshot alive does
+not meet that contract. Cleanup of unlaunched and deferred basepages also
+calls release_pd_files(), so partial construction and cancellation must use
+the same exactly-once ownership transition.
+
+The loader ledger retains UH_LOADED, UH_IMAGE and the legacy UH_LENT entries,
+including borrowed PD identities, separately from the ordinary KASPACE heap.
+Ring-3 PE_GO is rejected before image validation or ownership changes, so it
+cannot create a new give-back loan; PE_LOAD staging and consuming mode 6/106
+remain supported. The historical give-back branch stays for existing kernel
+compatibility paths, not as a shared-VM contract. Kernel/ROM callers without a
+user address space retain mode 4. Shared-VM modes 4/104 belong to #894 and
+must create a separate PROCESS, not a same-process thread.
+
+On a non-CUIS address-space build, an unwrapped disk-error longjmp from xclose
+could previously leave this sequence midway: earlier handles might already be
+closed, while the record, remaining directory references and owned allocations
+remained. A hard error returns through osif without an automatic cleanup retry;
+a media-change retry can instead revisit partially completed work. The
+process-memory cleanup path now uses kdos_fclose for each real handle, catching
+the disk error and retrying the interrupted close before moving to the next
+reference. A regression exercises proc_free_owned, its real child-record
+callback and the real close wrapper with an injected disk-error longjmp.
+The wrapper has a bounded retry count; repeated errors beyond that bound and
+non-local exits from unrelated filesystem callbacks are not a general
+transactional cleanup guarantee and need separate handling if encountered.
+When the close retry bound is exhausted, its handle reference may remain
+unreleased even though process-memory cleanup has proceeded. The exhausted
+case is tested explicitly; no general deferred handle-reaper is provided here.
+
+KASPACE sharing is not yet exposed to KPROC or processes. Do not share live
+process mappings until those metadata, loans and cleanup relationships and the
+calling-thread validation context have moved to consistent owners. Scheduler
+and syscall-stack ownership and the thread/process split remain #891 work.
+
+Required THREAD/PROCESS lifetime boundary
+-----------------------------------------
+The intended generic THREAD owns a PROCESS reference and an ASPACE reference;
+its process membership is a non-owning list link held by PROCESS, so there is
+no strong-reference cycle. TID allocation and lifetime must be independent of
+both PID and the scheduler's existing context token. Architecture backends
+own the execution-context storage; the scheduler controls readiness and must
+reclaim continuation stacks only after switching away. The syscall stack has
+a separate owner and cannot be merged into that stack by assumption.
+
+Process completion and retained identities
+------------------------------------------
+The live PD lookup owns one KPROC reference. A scheduler task acquires another
+before it is published; no process-to-task reference is created. Pterm records
+the status and ksched_exiting() snapshots usage, orphans children and discards
+the task's borrowed PD before files and the KPROC's live resources are released.
+The retained KPROC becomes a PID/status snapshot with all other fields cleared;
+its PID remains reserved until its final reference is released. The scheduler
+root frees a finished continuation's stack and releases a done task's reference;
+a zombie retains its identity until wait/reap or orphan cleanup. Deferred
+cancellation disposes the program before releasing its reference and stack.
+Synchronous nested children retain their existing immediate cleanup path.
+
+The retained identity does not keep the PD or mappings alive and cannot be used
+to access them. Observed child completion still uses the scheduler's trusted
+PID/status snapshot and CUIS token, with notification ordering unchanged. Parent
+PD links are removed by ksched_exiting before the parent allocation is freed;
+loader image give-back happens during live-record cleanup, before the PD can be
+released. Other borrowed PD users continue to obey the existing live-lookup and
+loan rules; no new long-lived PD access is permitted through a KPROC reference.
+The basepage-presence query describes only that allocation, not whether logical
+completion has been recorded: completion precedes basepage cleanup. PID search
+checks live records, retained identities and scheduler/CUIS reservations, and
+returns failure after a full namespace scan rather than reusing a reserved PID.
+
+This is not yet a complete THREAD/PROCESS lifetime implementation. A running
+thread would require live process resources and mapping metadata to outlive it,
+not merely this completed-identity snapshot. Membership, independently owned
+ASPACE metadata and thread-aware termination remain to be designed and tested
+before attaching generic THREAD objects. Shared ASPACEs must retain their own
+mapping metadata, not merely the backend page tables.
+
+Mmap fault dispatch, first-touch and file COW now consult KASPACE's retained
+reservations and backing references, including after the original KPROC is
+destroyed. Kernel-copy preflight also obtains mmap logical permissions from
+that owner and uses the same first-touch/COW policy; it still preflights the
+whole range before backing pages. The existing architecture trap still finds
+its KPROC through the current PD before dispatching; a future THREAD must
+supply its own retained KASPACE rather than relying on another process's PD. The
+shutdown registry is non-owning and tracks all live KASPACE objects, so shutdown
+can release file mappings even when no KPROC remains; anonymous reservations
+stay intact. Ordinary heap reservations also have a retained KASPACE view;
+loader staging, thread stack growth and PROCESS execution resources do not.
+
+Process-memory cleanup marks still-pinned blocks for deferred reclamation in
+their allocation records and discards the former owner address. The last unpin
+reclaims that exact record; ownership transfer cancels the deferred decision.
+Cleanup callbacks may reclaim allocations or exit non-locally; traversal resumes
+by allocation generation rather than retaining a list pointer across a callback.
+This uses repeated list scans, and reclamation also scans the allocation list;
+both have linear per-iteration cost. Before preemption or SMP, protect allocation
+records, pins, owner transfers, traversal and address-space switches together
+with an appropriate synchronization and lifetime scheme. Borrowed mappings are
+unmapped and translation caches flushed
+before unpin can reclaim their pages. Ptermres explicitly makes its kept blocks
+permanent. A production x32 test retains an active KASPACE across KPROC cleanup
+and checks its process blocks survive until the last reference is released;
+another test covers a separately retained pending private image. This does not
+yet authorize runnable threads or sharing active spaces between processes:
+mapping metadata and process-wide resources still need lifetime ownership.
+
+The target reference graph is THREAD -> PROCESS and THREAD -> ASPACE, with
+PROCESS -> ASPACE and borrowed PROCESS -> THREAD membership links. The initial
+KTHREAD object implements this graph for non-runnable identities only. It
+retains the existing KPROC identity and KASPACE. Detached and deferred process
+disposal waits for the last association before closing files, releasing the
+PD and destroying KPROC. LIVE, DISPOSAL_PENDING, DISPOSING and RETIRED states
+prevent new associations and repeated cleanup once disposal is requested.
+Retries use a retained KPROC identity, not a reusable PD address; the legacy
+PD-based entry point is only for a currently live caller. Normal x32 user exit
+reserves an exit-handoff state and commits disposal from its launcher; other
+single-thread exits commit directly. Both use the same resource teardown and
+still reject attached threads before doing so.
+
+A non-runnable KTHREAD can transfer an execution resource to a backend
+reclaimer. Stop preserves membership and all references; reap, invoked from a
+safe stack after the continuation cannot resume, reclaims that resource before
+detaching the thread. A started process may complete only through a safe-context
+operation on its sole remaining stopped thread. That operation immediately
+reaps the thread and then publishes status and releases process resources; a
+cancellation does not invent status.
+The native scheduler-active case is explicitly rejected: task completion,
+parent/orphan ownership, notification and stack handoff must be integrated
+before this interface may handle runnable contexts. A tracked parent is held
+as an identity-only reference; notification skips it once retired, even if
+its PD address is reused. An untracked kernel parent retains its legacy
+valid-lifetime requirement; tracked allocations without a process record
+are also checked against their original allocation generation. Deferred x32
+tasks retain a non-runnable KTHREAD during preparation and cancellation.
+Cancellation reaps that identity before reclaiming the separately owned
+scheduler stack; successor activation drops it before the task becomes
+runnable. A root-loop helper reclaims finished and zombie task stacks after the
+current task is cleared; zombies retain their process identity for waiters.
+Running scheduler tasks are not yet associated with KTHREAD. These are model and
+production-lifecycle tests, not runnable-thread or shared-VM support. Ring-3
+mode 4 no longer requires durable give-back loans.
+
+Generation-based traversal assumes the 64-bit allocation generation counter
+does not wrap during a boot. The existing allocators do not detect wraparound;
+they must fail closed or acquire a wider/epoch-qualified identity before that
+assumption can be removed. This is separate from ordinary window-address reuse,
+which receives a different generation on reallocation.
+
+Exit-finalization callback/unwind contract (#891)
+------------------------------------------------
+The x32 launch record is an ordinary object; only the exit-handoff members
+modified after setjmp are volatile. No qualifier is discarded when accessing
+its jump buffer or publishing current_launch. Immutable nesting/context fields
+are initialized before setjmp and remain unchanged until the launcher resumes.
+
+proc_finalize_exit installs a local errbuf boundary spanning commit, completion
+publication, ksched_exiting, resource release and successor activation. Calls
+have these responsibilities:
+- ksched_exiting snapshots task status and delivers CUIS completion using the
+  existing synchronous/async policy. Its callbacks must return normally.
+- release_pd_files uses kdos_fclose's local bounded disk-error retry boundary;
+  exhausting retries still may leak a handle. Directory and PFS cookie/search
+  release callbacks must return normally. They must not jump to private saved
+  continuations. The same requirement applies to backing-reference callbacks
+  reached through kproc_destroy and allocation callbacks reached by ixterm.
+- kproc_destroy releases KASPACE mappings/backings and retires the process;
+  ixterm then releases allocations. Neither phase may be restarted after an
+  interruption. Ptermres is applied between those operations as before.
+- ksched_exited_identity activates successors only after teardown, using the
+  retained identity. Its destructor callbacks obey the same no-unwind rule.
+- The launcher releases its retained handoff identity after successful return.
+
+An unexpected disk-error jump escaping any of these phases is a fatal contract
+violation, not a recoverable filesystem transaction. The local boundary restores
+the launcher's errbuf, clears the pending residency PD/length, consumes the
+handoff reference and panics. It never retries cleanup, republishes completion,
+activates further successors, or dereferences the possibly retired PD. Remaining
+partially torn-down resources are not recovered: the kernel stops. Private
+longjmp targets bypassing errbuf are forbidden, not supported recovery paths.
+The host production-finalizer harness injects jumps during notification,
+directory teardown, retirement and successor activation and verifies one commit,
+one publication, one handoff release and cleared residency/error-target state.
+It also checks successful finalization. This is host fault injection; it does
+not runtime-validate the unused x86_64_process_cancel pending-handoff branch.
+
+Nested launchers finalize child syscall stacks; only scheduler root reclaims
+scheduler-task stacks. Neither context acquires duplicate ownership. Runnable
+KTHREAD association and clone startup remain #892, public termination #893.
+
+ARM/m68k safe launcher exit handoff
+-----------------------------------
+All USER_ASPACE backends implement proc_defer_exit; proc_finalize_exit is one
+common implementation with the same bounded errbuf/fail-stop contract. ARM and
+m68k keep per-launch records on the suspended launcher stack, linked in LIFO
+order. Only handoff members changed across setjmp are volatile. A retained KPROC
+identity, not PD lookup after return, owns the pending operation. Preparation
+asserts the caller is on the child's transferred syscall stack. Failure before
+commit releases any acquired identity and uses the existing single-thread exit;
+no partially reserved handoff is published.
+
+longjmp restores the launcher kernel SP. The launcher restores its address-space
+root before releasing the transferred child stack, asserts it is off that stack
+and that the child's mappings still exist, then commits common finalization.
+It restores the captured exit status and releases the handoff identity. ARM
+preserves the SVC/exception-return model; its existing trap frame owns user FPU
+and exception state. Both backends restore the launcher's saved interrupt/control
+state after finalization. m68k restores its separately saved launcher FPU state
+last, so finalization cannot clobber it. No scheduler-stack owner is introduced.
+
+The isolation payload now nests normal, privileged-fault and Ptermres exits and
+checks each launcher status. Ptermres intentionally retains one-page residency
+(and the existing retained process allocations); non-resident resource-baseline
+checks run separately. CONF_WITH_EXIT_HANDOFF_TEST, disabled by default, rejects
+one handoff after retain and before reservation, releases that reference, and
+logs its rollback. ARM/m68k user-ASPACE CI regression configurations enable this
+option; the runner requires evidence that injection executed. The host
+production-finalizer fault-injection harness tests the now-common callback
+boundary; it does not emulate ARM/m68k exception instructions or arbitrary
+private longjmp recovery. Native suites exercise real normal/fault/resident
+traps and safe-stack assertions. KTHREAD remains non-runnable; #892/#893/#894
+boundaries are unchanged.

@@ -147,13 +147,13 @@ if ! grep -q 'x86-64 unaligned relocation: PASS' boot.log; then
   exit 1
 fi
 
-if ! grep -q 'x86-64 pexec go gives back: PASS' boot.log; then
-  echo "::error::PE_GO did not give the loaded program's pages back"
+if ! grep -q 'x86-64 pexec go rejected: PASS' boot.log; then
+  echo "::error::PE_GO rejection did not preserve the staged program"
   exit 1
 fi
 
-if ! grep -q 'x86-64 pexec go gives back with a gap: PASS' boot.log; then
-  echo "::error::PE_GO did not find the loaded program's pages after the child allocated below them"
+if ! grep -q 'x86-64 pexec go rejected with a gap: PASS' boot.log; then
+  echo "::error::PE_GO rejection did not preserve the staged program for mode 6"
   exit 1
 fi
 

@@ -37,6 +37,7 @@
 #include "kheap.h"
 #include "procmem.h"
 #include "kprint.h"
+#include "setjmp.h"
 #include "pgtable.h"
 #include "pmem.h"
 #include "pc_x86_64_memory.h"
@@ -47,8 +48,11 @@
 #include "pc_x86_64_memtest.h"
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
+#include "../../../bdos/arch/x86_64/kthread_context.h"
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
+#include "../../../bdos/kthread.h"
+#include "../../../bdos/proc.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
 #include "ksched.h"
@@ -166,6 +170,42 @@ static int failures;
             failures++; \
         } \
     } while (0)
+
+static BOOL exit_handoff_watch;
+static ULONG exit_handoff_stages[4];
+static UQUAD exit_handoff_free_before;
+
+void x86_64_memtest_exit_handoff(KPROC *process, PD *pd, UQUAD stack_phys,
+                                UWORD status, UWORD stage)
+{
+    UQUAD rsp;
+    UWORD recorded;
+    if (!exit_handoff_watch) return;
+    CHECK(stage < ARRAY_SIZE(exit_handoff_stages), "valid exit handoff stage");
+    if (stage >= ARRAY_SIZE(exit_handoff_stages)) return;
+    __asm__ volatile ("movq %%rsp,%0" : "=r"(rsp));
+    CHECK(x86_64_memtest_kstack_contains(stack_phys, rsp) == (stage == 0),
+          "exit finalization runs away from the child syscall stack");
+    if (stage == 1) exit_handoff_free_before = pmem_free_bytes();
+    if (stage == 2)
+        CHECK(pmem_free_bytes() == exit_handoff_free_before + x86_64_memtest_kstack_bytes(),
+              "the child syscall stack is released exactly once");
+    if (stage < 3) {
+        CHECK(kproc_ref_has_basepage(process) && kproc_user_aspace(pd),
+              "exit handoff retains process and mappings until finalization");
+        if (!stage) {
+            CHECK(!kthread_create(pd), "exit handoff rejects new thread associations");
+            proc_dispose_process(process);
+            CHECK(kproc_ref_has_basepage(process) && kproc_user_aspace(pd),
+                  "reentrant disposal cannot commit a pending exit handoff");
+        }
+    } else {
+        CHECK(!kproc_ref_has_basepage(process) &&
+              kproc_ref_status(process, &recorded) && recorded == status,
+              "exit finalization publishes the retained status once");
+    }
+    exit_handoff_stages[stage]++;
+}
 
 /* Everything that must be exactly the same before and after a cycle. */
 typedef struct {
@@ -449,10 +489,33 @@ static void test_kheap(void)
 /* ---- process window ------------------------------------------------ */
 
 static ULONG pre_free_calls;
+static void *callback_unpin_block;
+static void *callback_replacement;
+static void *callback_replacement_owner;
+static jmp_buf cleanup_test_resume;
 static void count_pre_free(void *base)
 {
     (void)base;
     pre_free_calls++;
+}
+static void unpin_during_cleanup(void *base)
+{
+    (void)base;
+    procmem_pin((VADDR)(uintptr_t)callback_unpin_block, PAGE, -1);
+    CHECK(!procmem_size(callback_unpin_block), "callback unpin reclaims deferred allocation");
+    pre_free_calls++;
+}
+static void jump_during_cleanup(void *base)
+{
+    (void)base;
+    longjmp(cleanup_test_resume, 1);
+}
+static void replace_during_keep(void *base)
+{
+    CHECK(procmem_free(base), "keep callback frees prior allocation");
+    callback_replacement = procmem_alloc(PAGE, 0);
+    CHECK(callback_replacement == base, "keep callback reuses address");
+    procmem_set_owner(callback_replacement, callback_replacement_owner);
 }
 
 static void test_procmem(void)
@@ -542,6 +605,75 @@ static void test_procmem(void)
         CHECK(procmem_size(b1), "kept block is resident");
         procmem_free(b1);
         procmem_free(perm);
+    }
+
+    /* A deferred block carries its own decision, not a reusable owner PD. */
+    {
+        void *owner = procmem_alloc(PAGE, 0);
+        void *held = procmem_alloc(PAGE, 0);
+        void *replacement;
+        UQUAD generation = procmem_gen(owner);
+
+        procmem_set_owner(owner, owner);
+        procmem_set_owner(held, owner);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(owner, NULL);
+        CHECK(!procmem_size(owner) && procmem_size(held), "pinned owned block defers release");
+        replacement = procmem_alloc(PAGE, 0);
+        CHECK(replacement == owner && procmem_gen(replacement) != generation,
+              "former owner address is reused with a new generation");
+        procmem_set_owner(replacement, replacement);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, -1);
+        CHECK(!procmem_size(held) && procmem_size(replacement),
+              "last unpin reclaims only the original allocation");
+        procmem_free_owned(replacement, NULL);
+    }
+    {
+        void *held = procmem_alloc(PAGE, 0);
+        procmem_set_owner(held, &owner_a);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(&owner_a, NULL);
+        procmem_set_owner(held, &owner_b);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, -1);
+        CHECK(procmem_size(held) && procmem_owner(held) == &owner_b,
+              "ownership transfer cancels deferred reclamation");
+        procmem_free_owned(&owner_b, NULL);
+    }
+    {
+        void *block = procmem_alloc(PAGE, 0);
+        procmem_set_owner(block, &owner_a);
+        callback_replacement = NULL;
+        callback_replacement_owner = &owner_b;
+        procmem_keep(&owner_a, 0, replace_during_keep);
+        CHECK(callback_replacement == block && procmem_owner(block) == &owner_b,
+              "keep ignores a replacement allocation with a new generation");
+        procmem_free_owned(&owner_b, NULL);
+    }
+    {
+        void *held = procmem_alloc(PAGE, 0);
+        void *other = procmem_alloc(PAGE, 0);
+        procmem_set_owner(held, &owner_a);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(&owner_a, NULL);
+        procmem_set_owner(other, &owner_b);
+        callback_unpin_block = held;
+        pre_free_calls = 0;
+        procmem_free_owned(&owner_b, unpin_during_cleanup);
+        CHECK(pre_free_calls == 1 && !procmem_size(held) && !procmem_size(other),
+              "cleanup traversal tolerates reclamation during callback");
+    }
+    {
+        void *held = procmem_alloc(PAGE, 0);
+        void *other = procmem_alloc(PAGE, 0);
+        procmem_set_owner(held, &owner_a);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, 1);
+        procmem_free_owned(&owner_a, NULL);
+        procmem_set_owner(other, &owner_b);
+        if (!setjmp(cleanup_test_resume))
+            procmem_free_owned(&owner_b, jump_during_cleanup);
+        procmem_pin((VADDR)(uintptr_t)held, PAGE, -1);
+        CHECK(!procmem_size(held), "non-local callback exit does not inhibit reclamation");
+        procmem_free_owned(&owner_b, NULL);
     }
 
     /* Ptermres: the owner's block is cut back to the requested pages and
@@ -1070,14 +1202,584 @@ static void test_process_validation(void)
     same(&s, "process validation");
 }
 
+/* Exercise the production pending/active ownership transition and unwind. */
+#include "../../../bdos/kaspace.h"
+
+static PD *disposal_test_pd;
+static KPROC *disposal_test_observer;
+static unsigned disposal_test_commits;
+#if CONF_WITH_NATIVE_SCHED
+struct test_thread_execution {
+    KTHREAD_STACK stack;
+    PADDR syscall_stack;
+    unsigned reclaims;
+};
+
+static void test_thread_reclaim(void *resource)
+{
+    struct test_thread_execution *execution = resource;
+    execution->reclaims++;
+    kthread_stack_release(&execution->stack);
+    if (execution->syscall_stack) {
+        kstack_free(execution->syscall_stack);
+        execution->syscall_stack = 0;
+    }
+}
+#endif
+
+void x86_64_memtest_disposal_committed(PD *pd)
+{
+    if (pd != disposal_test_pd)
+        return;
+    disposal_test_commits++;
+    CHECK(!kthread_create(pd), "disposing process rejects new threads");
+    proc_dispose_process(disposal_test_observer);
+}
+
+/* Detached cancellation keeps filesystem and mapping resources alive until
+ * the last non-runnable association is detached. */
+static void test_kthread_live_disposal(void)
+{
+    SNAP s;
+    PD *pd, *replacement, *saved = run;
+    void *env;
+    KTHREAD *a, *b;
+    KPROC *observer;
+    LONG handle, count;
+    WORD pid;
+    UWORD status;
+    char bytes[4];
+#if CONF_WITH_NATIVE_SCHED
+    struct test_thread_execution execution;
+    BOOL attached;
+    uintptr_t syscall_top;
+#endif
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_prepare_user(pd, run), "prepare process for deferred disposal");
+    observer = kproc_retain(pd);
+    disposal_test_pd = pd;
+    disposal_test_observer = observer;
+    disposal_test_commits = 0;
+    pid = kproc_pid(pd);
+    a = kthread_create(pd);
+    b = kthread_create(pd);
+    CHECK(a && b && observer, "retain live process for deferred disposal");
+    if (!a || !b || !observer) {
+        kthread_destroy(a);
+        kthread_destroy(b);
+        proc_dispose_retained(pd);
+        disposal_test_pd = NULL;
+        disposal_test_observer = NULL;
+        kproc_release(observer);
+        same(&s, "failed deferred-disposal setup");
+        return;
+    }
+#if CONF_WITH_NATIVE_SCHED
+    bzero(&execution, sizeof(execution));
+    attached = kthread_stack_allocate(&execution.stack);
+    CHECK(attached, "allocate execution stack for safe-context handoff");
+    if (attached) {
+        execution.syscall_stack = kstack_alloc(&syscall_top);
+        CHECK(execution.syscall_stack && syscall_top,
+              "allocate separate syscall stack for safe-context handoff");
+        if (!execution.syscall_stack) {
+            kthread_stack_release(&execution.stack);
+            attached = FALSE;
+        }
+    }
+    if (attached) {
+        attached = kthread_set_execution(a, &execution, test_thread_reclaim);
+        CHECK(attached, "transfer execution stack ownership to thread");
+        if (!attached) {
+            kthread_stack_release(&execution.stack);
+            kstack_free(execution.syscall_stack);
+        }
+    }
+#endif
+    CHECK(!kthread_reap(a), "thread cannot be reclaimed before stop");
+    run = pd;
+    handle = DISK_CALL(xopen("C:\\X32HELLO.TOS", 0));
+    run = saved;
+    CHECK(handle >= NUMSTD && handle < NUMHANDLES, "open process-owned file");
+    proc_dispose_retained(pd);
+    proc_dispose_retained(pd); /* repeated cancellation must not double-clean */
+    CHECK(kproc_ref_has_basepage(observer) && procmem_size(pd) &&
+          !kthread_create(pd), "disposal retains PD and rejects new threads");
+    CHECK(procmem_mfree(pd) == EACCDN,
+          "retained process basepage cannot be freed and reused");
+    if (handle >= NUMSTD && handle < NUMHANDLES)
+        CHECK(sft[handle-NUMSTD].f_own == pd && sft[handle-NUMSTD].f_use,
+              "process-owned file remains open while threads remain");
+    CHECK(kthread_stop(a) && !kthread_stop(a), "thread stop is once-only");
+#if CONF_WITH_NATIVE_SCHED
+    if (attached)
+        CHECK(execution.stack.physical && execution.syscall_stack && !execution.reclaims,
+              "stopping thread retains scheduler and syscall stacks");
+    CHECK(!kthread_set_execution(a, &execution, test_thread_reclaim),
+          "stopped thread rejects new execution resources");
+#endif
+    CHECK(kthread_reap(a), "reclaim stopped thread from safe context");
+#if CONF_WITH_NATIVE_SCHED
+    if (attached)
+        CHECK(!execution.stack.physical && !execution.syscall_stack && execution.reclaims == 1,
+              "safe-context reap frees both stacks once");
+#endif
+    if (handle >= NUMSTD && handle < NUMHANDLES) {
+        CHECK(kproc_ref_has_basepage(observer) && sft[handle-NUMSTD].f_own == pd,
+              "first thread release preserves process resources");
+        run = pd;
+        count = DISK_CALL(xread((WORD)handle, sizeof(bytes), bytes));
+        run = saved;
+        CHECK(count == sizeof(bytes), "retained process can still read its file");
+    }
+    CHECK(kthread_stop(b), "stop last associated thread");
+    CHECK(kproc_ref_has_basepage(observer), "stopped thread retains live process");
+    CHECK(kthread_reap(b), "last thread reap completes deferred disposal");
+    CHECK(disposal_test_commits == 1, "reentrant disposal commits once");
+    disposal_test_pd = NULL;
+    disposal_test_observer = NULL;
+    if (handle >= NUMSTD && handle < NUMHANDLES)
+        CHECK(!sft[handle-NUMSTD].f_own, "last thread closes process-owned file");
+    CHECK(observer && !kproc_ref_has_basepage(observer),
+          "identity survives final live-resource teardown");
+    CHECK(kproc_ref_pid(observer) == pid && !kproc_ref_status(observer, &status),
+          "abandoned process retains PID without an invented exit status");
+    proc_dispose_process(observer);
+    replacement = new_basepage();
+    if (replacement) {
+        void *replacement_env = USERPTR_TO_PTR(replacement->p_env);
+        set_owner(replacement, replacement);
+        set_owner(replacement_env, replacement);
+        CHECK(replacement == pd, "retired basepage address can be reused");
+        proc_dispose_process(observer);
+        CHECK(kproc_pid(replacement) && kproc_pid(replacement) != pid &&
+              procmem_size(replacement), "old identity cannot dispose replacement process");
+        proc_free_owned(replacement);
+    }
+    kproc_release(observer);
+    same(&s, "thread-retained detached process resources");
+}
+
+struct completion_reclaim {
+    KPROC *observer;
+    unsigned calls;
+};
+
+static void test_completion_reclaim(void *resource)
+{
+    struct completion_reclaim *execution = resource;
+    UWORD status;
+    execution->calls++;
+    CHECK(kproc_ref_has_basepage(execution->observer) &&
+          !kproc_ref_status(execution->observer, &status),
+          "completion remains unpublished while execution resources are reclaimed");
+    proc_dispose_process(execution->observer); /* reentrant request is deferred */
+}
+
+/* Model the final execution handoff without starting a user thread. */
+static void test_kthread_completion(void)
+{
+    SNAP s;
+    PD *pd;
+    void *env;
+    KPROC *observer;
+    KTHREAD *a, *b;
+    UWORD status;
+    struct completion_reclaim execution;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_prepare_user(pd, run), "prepare final-completion process");
+    kproc_set_parent(pd, run);
+    observer = kproc_retain(pd);
+    a = kthread_create(pd);
+    b = kthread_create(pd);
+    CHECK(observer && a && b, "construct completion associations");
+    if (!observer || !a || !b) {
+        kthread_destroy(a);
+        kthread_destroy(b);
+        proc_dispose_retained(pd);
+        kproc_release(observer);
+        same(&s, "failed completion setup");
+        return;
+    }
+    CHECK(kthread_stop(a), "stop first thread before completion preflight");
+    CHECK(!kthread_complete(a, 37),
+          "unstarted process cannot publish an exit status");
+    kproc_mark_started(pd); /* simulate a process that has executed */
+    CHECK(!kthread_complete(a, 37),
+          "live sibling prevents process completion");
+    CHECK(kthread_reap(a), "reap first stopped thread");
+    CHECK(!kproc_ref_status(observer, &status) && kproc_ref_has_basepage(observer),
+          "first thread exit preserves live process and unpublished status");
+    execution.observer = observer;
+    execution.calls = 0;
+    CHECK(kthread_set_execution(b, &execution, test_completion_reclaim),
+          "transfer final execution resource");
+    CHECK(kthread_stop(b), "stop final thread before completion request");
+    CHECK(!kproc_ref_status(observer, &status) && kproc_ref_has_basepage(observer),
+          "stopped thread retains resources until safe reap");
+    CHECK(kthread_complete(b, 37), "complete and reap final stopped thread");
+    CHECK(execution.calls == 1, "final execution resource reclaimed once");
+    CHECK(kproc_ref_status(observer, &status) && status == 37 &&
+          !kproc_ref_has_basepage(observer), "final reap publishes one process status");
+    proc_dispose_process(observer);
+    CHECK(kproc_ref_status(observer, &status) && status == 37,
+          "retired identity ignores repeated final cleanup");
+    kproc_release(observer);
+    same(&s, "final thread completion and process resources");
+}
+
+/* Non-runnable identities exercise actual KPROC membership and active-space
+ * references. They must be detached before the legacy process cleanup path. */
+static void test_kthread_relationships(void)
+{
+    SNAP s;
+    PD *pd;
+    void *env;
+    KTHREAD *a, *b;
+    KTHREAD *other_thread;
+    KPROC *observer, *other_observer;
+    PD *other;
+    KASPACE *shared;
+    ULONG first_tid, saved_tid;
+    UWORD status;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(!kthread_create(pd), "thread association rejects unprepared process");
+    CHECK(kproc_prepare_user(pd, run), "prepare thread relationship process");
+    observer = kproc_retain(pd);
+    kthread_test_fail_after_attach();
+    CHECK(!kthread_create(pd), "failed thread association rolls back its references");
+    a = kthread_create(pd);
+    kthread_test_fail_after_attach();
+    CHECK(!kthread_create(pd), "failed association between thread identities");
+    b = kthread_create(pd);
+    CHECK(observer && a && b, "construct two non-runnable threads");
+    if (a && b) {
+        first_tid = kthread_tid(a);
+        CHECK(first_tid && kthread_tid(b) && first_tid != kthread_tid(b),
+              "thread identities are distinct");
+        CHECK(kthread_tid(b) == first_tid + 1,
+              "failed association does not consume a thread identity");
+        CHECK(kthread_process(a) == observer && kthread_process(b) == observer &&
+              kthread_aspace(a) == kthread_aspace(b) &&
+              kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
+              "two threads retain the process and its active space");
+        kthread_destroy(a);
+        a = NULL;
+        CHECK(kthread_process(b) == observer &&
+              kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
+              "remaining thread retains its process and space");
+        other = kalloc(sizeof(*other));
+        CHECK(other != NULL, "allocate second process identity");
+        if (other) {
+            bzero(other, sizeof(*other));
+            if (kproc_create(other)) {
+                CHECK(kproc_pid(other) != kproc_pid(pd), "process identities differ");
+                CHECK(kproc_test_share_active(other, kthread_aspace(b)),
+                      "associate second non-runnable process with shared space");
+                other_thread = kthread_create(other);
+                other_observer = kproc_retain(other);
+                CHECK(other_thread && kthread_process(other_thread) != observer &&
+                      kthread_aspace(other_thread) == kthread_aspace(b),
+                      "distinct process identities retain one address space");
+                kproc_complete(other, 23);
+                CHECK(!kthread_create(other), "completed process refuses new thread");
+                kthread_destroy(other_thread);
+                kproc_destroy(other);
+                CHECK(other_observer && kproc_ref_status(other_observer, &status) &&
+                      status == 23 && !kproc_ref_has_basepage(other_observer),
+                      "completed identity survives shared-space process cleanup");
+                kproc_release(other_observer);
+                CHECK(kthread_process(b) == observer &&
+                      kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
+                      "second process completion leaves first space usable");
+            } else {
+                CHECK(FALSE, "construct second process identity");
+            }
+            kfree(other);
+        }
+    }
+    kthread_destroy(a);
+    kthread_destroy(b);
+    saved_tid = kthread_test_set_last_tid(~(ULONG)0 - 1);
+    a = kthread_create(pd);
+    CHECK(a && kthread_tid(a) == ~(ULONG)0,
+          "last available thread identity is nonzero");
+    CHECK(!kthread_create(pd), "exhausted thread identity space fails closed");
+    kthread_destroy(a);
+    kthread_test_set_last_tid(saved_tid);
+    a = kthread_create(pd);
+    b = kthread_create(pd);
+    CHECK(a && b, "construct threads for reverse release order");
+    kthread_destroy(b);
+    if (a)
+        CHECK(kthread_process(a) == observer &&
+              kaspace_backend(kthread_aspace(a)) == kproc_user_aspace(pd),
+              "first thread survives releasing second thread");
+    kthread_destroy(a);
+    other = kalloc(sizeof(*other));
+    other_thread = NULL;
+    if (other) {
+        bzero(other, sizeof(*other));
+        if (kproc_create(other)) {
+            shared = kproc_test_retain_active(pd);
+            CHECK(shared && kproc_test_share_active(other, shared),
+                  "associate second process for reverse cleanup order");
+            kaspace_put(shared);
+            other_thread = kthread_create(other);
+            CHECK(other_thread != NULL, "construct second process thread");
+        } else {
+            kfree(other);
+            other = NULL;
+            CHECK(FALSE, "construct second process for reverse cleanup order");
+        }
+    } else {
+        CHECK(FALSE, "allocate second process for reverse cleanup order");
+    }
+    proc_free_owned(pd);
+    if (other_thread)
+        CHECK(aspace_translate(kaspace_backend(kthread_aspace(other_thread)),
+                               (VADDR)(uintptr_t)pd, NULL, NULL),
+              "shared mapping survives first process cleanup");
+    kthread_destroy(other_thread);
+    if (other) {
+        kproc_destroy(other);
+        kfree(other);
+    }
+    CHECK(observer && !kproc_ref_has_basepage(observer),
+          "observer retains identity after threads and process cleanup");
+    kproc_release(observer);
+    same(&s, "non-runnable thread relationships");
+}
+
+static void test_kproc_pending_ownership(void)
+{
+    SNAP s;
+    PD *pd;
+    void *env;
+    ASPACE *active;
+    KASPACE *retained;
+    KASPACE *second;
+    LONG saved_value;
+    VADDR heap_va;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    pd->p_dreg[0] = 0x12345678L;
+    CHECK(kproc_prepare_user(pd, run), "prepare active space for independent owner");
+    heap_va = kproc_uheap_alloc(pd, PAGE);
+    CHECK(heap_va, "allocate ordinary heap in active space");
+#if CONF_WITH_MMAP
+    CHECK(kproc_mmap(pd, 0, PAGE, PROT_READ | PROT_WRITE,
+          MAP_PRIVATE | MAP_ANONYMOUS, 0, 0) == PTOS_MMAP_BASE,
+          "reserve mapping in retained active space");
+#endif
+    retained = kproc_test_retain_active(pd);
+    second = kaspace_share(retained);
+    CHECK(retained && second, "retain active space twice");
+    proc_free_owned(pd);
+    CHECK(procmem_size(pd) && procmem_size(env) && procmem_pinned(pd) &&
+          retained && aspace_translate(kaspace_backend(retained), (VADDR)(uintptr_t)pd, NULL, NULL),
+          "active mappings keep process blocks after logical cleanup");
+    CHECK(retained && aspace_copy_from_user(kaspace_backend(retained), &saved_value,
+          (VADDR)(uintptr_t)pd + offsetof(PD, p_dreg), sizeof(saved_value)) &&
+          saved_value == 0x12345678L, "retained mapping preserves process data");
+    CHECK(retained && kaspace_heap_contains(retained, heap_va),
+          "ordinary heap reservation survives KPROC destruction");
+#if CONF_WITH_DEMAND_PAGING
+    saved_value = -1;
+    CHECK(retained && kaspace_heap_demand_page(retained, heap_va, ASPACE_PROT_EXEC) == 0 &&
+          !aspace_translate(kaspace_backend(retained), heap_va, NULL, NULL),
+          "retained ordinary heap rejects execution before first touch");
+    CHECK(retained && kaspace_heap_demand_page(retained, heap_va, 0) == 1 &&
+          aspace_copy_from_user(kaspace_backend(retained), &saved_value,
+                                heap_va, sizeof(saved_value)) && !saved_value,
+          "retained ordinary heap faults a zero page after process destruction");
+#endif
+#if CONF_WITH_MMAP
+    CHECK(retained && kaspace_mmap(retained)->bytes == PAGE &&
+          kaspace_mmap(retained)->regions &&
+          kaspace_mmap(retained)->regions->address == PTOS_MMAP_BASE,
+          "retained active space preserves its mapping metadata");
+    CHECK(retained && kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, ASPACE_PROT_EXEC) == 0 &&
+          kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE + PAGE, 0) == -1 &&
+          !aspace_translate(kaspace_backend(retained), PTOS_MMAP_BASE, NULL, NULL),
+          "retained reservations reject disallowed and unreserved faults");
+    saved_value = -1;
+    CHECK(retained && kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, 0) == 1 &&
+          aspace_copy_from_user(kaspace_backend(retained), &saved_value,
+                                PTOS_MMAP_BASE, sizeof(saved_value)) && !saved_value &&
+          kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, 0) == 0,
+          "retained anonymous reservation faults after process destruction");
+#endif
+    kaspace_put(retained);
+    CHECK(procmem_size(pd) && procmem_size(env), "first independent release keeps mappings");
+    kaspace_put(second);
+    CHECK(!procmem_size(pd) && !procmem_size(env), "last release reclaims deferred blocks");
+    same(&s, "independently retained active space and deferred blocks");
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_load_begin(pd, ISO_VA, PAGE), "pending image for independent owner");
+    retained = kproc_test_retain_pending(pd);
+    CHECK(retained != NULL, "retain pending image space independently");
+    proc_free_owned(pd);
+    CHECK(retained && aspace_translate(kaspace_backend(retained), ISO_VA, NULL, NULL),
+          "private image remains mapped after owning process is destroyed");
+    kaspace_put(retained);
+    same(&s, "independently retained pending image ownership");
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    kaspace_test_fail_next();
+    CHECK(!kproc_load_begin(pd, ISO_VA, PAGE), "pending adoption allocation failure is reported");
+    CHECK(!kproc_user_aspace(pd), "failed pending adoption publishes no active space");
+    CHECK(!kproc_load_begin(pd, ISO_VA + 1, PAGE), "failed pending image mapping rolls back");
+    CHECK(kproc_load_begin(pd, ISO_VA, PAGE), "pending image is created after failed mapping");
+    kproc_load_enter(pd);
+    kproc_load_leave();
+    x86_64_pmem_test_fail_after(1);
+    CHECK(!kproc_prepare_user(pd, run), "syscall stack allocation failure is reported");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(!kproc_load_begin(pd, ISO_VA, PAGE), "stack failure preserves the pending image");
+    CHECK(kproc_prepare_user(pd, run), "pending image transfers to active ownership");
+    active = kproc_user_aspace(pd);
+    CHECK(active && aspace_translate(active, ISO_VA, NULL, NULL), "transferred image remains mapped");
+    proc_free_owned(pd);
+    proc_free_owned(pd);
+    same(&s, "pending address-space ownership");
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_load_begin(pd, ISO_VA, PAGE), "pending image for preparation rollback");
+    x86_64_pmem_test_fail_after(2);
+    CHECK(!kproc_prepare_user(pd, run), "preparation fails after stack allocation");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(!kproc_load_begin(pd, ISO_VA, PAGE), "failed preparation marks the adopted image lost");
+    CHECK(!kproc_user_aspace(pd), "failed preparation publishes no active space");
+    proc_free_owned(pd);
+    proc_free_owned(pd);
+    same(&s, "pending address-space preparation rollback");
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    kaspace_test_fail_next();
+    CHECK(!kproc_prepare_user(pd, run), "fresh address-space adoption failure is reported");
+    CHECK(!kproc_user_aspace(pd), "failed fresh adoption publishes no active space");
+    CHECK(kproc_prepare_user(pd, run), "fresh preparation succeeds after failed adoption");
+    proc_free_owned(pd);
+    proc_free_owned(pd);
+    same(&s, "fresh address-space adoption rollback");
+}
+
 /* ---- KPROC records and the real process lifecycle ------------------ */
 
 #define FAKE_PDS 1000
+
+static void test_parent_identity_reuse(void)
+{
+    SNAP s;
+    PD *parent, *child, *probe;
+    WORD old_pid;
+
+    snap(&s);
+    parent = kalloc(sizeof(*parent));
+    child = kalloc(sizeof(*child));
+    probe = kalloc(sizeof(*probe));
+    CHECK(parent && child && probe, "allocate parent identity test basepages");
+    if (!parent || !child || !probe) {
+        kfree(probe);
+        kfree(parent);
+        kfree(child);
+        return;
+    }
+    bzero(parent, sizeof(*parent));
+    bzero(child, sizeof(*child));
+    bzero(probe, sizeof(*probe));
+    if (!kproc_create(parent)) {
+        CHECK(FALSE, "create parent record");
+        kfree(probe); kfree(child); kfree(parent);
+        return;
+    }
+    if (!kproc_create(child)) {
+        CHECK(FALSE, "create child record");
+        kproc_destroy(parent);
+        kfree(probe); kfree(child); kfree(parent);
+        return;
+    }
+    old_pid = kproc_pid(parent);
+    kproc_set_parent(child, parent);
+    kproc_set_parent(child, parent); /* replacing the same identity must not leak */
+    CHECK(kproc_notification_parent(child) == parent && kproc_parent_pid(child) == old_pid,
+          "child resolves live parent identity");
+    kproc_destroy(parent);
+    CHECK(!kproc_notification_parent(child) && !kproc_parent_pid(child),
+          "retired parent is not a notification target");
+    kproc_test_pid_search(old_pid - 1, 1);
+    CHECK(!kproc_create(probe), "child identity reference retains the parent's PID");
+    kproc_test_pid_search(0, 0);
+    CHECK(kproc_create(parent) && kproc_pid(parent) != old_pid,
+          "replacement process reuses PD with a distinct PID");
+    CHECK(!kproc_notification_parent(child) && !kproc_parent_pid(child),
+          "PD reuse cannot redirect an orphan notification");
+    kproc_destroy(child);
+    kproc_test_pid_search(old_pid - 1, 1);
+    CHECK(kproc_create(probe) && kproc_pid(probe) == old_pid,
+          "last child release permits retired parent PID reuse");
+    kproc_test_pid_search(0, 0);
+    kproc_destroy(probe);
+    kproc_destroy(parent);
+    kfree(probe);
+    kfree(child);
+    kfree(parent);
+    same(&s, "parent identity across PD reuse");
+}
 
 static void test_kproc(void)
 {
     SNAP s;
     PD **pds;
+    PD *candidate;
+    KPROC *retained, *second;
+    WORD retained_pid;
+    UWORD status;
     ULONG i;
 
     snap(&s);
@@ -1092,7 +1794,45 @@ static void test_kproc(void)
     }
     CHECK(i == FAKE_PDS, "KPROC records past the fixed pool");
     CHECK(kproc_count() == s.kprocs + FAKE_PDS, "KPROC count");
-    for (i = 0; i < FAKE_PDS && pds[i]; i++) {
+    retained = kproc_retain(pds[0]);
+    second = kproc_retain(pds[0]);
+    CHECK(retained && second && retained == second, "retain live process twice");
+    retained_pid = kproc_pid(pds[0]);
+    candidate = kalloc(sizeof(PD));
+    CHECK(candidate != NULL, "PID exhaustion test basepage");
+    if (candidate) {
+        bzero(candidate, sizeof *candidate);
+        candidate->p_uft[0] = 7;
+        kproc_test_pid_search(retained_pid - 1, 1);
+        CHECK(!kproc_create(candidate) && candidate->p_uft[0] == 7,
+              "PID exhaustion rejects live identity without modifying basepage");
+        kproc_test_pid_search(0, 0);
+    }
+    CHECK(kproc_ref_has_basepage(retained) && kproc_ref_pid(retained) == retained_pid,
+          "retained process has live identity");
+    CHECK(!kproc_ref_status(retained, &status), "live process has no exit status");
+    kproc_complete(pds[0], 42);
+    CHECK(kproc_ref_has_basepage(retained) && kproc_ref_status(retained, &status),
+          "completion may precede basepage release");
+    CHECK(kproc_begin_exit(pds[0]) && !kproc_begin_exit(pds[0]),
+          "normal exit commits process cleanup once");
+    kproc_destroy(pds[0]);
+    kfree(pds[0]);
+    pds[0] = NULL;
+    CHECK(!kproc_ref_has_basepage(retained) && kproc_ref_pid(retained) == retained_pid &&
+          kproc_ref_status(retained, &status) && status == 42,
+          "retained completion survives record removal and basepage release");
+    if (candidate) {
+        kproc_test_pid_search(retained_pid - 1, 1);
+        CHECK(!kproc_create(candidate), "retired identity reserves its PID");
+        kproc_test_pid_search(0, 0);
+        kfree(candidate);
+    }
+    kproc_release(retained);
+    CHECK(kproc_ref_status(second, &status) && status == 42,
+          "second reference retains completed process");
+    kproc_release(second);
+    for (i = 1; i < FAKE_PDS && pds[i]; i++) {
         kproc_destroy(pds[i]);
         kproc_destroy(pds[i]);                  /* second destroy is a no-op */
         kfree(pds[i]);
@@ -1592,9 +2332,10 @@ static void free_mapping_process(PD *pd)
 static void test_mmap(void)
 {
     SNAP s;
-    PD *a, *b;
+    PD *a, *b, *parent = run;
     ASPACE *as, *bs;
     UQUAD pa, pb;
+    UQUAD cross_page = 0x12345678ULL;
     ULONG value, private_a, private_b;
     UWORD prot;
     LONG rc;
@@ -1634,6 +2375,23 @@ static void test_mmap(void)
         value = 1;
         CHECK(aspace_copy_from_user(bs, &value, PTOS_MMAP_BASE, sizeof(value)) && !value,
               "second process private data stays zero");
+        CHECK(kproc_mprot(b, PTOS_MMAP_BASE + 2 * PAGE, PAGE, PROT_READ) == 0,
+              "prepare read-only lazy mapping for kernel copies");
+        run = b;
+        value = 7;
+        CHECK(!kproc_copy_to_user(PTOS_MMAP_BASE + 2 * PAGE - 4,
+                                  &cross_page, sizeof(cross_page)) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
+              "cross-page write rejects read-only tail before backing either page");
+        CHECK(!kproc_copy_to_user(PTOS_MMAP_BASE + 2 * PAGE, &value, sizeof(value)) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
+              "kernel write rejects untouched read-only reservation without faulting");
+        CHECK(kproc_copy_from_user(&value, PTOS_MMAP_BASE + 2 * PAGE, sizeof(value)) && !value &&
+              aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, &prot) &&
+              (prot & ASPACE_PROT_USER) && !(prot & ASPACE_PROT_WRITE),
+              "kernel read faults the same reservation with its logical protection");
+        run = parent;
         CHECK(kproc_psetlimit(a, PSETLIMIT_DATA, PAGE) == 0,
               "set anonymous allocation limit");
         CHECK(kproc_mmap(a, 0, PAGE, PROT_READ,
@@ -1730,6 +2488,7 @@ static void test_file_mmap(void)
     char block[64], value, readback;
     PD *a = NULL, *b = NULL, *c = NULL, *parent = run;
     ASPACE *as, *bs, *cs;
+    KASPACE *retained = NULL;
     SNAP snapshot;
     UQUAD pa, pb, pc;
     DMD *media = NULL;
@@ -1756,6 +2515,9 @@ static void test_file_mmap(void)
     CHECK(kproc_mmap(a, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE &&
           kproc_mmap(b, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE,
           "reserve lazy private file mappings in two processes");
+    CHECK(kproc_mmap(a, 0, PAGE, PROT_READ | PROT_WRITE,
+          MAP_PRIVATE | MAP_ANONYMOUS, 0, 0) == PTOS_MMAP_BASE + 5 * PAGE,
+          "reserve anonymous mapping alongside retained file mapping");
     CHECK(aspace_file_pages() == 0 && kproc_demand_page(a, PTOS_MMAP_BASE, 0) == 1 &&
           kproc_demand_page(b, PTOS_MMAP_BASE, 0) == 1, "file mappings fault lazily");
     CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) &&
@@ -1807,16 +2569,33 @@ static void test_file_mmap(void)
           "middle unmap preserves backing offsets and references");
     fresh = DISK_CALL(xcreat(path, 0));
     CHECK(fresh >= NUMSTD && DISK_CALL(xwrite(fresh, 1, &value)) == 1, "recreate mapped pathname");
+    retained = kproc_test_retain_active(a);
+    CHECK(retained != NULL, "retain file mapping space independently");
+    free_mapping_process(a);
+    a = NULL;
+    CHECK(retained && kaspace_mmap(retained)->regions &&
+          kaspace_mmap(retained)->regions->backing &&
+          aspace_copy_from_user(kaspace_backend(retained), &readback, PTOS_MMAP_BASE, 1) && readback == 'Z',
+          "file mapping metadata and private page survive process destruction");
+    CHECK(retained && kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE + PAGE, 0) == 1 &&
+          aspace_copy_from_user(kaspace_backend(retained), &readback, PTOS_MMAP_BASE + PAGE, 1) &&
+          readback == 'B', "retained unlinked file reservation faults after process destruction");
     {
-        UQUAD previous = aspace_enter(as);
+        UQUAD previous = aspace_enter(bs);
         kproc_shutdown_file_mappings();
         aspace_leave(previous);
-        CHECK(!aspace_translate(as, PTOS_MMAP_BASE, NULL, NULL) && !aspace_file_pages() &&
+        CHECK(retained && kaspace_mmap(retained)->regions &&
+              kaspace_mmap(retained)->regions->address == PTOS_MMAP_BASE + 5 * PAGE &&
+              !kaspace_mmap(retained)->regions->backing &&
+              kaspace_mmap(retained)->bytes == PAGE &&
+              !aspace_translate(kaspace_backend(retained), PTOS_MMAP_BASE, NULL, NULL) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE, NULL, NULL) && !aspace_file_pages() &&
               DISK_CALL(getrealcl(head, media)) == FREECLUSTER,
-              "shutdown releases all file views and unlinked chains while retaining active kernel stack");
+              "shutdown releases file views in both retained and process-owned spaces");
     }
 done:
     run = parent;
+    kaspace_put(retained);
     if (fd >= NUMSTD) kdos_fclose(fd);
     free_mapping_process(a); free_mapping_process(b); free_mapping_process(c);
     CHECK(aspace_file_pages() == 0 && aspace_file_references() == 0, "last mapping frees cached file pages");
@@ -2286,11 +3065,21 @@ static void test_cuis_scheduler(void)
                 PD *duplicate[2] = { programs[0], programs[0] };
                 CHECK(ksched_run(duplicate, 2, results) == EINVAL, "scheduler rejects duplicate programs");
             }
-            x86_64_pmem_test_fail_after(1);
+            {
+                UWORD attempt;
+                for (attempt = 1; attempt <= 2; attempt++) {
+                    x86_64_pmem_test_fail_after(attempt);
+                    rc = ksched_run(programs, 2, results);
+                    x86_64_pmem_test_fail_after(0);
+                    CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
+                          "scheduler allocation failure preserves both unlaunched programs");
+                }
+            }
+            kthread_stack_test_fail_after(2);
             rc = ksched_run(programs, 2, results);
-            x86_64_pmem_test_fail_after(0);
+            kthread_stack_test_fail_after(0);
             CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
-                  "scheduler allocation failure preserves both unlaunched programs");
+                  "second scheduler stack failure rolls back the first task stack");
             rc = ksched_run(programs, 2, results);
             CHECK(rc == E_OK, "scheduler completes all managed clients");
             if (rc == E_OK) {
@@ -2570,6 +3359,10 @@ static void test_ring3(void)
     probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");
     probe_expect('p', 0xffff, "a privileged instruction in ring 3 is contained");
     probe_expect('e', 0, "a process runs normally after the faults");
+    snap(&s);
+    x86_64_memtest_fail_next_exit_handoff();
+    CHECK(run_probe('e') == 0, "failed exit handoff preserves legacy termination");
+    same(&s, "failed exit handoff rollback");
 
     /*
      * A ring-3 process runs another from inside its own system call
@@ -2585,8 +3378,18 @@ static void test_ring3(void)
 
         snap(&s);
         cpustate(&before);
+        bzero(exit_handoff_stages, sizeof(exit_handoff_stages));
+        exit_handoff_watch = TRUE;
         rc = run_probe('n');
+        exit_handoff_watch = FALSE;
         cpustate(&after);
+        if (rc != 0x100) {
+            CHECK(exit_handoff_stages[0] >= 2 &&
+                  exit_handoff_stages[0] == exit_handoff_stages[1] &&
+                  exit_handoff_stages[1] == exit_handoff_stages[2] &&
+                  exit_handoff_stages[2] == exit_handoff_stages[3],
+                  "nested launches transfer and finalize each syscall stack once");
+        }
         CHECK(run == me, "the launcher is the current process again after a nested launch");
         CHECK(after.cr3 == before.cr3 && after.gs == before.gs && after.kernel_gs == before.kernel_gs,
               "CR3 and the GS bases are back after a nested launch");
@@ -2602,6 +3405,9 @@ static void test_ring3(void)
         same(&s, "nested Pexec from ring 3");
     }
 
+#if CONF_WITH_PCLONE
+    probe_expect('^', 0, "Pclone validates ring-3 arguments before rejecting the unavailable backend");
+#endif
     /* a Pexec() that runs out of loan slots half way gives back what it took */
     probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
 
@@ -2716,17 +3522,17 @@ static void test_ring3(void)
         same(&s, "a program loaded into the caller");
     }
 
-    /* PE_LOAD then PE_GO: the program's pages come back when it ends (#434) */
+    /* PE_LOAD then rejected PE_GO: the staged image remains reclaimable. */
     {
         snap(&s);
         rc = run_probe('G');
         if (rc == 0x100) {
-            kcprintf("x86-64 pexec go gives back: SKIP (no C:\\X32HELLO.TOS)\n");
+            kcprintf("x86-64 pexec go rejected: SKIP (no C:\\X32HELLO.TOS)\n");
         } else {
-            CHECK(rc == 0, "PE_GO gives the program's pages back to the caller when it ends");
-            kcprintf(rc == 0 ? "x86-64 pexec go gives back: PASS\n" : "x86-64 pexec go gives back: FAIL (0x%lx)\n", rc);
+            CHECK(rc == 0, "PE_GO rejects without altering the staged program");
+            kcprintf(rc == 0 ? "x86-64 pexec go rejected: PASS\n" : "x86-64 pexec go rejected: FAIL (0x%lx)\n", rc);
         }
-        same(&s, "PE_LOAD and PE_GO from ring 3");
+        same(&s, "PE_LOAD and rejected PE_GO from ring 3");
     }
 
     /* a program bigger than the image window, loaded by PE_LOAD (#434) */
@@ -2754,15 +3560,15 @@ static void test_ring3(void)
         same(&s, "a failed load");
     }
 
-    /* the same with the child leaving a block below its image */
+    /* A heap gap and rejected PE_GO followed by consuming mode 6. */
     {
         snap(&s);
         rc = run_probe('H');
         if (rc != 0x100) {
-            CHECK(rc == 0, "PE_GO gives the image back although the child put a block below it");
-            kcprintf(rc == 0 ? "x86-64 pexec go gives back with a gap: PASS\n" : "x86-64 pexec go gives back with a gap: FAIL (0x%lx)\n", rc);
+            CHECK(rc == 0, "PE_GO rejection preserves a staged image for mode 6");
+            kcprintf(rc == 0 ? "x86-64 pexec go rejected with a gap: PASS\n" : "x86-64 pexec go rejected with a gap: FAIL (0x%lx)\n", rc);
         }
-        same(&s, "PE_LOAD and PE_GO with a gap");
+        same(&s, "rejected PE_GO and PE_GOTHENFREE with a gap");
     }
 
     /* PE_LOAD, PE_GO(THENFREE) and mode 0 with a physical allocation failing at every
@@ -3140,6 +3946,11 @@ void x86_64_memtest_run(void)
     test_aspace();
     test_isolation();
     test_process_validation();
+    test_kthread_relationships();
+    test_kthread_live_disposal();
+    test_kthread_completion();
+    test_kproc_pending_ownership();
+    test_parent_identity_reuse();
     test_kproc();
     test_kproc_ranges();
     test_lifecycle();

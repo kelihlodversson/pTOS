@@ -62,6 +62,14 @@ for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
 for name in ("CONF_WITH_AES", "CONF_WITH_X86_64_MEMTEST"):
     assert config.syms[name].str_value == "n", name
 
+# Pclone dispatch is opt-in, including on the address-space architectures.
+for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
+    config = kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config("configs/" + preset + "_defconfig")
+    assert config.syms["CONF_WITH_PCLONE"].str_value == "n", preset
+    config.syms["CONF_WITH_PCLONE"].set_value(2)
+    assert config.syms["CONF_WITH_PCLONE"].str_value == "y", preset
+
 # Master's 32-bit address-space presets must not enable kernel AES; they
 # retain the external CLI until libaes is ported to those architectures.
 for preset in ("virt-arm-aspace", "virt-m68k-aspace", "falcon-aspace", "amiga-aspace"):
@@ -151,6 +159,28 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     for test in ("deferred_rollback", "deferred_exit"):
         subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)
         subprocess.run([str(rollback / test)], check=True)
+    subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_reference.c", "-o", str(rollback / "deferred_reference")], check=True)
+    subprocess.run([str(rollback / "deferred_reference")], check=True)
+    subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_spawn.c", "-o", str(rollback / "deferred_spawn")], check=True)
+    subprocess.run([str(rollback / "deferred_spawn")], check=True)
+    unwind_command = [arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c")]
+    subprocess.run(unwind_command + ["tests/cuis/exit_unwind.c", "-o", str(rollback / "exit-unwind")], check=True)
+    subprocess.run([str(rollback / "exit-unwind")], check=True)
+    noncuis = work / "noncuis-cleanup"
+    noncuis.mkdir()
+    plain = kconfiglib.Kconfig(warn_to_stderr=False)
+    plain.load_config("configs/pc-x86_64_defconfig")
+    assert plain.syms["CONF_WITH_PROCMEM"].str_value == "y"
+    assert plain.syms["CONF_WITH_CUIS"].str_value == "n"
+    plain.write_config(str(noncuis / "config"))
+    subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
+                    "--config", str(noncuis / "config"), "--header", str(noncuis / "autoconf.h"),
+                    "--makefile", str(noncuis / "auto.conf")], check=True)
+    (noncuis / "setjmp.h").write_text("#include <setjmp.h>\n")
+    (noncuis / "i18nconf.h").write_text("/* Host fixture. */\n")
+    plain_command = [str(noncuis) if arg == str(rollback) else arg for arg in command]
+    subprocess.run(plain_command + ["tests/cuis/noncuis_cleanup.c", "-o", str(noncuis / "test")], check=True)
+    subprocess.run([str(noncuis / "test")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",

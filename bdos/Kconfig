@@ -9,6 +9,33 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_PCLONE
+    bool "Experimental Pclone argument validation"
+    depends on CONF_WITH_KPROC
+    default n
+    help
+      Route Pclone through its architecture ABI dispatcher and validate its
+      initial arguments on address-space kernels. A valid request returns
+      EINVFN because the clone backend is not implemented yet. On kernels
+      without user address spaces, all requests currently return EINVFN.
+
+config CONF_PCLONE_STACK_ALIGNMENT
+    int
+    default 16 if ARCH_X86_64
+    default 8 if ARCH_ARM
+    default 2
+
+config CONF_PCLONE_MIN_STACK
+    int
+    default 256 if ARCH_X86_64
+    default 16
+
+config CONF_PCLONE_ENTRY_ALIGNMENT
+    int
+    default 1 if ARCH_X86_64
+    default 4 if ARCH_ARM
+    default 2
+
 config CONF_WITH_NATIVE_SCHED
     bool
     depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE

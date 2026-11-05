@@ -31,6 +31,20 @@ long xexec_directory(char *path, char *tail, char *environment, ULONG session, U
 #endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
+#if CONF_WITH_USER_ASPACE
+/* Request disposal of the currently live PD. Callers must not retain this
+ * pointer for retries after cleanup: its address may be reused. */
+void proc_dispose_retained(PD *pd);
+struct kproc;
+/* Identity-based request: a retained identity is safe even after PD reuse.
+ * Final cleanup must run from a safe execution stack. */
+void proc_dispose_process(struct kproc *process);
+struct kthread;
+/* Internal preparation for kthread_complete(), which immediately reaps the
+ * sole stopped association. Legacy untracked kernel parents must stay valid;
+ * native scheduler integration is rejected while it is active. */
+BOOL proc_prepare_completion(struct kproc *process, struct kthread *thread, UWORD status);
+#endif
 WORD xtermres(long blkln, WORD rc);
 
 #if CONF_WITH_USER_ASPACE

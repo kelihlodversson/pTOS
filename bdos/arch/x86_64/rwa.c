@@ -72,6 +72,9 @@
 #include "kprint.h"
 #include "process.h"
 #include "string.h"
+#if CONF_WITH_X86_64_MEMTEST
+#include "../../../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
@@ -128,9 +131,50 @@ struct x86_64_process_launch {
     PD *pd;
     UQUAD stack_phys;
     WORD entry_type;
+#if CONF_WITH_USER_ASPACE
+    KPROC * volatile exit_process;
+    volatile UWORD exit_status;
+    volatile BOOL exit_resident;
+    volatile ULONG exit_resident_len;
+#endif
 };
 
 static X86_64_PROCESS_LAUNCH *current_launch;
+#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_X86_64_MEMTEST
+static BOOL fail_next_exit_handoff;
+void x86_64_memtest_fail_next_exit_handoff(void) { fail_next_exit_handoff = TRUE; }
+#endif
+BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
+{
+    KPROC *process;
+    X86_64_PROCESS_LAUNCH *launch = current_launch;
+    if (!launch || launch->pd != pd || !launch->stack_phys || launch->exit_process)
+        return FALSE;
+    process = kproc_retain(pd);
+    if (!process)
+        return FALSE;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_next_exit_handoff) {
+        fail_next_exit_handoff = FALSE;
+        kproc_release(process);
+        return FALSE;
+    }
+#endif
+    if (!kproc_prepare_exit_handoff(process)) {
+        kproc_release(process);
+        return FALSE;
+    }
+    launch->exit_process = process;
+    launch->exit_status = status;
+    launch->exit_resident = resident;
+    launch->exit_resident_len = resident_len;
+#if CONF_WITH_X86_64_MEMTEST
+    x86_64_memtest_exit_handoff(process, pd, launch->stack_phys, status, 0);
+#endif
+    return TRUE;
+}
+#endif
 extern UQUAD x86_64_get_irq_stack(void);
 extern void x86_64_set_irq_stack(UQUAD rsp);
 
@@ -195,8 +239,22 @@ void x86_64_process_cancel(X86_64_PROCESS_CONTEXT *context, PD *root)
         PD *pd = launch->pd;
         UQUAD stack_phys = launch->stack_phys;
 
-        proc_dispose_detached(pd);
-        kstack_free(stack_phys);
+#if CONF_WITH_USER_ASPACE
+        if (launch->exit_process) {
+            KPROC *process = launch->exit_process;
+            UWORD status = launch->exit_status;
+            BOOL resident = launch->exit_resident;
+            ULONG resident_len = launch->exit_resident_len;
+            launch->exit_process = NULL;
+            kstack_free(stack_phys);
+            proc_finalize_exit(process, status, resident, resident_len);
+            kproc_release(process);
+        } else
+#endif
+        {
+            proc_dispose_detached(pd);
+            kstack_free(stack_phys);
+        }
         if (pd == root)
             break;
         launch = previous;
@@ -272,6 +330,9 @@ void gouser_entry(WORD entry_type)
         launch.pd = p;
         launch.stack_phys = 0;
         launch.entry_type = entry_type;
+#if CONF_WITH_USER_ASPACE
+        launch.exit_process = NULL;
+#endif
 
 
         current_launch = &launch;
@@ -337,9 +398,10 @@ void gouser_entry(WORD entry_type)
          * leaves ring 0 by iretq.  What comes back is its own Pterm() (or a
          * fault in it), which unwinds with longjmp() to this exact point,
          * exactly as for a kernel-code process above -- so the parent's
-         * Pexec() returns the exit code.  By then xterm() has already
-         * destroyed the address space (switching CR3 to the kernel tables)
-         * and made the launcher `run` again.
+         * Pexec() returns the exit code. xterm() has restored the launcher
+         * as `run`. With a deferred exit, the child address space remains
+         * alive until finalization below, off the child's syscall stack.
+         * The legacy fallback has already destroyed it.
          *
          * The process's system calls run on a kernel stack of its own, so a
          * launcher that is itself a ring-3 process, suspended in its Pexec()
@@ -352,6 +414,9 @@ void gouser_entry(WORD entry_type)
         launch.pd = p;
         launch.stack_phys = kstack_phys;
         launch.entry_type = entry_type;
+#if CONF_WITH_USER_ASPACE
+        launch.exit_process = NULL;
+#endif
         current_launch = &launch;
         __asm__ volatile ("pushfq; popq %0" : "=r"(launcher_flags) :: "memory");
         x86_64_set_kernel_stack(kstack_top);
@@ -368,12 +433,36 @@ void gouser_entry(WORD entry_type)
         x86_64_set_kernel_stack(launcher_stack);
         x86_64_set_saved_user_rsp(launcher_user_rsp);
         x86_64_set_irq_stack(launcher_irq_rsp);
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_ASPACE
+        if (launch.exit_process)
+            x86_64_memtest_exit_handoff(launch.exit_process, launch.pd, kstack_phys,
+                                        launch.exit_status, 1);
+#endif
         kstack_free(kstack_phys);
         {
             UQUAD launcher_pml4 = kproc_user_root(run);
 
             x86_64_write_cr3(launcher_pml4 ? launcher_pml4 : x86_64_kernel_pml4_phys());
         }
+#if CONF_WITH_USER_ASPACE
+        if (launch.exit_process) {
+            KPROC *process = launch.exit_process;
+#if CONF_WITH_X86_64_MEMTEST
+            x86_64_memtest_exit_handoff(process, launch.pd, kstack_phys,
+                                        launch.exit_status, 2);
+#endif
+            proc_finalize_exit(process, launch.exit_status,
+                               launch.exit_resident, launch.exit_resident_len);
+            /* Cleanup can make kernel calls; preserve the launcher's result
+             * exactly as the legacy xterm path does after cleanup. */
+            run->p_dreg[0] = launch.exit_status;
+#if CONF_WITH_X86_64_MEMTEST
+            x86_64_memtest_exit_handoff(process, launch.pd, kstack_phys,
+                                        launch.exit_status, 3);
+#endif
+            kproc_release(process);
+        }
+#endif
         if (launcher_in_syscall)
             x86_64_gs_back_to_syscall();
         /* longjmp does not restore RFLAGS. Put the launcher's IF back only
