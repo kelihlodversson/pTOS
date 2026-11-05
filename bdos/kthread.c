@@ -51,15 +51,17 @@ KTHREAD *kthread_create(PD *pd)
 
 void kthread_destroy(KTHREAD *thread)
 {
-    PD *dispose;
+    BOOL dispose;
+    KPROC *process;
     if (!thread)
         return;
-    dispose = kproc_thread_detach(thread->process, thread, thread->process_next);
+    process = thread->process;
+    dispose = kproc_thread_detach(process, thread, thread->process_next);
     kaspace_put(thread->space);
-    kproc_release(thread->process);
     kfree(thread);
     if (dispose)
-        proc_dispose_retained(dispose);
+        proc_dispose_process(process);
+    kproc_release(process);
 }
 
 ULONG kthread_tid(const KTHREAD *thread) { return thread ? thread->tid : 0; }

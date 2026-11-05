@@ -78,8 +78,11 @@ void kproc_destroy(PD *p)
     owner_record = FALSE;
 }
 BOOL kproc_unlaunched(PD *p) { return p == &child && child_record; }
-BOOL kproc_defer_disposal(PD *p) { (void)p; return FALSE; }
+KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
+void kproc_release(KPROC *p) { (void)p; }
+BOOL kproc_begin_disposal(KPROC *p, PD **pd) { *pd = (PD *)p; return TRUE; }
 void kproc_require_no_threads(PD *p) { (void)p; }
+void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
 BOOL kproc_discard(PD *p)
 {
     still_deferred();
@@ -142,6 +145,8 @@ void termuser(void)
     CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner == &other);
     CHECK(completions == (unsigned)nested);
     CHECK(references[0] == successor_aliases && sft[0].f_use == (int)successor_aliases);
+    if (successor_aliases)
+        CHECK(sft[0].f_own && sft[0].f_own != &owner);
     if (!nested) CHECK(tasks[0].result == 37 && tasks[0].usage[0] == 8);
     longjmp(exit_resume,1);
 }

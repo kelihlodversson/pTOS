@@ -251,13 +251,19 @@ LONG ksched_yield(void)
 static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred);
 static void discard_deferred(KERNEL_TASK *task)
 {
+#if !CONF_WITH_USER_ASPACE
     PD *program = task->program;
+#endif
     KPROC *process = task->process;
     KTHREAD_STACK stack = kthread_stack_detach(&task->execution.stack);
     /* It never entered user mode; resource ownership is already the child's.
      * Do not read its basepage after revoking the loader's borrowed mapping. */
     memset(task,0,sizeof(*task));
+#if CONF_WITH_USER_ASPACE
+    proc_dispose_process(process);
+#else
     proc_dispose_deferred(program);
+#endif
     kproc_release(process);
     kthread_stack_release(&stack);
 }

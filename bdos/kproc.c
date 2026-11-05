@@ -50,6 +50,7 @@ enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
        UH_LOADED = 1,           /* a program Pexec(PE_LOAD) loaded for a child, until PE_GO */
        UH_IMAGE = 2,            /* the image of this very process, moved here by PE_GO */
        UH_LENT = 3 };           /* the image of a PE_GO child, lent to it until it ends */
+enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_DISPOSING, PROCESS_RETIRED };
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -93,7 +94,7 @@ struct kproc {
     ASPACE *aspace;      /* borrowed from active_space */
     KASPACE *active_space; /* owning reference, NULL until prepared */
     KTHREAD *threads;     /* non-owning; non-runnable associations only */
-    BOOL dispose_pending; /* detached process cleanup awaits last association */
+    UBYTE disposal_state; /* identity survives the final live-resource cleanup */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
 #if CONF_WITH_NATIVE_SCHED
     PD *async_parent;           /* stable controller for exit, not logical PPID */
@@ -357,7 +358,7 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
     KPROC *p = kproc_find(pd);
     KASPACE *as;
 
-    if (!p || p->completed || p->dispose_pending || !thread || !p->active_space)
+    if (!p || p->completed || p->disposal_state != PROCESS_LIVE || !thread || !p->active_space)
         return FALSE;
     if (!kproc_retain(pd))
         return FALSE;
@@ -373,14 +374,17 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
     return TRUE;
 }
 
-BOOL kproc_defer_disposal(PD *pd)
+BOOL kproc_begin_disposal(KPROC *process, PD **pd)
 {
-    KPROC *process = kproc_find(pd);
-
-    if (!process || !process->threads)
+    if (!process || process->disposal_state >= PROCESS_DISPOSING)
         return FALSE;
-    process->dispose_pending = TRUE;
-    return TRUE;
+    if (process->threads) {
+        process->disposal_state = PROCESS_DISPOSAL_PENDING;
+        return FALSE;
+    }
+    process->disposal_state = PROCESS_DISPOSING;
+    *pd = process->pd;
+    return *pd != NULL;
 }
 
 void kproc_require_no_threads(PD *pd)
@@ -390,18 +394,14 @@ void kproc_require_no_threads(PD *pd)
         panic("xterm: attached non-runnable threads");
 }
 
-PD *kproc_thread_detach(KPROC *process, KTHREAD *thread, KTHREAD *next)
+BOOL kproc_thread_detach(KPROC *process, KTHREAD *thread, KTHREAD *next)
 {
     KTHREAD **link;
 
     for (link = &process->threads; *link; link = kthread_next_link(*link))
         if (*link == thread) {
             *link = next;
-            if (!process->threads && process->dispose_pending) {
-                process->dispose_pending = FALSE;
-                return process->pd;
-            }
-            return NULL;
+            return !process->threads && process->disposal_state == PROCESS_DISPOSAL_PENDING;
         }
     panic("kproc_thread_detach: not a member");
 }
@@ -466,6 +466,9 @@ void kproc_destroy(PD *pd)
                 kproc->completed = completed;
                 kproc->exit_status = status;
                 kproc->next = next;
+#if CONF_WITH_USER_ASPACE
+                kproc->disposal_state = PROCESS_RETIRED;
+#endif
             }
             kproc_release(kproc); /* drop the lookup's ownership */
             return;

@@ -21,12 +21,21 @@ KTHREAD_STACK kthread_stack_detach(KTHREAD_STACK *stack)
     return result;
 }
 
+#if CONF_WITH_USER_ASPACE
+void proc_dispose_process(KPROC *process)
+{
+    CHECK(phase == 1 && process == (KPROC *)&successor);
+    CHECK(tasks[1].state == TASK_UNUSED && !tasks[1].program && !tasks[1].process);
+    phase++;
+}
+#else
 void proc_dispose_deferred(PD *pd)
 {
     CHECK(phase == 1 && pd == &successor);
     CHECK(tasks[1].state == TASK_UNUSED && !tasks[1].program && !tasks[1].process);
     phase++;
 }
+#endif
 
 void kproc_release(KPROC *process)
 {

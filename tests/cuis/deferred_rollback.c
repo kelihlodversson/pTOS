@@ -82,8 +82,11 @@ void kproc_destroy(PD *p)
     records--;
 }
 BOOL kproc_unlaunched(PD *p) { return p == &image && records; }
-BOOL kproc_defer_disposal(PD *p) { (void)p; return FALSE; }
+KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
+void kproc_release(KPROC *p) { (void)p; }
+BOOL kproc_begin_disposal(KPROC *p, PD **pd) { *pd = (PD *)p; return TRUE; }
 void kproc_require_no_threads(PD *p) { (void)p; }
+void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
 BOOL kproc_discard(PD *p) { CHECK(!records); return FALSE; }
 BOOL kproc_borrow(PD *p, void *block) { CHECK(p == &parent && procmem_contains(block)); return TRUE; }
 void kproc_unborrow(void *block) { CHECK(procmem_contains(block)); }

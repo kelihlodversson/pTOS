@@ -32,9 +32,13 @@ long xexec_directory(char *path, char *tail, char *environment, ULONG session, U
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
 #if CONF_WITH_USER_ASPACE
-/* Finalize detached-process disposal, or defer it while thread identities
- * still retain its live resources. Must run from a safe execution stack. */
+/* Request disposal of the currently live PD. Callers must not retain this
+ * pointer for retries after cleanup: its address may be reused. */
 void proc_dispose_retained(PD *pd);
+struct kproc;
+/* Identity-based request: a retained identity is safe even after PD reuse.
+ * Final cleanup must run from a safe execution stack. */
+void proc_dispose_process(struct kproc *process);
 #endif
 WORD xtermres(long blkln, WORD rc);
 

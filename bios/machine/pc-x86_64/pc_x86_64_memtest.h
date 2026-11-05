@@ -7,6 +7,9 @@
 #include "portab.h"
 #include "bdosdefs.h"
 
+#if CONF_WITH_X86_64_MEMTEST
+void x86_64_memtest_disposal_committed(PD *pd);
+#endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
 void x86_64_memtest_callback_entry(UQUAD flags);
 void x86_64_memtest_callback_lazy_oom(void);

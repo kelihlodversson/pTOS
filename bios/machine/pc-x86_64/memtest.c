@@ -1169,16 +1169,31 @@ static void test_process_validation(void)
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc.h"
 
+static PD *disposal_test_pd;
+static KPROC *disposal_test_observer;
+static unsigned disposal_test_commits;
+
+void x86_64_memtest_disposal_committed(PD *pd)
+{
+    if (pd != disposal_test_pd)
+        return;
+    disposal_test_commits++;
+    CHECK(!kthread_create(pd), "disposing process rejects new threads");
+    proc_dispose_process(disposal_test_observer);
+}
+
 /* Detached cancellation keeps filesystem and mapping resources alive until
  * the last non-runnable association is detached. */
 static void test_kthread_live_disposal(void)
 {
     SNAP s;
-    PD *pd, *saved = run;
+    PD *pd, *replacement, *saved = run;
     void *env;
     KTHREAD *a, *b;
     KPROC *observer;
     LONG handle, count;
+    WORD pid;
+    UWORD status;
     char bytes[4];
 
     snap(&s);
@@ -1189,6 +1204,10 @@ static void test_kthread_live_disposal(void)
     set_owner(env, pd);
     CHECK(kproc_prepare_user(pd, run), "prepare process for deferred disposal");
     observer = kproc_retain(pd);
+    disposal_test_pd = pd;
+    disposal_test_observer = observer;
+    disposal_test_commits = 0;
+    pid = kproc_pid(pd);
     a = kthread_create(pd);
     b = kthread_create(pd);
     CHECK(a && b && observer, "retain live process for deferred disposal");
@@ -1196,6 +1215,8 @@ static void test_kthread_live_disposal(void)
         kthread_destroy(a);
         kthread_destroy(b);
         proc_dispose_retained(pd);
+        disposal_test_pd = NULL;
+        disposal_test_observer = NULL;
         kproc_release(observer);
         same(&s, "failed deferred-disposal setup");
         return;
@@ -1223,10 +1244,27 @@ static void test_kthread_live_disposal(void)
         CHECK(count == sizeof(bytes), "retained process can still read its file");
     }
     kthread_destroy(b);
+    CHECK(disposal_test_commits == 1, "reentrant disposal commits once");
+    disposal_test_pd = NULL;
+    disposal_test_observer = NULL;
     if (handle >= NUMSTD && handle < NUMHANDLES)
         CHECK(!sft[handle-NUMSTD].f_own, "last thread closes process-owned file");
     CHECK(observer && !kproc_ref_has_basepage(observer),
           "identity survives final live-resource teardown");
+    CHECK(kproc_ref_pid(observer) == pid && !kproc_ref_status(observer, &status),
+          "abandoned process retains PID without an invented exit status");
+    proc_dispose_process(observer);
+    replacement = new_basepage();
+    if (replacement) {
+        void *replacement_env = USERPTR_TO_PTR(replacement->p_env);
+        set_owner(replacement, replacement);
+        set_owner(replacement_env, replacement);
+        CHECK(replacement == pd, "retired basepage address can be reused");
+        proc_dispose_process(observer);
+        CHECK(kproc_pid(replacement) && kproc_pid(replacement) != pid &&
+              procmem_size(replacement), "old identity cannot dispose replacement process");
+        proc_free_owned(replacement);
+    }
     kproc_release(observer);
     same(&s, "thread-retained detached process resources");
 }
@@ -1240,10 +1278,11 @@ static void test_kthread_relationships(void)
     void *env;
     KTHREAD *a, *b;
     KTHREAD *other_thread;
-    KPROC *observer;
+    KPROC *observer, *other_observer;
     PD *other;
     KASPACE *shared;
     ULONG first_tid;
+    UWORD status;
 
     snap(&s);
     pd = new_basepage();
@@ -1281,6 +1320,7 @@ static void test_kthread_relationships(void)
                 CHECK(kproc_test_share_active(other, kthread_aspace(b)),
                       "associate second non-runnable process with shared space");
                 other_thread = kthread_create(other);
+                other_observer = kproc_retain(other);
                 CHECK(other_thread && kthread_process(other_thread) != observer &&
                       kthread_aspace(other_thread) == kthread_aspace(b),
                       "distinct process identities retain one address space");
@@ -1288,6 +1328,10 @@ static void test_kthread_relationships(void)
                 CHECK(!kthread_create(other), "completed process refuses new thread");
                 kthread_destroy(other_thread);
                 kproc_destroy(other);
+                CHECK(other_observer && kproc_ref_status(other_observer, &status) &&
+                      status == 23 && !kproc_ref_has_basepage(other_observer),
+                      "completed identity survives shared-space process cleanup");
+                kproc_release(other_observer);
                 CHECK(kthread_process(b) == observer &&
                       kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
                       "second process completion leaves first space usable");

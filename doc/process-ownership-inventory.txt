@@ -219,7 +219,10 @@ PROCESS -> ASPACE and borrowed PROCESS -> THREAD membership links. The initial
 KTHREAD object implements this graph for non-runnable identities only. It
 retains the existing KPROC identity and KASPACE. Detached and deferred process
 disposal waits for the last association before closing files, releasing the
-PD and destroying KPROC; a pending disposal refuses new associations. This is
+PD and destroying KPROC. LIVE, DISPOSAL_PENDING, DISPOSING and RETIRED states
+prevent new associations and repeated cleanup once disposal is requested.
+Retries use a retained KPROC identity, not a reusable PD address; the legacy
+PD-based entry point is only for a currently live caller. This is
 not yet the xterm final-execution transition and owns no execution stack. In
 particular, a runnable THREAD must
 keep its process-wide resources and execution mappings usable; the current

@@ -41,7 +41,7 @@
 #endif
 #endif
 #include "../bios/vectors.h"
-#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#if CONF_WITH_X86_64_MEMTEST
 #include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
 #if CONF_WITH_PLUGGABLE_FS
@@ -1206,8 +1206,21 @@ void proc_dispose_detached(PD *p)
 #if CONF_WITH_USER_ASPACE
 void proc_dispose_retained(PD *p)
 {
-    if (kproc_defer_disposal(p))
+    KPROC *process = kproc_retain(p);
+    if (!process)
         return;
+    proc_dispose_process(process);
+    kproc_release(process);
+}
+
+void proc_dispose_process(KPROC *process)
+{
+    PD *p;
+    if (!kproc_begin_disposal(process, &p))
+        return;
+#if CONF_WITH_X86_64_MEMTEST
+    x86_64_memtest_disposal_committed(p);
+#endif
     release_pd_files(p);
     kproc_destroy(p);
     ixterm(p);

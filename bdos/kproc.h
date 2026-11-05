@@ -119,10 +119,11 @@ struct kaspace;
  * thread; cleanup must not begin until all such associations are detached. */
 BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,
                          struct kaspace **space, struct kthread **next);
-/* Return the PD when the last association must finish deferred disposal. */
-PD *kproc_thread_detach(KPROC *process, struct kthread *thread,
-                        struct kthread *next);
-BOOL kproc_defer_disposal(PD *pd);
+/* Return TRUE when the last association must finish deferred disposal. */
+BOOL kproc_thread_detach(KPROC *process, struct kthread *thread,
+                         struct kthread *next);
+/* Borrowed retained process; commit cleanup once or return FALSE. */
+BOOL kproc_begin_disposal(KPROC *process, PD **pd);
 /* Normal xterm is not thread-aware; reject it before any cleanup begins. */
 void kproc_require_no_threads(PD *pd);
 /*
