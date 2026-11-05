@@ -93,6 +93,7 @@ struct kproc {
     ASPACE *aspace;      /* borrowed from active_space */
     KASPACE *active_space; /* owning reference, NULL until prepared */
     KTHREAD *threads;     /* non-owning; non-runnable associations only */
+    BOOL dispose_pending; /* detached process cleanup awaits last association */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
 #if CONF_WITH_NATIVE_SCHED
     PD *async_parent;           /* stable controller for exit, not logical PPID */
@@ -356,7 +357,7 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
     KPROC *p = kproc_find(pd);
     KASPACE *as;
 
-    if (!p || p->completed || !thread || !p->active_space)
+    if (!p || p->completed || p->dispose_pending || !thread || !p->active_space)
         return FALSE;
     if (!kproc_retain(pd))
         return FALSE;
@@ -372,14 +373,35 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
     return TRUE;
 }
 
-void kproc_thread_detach(KPROC *process, KTHREAD *thread, KTHREAD *next)
+BOOL kproc_defer_disposal(PD *pd)
+{
+    KPROC *process = kproc_find(pd);
+
+    if (!process || !process->threads)
+        return FALSE;
+    process->dispose_pending = TRUE;
+    return TRUE;
+}
+
+void kproc_require_no_threads(PD *pd)
+{
+    KPROC *process = kproc_find(pd);
+    if (process && process->threads)
+        panic("xterm: attached non-runnable threads");
+}
+
+PD *kproc_thread_detach(KPROC *process, KTHREAD *thread, KTHREAD *next)
 {
     KTHREAD **link;
 
     for (link = &process->threads; *link; link = kthread_next_link(*link))
         if (*link == thread) {
             *link = next;
-            return;
+            if (!process->threads && process->dispose_pending) {
+                process->dispose_pending = FALSE;
+                return process->pd;
+            }
+            return NULL;
         }
     panic("kproc_thread_detach: not a member");
 }

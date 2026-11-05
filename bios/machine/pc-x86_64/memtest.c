@@ -1167,6 +1167,69 @@ static void test_process_validation(void)
 /* Exercise the production pending/active ownership transition and unwind. */
 #include "../../../bdos/kaspace.h"
 #include "../../../bdos/kthread.h"
+#include "../../../bdos/proc.h"
+
+/* Detached cancellation keeps filesystem and mapping resources alive until
+ * the last non-runnable association is detached. */
+static void test_kthread_live_disposal(void)
+{
+    SNAP s;
+    PD *pd, *saved = run;
+    void *env;
+    KTHREAD *a, *b;
+    KPROC *observer;
+    LONG handle, count;
+    char bytes[4];
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_prepare_user(pd, run), "prepare process for deferred disposal");
+    observer = kproc_retain(pd);
+    a = kthread_create(pd);
+    b = kthread_create(pd);
+    CHECK(a && b && observer, "retain live process for deferred disposal");
+    if (!a || !b || !observer) {
+        kthread_destroy(a);
+        kthread_destroy(b);
+        proc_dispose_retained(pd);
+        kproc_release(observer);
+        same(&s, "failed deferred-disposal setup");
+        return;
+    }
+    run = pd;
+    handle = DISK_CALL(xopen("C:\\X32HELLO.TOS", 0));
+    run = saved;
+    CHECK(handle >= NUMSTD && handle < NUMHANDLES, "open process-owned file");
+    proc_dispose_retained(pd);
+    proc_dispose_retained(pd); /* repeated cancellation must not double-clean */
+    CHECK(kproc_ref_has_basepage(observer) && procmem_size(pd) &&
+          !kthread_create(pd), "disposal retains PD and rejects new threads");
+    CHECK(procmem_mfree(pd) == EACCDN,
+          "retained process basepage cannot be freed and reused");
+    if (handle >= NUMSTD && handle < NUMHANDLES)
+        CHECK(sft[handle-NUMSTD].f_own == pd && sft[handle-NUMSTD].f_use,
+              "process-owned file remains open while threads remain");
+    kthread_destroy(a);
+    if (handle >= NUMSTD && handle < NUMHANDLES) {
+        CHECK(kproc_ref_has_basepage(observer) && sft[handle-NUMSTD].f_own == pd,
+              "first thread release preserves process resources");
+        run = pd;
+        count = DISK_CALL(xread((WORD)handle, sizeof(bytes), bytes));
+        run = saved;
+        CHECK(count == sizeof(bytes), "retained process can still read its file");
+    }
+    kthread_destroy(b);
+    if (handle >= NUMSTD && handle < NUMHANDLES)
+        CHECK(!sft[handle-NUMSTD].f_own, "last thread closes process-owned file");
+    CHECK(observer && !kproc_ref_has_basepage(observer),
+          "identity survives final live-resource teardown");
+    kproc_release(observer);
+    same(&s, "thread-retained detached process resources");
+}
 
 /* Non-runnable identities exercise actual KPROC membership and active-space
  * references. They must be detached before the legacy process cleanup path. */
@@ -3583,6 +3646,7 @@ void x86_64_memtest_run(void)
     test_isolation();
     test_process_validation();
     test_kthread_relationships();
+    test_kthread_live_disposal();
     test_kproc_pending_ownership();
     test_kproc();
     test_kproc_ranges();

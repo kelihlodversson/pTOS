@@ -4,6 +4,8 @@
 #include "kproc.h"
 #include "kaspace.h"
 #include "kthread.h"
+#include "fs.h"
+#include "proc.h"
 
 struct kthread {
     ULONG tid;
@@ -49,12 +51,15 @@ KTHREAD *kthread_create(PD *pd)
 
 void kthread_destroy(KTHREAD *thread)
 {
+    PD *dispose;
     if (!thread)
         return;
-    kproc_thread_detach(thread->process, thread, thread->process_next);
+    dispose = kproc_thread_detach(thread->process, thread, thread->process_next);
     kaspace_put(thread->space);
     kproc_release(thread->process);
     kfree(thread);
+    if (dispose)
+        proc_dispose_retained(dispose);
 }
 
 ULONG kthread_tid(const KTHREAD *thread) { return thread ? thread->tid : 0; }

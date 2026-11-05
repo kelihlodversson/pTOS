@@ -337,6 +337,11 @@ static void free_all_owned(PD *p, MPB *mpb)
  * a process holds.  Called when the process terminates and, on x86-64, for
  * a basepage discarded before it ever ran.
  */
+#if CONF_WITH_USER_ASPACE
+/* SFT owners are compared for identity, never dereferenced. A live inherited
+ * slot or an interrupted close may outlive its original owner's basepage. */
+static char orphaned_sft_owner;
+#endif
 static void release_pd_files(PD *r)
 {
     WORD h;
@@ -399,6 +404,13 @@ static void release_pd_files(PD *r)
      * leak.
      */
     pfs_proc_exit(r);
+#endif
+#if CONF_WITH_USER_ASPACE
+    /* Preserve the allocated SFT slot without leaving a reusable PD address
+     * in f_own. A failed bounded close can still leak its handle reference. */
+    for (i = 0; i < OPNFILES; i++)
+        if (sft[i].f_own == r)
+            sft[i].f_own = (PD *)&orphaned_sft_owner;
 #endif
 }
 
@@ -1169,20 +1181,38 @@ void proc_discard_accessory(PD *p)
  * basepage is not mapped in the requesting process after async preparation. */
 void proc_dispose_deferred(PD *p)
 {
+#if CONF_WITH_USER_ASPACE
+    proc_dispose_retained(p);
+#else
     release_pd_files(p);
     kproc_destroy(p);
     ixterm(p);
+#endif
 }
 #endif
 
 void proc_dispose_detached(PD *p)
 {
+#if CONF_WITH_USER_ASPACE
+    proc_dispose_retained(p);
+#else
+    release_pd_files(p);
+    kproc_destroy(p);
+    ixterm(p);
+#endif
+}
+#endif
+
+#if CONF_WITH_USER_ASPACE
+void proc_dispose_retained(PD *p)
+{
+    if (kproc_defer_disposal(p))
+        return;
     release_pd_files(p);
     kproc_destroy(p);
     ixterm(p);
 }
 #endif
-
 
 
 /*
@@ -1209,6 +1239,9 @@ void xterm(UWORD rc)
     PFVOID userterm;
     PD *p = run;
 
+#if CONF_WITH_USER_ASPACE
+    kproc_require_no_threads(p);
+#endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     x86_64_memtest_callback_exit(p, rc);
 #endif

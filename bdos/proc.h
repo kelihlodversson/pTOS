@@ -31,6 +31,11 @@ long xexec_directory(char *path, char *tail, char *environment, ULONG session, U
 #endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
+#if CONF_WITH_USER_ASPACE
+/* Finalize detached-process disposal, or defer it while thread identities
+ * still retain its live resources. Must run from a safe execution stack. */
+void proc_dispose_retained(PD *pd);
+#endif
 WORD xtermres(long blkln, WORD rc);
 
 #if CONF_WITH_USER_ASPACE

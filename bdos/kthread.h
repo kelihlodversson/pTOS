@@ -10,8 +10,8 @@ struct kaspace;
 struct _pd;
 
 /* Create a detached-from-scheduler identity associated with a prepared process.
- * The caller owns the result and must destroy it before process cleanup starts.
- * It cannot execute, own an execution stack, or defer process teardown yet.
+ * The caller owns the result. Detached-process disposal waits for its release.
+ * It cannot execute or own an execution stack; normal xterm remains guarded.
  * All operations require serialized process context. */
 KTHREAD *kthread_create(struct _pd *pd);
 void kthread_destroy(KTHREAD *thread);

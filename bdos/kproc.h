@@ -119,8 +119,12 @@ struct kaspace;
  * thread; cleanup must not begin until all such associations are detached. */
 BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,
                          struct kaspace **space, struct kthread **next);
-void kproc_thread_detach(KPROC *process, struct kthread *thread,
-                         struct kthread *next);
+/* Return the PD when the last association must finish deferred disposal. */
+PD *kproc_thread_detach(KPROC *process, struct kthread *thread,
+                        struct kthread *next);
+BOOL kproc_defer_disposal(PD *pd);
+/* Normal xterm is not thread-aware; reject it before any cleanup begins. */
+void kproc_require_no_threads(PD *pd);
 /*
  * Builds the ring-3 address space for a process about to be launched:
  * its environment block and its basepage..p_hitpa range, and `parent`'s

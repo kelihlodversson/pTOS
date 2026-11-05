@@ -70,9 +70,12 @@ int main(void)
     references = 2;
     attempts = invalidations = directories = first_closes = 0;
     exhaust = TRUE;
+    sft[1].f_own = &child;
+    sft[1].f_use = 1;
     proc_free_owned(&owner);
     CHECK(!allocations && !record && references == 1 && first_closes == 1 &&
-          attempts == BLKDEVNUM + 1 && invalidations == BLKDEVNUM + 1);
+          attempts == 2 * (BLKDEVNUM + 1) && invalidations == 2 * (BLKDEVNUM + 1));
+    CHECK(sft[1].f_own && sft[1].f_own != &child);
     /* The final interrupted close still owns its reference. A later successful
      * close releases it once; the earlier handle is never closed twice. */
     exhaust = FALSE;

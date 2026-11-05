@@ -78,6 +78,8 @@ void kproc_destroy(PD *p)
     owner_record = FALSE;
 }
 BOOL kproc_unlaunched(PD *p) { return p == &child && child_record; }
+BOOL kproc_defer_disposal(PD *p) { (void)p; return FALSE; }
+void kproc_require_no_threads(PD *p) { (void)p; }
 BOOL kproc_discard(PD *p)
 {
     still_deferred();
