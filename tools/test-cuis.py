@@ -163,6 +163,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     subprocess.run([str(rollback / "deferred_reference")], check=True)
     subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_spawn.c", "-o", str(rollback / "deferred_spawn")], check=True)
     subprocess.run([str(rollback / "deferred_spawn")], check=True)
+    unwind_command = [arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c")]
+    subprocess.run(unwind_command + ["tests/cuis/exit_unwind.c", "-o", str(rollback / "exit-unwind")], check=True)
+    subprocess.run([str(rollback / "exit-unwind")], check=True)
     noncuis = work / "noncuis-cleanup"
     noncuis.mkdir()
     plain = kconfiglib.Kconfig(warn_to_stderr=False)

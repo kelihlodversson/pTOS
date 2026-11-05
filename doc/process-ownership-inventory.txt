@@ -262,3 +262,44 @@ does not wrap during a boot. The existing allocators do not detect wraparound;
 they must fail closed or acquire a wider/epoch-qualified identity before that
 assumption can be removed. This is separate from ordinary window-address reuse,
 which receives a different generation on reallocation.
+
+Exit-finalization callback/unwind contract (#891)
+------------------------------------------------
+The x32 launch record is an ordinary object; only the exit-handoff members
+modified after setjmp are volatile. No qualifier is discarded when accessing
+its jump buffer or publishing current_launch. Immutable nesting/context fields
+are initialized before setjmp and remain unchanged until the launcher resumes.
+
+proc_finalize_exit installs a local errbuf boundary spanning commit, completion
+publication, ksched_exiting, resource release and successor activation. Calls
+have these responsibilities:
+- ksched_exiting snapshots task status and delivers CUIS completion using the
+  existing synchronous/async policy. Its callbacks must return normally.
+- release_pd_files uses kdos_fclose's local bounded disk-error retry boundary;
+  exhausting retries still may leak a handle. Directory and PFS cookie/search
+  release callbacks must return normally. They must not jump to private saved
+  continuations. The same requirement applies to backing-reference callbacks
+  reached through kproc_destroy and allocation callbacks reached by ixterm.
+- kproc_destroy releases KASPACE mappings/backings and retires the process;
+  ixterm then releases allocations. Neither phase may be restarted after an
+  interruption. Ptermres is applied between those operations as before.
+- ksched_exited_identity activates successors only after teardown, using the
+  retained identity. Its destructor callbacks obey the same no-unwind rule.
+- The launcher releases its retained handoff identity after successful return.
+
+An unexpected disk-error jump escaping any of these phases is a fatal contract
+violation, not a recoverable filesystem transaction. The local boundary restores
+the launcher's errbuf, clears the pending residency PD/length, consumes the
+handoff reference and panics. It never retries cleanup, republishes completion,
+activates further successors, or dereferences the possibly retired PD. Remaining
+partially torn-down resources are not recovered: the kernel stops. Private
+longjmp targets bypassing errbuf are forbidden, not supported recovery paths.
+The host production-finalizer harness injects jumps during notification,
+directory teardown, retirement and successor activation and verifies one commit,
+one publication, one handoff release and cleared residency/error-target state.
+It also checks successful finalization. This is host fault injection; it does
+not runtime-validate the unused x86_64_process_cancel pending-handoff branch.
+
+Nested launchers finalize child syscall stacks; only scheduler root reclaims
+scheduler-task stacks. Neither context acquires duplicate ownership. Runnable
+KTHREAD association and clone startup remain #892, public termination #893.

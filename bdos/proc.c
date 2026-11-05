@@ -1258,6 +1258,25 @@ void proc_dispose_process(KPROC *process)
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len)
 {
     PD *p;
+    jmp_buf saved_error;
+
+    /* Only the disk-error unwinder is supported by cleanup callbacks.
+     * kdos_fclose catches recoverable errors locally. An escaping disk error
+     * violates the no-unwind contract of the remaining teardown callbacks:
+     * do not retry a partially committed cleanup or return to a stale trap.
+     * On this fatal path consume the caller's handoff reference ourselves;
+     * panic must not return. Arbitrary private longjmp targets are forbidden.
+     */
+    memcpy(saved_error, errbuf, sizeof(errbuf));
+    if (setjmp(errbuf)) {
+        memcpy(errbuf, saved_error, sizeof(errbuf));
+#if CONF_WITH_PROCMEM
+        proc_resident_pd = NULL;
+        proc_resident_len = 0;
+#endif
+        kproc_release(process);
+        panic("exit finalization: cleanup callback escaped");
+    }
     if (!kproc_commit_exit_handoff(process, &p))
         panic("x86-64: invalid exit handoff");
     kproc_complete(p, status);
@@ -1277,6 +1296,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 #if CONF_WITH_CUIS
     ksched_exited_identity(process, p);
 #endif
+    memcpy(errbuf, saved_error, sizeof(errbuf));
 }
 #endif
 

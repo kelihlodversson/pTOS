@@ -132,10 +132,10 @@ struct x86_64_process_launch {
     UQUAD stack_phys;
     WORD entry_type;
 #if CONF_WITH_USER_ASPACE
-    KPROC *exit_process;
-    UWORD exit_status;
-    BOOL exit_resident;
-    ULONG exit_resident_len;
+    KPROC * volatile exit_process;
+    volatile UWORD exit_status;
+    volatile BOOL exit_resident;
+    volatile ULONG exit_resident_len;
 #endif
 };
 
@@ -378,7 +378,7 @@ void gouser_entry(WORD entry_type)
          * contract of doc/process-entry.txt: RSP + 8 divisible by 16. */
         UQUAD user_rsp = kproc_user_stack(p);
         BOOL standard_entry = kproc_standard_entry(p);
-        volatile X86_64_PROCESS_LAUNCH launch;
+        X86_64_PROCESS_LAUNCH launch;
         UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
         UQUAD launcher_stack = x86_64_get_kernel_stack();
         UQUAD launcher_user_rsp = x86_64_get_saved_user_rsp();
@@ -398,9 +398,10 @@ void gouser_entry(WORD entry_type)
          * leaves ring 0 by iretq.  What comes back is its own Pterm() (or a
          * fault in it), which unwinds with longjmp() to this exact point,
          * exactly as for a kernel-code process above -- so the parent's
-         * Pexec() returns the exit code.  By then xterm() has already
-         * destroyed the address space (switching CR3 to the kernel tables)
-         * and made the launcher `run` again.
+         * Pexec() returns the exit code. xterm() has restored the launcher
+         * as `run`. With a deferred exit, the child address space remains
+         * alive until finalization below, off the child's syscall stack.
+         * The legacy fallback has already destroyed it.
          *
          * The process's system calls run on a kernel stack of its own, so a
          * launcher that is itself a ring-3 process, suspended in its Pexec()
@@ -416,12 +417,12 @@ void gouser_entry(WORD entry_type)
 #if CONF_WITH_USER_ASPACE
         launch.exit_process = NULL;
 #endif
-        current_launch = (X86_64_PROCESS_LAUNCH *)&launch;
+        current_launch = &launch;
         __asm__ volatile ("pushfq; popq %0" : "=r"(launcher_flags) :: "memory");
         x86_64_set_kernel_stack(kstack_top);
         x86_64_set_irq_stack(kstack_top + 8);
         launcher_in_syscall = x86_64_gs_to_user();
-        if (setjmp(((X86_64_PROCESS_LAUNCH *)&launch)->resume) == 0)
+        if (setjmp(launch.resume) == 0)
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                               standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);
         current_launch = launch.previous;
