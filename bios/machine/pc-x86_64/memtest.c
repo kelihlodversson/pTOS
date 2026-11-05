@@ -52,6 +52,7 @@
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"
+#include "../../../bdos/proc_clone.h"
 #include "../../../bdos/proc.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
@@ -1594,6 +1595,148 @@ static void test_kthread_relationships(void)
           "observer retains identity after threads and process cleanup");
     kproc_release(observer);
     same(&s, "non-runnable thread relationships");
+}
+
+/* Real KPROC resources, heap/mmap metadata and ownership transactions. No
+ * runnable clone entry point or scheduler publication is involved. */
+static void test_proc_clone(void)
+{
+    SNAP baseline, acquired;
+    PD *source_pd, *target_pd;
+    KPROC *source, *target;
+    PROC_CLONE_ARGS args;
+    PROC_CLONE_TRANSACTION *tx;
+    PROC_CLONE_RESULT first, second, unchanged;
+    KTHREAD *survivor;
+    KASPACE *space;
+    VADDR heap;
+    UWORD order, stage, policy, status;
+    LONG rc;
+    int before = failures;
+#if CONF_WITH_MMAP
+    LONG mapping;
+#endif
+    for (order = 0; order < 2; order++) {
+        snap(&baseline);
+        source_pd = new_basepage();
+        target_pd = new_basepage();
+        if (!source_pd || !target_pd) return;
+        set_owner(source_pd, source_pd);
+        set_owner(USERPTR_TO_PTR(source_pd->p_env), source_pd);
+        set_owner(target_pd, target_pd);
+        set_owner(USERPTR_TO_PTR(target_pd->p_env), target_pd);
+        CHECK(kproc_prepare_user(source_pd, run), "prepare clone source active space");
+        source = kproc_retain(source_pd);
+        target = kproc_retain(target_pd);
+        heap = kproc_uheap_alloc(source_pd, 2 * PAGE);
+        CHECK(heap != 0, "reserve heap owned by shared clone space");
+#if CONF_WITH_MMAP
+        mapping = kproc_mmap(source_pd, 0, 2 * PAGE, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        CHECK(mapping > 0, "reserve anonymous mapping before clone construction");
+#endif
+        args.source = source;
+        args.vm_policy = PROC_CLONE_SHARE_VM;
+        for (policy = 0; policy < 2; policy++) {
+            args.process_policy = policy ? PROC_CLONE_PREPARED_PROCESS : PROC_CLONE_SAME_PROCESS;
+            args.prepared_process = policy ? target : NULL;
+            for (stage = 1; stage <= 4; stage++) {
+                snap(&acquired);
+                tx = (PROC_CLONE_TRANSACTION *)(uintptr_t)1;
+                proc_clone_test_fail_after(stage);
+                rc = proc_clone(&args, &tx);
+                CHECK(rc == ENSMEM && tx == (PROC_CLONE_TRANSACTION *)(uintptr_t)1,
+                      "clone acquisition failure leaves transaction output unchanged");
+                CHECK(!kproc_active_space(target) && kproc_ref_has_basepage(source) &&
+                      kproc_ref_has_basepage(target), "failed clone preserves both resource owners");
+                same(&acquired, "clone PROCESS/ASPACE/THREAD acquisition rollback");
+            }
+        }
+        args.process_policy = PROC_CLONE_SAME_PROCESS;
+        args.prepared_process = NULL;
+        tx = NULL;
+        CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &first) == E_OK && !tx,
+              "commit first same-PROCESS non-runnable clone identity");
+        CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &second) == E_OK && !tx,
+              "commit second same-PROCESS non-runnable clone identity");
+        CHECK(first.pid == kproc_ref_pid(source) && second.pid == first.pid &&
+              first.tid != second.tid && kthread_process(first.thread) == source &&
+              kthread_aspace(first.thread) == kthread_aspace(second.thread),
+              "clone results preserve PID versus independent TID identities");
+        CHECK(!kthread_start(first.thread), "committed clone identity cannot execute");
+        kthread_destroy(order ? first.thread : second.thread);
+        survivor = order ? second.thread : first.thread;
+
+        args.process_policy = PROC_CLONE_PREPARED_PROCESS;
+        args.prepared_process = target;
+        CHECK(proc_clone(&args, &tx) == E_OK && !kproc_active_space(target),
+              "prepared transaction does not publish target active VM");
+        proc_clone_abort(&tx);
+        proc_clone_abort(&tx);
+        CHECK(!tx && !kproc_active_space(target), "aborted import is idempotent and leaves no active VM");
+        CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &first) == E_OK && !tx,
+              "commit shared VM into independently prepared PROCESS resources");
+        space = kthread_aspace(first.thread);
+        CHECK(first.pid == kproc_ref_pid(target) && first.pid != kproc_ref_pid(source) &&
+              first.tid != kthread_tid(survivor) && kthread_process(survivor) == source &&
+              kthread_aspace(survivor) == space && kproc_active_space(target) == space && kproc_active_space(source) == space &&
+              !kproc_thread_start_allowed(target), "independent PROCESS identity imports VM without enabling startup");
+        if (order) {
+            kthread_destroy(survivor);
+            proc_dispose_process(source);
+            CHECK(!kproc_ref_has_basepage(source) && kproc_ref_has_basepage(target),
+                  "source disposal retires only its identity/resources");
+            CHECK(CONF_WITH_DEMAND_PAGING ?
+                  kproc_demand_page(target_pd, heap + PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE) == 1 :
+                  aspace_translate(kproc_user_aspace(target_pd), heap + PAGE, NULL, NULL),
+                  "shared heap first-touch dispatch survives original PROCESS retirement");
+#if CONF_WITH_MMAP
+            CHECK(kproc_demand_page(target_pd, (VADDR)mapping + PAGE,
+                                   ASPACE_PROT_USER | ASPACE_PROT_WRITE) == 1,
+                  "shared anonymous fault dispatch survives original PROCESS retirement");
+#endif
+        }
+        proc_dispose_process(target);
+        CHECK(kproc_ref_has_basepage(target), "clone THREAD retains pending PROCESS resources");
+        kthread_destroy(first.thread);
+        CHECK(!kproc_ref_has_basepage(target) && !kproc_ref_status(target, &status),
+              "last clone release disposes resources without inventing an exit status");
+        if (!order) {
+            CHECK(kproc_ref_has_basepage(source) && (CONF_WITH_DEMAND_PAGING ?
+                  kproc_demand_page(source_pd, heap + PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE) == 1 :
+                  aspace_translate(kproc_user_aspace(source_pd), heap + PAGE, NULL, NULL)),
+                  "source heap survives independent target cleanup");
+            proc_dispose_process(source);
+            CHECK(kproc_ref_has_basepage(source), "surviving source THREAD retains live resources");
+            kthread_destroy(survivor);
+        }
+        kproc_release(target);
+        kproc_release(source);
+        same(&baseline, "shared clone ownership release in either PROCESS order");
+    }
+
+    /* Disposal between stages rejects commit; abort retains exact identity,
+     * never revisiting a reusable PD through lookup. */
+    snap(&baseline);
+    source_pd = new_basepage();
+    if (!source_pd) return;
+    set_owner(source_pd, source_pd);
+    set_owner(USERPTR_TO_PTR(source_pd->p_env), source_pd);
+    CHECK(kproc_prepare_user(source_pd, run), "prepare clone commit rejection source");
+    source = kproc_retain(source_pd);
+    args.source = source; args.prepared_process = NULL;
+    args.process_policy = PROC_CLONE_SAME_PROCESS;
+    tx = NULL;
+    CHECK(proc_clone(&args, &tx) == E_OK, "prepare clone before disposal request");
+    bzero(&unchanged, sizeof(unchanged)); first = unchanged;
+    proc_dispose_process(source);
+    CHECK(proc_clone_commit(&tx, &first) == EACCDN && tx &&
+          !memcmp(&first, &unchanged, sizeof(first)), "rejected commit leaves result and abort ownership intact");
+    proc_clone_abort(&tx);
+    CHECK(!tx && !kproc_ref_has_basepage(source), "rollback releases pending resources exactly once");
+    kproc_release(source);
+    same(&baseline, "clone commit rejection rollback");
+    kcprintf("x86-64 trusted clone ownership: %s\n", failures == before ? "PASS" : "FAIL");
 }
 
 static void test_kproc_pending_ownership(void)
@@ -4011,6 +4154,7 @@ void x86_64_memtest_run(void)
     test_isolation();
     test_process_validation();
     test_kthread_relationships();
+    test_proc_clone();
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();

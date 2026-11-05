@@ -17,6 +17,7 @@ struct kthread {
     void (*reclaim_execution)(void *);
     UBYTE state;
     BOOL attached;
+    BOOL identity_only;
 };
 enum { THREAD_NEW, THREAD_EXECUTING, THREAD_STOPPED, THREAD_REAPING };
 
@@ -34,7 +35,7 @@ ULONG kthread_test_set_last_tid(ULONG tid)
 }
 #endif
 
-KTHREAD *kthread_create(PD *pd)
+static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only)
 {
     KTHREAD *thread;
 
@@ -46,8 +47,9 @@ KTHREAD *kthread_create(PD *pd)
     thread->execution = NULL;
     thread->reclaim_execution = NULL;
     thread->state = THREAD_NEW;
-    if (!kproc_thread_attach(pd, thread, &thread->process, &thread->space,
-                             &thread->process_next)) {
+    thread->identity_only = identity_only;
+    if (!kproc_thread_attach_space(process, space, thread, &thread->process,
+                                   &thread->space, &thread->process_next)) {
         kfree(thread);
         return NULL;
     }
@@ -65,9 +67,30 @@ KTHREAD *kthread_create(PD *pd)
     return thread;
 }
 
+KTHREAD *kthread_prepare(PD *pd, KASPACE *space)
+{
+    KPROC *process = kproc_retain(pd);
+    KTHREAD *thread = process ? create_thread(process, space, FALSE) : NULL;
+    kproc_release(process);
+    return thread;
+}
+
+KTHREAD *kthread_create(PD *pd)
+{
+    KPROC *process = kproc_retain(pd);
+    KTHREAD *thread = process ? create_thread(process, kproc_active_space(process), FALSE) : NULL;
+    kproc_release(process);
+    return thread;
+}
+
+KTHREAD *kthread_construct_identity(KPROC *process, KASPACE *space)
+{
+    return create_thread(process, space, TRUE);
+}
+
 BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void *))
 {
-    if (!thread || thread->state != THREAD_NEW || thread->reclaim_execution ||
+    if (!thread || thread->identity_only || thread->state != THREAD_NEW || thread->reclaim_execution ||
         !resource || !reclaim)
         return FALSE;
     thread->execution = resource;
@@ -77,8 +100,9 @@ BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void
 
 BOOL kthread_start(KTHREAD *thread)
 {
-    if (!thread || thread->state != THREAD_NEW || !thread->attached ||
-        !thread->reclaim_execution || !kproc_thread_start_allowed(thread->process))
+    if (!thread || thread->identity_only || thread->state != THREAD_NEW || !thread->attached ||
+        !thread->reclaim_execution || !kproc_thread_start_allowed(thread->process) ||
+        kproc_active_space(thread->process) != thread->space)
         return FALSE;
     thread->state = THREAD_EXECUTING;
     return TRUE;

@@ -122,6 +122,17 @@ struct kthread;
 struct kaspace;
 /* Borrowed execution policy; terminal processes cannot publish new work. */
 BOOL kproc_thread_start_allowed(const KPROC *process);
+/* Caller already holds the identity; only live resources may be acquired. */
+KPROC *kproc_retain_live(KPROC *process);
+struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */
+/* Explicit construction-space attachment never publishes active_space. */
+BOOL kproc_thread_attach_space(KPROC *process, struct kaspace *construction_space,
+    struct kthread *thread, KPROC **retained_process, struct kaspace **space,
+    struct kthread **next);
+/* Identity-only VM adoption into an independently prepared resource container.
+ * Success transfers space. Failure changes neither object nor references. */
+BOOL kproc_clone_target_ready(const KPROC *process, struct kthread *thread);
+BOOL kproc_clone_adopt_space(KPROC *process, struct kthread *thread, struct kaspace *space);
 /* Prepared association. Both returned references are owned by the thread;
  * cleanup must not begin until all such associations are safely detached. */
 BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,

@@ -101,6 +101,7 @@ struct kproc {
     KASPACE *active_space; /* owning reference, NULL until prepared */
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
+    BOOL clone_identity_only; /* no executable context/startup contract yet */
     BOOL completion_pending;
     UWORD pending_status;
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
@@ -360,23 +361,36 @@ void kproc_complete(PD *pd, UWORD status)
 }
 
 #if CONF_WITH_USER_ASPACE
+KPROC *kproc_retain_live(KPROC *process)
+{
+    if (!process || !process->pd || process->completed ||
+        process->disposal_state != PROCESS_LIVE || process->references == ~(ULONG)0)
+        return NULL;
+    process->references++;
+    return process;
+}
+
+KASPACE *kproc_active_space(const KPROC *process)
+{
+    return process && process->pd && !process->completed &&
+        process->disposal_state == PROCESS_LIVE ? process->active_space : NULL;
+}
+
 BOOL kproc_thread_start_allowed(const KPROC *process)
 {
     return process && process->pd && !process->completed &&
-        process->disposal_state == PROCESS_LIVE;
+        !process->clone_identity_only && process->disposal_state == PROCESS_LIVE;
 }
 
-BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
-                         KASPACE **space, KTHREAD **next)
+BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
+    KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next)
 {
-    KPROC *p = kproc_find(pd);
     KASPACE *as;
-
-    if (!p || p->completed || p->disposal_state != PROCESS_LIVE || !thread || !p->active_space)
+    if (!thread || !construction_space || !p ||
+        (p->active_space && p->active_space != construction_space) ||
+        !kproc_retain_live(p))
         return FALSE;
-    if (!kproc_retain(pd))
-        return FALSE;
-    as = kaspace_share(p->active_space);
+    as = kaspace_share(construction_space);
     if (!as) {
         kproc_release(p);
         return FALSE;
@@ -385,6 +399,41 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
     *space = as;
     *next = p->threads;
     p->threads = thread;
+    return TRUE;
+}
+
+BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
+                         KASPACE **space, KTHREAD **next)
+{
+    KPROC *p = kproc_find(pd);
+    return kproc_thread_attach_space(p, p ? p->active_space : NULL,
+                                    thread, process, space, next);
+}
+
+/* Only a caller-prepared, empty resource container can import shared VM.
+ * No image, stack or loader loan is transferred by this ownership operation. */
+BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *thread)
+{
+    ULONG i;
+    if (!p || !p->pd || p->started || p->completed ||
+        p->disposal_state != PROCESS_LIVE || p->clone_identity_only ||
+        p->active_space || p->pending_space || p->has_image || p->lost || p->kstack_phys ||
+        p->nheap || p->load_parent || p->lender ||
+        (thread ? p->threads != thread || *kthread_next_link(thread) : p->threads != NULL))
+        return FALSE;
+    for (i = 0; i < KPROC_BORROWS; i++)
+        if (p->borrowed[i].bytes) return FALSE;
+    return TRUE;
+}
+
+BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    if (!space || !thread || !kproc_clone_target_ready(p, thread) ||
+        kthread_process(thread) != p || kthread_aspace(thread) != space)
+        return FALSE;
+    p->active_space = space; /* transfer the transaction's owning reference */
+    p->aspace = kaspace_backend(space);
+    p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
     return TRUE;
 }
 
@@ -1059,16 +1108,10 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     if (!kproc->legacy)
         kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
 #endif
-    /* Allocate and associate the optional scheduler identity before the
-     * irreversible PE_LOAD image move. Expose this preparation's space only
-     * while the serialized constructor retains it; no backend is installed
-     * and the new thread cannot execute. Ownership still resides in owner. */
+    /* The constructor retains this explicit construction space. Keep the
+     * PROCESS's active-space view unpublished until preparation commits. */
     if (thread_result) {
-        kproc->active_space = owner;
-        kproc->aspace = as;
-        thread = kthread_create(pd);
-        kproc->active_space = NULL;
-        kproc->aspace = NULL;
+        thread = kthread_prepare(pd, owner);
         if (!thread)
             return prepare_failed(kproc, owner);
     }

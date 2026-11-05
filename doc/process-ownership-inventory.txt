@@ -347,9 +347,9 @@ association. ARM/m68k retain the Phase 2 single-thread launcher behavior.
 Construction: allocate KERNEL_TASK/backend scheduler stack and retain a KPROC
 observer identity. Prepare the child's existing image/ASPACE using the existing
 loader APIs, constructing the optional KTHREAD inside that transaction before
-any irreversible staged-image move. The serialized constructor temporarily
-borrows the preparing space through KPROC, then hides it until preparation
-commits; the THREAD has no backend and cannot start during this interval.
+any irreversible staged-image move. The serialized constructor receives the
+preparing space explicitly, without publishing KPROC active_space. The THREAD
+has no backend and cannot start during this interval.
 Preparation failure destroys the unpublished association before its owner space.
 For already prepared groups, create the KTHREAD before dispatch. Transfer backend
 scheduler-stack reclamation to that THREAD. Failure before publication destroys
@@ -402,3 +402,83 @@ addresses at entry/finalization/reclamation. Partial two-task association failur
 and all existing allocation/fault/notification/resource-baseline tests exercise
 rollback. Host deferred fixtures check callback ownership and exactly-once reap;
 physical-stack assertions run under QEMU, not in those mocked host fixtures.
+
+
+Phase 3 trusted construction transaction (non-runnable only)
+------------------------------------------------------------
+proc_clone takes kernel-owned source/optional prepared-target KPROC identities,
+not PD lookup keys or the untrusted GEMDOS argument layout. It implements one
+construction primitive, followed by proc_clone_commit or proc_clone_abort.
+Public xclone remains validation-only: no call to this transaction and valid
+requests still return EINVFN. Public flags/TLS/output-write semantics are not
+changed or negotiated here.
+
+The initial PROCESS resource policies are explicit:
+- SAME_PROCESS retains the existing PROCESS/resources and shared KASPACE.
+- PREPARED_PROCESS takes a distinct, fresh caller-prepared PROCESS/resource
+  container and imports shared KASPACE on commit. Its PID/PD, descriptors, CWD
+  and limits come from the existing caller/loader factory; the transaction does
+  not allocate or consume them, clone them implicitly, or change their release
+  owner. Source and target identities both remain caller-owned outside the
+  transaction. This is the resource-import portion of new-PROCESS construction,
+  not a complete runnable CLONE_VM process implementation.
+- Same PROCESS with private VM is invalid. Independent private VM is explicitly
+  unsupported. Unknown policies and nonempty/image-bearing targets are rejected
+  before acquisition. No loader staging/loan is treated as shared VM identity.
+
+Prepare owns: transaction -> source identity + target identity + KASPACE +
+KTHREAD. THREAD -> PROCESS + KASPACE, PROCESS -> THREAD membership is borrowed.
+A staged THREAD never acquires an execution backend. On failure, rollback drops
+THREAD, transaction VM and identities in that order. The prepared PROCESS is
+still the caller's responsibility; no fabricated process completion is emitted.
+Commit revalidates live source/target policy, moves (without incrementing) the
+transaction VM reference into a prepared target, then transfers the THREAD and
+trusted PID/TID result. A failed commit leaves the result and abort handle
+intact. Abort clears its handle before callbacks and is idempotent through that
+handle. Identity-only THREADs permanently reject backend installation/start in
+this slice; imported PROCESSes also reject the legacy scheduler startup path.
+CPU/FPU startup, mapping leases and safe sibling termination must precede any
+future change to those gates (#892/#893).
+
+Ownership audit of existing scheduler paths at this checkpoint:
+- Create/dispatch: unpublished backend owns its task stack until THREAD adopts
+  its reclaimer. Task observer KPROC ref is distinct from execution ownership.
+- Exit: child launcher owns/reclaims syscall stack. It detaches stopped THREAD
+  before common process finalization. Root alone reclaims task stack/THREAD.
+- Deferred activation: no ownership or TID replacement, only predecessor
+  identity release and policy-state transition. Cancellation unpublishes the
+  slot, requests disposal, then THREAD reclaimer frees its stack from elsewhere.
+- Refused start: stopped THREAD retains PROCESS/VM until root. Disposal is not
+  successful execution and invents no status; root performs final release.
+- First/second THREAD failure: unpublished identities and stack owners roll
+  back before the caller reclaims programs. No continuation exists to resume.
+- Image failure: construction now retains an explicit space. It never aliases
+  active_space during allocation. Failed preparation reaps THREAD before the
+  owner reference and preserves existing lost/staging rollback policy.
+- Nested Pexec: managed task retains its own PROCESS/ASPACE; the synchronous
+  child's existing launcher/identity governs its exit, with no false task match.
+- Parent retirement/PD reuse: delayed predecessor/handoff records retain KPROC
+  identity. Task parent PD is borrowed only while live and cleared by the
+  existing ksched_exiting orphan sweep before release. Zombies retain observer
+  identity/status, not task stacks or a reusable child PD.
+
+Prepare/acquisition and VM import do not call user code, yield or invoke a
+filesystem callback. Abort can finish a previously requested PROCESS disposal;
+its cleanup callbacks retain the existing no-unwind and bounded-close contract.
+An exhausted close can still leak a handle; this transaction does not make
+filesystem cleanup transactional. Allocators and teardown callbacks must not
+reenter dispatch or user code.
+The cooperative kernel serializes all stages and IRQ handlers must not mutate
+these ownership lists. Separate stages may observe intervening disposal, so
+commit rechecks live identities; VM import itself has no allocation or callback.
+Before preemption/SMP (#713), process membership, construction/active-space
+publication, retain/release and final disposal require one proven synchronization
+protocol. Plain reference counters and this no-yield contract are not that
+future protocol. No new locks or concurrent mapping-startup guarantees are
+claimed here.
+
+Production x32 tests use real KPROC resources, deferred procmem reclamation and
+fault dispatch, exercising both PROCESS release orders and lazy heap/anonymous
+mmap first touch after original-owner retirement. Host tests use real transaction,
+KTHREAD and KASPACE code with a counted PROCESS model under x32/ARM/m68k config
+headers; these are host tests, not native architecture runtime coverage.

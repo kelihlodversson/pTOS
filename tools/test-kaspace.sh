@@ -33,6 +33,23 @@ PY
         tests/kaspace_mmap_policy.c bdos/kaspace.c -o "$work/mmap-policy"
     "$work/mmap-policy"
     echo "KASPACE mmap policy ($preset configuration, host execution): PASS"
+    # The clone transaction owns real KTHREAD/KASPACE objects. This harness
+    # models PROCESS resources; native x32 tests use production KPROC instead.
+    CONFIG_= python3 - "$preset" "$work/config" <<'PYCONFIG'
+import kconfiglib, sys
+k = kconfiglib.Kconfig(warn_to_stderr=False)
+k.load_config('configs/' + sys.argv[1] + '_defconfig')
+k.syms['CONF_WITH_MMAP'].set_value(0)
+k.write_config(sys.argv[2])
+PYCONFIG
+    CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
+        --header "$work/autoconf.h" --makefile "$work/auto.conf"
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+        -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
+        -iquote fs tests/proc_clone.c bdos/proc_clone.c bdos/kthread.c bdos/kaspace.c \
+        -Wl,--gc-sections -o "$work/proc-clone"
+    "$work/proc-clone"
+    echo "Trusted clone construction ($preset configuration, host execution): PASS"
 done
 echo 'KASPACE ownership and failed adoption: PASS'
 echo 'KTHREAD_CONTEXT stack allocation and release: PASS'

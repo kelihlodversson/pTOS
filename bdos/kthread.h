@@ -14,6 +14,12 @@ struct _pd;
  * Execution may be published only by a backend that owns its continuation.
  * All operations require serialized process context. */
 KTHREAD *kthread_create(struct _pd *pd);
+/* Loader transaction: retain its explicit space without publishing it as the
+ * PROCESS's active VM. No execution backend is installed by construction. */
+KTHREAD *kthread_prepare(struct _pd *pd, struct kaspace *space);
+/* Clone relationship construction only. The result permanently rejects an
+ * execution backend/start until a later startup contract is implemented. */
+KTHREAD *kthread_construct_identity(struct kproc *process, struct kaspace *space);
 /* Transfer a backend execution resource to a non-runnable thread. The
  * reclaimer must not block or exit non-locally and runs only during reap.
  * Failure leaves ownership with the caller. */
