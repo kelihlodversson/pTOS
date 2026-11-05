@@ -84,6 +84,32 @@ void test_pie_load(void)
                       "PIEPROBE.TOS exited nonzero "
                       "(PIE dynamic relocations not applied?)");
 
+#if defined(TEST_WITH_USER_ASPACE)
+    {
+        BASEPAGE *bp = (BASEPAGE *)Pexec(PE_LOAD, "C:\\PIEPROBE.TOS", "", 0);
+        ptest_assert_msg((long)bp > 0, "mode 3 did not stage PIEPROBE.TOS");
+        if ((long)bp > 0) {
+            ptest_assert_msg(Pexec(PE_GO, "", bp, 0) == -32,
+                             "ring-3 mode 4 was not rejected");
+            ptest_assert_msg(Pexec(104, "", bp, 0) == -32,
+                             "mode 104 was not rejected");
+            ptest_assert_msg(bp->p_lowtpa == (char *)bp,
+                             "rejected mode 4 altered its staged basepage");
+            ptest_assert_msg(Pexec(PE_GO_FREE, "", bp, 0) == 0,
+                             "mode 6 failed after rejected mode 4");
+        }
+        bp = (BASEPAGE *)Pexec(PE_LOAD, "C:\\PIEPROBE.TOS", "", 0);
+        ptest_assert_msg((long)bp > 0, "second mode 3 staging failed");
+        if ((long)bp > 0) {
+            char *env = bp->p_env;
+            ptest_assert_msg(Pexec(PE_GO, "", bp, 0) == -32,
+                             "second mode 4 was not rejected");
+            ptest_assert_msg(Mfree(bp) == 0 && Mfree(env) == 0,
+                             "rejected staged image was not reclaimable");
+        }
+    }
+#endif
+
 #if (defined(__arm__) || defined(__mc68000__)) && !defined(TEST_WITH_USER_ASPACE)
     {
         const char *failure = check_footprint();

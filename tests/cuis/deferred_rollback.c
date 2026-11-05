@@ -27,6 +27,8 @@ static unsigned allocations, records, disposals, attempts, interrupted;
 static unsigned references[2], invalidations, directory_releases;
 static unsigned inject_errors;
 static BOOL return_close_error;
+static BOOL fake_completion;
+static unsigned completion_stage;
 static PD *pending_request;
 static LONG rejection;
 
@@ -61,6 +63,8 @@ void procmem_free_owned(const void *owner, void (*before)(void *))
     allocations = 0;
     disposals++;
 }
+void procmem_keep(const void *p, ULONG bytes, void (*before)(void *))
+{ (void)p; (void)bytes; (void)before; abort(); }
 SBYTE *kproc_uft(PD *p) { CHECK(p == &parent || (p == &image && records)); return p == &parent ? parent_files : child_files; }
 void kproc_standard_file_refs(ULONG *refs)
 {
@@ -82,6 +86,30 @@ void kproc_destroy(PD *p)
     records--;
 }
 BOOL kproc_unlaunched(PD *p) { return p == &image && records; }
+KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
+void kproc_release(KPROC *p) { (void)p; }
+BOOL kproc_begin_disposal(KPROC *p, PD **pd) { *pd = (PD *)p; return TRUE; }
+BOOL kproc_pending_completion(const KPROC *p, UWORD *status)
+{
+    CHECK(p == (KPROC *)&image);
+    if (!fake_completion) return FALSE;
+    *status = 37;
+    return TRUE;
+}
+void kproc_complete(PD *p, UWORD status)
+{
+    CHECK(fake_completion && p == &image && status == 37 && !completion_stage++);
+}
+void ksched_exiting(PD *p, UWORD status)
+{
+    CHECK(fake_completion && p == &image && status == 37 && completion_stage++ == 1 && records);
+}
+void ksched_exited(PD *p)
+{
+    CHECK(fake_completion && p == &image && completion_stage++ == 2 && !records && !allocations);
+}
+void kproc_require_no_threads(PD *p) { (void)p; }
+void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
 BOOL kproc_discard(PD *p) { CHECK(!records); return FALSE; }
 BOOL kproc_borrow(PD *p, void *block) { CHECK(p == &parent && procmem_contains(block)); return TRUE; }
 void kproc_unborrow(void *block) { CHECK(procmem_contains(block)); }
@@ -202,6 +230,14 @@ int main(void)
     CHECK(xexec_directory("NEXT.PRG",tail,env,23,0,TRUE,"C:\\MISSING") == EPTHNF);
     CHECK(pending_request == &pending && run == &parent);
     CHECK(!allocations && !records && disposals == 13);
+    /* Exercise notification ordering for an already committed completion;
+     * the real KPROC tests cover the started/stopped eligibility checks. */
+    fake_completion = TRUE;
+    references[0] = 2; references[1] = 1;
+    dirtbl[3].use = dirtbl[4].use = 1;
+    directory_releases = attempts = interrupted = invalidations = 0;
+    CHECK(xexec_deferred("NEXT.PRG",tail,env,23) == rejection);
+    CHECK(completion_stage == 3 && !allocations && !records);
     puts("Deferred rejection releases all references after interrupted close: PASS");
     return 0;
 }

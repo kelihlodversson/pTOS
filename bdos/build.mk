@@ -23,6 +23,7 @@ obj-y += kfile.o
 endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
 obj-$(CONF_WITH_PCLONE) += clone.o clone_args.o
+obj-$(CONF_WITH_USER_ASPACE) += kaspace.o kthread.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
 # The kernel shares only load-plan validation and stack construction with
@@ -42,4 +43,4 @@ obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)
 obj-$(CONF_WITH_MMAP) += fileback.o
 
 # Native kernel tasks for external libaes, independent of kernel AES.
-obj-$(CONF_WITH_NATIVE_SCHED) += native_sched.o native_sched_entry.o
+obj-$(CONF_WITH_NATIVE_SCHED) += native_sched.o native_sched_entry.o kthread_context.o

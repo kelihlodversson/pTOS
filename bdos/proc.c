@@ -25,6 +25,9 @@
 #include "biosbind.h"
 #include "string.h"
 #include "biosext.h"
+#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+#include "bdosstub.h"
+#endif
 #include "asm.h"
 #include "tosvars.h"
 #include "has.h"
@@ -38,7 +41,7 @@
 #endif
 #endif
 #include "../bios/vectors.h"
-#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#if CONF_WITH_X86_64_MEMTEST
 #include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
 #if CONF_WITH_PLUGGABLE_FS
@@ -102,7 +105,8 @@ static void hand_over(PD *p)
         kproc_hand_over(run, p);
 }
 
-/* PE_GO: a program PE_LOAD put in the caller's heap goes back there at the end */
+/* Preserve the legacy give-back path for kernel/ROM compatibility. User
+ * address-space callers cannot request PE_GO until shared-VM mode 4 exists. */
 static void give_back_image(PD *p, BOOL give_back)
 {
     kproc_set_give_back(p, give_back);
@@ -333,6 +337,11 @@ static void free_all_owned(PD *p, MPB *mpb)
  * a process holds.  Called when the process terminates and, on x86-64, for
  * a basepage discarded before it ever ran.
  */
+#if CONF_WITH_USER_ASPACE
+/* SFT owners are compared for identity, never dereferenced. A live inherited
+ * slot or an interrupted close may outlive its original owner's basepage. */
+static char orphaned_sft_owner;
+#endif
 static void release_pd_files(PD *r)
 {
     WORD h;
@@ -354,8 +363,8 @@ static void release_pd_files(PD *r)
 
     for (i = 0; i < NUMSTD; i++)
         if ((h = PD_UFT(r)[i]) > 0) {
-#if CONF_WITH_CUIS
-            Fclose(h); /* Complete cleanup even after a disk-error longjmp. */
+#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+            kdos_fclose(h); /* Catch disk errors and finish the interrupted close. */
 #else
             xclose(h);
 #endif
@@ -367,8 +376,8 @@ static void release_pd_files(PD *r)
             && explicit_refs[i]
 #endif
         ) {
-#if CONF_WITH_CUIS
-            Fclose(i+NUMSTD);
+#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+            kdos_fclose(i+NUMSTD);
 #else
             xclose(i+NUMSTD);
 #endif
@@ -396,6 +405,13 @@ static void release_pd_files(PD *r)
      */
     pfs_proc_exit(r);
 #endif
+#if CONF_WITH_USER_ASPACE
+    /* Preserve the allocated SFT slot without leaving a reusable PD address
+     * in f_own. A failed bounded close can still leak its handle reference. */
+    for (i = 0; i < OPNFILES; i++)
+        if (sft[i].f_own == r)
+            sft[i].f_own = (PD *)&orphaned_sft_owner;
+#endif
 }
 
 static void ixterm(PD *r)
@@ -414,6 +430,25 @@ static void ixterm(PD *r)
 #if CONF_WITH_PROCMEM
     proc_free_owned(r);
 #endif
+}
+
+/* Final process-wide teardown. For a normal exit this runs on the current
+ * syscall stack; that stack is owned and later freed by its launcher. */
+static void proc_release_resources(PD *p, BOOL resident_exit)
+{
+#if CONF_WITH_KPROC
+    release_pd_files(p);
+#endif
+    kproc_destroy(p);
+#if CONF_WITH_PROCMEM
+    if (resident_exit && proc_resident_pd == p) {
+        proc_make_resident(p, proc_resident_len);
+        proc_resident_pd = NULL;
+    }
+#else
+    UNUSED(resident_exit);
+#endif
+    ixterm(p);
 }
 
 
@@ -582,6 +617,12 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
+#if CONF_WITH_USER_ASPACE
+        /* Ring-3 mode 4 will return as shared-VM Pexec in #894. Refuse it
+         * before touching the staged image or changing any ownership. */
+        if (flag == PE_GO && caller_has_aspace())
+            return EINVFN;
+#endif
         p = (PD *) tail;
 #if CONF_WITH_USER_ASPACE
         if (flag == PE_GO && (rc = check_launch(p)) != E_OK)
@@ -1159,20 +1200,117 @@ void proc_discard_accessory(PD *p)
  * basepage is not mapped in the requesting process after async preparation. */
 void proc_dispose_deferred(PD *p)
 {
-    release_pd_files(p);
-    kproc_destroy(p);
-    ixterm(p);
+#if CONF_WITH_USER_ASPACE
+    proc_dispose_retained(p);
+#else
+    proc_release_resources(p, FALSE);
+#endif
 }
 #endif
 
 void proc_dispose_detached(PD *p)
 {
-    release_pd_files(p);
-    kproc_destroy(p);
-    ixterm(p);
+#if CONF_WITH_USER_ASPACE
+    proc_dispose_retained(p);
+#else
+    proc_release_resources(p, FALSE);
+#endif
 }
 #endif
 
+#if CONF_WITH_USER_ASPACE
+void proc_dispose_retained(PD *p)
+{
+    KPROC *process = kproc_retain(p);
+    if (!process)
+        return;
+    proc_dispose_process(process);
+    kproc_release(process);
+}
+
+void proc_dispose_process(KPROC *process)
+{
+    PD *p;
+    UWORD status = 0;
+    BOOL complete;
+    if (!kproc_begin_disposal(process, &p))
+        return;
+    complete = kproc_pending_completion(process, &status);
+#if CONF_WITH_X86_64_MEMTEST
+    x86_64_memtest_disposal_committed(p);
+#endif
+    if (complete) {
+        kproc_complete(p, status);
+#if CONF_WITH_NATIVE_SCHED
+        ksched_exiting(p, status);
+#endif
+    }
+    proc_release_resources(p, FALSE);
+#if CONF_WITH_CUIS
+    if (complete)
+        ksched_exited(p);
+#endif
+}
+
+/* The launcher calls this only after leaving the child's syscall stack and
+ * restoring its own address space. The retained identity owns no stack. */
+void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len)
+{
+    PD *p;
+    jmp_buf saved_error;
+
+    /* Only the disk-error unwinder is supported by cleanup callbacks.
+     * kdos_fclose catches recoverable errors locally. An escaping disk error
+     * violates the no-unwind contract of the remaining teardown callbacks:
+     * do not retry a partially committed cleanup or return to a stale trap.
+     * On this fatal path consume the caller's handoff reference ourselves;
+     * panic must not return. Arbitrary private longjmp targets are forbidden.
+     */
+    memcpy(saved_error, errbuf, sizeof(errbuf));
+    if (setjmp(errbuf)) {
+        memcpy(errbuf, saved_error, sizeof(errbuf));
+#if CONF_WITH_PROCMEM
+        proc_resident_pd = NULL;
+        proc_resident_len = 0;
+#endif
+        kproc_release(process);
+        panic("exit finalization: cleanup callback escaped");
+    }
+    if (!kproc_commit_exit_handoff(process, &p))
+        panic("invalid exit handoff");
+    kproc_complete(p, status);
+#if CONF_WITH_NATIVE_SCHED
+    ksched_exiting(p, status);
+#endif
+#if CONF_WITH_PROCMEM
+    if (resident) {
+        proc_resident_pd = p;
+        proc_resident_len = resident_len;
+    }
+#else
+    UNUSED(resident);
+    UNUSED(resident_len);
+#endif
+    proc_release_resources(p, TRUE);
+#if CONF_WITH_CUIS
+    ksched_exited_identity(process, p);
+#endif
+    memcpy(errbuf, saved_error, sizeof(errbuf));
+}
+
+BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)
+{
+#if CONF_WITH_NATIVE_SCHED
+    /* Runnable scheduler integration must account for task completion,
+     * orphaning and its separate stack handoff before using this path. */
+    if (ksched_active())
+        return FALSE;
+#endif
+    if (!kproc_request_completion(process, thread, status))
+        return FALSE;
+    return TRUE;
+}
+#endif
 
 
 /*
@@ -1199,33 +1337,53 @@ void xterm(UWORD rc)
     PFVOID userterm;
     PD *p = run;
 
+#if CONF_WITH_USER_ASPACE
+    kproc_require_no_threads(p);
+#endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     x86_64_memtest_callback_exit(p, rc);
 #endif
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
+#if CONF_WITH_USER_ASPACE
+    {
+        BOOL resident = FALSE;
+        ULONG resident_len = 0;
+#if CONF_WITH_PROCMEM
+        if (proc_resident_pd == p) {
+            resident = TRUE;
+            resident_len = proc_resident_len;
+        }
+#endif
+        if (proc_defer_exit(p, rc, resident, resident_len)) {
+#if CONF_WITH_PROCMEM
+            if (resident) proc_resident_pd = NULL;
+#endif
+            run = kproc_get_parent(p);
+            run->p_dreg[0] = rc;
+            termuser();
+        }
+    }
+#endif
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_begin_exit(p))
+        panic("xterm: process disposal already committed");
+#endif
+#if CONF_WITH_KPROC
+    kproc_complete(p, rc);
+#endif
 #if CONF_WITH_NATIVE_SCHED
     ksched_exiting(p, rc);
 #endif
-
 #if CONF_WITH_KPROC
     /* not run->p_parent: that field is in the process's own writable
      * memory, and run->p_dreg[0] is written through the result below */
     run = kproc_get_parent(p);
-    /* the file and directory tables are in the record, which goes next */
-    release_pd_files(p);
 #else
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
 #endif
-    kproc_destroy(p);
-#if CONF_WITH_PROCMEM
-    if (proc_resident_pd == p) {      /* Ptermres, now that nothing maps p */
-        proc_make_resident(p, proc_resident_len);
-        proc_resident_pd = NULL;
-    }
-#endif
-    ixterm(p);
+    proc_release_resources(p, TRUE);
 #if CONF_WITH_CUIS
     /* All process resources are gone. No cleanup can return to the caller
      * through the disk-error handler after making its successor runnable. */

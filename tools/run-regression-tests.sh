@@ -519,6 +519,12 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     stop_vm
 fi
 
+# A configured rollback injection must actually have reached a user exit.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'exit handoff: injected preparation rollback' "$suite_log"; then
+    record "exit handoff rollback" FAIL "configured injection was not exercised"
+fi
+
 # -- the verdict ----------------------------------------------------------------
 
 show_logs

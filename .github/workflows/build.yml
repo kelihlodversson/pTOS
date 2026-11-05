@@ -61,6 +61,8 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test clone ABI layout and pointer decoding
         run: sh tools/test-clone-abi.sh
+      - name: Test address-space ownership
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
       - name: Build the enabled freestanding x32 core

@@ -122,6 +122,8 @@ static void check_user_mode(void)
 {
     long rc;
 
+    rc = probe('n', 0, 0);
+    expect(rc == 43L, "nested normal/fault/resident exit handoff lost launcher status", rc);
     rc = probe('0', 0, 0);
     expect(rc == 42L, "a program did not run and return its exit code", rc);
     /* the privileged instruction is a fault of the process, not of the kernel */
