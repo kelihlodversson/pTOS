@@ -80,6 +80,8 @@ void kproc_test_pid_search(WORD previous, UWORD candidates);
 struct kaspace;
 struct kaspace *kproc_test_retain_pending(PD *pd);
 struct kaspace *kproc_test_retain_active(PD *pd);
+/* Non-runnable ownership test only; does not establish VM sharing policy. */
+BOOL kproc_test_share_active(PD *pd, struct kaspace *space);
 #endif
 #endif
 /* The launching process, recorded by proc_go() and used by Pterm() instead
@@ -111,6 +113,14 @@ BOOL kproc_discard(PD *pd);
 BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched */
 #endif
 #if CONF_WITH_USER_ASPACE
+struct kthread;
+struct kaspace;
+/* Non-runnable association only. Both returned references are owned by the
+ * thread; cleanup must not begin until all such associations are detached. */
+BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,
+                         struct kaspace **space, struct kthread **next);
+void kproc_thread_detach(KPROC *process, struct kthread *thread,
+                         struct kthread *next);
 /*
  * Builds the ring-3 address space for a process about to be launched:
  * its environment block and its basepage..p_hitpa range, and `parent`'s

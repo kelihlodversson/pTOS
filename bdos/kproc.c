@@ -37,6 +37,7 @@
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"
 #include "kaspace.h"
+#include "kthread.h"
 #include "progimage.h"
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/startup.h"
@@ -91,6 +92,7 @@ struct kproc {
     UBYTE *user_end;
     ASPACE *aspace;      /* borrowed from active_space */
     KASPACE *active_space; /* owning reference, NULL until prepared */
+    KTHREAD *threads;     /* non-owning; non-runnable associations only */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
 #if CONF_WITH_NATIVE_SCHED
     PD *async_parent;           /* stable controller for exit, not logical PPID */
@@ -279,6 +281,19 @@ KASPACE *kproc_test_retain_active(PD *pd)
     KPROC *process = kproc_find(pd);
     return process ? kaspace_share(process->active_space) : NULL;
 }
+BOOL kproc_test_share_active(PD *pd, KASPACE *space)
+{
+    KPROC *process = kproc_find(pd);
+    KASPACE *shared;
+    if (!process || process->active_space || process->pending_space)
+        return FALSE;
+    shared = kaspace_share(space);
+    if (!shared)
+        return FALSE;
+    process->active_space = shared;
+    process->aspace = kaspace_backend(shared);
+    return TRUE;
+}
 #endif
 #endif
 
@@ -334,6 +349,42 @@ void kproc_complete(PD *pd, UWORD status)
     }
 }
 
+#if CONF_WITH_USER_ASPACE
+BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
+                         KASPACE **space, KTHREAD **next)
+{
+    KPROC *p = kproc_find(pd);
+    KASPACE *as;
+
+    if (!p || p->completed || !thread || !p->active_space)
+        return FALSE;
+    if (!kproc_retain(pd))
+        return FALSE;
+    as = kaspace_share(p->active_space);
+    if (!as) {
+        kproc_release(p);
+        return FALSE;
+    }
+    *process = p;
+    *space = as;
+    *next = p->threads;
+    p->threads = thread;
+    return TRUE;
+}
+
+void kproc_thread_detach(KPROC *process, KTHREAD *thread, KTHREAD *next)
+{
+    KTHREAD **link;
+
+    for (link = &process->threads; *link; link = kthread_next_link(*link))
+        if (*link == thread) {
+            *link = next;
+            return;
+        }
+    panic("kproc_thread_detach: not a member");
+}
+#endif
+
 void kproc_destroy(PD *pd)
 {
     KPROC **link;
@@ -342,6 +393,11 @@ void kproc_destroy(PD *pd)
         if ((*link)->pd == pd) {
             KPROC *kproc = *link;
             KPROC *launcher = kproc->parent ? kproc_find(kproc->parent) : NULL;
+
+#if CONF_WITH_USER_ASPACE
+            if (kproc->threads)
+                panic("kproc_destroy: attached non-runnable threads");
+#endif
 
 #if CONF_WITH_CUIS
             cuis_process_exit(pd);

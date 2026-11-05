@@ -215,8 +215,11 @@ yet authorize runnable threads or sharing active spaces between processes:
 mapping metadata and process-wide resources still need lifetime ownership.
 
 The target reference graph is THREAD -> PROCESS and THREAD -> ASPACE, with
-PROCESS -> ASPACE and borrowed PROCESS -> THREAD membership links. That graph
-is not operational yet. In particular, an outstanding runnable THREAD must
+PROCESS -> ASPACE and borrowed PROCESS -> THREAD membership links. The initial
+KTHREAD object implements this graph for non-runnable identities only. It
+retains the existing KPROC identity and KASPACE; callers must detach every
+such identity before process cleanup begins. It does not retain live process
+resources and owns no execution stack. In particular, a runnable THREAD must
 keep its process-wide resources and execution mappings usable; the current
 completion snapshot intentionally cannot do so. Once that ownership exists,
 completion must detach publication and record status, then retain resources

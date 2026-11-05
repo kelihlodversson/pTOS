@@ -23,7 +23,7 @@ obj-y += kfile.o
 endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
 obj-$(CONF_WITH_PCLONE) += clone.o clone_args.o
-obj-$(CONF_WITH_USER_ASPACE) += kaspace.o
+obj-$(CONF_WITH_USER_ASPACE) += kaspace.o kthread.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
 # The kernel shares only load-plan validation and stack construction with

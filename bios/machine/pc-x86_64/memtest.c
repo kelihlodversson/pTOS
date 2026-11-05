@@ -1166,6 +1166,120 @@ static void test_process_validation(void)
 
 /* Exercise the production pending/active ownership transition and unwind. */
 #include "../../../bdos/kaspace.h"
+#include "../../../bdos/kthread.h"
+
+/* Non-runnable identities exercise actual KPROC membership and active-space
+ * references. They must be detached before the legacy process cleanup path. */
+static void test_kthread_relationships(void)
+{
+    SNAP s;
+    PD *pd;
+    void *env;
+    KTHREAD *a, *b;
+    KTHREAD *other_thread;
+    KPROC *observer;
+    PD *other;
+    KASPACE *shared;
+    ULONG first_tid;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(!kthread_create(pd), "thread association rejects unprepared process");
+    CHECK(kproc_prepare_user(pd, run), "prepare thread relationship process");
+    observer = kproc_retain(pd);
+    kthread_test_fail_after_attach();
+    CHECK(!kthread_create(pd), "failed thread association rolls back its references");
+    a = kthread_create(pd);
+    b = kthread_create(pd);
+    CHECK(observer && a && b, "construct two non-runnable threads");
+    if (a && b) {
+        first_tid = kthread_tid(a);
+        CHECK(first_tid && kthread_tid(b) && first_tid != kthread_tid(b),
+              "thread identities are distinct");
+        CHECK(kthread_process(a) == observer && kthread_process(b) == observer &&
+              kthread_aspace(a) == kthread_aspace(b) &&
+              kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
+              "two threads retain the process and its active space");
+        kthread_destroy(a);
+        a = NULL;
+        CHECK(kthread_process(b) == observer &&
+              kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
+              "remaining thread retains its process and space");
+        other = kalloc(sizeof(*other));
+        CHECK(other != NULL, "allocate second process identity");
+        if (other) {
+            bzero(other, sizeof(*other));
+            if (kproc_create(other)) {
+                CHECK(kproc_pid(other) != kproc_pid(pd), "process identities differ");
+                CHECK(kproc_test_share_active(other, kthread_aspace(b)),
+                      "associate second non-runnable process with shared space");
+                other_thread = kthread_create(other);
+                CHECK(other_thread && kthread_process(other_thread) != observer &&
+                      kthread_aspace(other_thread) == kthread_aspace(b),
+                      "distinct process identities retain one address space");
+                kproc_complete(other, 23);
+                CHECK(!kthread_create(other), "completed process refuses new thread");
+                kthread_destroy(other_thread);
+                kproc_destroy(other);
+                CHECK(kthread_process(b) == observer &&
+                      kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
+                      "second process completion leaves first space usable");
+            } else {
+                CHECK(FALSE, "construct second process identity");
+            }
+            kfree(other);
+        }
+    }
+    kthread_destroy(a);
+    kthread_destroy(b);
+    a = kthread_create(pd);
+    b = kthread_create(pd);
+    CHECK(a && b, "construct threads for reverse release order");
+    kthread_destroy(b);
+    if (a)
+        CHECK(kthread_process(a) == observer &&
+              kaspace_backend(kthread_aspace(a)) == kproc_user_aspace(pd),
+              "first thread survives releasing second thread");
+    kthread_destroy(a);
+    other = kalloc(sizeof(*other));
+    other_thread = NULL;
+    if (other) {
+        bzero(other, sizeof(*other));
+        if (kproc_create(other)) {
+            shared = kproc_test_retain_active(pd);
+            CHECK(shared && kproc_test_share_active(other, shared),
+                  "associate second process for reverse cleanup order");
+            kaspace_put(shared);
+            other_thread = kthread_create(other);
+            CHECK(other_thread != NULL, "construct second process thread");
+        } else {
+            kfree(other);
+            other = NULL;
+            CHECK(FALSE, "construct second process for reverse cleanup order");
+        }
+    } else {
+        CHECK(FALSE, "allocate second process for reverse cleanup order");
+    }
+    proc_free_owned(pd);
+    if (other_thread)
+        CHECK(aspace_translate(kaspace_backend(kthread_aspace(other_thread)),
+                               (VADDR)(uintptr_t)pd, NULL, NULL),
+              "shared mapping survives first process cleanup");
+    kthread_destroy(other_thread);
+    if (other) {
+        kproc_destroy(other);
+        kfree(other);
+    }
+    CHECK(observer && !kproc_ref_has_basepage(observer),
+          "observer retains identity after threads and process cleanup");
+    kproc_release(observer);
+    same(&s, "non-runnable thread relationships");
+}
+
 static void test_kproc_pending_ownership(void)
 {
     SNAP s;
@@ -3468,6 +3582,7 @@ void x86_64_memtest_run(void)
     test_aspace();
     test_isolation();
     test_process_validation();
+    test_kthread_relationships();
     test_kproc_pending_ownership();
     test_kproc();
     test_kproc_ranges();
