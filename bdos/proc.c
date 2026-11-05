@@ -432,6 +432,25 @@ static void ixterm(PD *r)
 #endif
 }
 
+/* Final process-wide teardown. For a normal exit this runs on the current
+ * syscall stack; that stack is owned and later freed by its launcher. */
+static void proc_release_resources(PD *p, BOOL resident_exit)
+{
+#if CONF_WITH_KPROC
+    release_pd_files(p);
+#endif
+    kproc_destroy(p);
+#if CONF_WITH_PROCMEM
+    if (resident_exit && proc_resident_pd == p) {
+        proc_make_resident(p, proc_resident_len);
+        proc_resident_pd = NULL;
+    }
+#else
+    UNUSED(resident_exit);
+#endif
+    ixterm(p);
+}
+
 
 /*
  * envsize - determine size of env area
@@ -1184,9 +1203,7 @@ void proc_dispose_deferred(PD *p)
 #if CONF_WITH_USER_ASPACE
     proc_dispose_retained(p);
 #else
-    release_pd_files(p);
-    kproc_destroy(p);
-    ixterm(p);
+    proc_release_resources(p, FALSE);
 #endif
 }
 #endif
@@ -1196,9 +1213,7 @@ void proc_dispose_detached(PD *p)
 #if CONF_WITH_USER_ASPACE
     proc_dispose_retained(p);
 #else
-    release_pd_files(p);
-    kproc_destroy(p);
-    ixterm(p);
+    proc_release_resources(p, FALSE);
 #endif
 }
 #endif
@@ -1216,14 +1231,38 @@ void proc_dispose_retained(PD *p)
 void proc_dispose_process(KPROC *process)
 {
     PD *p;
+    UWORD status = 0;
+    BOOL complete;
     if (!kproc_begin_disposal(process, &p))
         return;
+    complete = kproc_pending_completion(process, &status);
 #if CONF_WITH_X86_64_MEMTEST
     x86_64_memtest_disposal_committed(p);
 #endif
-    release_pd_files(p);
-    kproc_destroy(p);
-    ixterm(p);
+    if (complete) {
+        kproc_complete(p, status);
+#if CONF_WITH_NATIVE_SCHED
+        ksched_exiting(p, status);
+#endif
+    }
+    proc_release_resources(p, FALSE);
+#if CONF_WITH_CUIS
+    if (complete)
+        ksched_exited(p);
+#endif
+}
+
+BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)
+{
+#if CONF_WITH_NATIVE_SCHED
+    /* Runnable scheduler integration must account for task completion,
+     * orphaning and its separate stack handoff before using this path. */
+    if (ksched_active())
+        return FALSE;
+#endif
+    if (!kproc_request_completion(process, thread, status))
+        return FALSE;
+    return TRUE;
 }
 #endif
 
@@ -1261,30 +1300,24 @@ void xterm(UWORD rc)
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_begin_exit(p))
+        panic("xterm: process disposal already committed");
+#endif
 #if CONF_WITH_KPROC
     kproc_complete(p, rc);
 #endif
 #if CONF_WITH_NATIVE_SCHED
     ksched_exiting(p, rc);
 #endif
-
 #if CONF_WITH_KPROC
     /* not run->p_parent: that field is in the process's own writable
      * memory, and run->p_dreg[0] is written through the result below */
     run = kproc_get_parent(p);
-    /* the file and directory tables are in the record, which goes next */
-    release_pd_files(p);
 #else
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
 #endif
-    kproc_destroy(p);
-#if CONF_WITH_PROCMEM
-    if (proc_resident_pd == p) {      /* Ptermres, now that nothing maps p */
-        proc_make_resident(p, proc_resident_len);
-        proc_resident_pd = NULL;
-    }
-#endif
-    ixterm(p);
+    proc_release_resources(p, TRUE);
 #if CONF_WITH_CUIS
     /* All process resources are gone. No cleanup can return to the caller
      * through the disk-error handler after making its successor runnable. */

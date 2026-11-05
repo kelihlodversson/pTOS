@@ -222,18 +222,23 @@ disposal waits for the last association before closing files, releasing the
 PD and destroying KPROC. LIVE, DISPOSAL_PENDING, DISPOSING and RETIRED states
 prevent new associations and repeated cleanup once disposal is requested.
 Retries use a retained KPROC identity, not a reusable PD address; the legacy
-PD-based entry point is only for a currently live caller. This is
-not yet the xterm final-execution transition and owns no execution stack. In
-particular, a runnable THREAD must
-keep its process-wide resources and execution mappings usable; the current
-completion snapshot intentionally cannot do so. Once that ownership exists,
-completion must detach publication and record status, then retain resources
-needed by remaining threads. A thread releases its references only after it
-cannot resume and the scheduler has switched away from its execution stack.
-The last live-resource owner may then release process resources and its ASPACE
-reference; identity remains until observers/reap references are gone. Mapping
-metadata and staged-image ownership must be resolved before that sequence can
-be implemented safely. Ring-3 mode 4 no longer requires durable give-back loans.
+PD-based entry point is only for a currently live caller. Normal single-thread
+xterm commits that same disposal state and uses the same resource teardown;
+it still rejects attached threads before doing so.
+
+A non-runnable KTHREAD can transfer an execution resource to a backend
+reclaimer. Stop preserves membership and all references; reap, invoked from a
+safe stack after the continuation cannot resume, reclaims that resource before
+detaching the thread. A started process may complete only through a safe-context
+operation on its sole remaining stopped thread. That operation immediately
+reaps the thread and then publishes status and releases process resources; a
+cancellation does not invent status.
+The native scheduler-active case is explicitly rejected: task completion,
+parent/orphan ownership, notification and stack handoff must be integrated
+before this interface may handle runnable contexts. Its caller must also keep
+the recorded parent identity valid until notification. These are model and
+production-lifecycle tests, not runnable-thread or shared-VM support. Ring-3
+mode 4 no longer requires durable give-back loans.
 
 Generation-based traversal assumes the 64-bit allocation generation counter
 does not wrap during a boot. The existing allocators do not detect wraparound;

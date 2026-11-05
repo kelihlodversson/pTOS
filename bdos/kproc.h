@@ -124,6 +124,12 @@ BOOL kproc_thread_detach(KPROC *process, struct kthread *thread,
                          struct kthread *next);
 /* Borrowed retained process; commit cleanup once or return FALSE. */
 BOOL kproc_begin_disposal(KPROC *process, PD **pd);
+/* Commit the existing single-thread xterm cleanup while lookup owns KPROC. */
+BOOL kproc_begin_exit(PD *pd);
+/* Prepare completion only for the sole stopped association of a started
+ * process; the caller must immediately reap it from a safe context. */
+BOOL kproc_request_completion(KPROC *process, struct kthread *thread, UWORD status);
+BOOL kproc_pending_completion(const KPROC *process, UWORD *status);
 /* Normal xterm is not thread-aware; reject it before any cleanup begins. */
 void kproc_require_no_threads(PD *pd);
 /*

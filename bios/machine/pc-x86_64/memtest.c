@@ -1172,6 +1172,24 @@ static void test_process_validation(void)
 static PD *disposal_test_pd;
 static KPROC *disposal_test_observer;
 static unsigned disposal_test_commits;
+#if CONF_WITH_NATIVE_SCHED
+struct test_thread_execution {
+    KTHREAD_STACK stack;
+    PADDR syscall_stack;
+    unsigned reclaims;
+};
+
+static void test_thread_reclaim(void *resource)
+{
+    struct test_thread_execution *execution = resource;
+    execution->reclaims++;
+    kthread_stack_release(&execution->stack);
+    if (execution->syscall_stack) {
+        kstack_free(execution->syscall_stack);
+        execution->syscall_stack = 0;
+    }
+}
+#endif
 
 void x86_64_memtest_disposal_committed(PD *pd)
 {
@@ -1195,6 +1213,11 @@ static void test_kthread_live_disposal(void)
     WORD pid;
     UWORD status;
     char bytes[4];
+#if CONF_WITH_NATIVE_SCHED
+    struct test_thread_execution execution;
+    BOOL attached;
+    uintptr_t syscall_top;
+#endif
 
     snap(&s);
     pd = new_basepage();
@@ -1221,6 +1244,29 @@ static void test_kthread_live_disposal(void)
         same(&s, "failed deferred-disposal setup");
         return;
     }
+#if CONF_WITH_NATIVE_SCHED
+    bzero(&execution, sizeof(execution));
+    attached = kthread_stack_allocate(&execution.stack);
+    CHECK(attached, "allocate execution stack for safe-context handoff");
+    if (attached) {
+        execution.syscall_stack = kstack_alloc(&syscall_top);
+        CHECK(execution.syscall_stack && syscall_top,
+              "allocate separate syscall stack for safe-context handoff");
+        if (!execution.syscall_stack) {
+            kthread_stack_release(&execution.stack);
+            attached = FALSE;
+        }
+    }
+    if (attached) {
+        attached = kthread_set_execution(a, &execution, test_thread_reclaim);
+        CHECK(attached, "transfer execution stack ownership to thread");
+        if (!attached) {
+            kthread_stack_release(&execution.stack);
+            kstack_free(execution.syscall_stack);
+        }
+    }
+#endif
+    CHECK(!kthread_reap(a), "thread cannot be reclaimed before stop");
     run = pd;
     handle = DISK_CALL(xopen("C:\\X32HELLO.TOS", 0));
     run = saved;
@@ -1234,7 +1280,20 @@ static void test_kthread_live_disposal(void)
     if (handle >= NUMSTD && handle < NUMHANDLES)
         CHECK(sft[handle-NUMSTD].f_own == pd && sft[handle-NUMSTD].f_use,
               "process-owned file remains open while threads remain");
-    kthread_destroy(a);
+    CHECK(kthread_stop(a) && !kthread_stop(a), "thread stop is once-only");
+#if CONF_WITH_NATIVE_SCHED
+    if (attached)
+        CHECK(execution.stack.physical && execution.syscall_stack && !execution.reclaims,
+              "stopping thread retains scheduler and syscall stacks");
+    CHECK(!kthread_set_execution(a, &execution, test_thread_reclaim),
+          "stopped thread rejects new execution resources");
+#endif
+    CHECK(kthread_reap(a), "reclaim stopped thread from safe context");
+#if CONF_WITH_NATIVE_SCHED
+    if (attached)
+        CHECK(!execution.stack.physical && !execution.syscall_stack && execution.reclaims == 1,
+              "safe-context reap frees both stacks once");
+#endif
     if (handle >= NUMSTD && handle < NUMHANDLES) {
         CHECK(kproc_ref_has_basepage(observer) && sft[handle-NUMSTD].f_own == pd,
               "first thread release preserves process resources");
@@ -1243,7 +1302,9 @@ static void test_kthread_live_disposal(void)
         run = saved;
         CHECK(count == sizeof(bytes), "retained process can still read its file");
     }
-    kthread_destroy(b);
+    CHECK(kthread_stop(b), "stop last associated thread");
+    CHECK(kproc_ref_has_basepage(observer), "stopped thread retains live process");
+    CHECK(kthread_reap(b), "last thread reap completes deferred disposal");
     CHECK(disposal_test_commits == 1, "reentrant disposal commits once");
     disposal_test_pd = NULL;
     disposal_test_observer = NULL;
@@ -1267,6 +1328,80 @@ static void test_kthread_live_disposal(void)
     }
     kproc_release(observer);
     same(&s, "thread-retained detached process resources");
+}
+
+struct completion_reclaim {
+    KPROC *observer;
+    unsigned calls;
+};
+
+static void test_completion_reclaim(void *resource)
+{
+    struct completion_reclaim *execution = resource;
+    UWORD status;
+    execution->calls++;
+    CHECK(kproc_ref_has_basepage(execution->observer) &&
+          !kproc_ref_status(execution->observer, &status),
+          "completion remains unpublished while execution resources are reclaimed");
+    proc_dispose_process(execution->observer); /* reentrant request is deferred */
+}
+
+/* Model the final execution handoff without starting a user thread. */
+static void test_kthread_completion(void)
+{
+    SNAP s;
+    PD *pd;
+    void *env;
+    KPROC *observer;
+    KTHREAD *a, *b;
+    UWORD status;
+    struct completion_reclaim execution;
+
+    snap(&s);
+    pd = new_basepage();
+    if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env);
+    set_owner(pd, pd);
+    set_owner(env, pd);
+    CHECK(kproc_prepare_user(pd, run), "prepare final-completion process");
+    kproc_set_parent(pd, run);
+    observer = kproc_retain(pd);
+    a = kthread_create(pd);
+    b = kthread_create(pd);
+    CHECK(observer && a && b, "construct completion associations");
+    if (!observer || !a || !b) {
+        kthread_destroy(a);
+        kthread_destroy(b);
+        proc_dispose_retained(pd);
+        kproc_release(observer);
+        same(&s, "failed completion setup");
+        return;
+    }
+    CHECK(kthread_stop(a), "stop first thread before completion preflight");
+    CHECK(!kthread_complete(a, 37),
+          "unstarted process cannot publish an exit status");
+    kproc_mark_started(pd); /* simulate a process that has executed */
+    CHECK(!kthread_complete(a, 37),
+          "live sibling prevents process completion");
+    CHECK(kthread_reap(a), "reap first stopped thread");
+    CHECK(!kproc_ref_status(observer, &status) && kproc_ref_has_basepage(observer),
+          "first thread exit preserves live process and unpublished status");
+    execution.observer = observer;
+    execution.calls = 0;
+    CHECK(kthread_set_execution(b, &execution, test_completion_reclaim),
+          "transfer final execution resource");
+    CHECK(kthread_stop(b), "stop final thread before completion request");
+    CHECK(!kproc_ref_status(observer, &status) && kproc_ref_has_basepage(observer),
+          "stopped thread retains resources until safe reap");
+    CHECK(kthread_complete(b, 37), "complete and reap final stopped thread");
+    CHECK(execution.calls == 1, "final execution resource reclaimed once");
+    CHECK(kproc_ref_status(observer, &status) && status == 37 &&
+          !kproc_ref_has_basepage(observer), "final reap publishes one process status");
+    proc_dispose_process(observer);
+    CHECK(kproc_ref_status(observer, &status) && status == 37,
+          "retired identity ignores repeated final cleanup");
+    kproc_release(observer);
+    same(&s, "final thread completion and process resources");
 }
 
 /* Non-runnable identities exercise actual KPROC membership and active-space
@@ -1584,6 +1719,8 @@ static void test_kproc(void)
     kproc_complete(pds[0], 42);
     CHECK(kproc_ref_has_basepage(retained) && kproc_ref_status(retained, &status),
           "completion may precede basepage release");
+    CHECK(kproc_begin_exit(pds[0]) && !kproc_begin_exit(pds[0]),
+          "normal exit commits process cleanup once");
     kproc_destroy(pds[0]);
     kfree(pds[0]);
     pds[0] = NULL;
@@ -3702,6 +3839,7 @@ void x86_64_memtest_run(void)
     test_process_validation();
     test_kthread_relationships();
     test_kthread_live_disposal();
+    test_kthread_completion();
     test_kproc_pending_ownership();
     test_kproc();
     test_kproc_ranges();

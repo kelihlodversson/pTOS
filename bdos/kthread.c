@@ -12,7 +12,11 @@ struct kthread {
     KPROC *process;             /* owning identity reference */
     KASPACE *space;             /* owning mapping reference */
     KTHREAD *process_next;      /* borrowed process membership */
+    void *execution;
+    void (*reclaim_execution)(void *);
+    UBYTE state;
 };
+enum { THREAD_NEW, THREAD_STOPPED, THREAD_REAPING };
 
 /* Never reuse a TID during a boot. Exhaustion fails closed. */
 static ULONG last_tid;
@@ -36,6 +40,9 @@ KTHREAD *kthread_create(PD *pd)
     thread = kalloc(sizeof(*thread));
     if (!thread)
         return NULL;
+    thread->execution = NULL;
+    thread->reclaim_execution = NULL;
+    thread->state = THREAD_NEW;
     if (!kproc_thread_attach(pd, thread, &thread->process, &thread->space,
                              &thread->process_next)) {
         kfree(thread);
@@ -55,12 +62,38 @@ KTHREAD *kthread_create(PD *pd)
     return thread;
 }
 
-void kthread_destroy(KTHREAD *thread)
+BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void *))
+{
+    if (!thread || thread->state != THREAD_NEW || thread->reclaim_execution ||
+        !resource || !reclaim)
+        return FALSE;
+    thread->execution = resource;
+    thread->reclaim_execution = reclaim;
+    return TRUE;
+}
+
+BOOL kthread_stop(KTHREAD *thread)
+{
+    if (!thread || thread->state != THREAD_NEW)
+        return FALSE;
+    thread->state = THREAD_STOPPED;
+    return TRUE;
+}
+
+BOOL kthread_is_stopped(const KTHREAD *thread)
+{
+    return thread && thread->state == THREAD_STOPPED;
+}
+
+BOOL kthread_reap(KTHREAD *thread)
 {
     BOOL dispose;
     KPROC *process;
-    if (!thread)
-        return;
+    if (!thread || thread->state != THREAD_STOPPED)
+        return FALSE;
+    thread->state = THREAD_REAPING;
+    if (thread->reclaim_execution)
+        thread->reclaim_execution(thread->execution);
     process = thread->process;
     dispose = kproc_thread_detach(process, thread, thread->process_next);
     kaspace_put(thread->space);
@@ -68,6 +101,23 @@ void kthread_destroy(KTHREAD *thread)
     if (dispose)
         proc_dispose_process(process);
     kproc_release(process);
+    return TRUE;
+}
+
+BOOL kthread_complete(KTHREAD *thread, UWORD status)
+{
+    if (!thread || thread->state != THREAD_STOPPED ||
+        !proc_prepare_completion(thread->process, thread, status))
+        return FALSE;
+    return kthread_reap(thread);
+}
+
+void kthread_destroy(KTHREAD *thread)
+{
+    if (!thread)
+        return;
+    kthread_stop(thread);
+    kthread_reap(thread);
 }
 
 ULONG kthread_tid(const KTHREAD *thread) { return thread ? thread->tid : 0; }

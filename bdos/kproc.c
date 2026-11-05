@@ -95,6 +95,8 @@ struct kproc {
     KASPACE *active_space; /* owning reference, NULL until prepared */
     KTHREAD *threads;     /* non-owning; non-runnable associations only */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
+    BOOL completion_pending;
+    UWORD pending_status;
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
 #if CONF_WITH_NATIVE_SCHED
     PD *async_parent;           /* stable controller for exit, not logical PPID */
@@ -385,6 +387,33 @@ BOOL kproc_begin_disposal(KPROC *process, PD **pd)
     process->disposal_state = PROCESS_DISPOSING;
     *pd = process->pd;
     return *pd != NULL;
+}
+
+BOOL kproc_begin_exit(PD *pd)
+{
+    PD *claimed;
+    return kproc_begin_disposal(kproc_find(pd), &claimed) && claimed == pd;
+}
+
+BOOL kproc_request_completion(KPROC *process, KTHREAD *thread, UWORD status)
+{
+    if (!process || !process->started || !thread || process->threads != thread ||
+        *kthread_next_link(thread) || !kthread_is_stopped(thread) ||
+        process->completed || process->disposal_state != PROCESS_LIVE)
+        return FALSE;
+    process->completion_pending = TRUE;
+    process->pending_status = status;
+    process->disposal_state = PROCESS_DISPOSAL_PENDING;
+    return TRUE;
+}
+
+BOOL kproc_pending_completion(const KPROC *process, UWORD *status)
+{
+    if (!process || !process->completion_pending)
+        return FALSE;
+    if (status)
+        *status = process->pending_status;
+    return TRUE;
 }
 
 void kproc_require_no_threads(PD *pd)

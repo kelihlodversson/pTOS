@@ -39,6 +39,11 @@ struct kproc;
 /* Identity-based request: a retained identity is safe even after PD reuse.
  * Final cleanup must run from a safe execution stack. */
 void proc_dispose_process(struct kproc *process);
+struct kthread;
+/* Internal preparation for kthread_complete(), which immediately reaps the
+ * sole stopped association. The caller must ensure the recorded parent is
+ * valid; native scheduler integration is rejected while it is active. */
+BOOL proc_prepare_completion(struct kproc *process, struct kthread *thread, UWORD status);
 #endif
 WORD xtermres(long blkln, WORD rc);
 

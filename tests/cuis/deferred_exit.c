@@ -18,6 +18,7 @@ static BOOL owner_record, child_record, owner_memory, nested, returned_error;
 static unsigned references[4], directories, close_errors, injected, attempts;
 static unsigned fail_handle, invalidations, term_handlers, completions;
 static unsigned successor_aliases, explicit_open;
+static unsigned identity_completions, cleanup_commits;
 static jmp_buf exit_resume;
 
 jmp_buf errbuf;
@@ -57,7 +58,8 @@ PD *kproc_get_parent(PD *p) { CHECK(p == &owner && owner_record); return &parent
 WORD kproc_pid(PD *p) { CHECK(p == &owner && owner_record); return 11; }
 void kproc_complete(PD *p, UWORD status)
 {
-    CHECK(p == &owner && owner_record && status == 37);
+    CHECK(p == &owner && owner_record && status == 37 && cleanup_commits == 1);
+    CHECK(!identity_completions++);
     still_deferred();
 }
 void kproc_usage(PD *p, ULONG usage[8])
@@ -81,8 +83,16 @@ BOOL kproc_unlaunched(PD *p) { return p == &child && child_record; }
 KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
 void kproc_release(KPROC *p) { (void)p; }
 BOOL kproc_begin_disposal(KPROC *p, PD **pd) { *pd = (PD *)p; return TRUE; }
+BOOL kproc_pending_completion(const KPROC *p, UWORD *status) { (void)p; (void)status; return FALSE; }
+BOOL kproc_begin_exit(PD *p)
+{
+    CHECK(p == &owner && owner_record && !identity_completions && !attempts);
+    CHECK(!cleanup_commits++);
+    return TRUE;
+}
 void kproc_require_no_threads(PD *p) { (void)p; }
 void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
+void panic(const char *fmt, ...) { (void)fmt; abort(); }
 BOOL kproc_discard(PD *p)
 {
     still_deferred();
@@ -141,6 +151,7 @@ void termuser(void)
 {
     CHECK(run == &parent && parent.p_dreg[0] == 37);
     CHECK(!owner_record && !child_record && !owner_memory && term_handlers == 1);
+    CHECK(identity_completions == 1 && cleanup_commits == 1);
     CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner);
     CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner == &other);
     CHECK(completions == (unsigned)nested);
@@ -182,6 +193,7 @@ static void exit_check(void)
     for (i = 3; i <= 5; i++) dirtbl[i].use = 1;
     owner_record = child_record = owner_memory = TRUE;
     directories = injected = invalidations = attempts = term_handlers = completions = 0;
+    identity_completions = cleanup_commits = 0;
     run = &owner;
     if (!setjmp(exit_resume)) {
         /* Returning to osif's disk-error handler would resume the caller. */
