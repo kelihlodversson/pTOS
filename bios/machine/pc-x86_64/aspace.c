@@ -26,6 +26,9 @@
 #include "pgtable.h"
 #include "pmem.h"
 #include "pc_x86_64_memory.h"
+#if CONF_WITH_X86_64_MEMTEST
+#include "pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_MMAP
 #include "../../../bdos/fileback.h"
 #endif
@@ -886,6 +889,18 @@ void kstack_free(PADDR phys)
     if (phys)
         x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);
 }
+
+#if CONF_WITH_X86_64_MEMTEST
+BOOL x86_64_memtest_kstack_contains(UQUAD phys, UQUAD address)
+{
+    UQUAD base = X86_64_PHYS_MAP_BASE + phys;
+    return address >= base && address < base + X86_64_KSTACK_PAGES * X86_64_PAGE_SIZE;
+}
+UQUAD x86_64_memtest_kstack_bytes(void)
+{
+    return X86_64_KSTACK_PAGES * X86_64_PAGE_SIZE;
+}
+#endif
 
 /*
  * Supervisor-only access to someone else's process blocks, for exactly as long

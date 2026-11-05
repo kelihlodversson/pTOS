@@ -32,9 +32,16 @@ task stacks. Finished task stacks are reclaimed by the scheduler root context,
 not by the task. These stacks have different continuations and lifetimes from
 KPROC's syscall stack; unification needs proof, not a field rename.
 
-xterm() calls ksched_exiting() before process resources disappear, releases
-files, destroys KPROC, and only then invokes ksched_exited() for deferred CUIS
-handoff. Observed launch binds the CUIS child token before publication; child
+x32 user-process xterm() records a retained KPROC identity, status and optional
+residency request in its launcher continuation. It switches away through
+termuser() without destroying the process. The launcher restores its own stack
+and address space, frees the transferred syscall stack, commits the handoff,
+calls ksched_exiting(), releases process resources and only then invokes
+ksched_exited() for deferred CUIS handoff. Kernel/ROM launches and other
+architectures keep their legacy exit path. The scheduler task stack remains
+separate and is reclaimed later by scheduler root. Tracked deferred owners also
+retain their KPROC identities so successor activation cannot be redirected by
+PD reuse. Observed launch binds the CUIS child token before publication; child
 completion, console and session ownership must survive any refactor. Faults,
 orphaning, nested synchronous launches and deferred successors share these
 paths. The launcher and scheduler retain borrowed PD identities only within
@@ -222,9 +229,10 @@ disposal waits for the last association before closing files, releasing the
 PD and destroying KPROC. LIVE, DISPOSAL_PENDING, DISPOSING and RETIRED states
 prevent new associations and repeated cleanup once disposal is requested.
 Retries use a retained KPROC identity, not a reusable PD address; the legacy
-PD-based entry point is only for a currently live caller. Normal single-thread
-xterm commits that same disposal state and uses the same resource teardown;
-it still rejects attached threads before doing so.
+PD-based entry point is only for a currently live caller. Normal x32 user exit
+reserves an exit-handoff state and commits disposal from its launcher; other
+single-thread exits commit directly. Both use the same resource teardown and
+still reject attached threads before doing so.
 
 A non-runnable KTHREAD can transfer an execution resource to a backend
 reclaimer. Stop preserves membership and all references; reap, invoked from a

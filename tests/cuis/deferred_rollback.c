@@ -63,6 +63,8 @@ void procmem_free_owned(const void *owner, void (*before)(void *))
     allocations = 0;
     disposals++;
 }
+void procmem_keep(const void *p, ULONG bytes, void (*before)(void *))
+{ (void)p; (void)bytes; (void)before; abort(); }
 SBYTE *kproc_uft(PD *p) { CHECK(p == &parent || (p == &image && records)); return p == &parent ? parent_files : child_files; }
 void kproc_standard_file_refs(ULONG *refs)
 {

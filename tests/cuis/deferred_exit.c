@@ -97,6 +97,8 @@ BOOL kproc_begin_exit(PD *p)
 }
 void kproc_require_no_threads(PD *p) { (void)p; }
 void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
+BOOL x86_64_defer_exit(PD *p, UWORD status, BOOL resident, ULONG len)
+{ (void)p; (void)status; (void)resident; (void)len; return FALSE; }
 void kthread_destroy(KTHREAD *thread)
 {
     CHECK(thread == (KTHREAD *)&successor && tasks[1].state == TASK_DEFERRED);

@@ -129,6 +129,9 @@ BOOL kproc_thread_detach(KPROC *process, struct kthread *thread,
                          struct kthread *next);
 /* Borrowed retained process; commit cleanup once or return FALSE. */
 BOOL kproc_begin_disposal(KPROC *process, PD **pd);
+/* Reserve a single-thread launcher handoff; only its owner can commit it. */
+BOOL kproc_prepare_exit_handoff(KPROC *process);
+BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd);
 /* Commit the existing single-thread xterm cleanup while lookup owns KPROC. */
 BOOL kproc_begin_exit(PD *pd);
 /* Prepare completion only for the sole stopped association of a started

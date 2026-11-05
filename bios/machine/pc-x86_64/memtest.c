@@ -51,6 +51,8 @@
 #include "../../../bdos/arch/x86_64/kthread_context.h"
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
+#include "../../../bdos/kthread.h"
+#include "../../../bdos/proc.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
 #include "ksched.h"
@@ -168,6 +170,42 @@ static int failures;
             failures++; \
         } \
     } while (0)
+
+static BOOL exit_handoff_watch;
+static ULONG exit_handoff_stages[4];
+static UQUAD exit_handoff_free_before;
+
+void x86_64_memtest_exit_handoff(KPROC *process, PD *pd, UQUAD stack_phys,
+                                UWORD status, UWORD stage)
+{
+    UQUAD rsp;
+    UWORD recorded;
+    if (!exit_handoff_watch) return;
+    CHECK(stage < ARRAY_SIZE(exit_handoff_stages), "valid exit handoff stage");
+    if (stage >= ARRAY_SIZE(exit_handoff_stages)) return;
+    __asm__ volatile ("movq %%rsp,%0" : "=r"(rsp));
+    CHECK(x86_64_memtest_kstack_contains(stack_phys, rsp) == (stage == 0),
+          "exit finalization runs away from the child syscall stack");
+    if (stage == 1) exit_handoff_free_before = pmem_free_bytes();
+    if (stage == 2)
+        CHECK(pmem_free_bytes() == exit_handoff_free_before + x86_64_memtest_kstack_bytes(),
+              "the child syscall stack is released exactly once");
+    if (stage < 3) {
+        CHECK(kproc_ref_has_basepage(process) && kproc_user_aspace(pd),
+              "exit handoff retains process and mappings until finalization");
+        if (!stage) {
+            CHECK(!kthread_create(pd), "exit handoff rejects new thread associations");
+            proc_dispose_process(process);
+            CHECK(kproc_ref_has_basepage(process) && kproc_user_aspace(pd),
+                  "reentrant disposal cannot commit a pending exit handoff");
+        }
+    } else {
+        CHECK(!kproc_ref_has_basepage(process) &&
+              kproc_ref_status(process, &recorded) && recorded == status,
+              "exit finalization publishes the retained status once");
+    }
+    exit_handoff_stages[stage]++;
+}
 
 /* Everything that must be exactly the same before and after a cycle. */
 typedef struct {
@@ -1166,8 +1204,6 @@ static void test_process_validation(void)
 
 /* Exercise the production pending/active ownership transition and unwind. */
 #include "../../../bdos/kaspace.h"
-#include "../../../bdos/kthread.h"
-#include "../../../bdos/proc.h"
 
 static PD *disposal_test_pd;
 static KPROC *disposal_test_observer;
@@ -3323,6 +3359,10 @@ static void test_ring3(void)
     probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");
     probe_expect('p', 0xffff, "a privileged instruction in ring 3 is contained");
     probe_expect('e', 0, "a process runs normally after the faults");
+    snap(&s);
+    x86_64_memtest_fail_next_exit_handoff();
+    CHECK(run_probe('e') == 0, "failed exit handoff preserves legacy termination");
+    same(&s, "failed exit handoff rollback");
 
     /*
      * A ring-3 process runs another from inside its own system call
@@ -3338,8 +3378,18 @@ static void test_ring3(void)
 
         snap(&s);
         cpustate(&before);
+        bzero(exit_handoff_stages, sizeof(exit_handoff_stages));
+        exit_handoff_watch = TRUE;
         rc = run_probe('n');
+        exit_handoff_watch = FALSE;
         cpustate(&after);
+        if (rc != 0x100) {
+            CHECK(exit_handoff_stages[0] >= 2 &&
+                  exit_handoff_stages[0] == exit_handoff_stages[1] &&
+                  exit_handoff_stages[1] == exit_handoff_stages[2] &&
+                  exit_handoff_stages[2] == exit_handoff_stages[3],
+                  "nested launches transfer and finalize each syscall stack once");
+        }
         CHECK(run == me, "the launcher is the current process again after a nested launch");
         CHECK(after.cr3 == before.cr3 && after.gs == before.gs && after.kernel_gs == before.kernel_gs,
               "CR3 and the GS bases are back after a nested launch");

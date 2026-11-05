@@ -50,7 +50,8 @@ enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
        UH_LOADED = 1,           /* a program Pexec(PE_LOAD) loaded for a child, until PE_GO */
        UH_IMAGE = 2,            /* the image of this very process, moved here by PE_GO */
        UH_LENT = 3 };           /* the image of a PE_GO child, lent to it until it ends */
-enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_DISPOSING, PROCESS_RETIRED };
+enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
+       PROCESS_DISPOSING, PROCESS_RETIRED };
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -383,7 +384,8 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
 
 BOOL kproc_begin_disposal(KPROC *process, PD **pd)
 {
-    if (!process || process->disposal_state >= PROCESS_DISPOSING)
+    if (!process || process->disposal_state == PROCESS_EXIT_HANDOFF ||
+        process->disposal_state >= PROCESS_DISPOSING)
         return FALSE;
     if (process->threads) {
         process->disposal_state = PROCESS_DISPOSAL_PENDING;
@@ -392,6 +394,25 @@ BOOL kproc_begin_disposal(KPROC *process, PD **pd)
     process->disposal_state = PROCESS_DISPOSING;
     *pd = process->pd;
     return *pd != NULL;
+}
+
+BOOL kproc_prepare_exit_handoff(KPROC *process)
+{
+    if (!process || process->disposal_state != PROCESS_LIVE ||
+        process->completed || process->threads || !process->pd)
+        return FALSE;
+    process->disposal_state = PROCESS_EXIT_HANDOFF;
+    return TRUE;
+}
+
+BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd)
+{
+    if (!process || process->disposal_state != PROCESS_EXIT_HANDOFF ||
+        process->threads || !process->pd)
+        return FALSE;
+    process->disposal_state = PROCESS_DISPOSING;
+    *pd = process->pd;
+    return TRUE;
 }
 
 BOOL kproc_begin_exit(PD *pd)

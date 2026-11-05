@@ -1252,6 +1252,34 @@ void proc_dispose_process(KPROC *process)
 #endif
 }
 
+#if ARCH_X86_64
+/* The launcher calls this only after leaving the child's syscall stack and
+ * restoring its own address space. The retained identity owns no stack. */
+void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len)
+{
+    PD *p;
+    if (!kproc_commit_exit_handoff(process, &p))
+        panic("x86-64: invalid exit handoff");
+    kproc_complete(p, status);
+#if CONF_WITH_NATIVE_SCHED
+    ksched_exiting(p, status);
+#endif
+#if CONF_WITH_PROCMEM
+    if (resident) {
+        proc_resident_pd = p;
+        proc_resident_len = resident_len;
+    }
+#else
+    UNUSED(resident);
+    UNUSED(resident_len);
+#endif
+    proc_release_resources(p, TRUE);
+#if CONF_WITH_CUIS
+    ksched_exited_identity(process, p);
+#endif
+}
+#endif
+
 BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)
 {
 #if CONF_WITH_NATIVE_SCHED
@@ -1300,6 +1328,26 @@ void xterm(UWORD rc)
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
+#if ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    {
+        BOOL resident = FALSE;
+        ULONG resident_len = 0;
+#if CONF_WITH_PROCMEM
+        if (proc_resident_pd == p) {
+            resident = TRUE;
+            resident_len = proc_resident_len;
+        }
+#endif
+        if (x86_64_defer_exit(p, rc, resident, resident_len)) {
+#if CONF_WITH_PROCMEM
+            if (resident) proc_resident_pd = NULL;
+#endif
+            run = kproc_get_parent(p);
+            run->p_dreg[0] = rc;
+            termuser();
+        }
+    }
+#endif
 #if CONF_WITH_USER_ASPACE
     if (!kproc_begin_exit(p))
         panic("xterm: process disposal already committed");

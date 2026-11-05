@@ -27,6 +27,7 @@ typedef struct {
     KPROC *process;              /* retained identity, including after exit */
 #if CONF_WITH_CUIS
     PD *deferred_owner;
+    KPROC *deferred_owner_identity; /* owning identity, not parent resources */
     KTHREAD *deferred_thread;   /* non-runnable until successor activation */
 #endif
     WORD pid, signal;
@@ -164,21 +165,33 @@ void ksched_exiting(PD *pd, UWORD result)
 #if CONF_WITH_CUIS
 /* The record and allocations have gone. Compare the old identity only;
  * neither the exiting process nor its cleanup can resume after this hook. */
-void ksched_exited(PD *pd)
+static void activate_successors(KPROC *process, PD *pd, BOOL use_identity)
 {
     UWORD i;
     if (!scheduler.active) return;
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state == TASK_DEFERRED && task->deferred_owner == pd) {
+        if (task->state == TASK_DEFERRED && task->deferred_owner == pd &&
+            (!use_identity || !task->deferred_owner_identity ||
+             task->deferred_owner_identity == process)) {
             if (task->deferred_thread) {
                 kthread_destroy(task->deferred_thread);
                 task->deferred_thread = NULL;
             }
+            if (task->deferred_owner_identity)
+                kproc_release(task->deferred_owner_identity);
+            task->deferred_owner_identity = NULL;
             task->deferred_owner = NULL;
             task->state = TASK_NEW;
         }
     }
+}
+
+void ksched_exited(PD *pd) { activate_successors(NULL, pd, FALSE); }
+
+void ksched_exited_identity(KPROC *process, PD *pd)
+{
+    activate_successors(process, pd, TRUE);
 }
 #endif
 
@@ -271,6 +284,7 @@ static void discard_deferred(KERNEL_TASK *task)
     PD *program = task->program;
 #endif
     KPROC *process = task->process;
+    KPROC *owner = task->deferred_owner_identity;
     KTHREAD *thread = task->deferred_thread;
     KTHREAD_STACK stack = kthread_stack_detach(&task->execution.stack);
     /* It never entered user mode; resource ownership is already the child's.
@@ -283,6 +297,7 @@ static void discard_deferred(KERNEL_TASK *task)
 #endif
     if (thread) kthread_destroy(thread);
     kproc_release(process);
+    if (owner) kproc_release(owner);
     kthread_stack_release(&stack);
 }
 LONG ksched_defer_cancel(void)
@@ -352,6 +367,14 @@ LONG ksched_spawn(PD *pd)
             kthread_stack_release(&task->execution.stack);
             memset(task, 0, sizeof(*task));
             return ENSMEM; /* caller disposes the prepared child */
+        }
+        task->deferred_owner_identity = kproc_retain(run);
+        if (!task->deferred_owner_identity && kproc_pid(run)) {
+            kthread_destroy(task->deferred_thread);
+            kproc_release(task->process);
+            kthread_stack_release(&task->execution.stack);
+            memset(task, 0, sizeof(*task));
+            return ENSMEM;
         }
     }
 #endif
