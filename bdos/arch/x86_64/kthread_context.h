@@ -5,10 +5,10 @@
 #include "emutos.h"
 #include "process.h"
 
-/* This is an embedded compatibility bridge, not a public TID or independently
- * owned thread yet. Its token is never a PID. The scheduler owns its dispatch
- * stack and must reclaim it from the root context after the task stops. The
- * process syscall stack remains separate and is reclaimed by its launcher. */
+/* Embedded backend for a generic KTHREAD. Its private continuation token is
+ * neither PID nor TID. The KTHREAD owns this dispatch stack through a backend
+ * reclaimer; the scheduler invokes reap from root after the task stops. The
+ * syscall stack remains separately owned and reclaimed by the gouser launcher. */
 typedef struct {
     UQUAD physical, top;
 } KTHREAD_STACK;

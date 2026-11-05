@@ -336,3 +336,69 @@ boundary; it does not emulate ARM/m68k exception instructions or arbitrary
 private longjmp recovery. Native suites exercise real normal/fault/resident
 traps and safe-stack assertions. KTHREAD remains non-runnable; #892/#893/#894
 boundaries are unchanged.
+
+
+Phase 3 first checkpoint: persistent x32 scheduler KTHREAD
+---------------------------------------------------------
+The preceding Phase 2 checkpoints describe the merged baseline. On x32 native
+scheduler builds, the following now replaces the temporary deferred-only THREAD
+association. ARM/m68k retain the Phase 2 single-thread launcher behavior.
+
+Construction: allocate KERNEL_TASK/backend scheduler stack and retain a KPROC
+observer identity. Prepare the child's existing image/ASPACE using the existing
+loader APIs, constructing the optional KTHREAD inside that transaction before
+any irreversible staged-image move. The serialized constructor temporarily
+borrows the preparing space through KPROC, then hides it until preparation
+commits; the THREAD has no backend and cannot start during this interval.
+Preparation failure destroys the unpublished association before its owner space.
+For already prepared groups, create the KTHREAD before dispatch. Transfer backend
+scheduler-stack reclamation to that THREAD. Failure before publication destroys
+only unpublished THREADs, releases each stack once and leaves the child with
+its caller. The observer identity is for task accounting and zombies; it is
+not an independent execution-stack owner.
+
+Deferred, ready and blocked are scheduler policy states, not new THREADs.
+Deferred activation releases the predecessor observer, preserves the successor
+KTHREAD/TID and makes the task ready. Dispatch marks that same KTHREAD executing;
+blocking/yielding preserves it and the existing CPU/FPU/continuation backend.
+No new dispatcher or CPU startup frame is introduced.
+
+Exit (only the existing one-runnable-thread-per-process compatibility case):
+1. xterm admits only the scheduler-owned, sole executing THREAD of this exact
+   process. Non-runnable siblings and unsupported associations remain guarded.
+2. proc_defer_exit retains the child identity and reserves its normal launcher
+   exit handoff. No cleanup or THREAD detachment occurs on the child stack.
+3. termuser abandons the child syscall continuation. Its launcher restores its
+   execution context, frees that separately transferred syscall stack once and
+   restores the launcher address-space root, as in Phase 2.
+4. ksched_finish_exit stops and detaches the sole KTHREAD membership from this
+   safe launcher. THREAD still retains KPROC identity, KASPACE and the scheduler
+   stack. proc_finalize_exit remains the single PROCESS cleanup/completion path;
+   kthread_complete is not used by the native scheduler. Existing synchronous,
+   async wait, fault, resident and CUIS notification policies remain in place.
+5. task_entry finishes accounting and abandons its cooperative continuation.
+   Only the root loop reaps the stopped KTHREAD, whose backend callback frees
+   the scheduler stack. Final THREAD references then release KASPACE and KPROC.
+   A zombie retains only the separate observer identity until existing wait/reap.
+
+A refused start stops without inventing process completion; disposal waits for
+root reap. Deferred cancellation unpublishes the slot before cleanup callbacks,
+keeps backend storage intact through the THREAD reclaimer, and never runs the
+child. Reentrant cancellation cannot target or recycle that slot during cleanup.
+An attached execution cannot use xterm's legacy in-context fallback: inability
+to establish its verified launcher handoff fails closed. The injected legacy
+fallback test runs in an unassociated nested synchronous child instead.
+
+This supports existing loaded x32 scheduler tasks, not functional Pclone or
+additional runnable siblings. Entry/stack leases, trusted proc_clone, public
+clone flags/results and independent CPU/FPU startup remain later #892 slices.
+Thread/group termination is #893, generic waits #909, shared-VM Pexec #894,
+preemption/non-MMU/other scheduler backends #713, TLS #908. All mutations still
+require serialized cooperative process context; these are not SMP-safe APIs.
+
+Production memtest assertions check stable TID/process identity at preparation,
+activation, dispatch, launcher detachment and root reap, plus actual stack
+addresses at entry/finalization/reclamation. Partial two-task association failure
+and all existing allocation/fault/notification/resource-baseline tests exercise
+rollback. Host deferred fixtures check callback ownership and exactly-once reap;
+physical-stack assertions run under QEMU, not in those mocked host fixtures.

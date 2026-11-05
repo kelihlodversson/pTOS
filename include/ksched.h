@@ -14,6 +14,13 @@ LONG ksched_run(PD * const *programs, UWORD count, LONG *results);
  * Success consumes the launch and returns its full synchronous exit status. */
 LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result);
 BOOL ksched_active(void);
+struct kthread;
+struct kproc;
+/* Borrow the current task identity only for its own process, never a nested
+ * synchronous child. Finish is called off the child syscall stack, before
+ * the common PROCESS finalizer; task-stack reclamation remains root-only. */
+struct kthread *ksched_exit_thread(PD *pd);
+void ksched_finish_exit(struct kproc *process, PD *pd);
 /* Saved with kernel process contexts, including legacy AES coroutines.
  * Zero is unmanaged; identities are never reused, even across groups. */
 UQUAD ksched_context_id(void);

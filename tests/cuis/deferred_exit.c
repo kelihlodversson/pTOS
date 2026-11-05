@@ -96,6 +96,8 @@ BOOL kproc_begin_exit(PD *p)
     return TRUE;
 }
 void kproc_require_no_threads(PD *p) { (void)p; }
+void kproc_require_exit_thread(PD *p, KTHREAD *thread) { (void)p; CHECK(!thread); }
+BOOL kthread_is_executing(const KTHREAD *thread) { (void)thread; return FALSE; }
 void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
 BOOL proc_defer_exit(PD *p, UWORD status, BOOL resident, ULONG len)
 { (void)p; (void)status; (void)resident; (void)len; return FALSE; }
@@ -165,7 +167,7 @@ void termuser(void)
     CHECK(!owner_record && !child_record && !owner_memory && term_handlers == 1);
     CHECK(identity_completions == 1 && cleanup_commits == 1);
     CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner);
-    CHECK(!tasks[1].deferred_thread && thread_destroys == 1);
+    CHECK(tasks[1].thread == (KTHREAD *)&successor && !thread_destroys);
     CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner == &other);
     CHECK(completions == (unsigned)(nested && !parent_retired));
     CHECK(references[0] == successor_aliases && sft[0].f_use == (int)successor_aliases);
@@ -183,7 +185,7 @@ static void exit_check(void)
     tasks[0].program = nested ? &parent : &owner;
     tasks[0].state = TASK_RUNNING; tasks[0].asynchronous = TRUE;
     tasks[1].program = &successor; tasks[1].deferred_owner = &owner; tasks[1].state = TASK_DEFERRED;
-    tasks[1].deferred_thread = (KTHREAD *)&successor;
+    tasks[1].thread = (KTHREAD *)&successor;
     tasks[2].deferred_owner = &other; tasks[2].state = TASK_DEFERRED;
     memset(owner_files,0,sizeof(owner_files));
     memset(successor_files,0,sizeof(successor_files));

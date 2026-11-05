@@ -207,6 +207,31 @@ void x86_64_memtest_exit_handoff(KPROC *process, PD *pd, UQUAD stack_phys,
     exit_handoff_stages[stage]++;
 }
 
+#if CONF_WITH_NATIVE_SCHED
+static ULONG task_thread_stages[8];
+void x86_64_memtest_task_thread(KTHREAD *thread, UQUAD stack_phys, UWORD stage)
+{
+    UQUAD rsp;
+    CHECK(stage < ARRAY_SIZE(task_thread_stages), "valid task THREAD ownership stage");
+    if (stage >= ARRAY_SIZE(task_thread_stages)) return;
+    __asm__ volatile ("movq %%rsp,%0" : "=r"(rsp));
+    CHECK(x86_64_memtest_kstack_contains(stack_phys, rsp) == (stage == 2 || stage == 3),
+          "only task entry and launcher handoff execute on the scheduler stack");
+    if (stage != 7) {
+        CHECK(thread && kthread_tid(thread) && kthread_process(thread) && kthread_aspace(thread),
+              "each managed execution retains independent THREAD/PROCESS/ASPACE identity");
+        CHECK(kthread_is_executing(thread) == (stage == 1 || stage == 2),
+              "task dispatch and generic THREAD execution lifetime agree");
+        CHECK(kthread_is_stopped(thread) == (stage == 3 || stage == 4),
+              "task can only be reaped after a stopped launcher handoff");
+        if (stage == 3)
+            CHECK(kproc_ref_has_basepage(kthread_process(thread)),
+                  "launcher stops THREAD before final PROCESS cleanup");
+    }
+    task_thread_stages[stage]++;
+}
+#endif
+
 /* Everything that must be exactly the same before and after a cycle. */
 typedef struct {
     UQUAD pmem_free;
@@ -1316,6 +1341,7 @@ static void test_kthread_live_disposal(void)
     if (handle >= NUMSTD && handle < NUMHANDLES)
         CHECK(sft[handle-NUMSTD].f_own == pd && sft[handle-NUMSTD].f_use,
               "process-owned file remains open while threads remain");
+    CHECK(!kthread_start(a), "disposal-pending process cannot start a prepared execution");
     CHECK(kthread_stop(a) && !kthread_stop(a), "thread stop is once-only");
 #if CONF_WITH_NATIVE_SCHED
     if (attached)
@@ -1472,6 +1498,7 @@ static void test_kthread_relationships(void)
     b = kthread_create(pd);
     CHECK(observer && a && b, "construct two non-runnable threads");
     if (a && b) {
+        CHECK(!kthread_start(a), "THREAD cannot start without an owned execution backend");
         first_tid = kthread_tid(a);
         CHECK(first_tid && kthread_tid(b) && first_tid != kthread_tid(b),
               "thread identities are distinct");
@@ -3017,6 +3044,22 @@ static void test_async_processes(void)
             same(&s, "ordinary launch group allocation failure unwinds completely");
         }
     }
+    snap(&s);
+    rc = Pexec(PE_LOAD, "C:\\X32HELLO.TOS", "", environment);
+    CHECK(rc > 0, "load consuming launch THREAD-construction failure fixture");
+    if (rc > 0) {
+        program = (PD *)(uintptr_t)rc;
+        environment_block = USERPTR_TO_PTR(program->p_env);
+        kthread_test_fail_after_attach();
+        rc = Pexec(PE_GOTHENFREE, NULL, (char *)program, NULL);
+        CHECK(rc == ENSMEM && !ksched_active() && kproc_unlaunched(program),
+              "THREAD construction failure leaves consuming launch unpublished");
+        CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
+              "failed THREAD construction preserves caller allocation ownership");
+        CHECK(Mfree(environment_block) == E_OK && Mfree(program) == E_OK,
+              "failed consuming launch allocations remain reclaimable");
+    }
+    same(&s, "consuming launch THREAD construction rollback");
     kcprintf("x86-64 async process calls: %s\n", failures == before ? "PASS" : "FAIL");
 }
 
@@ -3080,8 +3123,25 @@ static void test_cuis_scheduler(void)
             kthread_stack_test_fail_after(0);
             CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
                   "second scheduler stack failure rolls back the first task stack");
-            rc = ksched_run(programs, 2, results);
-            CHECK(rc == E_OK, "scheduler completes all managed clients");
+            {
+                UWORD attempt;
+                for (attempt = 1; attempt <= 2; attempt++) {
+                    kthread_test_fail_attach_after(attempt);
+                    rc = ksched_run(programs, 2, results);
+                    kthread_test_fail_attach_after(0);
+                    CHECK(rc == ENSMEM && kproc_unlaunched(programs[0]) && kproc_unlaunched(programs[1]),
+                          "partial task THREAD association rolls back without starting either process");
+                }
+            }
+            {
+                ULONG started = task_thread_stages[2], stopped = task_thread_stages[3];
+                ULONG reaped = task_thread_stages[4], released = task_thread_stages[7];
+                rc = ksched_run(programs, 2, results);
+                CHECK(rc == E_OK, "scheduler completes all managed clients");
+                CHECK(task_thread_stages[2] == started + 2 && task_thread_stages[3] == stopped + 2 &&
+                      task_thread_stages[4] == reaped + 2 && task_thread_stages[7] == released + 2,
+                      "both runnable THREADs stop on their launcher then release each scheduler stack once on root");
+            }
             if (rc == E_OK) {
                 programs[0] = programs[1] = NULL;
                 if (results[0] != 0 || results[1] != (mode == 0 ? 0 : mode == 1 ? 0xffff : 77))
@@ -3361,7 +3421,11 @@ static void test_ring3(void)
     probe_expect('e', 0, "a process runs normally after the faults");
     snap(&s);
     x86_64_memtest_fail_next_exit_handoff();
+#if CONF_WITH_NATIVE_SCHED
+    CHECK(run_probe('n') == 0, "nested failed exit handoff preserves legacy termination");
+#else
     CHECK(run_probe('e') == 0, "failed exit handoff preserves legacy termination");
+#endif
     same(&s, "failed exit handoff rollback");
 
     /*

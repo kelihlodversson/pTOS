@@ -432,8 +432,9 @@ static void ixterm(PD *r)
 #endif
 }
 
-/* Final process-wide teardown. For a normal exit this runs on the current
- * syscall stack; that stack is owned and later freed by its launcher. */
+/* Final process-wide teardown. User-ASPACE exits normally finalize on the
+ * resumed launcher, after reclaiming the child's transferred syscall stack.
+ * The unassociated legacy fallback still runs before returning to its launcher. */
 static void proc_release_resources(PD *p, BOOL resident_exit)
 {
 #if CONF_WITH_KPROC
@@ -1338,7 +1339,11 @@ void xterm(UWORD rc)
     PD *p = run;
 
 #if CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_SCHED
+    kproc_require_exit_thread(p, ksched_exit_thread(p));
+#else
     kproc_require_no_threads(p);
+#endif
 #endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     x86_64_memtest_callback_exit(p, rc);
@@ -1367,6 +1372,9 @@ void xterm(UWORD rc)
     }
 #endif
 #if CONF_WITH_USER_ASPACE
+    /* A backend-associated execution must leave through its verified launcher
+     * handoff. Never fall back to in-context teardown of an attached thread. */
+    kproc_require_no_threads(p);
     if (!kproc_begin_exit(p))
         panic("xterm: process disposal already committed");
 #endif

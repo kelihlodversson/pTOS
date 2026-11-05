@@ -120,8 +120,10 @@ BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched *
 #if CONF_WITH_USER_ASPACE
 struct kthread;
 struct kaspace;
-/* Non-runnable association only. Both returned references are owned by the
- * thread; cleanup must not begin until all such associations are detached. */
+/* Borrowed execution policy; terminal processes cannot publish new work. */
+BOOL kproc_thread_start_allowed(const KPROC *process);
+/* Prepared association. Both returned references are owned by the thread;
+ * cleanup must not begin until all such associations are safely detached. */
 BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,
                          struct kaspace **space, struct kthread **next);
 /* Return TRUE when the last association must finish deferred disposal. */
@@ -137,6 +139,11 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len);
  * panic; other teardown callbacks must not exit non-locally. */
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len);
 BOOL kproc_prepare_exit_handoff(KPROC *process);
+/* Only the backend-owned, sole executing thread may use the single-thread
+ * launcher handoff. Detachment is deferred until it leaves its syscall stack. */
+BOOL kproc_prepare_thread_exit_handoff(KPROC *process, struct kthread *thread);
+BOOL kproc_finish_thread_handoff(KPROC *process, struct kthread *thread);
+void kproc_require_exit_thread(PD *pd, struct kthread *thread);
 BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd);
 /* Commit the existing single-thread xterm cleanup while lookup owns KPROC. */
 BOOL kproc_begin_exit(PD *pd);
@@ -163,10 +170,14 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
 #endif
 BOOL kproc_standard_entry(PD *pd);
 BOOL kproc_prepare_user(PD *pd, PD *parent);
+/* Optional generic identity construction is part of preparation, before any
+ * consuming image transfer. Failure leaves *thread NULL with no association. */
+BOOL kproc_prepare_user_thread(PD *pd, PD *parent, struct kthread **thread);
 #if CONF_WITH_NATIVE_SCHED
 void kproc_add_child_usage(PD *pd, ULONG milliseconds);
 void kproc_commit_async(PD *pd);
 BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller);
+BOOL kproc_prepare_async_thread(PD *pd, PD *parent, PD *controller, struct kthread **thread);
 #endif
 /*
  * Makes the process a built-in x32 program: kproc_prepare_user() will also

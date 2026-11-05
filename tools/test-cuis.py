@@ -141,6 +141,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     native.load_config("configs/pc-x86_64_defconfig")
     native.syms["CONF_WITH_ELF_SHARED"].set_value(2)
     native.syms["CONF_WITH_LIBAES"].set_value(2)
+    # These fixtures mock physical stacks; real stack-address assertions run
+    # in the QEMU memtest, not on the host process's stack.
+    native.syms["CONF_WITH_X86_64_MEMTEST"].set_value(0)
     native.write_config(str(rollback / "config"))
     subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
                     "--config", str(rollback / "config"), "--header",

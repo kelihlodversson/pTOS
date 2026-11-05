@@ -161,7 +161,11 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         return FALSE;
     }
 #endif
+#if CONF_WITH_NATIVE_SCHED
+    if (!kproc_prepare_thread_exit_handoff(process, ksched_exit_thread(pd))) {
+#else
     if (!kproc_prepare_exit_handoff(process)) {
+#endif
         kproc_release(process);
         return FALSE;
     }
@@ -361,8 +365,9 @@ void gouser_entry(WORD entry_type)
          * from ring 0 while this CR3 is still loaded).  Nothing else in the
          * process window is mapped, except the blocks of a child it is
          * itself launching (kproc_borrow()).  That address space belongs to
-         * the process's KPROC record and is freed with it (kproc_destroy(),
-         * from xterm()), so nothing here allocates or needs to unwind.
+         * the process's KASPACE, retained by KPROC and a managed KTHREAD.
+         * The common launcher finalizer releases KPROC ownership; a stopped
+         * managed thread releases its independent reference at scheduler root.
          *
          * Both branches resume the launcher at Pterm() the same way (the
          * jmp_buf saved below), so Pexec() returns the exit code.  What a
@@ -450,6 +455,9 @@ void gouser_entry(WORD entry_type)
 #if CONF_WITH_X86_64_MEMTEST
             x86_64_memtest_exit_handoff(process, launch.pd, kstack_phys,
                                         launch.exit_status, 2);
+#endif
+#if CONF_WITH_NATIVE_SCHED
+            ksched_finish_exit(process, launch.pd);
 #endif
             proc_finalize_exit(process, launch.exit_status,
                                launch.exit_resident, launch.exit_resident_len);

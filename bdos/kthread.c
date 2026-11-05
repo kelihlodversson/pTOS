@@ -1,5 +1,6 @@
-/* Initial non-runnable thread identity; scheduling remains in native_sched. */
+/* Generic execution identity; dispatch remains in the existing scheduler. */
 #include "emutos.h"
+#include "biosext.h"
 #include "kheap.h"
 #include "kproc.h"
 #include "kaspace.h"
@@ -15,14 +16,16 @@ struct kthread {
     void *execution;
     void (*reclaim_execution)(void *);
     UBYTE state;
+    BOOL attached;
 };
-enum { THREAD_NEW, THREAD_STOPPED, THREAD_REAPING };
+enum { THREAD_NEW, THREAD_EXECUTING, THREAD_STOPPED, THREAD_REAPING };
 
 /* Never reuse a TID during a boot. Exhaustion fails closed. */
 static ULONG last_tid;
 #if CONF_WITH_X86_64_MEMTEST
-static BOOL fail_after_attach;
-void kthread_test_fail_after_attach(void) { fail_after_attach = TRUE; }
+static UWORD fail_attach_after;
+void kthread_test_fail_after_attach(void) { fail_attach_after = 1; }
+void kthread_test_fail_attach_after(UWORD count) { fail_attach_after = count; }
 ULONG kthread_test_set_last_tid(ULONG tid)
 {
     ULONG previous = last_tid;
@@ -49,8 +52,7 @@ KTHREAD *kthread_create(PD *pd)
         return NULL;
     }
 #if CONF_WITH_X86_64_MEMTEST
-    if (fail_after_attach) {
-        fail_after_attach = FALSE;
+    if (fail_attach_after && !--fail_attach_after) {
         kproc_thread_detach(thread->process, thread, thread->process_next);
         kaspace_put(thread->space);
         kproc_release(thread->process);
@@ -58,6 +60,7 @@ KTHREAD *kthread_create(PD *pd)
         return NULL;
     }
 #endif
+    thread->attached = TRUE;
     thread->tid = ++last_tid;
     return thread;
 }
@@ -72,9 +75,33 @@ BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void
     return TRUE;
 }
 
+BOOL kthread_start(KTHREAD *thread)
+{
+    if (!thread || thread->state != THREAD_NEW || !thread->attached ||
+        !thread->reclaim_execution || !kproc_thread_start_allowed(thread->process))
+        return FALSE;
+    thread->state = THREAD_EXECUTING;
+    return TRUE;
+}
+
+BOOL kthread_is_executing(const KTHREAD *thread)
+{
+    return thread && thread->state == THREAD_EXECUTING;
+}
+
+BOOL kthread_finish_handoff(KTHREAD *thread)
+{
+    if (!kthread_is_executing(thread) || !thread->attached ||
+        !kproc_finish_thread_handoff(thread->process, thread))
+        return FALSE;
+    thread->attached = FALSE;
+    thread->state = THREAD_STOPPED;
+    return TRUE;
+}
+
 BOOL kthread_stop(KTHREAD *thread)
 {
-    if (!thread || thread->state != THREAD_NEW)
+    if (!thread || (thread->state != THREAD_NEW && thread->state != THREAD_EXECUTING))
         return FALSE;
     thread->state = THREAD_STOPPED;
     return TRUE;
@@ -95,7 +122,8 @@ BOOL kthread_reap(KTHREAD *thread)
     if (thread->reclaim_execution)
         thread->reclaim_execution(thread->execution);
     process = thread->process;
-    dispose = kproc_thread_detach(process, thread, thread->process_next);
+    dispose = thread->attached &&
+        kproc_thread_detach(process, thread, thread->process_next);
     kaspace_put(thread->space);
     kfree(thread);
     if (dispose)
@@ -116,6 +144,8 @@ void kthread_destroy(KTHREAD *thread)
 {
     if (!thread)
         return;
+    if (kthread_is_executing(thread))
+        panic("kthread_destroy: execution has not stopped");
     kthread_stop(thread);
     kthread_reap(thread);
 }

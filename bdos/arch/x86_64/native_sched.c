@@ -1,19 +1,21 @@
 /* Bounded cooperative kernel tasks, independent of the legacy AES scheduler.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
 #include "emutos.h"
+#include "biosext.h"
 #include "ksched.h"
 #include "kproc.h"
 #include "process.h"
 #include "kthread_context.h"
 #include "kthread.h"
 #include "kheap.h"
+#include "kprint.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_X86_64_MEMTEST
+#include "../../../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
-#endif
-#if CONF_WITH_X86_64_MEMTEST
-#include "kprint.h"
 #endif
 extern PD *run;
 
@@ -24,11 +26,14 @@ typedef enum { TASK_UNUSED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DONE, TAS
 } TASK_STATE;
 typedef struct {
     PD *program, *parent;
-    KPROC *process;              /* retained identity, including after exit */
+    KPROC *process;              /* observer identity, including after exit */
+    KTHREAD *thread;            /* owns execution until root-safe reap */
+#if CONF_WITH_X86_64_MEMTEST
+    ULONG prepared_tid;
+#endif
 #if CONF_WITH_CUIS
     PD *deferred_owner;
     KPROC *deferred_owner_identity; /* owning identity, not parent resources */
-    KTHREAD *deferred_thread;   /* non-runnable until successor activation */
 #endif
     WORD pid, signal;
     BOOL asynchronous, take_ownership, exited;
@@ -55,6 +60,79 @@ BOOL ksched_spawn_allowed(void)
     return scheduler.active && scheduler.current && scheduler.current->state == TASK_RUNNING;
 }
 BOOL ksched_active(void) { return scheduler.active; }
+
+KTHREAD *ksched_exit_thread(PD *pd)
+{
+    KERNEL_TASK *task = scheduler.current;
+    if (!scheduler.active || !task || task->state != TASK_RUNNING ||
+        task->program != pd || !kthread_is_executing(task->thread))
+        return NULL;
+    return task->thread;
+}
+
+static void check_task_thread(KERNEL_TASK *task, UWORD stage)
+{
+#if CONF_WITH_X86_64_MEMTEST
+    if (!task->thread || kthread_tid(task->thread) != task->prepared_tid ||
+        kthread_process(task->thread) != task->process)
+        panic("scheduler: task thread identity changed");
+    x86_64_memtest_task_thread(task->thread, task->execution.stack.physical, stage);
+#else
+    UNUSED(task);
+    UNUSED(stage);
+#endif
+}
+
+void ksched_finish_exit(KPROC *process, PD *pd)
+{
+    KTHREAD *thread = ksched_exit_thread(pd);
+    if (!thread) return; /* Nested synchronous child, not this task's process. */
+    if (kthread_process(thread) != process || !kthread_finish_handoff(thread))
+        panic("scheduler: invalid launcher exit handoff");
+    check_task_thread(scheduler.current, 3);
+}
+
+/* The thread is the sole owner of its backend scheduler stack. Called only
+ * for an unpublished task or after root has made its continuation unreachable.
+ * The syscall stack has a different owner: the existing gouser launcher. */
+static void reclaim_task_execution(void *resource)
+{
+    KTHREAD_CONTEXT *execution = resource;
+    if (scheduler.current && &scheduler.current->execution == execution)
+        panic("scheduler: reclaiming current execution stack");
+#if CONF_WITH_X86_64_MEMTEST
+    x86_64_memtest_task_thread(NULL, execution->stack.physical, 7);
+#endif
+    kthread_stack_release(&execution->stack);
+}
+
+static void adopt_task_execution(KERNEL_TASK *task)
+{
+    if (!task->thread || !kthread_set_execution(task->thread, &task->execution, reclaim_task_execution))
+        panic("scheduler: execution ownership transfer failed");
+#if CONF_WITH_X86_64_MEMTEST
+    task->prepared_tid = kthread_tid(task->thread);
+#endif
+    check_task_thread(task, 0);
+}
+
+static BOOL attach_task_thread(KERNEL_TASK *task)
+{
+    task->thread = kthread_create(task->program);
+    if (!task->thread) return FALSE;
+    adopt_task_execution(task);
+    return TRUE;
+}
+
+static void discard_task_execution(KERNEL_TASK *task)
+{
+    if (task->thread) {
+        kthread_destroy(task->thread);
+        task->thread = NULL;
+    } else {
+        kthread_stack_release(&task->execution.stack);
+    }
+}
 
 BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument)
 {
@@ -174,14 +252,11 @@ static void activate_successors(KPROC *process, PD *pd, BOOL use_identity)
         if (task->state == TASK_DEFERRED && task->deferred_owner == pd &&
             (!use_identity || !task->deferred_owner_identity ||
              task->deferred_owner_identity == process)) {
-            if (task->deferred_thread) {
-                kthread_destroy(task->deferred_thread);
-                task->deferred_thread = NULL;
-            }
             if (task->deferred_owner_identity)
                 kproc_release(task->deferred_owner_identity);
             task->deferred_owner_identity = NULL;
             task->deferred_owner = NULL;
+            check_task_thread(task, 5);
             task->state = TASK_NEW;
         }
     }
@@ -234,9 +309,17 @@ void ksched_fault(PD *pd, WORD signal)
 static void task_entry(void)
 {
     KERNEL_TASK *task = scheduler.current;
+    check_task_thread(task, 2);
     task->result = proc_start_scheduled(task->program, task->take_ownership);
-    if (!task->exited)
-        proc_discard_accessory(task->program); /* consumes a refused start */
+    if (!task->exited) {
+        /* No user continuation was published. Stop, then defer the refused
+         * process's disposal until root reaps this execution resource. */
+        if (!kthread_stop(task->thread))
+            panic("scheduler: refused task did not stop");
+        proc_discard_accessory(task->program);
+    }
+    if (!kthread_is_stopped(task->thread))
+        panic("scheduler: exited task has a resumable thread");
 #if CONF_WITH_X86_64_MEMTEST
     if (task->asynchronous && !task->parent && task->result)
         kcprintf("orphan PID %d returned %ld\n", task->pid, (long)task->result);
@@ -285,11 +368,19 @@ static void discard_deferred(KERNEL_TASK *task)
 #endif
     KPROC *process = task->process;
     KPROC *owner = task->deferred_owner_identity;
-    KTHREAD *thread = task->deferred_thread;
-    KTHREAD_STACK stack = kthread_stack_detach(&task->execution.stack);
+    KTHREAD *thread = task->thread;
+    check_task_thread(task, 6);
+    /* The thread's backend pointer refers into task: keep that storage intact
+     * until its reclaimer finishes. Neither this task nor its stack ever ran. */
+    /* Unpublish before callbacks without erasing the backend storage needed
+     * by the reclaimer. DONE also prevents reentrant spawn from reusing it. */
+    task->state = TASK_DONE;
+    task->program = NULL;
+    task->thread = NULL;
+    task->deferred_owner = NULL;
+    task->deferred_owner_identity = NULL;
     /* It never entered user mode; resource ownership is already the child's.
      * Do not read its basepage after revoking the loader's borrowed mapping. */
-    memset(task,0,sizeof(*task));
 #if CONF_WITH_USER_ASPACE
     proc_dispose_process(process);
 #else
@@ -298,7 +389,7 @@ static void discard_deferred(KERNEL_TASK *task)
     if (thread) kthread_destroy(thread);
     kproc_release(process);
     if (owner) kproc_release(owner);
-    kthread_stack_release(&stack);
+    memset(task, 0, sizeof(*task));
 }
 LONG ksched_defer_cancel(void)
 {
@@ -351,26 +442,12 @@ LONG ksched_spawn(PD *pd)
         }
     }
 #endif
-    /* Allocate the task stack before adopting the image. Preparation maps
-     * the stable controller for exit, while ancestor copies retain PPID. */
-    if (!kproc_prepare_async(pd, run, scheduler.root.pd)) {
-        kproc_release(task->process);
-        kthread_stack_release(&task->execution.stack);
-        memset(task, 0, sizeof(*task));
-        return ENSMEM;
-    }
 #if CONF_WITH_CUIS
+    /* Acquire the predecessor identity before image preparation can consume
+     * a staged image. No fallible acquisitions may follow that transfer. */
     if (deferred) {
-        task->deferred_thread = kthread_create(pd);
-        if (!task->deferred_thread) {
-            kproc_release(task->process);
-            kthread_stack_release(&task->execution.stack);
-            memset(task, 0, sizeof(*task));
-            return ENSMEM; /* caller disposes the prepared child */
-        }
         task->deferred_owner_identity = kproc_retain(run);
         if (!task->deferred_owner_identity && kproc_pid(run)) {
-            kthread_destroy(task->deferred_thread);
             kproc_release(task->process);
             kthread_stack_release(&task->execution.stack);
             memset(task, 0, sizeof(*task));
@@ -378,6 +455,19 @@ LONG ksched_spawn(PD *pd)
         }
     }
 #endif
+    /* The optional THREAD is constructed inside preparation, before its
+     * irreversible image move; publication and stack transfer cannot fail. */
+    if (!kproc_prepare_async_thread(pd, run, scheduler.root.pd, &task->thread)) {
+#if CONF_WITH_CUIS
+        if (task->deferred_owner_identity) kproc_release(task->deferred_owner_identity);
+#endif
+        kproc_release(task->process);
+        kthread_stack_release(&task->execution.stack);
+        memset(task, 0, sizeof(*task));
+        return ENSMEM;
+    }
+    task->program = pd;
+    adopt_task_execution(task);
     task->pid = kproc_pid(pd);
     task->program = pd;
     task->parent = run;
@@ -467,7 +557,12 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
 {
     if (scheduler.current || (task->state != TASK_DONE && task->state != TASK_ZOMBIE))
         return FALSE;
-    kthread_stack_release(&task->execution.stack);
+    if (task->thread) {
+        check_task_thread(task, 4);
+        if (!kthread_reap(task->thread))
+            panic("scheduler: root cannot reap unfinished thread");
+        task->thread = NULL;
+    }
     if (task->state == TASK_DONE && task->process) {
         kproc_release(task->process);
         task->process = NULL;
@@ -484,7 +579,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
 {
     UWORD i, j;
     if (scheduler.active) return EAGAIN;
-    if (!count || count > KSCHED_LIMIT) return EINVAL;
+    if (!count || count > KSCHED_LIMIT || (prepare && count != 1)) return EINVAL;
     if (next_identity > ~0ULL - count) return EAGAIN;
     for (i = 0; i < count; i++) {
         if (!kproc_unlaunched(programs[i]) || (!prepare && !kproc_user_root(programs[i]))) return EIMBA;
@@ -514,7 +609,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
     }
     /* Ordinary launches allocate every scheduler resource before adopting
      * the image or pinning the caller's retained basepage/environment. */
-    if (prepare && !kproc_prepare_user(programs[0], run)) {
+    if (prepare && !kproc_prepare_user_thread(programs[0], run, &scheduler.tasks[0].thread)) {
         for (i = 0; i < count; i++) {
             kthread_stack_release(&scheduler.tasks[i].execution.stack);
             kproc_release(scheduler.tasks[i].process);
@@ -522,6 +617,21 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         kfree(scheduler.tasks);
         scheduler.tasks = NULL;
         return ENSMEM;
+    }
+    /* Every task acquires exactly one generic identity before publication.
+     * Preparation/association failures keep all programs with the caller. */
+    for (i = 0; i < count; i++) {
+        if (prepare) {
+            adopt_task_execution(&scheduler.tasks[i]);
+        } else if (!attach_task_thread(&scheduler.tasks[i])) {
+            for (j = 0; j < count; j++) {
+                discard_task_execution(&scheduler.tasks[j]);
+                kproc_release(scheduler.tasks[j].process);
+            }
+            kfree(scheduler.tasks);
+            scheduler.tasks = NULL;
+            return ENSMEM;
+        }
     }
     scheduler.initial = count;
     scheduler.next = 0;
@@ -549,6 +659,9 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
             scheduler.next = (slot + 1) % KSCHED_LIMIT;
             scheduler.current = task;
             if (task->state == TASK_NEW) {
+                if (!kthread_start(task->thread))
+                    panic("scheduler: task identity cannot start");
+                check_task_thread(task, 1);
                 task->state = TASK_RUNNING;
                 native_sched_enter(task->execution.stack.top, task_entry);
             }

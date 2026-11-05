@@ -99,7 +99,7 @@ struct kproc {
     UBYTE *user_end;
     ASPACE *aspace;      /* borrowed from active_space */
     KASPACE *active_space; /* owning reference, NULL until prepared */
-    KTHREAD *threads;     /* non-owning; non-runnable associations only */
+    KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
     BOOL completion_pending;
     UWORD pending_status;
@@ -360,6 +360,12 @@ void kproc_complete(PD *pd, UWORD status)
 }
 
 #if CONF_WITH_USER_ASPACE
+BOOL kproc_thread_start_allowed(const KPROC *process)
+{
+    return process && process->pd && !process->completed &&
+        process->disposal_state == PROCESS_LIVE;
+}
+
 BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
                          KASPACE **space, KTHREAD **next)
 {
@@ -396,12 +402,33 @@ BOOL kproc_begin_disposal(KPROC *process, PD **pd)
     return *pd != NULL;
 }
 
-BOOL kproc_prepare_exit_handoff(KPROC *process)
+static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)
+{
+    return thread && process->threads == thread &&
+        !*kthread_next_link(thread) && kthread_is_executing(thread);
+}
+
+BOOL kproc_prepare_thread_exit_handoff(KPROC *process, KTHREAD *thread)
 {
     if (!process || process->disposal_state != PROCESS_LIVE ||
-        process->completed || process->threads || !process->pd)
+        process->completed || !process->pd ||
+        (thread ? !sole_execution_thread(process, thread) : process->threads != NULL))
         return FALSE;
     process->disposal_state = PROCESS_EXIT_HANDOFF;
+    return TRUE;
+}
+
+BOOL kproc_prepare_exit_handoff(KPROC *process)
+{
+    return kproc_prepare_thread_exit_handoff(process, NULL);
+}
+
+BOOL kproc_finish_thread_handoff(KPROC *process, KTHREAD *thread)
+{
+    if (!process || process->disposal_state != PROCESS_EXIT_HANDOFF ||
+        !sole_execution_thread(process, thread))
+        return FALSE;
+    process->threads = NULL;
     return TRUE;
 }
 
@@ -440,6 +467,13 @@ BOOL kproc_pending_completion(const KPROC *process, UWORD *status)
     if (status)
         *status = process->pending_status;
     return TRUE;
+}
+
+void kproc_require_exit_thread(PD *pd, KTHREAD *thread)
+{
+    KPROC *process = kproc_find(pd);
+    if (process && process->threads && !sole_execution_thread(process, thread))
+        panic("xterm: unsupported attached threads");
 }
 
 void kproc_require_no_threads(PD *pd)
@@ -875,23 +909,31 @@ void kproc_commit_async(PD *pd)
     kproc_unborrow(kproc->user_start);
 }
 
-BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller)
+BOOL kproc_prepare_async_thread(PD *pd, PD *parent, PD *controller, KTHREAD **thread)
 {
     KPROC *kproc = kproc_find(pd);
+    if (thread) *thread = NULL;
     if (!kproc || kproc->started || kproc->aspace) return FALSE;
     kproc->async_parent = controller;
-    return kproc_prepare_user(pd, parent);
+    return kproc_prepare_user_thread(pd, parent, thread);
+}
+
+BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller)
+{
+    return kproc_prepare_async_thread(pd, parent, controller, NULL);
 }
 #endif
 
-BOOL kproc_prepare_user(PD *pd, PD *parent)
+BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
 {
     KPROC *kproc = kproc_find(pd);
+    KTHREAD *thread = NULL;
     ASPACE *as;
     KASPACE *owner;
     VADDR env, tpa, hitpa;
     ULONG envbytes;
 
+    if (thread_result) *thread_result = NULL;
     if (!kproc || kproc->lost)
         return FALSE;
     if (kproc->aspace) {
@@ -899,7 +941,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
          * its kernel stack to gouser(), and cannot be launched a second time
          * (Pexec(PE_GO) of its own basepage, from ring 3): refuse, where the
          * launch can still fail cleanly. */
-        return kproc->kstack_phys != 0;
+        if (!kproc->kstack_phys) return FALSE;
+        if (thread_result) {
+            *thread_result = kthread_create(pd);
+            return *thread_result != NULL;
+        }
+        return TRUE;
     }
     env = (VADDR)(uintptr_t)kproc->env_start;
     tpa = (VADDR)(uintptr_t)kproc->user_start;
@@ -1012,6 +1059,19 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!kproc->legacy)
         kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
 #endif
+    /* Allocate and associate the optional scheduler identity before the
+     * irreversible PE_LOAD image move. Expose this preparation's space only
+     * while the serialized constructor retains it; no backend is installed
+     * and the new thread cannot execute. Ownership still resides in owner. */
+    if (thread_result) {
+        kproc->active_space = owner;
+        kproc->aspace = as;
+        thread = kthread_create(pd);
+        kproc->active_space = NULL;
+        kproc->aspace = NULL;
+        if (!thread)
+            return prepare_failed(kproc, owner);
+    }
     /*
      * A built-in image gets its segments as private pages at the fixed
      * addresses of include/procmem.h's layout (one loaded from a file has them
@@ -1026,12 +1086,15 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (kproc->has_image && !kproc->pending_as &&
         (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
                             : !layout_load(as, &kproc->layout))) {
+        kthread_destroy(thread);
         return prepare_failed(kproc, owner);
     }
 #if CONF_WITH_ELF_SHARED
     if (kproc->standard_entry && USER_STACK_TOP - kproc->stack_low >
-        (kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE))
+        (kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE)) {
+        kthread_destroy(thread);
         return prepare_failed(kproc, owner);
+    }
 #endif
     if (kproc->legacy)
         kproc->stack_top = hitpa & ~3UL;    /* the top of the TPA: the program sets its own stack */
@@ -1049,7 +1112,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     kproc->aspace = as;
     kproc->pending_as = NULL;               /* (the address space is the process's now) */
     kproc->pending_space = NULL;            /* transfer, not an additional reference */
+    if (thread_result) *thread_result = thread;
     return TRUE;
+}
+
+BOOL kproc_prepare_user(PD *pd, PD *parent)
+{
+    return kproc_prepare_user_thread(pd, parent, NULL);
 }
 
 /*
