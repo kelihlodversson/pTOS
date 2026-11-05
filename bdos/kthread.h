@@ -28,7 +28,9 @@ BOOL kthread_is_stopped(const KTHREAD *thread);
  * FALSE if it has not stopped; success consumes the thread. */
 BOOL kthread_reap(KTHREAD *thread);
 /* From a safe stack, finish the sole remaining stopped thread of a started
- * process. Failure leaves the thread and its resources owned by the caller. */
+ * process. The recorded parent must remain valid through notification; native
+ * scheduler integration is not yet supported. Failure leaves the thread and
+ * its resources owned by the caller. */
 BOOL kthread_complete(KTHREAD *thread, UWORD status);
 /* Convenience for a non-runnable thread, from a safe execution stack. */
 void kthread_destroy(KTHREAD *thread);
