@@ -303,3 +303,36 @@ not runtime-validate the unused x86_64_process_cancel pending-handoff branch.
 Nested launchers finalize child syscall stacks; only scheduler root reclaims
 scheduler-task stacks. Neither context acquires duplicate ownership. Runnable
 KTHREAD association and clone startup remain #892, public termination #893.
+
+ARM/m68k safe launcher exit handoff
+-----------------------------------
+All USER_ASPACE backends implement proc_defer_exit; proc_finalize_exit is one
+common implementation with the same bounded errbuf/fail-stop contract. ARM and
+m68k keep per-launch records on the suspended launcher stack, linked in LIFO
+order. Only handoff members changed across setjmp are volatile. A retained KPROC
+identity, not PD lookup after return, owns the pending operation. Preparation
+asserts the caller is on the child's transferred syscall stack. Failure before
+commit releases any acquired identity and uses the existing single-thread exit;
+no partially reserved handoff is published.
+
+longjmp restores the launcher kernel SP. The launcher restores its address-space
+root before releasing the transferred child stack, asserts it is off that stack
+and that the child's mappings still exist, then commits common finalization.
+It restores the captured exit status and releases the handoff identity. ARM
+preserves the SVC/exception-return model; its existing trap frame owns user FPU
+and exception state. Both backends restore the launcher's saved interrupt/control
+state after finalization. m68k restores its separately saved launcher FPU state
+last, so finalization cannot clobber it. No scheduler-stack owner is introduced.
+
+The isolation payload now nests normal, privileged-fault and Ptermres exits and
+checks each launcher status. Ptermres intentionally retains one-page residency
+(and the existing retained process allocations); non-resident resource-baseline
+checks run separately. CONF_WITH_EXIT_HANDOFF_TEST, disabled by default, rejects
+one handoff after retain and before reservation, releases that reference, and
+logs its rollback. ARM/m68k user-ASPACE CI regression configurations enable this
+option; the runner requires evidence that injection executed. The host
+production-finalizer fault-injection harness tests the now-common callback
+boundary; it does not emulate ARM/m68k exception instructions or arbitrary
+private longjmp recovery. Native suites exercise real normal/fault/resident
+traps and safe-stack assertions. KTHREAD remains non-runnable; #892/#893/#894
+boundaries are unchanged.

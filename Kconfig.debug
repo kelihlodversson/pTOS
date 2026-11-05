@@ -173,3 +173,12 @@ config CONF_DEBUG_FREETYPE_TEST_FONT
 source "tests/Kconfig"
 
 endmenu
+
+config CONF_WITH_EXIT_HANDOFF_TEST
+	bool "Inject one user exit-handoff preparation failure"
+	depends on CONF_WITH_USER_ASPACE && (ARCH_ARM || ARCH_M68K)
+	default n
+	help
+	  Regression-only: reject the first launcher handoff after acquiring its
+	  process reference. The legacy single-thread exit must still return the
+	  original status and release all resources. Subsequent exits use handoff.

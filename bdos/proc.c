@@ -1252,7 +1252,6 @@ void proc_dispose_process(KPROC *process)
 #endif
 }
 
-#if ARCH_X86_64
 /* The launcher calls this only after leaving the child's syscall stack and
  * restoring its own address space. The retained identity owns no stack. */
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len)
@@ -1278,7 +1277,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
         panic("exit finalization: cleanup callback escaped");
     }
     if (!kproc_commit_exit_handoff(process, &p))
-        panic("x86-64: invalid exit handoff");
+        panic("invalid exit handoff");
     kproc_complete(p, status);
 #if CONF_WITH_NATIVE_SCHED
     ksched_exiting(p, status);
@@ -1298,7 +1297,6 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 #endif
     memcpy(errbuf, saved_error, sizeof(errbuf));
 }
-#endif
 
 BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)
 {
@@ -1348,7 +1346,7 @@ void xterm(UWORD rc)
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
-#if ARCH_X86_64 && CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE
     {
         BOOL resident = FALSE;
         ULONG resident_len = 0;
@@ -1358,7 +1356,7 @@ void xterm(UWORD rc)
             resident_len = proc_resident_len;
         }
 #endif
-        if (x86_64_defer_exit(p, rc, resident, resident_len)) {
+        if (proc_defer_exit(p, rc, resident, resident_len)) {
 #if CONF_WITH_PROCMEM
             if (resident) proc_resident_pd = NULL;
 #endif

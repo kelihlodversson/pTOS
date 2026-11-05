@@ -36,16 +36,6 @@ void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *context);
 void gouser_entry(WORD entry_type);
 BOOL x86_64_process_is_accessory(void);
 void x86_64_process_cancel(X86_64_PROCESS_CONTEXT *context, PD *root);
-#if CONF_WITH_USER_ASPACE
-struct kproc;
-/* Capture a user-process exit for the current launcher's safe continuation. */
-BOOL x86_64_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len);
-/* Borrow the handoff reference on success (caller releases it). Cleanup
- * callbacks must return normally; disk errors may only use errbuf. An escaped
- * disk error consumes this reference and panics without restarting teardown.
- * Private/non-local continuation targets are not permitted during cleanup. */
-void proc_finalize_exit(struct kproc *process, UWORD status, BOOL resident, ULONG resident_len);
-#endif
 void proc_dispose_detached(PD *pd);
 
 /* Kernel-only accessory launch: preparation can fail before the AES task

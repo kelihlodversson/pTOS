@@ -145,7 +145,7 @@ static X86_64_PROCESS_LAUNCH *current_launch;
 static BOOL fail_next_exit_handoff;
 void x86_64_memtest_fail_next_exit_handoff(void) { fail_next_exit_handoff = TRUE; }
 #endif
-BOOL x86_64_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
+BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
     KPROC *process;
     X86_64_PROCESS_LAUNCH *launch = current_launch;

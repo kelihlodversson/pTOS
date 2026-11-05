@@ -130,6 +130,12 @@ BOOL kproc_thread_detach(KPROC *process, struct kthread *thread,
 /* Borrowed retained process; commit cleanup once or return FALSE. */
 BOOL kproc_begin_disposal(KPROC *process, PD **pd);
 /* Reserve a single-thread launcher handoff; only its owner can commit it. */
+/* Architecture launcher: FALSE leaves legacy single-thread teardown safe.
+ * Success retains identity and commits to its safe continuation. */
+BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len);
+/* Borrow handoff reference on success. Escaping disk errors consume it and
+ * panic; other teardown callbacks must not exit non-locally. */
+void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len);
 BOOL kproc_prepare_exit_handoff(KPROC *process);
 BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd);
 /* Commit the existing single-thread xterm cleanup while lookup owns KPROC. */

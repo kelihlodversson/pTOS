@@ -118,7 +118,52 @@ void m68k_gemdos_dispatch(struct uframe *f)
  * The resume point of each launch that waits: one jmp_buf per level of
  * Pexec() in progress, innermost first.
  */
-static jmp_buf *uspace_resume;
+struct uspace_launch {
+    jmp_buf resume;
+    struct uspace_launch *previous;
+    PD *pd;
+    PADDR stack_phys;
+    uintptr_t stack_top;
+    KPROC * volatile exit_process;
+    volatile UWORD exit_status;
+    volatile BOOL exit_resident;
+    volatile ULONG exit_resident_len;
+};
+static struct uspace_launch *uspace_launch;
+#if CONF_WITH_EXIT_HANDOFF_TEST
+static BOOL injected_exit_failure;
+#endif
+
+BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
+{
+    struct uspace_launch *launch = uspace_launch;
+    KPROC *process;
+    if (!launch || launch->pd != pd || !launch->stack_phys || launch->exit_process)
+        return FALSE;
+    if ((uintptr_t)&process < (uintptr_t)pmem32_virt(launch->stack_phys) ||
+        (uintptr_t)&process >= launch->stack_top)
+        panic("exit preparation off child syscall stack");
+    process = kproc_retain(pd);
+    if (!process)
+        return FALSE;
+#if CONF_WITH_EXIT_HANDOFF_TEST
+    if (!injected_exit_failure) {
+        injected_exit_failure = TRUE;
+        kproc_release(process);
+        kcprintf("exit handoff: injected preparation rollback\n");
+        return FALSE;
+    }
+#endif
+    if (!kproc_prepare_exit_handoff(process)) {
+        kproc_release(process);
+        return FALSE;
+    }
+    launch->exit_status = status;
+    launch->exit_resident = resident;
+    launch->exit_resident_len = resident_len;
+    launch->exit_process = process;
+    return TRUE;
+}
 
 void gouser(void)
 {
@@ -126,9 +171,9 @@ void gouser(void)
     ASPACE_ROOT root = kproc_user_root(p);
     ULONG entry = (ULONG)kproc_user_entry(p);
     ULONG user_sp = (ULONG)kproc_user_stack(p);
-    jmp_buf buf;
-    jmp_buf *saved_resume = uspace_resume;
+    struct uspace_launch launch;
     struct fpuctx fpu;
+    ULONG launcher_status;
     uintptr_t kstack_top;
     PADDR kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
 
@@ -141,16 +186,21 @@ void gouser(void)
      * Control never comes back through m68k_enter_user(): the process leaves
      * for user mode, and what comes back is its own Pterm() (or a fault in
      * it), which unwinds to here by longjmp(), so that the Pexec() of the
-     * launcher returns the exit code.  By then xterm() has destroyed the
-     * address space of the process (switching to the kernel's) and made the
-     * launcher `run` again.
+     * launcher returns the exit code. xterm() restores `run`; deferred
+     * finalization keeps the child mappings alive until this safe continuation.
      */
-    uspace_resume = &buf;
+    launch.previous = uspace_launch;
+    launch.pd = p;
+    launch.stack_phys = kstack_phys;
+    launch.stack_top = kstack_top;
+    launch.exit_process = NULL;
+    uspace_launch = &launch;
     /* the FPU of the launcher is what the child will not see, and what the
      * launcher gets back when it ends */
     if (fputype)
         m68k_fpu_save(&fpu);
-    if (setjmp(buf) == 0) {
+    __asm__ volatile ("move.w %%sr,%0" : "=d" (launcher_status));
+    if (setjmp(launch.resume) == 0) {
         ULONG initial[2];
 
         aspace_hw_switch(root);
@@ -172,15 +222,30 @@ void gouser(void)
         uenter.kstack_top = (ULONG)kstack_top;
         m68k_enter_user();
     }
-    uspace_resume = saved_resume;
-    if (fputype)
-        m68k_fpu_restore(&fpu);
-    kstack_free(kstack_phys);
+    uspace_launch = launch.previous;
     {
         ASPACE_ROOT launcher = kproc_user_root(run);
 
         aspace_hw_switch(launcher ? launcher : aspace_kernel_root());
     }
+    /* longjmp restored the launcher's kernel SP. The child stack is now
+     * unused and has exactly one owner: this suspended launcher. */
+    if ((uintptr_t)&launch >= (uintptr_t)pmem32_virt(kstack_phys) &&
+        (uintptr_t)&launch < kstack_top)
+        panic("exit finalization on child syscall stack");
+    if (launch.exit_process && !kproc_user_root(launch.pd))
+        panic("exit handoff lost child mappings");
+    kstack_free(kstack_phys);
+    if (launch.exit_process) {
+        KPROC *process = launch.exit_process;
+        proc_finalize_exit(process, launch.exit_status,
+                           launch.exit_resident, launch.exit_resident_len);
+        run->p_dreg[0] = launch.exit_status;
+        kproc_release(process);
+    }
+    if (fputype)
+        m68k_fpu_restore(&fpu);
+    __asm__ volatile ("move.w %0,%%sr" :: "d" (launcher_status) : "memory", "cc");
 }
 
 void termuser(void)
@@ -189,8 +254,8 @@ void termuser(void)
      * bdos/proc.c's xterm() already did `run = kproc_get_parent(p);
      * run->p_dreg[0] = rc;`: the exit code is where proc_go()'s caller reads it.
      */
-    if (uspace_resume)
-        longjmp(*uspace_resume, 1);
+    if (uspace_launch)
+        longjmp(uspace_launch->resume, 1);
 
     panic("process terminated with no launch to resume, rc=%ld\n", (long)run->p_dreg[0]);
 }
