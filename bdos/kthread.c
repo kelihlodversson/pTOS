@@ -13,6 +13,7 @@ struct kthread {
     KPROC *process;             /* owning identity reference */
     KASPACE *space;             /* owning mapping reference */
     KTHREAD *process_next;      /* borrowed process membership */
+    KASPACE_LEASE *stack_hold;
     void *execution;
     void (*reclaim_execution)(void *);
     UBYTE state;
@@ -44,6 +45,7 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
     thread = kalloc(sizeof(*thread));
     if (!thread)
         return NULL;
+    thread->stack_hold = NULL;
     thread->execution = NULL;
     thread->reclaim_execution = NULL;
     thread->state = THREAD_NEW;
@@ -98,6 +100,14 @@ BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void
     return TRUE;
 }
 
+BOOL kthread_take_stack_hold(KTHREAD *thread, KASPACE_LEASE **hold)
+{
+    if (!thread || thread->state != THREAD_NEW || thread->stack_hold || !hold ||
+        kaspace_stack_hold_space(*hold) != thread->space) return FALSE;
+    thread->stack_hold = *hold; *hold = NULL;
+    return TRUE;
+}
+
 BOOL kthread_start(KTHREAD *thread)
 {
     if (!thread || thread->identity_only || thread->state != THREAD_NEW || !thread->attached ||
@@ -145,6 +155,7 @@ BOOL kthread_reap(KTHREAD *thread)
     thread->state = THREAD_REAPING;
     if (thread->reclaim_execution)
         thread->reclaim_execution(thread->execution);
+    kaspace_lease_release(&thread->stack_hold);
     process = thread->process;
     dispose = thread->attached &&
         kproc_thread_detach(process, thread, thread->process_next);

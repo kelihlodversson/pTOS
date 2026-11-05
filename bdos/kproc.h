@@ -124,6 +124,7 @@ struct kthread;
 struct kaspace;
 /* Borrowed execution policy; terminal processes cannot publish new work. */
 BOOL kproc_thread_start_allowed(const KPROC *process);
+BOOL kproc_thread_is_sole(KPROC *process, struct kthread *thread);
 /* Caller already holds the identity; only live resources may be acquired. */
 KPROC *kproc_retain_live(KPROC *process);
 PD *kproc_live_pd(const KPROC *process); /* borrowed during serialized live-resource operation */

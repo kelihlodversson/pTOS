@@ -678,3 +678,17 @@ leases; backend mutations cannot silently replace a leased identity. Output
 preparation, reversible generic observer registration and atomic group sealing
 are implemented, but COMMITTED/RUNNABLE remain unreachable. The trusted thread-
 return bridge and execution-lifetime stack transfer remain gates, not features.
+
+Durable execution holds and kernel return image
+----------------------------------------------
+
+KTHREAD now owns an optional durable ordinary-heap/anonymous-stack hold, released
+after its execution-resource reclaimer on safe-context reap. It is distinct
+from the short publication seal. The x32 image can transfer syscall/scheduler
+stacks into separate release-owner records without granting execution.
+
+A generic backend capability selects an immutable x32 return bridge; callers no
+longer supply return PCs. Tests execute that bridge through the existing sole-
+PROCESS launcher, including an entry fault and an independently retained shared
+ASPACE. This is not yet dispatch of a proc_clone CPU/FPU image or sibling-only
+termination. See doc/thread-startup.txt for the exact remaining gates.

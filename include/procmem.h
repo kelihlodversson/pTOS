@@ -309,6 +309,9 @@ VADDR aspace_mappable_bytes(void);
  * is destroyed.
  */
 BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes);
+/* Resident privately owned non-file-cache pages only, for execution holds.
+ * Borrowed/procmem pages require another owner and are deliberately excluded. */
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
 
 #if ARCH_HAS_DEMAND_PAGING
 /*

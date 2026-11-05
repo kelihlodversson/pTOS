@@ -21,7 +21,7 @@ struct kaspace_lease {
     KASPACE *space; /* owning; list membership is non-owning */
     VADDR first, last; /* inclusive page addresses; no end-address overflow */
     UWORD access;
-    BOOL revoked, sealed;
+    BOOL revoked, sealed, held, stack;
     KASPACE_LEASE *next;
 };
 
@@ -57,13 +57,56 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     lease->first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
     lease->last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
     lease->access = access;
-    lease->revoked = lease->sealed = FALSE;
+    lease->revoked = lease->sealed = lease->held = lease->stack = FALSE;
     if (!kaspace_lease_valid(lease)) { kfree(lease); return EIMBA; }
     if (!kaspace_share(space)) { kfree(lease); return ENSMEM; }
     lease->next = space->leases;
     space->leases = lease;
     *result = lease;
     return E_OK;
+}
+
+BOOL kaspace_lease_hold_private(KASPACE_LEASE *lease)
+{
+    if (!kaspace_lease_valid(lease) || lease->held ||
+        !aspace_private_range_ok(lease->space->backend, lease->first,
+                lease->last - lease->first + USER_PAGE_SIZE)) return FALSE;
+    lease->held = TRUE;
+    return TRUE;
+}
+
+LONG kaspace_stack_hold_acquire(KASPACE *space, VADDR address, VADDR bytes, KASPACE_LEASE **result)
+{
+    KASPACE_LEASE *lease = NULL;
+    VADDR page, last;
+    LONG error;
+    if (!result || *result || !space || !bytes || address >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - address) return EINVAL;
+    last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    for (page = address & ~(VADDR)(USER_PAGE_SIZE - 1); ; page += USER_PAGE_SIZE) {
+        BOOL reserved = kaspace_heap_contains(space, page);
+#if CONF_WITH_MMAP
+        MMAP_REGION *region;
+        for (region = space->mmap.regions; !reserved && region; region = region->next)
+            if (!region->backing && page >= region->address &&
+                page < (UQUAD)region->address + region->length &&
+                (region->prot & (ASPACE_PROT_USER | ASPACE_PROT_WRITE)) ==
+                    (ASPACE_PROT_USER | ASPACE_PROT_WRITE)) reserved = TRUE;
+#endif
+        if (!reserved) return EACCDN;
+        if (page == last) break;
+    }
+    error = kaspace_lease_acquire(space, address, bytes, ASPACE_PROT_USER | ASPACE_PROT_WRITE, &lease);
+    if (error) return error;
+    if (!kaspace_lease_hold_private(lease)) { kaspace_lease_release(&lease); return EACCDN; }
+    lease->stack = TRUE;
+    *result = lease;
+    return E_OK;
+}
+
+KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold)
+{
+    return hold && hold->stack && hold->held && kaspace_lease_valid(hold) ? hold->space : NULL;
 }
 
 BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count)
@@ -98,7 +141,7 @@ BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
     for (space = spaces; space && space->backend != backend; space = space->next) { }
     if (!space) return TRUE; /* backend not yet adopted */
     for (lease = space->leases; lease; lease = lease->next)
-        if (lease->sealed && first <= lease->last && lease->first <= last) return FALSE;
+        if ((lease->sealed || lease->held) && first <= lease->last && lease->first <= last) return FALSE;
     for (lease = space->leases; lease; lease = lease->next)
         if (first <= lease->last && lease->first <= last) lease->revoked = TRUE;
     return TRUE;

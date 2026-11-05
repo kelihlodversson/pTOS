@@ -7,6 +7,7 @@
 typedef struct kthread KTHREAD;
 struct kproc;
 struct kaspace;
+struct kaspace_lease;
 struct _pd;
 
 /* Create a detached-from-scheduler identity associated with a prepared process.
@@ -28,6 +29,10 @@ BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void
  * separate from this execution lifetime. A started thread cannot be destroyed
  * until its backend stops its continuation. */
 BOOL kthread_start(KTHREAD *thread);
+/* Transfer a durable user-stack hold, including for a non-runnable identity.
+ * Failure leaves *hold owned by caller. Reap releases it only after backend
+ * execution resources are safely reclaimed. No start capability is granted. */
+BOOL kthread_take_stack_hold(KTHREAD *thread, struct kaspace_lease **hold);
 BOOL kthread_is_executing(const KTHREAD *thread);
 /* On the resumed launcher stack, after abandoning the child syscall stack:
  * detach the sole thread from a reserved PROCESS exit handoff, retaining its

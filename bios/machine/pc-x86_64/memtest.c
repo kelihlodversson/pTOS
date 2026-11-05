@@ -56,6 +56,8 @@
 #include "../../../bdos/proc_clone.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
+#include "../../../bdos/arch/x86_64/thread_return_x32.h"
+#include "../../../bdos/thread_startup_backend.h"
 #endif
 #include "../../../bdos/proc.h"
 #if CONF_WITH_CUIS
@@ -2010,8 +2012,8 @@ static void test_proc_clone_factory(void)
 }
 
 #if CONF_WITH_NATIVE_SCHED
-/* Prepare/cancel only. The executable mapping is a placeholder, not a tested
- * #893 return trampoline. No user instruction or backend stack is entered. */
+/* These identity-only startup drafts never enter user code or backend stacks.
+ * The bridge is exercised separately through the existing PROCESS launcher. */
 static void forbidden_startup_reclaim(void *resource)
 {
     UNUSED(resource);
@@ -2030,6 +2032,105 @@ static void startup_observer_release(void *context)
 {
     STARTUP_OBSERVER_TEST *test = context;
     test->released++;
+}
+
+/* Exercise the immutable bridge with the EXISTING single-process launcher.
+ * This is not execution of a proc_clone startup image or a runnable sibling. */
+static void test_return_bridge(void)
+{
+    UWORD mode;
+    int before = failures;
+    for (mode = 0; mode < 2; mode++) {
+        SNAP baseline;
+        PD *pd, *peer_pd;
+        KPROC *source, *peer;
+        KASPACE *space;
+        ASPACE *as;
+        X32_RETURN_BRIDGE *bridge = NULL, *second = NULL;
+        PROC_CLONE_TRANSACTION *tx = NULL;
+        PROC_CLONE_RESULT result = PROC_CLONE_RESULT_INIT;
+        PROC_CLONE_ARGS args;
+        KASPACE_LEASE *stack_hold = NULL;
+        KTHREAD *a, *b;
+        VADDR rsp;
+        UQUAD return_pc;
+        UWORD status;
+        LONG rc;
+        UBYTE code[] = { 0xb8, 0x68, 0x24, 0, 0, 0xc3 }; /* EAX=0x2468; ret */
+        snap(&baseline);
+        pd = new_basepage(); peer_pd = new_basepage();
+        if (!pd || !peer_pd) return;
+        set_owner(peer_pd, peer_pd); set_owner(USERPTR_TO_PTR(peer_pd->p_env), peer_pd);
+        pd->p_tbase = PTR_TO_USERPTR(pd + 1); pd->p_tlen = sizeof(code);
+        if (mode) { code[0] = 0x0f; code[1] = 0x0b; } /* UD2 entry fault */
+        memcpy(pd + 1, code, sizeof(code));
+        CHECK(kproc_prepare_user(pd, run), "prepare existing launcher for bridge execution");
+        source = kproc_retain(pd); peer = kproc_retain(peer_pd);
+        space = kproc_active_space(source); as = kaspace_backend(space);
+        CHECK(x32_return_bridge_acquire(space, &bridge) == E_OK &&
+              x32_return_bridge_acquire(space, &second) == E_OK && second == bridge,
+              "kernel bridge has one shared immutable mapping identity");
+        return_pc = x32_return_bridge_address(bridge);
+        CHECK(return_pc && x32_return_bridge_valid(bridge) &&
+              !aspace_unmap_private(as, return_pc, PAGE), "bridge is protected beyond publication sealing");
+        a = kthread_construct_identity(source, space); b = kthread_construct_identity(source, space);
+        {
+            VADDR custom_stack = kproc_uheap_alloc(pd, PAGE);
+            KASPACE_LEASE *one = NULL, *two = NULL;
+            CHECK(custom_stack && kproc_demand_page(pd, custom_stack, ASPACE_PROT_WRITE) == 1,
+                  "back ordinary user-stack reservation before lifetime acquisition");
+            CHECK(kaspace_stack_hold_acquire(space, custom_stack, PAGE, &one) == E_OK &&
+                  kaspace_stack_hold_acquire(space, custom_stack, PAGE, &two) == E_OK &&
+                  kthread_take_stack_hold(a, &one) && kthread_take_stack_hold(b, &two) && !one && !two,
+                  "two THREADs independently own one durable user-stack reservation");
+            CHECK(kproc_uheap_free(pd, custom_stack) != E_OK, "first live stack owner prevents Mfree");
+            kthread_destroy(b); b = NULL;
+            CHECK(kproc_uheap_free(pd, custom_stack) != E_OK && kproc_ref_has_basepage(source),
+                  "last sibling retains usable PROCESS and stack after first detach");
+            CHECK(x32_return_bridge_process_eligible(source, a), "sole THREAD bridge policy after sibling detaches");
+            kthread_destroy(a); a = NULL;
+            CHECK(kproc_uheap_free(pd, custom_stack) == E_OK, "last THREAD releases hold without double-freeing caller reservation");
+        }
+        a = kthread_construct_identity(source, space); b = kthread_construct_identity(source, space);
+        CHECK(a && b && !x32_return_bridge_process_eligible(source, a),
+              "single-process bridge refuses live sibling membership");
+        kthread_destroy(b);
+        CHECK(x32_return_bridge_process_eligible(source, a), "bridge policy recognizes a sole THREAD identity");
+        kthread_destroy(a); /* ordinary launcher still uses its legacy implicit context */
+        bzero(&args, sizeof(args)); args.source = source; args.prepared_process = peer;
+        args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
+        CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &result) == E_OK,
+              "independent PROCESS retains VM while original process executes");
+        rsp = kproc_user_stack(pd);
+        CHECK(kproc_demand_page(pd, rsp, ASPACE_PROT_WRITE) == 1 &&
+              aspace_copy_to_user(as, rsp, &return_pc, sizeof(return_pc)),
+              "kernel installs selected normal-return PC into existing launch stack");
+        CHECK(kaspace_lease_acquire(space, rsp - 128, 136, ASPACE_PROT_USER | ASPACE_PROT_WRITE,
+              &stack_hold) == E_OK && kaspace_lease_hold_private(stack_hold),
+              "retain private launch stack independently through completion");
+        bzero(exit_handoff_stages, sizeof(exit_handoff_stages)); exit_handoff_watch = TRUE;
+        rc = proc_start_scheduled(pd, TRUE);
+        exit_handoff_watch = FALSE;
+        CHECK(rc == (mode ? 0xffff : 0x2468), "real RET/entry-fault status reaches the original launcher");
+        CHECK(exit_handoff_stages[0] == 1 && exit_handoff_stages[1] == 1 &&
+              exit_handoff_stages[2] == 1 && exit_handoff_stages[3] == 1,
+              "bridge reuses once-only safe launcher finalization off the child syscall stack");
+        CHECK(kproc_ref_status(source, &status) && status == (mode ? 0xffff : 0x2468) &&
+              !kproc_ref_has_basepage(source) && kproc_ref_has_basepage(peer),
+              "completion retires only the executing PROCESS identity");
+        CHECK(kproc_active_space(peer) == space && x32_return_bridge_valid(second) &&
+              aspace_translate(as, rsp, NULL, NULL) && !kproc_ref_status(peer, &status),
+              "peer PROCESS and retained stack/mappings survive original completion");
+        kaspace_lease_release(&stack_hold);
+        x32_return_bridge_release(&bridge); x32_return_bridge_release(&bridge);
+        CHECK(x32_return_bridge_valid(second), "first bridge release preserves another owner");
+        x32_return_bridge_release(&second);
+        CHECK(!aspace_translate(as, return_pc, NULL, NULL), "last bridge owner releases code page once");
+        proc_dispose_process(peer); proc_clone_release(&result); proc_clone_release(&result);
+        kproc_release(peer); kproc_release(source);
+        same(&baseline, "bridge normal/fault execution, independent VM owner and final release");
+    }
+    kcprintf("x86-64 trusted return bridge: %s\n", failures == before ? "PASS" : "FAIL");
 }
 
 static void test_proc_clone_startup(void)
@@ -2071,13 +2172,24 @@ static void test_proc_clone_startup(void)
               ASPACE_PROT_USER | ASPACE_PROT_WRITE) == 1 : aspace_translate(backend, stack + i * PAGE, NULL, NULL),
               "caller supplies resident writable startup stack mappings");
     }
-    startup.entry = (VADDR)(uintptr_t)pd; startup.return_entry = startup.entry + 16;
+    startup.entry = (VADDR)(uintptr_t)pd;
     startup.argument = 0xfedcba98UL; startup.stack_base = stack; startup.stack_size = 2 * PAGE;
     rsp = ((stack + 2 * PAGE) & ~15ULL) - 8;
     CHECK(aspace_copy_to_user(backend, rsp, &old_slot, sizeof(old_slot)), "seed prospective return slot");
     bzero(&args, sizeof(args)); args.source = source;
     args.process_policy = PROC_CLONE_SAME_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
     CHECK(proc_clone(&args, &tx) == E_OK, "construct non-runnable identity before startup planning");
+    {
+        X32_RETURN_BRIDGE *bridge = NULL;
+        CHECK(x32_return_bridge_acquire(space, &bridge) == E_OK && x32_return_bridge_valid(bridge),
+              "provision trusted return bridge without arbitrary executable input");
+        CHECK(!aspace_protect_private(backend, x32_return_bridge_address(bridge), PAGE,
+              ASPACE_PROT_USER | ASPACE_PROT_WRITE), "immutable bridge identity rejects permission replacement");
+        x32_return_bridge_release(&bridge);
+        /* Like ordinary unmap, released bridge leaf pages leave reusable table
+         * capacity until final ASPACE destruction. Prime that capacity before
+         * per-attempt assertions; the outer full-lifetime baseline is exact. */
+    }
     snap(&prepared);
     bad = startup; bad.stack_size = 136;
     CHECK(proc_clone_prepare_startup(tx, &bad) == EINVAL && !proc_clone_startup(tx),
@@ -2089,7 +2201,7 @@ static void test_proc_clone_startup(void)
               "partial startup context/stack construction rolls back");
         same(&prepared, "startup metadata and both independent stack owners roll back");
     }
-    for (stage = 1; stage <= 3; stage++) {
+    for (stage = 1; stage <= 4; stage++) {
         kaspace_test_fail_lease_after(stage);
         CHECK(proc_clone_prepare_startup(tx, &startup) == ENSMEM && !proc_clone_startup(tx),
               "each startup mapping lease failure rolls back both stacks");
@@ -2110,7 +2222,7 @@ static void test_proc_clone_startup(void)
     if (image) {
         CHECK(image->user.rip == startup.entry && image->user.rdi == 0xfedcba98ULL &&
               image->user.rsp == rsp && (rsp & 15) == 8 && rsp - stack >= 128 &&
-              image->return_pc == startup.return_entry && image->user.cr3 == aspace_root(backend),
+              image->return_pc == USER_VA_LIMIT - PAGE && image->user.cr3 == aspace_root(backend),
               "x32 function-entry frame and high-bit argument are normalized");
         CHECK(!((uintptr_t)image->user.fpu & 15), "FXSAVE startup image is 16-byte aligned");
         CHECK(image->user.rflags == 0x202 && image->user.cs == X86_64_USER_CODE_SEL &&
@@ -2173,7 +2285,7 @@ static void test_proc_clone_startup(void)
                   "each output lease failure preserves empty output ownership");
             same(&prepared, "partial output lease rollback");
         }
-        CHECK(proc_clone_prepare_outputs(sealed_tx, output, USER_VA_LIMIT - 4) == EIMBA,
+        CHECK(proc_clone_prepare_outputs(sealed_tx, output, USER_VA_LIMIT - 2 * PAGE) == EIMBA,
               "unmapped final output rejects all destinations");
         same(&prepared, "invalid output releases earlier acquired destination");
         CHECK(proc_clone_prepare_outputs(sealed_tx, output, output + 4) == E_OK, "prepare both writable identity destinations");
@@ -2200,6 +2312,56 @@ static void test_proc_clone_startup(void)
         proc_clone_abort(&sealed_tx); proc_clone_abort(&sealed_tx);
         CHECK(observer_test.acquired == 1 && observer_test.released == 1 &&
               kproc_uheap_free(pd, output) == E_OK, "cancellation unseals before exactly-once observer/resource cleanup");
+    }
+    {
+        PROC_CLONE_TRANSACTION *held_stack_tx = NULL;
+        CHECK(proc_clone(&args, &held_stack_tx) == E_OK &&
+              proc_clone_prepare_startup(held_stack_tx, &startup) == E_OK &&
+              proc_clone_retain_startup_stack(held_stack_tx) == E_OK,
+              "transfer durable execution-stack hold into non-runnable KTHREAD");
+        CHECK(proc_clone_retain_startup_stack(held_stack_tx) == EACCDN,
+              "duplicate stack transfer preserves the original owner");
+#if CONF_WITH_MMAP
+        CHECK(kproc_munmap(pd, stack, 2 * PAGE) == EACCDN &&
+              kproc_mprot(pd, stack, 2 * PAGE, PROT_READ) == EACCDN,
+              "execution hold rejects unmap/protection outside a short sealed window");
+#else
+        CHECK(kproc_uheap_shrink(pd, stack, PAGE) != E_OK && kproc_uheap_free(pd, stack) != E_OK,
+              "execution hold rejects free/shrink while a THREAD retains its stack");
+#endif
+        CHECK(thread_startup_validate(proc_clone_startup(held_stack_tx)) == E_OK,
+              "blocked stack mutations preserve preparation identity");
+        proc_clone_abort(&held_stack_tx); proc_clone_abort(&held_stack_tx);
+        CHECK(thread_startup_validate(draft) == E_OK,
+              "stack-owner cancellation preserves independent preparations");
+    }
+    {
+        X32_RETURN_BRIDGE *bridge = NULL;
+        void *raw_image = NULL;
+        X32_THREAD_STARTUP_DRAFT *raw;
+        X32_THREAD_STACK_OWNERS owners = { { 0, 0 }, { 0, 0 } };
+        CHECK(x32_return_bridge_acquire(space, &bridge) == E_OK &&
+              thread_startup_arch_prepare(backend, &startup, bridge, &raw_image) == E_OK,
+              "prepare an owned backend image for explicit stack transfer");
+        raw = raw_image;
+        if (raw) {
+            UQUAD sp;
+            __asm__ volatile ("movq %%rsp,%0" : "=r"(sp));
+            CHECK(!x86_64_memtest_kstack_contains(raw->syscall_physical, sp) &&
+                  !x86_64_memtest_kstack_contains(raw->scheduler_stack.physical, sp),
+                  "stack transfer and cancellation run outside both owned execution stacks");
+            CHECK(thread_startup_x32_take_stacks(raw, &owners) &&
+                  !raw->syscall_physical && !raw->scheduler_stack.physical &&
+                  !thread_startup_x32_take_stacks(raw, &owners), "two stack owners transfer once without publication");
+            thread_startup_arch_abort(raw_image);
+            CHECK(owners.syscall.physical && owners.scheduler.physical,
+                  "backend cancellation cannot free transferred stacks");
+            thread_startup_x32_release_syscall(&owners); thread_startup_x32_release_syscall(&owners);
+            CHECK(owners.scheduler.physical && !owners.syscall.physical,
+                  "safe syscall reclamation preserves scheduler-stack owner");
+            thread_startup_x32_release_scheduler(&owners); thread_startup_x32_release_scheduler(&owners);
+        }
+        x32_return_bridge_release(&bridge);
     }
     identity = kthread_construct_identity(source, space);
     CHECK(identity && !kthread_set_execution(identity, &startup, forbidden_startup_reclaim) && !kthread_start(identity),
@@ -4673,6 +4835,7 @@ void x86_64_memtest_run(void)
     test_proc_clone_factory();
 #if CONF_WITH_NATIVE_SCHED
     test_proc_clone_startup();
+    test_return_bridge();
 #endif
     test_kthread_live_disposal();
     test_kthread_completion();

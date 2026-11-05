@@ -731,6 +731,19 @@ static BOOL range_is_private(const struct aspace *as, VADDR va, VADDR pages)
     return TRUE;
 }
 
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes)
+{
+    VADDR first;
+    if (!as || !bytes || va >= USER_VA_LIMIT || bytes > USER_VA_LIMIT - va) return FALSE;
+    first = va & ~(VADDR)(PAGE - 1);
+    if (!range_is_private(as, first, (va + bytes - first + PAGE - 1) / PAGE)) return FALSE;
+    for (; first < va + bytes; first += PAGE) {
+        PADDR phys; UWORD pr, fl;
+        if (!aspace_hw_lookup(as->root, first, &phys, &pr, &fl) || IS_FILE_PAGE(phys)) return FALSE;
+    }
+    return TRUE;
+}
+
 BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD prot)
 {
     VADDR pages, i, mapped = 0;

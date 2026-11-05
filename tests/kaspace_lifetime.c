@@ -26,6 +26,8 @@ BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD protection)
 { (void)as; (void)va; (void)protection; return TRUE; }
 #endif
 
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR address, VADDR bytes)
+{ (void)as; (void)address; (void)bytes; return TRUE; }
 int main(void)
 {
     ASPACE backend = { 42 };

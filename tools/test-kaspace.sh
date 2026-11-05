@@ -73,7 +73,7 @@ CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
     -iquote bdos/arch/x86_64 tests/thread_startup.c bdos/thread_startup.c bdos/kaspace.c \
-    bdos/arch/x86_64/thread_startup_x32.c bdos/arch/x86_64/kthread_context.c \
+    bdos/arch/x86_64/thread_startup_x32.c bdos/arch/x86_64/thread_return_x32.c bdos/arch/x86_64/kthread_context.c \
     -Wl,--gc-sections -o "$work/startup"
 "$work/startup"
 echo 'x32 startup CPU/FPU/frame planning and stack rollback (host model): PASS'

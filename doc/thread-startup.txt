@@ -115,8 +115,7 @@ scheduler insertion must occur without yields or mapping mutation in between.
 The scheduler must never observe the intermediate committed-but-unpublished
 THREAD. No rollback is allowed after dispatch.
 
-Before enabling that transition, #713 must provide synchronization for timer
-preemption/SMP: registry lookup, lease acquisition/revocation/sealing, PROCESS
+Before enabling timer preemption/SMP, #713 must provide synchronization for: registry lookup, lease acquisition/revocation/sealing, PROCESS
 state, observer cancellation, user outputs and scheduler publication must share
 a proved exclusion/ordering contract. The current implementation relies on the
 existing cooperative/no-mapping-mutation-in-interrupt context. No new scheduler,
@@ -133,36 +132,21 @@ successful startup and therefore releases all leases on abort only.
 Trusted return/termination bridge gate
 -------------------------------------
 
-return_entry is a kernel argument, but being executable DOES NOT prove a return
-bridge. Current tests use a mapping placeholder which is never executed.
-thread_startup_publication_check explicitly rejects it, even with valid sealed
-leases. There is no registration API which could turn an arbitrary executable
-VA into a trusted bridge, and no caller can install this image into KTHREAD.
-
-A future kernel-selected bridge must have a known ABI/code identity and mapping
-extent, validated against the exact image/ASPACE at construction, not a user
-supplied executable pointer. It must translate a normal entry-function return
-into the same internal THREAD stop/handoff used for abnormal termination. It
-must not invoke the legacy whole-PROCESS xterm cleanup for a SAME_PROCESS sibling.
-The last-THREAD decision must follow the shared live-resource owner, not PID/TID
-coincidence or a bare PD. Stopping one THREAD must preserve sibling descriptors,
-PROCESS identity, mappings and ASPACE. #893 owns those thread-only semantics.
-
-Reuse the merged safe launcher mechanism to leave the child's syscall stack;
-finalize from the restored launcher stack/root. A managed task's separate
-scheduler stack is reclaimed only later by the existing scheduler-root reap.
-THREAD detachment, last-PROCESS completion, observer delivery and identity release
-must follow those existing ownership boundaries exactly once. Do not build a
-second termination mechanism. #892 may enable startup only after this bridge and
-safe lifetime handoff are proved with runnable internal tests. Public group exit,
-Pthjoin and waits remain #893/#909; TLS remains unsupported (#908).
+The backend owns an immutable, kernel-selected single-THREAD PROCESS return
+bridge, described below. There is no caller-supplied return PC. That bridge uses
+the existing whole-PROCESS Pterm path and is not a thread-only exit capability.
+SAME_PROCESS dispatch must wait for sibling-safe internal #893 termination;
+a distinct-PROCESS/sole-THREAD context still requires controlled CPU/launcher
+integration and atomic publication. None of the startup or identity-only guards
+has been removed. Public group exit, joins, waits and TLS remain downstream.
 
 Rollback, aliases and limitations
 --------------------------------
 
 Before publication, abort consumes the canonical handle first, releases mapping
 leases (leaving any sealed window), unregisters a successful observer once, frees
-both never-used kernel stacks and image, and releases KASPACE. Transaction abort
+both never-used kernel stacks/image, releases the backend bridge capability,
+and releases KASPACE. Transaction abort
 then releases the remaining THREAD/PROCESS references and factory resources.
 Filesystem cleanup still obeys the documented bounded-close/no-unwind fail-stop
 contract. Failed prepare/observe/seal leaves outputs untouched. Repeated calls
@@ -170,6 +154,96 @@ through consumed handles are harmless; borrowed aliases are never ownership
 handles and may not be used after abort. Arbitrary dangling C pointers are not a
 supported handle-recovery interface.
 
-No public runnable sibling, trusted return thunk, context switch, executing
-CPU/FPU preservation test, output commit, scheduler publication or runnable
-stack-lifetime transfer is claimed by this checkpoint.
+No public runnable sibling, thread-only return capability, clone context switch,
+executing clone CPU/FPU preservation test, output commit, scheduler publication
+or runnable stack-lifetime transfer is claimed by this checkpoint.
+
+Kernel-selected bridge and execution holds
+-----------------------------------------
+
+THREAD_STARTUP_ARGS contains no return PC.
+The x32 backend receives an opaque kernel-created return-bridge capability,
+checks that its ASPACE matches, and derives the PC itself. A coincidentally
+identical executable page at the reserved VA is rejected rather than adopted.
+
+The bridge occupies the final user page, outside mmap/heap/callback windows.
+Its exact kernel instruction image and effective USER|EXEC (not WRITE) access
+are checked. A privately owned durable mapping hold prevents replacement or
+permission changes for the capability's entire lifetime. A borrowed registry
+shares one mapping among drafts in the same KASPACE; reference-count exhaustion
+fails. Final capability release drops its hold, removes the code page and its
+metadata, and releases KASPACE. Ordinary backend page-table capacity remains
+reusable until final ASPACE destruction, as with existing unmap; this is not a
+claim that every failed attempt reduces page-table capacity immediately. Tests
+prime that capacity before per-attempt snapshots and verify the exact complete
+ASPACE lifetime baseline after all owners are gone.
+
+The current internal bridge ABI is deliberately SINGLE-THREAD PROCESS exit:
+
+  LONG entry(void *argument) -> EAX result
+  bridge: EDI = EAX; RAX = (GEMDOS class 1 << 32) | Pterm 0x4c; syscall; ud2
+
+The existing Pterm UWORD status contract takes the low 16 bits. No C frames,
+user input PC, new syscall, parallel termination mechanism, or public Pterm
+semantics are introduced. An unexpected return from Pterm executes UD2.
+The bridge uses the existing xterm -> termuser -> resumed launcher -> common
+proc_finalize_exit ordering, off the terminated syscall stack. Scheduler-root
+reap of a managed task's separate scheduler stack remains independent.
+
+Production QEMU tests execute a real normal RET and an entry UD2 through that
+EXISTING launcher, with another PROCESS identity retaining the same ASPACE.
+They verify status, the four safe-handoff stages, independent peer identity,
+retained mappings, duplicate release, final code-page removal and resource
+baselines. The membership preflight rejects two THREADs in the same PROCESS.
+This is NOT dispatch of a constructed proc_clone CPU/FPU image and NOT an
+implementation of sibling-only termination. Public and trusted clone startup
+publication remain disabled. The existing xterm guard remains intact.
+
+Durable mapping holds are distinct from short publication seals. A hold is
+allowed across callbacks, scheduling points and user execution. It requires
+privately owned resident non-file-cache pages; borrowed/procmem mappings and
+unresolved file COW cannot acquire it. kaspace_stack_hold_acquire additionally
+requires ordinary KASPACE heap or anonymous mmap reservations, never loader
+staging, loans, file-backed views, or the original THREAD's implicit stack-growth
+reservation. Backing remains explicit and fallible before publication.
+
+KTHREAD can consume exactly one such stack-hold handle while constructed. It
+retains KASPACE independently and rejects a foreign-space or duplicate transfer.
+After stop, safe-context reap invokes the backend reclaimer first, then releases
+the user-stack hold, then membership/ASPACE/PROCESS references. Releasing a hold
+does not free caller-owned Malloc memory: it makes ordinary release legal again.
+Final ASPACE ownership releases remaining reservations. Tests prove two THREADs
+retain one reservation, first detach cannot permit Mfree, final detach permits
+it, borrowed-page/OOM construction rolls back, and unchanged identity-only
+start guards reject execution. Transaction cancellation releases the backend
+before KTHREAD drops its independently retained user-stack hold.
+
+The x32 backend can also detach its two kernel stacks into an initialized empty
+X32_THREAD_STACK_OWNERS. This moves each physical/top pair once; image cancellation
+then owns neither stack. The syscall owner must release after launcher handoff;
+the scheduler owner only after root handoff. Production tests perform transfer,
+image cancellation, separate exactly-once release and verify the current SP is
+outside both stacks. They do not assert an executing clone handoff exists yet.
+
+Remaining publication blockers are concrete:
+
+1. SAME_PROCESS requires #893's INTERNAL thread-only stop/handoff/last-thread
+   decision; this Pterm-based bridge is not that capability. No shared-process
+   context may be enabled using it merely because the membership once was sole.
+2. A distinct PROCESS/one-THREAD clone still needs to bind the prepared full
+   CPU/FPU image, syscall stack and launcher continuation to the existing native
+   task. The legacy gouser entry is not a consumer of this CPU/FPU image. The
+   current clone_identity_only and KTHREAD.identity_only guards remain.
+3. That backend must preallocate scheduler storage, take bridge/user/kernel stack
+   owners and lifecycle registrations, then commit no-fault frame/output stores
+   and scheduler insertion as one no-fail serialized transition. No stores or
+   scheduler publication have been added. COMMITTED/RUNNABLE are unreachable.
+
+The six-stage state machine above remains the intended transition. All mapping
+holds, context/bridge construction, observer registration, output preflight and
+scheduler-capacity reservation must precede sealing and the first visible store.
+After that store: no callback, allocation, yield, failure or rollback. #713 must
+supply exclusion before preemption/SMP; no unproved concurrency model is assumed.
+Actual CPU/FPU preservation of a new context must be tested once dispatch is
+connected. Current FPU-image inspection and legacy launcher runtime coverage
+must not be described as that future test.

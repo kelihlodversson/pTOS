@@ -748,6 +748,14 @@ static BOOL range_is_private(const struct aspace *as, UQUAD va, UQUAD pages)
     return TRUE;
 }
 
+BOOL aspace_private_range_ok(const ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    UQUAD first;
+    if (!as || !bytes || va >= USER_VA_LIMIT || bytes > USER_VA_LIMIT - va) return FALSE;
+    first = va & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
+    return range_is_private(as, first, (va + bytes - first + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE);
+}
+
 BOOL aspace_move_private(ASPACE *from, ASPACE *to,
                                 UQUAD va, UQUAD bytes, UWORD prot)
 {

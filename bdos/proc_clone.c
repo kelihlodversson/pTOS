@@ -168,6 +168,19 @@ LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *tx)
     return thread_startup_seal(tx->startup);
 }
 
+LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *tx)
+{
+    KASPACE_LEASE *hold = NULL;
+    LONG error;
+    if (!startup_target_live(tx)) return EACCDN;
+    error = thread_startup_retain_stack(tx->startup, &hold);
+    if (error) return error;
+    if (!kthread_take_stack_hold(tx->thread, &hold)) {
+        kaspace_lease_release(&hold); return EACCDN;
+    }
+    return E_OK;
+}
+
 const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *tx)
 {
     return tx ? tx->startup : NULL;

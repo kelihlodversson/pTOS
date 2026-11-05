@@ -476,6 +476,13 @@ BOOL kproc_begin_disposal(KPROC *process, PD **pd)
     return *pd != NULL;
 }
 
+BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
+{
+    return process && thread && process->disposal_state == PROCESS_LIVE &&
+        process->pd && !process->completed && process->threads == thread &&
+        !*kthread_next_link(thread) && kthread_process(thread) == process;
+}
+
 static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)
 {
     return thread && process->threads == thread &&

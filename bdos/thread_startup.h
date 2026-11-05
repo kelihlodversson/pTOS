@@ -4,19 +4,18 @@
 #include "portab.h"
 #include <aspace_types.h>
 struct kaspace;
+struct kaspace_lease;
 typedef struct thread_startup_draft THREAD_STARTUP_DRAFT;
 typedef struct {
     VADDR entry, argument, stack_base;
     ULONG stack_size;
-    /* Kernel-selected user return bridge. The draft validates its mapping,
-     * not thread-exit semantics; #893 integration is still a publication gate. */
-    VADDR return_entry;
 } THREAD_STARTUP_ARGS;
 /* All arguments are normalized kernel values, not a user structure. Requires
  * resident mappings; backing/COW must be completed before prepare. It never
  * faults in or writes user memory. Retains ASPACE
  * lifetime and revocable mapping leases. This draft still cannot authorize
- * execution or output writes. Prepare requires *draft == NULL.
+ * execution or output writes. Return code identity is selected/owned entirely
+ * by the backend, not supplied in THREAD_STARTUP_ARGS. Requires *draft == NULL.
  * Calls are serialized/no-yield. Unsupported backends return EINVFN. */
 LONG thread_startup_prepare(struct kaspace *space, const THREAD_STARTUP_ARGS *args,
                             THREAD_STARTUP_DRAFT **draft);
@@ -47,10 +46,13 @@ LONG thread_startup_observe(THREAD_STARTUP_DRAFT *draft,
  * No allocation/callback/user write. Abort leaves the window before callbacks.
  * Still NOT a trusted return bridge or an executable/publication capability. */
 LONG thread_startup_seal(THREAD_STARTUP_DRAFT *draft);
+/* Acquire a separate durable user-stack hold before publication. Transfer it
+ * to KTHREAD; the short startup seal remains independent. No execution grant. */
+LONG thread_startup_retain_stack(THREAD_STARTUP_DRAFT *draft, struct kaspace_lease **hold);
 THREAD_STARTUP_STATE thread_startup_state(const THREAD_STARTUP_DRAFT *draft);
-/* EIMBA for stale mappings, EINVFN otherwise: the kernel-selected #893 return
- * bridge and no-fail ownership/scheduler transition are not installed. An
- * arbitrary executable return_entry never authorizes execution. */
+/* EIMBA for stale mappings, EINVFN otherwise: the bridge currently supports
+ * sole-THREAD PROCESS exit only. Thread-only exit and the CPU dispatch/no-fail
+ * publication transition remain uninstalled; no arbitrary return PC input. */
 LONG thread_startup_publication_check(const THREAD_STARTUP_DRAFT *draft);
 /* Never-executed stacks/context only. Idempotent through the cleared handle. */
 void thread_startup_abort(THREAD_STARTUP_DRAFT **draft);

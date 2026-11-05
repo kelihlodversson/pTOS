@@ -21,8 +21,17 @@ BOOL kaspace_lease_valid(const KASPACE_LEASE *lease);
  * stack retention requires a separate execution-lifetime policy (#892/#893). */
 BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count);
 void kaspace_lease_release(KASPACE_LEASE **lease);
+/* Durable private-mapping hold, distinct from the short sealed publication
+ * window. May survive yields/user execution. Rejects borrowed and COW pages.
+ * The caller must release from a safe context after execution cannot resume. */
+BOOL kaspace_lease_hold_private(KASPACE_LEASE *lease);
+/* User stacks must lie in ordinary heap or anonymous mmap reservations, never
+ * loader staging/borrowed basepages. Acquisition never backs lazy/COW pages. */
+LONG kaspace_stack_hold_acquire(KASPACE *space, VADDR address, VADDR bytes,
+                               KASPACE_LEASE **result);
+KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold); /* borrowed */
 /* Backend mutation barrier, called BEFORE changing leaves or lazy metadata.
- * FALSE means a sealed lease rejects the entire operation, nothing revoked.
+ * FALSE means a sealed lease or durable hold rejects it, nothing revoked.
  * TRUE revokes overlapping preparation leases even if the mutation later fails.
  * Inputs are rounded out to pages. Backend lifetime is retained by each lease. */
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);

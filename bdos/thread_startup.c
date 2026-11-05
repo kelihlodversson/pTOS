@@ -10,6 +10,7 @@ struct thread_startup_draft {
     KASPACE *space;
     THREAD_STARTUP_ARGS args;
     void *image;
+    void *bridge;
     KASPACE_LEASE *leases[5]; /* entry, bridge, stack, PID output, TID output */
     THREAD_STARTUP_STATE state;
     BOOL outputs_prepared;
@@ -43,10 +44,12 @@ LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->observer_context = NULL;
         draft->args = *args;
         draft->image = NULL;
-        error = thread_startup_arch_prepare(kaspace_backend(space), &draft->args, &draft->image);
+        draft->bridge = NULL;
+        error = thread_startup_arch_bridge_acquire(space, &draft->bridge);
+        if (!error) error = thread_startup_arch_prepare(kaspace_backend(space), &draft->args, draft->bridge, &draft->image);
         if (!error) error = kaspace_lease_acquire(space, args->entry, 1,
             ASPACE_PROT_USER | ASPACE_PROT_EXEC, &draft->leases[0]);
-        if (!error) error = kaspace_lease_acquire(space, args->return_entry, 1,
+        if (!error) error = kaspace_lease_acquire(space, thread_startup_arch_bridge_address(draft->bridge), 1,
             ASPACE_PROT_USER | ASPACE_PROT_EXEC, &draft->leases[1]);
         /* Entire supplied stack, including alignment discard and red zone.
          * This intentionally protects more than just the minimal 136 bytes. */
@@ -72,6 +75,7 @@ LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
         for (i = 0; i < 2; i++)
             if (draft->outputs[i] && !aspace_copy_to_user_ok(kaspace_backend(draft->space),
                     draft->outputs[i], 4)) return EIMBA;
+        if (!thread_startup_arch_bridge_valid(draft->bridge)) return EIMBA;
         return thread_startup_arch_validate(kaspace_backend(draft->space), &draft->args);
     }
 #else
@@ -91,6 +95,7 @@ void thread_startup_abort(THREAD_STARTUP_DRAFT **result)
         for (i = 0; i < 5; i++) kaspace_lease_release(&draft->leases[i]);
         if (draft->observer.release) draft->observer.release(draft->observer_context);
         thread_startup_arch_abort(draft->image);
+        thread_startup_arch_bridge_release(&draft->bridge);
         kaspace_put(draft->space);
         kfree(draft);
     }
@@ -137,8 +142,8 @@ LONG thread_startup_prepare_outputs(THREAD_STARTUP_DRAFT *draft, VADDR pid, VADD
                  draft->args.stack_base < end) ||
                 ((address & ~(UQUAD)(USER_PAGE_SIZE - 1)) <= draft->args.entry &&
                  draft->args.entry < ((end + USER_PAGE_SIZE - 1) & ~(UQUAD)(USER_PAGE_SIZE - 1))) ||
-                ((address & ~(UQUAD)(USER_PAGE_SIZE - 1)) <= draft->args.return_entry &&
-                 draft->args.return_entry < ((end + USER_PAGE_SIZE - 1) & ~(UQUAD)(USER_PAGE_SIZE - 1)))) {
+                ((address & ~(UQUAD)(USER_PAGE_SIZE - 1)) <= thread_startup_arch_bridge_address(draft->bridge) &&
+                 thread_startup_arch_bridge_address(draft->bridge) < ((end + USER_PAGE_SIZE - 1) & ~(UQUAD)(USER_PAGE_SIZE - 1)))) {
                 error = EINVAL; break;
             }
             if (!aspace_copy_to_user_ok(kaspace_backend(draft->space), addresses[i], 4)) {
@@ -210,5 +215,21 @@ LONG thread_startup_seal(THREAD_STARTUP_DRAFT *draft)
 LONG thread_startup_publication_check(const THREAD_STARTUP_DRAFT *draft)
 {
     LONG error = thread_startup_validate(draft);
-    return error ? error : EINVFN; /* no trusted thread-return/termination bridge */
+    return error ? error : EINVFN; /* no thread-only exit/CPU dispatch/publication installation */
+}
+
+LONG thread_startup_retain_stack(THREAD_STARTUP_DRAFT *draft, KASPACE_LEASE **hold)
+{
+    if (!draft || !hold || *hold) return EINVAL;
+#if CONF_WITH_NATIVE_SCHED
+    {
+        LONG error;
+        if (draft->state != THREAD_STARTUP_PREPARED && draft->state != THREAD_STARTUP_OBSERVED) return EINVAL;
+        error = thread_startup_validate(draft);
+        if (error) return error;
+        return kaspace_stack_hold_acquire(draft->space, draft->args.stack_base, draft->args.stack_size, hold);
+    }
+#else
+    return EINVFN;
+#endif
 }

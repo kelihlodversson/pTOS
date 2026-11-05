@@ -9,6 +9,7 @@
 #include <stdlib.h>
 struct aspace { UWORD protection[2]; unsigned destroyed; };
 static unsigned allocations, frees, fail_alloc;
+static BOOL private_pages = TRUE;
 void *kalloc(ULONG bytes)
 {
     void *p;
@@ -30,6 +31,8 @@ BOOL aspace_translate(const ASPACE *space, VADDR va, PADDR *phys, UWORD *prot)
 #if CONF_WITH_MMAP
 void fileback_put(FILE_BACKING *backing) { assert(!backing); }
 #endif
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR address, VADDR bytes)
+{ (void)as; (void)address; (void)bytes; return private_pages; }
 int main(void)
 {
     ASPACE a = { { ASPACE_PROT_USER | ASPACE_PROT_WRITE, ASPACE_PROT_USER }, 0 };
@@ -61,6 +64,25 @@ int main(void)
     kaspace_lease_release(&leases[0]); kaspace_lease_release(&leases[1]);
     assert(kaspace_lease_acquire(one,0x1000,1,ASPACE_PROT_USER,&leases[0]) == E_OK);
     assert(kaspace_lease_acquire(one,0x2000,1,ASPACE_PROT_USER,&leases[1]) == E_OK);
+    {
+        KASPACE_LEASE *hold = NULL;
+        kaspace_heap(one)->blocks = kalloc(sizeof(KASPACE_HEAP_BLOCK));
+        assert(kaspace_heap(one)->blocks);
+        kaspace_heap(one)->blocks[0].va = 0x1000;
+        kaspace_heap(one)->blocks[0].pages = 1;
+        kaspace_heap(one)->count = kaspace_heap(one)->capacity = 1;
+        fail_alloc = 1;
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&hold) == ENSMEM && !hold);
+        fail_alloc = 0; private_pages = FALSE;
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&hold) == EACCDN && !hold);
+        private_pages = TRUE;
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&hold) == E_OK);
+        assert(kaspace_stack_hold_space(hold) == one);
+        assert(!kaspace_mapping_change(&a,0x1000,1));
+        assert(kaspace_lease_valid(leases[0]));
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&hold) == EINVAL);
+        kaspace_lease_release(&hold);
+    }
     assert(kaspace_lease_seal(leases,2));
     assert(!kaspace_mapping_change(&a,0x1000,2*USER_PAGE_SIZE));
     assert(kaspace_lease_valid(leases[0]) && kaspace_lease_valid(leases[1]));

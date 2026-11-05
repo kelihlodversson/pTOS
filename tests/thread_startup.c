@@ -6,6 +6,8 @@
 #include "kaspace.h"
 #include "thread_startup.h"
 #include "thread_startup_x32.h"
+#include "thread_return_x32.h"
+#include "thread_startup_backend.h"
 #include "gemerror.h"
 #include <assert.h>
 #include <stdlib.h>
@@ -13,7 +15,34 @@
 
 struct aspace { int marker; };
 static unsigned allocations, frees, destroys, stacks, fail_alloc, fail_stack;
-static BOOL live[8], stack_present = TRUE;
+static BOOL live[8], stack_present = TRUE, bridge_present;
+static UBYTE bridge_code[4096];
+#define BRIDGE (USER_VA_LIMIT - USER_PAGE_SIZE)
+void panic(const char *fmt, ...) { (void)fmt; abort(); }
+BOOL aspace_load_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, const void *src, ULONG filesz)
+{
+    (void)as;
+    assert(va == BRIDGE && bytes == 4096 && filesz <= 4096 && !bridge_present);
+    assert(prot == (ASPACE_PROT_USER | ASPACE_PROT_EXEC));
+    memcpy(bridge_code, src, filesz); bridge_present = TRUE; return TRUE;
+}
+BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes)
+{
+    assert(va == BRIDGE && bytes == 4096 && bridge_present);
+    if (!kaspace_mapping_change(as,va,bytes)) return FALSE;
+    bridge_present = FALSE; return TRUE;
+}
+BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes)
+{
+    (void)as;
+    if (va != BRIDGE || bytes > 4096 || !bridge_present) return FALSE;
+    memcpy(dst,bridge_code,bytes); return TRUE;
+}
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes)
+{
+    UWORD prot;
+    return bytes && aspace_translate(as,va,NULL,&prot);
+}
 static UWORD code_prot = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
 static UWORD stack_prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
 #define CODE 0x400000UL
@@ -35,6 +64,7 @@ BOOL aspace_translate(const ASPACE *as, VADDR address, PADDR *physical, UWORD *p
     if (address >= CODE && address < CODE + 4096) bits = code_prot;
     else if (stack_present && address >= STACK && address < STACK + 8192) bits = stack_prot;
     else if (address >= OUTPUT && address < OUTPUT + 4096) bits = stack_prot;
+    else if (bridge_present && address >= BRIDGE && address < BRIDGE + 4096) bits = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
     else return FALSE;
     if (prot) *prot = bits;
     return TRUE;
@@ -100,11 +130,33 @@ int main(void)
     KASPACE_LEASE *lease = NULL, *old;
     UQUAD regs[15];
     assert(space);
-    args.entry = CODE; args.return_entry = CODE + 16; args.argument = 0xfedcba98UL;
+    args.entry = CODE; args.argument = 0xfedcba98UL;
     args.stack_base = STACK; args.stack_size = 8192;
+    {
+        X32_RETURN_BRIDGE *bridge = NULL, *second = NULL;
+        assert(x32_return_bridge_acquire(space,&bridge) == E_OK);
+        assert(x32_return_bridge_acquire(space,&second) == E_OK && second == bridge);
+        assert(!kaspace_mapping_change(&backend,BRIDGE,4096));
+        {
+            ASPACE foreign = { 42 };
+            void *foreign_image = NULL;
+            assert(thread_startup_arch_prepare(&foreign,&args,bridge,&foreign_image) == EIMBA && !foreign_image);
+            bridge_code[0] ^= 1;
+            assert(!x32_return_bridge_valid(bridge));
+            bridge_code[0] ^= 1;
+            assert(x32_return_bridge_valid(bridge));
+        }
+        x32_return_bridge_release(&bridge);
+        assert(x32_return_bridge_valid(second));
+        x32_return_bridge_release(&second);
+        /* Even identical instructions at an occupied VA are not kernel trust. */
+        bridge_present = TRUE;
+        assert(x32_return_bridge_acquire(space,&bridge) == EACCDN && !bridge);
+        bridge_present = FALSE;
+    }
     observed_space = space;
     /* draft, image, entry lease, bridge lease, stack lease */
-    for (i = 1; i <= 5; i++) {
+    for (i = 1; i <= 7; i++) {
         before = allocations - frees; fail_alloc = i;
         assert(thread_startup_prepare(space,&args,&draft) == ENSMEM && !draft);
         assert(!stacks && allocations - frees == before);
@@ -143,7 +195,7 @@ int main(void)
     assert(thread_startup_prepare(space,&args,&draft) == EINVAL && draft == held && allocations - frees == before);
     image = thread_startup_image(draft);
     assert(image && thread_startup_validate(draft) == E_OK && !((uintptr_t)image->user.fpu & 15));
-    assert(image->user.rip == CODE && image->return_pc == CODE + 16);
+    assert(image->user.rip == CODE && image->return_pc == BRIDGE);
     assert(image->user.rdi == 0xfedcba98ULL && image->user.rflags == 0x202 && image->user.cr3 == 0xabc000);
     assert((image->user.rsp & 15) == 8 && image->user.rsp >= STACK + 128);
     memcpy(regs, &image->user, sizeof(regs));
@@ -217,6 +269,6 @@ int main(void)
     kaspace_put(space); /* lease independently keeps backend alive */
     assert(!destroys);
     kaspace_lease_release(&lease); kaspace_lease_release(&lease);
-    assert(destroys == 1 && allocations == frees);
+    assert(destroys == 1 && allocations == frees && !bridge_present);
     return 0;
 }

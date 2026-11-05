@@ -37,8 +37,7 @@
  * A *real*, ring-3 process (the other branch of gouser() below, via
  * x86_64_enter_user()) leaves the kernel entirely by iretq, so there is no
  * suspended C call chain to resume -- but gouser() saves a jmp_buf of its own
- * right before iretq, and termuser() (reached from xterm() once the address
- * space is gone, whether by Pterm() or by a fault) unwinds to it, exactly as
+ * right before iretq, and termuser() (reached from xterm(), whether by Pterm() or by a fault) unwinds to it, exactly as
  * for a kernel-code process.  That resumes the launcher with the exit code,
  * which is what the built-in EmuCON, and its parent bios.c, rely on.  Each
  * ring-3 process makes its system calls on a kernel stack of its own, which

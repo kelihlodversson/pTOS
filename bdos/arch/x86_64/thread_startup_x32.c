@@ -7,6 +7,7 @@
 #include "string.h"
 #include "thread_startup_backend.h"
 #include "thread_startup_x32.h"
+#include "thread_return_x32.h"
 #include "../../../bios/arch/x86_64/gdt.h"
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -21,19 +22,11 @@ static BOOL injected(UWORD stage)
 #define injected(stage) FALSE
 #endif
 
-static BOOL executable(const ASPACE *space, VADDR address)
-{
-    UWORD protection;
-    return aspace_translate(space, address, NULL, &protection) &&
-        (protection & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) ==
-        (ASPACE_PROT_USER | ASPACE_PROT_EXEC);
-}
-
 LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS *args)
 {
     UQUAD end, rsp;
-    if (!space || !args || !args->entry || !args->return_entry ||
-        args->entry > 0xffffffffULL || args->return_entry > 0xffffffffULL ||
+    if (!space || !args || !args->entry ||
+        args->entry > 0xffffffffULL ||
         args->argument > 0xffffffffULL || (args->stack_base & 15) ||
         !args->stack_size || args->stack_base >= USER_VA_LIMIT ||
         args->stack_size > USER_VA_LIMIT - args->stack_base)
@@ -46,8 +39,12 @@ LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS
     if (args->stack_size < 136 || (end & ~15ULL) < 8) return EINVAL;
     rsp = (end & ~15ULL) - 8;
     if (rsp < args->stack_base || rsp - args->stack_base < 128) return EINVAL;
-    if (!executable(space, args->entry) || !executable(space, args->return_entry) ||
-        !aspace_user_range_ok(space, args->stack_base, args->stack_size, TRUE))
+    {
+        UWORD prot;
+        if (!aspace_translate(space, args->entry, NULL, &prot) ||
+            (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) != (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) return EIMBA;
+    }
+    if (!aspace_user_range_ok(space, args->stack_base, args->stack_size, TRUE))
         return EIMBA;
     return E_OK;
 }
@@ -61,11 +58,12 @@ void thread_startup_arch_abort(void *resource)
     kfree(draft);
 }
 
-LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args, void **image)
+LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args, const void *return_bridge, void **image)
 {
     X32_THREAD_STARTUP_DRAFT *draft;
     LONG error;
     if (!image || *image) return EINVAL;
+    if (!x32_return_bridge_matches(return_bridge, space)) return EIMBA;
     error = thread_startup_arch_validate(space, args);
     if (error) return error;
     draft = kalloc(sizeof(*draft));
@@ -88,10 +86,30 @@ LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args,
     draft->user.fpu[0] = 0x7f; draft->user.fpu[1] = 0x03;
     draft->user.fpu[24] = 0x80; draft->user.fpu[25] = 0x1f;
     draft->user.fpu[28] = 0xbf; draft->user.fpu[29] = 0xff;
-    draft->return_pc = args->return_entry;
+    draft->return_pc = x32_return_bridge_address(return_bridge);
     *image = draft;
     return E_OK;
 failed:
     thread_startup_arch_abort(draft);
     return ENSMEM;
+}
+
+BOOL thread_startup_x32_take_stacks(X32_THREAD_STARTUP_DRAFT *draft, X32_THREAD_STACK_OWNERS *owners)
+{
+    if (!draft || !owners || owners->syscall.physical || owners->syscall.top ||
+        owners->scheduler.physical || owners->scheduler.top ||
+        !draft->syscall_physical || !draft->scheduler_stack.physical) return FALSE;
+    owners->syscall.physical = draft->syscall_physical;
+    owners->syscall.top = draft->syscall_top;
+    owners->scheduler = kthread_stack_detach(&draft->scheduler_stack);
+    draft->syscall_physical = 0; draft->syscall_top = 0;
+    return TRUE;
+}
+void thread_startup_x32_release_syscall(X32_THREAD_STACK_OWNERS *owners)
+{
+    if (owners) kthread_stack_release(&owners->syscall);
+}
+void thread_startup_x32_release_scheduler(X32_THREAD_STACK_OWNERS *owners)
+{
+    if (owners) kthread_stack_release(&owners->scheduler);
 }

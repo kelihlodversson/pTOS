@@ -219,6 +219,8 @@ static void exercise(BOOL source_first)
     proc_clone_abort(&tx); assert(!tx && !source.live && source.refs == 1);
     kproc_release(&source);
 }
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR address, VADDR bytes)
+{ (void)as; (void)address; (void)bytes; return TRUE; }
 int main(void)
 {
     exercise(FALSE); exercise(TRUE);
