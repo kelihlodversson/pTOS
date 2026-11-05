@@ -9,7 +9,7 @@
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred spawn:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD owner, child;
 static KERNEL_TASK tasks[KSCHED_LIMIT];
-static unsigned references, stacks, identities, preparations, commits, disposals;
+static unsigned references, stacks, identities, preparations, commits, disposals, stack_releases;
 static BOOL prepare_ok, identity_ok;
 PD *run;
 
@@ -28,7 +28,11 @@ BOOL kthread_stack_allocate(KTHREAD_STACK *s)
 KTHREAD_STACK kthread_stack_detach(KTHREAD_STACK *s)
 { KTHREAD_STACK result = *s; s->physical = s->top = 0; return result; }
 void kthread_stack_release(KTHREAD_STACK *s)
-{ CHECK(s->physical == 123 && stacks); stacks--; s->physical = s->top = 0; }
+{
+    if (!s->physical) return;
+    CHECK(s->physical == 123 && stacks);
+    stack_releases++; stacks--; s->physical = s->top = 0;
+}
 KTHREAD *kthread_create(PD *p) { CHECK(p == &child); if (!identity_ok) return NULL; identities++; return (KTHREAD *)p; }
 void kthread_destroy(KTHREAD *t) { CHECK(t == (KTHREAD *)&child && identities); identities--; }
 void proc_dispose_process(KPROC *p) { CHECK(p == (KPROC *)&child); disposals++; }
@@ -57,9 +61,18 @@ int main(void)
     ksched_exited(&owner);
     CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_thread &&
           references == 1 && stacks == 1 && !identities);
-    kproc_release(tasks[1].process);
-    kthread_stack_release(&tasks[1].execution.stack);
-    CHECK(!references && !stacks);
+    tasks[1].state = TASK_ZOMBIE;
+    CHECK(!reap_finished_on_root(&tasks[1]) && stacks == 1 && references == 1);
+    scheduler.current = NULL;
+    CHECK(reap_finished_on_root(&tasks[1]) && !stacks && references == 1);
+    {
+        unsigned reaped = stack_releases;
+        CHECK(reap_finished_on_root(&tasks[1]) && stack_releases == reaped);
+    }
+    tasks[1].state = TASK_DONE;
+    CHECK(reap_finished_on_root(&tasks[1]) && !references && !stacks &&
+          tasks[1].state == TASK_UNUSED && !tasks[1].pid);
+    CHECK(!reap_finished_on_root(&tasks[1]));
     puts("Deferred scheduler construction, rollback and identity handoff: PASS");
     return 0;
 }

@@ -243,7 +243,9 @@ are also checked against their original allocation generation. Deferred x32
 tasks retain a non-runnable KTHREAD during preparation and cancellation.
 Cancellation reaps that identity before reclaiming the separately owned
 scheduler stack; successor activation drops it before the task becomes
-runnable. Running scheduler tasks are not yet associated with KTHREAD. These are model and
+runnable. A root-loop helper reclaims finished and zombie task stacks after the
+current task is cleared; zombies retain their process identity for waiters.
+Running scheduler tasks are not yet associated with KTHREAD. These are model and
 production-lifecycle tests, not runnable-thread or shared-VM support. Ring-3
 mode 4 no longer requires durable give-back loans.
 

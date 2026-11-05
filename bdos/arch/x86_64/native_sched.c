@@ -437,6 +437,25 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
     }
 }
 
+/* Called only after the scheduler has switched back to its root context.
+ * A zombie keeps its process identity for waiters, but its continuation and
+ * stack can never run again. Repeated passes leave already-reaped stacks alone. */
+static BOOL reap_finished_on_root(KERNEL_TASK *task)
+{
+    if (scheduler.current || (task->state != TASK_DONE && task->state != TASK_ZOMBIE))
+        return FALSE;
+    kthread_stack_release(&task->execution.stack);
+    if (task->state == TASK_DONE && task->process) {
+        kproc_release(task->process);
+        task->process = NULL;
+    }
+    if (task->asynchronous && task->state == TASK_DONE) {
+        task->pid = 0;
+        task->state = TASK_UNUSED;
+    }
+    return TRUE;
+}
+
 static LONG run_group(PD * const *programs, UWORD count, LONG *results,
                       BOOL take_ownership, BOOL prepare)
 {
@@ -493,20 +512,8 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         BOOL pending = FALSE;
         scheduler.current = NULL;
         /* Reclaim a finished task's stack only from this root stack. */
-        for (i = 0; i < KSCHED_LIMIT; i++) {
-            KERNEL_TASK *task = &scheduler.tasks[i];
-            if (task->state == TASK_DONE || task->state == TASK_ZOMBIE) {
-                kthread_stack_release(&task->execution.stack);
-                if (task->state == TASK_DONE && task->process) {
-                    kproc_release(task->process);
-                    task->process = NULL;
-                }
-                if (task->asynchronous && task->state == TASK_DONE) {
-                    task->pid = 0;
-                    task->state = TASK_UNUSED;
-                }
-            }
-        }
+        for (i = 0; i < KSCHED_LIMIT; i++)
+            reap_finished_on_root(&scheduler.tasks[i]);
         for (i = 0; i < KSCHED_LIMIT; i++) {
             UWORD slot = (scheduler.next + i) % KSCHED_LIMIT;
             KERNEL_TASK *task = &scheduler.tasks[slot];
