@@ -1281,7 +1281,7 @@ static void test_kthread_relationships(void)
     KPROC *observer, *other_observer;
     PD *other;
     KASPACE *shared;
-    ULONG first_tid;
+    ULONG first_tid, saved_tid;
     UWORD status;
 
     snap(&s);
@@ -1296,12 +1296,16 @@ static void test_kthread_relationships(void)
     kthread_test_fail_after_attach();
     CHECK(!kthread_create(pd), "failed thread association rolls back its references");
     a = kthread_create(pd);
+    kthread_test_fail_after_attach();
+    CHECK(!kthread_create(pd), "failed association between thread identities");
     b = kthread_create(pd);
     CHECK(observer && a && b, "construct two non-runnable threads");
     if (a && b) {
         first_tid = kthread_tid(a);
         CHECK(first_tid && kthread_tid(b) && first_tid != kthread_tid(b),
               "thread identities are distinct");
+        CHECK(kthread_tid(b) == first_tid + 1,
+              "failed association does not consume a thread identity");
         CHECK(kthread_process(a) == observer && kthread_process(b) == observer &&
               kthread_aspace(a) == kthread_aspace(b) &&
               kaspace_backend(kthread_aspace(b)) == kproc_user_aspace(pd),
@@ -1343,6 +1347,13 @@ static void test_kthread_relationships(void)
     }
     kthread_destroy(a);
     kthread_destroy(b);
+    saved_tid = kthread_test_set_last_tid(~(ULONG)0 - 1);
+    a = kthread_create(pd);
+    CHECK(a && kthread_tid(a) == ~(ULONG)0,
+          "last available thread identity is nonzero");
+    CHECK(!kthread_create(pd), "exhausted thread identity space fails closed");
+    kthread_destroy(a);
+    kthread_test_set_last_tid(saved_tid);
     a = kthread_create(pd);
     b = kthread_create(pd);
     CHECK(a && b, "construct threads for reverse release order");

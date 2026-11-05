@@ -15,17 +15,23 @@ struct kthread {
 };
 
 /* Never reuse a TID during a boot. Exhaustion fails closed. */
-static ULONG next_tid = 1;
+static ULONG last_tid;
 #if CONF_WITH_X86_64_MEMTEST
 static BOOL fail_after_attach;
 void kthread_test_fail_after_attach(void) { fail_after_attach = TRUE; }
+ULONG kthread_test_set_last_tid(ULONG tid)
+{
+    ULONG previous = last_tid;
+    last_tid = tid;
+    return previous;
+}
 #endif
 
 KTHREAD *kthread_create(PD *pd)
 {
     KTHREAD *thread;
 
-    if (!next_tid)
+    if (last_tid == ~(ULONG)0)
         return NULL;
     thread = kalloc(sizeof(*thread));
     if (!thread)
@@ -45,7 +51,7 @@ KTHREAD *kthread_create(PD *pd)
         return NULL;
     }
 #endif
-    thread->tid = next_tid++;
+    thread->tid = ++last_tid;
     return thread;
 }
 

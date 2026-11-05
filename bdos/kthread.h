@@ -24,6 +24,7 @@ KTHREAD **kthread_next_link(KTHREAD *thread);
 #if CONF_WITH_X86_64_MEMTEST
 /* Fail after association to exercise the complete constructor rollback. */
 void kthread_test_fail_after_attach(void);
+ULONG kthread_test_set_last_tid(ULONG tid);
 #endif
 
 #endif
