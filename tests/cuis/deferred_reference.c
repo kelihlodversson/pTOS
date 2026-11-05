@@ -39,13 +39,19 @@ void proc_dispose_deferred(PD *pd)
 
 void kproc_release(KPROC *process)
 {
-    CHECK(phase == 2 && process == (KPROC *)&successor);
+    CHECK(phase == 3 && process == (KPROC *)&successor);
+    phase++;
+}
+
+void kthread_destroy(KTHREAD *thread)
+{
+    CHECK(phase == 2 && thread == (KTHREAD *)&successor);
     phase++;
 }
 
 void kthread_stack_release(KTHREAD_STACK *stack)
 {
-    CHECK(phase == 3 && stack->physical == 123);
+    CHECK(phase == 4 && stack->physical == 123);
     phase++;
 }
 
@@ -60,13 +66,14 @@ int main(void)
     tasks[1].state = TASK_DEFERRED;
     tasks[1].program = &successor;
     tasks[1].process = (KPROC *)&successor;
+    tasks[1].deferred_thread = (KTHREAD *)&successor;
     tasks[1].deferred_owner = &owner;
     tasks[1].execution.stack.physical = 123;
     tasks[2].state = TASK_DEFERRED;
     tasks[2].deferred_owner = &other;
-    CHECK(ksched_defer_cancel() == E_OK && phase == 4);
+    CHECK(ksched_defer_cancel() == E_OK && phase == 5);
     CHECK(tasks[2].state == TASK_DEFERRED);
-    CHECK(ksched_defer_cancel() == E_OK && phase == 4);
+    CHECK(ksched_defer_cancel() == E_OK && phase == 5);
     puts("Deferred cancellation releases its process reference and stack once: PASS");
     return 0;
 }

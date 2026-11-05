@@ -5,6 +5,7 @@
 #include "kproc.h"
 #include "process.h"
 #include "kthread_context.h"
+#include "kthread.h"
 #include "kheap.h"
 #include "gemerror.h"
 #include "string.h"
@@ -26,6 +27,7 @@ typedef struct {
     KPROC *process;              /* retained identity, including after exit */
 #if CONF_WITH_CUIS
     PD *deferred_owner;
+    KTHREAD *deferred_thread;   /* non-runnable until successor activation */
 #endif
     WORD pid, signal;
     BOOL asynchronous, take_ownership, exited;
@@ -119,7 +121,8 @@ void ksched_exiting(PD *pd, UWORD result)
 #if CONF_WITH_CUIS
     BOOL asynchronous = FALSE;
     if (!scheduler.active) {
-        cuis_child_completed(kproc_get_parent(pd),kproc_pid(pd),result);
+        PD *parent = kproc_notification_parent(pd);
+        if (parent) cuis_child_completed(parent,kproc_pid(pd),result);
         return;
     }
 #else
@@ -151,7 +154,10 @@ void ksched_exiting(PD *pd, UWORD result)
     /* Nested synchronous children never return through task_entry(). Their
      * trusted parent/PID still exist here; async tasks publish at task_entry
      * after their final result/signal is known. */
-    if (!asynchronous) cuis_child_completed(kproc_get_parent(pd),kproc_pid(pd),result);
+    if (!asynchronous) {
+        PD *parent = kproc_notification_parent(pd);
+        if (parent) cuis_child_completed(parent,kproc_pid(pd),result);
+    }
 #endif
 }
 
@@ -165,6 +171,10 @@ void ksched_exited(PD *pd)
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
         if (task->state == TASK_DEFERRED && task->deferred_owner == pd) {
+            if (task->deferred_thread) {
+                kthread_destroy(task->deferred_thread);
+                task->deferred_thread = NULL;
+            }
             task->deferred_owner = NULL;
             task->state = TASK_NEW;
         }
@@ -177,7 +187,8 @@ void ksched_fault(PD *pd, WORD signal)
     UWORD i;
     if (!scheduler.active) {
 #if CONF_WITH_CUIS
-        cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),signal);
+        PD *parent = kproc_notification_parent(pd);
+        if (parent) cuis_child_fault(parent,kproc_pid(pd),signal);
 #endif
         return;
     }
@@ -190,15 +201,20 @@ void ksched_fault(PD *pd, WORD signal)
              task->state == TASK_BLOCKED) && task->program == pd) {
             if (!task->signal) task->signal = signal;
 #if CONF_WITH_CUIS
-            if (!task->asynchronous)
-                cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),task->signal);
+            if (!task->asynchronous) {
+                PD *parent = kproc_notification_parent(pd);
+                if (parent) cuis_child_fault(parent,kproc_pid(pd),task->signal);
+            }
 #endif
             return;
         }
     }
 #if CONF_WITH_CUIS
     /* Nested synchronous children have no task slot of their own. */
-    cuis_child_fault(kproc_get_parent(pd),kproc_pid(pd),signal);
+    {
+        PD *parent = kproc_notification_parent(pd);
+        if (parent) cuis_child_fault(parent,kproc_pid(pd),signal);
+    }
 #endif
 }
 
@@ -255,6 +271,7 @@ static void discard_deferred(KERNEL_TASK *task)
     PD *program = task->program;
 #endif
     KPROC *process = task->process;
+    KTHREAD *thread = task->deferred_thread;
     KTHREAD_STACK stack = kthread_stack_detach(&task->execution.stack);
     /* It never entered user mode; resource ownership is already the child's.
      * Do not read its basepage after revoking the loader's borrowed mapping. */
@@ -264,6 +281,7 @@ static void discard_deferred(KERNEL_TASK *task)
 #else
     proc_dispose_deferred(program);
 #endif
+    if (thread) kthread_destroy(thread);
     kproc_release(process);
     kthread_stack_release(&stack);
 }
@@ -326,6 +344,17 @@ LONG ksched_spawn(PD *pd)
         memset(task, 0, sizeof(*task));
         return ENSMEM;
     }
+#if CONF_WITH_CUIS
+    if (deferred) {
+        task->deferred_thread = kthread_create(pd);
+        if (!task->deferred_thread) {
+            kproc_release(task->process);
+            kthread_stack_release(&task->execution.stack);
+            memset(task, 0, sizeof(*task));
+            return ENSMEM; /* caller disposes the prepared child */
+        }
+    }
+#endif
     task->pid = kproc_pid(pd);
     task->program = pd;
     task->parent = run;

@@ -14,11 +14,12 @@ static PD owner, parent, child, successor, other;
 static KERNEL_TASK tasks[KSCHED_LIMIT];
 static SBYTE owner_files[NUMSTD], child_files[NUMSTD], successor_files[NUMSTD];
 static UBYTE owner_dirs[NUMCURDIR], child_dirs[NUMCURDIR];
-static BOOL owner_record, child_record, owner_memory, nested, returned_error;
+static BOOL owner_record, child_record, owner_memory, nested, returned_error, parent_retired;
 static unsigned references[4], directories, close_errors, injected, attempts;
 static unsigned fail_handle, invalidations, term_handlers, completions;
 static unsigned successor_aliases, explicit_open;
 static unsigned identity_completions, cleanup_commits;
+static unsigned thread_destroys;
 static jmp_buf exit_resume;
 
 jmp_buf errbuf;
@@ -55,6 +56,10 @@ UBYTE *kproc_curdir(PD *p)
     return p == &owner ? owner_dirs : child_dirs;
 }
 PD *kproc_get_parent(PD *p) { CHECK(p == &owner && owner_record); return &parent; }
+PD *kproc_notification_parent(PD *p)
+{
+    return parent_retired ? NULL : kproc_get_parent(p);
+}
 WORD kproc_pid(PD *p) { CHECK(p == &owner && owner_record); return 11; }
 void kproc_complete(PD *p, UWORD status)
 {
@@ -92,6 +97,11 @@ BOOL kproc_begin_exit(PD *p)
 }
 void kproc_require_no_threads(PD *p) { (void)p; }
 void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
+void kthread_destroy(KTHREAD *thread)
+{
+    CHECK(thread == (KTHREAD *)&successor && tasks[1].state == TASK_DEFERRED);
+    thread_destroys++;
+}
 void panic(const char *fmt, ...) { (void)fmt; abort(); }
 BOOL kproc_discard(PD *p)
 {
@@ -153,8 +163,9 @@ void termuser(void)
     CHECK(!owner_record && !child_record && !owner_memory && term_handlers == 1);
     CHECK(identity_completions == 1 && cleanup_commits == 1);
     CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner);
+    CHECK(!tasks[1].deferred_thread && thread_destroys == 1);
     CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner == &other);
-    CHECK(completions == (unsigned)nested);
+    CHECK(completions == (unsigned)(nested && !parent_retired));
     CHECK(references[0] == successor_aliases && sft[0].f_use == (int)successor_aliases);
     if (successor_aliases)
         CHECK(sft[0].f_own && sft[0].f_own != &owner);
@@ -170,6 +181,7 @@ static void exit_check(void)
     tasks[0].program = nested ? &parent : &owner;
     tasks[0].state = TASK_RUNNING; tasks[0].asynchronous = TRUE;
     tasks[1].program = &successor; tasks[1].deferred_owner = &owner; tasks[1].state = TASK_DEFERRED;
+    tasks[1].deferred_thread = (KTHREAD *)&successor;
     tasks[2].deferred_owner = &other; tasks[2].state = TASK_DEFERRED;
     memset(owner_files,0,sizeof(owner_files));
     memset(successor_files,0,sizeof(successor_files));
@@ -194,6 +206,7 @@ static void exit_check(void)
     owner_record = child_record = owner_memory = TRUE;
     directories = injected = invalidations = attempts = term_handlers = completions = 0;
     identity_completions = cleanup_commits = 0;
+    thread_destroys = 0;
     run = &owner;
     if (!setjmp(exit_resume)) {
         /* Returning to osif's disk-error handler would resume the caller. */
@@ -216,6 +229,12 @@ int main(void)
                         for (close_errors = 0; close_errors <= 2; close_errors++) exit_check();
         }
     }
+    nested = TRUE;
+    parent_retired = TRUE;
+    returned_error = FALSE;
+    successor_aliases = explicit_open = close_errors = 0;
+    fail_handle = NUMSTD;
+    exit_check();
     puts("Deferred successor waits for complete owner/child cleanup despite close errors: PASS");
     puts("Exit sweep preserves successor stdout aliases with explicit handle open or closed: PASS");
     return 0;

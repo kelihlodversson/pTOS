@@ -235,8 +235,15 @@ reaps the thread and then publishes status and releases process resources; a
 cancellation does not invent status.
 The native scheduler-active case is explicitly rejected: task completion,
 parent/orphan ownership, notification and stack handoff must be integrated
-before this interface may handle runnable contexts. Its caller must also keep
-the recorded parent identity valid until notification. These are model and
+before this interface may handle runnable contexts. A tracked parent is held
+as an identity-only reference; notification skips it once retired, even if
+its PD address is reused. An untracked kernel parent retains its legacy
+valid-lifetime requirement; tracked allocations without a process record
+are also checked against their original allocation generation. Deferred x32
+tasks retain a non-runnable KTHREAD during preparation and cancellation.
+Cancellation reaps that identity before reclaiming the separately owned
+scheduler stack; successor activation drops it before the task becomes
+runnable. Running scheduler tasks are not yet associated with KTHREAD. These are model and
 production-lifecycle tests, not runnable-thread or shared-VM support. Ring-3
 mode 4 no longer requires durable give-back loans.
 

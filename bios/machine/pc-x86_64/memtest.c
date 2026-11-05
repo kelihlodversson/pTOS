@@ -1677,6 +1677,65 @@ static void test_kproc_pending_ownership(void)
 
 #define FAKE_PDS 1000
 
+static void test_parent_identity_reuse(void)
+{
+    SNAP s;
+    PD *parent, *child, *probe;
+    WORD old_pid;
+
+    snap(&s);
+    parent = kalloc(sizeof(*parent));
+    child = kalloc(sizeof(*child));
+    probe = kalloc(sizeof(*probe));
+    CHECK(parent && child && probe, "allocate parent identity test basepages");
+    if (!parent || !child || !probe) {
+        kfree(probe);
+        kfree(parent);
+        kfree(child);
+        return;
+    }
+    bzero(parent, sizeof(*parent));
+    bzero(child, sizeof(*child));
+    bzero(probe, sizeof(*probe));
+    if (!kproc_create(parent)) {
+        CHECK(FALSE, "create parent record");
+        kfree(probe); kfree(child); kfree(parent);
+        return;
+    }
+    if (!kproc_create(child)) {
+        CHECK(FALSE, "create child record");
+        kproc_destroy(parent);
+        kfree(probe); kfree(child); kfree(parent);
+        return;
+    }
+    old_pid = kproc_pid(parent);
+    kproc_set_parent(child, parent);
+    kproc_set_parent(child, parent); /* replacing the same identity must not leak */
+    CHECK(kproc_notification_parent(child) == parent && kproc_parent_pid(child) == old_pid,
+          "child resolves live parent identity");
+    kproc_destroy(parent);
+    CHECK(!kproc_notification_parent(child) && !kproc_parent_pid(child),
+          "retired parent is not a notification target");
+    kproc_test_pid_search(old_pid - 1, 1);
+    CHECK(!kproc_create(probe), "child identity reference retains the parent's PID");
+    kproc_test_pid_search(0, 0);
+    CHECK(kproc_create(parent) && kproc_pid(parent) != old_pid,
+          "replacement process reuses PD with a distinct PID");
+    CHECK(!kproc_notification_parent(child) && !kproc_parent_pid(child),
+          "PD reuse cannot redirect an orphan notification");
+    kproc_destroy(child);
+    kproc_test_pid_search(old_pid - 1, 1);
+    CHECK(kproc_create(probe) && kproc_pid(probe) == old_pid,
+          "last child release permits retired parent PID reuse");
+    kproc_test_pid_search(0, 0);
+    kproc_destroy(probe);
+    kproc_destroy(parent);
+    kfree(probe);
+    kfree(child);
+    kfree(parent);
+    same(&s, "parent identity across PD reuse");
+}
+
 static void test_kproc(void)
 {
     SNAP s;
@@ -3841,6 +3900,7 @@ void x86_64_memtest_run(void)
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();
+    test_parent_identity_reuse();
     test_kproc();
     test_kproc_ranges();
     test_lifecycle();

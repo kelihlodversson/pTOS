@@ -75,6 +75,11 @@ struct kproc {
     DTAINFO *dta;
     BOOL started;               /* proc_go() has launched it */
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
+#if CONF_WITH_USER_ASPACE
+    KPROC *parent_identity;     /* owning identity, never live parent resources */
+    BOOL parent_untracked;      /* legacy kernel parent without a KPROC */
+    UQUAD parent_gen;            /* generation if that parent has an allocation */
+#endif
     WORD pid;                   /* its process id, 1..KPROC_PID_MAX, never reused while it lives */
     SBYTE prio;                 /* Psetpriority(): kept, and with no effect (scheduling is cooperative) */
     ULONG start_tick;           /* hz_200 when the record was made, for Prusage() */
@@ -443,7 +448,12 @@ void kproc_destroy(PD *pd)
     for (link = &kproc_list; *link; link = &(*link)->next)
         if ((*link)->pd == pd) {
             KPROC *kproc = *link;
+#if CONF_WITH_USER_ASPACE
+            KPROC *launcher = kproc->parent_identity;
+            if (launcher && !launcher->pd) launcher = NULL;
+#else
             KPROC *launcher = kproc->parent ? kproc_find(kproc->parent) : NULL;
+#endif
 
 #if CONF_WITH_USER_ASPACE
             if (kproc->threads)
@@ -489,6 +499,9 @@ void kproc_destroy(PD *pd)
                 BOOL completed = kproc->completed;
                 UWORD status = kproc->exit_status;
                 KPROC *next = kproc->next;
+#if CONF_WITH_USER_ASPACE
+                KPROC *parent_identity = kproc->parent_identity;
+#endif
                 bzero(kproc, sizeof *kproc);
                 kproc->references = references;
                 kproc->pid = pid;
@@ -497,6 +510,7 @@ void kproc_destroy(PD *pd)
                 kproc->next = next;
 #if CONF_WITH_USER_ASPACE
                 kproc->disposal_state = PROCESS_RETIRED;
+                kproc_release(parent_identity);
 #endif
             }
             kproc_release(kproc); /* drop the lookup's ownership */
@@ -538,7 +552,13 @@ WORD kproc_parent_pid(PD *pd)
     if (ksched_parent_pid(pd, &pid)) return pid;
 #endif
 
+#if CONF_WITH_USER_ASPACE
+    if (kproc && kproc->parent_identity)
+        return kproc->parent_identity->pd ? kproc->parent_identity->pid : 0;
+    return 0; /* an untracked parent had no PID at association */
+#else
     return (kproc && kproc->parent) ? kproc_pid(kproc->parent) : 0;
+#endif
 }
 
 SBYTE kproc_get_prio(PD *pd)
@@ -633,8 +653,36 @@ void kproc_set_parent(PD *pd, PD *parent)
         KINFO(("Missing kernel process record for %p\n", pd));
         halt();
     }
+#if CONF_WITH_USER_ASPACE
+    {
+        KPROC *old = kproc->parent_identity;
+        KPROC *record = parent && parent != pd ? kproc_find(parent) : NULL;
+        kproc->parent_identity = record ? kproc_retain(parent) : NULL;
+        /* A tracked parent whose retain failed must not become an unsafe
+         * borrowed notification identity. */
+        kproc->parent_untracked = parent && parent != pd && !record;
+        kproc->parent_gen = kproc->parent_untracked ? procmem_gen(parent) : 0;
+        kproc_release(old);
+    }
+#endif
     kproc->parent = parent;
 }
+
+#if CONF_WITH_USER_ASPACE
+PD *kproc_notification_parent(PD *pd)
+{
+    KPROC *process = kproc_find(pd);
+    if (!process)
+        return NULL;
+    if (process->parent_identity)
+        return process->parent_identity->pd;
+    if (!process->parent_untracked || kproc_find(process->parent))
+        return NULL;
+    if (process->parent_gen && procmem_gen(process->parent) != process->parent_gen)
+        return NULL;
+    return process->parent;
+}
+#endif
 
 PD *kproc_get_parent(PD *pd)
 {

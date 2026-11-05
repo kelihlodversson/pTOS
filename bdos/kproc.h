@@ -89,6 +89,11 @@ BOOL kproc_test_share_active(PD *pd, struct kaspace *space);
  * is no record (like kproc_get_dta()). */
 void kproc_set_parent(PD *pd, PD *parent);
 PD *kproc_get_parent(PD *pd);
+#if CONF_WITH_USER_ASPACE
+/* Borrowed only for immediate notification; NULL if the tracked parent has
+ * retired. Does not keep its PD or heavyweight resources alive. */
+PD *kproc_notification_parent(PD *pd);
+#endif
 void kproc_mark_started(PD *pd);        /* proc_go() launched it */
 /* The process-id calls (bdos/mintproc.c).  A pid is 1..32767 and names a record;
  * 0 is the kernel's own context, which has none and is every boot-time basepage's
