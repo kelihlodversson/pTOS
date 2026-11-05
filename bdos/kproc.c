@@ -282,6 +282,12 @@ BOOL kproc_create(PD *pd)
 static void give_image_back(KPROC *kproc);
 static void release_loaded(KPROC *kproc);
 #if CONF_WITH_X86_64_MEMTEST
+ULONG kproc_test_child_ticks(const KPROC *process) { return process->child_ticks; }
+void kproc_test_age_unstarted(KPROC *process, ULONG ticks)
+{
+    if (process->started) panic("test cannot age an executing process");
+    process->start_tick = (ULONG)hz_200 - ticks;
+}
 KASPACE *kproc_test_retain_pending(PD *pd)
 {
     KPROC *process = kproc_find(pd);
@@ -368,6 +374,25 @@ KPROC *kproc_retain_live(KPROC *process)
         return NULL;
     process->references++;
     return process;
+}
+
+PD *kproc_live_pd(const KPROC *process)
+{
+    return process && !process->completed && process->disposal_state == PROCESS_LIVE ? process->pd : NULL;
+}
+
+BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
+{
+    KPROC *parent;
+    if (!kproc_clone_target_ready(target, NULL) || target->parent_identity ||
+        !(parent = kproc_retain_live(source)))
+        return FALSE;
+    target->parent_identity = parent;
+    target->parent = parent->pd; /* borrowed only while identity remains live */
+    target->prio = source->prio;
+    target->lim_core = source->lim_core;
+    target->lim_data = source->lim_data;
+    return TRUE;
 }
 
 KASPACE *kproc_active_space(const KPROC *process)
@@ -577,7 +602,13 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
-            if (launcher)                   /* what it used is its launcher's children's */
+            /* Identity-only construction/cancellation consumed no child CPU
+             * lifetime. Preserve classic accounting outside user-ASPACE. */
+            if (launcher
+#if CONF_WITH_USER_ASPACE
+                && kproc->started
+#endif
+            )
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;
 #if CONF_WITH_USER_ASPACE
             /* a program PE_LOAD put in its caller's heap that was never

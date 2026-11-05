@@ -482,3 +482,76 @@ fault dispatch, exercising both PROCESS release orders and lazy heap/anonymous
 mmap first touch after original-owner retirement. Host tests use real transaction,
 KTHREAD and KASPACE code with a counted PROCESS model under x32/ARM/m68k config
 headers; these are host tests, not native architecture runtime coverage.
+
+
+Phase 3 transaction hardening and PROCESS resource factory
+---------------------------------------------------------
+Preparation now requires an empty transaction handle. Nonempty handles return
+EINVAL before any reference/allocation acquisition; they cannot overwrite a
+live transaction. Repeated commit through a consumed NULL handle returns EINVAL
+without touching its result, and abort remains idempotent through its handle.
+
+Production KPROC invalidation tests cover target disposal, independent target
+VM preparation, another target THREAD, a target startup-state transition,
+source completion, and source disposal between prepare and commit. Each rejected
+commit keeps the exact handle/result, target resources and VM ownership intact;
+only abort drops construction references. The other member and independently
+prepared target space survive abort. These tests use actual ownership/state
+operations; startup-state injection marks a record but does not execute code.
+
+PROC_CLONE_NEW_PROCESS adds a real resource factory to the same transaction.
+proc_create_clone_process uses the existing alloc_env/alloc_tpa/init_pd_fields
+and kproc_create paths: empty environment, owned low-memory basepage, distinct
+PID and existing KPROC record. It calls no GEMDOS trap and creates no second
+process manager. The source must be the current live PROCESS because the legacy
+allocation helpers lend construction buffers to run; foreign-source requests
+fail EINVFN rather than swapping execution identity. Temporary borrowed mappings
+are revoked before return. No loader staging/image, startup frame, syscall stack
+or scheduler context is installed by resource construction.
+
+The two inheritance bits are orthogonal: copy Pexec-style standard-handle aliases,
+and copy current directories/current drive. With neither selected, those tables
+are initially empty (drive zero); all four combinations are tested. Nonstandard
+explicit SFT slots and directory-search state are not duplicated. Descriptor
+copying reuses ixforce; current directories use the existing native/PFS addref
+operations. The legacy Pexec wrapper still performs both copies with its prior
+error-handling policy. The factory checks inheritance errors and rolls back all
+references acquired by earlier slots. Parent identity, priority, core/data limits
+are copied from the retained kernel PROCESS; per-THREAD stack/TLS/signal startup
+is not inferred from those resource policies. Environment/loading semantics may
+be supplied by a future loader integration, not by borrowing a user PD field.
+
+A factory transaction owns both a retained child identity and the obligation
+to dispose its unstarted resources. All allocation, parent/resource acquisition,
+VM/THREAD construction and future observer setup precede publication. Abort
+requests generic disposal, reaps its non-runnable THREAD if acquired, drops VM
+and identity references, and invents no completion. Commit first validates and
+adopts the VM, then transfers the child ownership obligation to the internal
+PROC_CLONE_RESULT. proc_clone_release clears that result before requesting
+disposal and dropping its THREAD/identity, making repeated release harmless.
+Caller-prepared and same-PROCESS results do not acquire that extra disposal
+obligation. Existing PROCESS membership retains resources while other THREADs
+remain; this is not public thread exit or process-completion policy.
+
+The factory holds its parent as a kernel identity, not a dangling PD. A child
+may retain standard-file and CWD references after the source retires without
+keeping the parent's heavyweight resources alive. Existing orphan-SFT ownership
+protects reused PD identities. Bounded close retries and the existing no-unwind
+cleanup contract still apply; factory rollback is not transactional filesystem
+recovery. An unstarted user-ASPACE child is no longer charged as elapsed child
+execution during destruction. A test ages the unstarted child before disposal
+and verifies unchanged parent child_ticks. Classic accounting is unchanged.
+
+Native x32 tests inject failure after environment, PD, KPROC/PID, standard-handle
+and CWD acquisition, and after each later transaction stage. PID exhaustion and
+physical-allocation failure also unwind through production paths. Tests verify
+allocation/SFT/CWD baselines, checked inheritance failure, all resource-policy
+combinations, idempotent result release, stable completion identities, and a
+usable inherited file after source-first retirement. These complement the
+existing shared-heap/mmap fault-dispatch and both release-order tests. The portable
+host harness models PROCESS resources; actual factory runtime coverage is x32.
+
+The factory remains identity-only and all startup guards remain. CPU/FPU setup,
+entry/stack/output mapping leases and observer registration/publication are later
+#892 work; #893 termination, #909 waits, #713 scheduling, #894 Pexec shared VM and
+#908 TLS remain separate. There is still no functional public CLONE_VM or Pclone.

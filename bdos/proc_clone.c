@@ -12,6 +12,7 @@ struct proc_clone_transaction {
     KASPACE *space;          /* owning until target adopts it or rollback */
     KTHREAD *thread;         /* owns execution-resource retention, not runnable */
     PROC_CLONE_PROCESS_POLICY policy;
+    BOOL owns_process;
 };
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -29,6 +30,7 @@ static BOOL injected(UWORD stage)
 
 static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 {
+    if (tx->owns_process) proc_dispose_process(tx->process);
     kthread_destroy(tx->thread);
     kaspace_put(tx->space);
     kproc_release(tx->process);
@@ -43,14 +45,18 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     KASPACE *space;
     LONG error = ENSMEM;
 
-    if (!args || !transaction || !args->source ||
+    if (!args || !transaction || *transaction || !args->source ||
         (args->process_policy != PROC_CLONE_SAME_PROCESS &&
-         args->process_policy != PROC_CLONE_PREPARED_PROCESS) ||
+         args->process_policy != PROC_CLONE_PREPARED_PROCESS &&
+         args->process_policy != PROC_CLONE_NEW_PROCESS) ||
         (args->vm_policy != PROC_CLONE_SHARE_VM && args->vm_policy != PROC_CLONE_PRIVATE_VM))
         return EINVAL;
     if (args->process_policy == PROC_CLONE_SAME_PROCESS) {
         if (args->prepared_process) return EINVAL;
         target = args->source;
+    } else if (args->process_policy == PROC_CLONE_NEW_PROCESS) {
+        if (args->prepared_process || (args->resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
+        target = NULL;
     } else {
         target = args->prepared_process;
         if (!target || target == args->source) return EINVAL;
@@ -58,7 +64,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     if (args->vm_policy == PROC_CLONE_PRIVATE_VM)
         return args->process_policy == PROC_CLONE_SAME_PROCESS ? EINVAL : EINVFN;
     space = kproc_active_space(args->source);
-    if (!space || (target != args->source && !kproc_clone_target_ready(target, NULL)))
+    if (!space || (target && target != args->source && !kproc_clone_target_ready(target, NULL)))
         return EACCDN;
     tx = kalloc(sizeof(*tx));
     if (!tx) return ENSMEM;
@@ -66,15 +72,23 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     tx->space = NULL;
     tx->thread = NULL;
     tx->policy = args->process_policy;
+    tx->owns_process = FALSE;
     tx->source = kproc_retain_live(args->source);
     if (!tx->source) { error = EACCDN; goto failed; }
     if (injected(1)) goto failed;
-    tx->process = kproc_retain_live(target);
-    if (!tx->process) { error = EACCDN; goto failed; }
+    if (tx->policy == PROC_CLONE_NEW_PROCESS) {
+        error = proc_create_clone_process(tx->source, args->resources, &tx->process);
+        if (error != E_OK) goto failed;
+        tx->owns_process = TRUE;
+        error = ENSMEM;
+    } else {
+        tx->process = kproc_retain_live(target);
+        if (!tx->process) { error = EACCDN; goto failed; }
+    }
     if (injected(2)) goto failed;
     tx->space = kaspace_share(space);
     if (!tx->space || injected(3)) goto failed;
-    tx->thread = kthread_construct_identity(target, space);
+    tx->thread = kthread_construct_identity(tx->process, space);
     if (!tx->thread || injected(4)) goto failed;
     *transaction = tx; /* the only publication during prepare */
     return E_OK;
@@ -91,7 +105,7 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     tx = *transaction;
     if (kproc_active_space(tx->source) != tx->space)
         return EACCDN;
-    if (tx->policy == PROC_CLONE_PREPARED_PROCESS) {
+    if (tx->policy != PROC_CLONE_SAME_PROCESS) {
         if (!kproc_clone_adopt_space(tx->process, tx->thread, tx->space))
             return EACCDN;
         tx->space = NULL; /* moved, not another reference */
@@ -99,6 +113,11 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     ready.thread = tx->thread;
     ready.pid = kproc_ref_pid(tx->process);
     ready.tid = kthread_tid(tx->thread);
+    ready.owned_process = tx->owns_process ? tx->process : NULL;
+    if (tx->owns_process) {
+        tx->process = NULL; /* transfer retained identity/disposal to result */
+        tx->owns_process = FALSE;
+    }
     tx->thread = NULL;
     *transaction = NULL; /* no callback can abort this transaction twice */
     release_transaction(tx);
@@ -113,4 +132,20 @@ void proc_clone_abort(PROC_CLONE_TRANSACTION **transaction)
     tx = *transaction;
     *transaction = NULL;
     release_transaction(tx);
+}
+
+void proc_clone_release(PROC_CLONE_RESULT *result)
+{
+    KTHREAD *thread;
+    KPROC *process;
+    if (!result) return;
+    thread = result->thread;
+    process = result->owned_process;
+    result->thread = NULL;
+    result->owned_process = NULL;
+    result->pid = 0;
+    result->tid = 0;
+    if (process) proc_dispose_process(process);
+    kthread_destroy(thread);
+    kproc_release(process);
 }

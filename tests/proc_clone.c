@@ -76,6 +76,10 @@ void proc_dispose_process(KPROC *p)
     if (p->threads) return;
     p->live = FALSE; resources++; kaspace_put(p->space); p->space = NULL;
 }
+/* The portable harness models PROCESS ownership; real factory allocation,
+ * inheritance and rollback are exercised by the x32 production QEMU test. */
+LONG proc_create_clone_process(KPROC *source, UWORD policy, KPROC **result)
+{ (void)source; (void)policy; (void)result; return EINVFN; }
 static void dummy_reclaim(void *p) { (void)p; abort(); }
 
 static void exercise(BOOL source_first)
@@ -100,8 +104,8 @@ static void exercise(BOOL source_first)
     args.process_policy = PROC_CLONE_SAME_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
     for (i = 1; i <= 2; i++) {
         before = allocations - frees; fail_alloc_after = i;
-        unchanged = (PROC_CLONE_TRANSACTION *)1;
-        assert(proc_clone(&args,&unchanged) == ENSMEM && unchanged == (PROC_CLONE_TRANSACTION *)1);
+        unchanged = NULL;
+        assert(proc_clone(&args,&unchanged) == ENSMEM && !unchanged);
         assert(!source.threads && source.refs == 1 && allocations - frees == before);
     }
     for (i = 1; i <= 3; i++) {
@@ -130,14 +134,26 @@ static void exercise(BOOL source_first)
     assert(proc_clone(&args,&tx) == EINVAL && !tx);
     args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.prepared_process = &target;
     assert(proc_clone(&args,&tx) == EINVFN && !tx);
+    args.process_policy = PROC_CLONE_NEW_PROCESS; args.prepared_process = NULL;
+    args.resources = PROC_CLONE_RESOURCE_MASK + 1;
+    assert(proc_clone(&args,&tx) == EINVAL && !tx);
+    args.resources = 0;
+    assert(proc_clone(&args,&tx) == EINVFN && !tx); /* private VM remains unsupported */
+    args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.prepared_process = &target;
     args.vm_policy = PROC_CLONE_SHARE_VM;
     assert(proc_clone(&args,&tx) == E_OK && !target.space);
+    unchanged = tx; before = allocations - frees;
+    assert(proc_clone(&args,&tx) == EINVAL && tx == unchanged);
+    assert(allocations - frees == before && !target.space);
     proc_clone_abort(&tx); proc_clone_abort(&tx);
     assert(!target.space && !target.threads && source.refs == 1 && target.refs == 1);
 
     args.process_policy = PROC_CLONE_SAME_PROCESS; args.prepared_process = NULL;
     assert(proc_clone(&args,&tx) == E_OK);
     assert(proc_clone_commit(&tx,&a) == E_OK && !tx);
+    memset(&sentinel,0xa5,sizeof(sentinel)); b = sentinel;
+    assert(proc_clone_commit(&tx,&b) == EINVAL && !memcmp(&b,&sentinel,sizeof(b)));
+    proc_clone_abort(&tx);
     assert(proc_clone(&args,&tx) == E_OK);
     assert(proc_clone_commit(&tx,&b) == E_OK && !tx);
     assert(a.pid == source.pid && b.pid == a.pid && a.tid != b.tid);

@@ -21,6 +21,9 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
+#if CONF_WITH_USER_ASPACE
+#include "proc_clone.h"
+#endif
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
@@ -895,22 +898,31 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
 }
 
 /* duplicate files */
-static void init_pd_files(PD *p)
+static LONG init_pd_standard_files_from(PD *p, PD *source)
 {
     int i;
+    LONG error = E_OK, rc;
 
-    /* inherit standard files from me */
+    /* Preserve existing Pexec inheritance while allowing checked factory use. */
     for (i = 0; i < NUMSTD; i++) {
-        WORD h = PD_UFT(run)[i];
-        if (h > 0)
-            ixforce(i, h, p);
+        WORD h = PD_UFT(source)[i];
+        if (h > 0) {
+            rc = ixforce(i, h, p);
+            if (rc < 0 && error == E_OK) error = rc;
+        }
         else
             PD_UFT(p)[i] = h;
     }
 
-    /* and current directory set */
+    return error;
+}
+
+static void init_pd_cwd_from(PD *p, PD *source)
+{
+    int i;
+    /* The same native/PFS CWD reference operations used by Pexec. */
     for (i = 0; i < NUMCURDIR; i++) {
-        int dn = PD_CURDIR(run)[i];
+        int dn = PD_CURDIR(source)[i];
         PD_CURDIR(p)[i] = dn;
         if (dn)
             dirtbl[dn].use++;
@@ -925,8 +937,79 @@ static void init_pd_files(PD *p)
     }
 
     /* and current drive */
-    p->p_curdrv = run->p_curdrv;
+    p->p_curdrv = source->p_curdrv;
 }
+
+static void init_pd_files(PD *p)
+{
+    (void)init_pd_standard_files_from(p, run);
+    init_pd_cwd_from(p, run);
+}
+
+#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_X86_64_MEMTEST
+static UWORD clone_factory_fail_stage;
+void proc_clone_factory_test_fail_after(UWORD stage) { clone_factory_fail_stage = stage; }
+static BOOL clone_factory_injected(UWORD stage)
+{
+    if (clone_factory_fail_stage != stage) return FALSE;
+    clone_factory_fail_stage = 0;
+    return TRUE;
+}
+#else
+#define clone_factory_injected(stage) FALSE
+#endif
+
+LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
+{
+    static const char empty_environment[2] = { 0, 0 };
+    PD *parent, *p = NULL;
+    char *env;
+    LONG size, error = ENSMEM;
+    KPROC *process;
+
+    if (!result || *result || (resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
+    parent = kproc_live_pd(source);
+    if (!parent) return EACCDN;
+    /* Existing allocation helpers map their temporary construction buffers in
+     * run. Restrict this first factory to its actual calling PROCESS rather
+     * than switching global execution identity or borrowing a foreign PD. */
+    if (parent != run) return EINVFN;
+    env = alloc_env(PF_STANDARD, (char *)empty_environment);
+    if (!env) return ENSMEM;
+    if (clone_factory_injected(1)) goto raw_failed;
+    p = (PD *)alloc_tpa(PF_STANDARD, sizeof(PD), &size);
+    if (!p || clone_factory_injected(2)) goto raw_failed;
+    init_pd_fields(p, "", size, env);
+    p->p_flags = PF_STANDARD;
+    set_owner(p, p); set_owner(env, p);
+    if (!kproc_create(p)) goto raw_failed;
+    process = kproc_retain(p); /* freshly created lookup: exactly one ref */
+    if (!process) panic("clone factory: missing new identity");
+    if (clone_factory_injected(3)) goto record_failed;
+    if (!kproc_clone_inherit_identity(process, source)) { error = EACCDN; goto record_failed; }
+    if (resources & PROC_CLONE_COPY_STANDARD_HANDLES) {
+        error = init_pd_standard_files_from(p, parent);
+        if (error != E_OK) goto record_failed;
+    }
+    error = ENSMEM;
+    if (clone_factory_injected(4)) goto record_failed;
+    if (resources & PROC_CLONE_COPY_CWD) init_pd_cwd_from(p, parent);
+    if (clone_factory_injected(5)) goto record_failed;
+    /* No image staging and no loader grant survives resource construction. */
+    kproc_unborrow(env); kproc_unborrow(p);
+    *result = process;
+    return E_OK;
+record_failed:
+    proc_dispose_process(process);
+    kproc_release(process);
+    return error;
+raw_failed:
+    xexec_free(env);
+    if (p) xexec_free(p);
+    return ENSMEM;
+}
+#endif
 
 /* allocate the environment, in ST RAM or alternate RAM, according to the header flags */
 static char *alloc_env(ULONG flags, char *env)

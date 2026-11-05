@@ -1642,10 +1642,10 @@ static void test_proc_clone(void)
             args.prepared_process = policy ? target : NULL;
             for (stage = 1; stage <= 4; stage++) {
                 snap(&acquired);
-                tx = (PROC_CLONE_TRANSACTION *)(uintptr_t)1;
+                tx = NULL;
                 proc_clone_test_fail_after(stage);
                 rc = proc_clone(&args, &tx);
-                CHECK(rc == ENSMEM && tx == (PROC_CLONE_TRANSACTION *)(uintptr_t)1,
+                CHECK(rc == ENSMEM && !tx,
                       "clone acquisition failure leaves transaction output unchanged");
                 CHECK(!kproc_active_space(target) && kproc_ref_has_basepage(source) &&
                       kproc_ref_has_basepage(target), "failed clone preserves both resource owners");
@@ -1655,8 +1655,20 @@ static void test_proc_clone(void)
         args.process_policy = PROC_CLONE_SAME_PROCESS;
         args.prepared_process = NULL;
         tx = NULL;
-        CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &first) == E_OK && !tx,
+        CHECK(proc_clone(&args, &tx) == E_OK, "prepare first same-PROCESS clone identity");
+        {
+            PROC_CLONE_TRANSACTION *saved = tx;
+            snap(&acquired);
+            CHECK(proc_clone(&args, &tx) == EINVAL && tx == saved,
+                  "nonempty clone handle cannot be overwritten");
+            same(&acquired, "nonempty transaction rejection has no side effects");
+        }
+        CHECK(proc_clone_commit(&tx, &first) == E_OK && !tx,
               "commit first same-PROCESS non-runnable clone identity");
+        bzero(&unchanged, sizeof(unchanged)); second = unchanged;
+        CHECK(proc_clone_commit(&tx, &second) == EINVAL && !memcmp(&second, &unchanged, sizeof(second)),
+              "repeated commit preserves result and cannot consume an identity twice");
+        proc_clone_abort(&tx);
         CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &second) == E_OK && !tx,
               "commit second same-PROCESS non-runnable clone identity");
         CHECK(first.pid == kproc_ref_pid(source) && second.pid == first.pid &&
@@ -1737,6 +1749,219 @@ static void test_proc_clone(void)
     kproc_release(source);
     same(&baseline, "clone commit rejection rollback");
     kcprintf("x86-64 trusted clone ownership: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
+/* Exercise invalidation with real KPROC transitions between transaction stages.
+ * Startup-state injection marks the record only; it never starts user code. */
+static void test_proc_clone_invalidation(void)
+{
+    UWORD scenario, status;
+    SNAP baseline, invalidated;
+    PD *source_pd, *target_pd;
+    KPROC *source, *target;
+    KASPACE *space;
+    ASPACE *target_space;
+    KTHREAD *extra;
+    PROC_CLONE_ARGS args;
+    PROC_CLONE_TRANSACTION *tx, *saved;
+    PROC_CLONE_RESULT result, sentinel;
+    int before = failures;
+
+    for (scenario = 0; scenario < 6; scenario++) {
+        snap(&baseline);
+        source_pd = new_basepage(); target_pd = new_basepage();
+        if (!source_pd || !target_pd) return;
+        set_owner(source_pd, source_pd); set_owner(USERPTR_TO_PTR(source_pd->p_env), source_pd);
+        set_owner(target_pd, target_pd); set_owner(USERPTR_TO_PTR(target_pd->p_env), target_pd);
+        CHECK(kproc_prepare_user(source_pd, run), "prepare invalidation source");
+        source = kproc_retain(source_pd); target = kproc_retain(target_pd);
+        space = kproc_test_retain_active(source_pd);
+        args.source = source; args.prepared_process = target;
+        args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
+        tx = NULL; extra = NULL; target_space = NULL;
+        CHECK(proc_clone(&args, &tx) == E_OK && tx, "prepare target invalidation transaction");
+        saved = tx;
+        switch (scenario) {
+        case 0: proc_dispose_process(target); break;
+        case 1:
+            CHECK(kproc_prepare_user(target_pd, run), "target independently acquires incompatible VM");
+            target_space = kproc_user_aspace(target_pd);
+            CHECK(target_space && target_space != kaspace_backend(space), "invalidation uses distinct real VM");
+            break;
+        case 2:
+            extra = kthread_construct_identity(target, space);
+            CHECK(extra != NULL, "target acquires another non-runnable member");
+            break;
+        case 3: kproc_mark_started(target_pd); break;
+        case 4: kproc_complete(source_pd, 33); break;
+        case 5: proc_dispose_process(source); break;
+        }
+        bzero(&sentinel, sizeof(sentinel)); result = sentinel;
+        snap(&invalidated);
+        CHECK(proc_clone_commit(&tx, &result) == EACCDN && tx == saved &&
+              !memcmp(&result, &sentinel, sizeof(result)), "invalidated commit preserves handle and result");
+        CHECK(proc_clone_commit(&tx, &result) == EACCDN && tx == saved,
+              "repeated rejected commit cannot adopt VM or repeat cleanup");
+        CHECK(kproc_ref_has_basepage(target) &&
+              aspace_translate(kaspace_backend(space), (VADDR)(uintptr_t)source_pd, NULL, NULL),
+              "failed commit preserves target resources and retained source mappings");
+        if (target_space)
+            CHECK(kproc_user_aspace(target_pd) == target_space, "commit cannot replace incompatible target VM");
+        same(&invalidated, "rejected commit changes no allocation or resource ownership");
+        proc_clone_abort(&tx); proc_clone_abort(&tx);
+        CHECK(!tx && !memcmp(&result, &sentinel, sizeof(result)), "abort consumes only transaction ownership once");
+        if (extra) {
+            CHECK(kthread_process(extra) == target && kthread_aspace(extra) == space,
+                  "abort does not detach the target's other member");
+            kthread_destroy(extra);
+        }
+        if (target_space)
+            CHECK(kproc_user_aspace(target_pd) == target_space, "abort preserves independently acquired target VM");
+        proc_dispose_process(target); proc_dispose_process(source);
+        CHECK(!kproc_ref_has_basepage(target) && !kproc_ref_has_basepage(source),
+              "caller cleanup retires both exact identities");
+        if (scenario == 4)
+            CHECK(kproc_ref_status(source, &status) && status == 33, "existing source status is unchanged");
+        kproc_release(target); kproc_release(source); kaspace_put(space);
+        same(&baseline, "invalidation followed by abort releases resources exactly once");
+    }
+    kcprintf("x86-64 clone invalidation: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
+/* Real low-memory allocations, PID identity, standard-handle/CWD inheritance
+ * and generic disposal. The factory does not build an execution context. */
+static void test_proc_clone_factory(void)
+{
+    SNAP baseline, acquired;
+    PD *pd, *child_pd, *saved = run;
+    KPROC *source, *child;
+    PROC_CLONE_ARGS args;
+    PROC_CLONE_TRANSACTION *tx;
+    PROC_CLONE_RESULT result;
+    LONG handle, rc;
+    ULONG directories, child_ticks;
+    UWORD stage, policy, i, status;
+    int uses;
+    char byte;
+    int before = failures;
+
+    snap(&baseline);
+    pd = new_basepage();
+    if (!pd) return;
+    set_owner(pd, pd); set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+    CHECK(kproc_prepare_user(pd, run), "prepare resource-factory source");
+    source = kproc_retain(pd);
+    run = pd;
+    handle = DISK_CALL(xopen("C:\\X32HELLO.TOS", 0));
+    CHECK(handle >= NUMSTD && handle < NUMHANDLES, "open factory inheritance fixture");
+    if (handle < NUMSTD || handle >= NUMHANDLES) {
+        run = saved; proc_dispose_process(source); kproc_release(source); return;
+    }
+    CHECK(ixforce(1, handle, pd) == E_OK, "source owns stdout alias and explicit handle");
+    CHECK(kproc_psetlimit(pd, 3, 4 * PAGE) >= 0, "set source resource-limit policy");
+    kproc_set_prio(pd, -3);
+    uses = sft[handle-NUMSTD].f_use;
+    directories = dir_refs();
+    bzero(&args, sizeof(args));
+    args.source = source; args.process_policy = PROC_CLONE_NEW_PROCESS;
+    args.vm_policy = PROC_CLONE_SHARE_VM; args.resources = PROC_CLONE_RESOURCE_MASK;
+    snap(&acquired);
+    child = source;
+    CHECK(proc_create_clone_process(source, args.resources, &child) == EINVAL && child == source,
+          "factory cannot overwrite an existing resource-owner handle");
+    tx = NULL; run = saved;
+    CHECK(proc_clone(&args, &tx) == EINVFN && !tx && run == saved,
+          "foreign-source factory request cannot change execution identity");
+    run = pd;
+    same(&acquired, "factory handle/context admission has no side effects");
+    for (stage = 1; stage <= 5; stage++) {
+        snap(&acquired); tx = NULL;
+        proc_clone_factory_test_fail_after(stage);
+        rc = proc_clone(&args, &tx);
+        CHECK(rc == ENSMEM && !tx, "factory acquisition failure publishes no child or transaction");
+        CHECK(sft[handle-NUMSTD].f_use == uses && dir_refs() == directories,
+              "factory rollback closes only its own inherited resource references");
+        same(&acquired, "factory environment/PD/PID/handle/CWD rollback");
+    }
+    for (stage = 1; stage <= 4; stage++) {
+        snap(&acquired); tx = NULL;
+        proc_clone_test_fail_after(stage);
+        CHECK(proc_clone(&args, &tx) == ENSMEM && !tx,
+              "post-factory transaction failure disposes owned PROCESS exactly once");
+        same(&acquired, "transaction rollback includes factory-owned resources");
+    }
+    snap(&acquired); tx = NULL;
+    kproc_test_pid_search(kproc_ref_pid(source) - 1, 1);
+    CHECK(proc_clone(&args, &tx) == ENSMEM && !tx, "PID exhaustion releases raw factory allocations");
+    kproc_test_pid_search(kproc_ref_pid(source), 0);
+    same(&acquired, "factory PID-allocation failure rollback");
+    for (stage = 1; stage <= 12; stage++) {
+        snap(&acquired); tx = NULL;
+        x86_64_pmem_test_fail_after(stage);
+        rc = proc_clone(&args, &tx);
+        x86_64_pmem_test_fail_after(0);
+        CHECK(rc == E_OK || rc == ENSMEM, "physical allocation failure returns safely from factory");
+        proc_clone_abort(&tx);
+        same(&acquired, "factory physical-allocation failure and successful abort");
+    }
+    /* A checked inheritance failure cannot leave references from earlier slots. */
+    snap(&acquired); tx = NULL;
+    kproc_uft(pd)[1] = NUMSTD - 1;
+    CHECK(proc_clone(&args, &tx) == EIHNDL && !tx, "invalid inherited standard handle fails before commit");
+    kproc_uft(pd)[1] = handle;
+    same(&acquired, "checked resource-inheritance failure cleanup");
+
+    for (policy = 0; policy <= PROC_CLONE_RESOURCE_MASK; policy++) {
+        snap(&acquired); tx = NULL;
+        args.resources = policy;
+        CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &result) == E_OK && !tx,
+              "factory commits an explicitly selected resource policy");
+        child = result.owned_process;
+        child_pd = kproc_live_pd(child);
+        CHECK(child && child_pd && result.pid != kproc_ref_pid(source) &&
+              kthread_process(result.thread) == child && !kthread_start(result.thread),
+              "factory returns a distinct owned PROCESS/PID and non-runnable THREAD");
+        if (child_pd) {
+            CHECK(kproc_uft(child_pd)[1] == ((policy & PROC_CLONE_COPY_STANDARD_HANDLES) ? handle : 0),
+                  "standard-handle inheritance is independent of VM/CWD policy");
+            CHECK(sft[handle-NUMSTD].f_use == uses + !!(policy & PROC_CLONE_COPY_STANDARD_HANDLES),
+                  "factory standard alias owns exactly one added SFT reference");
+            for (i = 0; i < NUMCURDIR; i++)
+                CHECK(kproc_curdir(child_pd)[i] == ((policy & PROC_CLONE_COPY_CWD) ? kproc_curdir(pd)[i] : 0),
+                      "CWD inheritance is independent of VM/descriptor policy");
+            CHECK(kproc_parent_pid(child_pd) == kproc_ref_pid(source) &&
+                  kproc_get_prio(child_pd) == -3 && kproc_psetlimit(child_pd, 3, -1) == 4 * PAGE,
+                  "trusted parent identity, priority and process limits are inherited");
+        }
+        child_ticks = kproc_test_child_ticks(source);
+        kproc_test_age_unstarted(child, 37);
+        proc_clone_release(&result); proc_clone_release(&result);
+        CHECK(kproc_test_child_ticks(source) == child_ticks,
+              "unstarted constructed child cannot charge parent execution usage");
+        CHECK(!result.thread && !result.owned_process && !result.pid && !result.tid,
+              "non-runnable owned result release is idempotent");
+        same(&acquired, "committed factory result releases its PROCESS resources");
+    }
+
+    /* Child resources and mappings survive source retirement. */
+    tx = NULL; args.resources = PROC_CLONE_RESOURCE_MASK;
+    CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &result) == E_OK,
+          "construct factory child to outlive resource source");
+    child = kproc_retain_live(result.owned_process);
+    child_pd = kproc_live_pd(child);
+    run = saved;
+    proc_dispose_process(source);
+    CHECK(!kproc_ref_has_basepage(source) && kproc_ref_has_basepage(child) &&
+          sft[handle-NUMSTD].f_use == 1, "source exit preserves child's inherited file reference");
+    run = child_pd;
+    CHECK(DISK_CALL(xread(1, 1, &byte)) == 1, "inherited standard handle remains usable after source retirement");
+    run = saved;
+    proc_clone_release(&result); proc_clone_release(&result);
+    CHECK(!kproc_ref_has_basepage(child) && !kproc_ref_status(child, &status),
+          "owned child cleanup retains identity without fabricating completion");
+    kproc_release(child); kproc_release(source);
+    same(&baseline, "factory source-first cleanup and final owned-result release");
+    kcprintf("x86-64 clone PROCESS factory: %s\n", failures == before ? "PASS" : "FAIL");
 }
 
 static void test_kproc_pending_ownership(void)
@@ -4155,6 +4380,8 @@ void x86_64_memtest_run(void)
     test_process_validation();
     test_kthread_relationships();
     test_proc_clone();
+    test_proc_clone_invalidation();
+    test_proc_clone_factory();
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();

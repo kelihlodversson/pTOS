@@ -78,6 +78,8 @@ void kproc_test_pid_search(WORD previous, UWORD candidates);
 #if CONF_WITH_USER_ASPACE
 /* Test private pending images only; this does not enable active VM sharing. */
 struct kaspace;
+ULONG kproc_test_child_ticks(const KPROC *process);
+void kproc_test_age_unstarted(KPROC *process, ULONG ticks);
 struct kaspace *kproc_test_retain_pending(PD *pd);
 struct kaspace *kproc_test_retain_active(PD *pd);
 /* Non-runnable ownership test only; does not establish VM sharing policy. */
@@ -124,6 +126,9 @@ struct kaspace;
 BOOL kproc_thread_start_allowed(const KPROC *process);
 /* Caller already holds the identity; only live resources may be acquired. */
 KPROC *kproc_retain_live(KPROC *process);
+PD *kproc_live_pd(const KPROC *process); /* borrowed during serialized live-resource operation */
+BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
+void proc_dispose_process(KPROC *process);
 struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */
 /* Explicit construction-space attachment never publishes active_space. */
 BOOL kproc_thread_attach_space(KPROC *process, struct kaspace *construction_space,
