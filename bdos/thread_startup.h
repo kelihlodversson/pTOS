@@ -21,6 +21,8 @@ typedef struct {
  * Calls are serialized/no-yield. Unsupported backends return EINVFN. */
 LONG thread_startup_prepare(struct kaspace *space, const THREAD_STARTUP_ARGS *args,
                             THREAD_STARTUP_DRAFT **draft);
+/* Public void entry returns through the kernel-selected zero-status stub. */
+LONG thread_startup_prepare_public(struct kaspace *, const THREAD_STARTUP_ARGS *, THREAD_STARTUP_DRAFT **);
 /* A revoked lease stays invalid even if the VA/permissions are restored. */
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft);
 typedef enum {

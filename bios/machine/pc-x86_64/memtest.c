@@ -2091,6 +2091,9 @@ static LONG active_clone_construct(UWORD index)
     UQUAD frame = 0x1122334455667788ULL, after;
     PD *controller = kproc_get_parent(run);
     LONG pins_before = procmem_pins(controller);
+    UQUAD entry_flags, exit_flags;
+    __asm__ volatile ("pushfq; popq %0" : "=r"(entry_flags));
+    CHECK((entry_flags & 0x200) && !ksched_test_clone_masked(), "active construction starts outside IRQ exclusion");
     STARTUP_OBSERVER_TEST borrowed = { 0, 0, FALSE };
     THREAD_STARTUP_OBSERVER borrowed_ops = { startup_observer_acquire, startup_observer_release };
     stack = kproc_uheap_alloc(run, 2*PAGE);
@@ -2113,6 +2116,7 @@ static LONG active_clone_construct(UWORD index)
           "prepare real active-group PROCESS/THREAD/ASPACE and execution resources");
     if (active_clone.scenario == 0) {
         kproc_test_age_unstarted(proc_clone_process(tx), 37);
+        kproc_test_controller_first(proc_clone_process(tx));
         active_clone.usage = data + 32;
     }
     if (active_clone.scenario == 10) {
@@ -2133,6 +2137,9 @@ static LONG active_clone_construct(UWORD index)
     if (active_clone.scenario == 6) proc_clone_test_cancel_publication();
     if (active_clone.scenario == 7) kproc_test_fail_clone_controller();
     error = proc_clone_spawn(&tx,&active_clone.ids[index]);
+    __asm__ volatile ("pushfq; popq %0" : "=r"(exit_flags));
+    CHECK((entry_flags & 0x200) == (exit_flags & 0x200) && !ksched_test_clone_masked(),
+          "success/failure/cancellation restores caller IRQ state before teardown");
     active_clone.attempts++;
     if (!error) {
         CHECK(!tx && active_clone.ids[index].pid && active_clone.ids[index].tid,
@@ -3417,6 +3424,15 @@ static long run_probe(char mode)
         proc_free_owned(pd);
         return -1000;
     }
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    if (mode == '=' || mode == '<' || mode == '(' || mode == ')' || mode == '"') {
+        PD *programs[1]; LONG results[1];
+        programs[0] = pd;
+        rc = proc_prepare_scheduled(pd);
+        if (!rc) rc = ksched_run(programs, 1, results);
+        if (!rc) return results[0];
+    } else
+#endif
     rc = Pexec(PE_GOTHENFREE, "", (char *)pd, NULL);
     if (rc < 0) {
         set_owner(pd, pd);
@@ -4309,6 +4325,41 @@ static void test_ring3(void)
     SNAP s;
     long rc;
     int k, refused = 0, ran = 0;
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    int public_before = failures;
+#endif
+
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    probe_expect('=', 0, "public Pclone executes through the real ring-3 trap");
+    probe_expect('<', 77, "public clone resources survive parent retirement");
+    {
+        char bytes[2];
+        LONG file=Fopen("C:\\PCLORPH.TMP",0);
+        CHECK(file>=0 && Fread(file,2,bytes)==2 && bytes[0]=='O' && bytes[1]=='K',
+              "orphan public clone executes after parent exit with inherited file");
+        if(file>=0) Fclose(file);
+        Fdelete("C:\\PCLORPH.TMP");
+    }
+    {
+        UWORD stage;
+        for(stage=1;stage<=5;stage++) {
+            proc_clone_test_fail_after(stage);
+            probe_expect('(',0,"public clone acquisition failure leaves outputs and frame unchanged");
+            proc_clone_factory_test_fail_after(stage);
+            probe_expect('(',0,"public clone factory rollback leaves no child or output");
+        }
+        proc_clone_test_cancel_publication();
+        probe_expect(')',0,"public clone final cancellation leaves outputs and frame unchanged");
+    }
+    {
+        UQUAD generation=procmem_next_gen();
+        snap(&s);
+        CHECK(run_probe('"')==0,"public clone Ptermres preserves explicit exit status");
+        CHECK(procmem_free_ownerless_since(generation)==2,"public clone TSR retains only basepage and environment");
+        same(&s,"public clone TSR transient execution resources reclaimed");
+    }
+    kcprintf("x86-64 public Pclone: %s\n", failures == public_before ? "PASS" : "FAIL");
+#endif
 
     /* entry through the process-entry contract, a GEMDOS call across the
      * syscall boundary, and the exit code coming back */

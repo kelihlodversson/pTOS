@@ -21,6 +21,10 @@
 #include "portab.h"
 #include "string.h"
 #include "kheap.h"
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+#include "ksched.h"
+#include "biosext.h"
+#endif
 #include "pgtable.h"
 #include "pmem.h"
 
@@ -124,6 +128,9 @@ void *kalloc(ULONG size)
     struct block *b;
     UQUAD pages;
 
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+    if (ksched_test_clone_masked()) panic("allocation in clone publication exclusion");
+#endif
     if (!size)
         return NULL;
 
@@ -171,6 +178,9 @@ void kfree(void *p)
     struct block *b;
     UWORD cls;
 
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+    if (ksched_test_clone_masked()) panic("free in clone publication exclusion");
+#endif
     if (!p)
         return;
 

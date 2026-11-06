@@ -17,6 +17,9 @@
  * UD2 contains an unexpected return from the nonreturning termination call. */
 static const UBYTE return_code[] = {
     0x89, 0xc7, 0x48, 0xb8, 0x4c, 0, 0, 0, 1, 0, 0, 0,
+    0x0f, 0x05, 0x0f, 0x0b,
+    /* Public void entry: xor edi,edi; same Pterm/launcher path. */
+    0x31, 0xff, 0x48, 0xb8, 0x4c, 0, 0, 0, 1, 0, 0, 0,
     0x0f, 0x05, 0x0f, 0x0b
 };
 #define RETURN_VA (USER_VA_LIMIT - USER_PAGE_SIZE)
@@ -87,6 +90,11 @@ failed:
 VADDR x32_return_bridge_address(const X32_RETURN_BRIDGE *bridge)
 {
     return x32_return_bridge_valid(bridge) ? RETURN_VA : 0;
+}
+
+VADDR x32_return_bridge_zero_address(const X32_RETURN_BRIDGE *bridge)
+{
+    return x32_return_bridge_valid(bridge) ? RETURN_VA + 16 : 0;
 }
 
 BOOL x32_return_bridge_process_eligible(KPROC *process, KTHREAD *thread)

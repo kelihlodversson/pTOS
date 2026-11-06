@@ -1,16 +1,17 @@
 Public NEW_PROCESS integration contract (#890/#892)
 =================================================
 
-This fixes the integration plan; it does not enable a public operation. The
-exported 28-byte ptos_clone_args, native decoder and xclone validation behavior
-remain unchanged. Current flags must be zero, non-NULL TLS fails EINVAL and a
-valid request returns EINVFN. Internal root and active-group runners are not public syscall capabilities.
+Public NEW_PROCESS/SHARE_VM startup is now connected on x32 when Pclone and
+native cooperative scheduling are configured and the caller is a managed task
+in an active group. Other execution contexts and ARM/m68k startup remain
+unsupported (EINVFN). Neither SAME_PROCESS nor private-VM startup is enabled.
+This is not an architecture capability negotiation ABI.
 
-Future flags and results
+Flags and results
 ------------------------
 
-Use #890's CLONE_VM = 1<<0 and CLONE_SAME_PROCESS = 1<<1. Allocate the following
-resource bits when the functional ABI and its complete trap tests are enabled:
+Use #890's CLONE_VM = 1<<0 and CLONE_SAME_PROCESS = 1<<1. Use the following
+resource bits:
 CLONE_COPY_STANDARD_HANDLES = 1<<2, CLONE_COPY_CWD = 1<<3. These map to the
 existing trusted factory's independent copy policies; they do not share mutable
 PROCESS tables. Resource bits default to neither copy. Explicit/nonstandard SFT
@@ -20,8 +21,8 @@ No signal-policy, TLS, detached-thread, exit-scope or sync/async flag is added.
 
 Preserve the public void (*entry)(void *) prototype. Normal return therefore
 means status zero, not an incidental EAX value. The trusted internal test bridge
-currently consumes LONG entry results; public startup must select a kernel-owned
-zero-status return image using the same Pterm handoff before its gate opens.
+currently consumes LONG entry results; public startup selects the separately validated kernel-owned
+zero-status stub using the same Pterm handoff.
 Explicit Pterm keeps its supplied status. No user-supplied return PC or exit-scope
 flag is introduced. A prepared internal LONG-return image is not proof that the
 public void-entry return convention has been implemented.
@@ -111,11 +112,11 @@ published/root-released states. Its nonblocking getter reads the existing KPROC
 completion; it neither creates a completion producer nor implements waiting or
 reaping. The record survives parent retirement and caller-handle release, and
 independent records retain distinct identities/status. GUI event formatting is
-still outside the generic clone layer. Public xclone must supply the appropriate
-consumer/handle owner before returning; an arbitrary caller-stack context is
+still outside the generic clone layer. Public xclone drops its caller observer handle before returning; the startup
+registration owns the record until scheduler-root reclamation. an arbitrary caller-stack context is
 refused by active spawn.
 
-Acceptance before connecting xclone: production active clone execution, parent
+Established prerequisites for connecting xclone: production active clone execution, parent
 retirement/PD reuse, slot exhaustion, pre-commit cancellation and unchanged
 outputs, early completion and blocked-parent wakeup, owned observer rollback,
 normal/fault/TSR teardown and both stack release contexts. Add the complete future
@@ -165,3 +166,29 @@ not execute newly constructed clone contexts. Keep their startup return EINVFN
 until backend execution/lease/termination tests exist. Legacy non-MMU m68k multitasking is #911; generic scheduling remains
 #713, PROCESS waits #909, shared-VM Pexec #894, TLS independent #908. None is
 silently implemented by this integration plan.
+
+Publication exclusion and accounting
+-----------------------------------
+
+Construction remains serialized by the existing cooperative execution model.
+Reservation, factory work, compatibility/controller mappings, backing lazy heap
+or mmap startup ranges, aliases and observer setup run before IRQ exclusion.
+The guard revalidates the current managed task/controller, seals leases and
+performs the no-fail ownership/output/publication transition. It performs no
+allocation, teardown, filesystem callback or yield. Restore the entry IRQ state
+before cancellation, rollback or transaction destruction. MEMTEST allocation
+and free guards enforce the masked-window rule; failure/cancellation tests
+verify restoration. Preemption/SMP must serialize the entire prepare/revalidate
+protocol and range mutations under #713 before relying on this boundary.
+
+KPROC records child_usage_at_wait explicitly at commit. Async child usage is
+credited only when the existing Pwait consumes its zombie; controller lifetime
+or teardown order does not select accounting policy. The production test drops
+controller ownership before retirement accounting and verifies one wait credit.
+
+Public startup backs validated lazy reservations before acquiring leases. A
+backing failure returns ENSMEM/EIMBA, with no output or runnable child, rather
+than invoking ordinary user-copy fatal-OOM termination. Existing backed user
+pages can remain resident after a failed construction; no return-frame or
+identity data is stored until publication. ARM/m68k native ABI and packed-trap
+validation remain enabled while their runnable requests return EINVFN.

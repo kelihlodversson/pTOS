@@ -26,8 +26,8 @@ struct thread_startup_draft {
 };
 #endif
 
-LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
-                            THREAD_STARTUP_DRAFT **result)
+static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
+                            THREAD_STARTUP_DRAFT **result, BOOL public_return)
 {
     if (!result || *result || !space || !args) return EINVAL;
 #if CONF_WITH_NATIVE_SCHED
@@ -54,6 +54,7 @@ LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->bridge = NULL;
         error = thread_startup_arch_bridge_acquire(space, &draft->bridge);
         if (!error) error = thread_startup_arch_prepare(kaspace_backend(space), &draft->args, draft->bridge, &draft->image);
+        if (!error && public_return) error = thread_startup_arch_public_return(draft->image, draft->bridge);
         if (!error) error = kaspace_lease_acquire(space, args->entry, 1,
             ASPACE_PROT_USER | ASPACE_PROT_EXEC, &draft->leases[0]);
         if (!error) error = kaspace_lease_acquire(space, thread_startup_arch_bridge_address(draft->bridge), 1,
@@ -67,8 +68,16 @@ LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         return E_OK;
     }
 #else
-    return EINVFN;
+    (void)public_return; return EINVFN;
 #endif
+}
+LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
+{
+    return startup_prepare(space, args, out, FALSE);
+}
+LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
+{
+    return startup_prepare(space, args, out, TRUE);
 }
 
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)

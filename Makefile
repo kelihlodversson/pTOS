@@ -1016,7 +1016,7 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+obj/x32/x32probe.elf: tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
                     tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \

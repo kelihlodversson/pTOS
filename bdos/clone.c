@@ -1,4 +1,4 @@
-/* Pclone GEMDOS validation boundary; public startup remains gated. */
+/* Pclone GEMDOS snapshot/validation boundary; trusted startup is separate. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "clone.h"
@@ -7,6 +7,9 @@
 #include "bdosstub.h"
 #include "kproc.h"
 #include "clone_args.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "proc_clone.h"
+#endif
 
 static int clone_copy(void *context, uint64_t address, void *dst, uint32_t size)
 {
@@ -36,10 +39,33 @@ long xclone(uint64_t address, uint64_t size)
     valid = clone_validate_v1(&args, &abi, clone_access, NULL);
     if (valid == CLONE_INVALID) return EINVAL;
     if (valid != CLONE_VALID) return EIMBA;
+    if (!(args.flags & CLONE_VM) || (args.flags & CLONE_SAME_PROCESS)) return EINVFN;
+#if CONF_WITH_NATIVE_SCHED
+    {
+        PROC_CLONE_ARGS policy;
+        THREAD_STARTUP_ARGS startup;
+        LONG result;
+        policy.source = kproc_retain(run);
+        if (!policy.source) return EINVFN;
+        policy.prepared_process = NULL;
+        policy.process_policy = PROC_CLONE_NEW_PROCESS;
+        policy.vm_policy = PROC_CLONE_SHARE_VM;
+        policy.resources = ((args.flags & CLONE_COPY_STANDARD_HANDLES) ? PROC_CLONE_COPY_STANDARD_HANDLES : 0) |
+                           ((args.flags & CLONE_COPY_CWD) ? PROC_CLONE_COPY_CWD : 0);
+        startup.entry = (VADDR)(uintptr_t)args.entry;
+        startup.argument = (VADDR)(uintptr_t)args.argument;
+        startup.stack_base = (VADDR)(uintptr_t)args.stack_base;
+        startup.stack_size = args.stack_size;
+        result = proc_clone_start_public(&policy, &startup,
+                    (VADDR)(uintptr_t)args.child_pid, (VADDR)(uintptr_t)args.child_tid);
+        kproc_release(policy.source);
+        return result;
+    }
+#endif
 #else
     (void)address;
     (void)size;
 #endif
-    /* Internal clone startup is not yet the supported public ABI/backend. */
+    /* ARM/m68k and non-native execution backends remain explicitly unsupported. */
     return EINVFN;
 }

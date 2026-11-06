@@ -16,6 +16,7 @@ LONG thread_startup_arch_prepare(struct aspace *space, const THREAD_STARTUP_ARGS
                                  void **image);
 LONG thread_startup_arch_validate(const struct aspace *space, const THREAD_STARTUP_ARGS *args);
 void thread_startup_arch_abort(void *image);
+LONG thread_startup_arch_public_return(void *image, const void *bridge);
 void *thread_startup_arch_frame_alias(struct aspace *, const void *image);
 void thread_startup_arch_commit_frame(const void *image, void *alias);
 BOOL thread_startup_arch_take_stacks(void *image, THREAD_STARTUP_STACK_OWNERS *);

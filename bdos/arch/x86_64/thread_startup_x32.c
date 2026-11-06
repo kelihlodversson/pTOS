@@ -143,3 +143,11 @@ BOOL thread_startup_arch_take_stacks(void *image, THREAD_STARTUP_STACK_OWNERS *o
 {
     return thread_startup_x32_take_stacks(image, owners);
 }
+
+LONG thread_startup_arch_public_return(void *image, const void *bridge)
+{
+    X32_THREAD_STARTUP_DRAFT *draft = image;
+    VADDR address = x32_return_bridge_zero_address(bridge);
+    if (!draft || !address) return EIMBA;
+    draft->return_pc = address; return E_OK;
+}

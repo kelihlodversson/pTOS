@@ -58,6 +58,10 @@ static struct {
     PROC_CLONE_TRANSACTION *pending_clone;
 } scheduler;
 static UQUAD next_identity;
+#if CONF_WITH_X86_64_MEMTEST
+static BOOL clone_masked;
+BOOL ksched_test_clone_masked(void) { return clone_masked; }
+#endif
 static void publish_task(void **slot, TASK_STATE state);
 extern void native_sched_enter(UQUAD top, void (*entry)(void)) NORETURN;
 
@@ -367,10 +371,10 @@ static BOOL always_ready(void *argument) { (void)argument; return TRUE; }
 LONG ksched_yield(void)
 {
     UQUAD flags;
-    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_MMAP
-    x86_64_memtest_clone_yield();
+    x86_64_memtest_clone_yield(); /* process context, before IRQ exclusion */
 #endif
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
     ksched_block(always_ready, NULL);
     if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
     return E_OK;
@@ -794,20 +798,32 @@ BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *startup)
     }
     return FALSE;
 }
+BOOL ksched_clone_context(KPROC *source, PD **controller)
+{
+    if (!ksched_spawn_allowed() || scheduler.current->process != source ||
+        scheduler.current->program != run || kproc_live_pd(source) != run) return FALSE;
+    *controller = scheduler.root.pd; return TRUE;
+}
 BOOL ksched_clone_begin(KPROC *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard)
 {
     UQUAD flags;
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
-    if (!ksched_spawn_allowed() || scheduler.current->process != source ||
-        scheduler.current->program != run || kproc_live_pd(source) != run) {
+    if (!ksched_clone_context(source, controller)) {
         if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
         return FALSE;
     }
-    guard->flags = flags; *controller = scheduler.root.pd;
-    return TRUE;
+#if CONF_WITH_X86_64_MEMTEST
+    if (clone_masked) panic("nested clone publication exclusion");
+    clone_masked = TRUE;
+#endif
+    guard->flags = flags; return TRUE;
 }
 void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard)
 {
+#if CONF_WITH_X86_64_MEMTEST
+    if (!clone_masked) panic("clone publication exclusion already released");
+    clone_masked = FALSE;
+#endif
     if (guard->flags & 0x200) __asm__ volatile ("sti" ::: "memory");
 }
 void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STARTUP_DRAFT *startup,

@@ -103,6 +103,10 @@ struct kproc {
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
     BOOL clone_exclusive;
+    BOOL child_usage_at_wait; /* accounting policy, independent of controller refs */
+#if CONF_WITH_X86_64_MEMTEST
+    BOOL test_controller_first;
+#endif
     KASPACE *clone_compat;
     UBYTE clone_maps;
     void *clone_startup;
@@ -511,17 +515,24 @@ failed:
     kproc_clone_drop_compat(p);
     return FALSE;
 }
-void kproc_clone_drop_compat(KPROC *p)
+static void clone_drop_controller(KPROC *p)
 {
-    ASPACE *as;
-    if (!p || !p->clone_compat) return;
-    as = kaspace_backend(p->clone_compat);
     if (p->clone_controller_pd) {
         procmem_pin((VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD), -1);
         p->clone_controller_pd = NULL;
         p->clone_controller_gen = 0;
         kproc_release(p->clone_controller_identity); p->clone_controller_identity = NULL;
     }
+}
+#if CONF_WITH_X86_64_MEMTEST
+void kproc_test_controller_first(KPROC *p) { p->test_controller_first = TRUE; }
+#endif
+void kproc_clone_drop_compat(KPROC *p)
+{
+    ASPACE *as;
+    if (!p || !p->clone_compat) return;
+    as = kaspace_backend(p->clone_compat);
+    clone_drop_controller(p);
     if (p->clone_maps & 2) aspace_unborrow(as, (VADDR)(uintptr_t)p->env_start, p->env_end - p->env_start);
     if (p->clone_maps & 1) aspace_unborrow(as, (VADDR)(uintptr_t)p->user_start, p->user_end - p->user_start);
     p->clone_maps = 0;
@@ -580,7 +591,7 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
 #endif
     return TRUE;
 }
-void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physical, uintptr_t top)
+void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physical, uintptr_t top, BOOL wait_usage)
 {
     /* Impossible-to-fail invariants already proved before the first store;
      * fail-stop on kernel misuse instead of exposing a generic guard bypass. */
@@ -594,6 +605,7 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
     }
     p->active_space = space; p->aspace = kaspace_backend(space);
     p->clone_exclusive = TRUE; p->clone_identity_only = FALSE;
+    p->child_usage_at_wait = wait_usage;
     p->clone_startup = startup; p->kstack_phys = physical; p->kstack_top = top;
 }
 BOOL kproc_clone_execution_bound(KPROC *p, KTHREAD *thread)
@@ -755,6 +767,9 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+            if (kproc->test_controller_first) clone_drop_controller(kproc);
+#endif
             /* Identity-only construction/cancellation consumed no child CPU
              * lifetime. Preserve classic accounting outside user-ASPACE. */
             if (launcher
@@ -764,7 +779,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_NATIVE_SCHED
                 /* Active clones keep logical parent identity: their usage
                  * is credited by existing Pwait, never also at retirement. */
-                && !kproc->clone_controller_pd
+                && !kproc->child_usage_at_wait
 #endif
             )
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;

@@ -45,10 +45,14 @@ void test_pclone(void)
         ptest_assert_msg(pclone_trap(&args,sizeof(args)) == -32L,"valid request must reach unavailable backend");
         ptest_assert_msg(pclone_trap(0,sizeof(args)) == -40L,"null structure must fail");
         ptest_assert_msg(pclone_trap((void *)0xffff0000UL,sizeof(args)) == -40L,"inaccessible structure must fail");
-        ptest_assert_msg(pclone_trap(&args,sizeof(args)-1) == -25L,"short structure must fail");
+        ptest_assert_msg(pclone_trap(&args,PTOS_CLONE_ARGS_MIN_SIZE-1) == -25L,"short structure must fail");
         ptest_assert_msg(pclone_trap((void *)0x80001000UL,sizeof(args)) == -40L,"high-bit pointer must not be truncated");
         ptest_assert_msg(pclone_trap(&args,0xffffffffUL) == -40L,"negative-looking size must not wrap");
-        args.flags = 1;
+        args.flags = CLONE_VM;
+        ptest_assert_msg(pclone_trap(&args,28) == -32L,"shared VM backend remains unavailable on this architecture");
+        args.flags = CLONE_VM | CLONE_SAME_PROCESS;
+        ptest_assert_msg(pclone_trap(&args,32) == -32L,"same-process startup remains unavailable");
+        args.flags = 0x80000000U;
         ptest_assert_msg(pclone_trap(&args,sizeof(args)) == -25L,"reserved flag must fail");
         args.flags = 0; args.entry = (void (*)(void *))0xffff0000UL;
         ptest_assert_msg(pclone_trap(&args,sizeof(args)) == -40L,"inaccessible entry must fail");

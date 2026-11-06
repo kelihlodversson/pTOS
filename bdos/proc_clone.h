@@ -90,6 +90,10 @@ LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
  * before publication preserves transaction and outputs; success consumes it
  * and waits using the existing cooperative scheduler, returning value ids. */
 LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION *completion);
+/* Normalized public NEW_PROCESS/SHARE_VM request. Constructs and owns the
+ * asynchronous observer, returns positive signed TID or an error, and retains
+ * no caller-stack data after return. Requires the current managed task. */
+LONG proc_clone_start_public(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *, VADDR pid, VADDR tid);
 /* Owned observer required. Success consumes transaction and returns identities
  * immediately into an existing group; failures preserve it for abort except
  * explicit prepublication cancellation. No new waiter or public syscall. */

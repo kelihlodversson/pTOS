@@ -32,6 +32,7 @@ struct kthread;
 LONG ksched_task_reserve(BOOL root, void **slot);
 #if CONF_WITH_X86_64_MEMTEST
 void ksched_test_fail_clone_slot(void);
+BOOL ksched_test_clone_masked(void);
 #endif
 void ksched_task_cancel(void **slot);
 void ksched_task_publish(void **slot);
@@ -39,6 +40,8 @@ BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 /* Backends mask dispatch/IRQs and validate that source owns the current task.
  * Root is borrowed only while its blocked continuation owns the group. */
 typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
+/* Nonmasking query during serialized preparation; begin revalidates it. */
+BOOL ksched_clone_context(struct kproc *source, PD **controller);
 BOOL ksched_clone_begin(struct kproc *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard);
 void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard);
 void ksched_clone_commit(void *slot, struct kproc *, struct kthread *, struct thread_startup_draft *,

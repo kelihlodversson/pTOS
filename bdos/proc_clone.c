@@ -1,4 +1,4 @@
-/* Trusted construction; public Pclone and SAME_PROCESS startup remain gated. */
+/* Trusted construction; runnable SAME_PROCESS startup remains gated. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "biosext.h"
@@ -48,6 +48,9 @@ static BOOL injected(UWORD stage)
 
 static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 {
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+    if (ksched_test_clone_masked()) panic("clone teardown in publication exclusion");
+#endif
     thread_startup_abort(&tx->startup);
 #if CONF_WITH_NATIVE_SCHED
     kproc_clone_drop_compat(tx->process);
@@ -292,6 +295,64 @@ void proc_clone_release(PROC_CLONE_RESULT *result)
 }
 
 #if CONF_WITH_NATIVE_SCHED
+/* Public ABI wrapper receives normalized kernel arguments, never the user
+ * structure. The observer caller reference is dropped before returning; the
+ * startup registration owns the asynchronous lifetime through root reclaim. */
+/* Materialize validated KASPACE reservations before acquiring startup leases.
+ * Unlike ordinary user-copy demand handling, construction failure returns an
+ * error rather than terminating the caller on allocation/I/O failure. */
+static LONG public_back_range(KASPACE *space, VADDR address, ULONG bytes, UWORD access)
+{
+    VADDR page, last;
+    ASPACE *as = kaspace_backend(space);
+    if (!bytes) return E_OK;
+    if (address >= USER_VA_LIMIT || bytes > USER_VA_LIMIT - address) return EIMBA;
+    last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    for (page = address & ~(VADDR)(USER_PAGE_SIZE - 1); ; page += USER_PAGE_SIZE) {
+        UWORD prot;
+        if (!aspace_translate(as,page,NULL,&prot) || (prot & access) != access) {
+            int backed = kaspace_heap_demand_page(space,page,access);
+#if CONF_WITH_MMAP
+            if (backed == -1) backed = kaspace_mmap_demand_page(space,page,access);
+#endif
+            if (backed == 2) return ENSMEM;
+            if (backed != 1 || !aspace_translate(as,page,NULL,&prot) || (prot & access) != access)
+                return EIMBA;
+        }
+        if (page == last) return E_OK;
+    }
+}
+
+LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup, VADDR pid, VADDR tid)
+{
+    PROC_CLONE_TRANSACTION *tx = NULL;
+    PROC_CLONE_OBSERVER *observer = NULL;
+    PROC_CLONE_IDENTITIES created = { 0, 0 };
+    PD *controller;
+    ULONG identity;
+    LONG error;
+    if (!args || !startup || args->process_policy != PROC_CLONE_NEW_PROCESS || args->vm_policy != PROC_CLONE_SHARE_VM)
+        return EINVAL;
+    if (!ksched_clone_context(args->source,&controller)) return EINVFN;
+    error = proc_clone(args,&tx);
+    if (error) return error;
+    identity = kthread_tid(tx->thread);
+    if (!identity || identity > 0x7fffffffUL) { error = EAGAIN; goto done; }
+    error = public_back_range(tx->space,startup->entry,1,ASPACE_PROT_USER | ASPACE_PROT_EXEC);
+    if (!error) error = public_back_range(tx->space,startup->stack_base,startup->stack_size,ASPACE_PROT_USER | ASPACE_PROT_WRITE);
+    if (!error && pid) error = public_back_range(tx->space,pid,4,ASPACE_PROT_USER | ASPACE_PROT_WRITE);
+    if (!error && tid) error = public_back_range(tx->space,tid,4,ASPACE_PROT_USER | ASPACE_PROT_WRITE);
+    if (!error) error = thread_startup_prepare_public(tx->space,startup,&tx->startup);
+    if (!error) error = proc_clone_retain_startup_stack(tx);
+    if (!error) error = proc_clone_prepare_outputs(tx,pid,tid);
+    if (!error) error = proc_clone_observe_async(tx,&observer);
+    if (!error) error = proc_clone_spawn(&tx,&created);
+done:
+    proc_clone_abort(&tx);
+    proc_clone_observer_release(&observer);
+    return error ? error : (LONG)identity;
+}
+
 LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *created)
 {
     PROC_CLONE_TRANSACTION *tx;
@@ -308,9 +369,9 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
         !tx->observer || tx->observer->state != PROC_CLONE_OBSERVER_PREPARED) return EINVFN;
     if (!startup_target_live(tx) || !kthread_clone_run_ready(tx->thread)) return EACCDN;
     if (thread_startup_state(tx->startup) != THREAD_STARTUP_OBSERVED) return EINVAL;
-    if (!ksched_clone_begin(tx->source, &controller, &guard)) return EINVFN;
+    if (!ksched_clone_context(tx->source, &controller)) return EINVFN;
     error = ksched_task_reserve(FALSE, &slot);
-    if (error) goto done;
+    if (error) return error;
     if (!kproc_clone_prepare_compat(tx->process, tx->thread, tx->space) ||
         !kproc_clone_prepare_controller(tx->process, controller) ||
         !kproc_clone_prepare_parent(tx->process, tx->source)) { error = ENSMEM; goto failed; }
@@ -318,13 +379,21 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     if (error) goto failed;
     if (!kproc_clone_run_ready(tx->process, tx->thread, tx->space) ||
         kproc_active_space(tx->source) != tx->space) { error = EACCDN; goto failed; }
+    /* Only no-allocation/no-callback revalidation, sealing and stores occur
+     * under backend exclusion. Cleanup always restores the entry IRQ state. */
+    {
+        PD *confirmed;
+        if (!ksched_clone_begin(tx->source, &confirmed, &guard)) { error = EINVFN; goto failed; }
+        if (confirmed != controller) { ksched_clone_end(&guard); error = EACCDN; goto failed; }
+    }
     error = thread_startup_seal(tx->startup);
-    if (error) goto failed;
+    if (error) { ksched_clone_end(&guard); goto failed; }
 #if CONF_WITH_X86_64_MEMTEST
     if (cancel_publication) {
         cancel_publication = FALSE;
+        ksched_clone_end(&guard);
         ksched_task_cancel(&slot); proc_clone_abort(handle);
-        error = EAGAIN; goto done;
+        return EAGAIN;
     }
 #endif
     pid = kproc_ref_pid(tx->process); tid = kthread_tid(tx->thread);
@@ -332,13 +401,11 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     *handle = NULL;
     proc_clone_commit_prepared(tx, slot); /* consumes reservation; no dispatch yet */
     created->pid = pid; created->tid = tid;
-    release_transaction(tx); /* publication complete; caller still executing */
-    error = E_OK;
-    goto done;
+    ksched_clone_end(&guard);
+    release_transaction(tx); /* outside publication exclusion */
+    return E_OK;
 failed:
     kproc_clone_drop_compat(tx->process); ksched_task_cancel(&slot);
-done:
-    ksched_clone_end(&guard);
     return error;
 }
 
@@ -400,7 +467,7 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     ULONG tid = kthread_tid(tx->thread);
     THREAD_STARTUP_DRAFT *startup = tx->startup;
     if (!thread_startup_take_stacks(startup, &owners)) panic("clone publication: missing prepared stacks");
-    kproc_clone_commit_run(tx->process, tx->space, startup, owners.syscall.physical, owners.syscall.top);
+    kproc_clone_commit_run(tx->process, tx->space, startup, owners.syscall.physical, owners.syscall.top, tx->asynchronous);
     tx->space = NULL;
     owners.syscall.physical = owners.syscall.top = 0;
     ksched_clone_commit(slot, tx->process, tx->thread, startup, &owners.scheduler,

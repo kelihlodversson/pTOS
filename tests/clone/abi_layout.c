@@ -6,8 +6,8 @@
 #define ASSERT(name, expr) typedef char assert_##name[(expr) ? 1 : -1]
 ASSERT(user_pointer_width, sizeof(void *) == 4);
 ASSERT(user_entry_width, sizeof(void (*)(void *)) == 4);
-ASSERT(struct_size, sizeof(struct ptos_clone_args) == 28);
-ASSERT(wire_size, sizeof(CLONE_USER_V1) == 28);
+ASSERT(struct_size, sizeof(struct ptos_clone_args) == 32);
+ASSERT(wire_size, sizeof(CLONE_USER_V1) == 32);
 ASSERT(struct_alignment, __alignof__(struct ptos_clone_args) == __alignof__(uint32_t));
 ASSERT(wire_alignment, __alignof__(CLONE_USER_V1) == __alignof__(struct ptos_clone_args));
 ASSERT(pointer_alignment, __alignof__(void *) == __alignof__(uint32_t));
@@ -27,3 +27,5 @@ MATCH(stack_base, 12);
 MATCH(stack_size, 16);
 MATCH(tls, 20);
 MATCH(child_tid, 24);
+MATCH(child_pid, 28);
+ASSERT(prefix_size, PTOS_CLONE_ARGS_MIN_SIZE == 28);

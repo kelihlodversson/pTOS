@@ -147,10 +147,11 @@ BOOL kproc_clone_prepare_controller(KPROC *process, PD *controller);
 BOOL kproc_clone_prepare_parent(KPROC *, KPROC *);
 BOOL kproc_clone_parent_ready(const KPROC *);
 BOOL kproc_clone_execution_bound(KPROC *, struct kthread *);
-void kproc_clone_commit_run(KPROC *, struct kaspace *, void *, PADDR, uintptr_t);
+void kproc_clone_commit_run(KPROC *, struct kaspace *, void *, PADDR, uintptr_t, BOOL);
 void *kproc_clone_startup(PD *);
 #if CONF_WITH_X86_64_MEMTEST
 void kproc_test_fail_clone_controller(void);
+void kproc_test_controller_first(KPROC *process);
 void kproc_test_fail_clone_compat(UWORD stage);
 #endif
 #endif

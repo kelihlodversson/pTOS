@@ -3,6 +3,11 @@ Pclone ABI foundation
 
 Scope
 -----
+Historical #890 foundation: the original prefix and Phase 1 rejection behavior
+are recorded below. The functional x32 extension appends child_pid and accepts
+CLONE_* policy bits; doc/clone-public-integration.txt and include/pclone.h define
+that current contract. ARM/m68k runnable backends remain unavailable.
+
 The combined scheduling and process-model epic (#713, #889) needs one clone
 path shared by public Pclone and the kernel's Pexec/Pfork/Pvfork paths.  The
 public entry must not pass a caller-owned argument structure to that path.

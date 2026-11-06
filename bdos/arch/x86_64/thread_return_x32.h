@@ -11,6 +11,7 @@ typedef struct x32_return_bridge X32_RETURN_BRIDGE;
  * through existing Pterm/xterm + launcher finalization. It cannot terminate a
  * SAME_PROCESS sibling and never grants clone publication capability. */
 LONG x32_return_bridge_acquire(struct kaspace *space, X32_RETURN_BRIDGE **result);
+VADDR x32_return_bridge_zero_address(const X32_RETURN_BRIDGE *bridge);
 VADDR x32_return_bridge_address(const X32_RETURN_BRIDGE *bridge);
 BOOL x32_return_bridge_valid(const X32_RETURN_BRIDGE *bridge);
 BOOL x32_return_bridge_matches(const X32_RETURN_BRIDGE *bridge, const struct aspace *space);
