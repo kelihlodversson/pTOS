@@ -23,11 +23,17 @@ int main(void)
 
 #if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__))
     if ((unsigned char)_base->p_cmdlin[0] == 7 &&
-        !memcmp(_base->p_cmdlin + 1, "--clone", 7))
+        !memcmp(_base->p_cmdlin + 1, "--clone", 7)) {
         pclone_run_managed_tests();
-    else
+        failures = ptest_failures();
+        ptest_log_flush();
+        /* Only the outer driver may emit the suite summary/verdict. A child
+         * PASS must not conceal a later fault in the remaining parent tests. */
+        Pterm(failures);
+        return failures;
+    }
 #endif
-        ptest_run_tests();
+    ptest_run_tests();
 
     failures = ptest_summary();
     if (failures)
