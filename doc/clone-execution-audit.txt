@@ -109,7 +109,7 @@ TASK_RESERVED prevents callbacks from selecting a slot under construction.
 Legacy preparation also reserves program identity before callbacks, preventing
 a second construction of the same PD in another slot. Normal group entry rejects
 an existing private root reservation rather than overwriting its table. Dispatch,
-exit observation and wait predicates exclude private slots. Cancellation consumes
+exit observation, parent-PID lookup and wait predicates exclude private slots. Cancellation consumes
 only storage after caller-owned resources have been unwound; publish consumes
 the handle with stores/barriers only. Deferred readiness still uses predecessor
 cleanup, without granting runnable identity or adding a dispatcher.

@@ -1,4 +1,4 @@
-/* Pclone GEMDOS entry. The backend is not available yet. */
+/* Pclone GEMDOS validation boundary; public startup remains gated. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "clone.h"
@@ -40,6 +40,6 @@ long xclone(uint64_t address, uint64_t size)
     (void)address;
     (void)size;
 #endif
-    /* The execution-context backend is not implemented yet. */
+    /* Internal clone startup is not yet the supported public ABI/backend. */
     return EINVFN;
 }

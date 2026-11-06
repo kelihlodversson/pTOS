@@ -24,6 +24,7 @@ int main(void)
 {
     void *root = NULL, *slots[KSCHED_LIMIT] = { NULL };
     UWORD i;
+    WORD parent_pid = 123;
     UQUAD identity;
     CHILD_WAIT wait;
     CHECK(ksched_task_reserve(TRUE,&root) == E_OK && root == table && table[0].state == TASK_RESERVED);
@@ -45,6 +46,7 @@ int main(void)
     table[1].parent = &parent; table[1].program = &child; table[1].pid = 42;
     wait.parent = &parent; wait.pid = 42;
     CHECK(child_ready(&wait)); /* no published child */
+    CHECK(!ksched_parent_pid(&child,&parent_pid) && parent_pid == 123);
     ksched_exiting(&child,7);
     CHECK(!table[1].exited && table[1].program == &child && !notifications);
     for (i = 0; i < KSCHED_LIMIT-1; i++) ksched_task_cancel(&slots[i]);

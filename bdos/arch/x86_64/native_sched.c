@@ -194,7 +194,7 @@ BOOL ksched_parent_pid(PD *pd, WORD *pid)
     if (!scheduler.active) return FALSE;
     for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state != TASK_UNUSED && task->program == pd) {
+        if (task->state != TASK_UNUSED && task->state != TASK_RESERVED && task->program == pd) {
             *pid = kproc_pid(task->parent ? task->parent : scheduler.root.pd);
             return TRUE;
         }
