@@ -102,3 +102,15 @@ int main(void)
     puts("Deferred scheduler construction, rollback and identity handoff: PASS");
     return 0;
 }
+
+/* Legacy scheduler fixtures must never acquire clone startup ownership. */
+void thread_startup_abort(THREAD_STARTUP_DRAFT **startup)
+{
+    if (startup && *startup) abort();
+}
+
+void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
+{
+    (void)startup;
+    abort(); /* no published clone exists in this legacy fixture */
+}

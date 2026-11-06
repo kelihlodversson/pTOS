@@ -8,6 +8,10 @@
 #include "thread_startup_backend.h"
 #include "thread_startup_x32.h"
 #include "thread_return_x32.h"
+#include <stddef.h>
+typedef char entry_layout_check[(offsetof(X32_THREAD_ENTRY_IMAGE, fpu) == 224 &&
+    offsetof(X32_THREAD_ENTRY_IMAGE, cr3) == 144 && offsetof(X32_THREAD_ENTRY_IMAGE, ss) == 160 &&
+    offsetof(X32_THREAD_ENTRY_IMAGE, r15) == 112) ? 1 : -1];
 #include "../../../bios/arch/x86_64/gdt.h"
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -101,15 +105,41 @@ BOOL thread_startup_x32_take_stacks(X32_THREAD_STARTUP_DRAFT *draft, X32_THREAD_
         !draft->syscall_physical || !draft->scheduler_stack.physical) return FALSE;
     owners->syscall.physical = draft->syscall_physical;
     owners->syscall.top = draft->syscall_top;
-    owners->scheduler = kthread_stack_detach(&draft->scheduler_stack);
+    owners->scheduler.physical = draft->scheduler_stack.physical;
+    owners->scheduler.top = draft->scheduler_stack.top;
+    draft->scheduler_stack.physical = draft->scheduler_stack.top = 0;
     draft->syscall_physical = 0; draft->syscall_top = 0;
     return TRUE;
 }
 void thread_startup_x32_release_syscall(X32_THREAD_STACK_OWNERS *owners)
 {
-    if (owners) kthread_stack_release(&owners->syscall);
+    if (owners) {
+        KTHREAD_STACK stack = { owners->syscall.physical, owners->syscall.top };
+        owners->syscall.physical = owners->syscall.top = 0;
+        kthread_stack_release(&stack);
+    }
 }
 void thread_startup_x32_release_scheduler(X32_THREAD_STACK_OWNERS *owners)
 {
-    if (owners) kthread_stack_release(&owners->scheduler);
+    if (owners) {
+        KTHREAD_STACK stack = { owners->scheduler.physical, owners->scheduler.top };
+        owners->scheduler.physical = owners->scheduler.top = 0;
+        kthread_stack_release(&stack);
+    }
+}
+
+void *thread_startup_arch_frame_alias(ASPACE *space, const void *image)
+{
+    const X32_THREAD_STARTUP_DRAFT *draft = image;
+    return draft ? aspace_user_write_alias(space, draft->user.rsp, 8) : NULL;
+}
+void thread_startup_arch_commit_frame(const void *image, void *alias)
+{
+    const X32_THREAD_STARTUP_DRAFT *draft = image;
+    *(volatile UQUAD *)alias = draft->return_pc;
+}
+
+BOOL thread_startup_arch_take_stacks(void *image, THREAD_STARTUP_STACK_OWNERS *owners)
+{
+    return thread_startup_x32_take_stacks(image, owners);
 }

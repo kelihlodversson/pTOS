@@ -2036,6 +2036,145 @@ static void startup_observer_release(void *context)
 
 /* Exercise the immutable bridge with the EXISTING single-process launcher.
  * This is not execution of a proc_clone startup image or a runnable sibling. */
+#if CONF_WITH_MMAP
+typedef struct {
+    KPROC *process;
+    UWORD registered, released, completed, expected;
+    BOOL fail;
+} CLONE_RUN_OBSERVER;
+static LONG clone_observer_acquire(void *context)
+{
+    CLONE_RUN_OBSERVER *watch = context;
+    if (watch->fail) return ENSMEM;
+    if (!kproc_retain_live(watch->process)) return EACCDN;
+    watch->registered++;
+    return E_OK;
+}
+static void clone_observer_release(void *context)
+{
+    CLONE_RUN_OBSERVER *watch = context;
+    UWORD status;
+    CHECK(watch->registered == 1 && !watch->released, "registered clone observer releases once");
+    if (kproc_ref_status(watch->process, &status)) {
+        watch->completed++;
+        CHECK(status == watch->expected && !kproc_ref_has_basepage(watch->process),
+              "observer retains correct completed PID/status after live resources retire");
+    }
+    watch->released++;
+    kproc_release(watch->process); watch->process = NULL;
+}
+extern const UBYTE clone_probe_begin[], clone_probe_end[];
+/* Unlike bridge-only tests, these dispatch the constructed CPU/FPU image. */
+static void test_clone_execution(void)
+{
+    UWORD mode;
+    int before = failures;
+    for (mode = 0; mode < 10; mode++) {
+        SNAP baseline;
+        PD *pd, *original = run;
+        KPROC *source;
+        KTHREAD *parent_execution;
+        KASPACE *space;
+        ASPACE *as;
+        ASPACE_ROOT previous;
+        VADDR stack, data, collision = 0;
+        ULONG input[4] = { 0, 0, 0, 0 }, outputs[2] = { 0x11112222, 0x33334444 }, readback[2];
+        PROC_CLONE_ARGS args;
+        THREAD_STARTUP_ARGS startup;
+        PROC_CLONE_TRANSACTION *tx = NULL;
+        PROC_CLONE_COMPLETION done = { 0, 0, 0 };
+        CLONE_RUN_OBSERVER watched = { NULL, 0, 0, 0, 0, FALSE };
+        THREAD_STARTUP_OBSERVER observer = { clone_observer_acquire, clone_observer_release };
+        LONG result;
+        snap(&baseline);
+        pd = new_basepage();
+        if (!pd) return;
+        set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+        CHECK(kproc_prepare_user(pd,run), "prepare live parent for real clone execution");
+        parent_execution = kthread_create(pd);
+        CHECK(parent_execution != NULL, "caller execution association retains parent live resources");
+        source = kproc_retain(pd); space = kproc_active_space(source); as = kaspace_backend(space);
+        CHECK(aspace_load_private(as, 0x00600000, PAGE, ASPACE_PROT_USER | ASPACE_PROT_EXEC,
+              clone_probe_begin, clone_probe_end-clone_probe_begin), "install internal CPU/FPU execution probe");
+        stack = kproc_uheap_alloc(pd,2*PAGE);
+        if (mode == 0) {
+            data = 0xfedcb000ULL; /* execute with a real high-bit x32 pointer */
+            CHECK(aspace_map_private(as,data,PAGE,ASPACE_PROT_USER | ASPACE_PROT_WRITE),
+                  "map high-bit opaque argument and publication destinations");
+        } else data = kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        CHECK(stack && data && kproc_demand_page(pd,stack,ASPACE_PROT_WRITE) == 1 &&
+              kproc_demand_page(pd,stack+PAGE,ASPACE_PROT_WRITE) == 1 &&
+              (mode == 0 ? aspace_translate(as,data,NULL,NULL) : kproc_demand_page(pd,data,ASPACE_PROT_WRITE) == 1), "back shared code argument/outputs and private thread stack");
+        input[0] = mode < 3 ? mode : 0; input[2] = kproc_ref_pid(source); input[3] = stack;
+        CHECK(aspace_copy_to_user(as,data,input,sizeof(input)) &&
+              aspace_copy_to_user(as,data+16,outputs,sizeof(outputs)), "seed private clone argument and unchanged output sentinels");
+        /* This fixture establishes the same current PROCESS/ASPACE contract
+         * as a kernel service entered on behalf of a live user parent. */
+        previous = aspace_enter(as); run = pd;
+        bzero(&args,sizeof(args)); args.source = source;
+        args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
+        args.resources = PROC_CLONE_COPY_STANDARD_HANDLES | PROC_CLONE_COPY_CWD;
+        startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE;
+        CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
+              proc_clone_retain_startup_stack(tx) == E_OK &&
+              proc_clone_prepare_outputs(tx,data+16,data+20) == E_OK, "construct/process/VM/thread/context/leases before publication");
+        watched.process = proc_clone_process(tx);
+        watched.expected = mode == 0 ? 0x2468 : mode == 1 ? 0x3579 : 0xffff;
+        watched.fail = mode == 8;
+        CHECK(proc_clone_observe_startup(tx,&observer,&watched) == (mode == 8 ? ENSMEM : E_OK),
+              "register retained PROCESS lifecycle observer or fail before publication");
+        if (mode == 9) {
+            collision = (VADDR)(uintptr_t)kproc_live_pd(watched.process);
+            CHECK(aspace_load_private(as, collision, PAGE, ASPACE_PROT_USER,
+                  "owned", 6), "place an unrelated owned mapping in the compatibility range");
+        }
+        if (mode == 3) CHECK(kproc_mprot(pd,data,PAGE,PROT_READ) == E_OK, "invalidate publication output before final preflight");
+        if (mode == 4) proc_clone_test_cancel_publication();
+        if (mode == 5) ksched_test_fail_clone_slot();
+        if (mode == 6 || mode == 7) kproc_test_fail_clone_compat(mode-5);
+        bzero(exit_handoff_stages,sizeof(exit_handoff_stages)); exit_handoff_watch = TRUE;
+        result = proc_clone_exec(&tx,&done);
+        exit_handoff_watch = FALSE;
+        CHECK(run == pd && aspace_is_current(as) && kproc_active_space(source) == space && kproc_ref_has_basepage(source),
+              "child exit/cancellation preserves parent PROCESS and shared ASPACE");
+        CHECK(aspace_copy_from_user(as,readback,data+16,sizeof(readback)), "parent can still access shared output memory");
+        if (mode < 3) {
+            CHECK(result == E_OK && !tx && done.pid != kproc_ref_pid(source) && done.tid && done.tid != kthread_tid(parent_execution) &&
+                  done.status == (mode == 0 ? 0x2468 : mode == 1 ? 0x3579 : 0xffff),
+                  "actual constructed clone RET/Pterm/fault returns its independent identity and expected status");
+            CHECK(readback[0] == (ULONG)done.pid && readback[1] == done.tid,
+                  "publication commits both identities before dispatch");
+            CHECK(aspace_copy_from_user(as,readback,data,sizeof(readback)) && readback[1] == 0x600dcafe,
+                  "real initial CPU/FPU state and three cooperative yield patterns pass");
+            CHECK(exit_handoff_stages[0] == 1 && exit_handoff_stages[1] == 1 &&
+                  exit_handoff_stages[2] == 1 && exit_handoff_stages[3] == 1,
+                  "one THREAD/PROCESS handoff and syscall reclamation for constructed clone");
+        } else {
+            CHECK(result == (mode == 3 ? EIMBA : mode == 4 ? EAGAIN : mode == 8 ? EINVAL : ENSMEM) && !done.pid && !done.tid &&
+                  readback[0] == outputs[0] && readback[1] == outputs[1] && !exit_handoff_stages[0],
+                  "preflight failure or final prepublication cancellation exposes no output or child execution");
+            CHECK(mode == 4 ? tx == NULL : tx != NULL, "cancellation consumes handle; failed preflight preserves ownership until abort");
+            if (collision) {
+                char value[6];
+                CHECK(aspace_copy_from_user(as,value,collision,sizeof(value)) && !memcmp(value,"owned",6),
+                      "failed compatibility preparation cannot replace an unrelated mapping");
+                CHECK(aspace_unmap_private(as,collision,PAGE), "release caller-owned collision fixture");
+            }
+            proc_clone_abort(&tx);
+        }
+        CHECK(watched.registered == (mode == 8 ? 0 : 1) && watched.released == watched.registered &&
+              watched.completed == (mode < 3 ? 1 : 0),
+              "one completion observation for executed PROCESS, none for rejected/cancelled construction");
+        CHECK(kproc_uheap_free(pd,stack) == E_OK, "scheduler root reap released final durable user-stack hold");
+        run = original; aspace_leave(previous);
+        kthread_destroy(parent_execution);
+        proc_dispose_process(source); kproc_release(source);
+        same(&baseline,"constructed clone normal/fault execution and complete root reclamation");
+    }
+    kcprintf("x86-64 executable clone: %s\n", failures == before ? "PASS" : "FAIL");
+}
+
+#endif
 static void test_return_bridge(void)
 {
     UWORD mode;
@@ -4836,6 +4975,9 @@ void x86_64_memtest_run(void)
 #if CONF_WITH_NATIVE_SCHED
     test_proc_clone_startup();
     test_return_bridge();
+#if CONF_WITH_MMAP
+    test_clone_execution();
+#endif
 #endif
     test_kthread_live_disposal();
     test_kthread_completion();

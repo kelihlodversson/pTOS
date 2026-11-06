@@ -692,3 +692,34 @@ longer supply return PCs. Tests execute that bridge through the existing sole-
 PROCESS launcher, including an entry fault and an independently retained shared
 ASPACE. This is not yet dispatch of a proc_clone CPU/FPU image or sibling-only
 termination. See doc/thread-startup.txt for the exact remaining gates.
+
+Internal runnable x32 NEW_PROCESS/SHARE_VM checkpoint
+----------------------------------------------------
+
+The preceding identity-only startup limitations are superseded for the narrow
+internal proc_clone_exec root runner; see doc/thread-startup.txt. A factory-owned
+distinct PROCESS with one KTHREAD now executes the prepared CPU/FPU image through
+the existing native task and gouser/launcher path. Public Pclone, SAME_PROCESS
+startup and active-group insertion remain disabled.
+
+Publication moves the shared-space owner into KPROC, the KTHREAD/process identity
+and startup draft into KERNEL_TASK, the syscall stack into the existing launcher
+ownership chain, and the scheduler stack into KTHREAD_CONTEXT. Supervisor-only
+compatibility borrows for the child's own PD/environment are separately recorded
+and removed before process allocations are reclaimed. Parent identity was already
+retained by the factory; clone proc_go does not acquire a new parent reference.
+Exclusive membership forbids siblings for the PROCESS's entire executing life.
+
+Root continuation setup, all validation, allocation, observer registration and
+mapping sealing precede the first user store. Private guarded activation occurs
+while TASK_UNUSED; the no-fail stores then commit frame/identity outputs and
+publish TASK_NEW. Launcher syscall-stack reclamation remains distinct from root
+scheduler-stack reclamation. Only the verified stopped root may reclaim the
+published startup object. Escaping observer disk errors fail-stop without retry;
+ordinary public startup/termination/wait semantics remain downstream.
+
+Actual x32 tests execute normal-return, explicit-Pterm and faulting clones,
+checking full CPU/FPU state across yields, high-bit x32 pointers, retained parent
+VM, final observer identity, durable stack ownership and whole-lifetime resource
+baselines. ARM/m68k runtime suites verify their existing behavior, not execution
+of newly constructed architecture-specific clone contexts.

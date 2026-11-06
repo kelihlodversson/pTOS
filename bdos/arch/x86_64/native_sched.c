@@ -7,6 +7,9 @@
 #include "process.h"
 #include "kthread_context.h"
 #include "kthread.h"
+#include "thread_startup.h"
+#include "proc_clone.h"
+#include <stddef.h>
 #include "kheap.h"
 #include "kprint.h"
 #include "gemerror.h"
@@ -37,6 +40,7 @@ typedef struct {
 #endif
     WORD pid, signal;
     BOOL asynchronous, take_ownership, exited;
+    THREAD_STARTUP_DRAFT *startup;
     KTHREAD_CONTEXT execution;
     TASK_STATE state;
     BOOL (*ready)(void *);
@@ -51,6 +55,7 @@ static struct {
     X86_64_PROCESS_CONTEXT root;
     jmp_buf resume;
     UQUAD flags;
+    PROC_CLONE_TRANSACTION *pending_clone;
 } scheduler;
 static UQUAD next_identity;
 extern void native_sched_enter(UQUAD top, void (*entry)(void)) NORETURN;
@@ -104,6 +109,10 @@ static void reclaim_task_execution(void *resource)
     x86_64_memtest_task_thread(NULL, execution->stack.physical, 7);
 #endif
     kthread_stack_release(&execution->stack);
+    {
+        KERNEL_TASK *task = (KERNEL_TASK *)((UBYTE *)execution - offsetof(KERNEL_TASK, execution));
+        if (task->startup) thread_startup_reclaim(&task->startup);
+    }
 }
 
 static void adopt_task_execution(KERNEL_TASK *task)
@@ -310,6 +319,10 @@ static void task_entry(void)
 {
     KERNEL_TASK *task = scheduler.current;
     check_task_thread(task, 2);
+#if CONF_WITH_X86_64_MEMTEST
+    if (task->startup && kthread_create(task->program))
+        panic("clone admitted sibling after publication");
+#endif
     task->result = proc_start_scheduled(task->program, task->take_ownership);
     if (!task->exited) {
         /* No user continuation was published. Stop, then defer the refused
@@ -574,6 +587,8 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
     return TRUE;
 }
 
+static LONG dispatch_group(UWORD count, LONG *results);
+
 static LONG run_group(PD * const *programs, UWORD count, LONG *results,
                       BOOL take_ownership, BOOL prepare)
 {
@@ -633,6 +648,12 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
             return ENSMEM;
         }
     }
+    return dispatch_group(count, results);
+}
+
+static LONG dispatch_group(UWORD count, LONG *results)
+{
+    UWORD i;
     scheduler.initial = count;
     scheduler.next = 0;
     scheduler.current = NULL;
@@ -641,6 +662,11 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
     scheduler.flags = scheduler.root.flags;
     scheduler.root.flags &= ~0x200ULL;
     if (setjmp(scheduler.resume)) x86_64_process_restore(&scheduler.root);
+    else if (scheduler.pending_clone) {
+        PROC_CLONE_TRANSACTION *tx = scheduler.pending_clone;
+        scheduler.pending_clone = NULL;
+        proc_clone_commit_prepared(tx, scheduler.tasks);
+    }
     for (;;) {
         BOOL pending = FALSE;
         scheduler.current = NULL;
@@ -659,7 +685,9 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
             scheduler.next = (slot + 1) % KSCHED_LIMIT;
             scheduler.current = task;
             if (task->state == TASK_NEW) {
-                if (!kthread_start(task->thread))
+                if (task->startup) {
+                    if (!kthread_is_executing(task->thread)) panic("scheduler: unpublished clone identity");
+                } else if (!kthread_start(task->thread))
                     panic("scheduler: task identity cannot start");
                 check_task_thread(task, 1);
                 task->state = TASK_RUNNING;
@@ -689,4 +717,72 @@ LONG ksched_run(PD * const *programs, UWORD count, LONG *results)
 LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result)
 {
     return run_group(&program, 1, result, take_ownership, TRUE);
+}
+
+#if CONF_WITH_X86_64_MEMTEST
+static BOOL fail_clone_slot;
+void ksched_test_fail_clone_slot(void) { fail_clone_slot = TRUE; }
+#endif
+LONG ksched_clone_reserve(void **slot)
+{
+    KERNEL_TASK *task;
+    if (!slot || *slot) return EINVAL;
+    if (scheduler.active || scheduler.tasks) return EAGAIN;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_clone_slot) { fail_clone_slot = FALSE; return ENSMEM; }
+#endif
+    if (next_identity == ~0ULL) return EAGAIN;
+    scheduler.tasks = kalloc(KSCHED_LIMIT * sizeof(*scheduler.tasks));
+    if (!scheduler.tasks) return ENSMEM;
+    memset(scheduler.tasks, 0, KSCHED_LIMIT * sizeof(*scheduler.tasks));
+    task = &scheduler.tasks[0];
+    task->execution.identity = ++next_identity;
+    *slot = task;
+    return E_OK;
+}
+void ksched_clone_cancel(void **slot)
+{
+    if (!slot || !*slot) return;
+    if (scheduler.active || *slot != scheduler.tasks) panic("clone slot cancellation after publication");
+    *slot = NULL;
+    kfree(scheduler.tasks); scheduler.tasks = NULL;
+}
+BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *startup)
+{
+    UWORD i;
+    if (!scheduler.active || scheduler.current || !startup) return FALSE;
+    for (i = 0; i < KSCHED_LIMIT; i++) {
+        KERNEL_TASK *task = &scheduler.tasks[i];
+        if (task->startup == startup)
+            return !task->program && task->thread && !kthread_is_executing(task->thread) &&
+                (task->state == TASK_DONE || task->state == TASK_ZOMBIE);
+    }
+    return FALSE;
+}
+void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STARTUP_DRAFT *startup,
+                         UQUAD physical, UQUAD top)
+{
+    KERNEL_TASK *task = slot;
+    task->program = kproc_live_pd(process); task->pid = kproc_ref_pid(process);
+    task->process = process; task->thread = thread; task->startup = startup;
+    task->execution.stack.physical = physical; task->execution.stack.top = top;
+    task->take_ownership = FALSE;
+#if CONF_WITH_X86_64_MEMTEST
+    task->prepared_tid = kthread_tid(thread);
+#endif
+    kthread_clone_commit(thread, &task->execution, reclaim_task_execution);
+    if (!kthread_start(thread)) panic("clone activation invariant");
+    /* Still TASK_UNUSED: the dispatcher cannot observe this bound context. */
+}
+void ksched_clone_publish(void *slot)
+{
+    KERNEL_TASK *task = slot;
+    __asm__ volatile ("" ::: "memory");
+    task->state = TASK_NEW;
+}
+LONG ksched_clone_dispatch(void **slot, PROC_CLONE_TRANSACTION *transaction, LONG *status)
+{
+    *slot = NULL; /* consumed by the root commit, no fallible work remains */
+    scheduler.pending_clone = transaction;
+    return dispatch_group(1, status);
 }

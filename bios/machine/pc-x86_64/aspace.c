@@ -273,6 +273,11 @@ UQUAD aspace_root(const ASPACE *as)
     return as->pml4_phys;
 }
 
+BOOL aspace_is_current(const ASPACE *as)
+{
+    return as && as->pml4_phys == x86_64_read_cr3();
+}
+
 ULONG aspace_table_pages(const ASPACE *as)
 {
     return as->count;
@@ -442,6 +447,14 @@ static BOOL range_copyable(const ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
 BOOL aspace_copy_to_user_ok(const ASPACE *as, UQUAD va, ULONG bytes)
 {
     return range_copyable(as, va, bytes, TRUE);
+}
+
+void *aspace_user_write_alias(const ASPACE *as, UQUAD va, ULONG bytes)
+{
+    PADDR physical;
+    if (!bytes || bytes > USER_PAGE_SIZE - (va & (USER_PAGE_SIZE - 1)) ||
+        !range_copyable(as, va, bytes, TRUE) || !aspace_translate(as, va, &physical, NULL)) return NULL;
+    return (void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + physical);
 }
 
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, UQUAD va, ULONG bytes)

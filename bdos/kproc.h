@@ -139,6 +139,19 @@ BOOL kproc_thread_attach_space(KPROC *process, struct kaspace *construction_spac
  * Success transfers space. Failure changes neither object nor references. */
 BOOL kproc_clone_target_ready(const KPROC *process, struct kthread *thread);
 BOOL kproc_clone_adopt_space(KPROC *process, struct kthread *thread, struct kaspace *space);
+#if CONF_WITH_NATIVE_SCHED
+BOOL kproc_clone_prepare_compat(KPROC *, struct kthread *, struct kaspace *);
+void kproc_clone_drop_compat(KPROC *);
+BOOL kproc_clone_run_ready(KPROC *, struct kthread *, struct kaspace *);
+BOOL kproc_clone_prepare_parent(KPROC *, KPROC *);
+BOOL kproc_clone_parent_ready(const KPROC *);
+BOOL kproc_clone_execution_bound(KPROC *, struct kthread *);
+void kproc_clone_commit_run(KPROC *, struct kaspace *, void *, PADDR, uintptr_t);
+void *kproc_clone_startup(PD *);
+#if CONF_WITH_X86_64_MEMTEST
+void kproc_test_fail_clone_compat(UWORD stage);
+#endif
+#endif
 /* Prepared association. Both returned references are owned by the thread;
  * cleanup must not begin until all such associations are safely detached. */
 BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,

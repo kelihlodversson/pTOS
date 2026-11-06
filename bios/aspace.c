@@ -251,6 +251,11 @@ ASPACE_ROOT aspace_root(const ASPACE *as)
     return as->root;
 }
 
+BOOL aspace_is_current(const ASPACE *as)
+{
+    return as && as->root == aspace_hw_current();
+}
+
 ULONG aspace_table_pages(const ASPACE *as)
 {
     return as->count + as->root_pages;
@@ -419,6 +424,14 @@ static BOOL range_copyable(const ASPACE *as, VADDR va, VADDR bytes, BOOL write)
 BOOL aspace_copy_to_user_ok(const ASPACE *as, VADDR va, ULONG bytes)
 {
     return range_copyable(as, va, bytes, TRUE);
+}
+
+void *aspace_user_write_alias(const ASPACE *as, VADDR va, ULONG bytes)
+{
+    PADDR physical;
+    if (!bytes || bytes > USER_PAGE_SIZE - (va & (USER_PAGE_SIZE - 1)) ||
+        !range_copyable(as, va, bytes, TRUE) || !aspace_translate(as, va, &physical, NULL)) return NULL;
+    return pmem32_virt(physical);
 }
 
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes)

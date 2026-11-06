@@ -240,6 +240,7 @@ void aspace_destroy(ASPACE *as);
 ASPACE_ROOT aspace_enter(ASPACE *as);
 void aspace_leave(ASPACE_ROOT previous);
 ASPACE_ROOT aspace_root(const ASPACE *as);
+BOOL aspace_is_current(const ASPACE *as);
 
 /*
  * Maps one 4 KiB page: user virtual address va (page-aligned, and the
@@ -393,6 +394,9 @@ BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes);
 /* No-fault/no-write preflight, including direct-map RAM safety. A sealed
  * mapping lease must protect this result until the corresponding copy. */
 BOOL aspace_copy_to_user_ok(const ASPACE *as, VADDR va, ULONG bytes);
+/* Prepublication only: one resident RAM page, return borrowed kernel alias.
+ * A sealed lease/hold must preserve its identity through the final store. */
+void *aspace_user_write_alias(const ASPACE *as, VADDR va, ULONG bytes);
 BOOL aspace_copy_to_user(const ASPACE *as, VADDR va, const void *src, ULONG bytes);
 
 /*

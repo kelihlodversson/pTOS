@@ -1201,7 +1201,10 @@ static void proc_go(PD *p, WORD entry_type)
      * corruption. */
     p->p_parent = PTR_TO_USERPTR(run);
 #if CONF_WITH_KPROC
-    kproc_set_parent(p, run);   /* the copy xterm() trusts */
+#if CONF_WITH_NATIVE_SCHED
+    if (!kproc_clone_startup(p))
+#endif
+        kproc_set_parent(p, run);   /* clone parent retain was prepared before commit */
 #endif
 #if CONF_WITH_USER_ASPACE
     /* A ring-3 process cannot see its launcher's basepage, nor the

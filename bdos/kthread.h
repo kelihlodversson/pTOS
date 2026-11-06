@@ -18,8 +18,8 @@ KTHREAD *kthread_create(struct _pd *pd);
 /* Loader transaction: retain its explicit space without publishing it as the
  * PROCESS's active VM. No execution backend is installed by construction. */
 KTHREAD *kthread_prepare(struct _pd *pd, struct kaspace *space);
-/* Clone relationship construction only. The result permanently rejects an
- * execution backend/start until a later startup contract is implemented. */
+/* Clone construction rejects the ordinary execution setter/start. Only the
+ * validated NEW_PROCESS publication transaction can activate it. */
 KTHREAD *kthread_construct_identity(struct kproc *process, struct kaspace *space);
 /* Transfer a backend execution resource to a non-runnable thread. The
  * reclaimer must not block or exit non-locally and runs only during reap.
@@ -29,6 +29,11 @@ BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void
  * separate from this execution lifetime. A started thread cannot be destroyed
  * until its backend stops its continuation. */
 BOOL kthread_start(KTHREAD *thread);
+#if CONF_WITH_NATIVE_SCHED
+BOOL kthread_clone_run_ready(const KTHREAD *thread);
+/* Only the validated NEW_PROCESS publication transaction may call this. */
+void kthread_clone_commit(KTHREAD *thread, void *resource, void (*reclaim)(void *));
+#endif
 /* Transfer a durable user-stack hold, including for a non-runnable identity.
  * Failure leaves *hold owned by caller. Reap releases it only after backend
  * execution resources are safely reclaimed. No start capability is granted. */

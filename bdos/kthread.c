@@ -108,6 +108,22 @@ BOOL kthread_take_stack_hold(KTHREAD *thread, KASPACE_LEASE **hold)
     return TRUE;
 }
 
+#if CONF_WITH_NATIVE_SCHED
+BOOL kthread_clone_run_ready(const KTHREAD *thread)
+{
+    return thread && thread->identity_only && thread->state == THREAD_NEW &&
+        thread->attached && thread->stack_hold && !thread->execution &&
+        kproc_thread_is_sole(thread->process, (KTHREAD *)thread);
+}
+void kthread_clone_commit(KTHREAD *thread, void *resource, void (*reclaim)(void *))
+{
+    if (!kthread_clone_run_ready(thread) || !kproc_clone_execution_bound(thread->process, thread) ||
+        !resource || !reclaim) panic("unprepared clone THREAD activation");
+    thread->execution = resource; thread->reclaim_execution = reclaim;
+    thread->identity_only = FALSE;
+}
+#endif
+
 BOOL kthread_start(KTHREAD *thread)
 {
     if (!thread || thread->identity_only || thread->state != THREAD_NEW || !thread->attached ||

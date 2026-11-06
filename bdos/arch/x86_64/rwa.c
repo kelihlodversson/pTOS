@@ -76,6 +76,20 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "thread_startup.h"
+#include "thread_startup_x32.h"
+static UQUAD clone_read_fsbase(void)
+{
+    ULONG lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xc0000100UL));
+    return ((UQUAD)hi << 32) | lo;
+}
+static void clone_restore_fsbase(UQUAD value)
+{
+    __asm__ volatile ("wrmsr" :: "c"(0xc0000100UL), "a"((ULONG)value), "d"((ULONG)(value >> 32)) : "memory");
+}
+
+extern void x86_64_enter_prepared_user(const X32_THREAD_ENTRY_IMAGE *) NORETURN;
 #endif
 
 extern jmp_buf errbuf;
@@ -373,6 +387,12 @@ void gouser_entry(WORD entry_type)
          * ring-3 process has, which this branch switches to and back, is a
          * kernel stack of its own (see this file's own top comment).
          */
+#if CONF_WITH_NATIVE_SCHED
+        THREAD_STARTUP_DRAFT *startup = kproc_clone_startup(p);
+        const X32_THREAD_STARTUP_DRAFT *prepared = startup ? thread_startup_image(startup) : NULL;
+        UWORD launcher_ds, launcher_es, launcher_fs, launcher_gs;
+        UQUAD launcher_fsbase;
+#endif
         UQUAD pml4_phys = kproc_user_root(p);
         UQUAD entry_rip = kproc_user_entry(p);
         /* Every process has a private stack of its own, mapped when it was
@@ -390,6 +410,12 @@ void gouser_entry(WORD entry_type)
         UQUAD launcher_flags;
         int launcher_in_syscall;
 
+#if CONF_WITH_NATIVE_SCHED
+        __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
+                          : "=r"(launcher_ds), "=r"(launcher_es), "=r"(launcher_fs), "=r"(launcher_gs));
+        launcher_fsbase = clone_read_fsbase();
+        if (prepared) { entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; }
+#endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys || !kstack_phys || !user_rsp)
@@ -426,14 +452,28 @@ void gouser_entry(WORD entry_type)
         x86_64_set_kernel_stack(kstack_top);
         x86_64_set_irq_stack(kstack_top + 8);
         launcher_in_syscall = x86_64_gs_to_user();
-        if (setjmp(launch.resume) == 0)
+        if (setjmp(launch.resume) == 0) {
+#if CONF_WITH_NATIVE_SCHED
+            if (prepared) {
+                thread_startup_entering(startup);
+                x86_64_enter_prepared_user(&prepared->user);
+            }
+#endif
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                               standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);
+        }
         current_launch = launch.previous;
         /* Pterm() was a system call, still on the child's stack with the
          * kernel GS base swapped in: normalise that first, then restore the
          * launcher's own state.  Only now is the child's stack unused. */
         x86_64_syscall_abandoned();
+#if CONF_WITH_NATIVE_SCHED
+        if (prepared) {
+            __asm__ volatile ("movw %0,%%ds; movw %1,%%es; movw %2,%%fs; movw %3,%%gs"
+                              :: "r"(launcher_ds), "r"(launcher_es), "r"(launcher_fs), "r"(launcher_gs) : "memory");
+            clone_restore_fsbase(launcher_fsbase);
+        }
+#endif
         x86_64_set_kernel_stack(launcher_stack);
         x86_64_set_saved_user_rsp(launcher_user_rsp);
         x86_64_set_irq_stack(launcher_irq_rsp);

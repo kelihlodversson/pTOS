@@ -1,249 +1,209 @@
-Internal clone startup: leases and publication gates (#892)
-=========================================================
+Internal clone startup and publication (#892)
+============================================
 
-This is a construction contract, not a runnable clone implementation. Public
-Pclone remains validation-only. KTHREAD.identity_only, backend-install/start
-checks and proc_clone_commit's startup gate remain in place. Preparing a CPU
-image is not a CPU/FPU context-switch or preservation test.
+The internal x32 root runner executes PROC_CLONE_NEW_PROCESS with
+PROC_CLONE_SHARE_VM: a distinct PROCESS/PID and exactly one KTHREAD share the
+source KASPACE. Public Pclone remains validation-only (valid requests return
+EINVFN), and SAME_PROCESS/PREPARED_PROCESS runnable startup remains unsupported.
+Non-NULL Pclone.tls remains unsupported. No public termination semantics change.
+
+Execution preconditions
+-----------------------
+
+proc_clone_exec requires an empty value-only completion result and an owned
+construction transaction. The source must be the current live PROCESS, its
+ASPACE root must actually be current, and an execution association must retain
+its live resources throughout the call. An identity-only observer is insufficient.
+The target must still be an unstarted factory-owned PROCESS with one constructed
+KTHREAD and the original shared construction space. An existing native scheduler
+group is rejected: this first runner uses its existing root-group dispatch loop,
+not a second scheduler or insertion into an already running group.
+
+The factory already retains the parent's kernel identity. No parent reference is
+acquired after publication. Parent retirement/reuse cannot redirect notification
+through a replacement PD. The synchronous caller retains its own live execution
+resources; the child does not retain heavyweight parent resources for observation.
 
 Concrete ownership
 ------------------
 
-PROC_CLONE_TRANSACTION owns source/target identity references, its KTHREAD and
-shared construction KASPACE. Its optional THREAD_STARTUP_DRAFT owns another
-KASPACE reference, the copied kernel arguments, exact optional PID/TID output
-addresses, five possible mapping leases, a backend CPU/FPU image, two distinct
-kernel stacks, and at most one reversible generic lifecycle registration.
-Each mapping lease independently retains KASPACE; list membership is borrowed.
-There are no PROCESS/ASPACE/THREAD reference cycles or user-owned handoff records.
+Before publication the transaction owns source/target identities, the target
+KTHREAD, a shared KASPACE reference and a startup draft. The draft owns a backend
+CPU/FPU image, distinct syscall and scheduler stacks, bridge capability, startup
+mapping leases, optional output leases and a reversible lifecycle registration.
+KTHREAD separately owns a durable user-stack hold and PROCESS/ASPACE references.
+PROCESS membership and its startup pointer are borrowed, preventing cycles.
 
-The scheduler stack and syscall stack are still separate resources. Neither
-has executed in this draft. Cancellation frees each through its existing owner.
-Nothing is installed into KTHREAD or the scheduler. Transaction abort cancels
-the draft before releasing THREAD/PROCESS/ASPACE and factory ownership.
+Preparation temporarily maps the child's separately allocated PD and environment
+into the shared space using existing supervisor-only compatibility borrows. The
+entire ranges must be vacant; unrelated private mappings are never overwritten.
+Allocation generations are checked. Each successful borrow has one rollback bit
+and is removed before its process allocation is reclaimed. A retained KASPACE
+reference protects this bookkeeping until normal retirement or cancellation.
 
-Mapping lease contract
-----------------------
+Publication moves the transaction's PROCESS identity, KTHREAD and startup draft
+to the native task. Its KASPACE reference moves into KPROC.active_space. The
+syscall stack moves into KPROC, then gouser's existing launcher takes it through
+kproc_take_kernel_stack. The scheduler stack moves into KTHREAD_CONTEXT. The
+startup image owns neither stack after these transfers.
 
-kaspace_lease_acquire requires resident USER mappings with the requested WRITE
-and/or EXEC permissions. It never backs lazy pages, performs COW or writes user
-memory. The caller must complete those potentially fallible operations first.
-Missing residency/permissions fail rather than allocating behind validation.
+The published PROCESS rejects every further THREAD association until retirement.
+This is a lifetime restriction, including after dispatch, rather than a one-time
+membership count check. The Pterm-based bridge is safe only under that contract.
+SAME_PROCESS execution requires the internal sibling-safe exit work in #893.
 
-Entry and return leases cover their entire mapping pages. The stack lease
-covers the entire supplied range, rounded out to pages: the return slot,
-128-byte red zone, discarded alignment bytes and future stack reservation all
-fit within it. The x32 builder still checks the actual function-entry frame.
-Optional PID and TID outputs are each a four-byte aligned 32-bit destination.
-They cannot overlap each other, the supplied stack, or entry/return code pages.
-Output preparation additionally uses the same RAM/direct-map safety preflight
-as aspace_copy_to_user; a device translation alone is insufficient.
-
-A preparation lease is REVOCABLE. Every overlapping mapping or permission
-mutation first marks it permanently revoked. Restoring permissions or unmapping
-and remapping the same VA, even to the same physical page, cannot revive it.
-The lease's non-wrapping revoked bit belongs to its live kernel allocation; there
-is no finite global generation counter which can wrap back to a valid value.
-Translation checks also reject currently invalid access, but are not the identity
-proof. The backend mutation barriers supply that proof. Only a fresh acquisition
-can authorize a replacement mapping.
-
-kaspace_lease_seal validates a complete set before sealing any member. It neither
-allocates nor invokes callbacks. SEALED leases reject an overlapping mutation
-before changing any lease or mapping. A failed group seal seals no member.
-Preparation may span cooperative scheduling points, but sealing starts a short
-serialized no-yield, no-user-entry, no-callback critical window. This checkpoint
-can only leave that window by aborting. It cannot dispatch an execution image.
-
-Mutation audit (both the x32 and common ARM/m68k ASPACE backends):
-
-* Mmap cannot replace a resident leased range. Subsequent backing is covered by
-  map_page/map_private/fault_in/fault_file barriers.
-* Munmap validates its complete requested span against sealed leases before
-  touching any region. release_lazy/unmap_private also check the backend barrier.
-* Mprot checks before changing logical metadata or PTEs. Even restoring the same
-  permissions cannot resurrect a revoked preparation lease.
-* Ordinary Mfree/Mshrink release pages before deleting/changing KASPACE heap
-  metadata. A sealed overlap fails without that ledger mutation. Unsealed release
-  revokes the lease; later heap reuse cannot revive it.
-* Already-resident anonymous faults do not change identity. Absent-page backing
-  passes the mutation barrier. A leased page cannot be absent at acquisition.
-* File COW checks before I/O/allocation/PTE replacement. A sealed range refuses
-  the replacement; an unsealed attempt conservatively revokes even on later OOM.
-* move_private checks source and target ranges before transferring pages.
-  Loader borrows, grants and procmem mapping/shrink/release use the same barrier.
-  The void compatibility APIs unborrow/shrink have no recoverable rejection
-  result: calling them during an overlapping seal is a fail-stop invariant
-  violation. No callback or such cleanup is allowed inside the sealed window.
-* Each lease retains its backend through KASPACE, so normal final destruction
-  cannot bypass a live lease. Shutdown uses release_lazy and honors its refusal.
-
-Rejected mutations can conservatively revoke unsealed leases before discovering
-another invalid argument or a later failure. False rejection is safe; silently
-revalidating a changed mapping is not. Callers abort/reprepare after revocation.
-Physical procmem ownership, pins and deferred reclamation are unchanged.
-
-Publication state machine
--------------------------
-
-  CONSTRUCTED -> PREPARED -> OBSERVED -> SEALED -> COMMITTED -> RUNNABLE
-  identities     image      observer   leases    outputs/      scheduler
-                 + stacks   + optional protected ownership     visibility
-                 + leases   outputs
-
-CONSTRUCTED is the transaction before a draft exists. PREPARED is real image,
-stack and entry/return/stack lease ownership. Optional output preparation is
-all-or-nothing in PREPARED. OBSERVED means a kernel observer has successfully
-registered and transferred one rollback obligation. It is generic, not CUIS.
-Failed registration must unwind its own partial work. Callbacks must not yield,
-unwind, reenter or cancel their transaction. A mapping change during successful
-registration is detected, and registration is released before returning failure.
-
-SEALED rechecks current mappings and seals startup and output leases together.
-COMMITTED and RUNNABLE are deliberately UNREACHABLE reserved states. Even an
-observed, sealed draft returns EINVFN at publication_check/clone commit; revoked
-mappings return EIMBA. Results and every user destination remain unchanged.
-No return-slot store, identity output store or scheduler insertion exists here.
-
-The future final transition must pre-register observers/leases, resolve all
-allocation/I/O/backing/context failures, recheck source/target PROCESS state,
-then seal and revalidate outputs immediately before a no-fail commit. It must
-have one owner for every context/stack, prevalidated no-fault RAM destinations,
-and prepared scheduler storage. After the first externally visible output store
-there can be no fallible allocation/callback/rollback. Ownership transfer and
-scheduler insertion must occur without yields or mapping mutation in between.
-The scheduler must never observe the intermediate committed-but-unpublished
-THREAD. No rollback is allowed after dispatch.
-
-Before enabling timer preemption/SMP, #713 must provide synchronization for: registry lookup, lease acquisition/revocation/sealing, PROCESS
-state, observer cancellation, user outputs and scheduler publication must share
-a proved exclusion/ordering contract. The current implementation relies on the
-existing cooperative/no-mapping-mutation-in-interrupt context. No new scheduler,
-locks or unproved atomic multiword-publication claim is introduced here.
-
-The execution backend must then take over kernel stacks and an execution-lifetime
-user-stack reservation/hold before releasing startup seals. That long-lived hold
-must not use the short no-callback seal window as a substitute for lifetime
-management. Entry/return startup leases can be released only once the startup
-boundary is irrevocably crossed; output leases only after stores are complete.
-Cancellation before that boundary releases all leases. This checkpoint has no
-successful startup and therefore releases all leases on abort only.
-
-Trusted return/termination bridge gate
--------------------------------------
-
-The backend owns an immutable, kernel-selected single-THREAD PROCESS return
-bridge, described below. There is no caller-supplied return PC. That bridge uses
-the existing whole-PROCESS Pterm path and is not a thread-only exit capability.
-SAME_PROCESS dispatch must wait for sibling-safe internal #893 termination;
-a distinct-PROCESS/sole-THREAD context still requires controlled CPU/launcher
-integration and atomic publication. None of the startup or identity-only guards
-has been removed. Public group exit, joins, waits and TLS remain downstream.
-
-Rollback, aliases and limitations
+Mapping leases and durable holds
 --------------------------------
 
-Before publication, abort consumes the canonical handle first, releases mapping
-leases (leaving any sealed window), unregisters a successful observer once, frees
-both never-used kernel stacks/image, releases the backend bridge capability,
-and releases KASPACE. Transaction abort
-then releases the remaining THREAD/PROCESS references and factory resources.
-Filesystem cleanup still obeys the documented bounded-close/no-unwind fail-stop
-contract. Failed prepare/observe/seal leaves outputs untouched. Repeated calls
-through consumed handles are harmless; borrowed aliases are never ownership
-handles and may not be used after abort. Arbitrary dangling C pointers are not a
-supported handle-recovery interface.
+kaspace_lease_acquire requires already resident USER mappings with the required
+WRITE/EXEC permissions. It does not allocate, fault, COW or write user memory.
+Entry and bridge leases cover complete mapping pages. The stack lease covers the
+complete supplied reservation, including return slot, alignment loss and red zone.
+Optional PID/TID destinations are aligned four-byte RAM locations, separate from
+one another, the stack and executable pages. All backing is prepared explicitly.
 
-No public runnable sibling, thread-only return capability, clone context switch,
-executing clone CPU/FPU preservation test, output commit, scheduler publication
-or runnable stack-lifetime transfer is claimed by this checkpoint.
+Preparation leases are permanently revocable: unmap/remap at the same address
+with identical permissions cannot revive a lease. Backend mutation barriers,
+not translation equality or a KASPACE reference, establish mapping identity.
+Group sealing validates every lease before sealing any member. A sealed overlap
+is rejected without modifying mappings or metadata. The short sealed window
+permits no callback, yield, user entry or mapping mutation.
 
-Kernel-selected bridge and execution holds
------------------------------------------
+The shared policy remains:
+* Mmap backing, Munmap and Mprot check backend mutation barriers; logical mmap
+  permissions and resident/COW paths use the same KASPACE policy.
+* Ordinary Mfree/Mshrink release pages before changing heap metadata. A sealed
+  or durable-held overlap fails without deleting a reservation. Heap reuse cannot
+  restore a revoked preparation lease.
+* Already resident anonymous pages do not change identity; absent-page faults
+  pass mutation checks. File COW checks before I/O and page replacement.
+* Private moves validate both spaces. Loader borrowing, unborrowing, grants and
+  procmem mapping/shrink/release use the same barriers. Void compatibility APIs
+  cannot recover from a sealed overlap and fail-stop on invariant violation.
+* A lease retains KASPACE; final destruction cannot bypass it. Shutdown lazy
+  release honors holds. Registries are non-owning.
 
-THREAD_STARTUP_ARGS contains no return PC.
-The x32 backend receives an opaque kernel-created return-bridge capability,
-checks that its ASPACE matches, and derives the PC itself. A coincidentally
-identical executable page at the reserved VA is rejected rather than adopted.
+Durable holds are different from publication seals and may survive callbacks,
+yields and execution. The user-stack hold accepts privately owned resident
+ordinary heap or anonymous mmap reservations, not loader staging, borrowed
+procmem pages, implicit original-process stack growth or unresolved file COW.
+It prevents free/unmap/permission replacement until KTHREAD is safely reaped.
+Release makes caller-owned memory releasable; it does not itself Mfree it.
 
-The bridge occupies the final user page, outside mmap/heap/callback windows.
-Its exact kernel instruction image and effective USER|EXEC (not WRITE) access
-are checked. A privately owned durable mapping hold prevents replacement or
-permission changes for the capability's entire lifetime. A borrowed registry
-shares one mapping among drafts in the same KASPACE; reference-count exhaustion
-fails. Final capability release drops its hold, removes the code page and its
-metadata, and releases KASPACE. Ordinary backend page-table capacity remains
-reusable until final ASPACE destruction, as with existing unmap; this is not a
-claim that every failed attempt reduces page-table capacity immediately. Tests
-prime that capacity before per-attempt snapshots and verify the exact complete
-ASPACE lifetime baseline after all owners are gone.
+The kernel-selected bridge occupies a reserved final user page. Its immutable
+instruction image, effective USER|EXEC access and private mapping ownership are
+checked. A coincidentally matching mapping is not adopted. A capability retains
+the mapping and KASPACE; a borrowed registry shares it across drafts. Final
+capability release removes the page. Page-table capacity may remain reusable
+until final ASPACE destruction, as with existing unmap.
 
-The current internal bridge ABI is deliberately SINGLE-THREAD PROCESS exit:
+Publication transaction
+-----------------------
 
-  LONG entry(void *argument) -> EAX result
-  bridge: EDI = EAX; RAX = (GEMDOS class 1 << 32) | Pterm 0x4c; syscall; ud2
+ CONSTRUCTED -> PREPARED -> OBSERVED -> SEALED -> COMMITTED -> RUNNABLE
 
-The existing Pterm UWORD status contract takes the low 16 bits. No C frames,
-user input PC, new syscall, parallel termination mechanism, or public Pterm
-semantics are introduced. An unexpected return from Pterm executes UD2.
-The bridge uses the existing xterm -> termuser -> resumed launcher -> common
-proc_finalize_exit ordering, off the terminated syscall stack. Scheduler-root
-reap of a managed task's separate scheduler stack remains independent.
+PREPARED includes CPU/FPU image, both kernel stacks, trusted bridge and startup
+leases. Observer registration and optional output preparation occur before
+sealing. Failed registration undoes its own partial work; a successful generic
+registration transfers one rollback/release obligation. It is not CUIS-specific.
+Callbacks cannot yield, privately unwind or reenter/cancel their transaction.
 
-Production QEMU tests execute a real normal RET and an entry UD2 through that
-EXISTING launcher, with another PROCESS identity retaining the same ASPACE.
-They verify status, the four safe-handoff stages, independent peer identity,
-retained mappings, duplicate release, final code-page removal and resource
-baselines. The membership preflight rejects two THREADs in the same PROCESS.
-This is NOT dispatch of a constructed proc_clone CPU/FPU image and NOT an
-implementation of sibling-only termination. Public and trusted clone startup
-publication remain disabled. The existing xterm guard remains intact.
+proc_clone_exec reserves existing scheduler storage, prepares compatibility
+borrows, revalidates PROCESS/parent/ASPACE state, caches direct-map RAM aliases
+for the return slot and output words, and seals all leases. No user store occurs
+on preflight failure. Cancellation before publication consumes the transaction
+and releases all resources. Other preflight errors leave the handle and completion
+result owned by the caller for abort or retry, with user outputs unchanged.
 
-Durable mapping holds are distinct from short publication seals. A hold is
-allowed across callbacks, scheduling points and user execution. It requires
-privately owned resident non-file-cache pages; borrowed/procmem mappings and
-unresolved file COW cannot acquire it. kaspace_stack_hold_acquire additionally
-requires ordinary KASPACE heap or anonymous mmap reservations, never loader
-staging, loans, file-backed views, or the original THREAD's implicit stack-growth
-reservation. Backing remains explicit and fallible before publication.
+The native dispatcher saves its root context and establishes scheduler.resume
+before commit. Under the existing cooperative, interrupts-masked dispatch model,
+commit transfers stack/resource owners, binds the sole KTHREAD and validates its
+execution transition while the slot is still TASK_UNUSED. It consumes the
+transaction's owned pointers. Only then does the first externally visible store
+write the prepared user return slot. PID/TID stores use protected resident RAM
+aliases. COMMITTED -> RUNNABLE -> TASK_NEW consists only of stores and visibility
+barriers: no allocation, callback, yield, failure return or rollback intervenes.
+The scheduler cannot dispatch a partially published task.
 
-KTHREAD can consume exactly one such stack-hold handle while constructed. It
-retains KASPACE independently and rejects a foreign-space or duplicate transfer.
-After stop, safe-context reap invokes the backend reclaimer first, then releases
-the user-stack hold, then membership/ASPACE/PROCESS references. Releasing a hold
-does not free caller-owned Malloc memory: it makes ordinary release legal again.
-Final ASPACE ownership releases remaining reservations. Tests prove two THREADs
-retain one reservation, first detach cannot permit Mfree, final detach permits
-it, borrowed-page/OOM construction rolls back, and unchanged identity-only
-start guards reject execution. Transaction cancellation releases the backend
-before KTHREAD drops its independently retained user-stack hold.
+The task enters the existing proc_start_scheduled/gouser launcher. Its local
+launcher setjmp is established on the already reserved scheduler stack before
+IRET, after publication; this is an allocation-free continuation setup, not a
+second fallible context factory. Startup leases are released immediately before
+initial IRET. Durable user-stack and bridge holds remain through termination.
 
-The x32 backend can also detach its two kernel stacks into an initialized empty
-X32_THREAD_STACK_OWNERS. This moves each physical/top pair once; image cancellation
-then owns neither stack. The syscall owner must release after launcher handoff;
-the scheduler owner only after root handoff. Production tests perform transfer,
-image cancellation, separate exactly-once release and verify the current SP is
-outside both stacks. They do not assert an executing clone handoff exists yet.
+The existing public identity-only commit still rejects drafts. Internal guarded
+promotion requires the exact exclusive PROCESS/ASPACE/startup/stack association;
+ordinary backend-install/start protections are preserved. Merely removing an
+identity_only check cannot authorize sibling execution.
 
-Remaining publication blockers are concrete:
+CPU/FPU entry and return
+------------------------
 
-1. SAME_PROCESS requires #893's INTERNAL thread-only stop/handoff/last-thread
-   decision; this Pterm-based bridge is not that capability. No shared-process
-   context may be enabled using it merely because the membership once was sole.
-2. A distinct PROCESS/one-THREAD clone still needs to bind the prepared full
-   CPU/FPU image, syscall stack and launcher continuation to the existing native
-   task. The legacy gouser entry is not a consumer of this CPU/FPU image. The
-   current clone_identity_only and KTHREAD.identity_only guards remain.
-3. That backend must preallocate scheduler storage, take bridge/user/kernel stack
-   owners and lifecycle registrations, then commit no-fault frame/output stores
-   and scheduler insertion as one no-fail serialized transition. No stores or
-   scheduler publication have been added. COMMITTED/RUNNABLE are unreachable.
+The prepared x32 image is consumed at the existing ring-3 IRET boundary: CR3,
+RIP, RSP, RFLAGS, user selectors, all general registers and FXSAVE state are
+installed. FS/GS selectors and user bases start zero; this does not implement TLS.
+The existing launcher restores its own execution state after the child stops.
+Existing cooperative save/restore continues to own suspended register state.
 
-The six-stage state machine above remains the intended transition. All mapping
-holds, context/bridge construction, observer registration, output preflight and
-scheduler-capacity reservation must precede sealing and the first visible store.
-After that store: no callback, allocation, yield, failure or rollback. #713 must
-supply exclusion before preemption/SMP; no unproved concurrency model is assumed.
-Actual CPU/FPU preservation of a new context must be tested once dispatch is
-connected. Current FPU-image inspection and legacy launcher runtime coverage
-must not be described as that future test.
+The bridge ABI is kernel-selected:
+
+ LONG entry(void *argument) -> EAX result
+ bridge: EDI = EAX; RAX = (GEMDOS class 1 << 32) | Pterm 0x4c; syscall; ud2
+
+Pterm consumes the low 16 status bits. Normal return, explicit Pterm and entry
+fault use the merged xterm -> termuser -> launcher handoff -> proc_finalize_exit
+path. The sole attached KTHREAD uses the existing managed-task lifetime contract.
+No parallel termination, completion or CUIS lifetime mechanism is introduced.
+
+Reclamation and exceptional cleanup
+-----------------------------------
+
+The launcher leaves the child's syscall stack, restores the parent/kernel root,
+finalizes PROCESS resources and completion, and frees the transferred syscall
+stack exactly once. The scheduler task's continuation then stops. Scheduler root
+alone reaps KTHREAD_CONTEXT and its separate scheduler stack; the root proof
+requires a stopped task with no live PD. Its callback reclaims the startup draft
+and observer, then KTHREAD drops the durable user-stack hold, membership and
+ASPACE/PROCESS references. Observer-only identity references can outlive live
+resources without retaining PD allocations.
+
+Abort of COMMITTED/RUNNABLE drafts panics before consuming their handle. Published
+reclaim requires the verified stopped root context. Its observer/destructor disk
+error boundary, like proc_finalize_exit, restores the prior errbuf and fail-stops
+if cleanup escapes. It never retries partially completed publication or cleanup.
+Arbitrary private longjmp from a callback remains forbidden. The documented
+bounded-close exhausted-retry handle leak is unchanged; cleanup is not a
+transactional filesystem operation.
+
+Unpublished abort consumes its handle first, releases short leases before
+callbacks, then observer/image/stacks/bridge/KASPACE and transaction ownership.
+Repeated consumed-handle cancellation is harmless. Borrowed pointers are not
+independent ownership handles and cannot be used after consumption.
+
+Validation and remaining boundaries
+-----------------------------------
+
+The x32 production MEMTEST executes a newly constructed NEW_PROCESS/SHARE_VM
+clone, not only the legacy bridge. It checks initial CPU/FPU state, high-bit
+32-bit argument zero extension, PID/PPID, held-stack Mfree rejection, integer and
+XMM/x87/MXCSR preservation across three Syields, normal return, explicit Pterm,
+UD2 exit, observer completion and syscall/root-stack cleanup baselines. A kernel
+service fixture supplies the current parent execution association; it does not
+claim two independently runnable user threads or active-group async insertion.
+
+Failure tests cover output permission change, failed observer, slot OOM, either
+compatibility-borrow stage, unrelated private-map collision, and cancellation
+immediately before commit. User outputs remain unchanged. Host fault injection
+also verifies root-only reclaim, published-abort rejection, one-time callback
+release and fail-stop on an escaping observer disk error.
+
+ARM/m68k retain construction/ownership and existing launcher runtime coverage;
+their new-clone startup backends are not implemented by this x32 slice. Host
+configuration models and ABI cross-compilation are not target runtime tests.
+Public flag/result ABI, public startup gating and active-group integration remain
+#892. Thread/group exit and joining remain #893, PROCESS waits #909, generic
+scheduling/preemption/non-MMU integration #713, shared-VM Pexec #894 and TLS #908.
+
+Before preemption/SMP, #713 must synchronize PROCESS state, mapping mutation,
+lease sealing, output writes, observer lifetime and task publication. Current
+cooperative serialization is not an SMP or timer-preemptive atomicity claim.

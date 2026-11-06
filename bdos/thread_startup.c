@@ -6,6 +6,11 @@
 #include "thread_startup.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "thread_startup_backend.h"
+#include "ksched.h"
+#include "biosext.h"
+#include "setjmp.h"
+#include "string.h"
+extern jmp_buf errbuf;
 struct thread_startup_draft {
     KASPACE *space;
     THREAD_STARTUP_ARGS args;
@@ -17,6 +22,7 @@ struct thread_startup_draft {
     VADDR outputs[2]; /* exact destinations retained; never written yet */
     THREAD_STARTUP_OBSERVER observer;
     void *observer_context;
+    void *frame_alias, *output_aliases[2];
 };
 #endif
 
@@ -42,6 +48,7 @@ LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->observer.acquire = NULL;
         draft->observer.release = NULL;
         draft->observer_context = NULL;
+        draft->frame_alias = draft->output_aliases[0] = draft->output_aliases[1] = NULL;
         draft->args = *args;
         draft->image = NULL;
         draft->bridge = NULL;
@@ -90,6 +97,8 @@ void thread_startup_abort(THREAD_STARTUP_DRAFT **result)
     {
         THREAD_STARTUP_DRAFT *draft = *result;
         UWORD i;
+        if (draft->state == THREAD_STARTUP_COMMITTED || draft->state == THREAD_STARTUP_RUNNABLE)
+            panic("startup abort after publication");
         *result = NULL;
         /* Leave the sealed window before any resource/observer callbacks. */
         for (i = 0; i < 5; i++) kaspace_lease_release(&draft->leases[i]);
@@ -215,7 +224,7 @@ LONG thread_startup_seal(THREAD_STARTUP_DRAFT *draft)
 LONG thread_startup_publication_check(const THREAD_STARTUP_DRAFT *draft)
 {
     LONG error = thread_startup_validate(draft);
-    return error ? error : EINVFN; /* no thread-only exit/CPU dispatch/publication installation */
+    return error ? error : EINVFN; /* identity-only commit never grants execution */
 }
 
 LONG thread_startup_retain_stack(THREAD_STARTUP_DRAFT *draft, KASPACE_LEASE **hold)
@@ -233,3 +242,61 @@ LONG thread_startup_retain_stack(THREAD_STARTUP_DRAFT *draft, KASPACE_LEASE **ho
     return EINVFN;
 #endif
 }
+
+#if CONF_WITH_NATIVE_SCHED
+LONG thread_startup_run_preflight(THREAD_STARTUP_DRAFT *draft)
+{
+    UWORD i;
+    LONG error;
+    if (!draft || draft->state != THREAD_STARTUP_OBSERVED) return EINVAL;
+    error = thread_startup_validate(draft);
+    if (error) return error;
+    draft->frame_alias = thread_startup_arch_frame_alias(kaspace_backend(draft->space), draft->image);
+    if (!draft->frame_alias) return EIMBA;
+    for (i = 0; i < 2; i++) if (draft->outputs[i]) {
+        draft->output_aliases[i] = aspace_user_write_alias(kaspace_backend(draft->space), draft->outputs[i], 4);
+        if (!draft->output_aliases[i]) return EIMBA;
+    }
+    return E_OK;
+}
+void thread_startup_commit_stores(THREAD_STARTUP_DRAFT *draft, WORD pid, ULONG tid)
+{
+    thread_startup_arch_commit_frame(draft->image, draft->frame_alias);
+    if (draft->output_aliases[0]) *(volatile LONG *)draft->output_aliases[0] = pid;
+    if (draft->output_aliases[1]) *(volatile ULONG *)draft->output_aliases[1] = tid;
+    draft->state = THREAD_STARTUP_COMMITTED;
+}
+void thread_startup_publish(THREAD_STARTUP_DRAFT *draft)
+{
+    __asm__ volatile ("" ::: "memory");
+    draft->state = THREAD_STARTUP_RUNNABLE;
+}
+void thread_startup_entering(THREAD_STARTUP_DRAFT *draft)
+{
+    UWORD i;
+    for (i = 0; i < 5; i++) kaspace_lease_release(&draft->leases[i]);
+}
+BOOL thread_startup_take_stacks(THREAD_STARTUP_DRAFT *draft, THREAD_STARTUP_STACK_OWNERS *owners)
+{
+    return draft && draft->state == THREAD_STARTUP_SEALED &&
+        thread_startup_arch_take_stacks(draft->image, owners);
+}
+#endif
+
+#if CONF_WITH_NATIVE_SCHED
+void thread_startup_reclaim(THREAD_STARTUP_DRAFT **handle)
+{
+    jmp_buf saved_error;
+    if (!handle || !*handle) return;
+    if ((*handle)->state != THREAD_STARTUP_RUNNABLE || !ksched_startup_reclaimable(*handle))
+        panic("startup reclaim outside stopped scheduler root");
+    memcpy(saved_error, errbuf, sizeof(errbuf));
+    if (setjmp(errbuf)) {
+        memcpy(errbuf, saved_error, sizeof(errbuf));
+        panic("startup reclaim: cleanup callback escaped");
+    }
+    (*handle)->state = THREAD_STARTUP_RECLAIMABLE;
+    thread_startup_abort(handle);
+    memcpy(errbuf, saved_error, sizeof(errbuf));
+}
+#endif

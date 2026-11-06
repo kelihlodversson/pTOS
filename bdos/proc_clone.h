@@ -62,16 +62,28 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
  * also adopts an owning VM reference; NEW_PROCESS transfers factory ownership. No CPU context/stack/startup is installed.
  * Failure leaves result and transaction unchanged and rollback remains valid. */
 LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *result);
-/* Internal startup draft only. Success acquires context/stacks, never THREAD
- * execution ownership. Commit deliberately returns EINVFN while a draft is
- * attached: context dispatch, sibling-safe exit and atomic publication remain gated. */
+/* Startup preparation acquires context/stacks, never execution ownership.
+ * Identity-only commit still returns EINVFN with a draft attached. Only the
+ * private NEW_PROCESS root runner below can publish prepared execution. */
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *transaction, const THREAD_STARTUP_ARGS *args);
 LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *transaction, VADDR pid, VADDR tid);
 LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *transaction,
                                  const THREAD_STARTUP_OBSERVER *observer, void *context);
 LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *transaction);
 LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
+#if CONF_WITH_NATIVE_SCHED
+typedef struct { WORD pid; ULONG tid; LONG status; } PROC_CLONE_COMPLETION;
+/* Kernel-only first execution: NEW_PROCESS/SHARE_VM, root group only. Failure
+ * before publication preserves transaction and outputs; success consumes it
+ * and waits using the existing cooperative scheduler, returning value ids. */
+LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION *completion);
+/* Private no-fail scheduler-root half of the above transaction. */
+void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *, void *slot);
+#endif
 const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *transaction);
+/* Borrowed until transaction consumption. Observers must retain identity if
+ * they need it across publication/completion; no public PD exposure. */
+struct kproc *proc_clone_process(const PROC_CLONE_TRANSACTION *transaction);
 /* Abort is idempotent through this handle and never completes a PROCESS.
  * Caller-prepared PROCESS resources remain with their original release owner;
  * NEW_PROCESS resources are disposed by rollback. */
@@ -88,6 +100,7 @@ LONG proc_create_clone_process(struct kproc *source, UWORD resources, struct kpr
 #if CONF_WITH_X86_64_MEMTEST
 /* Inject failure after source, target, VM or THREAD acquisition (1..4). */
 void proc_clone_test_fail_after(UWORD stage);
+void proc_clone_test_cancel_publication(void);
 /* Environment, PD, KPROC, handles, CWD acquisition (1..5). */
 void proc_clone_factory_test_fail_after(UWORD stage);
 #endif

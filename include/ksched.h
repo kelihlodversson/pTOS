@@ -14,6 +14,22 @@ LONG ksched_run(PD * const *programs, UWORD count, LONG *results);
  * Success consumes the launch and returns its full synchronous exit status. */
 LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result);
 BOOL ksched_active(void);
+#if CONF_WITH_NATIVE_SCHED
+struct thread_startup_draft;
+struct proc_clone_transaction;
+struct kproc;
+struct kthread;
+/* Internal root-group slot. Reservation owns storage only, no execution refs. */
+LONG ksched_clone_reserve(void **slot);
+#if CONF_WITH_X86_64_MEMTEST
+void ksched_test_fail_clone_slot(void);
+#endif
+void ksched_clone_cancel(void **slot);
+BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
+void ksched_clone_commit(void *slot, struct kproc *, struct kthread *, struct thread_startup_draft *, UQUAD physical, UQUAD top);
+void ksched_clone_publish(void *slot);
+LONG ksched_clone_dispatch(void **slot, struct proc_clone_transaction *, LONG *status);
+#endif
 struct kthread;
 struct kproc;
 /* Borrow the current task identity only for its own process, never a nested

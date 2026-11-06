@@ -101,6 +101,12 @@ struct kproc {
     KASPACE *active_space; /* owning reference, NULL until prepared */
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
+#if CONF_WITH_NATIVE_SCHED
+    BOOL clone_exclusive;
+    KASPACE *clone_compat;
+    UBYTE clone_maps;
+    void *clone_startup;
+#endif
     BOOL clone_identity_only; /* no executable context/startup contract yet */
     BOOL completion_pending;
     UWORD pending_status;
@@ -412,6 +418,9 @@ BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
 {
     KASPACE *as;
     if (!thread || !construction_space || !p ||
+#if CONF_WITH_NATIVE_SCHED
+        p->clone_exclusive ||
+#endif
         (p->active_space && p->active_space != construction_space) ||
         !kproc_retain_live(p))
         return FALSE;
@@ -461,6 +470,90 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
     p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
     return TRUE;
 }
+
+#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_X86_64_MEMTEST
+static UWORD fail_clone_compat;
+void kproc_test_fail_clone_compat(UWORD stage) { fail_clone_compat = stage; }
+#endif
+static BOOL clone_borrow_unique(ASPACE *as, VADDR va, VADDR bytes)
+{
+    VADDR page, end = va + bytes;
+    for (page = va & ~(VADDR)(USER_PAGE_SIZE - 1); page < end; page += USER_PAGE_SIZE)
+        if (aspace_translate(as, page, NULL, NULL)) return FALSE;
+    return aspace_borrow(as, va, bytes);
+}
+BOOL kproc_clone_prepare_compat(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    if (!kproc_clone_target_ready(p, thread) || p->clone_compat ||
+        procmem_gen(p->user_start) != p->tpa_gen || procmem_gen(p->env_start) != p->env_gen) return FALSE;
+    p->clone_compat = kaspace_share(space);
+    if (!p->clone_compat) return FALSE;
+    if (!clone_borrow_unique(kaspace_backend(space), (VADDR)(uintptr_t)p->user_start,
+                       p->user_end - p->user_start)) goto failed;
+    p->clone_maps = 1;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_clone_compat == 1) { fail_clone_compat = 0; goto failed; }
+#endif
+    if (!clone_borrow_unique(kaspace_backend(space), (VADDR)(uintptr_t)p->env_start,
+                       p->env_end - p->env_start)) goto failed;
+    p->clone_maps = 3;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_clone_compat == 2) { fail_clone_compat = 0; goto failed; }
+#endif
+    return TRUE;
+failed:
+    kproc_clone_drop_compat(p);
+    return FALSE;
+}
+void kproc_clone_drop_compat(KPROC *p)
+{
+    ASPACE *as;
+    if (!p || !p->clone_compat) return;
+    as = kaspace_backend(p->clone_compat);
+    if (p->clone_maps & 2) aspace_unborrow(as, (VADDR)(uintptr_t)p->env_start, p->env_end - p->env_start);
+    if (p->clone_maps & 1) aspace_unborrow(as, (VADDR)(uintptr_t)p->user_start, p->user_end - p->user_start);
+    p->clone_maps = 0;
+    kaspace_put(p->clone_compat); p->clone_compat = NULL;
+}
+BOOL kproc_clone_run_ready(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    return kproc_clone_target_ready(p, thread) && p->clone_compat == space && p->clone_maps == 3;
+}
+BOOL kproc_clone_parent_ready(const KPROC *p)
+{
+    /* The caller's execution owner, rather than an identity-only observer,
+     * must retain parent resources throughout this synchronous root call. */
+    return kproc_active_space(p) && p->threads != NULL;
+}
+BOOL kproc_clone_prepare_parent(KPROC *p, KPROC *parent)
+{
+    /* Factory already retained the parent. No new ref acquisition is needed
+     * during launch or after publication. */
+    return p && parent && kproc_live_pd(parent) && p->parent_identity == parent;
+}
+void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physical, uintptr_t top)
+{
+    /* Impossible-to-fail invariants already proved before the first store;
+     * fail-stop on kernel misuse instead of exposing a generic guard bypass. */
+    if (!p || !p->threads || !kproc_clone_run_ready(p, p->threads, space) ||
+        !startup || !physical || !top) panic("unprepared clone PROCESS activation");
+    /* All references and mappings acquired before sealing. No callbacks. */
+    p->active_space = space; p->aspace = kaspace_backend(space);
+    p->clone_exclusive = TRUE; p->clone_identity_only = FALSE;
+    p->clone_startup = startup; p->kstack_phys = physical; p->kstack_top = top;
+}
+BOOL kproc_clone_execution_bound(KPROC *p, KTHREAD *thread)
+{
+    return p && p->clone_exclusive && p->clone_startup && p->kstack_phys &&
+        p->active_space == kthread_aspace(thread) && !p->started && kproc_thread_is_sole(p, thread);
+}
+void *kproc_clone_startup(PD *pd)
+{
+    KPROC *p = kproc_find(pd);
+    return p ? p->clone_startup : NULL;
+}
+#endif
 
 BOOL kproc_begin_disposal(KPROC *process, PD **pd)
 {
@@ -625,6 +718,9 @@ void kproc_destroy(PD *pd)
             if (kproc->lender)
                 give_image_back(kproc);
             kproc_load_leave();             /* (a disk error jumped out of a load) */
+#if CONF_WITH_NATIVE_SCHED
+            kproc_clone_drop_compat(kproc);
+#endif
             kaspace_put(kproc->pending_space);
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
