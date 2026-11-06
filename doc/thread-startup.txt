@@ -118,7 +118,7 @@ result owned by the caller for abort or retry, with user outputs unchanged.
 The native dispatcher saves its root context and establishes scheduler.resume
 before commit. Under the existing cooperative, interrupts-masked dispatch model,
 commit transfers stack/resource owners, binds the sole KTHREAD and validates its
-execution transition while the slot is still TASK_UNUSED. It consumes the
+execution transition while the slot is still TASK_RESERVED. It consumes the
 transaction's owned pointers. Only then does the first externally visible store
 write the prepared user return slot. PID/TID stores use protected resident RAM
 aliases. COMMITTED -> RUNNABLE -> TASK_NEW consists only of stores and visibility
@@ -207,3 +207,14 @@ scheduling/preemption/non-MMU integration #713, shared-VM Pexec #894 and TLS #90
 Before preemption/SMP, #713 must synchronize PROCESS state, mapping mutation,
 lease sealing, output writes, observer lifetime and task publication. Current
 cooperative serialization is not an SMP or timer-preemptive atomicity claim.
+
+Publication follow-up
+---------------------
+
+The private reserved state and common ksched_task_reserve/cancel/publish now
+serve both root clone execution and active legacy async/deferred launches.
+Explicit reservations also prevent callback-driven slot/image reuse. The clone
+runner itself remains root-only: a shared reservation API is not a stable
+active-child launcher or asynchronous observer ownership contract. See
+clone-execution-audit.txt and clone-public-integration.txt for the production
+audit, exact next gate and finalized public ABI integration plan.

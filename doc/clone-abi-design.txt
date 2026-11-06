@@ -65,7 +65,7 @@ ignoring an unknown tail must not silently grant different clone semantics.
 Field contract
 --------------
 flags is reserved and must be zero. tls is reserved and must be NULL: target
-thread-pointer initialization and runtime TLS layout belong to #892. Nonzero
+thread-pointer initialization and runtime TLS layout belong to independent #908. Nonzero
 values fail closed with EINVAL rather than promising a TLS convention.
 
 entry is the mandatory user function called with the opaque argument value.

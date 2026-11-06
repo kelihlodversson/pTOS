@@ -19,15 +19,23 @@ struct thread_startup_draft;
 struct proc_clone_transaction;
 struct kproc;
 struct kthread;
-/* Internal root-group slot. Reservation owns storage only, no execution refs. */
-LONG ksched_clone_reserve(void **slot);
+/* Shared publication storage for legacy process launches and trusted clone.
+ * root=TRUE reserves a fresh group; FALSE requires the current managed task.
+ * *slot must be NULL. TASK_RESERVED is neither runnable nor wait-visible and
+ * cannot be reused by preparation callbacks. Calls are serialized/no-yield;
+ * future preemption/SMP exclusion belongs to #713. This grants no THREAD start.
+ * Caller rolls back resource owners before cancel, which consumes the handle.
+ * All validation/ownership transfers precede publish: it consumes the handle
+ * with no allocation, callback, yield or failure, then makes TASK_NEW visible.
+ * Never cancel or dereference a consumed handle. */
+LONG ksched_task_reserve(BOOL root, void **slot);
 #if CONF_WITH_X86_64_MEMTEST
 void ksched_test_fail_clone_slot(void);
 #endif
-void ksched_clone_cancel(void **slot);
+void ksched_task_cancel(void **slot);
+void ksched_task_publish(void **slot);
 BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 void ksched_clone_commit(void *slot, struct kproc *, struct kthread *, struct thread_startup_draft *, UQUAD physical, UQUAD top);
-void ksched_clone_publish(void *slot);
 LONG ksched_clone_dispatch(void **slot, struct proc_clone_transaction *, LONG *status);
 #endif
 struct kthread;

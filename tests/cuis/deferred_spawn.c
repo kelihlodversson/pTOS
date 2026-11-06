@@ -27,6 +27,16 @@ void kproc_release(KPROC *p)
 BOOL kproc_prepare_async_thread(PD *p, PD *parent, PD *controller, KTHREAD **thread)
 {
     CHECK(p == &child && parent == &owner && controller == &owner);
+    /* Real preparation callback: its unpublished slot cannot be selected by
+     * reentrant reservation. Cancel the nested storage without acquiring refs. */
+    {
+        void *nested = NULL;
+        CHECK(tasks[1].state == TASK_RESERVED && tasks[1].program == &child);
+        CHECK(ksched_spawn(&child) == EACCDN);
+        CHECK(ksched_task_reserve(FALSE, &nested) == E_OK && nested == &tasks[2]);
+        ksched_task_cancel(&nested);
+        CHECK(!nested && tasks[1].state == TASK_RESERVED);
+    }
     preparations++; *thread = NULL;
     if (!prepare_ok) return FALSE;
     *thread = kthread_create(p);
@@ -114,3 +124,7 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
     (void)startup;
     abort(); /* no published clone exists in this legacy fixture */
 }
+
+/* This fixture only reserves within an existing group. */
+void *kalloc(ULONG bytes) { (void)bytes; abort(); }
+void kfree(void *pointer) { (void)pointer; abort(); }

@@ -187,12 +187,20 @@ C_SYM(clone_probe_begin):
         addq $24,%rsp
         movl $0x600dcafe,4(%r12)
         movl (%r12),%eax
+        cmpl $3,%eax
+        je .Lclone_resident
         cmpl $2,%eax
         je .Lclone_fault
         testl %eax,%eax
         jnz .Lclone_pterm
         movl $0x2468,%eax
         ret
+.Lclone_resident:
+        movl $4096,%edi
+        movl $0x468a,%esi
+        movabsq $0x100000031,%rax /* Ptermres: retain own low blocks only */
+        syscall
+        ud2
 .Lclone_pterm:
         movl $0x3579,%edi
         movabsq $0x10000004c,%rax

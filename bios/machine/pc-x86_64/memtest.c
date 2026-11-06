@@ -2069,7 +2069,7 @@ static void test_clone_execution(void)
 {
     UWORD mode;
     int before = failures;
-    for (mode = 0; mode < 10; mode++) {
+    for (mode = 0; mode < 12; mode++) {
         SNAP baseline;
         PD *pd, *original = run;
         KPROC *source;
@@ -2086,6 +2086,8 @@ static void test_clone_execution(void)
         CLONE_RUN_OBSERVER watched = { NULL, 0, 0, 0, 0, FALSE };
         THREAD_STARTUP_OBSERVER observer = { clone_observer_acquire, clone_observer_release };
         LONG result;
+        UQUAD resident_generation, frame_before = 0x1122334455667788ULL, frame_after;
+        BOOL executed = mode < 3 || mode == 10;
         snap(&baseline);
         pd = new_basepage();
         if (!pd) return;
@@ -2105,7 +2107,9 @@ static void test_clone_execution(void)
         CHECK(stack && data && kproc_demand_page(pd,stack,ASPACE_PROT_WRITE) == 1 &&
               kproc_demand_page(pd,stack+PAGE,ASPACE_PROT_WRITE) == 1 &&
               (mode == 0 ? aspace_translate(as,data,NULL,NULL) : kproc_demand_page(pd,data,ASPACE_PROT_WRITE) == 1), "back shared code argument/outputs and private thread stack");
-        input[0] = mode < 3 ? mode : 0; input[2] = kproc_ref_pid(source); input[3] = stack;
+        CHECK(aspace_copy_to_user(as,stack+2*PAGE-8,&frame_before,sizeof(frame_before)),
+              "seed return slot before any publication preparation");
+        input[0] = mode == 10 ? 3 : mode < 3 ? mode : 0; input[2] = kproc_ref_pid(source); input[3] = stack;
         CHECK(aspace_copy_to_user(as,data,input,sizeof(input)) &&
               aspace_copy_to_user(as,data+16,outputs,sizeof(outputs)), "seed private clone argument and unchanged output sentinels");
         /* This fixture establishes the same current PROCESS/ASPACE contract
@@ -2115,11 +2119,12 @@ static void test_clone_execution(void)
         args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
         args.resources = PROC_CLONE_COPY_STANDARD_HANDLES | PROC_CLONE_COPY_CWD;
         startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE;
+        resident_generation = procmem_next_gen();
         CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
               proc_clone_retain_startup_stack(tx) == E_OK &&
               proc_clone_prepare_outputs(tx,data+16,data+20) == E_OK, "construct/process/VM/thread/context/leases before publication");
         watched.process = proc_clone_process(tx);
-        watched.expected = mode == 0 ? 0x2468 : mode == 1 ? 0x3579 : 0xffff;
+        watched.expected = mode == 0 ? 0x2468 : mode == 1 ? 0x3579 : mode == 10 ? 0x468a : 0xffff;
         watched.fail = mode == 8;
         CHECK(proc_clone_observe_startup(tx,&observer,&watched) == (mode == 8 ? ENSMEM : E_OK),
               "register retained PROCESS lifecycle observer or fail before publication");
@@ -2132,15 +2137,16 @@ static void test_clone_execution(void)
         if (mode == 4) proc_clone_test_cancel_publication();
         if (mode == 5) ksched_test_fail_clone_slot();
         if (mode == 6 || mode == 7) kproc_test_fail_clone_compat(mode-5);
+        if (mode == 11) proc_dispose_process(source); /* execution association retains resources */
         bzero(exit_handoff_stages,sizeof(exit_handoff_stages)); exit_handoff_watch = TRUE;
         result = proc_clone_exec(&tx,&done);
         exit_handoff_watch = FALSE;
-        CHECK(run == pd && aspace_is_current(as) && kproc_active_space(source) == space && kproc_ref_has_basepage(source),
+        CHECK(run == pd && aspace_is_current(as) && (mode == 11 ? !kproc_active_space(source) : kproc_active_space(source) == space) && kproc_ref_has_basepage(source),
               "child exit/cancellation preserves parent PROCESS and shared ASPACE");
         CHECK(aspace_copy_from_user(as,readback,data+16,sizeof(readback)), "parent can still access shared output memory");
-        if (mode < 3) {
+        if (executed) {
             CHECK(result == E_OK && !tx && done.pid != kproc_ref_pid(source) && done.tid && done.tid != kthread_tid(parent_execution) &&
-                  done.status == (mode == 0 ? 0x2468 : mode == 1 ? 0x3579 : 0xffff),
+                  done.status == watched.expected,
                   "actual constructed clone RET/Pterm/fault returns its independent identity and expected status");
             CHECK(readback[0] == (ULONG)done.pid && readback[1] == done.tid,
                   "publication commits both identities before dispatch");
@@ -2150,9 +2156,11 @@ static void test_clone_execution(void)
                   exit_handoff_stages[2] == 1 && exit_handoff_stages[3] == 1,
                   "one THREAD/PROCESS handoff and syscall reclamation for constructed clone");
         } else {
-            CHECK(result == (mode == 3 ? EIMBA : mode == 4 ? EAGAIN : mode == 8 ? EINVAL : ENSMEM) && !done.pid && !done.tid &&
+            CHECK(result == (mode == 3 ? EIMBA : mode == 4 ? EAGAIN : mode == 8 ? EINVAL : mode == 11 ? EINVFN : ENSMEM) && !done.pid && !done.tid &&
                   readback[0] == outputs[0] && readback[1] == outputs[1] && !exit_handoff_stages[0],
                   "preflight failure or final prepublication cancellation exposes no output or child execution");
+            CHECK(aspace_copy_from_user(as,&frame_after,stack+2*PAGE-8,sizeof(frame_after)) && frame_after == frame_before,
+                  "failed preflight and prepublication cancellation leave even the return slot unchanged");
             CHECK(mode == 4 ? tx == NULL : tx != NULL, "cancellation consumes handle; failed preflight preserves ownership until abort");
             if (collision) {
                 char value[6];
@@ -2163,8 +2171,10 @@ static void test_clone_execution(void)
             proc_clone_abort(&tx);
         }
         CHECK(watched.registered == (mode == 8 ? 0 : 1) && watched.released == watched.registered &&
-              watched.completed == (mode < 3 ? 1 : 0),
+              watched.completed == (executed ? 1 : 0),
               "one completion observation for executed PROCESS, none for rejected/cancelled construction");
+        if (mode == 10) CHECK(procmem_free_ownerless_since(resident_generation) == 2,
+              "Ptermres keeps only its PD/environment blocks, with no live process or execution resources");
         CHECK(kproc_uheap_free(pd,stack) == E_OK, "scheduler root reap released final durable user-stack hold");
         run = original; aspace_leave(previous);
         kthread_destroy(parent_execution);

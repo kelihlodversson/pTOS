@@ -238,7 +238,7 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
     if (!startup_target_live(tx) || !kproc_clone_parent_ready(tx->source) ||
         !kthread_clone_run_ready(tx->thread)) return EACCDN;
     if (thread_startup_state(startup) != THREAD_STARTUP_OBSERVED) return EINVAL;
-    error = ksched_clone_reserve(&slot);
+    error = ksched_task_reserve(TRUE, &slot);
     if (error) return error;
     if (!kproc_clone_prepare_compat(tx->process, tx->thread, tx->space)) { error = ENSMEM; goto failed; }
     if (!kproc_clone_prepare_parent(tx->process, tx->source)) { error = ENSMEM; goto failed; }
@@ -251,7 +251,7 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
 #if CONF_WITH_X86_64_MEMTEST
     if (cancel_publication) {
         cancel_publication = FALSE;
-        ksched_clone_cancel(&slot);
+        ksched_task_cancel(&slot);
         proc_clone_abort(handle); /* explicit cancellation consumes all ownership */
         return EAGAIN;
     }
@@ -266,7 +266,7 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
     return error;
 failed:
     kproc_clone_drop_compat(tx->process);
-    ksched_clone_cancel(&slot);
+    ksched_task_cancel(&slot);
     return error;
 }
 #endif
@@ -288,10 +288,10 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     owners.scheduler.physical = owners.scheduler.top = 0;
     tx->process = NULL; tx->thread = NULL; tx->startup = NULL; tx->owns_process = FALSE;
     /* First externally visible store starts here. Only no-fail stores and
-     * visibility barriers follow; the bound slot is still TASK_UNUSED. */
+     * visibility barriers follow; the bound slot is still TASK_RESERVED. */
     thread_startup_commit_stores(startup, pid, tid);
     thread_startup_publish(startup);
-    ksched_clone_publish(slot);
+    ksched_task_publish(&slot);
 }
 #endif
 

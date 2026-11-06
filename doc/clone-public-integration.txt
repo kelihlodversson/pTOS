@@ -1,0 +1,164 @@
+Public NEW_PROCESS integration contract (#890/#892)
+=================================================
+
+This fixes the integration plan; it does not enable a public operation. The
+exported 28-byte ptos_clone_args, native decoder and xclone validation behavior
+remain unchanged. Current flags must be zero, non-NULL TLS fails EINVAL and a
+valid request returns EINVFN. The internal root runner is not a public capability
+or an active-group clone implementation.
+
+Future flags and results
+------------------------
+
+Use #890's CLONE_VM = 1<<0 and CLONE_SAME_PROCESS = 1<<1. Allocate the following
+resource bits when the functional ABI and its complete trap tests are enabled:
+CLONE_COPY_STANDARD_HANDLES = 1<<2, CLONE_COPY_CWD = 1<<3. These map to the
+existing trusted factory's independent copy policies; they do not share mutable
+PROCESS tables. Resource bits default to neither copy. Explicit/nonstandard SFT
+handles are not duplicated. Priority/limits and parent identity follow the
+factory's documented inherited identity policy; environment starts empty.
+No signal-policy, TLS, detached-thread, exit-scope or sync/async flag is added.
+
+Preserve the public void (*entry)(void *) prototype. Normal return therefore
+means status zero, not an incidental EAX value. The trusted internal test bridge
+currently consumes LONG entry results; public startup must select a kernel-owned
+zero-status return image using the same Pterm handoff before its gate opens.
+Explicit Pterm keeps its supplied status. No user-supplied return PC or exit-scope
+flag is introduced. A prepared internal LONG-return image is not proof that the
+public void-entry return convention has been implemented.
+
+flags & ~0x0f: EINVAL.
+SAME_PROCESS without VM: EINVAL.
+SAME_PROCESS with resource-copy bits: EINVAL (resources already belong to PROCESS).
+VM alone, optionally with resource-copy bits: NEW_PROCESS/SHARE_VM.
+VM|SAME_PROCESS: unavailable until #893's thread-only exit guarantee, EINVFN.
+No VM or SAME_PROCESS: independent PROCESS/ASPACE, EINVFN until a private backend.
+Do not mistake any shared-ASPACE policy for sharing PID or PROCESS resources.
+
+Pclone returns a positive TID, never an overloaded PID. Before public publication,
+check that the allocated TID is representable as positive int32_t; otherwise
+EAGAIN with no output or runnable child. The internal ULONG TID namespace alone
+is not proof that a GEMDOS LONG return is nonnegative. Thread IDs and process IDs
+remain independent even if their numerical values happen to coincide.
+
+Append native int32_t *child_pid at offset 28. The complete extended structure is
+32 bytes; preserve every original field/offset, including reserved tls at 20 and
+child_tid at 24. On x32/ARM alignment is four, on m68k two, using existing native
+ABI conventions rather than packed synthetic arrays. child_pid is optional for
+NEW_PROCESS, including an older 28-byte caller. A caller needing PID supplies it;
+TID return is never a substitute. SAME_PROCESS can report the caller's PID once
+supported. Both outputs are snapshots at creation, not clear-on-exit locations.
+
+Size remains a separate scalar, without a version/feature-negotiation field.
+Accept the original 28-byte prefix. Read child_pid only when size >= 32; sizes
+28..31 omit it. Accept larger append-only tails without reading unknown fields.
+Future behavior requiring a new tail also needs a rejectable new flag. Snapshot
+the understood fields once; never interpret an x32 structure at LP64 offsets.
+Validate overflow and the supplied address/size before copying the known prefix.
+
+Pointer and publication contract
+--------------------------------
+
+ARM and m68k decode their native 32-bit pointer members; x32 explicitly
+zero-extends each ILP32 pointer through uintptr_t. Decode m68k's packed trap
+arguments separately from the pointed-to structure; ARM/x32 use native argument
+slots. Keep entry/stack ABI alignment checks and actual startup-frame bounds.
+The opaque argument is not dereferenced. Non-NULL tls remains EINVAL under #908;
+its existing slot cannot be removed, reused or treated as startup support.
+
+Outputs are optional, aligned writable int32_t destinations in the caller's
+KASPACE. Reject overlap with one another, startup stack or executable pages.
+Back/COW and obtain protected RAM aliases before publication; revalidate at
+commit and seal all leases as one group. Reject same-address replacement as a
+stale lease, even if permissions match. On every failure leave both words and
+the return slot unchanged; retain no output pointer after the initial stores.
+
+xclone remains the untrusted boundary. It passes a kernel-owned normalized
+snapshot to trusted construction, never user storage. The transaction builds
+PROCESS/KASPACE/KTHREAD/context, secures execution holds, reserves scheduler
+storage and registers a generic observer before sealing. The scheduler must own
+a stable launcher/controller before any write. Only then transfer ownership,
+write the return frame/PID/TID and publish TASK_NEW without callbacks, allocation,
+yield or a fallible operation in the final transition.
+
+EINVAL: bad scalar size/flags/alignment, undersized startup frame, non-NULL TLS.
+EIMBA: unreadable/wrapping pointers, inaccessible entry/stack/output or stale lease.
+ENSMEM: allocation/backing failure. EAGAIN: slot/identity capacity exhausted.
+EINVFN: configuration/backend or policy unavailable. Do not advertise runtime
+capability merely because CONF_WITH_PCLONE routes a validated syscall. Unsupported
+configurations must not silently fall back to unsafely runnable legacy contexts.
+
+Active-group prerequisite and integration tests
+-----------------------------------------------
+
+ksched_task_reserve/cancel/publish is now shared by the internal root clone runner
+and existing async/deferred PROCESS launches. A private TASK_RESERVED cannot be
+selected by dispatch or waits, nor reused by a reentrant preparation. Legacy
+image identity is also reserved so recursive preparation cannot start the same
+PD in a second slot. No generic PROCESS waiter or second dispatcher is added.
+
+Active proc_clone publication remains gated. The synchronous root runner's
+launcher parent is its blocked caller. A detached active child instead resumes
+on its own task stack under scheduler.root.pd, which survives the group, even
+when its logical parent retires. It must establish this trusted controller
+separately from the retained logical parent/PPID and notification identity.
+Existing Pexec uses async_parent plus a controller mapping during preparation;
+clone shared-space compatibility preparation does not yet install that contract.
+Merely accepting active reservations or clearing the root-only gate would leave
+xterm's kproc_get_parent vulnerable to a retired logical parent. Reuse the
+existing async preparation split, with vacancy-checked controller mapping
+ownership and a no-fail launch decision, before adding proc_clone_spawn.
+
+Independent lifecycle observers need owned context storage through root reap;
+a caller's automatic callback context cannot outlive an asynchronous return.
+Register before commit and release once after stopped-root reclamation. Reuse
+#893's completion producer, #909's existing wait/zombie consumer and #907's CUIS
+observer; do not turn CUIS into PROCESS lifetime ownership. Early wait, blocked
+parent, orphaning and independent observers must consume the same single event.
+
+Acceptance before connecting xclone: production active clone execution, parent
+retirement/PD reuse, slot exhaustion, pre-commit cancellation and unchanged
+outputs, early completion and blocked-parent wakeup, owned observer rollback,
+normal/fault/TSR teardown and both stack release contexts. Add the complete future
+flag/size/child_pid/resource/error matrix to cross-ABI layout, decoder, production
+handler and real-trap tests while preserving validation-only compatibility.
+The current publication host fixture models slots and existing wait predicates;
+it is not evidence that an active-group proc_clone context has executed.
+
+Minimum #893 handoff dependency
+-------------------------------
+
+SAME_PROCESS stays disabled. #893 must supply an internal current-thread exit
+operation with status and a backend-owned nonreturning handoff. It must mark only
+that THREAD nonresumable, transfer from its syscall continuation to the existing
+safe launcher/backend context, then permit root reclamation of its scheduler
+stack. Only after leaving its stacks may it drop THREAD execution/ASPACE/PROCESS
+references. PROCESS membership remains non-owning. A last-THREAD decision must be
+serialized with attachment/disposal and publish PROCESS completion once; an
+ordinary sibling exit cannot close descriptors, free PD or satisfy PROCESS waits.
+
+Required #893 tests: initial or secondary THREAD exits first, surviving sibling
+uses descriptors and faults shared mappings, both exit orders, exactly-once final
+completion, separate shared-VM PROCESS unaffected, blocked/deferred stop, and
+syscall/scheduler reclamation after their respective safe handoffs. Existing
+non-runnable ownership tests do not establish this runnable contract. Do not add
+a Pclone exit flag or copy Pterm/Ptermgrp/Pthjoin policy into #892. The current
+Pterm-based sole-THREAD bridge remains the only capability accepted here.
+
+Architecture staging
+--------------------
+
+The shared ownership/lease/publication transaction is the backend boundary.
+ARM needs its ARM-mode entry/argument/return register frame, aligned initial SP,
+exception/control state, FPU image and a stable launcher/controller. m68k needs
+its own argument/return stack frame, USP/SR/PC, FPU/control state and safe trap
+return; packed GEMDOS input decoding is not a context-switch implementation.
+Use the existing architecture launchers and #713 scheduling backends, not a
+parallel dispatcher. Both must preserve nested Pexec/FPU/interrupt restoration
+and support rollback and ownership transfer before their gate can open.
+
+ARM/m68k construction/lease/ABI compilation and existing 26/25 runtime suites do
+not execute newly constructed clone contexts. Keep their startup return EINVFN
+until backend execution/lease/termination tests exist. Non-MMU scheduling remains
+#713, PROCESS waits #909, shared-VM Pexec #894, TLS independent #908. None is
+silently implemented by this integration plan.
