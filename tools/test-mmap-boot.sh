@@ -175,6 +175,10 @@ fi
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi
+if [ "$expected" = PASS ] && grep -q '^CONF_WITH_NATIVE_SCHED=y' .config; then
+    grep -q 'x86-64 executable clone: PASS' "$log"
+    grep -q 'x86-64 active-group clone: PASS' "$log"
+fi
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     grep -q 'x86-64 ldso relocations: PASS' "$log"
     [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]
