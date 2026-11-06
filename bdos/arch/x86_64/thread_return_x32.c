@@ -1,4 +1,4 @@
-/* Kernel-selected single-THREAD PROCESS return bridge, never user code input. */
+/* Kernel-selected THREAD return bridge, never user code input. */
 #include "emutos.h"
 #include "biosext.h"
 #include "gemerror.h"
@@ -99,8 +99,8 @@ VADDR x32_return_bridge_zero_address(const X32_RETURN_BRIDGE *bridge)
 
 BOOL x32_return_bridge_process_eligible(KPROC *process, KTHREAD *thread)
 {
-    /* The process's non-owning membership must identify exactly one THREAD.
-     * No observer callback or user state controls this decision. */
+    /* Legacy sole-identity model preflight. Runnable managed siblings instead
+     * use trusted startup plus the thread-only launcher exit contract. */
     return kproc_thread_is_sole(process, thread);
 }
 

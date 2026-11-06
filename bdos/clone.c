@@ -39,7 +39,7 @@ long xclone(uint64_t address, uint64_t size)
     valid = clone_validate_v1(&args, &abi, clone_access, NULL);
     if (valid == CLONE_INVALID) return EINVAL;
     if (valid != CLONE_VALID) return EIMBA;
-    if (!(args.flags & CLONE_VM) || (args.flags & CLONE_SAME_PROCESS)) return EINVFN;
+    if (!(args.flags & CLONE_VM)) return EINVFN;
 #if CONF_WITH_NATIVE_SCHED
     {
         PROC_CLONE_ARGS policy;
@@ -48,7 +48,7 @@ long xclone(uint64_t address, uint64_t size)
         policy.source = kproc_retain(run);
         if (!policy.source) return EINVFN;
         policy.prepared_process = NULL;
-        policy.process_policy = PROC_CLONE_NEW_PROCESS;
+        policy.process_policy = (args.flags & CLONE_SAME_PROCESS) ? PROC_CLONE_SAME_PROCESS : PROC_CLONE_NEW_PROCESS;
         policy.vm_policy = PROC_CLONE_SHARE_VM;
         policy.resources = ((args.flags & CLONE_COPY_STANDARD_HANDLES) ? PROC_CLONE_COPY_STANDARD_HANDLES : 0) |
                            ((args.flags & CLONE_COPY_CWD) ? PROC_CLONE_COPY_CWD : 0);

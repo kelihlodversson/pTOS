@@ -111,14 +111,14 @@ int x32_public_clone_checks(void)
             if (m!=2 && entered!=1) return 7;
         }
     }
-    args.flags=CLONE_VM|CLONE_SAME_PROCESS;
+    args.flags=CLONE_VM|CLONE_SAME_PROCESS|CLONE_COPY_CWD;
     tid=-7;pid=-9;
-    if (CALL(GEMDOS_PCLONE,&args,32,0)!=-32 || tid!=-7 || pid!=-9) return 8;
+    if (CALL(GEMDOS_PCLONE,&args,32,0)!=-25 || tid!=-7 || pid!=-9) return 8;
     args.flags=0x80000000UL;
     if (CALL(GEMDOS_PCLONE,&args,32,0)!=-25 || tid!=-7 || pid!=-9) return 9;
     args.flags=CLONE_VM; args.tls=(void *)1;
     if (CALL(GEMDOS_PCLONE,&args,32,0)!=-25 || tid!=-7 || pid!=-9) return 10;
-    args.tls=0; args.child_tid=(int32_t *)entry;
+    args.tls=0; args.child_tid=(int32_t *)((unsigned long)entry & ~3UL);
     if(CALL(GEMDOS_PCLONE,&args,32,0)!=-40 || tid!=-7 || pid!=-9) return 21;
     args.child_tid=&tid; args.child_pid=&tid;
     if(CALL(GEMDOS_PCLONE,&args,32,0)!=-25 || tid!=-7 || pid!=-9) return 22;

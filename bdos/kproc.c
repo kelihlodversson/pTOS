@@ -102,7 +102,8 @@ struct kproc {
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
-    BOOL clone_exclusive;
+    BOOL clone_guarded;
+    BOOL threaded; /* trusted multi-THREAD publication, not a new PROCESS */
     BOOL child_usage_at_wait; /* accounting policy, independent of controller refs */
 #if CONF_WITH_X86_64_MEMTEST
     BOOL test_controller_first;
@@ -421,12 +422,12 @@ BOOL kproc_thread_start_allowed(const KPROC *process)
 }
 
 BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
-    KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next)
+    KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next, BOOL identity_only)
 {
     KASPACE *as;
     if (!thread || !construction_space || !p ||
 #if CONF_WITH_NATIVE_SCHED
-        p->clone_exclusive ||
+        (p->clone_guarded && !identity_only) ||
 #endif
         (p->active_space && p->active_space != construction_space) ||
         !kproc_retain_live(p))
@@ -448,7 +449,7 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
 {
     KPROC *p = kproc_find(pd);
     return kproc_thread_attach_space(p, p ? p->active_space : NULL,
-                                    thread, process, space, next);
+                                    thread, process, space, next, FALSE);
 }
 
 /* Only a caller-prepared, empty resource container can import shared VM.
@@ -604,13 +605,32 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
         p->parent = p->clone_controller_pd; /* logical identity remains separate */
     }
     p->active_space = space; p->aspace = kaspace_backend(space);
-    p->clone_exclusive = TRUE; p->clone_identity_only = FALSE;
+    p->clone_guarded = TRUE; p->clone_identity_only = FALSE;
     p->child_usage_at_wait = wait_usage;
     p->clone_startup = startup; p->kstack_phys = physical; p->kstack_top = top;
 }
+BOOL kproc_clone_sibling_ready(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    KTHREAD *member;
+    if (!kproc_thread_start_allowed(p) || !p->started || p->active_space != space ||
+        !thread || kthread_process(thread) != p || kthread_aspace(thread) != space)
+        return FALSE;
+    for (member = p->threads; member; member = *kthread_next_link(member))
+        if (member == thread) return TRUE;
+    return FALSE;
+}
+void kproc_clone_commit_sibling(KPROC *p, KTHREAD *thread)
+{
+    if (!kproc_clone_sibling_ready(p, thread, kthread_aspace(thread)))
+        panic("unprepared sibling activation");
+    p->threaded = TRUE;
+    p->clone_guarded = TRUE; /* ordinary backend installation stays forbidden */
+}
 BOOL kproc_clone_execution_bound(KPROC *p, KTHREAD *thread)
 {
-    return p && p->clone_exclusive && p->clone_startup && p->kstack_phys &&
+    if (p && p->threaded && kproc_clone_sibling_ready(p, thread, kthread_aspace(thread)))
+        return TRUE;
+    return p && p->clone_guarded && p->clone_startup && p->kstack_phys &&
         p->active_space == kthread_aspace(thread) && !p->started && kproc_thread_is_sole(p, thread);
 }
 void *kproc_clone_startup(PD *pd)
@@ -650,9 +670,17 @@ static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)
 BOOL kproc_prepare_thread_exit_handoff(KPROC *process, KTHREAD *thread)
 {
     if (!process || process->disposal_state != PROCESS_LIVE ||
-        process->completed || !process->pd ||
-        (thread ? !sole_execution_thread(process, thread) : process->threads != NULL))
+        process->completed || !process->pd)
         return FALSE;
+    if (thread && !sole_execution_thread(process, thread)) {
+#if CONF_WITH_NATIVE_SCHED
+        if (process->threaded && kthread_is_executing(thread) &&
+            kproc_clone_sibling_ready(process, thread, kthread_aspace(thread)))
+            return TRUE; /* only this execution stops; PROCESS remains live */
+#endif
+        return FALSE;
+    }
+    if (!thread && process->threads) return FALSE;
     process->disposal_state = PROCESS_EXIT_HANDOFF;
     return TRUE;
 }
@@ -664,11 +692,24 @@ BOOL kproc_prepare_exit_handoff(KPROC *process)
 
 BOOL kproc_finish_thread_handoff(KPROC *process, KTHREAD *thread)
 {
-    if (!process || process->disposal_state != PROCESS_EXIT_HANDOFF ||
-        !sole_execution_thread(process, thread))
-        return FALSE;
-    process->threads = NULL;
-    return TRUE;
+    if (!process || !kthread_is_executing(thread)) return FALSE;
+    if (process->disposal_state == PROCESS_EXIT_HANDOFF && sole_execution_thread(process, thread)) {
+        process->threads = NULL;
+        return TRUE;
+    }
+#if CONF_WITH_NATIVE_SCHED
+    if (process->threaded && process->disposal_state == PROCESS_LIVE &&
+        kproc_clone_sibling_ready(process, thread, kthread_aspace(thread))) {
+        kproc_thread_detach(process, thread, *kthread_next_link(thread));
+        return TRUE;
+    }
+#endif
+    return FALSE;
+}
+
+BOOL kproc_exit_handoff_pending(const KPROC *process)
+{
+    return process && process->disposal_state == PROCESS_EXIT_HANDOFF;
 }
 
 BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd)
@@ -711,8 +752,13 @@ BOOL kproc_pending_completion(const KPROC *process, UWORD *status)
 void kproc_require_exit_thread(PD *pd, KTHREAD *thread)
 {
     KPROC *process = kproc_find(pd);
-    if (process && process->threads && !sole_execution_thread(process, thread))
+    if (process && process->threads && !sole_execution_thread(process, thread)) {
+#if CONF_WITH_NATIVE_SCHED
+        if (process->threaded && kthread_is_executing(thread) &&
+            kproc_clone_sibling_ready(process, thread, kthread_aspace(thread))) return;
+#endif
         panic("xterm: unsupported attached threads");
+    }
 }
 
 void kproc_require_no_threads(PD *pd)
@@ -1913,6 +1959,9 @@ PADDR kproc_take_kernel_stack(PD *pd, uintptr_t *top)
     phys = kproc->kstack_phys;
     *top = kproc->kstack_top;
     kproc->kstack_phys = 0;         /* the launcher frees it, after the exit */
+#if CONF_WITH_NATIVE_SCHED
+    kproc->clone_startup = NULL; /* borrowed first-thread draft ends at launch */
+#endif
     return phys;
 }
 

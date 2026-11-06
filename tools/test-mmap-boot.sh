@@ -180,6 +180,7 @@ if [ "$expected" = PASS ] && grep -q '^CONF_WITH_NATIVE_SCHED=y' .config; then
     grep -q 'x86-64 active-group clone: PASS' "$log"
     if grep -q '^CONF_WITH_PCLONE=y' .config; then
         grep -q 'x86-64 public Pclone: PASS' "$log"
+        grep -q 'x86-64 SAME_PROCESS threads: PASS' "$log"
     fi
 fi
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then

@@ -131,10 +131,12 @@ PD *kproc_live_pd(const KPROC *process); /* borrowed during serialized live-reso
 BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
 void proc_dispose_process(KPROC *process);
 struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */
-/* Explicit construction-space attachment never publishes active_space. */
+/* Explicit construction-space attachment never publishes active_space.
+ * identity_only constructs a trusted non-runnable identity; it cannot install
+ * a backend through ordinary KTHREAD setters. */
 BOOL kproc_thread_attach_space(KPROC *process, struct kaspace *construction_space,
     struct kthread *thread, KPROC **retained_process, struct kaspace **space,
-    struct kthread **next);
+    struct kthread **next, BOOL identity_only);
 /* Identity-only VM adoption into an independently prepared resource container.
  * Success transfers space. Failure changes neither object nor references. */
 BOOL kproc_clone_target_ready(const KPROC *process, struct kthread *thread);
@@ -147,6 +149,8 @@ BOOL kproc_clone_prepare_controller(KPROC *process, PD *controller);
 BOOL kproc_clone_prepare_parent(KPROC *, KPROC *);
 BOOL kproc_clone_parent_ready(const KPROC *);
 BOOL kproc_clone_execution_bound(KPROC *, struct kthread *);
+BOOL kproc_clone_sibling_ready(KPROC *, struct kthread *, struct kaspace *);
+void kproc_clone_commit_sibling(KPROC *, struct kthread *);
 void kproc_clone_commit_run(KPROC *, struct kaspace *, void *, PADDR, uintptr_t, BOOL);
 void *kproc_clone_startup(PD *);
 #if CONF_WITH_X86_64_MEMTEST
@@ -172,11 +176,13 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len);
  * panic; other teardown callbacks must not exit non-locally. */
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len);
 BOOL kproc_prepare_exit_handoff(KPROC *process);
-/* Only the backend-owned, sole executing thread may use the single-thread
- * launcher handoff. Detachment is deferred until it leaves its syscall stack. */
+/* Backend-owned executing threads use the launcher handoff. A non-final
+ * thread leaves PROCESS live; only the final association reserves disposal.
+ * Detachment is deferred until the caller has left its syscall stack. */
 BOOL kproc_prepare_thread_exit_handoff(KPROC *process, struct kthread *thread);
 BOOL kproc_finish_thread_handoff(KPROC *process, struct kthread *thread);
 void kproc_require_exit_thread(PD *pd, struct kthread *thread);
+BOOL kproc_exit_handoff_pending(const KPROC *process);
 BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd);
 /* Commit the existing single-thread xterm cleanup while lookup owns KPROC. */
 BOOL kproc_begin_exit(PD *pd);
@@ -184,7 +190,7 @@ BOOL kproc_begin_exit(PD *pd);
  * process; the caller must immediately reap it from a safe context. */
 BOOL kproc_request_completion(KPROC *process, struct kthread *thread, UWORD status);
 BOOL kproc_pending_completion(const KPROC *process, UWORD *status);
-/* Normal xterm is not thread-aware; reject it before any cleanup begins. */
+/* Legacy/unmanaged xterm cannot tear down attached non-runnable identities. */
 void kproc_require_no_threads(PD *pd);
 /*
  * Builds the ring-3 address space for a process about to be launched:

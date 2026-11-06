@@ -9,7 +9,8 @@
 struct kproc { WORD pid; ULONG references; BOOL live, completed; UWORD status; };
 struct thread_startup_draft { THREAD_STARTUP_OBSERVER observer; void *context; };
 static unsigned allocations, frees, fail_registration;
-static BOOL fail_allocate;
+static BOOL fail_allocate, thread_done;
+static UWORD thread_status;
 static KASPACE *space = (KASPACE *)1;
 void *kalloc(ULONG bytes) { void *p; if (fail_allocate) return NULL; p = malloc(bytes); if (p) allocations++; return p; }
 void kfree(void *p) { assert(p); frees++; free(p); }
@@ -20,6 +21,7 @@ WORD kproc_ref_pid(const KPROC *p) { return p->pid; }
 BOOL kproc_ref_status(const KPROC *p, UWORD *status) { if (!p->completed) return FALSE; *status = p->status; return TRUE; }
 KASPACE *kproc_active_space(const KPROC *p) { return p->live ? space : NULL; }
 BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *t) { (void)t; return p->live; }
+BOOL kthread_exit_status(const KTHREAD *t, UWORD *s) { assert(t); if (!thread_done) return FALSE; *s=thread_status; return TRUE; }
 ULONG kthread_tid(const KTHREAD *thread) { return (ULONG)(uintptr_t)thread + 70; }
 LONG thread_startup_observe(THREAD_STARTUP_DRAFT *d, const THREAD_STARTUP_OBSERVER *ops, void *context)
 {
@@ -75,6 +77,26 @@ int main(void)
     assert(proc_clone_observe_async(&tx[0],&observer[0])==E_OK); detach(&draft[0]);
     target[0].completed=TRUE;
     assert(proc_clone_observer_state(observer[0])==PROC_CLONE_OBSERVER_CANCELLED && !proc_clone_observer_result(observer[0],&result));
+    proc_clone_observer_release(&observer[0]);
+    assert(target[0].references==1 && allocations==frees);
+    /* Leader execution reaped before its PROCESS completes: retained observer
+     * must wait for the existing PROCESS record rather than invent an exit. */
+    tx[0].observer=NULL;target[0].live=TRUE;target[0].completed=FALSE;
+    assert(proc_clone_observe_async(&tx[0],&observer[0])==E_OK);
+    observer[0]->state=PROC_CLONE_OBSERVER_PUBLISHED; detach(&draft[0]);
+    assert(!proc_clone_observer_result(observer[0],&result));
+    target[0].completed=TRUE;target[0].status=0x66;
+    assert(proc_clone_observer_result(observer[0],&result) && result.status==0x66);
+    proc_clone_observer_release(&observer[0]);
+    tx[0].observer=NULL;tx[0].policy=PROC_CLONE_SAME_PROCESS;
+    target[0].live=TRUE;target[0].completed=FALSE;
+    assert(proc_clone_observe_async(&tx[0],&observer[0])==E_OK);
+    observer[0]->state=PROC_CLONE_OBSERVER_PUBLISHED;
+    assert(!proc_clone_observer_result(observer[0],&result));
+    thread_done=TRUE;thread_status=0x1234;
+    detach(&draft[0]);
+    assert(!observer[0]->thread && !target[0].completed &&
+           proc_clone_observer_result(observer[0],&result) && result.status==0x1234 && result.tid==71);
     proc_clone_observer_release(&observer[0]);
     assert(target[0].references==1 && allocations==frees);
     puts("Owned clone observers: rollback, independent completion, creator/root release orders and cancellation: PASS");

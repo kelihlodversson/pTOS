@@ -116,6 +116,7 @@ s64 x32_probe_call(u64 fn, s64 a, s64 b, s64 c)
     return sys6(GEMDOS, fn, a, b, c, 0, 0, 0);
 }
 extern int x32_public_clone_checks(void);
+extern int x32_same_threads(int test);
 extern int x32_public_clone_orphan(void);
 extern int x32_public_clone_single(int expected);
 
@@ -350,6 +351,14 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 
     switch (tail[0]) {
 #if CONF_WITH_PCLONE && CONF_WITH_NATIVE_SCHED
+    case '.': pterm(x32_same_threads(6)); break;
+    case '>': pterm(x32_same_threads(7)); break;
+    case ',': pterm(x32_same_threads(0)); break;
+    case '_': pterm(x32_same_threads(1)); break;
+    case ';': pterm(x32_same_threads(2)); break;
+    case '/': pterm(x32_same_threads(3)); break;
+    case '-': pterm(x32_same_threads(4)); break;
+    case '*': pterm(x32_same_threads(5)); break;
     case '=': pterm(x32_public_clone_checks()); break;
     case '<': pterm(x32_public_clone_orphan()); break;
     case '(': pterm(x32_public_clone_single(-39)); break;

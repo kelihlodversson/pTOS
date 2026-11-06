@@ -19,6 +19,8 @@ struct kthread {
     UBYTE state;
     BOOL attached;
     BOOL identity_only;
+    BOOL has_exit;
+    UWORD exit_status;
 };
 enum { THREAD_NEW, THREAD_EXECUTING, THREAD_STOPPED, THREAD_REAPING };
 
@@ -49,9 +51,10 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
     thread->execution = NULL;
     thread->reclaim_execution = NULL;
     thread->state = THREAD_NEW;
+    thread->has_exit = FALSE;
     thread->identity_only = identity_only;
     if (!kproc_thread_attach_space(process, space, thread, &thread->process,
-                                   &thread->space, &thread->process_next)) {
+                                   &thread->space, &thread->process_next, identity_only)) {
         kfree(thread);
         return NULL;
     }
@@ -113,7 +116,8 @@ BOOL kthread_clone_run_ready(const KTHREAD *thread)
 {
     return thread && thread->identity_only && thread->state == THREAD_NEW &&
         thread->attached && thread->stack_hold && !thread->execution &&
-        kproc_thread_is_sole(thread->process, (KTHREAD *)thread);
+        (kproc_thread_is_sole(thread->process, (KTHREAD *)thread) ||
+         kproc_clone_sibling_ready(thread->process, (KTHREAD *)thread, thread->space));
 }
 void kthread_clone_commit(KTHREAD *thread, void *resource, void (*reclaim)(void *))
 {
@@ -139,6 +143,19 @@ BOOL kthread_is_executing(const KTHREAD *thread)
     return thread && thread->state == THREAD_EXECUTING;
 }
 
+BOOL kthread_exit_status(const KTHREAD *thread, UWORD *status)
+{
+    if (!thread || !thread->has_exit) return FALSE;
+    if (status) *status = thread->exit_status;
+    return TRUE;
+}
+BOOL kthread_finish_exit(KTHREAD *thread, UWORD status)
+{
+    if (!kthread_finish_handoff(thread)) return FALSE;
+    thread->exit_status = status;
+    thread->has_exit = TRUE;
+    return TRUE;
+}
 BOOL kthread_finish_handoff(KTHREAD *thread)
 {
     if (!kthread_is_executing(thread) || !thread->attached ||

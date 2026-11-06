@@ -45,7 +45,11 @@ BOOL ksched_clone_context(struct kproc *source, PD **controller);
 BOOL ksched_clone_begin(struct kproc *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard);
 void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard);
 void ksched_clone_commit(void *slot, struct kproc *, struct kthread *, struct thread_startup_draft *,
-                         struct thread_startup_stack *scheduler_stack, struct kproc *logical_parent);
+                         struct thread_startup_stack *scheduler_stack, struct kproc *logical_parent,
+                         BOOL same_process, struct thread_startup_stack *syscall_stack);
+struct thread_startup_draft *ksched_thread_startup(PD *pd);
+BOOL ksched_sibling_launch(PD *pd);
+BOOL ksched_take_syscall_stack(PD *pd, struct thread_startup_stack *owner);
 LONG ksched_clone_dispatch(void **slot, struct proc_clone_transaction *, LONG *status);
 #endif
 struct kthread;
@@ -54,7 +58,7 @@ struct kproc;
  * synchronous child. Finish is called off the child syscall stack, before
  * the common PROCESS finalizer; task-stack reclamation remains root-only. */
 struct kthread *ksched_exit_thread(PD *pd);
-void ksched_finish_exit(struct kproc *process, PD *pd);
+BOOL ksched_finish_exit(struct kproc *process, PD *pd, UWORD status);
 /* Saved with kernel process contexts, including legacy AES coroutines.
  * Zero is unmanaged; identities are never reused, even across groups. */
 UQUAD ksched_context_id(void);

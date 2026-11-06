@@ -48,8 +48,9 @@ WORD kproc_ref_pid(const KPROC *p) { return p->pid; }
 KASPACE *kproc_active_space(const KPROC *p) { return p && p->live && !p->pending ? p->space : NULL; }
 BOOL kproc_thread_start_allowed(const KPROC *p) { return p->live && !p->pending && !p->model; }
 BOOL kproc_thread_attach_space(KPROC *p, KASPACE *space, KTHREAD *t,
-    KPROC **process, KASPACE **retained, KTHREAD **next)
+    KPROC **process, KASPACE **retained, KTHREAD **next, BOOL identity_only)
 {
+    (void)identity_only;
     if (!p || !space || (p->space && p->space != space) || !kproc_retain_live(p)) return FALSE;
     *retained = kaspace_share(space);
     if (!*retained) { kproc_release(p); return FALSE; }

@@ -41,7 +41,7 @@ typedef struct {
 } PROC_CLONE_ARGS;
 
 typedef struct {
-    struct kthread *thread; /* owning, permanently non-runnable in this slice */
+    struct kthread *thread; /* owning non-runnable identity result; no execution publication */
     WORD pid;
     ULONG tid;
     /* NEW_PROCESS only: owns identity reference plus disposal responsibility.
@@ -69,14 +69,17 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
 LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *result);
 /* Startup preparation acquires context/stacks, never execution ownership.
  * Identity-only commit still returns EINVFN with a draft attached. Only the
- * trusted NEW_PROCESS publication paths below can publish prepared execution. */
+ * trusted NEW_PROCESS/SAME_PROCESS publication paths below can publish prepared execution. */
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *transaction, const THREAD_STARTUP_ARGS *args);
 LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *transaction, VADDR pid, VADDR tid);
 /* Heap-owned asynchronous observation: one caller reference plus one startup
  * registration. Release either order; completion is read from retained KPROC,
  * not published a second time. No callback borrows creator stack storage.
  * Abort marks CANCELLED with no invented status; root detach marks REAPED.
- * These are nonblocking snapshots, not another PROCESS wait/reap mechanism. */
+ * NEW_PROCESS snapshots its existing PROCESS completion (possibly later than
+ * leader reap). SAME_PROCESS snapshots this TID's stop status before THREAD
+ * destruction, independently of PROCESS completion. These neither consume a
+ * PID zombie nor implement the deferred public Pthjoin/wait mechanisms. */
 LONG proc_clone_observe_async(PROC_CLONE_TRANSACTION *, PROC_CLONE_OBSERVER **);
 void proc_clone_observer_release(PROC_CLONE_OBSERVER **);
 PROC_CLONE_OBSERVER_STATE proc_clone_observer_state(const PROC_CLONE_OBSERVER *);
@@ -90,7 +93,7 @@ LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
  * before publication preserves transaction and outputs; success consumes it
  * and waits using the existing cooperative scheduler, returning value ids. */
 LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION *completion);
-/* Normalized public NEW_PROCESS/SHARE_VM request. Constructs and owns the
+/* Normalized public NEW_PROCESS or SAME_PROCESS/SHARE_VM request. Constructs and owns the
  * asynchronous observer, returns positive signed TID or an error, and retains
  * no caller-stack data after return. Requires the current managed task. */
 LONG proc_clone_start_public(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *, VADDR pid, VADDR tid);

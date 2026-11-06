@@ -16,6 +16,7 @@ typedef struct {
 typedef struct {
     UQUAD identity;
     KTHREAD_STACK stack;
+    KTHREAD_STACK syscall_stack; /* transferred once to the existing launcher */
     X86_64_PROCESS_CONTEXT cpu;
     jmp_buf resume;
 } KTHREAD_CONTEXT;

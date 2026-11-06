@@ -149,6 +149,7 @@ struct x86_64_process_launch {
     volatile UWORD exit_status;
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
+    volatile BOOL exit_final;
 #endif
 };
 
@@ -173,6 +174,12 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         kproc_release(process);
         return FALSE;
     }
+#endif
+#if CONF_WITH_NATIVE_SCHED
+    launch->exit_final = !ksched_exit_thread(pd) ||
+                        kproc_thread_is_sole(process, ksched_exit_thread(pd));
+#else
+    launch->exit_final = TRUE;
 #endif
 #if CONF_WITH_NATIVE_SCHED
     if (!kproc_prepare_thread_exit_handoff(process, ksched_exit_thread(pd))) {
@@ -250,6 +257,12 @@ BOOL x86_64_process_is_accessory(void)
 void x86_64_process_cancel(X86_64_PROCESS_CONTEXT *context, PD *root)
 {
     X86_64_PROCESS_LAUNCH *launch = context->launch;
+#if CONF_WITH_NATIVE_SCHED
+    /* No caller currently cancels managed continuations through this legacy
+     * API. Group cancellation needs #893's explicit stop/root-reap protocol. */
+    if (context->native_task)
+        panic("native context cancellation requires THREAD handoff");
+#endif
 
     while (launch) {
         X86_64_PROCESS_LAUNCH *previous = launch->previous;
@@ -388,10 +401,11 @@ void gouser_entry(WORD entry_type)
          * kernel stack of its own (see this file's own top comment).
          */
 #if CONF_WITH_NATIVE_SCHED
-        THREAD_STARTUP_DRAFT *startup = kproc_clone_startup(p);
+        THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
         const X32_THREAD_STARTUP_DRAFT *prepared = startup ? thread_startup_image(startup) : NULL;
         UWORD launcher_ds, launcher_es, launcher_fs, launcher_gs;
         UQUAD launcher_fsbase;
+        THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
 #endif
         UQUAD pml4_phys = kproc_user_root(p);
         UQUAD entry_rip = kproc_user_entry(p);
@@ -403,7 +417,7 @@ void gouser_entry(WORD entry_type)
         UQUAD user_rsp = kproc_user_stack(p);
         BOOL standard_entry = kproc_standard_entry(p);
         X86_64_PROCESS_LAUNCH launch;
-        UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+        UQUAD kstack_top, kstack_phys;
         UQUAD launcher_stack = x86_64_get_kernel_stack();
         UQUAD launcher_user_rsp = x86_64_get_saved_user_rsp();
         UQUAD launcher_irq_rsp = x86_64_get_irq_stack();
@@ -411,10 +425,17 @@ void gouser_entry(WORD entry_type)
         int launcher_in_syscall;
 
 #if CONF_WITH_NATIVE_SCHED
+        if (ksched_take_syscall_stack(p, &syscall_owner)) {
+            kstack_phys = syscall_owner.physical;
+            kstack_top = syscall_owner.top;
+        } else
+#endif
+            kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+#if CONF_WITH_NATIVE_SCHED
         __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
                           : "=r"(launcher_ds), "=r"(launcher_es), "=r"(launcher_fs), "=r"(launcher_gs));
         launcher_fsbase = clone_read_fsbase();
-        if (prepared) { entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; }
+        if (prepared) { entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; standard_entry = FALSE; }
 #endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
@@ -496,10 +517,12 @@ void gouser_entry(WORD entry_type)
                                         launch.exit_status, 2);
 #endif
 #if CONF_WITH_NATIVE_SCHED
-            ksched_finish_exit(process, launch.pd);
+            if (ksched_finish_exit(process, launch.pd, launch.exit_status) != launch.exit_final)
+                panic("thread exit finalization changed");
 #endif
-            proc_finalize_exit(process, launch.exit_status,
-                               launch.exit_resident, launch.exit_resident_len);
+            if (launch.exit_final)
+                proc_finalize_exit(process, launch.exit_status,
+                                   launch.exit_resident, launch.exit_resident_len);
             /* Cleanup can make kernel calls; preserve the launcher's result
              * exactly as the legacy xterm path does after cleanup. */
             run->p_dreg[0] = launch.exit_status;

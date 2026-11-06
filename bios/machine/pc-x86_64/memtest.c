@@ -216,6 +216,7 @@ void x86_64_memtest_exit_handoff(KPROC *process, PD *pd, UQUAD stack_phys,
 
 #if CONF_WITH_NATIVE_SCHED
 static ULONG task_thread_stages[8];
+static ULONG live_process_thread_reaps;
 void x86_64_memtest_task_thread(KTHREAD *thread, UQUAD stack_phys, UWORD stage)
 {
     UQUAD rsp;
@@ -231,6 +232,13 @@ void x86_64_memtest_task_thread(KTHREAD *thread, UQUAD stack_phys, UWORD stage)
               "task dispatch and generic THREAD execution lifetime agree");
         CHECK(kthread_is_stopped(thread) == (stage == 3 || stage == 4),
               "task can only be reaped after a stopped launcher handoff");
+        if (stage == 4 && kproc_ref_has_basepage(kthread_process(thread))) {
+            UWORD status;
+            if (kthread_exit_status(thread, &status)) {
+                CHECK(!kproc_ref_status(kthread_process(thread), NULL), "sibling reap does not complete live PROCESS");
+                live_process_thread_reaps++;
+            }
+        }
         if (stage == 3)
             CHECK(kproc_ref_has_basepage(kthread_process(thread)),
                   "launcher stops THREAD before final PROCESS cleanup");
@@ -3425,7 +3433,8 @@ static long run_probe(char mode)
         return -1000;
     }
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
-    if (mode == '=' || mode == '<' || mode == '(' || mode == ')' || mode == '"') {
+    if (mode == '=' || mode == '<' || mode == '(' || mode == ')' || mode == '"' ||
+        mode == '.' || mode == '>' || mode == ',' || mode == '_' || mode == ';' || mode == '/' || mode == '-' || mode == '*') {
         PD *programs[1]; LONG results[1];
         programs[0] = pd;
         rc = proc_prepare_scheduled(pd);
@@ -4327,9 +4336,48 @@ static void test_ring3(void)
     int k, refused = 0, ran = 0;
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
     int public_before = failures;
+    ULONG live_reaps_before = live_process_thread_reaps;
 #endif
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    probe_expect(',', 0, "public SAME_PROCESS dispatch, private stacks/registers, Pterm/fault isolation, TSR refusal and exhaustion");
+    probe_expect('_',0x66,"initial Pterm retains PROCESS files until final sibling exit");
+    probe_expect(';',0x66,"initial fault retains PROCESS resources and final sibling status");
+    {
+        char bytes[2];
+        LONG file=Fopen("C:\\THRLEAD.TMP",0);
+        CHECK(file>=0 && Fread(file,2,bytes)==2 && bytes[0]=='O' && bytes[1]=='K',"surviving sibling uses explicit shared descriptor after leader exit");
+        if(file>=0) Fclose(file);
+        Fdelete("C:\\THRLEAD.TMP");
+    }
+    probe_expect('.',0,"PROCESS wait remains pending after leader return and consumes only final sibling exit");
+    probe_expect('>',0x55,"orphan threaded PROCESS drains independently of original parent");
+    {
+        char bytes[2];
+        LONG file=Fopen("C:\\THRGROUP.TMP",0);
+        CHECK(file>=0 && Fread(file,2,bytes)==2 && bytes[0]=='O' && bytes[1]=='K',"orphan sibling preserves shared VM, file and controller ownership");
+        if(file>=0) Fclose(file);
+        Fdelete("C:\\THRGROUP.TMP");
+    }
+    {
+        UQUAD generation=procmem_next_gen();
+        snap(&s);
+        CHECK(run_probe('/')==0x68,"final sibling Ptermres preserves legacy resident status");
+        CHECK(procmem_free_ownerless_since(generation)==2,"final sibling TSR retains only basepage and environment");
+        same(&s,"final sibling TSR releases transient resources");
+        Fdelete("C:\\THRLEAD.TMP");
+    }
+    {
+        UWORD stage;
+        for(stage=1;stage<=5;stage++) {
+            proc_clone_test_fail_after(stage);
+            probe_expect('-',0,"SAME_PROCESS acquisition rollback preserves source and outputs");
+        }
+        proc_clone_test_cancel_publication();
+        probe_expect('*',0,"SAME_PROCESS cancellation preserves source resources");
+    }
+    CHECK(live_process_thread_reaps > live_reaps_before, "root safely reaps stopped THREADs while PROCESS resources stay live");
+    kcprintf("x86-64 SAME_PROCESS threads: %s\n", failures == public_before ? "PASS" : "FAIL");
     probe_expect('=', 0, "public Pclone executes through the real ring-3 trap");
     probe_expect('<', 77, "public clone resources survive parent retirement");
     {

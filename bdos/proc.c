@@ -39,6 +39,7 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "kthread.h"
 #if CONF_WITH_CUIS
 #include "bdosbind.h"
 #endif
@@ -1188,6 +1189,23 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
  *
  */
 
+/* Shared launcher entry for a new PROCESS or an already prepared THREAD. */
+static void proc_enter_user(WORD entry_type)
+{
+#if ARCH_X86_64
+    gouser_entry(entry_type);
+#else
+    (void)entry_type;
+#if ARCH_ARM && !CONF_WITH_USER_ASPACE
+    /* gouser() would store whatever r0 happens to hold over the basepage
+     * proc_launch_prepare() put there for the new process to find in r0 */
+    termuser();
+#else
+    gouser();
+#endif
+#endif
+}
+
 static void proc_go(PD *p, WORD entry_type)
 {
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
@@ -1221,18 +1239,7 @@ static void proc_go(PD *p, WORD entry_type)
 #endif
     run = (PD *)p;
 
-#if ARCH_X86_64
-    gouser_entry(entry_type);
-#else
-    (void)entry_type;
-#if ARCH_ARM && !CONF_WITH_USER_ASPACE
-    /* gouser() would store whatever r0 happens to hold over the basepage
-     * proc_launch_prepare() put there for the new process to find in r0 */
-    termuser();
-#else
-    gouser();
-#endif
-#endif
+    proc_enter_user(entry_type);
 }
 
 #if CONF_WITH_NATIVE_SCHED
@@ -1244,6 +1251,13 @@ LONG proc_prepare_scheduled(PD *p)
 }
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {
+    if (ksched_sibling_launch(p)) {
+        /* Existing PROCESS: do not reset parent, loader state or start time.
+         * The existing launcher consumes this task's independent startup. */
+        run = p;
+        proc_enter_user(ENTRY_PROGRAM);
+        return run->p_dreg[0];
+    }
     if (!kproc_unlaunched(p) || !kproc_user_root(p)) return EIMBA;
     if (take_ownership) {
         set_owner(p, p);
@@ -1423,10 +1437,13 @@ void xterm(UWORD rc)
 {
     PFVOID userterm;
     PD *p = run;
+#if CONF_WITH_NATIVE_SCHED
+    KTHREAD *thread = ksched_exit_thread(p);
+#endif
 
 #if CONF_WITH_USER_ASPACE
 #if CONF_WITH_NATIVE_SCHED
-    kproc_require_exit_thread(p, ksched_exit_thread(p));
+    kproc_require_exit_thread(p, thread);
 #else
     kproc_require_no_threads(p);
 #endif
@@ -1435,8 +1452,13 @@ void xterm(UWORD rc)
     x86_64_memtest_callback_exit(p, rc);
 #endif
 
-    userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
-    protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
+#if CONF_WITH_NATIVE_SCHED
+    if (!thread || kproc_thread_is_sole(kthread_process(thread), thread))
+#endif
+    {
+        userterm = (PFVOID)Setexc(0x102, (long)-1L);
+        protect_v((PFLONG)userterm); /* process-wide hook, preserving d2/a2 */
+    }
 #if CONF_WITH_USER_ASPACE
     {
         BOOL resident = FALSE;
@@ -1516,8 +1538,13 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 /*
  * xtermres - Function 0x31 (Ptermres)
  */
-WORD xtermres(long blkln, WORD rc)
+long xtermres(long blkln, WORD rc)
 {
+#if CONF_WITH_NATIVE_SCHED
+    KTHREAD *thread = ksched_exit_thread(run);
+    if (thread && !kproc_thread_is_sole(kthread_process(thread), thread))
+        return EACCDN;
+#endif
 #if ARCH_X86_64
     /* An accessory is owned by the AES session and must drain on restart. */
     if (x86_64_process_is_accessory())

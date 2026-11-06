@@ -764,3 +764,16 @@ All allocation, callback, cancellation and teardown occur outside that guard.
 Usage-credit policy is stored explicitly in KPROC rather than inferred from the
 controller pointer; controller-first retirement is tested. See the current
 clone-public-integration.txt contract and thread-startup.txt for release order.
+
+Runnable SAME_PROCESS update
+-----------------------------
+
+Managed x32 now supports trusted SAME_PROCESS publication. Per-task startup and
+syscall-stack ownership no longer depend on first-thread KPROC fields. The
+initial task can become a non-runnable PROCESS anchor after its THREAD stops;
+root reaps that execution independently of live siblings. Pterm stops its caller,
+only the last THREAD commits the existing PROCESS finalizer, and Pwait/CUIS see
+one PROCESS completion. Compatibility-map rollback is transaction-owned and
+never revokes a running SAME_PROCESS source. See thread-group-execution.txt
+for the complete reference graph, per-TID observation, TSR policy and deferred
+preemption/sibling issues. ARM/m68k runnable startup is still unavailable.

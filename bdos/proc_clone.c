@@ -18,6 +18,9 @@ struct proc_clone_observer {
     KPROC *process; /* identity only: never retains descriptors or a PD */
     WORD pid;
     ULONG tid;
+    KTHREAD *thread; /* borrowed until root detach; no reference cycle */
+    BOOL same_process, thread_completed;
+    UWORD thread_status;
     PROC_CLONE_OBSERVER_STATE state;
 };
 struct proc_clone_transaction {
@@ -26,6 +29,7 @@ struct proc_clone_transaction {
     KTHREAD *thread;         /* owns execution-resource retention, not runnable */
     PROC_CLONE_PROCESS_POLICY policy;
     BOOL owns_process;
+    BOOL owns_compat; /* only NEW_PROCESS preparation, never source resources */
     THREAD_STARTUP_DRAFT *startup;
     PROC_CLONE_OBSERVER *observer; /* borrowed from owned startup registration */
     BOOL asynchronous;
@@ -53,7 +57,7 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 #endif
     thread_startup_abort(&tx->startup);
 #if CONF_WITH_NATIVE_SCHED
-    kproc_clone_drop_compat(tx->process);
+    if (tx->owns_compat) kproc_clone_drop_compat(tx->process);
 #endif
     if (tx->owns_process) proc_dispose_process(tx->process);
     kthread_destroy(tx->thread);
@@ -102,6 +106,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     tx->observer = NULL; tx->asynchronous = FALSE;
     tx->policy = args->process_policy;
     tx->owns_process = FALSE;
+    tx->owns_compat = FALSE;
     tx->source = kproc_retain_live(args->source);
     if (!tx->source) { error = EACCDN; goto failed; }
     if (injected(1)) goto failed;
@@ -150,6 +155,7 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     if (tx->owns_process) {
         tx->process = NULL; /* transfer retained identity/disposal to result */
         tx->owns_process = FALSE;
+        tx->owns_compat = FALSE;
     }
     tx->thread = NULL;
     *transaction = NULL; /* no callback can abort this transaction twice */
@@ -178,6 +184,10 @@ static void observer_detach(void *context)
     else if (observer->state == PROC_CLONE_OBSERVER_PUBLISHED)
         observer->state = PROC_CLONE_OBSERVER_REAPED;
     else panic("clone observer detached twice");
+    if (observer->thread) {
+        observer->thread_completed = kthread_exit_status(observer->thread, &observer->thread_status);
+        observer->thread = NULL;
+    }
     observer_put(observer);
 }
 LONG proc_clone_observe_async(PROC_CLONE_TRANSACTION *tx, PROC_CLONE_OBSERVER **out)
@@ -189,6 +199,10 @@ LONG proc_clone_observe_async(PROC_CLONE_TRANSACTION *tx, PROC_CLONE_OBSERVER **
     observer = kalloc(sizeof(*observer));
     if (!observer) return ENSMEM;
     observer->references = 1;
+    observer->same_process = tx->policy == PROC_CLONE_SAME_PROCESS;
+    observer->thread = observer->same_process ? tx->thread : NULL;
+    observer->thread_completed = FALSE;
+    observer->thread_status = 0;
     observer->process = kproc_retain_live(tx->process);
     if (!observer->process) { kfree(observer); return EACCDN; }
     if (injected(5)) { observer_put(observer); return ENSMEM; }
@@ -211,8 +225,15 @@ BOOL proc_clone_observer_result(const PROC_CLONE_OBSERVER *observer, PROC_CLONE_
 {
     UWORD status;
     if (!observer || !out ||
-        (observer->state != PROC_CLONE_OBSERVER_PUBLISHED && observer->state != PROC_CLONE_OBSERVER_REAPED) ||
-        !kproc_ref_status(observer->process, &status)) return FALSE;
+        (observer->state != PROC_CLONE_OBSERVER_PUBLISHED && observer->state != PROC_CLONE_OBSERVER_REAPED)) return FALSE;
+    if (observer->same_process) {
+        if (observer->thread) {
+            if (!kthread_exit_status(observer->thread, &status)) return FALSE;
+        } else {
+            if (!observer->thread_completed) return FALSE;
+            status = observer->thread_status;
+        }
+    } else if (!kproc_ref_status(observer->process, &status)) return FALSE;
     out->pid = observer->pid; out->tid = observer->tid; out->status = status;
     return TRUE; /* snapshot of existing completion, not another wait/reaper */
 }
@@ -331,7 +352,8 @@ LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_A
     PD *controller;
     ULONG identity;
     LONG error;
-    if (!args || !startup || args->process_policy != PROC_CLONE_NEW_PROCESS || args->vm_policy != PROC_CLONE_SHARE_VM)
+    if (!args || !startup || (args->process_policy != PROC_CLONE_NEW_PROCESS &&
+        args->process_policy != PROC_CLONE_SAME_PROCESS) || args->vm_policy != PROC_CLONE_SHARE_VM)
         return EINVAL;
     if (!ksched_clone_context(args->source,&controller)) return EINVFN;
     error = proc_clone(args,&tx);
@@ -365,19 +387,28 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     if (!handle || !*handle || !created || created->pid || created->tid) return EINVAL;
     tx = *handle;
     if (kproc_live_pd(tx->source) != run || !aspace_is_current(kaspace_backend(tx->space))) return EINVFN;
-    if (tx->policy != PROC_CLONE_NEW_PROCESS || !tx->owns_process || !tx->startup ||
+    if (((tx->policy != PROC_CLONE_NEW_PROCESS || !tx->owns_process) &&
+         tx->policy != PROC_CLONE_SAME_PROCESS) || !tx->startup ||
         !tx->observer || tx->observer->state != PROC_CLONE_OBSERVER_PREPARED) return EINVFN;
     if (!startup_target_live(tx) || !kthread_clone_run_ready(tx->thread)) return EACCDN;
     if (thread_startup_state(tx->startup) != THREAD_STARTUP_OBSERVED) return EINVAL;
     if (!ksched_clone_context(tx->source, &controller)) return EINVFN;
     error = ksched_task_reserve(FALSE, &slot);
     if (error) return error;
-    if (!kproc_clone_prepare_compat(tx->process, tx->thread, tx->space) ||
-        !kproc_clone_prepare_controller(tx->process, controller) ||
-        !kproc_clone_prepare_parent(tx->process, tx->source)) { error = ENSMEM; goto failed; }
+    if (tx->policy == PROC_CLONE_SAME_PROCESS) {
+        if (tx->process != tx->source || !kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) ||
+            kproc_get_parent(run) != controller) { error = EACCDN; goto failed; }
+    } else {
+        if (!kproc_clone_prepare_compat(tx->process, tx->thread, tx->space)) { error = ENSMEM; goto failed; }
+        tx->owns_compat = TRUE;
+        if (!kproc_clone_prepare_controller(tx->process, controller) ||
+            !kproc_clone_prepare_parent(tx->process, tx->source)) { error = ENSMEM; goto failed; }
+    }
     error = thread_startup_run_preflight(tx->startup);
     if (error) goto failed;
-    if (!kproc_clone_run_ready(tx->process, tx->thread, tx->space) ||
+    if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
+          kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) :
+          kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
         kproc_active_space(tx->source) != tx->space) { error = EACCDN; goto failed; }
     /* Only no-allocation/no-callback revalidation, sealing and stores occur
      * under backend exclusion. Cleanup always restores the entry IRQ state. */
@@ -405,7 +436,8 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     release_transaction(tx); /* outside publication exclusion */
     return E_OK;
 failed:
-    kproc_clone_drop_compat(tx->process); ksched_task_cancel(&slot);
+    if (tx->owns_compat) { kproc_clone_drop_compat(tx->process); tx->owns_compat = FALSE; }
+    ksched_task_cancel(&slot);
     return error;
 }
 
@@ -427,10 +459,13 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
     error = ksched_task_reserve(TRUE, &slot);
     if (error) return error;
     if (!kproc_clone_prepare_compat(tx->process, tx->thread, tx->space)) { error = ENSMEM; goto failed; }
+    tx->owns_compat = TRUE;
     if (!kproc_clone_prepare_parent(tx->process, tx->source)) { error = ENSMEM; goto failed; }
     error = thread_startup_run_preflight(startup);
     if (error) goto failed;
-    if (!kproc_clone_run_ready(tx->process, tx->thread, tx->space) ||
+    if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
+          kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) :
+          kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
         kproc_active_space(tx->source) != tx->space) { error = EACCDN; goto failed; }
     error = thread_startup_seal(startup);
     if (error) goto failed;
@@ -451,7 +486,7 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
     release_transaction(tx);
     return error;
 failed:
-    kproc_clone_drop_compat(tx->process);
+    if (tx->owns_compat) { kproc_clone_drop_compat(tx->process); tx->owns_compat = FALSE; }
     ksched_task_cancel(&slot);
     return error;
 }
@@ -467,11 +502,17 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     ULONG tid = kthread_tid(tx->thread);
     THREAD_STARTUP_DRAFT *startup = tx->startup;
     if (!thread_startup_take_stacks(startup, &owners)) panic("clone publication: missing prepared stacks");
-    kproc_clone_commit_run(tx->process, tx->space, startup, owners.syscall.physical, owners.syscall.top, tx->asynchronous);
-    tx->space = NULL;
-    owners.syscall.physical = owners.syscall.top = 0;
+    if (tx->policy == PROC_CLONE_SAME_PROCESS) {
+        kproc_clone_commit_sibling(tx->process, tx->thread);
+    } else {
+        kproc_clone_commit_run(tx->process, tx->space, startup, owners.syscall.physical, owners.syscall.top, tx->asynchronous);
+        tx->space = NULL;
+        tx->owns_compat = FALSE; /* live PROCESS now owns its compatibility maps */
+        owners.syscall.physical = owners.syscall.top = 0;
+    }
     ksched_clone_commit(slot, tx->process, tx->thread, startup, &owners.scheduler,
-                         tx->asynchronous ? tx->source : NULL);
+                         tx->asynchronous ? tx->source : NULL,
+                         tx->policy == PROC_CLONE_SAME_PROCESS, &owners.syscall);
     if (tx->observer) tx->observer->state = PROC_CLONE_OBSERVER_PUBLISHED;
     tx->process = NULL; tx->thread = NULL; tx->startup = NULL; tx->owns_process = FALSE;
     /* First externally visible store starts here. Only no-fail stores and

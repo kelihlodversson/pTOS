@@ -96,6 +96,8 @@ BOOL kproc_begin_exit(PD *p)
     return TRUE;
 }
 void kproc_require_no_threads(PD *p) { (void)p; }
+KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
+BOOL kproc_thread_is_sole(KPROC *p, KTHREAD *t) { (void)p; (void)t; abort(); }
 void kproc_require_exit_thread(PD *p, KTHREAD *thread) { (void)p; CHECK(!thread); }
 BOOL kthread_is_executing(const KTHREAD *thread) { (void)thread; return FALSE; }
 void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
@@ -183,6 +185,7 @@ static void exit_check(void)
     memset(tasks,0,sizeof(tasks));
     scheduler.tasks = tasks; scheduler.active = TRUE;
     tasks[0].program = nested ? &parent : &owner;
+    tasks[0].process = (KPROC *)tasks[0].program;
     tasks[0].state = TASK_RUNNING; tasks[0].asynchronous = TRUE;
     tasks[1].program = &successor; tasks[1].deferred_owner = &owner; tasks[1].state = TASK_DEFERRED;
     tasks[1].thread = (KTHREAD *)&successor;

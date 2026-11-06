@@ -19,7 +19,7 @@ KTHREAD *kthread_create(struct _pd *pd);
  * PROCESS's active VM. No execution backend is installed by construction. */
 KTHREAD *kthread_prepare(struct _pd *pd, struct kaspace *space);
 /* Clone construction rejects the ordinary execution setter/start. Only the
- * validated NEW_PROCESS publication transaction can activate it. */
+ * validated clone publication transaction can activate it. */
 KTHREAD *kthread_construct_identity(struct kproc *process, struct kaspace *space);
 /* Transfer a backend execution resource to a non-runnable thread. The
  * reclaimer must not block or exit non-locally and runs only during reap.
@@ -31,7 +31,7 @@ BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void
 BOOL kthread_start(KTHREAD *thread);
 #if CONF_WITH_NATIVE_SCHED
 BOOL kthread_clone_run_ready(const KTHREAD *thread);
-/* Only the validated NEW_PROCESS publication transaction may call this. */
+/* Only the validated clone publication transaction may call this. */
 void kthread_clone_commit(KTHREAD *thread, void *resource, void (*reclaim)(void *));
 #endif
 /* Transfer a durable user-stack hold, including for a non-runnable identity.
@@ -40,10 +40,13 @@ void kthread_clone_commit(KTHREAD *thread, void *resource, void (*reclaim)(void 
 BOOL kthread_take_stack_hold(KTHREAD *thread, struct kaspace_lease **hold);
 BOOL kthread_is_executing(const KTHREAD *thread);
 /* On the resumed launcher stack, after abandoning the child syscall stack:
- * detach the sole thread from a reserved PROCESS exit handoff, retaining its
- * identity/ASPACE/execution resource until safe scheduler-root reap. This does
- * not publish completion; proc_finalize_exit remains its single owner. */
+ * detach this thread, retaining its identity/ASPACE/execution resource until
+ * safe scheduler-root reap. Only the final thread reserves PROCESS cleanup;
+ * proc_finalize_exit remains the sole PROCESS completion producer. */
 BOOL kthread_finish_handoff(KTHREAD *thread);
+/* Safe launcher completion snapshot; no PROCESS completion is fabricated. */
+BOOL kthread_finish_exit(KTHREAD *thread, UWORD status);
+BOOL kthread_exit_status(const KTHREAD *thread, UWORD *status);
 /* Stop preserves membership and all references until safe-context reap.
  * Repeated stop returns FALSE. The backend must prevent further resumption. */
 BOOL kthread_stop(KTHREAD *thread);

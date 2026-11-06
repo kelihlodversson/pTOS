@@ -4,7 +4,8 @@ Internal clone startup and publication (#892)
 The internal x32 root runner and active-group spawn execute PROC_CLONE_NEW_PROCESS with
 PROC_CLONE_SHARE_VM: a distinct PROCESS/PID and exactly one KTHREAD share the
 source KASPACE. Public Pclone uses active-group startup on managed x32 tasks;
-SAME_PROCESS/PREPARED_PROCESS runnable startup remains unsupported.
+SAME_PROCESS uses the thread-only handoff in thread-group-execution.txt.
+PREPARED_PROCESS runnable startup remains unsupported.
 Non-NULL Pclone.tls remains unsupported. No public termination semantics change.
 
 Execution preconditions
@@ -50,10 +51,10 @@ syscall stack moves into KPROC, then gouser's existing launcher takes it through
 kproc_take_kernel_stack. The scheduler stack moves into KTHREAD_CONTEXT. The
 startup image owns neither stack after these transfers.
 
-The published PROCESS rejects every further THREAD association until retirement.
-This is a lifetime restriction, including after dispatch, rather than a one-time
-membership count check. The Pterm-based bridge is safe only under that contract.
-SAME_PROCESS execution requires the internal sibling-safe exit work in #893.
+Ordinary unvalidated backend association remains guarded. Trusted SAME_PROCESS
+publication may add an independent context to a live managed PROCESS. Pterm and
+the same return bridge now use a thread-only handoff; only its last association
+commits PROCESS cleanup. See thread-group-execution.txt for anchor/stack lifetime.
 
 Mapping leases and durable holds
 --------------------------------
@@ -266,7 +267,7 @@ retirement and makes completed orphans root-reapable. Active clone child usage
 is credited by the existing Pwait path once, not also at KPROC retirement. CUIS formatting remains in
 its existing task completion consumer. No second process completion/wait system
 has been introduced. Public managed x32 Pclone selects the owned observer path;
-SAME_PROCESS startup remains gated.
+SAME_PROCESS startup uses the shared thread-only lifetime contract.
 
 Production x32 tests enter the real active API from a kernel-only Syield hook
 on behalf of an executing ring-3 parent. They exercise parent continuation,
@@ -288,7 +289,7 @@ Pclone snapshots either the legacy 28-byte prefix or the 32-byte extension once,
 normalizes ILP32 pointers, validates policies and dispatches NEW_PROCESS/SHARE_VM
 only from the current managed native task. Optional PID/TID stores and positive
 signed TID return use the same transaction. Non-NULL TLS and invalid flags fail
-before construction; private/SAME_PROCESS and unsupported backends remain gated.
+before construction; private VM and unsupported architecture backends remain gated.
 
 Lazy heap/mmap entry, stack and output reservations are backed before startup
 lease acquisition. This construction path returns backing errors instead of
@@ -297,3 +298,14 @@ written before commit. The narrow publication IRQ guard excludes allocation,
 callbacks and cleanup; restoration precedes abort/cancellation and transaction
 release. Pwait usage policy is explicit, independent of controller-reference
 teardown order. See clone-public-integration.txt for the ABI and guard contract.
+
+SAME_PROCESS execution update
+------------------------------
+
+The historical sole-thread startup notes above describe the original NEW_PROCESS
+checkpoint. Managed x32 siblings now use per-task prepared CPU/syscall-stack
+resources, while one process-completion anchor survives initial-thread exit.
+THREAD exit does not release descriptors/CWD/PD or complete PROCESS while live
+siblings remain. The trusted return stub uses the same Pterm handoff; PROCESS
+completion and existing Pwait/CUIS consumers remain single-owner operations.
+See thread-group-execution.txt for the current contract and #713 blockers.

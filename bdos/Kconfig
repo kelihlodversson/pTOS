@@ -16,8 +16,9 @@ config CONF_WITH_PCLONE
     help
       Route Pclone through its architecture ABI dispatcher and validate its
       arguments on address-space kernels. Managed native x32 tasks can create
-      a distinct process sharing their address space with CLONE_VM. Other
-      execution backends and SAME_PROCESS/private-VM startup return EINVFN.
+      a distinct process sharing their address space with CLONE_VM, or add a
+      thread to the current process with CLONE_VM | CLONE_SAME_PROCESS. Other
+      execution backends and private-VM startup return EINVFN.
       Kernels without user address spaces return EINVFN without reading args.
 
 config CONF_PCLONE_STACK_ALIGNMENT
