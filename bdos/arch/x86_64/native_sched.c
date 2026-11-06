@@ -368,6 +368,9 @@ LONG ksched_yield(void)
 {
     UQUAD flags;
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_MMAP
+    x86_64_memtest_clone_yield();
+#endif
     ksched_block(always_ready, NULL);
     if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
     return E_OK;
@@ -791,15 +794,37 @@ BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *startup)
     }
     return FALSE;
 }
+BOOL ksched_clone_begin(KPROC *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard)
+{
+    UQUAD flags;
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    if (!ksched_spawn_allowed() || scheduler.current->process != source ||
+        scheduler.current->program != run || kproc_live_pd(source) != run) {
+        if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+        return FALSE;
+    }
+    guard->flags = flags; *controller = scheduler.root.pd;
+    return TRUE;
+}
+void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard)
+{
+    if (guard->flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+}
 void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STARTUP_DRAFT *startup,
-                         UQUAD physical, UQUAD top)
+                         THREAD_STARTUP_STACK *stack, KPROC *logical_parent)
 {
     KERNEL_TASK *task = slot;
     if (task->state != TASK_RESERVED) panic("clone binding without reservation");
     task->program = kproc_live_pd(process); task->pid = kproc_ref_pid(process);
     task->process = process; task->thread = thread; task->startup = startup;
-    task->execution.stack.physical = physical; task->execution.stack.top = top;
+    task->execution.stack.physical = stack->physical; task->execution.stack.top = stack->top;
+    stack->physical = stack->top = 0;
     task->take_ownership = FALSE;
+    if (logical_parent) {
+        if (scheduler.current->process != logical_parent || kproc_live_pd(logical_parent) != run)
+            panic("clone publication parent changed");
+        task->asynchronous = TRUE; task->parent = run;
+    }
 #if CONF_WITH_X86_64_MEMTEST
     task->prepared_tid = kthread_tid(thread);
 #endif

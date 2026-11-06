@@ -106,6 +106,9 @@ struct kproc {
     KASPACE *clone_compat;
     UBYTE clone_maps;
     void *clone_startup;
+    PD *clone_controller_pd; /* pinned allocation, scheduler-root continuation */
+    UQUAD clone_controller_gen;
+    KPROC *clone_controller_identity; /* owning if the root is tracked */
 #endif
     BOOL clone_identity_only; /* no executable context/startup contract yet */
     BOOL completion_pending;
@@ -474,6 +477,8 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
 #if CONF_WITH_NATIVE_SCHED
 #if CONF_WITH_X86_64_MEMTEST
 static UWORD fail_clone_compat;
+static BOOL fail_clone_controller;
+void kproc_test_fail_clone_controller(void) { fail_clone_controller = TRUE; }
 void kproc_test_fail_clone_compat(UWORD stage) { fail_clone_compat = stage; }
 #endif
 static BOOL clone_borrow_unique(ASPACE *as, VADDR va, VADDR bytes)
@@ -511,6 +516,12 @@ void kproc_clone_drop_compat(KPROC *p)
     ASPACE *as;
     if (!p || !p->clone_compat) return;
     as = kaspace_backend(p->clone_compat);
+    if (p->clone_controller_pd) {
+        procmem_pin((VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD), -1);
+        p->clone_controller_pd = NULL;
+        p->clone_controller_gen = 0;
+        kproc_release(p->clone_controller_identity); p->clone_controller_identity = NULL;
+    }
     if (p->clone_maps & 2) aspace_unborrow(as, (VADDR)(uintptr_t)p->env_start, p->env_end - p->env_start);
     if (p->clone_maps & 1) aspace_unborrow(as, (VADDR)(uintptr_t)p->user_start, p->user_end - p->user_start);
     p->clone_maps = 0;
@@ -518,7 +529,7 @@ void kproc_clone_drop_compat(KPROC *p)
 }
 BOOL kproc_clone_run_ready(KPROC *p, KTHREAD *thread, KASPACE *space)
 {
-    return kproc_clone_target_ready(p, thread) && p->clone_compat == space && p->clone_maps == 3;
+    return kproc_clone_target_ready(p, thread) && p->clone_compat == space && (p->clone_maps & 3) == 3;
 }
 BOOL kproc_clone_parent_ready(const KPROC *p)
 {
@@ -532,6 +543,43 @@ BOOL kproc_clone_prepare_parent(KPROC *p, KPROC *parent)
      * during launch or after publication. */
     return p && parent && kproc_live_pd(parent) && p->parent_identity == parent;
 }
+/* Distinct from logical parent_identity. The backend guarantees that its root
+ * continuation is blocked until the group ends. Own an allocation pin as well
+ * as a tracked identity, so a reusable raw PD is never the only controller. */
+BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
+{
+    ASPACE *as;
+    VADDR page, end;
+    KPROC *identity;
+    UQUAD generation;
+    if (!p || !p->clone_compat || p->clone_controller_pd || !controller ||
+        !(generation = procmem_gen(controller)) ||
+        !procmem_range_live((VADDR)(uintptr_t)controller, sizeof(PD))) return FALSE;
+    identity = kproc_find(controller);
+    if (identity && !kproc_retain_live(identity)) return FALSE;
+    as = kaspace_backend(p->clone_compat);
+    page = (VADDR)(uintptr_t)controller & ~(VADDR)(USER_PAGE_SIZE - 1);
+    end = ((VADDR)(uintptr_t)controller + sizeof(PD) + USER_PAGE_SIZE - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    /* Reuse only an exact existing writable procmem translation. Never replace
+     * somebody else's mapping or unborrow a mapping owned by the shared space. */
+    for (; page < end; page += USER_PAGE_SIZE) {
+        PADDR physical;
+        UWORD prot;
+        if (!aspace_translate(as, page, &physical, &prot) ||
+            physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
+            kproc_release(identity);
+            return FALSE;
+        }
+    }
+    procmem_pin((VADDR)(uintptr_t)controller, sizeof(PD), +1);
+    p->clone_controller_pd = controller;
+    p->clone_controller_gen = generation;
+    p->clone_controller_identity = identity;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_clone_controller) { fail_clone_controller = FALSE; return FALSE; }
+#endif
+    return TRUE;
+}
 void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physical, uintptr_t top)
 {
     /* Impossible-to-fail invariants already proved before the first store;
@@ -539,6 +587,11 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
     if (!p || !p->threads || !kproc_clone_run_ready(p, p->threads, space) ||
         !startup || !physical || !top) panic("unprepared clone PROCESS activation");
     /* All references and mappings acquired before sealing. No callbacks. */
+    if (p->clone_controller_pd) {
+        if (procmem_gen(p->clone_controller_pd) != p->clone_controller_gen)
+            panic("clone controller identity changed");
+        p->parent = p->clone_controller_pd; /* logical identity remains separate */
+    }
     p->active_space = space; p->aspace = kaspace_backend(space);
     p->clone_exclusive = TRUE; p->clone_identity_only = FALSE;
     p->clone_startup = startup; p->kstack_phys = physical; p->kstack_top = top;
@@ -707,6 +760,11 @@ void kproc_destroy(PD *pd)
             if (launcher
 #if CONF_WITH_USER_ASPACE
                 && kproc->started
+#endif
+#if CONF_WITH_NATIVE_SCHED
+                /* Active clones keep logical parent identity: their usage
+                 * is credited by existing Pwait, never also at retirement. */
+                && !kproc->clone_controller_pd
 #endif
             )
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;

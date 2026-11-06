@@ -1,4 +1,4 @@
-/* Kernel-owned startup planning; execution requires the private root transaction. */
+/* Kernel-owned startup planning; execution requires the trusted publication transaction. */
 #ifndef THREAD_STARTUP_H
 #define THREAD_STARTUP_H
 #include "portab.h"
@@ -6,7 +6,7 @@
 struct kaspace;
 struct kaspace_lease;
 typedef struct thread_startup_draft THREAD_STARTUP_DRAFT;
-typedef struct { PADDR physical; uintptr_t top; } THREAD_STARTUP_STACK;
+typedef struct thread_startup_stack { PADDR physical; uintptr_t top; } THREAD_STARTUP_STACK;
 typedef struct { THREAD_STARTUP_STACK syscall, scheduler; } THREAD_STARTUP_STACK_OWNERS;
 typedef struct {
     VADDR entry, argument, stack_base;
@@ -71,6 +71,6 @@ BOOL thread_startup_take_stacks(THREAD_STARTUP_DRAFT *, THREAD_STARTUP_STACK_OWN
  * execution cleanup uses root-verified reclaim. Cleared handles are idempotent. */
 void thread_startup_abort(THREAD_STARTUP_DRAFT **draft);
 /* Borrowed immutable backend image. Reading it does not grant execution;
- * only the private root transaction can transfer its execution ownership. */
+ * only the trusted publication transaction can transfer its execution ownership. */
 const void *thread_startup_image(const THREAD_STARTUP_DRAFT *draft);
 #endif

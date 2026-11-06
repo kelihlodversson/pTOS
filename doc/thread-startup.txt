@@ -1,7 +1,7 @@
 Internal clone startup and publication (#892)
 ============================================
 
-The internal x32 root runner executes PROC_CLONE_NEW_PROCESS with
+The internal x32 root runner and active-group spawn execute PROC_CLONE_NEW_PROCESS with
 PROC_CLONE_SHARE_VM: a distinct PROCESS/PID and exactly one KTHREAD share the
 source KASPACE. Public Pclone remains validation-only (valid requests return
 EINVFN), and SAME_PROCESS/PREPARED_PROCESS runnable startup remains unsupported.
@@ -15,9 +15,12 @@ construction transaction. The source must be the current live PROCESS, its
 ASPACE root must actually be current, and an execution association must retain
 its live resources throughout the call. An identity-only observer is insufficient.
 The target must still be an unstarted factory-owned PROCESS with one constructed
-KTHREAD and the original shared construction space. An existing native scheduler
-group is rejected: this first runner uses its existing root-group dispatch loop,
-not a second scheduler or insertion into an already running group.
+KTHREAD and the original shared construction space. proc_clone_exec starts a
+fresh root group and waits; proc_clone_spawn publishes into the caller's current
+native group and returns identities immediately. Both use the same native
+dispatcher, task reservation and no-fail publication transaction. Active callers
+must own the current KTHREAD/PROCESS and current ASPACE, not a foreign callback
+or nested launcher's execution context.
 
 The factory already retains the parent's kernel identity. No parent reference is
 acquired after publication. Parent retirement/reuse cannot redirect notification
@@ -213,8 +216,62 @@ Publication follow-up
 
 The private reserved state and common ksched_task_reserve/cancel/publish now
 serve both root clone execution and active legacy async/deferred launches.
-Explicit reservations also prevent callback-driven slot/image reuse. The clone
-runner itself remains root-only: a shared reservation API is not a stable
-active-child launcher or asynchronous observer ownership contract. See
+Explicit reservations also prevent callback-driven slot/image reuse. The
+subsequent active-child controller and owned-observer contracts are implemented
+below; reservation alone was not sufficient to grant that execution. See
 clone-execution-audit.txt and clone-public-integration.txt for the production
-audit, exact next gate and finalized public ABI integration plan.
+audit and remaining public ABI gates.
+
+Active-group NEW_PROCESS lifetime
+--------------------------------
+
+proc_clone_spawn now reuses the active reservation path. A backend publication
+guard validates the actual current source task and masks IRQs through the final
+transition. The existing group's root continuation already exists; no dispatcher
+or PROCESS waiter is created. All fallible compatibility/controller mapping
+checks, reference acquisition, output aliases and sealing precede publication.
+The native backend consumes the prepared scheduler-stack owner as a typed record;
+PADDR/uintptr_t remain inside that record, suitable for 32-bit MMU backends too.
+
+Logical parent_identity is retained for historical PPID/notifications. The launch
+parent used by xterm is separately set to scheduler.root.pd, whose blocked
+continuation owns the group. KPROC retains the root's tracked identity, its
+allocation generation and an independent procmem pin. It accepts only an existing
+writable translation to that exact procmem page; it never overwrites or unborrows
+another owner's mapping. This first active backend rejects a missing/incompatible
+controller mapping. Controller ownership is released during process retirement,
+not kept by completion observers. A boot root without KPROC is still protected
+by allocation generation/pin and the existing blocked-root execution contract.
+
+The owned PROC_CLONE_OBSERVER is a heap record, not a caller-stack callback
+context. It holds only target completion identity and immutable PID/TID. Caller
+and startup registration own separate references. Abort changes PREPARED to
+CANCELLED without a completion; publication changes it to PUBLISHED; root detach
+changes it once to REAPED. A caller may release before child execution, or retain
+through wait, parent retirement and root reclamation. The result getter snapshots
+existing KPROC completion and does not publish another event, block, consume a
+zombie or format GUI messages. Cancelled/prepared records never report completion.
+The last record reference releases identity and memory once. The kernel caller
+must release or transfer its own handle; process exit does not discover arbitrary
+kernel-owned handles left on a stack. Borrowed registrations remain supported
+for synchronous root calls but are explicitly refused by active spawn.
+
+Async tasks retain the usual parent/zombie relationship. Existing ksched_wait
+handles a blocked or early wait; existing ksched_exiting clears parent links on
+retirement and makes completed orphans root-reapable. Active clone child usage
+is credited by the existing Pwait path once, not also at KPROC retirement. CUIS formatting remains in
+its existing task completion consumer. No second process completion/wait system
+has been introduced. Public Pclone and SAME_PROCESS startup remain gated.
+
+Production x32 tests enter the real active API from a kernel-only Syield hook
+on behalf of an executing ring-3 parent. They exercise parent continuation,
+blocked wait with independently yielding child, early completion before wait,
+normal return, fault, Ptermres, seven active children plus exhaustion, revoked
+outputs, last-moment cancellation, controller and observer acquisition failure,
+early caller-observer release and borrowed-context refusal. An orphan continues
+through actual creator PD reuse without notifying the replacement. Every case
+returns allocation/stack/controller-pin/reference counts to baseline. Generic
+owned-observer tests run as host models under x32/ARM/m68k configurations, including
+both release orders and independent completions. These do not execute new ARM
+or m68k clone CPU contexts. Legacy non-MMU m68k multitasking is #911 and is not
+an acceptance gate for this MMU slice.

@@ -2065,11 +2065,158 @@ static void clone_observer_release(void *context)
 }
 extern const UBYTE clone_probe_begin[], clone_probe_end[];
 /* Unlike bridge-only tests, these dispatch the constructed CPU/FPU image. */
+/* Kernel-only hook reached from a real ring-3 Syield. No test syscall. Each
+ * child is constructed while its actual parent is executing in the group. */
+static struct {
+    BOOL enabled, waiting, reused;
+    UWORD scenario, parent_yields, child_progress, successes, attempts;
+    KPROC *parent; /* owning completion identity, never retains its old PD */
+    PD *old_pd;
+    VADDR usage;
+    ULONG child_ticks;
+    PROC_CLONE_IDENTITIES ids[KSCHED_LIMIT];
+    PROC_CLONE_OBSERVER *observers[KSCHED_LIMIT];
+} active_clone;
+static LONG active_clone_construct(UWORD index)
+{
+    PROC_CLONE_TRANSACTION *tx = NULL;
+    PROC_CLONE_ARGS args;
+    THREAD_STARTUP_ARGS startup;
+    KTHREAD *current = ksched_exit_thread(run);
+    KPROC *source = kthread_process(current);
+    ASPACE *as = kaspace_backend(kproc_active_space(source));
+    VADDR stack, data;
+    ULONG words[6] = { 0, 0, 0, 0, 0x11112222, 0x33334444 }, check[2];
+    LONG error;
+    UQUAD frame = 0x1122334455667788ULL, after;
+    PD *controller = kproc_get_parent(run);
+    LONG pins_before = procmem_pins(controller);
+    STARTUP_OBSERVER_TEST borrowed = { 0, 0, FALSE };
+    THREAD_STARTUP_OBSERVER borrowed_ops = { startup_observer_acquire, startup_observer_release };
+    stack = kproc_uheap_alloc(run, 2*PAGE);
+    data = kproc_mmap(run,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    CHECK(stack && data && kproc_demand_page(run,stack,ASPACE_PROT_WRITE) == 1 &&
+          kproc_demand_page(run,stack+PAGE,ASPACE_PROT_WRITE) == 1 &&
+          kproc_demand_page(run,data,ASPACE_PROT_WRITE) == 1, "back active-clone stack/outputs before construction");
+    CHECK(aspace_copy_to_user(as,stack+2*PAGE-8,&frame,sizeof(frame)), "seed active return slot before publication");
+    words[0] = active_clone.scenario == 1 ? 4 : active_clone.scenario == 2 ? 5 :
+               active_clone.scenario == 3 ? 2 : active_clone.scenario == 11 ? 3 :
+               active_clone.scenario == 4 && (index & 1) ? 2 : 0;
+    words[2] = kproc_ref_pid(source); words[3] = stack;
+    CHECK(aspace_copy_to_user(as,data,words,sizeof(words)), "seed active clone argument and rollback outputs");
+    bzero(&args,sizeof(args)); args.source = source;
+    args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
+    args.resources = PROC_CLONE_RESOURCE_MASK;
+    startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE;
+    CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
+          proc_clone_retain_startup_stack(tx) == E_OK && proc_clone_prepare_outputs(tx,data+16,data+20) == E_OK,
+          "prepare real active-group PROCESS/THREAD/ASPACE and execution resources");
+    if (active_clone.scenario == 0) {
+        kproc_test_age_unstarted(proc_clone_process(tx), 37);
+        active_clone.usage = data + 32;
+    }
+    if (active_clone.scenario == 10) {
+        CHECK(proc_clone_observe_startup(tx,&borrowed_ops,&borrowed) == E_OK,
+              "prepare borrowed observer solely to verify active admission refuses it");
+    } else {
+        if (active_clone.scenario == 8) proc_clone_test_fail_after(5);
+        error = proc_clone_observe_async(tx,&active_clone.observers[index]);
+        CHECK(error == (active_clone.scenario == 8 ? ENSMEM : E_OK), "owned observer acquisition and rollback");
+        if (error) {
+            CHECK(aspace_copy_from_user(as,&after,stack+2*PAGE-8,sizeof(after)) && after == frame &&
+                  aspace_copy_from_user(as,check,data+16,sizeof(check)) && check[0] == words[4] && check[1] == words[5],
+                  "observer allocation failure preserves frame and identity outputs");
+            proc_clone_abort(&tx); return error;
+        }
+    }
+    if (active_clone.scenario == 5) CHECK(kproc_mprot(run,data,PAGE,PROT_READ) == E_OK, "revoke active publication output");
+    if (active_clone.scenario == 6) proc_clone_test_cancel_publication();
+    if (active_clone.scenario == 7) kproc_test_fail_clone_controller();
+    error = proc_clone_spawn(&tx,&active_clone.ids[index]);
+    active_clone.attempts++;
+    if (!error) {
+        CHECK(!tx && active_clone.ids[index].pid && active_clone.ids[index].tid,
+              "active publication consumes transaction and returns distinct ids without waiting");
+        active_clone.successes++;
+        CHECK(procmem_pins(controller) == pins_before + 1, "published child owns an independent controller allocation pin");
+        CHECK(proc_clone_observer_state(active_clone.observers[index]) == PROC_CLONE_OBSERVER_PUBLISHED,
+              "published child cannot run before creator yields");
+        CHECK(!proc_clone_observer_result(active_clone.observers[index], &(PROC_CLONE_COMPLETION){0,0,0}),
+              "no premature completion from publication");
+        if (active_clone.scenario == 9) proc_clone_observer_release(&active_clone.observers[index]);
+    } else {
+        LONG expected = active_clone.scenario == 5 ? EIMBA : active_clone.scenario == 6 || active_clone.scenario == 4 ? EAGAIN :
+                        active_clone.scenario == 7 ? ENSMEM : EINVFN;
+        CHECK(error == expected && !active_clone.ids[index].pid && !active_clone.ids[index].tid,
+              "failed active publication leaves result and outputs unchanged");
+        CHECK(aspace_copy_from_user(as,check,data+16,sizeof(check)) && check[0] == words[4] && check[1] == words[5],
+              "active output rollback before first publication store");
+        CHECK(active_clone.scenario == 6 ? !tx : tx != NULL, "explicit cancellation consumes; preflight failure preserves transaction");
+        proc_clone_abort(&tx);
+        CHECK(procmem_pins(controller) == pins_before && aspace_copy_from_user(as,&after,stack+2*PAGE-8,sizeof(after)) && after == frame,
+              "failed/cancelled publication releases its controller ownership and preserves return slot");
+        if (active_clone.observers[index]) CHECK(proc_clone_observer_state(active_clone.observers[index]) == PROC_CLONE_OBSERVER_CANCELLED,
+              "cancelled observer has no fabricated process completion");
+        if (active_clone.scenario == 10) CHECK(borrowed.acquired == 1 && borrowed.released == 1,
+              "borrowed observer is refused and unwound before its caller returns");
+    }
+    return error;
+}
+void x86_64_memtest_clone_yield(void)
+{
+    UWORD i;
+    KTHREAD *thread;
+    if (!active_clone.enabled || !(thread = ksched_exit_thread(run))) return;
+    if (kthread_process(thread) == active_clone.parent) {
+        active_clone.parent_yields++;
+        if (active_clone.parent_yields == 1) {
+            UWORD count = active_clone.scenario == 4 ? KSCHED_LIMIT : 1;
+            active_clone.child_ticks = kproc_test_child_ticks(active_clone.parent);
+            for (i = 0; i < count; i++) active_clone_construct(i);
+            if (active_clone.scenario == 4) CHECK(active_clone.successes == KSCHED_LIMIT-1,
+                  "actual active group exhausts its final slot without publishing an eighth child");
+        } else if (active_clone.parent_yields == 2 && active_clone.successes && active_clone.scenario != 2 &&
+                   active_clone.scenario != 4 && active_clone.scenario != 9) {
+            LONG waited;
+            PROC_CLONE_COMPLETION result = { 0, 0, 0 };
+            if (active_clone.scenario == 1) CHECK(proc_clone_observer_state(active_clone.observers[0]) == PROC_CLONE_OBSERVER_REAPED,
+                  "fast child completed and root-reaped before the parent's first wait");
+            active_clone.waiting = TRUE;
+            waited = ksched_wait(active_clone.ids[0].pid, active_clone.scenario == 1 ? 1 : 0, active_clone.usage);
+            active_clone.waiting = FALSE;
+            CHECK((WORD)((ULONG)waited >> 16) == active_clone.ids[0].pid &&
+                  proc_clone_observer_result(active_clone.observers[0],&result) && result.pid == active_clone.ids[0].pid &&
+                  result.tid == active_clone.ids[0].tid && result.status == (active_clone.scenario == 3 ? 0xffff : active_clone.scenario == 11 ? 0x468a : 0x2468),
+                  "existing Pwait consumer and independently owned observer agree on completion");
+            if (active_clone.scenario == 0) {
+                ULONG usage[2];
+                CHECK(kproc_copy_from_user(usage,active_clone.usage,sizeof(usage)) && usage[0] >= 37 * (1000UL / CLOCKS_PER_SEC) &&
+                      kproc_test_child_ticks(active_clone.parent) - active_clone.child_ticks == usage[0] / (1000UL / CLOCKS_PER_SEC),
+                      "logical parent child usage is credited once by Pwait, not also during clone retirement");
+            }
+        }
+    } else {
+        if (active_clone.waiting) active_clone.child_progress++;
+        if (active_clone.scenario == 2 && !active_clone.reused && !kproc_ref_has_basepage(active_clone.parent)) {
+            PD *replacement = new_basepage();
+            KPROC *identity;
+            CHECK(replacement != NULL, "allocate replacement after actual creator retirement");
+            if (!replacement) return;
+            set_owner(replacement,replacement); set_owner(USERPTR_TO_PTR(replacement->p_env),replacement);
+            identity = kproc_retain(replacement);
+            CHECK(replacement == active_clone.old_pd && kproc_ref_pid(identity) != kproc_ref_pid(active_clone.parent),
+                  "retired parent PD really is reused under a distinct PROCESS identity");
+            CHECK(!kproc_notification_parent(run), "orphan completion cannot notify replacement at reused creator PD");
+            proc_dispose_process(identity); kproc_release(identity);
+            active_clone.reused = TRUE;
+        }
+    }
+}
 static void test_clone_execution(void)
 {
     UWORD mode;
     int before = failures;
-    for (mode = 0; mode < 12; mode++) {
+    for (mode = 0; mode < 24; mode++) {
         SNAP baseline;
         PD *pd, *original = run;
         KPROC *source;
@@ -2087,7 +2234,7 @@ static void test_clone_execution(void)
         THREAD_STARTUP_OBSERVER observer = { clone_observer_acquire, clone_observer_release };
         LONG result;
         UQUAD resident_generation, frame_before = 0x1122334455667788ULL, frame_after;
-        BOOL executed = mode < 3 || mode == 10;
+        BOOL executed = mode < 3 || mode == 10 || mode >= 12;
         snap(&baseline);
         pd = new_basepage();
         if (!pd) return;
@@ -2124,7 +2271,7 @@ static void test_clone_execution(void)
               proc_clone_retain_startup_stack(tx) == E_OK &&
               proc_clone_prepare_outputs(tx,data+16,data+20) == E_OK, "construct/process/VM/thread/context/leases before publication");
         watched.process = proc_clone_process(tx);
-        watched.expected = mode == 0 ? 0x2468 : mode == 1 ? 0x3579 : mode == 10 ? 0x468a : 0xffff;
+        watched.expected = mode == 0 || mode >= 12 ? 0x2468 : mode == 1 ? 0x3579 : mode == 10 ? 0x468a : 0xffff;
         watched.fail = mode == 8;
         CHECK(proc_clone_observe_startup(tx,&observer,&watched) == (mode == 8 ? ENSMEM : E_OK),
               "register retained PROCESS lifecycle observer or fail before publication");
@@ -2138,8 +2285,15 @@ static void test_clone_execution(void)
         if (mode == 5) ksched_test_fail_clone_slot();
         if (mode == 6 || mode == 7) kproc_test_fail_clone_compat(mode-5);
         if (mode == 11) proc_dispose_process(source); /* execution association retains resources */
+        bzero(&active_clone,sizeof(active_clone));
+        if (mode >= 12) {
+            active_clone.enabled = TRUE; active_clone.scenario = mode - 12;
+            active_clone.parent = kproc_retain_live(watched.process);
+            active_clone.old_pd = kproc_live_pd(watched.process);
+        }
         bzero(exit_handoff_stages,sizeof(exit_handoff_stages)); exit_handoff_watch = TRUE;
         result = proc_clone_exec(&tx,&done);
+        active_clone.enabled = FALSE;
         exit_handoff_watch = FALSE;
         CHECK(run == pd && aspace_is_current(as) && (mode == 11 ? !kproc_active_space(source) : kproc_active_space(source) == space) && kproc_ref_has_basepage(source),
               "child exit/cancellation preserves parent PROCESS and shared ASPACE");
@@ -2152,8 +2306,8 @@ static void test_clone_execution(void)
                   "publication commits both identities before dispatch");
             CHECK(aspace_copy_from_user(as,readback,data,sizeof(readback)) && readback[1] == 0x600dcafe,
                   "real initial CPU/FPU state and three cooperative yield patterns pass");
-            CHECK(exit_handoff_stages[0] == 1 && exit_handoff_stages[1] == 1 &&
-                  exit_handoff_stages[2] == 1 && exit_handoff_stages[3] == 1,
+            CHECK(exit_handoff_stages[0] == 1 + active_clone.successes && exit_handoff_stages[1] == 1 + active_clone.successes &&
+                  exit_handoff_stages[2] == 1 + active_clone.successes && exit_handoff_stages[3] == 1 + active_clone.successes,
                   "one THREAD/PROCESS handoff and syscall reclamation for constructed clone");
         } else {
             CHECK(result == (mode == 3 ? EIMBA : mode == 4 ? EAGAIN : mode == 8 ? EINVAL : mode == 11 ? EINVFN : ENSMEM) && !done.pid && !done.tid &&
@@ -2175,12 +2329,33 @@ static void test_clone_execution(void)
               "one completion observation for executed PROCESS, none for rejected/cancelled construction");
         if (mode == 10) CHECK(procmem_free_ownerless_since(resident_generation) == 2,
               "Ptermres keeps only its PD/environment blocks, with no live process or execution resources");
+        if (mode >= 12) {
+            UWORD j;
+            CHECK(active_clone.parent_yields == 3 && !kproc_ref_has_basepage(active_clone.parent),
+                  "creator continued independently and completed before returning to group root");
+            if (active_clone.scenario == 0 || active_clone.scenario == 3 || active_clone.scenario == 11)
+                CHECK(active_clone.child_progress, "blocked creator permits independent child execution");
+            if (active_clone.scenario == 2) CHECK(active_clone.reused, "orphan survived actual parent PD reuse");
+            for (j = 0; j < KSCHED_LIMIT; j++) if (active_clone.observers[j]) {
+                PROC_CLONE_COMPLETION observed = { 0, 0, 0 };
+                if (active_clone.ids[j].pid) CHECK(proc_clone_observer_state(active_clone.observers[j]) == PROC_CLONE_OBSERVER_REAPED &&
+                    proc_clone_observer_result(active_clone.observers[j],&observed) && observed.pid == active_clone.ids[j].pid &&
+                    observed.tid == active_clone.ids[j].tid && observed.status == (active_clone.scenario == 3 || (active_clone.scenario == 4 && (j & 1)) ? 0xffff : active_clone.scenario == 11 ? 0x468a : 0x2468),
+                    "each independent async observer survives wait/orphan/root reclamation with its own status");
+                proc_clone_observer_release(&active_clone.observers[j]);
+                proc_clone_observer_release(&active_clone.observers[j]);
+            }
+            kproc_release(active_clone.parent);
+            if (active_clone.scenario == 11) CHECK(procmem_free_ownerless_since(resident_generation) == 2,
+                  "active Ptermres retains only its two resident compatibility allocations");
+        }
         CHECK(kproc_uheap_free(pd,stack) == E_OK, "scheduler root reap released final durable user-stack hold");
         run = original; aspace_leave(previous);
         kthread_destroy(parent_execution);
         proc_dispose_process(source); kproc_release(source);
         same(&baseline,"constructed clone normal/fault execution and complete root reclamation");
     }
+    kcprintf("x86-64 active-group clone: %s\n", failures == before ? "PASS" : "FAIL");
     kcprintf("x86-64 executable clone: %s\n", failures == before ? "PASS" : "FAIL");
 }
 

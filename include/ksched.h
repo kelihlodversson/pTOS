@@ -16,6 +16,7 @@ LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result);
 BOOL ksched_active(void);
 #if CONF_WITH_NATIVE_SCHED
 struct thread_startup_draft;
+struct thread_startup_stack;
 struct proc_clone_transaction;
 struct kproc;
 struct kthread;
@@ -35,7 +36,13 @@ void ksched_test_fail_clone_slot(void);
 void ksched_task_cancel(void **slot);
 void ksched_task_publish(void **slot);
 BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
-void ksched_clone_commit(void *slot, struct kproc *, struct kthread *, struct thread_startup_draft *, UQUAD physical, UQUAD top);
+/* Backends mask dispatch/IRQs and validate that source owns the current task.
+ * Root is borrowed only while its blocked continuation owns the group. */
+typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
+BOOL ksched_clone_begin(struct kproc *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard);
+void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard);
+void ksched_clone_commit(void *slot, struct kproc *, struct kthread *, struct thread_startup_draft *,
+                         struct thread_startup_stack *scheduler_stack, struct kproc *logical_parent);
 LONG ksched_clone_dispatch(void **slot, struct proc_clone_transaction *, LONG *status);
 #endif
 struct kthread;

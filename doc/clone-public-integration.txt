@@ -4,8 +4,7 @@ Public NEW_PROCESS integration contract (#890/#892)
 This fixes the integration plan; it does not enable a public operation. The
 exported 28-byte ptos_clone_args, native decoder and xclone validation behavior
 remain unchanged. Current flags must be zero, non-NULL TLS fails EINVAL and a
-valid request returns EINVFN. The internal root runner is not a public capability
-or an active-group clone implementation.
+valid request returns EINVFN. Internal root and active-group runners are not public syscall capabilities.
 
 Future flags and results
 ------------------------
@@ -97,24 +96,24 @@ selected by dispatch or waits, nor reused by a reentrant preparation. Legacy
 image identity is also reserved so recursive preparation cannot start the same
 PD in a second slot. No generic PROCESS waiter or second dispatcher is added.
 
-Active proc_clone publication remains gated. The synchronous root runner's
-launcher parent is its blocked caller. A detached active child instead resumes
-on its own task stack under scheduler.root.pd, which survives the group, even
-when its logical parent retires. It must establish this trusted controller
-separately from the retained logical parent/PPID and notification identity.
-Existing Pexec uses async_parent plus a controller mapping during preparation;
-clone shared-space compatibility preparation does not yet install that contract.
-Merely accepting active reservations or clearing the root-only gate would leave
-xterm's kproc_get_parent vulnerable to a retired logical parent. Reuse the
-existing async preparation split, with vacancy-checked controller mapping
-ownership and a no-fail launch decision, before adding proc_clone_spawn.
+Active proc_clone publication now uses the established async separation. The
+logical parent retains identity only, while xterm returns to the stable scheduler
+root controller on the child's task stack. KPROC records the controller allocation
+generation, owns its pin and tracked identity, and validates the exact existing
+writable procmem mapping. It does not overwrite/borrow a replacement mapping.
+The group's blocked root continuation retains its own live execution resources.
+Controller ownership ends at child retirement; a completion snapshot does not
+keep heavyweight controller resources alive.
 
-Independent lifecycle observers need owned context storage through root reap;
-a caller's automatic callback context cannot outlive an asynchronous return.
-Register before commit and release once after stopped-root reclamation. Reuse
-#893's completion producer, #909's existing wait/zombie consumer and #907's CUIS
-observer; do not turn CUIS into PROCESS lifetime ownership. Early wait, blocked
-parent, orphaning and independent observers must consume the same single event.
+A heap-owned PROC_CLONE_OBSERVER now replaces borrowed active callback contexts.
+Its caller and startup registration hold separate refs, with cancellation versus
+published/root-released states. Its nonblocking getter reads the existing KPROC
+completion; it neither creates a completion producer nor implements waiting or
+reaping. The record survives parent retirement and caller-handle release, and
+independent records retain distinct identities/status. GUI event formatting is
+still outside the generic clone layer. Public xclone must supply the appropriate
+consumer/handle owner before returning; an arbitrary caller-stack context is
+refused by active spawn.
 
 Acceptance before connecting xclone: production active clone execution, parent
 retirement/PD reuse, slot exhaustion, pre-commit cancellation and unchanged
@@ -122,8 +121,12 @@ outputs, early completion and blocked-parent wakeup, owned observer rollback,
 normal/fault/TSR teardown and both stack release contexts. Add the complete future
 flag/size/child_pid/resource/error matrix to cross-ABI layout, decoder, production
 handler and real-trap tests while preserving validation-only compatibility.
-The current publication host fixture models slots and existing wait predicates;
-it is not evidence that an active-group proc_clone context has executed.
+The production x32 MEMTEST now executes constructed active-group clones,
+including blocked/early wait, creator PD reuse, normal/fault/TSR exit and all
+ownership transfers. Host publication/observer fixtures remain models and are
+reported separately. Public flag/output/return ABI integration, including the
+void-entry zero-status bridge, is still gated; runnable SAME_PROCESS still needs
+#893. See thread-startup.txt for the active execution contract.
 
 Minimum #893 handoff dependency
 -------------------------------
@@ -159,6 +162,6 @@ and support rollback and ownership transfer before their gate can open.
 
 ARM/m68k construction/lease/ABI compilation and existing 26/25 runtime suites do
 not execute newly constructed clone contexts. Keep their startup return EINVFN
-until backend execution/lease/termination tests exist. Non-MMU scheduling remains
+until backend execution/lease/termination tests exist. Legacy non-MMU m68k multitasking is #911; generic scheduling remains
 #713, PROCESS waits #909, shared-VM Pexec #894, TLS independent #908. None is
 silently implemented by this integration plan.

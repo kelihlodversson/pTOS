@@ -723,3 +723,25 @@ checking full CPU/FPU state across yields, high-bit x32 pointers, retained paren
 VM, final observer identity, durable stack ownership and whole-lifetime resource
 baselines. ARM/m68k runtime suites verify their existing behavior, not execution
 of newly constructed architecture-specific clone contexts.
+
+Active-group ownership graph (#892)
+----------------------------------
+
+Executing source -> clone construction transaction -> target KPROC/KTHREAD/KASPACE
+  publication moves owners -> existing KERNEL_TASK, KPROC and KTHREAD_CONTEXT
+  target KPROC -> logical parent identity (completion only)
+  target KPROC -> scheduler root identity + generation-qualified allocation pin
+  KTHREAD -> durable user stack + PROCESS/ASPACE
+  startup registration -> heap PROC_CLONE_OBSERVER -> target completion identity
+  caller kernel handle -> same observer (independent reference)
+
+The root continuation owns the stable controller's live resources throughout the
+group. Only a validated existing procmem mapping can be used as that controller;
+no unrelated mapping is replaced. Original parent retirement clears scheduler
+parent links; its old PD may be reused while the child continues. Observation
+snapshots never retain that PD or process-wide live resources. Child finalization
+drops controller refs/pin; root reaping drops execution/stack/startup refs; last
+observer reference drops only retained PID/status identity. Shared ASPACE survives
+independent PROCESS cleanup. Public Pclone/SAME_PROCESS remain gated, ARM/m68k
+clone context integration is staged, and #911 non-MMU m68k work does not block
+this user-ASPACE ownership contract.

@@ -129,3 +129,26 @@ from interrupts. Registry/state/lease/output/slot exclusion before preemption or
 SMP belongs to #713. The public ABI plan and #893 internal thread-only handoff
 requirements are explicit in clone-public-integration.txt; no second PROCESS
 wait mechanism or duplicate termination primitive is introduced here.
+
+Active-group follow-up after 42bc887b1
+------------------------------------
+
+The earlier active-group blockers above are superseded for internal x32
+NEW_PROCESS/SHARE_VM. proc_clone_spawn uses a backend publication guard and the
+same reserved-slot/commit path, with independently pinned/retained root controller
+ownership and an owned heap observation record. Logical parent retirement does
+not invalidate the controller or borrow a creator-stack callback context. Source
+PROCESS, current task and actual ASPACE root are checked before admission. No
+fallible action or callback occurs between the first output/frame store and final
+TASK_NEW publication. Post-publication transaction-shell cleanup is separate and
+cannot dispatch the child before the creator explicitly yields/blocks.
+
+Actual x32 active-clone tests cover parent continuation, blocked/early wait,
+seven-child capacity, normal/fault/TSR exit, parent retirement plus real PD reuse,
+controller-pin and observer rollback, unchanged identity/frame outputs, explicit
+cancellation, early creator observer release and independent observation records.
+The existing finalizer/launcher and root-reap paths release syscall stack,
+scheduler stack, startup/bridge, user-stack hold and process identity once. There
+is still one existing PROCESS completion producer and one existing wait/zombie
+consumer. Public Pclone and SAME_PROCESS remain gated; generic observer models
+and legacy ARM/m68k QEMU regressions do not claim native clone CPU execution.

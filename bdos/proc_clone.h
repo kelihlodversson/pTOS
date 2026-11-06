@@ -7,6 +7,11 @@
 struct kproc;
 struct kthread;
 typedef struct proc_clone_transaction PROC_CLONE_TRANSACTION;
+typedef struct proc_clone_observer PROC_CLONE_OBSERVER;
+typedef struct { WORD pid; ULONG tid; } PROC_CLONE_IDENTITIES;
+typedef struct { WORD pid; ULONG tid; LONG status; } PROC_CLONE_COMPLETION;
+typedef enum { PROC_CLONE_OBSERVER_PREPARED, PROC_CLONE_OBSERVER_PUBLISHED,
+               PROC_CLONE_OBSERVER_REAPED, PROC_CLONE_OBSERVER_CANCELLED } PROC_CLONE_OBSERVER_STATE;
 
 typedef enum {
     PROC_CLONE_SAME_PROCESS,
@@ -64,20 +69,32 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
 LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *result);
 /* Startup preparation acquires context/stacks, never execution ownership.
  * Identity-only commit still returns EINVFN with a draft attached. Only the
- * private NEW_PROCESS root runner below can publish prepared execution. */
+ * trusted NEW_PROCESS publication paths below can publish prepared execution. */
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *transaction, const THREAD_STARTUP_ARGS *args);
 LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *transaction, VADDR pid, VADDR tid);
+/* Heap-owned asynchronous observation: one caller reference plus one startup
+ * registration. Release either order; completion is read from retained KPROC,
+ * not published a second time. No callback borrows creator stack storage.
+ * Abort marks CANCELLED with no invented status; root detach marks REAPED.
+ * These are nonblocking snapshots, not another PROCESS wait/reap mechanism. */
+LONG proc_clone_observe_async(PROC_CLONE_TRANSACTION *, PROC_CLONE_OBSERVER **);
+void proc_clone_observer_release(PROC_CLONE_OBSERVER **);
+PROC_CLONE_OBSERVER_STATE proc_clone_observer_state(const PROC_CLONE_OBSERVER *);
+BOOL proc_clone_observer_result(const PROC_CLONE_OBSERVER *, PROC_CLONE_COMPLETION *);
 LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *transaction,
                                  const THREAD_STARTUP_OBSERVER *observer, void *context);
 LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *transaction);
 LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
 #if CONF_WITH_NATIVE_SCHED
-typedef struct { WORD pid; ULONG tid; LONG status; } PROC_CLONE_COMPLETION;
 /* Kernel-only first execution: NEW_PROCESS/SHARE_VM, root group only. Failure
  * before publication preserves transaction and outputs; success consumes it
  * and waits using the existing cooperative scheduler, returning value ids. */
 LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION *completion);
-/* Private no-fail scheduler-root half of the above transaction. */
+/* Owned observer required. Success consumes transaction and returns identities
+ * immediately into an existing group; failures preserve it for abort except
+ * explicit prepublication cancellation. No new waiter or public syscall. */
+LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_IDENTITIES *created);
+/* Private no-fail publication half, shared by root and active-group callers. */
 void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *, void *slot);
 #endif
 const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *transaction);
@@ -98,7 +115,7 @@ void proc_clone_release(PROC_CLONE_RESULT *result);
 LONG proc_create_clone_process(struct kproc *source, UWORD resources, struct kproc **result);
 
 #if CONF_WITH_X86_64_MEMTEST
-/* Inject failure after source, target, VM or THREAD acquisition (1..4). */
+/* Inject failure after source, target, VM, THREAD, or owned-observer identity acquisition (1..5). */
 void proc_clone_test_fail_after(UWORD stage);
 void proc_clone_test_cancel_publication(void);
 /* Environment, PD, KPROC, handles, CWD acquisition (1..5). */

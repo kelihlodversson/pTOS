@@ -149,6 +149,12 @@ C_SYM(clone_probe_begin):
         pcmpeqd %xmm0,%xmm0
         movdqa %xmm0,%xmm15
         movl $3,%r10d
+        cmpl $5,(%r12)
+        jne .Lclone_counted
+        incl %r10d
+.Lclone_counted:
+        cmpl $4,(%r12)
+        je .Lclone_yields_done
 .Lclone_yields:
         movabsq $0x1000000ff,%rax /* Syield */
         syscall
@@ -180,6 +186,7 @@ C_SYM(clone_probe_begin):
         jne .Lclone_fail
         decl %r10d
         jnz .Lclone_yields
+.Lclone_yields_done:
         fstpl 8(%rsp)
         movabsq $0x3ff0000000000000,%rax
         cmpq %rax,8(%rsp)
@@ -191,8 +198,11 @@ C_SYM(clone_probe_begin):
         je .Lclone_resident
         cmpl $2,%eax
         je .Lclone_fault
+        cmpl $4,%eax
+        jae .Lclone_return
         testl %eax,%eax
         jnz .Lclone_pterm
+.Lclone_return:
         movl $0x2468,%eax
         ret
 .Lclone_resident:

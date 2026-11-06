@@ -13,6 +13,13 @@
 extern PD *run;
 #endif
 
+struct proc_clone_observer {
+    ULONG references;
+    KPROC *process; /* identity only: never retains descriptors or a PD */
+    WORD pid;
+    ULONG tid;
+    PROC_CLONE_OBSERVER_STATE state;
+};
 struct proc_clone_transaction {
     KPROC *source, *process; /* owning identity references */
     KASPACE *space;          /* owning until target adopts it or rollback */
@@ -20,6 +27,8 @@ struct proc_clone_transaction {
     PROC_CLONE_PROCESS_POLICY policy;
     BOOL owns_process;
     THREAD_STARTUP_DRAFT *startup;
+    PROC_CLONE_OBSERVER *observer; /* borrowed from owned startup registration */
+    BOOL asynchronous;
 };
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -87,6 +96,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     tx->space = NULL;
     tx->thread = NULL;
     tx->startup = NULL;
+    tx->observer = NULL; tx->asynchronous = FALSE;
     tx->policy = args->process_policy;
     tx->owns_process = FALSE;
     tx->source = kproc_retain_live(args->source);
@@ -143,6 +153,65 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     release_transaction(tx);
     *result = ready; /* kernel-owned result only; never a user child-TID write */
     return E_OK;
+}
+
+static void observer_put(PROC_CLONE_OBSERVER *observer)
+{
+    if (!observer || !observer->references) panic("clone observer reference underflow");
+    if (--observer->references) return;
+    kproc_release(observer->process); kfree(observer);
+}
+static LONG observer_acquire(void *context)
+{
+    PROC_CLONE_OBSERVER *observer = context;
+    if (observer->references == ~(ULONG)0) return EAGAIN;
+    observer->references++; return E_OK;
+}
+static void observer_detach(void *context)
+{
+    PROC_CLONE_OBSERVER *observer = context;
+    if (observer->state == PROC_CLONE_OBSERVER_PREPARED)
+        observer->state = PROC_CLONE_OBSERVER_CANCELLED;
+    else if (observer->state == PROC_CLONE_OBSERVER_PUBLISHED)
+        observer->state = PROC_CLONE_OBSERVER_REAPED;
+    else panic("clone observer detached twice");
+    observer_put(observer);
+}
+LONG proc_clone_observe_async(PROC_CLONE_TRANSACTION *tx, PROC_CLONE_OBSERVER **out)
+{
+    static const THREAD_STARTUP_OBSERVER ops = { observer_acquire, observer_detach };
+    PROC_CLONE_OBSERVER *observer;
+    LONG error;
+    if (!tx || !out || *out || tx->observer || !tx->startup) return EINVAL;
+    observer = kalloc(sizeof(*observer));
+    if (!observer) return ENSMEM;
+    observer->references = 1;
+    observer->process = kproc_retain_live(tx->process);
+    if (!observer->process) { kfree(observer); return EACCDN; }
+    if (injected(5)) { observer_put(observer); return ENSMEM; }
+    observer->pid = kproc_ref_pid(tx->process); observer->tid = kthread_tid(tx->thread);
+    observer->state = PROC_CLONE_OBSERVER_PREPARED;
+    error = proc_clone_observe_startup(tx, &ops, observer);
+    if (error) { observer_put(observer); return error; }
+    tx->observer = observer; *out = observer;
+    return E_OK;
+}
+void proc_clone_observer_release(PROC_CLONE_OBSERVER **handle)
+{
+    PROC_CLONE_OBSERVER *observer;
+    if (!handle || !*handle) return;
+    observer = *handle; *handle = NULL; observer_put(observer);
+}
+PROC_CLONE_OBSERVER_STATE proc_clone_observer_state(const PROC_CLONE_OBSERVER *observer)
+{ return observer->state; }
+BOOL proc_clone_observer_result(const PROC_CLONE_OBSERVER *observer, PROC_CLONE_COMPLETION *out)
+{
+    UWORD status;
+    if (!observer || !out ||
+        (observer->state != PROC_CLONE_OBSERVER_PUBLISHED && observer->state != PROC_CLONE_OBSERVER_REAPED) ||
+        !kproc_ref_status(observer->process, &status)) return FALSE;
+    out->pid = observer->pid; out->tid = observer->tid; out->status = status;
+    return TRUE; /* snapshot of existing completion, not another wait/reaper */
 }
 
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP_ARGS *args)
@@ -223,6 +292,56 @@ void proc_clone_release(PROC_CLONE_RESULT *result)
 }
 
 #if CONF_WITH_NATIVE_SCHED
+LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *created)
+{
+    PROC_CLONE_TRANSACTION *tx;
+    KSCHED_PUBLICATION_GUARD guard;
+    PD *controller;
+    void *slot = NULL;
+    LONG error;
+    WORD pid;
+    ULONG tid;
+    if (!handle || !*handle || !created || created->pid || created->tid) return EINVAL;
+    tx = *handle;
+    if (kproc_live_pd(tx->source) != run || !aspace_is_current(kaspace_backend(tx->space))) return EINVFN;
+    if (tx->policy != PROC_CLONE_NEW_PROCESS || !tx->owns_process || !tx->startup ||
+        !tx->observer || tx->observer->state != PROC_CLONE_OBSERVER_PREPARED) return EINVFN;
+    if (!startup_target_live(tx) || !kthread_clone_run_ready(tx->thread)) return EACCDN;
+    if (thread_startup_state(tx->startup) != THREAD_STARTUP_OBSERVED) return EINVAL;
+    if (!ksched_clone_begin(tx->source, &controller, &guard)) return EINVFN;
+    error = ksched_task_reserve(FALSE, &slot);
+    if (error) goto done;
+    if (!kproc_clone_prepare_compat(tx->process, tx->thread, tx->space) ||
+        !kproc_clone_prepare_controller(tx->process, controller) ||
+        !kproc_clone_prepare_parent(tx->process, tx->source)) { error = ENSMEM; goto failed; }
+    error = thread_startup_run_preflight(tx->startup);
+    if (error) goto failed;
+    if (!kproc_clone_run_ready(tx->process, tx->thread, tx->space) ||
+        kproc_active_space(tx->source) != tx->space) { error = EACCDN; goto failed; }
+    error = thread_startup_seal(tx->startup);
+    if (error) goto failed;
+#if CONF_WITH_X86_64_MEMTEST
+    if (cancel_publication) {
+        cancel_publication = FALSE;
+        ksched_task_cancel(&slot); proc_clone_abort(handle);
+        error = EAGAIN; goto done;
+    }
+#endif
+    pid = kproc_ref_pid(tx->process); tid = kthread_tid(tx->thread);
+    tx->asynchronous = TRUE;
+    *handle = NULL;
+    proc_clone_commit_prepared(tx, slot); /* consumes reservation; no dispatch yet */
+    created->pid = pid; created->tid = tid;
+    release_transaction(tx); /* publication complete; caller still executing */
+    error = E_OK;
+    goto done;
+failed:
+    kproc_clone_drop_compat(tx->process); ksched_task_cancel(&slot);
+done:
+    ksched_clone_end(&guard);
+    return error;
+}
+
 LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *completion)
 {
     PROC_CLONE_TRANSACTION *tx;
@@ -272,8 +391,8 @@ failed:
 #endif
 
 #if CONF_WITH_NATIVE_SCHED
-/* Invoked directly by the existing scheduler root, never as an observer or
- * user callback. Every fallible preflight and the root setjmp already passed. */
+/* Invoked by scheduler root or the serialized active creator, never an observer
+ * or user callback. All fallible preparation precedes this no-fail transfer. */
 void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
 {
     THREAD_STARTUP_STACK_OWNERS owners = { { 0, 0 }, { 0, 0 } };
@@ -284,8 +403,9 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     kproc_clone_commit_run(tx->process, tx->space, startup, owners.syscall.physical, owners.syscall.top);
     tx->space = NULL;
     owners.syscall.physical = owners.syscall.top = 0;
-    ksched_clone_commit(slot, tx->process, tx->thread, startup, owners.scheduler.physical, owners.scheduler.top);
-    owners.scheduler.physical = owners.scheduler.top = 0;
+    ksched_clone_commit(slot, tx->process, tx->thread, startup, &owners.scheduler,
+                         tx->asynchronous ? tx->source : NULL);
+    if (tx->observer) tx->observer->state = PROC_CLONE_OBSERVER_PUBLISHED;
     tx->process = NULL; tx->thread = NULL; tx->startup = NULL; tx->owns_process = FALSE;
     /* First externally visible store starts here. Only no-fail stores and
      * visibility barriers follow; the bound slot is still TASK_RESERVED. */
