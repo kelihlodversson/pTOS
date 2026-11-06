@@ -66,6 +66,6 @@ long xclone(uint64_t address, uint64_t size)
     (void)address;
     (void)size;
 #endif
-    /* ARM/m68k and non-native execution backends remain explicitly unsupported. */
+    /* Configurations without the native execution backend remain unsupported. */
     return EINVFN;
 }

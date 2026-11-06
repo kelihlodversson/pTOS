@@ -12,7 +12,7 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 -iquote bdos \
     -iquote bdos/arch/x86_64 tests/kthread_stack.c \
-    bdos/arch/x86_64/kthread_context.c -o "$work/thread-test"
+    bdos/kthread_context.c -o "$work/thread-test"
 "$work/thread-test"
 for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
     CONFIG_= python3 - "$preset" "$work/config" <<'PY'
@@ -79,7 +79,7 @@ CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
     -iquote bdos/arch/x86_64 tests/thread_startup.c bdos/thread_startup.c bdos/kaspace.c \
-    bdos/arch/x86_64/thread_startup_x32.c bdos/arch/x86_64/thread_return_x32.c bdos/arch/x86_64/kthread_context.c \
+    bdos/arch/x86_64/thread_startup_x32.c bdos/thread_return.c bdos/kthread_context.c \
     -Wl,--gc-sections -o "$work/startup"
 "$work/startup"
 echo 'x32 startup CPU/FPU/frame planning and stack rollback (host model): PASS'

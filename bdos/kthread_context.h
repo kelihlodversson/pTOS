@@ -1,23 +1,25 @@
 /* Per-execution-context state used by the cooperative scheduler. */
-#ifndef X32_KTHREAD_CONTEXT_H
-#define X32_KTHREAD_CONTEXT_H
+#ifndef KTHREAD_CONTEXT_H
+#define KTHREAD_CONTEXT_H
 
 #include "emutos.h"
-#include "process.h"
+#include "native_sched_backend.h"
+#include "procmem.h"
 
 /* Embedded backend for a generic KTHREAD. Its private continuation token is
  * neither PID nor TID. The KTHREAD owns this dispatch stack through a backend
  * reclaimer; the scheduler invokes reap from root after the task stops. The
  * syscall stack remains separately owned and reclaimed by the gouser launcher. */
 typedef struct {
-    UQUAD physical, top;
+    PADDR physical;
+    uintptr_t top;
 } KTHREAD_STACK;
 
 typedef struct {
     UQUAD identity;
     KTHREAD_STACK stack;
     KTHREAD_STACK syscall_stack; /* transferred once to the existing launcher */
-    X86_64_PROCESS_CONTEXT cpu;
+    NATIVE_SCHED_CONTEXT cpu;
     jmp_buf resume;
 } KTHREAD_CONTEXT;
 

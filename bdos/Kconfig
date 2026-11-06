@@ -39,13 +39,14 @@ config CONF_PCLONE_ENTRY_ALIGNMENT
     default 2
 
 config CONF_WITH_NATIVE_SCHED
-    bool
-    depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    bool "Cooperative native scheduling"
+    depends on CONF_WITH_USER_ASPACE
     help
       Kernel-owned cooperative native process scheduling and standard MiNT
       asynchronous launch, yield and child waits. Selected by CUIS initially;
       independent of GUI session and input services. No preemption or Pfork.
-      Other architecture backends follow their isolated address spaces.
+      Available on x32, ARM MMU and m68k MMU user-address-space kernels.
+      Scheduling is cooperative and does not require CUIS or external libaes.
 
 
 config CONF_LOGSEC_SIZE

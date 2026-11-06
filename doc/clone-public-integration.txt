@@ -1,10 +1,10 @@
 Public clone integration contract (#890/#892)
 =================================================
 
-Public NEW_PROCESS/SHARE_VM startup is now connected on x32 when Pclone and
+Public NEW_PROCESS/SHARE_VM startup is now connected on x32, ARM MMU and m68k MMU when Pclone and
 native cooperative scheduling are configured and the caller is a managed task
-in an active group. Other execution contexts and ARM/m68k startup remain
-unsupported (EINVFN). Managed x32 SAME_PROCESS startup is also enabled through
+in an active group. Other execution contexts remain
+unsupported (EINVFN). Managed SAME_PROCESS startup is also enabled through
 the thread-only lifetime described in thread-group-execution.txt. Private VM
 startup is not enabled.
 This is not an architecture capability negotiation ABI.
@@ -145,23 +145,22 @@ consumer uses one PROCESS anchor, never a per-worker PID zombie. Details,
 reference graph, rollback and preemption requirements are in
 thread-group-execution.txt. No TLS implementation or new scheduler is added.
 
-Architecture staging
----------------------
+Architecture execution
+------------------------
 
-The shared ownership/lease/publication transaction is the backend boundary.
-ARM needs its ARM-mode entry/argument/return register frame, aligned initial SP,
-exception/control state, FPU image and a stable launcher/controller. m68k needs
-its own argument/return stack frame, USP/SR/PC, FPU/control state and safe trap
-return; packed GEMDOS input decoding is not a context-switch implementation.
-Use the existing architecture launchers and #713 scheduling backends, not a
-parallel dispatcher. Both must preserve nested Pexec/FPU/interrupt restoration
-and support rollback and ownership transfer before their gate can open.
+x32, ARM MMU and m68k MMU share bdos/native_sched.c, KTHREAD stack ownership,
+proc_clone construction/publication, the bridge registry and the PROCESS exit
+finalizer. CPU state/IRQ operations and fresh supervisor-stack entry are backend
+operations. ARM/m68k use their existing gouser/termuser launchers and trap return
+paths, not a parallel process manager. See clone-mmu-parity.txt for entry frames,
+CPU/FPU ownership, executable evidence and limitations.
 
-ARM/m68k construction/lease/ABI compilation and existing 26/25 runtime suites do
-not execute newly constructed clone contexts. Keep their startup return EINVFN
-until backend execution/lease/termination tests exist. Legacy non-MMU m68k multitasking is #911; generic scheduling remains
-#713, PROCESS waits #909, shared-VM Pexec #894, TLS independent #908. None is
-silently implemented by this integration plan.
+Public managed NEW_PROCESS/SHARE_VM and SAME_PROCESS startup are tested on ARM
+Cortex-A7 and m68k 68040 QEMU without CUIS/libaes. The old 26/25 compatibility
+suites alone are not that evidence: the new managed worker executes actual
+clones, yields with register/FPU patterns and tests exit, wait and rollback.
+Legacy non-MMU m68k scheduling is #911, generic scheduling/preemption #713,
+PROCESS waits #909, shared-VM Pexec #894 and TLS independent #908.
 
 Publication exclusion and accounting
 -----------------------------------

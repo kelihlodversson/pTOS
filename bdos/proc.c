@@ -841,7 +841,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
             if (deferred) proc_dispose_deferred(cur_p);
             else
 #endif
-                proc_discard_accessory(cur_p);
+                proc_discard_scheduled(cur_p);
         }
         return rc;
     }
@@ -850,7 +850,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #if CONF_WITH_NATIVE_SCHED
         if (schedule_launch(cur_p)) {
             rc = ksched_exec(cur_p, TRUE, &scheduled_result);
-            if (rc < 0) proc_discard_accessory(cur_p);
+            if (rc < 0) proc_discard_scheduled(cur_p);
             return rc < 0 ? rc : scheduled_result;
         }
 #endif
@@ -1255,7 +1255,7 @@ LONG proc_start_scheduled(PD *p, BOOL take_ownership)
         /* Existing PROCESS: do not reset parent, loader state or start time.
          * The existing launcher consumes this task's independent startup. */
         run = p;
-        proc_enter_user(ENTRY_PROGRAM);
+        proc_enter_user(0);
         return run->p_dreg[0];
     }
     if (!kproc_unlaunched(p) || !kproc_user_root(p)) return EIMBA;
@@ -1263,7 +1263,7 @@ LONG proc_start_scheduled(PD *p, BOOL take_ownership)
         set_owner(p, p);
         set_owner(USERPTR_TO_PTR(p->p_env), p);
     }
-    proc_go(p, ENTRY_PROGRAM);
+    proc_go(p, 0);
     return run->p_dreg[0];
 }
 #endif
@@ -1287,13 +1287,27 @@ LONG proc_start_accessory(PD *p)
     return run->p_dreg[0];
 }
 
-void proc_discard_accessory(PD *p)
+#endif
+
+#if ARCH_X86_64 || CONF_WITH_NATIVE_SCHED
+void proc_discard_scheduled(PD *p)
 {
     if (!kproc_unlaunched(p))
         return;
     set_owner(p, p);
     set_owner(USERPTR_TO_PTR(p->p_env), p);
+#if CONF_WITH_USER_ASPACE
+    proc_dispose_retained(p);
+#else
     proc_dispose_detached(p);
+#endif
+}
+#endif
+
+#if ARCH_X86_64
+void proc_discard_accessory(PD *p)
+{
+    proc_discard_scheduled(p);
 }
 
 #if CONF_WITH_CUIS

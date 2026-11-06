@@ -4,7 +4,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
-#include "../../bdos/arch/x86_64/native_sched.c"
+#include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred spawn:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD owner, child;

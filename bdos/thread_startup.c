@@ -22,7 +22,7 @@ struct thread_startup_draft {
     VADDR outputs[2]; /* exact destinations retained; never written yet */
     THREAD_STARTUP_OBSERVER observer;
     void *observer_context;
-    void *frame_alias, *output_aliases[2];
+    void *frame_alias, *output_aliases[2], *output_tails[2];
 };
 #endif
 
@@ -49,6 +49,7 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->observer.release = NULL;
         draft->observer_context = NULL;
         draft->frame_alias = draft->output_aliases[0] = draft->output_aliases[1] = NULL;
+        draft->output_tails[0] = draft->output_tails[1] = NULL;
         draft->args = *args;
         draft->image = NULL;
         draft->bridge = NULL;
@@ -155,7 +156,7 @@ LONG thread_startup_prepare_outputs(THREAD_STARTUP_DRAFT *draft, VADDR pid, VADD
         if (pid && tid && (UQUAD)pid < (UQUAD)tid + 4 && (UQUAD)tid < (UQUAD)pid + 4) return EINVAL;
         for (i = 0; i < 2; i++) if (addresses[i]) {
             UQUAD address = addresses[i], end = address + 4;
-            if ((address & 3) || address >= USER_VA_LIMIT || end > USER_VA_LIMIT ||
+            if ((address & (__alignof__(ULONG) - 1)) || address >= USER_VA_LIMIT || end > USER_VA_LIMIT ||
                 (address < (UQUAD)draft->args.stack_base + draft->args.stack_size &&
                  draft->args.stack_base < end) ||
                 ((address & ~(UQUAD)(USER_PAGE_SIZE - 1)) <= draft->args.entry &&
@@ -264,15 +265,32 @@ LONG thread_startup_run_preflight(THREAD_STARTUP_DRAFT *draft)
     if (!draft->frame_alias) return EIMBA;
     for (i = 0; i < 2; i++) if (draft->outputs[i]) {
         draft->output_aliases[i] = aspace_user_write_alias(kaspace_backend(draft->space), draft->outputs[i], 4);
+        if (!draft->output_aliases[i] &&
+            (draft->outputs[i] & (USER_PAGE_SIZE - 1)) == USER_PAGE_SIZE - 2) {
+            /* Native m68k uint32_t alignment is two: a valid output may span
+             * two unrelated physical pages. Secure both aliases before seal. */
+            draft->output_aliases[i] = aspace_user_write_alias(kaspace_backend(draft->space), draft->outputs[i], 2);
+            draft->output_tails[i] = aspace_user_write_alias(kaspace_backend(draft->space), draft->outputs[i] + 2, 2);
+            if (!draft->output_tails[i]) return EIMBA;
+        }
         if (!draft->output_aliases[i]) return EIMBA;
     }
     return E_OK;
 }
 void thread_startup_commit_stores(THREAD_STARTUP_DRAFT *draft, WORD pid, ULONG tid)
 {
+    UWORD i;
+    ULONG values[2];
     thread_startup_arch_commit_frame(draft->image, draft->frame_alias);
-    if (draft->output_aliases[0]) *(volatile LONG *)draft->output_aliases[0] = pid;
-    if (draft->output_aliases[1]) *(volatile ULONG *)draft->output_aliases[1] = tid;
+    values[0] = (LONG)pid; values[1] = tid;
+    for (i = 0; i < 2; i++) if (draft->output_aliases[i]) {
+        if (draft->output_tails[i]) {
+            UWORD words[2];
+            memcpy(words, &values[i], sizeof(words));
+            *(volatile UWORD *)draft->output_aliases[i] = words[0];
+            *(volatile UWORD *)draft->output_tails[i] = words[1];
+        } else *(volatile ULONG *)draft->output_aliases[i] = values[i];
+    }
     draft->state = THREAD_STARTUP_COMMITTED;
 }
 void thread_startup_publish(THREAD_STARTUP_DRAFT *draft)

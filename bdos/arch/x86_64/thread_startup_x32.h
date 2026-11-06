@@ -3,7 +3,7 @@
 #define THREAD_STARTUP_X32_H
 #include "emutos.h"
 #include <aspace_types.h>
-#include "kthread_context.h"
+#include "../../kthread_context.h"
 #include "../../thread_startup.h"
 typedef struct {
     UQUAD rax, rbx, rcx, rdx, rsi, rdi, rbp;

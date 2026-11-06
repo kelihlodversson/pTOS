@@ -88,6 +88,8 @@ import kconfiglib
 config = kconfiglib.Kconfig()
 config.load_config()
 config.syms['CONF_WITH_PCLONE'].set_value(2)
+config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
+assert config.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'y'
 config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
 assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'

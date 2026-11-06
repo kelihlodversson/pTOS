@@ -1892,6 +1892,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
+              $(if $(filter y,$(CONF_WITH_NATIVE_SCHED)),-DTEST_WITH_NATIVE_SCHED) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
               $(if $(CONF_M68K_ROM_WINDOW),-DTEST_NO_RMW_FAULTS -DTEST_NO_CROSSING) \
               $(if $(CONF_WITH_MMU_PROBE),-DTEST_WITH_MMU_PROBE) \
@@ -1937,6 +1938,11 @@ endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
+ifneq ($(filter pclone,$(TEST_SUITES)),)
+TEST_SUITE_OBJ += obj/clone_registers.o
+obj/clone_registers.o: tests/pclone/registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+endif
 
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
@@ -1955,7 +1961,7 @@ TEST_LD = $(TEST_CC) $(TEST_CPUFLAGS) -nostartfiles -nostdlib
 # linker script variant this toolchain doesn't ship). Named .tos by
 # convention regardless of format.
 ifdef ARCH_ARM
-TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start -Wl,-z,noexecstack
 else ifdef ARCH_X86_64
 TEST_LDFLAGS = $(X32_LDFLAGS) -Wl,-e_start
 else

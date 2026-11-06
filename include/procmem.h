@@ -178,6 +178,7 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  *   0x0ffe0000 - 0x0ffeffff   optional read-only executable x32 VDI client;
  *                             private pages, outside image/heap windows
  *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
+ *   0x0fff1000 - 0x0fff1fff   optional ARM/m68k trusted THREAD return bridge
  *   0x10000000 - 0x7efeffff   Malloc() memory of a process, backed by private
  *                             pages as they are first touched (see below)
  *   0x7efff000 - 0x7effffff   guard page: neither heap nor stack, never mapped
@@ -207,6 +208,7 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  */
 #define USER_ANCESTORS_VA VADDR_C(0x0fff0000)
 #define USER_ANCESTORS    16
+#define USER_THREAD_RETURN_VA (USER_ANCESTORS_VA + USER_PAGE_SIZE)
 #define USER_IMAGE_BASE  VADDR_C(0x00400000)
 #define USER_IMAGE_SIZE  VADDR_C(0x00400000)
 /* Zeroed read/write memory mapped right after the last page of a program

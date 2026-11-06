@@ -49,7 +49,7 @@
 #include "pc_x86_64_memtest.h"
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
-#include "../../../bdos/arch/x86_64/kthread_context.h"
+#include "../../../bdos/kthread_context.h"
 #include "../../../bdos/fs.h"
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"

@@ -94,4 +94,5 @@ void ksched_exited_identity(struct kproc *process, PD *pd);
 void ksched_fault(PD *pd, WORD signal);
 LONG proc_prepare_scheduled(PD *pd);
 LONG proc_start_scheduled(PD *pd, BOOL take_ownership);
+void proc_discard_scheduled(PD *pd);
 #endif

@@ -1,17 +1,16 @@
-Managed x32 SAME_PROCESS execution (#892 / internal #893 foundation)
+Managed MMU SAME_PROCESS execution (#892 / internal #893 foundation)
 =================================================================
 
 Supported operation and ownership
 --------------------------------
 
-Configured, managed x32 user-ASPACE tasks can publish CLONE_VM |
+Configured, managed x32, ARM MMU and m68k MMU user-ASPACE tasks can publish CLONE_VM |
 CLONE_SAME_PROCESS through the existing public Pclone snapshot, trusted clone
 transaction and cooperative native task table. The new TID shares PROCESS/PID,
 KASPACE, descriptors, directories, loader identity and process-wide limits.
 Resource-copy bits are invalid for SAME_PROCESS. The size-tagged 28/32-byte ABI,
 positive signed TID return, optional PID/TID stores and reserved TLS slot do not
-change. Non-NULL TLS remains EINVAL. Private VM, PREPARED_PROCESS execution and
-ARM/m68k runnable startup remain unavailable. The existing VM-only operation
+change. Non-NULL TLS remains EINVAL. Private VM and PREPARED_PROCESS execution remain unavailable. The existing VM-only operation
 still creates an independently identified PROCESS, not another thread.
 
 There is one retained PROCESS completion anchor per PROCESS in the existing
@@ -137,8 +136,8 @@ Before timer preemption/SMP, #713 must establish and prove an ordering for:
 
 The root ready predicates, IRQ-masked waits and teardown callbacks require the
 same audit. The present callback blacklist/cooperative guarantee is not proof
-of safe asynchronous kernel preemption. ARM/m68k scheduling/context backends
-remain #713; their runtime compatibility suites do not execute new clone frames.
+of safe asynchronous kernel preemption. The ARM/m68k cooperative backends now
+execute native clone frames; further scheduling/preemption remains #713.
 Legacy non-MMU scheduling remains #911. TLS remains independent #908.
 
 Executable evidence

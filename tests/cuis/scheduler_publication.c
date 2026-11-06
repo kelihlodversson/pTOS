@@ -5,7 +5,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
-#include "../../bdos/arch/x86_64/native_sched.c"
+#include "../../bdos/native_sched.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"publication:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static KERNEL_TASK table[KSCHED_LIMIT];
 static PD parent, child, peer;
@@ -27,7 +27,7 @@ static unsigned refused_disposals;
 LONG proc_start_scheduled(PD *p, BOOL take) { (void)take; CHECK(p==&child); return EIMBA; }
 BOOL kthread_stop(KTHREAD *t) { CHECK(t==(KTHREAD *)1 && !refused_stopped); refused_stopped=TRUE; return TRUE; }
 BOOL kthread_is_stopped(const KTHREAD *t) { CHECK(t==(KTHREAD *)1); return refused_stopped; }
-void proc_discard_accessory(PD *p) { CHECK(p==&child && refused_stopped); refused_disposals++; }
+void proc_discard_scheduled(PD *p) { CHECK(p==&child && refused_stopped); refused_disposals++; }
 void x86_64_process_save(X86_64_PROCESS_CONTEXT *c) { (void)c; }
 int main(void)
 {

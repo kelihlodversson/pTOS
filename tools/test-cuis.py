@@ -27,6 +27,15 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "n"
 
+# Native scheduling is selectable without either AES on all MMU targets.
+for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
+    config = kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config("configs/" + preset + "_defconfig")
+    config.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
+    assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y"
+    assert config.syms["CONF_WITH_CUIS"].str_value == "n"
+    assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
+
 # The external GEM desktop/resources must survive removal of both kernel
 # AES implementations. Shared options retain their normal desktop defaults.
 config = kconfiglib.Kconfig(warn_to_stderr=False)

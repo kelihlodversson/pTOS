@@ -121,6 +121,7 @@ C_SYM(m68k_enter_user):
         clr.l   -(sp)
         FRESTORE_SP_PLUS                // a NULL frame: pops its longword
         lea     8(sp),sp                // (the extra longs of the 68060)
+        jsr     C_SYM(m68k_fpu_init)
 no_fpu_reset:
         moveq   #0,d0
         moveq   #0,d1
@@ -137,6 +138,9 @@ no_fpu_reset:
         sub.l   a4,a4
         sub.l   a5,a5
         sub.l   a6,a6
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_MFASTCALL
+        move.l  C_SYM(uenter)+12,a0       // native register-argument ABI
+#endif
         rte
 
 #endif /* CONF_WITH_USER_ASPACE */

@@ -205,11 +205,11 @@ immediately before commit. User outputs remain unchanged. Host fault injection
 also verifies root-only reclaim, published-abort rejection, one-time callback
 release and fail-stop on an escaping observer disk error.
 
-ARM/m68k retain construction/ownership and existing launcher runtime coverage;
-their new-clone startup backends are not implemented by this x32 slice. Host
+This paragraph describes the earlier x32-only checkpoint. ARM/m68k native
+backends and managed-clone runtime coverage now follow clone-mmu-parity.txt. Host
 configuration models and ABI cross-compilation are not target runtime tests.
 Public flag/result ABI and managed active-group x32 startup are now implemented;
-remaining architecture startup backends stay in #892. Thread/group exit and joining remain #893, PROCESS waits #909, generic
+remaining startup/backend integration stays in #892. Thread/group exit and joining remain #893, PROCESS waits #909, generic
 scheduling/preemption/non-MMU integration #713, shared-VM Pexec #894 and TLS #908.
 
 Before preemption/SMP, #713 must synchronize PROCESS state, mapping mutation,
@@ -278,8 +278,8 @@ early caller-observer release and borrowed-context refusal. An orphan continues
 through actual creator PD reuse without notifying the replacement. Every case
 returns allocation/stack/controller-pin/reference counts to baseline. Generic
 owned-observer tests run as host models under x32/ARM/m68k configurations, including
-both release orders and independent completions. These do not execute new ARM
-or m68k clone CPU contexts. Legacy non-MMU m68k multitasking is #911 and is not
+both release orders and independent completions. Those host models do not
+execute target CPU contexts; native ARM/m68k evidence is in clone-mmu-parity.txt. Legacy non-MMU m68k multitasking is #911 and is not
 an acceptance gate for this MMU slice.
 
 Public trap integration checkpoint

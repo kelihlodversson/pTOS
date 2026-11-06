@@ -8,13 +8,14 @@
 #include "kproc.h"
 #include "kthread.h"
 #include "string.h"
-#include "thread_return_x32.h"
+#include "thread_return.h"
 #include "thread_startup_backend.h"
 
 /* x32 SysV function result in EAX; GEMDOS takes UWORD status in RDI.
  * mov edi,eax; movabs rax,(GEMDOS_CLASS<<32)|Pterm; syscall; ud2.
  * No C stack accesses, dynamic relocations, user-selected PC or new syscall.
  * UD2 contains an unexpected return from the nonreturning termination call. */
+#if ARCH_X86_64
 static const UBYTE return_code[] = {
     0x89, 0xc7, 0x48, 0xb8, 0x4c, 0, 0, 0, 1, 0, 0, 0,
     0x0f, 0x05, 0x0f, 0x0b,
@@ -22,16 +23,39 @@ static const UBYTE return_code[] = {
     0x31, 0xff, 0x48, 0xb8, 0x4c, 0, 0, 0, 1, 0, 0, 0,
     0x0f, 0x05, 0x0f, 0x0b
 };
+#elif ARCH_ARM
+/* AAPCS: LR returns here; r0 is the result, GEMDOS uses r0/r1. */
+static const UBYTE return_code[] = {
+    0x00,0x10,0xa0,0xe1, 0x4c,0x00,0xa0,0xe3,
+    0x01,0x00,0x00,0xef, 0xf0,0x00,0xf0,0xe7,
+    0x00,0x10,0xa0,0xe3, 0x4c,0x00,0xa0,0xe3,
+    0x01,0x00,0x00,0xef, 0xf0,0x00,0xf0,0xe7
+};
+#else
+/* m68k C ABI: RTS pops the trusted bridge; GEMDOS arguments are packed. */
+static const UBYTE return_code[] = {
+    0x3f,0x00, 0x3f,0x3c,0x00,0x4c, 0x4e,0x41, 0x4a,0xfc,
+    0x4a,0xfc, 0x4a,0xfc, 0x4a,0xfc,
+    0x42,0x67, 0x3f,0x3c,0x00,0x4c, 0x4e,0x41, 0x4a,0xfc,
+    0x4a,0xfc, 0x4a,0xfc, 0x4a,0xfc
+};
+#endif
+/* 32-bit stacks end at USER_VA_LIMIT. Their bridge has a reserved image-
+ * metadata page outside heap, interpreter, ancestor and growing stack ranges. */
+#if ARCH_X86_64
 #define RETURN_VA (USER_VA_LIMIT - USER_PAGE_SIZE)
-struct x32_return_bridge {
+#else
+#define RETURN_VA USER_THREAD_RETURN_VA
+#endif
+struct thread_return_bridge {
     KASPACE *space; /* owning; registry membership is borrowed */
     KASPACE_LEASE *hold;
     ULONG users;
-    struct x32_return_bridge *next;
+    struct thread_return_bridge *next;
 };
-static X32_RETURN_BRIDGE *bridges;
+static THREAD_RETURN_BRIDGE *bridges;
 
-BOOL x32_return_bridge_valid(const X32_RETURN_BRIDGE *bridge)
+BOOL thread_return_bridge_valid(const THREAD_RETURN_BRIDGE *bridge)
 {
     UBYTE code[sizeof(return_code)];
     UWORD prot;
@@ -44,19 +68,19 @@ BOOL x32_return_bridge_valid(const X32_RETURN_BRIDGE *bridge)
         !memcmp(code, return_code, sizeof(code));
 }
 
-BOOL x32_return_bridge_matches(const X32_RETURN_BRIDGE *bridge, const ASPACE *space)
+BOOL thread_return_bridge_matches(const THREAD_RETURN_BRIDGE *bridge, const ASPACE *space)
 {
-    return bridge && kaspace_backend(bridge->space) == space && x32_return_bridge_valid(bridge);
+    return bridge && kaspace_backend(bridge->space) == space && thread_return_bridge_valid(bridge);
 }
 
-LONG x32_return_bridge_acquire(KASPACE *space, X32_RETURN_BRIDGE **result)
+LONG thread_return_bridge_acquire(KASPACE *space, THREAD_RETURN_BRIDGE **result)
 {
-    X32_RETURN_BRIDGE *bridge;
+    THREAD_RETURN_BRIDGE *bridge;
     ASPACE *as;
     LONG error;
     if (!space || !result || *result) return EINVAL;
     for (bridge = bridges; bridge; bridge = bridge->next) if (bridge->space == space) {
-        if (!x32_return_bridge_valid(bridge)) return EIMBA;
+        if (!thread_return_bridge_valid(bridge)) return EIMBA;
         if (bridge->users == ~(ULONG)0) return ENSMEM;
         bridge->users++; *result = bridge; return E_OK;
     }
@@ -87,26 +111,26 @@ failed:
     kaspace_put(bridge->space); kfree(bridge); return error;
 }
 
-VADDR x32_return_bridge_address(const X32_RETURN_BRIDGE *bridge)
+VADDR thread_return_bridge_address(const THREAD_RETURN_BRIDGE *bridge)
 {
-    return x32_return_bridge_valid(bridge) ? RETURN_VA : 0;
+    return thread_return_bridge_valid(bridge) ? RETURN_VA : 0;
 }
 
-VADDR x32_return_bridge_zero_address(const X32_RETURN_BRIDGE *bridge)
+VADDR thread_return_bridge_zero_address(const THREAD_RETURN_BRIDGE *bridge)
 {
-    return x32_return_bridge_valid(bridge) ? RETURN_VA + 16 : 0;
+    return thread_return_bridge_valid(bridge) ? RETURN_VA + 16 : 0;
 }
 
-BOOL x32_return_bridge_process_eligible(KPROC *process, KTHREAD *thread)
+BOOL thread_return_bridge_process_eligible(KPROC *process, KTHREAD *thread)
 {
     /* Legacy sole-identity model preflight. Runnable managed siblings instead
      * use trusted startup plus the thread-only launcher exit contract. */
     return kproc_thread_is_sole(process, thread);
 }
 
-void x32_return_bridge_release(X32_RETURN_BRIDGE **result)
+void thread_return_bridge_release(THREAD_RETURN_BRIDGE **result)
 {
-    X32_RETURN_BRIDGE *bridge, **link;
+    THREAD_RETURN_BRIDGE *bridge, **link;
     if (!result || !*result) return;
     bridge = *result; *result = NULL;
     if (--bridge->users) return;
@@ -121,25 +145,25 @@ void x32_return_bridge_release(X32_RETURN_BRIDGE **result)
 
 LONG thread_startup_arch_bridge_acquire(KASPACE *space, void **result)
 {
-    X32_RETURN_BRIDGE *bridge = NULL;
+    THREAD_RETURN_BRIDGE *bridge = NULL;
     LONG error;
     if (!result || *result) return EINVAL;
-    error = x32_return_bridge_acquire(space, &bridge);
+    error = thread_return_bridge_acquire(space, &bridge);
     if (!error) *result = bridge;
     return error;
 }
 BOOL thread_startup_arch_bridge_valid(const void *bridge)
 {
-    return x32_return_bridge_valid(bridge);
+    return thread_return_bridge_valid(bridge);
 }
 VADDR thread_startup_arch_bridge_address(const void *bridge)
 {
-    return x32_return_bridge_address(bridge);
+    return thread_return_bridge_address(bridge);
 }
 void thread_startup_arch_bridge_release(void **result)
 {
-    X32_RETURN_BRIDGE *bridge;
+    THREAD_RETURN_BRIDGE *bridge;
     if (!result) return;
     bridge = *result; *result = NULL;
-    x32_return_bridge_release(&bridge);
+    thread_return_bridge_release(&bridge);
 }

@@ -4,7 +4,7 @@
 #include "biosext.h"
 #include "ksched.h"
 #include "kproc.h"
-#include "process.h"
+#include "native_sched_backend.h"
 #include "kthread_context.h"
 #include "kthread.h"
 #include "thread_startup.h"
@@ -15,10 +15,10 @@
 #include "gemerror.h"
 #include "string.h"
 #if CONF_WITH_X86_64_MEMTEST
-#include "../../../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
 #if CONF_WITH_CUIS
-#include "../../../aes/cuis.h"
+#include "../aes/cuis.h"
 #endif
 extern PD *run;
 
@@ -54,9 +54,9 @@ static struct {
     BOOL active;
     UWORD initial, next;
     KERNEL_TASK *tasks, *current;
-    X86_64_PROCESS_CONTEXT root;
+    NATIVE_SCHED_CONTEXT root;
     jmp_buf resume;
-    UQUAD flags;
+    uintptr_t flags;
     PROC_CLONE_TRANSACTION *pending_clone;
 } scheduler;
 static UQUAD next_identity;
@@ -88,7 +88,7 @@ BOOL ksched_take_syscall_stack(PD *pd, THREAD_STARTUP_STACK *owner)
     owner->top = stack.top;
     return stack.physical != 0;
 }
-extern void native_sched_enter(UQUAD top, void (*entry)(void)) NORETURN;
+
 
 BOOL ksched_spawn_allowed(void)
 {
@@ -180,11 +180,11 @@ static void discard_task_execution(KERNEL_TASK *task)
 
 BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument)
 {
-    UQUAD flags;
+    uintptr_t flags;
     BOOL managed;
-    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    flags = native_sched_irq_save();
     managed = ksched_block(ready,argument);
-    if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+    native_sched_irq_restore(flags);
     return managed;
 }
 
@@ -382,7 +382,7 @@ static void task_entry(void)
          * process's disposal until root reaps this execution resource. */
         if (!kthread_stop(task->thread))
             panic("scheduler: refused task did not stop");
-        proc_discard_accessory(task->program);
+        proc_discard_scheduled(task->program);
     }
     if (!kthread_is_stopped(task->thread))
         panic("scheduler: exited task has a resumable thread");
@@ -407,7 +407,7 @@ static void task_entry(void)
         }
         if (owner != task) task->state = TASK_DONE;
     }
-    x86_64_process_save(&task->execution.cpu);
+    native_sched_save(&task->execution.cpu);
     longjmp(scheduler.resume, 1);
 }
 
@@ -418,7 +418,7 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     task->ready = ready;
     task->argument = argument;
     task->state = TASK_BLOCKED;
-    x86_64_process_save(&task->execution.cpu);
+    native_sched_save(&task->execution.cpu);
     if (!setjmp(task->execution.resume)) longjmp(scheduler.resume, 1);
     task->ready = NULL;
     task->argument = NULL;
@@ -428,13 +428,13 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
 static BOOL always_ready(void *argument) { (void)argument; return TRUE; }
 LONG ksched_yield(void)
 {
-    UQUAD flags;
+    uintptr_t flags;
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_MMAP
     x86_64_memtest_clone_yield(); /* process context, before IRQ exclusion */
 #endif
-    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    flags = native_sched_irq_save();
     ksched_block(always_ready, NULL);
-    if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+    native_sched_irq_restore(flags);
     return E_OK;
 }
 
@@ -592,14 +592,14 @@ static BOOL child_ready(void *argument)
 LONG ksched_wait(WORD pid, WORD options, UQUAD address)
 {
     CHILD_WAIT wait;
-    UQUAD flags;
+    uintptr_t flags;
     UWORD i;
     if (options & ~3) return EINVAL;
     /* No process-group or stopped-process model is implemented yet. */
     if (!pid || pid < -1) return EINVFN;
     if (!ksched_spawn_allowed()) return EFILNF;
     wait.parent = run; wait.pid = pid;
-    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    flags = native_sched_irq_save();
     for (;;) {
         BOOL found = FALSE;
         for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
@@ -611,10 +611,10 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
             if (task->state != TASK_ZOMBIE) continue;
             /* Back/copy output outside IRQ exclusion. This path never yields,
              * so the zombie remains owned and cannot change under the copy. */
-            if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+            native_sched_irq_restore(flags);
             if (address && !kproc_copy_to_user(address, task->usage, sizeof(task->usage))) return EIMBA;
             kproc_add_child_usage(run, task->usage[0]);
-            __asm__ volatile ("cli" ::: "memory");
+            native_sched_irq_disable();
             status = ((ULONG)(UWORD)task->pid << 16) |
                      (task->signal ? ((ULONG)task->signal << 8) : (task->result & 255));
             task->parent = NULL;
@@ -622,11 +622,11 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
             kproc_release(task->process);
             task->process = NULL;
             task->state = TASK_UNUSED;
-            if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+            native_sched_irq_restore(flags);
             return (LONG)status;
         }
         if (!found || (options & 1)) {
-            if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+            native_sched_irq_restore(flags);
             return found ? 0 : EFILNF;
         }
         ksched_block(child_ready, &wait);
@@ -728,10 +728,10 @@ static LONG dispatch_group(UWORD count, LONG *results)
     scheduler.next = 0;
     scheduler.current = NULL;
     scheduler.active = TRUE;
-    x86_64_process_save(&scheduler.root);
+    native_sched_save(&scheduler.root);
     scheduler.flags = scheduler.root.flags;
-    scheduler.root.flags &= ~0x200ULL;
-    if (setjmp(scheduler.resume)) x86_64_process_restore(&scheduler.root);
+    scheduler.root.flags = native_sched_masked(scheduler.root.flags);
+    if (setjmp(scheduler.resume)) native_sched_restore(&scheduler.root);
     else if (scheduler.pending_clone) {
         PROC_CLONE_TRANSACTION *tx = scheduler.pending_clone;
         scheduler.pending_clone = NULL;
@@ -765,18 +765,18 @@ static LONG dispatch_group(UWORD count, LONG *results)
                 native_sched_enter(task->execution.stack.top, task_entry);
             }
             task->state = TASK_RUNNING;
-            x86_64_process_restore(&task->execution.cpu);
+            native_sched_restore(&task->execution.cpu);
             longjmp(task->execution.resume, 1);
         }
         if (!pending) break;
-        __asm__ volatile ("sti; hlt; cli" ::: "memory");
+        native_sched_idle();
     }
     for (i = 0; i < count; i++) results[i] = scheduler.tasks[i].result;
     kfree(scheduler.tasks);
     scheduler.tasks = scheduler.current = NULL;
     scheduler.active = FALSE;
     scheduler.root.flags = scheduler.flags;
-    x86_64_process_restore(&scheduler.root);
+    native_sched_restore(&scheduler.root);
     return E_OK;
 }
 
@@ -865,10 +865,10 @@ BOOL ksched_clone_context(KPROC *source, PD **controller)
 }
 BOOL ksched_clone_begin(KPROC *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard)
 {
-    UQUAD flags;
-    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    uintptr_t flags;
+    flags = native_sched_irq_save();
     if (!ksched_clone_context(source, controller)) {
-        if (flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+        native_sched_irq_restore(flags);
         return FALSE;
     }
 #if CONF_WITH_X86_64_MEMTEST
@@ -883,7 +883,7 @@ void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard)
     if (!clone_masked) panic("clone publication exclusion already released");
     clone_masked = FALSE;
 #endif
-    if (guard->flags & 0x200) __asm__ volatile ("sti" ::: "memory");
+    native_sched_irq_restore(guard->flags);
 }
 void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STARTUP_DRAFT *startup,
                          THREAD_STARTUP_STACK *stack, KPROC *logical_parent, BOOL same_process, THREAD_STARTUP_STACK *syscall_stack)

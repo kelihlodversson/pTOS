@@ -525,6 +525,19 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
     record "exit handoff rollback" FAIL "configured injection was not exercised"
 fi
 
+# Compilation and legacy compatibility are insufficient evidence of native
+# startup. Require the managed child worker's runtime verdict on both MMUs.
+case "$machine" in
+    virt-arm|virt-m68k-aspace)
+        if grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+           grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h"; then
+            if ! grep -aq 'pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS' "$suite_log"; then
+                record "native managed clone execution" FAIL "native clone worker did not execute"
+            fi
+        fi
+        ;;
+esac
+
 # -- the verdict ----------------------------------------------------------------
 
 show_logs
