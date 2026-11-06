@@ -745,3 +745,22 @@ observer reference drops only retained PID/status identity. Shared ASPACE surviv
 independent PROCESS cleanup. Public Pclone/SAME_PROCESS remain gated, ARM/m68k
 clone context integration is staged, and #911 non-MMU m68k work does not block
 this user-ASPACE ownership contract.
+
+Public x32 Pclone checkpoint
+---------------------------
+
+The earlier validation-only gates above describe historical checkpoints.
+Managed native x32 Pclone now connects the same trusted active-group transaction:
+source owns execution resources throughout preparation; transaction owns the
+child PROCESS/KASPACE/KTHREAD/startup before commit; task and existing launcher
+own them after publication; observer registration owns asynchronous observation
+through root reap. The public caller retains no observer handle. A public void
+entry uses the kernel's zero-status return stub, preserving explicit Pterm/fault
+handling and the sole-THREAD restriction. No public SAME_PROCESS, private VM,
+ARM/m68k startup, TLS or new wait/termination mechanism is enabled here.
+
+The startup guard now covers only final revalidation, sealing and no-fail stores.
+All allocation, callback, cancellation and teardown occur outside that guard.
+Usage-credit policy is stored explicitly in KPROC rather than inferred from the
+controller pointer; controller-first retirement is tested. See the current
+clone-public-integration.txt contract and thread-startup.txt for release order.

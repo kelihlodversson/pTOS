@@ -3,8 +3,8 @@ Internal clone startup and publication (#892)
 
 The internal x32 root runner and active-group spawn execute PROC_CLONE_NEW_PROCESS with
 PROC_CLONE_SHARE_VM: a distinct PROCESS/PID and exactly one KTHREAD share the
-source KASPACE. Public Pclone remains validation-only (valid requests return
-EINVFN), and SAME_PROCESS/PREPARED_PROCESS runnable startup remains unsupported.
+source KASPACE. Public Pclone uses active-group startup on managed x32 tasks;
+SAME_PROCESS/PREPARED_PROCESS runnable startup remains unsupported.
 Non-NULL Pclone.tls remains unsupported. No public termination semantics change.
 
 Execution preconditions
@@ -134,7 +134,7 @@ IRET, after publication; this is an allocation-free continuation setup, not a
 second fallible context factory. Startup leases are released immediately before
 initial IRET. Durable user-stack and bridge holds remain through termination.
 
-The existing public identity-only commit still rejects drafts. Internal guarded
+The trusted identity-only commit still rejects startup drafts. Guarded
 promotion requires the exact exclusive PROCESS/ASPACE/startup/stack association;
 ordinary backend-install/start protections are preserved. Merely removing an
 identity_only check cannot authorize sibling execution.
@@ -148,10 +148,14 @@ installed. FS/GS selectors and user bases start zero; this does not implement TL
 The existing launcher restores its own execution state after the child stops.
 Existing cooperative save/restore continues to own suspended register state.
 
-The bridge ABI is kernel-selected:
+The internal test bridge ABI is kernel-selected:
 
  LONG entry(void *argument) -> EAX result
  bridge: EDI = EAX; RAX = (GEMDOS class 1 << 32) | Pterm 0x4c; syscall; ud2
+
+Public void (*entry)(void *) instead uses the adjacent immutable stub which
+sets EDI to zero regardless of EAX. Both stubs have the same trusted mapping
+identity and Pterm handoff. Explicit Pterm retains its supplied status.
 
 Pterm consumes the low 16 status bits. Normal return, explicit Pterm and entry
 fault use the merged xterm -> termuser -> launcher handoff -> proc_finalize_exit
@@ -203,8 +207,8 @@ release and fail-stop on an escaping observer disk error.
 ARM/m68k retain construction/ownership and existing launcher runtime coverage;
 their new-clone startup backends are not implemented by this x32 slice. Host
 configuration models and ABI cross-compilation are not target runtime tests.
-Public flag/result ABI, public startup gating and active-group integration remain
-#892. Thread/group exit and joining remain #893, PROCESS waits #909, generic
+Public flag/result ABI and managed active-group x32 startup are now implemented;
+remaining architecture startup backends stay in #892. Thread/group exit and joining remain #893, PROCESS waits #909, generic
 scheduling/preemption/non-MMU integration #713, shared-VM Pexec #894 and TLS #908.
 
 Before preemption/SMP, #713 must synchronize PROCESS state, mapping mutation,
@@ -261,7 +265,8 @@ handles a blocked or early wait; existing ksched_exiting clears parent links on
 retirement and makes completed orphans root-reapable. Active clone child usage
 is credited by the existing Pwait path once, not also at KPROC retirement. CUIS formatting remains in
 its existing task completion consumer. No second process completion/wait system
-has been introduced. Public Pclone and SAME_PROCESS startup remain gated.
+has been introduced. Public managed x32 Pclone selects the owned observer path;
+SAME_PROCESS startup remains gated.
 
 Production x32 tests enter the real active API from a kernel-only Syield hook
 on behalf of an executing ring-3 parent. They exercise parent continuation,
@@ -275,3 +280,20 @@ owned-observer tests run as host models under x32/ARM/m68k configurations, inclu
 both release orders and independent completions. These do not execute new ARM
 or m68k clone CPU contexts. Legacy non-MMU m68k multitasking is #911 and is not
 an acceptance gate for this MMU slice.
+
+Public trap integration checkpoint
+----------------------------------
+
+Pclone snapshots either the legacy 28-byte prefix or the 32-byte extension once,
+normalizes ILP32 pointers, validates policies and dispatches NEW_PROCESS/SHARE_VM
+only from the current managed native task. Optional PID/TID stores and positive
+signed TID return use the same transaction. Non-NULL TLS and invalid flags fail
+before construction; private/SAME_PROCESS and unsupported backends remain gated.
+
+Lazy heap/mmap entry, stack and output reservations are backed before startup
+lease acquisition. This construction path returns backing errors instead of
+invoking fatal ordinary user-copy OOM handling. No output or return slot is
+written before commit. The narrow publication IRQ guard excludes allocation,
+callbacks and cleanup; restoration precedes abort/cancellation and transaction
+release. Pwait usage policy is explicit, independent of controller-reference
+teardown order. See clone-public-integration.txt for the ABI and guard contract.

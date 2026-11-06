@@ -119,15 +119,15 @@ refused by active spawn.
 Established prerequisites for connecting xclone: production active clone execution, parent
 retirement/PD reuse, slot exhaustion, pre-commit cancellation and unchanged
 outputs, early completion and blocked-parent wakeup, owned observer rollback,
-normal/fault/TSR teardown and both stack release contexts. Add the complete future
-flag/size/child_pid/resource/error matrix to cross-ABI layout, decoder, production
-handler and real-trap tests while preserving validation-only compatibility.
+normal/fault/TSR teardown and both stack release contexts. The public
+flag/size/child_pid/resource/error matrix now has cross-ABI layout, decoder,
+production handler and real x32 ring-3 trap tests.
 The production x32 MEMTEST now executes constructed active-group clones,
 including blocked/early wait, creator PD reuse, normal/fault/TSR exit and all
 ownership transfers. Host publication/observer fixtures remain models and are
 reported separately. Public flag/output/return ABI integration, including the
-void-entry zero-status bridge, is still gated; runnable SAME_PROCESS still needs
-#893. See thread-startup.txt for the active execution contract.
+void-entry zero-status bridge, is enabled in managed x32 groups. Runnable
+SAME_PROCESS still needs #893. See thread-startup.txt for the active execution contract.
 
 Minimum #893 handoff dependency
 -------------------------------

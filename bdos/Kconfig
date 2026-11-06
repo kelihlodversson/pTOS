@@ -10,14 +10,15 @@
 menu "GEMDOS (BDOS)"
 
 config CONF_WITH_PCLONE
-    bool "Experimental Pclone argument validation"
+    bool "Experimental Pclone"
     depends on CONF_WITH_KPROC
     default n
     help
       Route Pclone through its architecture ABI dispatcher and validate its
-      initial arguments on address-space kernels. A valid request returns
-      EINVFN because the clone backend is not implemented yet. On kernels
-      without user address spaces, all requests currently return EINVFN.
+      arguments on address-space kernels. Managed native x32 tasks can create
+      a distinct process sharing their address space with CLONE_VM. Other
+      execution backends and SAME_PROCESS/private-VM startup return EINVFN.
+      Kernels without user address spaces return EINVFN without reading args.
 
 config CONF_PCLONE_STACK_ALIGNMENT
     int
