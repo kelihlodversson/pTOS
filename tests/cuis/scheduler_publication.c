@@ -210,6 +210,27 @@ int main(void)
     if(!setjmp(scheduler.resume)) task_entry();
     CHECK(table[0].state==TASK_DONE && refused_stopped && refused_disposals==1 &&
           !table[0].program && !table[0].process_completed && table[0].result==EIMBA);
+    /* A retired attachment must lose its jump target, not just its result
+     * permission. The producer can still finish after the consumer is gone. */
+    ksched_admission_release(&scheduler.waiter);
+    ksched_admission_release(&scheduler.admission);
+    CHECK(ksched_admission_create((KPROC *)&parent,1,&scheduler.waiter)==E_OK &&
+          ksched_admission_retain(&scheduler.waiter,&scheduler.admission));
+    scheduler.waiter_attached=TRUE;
+    memset(scheduler.waiter_resume,0xa5,sizeof(scheduler.waiter_resume));
+    ksched_exiting(&parent,9);
+    CHECK(!scheduler.waiter_attached && !scheduler.waiter.identity &&
+          ksched_admission_abandoned(&scheduler.admission));
+    for (i=0;i<sizeof(scheduler.waiter_resume);i++)
+        CHECK(!((UBYTE *)scheduler.waiter_resume)[i]);
+    {
+        LONG untouched=-91;
+        CHECK(ksched_admission_complete(&scheduler.admission,0,9) &&
+              ksched_admission_take(&scheduler.admission,&untouched,1)==EACCDN && untouched==-91);
+        ksched_exiting(&parent,10); /* duplicate notification cannot restore it */
+        CHECK(!scheduler.waiter_attached && !scheduler.waiter.identity);
+    }
+    puts("Attached waiter retirement: cleared continuation, late producer and unchanged output: PASS (host)");
     scheduler.current = NULL; scheduler.active=FALSE; free_task_table();
     CHECK(allocations == frees && !scheduler.tasks);
     puts("Shared scheduler growth/publication: exhaustion, private reservations, cancellation, blocked/early wait and orphan identity: PASS");
