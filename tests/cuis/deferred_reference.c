@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include "emutos.h"
 #include "string.h"
-#include "../../bdos/arch/x86_64/native_sched.c"
+#include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "deferred reference:%d: %s\n", __LINE__, #c); abort(); } } while (0)
 
@@ -12,47 +12,39 @@ static KERNEL_TASK tasks[KSCHED_LIMIT];
 static unsigned phase;
 PD *run;
 
-KTHREAD_STACK kthread_stack_detach(KTHREAD_STACK *stack)
-{
-    KTHREAD_STACK result = *stack;
-    CHECK(phase == 0 && result.physical == 123);
-    stack->physical = stack->top = 0;
-    phase++;
-    return result;
-}
-
 #if CONF_WITH_USER_ASPACE
 void proc_dispose_process(KPROC *process)
 {
-    CHECK(phase == 1 && process == (KPROC *)&successor);
-    CHECK(tasks[1].state == TASK_UNUSED && !tasks[1].program && !tasks[1].process);
+    CHECK(phase == 0 && process == (KPROC *)&successor);
+    CHECK(tasks[1].state == TASK_DONE && !tasks[1].program && !tasks[1].thread);
     phase++;
 }
 #else
 void proc_dispose_deferred(PD *pd)
 {
-    CHECK(phase == 1 && pd == &successor);
-    CHECK(tasks[1].state == TASK_UNUSED && !tasks[1].program && !tasks[1].process);
+    CHECK(phase == 0 && pd == &successor);
+    CHECK(tasks[1].state == TASK_DONE && !tasks[1].program && !tasks[1].thread);
     phase++;
 }
 #endif
 
 void kproc_release(KPROC *process)
 {
-    CHECK(phase == 3 && process == (KPROC *)&successor);
+    CHECK(phase == 2 && process == (KPROC *)&successor);
     phase++;
 }
 
 void kthread_destroy(KTHREAD *thread)
 {
-    CHECK(phase == 2 && thread == (KTHREAD *)&successor);
+    CHECK(phase == 1 && thread == (KTHREAD *)&successor);
     phase++;
+    kthread_stack_release(&tasks[1].execution.stack);
 }
 
 void kthread_stack_release(KTHREAD_STACK *stack)
 {
-    CHECK(phase == 4 && stack->physical == 123);
-    phase++;
+    CHECK(phase == 2 && stack->physical == 123);
+    stack->physical = stack->top = 0;
 }
 
 int main(void)
@@ -66,14 +58,26 @@ int main(void)
     tasks[1].state = TASK_DEFERRED;
     tasks[1].program = &successor;
     tasks[1].process = (KPROC *)&successor;
-    tasks[1].deferred_thread = (KTHREAD *)&successor;
+    tasks[1].thread = (KTHREAD *)&successor;
     tasks[1].deferred_owner = &owner;
     tasks[1].execution.stack.physical = 123;
     tasks[2].state = TASK_DEFERRED;
     tasks[2].deferred_owner = &other;
-    CHECK(ksched_defer_cancel() == E_OK && phase == 5);
+    CHECK(ksched_defer_cancel() == E_OK && phase == 3);
     CHECK(tasks[2].state == TASK_DEFERRED);
-    CHECK(ksched_defer_cancel() == E_OK && phase == 5);
+    CHECK(ksched_defer_cancel() == E_OK && phase == 3);
     puts("Deferred cancellation releases its process reference and stack once: PASS");
     return 0;
+}
+
+/* Legacy scheduler fixtures must never acquire clone startup ownership. */
+void thread_startup_abort(THREAD_STARTUP_DRAFT **startup)
+{
+    if (startup && *startup) abort();
+}
+
+void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
+{
+    (void)startup;
+    abort(); /* no published clone exists in this legacy fixture */
 }

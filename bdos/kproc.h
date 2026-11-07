@@ -78,6 +78,8 @@ void kproc_test_pid_search(WORD previous, UWORD candidates);
 #if CONF_WITH_USER_ASPACE
 /* Test private pending images only; this does not enable active VM sharing. */
 struct kaspace;
+ULONG kproc_test_child_ticks(const KPROC *process);
+void kproc_test_age_unstarted(KPROC *process, ULONG ticks);
 struct kaspace *kproc_test_retain_pending(PD *pd);
 struct kaspace *kproc_test_retain_active(PD *pd);
 /* Non-runnable ownership test only; does not establish VM sharing policy. */
@@ -120,8 +122,51 @@ BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched *
 #if CONF_WITH_USER_ASPACE
 struct kthread;
 struct kaspace;
-/* Non-runnable association only. Both returned references are owned by the
- * thread; cleanup must not begin until all such associations are detached. */
+/* Borrowed execution policy; terminal processes cannot publish new work. */
+#if CONF_WITH_PTERMGRP
+/* Serialized membership latch; existing execution remains valid until handoff.
+ * First accepted status wins. Retained identity, never reusable PD identity. */
+BOOL kproc_request_group_exit(KPROC *process, UWORD status);
+BOOL kproc_group_status(const KPROC *process, UWORD *status);
+#endif
+BOOL kproc_thread_start_allowed(const KPROC *process);
+BOOL kproc_thread_is_sole(KPROC *process, struct kthread *thread);
+/* Caller already holds the identity; only live resources may be acquired. */
+KPROC *kproc_retain_live(KPROC *process);
+PD *kproc_live_pd(const KPROC *process); /* borrowed during serialized live-resource operation */
+BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
+void proc_dispose_process(KPROC *process);
+struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */
+/* Explicit construction-space attachment never publishes active_space.
+ * identity_only constructs a trusted non-runnable identity; it cannot install
+ * a backend through ordinary KTHREAD setters. */
+BOOL kproc_thread_attach_space(KPROC *process, struct kaspace *construction_space,
+    struct kthread *thread, KPROC **retained_process, struct kaspace **space,
+    struct kthread **next, BOOL identity_only);
+/* Identity-only VM adoption into an independently prepared resource container.
+ * Success transfers space. Failure changes neither object nor references. */
+BOOL kproc_clone_target_ready(const KPROC *process, struct kthread *thread);
+BOOL kproc_clone_adopt_space(KPROC *process, struct kthread *thread, struct kaspace *space);
+#if CONF_WITH_NATIVE_SCHED
+BOOL kproc_clone_prepare_compat(KPROC *, struct kthread *, struct kaspace *);
+void kproc_clone_drop_compat(KPROC *);
+BOOL kproc_clone_run_ready(KPROC *, struct kthread *, struct kaspace *);
+BOOL kproc_clone_prepare_controller(KPROC *process, PD *controller);
+BOOL kproc_clone_prepare_parent(KPROC *, KPROC *);
+BOOL kproc_clone_parent_ready(const KPROC *);
+BOOL kproc_clone_execution_bound(KPROC *, struct kthread *);
+BOOL kproc_clone_sibling_ready(KPROC *, struct kthread *, struct kaspace *);
+void kproc_clone_commit_sibling(KPROC *, struct kthread *);
+void kproc_clone_commit_run(KPROC *, struct kaspace *, void *, PADDR, uintptr_t, BOOL);
+void *kproc_clone_startup(PD *);
+#if CONF_WITH_X86_64_MEMTEST
+void kproc_test_fail_clone_controller(void);
+void kproc_test_controller_first(KPROC *process);
+void kproc_test_fail_clone_compat(UWORD stage);
+#endif
+#endif
+/* Prepared association. Both returned references are owned by the thread;
+ * cleanup must not begin until all such associations are safely detached. */
 BOOL kproc_thread_attach(PD *pd, struct kthread *thread, KPROC **process,
                          struct kaspace **space, struct kthread **next);
 /* Return TRUE when the last association must finish deferred disposal. */
@@ -137,6 +182,13 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len);
  * panic; other teardown callbacks must not exit non-locally. */
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len);
 BOOL kproc_prepare_exit_handoff(KPROC *process);
+/* Backend-owned executing threads use the launcher handoff. A non-final
+ * thread leaves PROCESS live; only the final association reserves disposal.
+ * Detachment is deferred until the caller has left its syscall stack. */
+BOOL kproc_prepare_thread_exit_handoff(KPROC *process, struct kthread *thread);
+BOOL kproc_finish_thread_handoff(KPROC *process, struct kthread *thread);
+void kproc_require_exit_thread(PD *pd, struct kthread *thread);
+BOOL kproc_exit_handoff_pending(const KPROC *process);
 BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd);
 /* Commit the existing single-thread xterm cleanup while lookup owns KPROC. */
 BOOL kproc_begin_exit(PD *pd);
@@ -144,7 +196,7 @@ BOOL kproc_begin_exit(PD *pd);
  * process; the caller must immediately reap it from a safe context. */
 BOOL kproc_request_completion(KPROC *process, struct kthread *thread, UWORD status);
 BOOL kproc_pending_completion(const KPROC *process, UWORD *status);
-/* Normal xterm is not thread-aware; reject it before any cleanup begins. */
+/* Legacy/unmanaged xterm cannot tear down attached non-runnable identities. */
 void kproc_require_no_threads(PD *pd);
 /*
  * Builds the ring-3 address space for a process about to be launched:
@@ -163,10 +215,14 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
 #endif
 BOOL kproc_standard_entry(PD *pd);
 BOOL kproc_prepare_user(PD *pd, PD *parent);
+/* Optional generic identity construction is part of preparation, before any
+ * consuming image transfer. Failure leaves *thread NULL with no association. */
+BOOL kproc_prepare_user_thread(PD *pd, PD *parent, struct kthread **thread);
 #if CONF_WITH_NATIVE_SCHED
 void kproc_add_child_usage(PD *pd, ULONG milliseconds);
 void kproc_commit_async(PD *pd);
 BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller);
+BOOL kproc_prepare_async_thread(PD *pd, PD *parent, PD *controller, struct kthread **thread);
 #endif
 /*
  * Makes the process a built-in x32 program: kproc_prepare_user() will also

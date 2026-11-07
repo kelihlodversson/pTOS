@@ -28,6 +28,8 @@
 #include "string.h"
 #include "kheap.h"
 #include "procmem.h"
+#include "../bdos/kaspace.h"
+#include "biosext.h"
 #include "pmem32.h"
 #include "aspace32.h"
 #include "gemerror.h"
@@ -249,6 +251,11 @@ ASPACE_ROOT aspace_root(const ASPACE *as)
     return as->root;
 }
 
+BOOL aspace_is_current(const ASPACE *as)
+{
+    return as && as->root == aspace_hw_current();
+}
+
 ULONG aspace_table_pages(const ASPACE *as)
 {
     return as->count + as->root_pages;
@@ -268,6 +275,7 @@ static void flush_if_current(const struct aspace *as)
 
 BOOL aspace_map_page(ASPACE *as, VADDR va, PADDR phys, UWORD prot)
 {
+    if (!kaspace_mapping_change(as, va, PAGE)) return FALSE;
     if ((va | phys) & (PAGE - 1))
         return FALSE;
     /* the whole page must lie in the user half */
@@ -280,6 +288,7 @@ BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
 {
     VADDR page, end;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if (!bytes || va + bytes < va || !procmem_range_live(va, bytes))
         return FALSE;
     /* Pin before mapping, and remember it before pinning, so every pin has
@@ -322,6 +331,8 @@ void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes)
         if (as->pins[i].va != va || as->pins[i].bytes <= keep_end - va)
             continue;
         old_end = (va + as->pins[i].bytes + PAGE - 1) & ~(PAGE - 1);
+        if (!kaspace_mapping_change(as, keep_end, old_end - keep_end))
+            panic("shrink during sealed startup");
         for (page = keep_end; page < old_end; page += PAGE)
             aspace_hw_unmap(as->root, page);
         as->pins[i].bytes = keep_end - va;
@@ -410,6 +421,19 @@ static BOOL range_copyable(const ASPACE *as, VADDR va, VADDR bytes, BOOL write)
     return TRUE;
 }
 
+BOOL aspace_copy_to_user_ok(const ASPACE *as, VADDR va, ULONG bytes)
+{
+    return range_copyable(as, va, bytes, TRUE);
+}
+
+void *aspace_user_write_alias(const ASPACE *as, VADDR va, ULONG bytes)
+{
+    PADDR physical;
+    if (!bytes || bytes > USER_PAGE_SIZE - (va & (USER_PAGE_SIZE - 1)) ||
+        !range_copyable(as, va, bytes, TRUE) || !aspace_translate(as, va, &physical, NULL)) return NULL;
+    return pmem32_virt(physical);
+}
+
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes)
 {
     if (!range_copyable(as, va, bytes, FALSE))
@@ -465,6 +489,7 @@ BOOL aspace_map_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
     PADDR backing;
     ULONG first_tables = as->count;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -521,6 +546,7 @@ BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes)
 {
     VADDR pages, i;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -558,6 +584,7 @@ BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot)
         return FALSE;
     if (aspace_translate(as, page, NULL, NULL))
         return TRUE;                    /* (a racing mapping: nothing to do) */
+    if (!kaspace_mapping_change(as, page, PAGE)) return FALSE;
     /* the page, the tables it may need and the bookkeeping must leave the
      * reserve alone */
     if (pmem32_free_bytes() < ASPACE_RESERVE + ASPACE_COST)
@@ -582,6 +609,7 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
 {
     VADDR pages, i;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -630,6 +658,7 @@ int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
             return 3;
         old = current;
     }
+    if (!kaspace_mapping_change(as, va, PAGE)) return 2;
     for (p = file_pages; p; p = p->next)
         if (old != PMEM32_NONE ? p->physical == old
                                : (p->backing == backing && p->offset == offset))
@@ -715,6 +744,19 @@ static BOOL range_is_private(const struct aspace *as, VADDR va, VADDR pages)
     return TRUE;
 }
 
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes)
+{
+    VADDR first;
+    if (!as || !bytes || va >= USER_VA_LIMIT || bytes > USER_VA_LIMIT - va) return FALSE;
+    first = va & ~(VADDR)(PAGE - 1);
+    if (!range_is_private(as, first, (va + bytes - first + PAGE - 1) / PAGE)) return FALSE;
+    for (; first < va + bytes; first += PAGE) {
+        PADDR phys; UWORD pr, fl;
+        if (!aspace_hw_lookup(as->root, first, &phys, &pr, &fl) || IS_FILE_PAGE(phys)) return FALSE;
+    }
+    return TRUE;
+}
+
 BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD prot)
 {
     VADDR pages, i, mapped = 0;
@@ -723,6 +765,8 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD 
     if (from == to || (va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
+    if (!kaspace_mapping_change(from, va, bytes) ||
+        !kaspace_mapping_change(to, va, bytes)) return FALSE;
     pages = (bytes + PAGE - 1) / PAGE;
     if (!range_is_private(from, va, pages))
         return FALSE;
@@ -774,6 +818,7 @@ static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL 
 {
     VADDR pages, i;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -880,6 +925,7 @@ void kstack_free(PADDR phys)
  */
 BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes)
 {
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if (aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
         return TRUE;
     aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
@@ -892,6 +938,8 @@ void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes)
     ULONG i;
     BOOL pinned = FALSE;
 
+    if (!kaspace_mapping_change(as, va, bytes))
+        panic("unborrow during sealed startup");
     for (i = as->npins; i-- > 0; )
         if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
             as->pins[i] = as->pins[--as->npins];
@@ -919,6 +967,7 @@ BOOL aspace_regrant(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
     VADDR end = (va + bytes + PAGE - 1) & ~(PAGE - 1);
     BOOL ok = TRUE;
 
+    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     for (; page < end; page += PAGE) {
         PADDR phys;
         UWORD pr, fl;

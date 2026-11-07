@@ -44,5 +44,6 @@ void proc_dispose_detached(PD *pd);
 LONG proc_prepare_accessory(PD *pd);
 LONG proc_start_accessory(PD *pd);
 void proc_discard_accessory(PD *pd);
+void proc_discard_scheduled(PD *pd);
 
 #endif

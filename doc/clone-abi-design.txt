@@ -3,6 +3,11 @@ Pclone ABI foundation
 
 Scope
 -----
+Historical #890 foundation: the original prefix and Phase 1 rejection behavior
+are recorded below. The functional x32 extension appends child_pid and accepts
+CLONE_* policy bits; doc/clone-public-integration.txt and include/pclone.h define
+that current contract. ARM/m68k runnable backends remain unavailable.
+
 The combined scheduling and process-model epic (#713, #889) needs one clone
 path shared by public Pclone and the kernel's Pexec/Pfork/Pvfork paths.  The
 public entry must not pass a caller-owned argument structure to that path.
@@ -65,7 +70,7 @@ ignoring an unknown tail must not silently grant different clone semantics.
 Field contract
 --------------
 flags is reserved and must be zero. tls is reserved and must be NULL: target
-thread-pointer initialization and runtime TLS layout belong to #892. Nonzero
+thread-pointer initialization and runtime TLS layout belong to independent #908. Nonzero
 values fail closed with EINVAL rather than promising a TLS convention.
 
 entry is the mandatory user function called with the opaque argument value.

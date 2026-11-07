@@ -178,6 +178,7 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  *   0x0ffe0000 - 0x0ffeffff   optional read-only executable x32 VDI client;
  *                             private pages, outside image/heap windows
  *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
+ *   0x0fff1000 - 0x0fff1fff   optional ARM/m68k trusted THREAD return bridge
  *   0x10000000 - 0x7efeffff   Malloc() memory of a process, backed by private
  *                             pages as they are first touched (see below)
  *   0x7efff000 - 0x7effffff   guard page: neither heap nor stack, never mapped
@@ -207,6 +208,7 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  */
 #define USER_ANCESTORS_VA VADDR_C(0x0fff0000)
 #define USER_ANCESTORS    16
+#define USER_THREAD_RETURN_VA (USER_ANCESTORS_VA + USER_PAGE_SIZE)
 #define USER_IMAGE_BASE  VADDR_C(0x00400000)
 #define USER_IMAGE_SIZE  VADDR_C(0x00400000)
 /* Zeroed read/write memory mapped right after the last page of a program
@@ -240,6 +242,7 @@ void aspace_destroy(ASPACE *as);
 ASPACE_ROOT aspace_enter(ASPACE *as);
 void aspace_leave(ASPACE_ROOT previous);
 ASPACE_ROOT aspace_root(const ASPACE *as);
+BOOL aspace_is_current(const ASPACE *as);
 
 /*
  * Maps one 4 KiB page: user virtual address va (page-aligned, and the
@@ -309,6 +312,9 @@ VADDR aspace_mappable_bytes(void);
  * is destroyed.
  */
 BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes);
+/* Resident privately owned non-file-cache pages only, for execution holds.
+ * Borrowed/procmem pages require another owner and are deliberately excluded. */
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
 
 #if ARCH_HAS_DEMAND_PAGING
 /*
@@ -387,6 +393,12 @@ BOOL aspace_user_range_ok(const ASPACE *as, VADDR va, VADDR bytes, BOOL write);
  * safe direct-map alias; it needs a separate access mechanism).
  */
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes);
+/* No-fault/no-write preflight, including direct-map RAM safety. A sealed
+ * mapping lease must protect this result until the corresponding copy. */
+BOOL aspace_copy_to_user_ok(const ASPACE *as, VADDR va, ULONG bytes);
+/* Prepublication only: one resident RAM page, return borrowed kernel alias.
+ * A sealed lease/hold must preserve its identity through the final store. */
+void *aspace_user_write_alias(const ASPACE *as, VADDR va, ULONG bytes);
 BOOL aspace_copy_to_user(const ASPACE *as, VADDR va, const void *src, ULONG bytes);
 
 /*

@@ -37,8 +37,7 @@
  * A *real*, ring-3 process (the other branch of gouser() below, via
  * x86_64_enter_user()) leaves the kernel entirely by iretq, so there is no
  * suspended C call chain to resume -- but gouser() saves a jmp_buf of its own
- * right before iretq, and termuser() (reached from xterm() once the address
- * space is gone, whether by Pterm() or by a fault) unwinds to it, exactly as
+ * right before iretq, and termuser() (reached from xterm(), whether by Pterm() or by a fault) unwinds to it, exactly as
  * for a kernel-code process.  That resumes the launcher with the exit code,
  * which is what the built-in EmuCON, and its parent bios.c, rely on.  Each
  * ring-3 process makes its system calls on a kernel stack of its own, which
@@ -77,6 +76,20 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "thread_startup.h"
+#include "thread_startup_x32.h"
+static UQUAD clone_read_fsbase(void)
+{
+    ULONG lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xc0000100UL));
+    return ((UQUAD)hi << 32) | lo;
+}
+static void clone_restore_fsbase(UQUAD value)
+{
+    __asm__ volatile ("wrmsr" :: "c"(0xc0000100UL), "a"((ULONG)value), "d"((ULONG)(value >> 32)) : "memory");
+}
+
+extern void x86_64_enter_prepared_user(const X32_THREAD_ENTRY_IMAGE *) NORETURN;
 #endif
 
 extern jmp_buf errbuf;
@@ -136,6 +149,7 @@ struct x86_64_process_launch {
     volatile UWORD exit_status;
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
+    volatile BOOL exit_final;
 #endif
 };
 
@@ -161,7 +175,17 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         return FALSE;
     }
 #endif
+#if CONF_WITH_NATIVE_SCHED
+    launch->exit_final = !ksched_exit_thread(pd) ||
+                        kproc_thread_is_sole(process, ksched_exit_thread(pd));
+#else
+    launch->exit_final = TRUE;
+#endif
+#if CONF_WITH_NATIVE_SCHED
+    if (!kproc_prepare_thread_exit_handoff(process, ksched_exit_thread(pd))) {
+#else
     if (!kproc_prepare_exit_handoff(process)) {
+#endif
         kproc_release(process);
         return FALSE;
     }
@@ -233,6 +257,12 @@ BOOL x86_64_process_is_accessory(void)
 void x86_64_process_cancel(X86_64_PROCESS_CONTEXT *context, PD *root)
 {
     X86_64_PROCESS_LAUNCH *launch = context->launch;
+#if CONF_WITH_NATIVE_SCHED
+    /* No caller currently cancels managed continuations through this legacy
+     * API. Group cancellation needs #893's explicit stop/root-reap protocol. */
+    if (context->native_task)
+        panic("native context cancellation requires THREAD handoff");
+#endif
 
     while (launch) {
         X86_64_PROCESS_LAUNCH *previous = launch->previous;
@@ -361,14 +391,22 @@ void gouser_entry(WORD entry_type)
          * from ring 0 while this CR3 is still loaded).  Nothing else in the
          * process window is mapped, except the blocks of a child it is
          * itself launching (kproc_borrow()).  That address space belongs to
-         * the process's KPROC record and is freed with it (kproc_destroy(),
-         * from xterm()), so nothing here allocates or needs to unwind.
+         * the process's KASPACE, retained by KPROC and a managed KTHREAD.
+         * The common launcher finalizer releases KPROC ownership; a stopped
+         * managed thread releases its independent reference at scheduler root.
          *
          * Both branches resume the launcher at Pterm() the same way (the
          * jmp_buf saved below), so Pexec() returns the exit code.  What a
          * ring-3 process has, which this branch switches to and back, is a
          * kernel stack of its own (see this file's own top comment).
          */
+#if CONF_WITH_NATIVE_SCHED
+        THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
+        const X32_THREAD_STARTUP_DRAFT *prepared = startup ? thread_startup_image(startup) : NULL;
+        UWORD launcher_ds, launcher_es, launcher_fs, launcher_gs;
+        UQUAD launcher_fsbase;
+        THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
+#endif
         UQUAD pml4_phys = kproc_user_root(p);
         UQUAD entry_rip = kproc_user_entry(p);
         /* Every process has a private stack of its own, mapped when it was
@@ -379,13 +417,26 @@ void gouser_entry(WORD entry_type)
         UQUAD user_rsp = kproc_user_stack(p);
         BOOL standard_entry = kproc_standard_entry(p);
         X86_64_PROCESS_LAUNCH launch;
-        UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+        UQUAD kstack_top, kstack_phys;
         UQUAD launcher_stack = x86_64_get_kernel_stack();
         UQUAD launcher_user_rsp = x86_64_get_saved_user_rsp();
         UQUAD launcher_irq_rsp = x86_64_get_irq_stack();
         UQUAD launcher_flags;
         int launcher_in_syscall;
 
+#if CONF_WITH_NATIVE_SCHED
+        if (ksched_take_syscall_stack(p, &syscall_owner)) {
+            kstack_phys = syscall_owner.physical;
+            kstack_top = syscall_owner.top;
+        } else
+#endif
+            kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+#if CONF_WITH_NATIVE_SCHED
+        __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
+                          : "=r"(launcher_ds), "=r"(launcher_es), "=r"(launcher_fs), "=r"(launcher_gs));
+        launcher_fsbase = clone_read_fsbase();
+        if (prepared) { entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; standard_entry = FALSE; }
+#endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys || !kstack_phys || !user_rsp)
@@ -422,14 +473,28 @@ void gouser_entry(WORD entry_type)
         x86_64_set_kernel_stack(kstack_top);
         x86_64_set_irq_stack(kstack_top + 8);
         launcher_in_syscall = x86_64_gs_to_user();
-        if (setjmp(launch.resume) == 0)
+        if (setjmp(launch.resume) == 0) {
+#if CONF_WITH_NATIVE_SCHED
+            if (prepared) {
+                thread_startup_entering(startup);
+                x86_64_enter_prepared_user(&prepared->user);
+            }
+#endif
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                               standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);
+        }
         current_launch = launch.previous;
         /* Pterm() was a system call, still on the child's stack with the
          * kernel GS base swapped in: normalise that first, then restore the
          * launcher's own state.  Only now is the child's stack unused. */
         x86_64_syscall_abandoned();
+#if CONF_WITH_NATIVE_SCHED
+        if (prepared) {
+            __asm__ volatile ("movw %0,%%ds; movw %1,%%es; movw %2,%%fs; movw %3,%%gs"
+                              :: "r"(launcher_ds), "r"(launcher_es), "r"(launcher_fs), "r"(launcher_gs) : "memory");
+            clone_restore_fsbase(launcher_fsbase);
+        }
+#endif
         x86_64_set_kernel_stack(launcher_stack);
         x86_64_set_saved_user_rsp(launcher_user_rsp);
         x86_64_set_irq_stack(launcher_irq_rsp);
@@ -451,8 +516,13 @@ void gouser_entry(WORD entry_type)
             x86_64_memtest_exit_handoff(process, launch.pd, kstack_phys,
                                         launch.exit_status, 2);
 #endif
-            proc_finalize_exit(process, launch.exit_status,
-                               launch.exit_resident, launch.exit_resident_len);
+#if CONF_WITH_NATIVE_SCHED
+            if (ksched_finish_exit(process, launch.pd, launch.exit_status) != launch.exit_final)
+                panic("thread exit finalization changed");
+#endif
+            if (launch.exit_final)
+                proc_finalize_exit(process, launch.exit_status,
+                                   launch.exit_resident, launch.exit_resident_len);
             /* Cleanup can make kernel calls; preserve the launcher's result
              * exactly as the legacy xterm path does after cleanup. */
             run->p_dreg[0] = launch.exit_status;

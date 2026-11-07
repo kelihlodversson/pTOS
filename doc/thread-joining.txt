@@ -1,0 +1,100 @@
+Managed THREAD joining (#893)
+=============================
+
+ABI and capability
+------------------
+
+CONF_WITH_PTHJOIN is opt-in and requires NATIVE_SCHED and PCLONE. It is
+independent of CUIS/libaes. Disabled or unmanaged calls return EINVFN.
+GEMDOS 0x191 is Pthjoin(LONG tid, int32_t *status): return zero on success,
+negative GEMDOS error otherwise. The optional output is a native-endian,
+naturally aligned 32-bit word containing the zero-extended raw 16-bit THREAD
+status (including 0xffff for a fault). NULL discards the status.
+
+Opcode audit: FreeMiNT sys/syscalls.master at
+68be4e529ad82ea9ec2b1c215b53303f91e78d52 ends at 0x190; pTOS already assigns
+0x190 to Pclone. The local TOS.HYP GEMDOS extension catalogue and libcmini
+mintbind declarations have no 0x191 assignment. ARM/x32 use native argument
+slots, m68k uses packed GEMDOS LONG arguments. This is not a POSIX pthread ABI.
+Ptermgrp uses the subsequent audited opcode 0x192; see group-exit.txt.
+
+Only published managed TIDs belonging to the calling PROCESS are joinable.
+Unknown, foreign, unpublished, already reaped or aborted TIDs return ESRCH.
+There is no public detach API; these managed TIDs are joinable until consumed
+or their PROCESS retires. Self-join and a join closing a dependency cycle
+return EDEADLK (-22, the FreeMiNT error). A competing claim returns EACCDN.
+Invalid/unwritable output returns EIMBA. TIDs are never reused during a boot.
+
+Completion ownership
+--------------------
+
+A small completion record is allocated before THREAD association/publication.
+The executing THREAD, registry, and at most one claimant own independent
+references. Registry membership borrows the stable KPROC identity and is
+removed before KPROC retirement; it never retains PD, PROCESS resources or
+KASPACE. The final execution reference can outlive registry removal.
+
+A stopped THREAD is not yet join-ready. Scheduler-root reap first releases
+execution stacks, durable user-stack hold and execution ownership; only then
+marks completion ready. The joiner can therefore reclaim/reuse the user stack
+on successful return. Late join retains status without retaining stacks.
+PROCESS completion remains separate: joining a leader with a surviving sibling
+does not complete PROCESS, consume its zombie or publish CH_EXIT.
+
+Output is checked before claiming and checked/copied again after waking.
+Failure releases the claim without consuming status; a later valid join may
+retry. Successful copyout precedes the serialized no-fail consume step.
+Blocking uses the existing generic scheduler predicate mechanism. Safe THREAD
+reap cancels an outstanding claim. There is no asynchronous signal delivery
+or public wait-cancellation API yet, so this implementation does not claim
+EINTR behavior. Future signal interruption must cancel the claim and leave
+the completion available; #713/#893 must provide its safe handoff.
+
+The registry, dependency edges, claim transfer, ready publication and final
+consume currently use cooperative serialization and scheduler IRQ exclusion.
+#713 must supply a common membership/completion/wait lock order, atomic
+check-and-block/wakeup and root-reclamation exclusion before preemption/SMP.
+Do not invoke callbacks or yield between copyout and consume. IRQ masking is
+not a cross-CPU lock. Existing filesystem, mapping and launcher-chain blockers
+still apply; no preemption is enabled here.
+
+Cooperative group termination
+----------------------------
+
+CONF_WITH_PTERMGRP adds managed PROCESS-wide cancellation through the existing
+THREAD/launcher/root handoffs. See group-exit.txt for its pending nested-child
+and blocking-boundary contracts. Outstanding join claims are cancelled by safe
+THREAD reap; group cancellation never consumes a target status as a join.
+
+#909 still owns generic PROCESS waits/reaping. libcmini #25 must integrate
+one-time atexit plus Ptermgrp with older-kernel fallback (EINVFN/EINVAL); libc
+exit is not claimed group-wide here. TLS (#908) remains unsupported.
+
+Validation evidence
+-------------------
+
+The native worker invokes real GEMDOS traps and checks blocking/late join,
+return/Pterm/fault statuses, competing reapers, self/dependency cycles,
+invalid/revoked output with retry, leader-first exit, foreign/dead TIDs and
+resource baselines. It runs on x32, Cortex-A7 and m68040 QEMU. The host harness
+executes production KTHREAD code with counted PROCESS/ASPACE models, including
+claim cancellation, retirement before root reap, constructor rollback and no
+heavyweight completion references. Host models are not native runtime tests.
+
+68060 QEMU limitation (#913)
+---------------------------
+
+QEMU 10.0.13 (Debian) with -M virt -cpu m68060 -m 128 -L /tmp/906-qemu,
+-kernel virt-m68k.elf and a serial file reaches ELF entry and early MMU setup,
+then raises F-line at the F518 PFLUSHA in virt_mmu_early (+0x0a), before normal
+exception vectors/console. Both the pre-clone Phase 2 kernel and current kernel
+fail there; both boot with the same settings and -cpu m68040. The preceding
+illegal PCR CPU-detection probe is handled and is not the fatal fault.
+
+QEMU v10.0.13 target/m68k/cpu.c clears M68K_FEATURE_M68040 for m68060 while
+translate.c registers PFLUSH under that feature. The installed binary has no
+m68060 mmu property (mmu=on is rejected). This is a reproducible pre-existing
+CPU-model/MMU coverage limitation, not evidence of a clone regression. No
+unrelated boot workaround is included. Nonzero FPIAR and native -mfastcall
+runtime remain unverified; local m68k shared-library-disabled runs do not
+establish shared-library runtime support.

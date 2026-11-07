@@ -172,9 +172,20 @@ if grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"; then
     echo 'Boot log contains a panic or failed test' >&2
     exit 1
 fi
+if grep -q '^CONF_WITH_CUIS=y' .config; then
+    grep -q 'x86-64 CUIS input history: PASS' "$log"
+fi
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi
+if [ "$expected" = PASS ] && grep -q '^CONF_WITH_NATIVE_SCHED=y' .config; then
+    grep -q 'x86-64 executable clone: PASS' "$log"
+    grep -q 'x86-64 active-group clone: PASS' "$log"
+    if grep -q '^CONF_WITH_PCLONE=y' .config; then
+        grep -q 'x86-64 public Pclone: PASS' "$log"
+        grep -q 'x86-64 SAME_PROCESS threads: PASS' "$log"
+    fi
+fi
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     grep -q 'x86-64 ldso relocations: PASS' "$log"
     [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]

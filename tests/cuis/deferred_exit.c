@@ -7,7 +7,7 @@
 #include "procmem.h"
 #include "mem.h"
 #include "bdosstub.h"
-#include "../../bdos/arch/x86_64/native_sched.c"
+#include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred exit:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD owner, parent, child, successor, other;
@@ -96,6 +96,10 @@ BOOL kproc_begin_exit(PD *p)
     return TRUE;
 }
 void kproc_require_no_threads(PD *p) { (void)p; }
+KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
+BOOL kproc_thread_is_sole(KPROC *p, KTHREAD *t) { (void)p; (void)t; abort(); }
+void kproc_require_exit_thread(PD *p, KTHREAD *thread) { (void)p; CHECK(!thread); }
+BOOL kthread_is_executing(const KTHREAD *thread) { (void)thread; return FALSE; }
 void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
 BOOL proc_defer_exit(PD *p, UWORD status, BOOL resident, ULONG len)
 { (void)p; (void)status; (void)resident; (void)len; return FALSE; }
@@ -165,7 +169,7 @@ void termuser(void)
     CHECK(!owner_record && !child_record && !owner_memory && term_handlers == 1);
     CHECK(identity_completions == 1 && cleanup_commits == 1);
     CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner);
-    CHECK(!tasks[1].deferred_thread && thread_destroys == 1);
+    CHECK(tasks[1].thread == (KTHREAD *)&successor && !thread_destroys);
     CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner == &other);
     CHECK(completions == (unsigned)(nested && !parent_retired));
     CHECK(references[0] == successor_aliases && sft[0].f_use == (int)successor_aliases);
@@ -181,9 +185,10 @@ static void exit_check(void)
     memset(tasks,0,sizeof(tasks));
     scheduler.tasks = tasks; scheduler.active = TRUE;
     tasks[0].program = nested ? &parent : &owner;
+    tasks[0].process = (KPROC *)tasks[0].program;
     tasks[0].state = TASK_RUNNING; tasks[0].asynchronous = TRUE;
     tasks[1].program = &successor; tasks[1].deferred_owner = &owner; tasks[1].state = TASK_DEFERRED;
-    tasks[1].deferred_thread = (KTHREAD *)&successor;
+    tasks[1].thread = (KTHREAD *)&successor;
     tasks[2].deferred_owner = &other; tasks[2].state = TASK_DEFERRED;
     memset(owner_files,0,sizeof(owner_files));
     memset(successor_files,0,sizeof(successor_files));
@@ -240,4 +245,16 @@ int main(void)
     puts("Deferred successor waits for complete owner/child cleanup despite close errors: PASS");
     puts("Exit sweep preserves successor stdout aliases with explicit handle open or closed: PASS");
     return 0;
+}
+
+/* Legacy scheduler fixtures must never acquire clone startup ownership. */
+void thread_startup_abort(THREAD_STARTUP_DRAFT **startup)
+{
+    if (startup && *startup) abort();
+}
+
+void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
+{
+    (void)startup;
+    abort(); /* no published clone exists in this legacy fixture */
 }

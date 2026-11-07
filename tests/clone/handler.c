@@ -6,6 +6,9 @@
 #include "clone.h"
 #include "clone_args.h"
 #include "gemerror.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "proc_clone.h"
+#endif
 #include <assert.h>
 #include <string.h>
 
@@ -57,7 +60,17 @@ int main(void)
     assert(xclone(0xfffffff0, 28) == EIMBA);
     assert(xclone(0x1000, 27) == EINVAL && xclone(0x1000, 0x100000000ULL) == EINVAL);
     assert(copies == before);
-    args.flags = 1; put(0x1000, args); assert(xclone(0x1000,28) == EINVAL);
+    args.flags = CLONE_VM; put(0x1000,args);
+    assert(xclone(0x1000,28) == EINVFN); /* no managed source/backend */
+    args.flags = CLONE_VM | CLONE_COPY_STANDARD_HANDLES | CLONE_COPY_CWD;
+    put(0x1000,args); assert(xclone(0x1000,32) == EINVFN);
+    args.flags = CLONE_SAME_PROCESS; put(0x1000,args);
+    assert(xclone(0x1000,32) == EINVAL);
+    args.flags = CLONE_VM | CLONE_SAME_PROCESS; put(0x1000,args);
+    assert(xclone(0x1000,32) == EINVFN);
+    args.flags = CLONE_VM | CLONE_SAME_PROCESS | CLONE_COPY_CWD; put(0x1000,args);
+    assert(xclone(0x1000,32) == EINVAL);
+    args.flags = 0x80000000U; put(0x1000, args); assert(xclone(0x1000,28) == EINVAL);
     args = good(); args.tls = 0x7000; put(0x1000,args); assert(xclone(0x1000,28) == EINVAL);
     args = good(); args.entry = 0x7000; put(0x1000,args); assert(xclone(0x1000,28) == EIMBA);
     args = good(); args.stack_base = 0x7000; put(0x1000,args); assert(xclone(0x1000,28) == EIMBA);
@@ -68,3 +81,10 @@ int main(void)
     assert(memory[0x1800] == 0xa5 && run == NULL);
     return 0;
 }
+
+#if CONF_WITH_NATIVE_SCHED
+KPROC *kproc_retain(PD *pd) { assert(!pd); return NULL; }
+void kproc_release(KPROC *p) { (void)p; assert(0); }
+LONG proc_clone_start_public(const PROC_CLONE_ARGS *a, const THREAD_STARTUP_ARGS *s, VADDR pid, VADDR tid)
+{ (void)a; (void)s; (void)pid; (void)tid; assert(0); return EINVFN; }
+#endif

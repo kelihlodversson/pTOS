@@ -40,6 +40,8 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
 void fileback_put(FILE_BACKING *backing) { if (backing) backing->references--; }
 void fileback_reap(void) { reaps++; }
 
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR address, VADDR bytes)
+{ (void)as; (void)address; (void)bytes; return TRUE; }
 int main(void)
 {
     ASPACE backend = { 0, 0, FALSE };

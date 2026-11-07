@@ -75,6 +75,7 @@
 
 #define FNOP                .dc.l 0xf2800000        /* 6888X, 68040-68060 (except 68ec040/68ec060) */
 #define FSAVE_MINUS_SP      .dc.w 0xf327            /* 6888X, 68040-68060 (except 68ec040/68ec060) */
+#define FRESTORE_SP         .dc.w 0xf357            /* fixed caller-owned frame allocation */
 #define FRESTORE_SP_PLUS    .dc.w 0xf35f            /* 6888X, 68040-68060 (except 68ec040/68ec060) */
 
 #ifdef MACHINE_VIRT_M68K

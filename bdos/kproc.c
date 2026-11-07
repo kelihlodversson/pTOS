@@ -99,8 +99,27 @@ struct kproc {
     UBYTE *user_end;
     ASPACE *aspace;      /* borrowed from active_space */
     KASPACE *active_space; /* owning reference, NULL until prepared */
-    KTHREAD *threads;     /* non-owning; non-runnable associations only */
+    KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
+#if CONF_WITH_NATIVE_SCHED
+    BOOL clone_guarded;
+#if CONF_WITH_PTERMGRP
+    BOOL group_exiting;
+    UWORD group_status;
+#endif
+    BOOL threaded; /* trusted multi-THREAD publication, not a new PROCESS */
+    BOOL child_usage_at_wait; /* accounting policy, independent of controller refs */
+#if CONF_WITH_X86_64_MEMTEST
+    BOOL test_controller_first;
+#endif
+    KASPACE *clone_compat;
+    UBYTE clone_maps;
+    void *clone_startup;
+    PD *clone_controller_pd; /* pinned allocation, scheduler-root continuation */
+    UQUAD clone_controller_gen;
+    KPROC *clone_controller_identity; /* owning if the root is tracked */
+#endif
+    BOOL clone_identity_only; /* no executable context/startup contract yet */
     BOOL completion_pending;
     UWORD pending_status;
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
@@ -281,6 +300,12 @@ BOOL kproc_create(PD *pd)
 static void give_image_back(KPROC *kproc);
 static void release_loaded(KPROC *kproc);
 #if CONF_WITH_X86_64_MEMTEST
+ULONG kproc_test_child_ticks(const KPROC *process) { return process->child_ticks; }
+void kproc_test_age_unstarted(KPROC *process, ULONG ticks)
+{
+    if (process->started) panic("test cannot age an executing process");
+    process->start_tick = (ULONG)hz_200 - ticks;
+}
 KASPACE *kproc_test_retain_pending(PD *pd)
 {
     KPROC *process = kproc_find(pd);
@@ -360,17 +385,79 @@ void kproc_complete(PD *pd, UWORD status)
 }
 
 #if CONF_WITH_USER_ASPACE
-BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
-                         KASPACE **space, KTHREAD **next)
+KPROC *kproc_retain_live(KPROC *process)
 {
-    KPROC *p = kproc_find(pd);
-    KASPACE *as;
+    if (!process || !process->pd || process->completed ||
+        process->disposal_state != PROCESS_LIVE || process->references == ~(ULONG)0)
+        return NULL;
+    process->references++;
+    return process;
+}
 
-    if (!p || p->completed || p->disposal_state != PROCESS_LIVE || !thread || !p->active_space)
+PD *kproc_live_pd(const KPROC *process)
+{
+    return process && !process->completed && process->disposal_state == PROCESS_LIVE ? process->pd : NULL;
+}
+
+BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
+{
+    KPROC *parent;
+    if (!kproc_clone_target_ready(target, NULL) || target->parent_identity ||
+        !(parent = kproc_retain_live(source)))
         return FALSE;
-    if (!kproc_retain(pd))
+    target->parent_identity = parent;
+    target->parent = parent->pd; /* borrowed only while identity remains live */
+    target->prio = source->prio;
+    target->lim_core = source->lim_core;
+    target->lim_data = source->lim_data;
+    return TRUE;
+}
+
+KASPACE *kproc_active_space(const KPROC *process)
+{
+    return process && process->pd && !process->completed &&
+        process->disposal_state == PROCESS_LIVE ? process->active_space : NULL;
+}
+
+#if CONF_WITH_PTERMGRP
+BOOL kproc_group_status(const KPROC *process, UWORD *status)
+{
+    if (!process || !process->group_exiting) return FALSE;
+    if (status) *status = process->group_status;
+    return TRUE;
+}
+BOOL kproc_request_group_exit(KPROC *process, UWORD status)
+{
+    if (!kproc_thread_start_allowed(process) || !process->started) return FALSE;
+    if (!process->group_exiting) {
+        process->group_status = status;
+        process->group_exiting = TRUE;
+    }
+    return TRUE;
+}
+#endif
+
+BOOL kproc_thread_start_allowed(const KPROC *process)
+{
+    return process && process->pd && !process->completed &&
+        !process->clone_identity_only && process->disposal_state == PROCESS_LIVE;
+}
+
+BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
+    KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next, BOOL identity_only)
+{
+    KASPACE *as;
+    if (!thread || !construction_space || !p ||
+#if CONF_WITH_PTERMGRP
+        p->group_exiting ||
+#endif
+#if CONF_WITH_NATIVE_SCHED
+        (p->clone_guarded && !identity_only) ||
+#endif
+        (p->active_space && p->active_space != construction_space) ||
+        !kproc_retain_live(p))
         return FALSE;
-    as = kaspace_share(p->active_space);
+    as = kaspace_share(construction_space);
     if (!as) {
         kproc_release(p);
         return FALSE;
@@ -381,6 +468,206 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
     p->threads = thread;
     return TRUE;
 }
+
+BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
+                         KASPACE **space, KTHREAD **next)
+{
+    KPROC *p = kproc_find(pd);
+    return kproc_thread_attach_space(p, p ? p->active_space : NULL,
+                                    thread, process, space, next, FALSE);
+}
+
+/* Only a caller-prepared, empty resource container can import shared VM.
+ * No image, stack or loader loan is transferred by this ownership operation. */
+BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *thread)
+{
+    ULONG i;
+    if (!p || !p->pd || p->started || p->completed ||
+        p->disposal_state != PROCESS_LIVE || p->clone_identity_only ||
+        p->active_space || p->pending_space || p->has_image || p->lost || p->kstack_phys ||
+        p->nheap || p->load_parent || p->lender ||
+        (thread ? p->threads != thread || *kthread_next_link(thread) : p->threads != NULL))
+        return FALSE;
+    for (i = 0; i < KPROC_BORROWS; i++)
+        if (p->borrowed[i].bytes) return FALSE;
+    return TRUE;
+}
+
+BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    if (!space || !thread || !kproc_clone_target_ready(p, thread) ||
+        kthread_process(thread) != p || kthread_aspace(thread) != space)
+        return FALSE;
+    p->active_space = space; /* transfer the transaction's owning reference */
+    p->aspace = kaspace_backend(space);
+    p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
+    return TRUE;
+}
+
+#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_X86_64_MEMTEST
+static UWORD fail_clone_compat;
+static BOOL fail_clone_controller;
+void kproc_test_fail_clone_controller(void) { fail_clone_controller = TRUE; }
+void kproc_test_fail_clone_compat(UWORD stage) { fail_clone_compat = stage; }
+#endif
+static BOOL clone_borrow_unique(ASPACE *as, VADDR va, VADDR bytes)
+{
+    VADDR page, end = va + bytes;
+    for (page = va & ~(VADDR)(USER_PAGE_SIZE - 1); page < end; page += USER_PAGE_SIZE)
+        if (aspace_translate(as, page, NULL, NULL)) return FALSE;
+    return aspace_borrow(as, va, bytes);
+}
+BOOL kproc_clone_prepare_compat(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    if (!kproc_clone_target_ready(p, thread) || p->clone_compat ||
+        procmem_gen(p->user_start) != p->tpa_gen || procmem_gen(p->env_start) != p->env_gen) return FALSE;
+    p->clone_compat = kaspace_share(space);
+    if (!p->clone_compat) return FALSE;
+    if (!clone_borrow_unique(kaspace_backend(space), (VADDR)(uintptr_t)p->user_start,
+                       p->user_end - p->user_start)) goto failed;
+    p->clone_maps = 1;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_clone_compat == 1) { fail_clone_compat = 0; goto failed; }
+#endif
+    if (!clone_borrow_unique(kaspace_backend(space), (VADDR)(uintptr_t)p->env_start,
+                       p->env_end - p->env_start)) goto failed;
+    p->clone_maps = 3;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_clone_compat == 2) { fail_clone_compat = 0; goto failed; }
+#endif
+    return TRUE;
+failed:
+    kproc_clone_drop_compat(p);
+    return FALSE;
+}
+static void clone_drop_controller(KPROC *p)
+{
+    if (p->clone_controller_pd) {
+        procmem_pin((VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD), -1);
+        p->clone_controller_pd = NULL;
+        p->clone_controller_gen = 0;
+        kproc_release(p->clone_controller_identity); p->clone_controller_identity = NULL;
+    }
+}
+#if CONF_WITH_X86_64_MEMTEST
+void kproc_test_controller_first(KPROC *p) { p->test_controller_first = TRUE; }
+#endif
+void kproc_clone_drop_compat(KPROC *p)
+{
+    ASPACE *as;
+    if (!p || !p->clone_compat) return;
+    as = kaspace_backend(p->clone_compat);
+    clone_drop_controller(p);
+    if (p->clone_maps & 2) aspace_unborrow(as, (VADDR)(uintptr_t)p->env_start, p->env_end - p->env_start);
+    if (p->clone_maps & 1) aspace_unborrow(as, (VADDR)(uintptr_t)p->user_start, p->user_end - p->user_start);
+    p->clone_maps = 0;
+    kaspace_put(p->clone_compat); p->clone_compat = NULL;
+}
+BOOL kproc_clone_run_ready(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    return kproc_clone_target_ready(p, thread) && p->clone_compat == space && (p->clone_maps & 3) == 3;
+}
+BOOL kproc_clone_parent_ready(const KPROC *p)
+{
+    /* The caller's execution owner, rather than an identity-only observer,
+     * must retain parent resources throughout this synchronous root call. */
+    return kproc_active_space(p) && p->threads != NULL
+#if CONF_WITH_PTERMGRP
+        && !p->group_exiting
+#endif
+        ;
+}
+BOOL kproc_clone_prepare_parent(KPROC *p, KPROC *parent)
+{
+    /* Factory already retained the parent. No new ref acquisition is needed
+     * during launch or after publication. */
+    return p && parent && kproc_live_pd(parent) && p->parent_identity == parent;
+}
+/* Distinct from logical parent_identity. The backend guarantees that its root
+ * continuation is blocked until the group ends. Own an allocation pin as well
+ * as a tracked identity, so a reusable raw PD is never the only controller. */
+BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
+{
+    ASPACE *as;
+    VADDR page, end;
+    KPROC *identity;
+    UQUAD generation;
+    if (!p || !p->clone_compat || p->clone_controller_pd || !controller ||
+        !(generation = procmem_gen(controller)) ||
+        !procmem_range_live((VADDR)(uintptr_t)controller, sizeof(PD))) return FALSE;
+    identity = kproc_find(controller);
+    if (identity && !kproc_retain_live(identity)) return FALSE;
+    as = kaspace_backend(p->clone_compat);
+    page = (VADDR)(uintptr_t)controller & ~(VADDR)(USER_PAGE_SIZE - 1);
+    end = ((VADDR)(uintptr_t)controller + sizeof(PD) + USER_PAGE_SIZE - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    /* Reuse only an exact existing writable procmem translation. Never replace
+     * somebody else's mapping or unborrow a mapping owned by the shared space. */
+    for (; page < end; page += USER_PAGE_SIZE) {
+        PADDR physical;
+        UWORD prot;
+        if (!aspace_translate(as, page, &physical, &prot) ||
+            physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
+            kproc_release(identity);
+            return FALSE;
+        }
+    }
+    procmem_pin((VADDR)(uintptr_t)controller, sizeof(PD), +1);
+    p->clone_controller_pd = controller;
+    p->clone_controller_gen = generation;
+    p->clone_controller_identity = identity;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_clone_controller) { fail_clone_controller = FALSE; return FALSE; }
+#endif
+    return TRUE;
+}
+void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physical, uintptr_t top, BOOL wait_usage)
+{
+    /* Impossible-to-fail invariants already proved before the first store;
+     * fail-stop on kernel misuse instead of exposing a generic guard bypass. */
+    if (!p || !p->threads || !kproc_clone_run_ready(p, p->threads, space) ||
+        !startup || !physical || !top) panic("unprepared clone PROCESS activation");
+    /* All references and mappings acquired before sealing. No callbacks. */
+    if (p->clone_controller_pd) {
+        if (procmem_gen(p->clone_controller_pd) != p->clone_controller_gen)
+            panic("clone controller identity changed");
+        p->parent = p->clone_controller_pd; /* logical identity remains separate */
+    }
+    p->active_space = space; p->aspace = kaspace_backend(space);
+    p->clone_guarded = TRUE; p->clone_identity_only = FALSE;
+    p->child_usage_at_wait = wait_usage;
+    p->clone_startup = startup; p->kstack_phys = physical; p->kstack_top = top;
+}
+BOOL kproc_clone_sibling_ready(KPROC *p, KTHREAD *thread, KASPACE *space)
+{
+    KTHREAD *member;
+    if (!kproc_thread_start_allowed(p) || !p->started || p->active_space != space ||
+        !thread || kthread_process(thread) != p || kthread_aspace(thread) != space)
+        return FALSE;
+    for (member = p->threads; member; member = *kthread_next_link(member))
+        if (member == thread) return TRUE;
+    return FALSE;
+}
+void kproc_clone_commit_sibling(KPROC *p, KTHREAD *thread)
+{
+    if (!kproc_clone_sibling_ready(p, thread, kthread_aspace(thread)))
+        panic("unprepared sibling activation");
+    p->threaded = TRUE;
+    p->clone_guarded = TRUE; /* ordinary backend installation stays forbidden */
+}
+BOOL kproc_clone_execution_bound(KPROC *p, KTHREAD *thread)
+{
+    if (p && p->threaded && kproc_clone_sibling_ready(p, thread, kthread_aspace(thread)))
+        return TRUE;
+    return p && p->clone_guarded && p->clone_startup && p->kstack_phys &&
+        p->active_space == kthread_aspace(thread) && !p->started && kproc_thread_is_sole(p, thread);
+}
+void *kproc_clone_startup(PD *pd)
+{
+    KPROC *p = kproc_find(pd);
+    return p ? p->clone_startup : NULL;
+}
+#endif
 
 BOOL kproc_begin_disposal(KPROC *process, PD **pd)
 {
@@ -396,13 +683,62 @@ BOOL kproc_begin_disposal(KPROC *process, PD **pd)
     return *pd != NULL;
 }
 
-BOOL kproc_prepare_exit_handoff(KPROC *process)
+BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
+{
+    return process && thread && process->disposal_state == PROCESS_LIVE &&
+        process->pd && !process->completed && process->threads == thread &&
+        !*kthread_next_link(thread) && kthread_process(thread) == process;
+}
+
+static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)
+{
+    return thread && process->threads == thread &&
+        !*kthread_next_link(thread) && kthread_is_executing(thread);
+}
+
+BOOL kproc_prepare_thread_exit_handoff(KPROC *process, KTHREAD *thread)
 {
     if (!process || process->disposal_state != PROCESS_LIVE ||
-        process->completed || process->threads || !process->pd)
+        process->completed || !process->pd)
         return FALSE;
+    if (thread && !sole_execution_thread(process, thread)) {
+#if CONF_WITH_NATIVE_SCHED
+        if (process->threaded && kthread_is_executing(thread) &&
+            kproc_clone_sibling_ready(process, thread, kthread_aspace(thread)))
+            return TRUE; /* only this execution stops; PROCESS remains live */
+#endif
+        return FALSE;
+    }
+    if (!thread && process->threads) return FALSE;
     process->disposal_state = PROCESS_EXIT_HANDOFF;
     return TRUE;
+}
+
+BOOL kproc_prepare_exit_handoff(KPROC *process)
+{
+    return kproc_prepare_thread_exit_handoff(process, NULL);
+}
+
+BOOL kproc_finish_thread_handoff(KPROC *process, KTHREAD *thread)
+{
+    if (!process || !kthread_is_executing(thread)) return FALSE;
+    if (process->disposal_state == PROCESS_EXIT_HANDOFF && sole_execution_thread(process, thread)) {
+        process->threads = NULL;
+        return TRUE;
+    }
+#if CONF_WITH_NATIVE_SCHED
+    if (process->threaded && process->disposal_state == PROCESS_LIVE &&
+        kproc_clone_sibling_ready(process, thread, kthread_aspace(thread))) {
+        kproc_thread_detach(process, thread, *kthread_next_link(thread));
+        return TRUE;
+    }
+#endif
+    return FALSE;
+}
+
+BOOL kproc_exit_handoff_pending(const KPROC *process)
+{
+    return process && process->disposal_state == PROCESS_EXIT_HANDOFF;
 }
 
 BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd)
@@ -440,6 +776,18 @@ BOOL kproc_pending_completion(const KPROC *process, UWORD *status)
     if (status)
         *status = process->pending_status;
     return TRUE;
+}
+
+void kproc_require_exit_thread(PD *pd, KTHREAD *thread)
+{
+    KPROC *process = kproc_find(pd);
+    if (process && process->threads && !sole_execution_thread(process, thread)) {
+#if CONF_WITH_NATIVE_SCHED
+        if (process->threaded && kthread_is_executing(thread) &&
+            kproc_clone_sibling_ready(process, thread, kthread_aspace(thread))) return;
+#endif
+        panic("xterm: unsupported attached threads");
+    }
 }
 
 void kproc_require_no_threads(PD *pd)
@@ -490,11 +838,28 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_CALLBACKS
             user_callback_process_exit(pd);
 #endif
+#if CONF_WITH_PTHJOIN
+            kthread_forget_completions(kproc);
+#endif
             *link = kproc->next;
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
-            if (launcher)                   /* what it used is its launcher's children's */
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+            if (kproc->test_controller_first) clone_drop_controller(kproc);
+#endif
+            /* Identity-only construction/cancellation consumed no child CPU
+             * lifetime. Preserve classic accounting outside user-ASPACE. */
+            if (launcher
+#if CONF_WITH_USER_ASPACE
+                && kproc->started
+#endif
+#if CONF_WITH_NATIVE_SCHED
+                /* Active clones keep logical parent identity: their usage
+                 * is credited by existing Pwait, never also at retirement. */
+                && !kproc->child_usage_at_wait
+#endif
+            )
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;
 #if CONF_WITH_USER_ASPACE
             /* a program PE_LOAD put in its caller's heap that was never
@@ -504,6 +869,9 @@ void kproc_destroy(PD *pd)
             if (kproc->lender)
                 give_image_back(kproc);
             kproc_load_leave();             /* (a disk error jumped out of a load) */
+#if CONF_WITH_NATIVE_SCHED
+            kproc_clone_drop_compat(kproc);
+#endif
             kaspace_put(kproc->pending_space);
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
@@ -875,23 +1243,31 @@ void kproc_commit_async(PD *pd)
     kproc_unborrow(kproc->user_start);
 }
 
-BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller)
+BOOL kproc_prepare_async_thread(PD *pd, PD *parent, PD *controller, KTHREAD **thread)
 {
     KPROC *kproc = kproc_find(pd);
+    if (thread) *thread = NULL;
     if (!kproc || kproc->started || kproc->aspace) return FALSE;
     kproc->async_parent = controller;
-    return kproc_prepare_user(pd, parent);
+    return kproc_prepare_user_thread(pd, parent, thread);
+}
+
+BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller)
+{
+    return kproc_prepare_async_thread(pd, parent, controller, NULL);
 }
 #endif
 
-BOOL kproc_prepare_user(PD *pd, PD *parent)
+BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
 {
     KPROC *kproc = kproc_find(pd);
+    KTHREAD *thread = NULL;
     ASPACE *as;
     KASPACE *owner;
     VADDR env, tpa, hitpa;
     ULONG envbytes;
 
+    if (thread_result) *thread_result = NULL;
     if (!kproc || kproc->lost)
         return FALSE;
     if (kproc->aspace) {
@@ -899,7 +1275,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
          * its kernel stack to gouser(), and cannot be launched a second time
          * (Pexec(PE_GO) of its own basepage, from ring 3): refuse, where the
          * launch can still fail cleanly. */
-        return kproc->kstack_phys != 0;
+        if (!kproc->kstack_phys) return FALSE;
+        if (thread_result) {
+            *thread_result = kthread_create(pd);
+            return *thread_result != NULL;
+        }
+        return TRUE;
     }
     env = (VADDR)(uintptr_t)kproc->env_start;
     tpa = (VADDR)(uintptr_t)kproc->user_start;
@@ -1012,6 +1393,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!kproc->legacy)
         kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
 #endif
+    /* The constructor retains this explicit construction space. Keep the
+     * PROCESS's active-space view unpublished until preparation commits. */
+    if (thread_result) {
+        thread = kthread_prepare(pd, owner);
+        if (!thread)
+            return prepare_failed(kproc, owner);
+    }
     /*
      * A built-in image gets its segments as private pages at the fixed
      * addresses of include/procmem.h's layout (one loaded from a file has them
@@ -1026,12 +1414,15 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (kproc->has_image && !kproc->pending_as &&
         (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
                             : !layout_load(as, &kproc->layout))) {
+        kthread_destroy(thread);
         return prepare_failed(kproc, owner);
     }
 #if CONF_WITH_ELF_SHARED
     if (kproc->standard_entry && USER_STACK_TOP - kproc->stack_low >
-        (kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE))
+        (kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE)) {
+        kthread_destroy(thread);
         return prepare_failed(kproc, owner);
+    }
 #endif
     if (kproc->legacy)
         kproc->stack_top = hitpa & ~3UL;    /* the top of the TPA: the program sets its own stack */
@@ -1049,7 +1440,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     kproc->aspace = as;
     kproc->pending_as = NULL;               /* (the address space is the process's now) */
     kproc->pending_space = NULL;            /* transfer, not an additional reference */
+    if (thread_result) *thread_result = thread;
     return TRUE;
+}
+
+BOOL kproc_prepare_user(PD *pd, PD *parent)
+{
+    return kproc_prepare_user_thread(pd, parent, NULL);
 }
 
 /*
@@ -1594,6 +1991,9 @@ PADDR kproc_take_kernel_stack(PD *pd, uintptr_t *top)
     phys = kproc->kstack_phys;
     *top = kproc->kstack_top;
     kproc->kstack_phys = 0;         /* the launcher frees it, after the exit */
+#if CONF_WITH_NATIVE_SCHED
+    kproc->clone_startup = NULL; /* borrowed first-thread draft ends at launch */
+#endif
     return phys;
 }
 
@@ -1868,6 +2268,7 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
         return rc;
     if (!mapping_range(address, length))
         return EIMBA;
+    if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
     end = address + length;
     for (link = &kaspace_mmap(kproc->active_space)->regions; *link;) {
         region = *link;
@@ -1977,6 +2378,7 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
     rc = mapping_protection(protection, &prot);
     if (rc)
         return rc;
+    if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
     if (!mapping_range(address, length)) {
 #if CONF_WITH_ELF_SHARED
         if (standard_image_range(kproc, address, length))

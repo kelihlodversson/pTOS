@@ -21,6 +21,9 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#if CONF_WITH_PTERMGRP
+#include "ksched.h"
+#endif
 #include "asm.h"
 #include "fs.h"
 #include "biosdefs.h"
@@ -672,10 +675,18 @@ long osif(short *pw);
  *  carries are checked first (uaccess.c).  Kernel code does not come this
  *  way: on x86-64 it calls the implementations directly (kcall.c).
  */
+#if CONF_WITH_PTERMGRP
+#if CONF_WITH_NATIVE_ABI
+static long osif_impl(long *pw)
+#else
+static long osif_impl(short *pw)
+#endif
+#else
 #if CONF_WITH_NATIVE_ABI
 long osif(long *pw)
 #else
 long osif(short *pw)
+#endif
 #endif
 {
     char **pb, *pb2, *p, ctmp;
@@ -1337,3 +1348,20 @@ restrt:
 
     return rc;
 }
+
+#if CONF_WITH_PTERMGRP
+/* A nested child has completely finalized before its caller returns here.
+ * No operation-local filesystem/CUIS state is unwound by cancellation. */
+#if CONF_WITH_NATIVE_ABI
+long osif(long *pw)
+#else
+long osif(short *pw)
+#endif
+{
+    long result;
+    ksched_cancel_point();
+    result = osif_impl(pw);
+    ksched_cancel_point();
+    return result;
+}
+#endif

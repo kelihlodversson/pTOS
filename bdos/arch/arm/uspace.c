@@ -32,6 +32,13 @@
 #include "biosext.h"
 #include "procmem.h"
 #include "aspace32.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#include "native_sched_backend.h"
+#include "thread_startup32.h"
+#include "string.h"
+#include "fs.h"
+#endif
 #include "arch/arm/fpusave.h"
 
 extern long osif(long *pw);                     /* bdos/bdosmain.c */
@@ -39,6 +46,9 @@ extern long osif(long *pw);                     /* bdos/bdosmain.c */
 void gouser(void);
 void termuser(void) NORETURN;
 extern void arm_enter_user(ULONG entry, ULONG user_sp, ULONG basepage, ULONG kstack_top) NORETURN;
+#if CONF_WITH_NATIVE_SCHED
+extern void arm_enter_prepared_user(const THREAD_STARTUP32 *image, ULONG kstack_top) NORETURN;
+#endif
 
 /* the frame of a GEMDOS call (uspaceasm.S), lowest address first */
 struct uframe {
@@ -117,8 +127,42 @@ struct uspace_launch {
     volatile UWORD exit_status;
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
+    volatile BOOL exit_final;
 };
 static struct uspace_launch *uspace_launch;
+#if CONF_WITH_NATIVE_SCHED
+/* IRQ exclusion covers the serialized cooperative handoff, not execution.
+ * User registers stay in the suspended trap frame on this context's stack.
+ * Never publish another task until its continuation and resource owners exist. */
+void native_sched_save(NATIVE_SCHED_CONTEXT *context)
+{
+    context->flags = native_sched_irq_save();
+    context->pd = run;
+    context->root = aspace_hw_current();
+    __asm__ volatile ("stmia %0,{sp,lr}^" :: "r"(&context->user_sp) : "memory");
+#ifdef __ARM_PCS_VFP
+    __asm__ volatile ("vmrs %0,fpscr" : "=r"(context->fpscr));
+#endif
+    context->launch = uspace_launch;
+    context->native_task = ksched_context_id();
+    memcpy(context->disk_error, errbuf, sizeof(errbuf));
+    aspace_hw_switch(aspace_kernel_root());
+}
+void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
+{
+    native_sched_irq_disable();
+    run = context->pd;
+    uspace_launch = context->launch;
+    ksched_context_restore(context->native_task);
+    memcpy(errbuf, context->disk_error, sizeof(errbuf));
+    aspace_hw_switch(context->root);
+    __asm__ volatile ("ldmia %0,{sp,lr}^; nop" :: "r"(&context->user_sp) : "memory");
+#ifdef __ARM_PCS_VFP
+    __asm__ volatile ("vmsr fpscr,%0" :: "r"(context->fpscr));
+#endif
+    native_sched_irq_restore(context->flags);
+}
+#endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
 static BOOL injected_exit_failure;
 #endif
@@ -136,14 +180,25 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
     if (!process)
         return FALSE;
 #if CONF_WITH_EXIT_HANDOFF_TEST
-    if (!injected_exit_failure) {
+    if (!injected_exit_failure
+#if CONF_WITH_NATIVE_SCHED
+        && !ksched_exit_thread(pd)
+#endif
+    ) {
         injected_exit_failure = TRUE;
         kproc_release(process);
         kcprintf("exit handoff: injected preparation rollback\n");
         return FALSE;
     }
 #endif
+#if CONF_WITH_NATIVE_SCHED
+    launch->exit_final = !ksched_exit_thread(pd) ||
+                         kproc_thread_is_sole(process, ksched_exit_thread(pd));
+    if (!kproc_prepare_thread_exit_handoff(process, ksched_exit_thread(pd))) {
+#else
+    launch->exit_final = TRUE;
     if (!kproc_prepare_exit_handoff(process)) {
+#endif
         kproc_release(process);
         return FALSE;
     }
@@ -163,7 +218,20 @@ void gouser(void)
     struct uspace_launch launch;
     ULONG launcher_status;
     uintptr_t kstack_top;
-    PADDR kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+    PADDR kstack_phys;
+#if CONF_WITH_NATIVE_SCHED
+    THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
+    const THREAD_STARTUP32 *prepared = startup ? thread_startup_image(startup) : NULL;
+    THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
+    if (ksched_take_syscall_stack(p, &syscall_owner)) {
+        kstack_phys = syscall_owner.physical;
+        kstack_top = syscall_owner.top;
+    } else
+#endif
+        kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+#if CONF_WITH_NATIVE_SCHED
+    if (prepared) { entry = prepared->entry; user_sp = prepared->sp; }
+#endif
 
     if (!entry)                 /* no image: a basepage with its code in its TPA */
         entry = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
@@ -189,6 +257,12 @@ void gouser(void)
         /* the code of an ELF image was written through the data side (the loader reads the
          * file into the pages of the new space): publish it before the first fetch */
         aspace_hw_code_changed();
+#if CONF_WITH_NATIVE_SCHED
+        if (prepared) {
+            thread_startup_entering(startup);
+            arm_enter_prepared_user(prepared, (ULONG)kstack_top);
+        }
+#endif
         arm_enter_user(entry, user_sp, (ULONG)(uintptr_t)p, (ULONG)kstack_top);
     }
     uspace_launch = launch.previous;
@@ -207,8 +281,13 @@ void gouser(void)
     kstack_free(kstack_phys);
     if (launch.exit_process) {
         KPROC *process = launch.exit_process;
-        proc_finalize_exit(process, launch.exit_status,
-                           launch.exit_resident, launch.exit_resident_len);
+#if CONF_WITH_NATIVE_SCHED
+        if (ksched_finish_exit(process, launch.pd, launch.exit_status) != launch.exit_final)
+            panic("thread exit finalization changed");
+#endif
+        if (launch.exit_final)
+            proc_finalize_exit(process, launch.exit_status,
+                               launch.exit_resident, launch.exit_resident_len);
         run->p_dreg[0] = launch.exit_status;
         kproc_release(process);
     }
