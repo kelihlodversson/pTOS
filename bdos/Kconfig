@@ -49,6 +49,16 @@ config CONF_WITH_NATIVE_SCHED
       Scheduling is cooperative and does not require CUIS or external libaes.
 
 
+config CONF_WITH_PTHJOIN
+    bool "Managed per-TID thread joins"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Retain small per-TID completion records after safe execution-stack reap.
+      Pthjoin joins only managed threads in the calling PROCESS; no GUI,
+      preemption, asynchronous signals or group termination is implied.
+
+
 config CONF_LOGSEC_SIZE
 	int "Maximum logical sector size, in bytes"
 	default 512

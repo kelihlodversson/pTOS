@@ -112,6 +112,7 @@ No IRQ or filesystem callback may yield through half-completed construction
 or finalization. Root reclamation requires the old continuation to be dead.
 
 #892 retains remaining clone policies/private-VM and loader integration work;
-#893 owns Ptermgrp, Pthjoin and group cancellation; #909 owns generic PROCESS
+#893 retains Ptermgrp and group cancellation; optional Pthjoin is documented
+in thread-joining.txt; #909 owns generic PROCESS
 wait/reaping evolution. Shared-VM Pexec is #894, TLS #908, non-MMU scheduling
 #911, and ARM/m68k external libaes/CUIS #898. These are not implemented here.

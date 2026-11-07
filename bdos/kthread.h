@@ -68,6 +68,18 @@ ULONG kthread_tid(const KTHREAD *thread);
 struct kproc *kthread_process(const KTHREAD *thread); /* borrowed */
 struct kaspace *kthread_aspace(const KTHREAD *thread); /* borrowed */
 
+#if CONF_WITH_PTHJOIN
+/* One claim per TID; cancellation preserves the target for another joiner.
+ * Caller owns an execution reference. Ready means backend/root reap finished.
+ * A live caller/process retains resources; these records retain no heavy state. */
+LONG kthread_join_begin(KTHREAD *caller, ULONG tid);
+BOOL kthread_join_ready(void *caller);
+BOOL kthread_join_status(KTHREAD *caller, UWORD *status);
+void kthread_join_cancel(KTHREAD *caller);
+void kthread_join_consume(KTHREAD *caller);
+void kthread_forget_completions(struct kproc *process);
+#endif
+
 /* KPROC's borrowed membership links; internal to the ownership layer. */
 KTHREAD **kthread_next_link(KTHREAD *thread);
 #if CONF_WITH_X86_64_MEMTEST

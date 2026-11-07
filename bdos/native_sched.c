@@ -438,6 +438,39 @@ LONG ksched_yield(void)
     return E_OK;
 }
 
+#if CONF_WITH_PTHJOIN
+LONG ksched_join(ULONG tid, UQUAD address)
+{
+    KTHREAD *caller = ksched_exit_thread(run);
+    uintptr_t flags;
+    UWORD status;
+    ULONG output;
+    LONG error;
+    if (!caller) return EINVFN;
+    if (address && (address >= USER_VA_LIMIT ||
+        (address & (__alignof__(ULONG) - 1)) ||
+        !kproc_user_access(run, address, sizeof(output), TRUE))) return EIMBA;
+    flags = native_sched_irq_save();
+    error = kthread_join_begin(caller, tid);
+    if (error) { native_sched_irq_restore(flags); return error; }
+    while (!kthread_join_ready(caller)) ksched_block(kthread_join_ready, caller);
+    native_sched_irq_restore(flags);
+    if (!kthread_join_status(caller, &status)) {
+        kthread_join_cancel(caller); return ESRCH;
+    }
+    output = status;
+    /* No TID status is consumed until the entire copy succeeds. An escaping
+     * memory fault stops the caller: root reap cancels its retained claim. */
+    if (address && !kproc_copy_to_user(address, &output, sizeof(output))) {
+        kthread_join_cancel(caller); return EIMBA;
+    }
+    flags = native_sched_irq_save();
+    kthread_join_consume(caller);
+    native_sched_irq_restore(flags);
+    return E_OK;
+}
+#endif
+
 #if CONF_WITH_CUIS
 static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred);
 static void discard_deferred(KERNEL_TASK *task)

@@ -809,6 +809,9 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_CALLBACKS
             user_callback_process_exit(pd);
 #endif
+#if CONF_WITH_PTHJOIN
+            kthread_forget_completions(kproc);
+#endif
             *link = kproc->next;
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;

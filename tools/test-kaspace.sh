@@ -83,3 +83,9 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sectio
     -Wl,--gc-sections -o "$work/startup"
 "$work/startup"
 echo 'x32 startup CPU/FPU/frame planning and stack rollback (host model): PASS'
+# Completion registry tests use real KTHREAD code, with counted ownership models.
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+    -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
+    -iquote fs tests/kthread_join.c -Wl,--gc-sections -o "$work/thread-join"
+"$work/thread-join"
+echo 'KTHREAD TID completion: late join, one reaper, claim cancellation, cycles, retirement and rollback: PASS'

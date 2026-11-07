@@ -528,7 +528,7 @@ fi
 # Compilation and legacy compatibility are insufficient evidence of native
 # startup. Require the managed child worker's runtime verdict on both MMUs.
 case "$machine" in
-    virt-arm|virt-m68k-aspace)
+    virt-arm|virt-m68k-aspace|pc-x86_64)
         if grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
            grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h"; then
             if ! grep -aq 'pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS' "$suite_log"; then
@@ -537,6 +537,11 @@ case "$machine" in
         fi
         ;;
 esac
+
+if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
+    record "native TID joining" FAIL "configured Pthjoin worker did not pass"
+fi
 
 # -- the verdict ----------------------------------------------------------------
 

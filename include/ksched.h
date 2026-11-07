@@ -82,6 +82,9 @@ struct kproc;
 void proc_dispose_process(struct kproc *process);
 #endif
 LONG ksched_yield(void);
+#if CONF_WITH_PTHJOIN
+LONG ksched_join(ULONG tid, UQUAD status);
+#endif
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
 BOOL ksched_parent_pid(PD *pd, WORD *pid);

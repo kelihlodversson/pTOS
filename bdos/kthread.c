@@ -7,6 +7,26 @@
 #include "kthread.h"
 #include "fs.h"
 #include "proc.h"
+#include "gemerror.h"
+#include "string.h"
+
+#if CONF_WITH_PTHJOIN
+struct thread_completion {
+    struct thread_completion *next;
+    KPROC *process; /* borrowed only while linked; retirement unlinks it */
+    KTHREAD *thread, *claimant; /* borrowed while these execution owners live */
+    ULONG tid, refs;
+    UWORD status;
+    BOOL linked, ready, has_exit;
+};
+static struct thread_completion *completions;
+static void completion_unlink(struct thread_completion *record);
+static void completion_put(struct thread_completion *record)
+{
+    if (!record || !record->refs) panic("invalid TID completion release");
+    if (!--record->refs) kfree(record);
+}
+#endif
 
 struct kthread {
     ULONG tid;
@@ -21,6 +41,9 @@ struct kthread {
     BOOL identity_only;
     BOOL has_exit;
     UWORD exit_status;
+#if CONF_WITH_PTHJOIN
+    struct thread_completion *completion, *joining;
+#endif
 };
 enum { THREAD_NEW, THREAD_EXECUTING, THREAD_STOPPED, THREAD_REAPING };
 
@@ -47,6 +70,14 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
     thread = kalloc(sizeof(*thread));
     if (!thread)
         return NULL;
+#if CONF_WITH_PTHJOIN
+    thread->completion = kalloc(sizeof(*thread->completion));
+    if (!thread->completion) { kfree(thread); return NULL; }
+    bzero(thread->completion, sizeof(*thread->completion));
+    thread->completion->refs = 1; /* execution owner; registry acquired at start */
+    thread->completion->thread = thread;
+    thread->joining = NULL;
+#endif
     thread->stack_hold = NULL;
     thread->execution = NULL;
     thread->reclaim_execution = NULL;
@@ -55,6 +86,9 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
     thread->identity_only = identity_only;
     if (!kproc_thread_attach_space(process, space, thread, &thread->process,
                                    &thread->space, &thread->process_next, identity_only)) {
+#if CONF_WITH_PTHJOIN
+        completion_put(thread->completion);
+#endif
         kfree(thread);
         return NULL;
     }
@@ -63,6 +97,9 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
         kproc_thread_detach(thread->process, thread, thread->process_next);
         kaspace_put(thread->space);
         kproc_release(thread->process);
+#if CONF_WITH_PTHJOIN
+        completion_put(thread->completion);
+#endif
         kfree(thread);
         return NULL;
     }
@@ -134,6 +171,15 @@ BOOL kthread_start(KTHREAD *thread)
         !thread->reclaim_execution || !kproc_thread_start_allowed(thread->process) ||
         kproc_active_space(thread->process) != thread->space)
         return FALSE;
+#if CONF_WITH_PTHJOIN
+    {
+        struct thread_completion *record = thread->completion;
+        record->tid = thread->tid;
+        record->process = thread->process;
+        record->next = completions; completions = record;
+        record->linked = TRUE; record->refs++;
+    }
+#endif
     thread->state = THREAD_EXECUTING;
     return TRUE;
 }
@@ -193,6 +239,17 @@ BOOL kthread_reap(KTHREAD *thread)
     dispose = thread->attached &&
         kproc_thread_detach(process, thread, thread->process_next);
     kaspace_put(thread->space);
+#if CONF_WITH_PTHJOIN
+    kthread_join_cancel(thread);
+    thread->completion->thread = NULL;
+    thread->completion->status = thread->has_exit ? thread->exit_status : 0;
+    thread->completion->has_exit = thread->has_exit;
+    /* Only now can a joiner reuse the user stack: both execution stacks and
+     * its durable mapping hold are gone, and this continuation is dead. */
+    thread->completion->ready = TRUE;
+    if (!thread->has_exit) completion_unlink(thread->completion);
+    completion_put(thread->completion);
+#endif
     kfree(thread);
     if (dispose)
         proc_dispose_process(process);
@@ -224,3 +281,77 @@ KASPACE *kthread_aspace(const KTHREAD *thread) { return thread ? thread->space :
 
 /* Used only to walk the process's non-owning membership list. */
 KTHREAD **kthread_next_link(KTHREAD *thread) { return &thread->process_next; }
+
+#if CONF_WITH_PTHJOIN
+/* Serialized cooperative lifecycle operations. Registry membership owns only
+ * small completion metadata, never PROCESS/ASPACE/resources or a user PD. */
+static void completion_unlink(struct thread_completion *record)
+{
+    struct thread_completion **link;
+    if (!record->linked) return;
+    for (link = &completions; *link != record; link = &(*link)->next) {
+        if (!*link) panic("lost TID completion");
+    }
+    *link = record->next;
+    record->next = NULL; record->linked = FALSE; record->process = NULL;
+    completion_put(record);
+}
+void kthread_forget_completions(KPROC *process)
+{
+    struct thread_completion *record = completions, *next;
+    while (record) {
+        next = record->next;
+        if (record->process == process) completion_unlink(record);
+        record = next;
+    }
+}
+LONG kthread_join_begin(KTHREAD *caller, ULONG tid)
+{
+    struct thread_completion *record, *edge;
+    KTHREAD *target;
+    if (!kthread_is_executing(caller) || caller->joining) return EACCDN;
+    if (!tid || tid > 0x7fffffffUL) return ESRCH;
+    if (tid == caller->tid) return EDEADLK;
+    for (record = completions; record; record = record->next)
+        if (record->tid == tid && record->process == caller->process) break;
+    if (!record || (record->ready && !record->has_exit)) return ESRCH;
+    if (record->claimant) return EACCDN;
+    /* Joining edges are acyclic. A join that closes a cycle is rejected;
+     * traversal is bounded by the finite live completion registry. */
+    for (target = record->thread; target && (edge = target->joining); target = edge->thread)
+        if (edge == caller->completion) return EDEADLK;
+    record->refs++;
+    record->claimant = caller;
+    caller->joining = record;
+    return E_OK;
+}
+BOOL kthread_join_ready(void *resource)
+{
+    KTHREAD *caller = resource;
+    return caller->joining && caller->joining->ready;
+}
+BOOL kthread_join_status(KTHREAD *caller, UWORD *status)
+{
+    if (!caller || !caller->joining || !caller->joining->ready ||
+        !caller->joining->has_exit) return FALSE;
+    *status = caller->joining->status;
+    return TRUE;
+}
+void kthread_join_cancel(KTHREAD *caller)
+{
+    struct thread_completion *record;
+    if (!caller || !(record = caller->joining)) return;
+    if (record->claimant != caller) panic("TID join claim owner changed");
+    caller->joining = NULL; record->claimant = NULL;
+    completion_put(record);
+}
+void kthread_join_consume(KTHREAD *caller)
+{
+    struct thread_completion *record = caller->joining;
+    if (!record || record->claimant != caller || !record->ready || !record->has_exit)
+        panic("invalid TID completion consume");
+    /* Called after successful copyout, with no allocation/callback/yield. */
+    completion_unlink(record);
+    kthread_join_cancel(caller);
+}
+#endif

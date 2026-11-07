@@ -1,11 +1,12 @@
 /* User-mode Pclone checks through the real GEMDOS trap, not kernel calls. */
 #include "test.h"
 #include "../../include/pclone.h"
+#include "../../include/threadcalls.h"
 #include <mint/osbind.h>
 #include <stdio.h>
 #include <mint/mintbind.h>
 
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__))
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 static long pclone_trap(const void *args, unsigned long size)
 {
 #if defined(__mc68000__)
@@ -19,20 +20,22 @@ static long pclone_trap(const void *args, unsigned long size)
         : "=d"(result) : "r"(args), "r"(size)
         : "d1", "d2", "a0", "a1", "a2", "memory", "cc");
     return result;
-#else
+#elif defined(__arm__)
     register long r0 __asm__("r0") = GEMDOS_PCLONE;
     register const void *r1 __asm__("r1") = args;
     register unsigned long r2 __asm__("r2") = size;
     __asm__ volatile ("svc 1" : "+r"(r0) : "r"(r1), "r"(r2)
                       : "r3", "r12", "lr", "memory", "cc");
     return r0;
+#else
+    return trap_1_wll(GEMDOS_PCLONE,(long)args,(long)size);
 #endif
 }
 static volatile int entry_ran;
 static void child_entry(void *argument) { (void)argument; entry_ran = 1; }
 #endif
 
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__))
+#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 /* These are actual user continuations; Pclone cannot pass by just constructing
  * kernel identities. A blocked PROCESS wait must dispatch the child. */
 long clone_registers(unsigned long seed);
@@ -64,7 +67,11 @@ static void runnable_entry(void *argument)
     for (i = 0; i < 12; i++) {
         if (local != 0x13579bdfUL) p->error = 1;
         p->steps++;
+#if defined(__arm__) || defined(__mc68000__)
         if (clone_registers((unsigned long)&local)) p->error |= 2;
+#else
+        (void)Syield(); /* x32 GP/FPU probes remain in the native MEMTEST */
+#endif
 #if defined(__mc68000__)
         if (has_fpu) {
             long error = clone_fpu_registers((unsigned long)&local);
@@ -198,6 +205,126 @@ static void test_lifecycle(void)
     for (i = 0; i < made; i++)
         ptest_assert_msg(Mfree(stacks[i]) == 0,"root reap releases each stack once");
 }
+#if defined(TEST_WITH_PTHJOIN)
+static struct {
+    int32_t target, a, b, leader, survivor;
+    volatile long gate, done, entered, result_a, result_b, status_a, error;
+    void *output;
+} joins;
+static long join_tid(long tid, int32_t *status)
+{
+    return trap_1_wll(GEMDOS_PTHJOIN,tid,(long)status);
+}
+static void join_target(void *argument)
+{
+    (void)argument;
+    while (!joins.gate) (void)Syield();
+    Pterm(57);
+}
+static void join_a(void *argument)
+{
+    int32_t status = -1;
+    (void)argument;
+    if (join_tid(joins.a,0) != -22L) joins.error = 1;
+    joins.entered = 1;
+    joins.result_a = join_tid(joins.target,&status);
+    joins.status_a = status;
+}
+static void join_b(void *argument)
+{
+    (void)argument;
+    joins.result_b = join_tid(joins.target,0);
+    joins.done = 1;
+}
+static void join_survivor(void *argument)
+{
+    int32_t status = -1;
+    (void)argument;
+    if (join_tid(joins.leader,&status) || status != 37) joins.error = 1;
+    Pterm(53);
+}
+static void join_leader(void *argument)
+{
+    int32_t pid;
+    (void)argument;
+    if (launch_entry(join_survivor,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&joins.survivor) <= 0)
+        joins.error = 1;
+    Pterm(37);
+}
+static void join_cycle_a(void *argument)
+{
+    (void)argument;
+    joins.result_a = join_tid(joins.b,0);
+}
+static void join_cycle_b(void *argument)
+{
+    (void)argument;
+    joins.result_b = join_tid(joins.a,0);
+    joins.done = 1;
+}
+static void join_revoke_output(void *argument)
+{
+    (void)argument;
+    if (Mfree(joins.output)) joins.error = 1;
+    Pterm(41);
+}
+static void test_joins(void)
+{
+    int32_t pid, tid, status;
+    int mode, cycle, spin;
+    long result;
+    ptest_assert_msg(join_tid(0,0) == -20L && join_tid(-1,0) == -20L &&
+                     join_tid(0x7fffffffL,0) == -20L,"invalid/dead TIDs return ESRCH");
+    for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 3; mode++) {
+        probe.mode = mode; probe.steps = probe.error = 0;
+        result = launch_probe(CLONE_VM|CLONE_SAME_PROCESS,0,&pid,&tid);
+        ptest_assert_msg(result > 0,"joinable sibling created");
+        if (result <= 0) return;
+        status = -99;
+        ptest_assert_msg(join_tid(tid,(int32_t *)0x80001000UL) == -40L,"bad join output keeps target joinable");
+        if (cycle == 1) {
+            for (spin=0; spin<128 && probe.steps<12; spin++) (void)Syield();
+            (void)Syield(); (void)Syield(); /* join after execution-stack reap */
+        }
+        ptest_assert_msg(join_tid(tid,&status) == 0 && status == (mode==1 ? 23 : mode==2 ? 65535L : 0),
+                         "join return/Pterm/fault status after safe reap");
+        ptest_assert_msg(!probe.error && probe.steps == 12,"joining preserves actual execution context");
+        ptest_assert_msg(join_tid(tid,0) == -20L,"one successful TID reaper");
+    }
+    joins.gate = joins.done = joins.entered = joins.error = 0;
+    ptest_assert_msg(launch_entry(join_target,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&joins.target)>0,"join target created");
+    ptest_assert_msg(launch_entry(join_a,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[1],&pid,&joins.a)>0,"first joiner created");
+    ptest_assert_msg(launch_entry(join_b,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&joins.b)>0,"competing joiner created");
+    for (cycle=0; cycle<64 && !joins.done; cycle++) (void)Syield();
+    ptest_assert_msg(joins.done && joins.entered && joins.result_b==-36L && !joins.error,"exclusive join claim and self rejection");
+    ptest_assert_msg(join_tid(joins.target,0)==-36L,"another joiner cannot steal a live claim");
+    joins.gate=1;
+    ptest_assert_msg(join_tid(joins.a,0)==0 && join_tid(joins.b,0)==0 && joins.result_a==0 && joins.status_a==57,
+                     "blocked joiner wakes with correct status");
+    ptest_assert_msg(join_tid(joins.target,0)==-20L,"competing target consumed once");
+    joins.done=0;
+    ptest_assert_msg(launch_entry(join_cycle_a,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&joins.a)>0,"cycle A created");
+    ptest_assert_msg(launch_entry(join_cycle_b,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[1],&pid,&joins.b)>0,"cycle B created");
+    for (cycle=0;cycle<64 && !joins.done;cycle++) (void)Syield();
+    ptest_assert_msg(joins.done && joins.result_b==-22L,"cyclic join is rejected");
+    ptest_assert_msg(join_tid(joins.a,0)==0 && joins.result_a==0,"cycle rejection lets survivor finish");
+    joins.output=(void *)Malloc(4096);
+    ptest_assert_msg((long)joins.output>0,"revocable join output allocated");
+    if ((long)joins.output>0) {
+        *(int32_t *)joins.output=-99;
+        joins.error=0;
+        ptest_assert_msg(launch_entry(join_revoke_output,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&tid)>0,"output revoker created");
+        ptest_assert_msg(join_tid(tid,joins.output)==-40L && !joins.error,"copyout revalidated after blocked wait");
+        ptest_assert_msg(join_tid(tid,&status)==0 && status==41,"failed copyout releases claim without consuming status");
+    }
+    joins.error=0;
+    ptest_assert_msg(launch_entry(join_leader,CLONE_VM,runnable_stacks[0],&pid,&joins.leader)>0,"joinable leader PROCESS created");
+    ptest_assert_msg(join_tid(joins.leader,0)==-20L,"TID join does not substitute for a different PROCESS wait");
+    result=Pwaitpid(pid,0,0);
+    ptest_assert_msg((result>>16)==pid && (result&65535)==53 && !joins.error,"survivor joins stopped leader before final PROCESS completion");
+    conws("native Pthjoin execution: tested\r\n");
+}
+#endif
 static void test_runnable(void)
 {
     int mode, cycle;
@@ -295,6 +422,9 @@ static void test_runnable(void)
             }
         }
     }
+#if defined(TEST_WITH_PTHJOIN)
+    test_joins();
+#endif
     test_lifecycle();
     for (cycle = 0; cycle < 3; cycle++)
         ptest_assert_msg(Mfree(runnable_stacks[cycle]) == 0,"clone stack hold released after root reap");
@@ -311,15 +441,19 @@ void pclone_run_managed_tests(void)
     if (has_fpu && clone_fpu_expected_iar != 0x12345678UL)
         conws("m68k FPIAR write/read is not modeled; observable value preserved\r\n");
 #endif
-    if (!ptest_failures())
+    if (!ptest_failures()) {
         conws("pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS\r\n");
+#if defined(TEST_WITH_PTHJOIN)
+        conws("native Pthjoin: PASS\r\n");
+#endif
+    }
 }
 #endif
 void test_pclone(void);
 void test_pclone(void)
 {
     ptest_begin("pclone");
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__))
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     {
         static unsigned char stack[256] __attribute__((aligned(16)));
         int32_t tid = 0x12345678;
@@ -350,7 +484,7 @@ void test_pclone(void)
         ptest_assert_msg(entry_ran == 0,"no child entry may run");
     }
 #endif
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__))
+#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     {
         long child, status;
         /* The shell may itself own the group. A nested synchronous Pexec is
