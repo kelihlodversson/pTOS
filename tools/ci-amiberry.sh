@@ -31,6 +31,7 @@ for combo in $combos; do
     config=${combo%%:*}
     cpu=${combo#*:}
     name=$config-$cpu
+    [ "${NATIVE_THREADS:-0}" != 1 ] || name=$name-native
     echo "::group::$name"
 
     build_target() {
@@ -51,6 +52,9 @@ PYCONFIG
     }
     managed=
     [ "${NATIVE_THREADS:-0}" != 1 ] || managed=--require-managed-threads
+    fpu=
+    [ -z "${AMIBERRY_FPU:-}" ] || fpu="--fpu $AMIBERRY_FPU"
+    [ "${REQUIRE_FPIAR:-0}" != 1 ] || managed="$managed --require-nonzero-fpiar"
     if ! build_target; then
         echo "::error::$name: the build failed (logs/$name.build)"
         tail -20 "logs/$name.build"
@@ -75,7 +79,7 @@ PYCONFIG
             for mode in "" "--caches"; do
                 suffix=${mode:+-caches}
                 if python3 tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd-shell.img \
-                    --cpu "$cpu" --halt "$halt" $mode $managed >"logs/$name$suffix-tests.log" 2>&1; then
+                    --cpu "$cpu" --halt "$halt" $mode $managed $fpu >"logs/$name$suffix-tests.log" 2>&1; then
                     echo "$name${suffix:+ ($suffix)}: $(grep 'Summary' "logs/$name$suffix-tests.log")"
                 else
                     echo "::error::$name$suffix: the tests failed (logs/$name$suffix-tests.log)"

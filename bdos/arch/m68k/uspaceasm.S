@@ -119,8 +119,10 @@ C_SYM(m68k_enter_user):
         clr.l   -(sp)
         clr.l   -(sp)
         clr.l   -(sp)
-        FRESTORE_SP_PLUS                // a NULL frame: pops its longword
-        lea     8(sp),sp                // (the extra longs of the 68060)
+        /* NULL consumes 4 bytes on 6888x/040, 12 on 060. Do not let
+         * post-increment plus a fixed adjustment discard the RTE frame. */
+        FRESTORE_SP
+        lea     12(sp),sp               // release exactly our three longs
         jsr     C_SYM(m68k_fpu_init)
 no_fpu_reset:
         moveq   #0,d0

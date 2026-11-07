@@ -85,3 +85,12 @@ opting in. #909 zombie consumption is unchanged. Native custom vector-0x102
 hook fault injection is not established by the host model; native libc atexit
 handlers invoking GEMDOS are separately tested. Timer preemption and concurrent
 atexit registration remain outside this cooperative contract.
+
+The integration pins libcmini PR #26 (143cdf1, ba71b39): a WORD Ptermgrp binding,
+LIFO pop-before-call callback handling, explicit callback-array release when
+shared VM survives, EINVFN/EINVAL Pterm fallback and nonreturning unexpected-error
+handling. Host mocks/sanitizers cover both fallback errors and callback
+recursion/registration; native MMU tests cover actual libc group exit and one
+atexit handler invoking GEMDOS, plus legacy/unmanaged fixture returns. This does
+not establish preemptive concurrent atexit registration or independent C-global
+namespaces for separate PROCESSes sharing VM.

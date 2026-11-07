@@ -84,6 +84,9 @@ def main():
     ap.add_argument('--amiberry', default=os.environ.get('AMIBERRY') or
                     os.path.expanduser('~/.local/src/amiberry/build/amiberry'))
     ap.add_argument('--timeout', type=float, default=1200, help='seconds for the whole suite')
+    ap.add_argument('--fpu', choices=['0','68881','68882','68040','68060'],
+                    help='explicit FPU model; omitted preserves the emulator default')
+    ap.add_argument('--require-nonzero-fpiar', action='store_true')
     ap.add_argument('--caches', action='store_true', help='CPU caches on')
     ap.add_argument('--require-managed-threads', action='store_true',
                     help='require native clone/join/group/libc exit worker verdicts')
@@ -111,7 +114,7 @@ def main():
     path = None
     text = ''
     try:
-        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches)
+        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches, fpu=a.fpu)
         deadline = time.time() + a.timeout
         while time.time() < deadline:
             time.sleep(5)
@@ -146,6 +149,9 @@ def main():
             if marker not in text:
                 print('run-amiberry-tests: missing managed runtime verdict: ' + marker, file=sys.stderr)
                 return 1
+    if a.require_nonzero_fpiar and 'native m68k nonzero FPIAR: PASS' not in text:
+        print('run-amiberry-tests: nonzero FPIAR was not runtime-verified', file=sys.stderr)
+        return 1
     return 0
 
 
