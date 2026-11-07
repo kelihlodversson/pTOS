@@ -299,7 +299,9 @@ bootstrap batch (up to eight), not the number of globally allowed tasks.
 Protocol under serialized cooperative execution:
 1. Reserve arena + admission before image transfer/publication. Retain parent,
    KTHREAD/KPROC/KASPACE and execution resources using existing rollback paths.
-   An allocation/reference failure consumes no admission identity or output.
+   Failed admission-record allocation/owner-retain consumes no identity or
+   output. Later preparation failures release the created record; its token is
+   retired permanently (gaps are valid), never recycled.
 2. Attach the live synchronous waiter. Its saved CPU frame and result pointer
    remain ONLY on its own still-blocked caller stack. Kernel state has no result
    array pointer; waiter_resume exists only during this explicit attachment.
