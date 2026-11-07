@@ -466,18 +466,38 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     return TRUE;
 }
 
+BOOL ksched_cancellation_pending(void)
+{
+#if CONF_WITH_PTERMGRP
+    KTHREAD *thread = ksched_exit_thread(run);
+    return thread && !scheduler.current->cancel_delivering &&
+        kproc_group_status(kthread_process(thread), NULL);
+#else
+    return FALSE;
+#endif
+}
+
+KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument)
+{
+    KERNEL_TASK *task = scheduler.current;
+    if (!ksched_spawn_allowed()) return KSCHED_WAIT_UNMANAGED;
+#if CONF_WITH_PTERMGRP
+    if (ksched_cancellation_pending()) return KSCHED_WAIT_CANCELLED;
+    task->cancel_boundary = TRUE;
+#endif
+    ksched_block(ready, argument);
+#if CONF_WITH_PTERMGRP
+    task->cancel_boundary = FALSE;
+    if (ksched_cancellation_pending()) return KSCHED_WAIT_CANCELLED;
+#else
+    UNUSED(task);
+#endif
+    return KSCHED_WAIT_READY;
+}
+
 static BOOL cancellation_wait(BOOL (*ready)(void *), void *argument)
 {
-    BOOL managed;
-#if CONF_WITH_PTERMGRP
-    KERNEL_TASK *task = scheduler.current;
-    if (ksched_spawn_allowed()) task->cancel_boundary = TRUE;
-#endif
-    managed = ksched_block(ready, argument);
-#if CONF_WITH_PTERMGRP
-    if (managed) task->cancel_boundary = FALSE;
-#endif
-    return managed;
+    return ksched_wait_cancelable(ready, argument) != KSCHED_WAIT_UNMANAGED;
 }
 
 static BOOL always_ready(void *argument) { (void)argument; return TRUE; }
@@ -824,6 +844,17 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
     return dispatch_group(count, results);
 }
 
+static BOOL cancel_wait_ready(const KERNEL_TASK *task)
+{
+#if CONF_WITH_PTERMGRP
+    return task->cancel_boundary && !task->cancel_delivering &&
+        task->execution.cpu.pd == task->program && kproc_group_status(task->process, NULL);
+#else
+    UNUSED(task);
+    return FALSE;
+#endif
+}
+
 static LONG dispatch_group(UWORD count, LONG *results)
 {
     UWORD i;
@@ -855,12 +886,8 @@ static LONG dispatch_group(UWORD count, LONG *results)
 #if CONF_WITH_CUIS
             if (task->state == TASK_DEFERRED) continue;
 #endif
-            if (task->state == TASK_BLOCKED && !task->ready(task->argument)
-#if CONF_WITH_PTERMGRP
-                && !(task->cancel_boundary && task->execution.cpu.pd == task->program &&
-                     kproc_group_status(task->process, NULL))
-#endif
-            ) continue;
+            if (task->state == TASK_BLOCKED && !task->ready(task->argument) &&
+                !cancel_wait_ready(task)) continue;
             scheduler.next = (slot + 1) % KSCHED_LIMIT;
             scheduler.current = task;
             if (task->state == TASK_NEW) {

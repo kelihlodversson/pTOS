@@ -4,6 +4,7 @@
 #include "../../include/threadcalls.h"
 #include <mint/osbind.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
 
@@ -329,7 +330,7 @@ static void test_joins(void)
 #if defined(TEST_WITH_PTERMGRP)
 static const char group_env[2]={0,0};
 static struct {
-    volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done;
+    volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done, atexit_calls;
     int32_t target, joiner, killer, nested, wait_child;
     unsigned char *stack[6];
 } group;
@@ -349,11 +350,29 @@ static int group_exists(const char *name)
     if (h<0) return 0;
     (void)Fclose(h); return 1;
 }
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+static long native_cuis(unsigned fn, long handle, unsigned long value)
+{
+    register unsigned long long ax __asm__("rax")=(0x103ULL<<32)|fn;
+    register unsigned long long di __asm__("rdi")=(unsigned long)handle;
+    register unsigned long long si __asm__("rsi")=value;
+    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di), "r"(si) : "rcx","r11","memory","cc");
+    return (long)ax;
+}
+#endif
 static void group_nested(void *arg);
 static void group_target(void *arg)
 {
     (void)arg; group.ready|=1;
-    if (group.mode) group_nested(arg);
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+    if (group.mode==5) {
+        long session=native_cuis(0,0,0);
+        if (session<0) group.error=1;
+        (void)native_cuis(24,session,3600000UL);
+        group.returned=1; /* must cancel, not wait an hour or return success */
+    }
+#endif
+    if (group.mode==1 || group.mode==2) group_nested(arg);
     for (;;) (void)Syield();
 }
 static void group_joiner(void *arg)
@@ -374,12 +393,23 @@ static void group_nested(void *arg)
     /* Group cancellation must intercept GEMDOS return before this executes. */
     group.returned=1;
 }
+static void group_atexit(void)
+{
+    group.atexit_calls++;
+    /* Real GEMDOS from the cleanup handler before PROCESS termination. */
+    (void)Pgetpid();
+    (void)Syield();
+}
 static void group_killer(void *arg)
 {
     (void)arg;
     while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
     if (!group.mode) { for (;;) (void)Syield(); }
     group.requested=1;
+    if (group.mode==4) {
+        if (atexit(group_atexit)) group.error=1;
+        exit(62); /* real libc entry: callbacks then Ptermgrp, never raw Pterm */
+    }
     (void)term_group(61);
     group.returned=1;
 }
@@ -445,9 +475,15 @@ static void test_group_exit(void)
         ptest_assert_msg((long)group.stack[i]>0,"group stack allocated");
         if ((long)group.stack[i]<=0) return;
     }
-    for (mode=0;mode<4;mode++) {
+    for (mode=0;mode<
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+        6
+#else
+        5
+#endif
+        ;mode++) {
         for (i=0;i<5;i++) (void)Fdelete(files[i]);
-        group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=0;
+        group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=group.atexit_calls=0;
         ptest_assert_msg(launch_entry(group_peer,CLONE_VM,group.stack[5],&peer_pid,&peer_tid)>0,"independent shared-ASPACE peer created");
         ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
         for (spin=0;spin<2000 && !group.requested;spin++) (void)Syield();
@@ -455,14 +491,21 @@ static void test_group_exit(void)
         if (mode==1 || mode==2) {
             ptest_assert_msg(Pwaitpid(pid,1,0)==0,"nested child retains pending PROCESS until safe return");
             ptest_assert_msg(group_exists("GDEEP.ON") && !group_exists("GRET0.ON"),"nested child not unwound or killed");
+            for (spin=0;spin<32;spin++) {
+                (void)Syield();
+                ptest_assert_msg(Pwaitpid(pid,1,0)==0,"nonreturning child delays completion without early reap");
+            }
+            /* Heap lease barriers return ERR; EACCDN is the separate callback-pin path. */
+            ptest_assert_msg(Mfree(group.stack[1])==-1L,"pending nested continuation retains its user stack");
             group_mark("GGO.ON");
             ptest_assert_msg(group_exists("GGO.ON"),"nested release marker exists");
         }
         result=Pwaitpid(pid,0,0);
-        ptest_assert_msg((result>>16)==pid && (result&65535)==(mode?61:60),"group final status and one PROCESS completion");
+        ptest_assert_msg((result>>16)==pid && (result&65535)==(mode==4?62:mode?61:60),"group final status and one PROCESS completion");
         ptest_assert_msg(!group.returned && !group.error,"cancelled parent continuations never return to user");
         ptest_assert_msg(Pwaitpid(pid,1,0)==-33L,"group zombie consumed only once");
         if (mode==1 || mode==2) ptest_assert_msg(group_exists("GRET0.ON") && group_exists("GRET1.ON") && group_exists("GRET2.ON"),"all nested PROCESSes complete normally before cancellation");
+        if (mode==4) ptest_assert_msg(group.atexit_calls==1,"libc exit runs atexit once before group termination");
         group.child_go=1;
         if (mode==3) {
             for (spin=0;spin<128 && !group.child_done;spin++) (void)Syield();
@@ -597,12 +640,20 @@ void pclone_run_managed_tests(void)
         conws("m68k FPIAR write/read is not modeled; observable value preserved\r\n");
 #endif
     if (!ptest_failures()) {
+#if defined(__mc68000__)
+        if (has_fpu && clone_fpu_expected_iar == 0x12345678UL)
+            conws("native m68k nonzero FPIAR: PASS\r\n");
+#endif
         conws("pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS\r\n");
 #if defined(TEST_WITH_PTHJOIN)
         conws("native Pthjoin: PASS\r\n");
 #endif
 #if defined(TEST_WITH_PTERMGRP)
         conws("native Ptermgrp: PASS\r\n");
+        conws("native libc exit: PASS\r\n");
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+        conws("native CUIS delay cancellation: PASS\r\n");
+#endif
 #endif
     }
 }

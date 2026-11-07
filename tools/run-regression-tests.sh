@@ -548,6 +548,16 @@ if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
     record "native PROCESS group exit" FAIL "configured Ptermgrp worker did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native libc exit: PASS' "$suite_log"; then
+    record "native libc group exit" FAIL "libc exit worker did not pass"
+fi
+if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS delay cancellation: PASS' "$suite_log"; then
+    record "native CUIS delay cancellation" FAIL "CUIS adapter worker did not pass"
+fi
+
 # -- the verdict ----------------------------------------------------------------
 
 show_logs

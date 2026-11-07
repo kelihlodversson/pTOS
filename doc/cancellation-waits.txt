@@ -1,0 +1,87 @@
+Cooperative wait cancellation audit (#893 / #907 / #713)
+======================================================
+
+All waits belong to the current KTHREAD's restored PROCESS, not merely the
+ASPACE. A synchronous child borrowing its parent's scheduler continuation has
+its own run/launch chain; cancellation of the parent cannot interrupt it.
+No adapter may invoke termination on scheduler root, under the caller's IRQ
+mask, or before operation-local state has been released.
+
+Wait                         Retained state / readiness / safe boundary
+---------------------------  -------------------------------------------
+Syield                       No local resources; always ready. Check after
+                             restoring IRQs (already supported).
+Pthjoin                      One completion claim. Ready only after root
+                             reap. Cancel before copyout/consume; root reap
+                             releases the interrupted claimant (supported).
+PROCESS wait                 Borrowed live parent identity and stack wait
+                             record. Child zombie predicate. Cancel before
+                             copying usage/consuming zombie (supported).
+CUIS display lock            No acquisition while blocked; finds owner anew
+                             each pass. Availability predicate. Restore IRQs
+                             then cancel before acquiring ownership (adapter).
+CUIS mouse lock              No acquisition while blocked; predicate compares
+                             capture identities. Restore IRQs before cancel;
+                             never acquire mouse/capture as part of cancel.
+CUIS delay                   Stack-only timer predicate, no published pointer
+                             or consumed event. Restore IRQs before cancel.
+CUIS window/event wait       Borrowed mutable window/client identities. Defer
+                             until #907 establishes stable close-vs-wait
+                             ownership for all concurrent operations.
+CUIS session/input wait      client->input_wait points into syscall stack;
+                             button-resume/history mutations need a defined
+                             rollback. Defer rather than unwinding that frame.
+CUIS stream read/write       pending_write packet, client/peer lifetime and
+                             preflight copyout/commit. Defer until cancellation
+                             cleans each owner with stable session identity.
+BIOS console input           IOREC predicate alone is simple, but callers can
+                             hold GEMDOS console/driver state; BIOS and serial
+                             paths have different return contracts. Defer;
+                             returning a synthetic key would consume/forge an
+                             event or escape the wrong layer.
+Filesystem/device I/O        May own buffers, transactions and disk errbuf;
+                             interrupt return is not operation completion.
+                             No blanket checkpoint or driver-frame unwind.
+Nested Pexec                 Child owns syscall stack; parent launcher owns
+                             its transferred lifetime. Parent cancellation
+                             remains pending until ordinary child return.
+
+The common adapter returns READY, CANCELLED or UNMANAGED while preserving the
+existing masked-IRQ wait admission contract. It does not call cleanup or exit.
+An opting-in caller registers only its wait predicate/state; CANCELLED hands
+control back to that owning caller to release local state and restore IRQs.
+Cancellation wins over a coincident ready event without consuming that event.
+Only then may the caller call the normal cancellation checkpoint. No GUI state
+or policy belongs in the scheduler. Unadapted waits keep their old contract.
+
+Preemption remains disabled. #713 must serialize admission/latch/predicate
+checks and wakeup, completion claims, current-task/launcher snapshots, stack
+reap and callback state, with a proven lock order. IRQ exclusion is not SMP
+synchronization. Cleanup and termination hooks must run after restoring the
+caller's IRQ state and outside operation locks. #909's PROCESS waiter remains
+the sole zombie consumer; adapters cannot claim another PROCESS's completion.
+
+Verification and follow-ups
+--------------------------
+
+The native group worker now includes libc exit/atexit and a blocked x32 CUIS
+delay. Its nested-child test holds the child across 32 bounded scheduler turns,
+checks nonblocking PROCESS wait remains pending, and verifies the suspended
+parent's durable user-stack lease still rejects Mfree with ERR before release.
+A timeout is never a successful negative verdict. ARM/m68k run the same common
+wait/group/exit cases without CUIS; only x32 runs the CUIS adapter scenario.
+
+Host tests execute production CUIS code with cancellation before admission,
+during a blocked lock/timer wait and after a normal wake, checking restored IRQ
+state and unchanged foreign display/mouse ownership. Production scheduler host
+models check pending-vs-ready precedence, distinct nested PROCESS identity,
+and a reentrant termination hook. An exit-delivery guard must suppress both
+checkpoint recursion and forced wakeup of the hook's own wait; otherwise a
+pending request can turn a legitimately blocked hook into a busy loop.
+
+Window/session/stream cancellation still needs #907's close-vs-wait references
+and explicit rollback of input_wait, click history and pending_write before
+opting in. #909 zombie consumption is unchanged. Native custom vector-0x102
+hook fault injection is not established by the host model; native libc atexit
+handlers invoking GEMDOS are separately tested. Timer preemption and concurrent
+atexit registration remain outside this cooperative contract.

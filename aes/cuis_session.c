@@ -1032,6 +1032,23 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     return result;
 }
 
+/* Only waits with no published stack pointer or acquired resource opt in.
+ * The caller restores its IRQ mask before entering the termination path. */
+static BOOL cancelable_wait(BOOL (*ready)(void *), void *argument)
+{
+    KSCHED_WAIT_RESULT result = ksched_wait_cancelable(ready, argument);
+    if (result == KSCHED_WAIT_UNMANAGED) cuis_input_idle();
+    return result == KSCHED_WAIT_CANCELLED;
+}
+static LONG cancel_after_unlock(UQUAD flags)
+{
+    cuis_input_unlock(flags);
+#if CONF_WITH_PTERMGRP
+    ksched_cancel_point();
+#endif
+    return EACCDN; /* defensive fallback; managed cancellation does not return */
+}
+
 LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 {
     CUIS_CLIENT *client;
@@ -1040,6 +1057,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     if (handle > 0x7fffffffULL || acquire > 1 || block > 1 || (!acquire && block)) return EINVAL;
     flags = cuis_input_lock();
     for (;;) {
+        if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
         client = *find_owner(run);
         if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
         if (!acquire) {
@@ -1076,7 +1094,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
          * masked IRQs and restores the selected task's saved context; idle
          * uses STI/HLT/CLI. Unlocking here would race the availability check
          * against waiter publication (or HLT) and lose a release wakeup. */
-        if (!ksched_block(display_available, NULL)) cuis_input_idle();
+        if (cancelable_wait(display_available, NULL)) return cancel_after_unlock(flags);
     }
 }
 
@@ -1175,6 +1193,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     refresh_pointer_bounds();
     flags = cuis_input_lock();
     for (;;) {
+        if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
         client = *find_owner(run);
         if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
         if (!acquire) {
@@ -1209,7 +1228,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
         /* Keep the availability test and waiter publication under the same
          * IRQ mask, just like DISPLAY_LOCK; no lock spans task execution. */
-        if (!ksched_block(mouse_available, client)) cuis_input_idle();
+        if (cancelable_wait(mouse_available, client)) return cancel_after_unlock(flags);
     }
 }
 
@@ -2234,8 +2253,11 @@ LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds)
     wait.client = client; wait.window = NULL; wait.events = 0;
     wait.start = cuis_input_ticks(); wait.timeout = 0;
     wait.duration = (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1);
-    while (!wait_ready(&wait))
-        if (!ksched_block(wait_ready, &wait)) cuis_input_idle();
+    for (;;) {
+        if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
+        if (wait_ready(&wait)) break;
+        if (cancelable_wait(wait_ready, &wait)) return cancel_after_unlock(flags);
+    }
     cuis_input_unlock(flags);
     return E_OK;
 }

@@ -73,6 +73,13 @@ void ksched_context_restore(UQUAD identity);
  * allocate, block or access user memory. FALSE means no managed task. */
 BOOL ksched_block(BOOL (*ready)(void *), void *argument);
 /* The same wait for callers that do not already hold an IRQ mask. */
+/* Explicit opt-in boundary: returns with the existing IRQ mask intact. No
+ * cleanup callback or termination runs here. CANCELLED wins over readiness;
+ * caller releases local state, restores IRQs, then checkpoints. Nested child
+ * PROCESSes are never cancelled through their carrier task's group request. */
+typedef enum { KSCHED_WAIT_UNMANAGED, KSCHED_WAIT_READY, KSCHED_WAIT_CANCELLED } KSCHED_WAIT_RESULT;
+BOOL ksched_cancellation_pending(void); /* query only; never exits or consumes events */
+KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument);
 BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
 /* Standard async process calls are admitted only within a managed group.
  * Spawn consumes an unprepared, loaded basepage only on success. */

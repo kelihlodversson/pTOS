@@ -33,7 +33,25 @@ for combo in $combos; do
     name=$config-$cpu
     echo "::group::$name"
 
-    if ! { make "${config}_defconfig" >/dev/null && make -j"$(nproc)" >"logs/$name.build" 2>&1; }; then
+    build_target() {
+        make "${config}_defconfig" >/dev/null || return 1
+        if [ "${NATIVE_THREADS:-0}" = 1 ]; then
+            CONFIG_= python3 - <<'PYCONFIG' || return 1
+import kconfiglib
+k=kconfiglib.Kconfig()
+k.load_config()
+assert k.syms['CONF_WITH_USER_ASPACE'].str_value == 'y'
+for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP'):
+    k.syms[name].set_value(2)
+    assert k.syms[name].str_value == 'y', name
+k.write_config()
+PYCONFIG
+        fi
+        make -j"$(nproc)" >"logs/$name.build" 2>&1
+    }
+    managed=
+    [ "${NATIVE_THREADS:-0}" != 1 ] || managed=--require-managed-threads
+    if ! build_target; then
         echo "::error::$name: the build failed (logs/$name.build)"
         tail -20 "logs/$name.build"
         failed="$failed $name"
@@ -57,7 +75,7 @@ for combo in $combos; do
             for mode in "" "--caches"; do
                 suffix=${mode:+-caches}
                 if python3 tools/run-amiberry-tests.py --rom ptos-amiga.rom --disk test-hd-shell.img \
-                    --cpu "$cpu" --halt "$halt" $mode >"logs/$name$suffix-tests.log" 2>&1; then
+                    --cpu "$cpu" --halt "$halt" $mode $managed >"logs/$name$suffix-tests.log" 2>&1; then
                     echo "$name${suffix:+ ($suffix)}: $(grep 'Summary' "logs/$name$suffix-tests.log")"
                 else
                     echo "::error::$name$suffix: the tests failed (logs/$name$suffix-tests.log)"

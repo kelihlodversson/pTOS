@@ -93,6 +93,16 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     if (input_irqs) input_bad_idle = TRUE;
     return FALSE;
 }
+static BOOL cancel_pending;
+static int cancel_on_wait;
+static BOOL cancel_after_wake;
+BOOL ksched_cancellation_pending(void) { return cancel_pending; }
+KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument)
+{
+    if (cancel_on_wait) { cancel_on_wait--; return KSCHED_WAIT_CANCELLED; }
+    if (cancel_after_wake) { cancel_after_wake=FALSE; cancel_pending=TRUE; return KSCHED_WAIT_READY; }
+    return ksched_block(ready, argument) ? KSCHED_WAIT_READY : KSCHED_WAIT_UNMANAGED;
+}
 LONG ksched_yield(void)
 {
     delay_yields++;
@@ -283,10 +293,41 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "peers.c"
 #include "cohorts.c"
 
+static int cancellation_adapter_checks(void)
+{
+    LONG a, b;
+    run=&first; a=cuis_service(CUIS_SESSION_START,0);
+    run=&second; b=cuis_service(CUIS_SESSION_START,0);
+    CHECK(a>=0 && b>=0 && input_irqs);
+    cancel_pending=TRUE;
+    CHECK(cuis_delay_service(b,1000)==EACCDN && input_irqs);
+    CHECK(cuis_display_lock(b,1,1)==EACCDN && !display_owner && input_irqs);
+    CHECK(cuis_mouse_lock(b,1,1)==EACCDN && !mouse_owner && input_irqs);
+    cancel_pending=FALSE; cancel_after_wake=TRUE;
+    CHECK(cuis_delay_service(b,1000)==EACCDN && input_irqs && !cancel_after_wake);
+    cancel_pending=FALSE;
+    run=&first; CHECK(cuis_display_lock(a,1,0)==0);
+    run=&second; cancel_on_wait=1;
+    CHECK(cuis_display_lock(b,1,1)==EACCDN && input_irqs && display_owner->owner==&first);
+    cancel_on_wait=1;
+    CHECK(cuis_delay_service(b,1000)==EACCDN && input_irqs);
+    run=&first; CHECK(cuis_display_lock(a,0,0)==0);
+    CHECK(cuis_mouse_lock(a,1,0)==0);
+    run=&second; cancel_on_wait=1;
+    CHECK(cuis_mouse_lock(b,1,1)==EACCDN && input_irqs && mouse_owner->owner==&first);
+    run=&first; CHECK(cuis_mouse_lock(a,0,0)==0);
+    cuis_process_exit(&first); cuis_process_exit(&second);
+    CHECK(allocations==frees && !cancel_on_wait && !input_bad_idle);
+    next_handle=0; allocations=frees=0;
+    return 0;
+}
+
 int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=cancellation_adapter_checks();
+    if (rc) return rc;
     CHECK(cuis_service(99, ~0ULL) == EINVFN);
     CHECK(cuis_service(CUIS_SESSION_QUERY, 0) == EACCDN);
     CHECK(cuis_service(CUIS_SESSION_END, 0) == EACCDN);

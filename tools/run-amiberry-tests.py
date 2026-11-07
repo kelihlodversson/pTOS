@@ -85,6 +85,8 @@ def main():
                     os.path.expanduser('~/.local/src/amiberry/build/amiberry'))
     ap.add_argument('--timeout', type=float, default=1200, help='seconds for the whole suite')
     ap.add_argument('--caches', action='store_true', help='CPU caches on')
+    ap.add_argument('--require-managed-threads', action='store_true',
+                    help='require native clone/join/group/libc exit worker verdicts')
     ap.add_argument('--halt', help='the address of halt() in the kernel (emutos.map): an image whose shell '
                     'is the harness halts the machine when it is done, and the emulator does not write the '
                     'log to the disk image until it is stopped, so the end is seen by the CPU')
@@ -137,6 +139,13 @@ def main():
     if int(m.group(2)) or 'All tests passed.' not in text:
         print('run-amiberry-tests: %s tests failed' % m.group(2), file=sys.stderr)
         return 1
+    if a.require_managed_threads:
+        markers = ('pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS',
+                   'native Pthjoin: PASS', 'native Ptermgrp: PASS', 'native libc exit: PASS')
+        for marker in markers:
+            if marker not in text:
+                print('run-amiberry-tests: missing managed runtime verdict: ' + marker, file=sys.stderr)
+                return 1
     return 0
 
 

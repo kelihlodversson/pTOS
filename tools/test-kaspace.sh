@@ -89,3 +89,9 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sectio
     -iquote fs tests/kthread_join.c -Wl,--gc-sections -o "$work/thread-join"
 "$work/thread-join"
 echo 'KTHREAD TID completion: late join, one reaper, claim cancellation, cycles, retirement and rollback: PASS'
+
+${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+    -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
+    -iquote bdos/arch/x86_64 -iquote fs tests/wait_cancel.c -Wl,--gc-sections -o "$work/wait-cancel"
+"$work/wait-cancel"
+echo 'Scheduler cancellation admission, nested identity and reentrant termination hook: PASS (host model)'
