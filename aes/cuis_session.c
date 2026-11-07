@@ -21,6 +21,7 @@ extern PD *run;
 #define CUIS_POINTER_CAPACITY 16U
 #define CUIS_WINDOW_LIMIT 256UL
 #define CUIS_STREAM_BYTES 65536UL
+#define CUIS_BUTTON_HISTORY_CAPACITY (4U * CUIS_POINTER_CAPACITY)
 typedef struct {
     LONG sender_pid;
     UBYTE data[1];
@@ -29,6 +30,20 @@ typedef struct {
     LONG x, y;
     ULONG buttons, state;
 } CUIS_POINTER;
+/* Durable routed-edge source; legacy normal/resume queues remain views. */
+typedef struct {
+    UQUAD sequence, policy;
+    CUIS_POINTER event;
+} CUIS_BUTTON_EDGE;
+typedef struct {
+    UQUAD next, policy;
+    ULONG session;
+    BOOL exhausted;
+} CUIS_BUTTON_CURSOR;
+typedef enum {
+    BUTTON_HISTORY_EVENT, BUTTON_HISTORY_EMPTY, BUTTON_HISTORY_GAP,
+    BUTTON_HISTORY_POLICY, BUTTON_HISTORY_EXHAUSTED, BUTTON_HISTORY_RETIRED
+} CUIS_BUTTON_READ;
 typedef struct cuis_window {
     struct cuis_client *client;
     struct cuis_window *next;
@@ -75,6 +90,10 @@ typedef struct {
     LONG x, y;
     ULONG buttons, modifiers;
     BOOL matched, tracking;
+    UQUAD history_through, history_policy;
+    BOOL history_observed;
+    CUIS_BUTTON_CURSOR history_cursor;
+    CUIS_BUTTON_READ history_read;
 } CUIS_INPUT_WAIT;
 typedef struct cuis_client {
     struct cuis_client *next;
@@ -105,9 +124,15 @@ typedef struct cuis_client {
     struct { ULONG token; WORD pid, signal; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
     UBYTE child_order[CUIS_CHILDREN_PER_SESSION];
     UWORD child_count;
+    CUIS_BUTTON_EDGE button_history[CUIS_BUTTON_HISTORY_CAPACITY];
+    UQUAD button_sequence, button_policy;
+    UWORD history_head, history_count;
+    BOOL history_exhausted;
     CUIS_POINTER button_edges[CUIS_POINTER_CAPACITY];
+    UQUAD edge_sequence[CUIS_POINTER_CAPACITY];
     ULONG edge_head, edge_count, recent_count, recent_buttons;
     CUIS_POINTER saved_edges[CUIS_POINTER_CAPACITY];
+    UQUAD saved_sequence[CUIS_POINTER_CAPACITY];
     ULONG saved_head, saved_count, saved_recent_count, saved_recent_buttons;
     BOOL isolated_mouse;
     BOOL pointer_style_set;
@@ -120,6 +145,7 @@ typedef struct cuis_client {
     CUIS_INPUT_WAIT button_resume;
     BOOL button_resume_active;
     CUIS_POINTER button_resume_edges[CUIS_POINTER_CAPACITY];
+    UQUAD resume_sequence[CUIS_POINTER_CAPACITY];
     UWORD button_resume_head, button_resume_count;
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
@@ -384,6 +410,129 @@ static BOOL content_contains(CUIS_WINDOW *window)
         (QUAD)pointer_y < (QUAD)window->y+window->height-window->content_bottom;
 }
 
+/* Input IRQs excluded. A policy change invalidates cursors, never rewinds
+ * the producer identity. Counter exhaustion is latched, never wrapped. */
+static void button_history_policy(CUIS_CLIENT *client)
+{
+    if (client->button_policy == ~0ULL) client->history_exhausted = TRUE;
+    else client->button_policy++;
+}
+static UQUAD button_history_record(CUIS_CLIENT *client, const CUIS_POINTER *event)
+{
+    CUIS_BUTTON_EDGE *edge;
+    UWORD index;
+    if (client->history_exhausted || client->button_sequence == ~0ULL) {
+        client->history_exhausted = TRUE;
+        return 0;
+    }
+    if (client->history_count == CUIS_BUTTON_HISTORY_CAPACITY) {
+        client->history_head = (client->history_head+1) % CUIS_BUTTON_HISTORY_CAPACITY;
+        client->history_count--;
+    }
+    index = (client->history_head+client->history_count++) % CUIS_BUTTON_HISTORY_CAPACITY;
+    edge = &client->button_history[index];
+    edge->sequence = ++client->button_sequence;
+    edge->policy = client->button_policy;
+    edge->event = *event;
+    return edge->sequence;
+}
+static void button_history_begin(CUIS_CLIENT *client, CUIS_BUTTON_CURSOR *cursor)
+{
+    UWORD i;
+    cursor->session = client->handle;
+    cursor->policy = client->button_policy;
+    cursor->exhausted = client->history_exhausted || client->button_sequence == ~0ULL;
+    cursor->next = cursor->exhausted ? 0 : client->button_sequence+1;
+    /* New cursors start in the current policy epoch. Old epochs are retained
+     * only until bounded eviction; an existing cursor cannot cross epochs. */
+    for (i = 0; i < client->history_count; i++) {
+        CUIS_BUTTON_EDGE *edge = &client->button_history[(client->history_head+i)%CUIS_BUTTON_HISTORY_CAPACITY];
+        if (edge->policy == cursor->policy) {
+            cursor->next = edge->sequence;
+            cursor->exhausted = client->history_exhausted;
+            break;
+        }
+    }
+}
+static CUIS_BUTTON_READ button_history_next(CUIS_CLIENT *client, CUIS_BUTTON_CURSOR *cursor, CUIS_BUTTON_EDGE *result)
+{
+    CUIS_BUTTON_EDGE *edge;
+    UQUAD offset;
+    if (client->retired || cursor->session != client->handle) return BUTTON_HISTORY_RETIRED;
+    if (cursor->policy != client->button_policy) return BUTTON_HISTORY_POLICY;
+    if (cursor->exhausted || client->history_exhausted) return BUTTON_HISTORY_EXHAUSTED;
+    if (!client->history_count || cursor->next > client->button_sequence) return BUTTON_HISTORY_EMPTY;
+    edge = &client->button_history[client->history_head];
+    if (!cursor->next || cursor->next < edge->sequence) return BUTTON_HISTORY_GAP;
+    offset = cursor->next-edge->sequence;
+    if (offset >= client->history_count) return BUTTON_HISTORY_GAP;
+    edge = &client->button_history[(client->history_head+(UWORD)offset)%CUIS_BUTTON_HISTORY_CAPACITY];
+    if (edge->sequence != cursor->next) return BUTTON_HISTORY_GAP;
+    if (edge->policy != cursor->policy) return BUTTON_HISTORY_POLICY;
+    *result = *edge;
+    if (cursor->next == ~0ULL) cursor->exhausted = TRUE;
+    else cursor->next++;
+    return BUTTON_HISTORY_EVENT;
+}
+/* Observe the durable source without consuming it. The legacy sampler below
+ * still decides GEM readiness; a cursor gap is latched and must never be used
+ * as successful replay by the future transactional consumer. */
+static void observe_button_history(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait)
+{
+    CUIS_BUTTON_EDGE edge;
+    CUIS_BUTTON_READ result;
+    if (wait->history_read != BUTTON_HISTORY_EMPTY) return;
+    do { result = button_history_next(client,&wait->history_cursor,&edge); }
+    while (result == BUTTON_HISTORY_EVENT);
+    wait->history_read = result;
+}
+
+#if CONF_WITH_X86_64_MEMTEST
+BOOL cuis_button_history_test(void)
+{
+    CUIS_CLIENT *client = kalloc(sizeof(*client));
+    CUIS_BUTTON_CURSOR cursor, saved;
+    CUIS_BUTTON_EDGE edge;
+    CUIS_POINTER event;
+    ULONG i;
+    BOOL ok = TRUE;
+    if (!client) return FALSE;
+    memset(client,0,sizeof(*client));
+    memset(&event,0,sizeof(event));
+    client->handle = 17; client->button_policy = 1;
+    button_history_begin(client,&cursor);
+    for (i = 0; i < CUIS_BUTTON_HISTORY_CAPACITY+1; i++) {
+        event.x = i; event.buttons = i&1;
+        if (button_history_record(client,&event) != i+1) ok = FALSE;
+    }
+    saved = cursor;
+    if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_GAP || cursor.next != saved.next) ok = FALSE;
+    button_history_begin(client,&cursor);
+    for (i = 1; i <= CUIS_BUTTON_HISTORY_CAPACITY; i++)
+        if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_EVENT ||
+            edge.sequence != i+1 || edge.event.x != (LONG)i || edge.event.buttons != (i&1)) ok = FALSE;
+    if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_EMPTY) ok = FALSE;
+    button_history_policy(client);
+    if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_POLICY) ok = FALSE;
+    kfree(client);
+    return ok;
+}
+#endif
+
+/* Only a successfully completed operation consumes its tentative initial
+ * prefix. Policy changes, FIFO overflow and newer IRQ data cannot be undone. */
+static void commit_initial_history(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait)
+{
+    if (wait->history_observed && !client->history_exhausted &&
+        wait->history_policy == client->button_policy)
+        while (client->edge_count && client->edge_sequence[client->edge_head] &&
+               client->edge_sequence[client->edge_head] <= wait->history_through) {
+            client->edge_head = (client->edge_head+1)%CUIS_POINTER_CAPACITY;
+            client->edge_count--;
+        }
+    wait->history_observed = FALSE;
+}
+
 /* IRQ keyboard delivery uses only the published focus pointer and its
  * resident bounded queue. Remove that pointer before a window can be freed. */
 static BOOL set_focus(CUIS_WINDOW *window)
@@ -397,6 +546,7 @@ static BOOL set_focus(CUIS_WINDOW *window)
             cancel_controls(focus_window);
             focus_window->key_head = focus_window->key_count = 0;
             if ((!window || window->client != focus_window->client) && focus_window->client != mouse_owner) {
+                button_history_policy(focus_window->client);
                 focus_window->client->edge_count = 0;
                 focus_window->client->recent_count = 0;
             }
@@ -457,12 +607,19 @@ static void expire_button_wait(CUIS_INPUT_WAIT *wait)
  * routing calls this producer; opaque application messages never enter it. */
 static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
 {
-    CUIS_POINTER *event;
+    CUIS_POINTER *event, snapshot;
+    UQUAD sequence = 0;
     LONG x, y;
     ULONG buttons, modifiers;
     CUIS_INPUT_WAIT *wait = client->input_wait && (client->input_wait->events & CUIS_READY_BUTTON) ?
         client->input_wait : client->button_resume_active ? &client->button_resume : NULL;
-    if (changed) { client->recent_count = 1; client->recent_buttons = pointer_buttons; }
+    if (changed) {
+        cuis_input_snapshot(&x,&y,&buttons,&modifiers);
+        snapshot.x = pointer_x; snapshot.y = pointer_y;
+        snapshot.buttons = pointer_buttons; snapshot.state = modifiers;
+        sequence = button_history_record(client, &snapshot);
+        client->recent_count = 1; client->recent_buttons = pointer_buttons;
+    }
     expire_button_wait(wait);
     if (changed && (client->button_resume_active || !wait || (wait->ready & CUIS_READY_BUTTON))) {
         if (client->button_resume_active && !(wait->ready & CUIS_READY_BUTTON)) {
@@ -470,17 +627,17 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
                 client->button_resume_head = (client->button_resume_head+1) % CUIS_POINTER_CAPACITY;
                 client->button_resume_count--;
             }
+            client->resume_sequence[(client->button_resume_head+client->button_resume_count)%CUIS_POINTER_CAPACITY] = sequence;
             event = &client->button_resume_edges[(client->button_resume_head+client->button_resume_count++) % CUIS_POINTER_CAPACITY];
         } else {
             if (client->edge_count == CUIS_POINTER_CAPACITY) {
                 client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
                 client->edge_count--;
             }
+            client->edge_sequence[(client->edge_head+client->edge_count)%CUIS_POINTER_CAPACITY] = sequence;
             event = &client->button_edges[(client->edge_head + client->edge_count++) % CUIS_POINTER_CAPACITY];
         }
-        cuis_input_snapshot(&x,&y,&buttons,&modifiers);
-        event->x = pointer_x; event->y = pointer_y;
-        event->buttons = pointer_buttons; event->state = modifiers;
+        *event = snapshot;
     }
 }
 /* Cached edges belong to the resumed predicate only after a compatible
@@ -488,17 +645,22 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
 static void abandon_button_resume(CUIS_CLIENT *client)
 {
     CUIS_POINTER edges[CUIS_POINTER_CAPACITY];
+    UQUAD sequences[CUIS_POINTER_CAPACITY];
     UWORD i, count = client->button_resume_count+client->edge_count;
     UWORD skip = count > CUIS_POINTER_CAPACITY ? count-CUIS_POINTER_CAPACITY : 0;
     if (!client->button_resume_active) return;
     for (i = skip; i < count; i++) {
-        if (i < client->button_resume_count)
+        if (i < client->button_resume_count) {
             edges[i-skip] = client->button_resume_edges[(client->button_resume_head+i) % CUIS_POINTER_CAPACITY];
-        else
+            sequences[i-skip] = client->resume_sequence[(client->button_resume_head+i)%CUIS_POINTER_CAPACITY];
+        } else {
             edges[i-skip] = client->button_edges[(client->edge_head+i-client->button_resume_count) % CUIS_POINTER_CAPACITY];
+            sequences[i-skip] = client->edge_sequence[(client->edge_head+i-client->button_resume_count)%CUIS_POINTER_CAPACITY];
+        }
     }
     client->edge_head = 0; client->edge_count = count-skip;
     memcpy(client->button_edges,edges,client->edge_count*sizeof(edges[0]));
+    memcpy(client->edge_sequence,sequences,client->edge_count*sizeof(sequences[0]));
     client->button_resume_active = FALSE;
     client->button_resume_head = client->button_resume_count = 0;
 }
@@ -752,7 +914,10 @@ static void hide_window(CUIS_WINDOW *window)
     window->notices = 0;
     window->pointer_head = window->pointer_count = 0;
     window->pointer_overflow = FALSE;
-    if (window->client != mouse_owner) window->client->edge_count = window->client->recent_count = 0;
+    if (window->client != mouse_owner) {
+        button_history_policy(window->client);
+        window->client->edge_count = window->client->recent_count = 0;
+    }
     if (pointer_capture == window) {
         pointer_capture = NULL;
         pointer_activation_drag = FALSE;
@@ -1197,6 +1362,7 @@ static void end_mouse(void)
 {
     CUIS_CLIENT *client = mouse_owner;
     end_keyboard();
+    button_history_policy(mouse_owner);
     mouse_owner->edge_count = mouse_owner->recent_count = 0;
     mouse_owner = NULL; mouse_depth = 0;
     pointer_capture = pointer_hover = NULL; surface_capture = NULL; background_capture = NULL;
@@ -1206,6 +1372,7 @@ static void end_mouse(void)
     route_pointer(0);
     if (client->isolated_mouse) {
         memcpy(client->button_edges,client->saved_edges,sizeof(client->button_edges));
+        memcpy(client->edge_sequence,client->saved_sequence,sizeof(client->edge_sequence));
         client->edge_head = client->saved_head; client->edge_count = client->saved_count;
         client->recent_count = client->saved_recent_count; client->recent_buttons = client->saved_recent_buttons;
         client->isolated_mouse = FALSE;
@@ -1241,8 +1408,10 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         }
         if (mouse_available(client)) {
             if (acquire == CUIS_MOUSE_FRESH) {
+                button_history_policy(client);
                 abandon_button_resume(client);
                 memcpy(client->saved_edges,client->button_edges,sizeof(client->button_edges));
+                memcpy(client->saved_sequence,client->edge_sequence,sizeof(client->edge_sequence));
                 client->saved_head = client->edge_head; client->saved_count = client->edge_count;
                 client->saved_recent_count = client->recent_count; client->saved_recent_buttons = client->recent_buttons;
                 client->button_resume_active = FALSE;
@@ -1395,6 +1564,8 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->pid = kproc_pid(run);
         client->pending_write = NULL; client->stream_data = NULL;
         client->stream_head = client->stream_bytes = 0;
+        client->button_sequence = 0; client->button_policy = 1;
+        client->history_head = client->history_count = 0; client->history_exhausted = FALSE;
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
         client->wait_sequence = client->wait_operation = 0;
@@ -2343,11 +2514,13 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     CUIS_INPUT_FILTER *filter = &client->input_filter;
     CUIS_INPUT_RECTANGLE *rect;
     CUIS_POINTER *edge;
-    ULONG i, bit;
+    ULONG i, bit, observed;
     BOOL owned, match, inside;
     LONG x, y;
     ULONG buttons, modifiers;
     if (console_owner) return;
+    if (wait == &client->active_input && (wait->events & CUIS_READY_BUTTON))
+        observe_button_history(client,wait);
     cuis_input_snapshot(&x, &y, &buttons, &modifiers);
     if (pointer_initialized) { x = pointer_x; y = pointer_y; buttons = pointer_buttons; }
     owned = !pointer_suppressed && !pointer_legacy_drag && !pointer_activation_drag && !pointer_control_drag &&
@@ -2378,16 +2551,19 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
          * the first matching edge so subsequent waits retain FIFO history.
          * These edges were already routed to this owner by trusted input;
          * current focus only governs live predicates, not queued history. */
-        while (client->edge_count && !(wait->ready & CUIS_READY_BUTTON)) {
-            edge = &client->button_edges[client->edge_head];
+        wait->history_policy = client->button_policy;
+        observed = 0;
+        while (observed < client->edge_count && !(wait->ready & CUIS_READY_BUTTON)) {
+            ULONG index = (client->edge_head+observed++)%CUIS_POINTER_CAPACITY;
+            edge = &client->button_edges[index];
+            wait->history_through = client->edge_sequence[index];
+            wait->history_observed = TRUE;
             if (((edge->buttons & filter->mask) == (filter->state & filter->mask)) != filter->invert) {
                 wait->ready |= CUIS_READY_BUTTON;
                 wait->count = filter->clicks ? 1 : 0;
                 wait->x = edge->x; wait->y = edge->y;
                 wait->buttons = edge->buttons; wait->modifiers = edge->state;
             }
-            client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
-            client->edge_count--;
         }
     }
     expire_button_wait(wait);
@@ -2519,6 +2695,7 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     flags = cuis_input_lock();
     if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
     if (client->wait_operation) { cuis_input_unlock(flags); return EACCDN; }
+    if ((events & CUIS_READY_BUTTON) && client->history_exhausted) { cuis_input_unlock(flags); return ERANGE; }
     if (client->wait_sequence == ~0ULL) { cuis_input_unlock(flags); return ERANGE; }
     if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
     wait.client = client;
@@ -2527,10 +2704,17 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     if (events & CUIS_READY_INPUT) refresh_pointer_bounds();
     memset(wait.input, 0, sizeof(*wait.input));
     wait.input->events = (ULONG)events;
+    if (events & CUIS_READY_BUTTON) {
+        button_history_begin(client,&wait.input->history_cursor);
+        wait.input->history_read = BUTTON_HISTORY_EMPTY;
+    }
     wait.resumed_button = FALSE;
     if ((events & CUIS_READY_BUTTON) && client->button_resume_active) {
         *wait.input = client->button_resume;
         wait.input->events = (ULONG)events;
+        wait.input->history_observed = FALSE;
+        button_history_begin(client,&wait.input->history_cursor);
+        wait.input->history_read = BUTTON_HISTORY_EMPTY;
         client->button_resume_active = FALSE;
         client->button_resume_head = client->button_resume_count = 0;
         wait.resumed_button = TRUE;
@@ -2561,7 +2745,9 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         if (client->retired) return finish_session_wait(&wait,flags,EACCDN);
         ready = session_ready(&wait);
         if (ready) {
+            if (client->wait_operation != wait.operation) return finish_session_wait(&wait,flags,EACCDN);
             if (events & CUIS_READY_INPUT) {
+                commit_initial_history(client, wait.input);
                 if (!(ready & CUIS_READY_BUTTON)) {
                     if (((ready & CUIS_READY_CHILD) || wait.resumed_button) && wait.input->tracking) {
                         client->button_resume = *wait.input;
@@ -2628,15 +2814,25 @@ LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c,
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
-    if (function == CUIS_INPUT_RECT) client->input_filter.rect[a & 1] = rect;
-    else if (function == CUIS_INPUT_BUTTON) {
+    if (function == CUIS_INPUT_RECT) {
+        CUIS_INPUT_RECTANGLE *old = &client->input_filter.rect[a & 1];
+        if (old->x != rect.x || old->y != rect.y || old->width != rect.width ||
+            old->height != rect.height || old->leave != rect.leave) button_history_policy(client);
+        client->input_filter.rect[a & 1] = rect;
+    } else if (function == CUIS_INPUT_BUTTON) {
         if (client->input_filter.mask != (ULONG)a || client->input_filter.state != (ULONG)b ||
-            client->input_filter.clicks != (ULONG)c || client->input_filter.invert != (BOOL)d)
+            client->input_filter.clicks != (ULONG)c || client->input_filter.invert != (BOOL)d) {
+            button_history_policy(client);
             abandon_button_resume(client);
+        }
         client->input_filter.mask = (ULONG)a; client->input_filter.state = (ULONG)b;
         client->input_filter.clicks = (ULONG)c; client->input_filter.invert = (BOOL)d;
     } else if (function == CUIS_INPUT_INTERVAL) {
-        if (b) input_interval = (ULONG)a;
+        if (b && input_interval != (ULONG)a) {
+            CUIS_CLIENT *peer;
+            for (peer = clients; peer; peer = peer->next) button_history_policy(peer);
+            input_interval = (ULONG)a;
+        }
         i = input_interval;
         cuis_input_unlock(flags); return (LONG)i;
     } else {
@@ -3349,6 +3545,7 @@ static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQU
             surface_capture = background_capture = NULL;
             for (peer = clients; peer; peer = peer->next) {
                 peer->key_head = peer->key_count = 0;
+                button_history_policy(peer);
                 peer->edge_count = peer->recent_count = 0;
                 for (window = peer->windows; window; window = window->next) {
                     window->key_head = window->key_count = 0;

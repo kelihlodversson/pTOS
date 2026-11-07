@@ -172,6 +172,9 @@ if grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"; then
     echo 'Boot log contains a panic or failed test' >&2
     exit 1
 fi
+if grep -q '^CONF_WITH_CUIS=y' .config; then
+    grep -q 'x86-64 CUIS input history: PASS' "$log"
+fi
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi

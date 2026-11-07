@@ -243,3 +243,103 @@ and cancellation of the next operation before admission. An unrelated shared-VM
 PROCESS survives and whole-worker mapping counts return to baseline. No owning
 THREAD is forced out of an active non-transactional sampler. No native claim is
 made for cancellation during click accumulation or rollback of newer IRQ edges.
+
+Sequenced-history audit before the third increment
+--------------------------------------------------
+Normal history, cached resume edges, and live click tracking are three current
+routing views. A changed routed packet can be intentionally suppressed from the
+normal/resume caches while the active sampler counts it. A durable migration
+source must record BEFORE that decision, without changing its GEM semantics.
+The bounded journal will therefore assign identities to every routed changed
+packet, including tracked edges. Its cursor is observational: advancing it must
+never mutate persistent queues. Overflow must return an explicit gap, policy
+changes must invalidate the cursor, and identities must not wrap/recycle.
+
+The first safe production consumer migration is the initial normal-history
+quick check: inspect a sequence-tagged prefix tentatively and remove that prefix
+only at successful operation commit. Never restore a saved head/count on abort.
+Newer IRQ edges have later identities, so they cannot be removed by that commit.
+Resume-cache merging and fresh-grab save/restore must carry the same identities;
+policy generations prevent an old operation from consuming a replacement view.
+This increment does not yet replay the journal into the legacy live/resume
+sampler. Those views remain a compatibility bridge until tentative resume
+adoption and all live edges can be committed/retried without semantic changes.
+Post-admission cancellation must remain disabled during that bridge.
+
+Sequenced foundation implemented (post-admission cancellation still disabled)
+----------------------------------------------------------------------------
+Each client has a fixed 64-record routed-button journal. A changed packet is
+recorded before legacy routing decides whether to cache it or count it only in
+live tracking. Each record contains the original position/buttons/modifiers,
+a non-recycled 64-bit per-session sequence and its input-policy generation.
+No allocation, callback or yield occurs in the producer. Overflow evicts the
+oldest journal record; a cursor behind that floor returns GAP unchanged rather
+than skipping silently. Read results are EVENT, EMPTY, GAP, POLICY, EXHAUSTED
+or RETIRED. Failed reads change neither the cursor nor its output snapshot.
+Session-handle binding rejects a cursor after storage reuse. Counters latch
+exhaustion instead of wrapping; new button waits then fail ERANGE before admission.
+
+A sampler has its own observational cursor. It may advance without changing a
+persistent consumer. Gaps/policy/exhaustion are latched, never interpreted as
+successful replay. This journal is not yet the GEM delivery authority: existing
+normal and resume caches retain their original bounded routing semantics. A
+cached event remains a real input snapshot even if its older journal copy was
+evicted. The legacy live sampler can still observe physical button state, but
+it cannot claim that a gapped cursor replayed missing edges. A new cursor may
+inspect retained committed records; inspection is not redelivery. Final unified
+committed-consumer positions are part of the remaining resume/live transaction.
+
+Normal, resume and saved modal cache entries now carry the same sequence IDs.
+Resume merge and modal save/restore preserve those IDs and FIFO ordering.
+History-invalidating focus/grab/console changes, filter changes and interval
+changes advance policy generations without rewinding sequence IDs. Ordinary
+same-owner capture gestures retain their routed ownership; live topology is
+still evaluated by the compatibility sampler, not by replaying journal gaps.
+
+Initial normal-history sampling is now tentative. It records the last inspected
+sequence and policy but does not advance edge_head/edge_count. At successful
+commit, the matching operation token is revalidated before key consumption or
+result publication. A bounded prefix commit removes only cached entries at or
+before that observed sequence under the same policy, then clears the tentative
+mark. Repeated commit cannot consume twice. A normal failure/retirement simply
+discards that mark; it never restores queue indices over newer IRQ input. New
+edges, policy replacement and FIFO overflow therefore cannot be undone by an
+old prefix commit. Key consumption, readiness-only sources and shared result
+publication otherwise preserve the previous implementation.
+
+Remaining blocker: resume adoption still destructively transfers cached state,
+and active live tracking still uses legacy ownership/consumption rules. A full
+transaction must tentatively adopt the original deadline/count/edge set and
+commit all three views consistently, including gaps and policy transitions.
+Only then may cancellation discard the entire operation-local cursor without
+losing a tracked edge. No CANCELLED wake is enabled in this increment. Streams
+remain non-cancellable and their separate source/packet ownership is unchanged.
+
+Verification: host tests call the production routed producer and sampler. They
+verify exact FIFO IDs/data through normal routing and active tracking, an
+observational cursor with no persistent consumption, explicit overflow gaps,
+policy changes, token/identity exhaustion, storage reuse, no per-edge allocation,
+tentative selection, exactly-once prefix commit, failure after publication,
+new IRQ data before abandonment, newer data surviving overflow and old commit,
+and sequence preservation through resume merge and modal save/restore. Existing
+multi-click/deadline/child/cohort/timer and keyboard/message tests remain gates.
+A native x32 kernel self-test exercises actual production cursor FIFO/gap/policy
+helpers; real ring-3 GEM input and SAME_PROCESS lifetime suites remain separate.
+This is not native ring-3 transactional button cancellation coverage.
+
+#713 must serialize producer sequence/record publication, observer and eventual
+consumer cursors, policy changes, operation commit/cancellation and retirement
+with scheduler admission/wakeup and retained identity release. Current input IRQ
+exclusion plus cooperative non-yielding commit is not SMP synchronization. Future
+64-bit cursor updates on 32-bit ports also require explicit synchronization.
+No PROCESS lock, callback or termination may be introduced under input exclusion
+without a proven lock order; current-task/launcher state remains per-CPU work.
+No new Kconfig gates, generic transaction framework or libcmini pin change.
+
+For streams, reuse only the established ownership principles: retained source
+identity, exclusive operation admission, validation before a bounded no-fail
+commit, and matching cleanup outside the input lock. A byte-stream selected
+range, packet lifetime and cohort/sender provenance are not button-history
+cursors; do not build a generic transaction framework or reuse this journal as
+stream storage. Stream source retirement/copyout remains the next independent
+migration after full input transaction/cancellation is proven.

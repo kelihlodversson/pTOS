@@ -4369,6 +4369,14 @@ static void test_ring3(void)
     ULONG live_reaps_before = live_process_thread_reaps;
 #endif
 
+#if CONF_WITH_CUIS
+    {
+        int before = failures;
+        CHECK(cuis_button_history_test(), "bounded CUIS history cursor, FIFO and explicit gap/policy status");
+        kcprintf("x86-64 CUIS input history: %s\n", failures == before ? "PASS" : "FAIL");
+    }
+#endif
+
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
     probe_expect(',', 0, "public SAME_PROCESS dispatch, private stacks/registers, Pterm/fault isolation, TSR refusal and exhaustion");
     probe_expect('_',0x66,"initial Pterm retains PROCESS files until final sibling exit");

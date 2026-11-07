@@ -97,3 +97,20 @@ recursion/registration; native MMU tests cover actual libc group exit and one
 atexit handler invoking GEMDOS, plus legacy/unmanaged fixture returns. This does
 not establish preemptive concurrent atexit registration or independent C-global
 namespaces for separate PROCESSes sharing VM.
+
+Sequenced button-history foundation
+-----------------------------------
+The routed producer now records all changed edges in a fixed 64-record journal,
+including packets counted only by live click tracking. Per-operation observers
+have sequence/policy cursors with explicit GAP/POLICY/EXHAUSTED/RETIRED results;
+observing is not consuming. Legacy normal/resume/modal cache entries carry the
+same provenance IDs. The initial quick check is tentative; successful matching
+operation commit removes only its observed prefix and never restores queue
+indices over later input. Failures leave that prefix unconsumed.
+
+This is not the complete input transaction. Journal replay is not yet the GEM
+delivery authority; resume adoption and live tracking still have compatibility
+consumption rules. Cancellation AFTER combined-wait admission remains disabled.
+Do not replace its raw block/poll with CANCELLED wake until all three views can
+be committed or abandoned together. Streams remain unadapted. See
+cuis-lifetime.txt for bounded overflow, generation and migration contracts.
