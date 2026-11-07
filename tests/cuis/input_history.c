@@ -87,8 +87,8 @@ static int input_history_checks(void)
     CHECK(client->edge_count==CUIS_POINTER_CAPACITY && client->edge_sequence[client->edge_head]>tentative.history_through);
     head=client->edge_head; commit_initial_history(client,&tentative);
     CHECK(client->edge_head==head && client->edge_count==CUIS_POINTER_CAPACITY);
-    /* Every routed edge is journaled even while legacy tracking suppresses
-     * its normal cache. A lagging cursor must fail explicitly after overflow. */
+    /* Tracking now retains a bounded eligible FIFO until commit, as well as
+     * the durable journal. A lagging cursor fails explicitly after overflow. */
     client->edge_count=0; button_history_policy(client);
     memset(&client->active_input,0,sizeof(client->active_input));
     client->active_input.events=CUIS_READY_BUTTON;
@@ -103,8 +103,8 @@ static int input_history_checks(void)
         CHECK(cuis_pointer_packet(0,0,!(i&1),NULL,NULL));
     fail_allocation=FALSE;
     CHECK(allocations==allocations_before && client->button_sequence==sequence+CUIS_BUTTON_HISTORY_CAPACITY+4);
-    CHECK(!client->edge_count && client->history_count==CUIS_BUTTON_HISTORY_CAPACITY);
-    CHECK(client->active_input.history_read==BUTTON_HISTORY_EMPTY);
+    CHECK(client->edge_count==CUIS_POINTER_CAPACITY && client->history_count==CUIS_BUTTON_HISTORY_CAPACITY);
+    CHECK(client->active_input.history_read==BUTTON_HISTORY_GAP);
     client->input_wait=NULL;
     saved=cursor; memset(&edge,0xa5,sizeof(edge));
     CHECK(button_history_next(client,&cursor,&edge)==BUTTON_HISTORY_GAP && cursor.next==saved.next);

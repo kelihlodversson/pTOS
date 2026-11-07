@@ -53,3 +53,20 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
     marker("native CUIS resume/live commit: PASS")
     print("Native SAME_PROCESS resume/live count=2, no redelivery: PASS; %.3fs from first press" %
           (time.monotonic() - started))
+
+    # Cancellation owns a separate PROCESS; the outer worker shares ASPACE
+    # and must survive both group exits. Physical presses enter admitted waits.
+    marker("CUIS cancel button: READY")
+    command("mouse_button 1")
+    marker("native CUIS tracked button cancellation: PASS")
+    command("mouse_button 0")
+    marker("CUIS cancel resume first: READY")
+    command("mouse_button 1")
+    marker("CUIS cancel resume checkpoint: READY")
+    command("mouse_button 0")
+    marker("CUIS cancel resume adopt: READY")
+    command("mouse_button 1")
+    marker("native CUIS resumed button cancellation: PASS")
+    command("mouse_button 0")
+    marker("native CUIS history cancellation: PASS")
+    print("Native admitted tracking/resume cancellation and independent PROCESS survival: PASS")

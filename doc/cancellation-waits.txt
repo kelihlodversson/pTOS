@@ -31,9 +31,10 @@ CUIS window/event wait       Retained client/window scope; retirement wakes
                              cuis-lifetime.txt for scope and remaining gaps.
 CUIS session/input wait      Exclusive operation token; retained client owns
                              the sampler, no GUI-published syscall-stack pointer.
-                             Raw block/poll defers cancellation after admission;
-                             history transactions remain required. Retirement
-                             wakes and releases through matching cleanup.
+                             Sequenced source and tentative normal/resume/view
+                             prefix; CANCELLED abandons observation, unpublishes,
+                             puts and restores IRQs before checkpoint. Retirement
+                             wakes EACCDN; bounded gaps/policy fail before commit.
 CUIS stream read/write       pending_write packet, client/peer lifetime and
                              preflight copyout/commit. Defer until cancellation
                              cleans each owner with stable session identity.
@@ -82,7 +83,7 @@ and a reentrant termination hook. An exit-delivery guard must suppress both
 checkpoint recursion and forced wakeup of the hook's own wait; otherwise a
 pending request can turn a legitimately blocked hook into a busy loop.
 
-Window/session/stream cancellation still needs #907's close-vs-wait references
+Stream cancellation still needs #907's source-operation and packet references
 and explicit rollback of input_wait, click history and pending_write before
 opting in. #909 zombie consumption is unchanged. Native custom vector-0x102
 hook fault injection is not established by the host model; native libc atexit
@@ -98,36 +99,30 @@ atexit handler invoking GEMDOS, plus legacy/unmanaged fixture returns. This does
 not establish preemptive concurrent atexit registration or independent C-global
 namespaces for separate PROCESSes sharing VM.
 
-Sequenced button-history foundation
------------------------------------
-The routed producer now records all changed edges in a fixed 64-record journal,
-including packets counted only by live click tracking. Per-operation observers
-have sequence/policy cursors with explicit GAP/POLICY/EXHAUSTED/RETIRED results;
-observing is not consuming. Legacy normal/resume/modal cache entries carry the
-same provenance IDs. The initial quick check is tentative; successful matching
-operation commit removes only its observed prefix and never restores queue
-indices over later input. Failures leave that prefix unconsumed.
+Transactional combined input cancellation
+-----------------------------------------
+The 64-record journal is the payload source; normal/resume/modal caches select
+eligible sequence IDs. Active normal tracking now retains FIFO eligibility until
+commit instead of suppressing it. Resume adoption reserves its durable checkpoint
+without transferring it. One validated bounded commit advances only the owned
+prefix/checkpoint then consumes key and publishes input_result without yielding.
+Newer IRQ data and older saved modal IDs cannot be consumed by an unrelated view.
+Required-entry eviction or missing source records return ERANGE unchanged; policy
+invalidation returns EAGAIN. There is no stale snapshot restoration or global
+committed watermark.
 
-This is not the complete input transaction. Journal replay is not yet the GEM
-delivery authority; resume adoption and live tracking still have compatibility
-consumption rules. Cancellation AFTER combined-wait admission remains disabled.
-Do not replace its raw block/poll with CANCELLED wake until all three views can
-be committed or abandoned together. Streams remain unadapted. See
-cuis-lifetime.txt for bounded overflow, generation and migration contracts.
+Combined block and zero-timer poll now use READY/CANCELLED/UNMANAGED. Cancellation
+wins before commit; cleanup unpublishes the operation/sampler/resume reservation,
+puts the retained client, and restores IRQs before the ordinary checkpoint. After
+commit a later request cannot retract delivery. No arbitrary callback or driver
+unwind is added. Group cancellation during a distinct nested child still waits
+for that child's own safe launcher boundary.
 
-Tentative resume/live foundation (fourth CUIS increment)
--------------------------------------------------------
-An admitted combined wait now reserves, rather than removes, the durable
-button-resume checkpoint. IRQ observations continue updating it; a failed
-operation clears only matching ownership, never restores stale history over
-new events. One bounded helper validates operation/session/resume policy before
-normal/resume prefix consumption and the checkpoint transition, followed by
-key/result publication without a callback or yield. Policy-invalid adoption
-returns EAGAIN before consumption; retirement returns EACCDN.
-
-Post-admission cancellation remains disabled. Normal live-history suppression,
-modal saved-view eligibility and journal-overflow reconciliation still block a
-complete no-consumption rollback. Native ring-3 coverage proves resume/live
-commit and no redelivery; forced rollback is production-code host coverage.
-Neither is reported as native admitted-wait cancellation. See cuis-lifetime.txt
-for the precise next boundary and #713 synchronization requirements.
+Host production/sanitizer tests verify exact IDs, count/deadline, rollback under
+new IRQ data, readiness/cancellation/gap arbitration, modal ordering and checkpoint
+entry after release. Native x32 ring-3 tests execute real tracked/resumed button
+cancellation with PS/2 input, status/deadline assertions, independent PROCESS
+survival and resource baselines. Native kernel self-tests and host-only forced
+races remain separately identified. See cuis-lifetime.txt for all guarantees,
+bounded-retention limitations and #713's synchronization/lock-order requirements.
+Streams remain non-cancellable and their source/packet ownership is separate.

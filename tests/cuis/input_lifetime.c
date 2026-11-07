@@ -32,10 +32,9 @@ static void operation_hook(void)
         operation_bad=1;
     if (operation_action==1) operation_retire();
     else if (operation_action==2) {
-        /* A group request alone cannot unwind a non-transactional sampler.
-         * The next normal block still owns storage; retirement then wakes it. */
+        /* Admitted cancellation drops publication before its checkpoint;
+         * no later callback is needed for progress. */
         cancel_pending=TRUE;
-        input_operation_hook=operation_retire;
     } else {
         /* New input arriving while an owner waits remains a normal event. */
         operation_client->keys[0]=0x12345678UL; operation_client->key_head=0;
@@ -86,7 +85,9 @@ static int input_lifetime_checks(void)
         CHECK(cuis_session_wait(operation_handle,0,CUIS_READY_KEY,0)==EACCDN);
         cancel_pending=FALSE;
         CHECK(!operation_bad && !input_operation_hook && input_irqs);
-        CHECK(cuis_service(CUIS_SESSION_END,operation_replacement)==0 && allocations==frees);
+        CHECK(operation_client->references==1 && !operation_client->input_wait &&
+              !operation_client->wait_operation);
+        CHECK(cuis_service(CUIS_SESSION_END,operation_handle)==0 && allocations==frees);
     }
     __builtin_printf("CUIS exclusive combined input operation, owned sampler and retirement: PASS (host)\n");
     next_handle=next_window_handle=0; allocations=frees=0;

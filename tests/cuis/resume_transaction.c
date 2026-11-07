@@ -41,17 +41,18 @@ static void resume_wait_hook(void)
             /* This press arrives after the original deadline. It must remain
              * normal history, not become part of the completed resume prefix. */
             if (!cuis_pointer_packet(0,0,1,NULL,NULL)) resume_bad=1;
-        } else update_owner=resume_client; /* fail after observation, before input commit */
+        } else if (resume_action==4) cancel_pending=TRUE;
+        else update_owner=resume_client; /* fail after observation, before input commit */
     }
 }
 static int resume_transaction_checks(void)
 {
     LONG window, token;
-    ULONG interval=input_interval, before;
+    ULONG interval=input_interval, before, visits;
     ULONG ticks_before=input_ticks, sleeps_before=input_sleeps, yields_before=delay_yields;
     int action, cycle;
     run=&first;
-    for (cycle=0;cycle<3;cycle++) for (action=0;action<4;action++) {
+    for (cycle=0;cycle<3;cycle++) for (action=0;action<5;action++) {
         resume_handle=cuis_service(CUIS_SESSION_START,0);
         CHECK(resume_handle>=0); resume_client=*find_owner(run);
         pointer_buttons=0; pointer_suppressed=pointer_legacy_drag=FALSE; input_pointer_source=FALSE;
@@ -68,9 +69,12 @@ static int resume_transaction_checks(void)
         CHECK(resume_client->button_resume_active && resume_client->button_resume.count==1);
         resume_start=resume_client->button_resume.start; resume_duration=resume_client->button_resume.duration;
         resume_client->input_result[0]=123; resume_client->input_result[1]=456;
+        cancellation_owner=action==4?resume_client:NULL;
+        visits=cancellation_visits;
         resume_action=action; input_operation_hook=resume_wait_hook; before=frees;
         CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==(action==1?EAGAIN:action==3?(LONG)CUIS_READY_BUTTON:EACCDN));
-        update_owner=NULL;
+        update_owner=NULL; cancel_pending=FALSE; cancellation_owner=NULL;
+        CHECK(cancellation_visits==visits+(action==4) && !cancellation_bad);
         CHECK(!resume_bad && !input_operation_hook && input_irqs);
         if (action==2) {
             CHECK(frees>before && (*find_owner(run))->handle==(ULONG)resume_replacement);
@@ -89,7 +93,7 @@ static int resume_transaction_checks(void)
             CHECK(!resume_client->wait_operation && !resume_client->resume_operation &&
                   !resume_client->input_wait && resume_client->references==1 &&
                   resume_client->input_result[0]==123 && resume_client->input_result[1]==456);
-            if (!action) {
+            if (!action || action==4) {
                 CHECK(resume_client->button_resume_active && resume_client->button_resume_count==2 &&
                       resume_client->button_resume.start==resume_start &&
                       resume_client->button_resume.duration==resume_duration+3);

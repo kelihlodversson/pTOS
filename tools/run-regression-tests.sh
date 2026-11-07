@@ -548,7 +548,8 @@ if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ] &&
     done
     finish_cuis_input
     if grep -aq 'All tests passed\.' "$log" && ! grep -aq 'FAIL' "$log" &&
-       grep -aq 'native CUIS resume/live commit: PASS' "$log"; then
+       grep -aq 'native CUIS resume/live commit: PASS' "$log" &&
+       grep -aq 'native CUIS history cancellation: PASS' "$log"; then
         echo "native GUI resume worker: PASS"
     else
         record "native GUI resume worker" FAIL "public GUI worker did not pass"

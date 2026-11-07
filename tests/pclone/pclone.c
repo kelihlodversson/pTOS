@@ -412,6 +412,99 @@ static void native_resume_peer(void *argument)
     native_resume.second_tick=Ssystem(S_GETLVAL,0x4baL,0L);
     conws("CUIS resume second: READY\r\n");
 }
+static struct {
+    volatile long session, mode, adopt, error, returned, first_tick;
+} native_cancel;
+static void native_cancel_peer(void *argument)
+{
+    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
+    long x,y,buttons=0,modifiers,token,launched;
+    (void)argument;
+    do {
+        if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
+            native_cancel.error=1; return;
+        }
+        if (!(buttons&1)) (void)Syield();
+    } while (!(buttons&1));
+    native_cancel.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
+    if (native_cancel.mode) {
+        token=native_cuis5(66,native_cancel.session,0,0,0,0);
+        launched=token>0?native_cuis6(69,native_cancel.session,token,(unsigned long)path,(unsigned long)tail,(unsigned long)group_env,0):token;
+        if (launched<=0) {
+            native_cancel.error=launched?launched:1;
+            printf("resume observer launch token=%ld result=%ld\r\n",token,launched); return;
+        }
+        while (!native_cancel.adopt) (void)Syield();
+        do {
+            if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
+                native_cancel.error=1; return;
+            }
+            if (!(buttons&1)) (void)Syield();
+        } while (!(buttons&1));
+    }
+    (void)term_group((short)(71+native_cancel.mode));
+    native_cancel.returned=1;
+}
+static void native_cancel_leader(void *argument)
+{
+    int32_t pid,tid;
+    long x,y,buttons=0,modifiers,result;
+    (void)argument;
+    native_cancel.session=native_cuis(0,0,0);
+    if (native_cancel.session<0 || native_cuis5(47,native_cancel.session,1,1,0,0) ||
+        native_cuis6(44,native_cancel.session,1,1,2,0,0) ||
+        native_cuis6(46,native_cancel.session,3000,1,0,0,0)!=3000) { native_cancel.error=1; return; }
+    /* Wait for the previous fixture's held release before announcing a fresh
+     * gesture; the host never relies on monitor ACK as an IRQ-delivery fence. */
+    do {
+        if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
+            native_cancel.error=1; return;
+        }
+        if (buttons&1) (void)Syield();
+    } while (buttons&1);
+    if (launch_entry(native_cancel_peer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&tid)<=0) {
+        native_cancel.error=1; return;
+    }
+    conws(native_cancel.mode?"CUIS cancel resume first: READY\r\n":"CUIS cancel button: READY\r\n");
+    result=native_cuis5(32,native_cancel.session,0,16|2|(native_cancel.mode?2048:0),5000,0);
+    if (native_cancel.mode && result==2048) {
+        conws("CUIS cancel resume checkpoint: READY\r\n");
+        do {
+            if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
+                native_cancel.error=1; return;
+            }
+            if (buttons&1) (void)Syield();
+        } while (buttons&1);
+        native_cancel.adopt=1;
+        conws("CUIS cancel resume adopt: READY\r\n");
+        (void)native_cuis5(32,native_cancel.session,0,16|2,5000,0);
+    }
+    native_cancel.returned=1; /* Cancellation must not return to this user continuation. */
+}
+static void test_native_input_cancel(void)
+{
+    int mode,ok=1;
+    int32_t pid,tid;
+    long result;
+    for (mode=0;mode<2;mode++) {
+        native_cancel.mode=mode; native_cancel.error=native_cancel.returned=native_cancel.adopt=0;
+        native_cancel.first_tick=0;
+        result=launch_entry(native_cancel_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,
+                            runnable_stacks[1],&pid,&tid);
+        ptest_assert_msg(result>0,"native input cancellation PROCESS constructed");
+        if (result<=0) return;
+        result=Pwaitpid(pid,0,0);
+        if ((result>>16)!=pid || (result&65535)!=71+mode || native_cancel.error || native_cancel.returned ||
+            !native_cancel.first_tick ||
+            (unsigned long)(Ssystem(S_GETLVAL,0x4baL,0L)-native_cancel.first_tick)>=600) ok=0;
+        if (!ok) printf("input cancellation mode=%d wait=%lx error=%ld returned=%ld first=%ld now=%ld\r\n",mode,result,native_cancel.error,native_cancel.returned,native_cancel.first_tick,Ssystem(S_GETLVAL,0x4baL,0L));
+        ptest_assert_msg(ok,"tracked/resumed button cancellation completes before click deadline with exact group status");
+        ptest_assert_msg(Pwaitpid(pid,1,0)==-33L,"cancelled input PROCESS completion consumed once");
+        if (ok) conws(mode?"native CUIS resumed button cancellation: PASS\r\n":
+                          "native CUIS tracked button cancellation: PASS\r\n");
+    }
+    if (ok) conws("native CUIS history cancellation: PASS\r\n");
+}
 static void test_native_resume(void)
 {
     long window=-1, interval, result, values[5]={0}, x,y,buttons=0,modifiers;
@@ -471,9 +564,12 @@ joined:
     }
 out:
     (void)native_cuis5(47,native_resume.session,0,0,0,0);
+    if (ok) {
+        conws("native CUIS resume/live commit: PASS\r\n");
+        test_native_input_cancel();
+    }
     (void)native_cuis6(46,native_resume.session,interval,1,0,0,0);
     (void)native_cuis(2,native_resume.session,0);
-    if (ok) conws("native CUIS resume/live commit: PASS\r\n");
 }
 #undef RESUME_CHECK
 
@@ -489,7 +585,7 @@ static void group_target(void *arg)
         long rc;
         group.session=native_cuis(0,0,0);
         if (group.session<0) group.error=1;
-        if (group.mode>=10) rc=native_cuis5(32,group.session,0,group.mode==10?8:10,group.mode==12?100:0,0);
+        if (group.mode>=10) rc=native_cuis5(32,group.session,0,group.mode==13?16:group.mode==10?8:10,group.mode==12?100:0,0);
         else if (group.mode==5) rc=native_cuis(24,group.session,3600000UL);
         else if (group.mode==7 || group.mode==8) {
             group.window=native_cuis5(3,1,1,32,32,0);
@@ -631,7 +727,7 @@ static void test_group_exit(void)
     }
     for (mode=0;mode<
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-        13
+        14
 #else
         5
 #endif
@@ -660,7 +756,7 @@ static void test_group_exit(void)
         ptest_assert_msg(!group.returned && !group.error,"cancelled parent continuations never return to user");
         ptest_assert_msg(Pwaitpid(pid,1,0)==-33L,"group zombie consumed only once");
         if (mode==1 || mode==2) ptest_assert_msg(group_exists("GRET0.ON") && group_exists("GRET1.ON") && group_exists("GRET2.ON"),"all nested PROCESSes complete normally before cancellation");
-        if (mode==12) ptest_assert_msg(group.wait_done,"normal sampler completes, then pending cancellation prevents new admission");
+        if (mode==12) ptest_assert_msg(!group.wait_done,"admitted combined input wait is cancelled before timer commit");
         if (mode==4) ptest_assert_msg(group.atexit_calls==1,"libc exit runs atexit once before group termination");
         group.child_go=1;
         if (mode==3) {
@@ -815,6 +911,7 @@ void pclone_run_managed_tests(void)
         conws("native CUIS retained event cancellation: PASS\r\n");
         conws("native CUIS window/session retirement: PASS\r\n");
         conws("native CUIS exclusive combined wait lifetime: PASS\r\n");
+        conws("native CUIS admitted key/button cancellation: PASS\r\n");
 #endif
 #endif
     }

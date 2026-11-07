@@ -1,187 +1,169 @@
-CUIS wait ownership (#907)
-==========================
+CUIS wait ownership and transactional input (#907)
+=================================================
 
-Audit before migration
-----------------------
-The live client registry owns CUIS_CLIENT storage. It is currently indexed by
-one live PD, but the monotonically allocated, non-recycled session handle is
-the GUI identity; neither PID, TID nor ASPACE is its identity. Windows belong
-to a client and have non-recycled native handles, distinct from their reusable
-16-bit GEM identifier. Future multiple AES identities per PROCESS (#896)
-require an explicit session selector, not a PID-derived session identity.
+Identity and retained storage
+-----------------------------
+A CUIS session is a non-recycled native handle, not a PID, TID, PD or ASPACE.
+The registry owns one CUIS_CLIENT reference; wait scopes retain inspected client
+and window storage. Native window handles are non-recycled, distinct from the
+reusable GEM window identifier. #896's future multiple AES identities in one
+PROCESS require an explicit session selector. GUI references never retain
+PROCESS resources or substitute for #909's PROCESS wait/reap ownership.
 
-Window/key/message waits borrow client/window pointers in a syscall-stack
-predicate record. Readiness examines queues without consuming them; separate
-read calls commit consumption. Session deregistration or window destruction
-currently frees that storage while a sibling can be suspended. This is the
-first migration target: retain object storage, retire the public identity
-before releasing registry ownership, and distinguish retirement from readiness.
-Cancellation must drop both references and restore IRQ state before termination.
+Close/deregister removes public lookup and routing first, marks storage retired,
+clears borrowed PD ownership, and wakes retained waiters. Final put alone frees
+storage. A replacement handle/storage cannot satisfy the old predicate. Window
+wait scopes pair a retained window with its client. Saturated references and
+exhausted handles/tokens fail before publishing a partial operation.
 
-Session/input waits publish &wait.input from the syscall stack. Sampling can
-consume button edges, advance click tracking and transfer button_resume state.
-A sibling wait must not overwrite that publication. Full cancellation requires
-an explicit input transaction and history merge/rollback; it must not blindly
-restore a snapshot over newer IRQ input. This increment leaves it non-cancellable.
+Event/key/message/window waits advertise readiness without consuming queues;
+separate read operations still commit consumption. They release references and
+restore IRQs before the cooperative termination checkpoint. Delay, display and
+mouse-admission adapters have the same cleanup boundary. Foreign display/update/
+mouse ownership is never released merely to cancel a different client.
 
-Stream writes publish a kernel packet in client->pending_write before user
-copyin. Teardown owns it on fatal faults. Receiver predicates resolve a
-non-recycled handle on each check, so receiver retirement wakes a writer.
-Source retirement, concurrent writes and read copyout need distinct operation
-ownership before enabling cancellation. Do not add a checkpoint to these frames.
+Combined-operation admission and lifetime
+-----------------------------------------
+All combined waits, including timer/maintenance-only requests, exclusively own
+one nonzero wait_operation token from the session-local 64-bit wait_sequence.
+The tuple (session handle, token) never recycles; admission exhaustion is ERANGE.
+A competing call returns EACCDN unchanged before refresh, sampling or adoption.
+The admitted scope retains the client and publishes only client->active_input.
+No GUI sampler points into a syscall stack. The scheduler's separate stack
+predicate remains valid until ksched_wait_cancelable removes it and resumes its
+own continuation. Only the matching operation unpublishes GUI state and drops
+its reference. Retirement may unpublish earlier but cannot reclaim held storage.
 
-Display/mouse admission holds no acquired lock; each loop resolves its client
-anew. The mouse predicate compares capture pointers only. Delay holds only a
-timer. Existing adapters restore IRQs before the termination checkpoint.
-Enumeration returns scalar identities; it does not transfer object ownership.
-Cohort, child-observer, console and completion policy remain unchanged. PROCESS
-wait/reap remains #909; CUIS is not a PROCESS lifetime owner.
+Source, eligibility and observation
+-----------------------------------
+Every changed trusted routed button packet receives an immutable 64-bit sequence
+and routing-policy generation before selection/caching, including live tracked
+edges. The fixed 64-record journal is the payload source. Counter exhaustion
+latches, never wraps. Observational cursors expose EVENT/EMPTY/GAP/POLICY/
+EXHAUSTED/RETIRED without consuming events or skipping unavailable records.
 
-Synchronization boundary
-------------------------
-Current cooperative serialization plus the input IRQ mask protects registry,
-retirement and wait admission. Before preemption/SMP (#713), lookup+get and
-retire+unlink must become atomic with wait publication and wakeup, with a proven
-lock order. No termination callback may execute under the object/input lock.
-Per-CPU current-task state and nested-launcher restoration remain scheduler
-responsibilities. Retained GUI storage must not retain a stale PD identity.
+Existing 16-entry normal/resume/modal caches select delivery eligibility using
+those same IDs; their copied payloads are compatibility views, not an alternate
+source for normal sampling. Normal initial selection resolves the actual journal
+record. The active operation records its first required identity, initial
+selected prefix and last routed edge observed before readiness/deadline. Merely
+reading a cursor, selecting an edge or accumulating clicks does not consume it.
 
-Implemented first increment
----------------------------
-Registry/list membership owns one reference. Window/message/key event waits
-retain their client, and window waits retain the matching window, before the
-scheduler sees their stack predicate. Window references in these scopes are
-always paired with the client reference; there is no reference cycle. Delay
-and mouse-admission predicates also retain the client they inspect. Saturated
-reference counts fail without changing membership or consuming an event.
+The producer NO LONGER suppresses normal FIFO insertion during active tracking.
+That is the missing rollback guarantee: tentative live observations remain
+eligible just like queued pre-admission input. Resume uses its disjoint cache;
+post-deadline packets use normal history. New IRQ input appends normally, never
+restores or rewinds a consumer head. Expiry precedes packet admission, preserving
+the original click window and GEM's three-tick extension. Existing quick-check,
+held-state, rectangle, click count and snapshot semantics remain unchanged.
 
-Closing a window removes routing/list membership and retires its native handle;
-deregistering a session retires its identity, drops routing/cohort/directory
-membership, destroys owned resources and clears its borrowed PD before dropping
-the registry reference. Retained event scopes preserve only object storage,
-not the PD, filesystem state or ASPACE. A retained window/client cannot be
-reallocated until its last scope leaves. Even after storage is reused, native
-handles are never recycled; the signed handle limit fails explicitly. The
-reusable GEM window identifier must never substitute for that native identity.
+Modal fresh grabs save the normal eligible view and start a private one under a
+new policy. Ending the grab discards that private view and restores the saved
+normal IDs as before. A newer private commit cannot consume older saved normal
+input: commit advances only the currently owned view, not a global watermark.
+No fourth representation, independent consumer log or transaction manager exists.
 
-Retirement wakes an event/timer predicate and returns EACCDN, independently of
-normal readiness. Cancellation takes priority over readiness and timeout. The
-scheduler first removes the predicate; the caller puts window then client,
-restores IRQ state, and only then enters the standard termination checkpoint.
-No GUI callback or PROCESS cleanup is invoked with the input mask held.
+Bounded retention and gaps
+--------------------------
+An idle view keeps the legacy drop-oldest 16-entry policy; the journal also
+evicts oldest records at 64. Evicting an entry required by an active tentative
+operation latches GAP, including FIFO eviction before journal eviction. A resume
+checkpoint latches a gap when its uncommitted cache requirement is evicted;
+adoption cannot clear it. Losing the first required journal record also fails
+validation. The operation wakes and returns ERANGE without committing any button
+or key/result data. Sequence exhaustion returns an error, never a recycled ID.
 
-These waits advertise readiness only. A separate read commits queue consumption.
-Neither a READY result nor cancellation consumes a key/message/button edge,
-clears another thread's input_wait publication or changes button-resume history.
-Their rollback is precisely the release of the scope references; they cannot
-restore an old history snapshot over new IRQ input. Readiness is not a reservation:
-another reader may consume the event before a subsequent read, as before.
+An older saved modal ID can outlive journal retention. Its later selection then
+returns ERANGE unchanged; no missing record is fabricated from a stale cached
+payload. Normal producer replacement, an intentional policy invalidation/clear,
+or session teardown can retire that obsolete eligible view. Gaps are errors,
+not a promise of unbounded lossless input. Producer overflow is never reversed
+by rollback; cancellation retains the surviving bounded history. Policy change
+invalidates an admitted button transaction with EAGAIN before consumption, and
+retirement returns EACCDN without accessing replacement storage.
 
-Combined input history and stream waits remain non-cancellable. The second
-increment below establishes combined-operation lifetime and retirement safety;
-stream source pointers still lack that protection. Do not interpret event
-retention as blanket ownership of all CUIS operations. Input-history commit and
-source-side stream operation ownership remain required. Existing receiver-handle
-lookup and pending-packet teardown are not new stream cancellation guarantees.
-No new configuration switches or generic scheduler/PROCESS policy are introduced.
+Tentative resume adoption
+-------------------------
+CHILD/non-button checkpointing can persist the count/start/duration/matched state
+of unfinished tracking. Already committed observations become a self-contained
+checkpoint, so its original click record need not remain journal-pinned forever.
+New uncommitted edges remain in the resume cache with their immutable IDs.
+
+Adoption reserves resume_operation == wait_operation without clearing the durable
+checkpoint or its cache. The active and durable samplers observe new IRQ packets;
+neither consumes them. Failure/cancellation releases only that reservation,
+leaving the original deadline and newer durable observations/cache available for
+retry. No old sampler snapshot is copied over a newer IRQ or legitimate policy
+change. A successful commit consumes the observed cache prefix, checkpoints the
+accumulated count without resetting the deadline, or ends the checkpoint and
+returns its unconsumed suffix ahead of later normal history. Modal/filter policy
+changes may legitimately abandon/merge a checkpoint; rollback never undoes them.
+
+One input commit
+----------------
+Under input exclusion and cooperative serialization, validate live session,
+matching operation token, button policy, resume reservation and required source
+identities before any persistent consumption. commit_session_input then advances
+only the observed normal/resume prefix and commits/ends the checkpoint. A
+non-yielding, non-failing continuation consumes one selected key and publishes
+input_result under the same exclusion. No allocation, user callback, copyout or
+scheduler handoff can intervene. Failure leaves key and result state unchanged.
+Timer/message/stream/child/cohort/surface/display readiness remains non-destructive;
+no PROCESS completion record or unrelated message/byte is consumed here.
+
+input_result remains the existing per-session cache, read by a separate call.
+A later successful wait may replace it; callers sharing one GUI session must
+serialize wait plus result retrieval. The internal operation token is not a new
+public result cookie, and distinct PIDs do not create distinct AES identities.
+A cancelled/failed operation never overwrites that cache. Broader ABI identity
+and result isolation remains #907/#896 work.
+
+A successful commit cannot be retracted by a later termination request. Future
+preemption must make cancellation arbitration and this complete commit atomic;
+current code relies explicitly on cooperative execution plus the input IRQ mask.
+
+Cancellation after admission is enabled
+----------------------------------------
+Combined wait and zero-timer scheduling use the existing READY/CANCELLED/
+UNMANAGED protocol. A pending group request wins over coincident readiness,
+policy/gap errors and timeout until commit. CANCELLED/retirement/failure discards
+only tentative observations; it does not restore old FIFO indices or consume
+keys, edges or results. Matching cleanup unpublishes input_wait, resume_operation
+and wait_operation, puts the retained client, restores the original IRQ state,
+and only then enters ksched_cancel_point. No termination runs under input
+exclusion. Unmanaged zero polls retain legacy yield behavior; an unmanaged
+continuation cannot acquire managed cancellation ownership across that poll.
+
+This is cooperative cancellation at an explicitly clean operation boundary,
+not arbitrary callback/driver stack unwinding. A synchronous child retains its
+own PROCESS/launcher until normal return; GUI cancellation does not change that
+contract. An unsupported non-returning nested child or raw filesystem/device
+wait may still defer group completion. Streams remain unadapted.
 
 Validation scope
 ----------------
-Production host service tests exercise cancellation before registration, during
-blocking and coincident readiness; normal readiness preserves messages. They
-also cover close/deregister during waits, replacement handles, explicit storage
-reuse, reference-acquisition rollback/saturation, another input_wait publication,
-unchanged history and repeated balanced setup/teardown. ASan/UBSan supplement
-the counting allocator; these are host models, not target execution.
-Native x32 managed SAME_PROCESS tests block in message/window waits, cancel via
-Ptermgrp, close a window from a sibling, and deregister/re-register a session
-while its old message waiter remains suspended. Whole-suite baseline checks and
-an independent shared-ASPACE PROCESS verify reclamation and isolation.
-ARM/m68k suites exercise unchanged non-GUI kernel behavior, not native CUIS.
+Production host tests, normally and ASan/UBSan, cover direct CANCELLED admission,
+READY with a newly pending request, cancellation over key/button/timer readiness,
+overflow over ready keys, exact prefix IDs, later IRQ edges before/after rollback,
+normal/modal ordering, count/start/deadline preservation through resumed retry,
+policy invalidation, session retirement/replacement, storage/sequence exhaustion,
+forced allocator failure and repeated balanced cleanup. The mocked termination
+checkpoint verifies publication/reference release and restored IRQs before entry.
+Cursor/gap/policy native kernel self-tests remain separate from user execution.
 
-Combined-wait audit before the second increment
------------------------------------------------
-Combined waits currently sample into a syscall-stack CUIS_INPUT_WAIT and publish
-its address. Initial sample_input(TRUE) advances the persistent edge head/count
-through the first matching edge. Live button_enqueue() suppresses normal-history
-insertion while an active wait tracks clicks; sample_input(FALSE) latches live
-matches, rectangles and deadlines locally. Thus merely restoring queue indices
-cannot roll back a wait: some later edges never entered that queue at all.
-
-Preparing a resumed button wait copies client->button_resume, clears its active
-flag and cached resume-edge counters, and continues its original deadline. Child
-completion or selected maintenance wakes can save tracking back into resume.
-Successful combined completion consumes a key and publishes input_result; stream,
-notice, child, cohort, surface/display and timer predicates only advertise work.
-No messages or PROCESS completion records are consumed by combined readiness.
-Input filter changes, focus/keyboard/grab transitions can independently clear or
-move history; rollback must not reverse those policy changes or newer IRQ input.
-
-The zero-timer poll currently calls ksched_yield(), which may terminate at its
-own cancellation checkpoint before the enclosing operation unpublishes its
-input pointer. This must become a non-cancelling scheduling opportunity until
-history commit/rollback exists. Ordinary ksched_block() already defers cancellation
-and keeps the current operation continuation; no new scheduler is necessary.
-
-Admission must happen under the input IRQ mask before sampling or resume transfer.
-Only one combined operation per retained client is admitted (including non-input
-combined waits, which must not clear another operation's input publication).
-Session handle plus a non-recycled operation sequence identifies the owner;
-PROCESS/PD/TID/ASPACE are not the operation identity. The published sampler must
-reside in retained client storage. Retirement unpublishes it, marks the client
-retired, wakes its blocked predicate and leaves that storage alive until the
-operation returns. Matching finalization alone clears ownership and drops the
-reference. No replacement session can inherit the old operation.
-
-This is the exclusive-lifetime prerequisite, not transactional history. Pending
-cancellation before admission may checkpoint without touching history; cancellation
-after admission must wait for normal completion or session retirement. Do not add
-a CANCELLED wake until every tentative edge/resume change can be rolled back.
-
-Exclusive combined lifetime implementation
-------------------------------------------
-The retained client now contains active_input; input_wait borrows that sampler,
-never the syscall stack. wait_operation is a nonzero admission token from the
-client's monotonic 64-bit wait_sequence; sequence exhaustion fails ERANGE, reference
-exhaustion fails EACCDN, with no token consumed. Every combined wait (even timer
-or maintenance only) requires the single operation slot. A competing call fails
-EACCDN before pointer refresh, input sampling, resume transfer or publication.
-The active operation has one client reference and a private copy of its token.
-
-Normal return and retirement share finish_session_wait(): the matching owner
-unpublishes input_wait, clears the token, puts the retained client, and restores
-IRQs. Retirement may unpublish the sampler earlier to stop input routing, but
-cannot free its storage while the suspended owner holds its reference. The
-scheduler's stack predicate remains valid until its own continuation resumes;
-it is removed by ksched_block before operation finalization. The zero-timer poll
-uses a raw, non-cancelling scheduler opportunity. No generic scheduler change,
-GUI-owned PROCESS reference, dynamic operation allocation or new feature flag.
-
-Cancellation remains disabled AFTER admission. A pending request may stop a
-new operation before touching history, but an admitted operation finishes only
-on its ordinary predicate/deadline or retirement. A normal timer result can
-return before the next GEMDOS cancellation checkpoint; this is deliberate
-cooperative deferral, not a CANCELLED result. An unbounded input wait can still
-delay group completion indefinitely without a normal event or retirement.
-Do not claim input-history rollback or cancellable multi-click accumulation.
-
-Inside the published operation there is no user-memory access or user callback.
-Raw block/poll does not invoke termination. No arbitrary filesystem callback or
-private longjmp may abandon it. A sibling user fault does not terminate this
-owner; native tests verify normal sampler completion after such a fault. Forced
-unwind of the owning kernel frame is unsupported, not a recovery guarantee.
-
-Transaction still required
--------------------------
-The next change must introduce one routed button-edge sequence source shared by
-normal and resume history, with an operation-local read cursor. Producers must
-record edges even during click tracking, defining a bounded overflow policy;
-commit advances only the owned prefix, and cancellation leaves the cursor
-uncommitted. Focus/grab/configuration history invalidations need generations,
-not stale head/count restoration. Resume adoption must remain tentative until
-commit and preserve its deadline, cached edges and newer IRQ events. Keyboard
-selection/commit and shared input_result publication need an equally explicit
-consumer boundary. Existing destructive sampling is unchanged in this increment.
+Real x32 SAME_PROCESS ring-3 tests use public CUIS calls and QEMU PS/2 input under
+a public modal grab. They verify child/timer resume checkpointing, exactly two
+clicks with no redelivery, and group cancellation during actual first-click and
+resumed-click tracking before the deadline. The observer child receives an
+explicit bounded environment, as other clone/Pexec fixtures do. The enclosing
+independent shared-ASPACE PROCESS survives, exit status is exact, completion is
+consumed once, and mapped-page accounting returns to baseline. Separate native
+scenarios cover admitted key/button cancellation, retirement/replacement,
+competing admission, sibling faults and nested execution. Exact forced IRQ/commit
+races and rollback/retry identities are host production-code tests, not claims
+that each injection executes from ring 3. The existing full GEM input/deadline/
+modal/keyboard/message/cohort/timer suite remains a gate. ARM/m68k tests remain
+non-GUI kernel validation; external CUIS/libaes ports belong to #898.
 
 Stream ownership design for the following iteration
 ---------------------------------------------------
@@ -208,246 +190,27 @@ Exactly one final owner releases each packet, including fault and retirement
 paths. Callback unwinding must have an explicit cleanup contract before enabling
 cancellation. These are design requirements, not implemented stream guarantees.
 
-Before preemption/SMP
---------------------
-#713 must synchronize lookup+retain, exclusive admission, sampler publication,
-IRQ producer access, retirement, scheduler check/block/wakeup and matching final
-release. The current input mask plus cooperative no-yield commit sections are
-not SMP locking. Define scheduler/input/PROCESS lock order before adding timer
-preemption; no callback or termination checkpoint may run under the input lock.
-Per-CPU current task/nested launcher state and publication lifetime must remain
-coordinated with scheduler-root stack reclamation. A future history commit must
-serialize cancellation versus producer/consumer cursors and policy generations.
+Before preemption/SMP (#713)
+-----------------------------
+Synchronize lookup+retain and retirement+unlink/final put; exclusive operation
+and resume reservation; journal sequence/record publication and eviction; cursor
+and policy snapshots; producer/consumer eligibility; commit versus cancellation
+and policy invalidation; scheduler predicate publication/check/block/wakeup.
+64-bit identities need explicit atomic protection on future 32-bit CUIS targets.
+Prove scheduler/input/PROCESS lock order. Do not take a blocking PROCESS lock
+under input exclusion if teardown takes PROCESS then CUIS. Use a published exit
+latch or an inversion-free order; no callback/termination or conflicting lock
+may span input exclusion or scheduler handoff. Current-task and nested launcher
+state must be per-CPU; preserve root-safe stack reclamation. Local IRQ masking
+and cooperative no-yield sections are not SMP synchronization. Preemption stays
+disabled, and GUI ownership never moves into the generic scheduler.
 
-Additional lock-order constraint: a future implementation must not make the
-pre-admission cancellation query take a blocking PROCESS lock while holding
-CUIS input exclusion if PROCESS teardown acquires CUIS in the reverse order.
-Use a safely published group-exit latch or prove a consistent order. Scheduler
-predicate execution and GUI admission likewise need a check/block protocol that
-does not hold conflicting scheduler/input locks across callbacks or handoff.
-
-Second-increment validation scope
---------------------------------
-Production host tests cover admission conflicts without input/resume mutation,
-pre-admission cancellation, retained storage and matching cleanup, retirement
-and immediate replacement during an ordinary wait and a zero-timer poll,
-reference/sequence exhaustion, forced allocator failure with no new operation
-allocation, preserved normal key commit, pending-request deferral, and repeated
-balanced teardown. The existing production history/multi-click/button-resume
-suite passes; that is compatibility coverage, not transactional rollback proof.
-
-Native x32 SAME_PROCESS tests execute competing combined waits, retirement and
-replacement while the owner blocks, zero-timer retirement, a sibling user fault
-while a sampler is published, normal timer completion under pending group exit,
-and cancellation of the next operation before admission. An unrelated shared-VM
-PROCESS survives and whole-worker mapping counts return to baseline. No owning
-THREAD is forced out of an active non-transactional sampler. No native claim is
-made for cancellation during click accumulation or rollback of newer IRQ edges.
-
-Sequenced-history audit before the third increment
---------------------------------------------------
-Normal history, cached resume edges, and live click tracking are three current
-routing views. A changed routed packet can be intentionally suppressed from the
-normal/resume caches while the active sampler counts it. A durable migration
-source must record BEFORE that decision, without changing its GEM semantics.
-The bounded journal will therefore assign identities to every routed changed
-packet, including tracked edges. Its cursor is observational: advancing it must
-never mutate persistent queues. Overflow must return an explicit gap, policy
-changes must invalidate the cursor, and identities must not wrap/recycle.
-
-The first safe production consumer migration is the initial normal-history
-quick check: inspect a sequence-tagged prefix tentatively and remove that prefix
-only at successful operation commit. Never restore a saved head/count on abort.
-Newer IRQ edges have later identities, so they cannot be removed by that commit.
-Resume-cache merging and fresh-grab save/restore must carry the same identities;
-policy generations prevent an old operation from consuming a replacement view.
-This increment does not yet replay the journal into the legacy live/resume
-sampler. Those views remain a compatibility bridge until tentative resume
-adoption and all live edges can be committed/retried without semantic changes.
-Post-admission cancellation must remain disabled during that bridge.
-
-Sequenced foundation implemented (post-admission cancellation still disabled)
-----------------------------------------------------------------------------
-Each client has a fixed 64-record routed-button journal. A changed packet is
-recorded before legacy routing decides whether to cache it or count it only in
-live tracking. Each record contains the original position/buttons/modifiers,
-a non-recycled 64-bit per-session sequence and its input-policy generation.
-No allocation, callback or yield occurs in the producer. Overflow evicts the
-oldest journal record; a cursor behind that floor returns GAP unchanged rather
-than skipping silently. Read results are EVENT, EMPTY, GAP, POLICY, EXHAUSTED
-or RETIRED. Failed reads change neither the cursor nor its output snapshot.
-Session-handle binding rejects a cursor after storage reuse. Counters latch
-exhaustion instead of wrapping; new button waits then fail ERANGE before admission.
-
-A sampler has its own observational cursor. It may advance without changing a
-persistent consumer. Gaps/policy/exhaustion are latched, never interpreted as
-successful replay. This journal is not yet the GEM delivery authority: existing
-normal and resume caches retain their original bounded routing semantics. A
-cached event remains a real input snapshot even if its older journal copy was
-evicted. The legacy live sampler can still observe physical button state, but
-it cannot claim that a gapped cursor replayed missing edges. A new cursor may
-inspect retained committed records; inspection is not redelivery. Final unified
-committed-consumer positions are part of the remaining resume/live transaction.
-
-Normal, resume and saved modal cache entries now carry the same sequence IDs.
-Resume merge and modal save/restore preserve those IDs and FIFO ordering.
-History-invalidating focus/grab/console changes, filter changes and interval
-changes advance policy generations without rewinding sequence IDs. Ordinary
-same-owner capture gestures retain their routed ownership; live topology is
-still evaluated by the compatibility sampler, not by replaying journal gaps.
-
-Initial normal-history sampling is now tentative. It records the last inspected
-sequence and policy but does not advance edge_head/edge_count. At successful
-commit, the matching operation token is revalidated before key consumption or
-result publication. A bounded prefix commit removes only cached entries at or
-before that observed sequence under the same policy, then clears the tentative
-mark. Repeated commit cannot consume twice. A normal failure/retirement simply
-discards that mark; it never restores queue indices over newer IRQ input. New
-edges, policy replacement and FIFO overflow therefore cannot be undone by an
-old prefix commit. Key consumption, readiness-only sources and shared result
-publication otherwise preserve the previous implementation.
-
-At the third checkpoint (superseded by the next section), resume adoption still
-destructively transferred cached state,
-and active live tracking still uses legacy ownership/consumption rules. A full
-transaction must tentatively adopt the original deadline/count/edge set and
-commit all three views consistently, including gaps and policy transitions.
-Only then may cancellation discard the entire operation-local cursor without
-losing a tracked edge. No CANCELLED wake is enabled in this increment. Streams
-remain non-cancellable and their separate source/packet ownership is unchanged.
-
-Verification: host tests call the production routed producer and sampler. They
-verify exact FIFO IDs/data through normal routing and active tracking, an
-observational cursor with no persistent consumption, explicit overflow gaps,
-policy changes, token/identity exhaustion, storage reuse, no per-edge allocation,
-tentative selection, exactly-once prefix commit, failure after publication,
-new IRQ data before abandonment, newer data surviving overflow and old commit,
-and sequence preservation through resume merge and modal save/restore. Existing
-multi-click/deadline/child/cohort/timer and keyboard/message tests remain gates.
-A native x32 kernel self-test exercises actual production cursor FIFO/gap/policy
-helpers; real ring-3 GEM input and SAME_PROCESS lifetime suites remain separate.
-This is not native ring-3 transactional button cancellation coverage.
-
-#713 must serialize producer sequence/record publication, observer and eventual
-consumer cursors, policy changes, operation commit/cancellation and retirement
-with scheduler admission/wakeup and retained identity release. Current input IRQ
-exclusion plus cooperative non-yielding commit is not SMP synchronization. Future
-64-bit cursor updates on 32-bit ports also require explicit synchronization.
-No PROCESS lock, callback or termination may be introduced under input exclusion
-without a proven lock order; current-task/launcher state remains per-CPU work.
-No new Kconfig gates, generic transaction framework or libcmini pin change.
-
-For streams, reuse only the established ownership principles: retained source
-identity, exclusive operation admission, validation before a bounded no-fail
-commit, and matching cleanup outside the input lock. A byte-stream selected
-range, packet lifetime and cohort/sender provenance are not button-history
-cursors; do not build a generic transaction framework or reuse this journal as
-stream storage. Stream source retirement/copyout remains the next independent
-migration after full input transaction/cancellation is proven.
-
-Tentative resume/live consumer foundation (fourth increment)
-------------------------------------------------------------
-A CHILD readiness commit may persist an active sampler as button_resume with
-its original count/start/duration/matched state. Between calls this is the
-authoritative durable click checkpoint, updated by trusted IRQ sampling. The
-normal FIFO, resume cache and saved modal FIFO are bounded compatibility views
-of sequenced routed records; they are not independent delivery authorities.
-The journal remains observational until all-view eligibility is implemented.
-
-Adoption now reserves this checkpoint using resume_operation == wait_operation.
-It does NOT clear button_resume_active or its cached edges. The admitted
-operation copies the checkpoint into client-owned active_input. The durable
-and active samplers observe subsequent routed IRQ edges; neither consumes a
-cache during sampling. A competing combined wait returns EACCDN unchanged.
-There is no new allocation or fourth history representation.
-
-The producer expires click windows before stamping live_through. That field
-identifies the last actual routed edge observed before button readiness, not
-the journal tail read by a cursor. A packet after expiry remains later input.
-The existing three-tick extension and original start/deadline/count/matched
-state survive adoption, failed adoption and retry. Periodic predicate sampling
-must not manufacture an edge identity.
-
-commit_session_input validates session liveness, matching operation ownership,
-and the adopted checkpoint's reservation/policy before persistent mutation.
-It commits the tentative normal prefix and only the resume-cache prefix at or
-before live_through. A non-button completion can checkpoint accumulated clicks
-without restarting the deadline; button completion ends the checkpoint and
-returns any unconsumed cache suffix ahead of later normal history. Key selection
-and input_result publication follow under the same input exclusion, with no
-allocation, callback, failure or yield after validation. Readiness-only sources
-remain non-destructive. Releasing the operation clears its matching reservation
-and sampler publication before putting retained client storage.
-
-Failure before this boundary releases the reservation without restoring any
-old head/count or sampler over new IRQ input. The durable checkpoint/cache
-therefore remains available for retry. A policy change wakes an adopted wait
-with EAGAIN before key/result mutation; legitimate filter/focus/grab policy
-changes and their cache merge are never reversed. Retirement returns EACCDN,
-drops only the retained old session, and cannot touch a replacement identity.
-These are resume-adoption guarantees, NOT complete normal-live rollback.
-
-Full cancellation still disabled
---------------------------------
-The raw post-admission block/poll remains deliberately unchanged. Normal live
-tracking suppresses its compatibility cache; recovering those tentative edges
-requires journal-based replay with explicit gaps and policy/view eligibility.
-A blind global sequence watermark is unsafe: an isolated fresh mouse grab may
-consume newer private edges while legitimately restoring older unconsumed
-saved edges. Resume-cache truncation and an operation falling behind the
-64-record journal also need one deterministic delivery/gap policy. No missing
-record may be fabricated or accepted as replay. These block the full unified
-transaction and CANCELLED wake, including rollback during normal/live tracking.
-An unbounded admitted wait may still delay cooperative group completion.
-
-Verification scope
-------------------
-Production host tests force failure after tentative resume observation, inject
-new IRQ edges, and retry with exact count/start/duration/prefix assertions.
-They cover competing admission, policy invalidation without result mutation,
-retirement/replacement and matching reference cleanup, three repeated cycles,
-and a new edge after expiry surviving as normal FIFO input. The existing
-journal gap/exhaustion, normal-prefix/overflow, modal provenance, allocation
-failure, keyboard/message and multi-click/cohort/timer suites remain gates.
-These tests run normally and with ASan/UBSan.
-
-A dedicated x32 graphical autorun launches real SAME_PROCESS ring-3 siblings
-through public Pclone/CUIS calls. PS/2 input comes from QEMU's monitor: the first
-press starts tracking; an observed child completes it as CHILD readiness; a
-zero-timer commit preserves the checkpoint; a resumed second press produces
-exactly two clicks. A subsequent poll verifies no redelivery. PROCESS wait and
-CUIS notice consumption stay independent. The test takes a public modal mouse
-grab so desktop focus/surface routing cannot own the gesture. Console-owned
-TOS regression launches remain unchanged and intentionally suppress GUI input.
-This is native resume/live COMMIT coverage, not native cancellation/rollback.
-The native journal helper self-test is separately kernel-mode coverage.
-
-Footprint and bounded producer measurement
------------------------------------------
-On this x86-64 compiler, sizeof(CUIS_CLIENT) was 2024 before the journal, 4608 at
-18d28d8cb, and 4632 now; the resume reservation/last-edge fields add 24 bytes.
-The 64-record journal and provenance together add 2608 bytes per client versus
-07222df2a. No per-edge heap allocation is introduced; recording and prefix
-commit remain bounded by the existing ring capacities.
-
-A host-only -O2 microbenchmark called the actual button_enqueue producer five
-million times with active tracking, fixed ticks and a stub snapshot, preventing
-inlining/interprocedural specialization. Median of seven separate runs was
-2.359 ns/edge before the journal, 3.808 ns at 18d28d8cb and 4.098 ns now. This
-isolates the added producer work, excludes routing/sampling/IRQ entry, and is
-NOT native IRQ latency or evidence of 32-bit GUI performance. Full native
-input-routing overhead is unmeasured; no optimization is justified by this
-small synthetic measurement alone.
-
-Before preemption/SMP, #713 must atomically synchronize journal publication,
-64-bit cursor/epoch/token snapshots (including future 32-bit targets), tentative
-checkpoint reservation, producer observations, commit versus policy changes and
-cancellation, retirement/final put, and scheduler check/block/wakeup. Prove the
-scheduler/input/PROCESS lock order, prevent callback/termination under input
-exclusion, and use per-CPU current-task/launcher state. Cooperative no-yield
-sections plus local IRQ exclusion are the current contract, not SMP safety.
-
-Streams remain audit-only and non-cancellable. Their source-operation identity,
-pending packet ownership, receiver retirement and validated copyout-before-
-consumption need a separate #907 increment after input transactions. No generic
-scheduler/PROCESS policy, Kconfig flags or libcmini pin changed.
+Footprint
+----------
+The journal and compatibility provenance remain bounded, with no per-edge or
+per-operation allocation. history_first adds eight bytes to each of the two
+retained samplers (16 bytes/client on the current 64-bit compiler). Before this
+increment, CUIS_CLIENT was 4632 bytes (4608 at 18d28d8cb, 2024 before the journal).
+The earlier isolated producer microbenchmark was host-only and excluded full
+routing/sampling/IRQ entry; it is not native IRQ latency or 32-bit GUI evidence.
+No premature optimization, new Kconfig gate or libcmini source-pin change.

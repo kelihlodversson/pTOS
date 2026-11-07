@@ -5,6 +5,10 @@ long xexec_directory(char *path, char *tail, char *environment, ULONG session, U
 const char *kproc_executable_name(PD *pd);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
+/* Exercise the production cleanup-to-checkpoint call, with scheduler/THREAD
+ * termination mocked below so the host can inspect the post-cleanup state. */
+#undef CONF_WITH_PTERMGRP
+#define CONF_WITH_PTERMGRP 1
 #include "../../aes/cuis_session.c"
 
 static MFORM displayed_pointer;
@@ -100,6 +104,16 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     return FALSE;
 }
 static BOOL cancel_pending;
+static CUIS_CLIENT *cancellation_owner;
+static BOOL cancellation_bad;
+static ULONG cancellation_visits;
+void ksched_cancel_point(void)
+{
+    cancellation_visits++;
+    if (!input_irqs) cancellation_bad=TRUE;
+    if (cancellation_owner && (cancellation_owner->input_wait || cancellation_owner->wait_operation ||
+        cancellation_owner->resume_operation || cancellation_owner->references!=1)) cancellation_bad=TRUE;
+}
 static int cancel_on_wait;
 static BOOL cancel_after_wake;
 static void (*lifetime_wait_hook)(void);
@@ -311,6 +325,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "input_lifetime.c"
 #include "input_history.c"
 #include "resume_transaction.c"
+#include "input_transaction.c"
 
 static int cancellation_adapter_checks(void)
 {
@@ -345,8 +360,12 @@ int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=input_transaction_checks();
+    if (rc) return rc;
+    CHECK(!cancellation_bad);
     rc=resume_transaction_checks();
     if (rc) return rc;
+    CHECK(!cancellation_bad);
     rc=input_history_checks();
     if (rc) return rc;
     rc=input_lifetime_checks();

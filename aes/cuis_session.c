@@ -92,6 +92,7 @@ typedef struct {
     BOOL matched, tracking;
     UQUAD history_through, history_policy;
     UQUAD live_through; /* Last routed edge observed before button readiness. */
+    UQUAD history_first; /* Oldest uncommitted source identity required by this operation. */
     BOOL history_observed;
     CUIS_BUTTON_CURSOR history_cursor;
     CUIS_BUTTON_READ history_read;
@@ -438,6 +439,20 @@ static UQUAD button_history_record(CUIS_CLIENT *client, const CUIS_POINTER *even
     edge->event = *event;
     return edge->sequence;
 }
+/* Borrowed only under input exclusion. Compatibility queues select eligibility;
+ * the immutable journal supplies the event. No lookup fabricates an evicted ID. */
+static CUIS_BUTTON_EDGE *button_history_find(CUIS_CLIENT *client, UQUAD sequence)
+{
+    UQUAD offset;
+    CUIS_BUTTON_EDGE *edge;
+    if (!sequence || !client->history_count) return NULL;
+    edge = &client->button_history[client->history_head];
+    if (sequence < edge->sequence) return NULL;
+    offset = sequence-edge->sequence;
+    if (offset >= client->history_count) return NULL;
+    edge = &client->button_history[(client->history_head+(UWORD)offset)%CUIS_BUTTON_HISTORY_CAPACITY];
+    return edge->sequence == sequence ? edge : NULL;
+}
 static void button_history_begin(CUIS_CLIENT *client, CUIS_BUTTON_CURSOR *cursor)
 {
     UWORD i;
@@ -476,9 +491,8 @@ static CUIS_BUTTON_READ button_history_next(CUIS_CLIENT *client, CUIS_BUTTON_CUR
     else cursor->next++;
     return BUTTON_HISTORY_EVENT;
 }
-/* Observe the durable source without consuming it. The legacy sampler below
- * still decides GEM readiness; a cursor gap is latched and must never be used
- * as successful replay by the future transactional consumer. */
+/* Observing the source never grants delivery eligibility or consumes a view.
+ * A journal/view gap is latched and rejects commit, never successful replay. */
 static void observe_button_history(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait)
 {
     CUIS_BUTTON_EDGE edge;
@@ -521,8 +535,8 @@ BOOL cuis_button_history_test(void)
 }
 #endif
 
-/* Only a successfully completed operation consumes its tentative initial
- * prefix. Policy changes, FIFO overflow and newer IRQ data cannot be undone. */
+/* Only a successful operation consumes its tentative normal-view prefix.
+ * Policy changes, FIFO overflow and newer IRQ data cannot be undone. */
 static void commit_initial_history(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait)
 {
     if (wait->history_observed && !client->history_exhausted &&
@@ -596,6 +610,17 @@ static CUIS_WINDOW *window_at(LONG x, LONG y)
     return NULL;
 }
 
+/* Eviction is a producer policy, never a rollback. A required view entry
+ * cannot disappear unnoticed while a tentative consumer or resume owns it. */
+static void button_history_evict(CUIS_CLIENT *client, UQUAD sequence, BOOL resume)
+{
+    CUIS_INPUT_WAIT *active = client->input_wait;
+    if (active && (active->events & CUIS_READY_BUTTON) && active->history_first &&
+        sequence >= active->history_first) active->history_read = BUTTON_HISTORY_GAP;
+    if (resume && client->button_resume.history_first &&
+        sequence >= client->button_resume.history_first)
+        client->button_resume.history_read = BUTTON_HISTORY_GAP;
+}
 /* Expiry must precede admission of a packet: a delayed waiter must not
  * count a new press as part of an already completed click window. */
 static void expire_button_wait(CUIS_INPUT_WAIT *wait)
@@ -625,13 +650,22 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
     expire_button_wait(wait);
     if (client->button_resume_active) expire_button_wait(&client->button_resume);
     if (changed && sequence) {
-        if (wait && !(wait->ready & CUIS_READY_BUTTON)) wait->live_through = sequence;
-        if (client->button_resume_active && !(client->button_resume.ready & CUIS_READY_BUTTON))
+        if (wait && !(wait->ready & CUIS_READY_BUTTON)) {
+            wait->live_through = sequence;
+            if (!wait->history_first) wait->history_first = sequence;
+        }
+        if (client->button_resume_active && !(client->button_resume.ready & CUIS_READY_BUTTON)) {
             client->button_resume.live_through = sequence;
+            if (!client->button_resume.history_first) client->button_resume.history_first = sequence;
+        }
     }
-    if (changed && (client->button_resume_active || !wait || (wait->ready & CUIS_READY_BUTTON))) {
+    /* Observation never removes delivery eligibility. Active normal tracking
+     * keeps the same bounded FIFO as an idle session; only commit consumes
+     * its observed prefix. Resume uses its existing disjoint cache view. */
+    if (changed) {
         if (client->button_resume_active && !(wait->ready & CUIS_READY_BUTTON)) {
             if (client->button_resume_count == CUIS_POINTER_CAPACITY) {
+                button_history_evict(client,client->resume_sequence[client->button_resume_head],TRUE);
                 client->button_resume_head = (client->button_resume_head+1) % CUIS_POINTER_CAPACITY;
                 client->button_resume_count--;
             }
@@ -639,6 +673,7 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
             event = &client->button_resume_edges[(client->button_resume_head+client->button_resume_count++) % CUIS_POINTER_CAPACITY];
         } else {
             if (client->edge_count == CUIS_POINTER_CAPACITY) {
+                button_history_evict(client,client->edge_sequence[client->edge_head],FALSE);
                 client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
                 client->edge_count--;
             }
@@ -1236,8 +1271,8 @@ static void window_retire(CUIS_WINDOW *window)
     cuis_input_unlock(flags);
 }
 
-/* Only waits with no published stack pointer or acquired resource opt in.
- * The caller restores its IRQ mask before entering the termination path. */
+/* Opt-in callers have an explicit cleanup boundary for retained references
+ * and tentative state. They restore IRQs before entering termination. */
 static BOOL cancelable_wait(BOOL (*ready)(void *), void *argument)
 {
     KSCHED_WAIT_RESULT result = ksched_wait_cancelable(ready, argument);
@@ -2564,8 +2599,11 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
         observed = 0;
         while (observed < client->edge_count && !(wait->ready & CUIS_READY_BUTTON)) {
             ULONG index = (client->edge_head+observed++)%CUIS_POINTER_CAPACITY;
-            edge = &client->button_edges[index];
-            wait->history_through = client->edge_sequence[index];
+            CUIS_BUTTON_EDGE *record = button_history_find(client,client->edge_sequence[index]);
+            if (!record) { wait->history_read = BUTTON_HISTORY_GAP; return; }
+            edge = &record->event;
+            if (!wait->history_first) wait->history_first = record->sequence;
+            wait->history_through = record->sequence;
             wait->history_observed = TRUE;
             if (((edge->buttons & filter->mask) == (filter->state & filter->mask)) != filter->invert) {
                 wait->ready |= CUIS_READY_BUTTON;
@@ -2669,21 +2707,33 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
 static BOOL resume_adoption_invalid(CUIS_SESSION_WAIT_STATE *wait)
 {
     CUIS_CLIENT *client = wait->client;
-    return wait->resumed_button &&
+    return ((wait->events & CUIS_READY_BUTTON) && client->button_policy != wait->resume_policy) ||
+        (wait->resumed_button &&
         (client->resume_operation != wait->operation || !client->button_resume_active ||
-         client->button_policy != wait->resume_policy || client->history_exhausted);
+         client->history_exhausted));
+}
+static LONG session_input_error(CUIS_SESSION_WAIT_STATE *wait)
+{
+    CUIS_CLIENT *client = wait->client;
+    if (resume_adoption_invalid(wait)) return EAGAIN;
+    if (!(wait->events & CUIS_READY_BUTTON)) return E_OK;
+    if (client->history_exhausted || wait->input->history_read == BUTTON_HISTORY_GAP ||
+        wait->input->history_read == BUTTON_HISTORY_EXHAUSTED ||
+        (wait->input->history_first && !button_history_find(client,wait->input->history_first)))
+        return ERANGE;
+    return E_OK;
 }
 static BOOL session_wait_ready(void *argument)
 {
     CUIS_SESSION_WAIT_STATE *wait = argument;
-    return wait->client->retired || resume_adoption_invalid(wait) || session_ready(wait) != 0;
+    return wait->client->retired || session_input_error(wait) || session_ready(wait) != 0;
 }
 static BOOL session_poll_ready(void *argument) { (void)argument; return TRUE; }
 
 /* Only the matching admitted operation may unpublish the sampler. Its client
  * reference owns the sampler storage even after SESSION_END drops the registry.
  * The scheduler has removed its predicate before calling this finalizer. */
-static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG result)
+static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG result, BOOL cancel)
 {
     CUIS_CLIENT *client = wait->client;
     if (client->wait_operation == wait->operation) {
@@ -2692,6 +2742,7 @@ static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG
         client->wait_operation = 0;
     }
     client_put(client);
+    if (cancel) return cancel_after_unlock(flags);
     cuis_input_unlock(flags);
     return result;
 }
@@ -2704,8 +2755,15 @@ static LONG commit_session_input(CUIS_SESSION_WAIT_STATE *wait, LONG ready)
     CUIS_CLIENT *client = wait->client;
     CUIS_INPUT_WAIT *input = wait->input;
     if (client->retired || client->wait_operation != wait->operation) return EACCDN;
-    if (resume_adoption_invalid(wait)) return EAGAIN;
+    { LONG error = session_input_error(wait); if (error) return error; }
 
+    if (!wait->resumed_button && input->live_through &&
+        wait->resume_policy == client->button_policy) {
+        input->history_policy = wait->resume_policy;
+        if (!input->history_observed || input->history_through < input->live_through)
+            input->history_through = input->live_through;
+        input->history_observed = TRUE;
+    }
     commit_initial_history(client,input);
     if (wait->resumed_button) {
         while (client->button_resume_count &&
@@ -2718,6 +2776,7 @@ static LONG commit_session_input(CUIS_SESSION_WAIT_STATE *wait, LONG ready)
     if (!(ready & CUIS_READY_BUTTON)) {
         if (((ready & CUIS_READY_CHILD) || wait->resumed_button) && input->tracking) {
             client->button_resume = *input;
+            client->button_resume.history_first = 0; /* Committed checkpoint is self-contained. */
             client->button_resume.events = CUIS_READY_BUTTON;
             client->button_resume.ready = 0;
             client->button_resume_active = TRUE;
@@ -2770,8 +2829,11 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         *wait.input = client->button_resume;
         wait.input->events = (ULONG)events;
         wait.input->history_observed = FALSE;
+        wait.input->history_first = client->button_resume_count ?
+            client->resume_sequence[client->button_resume_head] : 0;
         button_history_begin(client,&wait.input->history_cursor);
-        wait.input->history_read = BUTTON_HISTORY_EMPTY;
+        if (wait.input->history_read != BUTTON_HISTORY_GAP)
+            wait.input->history_read = BUTTON_HISTORY_EMPTY;
         client->resume_operation = wait.operation;
         wait.resumed_button = TRUE;
         sample_input(client,wait.input,FALSE);
@@ -2788,24 +2850,26 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     if ((events & CUIS_READY_TIMER) && !milliseconds && !(session_ready(&wait) & ~CUIS_READY_TIMER)) {
         /* A zero timer poll also gives cooperative peers one opportunity,
          * unless a requested source was already ready at the initial check. */
-        /* Yield without entering a termination checkpoint inside an input
-         * operation whose history is not yet transactional. Unmanaged contexts
-         * cannot deliver managed cancellation; preserve their legacy poll. */
-        if (!ksched_block(session_poll_ready, NULL)) {
+        KSCHED_WAIT_RESULT result = ksched_wait_cancelable(session_poll_ready,NULL);
+        if (result == KSCHED_WAIT_CANCELLED) return finish_session_wait(&wait,flags,EACCDN,TRUE);
+        if (result == KSCHED_WAIT_UNMANAGED) {
             cuis_input_unlock(flags);
             ksched_yield();
             flags = cuis_input_lock();
         }
     }
     for (;;) {
-        if (client->retired) return finish_session_wait(&wait,flags,EACCDN);
-        if (resume_adoption_invalid(&wait)) return finish_session_wait(&wait,flags,EAGAIN);
+        /* Cancellation wins until the non-yielding commit. Cleanup unpublishes
+         * both operation identities before putting storage/restoring IRQs. */
+        if (ksched_cancellation_pending()) return finish_session_wait(&wait,flags,EACCDN,TRUE);
+        if (client->retired) return finish_session_wait(&wait,flags,EACCDN,FALSE);
+        { LONG error = session_input_error(&wait); if (error) return finish_session_wait(&wait,flags,error,FALSE); }
         ready = session_ready(&wait);
         if (ready) {
-            if (client->wait_operation != wait.operation) return finish_session_wait(&wait,flags,EACCDN);
+            if (client->wait_operation != wait.operation) return finish_session_wait(&wait,flags,EACCDN,FALSE);
             if (events & CUIS_READY_INPUT) {
                 LONG error = commit_session_input(&wait,ready);
-                if (error) return finish_session_wait(&wait,flags,error);
+                if (error) return finish_session_wait(&wait,flags,error,FALSE);
                 client->input_result[0] = 0;
                 if (ready & CUIS_READY_KEY) {
                     if (keyboard_owner == client || (!focus_window &&
@@ -2829,12 +2893,12 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
                 client->input_result[2] = wait.input->x; client->input_result[3] = wait.input->y;
                 client->input_result[4] = (wait.input->buttons & 0xffff) | ((wait.input->modifiers & 0xffff) << 16);
             }
-            return finish_session_wait(&wait,flags,ready);
+            return finish_session_wait(&wait,flags,ready,FALSE);
         }
         if (update_owner == client) {
-            return finish_session_wait(&wait,flags,EACCDN);
+            return finish_session_wait(&wait,flags,EACCDN,FALSE);
         }
-        if (!ksched_block(session_wait_ready, &wait)) cuis_input_idle();
+        if (cancelable_wait(session_wait_ready,&wait)) return finish_session_wait(&wait,flags,EACCDN,TRUE);
     }
 }
 
