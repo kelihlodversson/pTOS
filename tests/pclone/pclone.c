@@ -593,7 +593,7 @@ static void group_target(void *arg)
             rc=native_cuis5(20,group.window,8,-1,0,0); /* window/message wait */
         } else rc=native_cuis(23,group.session,~0ULL);
         if (group.mode==12 && rc==2) {
-            group.wait_done=1; /* admitted wait finishes normally */
+            group.wait_done=1; /* rejected legacy outcome: pending cancellation must win */
             (void)native_cuis5(32,group.session,0,8,0,0);
             group.returned=1; /* pending cancellation must stop before new admission */
         }

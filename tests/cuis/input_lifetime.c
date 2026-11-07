@@ -1,4 +1,4 @@
-/* Test production admission/publication/retirement without enabling rollback. */
+/* Production admission/publication, retirement and cancellation cleanup. */
 static CUIS_CLIENT *operation_client;
 static LONG operation_handle, operation_replacement;
 static int operation_action, operation_bad;

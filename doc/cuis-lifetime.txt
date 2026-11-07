@@ -47,7 +47,10 @@ those same IDs; their copied payloads are compatibility views, not an alternate
 source for normal sampling. Normal initial selection resolves the actual journal
 record. The active operation records its first required identity, initial
 selected prefix and last routed edge observed before readiness/deadline. Merely
-reading a cursor, selecting an edge or accumulating clicks does not consume it.
+reading a cursor, selecting an edge or accumulating clicks does not consume it. A record's policy is routing provenance; the operation's
+admission policy controls commit. A new filter may intentionally select an older
+still-eligible queued edge; only the operation admitted before that change is
+invalidated. Focus/grab clears and view transfers remain explicit routing policy.
 
 The producer NO LONGER suppresses normal FIFO insertion during active tracking.
 That is the missing rollback guarantee: tentative live observations remain
