@@ -5,6 +5,18 @@
 #include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
+#ifndef __SANITIZE_ADDRESS__
+/* Test the kernel continuation ABI, not glibc's fortified caller-stack ABI.
+ * Other fixtures (and ASan ownership tests below) retain normal libc jumps. */
+#include <setjmp.h>
+#undef setjmp
+#undef longjmp
+int cuis_root_setjmp(jmp_buf state) __attribute__((returns_twice));
+void cuis_root_longjmp(jmp_buf state, int value) NORETURN;
+typedef char kernel_context_fits_host_buffer[sizeof(jmp_buf) >= 13*sizeof(long) ? 1 : -1];
+#define setjmp cuis_root_setjmp
+#define longjmp cuis_root_longjmp
+#endif
 #include "../../bdos/native_sched.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"publication:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static KERNEL_TASK table[KSCHED_LIMIT];

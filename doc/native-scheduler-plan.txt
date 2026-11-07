@@ -228,7 +228,9 @@ resume handoffs on one root frame, changes/reuses modeled caller PD storage,
 checks exact per-caller results and IRQ flags, zeroed parked CPU/waiter state and
 one bootstrap entry, with counted arena reclamation. CPU/MMU mechanics there are
 modeled, not native kernel execution; normal and UBSan runs exercise these
-stack handoffs. A final injected disk error during root
+stack handoffs using the project's private continuation assembly under fixture-
+local names. Normal hosted libc fortification is not disabled or interposed;
+its caller-stack-only ABI cannot represent a kernel BSS-stack coroutine. A final injected disk error during root
 retirement proves fail-stop before caller output delivery and no repeated
 release. Hosted ASan does NOT execute this kernel-private alternate-stack ABI;
 its production allocation/retirement/publication tests still run with ASan/UBSan.
