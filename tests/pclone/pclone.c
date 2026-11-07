@@ -372,6 +372,113 @@ static long native_cuis5(unsigned fn, long a, long b, long c, long d, long e)
     return (long)ax;
 }
 
+#if defined(TEST_WITH_PTHJOIN)
+static long native_cuis6(unsigned fn, unsigned long long a, unsigned long long b,
+                         unsigned long long c, unsigned long long d,
+                         unsigned long long e, unsigned long long f)
+{
+    register unsigned long long ax __asm__("rax")=(0x103ULL<<32)|fn;
+    register unsigned long long di __asm__("rdi")=a, si __asm__("rsi")=b;
+    register unsigned long long dx __asm__("rdx")=c, r10 __asm__("r10")=d;
+    register unsigned long long r8 __asm__("r8")=e, r9 __asm__("r9")=f;
+    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di),"r"(si),"r"(dx),"r"(r10),"r"(r8),"r"(r9) : "rcx","r11","memory","cc");
+    return (long)ax;
+}
+static struct { volatile long error, first_tick, second_tick; long session, child; } native_resume;
+static void native_resume_peer(void *argument)
+{
+    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
+    long x,y,buttons,modifiers,token;
+    (void)argument;
+    do {
+        if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
+            native_resume.error=1; return;
+        }
+        if (!(buttons&1)) (void)Syield();
+    } while (!(buttons&1));
+    native_resume.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
+    token=native_cuis5(66,native_resume.session,0,0,0,0);
+    if (token<=0) { native_resume.error=1; return; }
+    native_resume.child=native_cuis6(69,native_resume.session,token,(unsigned long)path,(unsigned long)tail,0,0);
+    if (native_resume.child<=0) { native_resume.error=1; return; }
+    do {
+        if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
+        if (buttons&1) (void)Syield();
+    } while (buttons&1);
+    do {
+        if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
+        if (!(buttons&1)) (void)Syield();
+    } while (!(buttons&1));
+    native_resume.second_tick=Ssystem(S_GETLVAL,0x4baL,0L);
+    conws("CUIS resume second: READY\r\n");
+}
+static void test_native_resume(void)
+{
+    long window=-1, interval, result, values[5]={0}, x,y,buttons=0,modifiers;
+    int32_t pid,tid,status;
+    int ok=1;
+    long marker=Fopen("C:\\HISTGUI.ON",0);
+    if (marker<0) return; /* dedicated GUI run; console leases suppress GUI input */
+    (void)Fclose(marker);
+#define RESUME_CHECK(condition, message) do { int valid=(condition); if (!valid) ok=0; ptest_assert_msg(valid,message); } while (0)
+    native_resume.error=0; native_resume.child=0; native_resume.first_tick=native_resume.second_tick=0;
+    native_resume.session=native_cuis(0,0,0);
+    RESUME_CHECK(native_resume.session>=0,"native resume session");
+    if (native_resume.session<0) return;
+    interval=native_cuis6(46,native_resume.session,0,0,0,0,0);
+    window=native_cuis5(3,0,0,300,300,0);
+    RESUME_CHECK(window>=0 && native_cuis(38,window,1)==0 && native_cuis(6,window,0)==0,
+                     "native resume focused work area");
+    RESUME_CHECK(native_cuis6(46,native_resume.session,3000,1,0,0,0)==3000 &&
+                     native_cuis6(44,native_resume.session,1,1,2,0,0)==0,"native double-click policy");
+    RESUME_CHECK(native_cuis5(47,native_resume.session,1,0,0,0)==0,"native modal pointer ownership");
+    result=launch_entry(native_resume_peer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&tid);
+    RESUME_CHECK(result>0,"native SAME_PROCESS child observer peer");
+    if (result<=0) goto out;
+    conws("CUIS resume first: READY\r\n");
+    result=native_cuis5(32,native_resume.session,0,16|2048|2,5000,0);
+    RESUME_CHECK(result==2048 && !native_resume.error,"child wake checkpoints first click before deadline");
+    if (result!=2048 || native_resume.error) goto joined;
+    conws("CUIS resume checkpoint: READY\r\n");
+    RESUME_CHECK(native_cuis5(32,native_resume.session,0,16|2,0,0)==2,
+                     "zero timer commits resume ownership without restarting clicks");
+    do {
+        result=native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers);
+        if (buttons&1) (void)Syield();
+    } while (!result && (buttons&1));
+    RESUME_CHECK(result==0,"first hardware release observed");
+    conws("CUIS resume adopt: READY\r\n");
+    result=native_cuis5(32,native_resume.session,0,16|2,5000,0);
+    if (result!=16) printf("native resume completion=%ld interval=%ld\r\n",result,native_cuis6(46,native_resume.session,0,0,0,0,0));
+    RESUME_CHECK(result==16,"resumed hardware click sequence completes as button input");
+    result=native_cuis6(45,native_resume.session,(unsigned long)&values[0],(unsigned long)&values[1],
+                     (unsigned long)&values[2],(unsigned long)&values[3],(unsigned long)&values[4]);
+    if (result || values[1]!=2 || (values[4]&3)!=1)
+        printf("native resume snapshot rc=%ld count=%ld buttons=%ld xy=%ld,%ld ticks=%ld,%ld,%ld\r\n",result,values[1],values[4],values[2],values[3],native_resume.first_tick,native_resume.second_tick,Ssystem(S_GETLVAL,0x4baL,0L));
+    RESUME_CHECK(result==0 && values[1]==2 && (values[4]&3)==1,"resumed click count is exactly two");
+    RESUME_CHECK(native_cuis6(44,native_resume.session,1,1,1,0,0)==0 &&
+                     native_cuis5(32,native_resume.session,0,16|2,0,0)==2,
+                     "resume/live cache cannot redeliver committed clicks");
+joined:
+    /* Reap through the existing TID and PROCESS consumers; CUIS merely
+     * retains its independent completion notice until session teardown. */
+    if (result!=16 && native_resume.child<=0) (void)native_cuis(2,native_resume.session,0);
+    RESUME_CHECK(join_tid(tid,&status)==0 && status==0,"native observer peer reaped");
+    if (native_resume.child>0) {
+        result=Pwaitpid(native_resume.child,0,0);
+        RESUME_CHECK((result>>16)==native_resume.child && (result&65535)==92,"native observed child exits once");
+        RESUME_CHECK((native_cuis5(67,native_resume.session,0,0,0,0)&65535)==92,"CUIS notice survives PROCESS wait");
+    }
+out:
+    (void)native_cuis5(47,native_resume.session,0,0,0,0);
+    (void)native_cuis6(46,native_resume.session,interval,1,0,0,0);
+    (void)native_cuis(2,native_resume.session,0);
+    if (ok) conws("native CUIS resume/live commit: PASS\r\n");
+}
+#undef RESUME_CHECK
+
+#endif
+
 #endif
 static void group_nested(void *arg);
 static void group_target(void *arg)
@@ -671,6 +778,9 @@ static void test_runnable(void)
 #endif
 #if defined(TEST_WITH_PTERMGRP)
     test_group_exit();
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_PTHJOIN)
+    test_native_resume();
+#endif
 #endif
     test_lifecycle();
     for (cycle = 0; cycle < 3; cycle++)

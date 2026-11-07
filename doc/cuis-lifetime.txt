@@ -307,7 +307,8 @@ edges, policy replacement and FIFO overflow therefore cannot be undone by an
 old prefix commit. Key consumption, readiness-only sources and shared result
 publication otherwise preserve the previous implementation.
 
-Remaining blocker: resume adoption still destructively transfers cached state,
+At the third checkpoint (superseded by the next section), resume adoption still
+destructively transferred cached state,
 and active live tracking still uses legacy ownership/consumption rules. A full
 transaction must tentatively adopt the original deadline/count/edge set and
 commit all three views consistently, including gaps and policy transitions.
@@ -343,3 +344,110 @@ range, packet lifetime and cohort/sender provenance are not button-history
 cursors; do not build a generic transaction framework or reuse this journal as
 stream storage. Stream source retirement/copyout remains the next independent
 migration after full input transaction/cancellation is proven.
+
+Tentative resume/live consumer foundation (fourth increment)
+------------------------------------------------------------
+A CHILD readiness commit may persist an active sampler as button_resume with
+its original count/start/duration/matched state. Between calls this is the
+authoritative durable click checkpoint, updated by trusted IRQ sampling. The
+normal FIFO, resume cache and saved modal FIFO are bounded compatibility views
+of sequenced routed records; they are not independent delivery authorities.
+The journal remains observational until all-view eligibility is implemented.
+
+Adoption now reserves this checkpoint using resume_operation == wait_operation.
+It does NOT clear button_resume_active or its cached edges. The admitted
+operation copies the checkpoint into client-owned active_input. The durable
+and active samplers observe subsequent routed IRQ edges; neither consumes a
+cache during sampling. A competing combined wait returns EACCDN unchanged.
+There is no new allocation or fourth history representation.
+
+The producer expires click windows before stamping live_through. That field
+identifies the last actual routed edge observed before button readiness, not
+the journal tail read by a cursor. A packet after expiry remains later input.
+The existing three-tick extension and original start/deadline/count/matched
+state survive adoption, failed adoption and retry. Periodic predicate sampling
+must not manufacture an edge identity.
+
+commit_session_input validates session liveness, matching operation ownership,
+and the adopted checkpoint's reservation/policy before persistent mutation.
+It commits the tentative normal prefix and only the resume-cache prefix at or
+before live_through. A non-button completion can checkpoint accumulated clicks
+without restarting the deadline; button completion ends the checkpoint and
+returns any unconsumed cache suffix ahead of later normal history. Key selection
+and input_result publication follow under the same input exclusion, with no
+allocation, callback, failure or yield after validation. Readiness-only sources
+remain non-destructive. Releasing the operation clears its matching reservation
+and sampler publication before putting retained client storage.
+
+Failure before this boundary releases the reservation without restoring any
+old head/count or sampler over new IRQ input. The durable checkpoint/cache
+therefore remains available for retry. A policy change wakes an adopted wait
+with EAGAIN before key/result mutation; legitimate filter/focus/grab policy
+changes and their cache merge are never reversed. Retirement returns EACCDN,
+drops only the retained old session, and cannot touch a replacement identity.
+These are resume-adoption guarantees, NOT complete normal-live rollback.
+
+Full cancellation still disabled
+--------------------------------
+The raw post-admission block/poll remains deliberately unchanged. Normal live
+tracking suppresses its compatibility cache; recovering those tentative edges
+requires journal-based replay with explicit gaps and policy/view eligibility.
+A blind global sequence watermark is unsafe: an isolated fresh mouse grab may
+consume newer private edges while legitimately restoring older unconsumed
+saved edges. Resume-cache truncation and an operation falling behind the
+64-record journal also need one deterministic delivery/gap policy. No missing
+record may be fabricated or accepted as replay. These block the full unified
+transaction and CANCELLED wake, including rollback during normal/live tracking.
+An unbounded admitted wait may still delay cooperative group completion.
+
+Verification scope
+------------------
+Production host tests force failure after tentative resume observation, inject
+new IRQ edges, and retry with exact count/start/duration/prefix assertions.
+They cover competing admission, policy invalidation without result mutation,
+retirement/replacement and matching reference cleanup, three repeated cycles,
+and a new edge after expiry surviving as normal FIFO input. The existing
+journal gap/exhaustion, normal-prefix/overflow, modal provenance, allocation
+failure, keyboard/message and multi-click/cohort/timer suites remain gates.
+These tests run normally and with ASan/UBSan.
+
+A dedicated x32 graphical autorun launches real SAME_PROCESS ring-3 siblings
+through public Pclone/CUIS calls. PS/2 input comes from QEMU's monitor: the first
+press starts tracking; an observed child completes it as CHILD readiness; a
+zero-timer commit preserves the checkpoint; a resumed second press produces
+exactly two clicks. A subsequent poll verifies no redelivery. PROCESS wait and
+CUIS notice consumption stay independent. The test takes a public modal mouse
+grab so desktop focus/surface routing cannot own the gesture. Console-owned
+TOS regression launches remain unchanged and intentionally suppress GUI input.
+This is native resume/live COMMIT coverage, not native cancellation/rollback.
+The native journal helper self-test is separately kernel-mode coverage.
+
+Footprint and bounded producer measurement
+-----------------------------------------
+On this x86-64 compiler, sizeof(CUIS_CLIENT) was 2024 before the journal, 4608 at
+18d28d8cb, and 4632 now; the resume reservation/last-edge fields add 24 bytes.
+The 64-record journal and provenance together add 2608 bytes per client versus
+07222df2a. No per-edge heap allocation is introduced; recording and prefix
+commit remain bounded by the existing ring capacities.
+
+A host-only -O2 microbenchmark called the actual button_enqueue producer five
+million times with active tracking, fixed ticks and a stub snapshot, preventing
+inlining/interprocedural specialization. Median of seven separate runs was
+2.359 ns/edge before the journal, 3.808 ns at 18d28d8cb and 4.098 ns now. This
+isolates the added producer work, excludes routing/sampling/IRQ entry, and is
+NOT native IRQ latency or evidence of 32-bit GUI performance. Full native
+input-routing overhead is unmeasured; no optimization is justified by this
+small synthetic measurement alone.
+
+Before preemption/SMP, #713 must atomically synchronize journal publication,
+64-bit cursor/epoch/token snapshots (including future 32-bit targets), tentative
+checkpoint reservation, producer observations, commit versus policy changes and
+cancellation, retirement/final put, and scheduler check/block/wakeup. Prove the
+scheduler/input/PROCESS lock order, prevent callback/termination under input
+exclusion, and use per-CPU current-task/launcher state. Cooperative no-yield
+sections plus local IRQ exclusion are the current contract, not SMP safety.
+
+Streams remain audit-only and non-cancellable. Their source-operation identity,
+pending packet ownership, receiver retirement and validated copyout-before-
+consumption need a separate #907 increment after input transactions. No generic
+scheduler/PROCESS policy, Kconfig flags or libcmini pin changed.

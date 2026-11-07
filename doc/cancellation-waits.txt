@@ -114,3 +114,20 @@ consumption rules. Cancellation AFTER combined-wait admission remains disabled.
 Do not replace its raw block/poll with CANCELLED wake until all three views can
 be committed or abandoned together. Streams remain unadapted. See
 cuis-lifetime.txt for bounded overflow, generation and migration contracts.
+
+Tentative resume/live foundation (fourth CUIS increment)
+-------------------------------------------------------
+An admitted combined wait now reserves, rather than removes, the durable
+button-resume checkpoint. IRQ observations continue updating it; a failed
+operation clears only matching ownership, never restores stale history over
+new events. One bounded helper validates operation/session/resume policy before
+normal/resume prefix consumption and the checkpoint transition, followed by
+key/result publication without a callback or yield. Policy-invalid adoption
+returns EAGAIN before consumption; retirement returns EACCDN.
+
+Post-admission cancellation remains disabled. Normal live-history suppression,
+modal saved-view eligibility and journal-overflow reconciliation still block a
+complete no-consumption rollback. Native ring-3 coverage proves resume/live
+commit and no redelivery; forced rollback is production-code host coverage.
+Neither is reported as native admitted-wait cancellation. See cuis-lifetime.txt
+for the precise next boundary and #713 synchronization requirements.

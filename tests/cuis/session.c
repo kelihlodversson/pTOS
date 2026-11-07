@@ -310,6 +310,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "lifetime.c"
 #include "input_lifetime.c"
 #include "input_history.c"
+#include "resume_transaction.c"
 
 static int cancellation_adapter_checks(void)
 {
@@ -344,6 +345,8 @@ int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=resume_transaction_checks();
+    if (rc) return rc;
     rc=input_history_checks();
     if (rc) return rc;
     rc=input_lifetime_checks();

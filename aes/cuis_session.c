@@ -91,6 +91,7 @@ typedef struct {
     ULONG buttons, modifiers;
     BOOL matched, tracking;
     UQUAD history_through, history_policy;
+    UQUAD live_through; /* Last routed edge observed before button readiness. */
     BOOL history_observed;
     CUIS_BUTTON_CURSOR history_cursor;
     CUIS_BUTTON_READ history_read;
@@ -144,6 +145,7 @@ typedef struct cuis_client {
     UQUAD wait_sequence, wait_operation; /* Session-local, never recycled. */
     CUIS_INPUT_WAIT button_resume;
     BOOL button_resume_active;
+    UQUAD resume_operation; /* Reservation, not transfer of persistent history. */
     CUIS_POINTER button_resume_edges[CUIS_POINTER_CAPACITY];
     UQUAD resume_sequence[CUIS_POINTER_CAPACITY];
     UWORD button_resume_head, button_resume_count;
@@ -621,6 +623,12 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
         client->recent_count = 1; client->recent_buttons = pointer_buttons;
     }
     expire_button_wait(wait);
+    if (client->button_resume_active) expire_button_wait(&client->button_resume);
+    if (changed && sequence) {
+        if (wait && !(wait->ready & CUIS_READY_BUTTON)) wait->live_through = sequence;
+        if (client->button_resume_active && !(client->button_resume.ready & CUIS_READY_BUTTON))
+            client->button_resume.live_through = sequence;
+    }
     if (changed && (client->button_resume_active || !wait || (wait->ready & CUIS_READY_BUTTON))) {
         if (client->button_resume_active && !(wait->ready & CUIS_READY_BUTTON)) {
             if (client->button_resume_count == CUIS_POINTER_CAPACITY) {
@@ -1569,7 +1577,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
         client->wait_sequence = client->wait_operation = 0;
-        client->button_resume_active = FALSE;
+        client->button_resume_active = FALSE; client->resume_operation = 0;
         client->button_resume_head = client->button_resume_count = 0;
         memset(client->children,0,sizeof(client->children));
         client->child_count = 0;
@@ -2495,6 +2503,7 @@ typedef struct {
     CUIS_CLIENT *client;
     ULONG events, minimum, start, duration;
     BOOL resumed_button;
+    UQUAD resume_policy;
     CUIS_INPUT_WAIT *input;
     UQUAD operation;
 } CUIS_SESSION_WAIT_STATE;
@@ -2657,10 +2666,17 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     return result;
 }
 
+static BOOL resume_adoption_invalid(CUIS_SESSION_WAIT_STATE *wait)
+{
+    CUIS_CLIENT *client = wait->client;
+    return wait->resumed_button &&
+        (client->resume_operation != wait->operation || !client->button_resume_active ||
+         client->button_policy != wait->resume_policy || client->history_exhausted);
+}
 static BOOL session_wait_ready(void *argument)
 {
     CUIS_SESSION_WAIT_STATE *wait = argument;
-    return wait->client->retired || session_ready(wait) != 0;
+    return wait->client->retired || resume_adoption_invalid(wait) || session_ready(wait) != 0;
 }
 static BOOL session_poll_ready(void *argument) { (void)argument; return TRUE; }
 
@@ -2672,11 +2688,51 @@ static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG
     CUIS_CLIENT *client = wait->client;
     if (client->wait_operation == wait->operation) {
         if (client->input_wait == wait->input) client->input_wait = NULL;
+        if (client->resume_operation == wait->operation) client->resume_operation = 0;
         client->wait_operation = 0;
     }
     client_put(client);
     cuis_input_unlock(flags);
     return result;
+}
+
+/* The sole consumer boundary for the existing normal/resume/live views.
+ * IRQ sampling only observes; cache prefixes and checkpoint ownership change
+ * here, after validation, without allocation, callback or yield. */
+static LONG commit_session_input(CUIS_SESSION_WAIT_STATE *wait, LONG ready)
+{
+    CUIS_CLIENT *client = wait->client;
+    CUIS_INPUT_WAIT *input = wait->input;
+    if (client->retired || client->wait_operation != wait->operation) return EACCDN;
+    if (resume_adoption_invalid(wait)) return EAGAIN;
+
+    commit_initial_history(client,input);
+    if (wait->resumed_button) {
+        while (client->button_resume_count &&
+               client->resume_sequence[client->button_resume_head] &&
+               client->resume_sequence[client->button_resume_head] <= input->live_through) {
+            client->button_resume_head = (client->button_resume_head+1)%CUIS_POINTER_CAPACITY;
+            client->button_resume_count--;
+        }
+    }
+    if (!(ready & CUIS_READY_BUTTON)) {
+        if (((ready & CUIS_READY_CHILD) || wait->resumed_button) && input->tracking) {
+            client->button_resume = *input;
+            client->button_resume.events = CUIS_READY_BUTTON;
+            client->button_resume.ready = 0;
+            client->button_resume_active = TRUE;
+            /* New checkpoint has no pre-existing resume view. An adopted
+             * checkpoint retains any suffix newer than the observed prefix. */
+            if (!wait->resumed_button) client->button_resume_head = client->button_resume_count = 0;
+        } else if (wait->resumed_button) abandon_button_resume(client);
+        input->tracking = FALSE;
+        sample_input(client,input,FALSE);
+    } else if (wait->resumed_button) {
+        /* Unconsumed suffix is returned in FIFO order, never thrown away
+         * merely because the adopted predicate completed. */
+        abandon_button_resume(client);
+    }
+    return E_OK;
 }
 
 /* Stream/notice checks do not consume data. Input completion captures a
@@ -2694,7 +2750,7 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     if (!client || handle != client->handle) return EACCDN;
     flags = cuis_input_lock();
     if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
-    if (client->wait_operation) { cuis_input_unlock(flags); return EACCDN; }
+    if (client->wait_operation || client->resume_operation) { cuis_input_unlock(flags); return EACCDN; }
     if ((events & CUIS_READY_BUTTON) && client->history_exhausted) { cuis_input_unlock(flags); return ERANGE; }
     if (client->wait_sequence == ~0ULL) { cuis_input_unlock(flags); return ERANGE; }
     if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
@@ -2709,14 +2765,14 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         wait.input->history_read = BUTTON_HISTORY_EMPTY;
     }
     wait.resumed_button = FALSE;
+    wait.resume_policy = client->button_policy;
     if ((events & CUIS_READY_BUTTON) && client->button_resume_active) {
         *wait.input = client->button_resume;
         wait.input->events = (ULONG)events;
         wait.input->history_observed = FALSE;
         button_history_begin(client,&wait.input->history_cursor);
         wait.input->history_read = BUTTON_HISTORY_EMPTY;
-        client->button_resume_active = FALSE;
-        client->button_resume_head = client->button_resume_count = 0;
+        client->resume_operation = wait.operation;
         wait.resumed_button = TRUE;
         sample_input(client,wait.input,FALSE);
     } else if (events & CUIS_READY_INPUT) {
@@ -2743,22 +2799,13 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     }
     for (;;) {
         if (client->retired) return finish_session_wait(&wait,flags,EACCDN);
+        if (resume_adoption_invalid(&wait)) return finish_session_wait(&wait,flags,EAGAIN);
         ready = session_ready(&wait);
         if (ready) {
             if (client->wait_operation != wait.operation) return finish_session_wait(&wait,flags,EACCDN);
             if (events & CUIS_READY_INPUT) {
-                commit_initial_history(client, wait.input);
-                if (!(ready & CUIS_READY_BUTTON)) {
-                    if (((ready & CUIS_READY_CHILD) || wait.resumed_button) && wait.input->tracking) {
-                        client->button_resume = *wait.input;
-                        client->button_resume.events = CUIS_READY_BUTTON;
-                        client->button_resume.ready = 0;
-                        client->button_resume_active = TRUE;
-                        client->button_resume_head = client->button_resume_count = 0;
-                    }
-                    wait.input->tracking = FALSE;
-                    sample_input(client, wait.input, FALSE);
-                }
+                LONG error = commit_session_input(&wait,ready);
+                if (error) return finish_session_wait(&wait,flags,error);
                 client->input_result[0] = 0;
                 if (ready & CUIS_READY_KEY) {
                     if (keyboard_owner == client || (!focus_window &&

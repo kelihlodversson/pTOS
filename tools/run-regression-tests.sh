@@ -49,6 +49,7 @@ tools=$(cd "$(dirname "$0")" && pwd)
 top=$(dirname "$tools")
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-regression.XXXXXX")
 qemu_pid=
+cuis_input_pid=
 qemu_status=0
 log=
 disk=
@@ -64,6 +65,11 @@ fi
 : >"$logs"
 
 stop_vm() {
+    if [ -n "$cuis_input_pid" ]; then
+        kill "$cuis_input_pid" 2>/dev/null
+        wait "$cuis_input_pid" 2>/dev/null
+        cuis_input_pid=
+    fi
     if [ -n "$qemu_pid" ]; then
         kill "$qemu_pid" 2>/dev/null
         wait "$qemu_pid" 2>/dev/null
@@ -188,11 +194,16 @@ start_vm() {
     disk=$work/disk-$label
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
+    if [ "$label" = cuis ]; then
+        cp "$disk/runtests.tos" "$disk/RUNTESTS.PRG"
+        : > "$disk/HISTGUI.ON"
+    fi
     if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
         # Keep the same desktop autorun path for the suite and all shutdown
         # probes. No monitor keystrokes or early kernel test hook starts them.
         case $label in
         suite | sysfont) program=RUNTESTS.TOS ;;
+        cuis) program=RUNTESTS.PRG ;;
         poweroff | reboot | coldboot | halt) program=$(printf '%s.TOS' "$label" | tr '[:lower:]' '[:upper:]') ;;
         *) die "unknown autorun label $label" "never started" ;;
         esac
@@ -202,7 +213,8 @@ import sys
 p = Path(sys.argv[1])
 lines = p.read_text().splitlines()
 assert sum(line.startswith("#Z ") for line in lines) == 1
-p.write_bytes(("\r\n".join("#Z 00 C:\\" + sys.argv[2] + "@" if line.startswith("#Z ") else line
+kind = "01" if sys.argv[2] == "RUNTESTS.PRG" else "00"
+p.write_bytes(("\r\n".join("#Z " + kind + " C:\\" + sys.argv[2] + "@" if line.startswith("#Z ") else line
                           for line in lines) + "\r\n").encode("ascii"))
 PY
     fi
@@ -343,6 +355,16 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
             -serial file:"$log" -monitor unix:"$work/mon.sock",server,nowait \
             -display none >"${log%.log}.qemu" 2>&1 &
         qemu_pid=$!
+        case $label in
+        cuis)
+            if grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+               grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+               grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h"; then
+                python3 "$tools/exercise-cuis-resume.py" "$work/mon.sock" "$log" "$limit" >"$work/cuis-$label.log" 2>&1 &
+                cuis_input_pid=$!
+            fi
+            ;;
+        esac
         if [ "$autorun" != true ]; then
             wait_for 'C:\>' 120 || die "EmuCON never showed its prompt ($label)" "never started"
             sleep 1
@@ -443,6 +465,16 @@ reboot_run() {
     fi
 }
 
+finish_cuis_input() {
+    if [ -n "$cuis_input_pid" ]; then
+        if wait "$cuis_input_pid"; then echo "native CUIS hardware resume: PASS"
+        else record "native CUIS hardware resume" FAIL "hardware input or native worker failed"
+        fi
+        cuis_input_pid=
+        cat "$work/cuis-$label.log"
+    fi
+}
+
 # -- machine 1: the suite, then the power off ---------------------------------
 
 start_vm suite
@@ -456,6 +488,7 @@ while [ "$n" -lt "$limit" ]; do
     n=$((n + 1))
 done
 suite_log=$log
+finish_cuis_input
 
 if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
     if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
@@ -497,6 +530,32 @@ fi
 # with that font, and the log must say that it was made.
 
 # (and only for a build that has scalable fonts: the kernel of the tree in $top)
+# A console-owned TOS launch deliberately suppresses GUI button input. Keep
+# that compatibility run, and exercise the public GUI wait in a separate PRG
+# launch without a console lease. Never bypass ownership in the kernel.
+if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ] &&
+   grep -aq 'All tests passed\.' "$suite_log" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h"; then
+    start_vm cuis
+    type_line 'runtests.tos'
+    n=0
+    while [ "$n" -lt "$limit" ]; do
+        grep -aqE 'All tests passed\.|Some tests FAILED\.' "$log" && break
+        sleep 1
+        n=$((n+1))
+    done
+    finish_cuis_input
+    if grep -aq 'All tests passed\.' "$log" && ! grep -aq 'FAIL' "$log" &&
+       grep -aq 'native CUIS resume/live commit: PASS' "$log"; then
+        echo "native GUI resume worker: PASS"
+    else
+        record "native GUI resume worker" FAIL "public GUI worker did not pass"
+    fi
+    stop_vm
+fi
+
 if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ] \
    && grep -q '^#define CONF_WITH_VDI_SCALABLE_FONTS 1' "$top/obj/autoconf.h" 2>/dev/null; then
     system_font=DJVUMONO.TTF
@@ -516,6 +575,7 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     else
         record "scalable system font" FAIL "the suite did not pass with it"
     fi
+    finish_cuis_input
     stop_vm
 fi
 
