@@ -586,6 +586,14 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
     record "exit handoff rollback" FAIL "configured injection was not exercised"
 fi
 
+# Test-only assertions cross a real user PROCESS retirement and root reap.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native scheduler durable controller/completion abandonment: PASS' "$suite_log"; then
+    record "native scheduler lifetime" FAIL "retained-result retirement assertions did not execute"
+fi
+
 # Compilation and legacy compatibility are insufficient evidence of native
 # startup. Require managed startup and scheduler evidence on all three MMUs.
 case "$machine" in

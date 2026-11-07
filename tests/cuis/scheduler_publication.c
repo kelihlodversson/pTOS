@@ -20,7 +20,7 @@ typedef char kernel_context_fits_host_buffer[sizeof(jmp_buf) >= 13*sizeof(long) 
 #include "../../bdos/native_sched.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"publication:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static KERNEL_TASK table[KSCHED_LIMIT];
-static PD parent, child, peer;
+static PD parent, child, peer, kernel_controller;
 static UWORD allocations, frees, notifications;
 static BOOL fail_growth;
 PD *run;
@@ -32,8 +32,7 @@ void *kalloc(ULONG bytes)
 {
     void *p;
     if (bytes == sizeof(table)) { allocations++; return table; }
-    CHECK(bytes == sizeof(KERNEL_TASK));
-    if (fail_growth) return NULL;
+    if (bytes == sizeof(KERNEL_TASK) && fail_growth) return NULL;
     p = malloc(bytes); if (p) allocations++; return p;
 }
 void kfree(void *p) { CHECK(p); if (p != table) free(p); frees++; }
@@ -53,7 +52,12 @@ void kproc_release(KPROC *p)
 {
     if (root_fault && p==(KPROC *)&child) { root_release_calls++; longjmp(errbuf,1); }
 }
-WORD kproc_pid(PD *p) { (void)p; return 42; }
+WORD kproc_pid(PD *p) { return p ? 42 : 0; }
+KPROC *kproc_retain_live(KPROC *p) { return p; }
+PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
+UQUAD procmem_gen(const void *p) { return p==&kernel_controller ? 1 : 2; }
+BOOL procmem_range_live(VADDR p,VADDR n) { return p==(VADDR)(uintptr_t)&kernel_controller && n==sizeof(PD); }
+void procmem_pin(VADDR p,VADDR n,int delta) { CHECK(p==(VADDR)(uintptr_t)&kernel_controller && n==sizeof(PD) && delta==1); }
 void cuis_child_completed(PD *p, WORD pid, UWORD status)
 { (void)p; (void)pid; (void)status; notifications++; }
 BOOL cuis_child_pid_reserved(WORD pid) { (void)pid; return FALSE; }
@@ -75,6 +79,7 @@ void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *c)
 { run=c->pd; modeled_flags=c->flags; }
 void native_sched_enter(uintptr_t top, void (*entry)(void))
 {
+    CHECK(run==&kernel_controller && !scheduler.root.launch);
     CHECK(entry==scheduler_root_entry && top==(uintptr_t)root_stack+sizeof(root_stack)-8);
     root_entries++;
     __asm__ volatile ("mov %0,%%rsp; jmp *%1" :: "r"(top), "r"(entry) : "memory");
@@ -97,7 +102,8 @@ static void root_lifetime_check(void)
     for (cycle=0;cycle<32;cycle++) {
         LONG output[2]={-1,-1};
         PD *caller=cycle&1?&parent:&peer;
-        CHECK(allocate_task_table());
+        run=caller;
+        CHECK(allocate_task_table(2));
         table[0].state=table[1].state=TASK_DONE;
         table[0].result=cycle+100; table[1].result=cycle+200;
         run=caller; modeled_flags=cycle&1?0x200:0;
@@ -107,13 +113,13 @@ static void root_lifetime_check(void)
               !scheduler.active && !scheduler.current && !scheduler.tasks && root_entries==1);
         CHECK(!memcmp(&scheduler.root,&empty,sizeof(empty)) &&
               !memcmp(scheduler.waiter_resume,no_waiter,sizeof(no_waiter)));
-        CHECK(!scheduler.results[0] && !scheduler.results[1]);
+        CHECK(!scheduler.waiter.identity && !scheduler.admission.identity);
         memset(caller,0x7d,sizeof(*caller)); /* Old identity storage is reusable. */
         output[0]=output[1]=-77;
     }
     CHECK(allocations==frees);
     puts("Persistent root: 32 real hosted park/resume stack handoffs, copied results and no retired identity: PASS (CPU modeled)");
-    CHECK(allocate_task_table());
+    CHECK(allocate_task_table(2));
     table[0].state=TASK_DONE; table[0].process=(KPROC *)&child;
     fault_output=-123; root_fault=TRUE;
     dispatch_group(1,&fault_output);
@@ -128,17 +134,18 @@ int main(void)
     UQUAD identity;
     KERNEL_TASK *t, *grown;
     CHILD_WAIT wait;
+    CHECK(ksched_controller_install(&kernel_controller));
     CHECK(ksched_task_reserve(TRUE,&root) == E_OK && root == table && table[0].state == TASK_RESERVED);
     identity = next_identity;
     CHECK(ksched_task_reserve(TRUE,&root) == EINVAL && root == table && next_identity == identity);
-    CHECK(ksched_task_reserve(TRUE,&slots[0]) == EAGAIN && !slots[0] && allocations == 1);
+    CHECK(ksched_task_reserve(TRUE,&slots[0]) == EAGAIN && !slots[0] && allocations == 2);
     ksched_task_cancel(&root); ksched_task_cancel(&root);
-    CHECK(!scheduler.tasks && frees == 1);
+    CHECK(!scheduler.tasks && frees == 2);
     scheduler.waiter_attached=TRUE; /* root parked, but old result not consumed */
     identity=next_identity;
-    CHECK(ksched_task_reserve(TRUE,&root)==EAGAIN && !root && allocations==1 && next_identity==identity);
+    CHECK(ksched_task_reserve(TRUE,&root)==EAGAIN && !root && allocations==2 && next_identity==identity);
     scheduler.waiter_attached=FALSE;
-    CHECK(allocate_task_table()); scheduler.active = TRUE;
+    CHECK(allocate_task_table(2)); scheduler.active = TRUE;
     scheduler.initial = 1; scheduler.current = table; table[0].state = TASK_RUNNING; run = &parent;
     for (i = 0; i < KSCHED_LIMIT-1; i++) {
         CHECK(ksched_task_reserve(FALSE,&slots[i]) == E_OK && slots[i] == &table[i+1]);
@@ -147,18 +154,18 @@ int main(void)
     identity = next_identity;
     fail_growth = TRUE;
     CHECK(ksched_task_reserve(FALSE,&slots[KSCHED_LIMIT-1]) == ENSMEM &&
-          !slots[KSCHED_LIMIT-1] && next_identity == identity && allocations == 2);
+          !slots[KSCHED_LIMIT-1] && next_identity == identity && allocations == 4);
     CHECK(!table[KSCHED_LIMIT-1].next_task); /* failed growth publishes nothing */
     fail_growth = FALSE;
     CHECK(ksched_task_reserve(FALSE,&slots[KSCHED_LIMIT-1]) == E_OK &&
-          slots[KSCHED_LIMIT-1] == table[KSCHED_LIMIT-1].next_task && allocations == 3);
+          slots[KSCHED_LIMIT-1] == table[KSCHED_LIMIT-1].next_task && allocations == 5);
     CHECK(table[1].state == TASK_RESERVED && table[0].state == TASK_RUNNING);
     CHECK(ksched_task_reserve(FALSE,&slots[KSCHED_LIMIT-1]) == EINVAL);
     grown=slots[KSCHED_LIMIT-1];
     ksched_task_cancel(&slots[KSCHED_LIMIT-1]);
-    CHECK(table[KSCHED_LIMIT-1].next_task==grown && grown->state==TASK_UNUSED && frees==1);
+    CHECK(table[KSCHED_LIMIT-1].next_task==grown && grown->state==TASK_UNUSED && frees==2);
     CHECK(ksched_task_reserve(FALSE,&slots[KSCHED_LIMIT-1])==E_OK &&
-          slots[KSCHED_LIMIT-1]==grown && allocations==3); /* stable high-water reuse */
+          slots[KSCHED_LIMIT-1]==grown && allocations==5); /* stable high-water reuse */
     /* A privately bound slot is still invisible to waits/exit callbacks. */
     table[1].parent = &parent; table[1].program = &child; table[1].process = (KPROC *)&child; table[1].pid = 42;
     wait.parent = &parent; wait.pid = 42;
@@ -167,7 +174,7 @@ int main(void)
     ksched_exiting(&child,7);
     CHECK(!table[1].exited && table[1].program == &child && !notifications);
     for (i = 0; i < KSCHED_LIMIT; i++) ksched_task_cancel(&slots[i]);
-    CHECK(frees == 1);
+    CHECK(frees == 2);
     CHECK(ksched_task_reserve(FALSE,&slots[0]) == E_OK && slots[0] == &table[1]);
     table[1].program = &child; table[1].process = (KPROC *)&child; table[1].parent = &parent; table[1].pid = 42;
     ksched_task_publish(&slots[0]); CHECK(!slots[0] && table[1].state == TASK_NEW);
@@ -193,7 +200,7 @@ int main(void)
     ksched_exiting(&parent,8);
     CHECK(!table[1].parent && table[1].state == TASK_DONE && !grown->parent && grown->program == &peer);
     /* A replacement at the same PD address cannot inherit the old children. */
-    CHECK(child_ready(&wait) && !notifications && allocations == 3 && frees == 1);
+    CHECK(child_ready(&wait) && !notifications && allocations == 5 && frees == 2);
     /* A refused legacy start must be DONE/root-reapable, not DRAINING
      * forever as though a runnable sibling still retained its PROCESS. */
     for (t=table;t;t=t->next_task) clear_task(t);
@@ -203,7 +210,7 @@ int main(void)
     if(!setjmp(scheduler.resume)) task_entry();
     CHECK(table[0].state==TASK_DONE && refused_stopped && refused_disposals==1 &&
           !table[0].program && !table[0].process_completed && table[0].result==EIMBA);
-    scheduler.current = NULL; free_task_table();
+    scheduler.current = NULL; scheduler.active=FALSE; free_task_table();
     CHECK(allocations == frees && !scheduler.tasks);
     puts("Shared scheduler growth/publication: exhaustion, private reservations, cancellation, blocked/early wait and orphan identity: PASS");
 #ifndef __SANITIZE_ADDRESS__

@@ -21,8 +21,9 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "ksched_lifetime.h"
 #endif
 #include "asm.h"
 #include "fs.h"
@@ -532,6 +533,12 @@ void osinit_after_xmaddalt(void)
         halt();
     }
 
+#if CONF_WITH_NATIVE_SCHED
+    {
+        PD *controller=procmem_alloc(sizeof(PD),PROCMEM_ZERO);
+        if (!controller || !ksched_controller_install(controller)) halt();
+    }
+#endif
     time_init();
 
     KDEBUG(("BDOS: address of basepage = %p\n", run));

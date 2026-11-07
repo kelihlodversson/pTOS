@@ -254,6 +254,9 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 libaes/CUIS sessions: PASS' "$log"
     grep -q 'x86-64 CUIS sessions: PASS' "$log"
 fi
+if grep -q '^CONF_WITH_NATIVE_SCHED *= *y' obj/auto.conf; then
+    grep -q 'native scheduler durable controller/completion abandonment: PASS' "$log"
+fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"
 if sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'; then

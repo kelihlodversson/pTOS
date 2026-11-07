@@ -179,6 +179,12 @@ Results pass through kernel slots before the attached waiter copies them out.
 Root cleanup has its own fail-stop disk-error boundary. Native MMU regressions
 exercise real task handoff on this owned stack; host stack-switch tests model
 CPU/MMU state separately from ASan ownership tests. Global background admission
-remains gated on durable controller and completion/result ownership (A2b).
+remains gated on detachable waiter execution and unmanaged root entry (A2c).
+A2b now supplies a pinned kernel-only controller basepage (no PID/KPROC),
+separately retained logical-parent identities and token-only admission/result
+records. Root never stores a caller result pointer, and abandoned owners cannot
+receive delivery. Native lifecycle assertions span actual async PROCESS
+retirement and root reap; host fault-injection models PROCESS/procmem endpoints.
+See doc/native-scheduler-plan.txt for the ownership and no-fail protocol.
 See doc/native-scheduler-plan.txt; no parent-return/background or preemption
 capability is claimed. No GUI ports, TLS or non-MMU scheduling added.

@@ -60,6 +60,11 @@ PYCONFIG
         -iquote fs tests/clone_observer.c -Wl,--gc-sections -o "$work/clone-observer"
     "$work/clone-observer"
     echo "Owned clone observer ($preset configuration, host execution): PASS"
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-pie -no-pie \
+        -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
+        tests/sched_lifetime.c -o "$work/sched-lifetime"
+    "$work/sched-lifetime"
+    echo "Scheduler lifetime ($preset configuration, host execution): PASS"
 
 done
 echo 'KASPACE ownership and failed adoption: PASS'

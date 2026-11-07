@@ -7,8 +7,8 @@
  * limit. Active publication grows stable slots on demand; ENSMEM is retryable. */
 #define KSCHED_LIMIT 8U
 /* Dispatch/idle uses permanent kernel stack/context storage. Compatibility
- * activations still drain before their synchronous waiter returns: global
- * background admission remains gated. Root copies results into kernel storage;
+ * admissions still drain before their synchronous waiter returns: global
+ * background admission remains gated. Root publishes retained result records;
  * only the attached live waiter copies them to its own result destination.
  * All programs must be prepared, unlaunched and distinct. Success consumes
  * them, writes their exit statuses, and returns after all tasks finish.
@@ -20,6 +20,7 @@ LONG ksched_run(PD * const *programs, UWORD count, LONG *results);
  * Success consumes the launch and returns its full synchronous exit status. */
 LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result);
 BOOL ksched_active(void);
+PD *ksched_launch_controller(PD *pd); /* current task only, never a nested launcher */
 #if CONF_WITH_NATIVE_SCHED
 struct thread_startup_draft;
 struct thread_startup_stack;
@@ -44,8 +45,8 @@ void ksched_task_cancel(void **slot);
 void ksched_task_publish(void **slot);
 BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 /* Backends mask dispatch/IRQs and validate that source owns the current task.
- * The compatibility controller is borrowed while its waiter owns the gated
- * activation; it is not the permanent root stack/continuation. */
+ * The compatibility controller is a pinned kernel-only basepage with no
+ * PROCESS/PID; logical parent and synchronous result owners are separate. */
 typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
 /* Nonmasking query during serialized preparation; begin revalidates it. */
 BOOL ksched_clone_context(struct kproc *source, PD **controller);

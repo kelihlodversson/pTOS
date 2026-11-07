@@ -258,3 +258,7 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
     (void)startup;
     abort(); /* no published clone exists in this legacy fixture */
 }
+
+void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
+BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
+void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }

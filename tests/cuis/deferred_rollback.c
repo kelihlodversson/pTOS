@@ -242,3 +242,5 @@ int main(void)
     puts("Deferred rejection releases all references after interrupted close: PASS");
     return 0;
 }
+
+PD *ksched_launch_controller(PD *p) { (void)p; return NULL; }

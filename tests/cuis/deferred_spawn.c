@@ -128,3 +128,11 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 /* This fixture only reserves within an existing group. */
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
+
+void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
+BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
+void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }
+PD *ksched_controller_pd(void) { return &owner; }
+
+BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD index,LONG status)
+{ (void)h; (void)index; (void)status; abort(); } /* async slots are not launch results */

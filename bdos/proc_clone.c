@@ -10,6 +10,7 @@
 #include "proc_clone.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "ksched_lifetime.h"
 extern PD *run;
 #endif
 
@@ -475,7 +476,8 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
     if (error) return error;
     if (!kproc_clone_prepare_compat(tx->process, tx->thread, tx->space)) { error = ENSMEM; goto failed; }
     tx->owns_compat = TRUE;
-    if (!kproc_clone_prepare_parent(tx->process, tx->source)) { error = ENSMEM; goto failed; }
+    if (!kproc_clone_prepare_parent(tx->process, tx->source) ||
+        !kproc_clone_prepare_controller(tx->process,ksched_controller_pd())) { error = ENSMEM; goto failed; }
     error = thread_startup_run_preflight(startup);
     if (error) goto failed;
     if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
