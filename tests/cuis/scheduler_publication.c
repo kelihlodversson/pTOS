@@ -12,6 +12,10 @@ static PD parent, child, peer;
 static UWORD allocations, frees, notifications;
 static BOOL fail_growth;
 PD *run;
+jmp_buf errbuf;
+static BOOL root_fault;
+static unsigned root_release_calls;
+static LONG fault_output;
 void *kalloc(ULONG bytes)
 {
     void *p;
@@ -21,11 +25,22 @@ void *kalloc(ULONG bytes)
     p = malloc(bytes); if (p) allocations++; return p;
 }
 void kfree(void *p) { CHECK(p); if (p != table) free(p); frees++; }
-void panic(const char *fmt, ...) { (void)fmt; abort(); }
+void panic(const char *fmt, ...)
+{
+    if (root_fault && !strcmp(fmt,"scheduler root: cleanup callback escaped") &&
+        root_release_calls==1 && fault_output==-123 && scheduler.active && !scheduler.parked) {
+        puts("Persistent root escaping disk error: fail-stop, no repeated release/result delivery: PASS (host injection)");
+        fflush(stdout); _Exit(0);
+    }
+    abort();
+}
 void kproc_usage(PD *p, ULONG usage[8]) { (void)p; memset(usage,0,8*sizeof(*usage)); }
 PD *kproc_notification_parent(PD *p) { (void)p; return NULL; }
 KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
-void kproc_release(KPROC *p) { (void)p; }
+void kproc_release(KPROC *p)
+{
+    if (root_fault && p==(KPROC *)&child) { root_release_calls++; longjmp(errbuf,1); }
+}
 WORD kproc_pid(PD *p) { (void)p; return 42; }
 void cuis_child_completed(PD *p, WORD pid, UWORD status)
 { (void)p; (void)pid; (void)status; notifications++; }
@@ -36,7 +51,63 @@ LONG proc_start_scheduled(PD *p, BOOL take) { (void)take; CHECK(p==&child); retu
 BOOL kthread_stop(KTHREAD *t) { CHECK(t==(KTHREAD *)1 && !refused_stopped); refused_stopped=TRUE; return TRUE; }
 BOOL kthread_is_stopped(const KTHREAD *t) { CHECK(t==(KTHREAD *)1); return refused_stopped; }
 void proc_discard_scheduled(PD *p) { CHECK(p==&child && refused_stopped); refused_disposals++; }
-void x86_64_process_save(X86_64_PROCESS_CONTEXT *c) { (void)c; }
+static uintptr_t modeled_flags = 0x200;
+static unsigned root_entries;
+void x86_64_process_save(X86_64_PROCESS_CONTEXT *c)
+{
+    memset(c,0,sizeof(*c)); c->pd=run; c->flags=modeled_flags;
+    c->launch=(X86_64_PROCESS_LAUNCH *)run; /* Deliberately reusable identity. */
+    modeled_flags=0;
+}
+void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *c)
+{ run=c->pd; modeled_flags=c->flags; }
+void native_sched_enter(uintptr_t top, void (*entry)(void))
+{
+    CHECK(entry==scheduler_root_entry && top==(uintptr_t)root_stack+sizeof(root_stack)-8);
+    root_entries++;
+    __asm__ volatile ("mov %0,%%rsp; jmp *%1" :: "r"(top), "r"(entry) : "memory");
+    __builtin_unreachable();
+}
+BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
+BOOL kthread_start(KTHREAD *t) { (void)t; abort(); }
+BOOL kthread_reap(KTHREAD *t) { (void)t; abort(); }
+void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
+{ (void)tx; (void)slot; abort(); }
+#ifndef __SANITIZE_ADDRESS__
+/* Actual hosted stack switches; privileged context/MMU effects are modeled.
+ * Hosted ASan cannot validate this kernel's private alternate-stack ABI. */
+static void root_lifetime_check(void)
+{
+    unsigned cycle;
+    NATIVE_SCHED_CONTEXT empty;
+    jmp_buf no_waiter;
+    memset(&empty,0,sizeof(empty)); memset(no_waiter,0,sizeof(no_waiter));
+    for (cycle=0;cycle<32;cycle++) {
+        LONG output[2]={-1,-1};
+        PD *caller=cycle&1?&parent:&peer;
+        CHECK(allocate_task_table());
+        table[0].state=table[1].state=TASK_DONE;
+        table[0].result=cycle+100; table[1].result=cycle+200;
+        run=caller; modeled_flags=cycle&1?0x200:0;
+        CHECK(dispatch_group(2,output)==E_OK && run==caller && modeled_flags==(cycle&1?0x200:0));
+        CHECK(output[0]==(LONG)cycle+100 && output[1]==(LONG)cycle+200);
+        CHECK(scheduler.root_started && scheduler.parked && !scheduler.waiter_attached &&
+              !scheduler.active && !scheduler.current && !scheduler.tasks && root_entries==1);
+        CHECK(!memcmp(&scheduler.root,&empty,sizeof(empty)) &&
+              !memcmp(scheduler.waiter_resume,no_waiter,sizeof(no_waiter)));
+        CHECK(!scheduler.results[0] && !scheduler.results[1]);
+        memset(caller,0x7d,sizeof(*caller)); /* Old identity storage is reusable. */
+        output[0]=output[1]=-77;
+    }
+    CHECK(allocations==frees);
+    puts("Persistent root: 32 real hosted park/resume stack handoffs, copied results and no retired identity: PASS (CPU modeled)");
+    CHECK(allocate_task_table());
+    table[0].state=TASK_DONE; table[0].process=(KPROC *)&child;
+    fault_output=-123; root_fault=TRUE;
+    dispatch_group(1,&fault_output);
+    abort(); /* A fail-stop root must not return to a partially cleaned caller. */
+}
+#endif
 int main(void)
 {
     void *root = NULL, *slots[KSCHED_LIMIT] = { NULL };
@@ -51,6 +122,10 @@ int main(void)
     CHECK(ksched_task_reserve(TRUE,&slots[0]) == EAGAIN && !slots[0] && allocations == 1);
     ksched_task_cancel(&root); ksched_task_cancel(&root);
     CHECK(!scheduler.tasks && frees == 1);
+    scheduler.waiter_attached=TRUE; /* root parked, but old result not consumed */
+    identity=next_identity;
+    CHECK(ksched_task_reserve(TRUE,&root)==EAGAIN && !root && allocations==1 && next_identity==identity);
+    scheduler.waiter_attached=FALSE;
     CHECK(allocate_task_table()); scheduler.active = TRUE;
     scheduler.initial = 1; scheduler.current = table; table[0].state = TASK_RUNNING; run = &parent;
     for (i = 0; i < KSCHED_LIMIT-1; i++) {
@@ -119,5 +194,10 @@ int main(void)
     scheduler.current = NULL; free_task_table();
     CHECK(allocations == frees && !scheduler.tasks);
     puts("Shared scheduler growth/publication: exhaustion, private reservations, cancellation, blocked/early wait and orphan identity: PASS");
+#ifndef __SANITIZE_ADDRESS__
+    root_lifetime_check();
+#else
+    puts("Persistent root alternate-stack switch: native targets/unsanitized host only; hosted ASan ownership tests continue");
+#endif
     return 0;
 }

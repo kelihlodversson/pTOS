@@ -62,10 +62,26 @@ static struct {
     UWORD initial;
     KERNEL_TASK *tasks, *current, *next;
     NATIVE_SCHED_CONTEXT root;
-    jmp_buf resume;
-    uintptr_t flags;
+    jmp_buf resume;             /* Always points into root_stack, never a launcher. */
+    BOOL root_started, parked, waiter_attached;
+    jmp_buf waiter_resume;      /* Borrowed continuation only during a gated drain. */
+    LONG results[KSCHED_LIMIT]; /* Kernel-owned synchronous results, no caller pointer. */
     PROC_CLONE_TRANSACTION *pending_clone;
 } scheduler;
+/* Permanent kernel storage, outside procmem and all PROCESS/ASPACE owners.
+ * The parked root keeps no allocation/PD/launcher reference. Global admission
+ * remains gated until controller/result delivery can outlive the waiter. */
+#define ROOT_STACK_BYTES (16UL * 1024)
+#define ROOT_STACK_GUARD 0x713a2001UL
+static ULONG root_stack[ROOT_STACK_BYTES / sizeof(ULONG)] __attribute__((aligned(16)));
+static void check_root_stack(void)
+{
+    uintptr_t marker;
+    if ((uintptr_t)&marker < (uintptr_t)root_stack + sizeof(ULONG) ||
+        (uintptr_t)&marker >= ((uintptr_t)root_stack + sizeof(root_stack)) ||
+        root_stack[0] != ROOT_STACK_GUARD)
+        panic("scheduler: invalid persistent root stack");
+}
 /* The initial array preserves synchronous result positions. Additional slots
  * are individually allocated and never moved/freed while a group is active:
  * completion_owner, THREAD backends and reservations point into these records.
@@ -819,7 +835,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
                       BOOL take_ownership, BOOL prepare)
 {
     UWORD i, j;
-    if (scheduler.active || scheduler.tasks) return EAGAIN;
+    if (scheduler.active || scheduler.tasks || scheduler.waiter_attached) return EAGAIN;
     if (!count || count > KSCHED_LIMIT || (prepare && count != 1)) return EINVAL;
     if (next_identity > ~0ULL - count) return EAGAIN;
     for (i = 0; i < count; i++) {
@@ -883,18 +899,21 @@ static BOOL cancel_wait_ready(const KERNEL_TASK *task)
 #endif
 }
 
-static LONG dispatch_group(UWORD count, LONG *results)
+/* One permanent root frame. All mutable locals are assigned after setjmp;
+ * none carries caller-owned state across a park/resume or task handoff. */
+static void scheduler_root_entry(void) NORETURN;
+static void scheduler_root_entry(void)
 {
-    UWORD i;
-    scheduler.initial = count;
-    scheduler.next = scheduler.tasks;
-    scheduler.current = NULL;
-    scheduler.active = TRUE;
-    native_sched_save(&scheduler.root);
-    scheduler.flags = scheduler.root.flags;
-    scheduler.root.flags = native_sched_masked(scheduler.root.flags);
     if (setjmp(scheduler.resume)) native_sched_restore(&scheduler.root);
-    else if (scheduler.pending_clone) {
+    if (!scheduler.active || !scheduler.waiter_attached || scheduler.parked)
+        panic("scheduler: root resumed without activation owner");
+    check_root_stack();
+    /* A root cleanup callback must never escape into the launcher's errbuf.
+     * Recoverable close retries stay local; an escaping disk error is fatal,
+     * with no retry of partially committed retirement/publication. */
+    if (setjmp(errbuf)) panic("scheduler root: cleanup callback escaped");
+    memcpy(scheduler.root.disk_error, errbuf, sizeof(errbuf));
+    if (scheduler.pending_clone) {
         PROC_CLONE_TRANSACTION *tx = scheduler.pending_clone;
         scheduler.pending_clone = NULL;
         proc_clone_commit_prepared(tx, scheduler.tasks);
@@ -903,6 +922,7 @@ static LONG dispatch_group(UWORD count, LONG *results)
         BOOL pending = FALSE;
         KERNEL_TASK *task, *first;
         scheduler.current = NULL;
+        check_root_stack();
         /* Reclaim only from root. Slots remain stable until root returns. */
         for (task = scheduler.tasks; task; task = task->next_task)
             reap_finished_on_root(task);
@@ -935,12 +955,60 @@ static LONG dispatch_group(UWORD count, LONG *results)
         if (!pending) break;
         native_sched_idle();
     }
-    for (i = 0; i < count; i++) results[i] = scheduler.tasks[i].result;
+    {
+        UWORD i;
+        for (i = 0; i < scheduler.initial; i++) scheduler.results[i] = scheduler.tasks[i].result;
+    }
     free_task_table();
     scheduler.current = NULL;
     scheduler.active = FALSE;
-    scheduler.root.flags = scheduler.flags;
-    native_sched_restore(&scheduler.root);
+    /* No parked context retains a PD, syscall/IRQ stack, launch chain or
+     * disk-error continuation from this activation. A future attachment must
+     * install fresh CPU state BEFORE jumping into the permanent root frame. */
+    memset(&scheduler.root, 0, sizeof(scheduler.root));
+    scheduler.parked = TRUE;
+    longjmp(scheduler.waiter_resume, 1);
+}
+
+static LONG dispatch_group(UWORD count, LONG *results)
+{
+    NATIVE_SCHED_CONTEXT caller; /* Lives only on the still-waiting caller stack. */
+    UWORD i;
+    if (scheduler.waiter_attached || (scheduler.root_started && !scheduler.parked))
+        panic("scheduler: overlapping synchronous activation");
+    scheduler.initial = count;
+    scheduler.next = scheduler.tasks;
+    scheduler.current = NULL;
+    scheduler.active = TRUE;
+    scheduler.waiter_attached = TRUE;
+    /* save masks IRQs and activates kernel mappings. Saving the root AFTER
+     * the caller captures kernel mappings/masked flags, while retaining the
+     * current activation's compatibility controller until drain. */
+    native_sched_save(&caller);
+    native_sched_save(&scheduler.root);
+    scheduler.root.flags = native_sched_masked(scheduler.root.flags);
+    scheduler.parked = FALSE;
+    if (!setjmp(scheduler.waiter_resume)) {
+        if (scheduler.root_started) {
+            native_sched_restore(&scheduler.root);
+            longjmp(scheduler.resume, 1);
+        }
+        scheduler.root_started = TRUE;
+        root_stack[0] = ROOT_STACK_GUARD;
+        native_sched_enter(native_sched_root_stack_top((uintptr_t)root_stack, sizeof(root_stack)),
+                           scheduler_root_entry);
+    }
+    /* Only this live waiting continuation touches its result destination.
+     * Copy and detach while masked, before restoring caller CPU/FPU/IRQ state. */
+    if (!scheduler.parked || scheduler.active || scheduler.tasks || scheduler.current)
+        panic("scheduler: returning before root drain");
+    for (i = 0; i < count; i++) {
+        results[i] = scheduler.results[i];
+        scheduler.results[i] = 0;
+    }
+    scheduler.waiter_attached = FALSE;
+    memset(scheduler.waiter_resume, 0, sizeof(scheduler.waiter_resume));
+    native_sched_restore(&caller);
     return E_OK;
 }
 
@@ -965,7 +1033,7 @@ LONG ksched_task_reserve(BOOL root, void **slot)
     KERNEL_TASK *task, *last;
     if (!slot || *slot) return EINVAL;
     if (root) {
-        if (scheduler.active || scheduler.tasks) return EAGAIN;
+        if (scheduler.active || scheduler.tasks || scheduler.waiter_attached) return EAGAIN;
     } else if (!ksched_spawn_allowed()) return EINVFN;
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_clone_slot) { fail_clone_slot = FALSE; return ENSMEM; }

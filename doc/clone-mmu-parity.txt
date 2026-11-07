@@ -169,3 +169,16 @@ remains tested independently. See doc/native-scheduler-plan.txt for the remainin
 borrowed-root/global-admission contract, CPU-specific IRQ frame audit and
 staged preemption/locking plan. No preemption or global background task lifetime
 is implied by arena growth. CUIS stream cancellation remains disabled.
+
+Persistent root follow-up (#713 A2a)
+-------------------------------------
+Dispatch/idle/root reap now use permanent 16 KiB kernel BSS stack/context storage,
+separate from the synchronous waiter continuation. Park clears borrowed CPU/
+PD/launcher/error/stack references; fresh attachment resumes the SAME root frame.
+Results pass through kernel slots before the attached waiter copies them out.
+Root cleanup has its own fail-stop disk-error boundary. Native MMU regressions
+exercise real task handoff on this owned stack; host stack-switch tests model
+CPU/MMU state separately from ASan ownership tests. Global background admission
+remains gated on durable controller and completion/result ownership (A2b).
+See doc/native-scheduler-plan.txt; no parent-return/background or preemption
+capability is claimed. No GUI ports, TLS or non-MMU scheduling added.

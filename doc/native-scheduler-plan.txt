@@ -10,18 +10,20 @@ required. NEW_PROCESS, SAME_PROCESS and ordinary async Pexec use the same privat
 reservation -> prepared ownership -> TASK_NEW publication and dispatcher.
 
 A group is an activation lifetime, not a PROCESS group or a separate ready
-queue. run_group()/ksched_exec() borrow the synchronous launcher's root stack;
-ksched_clone_dispatch() uses the same root for an internal synchronous clone.
+queue. run_group()/ksched_exec()/ksched_clone_dispatch() attach a synchronous
+waiter to the same kernel-owned persistent root. The compatibility controller
+PD/launcher chain is still borrowed for that gated activation, not its stack.
 Only one activation exists. All independently identified PROCESSes/THREADs in
 it share one circular round-robin. Nested synchronous Pexec stays on its carrier
 continuation: run may be a distinct child while the task's execution owner stays
 unchanged. Its user return/launcher handoff must finish before carrier group
 cancellation. No cancellation may reap that child by confusing these identities.
 
-The root cannot return while any runnable/blocked/draining/deferred continuation
-remains. Ordinary async modes are admitted only inside this activation, so their
+The synchronous waiter cannot return while any runnable/blocked/draining/
+deferred continuation remains. The kernel root parks after drain and survives
+that return; it does not return into a launcher's dispatcher frame. Ordinary async modes are admitted only inside this activation, so their
 PID-returning call is asynchronous to its caller but they are not yet global
-background tasks surviving release of the outer root. This restriction is a real
+background tasks surviving release of the outer waiter. This restriction is a real
 lifetime requirement, not a feature gate to remove. Original synchronous Pexec
 status/return behavior remains intact. A never-returning child or unsupported
 raw wait can deliberately defer group drain.
@@ -73,16 +75,21 @@ A1 (implemented here): stable growable storage + one RR across the activation,
 production allocation-failure and deep-slot traversal tests, native >8 mixed
 PROCESS/THREAD scheduling and repeat/reclaim tests on all three MMU targets.
 
-A2: introduce a kernel-owned persistent scheduler root/idle stack and explicit
-activation admission/drain handles. Retain logical parent separately from live
-launcher/controller; move result delivery off borrowed caller result arrays.
+A2a (implemented): kernel-owned persistent root/idle stack, a separate attached
+waiter continuation and kernel-owned result copy. See the lifecycle below.
+
+A2b (remaining): explicit persistent admission/drain/result ownership. Retain
+logical parent separately from a durable controller and live launcher/waiter;
+replace the single gated waiter with independently retained completion/result
+handles and an abandonment contract.
 Migrate ordinary async admission and explicit groups through that ONE root.
 Allow a synchronous launcher to return when its own completion is ready while
 other independent tasks remain admitted. Preserve nested launcher status and
 safe-stack handoff. Separately retain zombie identities, with #909 consuming
 completion; do not build a second waiter. Do not reuse/free an anchor with a
 sibling, observer or reserved publication referencing it. This must precede
-claiming global background execution. Dynamic storage alone does not do A2.
+claiming global background execution. Neither dynamic slots nor a permanent
+root stack alone proves independent controller/result lifetime.
 
 B: add per-CPU current execution + nested launcher, pending-reschedule/quantum
 accounting and architecture-owned user-interruption frames. Timer IRQ only
@@ -161,3 +168,88 @@ operations reentrant. ARM banked LR/SP/FPSCR, m68k uenter and x32 TSS/current
 launch state require per-CPU ownership. Generic PROCESS waiting stays #909;
 TLS #908, non-MMU #911 and ARM/m68k GUI #898 are not scheduler prerequisites.
 CUIS stream cancellation stays disabled under its existing #907 contract.
+
+
+A2a persistent root lifecycle and validation
+--------------------------------------------
+Storage: one 16 KiB, 16-byte-aligned kernel BSS array and kernel scheduler CPU/
+setjmp storage. No procmem owner, KPROC/PD allocation or ASPACE user mapping can
+own/free it. It is a fixed kernel footprint, not an allocation left by a launch.
+Feature-disabled/classic non-MMU builds do not compile this scheduler storage.
+No new Kconfig flag. The existing CPU native_sched_enter hook bootstraps the root
+once, with its existing x32 C-entry alignment or ARM/m68k supervisor ABI. CPU
+backends and user entry/exit are otherwise unchanged.
+
+Initial attachment: serialized dispatch saves the caller CPU/FPU/MMU/IRQ state
+on the caller's STILL LIVE kernel stack, then captures the root's masked,
+kernel-mapped execution state. A separate waiter_resume is the temporary return
+route for that synchronous call. It is not scheduler.resume. Kernel-owned result
+slots retain values; the root NEVER stores a caller result pointer/array.
+All existing image/clone fallible preparation still precedes dispatch/publication.
+The static root requires no fallible allocation or user resource acquisition.
+
+RUNNING/IDLE-ACTIVE: scheduler.resume always points into the permanent root frame.
+Root dispatch and reclamation assert their current SP lies inside that stack and
+check its low guard. BLOCKED/deferred/draining work keeps the task arena alive.
+When no task is ready, existing backend idle services interrupts and rechecks
+predicates on the SAME root stack. IRQs do not switch arbitrary continuations.
+Task/sibling ownership and one RR runqueue are unchanged. Syscall stacks remain
+launcher-owned after transfer; task stacks remain KTHREAD/root-reap-owned.
+
+Root owns its disk-error boundary as well. An escaping cleanup disk error must
+panic on root, never jump into the waiter's saved errbuf, retry partial cleanup
+or publish a duplicate result. Recoverable kdos_fclose retries remain local;
+this is fail-stop, not transactional recovery. Private callback longjmps remain
+unsupported. No allocation/callback/user copy is added to the no-fail publication
+section; the boundary is installed before pending clone commit and root cleanup.
+
+PARKED: after all tasks drain and normal root-safe reaping, copy initial results
+to kernel slots and free the whole activation arena/high-water storage. Clear
+root CPU state, including PD, launcher, syscall/IRQ stack and disk-error pointers.
+Mark inactive/parked and jump to the attached waiter's continuation. Only that
+live waiter copies results to its destination, clears the kernel result slots
+and its waiter_resume/attachment, then restores its own CPU/FPU/MMU/IRQ state and
+returns. Admission rejects an attached waiter even if active is already false,
+so result consumption cannot be overwritten by a reentrant activation. The
+permanent root frame/stack survive. A subsequent attachment installs
+fresh root CPU/controller state BEFORE resuming that same root frame. Old PD
+address reuse cannot resurrect an idle root reference. Mutable root locals are
+assigned after setjmp; no modified automatic state is relied on after longjmp.
+
+Shutdown: permanent root storage is never freed, especially not while executing
+or idle. Existing shutdown/reset ends kernel execution; cold startup clears BSS.
+There is no new global-background shutdown/drain policy yet. With the current
+admission gate, normal waiter return still requires complete activation drain.
+A parked root consumes no CPU; a future permitted attachment resumes it. An
+active idle root retains all blocked tasks and wakes through ordinary IRQ events.
+
+Tests: the production host fixture performs 32 ACTUAL alternate-stack park/
+resume handoffs on one root frame, changes/reuses modeled caller PD storage,
+checks exact per-caller results and IRQ flags, zeroed parked CPU/waiter state and
+one bootstrap entry, with counted arena reclamation. CPU/MMU mechanics there are
+modeled, not native kernel execution; normal and UBSan runs exercise these
+stack handoffs. A final injected disk error during root
+retirement proves fail-stop before caller output delivery and no repeated
+release. Hosted ASan does NOT execute this kernel-private alternate-stack ABI;
+its production allocation/retirement/publication tests still run with ASan/UBSan.
+Native x32/ARM/m68k suites execute real user tasks through the owned root, enforce
+root-stack/guard assertions and preserve register/FPU/MMU, nested Pexec, join,
+group exit, orphan, >8-peer fairness and resource-baseline regressions. Root idle
+and parked root are distinct states, not preemption evidence.
+
+Exact remaining blocker: an independent background task still needs a durable
+controller/launcher return contract, and a waiting caller needs an independently
+owned completion/result/admission record that can be consumed or abandoned.
+The single waiter cannot be detached before drain while task preparation uses
+its compatibility PD/launch chain. No new ordinary async admission outside an
+activation is enabled; no claim of background execution after the outer waiter
+returns. A2b must also define how an unmanaged caller yields into the global
+root after its synchronous return, without borrowing a reclaimed syscall stack.
+#909 remains the public PROCESS waiter; do not build a parallel Pwait consumer.
+
+Before preemption/SMP, protect root park/attach transitions, waiter/result
+ownership and final detachment with the existing planned publication/leaf-runqueue
+ordering. Replace the global single-waiter/current-task/error/launcher state with
+per-CPU state, serialize shutdown versus admission and provide wait generations.
+No readiness callback or destructor under a future runqueue lock. IRQ masking
+alone is not cross-CPU synchronization. CUIS stream cancellation stays disabled.

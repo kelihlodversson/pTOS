@@ -6,7 +6,11 @@
 /* Initial arena and maximum synchronous bootstrap batch, not a runnable-task
  * limit. Active publication grows stable slots on demand; ENSMEM is retryable. */
 #define KSCHED_LIMIT 8U
-/* All programs must be prepared, unlaunched and distinct. Success consumes
+/* Dispatch/idle uses permanent kernel stack/context storage. Compatibility
+ * activations still drain before their synchronous waiter returns: global
+ * background admission remains gated. Root copies results into kernel storage;
+ * only the attached live waiter copies them to its own result destination.
+ * All programs must be prepared, unlaunched and distinct. Success consumes
  * them, writes their exit statuses, and returns after all tasks finish.
  * Failure before launch leaves every program with the caller. */
 LONG ksched_run(PD * const *programs, UWORD count, LONG *results);
@@ -40,7 +44,8 @@ void ksched_task_cancel(void **slot);
 void ksched_task_publish(void **slot);
 BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 /* Backends mask dispatch/IRQs and validate that source owns the current task.
- * Root is borrowed only while its blocked continuation owns the group. */
+ * The compatibility controller is borrowed while its waiter owns the gated
+ * activation; it is not the permanent root stack/continuation. */
 typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
 /* Nonmasking query during serialized preparation; begin revalidates it. */
 BOOL ksched_clone_context(struct kproc *source, PD **controller);

@@ -9,6 +9,9 @@
 typedef X86_64_PROCESS_CONTEXT NATIVE_SCHED_CONTEXT;
 #define native_sched_save x86_64_process_save
 #define native_sched_restore x86_64_process_restore
+/* native_sched_enter jumps to a SysV C entry: RSP must be 8 mod 16. */
+static inline uintptr_t native_sched_root_stack_top(uintptr_t base, ULONG bytes)
+{ return base + bytes - 8; }
 static inline uintptr_t native_sched_irq_save(void)
 {
     uintptr_t flags;
@@ -51,6 +54,9 @@ typedef struct {
 } NATIVE_SCHED_CONTEXT;
 void native_sched_save(NATIVE_SCHED_CONTEXT *context);
 void native_sched_restore(const NATIVE_SCHED_CONTEXT *context);
+/* ARM/m68k reuse the supervisor-stack C-entry ABI of native task entry. */
+static inline uintptr_t native_sched_root_stack_top(uintptr_t base, ULONG bytes)
+{ return base + bytes; }
 #if ARCH_ARM
 static inline uintptr_t native_sched_irq_save(void)
 {
