@@ -16,7 +16,7 @@ Opcode audit: FreeMiNT sys/syscalls.master at
 0x190 to Pclone. The local TOS.HYP GEMDOS extension catalogue and libcmini
 mintbind declarations have no 0x191 assignment. ARM/x32 use native argument
 slots, m68k uses packed GEMDOS LONG arguments. This is not a POSIX pthread ABI.
-No Ptermgrp opcode/handler is introduced by this increment.
+Ptermgrp uses the subsequent audited opcode 0x192; see group-exit.txt.
 
 Only published managed TIDs belonging to the calling PROCESS are joinable.
 Unknown, foreign, unpublished, already reaped or aborted TIDs return ESRCH.
@@ -58,20 +58,13 @@ Do not invoke callbacks or yield between copyout and consume. IRQ masking is
 not a cross-CPU lock. Existing filesystem, mapping and launcher-chain blockers
 still apply; no preemption is enabled here.
 
-Group termination remains gated
-------------------------------
+Cooperative group termination
+----------------------------
 
-Ptermgrp is not implemented. A cooperative task can be suspended inside nested
-synchronous Pexec: its current run identity and syscall continuation can belong
-to a different PROCESS. Killing the scheduler task directly would strand that
-child's launcher/syscall stacks; blindly resuming xterm could terminate the
-wrong PROCESS. #893 needs a trusted task cancellation request, wakeup and
-launcher-unwind/handoff contract before reclaiming those tasks. It must also
-latch group exit before new association, retain the first accepted status,
-cancel join claims safely and publish PROCESS completion once. Cancellation
-must occur at a proven safe boundary, never by freeing an active stack.
-Separate PROCESSes sharing KASPACE must survive. This increment does not
-change Pterm/Ptermres or pretend cooperative cancellation is preemptive.
+CONF_WITH_PTERMGRP adds managed PROCESS-wide cancellation through the existing
+THREAD/launcher/root handoffs. See group-exit.txt for its pending nested-child
+and blocking-boundary contracts. Outstanding join claims are cancelled by safe
+THREAD reap; group cancellation never consumes a target status as a join.
 
 #909 still owns generic PROCESS waits/reaping. libcmini #25 must integrate
 one-time atexit plus Ptermgrp with older-kernel fallback (EINVFN/EINVAL); libc

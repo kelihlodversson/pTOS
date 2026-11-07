@@ -103,6 +103,10 @@ struct kproc {
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
     BOOL clone_guarded;
+#if CONF_WITH_PTERMGRP
+    BOOL group_exiting;
+    UWORD group_status;
+#endif
     BOOL threaded; /* trusted multi-THREAD publication, not a new PROCESS */
     BOOL child_usage_at_wait; /* accounting policy, independent of controller refs */
 #if CONF_WITH_X86_64_MEMTEST
@@ -415,6 +419,24 @@ KASPACE *kproc_active_space(const KPROC *process)
         process->disposal_state == PROCESS_LIVE ? process->active_space : NULL;
 }
 
+#if CONF_WITH_PTERMGRP
+BOOL kproc_group_status(const KPROC *process, UWORD *status)
+{
+    if (!process || !process->group_exiting) return FALSE;
+    if (status) *status = process->group_status;
+    return TRUE;
+}
+BOOL kproc_request_group_exit(KPROC *process, UWORD status)
+{
+    if (!kproc_thread_start_allowed(process) || !process->started) return FALSE;
+    if (!process->group_exiting) {
+        process->group_status = status;
+        process->group_exiting = TRUE;
+    }
+    return TRUE;
+}
+#endif
+
 BOOL kproc_thread_start_allowed(const KPROC *process)
 {
     return process && process->pd && !process->completed &&
@@ -426,6 +448,9 @@ BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
 {
     KASPACE *as;
     if (!thread || !construction_space || !p ||
+#if CONF_WITH_PTERMGRP
+        p->group_exiting ||
+#endif
 #if CONF_WITH_NATIVE_SCHED
         (p->clone_guarded && !identity_only) ||
 #endif
@@ -547,7 +572,11 @@ BOOL kproc_clone_parent_ready(const KPROC *p)
 {
     /* The caller's execution owner, rather than an identity-only observer,
      * must retain parent resources throughout this synchronous root call. */
-    return kproc_active_space(p) && p->threads != NULL;
+    return kproc_active_space(p) && p->threads != NULL
+#if CONF_WITH_PTERMGRP
+        && !p->group_exiting
+#endif
+        ;
 }
 BOOL kproc_clone_prepare_parent(KPROC *p, KPROC *parent)
 {

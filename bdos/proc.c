@@ -1453,6 +1453,12 @@ void xterm(UWORD rc)
     PD *p = run;
 #if CONF_WITH_NATIVE_SCHED
     KTHREAD *thread = ksched_exit_thread(p);
+#if CONF_WITH_PTERMGRP
+    if (thread) {
+        ksched_enter_exit(p);
+        (void)kproc_group_status(kthread_process(thread), &rc);
+    }
+#endif
 #endif
 
 #if CONF_WITH_USER_ASPACE

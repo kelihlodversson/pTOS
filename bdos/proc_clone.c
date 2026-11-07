@@ -94,6 +94,9 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     }
     if (args->vm_policy == PROC_CLONE_PRIVATE_VM)
         return args->process_policy == PROC_CLONE_SAME_PROCESS ? EINVAL : EINVFN;
+#if CONF_WITH_PTERMGRP
+    if (kproc_group_status(args->source, NULL)) return EACCDN;
+#endif
     space = kproc_active_space(args->source);
     if (!space || (target && target != args->source && !kproc_clone_target_ready(target, NULL)))
         return EACCDN;
@@ -138,6 +141,10 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     if (!transaction || !*transaction || !result || result->thread ||
         result->owned_process || result->pid || result->tid) return EINVAL;
     tx = *transaction;
+#if CONF_WITH_PTERMGRP
+    if (kproc_group_status(tx->source, NULL) || kproc_group_status(tx->process, NULL))
+        return EACCDN;
+#endif
     if (kproc_active_space(tx->source) != tx->space)
         return EACCDN;
     /* Identity-only commit cannot publish a startup image. The controlled
@@ -241,7 +248,11 @@ BOOL proc_clone_observer_result(const PROC_CLONE_OBSERVER *observer, PROC_CLONE_
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP_ARGS *args)
 {
     if (!tx || !args || tx->startup) return EINVAL;
-    if (kproc_active_space(tx->source) != tx->space ||
+    if (
+#if CONF_WITH_PTERMGRP
+        kproc_group_status(tx->source, NULL) || kproc_group_status(tx->process, NULL) ||
+#endif
+        kproc_active_space(tx->source) != tx->space ||
         (tx->policy != PROC_CLONE_SAME_PROCESS && !kproc_clone_target_ready(tx->process, tx->thread)))
         return EACCDN;
     return thread_startup_prepare(tx->space, args, &tx->startup);
@@ -249,7 +260,11 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
 
 static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 {
-    return tx && tx->startup && kproc_active_space(tx->source) == tx->space &&
+    return tx && tx->startup &&
+#if CONF_WITH_PTERMGRP
+        !kproc_group_status(tx->source, NULL) && !kproc_group_status(tx->process, NULL) &&
+#endif
+        kproc_active_space(tx->source) == tx->space &&
         (tx->policy == PROC_CLONE_SAME_PROCESS || kproc_clone_target_ready(tx->process, tx->thread));
 }
 

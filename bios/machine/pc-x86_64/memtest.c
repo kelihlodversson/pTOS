@@ -1457,7 +1457,37 @@ static void test_kthread_completion(void)
     CHECK(kthread_stop(a), "stop first thread before completion preflight");
     CHECK(!kthread_complete(a, 37),
           "unstarted process cannot publish an exit status");
+#if CONF_WITH_PTERMGRP
+    CHECK(!kproc_request_group_exit(observer, 37), "unstarted group rejects exit request");
+#endif
     kproc_mark_started(pd); /* simulate a process that has executed */
+#if CONF_WITH_PTERMGRP
+    {
+        PROC_CLONE_ARGS args;
+        PROC_CLONE_TRANSACTION *tx = NULL, *saved;
+        PROC_CLONE_RESULT output = { 0 };
+        UWORD group_status;
+        memset(&args, 0, sizeof(args));
+        args.source = observer;
+        args.process_policy = PROC_CLONE_SAME_PROCESS;
+        args.vm_policy = PROC_CLONE_SHARE_VM;
+        CHECK(proc_clone(&args, &tx) == E_OK && tx, "prepare before group exit latch");
+        saved = tx;
+        CHECK(kproc_request_group_exit(observer, 37) &&
+              kproc_request_group_exit(observer, 99) &&
+              kproc_group_status(observer, &group_status) && group_status == 37,
+              "first group request status remains latched");
+        CHECK(!kthread_create(pd) &&
+              !kthread_construct_identity(observer, kproc_active_space(observer)),
+              "group exit rejects ordinary and identity associations");
+        CHECK(proc_clone_commit(&tx, &output) == EACCDN && tx == saved &&
+              !output.thread && !output.owned_process && !output.pid && !output.tid,
+              "pending clone commit rejected without consuming transaction or outputs");
+        proc_clone_abort(&tx);
+        CHECK(proc_clone(&args, &tx) == EACCDN && !tx,
+              "group exit rejects fresh clone before allocation");
+    }
+#endif
     CHECK(!kthread_complete(a, 37),
           "live sibling prevents process completion");
     CHECK(kthread_reap(a), "reap first stopped thread");

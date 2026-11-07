@@ -9,6 +9,8 @@
 #include "kthread.h"
 #include "thread_startup.h"
 #include "proc_clone.h"
+#include "fs.h"
+#include "proc.h"
 #include <stddef.h>
 #include "kheap.h"
 #include "kprint.h"
@@ -31,6 +33,10 @@ typedef struct kernel_task {
     PD *program, *parent;
     struct kernel_task *completion_owner; /* borrowed; NULL means this is the anchor */
     BOOL process_completed;
+#if CONF_WITH_PTERMGRP
+    BOOL cancel_boundary; /* only waits whose callers explicitly checkpoint */
+    BOOL cancel_delivering; /* termination hooks must not recursively cancel */
+#endif
     KPROC *process;              /* observer identity, including after exit */
     KTHREAD *thread;            /* owns execution until root-safe reap */
 #if CONF_WITH_X86_64_MEMTEST
@@ -104,6 +110,37 @@ KTHREAD *ksched_exit_thread(PD *pd)
         return NULL;
     return task->thread;
 }
+
+#if CONF_WITH_PTERMGRP
+/* This runs on a restored task/syscall stack, never on scheduler root. A
+ * nested child owns a different launch chain and must return normally. */
+void ksched_cancel_point(void)
+{
+    KTHREAD *thread = ksched_exit_thread(run);
+    UWORD status;
+    if (thread && !scheduler.current->cancel_delivering &&
+        kproc_group_status(kthread_process(thread), &status)) xterm(status);
+}
+void ksched_enter_exit(PD *pd)
+{
+    if (ksched_exit_thread(pd)) scheduler.current->cancel_delivering = TRUE;
+}
+LONG ksched_termgrp(UWORD status)
+{
+    KTHREAD *thread = ksched_exit_thread(run);
+    uintptr_t flags;
+    if (!thread) return EINVFN;
+    if (scheduler.current->cancel_delivering) return EACCDN;
+    flags = native_sched_irq_save();
+    if (!kproc_request_group_exit(kthread_process(thread), status)) {
+        native_sched_irq_restore(flags); return EACCDN;
+    }
+    native_sched_irq_restore(flags);
+    ksched_cancel_point();
+    panic("group exit returned");
+    return EINVFN;
+}
+#endif
 
 static void check_task_thread(KERNEL_TASK *task, UWORD stage)
 {
@@ -265,6 +302,10 @@ void ksched_exiting(PD *pd, UWORD result)
             ULONG usage[8];
             if (task->process_completed) panic("duplicate PROCESS completion");
             task->process_completed = TRUE;
+#if CONF_WITH_PTERMGRP
+            if (kproc_group_status(exiting, NULL) && scheduler.current)
+                scheduler.current->signal = 0;
+#endif
             if (scheduler.current && scheduler.current->process == task->process)
                 task->signal = scheduler.current->signal;
 #if CONF_WITH_CUIS
@@ -425,6 +466,20 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     return TRUE;
 }
 
+static BOOL cancellation_wait(BOOL (*ready)(void *), void *argument)
+{
+    BOOL managed;
+#if CONF_WITH_PTERMGRP
+    KERNEL_TASK *task = scheduler.current;
+    if (ksched_spawn_allowed()) task->cancel_boundary = TRUE;
+#endif
+    managed = ksched_block(ready, argument);
+#if CONF_WITH_PTERMGRP
+    if (managed) task->cancel_boundary = FALSE;
+#endif
+    return managed;
+}
+
 static BOOL always_ready(void *argument) { (void)argument; return TRUE; }
 LONG ksched_yield(void)
 {
@@ -433,8 +488,11 @@ LONG ksched_yield(void)
     x86_64_memtest_clone_yield(); /* process context, before IRQ exclusion */
 #endif
     flags = native_sched_irq_save();
-    ksched_block(always_ready, NULL);
+    cancellation_wait(always_ready, NULL);
     native_sched_irq_restore(flags);
+#if CONF_WITH_PTERMGRP
+    ksched_cancel_point();
+#endif
     return E_OK;
 }
 
@@ -453,7 +511,14 @@ LONG ksched_join(ULONG tid, UQUAD address)
     flags = native_sched_irq_save();
     error = kthread_join_begin(caller, tid);
     if (error) { native_sched_irq_restore(flags); return error; }
-    while (!kthread_join_ready(caller)) ksched_block(kthread_join_ready, caller);
+    while (!kthread_join_ready(caller)) {
+        cancellation_wait(kthread_join_ready, caller);
+        native_sched_irq_restore(flags);
+#if CONF_WITH_PTERMGRP
+        ksched_cancel_point();
+#endif
+        flags = native_sched_irq_save();
+    }
     native_sched_irq_restore(flags);
     if (!kthread_join_status(caller, &status)) {
         kthread_join_cancel(caller); return ESRCH;
@@ -662,7 +727,12 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
             native_sched_irq_restore(flags);
             return found ? 0 : EFILNF;
         }
-        ksched_block(child_ready, &wait);
+        cancellation_wait(child_ready, &wait);
+        native_sched_irq_restore(flags);
+#if CONF_WITH_PTERMGRP
+        ksched_cancel_point();
+#endif
+        flags = native_sched_irq_save();
     }
 }
 
@@ -785,7 +855,12 @@ static LONG dispatch_group(UWORD count, LONG *results)
 #if CONF_WITH_CUIS
             if (task->state == TASK_DEFERRED) continue;
 #endif
-            if (task->state == TASK_BLOCKED && !task->ready(task->argument)) continue;
+            if (task->state == TASK_BLOCKED && !task->ready(task->argument)
+#if CONF_WITH_PTERMGRP
+                && !(task->cancel_boundary && task->execution.cpu.pd == task->program &&
+                     kproc_group_status(task->process, NULL))
+#endif
+            ) continue;
             scheduler.next = (slot + 1) % KSCHED_LIMIT;
             scheduler.current = task;
             if (task->state == TASK_NEW) {
@@ -892,6 +967,9 @@ BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *startup)
 }
 BOOL ksched_clone_context(KPROC *source, PD **controller)
 {
+#if CONF_WITH_PTERMGRP
+    if (kproc_group_status(source, NULL)) return FALSE;
+#endif
     if (!ksched_spawn_allowed() || scheduler.current->process != source ||
         scheduler.current->program != run || kproc_live_pd(source) != run) return FALSE;
     *controller = scheduler.root.pd; return TRUE;

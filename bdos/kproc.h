@@ -123,6 +123,12 @@ BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched *
 struct kthread;
 struct kaspace;
 /* Borrowed execution policy; terminal processes cannot publish new work. */
+#if CONF_WITH_PTERMGRP
+/* Serialized membership latch; existing execution remains valid until handoff.
+ * First accepted status wins. Retained identity, never reusable PD identity. */
+BOOL kproc_request_group_exit(KPROC *process, UWORD status);
+BOOL kproc_group_status(const KPROC *process, UWORD *status);
+#endif
 BOOL kproc_thread_start_allowed(const KPROC *process);
 BOOL kproc_thread_is_sole(KPROC *process, struct kthread *thread);
 /* Caller already holds the identity; only live resources may be acquired. */

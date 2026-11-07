@@ -543,6 +543,11 @@ if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native Ptermgrp: PASS' "$suite_log"; then
+    record "native PROCESS group exit" FAIL "configured Ptermgrp worker did not pass"
+fi
+
 # -- the verdict ----------------------------------------------------------------
 
 show_logs

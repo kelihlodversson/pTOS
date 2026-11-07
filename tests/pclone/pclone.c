@@ -5,6 +5,7 @@
 #include <mint/osbind.h>
 #include <stdio.h>
 #include <mint/mintbind.h>
+#include <mint/basepage.h>
 
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 static long pclone_trap(const void *args, unsigned long size)
@@ -325,6 +326,157 @@ static void test_joins(void)
     conws("native Pthjoin execution: tested\r\n");
 }
 #endif
+#if defined(TEST_WITH_PTERMGRP)
+static const char group_env[2]={0,0};
+static struct {
+    volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done;
+    int32_t target, joiner, killer, nested, wait_child;
+    unsigned char *stack[6];
+} group;
+static long term_group(short status) { return trap_1_ww(GEMDOS_PTERMGRP,status); }
+static void group_mark(const char *name)
+{
+    char path[32];
+    long h;
+    sprintf(path,"C:\\%s",name); h=Fcreate(path,0);
+    if (h>=0) (void)Fclose(h);
+}
+static int group_exists(const char *name)
+{
+    char path[32];
+    long h;
+    sprintf(path,"C:\\%s",name); h=Fopen(path,0);
+    if (h<0) return 0;
+    (void)Fclose(h); return 1;
+}
+static void group_nested(void *arg);
+static void group_target(void *arg)
+{
+    (void)arg; group.ready|=1;
+    if (group.mode) group_nested(arg);
+    for (;;) (void)Syield();
+}
+static void group_joiner(void *arg)
+{
+    (void)arg; group.ready|=2;
+#if defined(TEST_WITH_PTHJOIN)
+    if (join_tid(group.target,0)==0) group.error=1;
+    group.returned=1;
+#else
+    for (;;) (void)Syield();
+#endif
+}
+static void group_nested(void *arg)
+{
+    static const char tail[]="\1" "2";
+    (void)arg;
+    { long rc=Pexec(0,"C:\\GROUPCH.TOS",tail,(void *)group_env); if (rc!=19) group.error=rc; }
+    /* Group cancellation must intercept GEMDOS return before this executes. */
+    group.returned=1;
+}
+static void group_killer(void *arg)
+{
+    (void)arg;
+    while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
+    if (!group.mode) { for (;;) (void)Syield(); }
+    group.requested=1;
+    (void)term_group(61);
+    group.returned=1;
+}
+static void group_peer(void *arg)
+{
+    (void)arg;
+    while (!group.peer_go) (void)Syield();
+    group.peer_done=1;
+    Pterm(44);
+}
+static void group_wait_child(void *arg)
+{
+    (void)arg; group.ready|=1;
+    while (!group.child_go) (void)Syield();
+    group.child_done=1;
+    Pterm(45);
+}
+static void group_compete(void *arg)
+{
+    (void)arg; group.ready|=2;
+    while (!group.requested) (void)Syield();
+    (void)term_group(99); /* accepted first status must remain 61 */
+    group.returned=1;
+}
+static void group_leader(void *arg)
+{
+    int32_t pid;
+#if defined(TEST_WITH_PTHJOIN)
+    int32_t tid;
+#endif
+    (void)arg;
+    if (launch_entry(group.mode==3 ? group_wait_child : group_target,
+                     group.mode==3 ? CLONE_VM : CLONE_VM|CLONE_SAME_PROCESS,
+                     group.stack[1],&group.wait_child,&group.target)<=0 ||
+        launch_entry(group.mode==3 ? group_compete : group_joiner,
+                     CLONE_VM|CLONE_SAME_PROCESS,group.stack[2],&pid,&group.joiner)<=0 ||
+        launch_entry(group_killer,CLONE_VM|CLONE_SAME_PROCESS,group.stack[3],&pid,&group.killer)<=0) {
+        group.error=1; (void)term_group(90); return;
+    }
+    if (group.mode==2) Pterm(37); /* anchor must outlive the initial THREAD */
+    if (!group.mode) {
+        while ((group.ready&3)!=3) (void)Syield();
+        group.requested=1;
+        (void)term_group(60);
+    } else {
+        if (group.mode==3) (void)Pwaitpid(group.wait_child,0,0);
+#if defined(TEST_WITH_PTHJOIN)
+        else (void)join_tid(group.killer,&tid); /* cancellation-safe blocked join */
+#else
+        else for (;;) (void)Syield();
+#endif
+    }
+    group.returned=1;
+}
+static void test_group_exit(void)
+{
+    int i, mode, spin;
+    int32_t pid,tid,peer_pid,peer_tid;
+    long result;
+    const char *files[]={"GDEEP.ON","GGO.ON","GRET0.ON","GRET1.ON","GRET2.ON"};
+    for (i=0;i<6;i++) {
+        group.stack[i]=(void *)Malloc(RUNNABLE_STACK_SIZE);
+        ptest_assert_msg((long)group.stack[i]>0,"group stack allocated");
+        if ((long)group.stack[i]<=0) return;
+    }
+    for (mode=0;mode<4;mode++) {
+        for (i=0;i<5;i++) (void)Fdelete(files[i]);
+        group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=0;
+        ptest_assert_msg(launch_entry(group_peer,CLONE_VM,group.stack[5],&peer_pid,&peer_tid)>0,"independent shared-ASPACE peer created");
+        ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
+        for (spin=0;spin<2000 && !group.requested;spin++) (void)Syield();
+        ptest_assert_msg(group.requested && !group.error,"group request reached native syscall");
+        if (mode==1 || mode==2) {
+            ptest_assert_msg(Pwaitpid(pid,1,0)==0,"nested child retains pending PROCESS until safe return");
+            ptest_assert_msg(group_exists("GDEEP.ON") && !group_exists("GRET0.ON"),"nested child not unwound or killed");
+            group_mark("GGO.ON");
+            ptest_assert_msg(group_exists("GGO.ON"),"nested release marker exists");
+        }
+        result=Pwaitpid(pid,0,0);
+        ptest_assert_msg((result>>16)==pid && (result&65535)==(mode?61:60),"group final status and one PROCESS completion");
+        ptest_assert_msg(!group.returned && !group.error,"cancelled parent continuations never return to user");
+        ptest_assert_msg(Pwaitpid(pid,1,0)==-33L,"group zombie consumed only once");
+        if (mode==1 || mode==2) ptest_assert_msg(group_exists("GRET0.ON") && group_exists("GRET1.ON") && group_exists("GRET2.ON"),"all nested PROCESSes complete normally before cancellation");
+        group.child_go=1;
+        if (mode==3) {
+            for (spin=0;spin<128 && !group.child_done;spin++) (void)Syield();
+            (void)Syield(); (void)Syield();
+            ptest_assert_msg(group.child_done,"cancelled PROCESS wait preserves and orphans separate child");
+        }
+        group.peer_go=1;
+        result=Pwaitpid(peer_pid,0,0);
+        ptest_assert_msg((result>>16)==peer_pid && (result&65535)==44 && group.peer_done,"separate PROCESS sharing ASPACE survives group exit");
+    }
+    for (i=0;i<6;i++) ptest_assert_msg(Mfree(group.stack[i])==0,"group root reclaim releases each stack hold");
+    for (i=0;i<5;i++) (void)Fdelete(files[i]);
+}
+#endif
 static void test_runnable(void)
 {
     int mode, cycle;
@@ -425,6 +577,9 @@ static void test_runnable(void)
 #if defined(TEST_WITH_PTHJOIN)
     test_joins();
 #endif
+#if defined(TEST_WITH_PTERMGRP)
+    test_group_exit();
+#endif
     test_lifecycle();
     for (cycle = 0; cycle < 3; cycle++)
         ptest_assert_msg(Mfree(runnable_stacks[cycle]) == 0,"clone stack hold released after root reap");
@@ -445,6 +600,9 @@ void pclone_run_managed_tests(void)
         conws("pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS\r\n");
 #if defined(TEST_WITH_PTHJOIN)
         conws("native Pthjoin: PASS\r\n");
+#endif
+#if defined(TEST_WITH_PTERMGRP)
+        conws("native Ptermgrp: PASS\r\n");
 #endif
     }
 }

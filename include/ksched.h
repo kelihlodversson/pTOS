@@ -58,6 +58,12 @@ struct kproc;
  * synchronous child. Finish is called off the child syscall stack, before
  * the common PROCESS finalizer; task-stack reclamation remains root-only. */
 struct kthread *ksched_exit_thread(PD *pd);
+#if CONF_WITH_PTERMGRP
+/* Only terminates at an owned syscall continuation; nested children defer it. */
+void ksched_cancel_point(void);
+void ksched_enter_exit(PD *pd); /* suppress recursive delivery through termination hooks */
+LONG ksched_termgrp(UWORD status);
+#endif
 BOOL ksched_finish_exit(struct kproc *process, PD *pd, UWORD status);
 /* Saved with kernel process contexts, including legacy AES coroutines.
  * Zero is unmanaged; identities are never reused, even across groups. */

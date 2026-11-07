@@ -1,0 +1,104 @@
+Cooperative PROCESS group cancellation (#893)
+===========================================
+
+Ownership audit before cancellation
+-----------------------------------
+
+KPROC owns PROCESS membership/resources and the group-exit latch. Each KTHREAD
+owns a distinct execution identity and retained KPROC/KASPACE references.
+KERNEL_TASK owns the scheduler continuation through that KTHREAD; its PROCESS
+anchor survives leader-first exit. The current run/launch-chain identity can
+belong to a separate synchronous child, not the task's PROCESS. Each nested
+launcher owns the transferred child's syscall stack until termuser restores
+that launcher; root alone reclaims the task's scheduler stack.
+
+Cancellation must not jump to root or reap a suspended task. A request only
+latches the original PROCESS identity/status. A checkpoint may call existing
+thread-only xterm only when ksched_exit_thread(run) proves that run is the
+current task's own live PROCESS. Nested children continue normally. After their
+normal launcher finalization, the enclosing GEMDOS return checkpoint cancels
+the parent before returning to its user continuation. This works at arbitrary
+nesting depth without changing any child, launcher root or stack owner.
+
+Supported blocking boundaries are Syield, Pthjoin and PROCESS wait: their
+scheduler wait is marked cancellation-safe, and a pending request may wake it
+without its normal predicate. The resumed owner restores IRQ state and checks
+cancellation before consuming completion/copying output. Other internal waits
+retain their ordinary readiness/cleanup contract; cancellation occurs when the
+operation returns to the GEMDOS boundary. Nested children blocked indefinitely
+still require their ordinary event/child progress. User code that never enters
+the kernel likewise cannot be forcibly stopped by a cooperative dispatcher.
+No promise of immediate asynchronous cancellation is made.
+
+Implementation must latch before new association/publication, retain the first
+status, preserve live resources until final THREAD handoff, cancel join claims
+at safe root reap and keep PROCESS wait/observer publication unchanged. No
+executing stack is freed and no separate shared-ASPACE PROCESS is cancelled.
+
+Preemption remains disabled. #713 must synchronize membership/latch, pending
+requests with wait admission and wakeup, launcher/current-task snapshots,
+completion claims and root/anchor reclamation. Cancellation checkpoints must
+be outside locks and after operation-local cleanup; IRQ masking is not an SMP
+lock or permission to unwind arbitrary callbacks. Existing filesystem and
+mapping copyout/lease synchronization requirements remain.
+
+Public ABI and gates
+--------------------
+
+CONF_WITH_PTERMGRP is opt-in and requires PCLONE and NATIVE_SCHED. GEMDOS 0x192
+is Ptermgrp(WORD status), after Pclone 0x190 and Pthjoin 0x191. The FreeMiNT
+sys/syscalls.master audit at 68be4e529ad82ea9ec2b1c215b53303f91e78d52 and the
+TOS.HYP extension catalogue have no 0x192 assignment. Native x32/ARM argument
+slot 1 and packed m68k WORD 1 are decoded by the existing GEMDOS dispatcher.
+A supported managed request never returns. Disabled or unassociated/nested
+synchronous callers receive EINVFN. A request made reentrantly from a
+termination hook receives EACCDN; the outer accepted request still owns exit.
+The first accepted 16-bit status is used for all cancelled THREADs and final
+PROCESS completion; existing Pwait encoding and observer policies remain.
+
+The latch is distinct from disposal state. Existing THREADs must remain live
+and exit-capable while new associations, prepared commits and publication are
+rejected. A termination-delivery guard suppresses recursive cancellation when
+legacy termination hooks invoke GEMDOS. No allocation or observer callback is
+needed to request cancellation. Identity retention, launcher-stack syscall
+reclamation, scheduler-root task reap and final PROCESS cleanup are unchanged.
+Deferred CUIS launches are distinct PROCESSes, not deferred SAME_PROCESS
+members; no new same-PROCESS deferred startup mode is introduced.
+
+Natural return, Pterm0/Pterm and faults still stop one THREAD. Once group exit
+is latched their status cannot replace the accepted group status, including
+wait signal encoding on final fault exit. Ptermres remains refused with live
+siblings; ordinary sole-THREAD residency behavior is unchanged. Join claim
+cancellation happens only when the claimant continuation is no longer resumable.
+
+Tests and remaining boundaries
+------------------------------
+
+A small GROUPCH.TOS fixture recursively executes three synchronous child
+PROCESSes, using absolute paths and an explicit empty environment (no CWD or
+null-environment inheritance assumption). It deliberately avoids recursively
+reserving the full driver's large legacy m68k TPA. The outer native worker
+holds the deepest child at a file rendezvous, requests group exit, verifies no
+early PROCESS completion, then releases it. All three children return normally
+before the parent's enclosing GEMDOS checkpoint cancels its THREAD. Markers
+prove child completion and that cancelled parents never return to user code.
+
+Other native cases cover initial/secondary request, leader-first exit,
+competing requests, runnable siblings, blocked joins, cancelled PROCESS waits,
+orphan child survival, separate shared-ASPACE peers, one zombie consumption,
+repeated groups and final user-stack hold reclamation. Existing register/FPU,
+fault, TSR, slot exhaustion and constructor rollback tests remain enabled.
+The x32 production ownership test additionally invalidates a prepared clone
+transaction with a group latch, checks unchanged outputs/ownership, aborts it,
+and verifies new association rejection, first-status retention and baselines.
+Host/sanitizer ownership tests are separate from target execution.
+
+Arbitrary internal device/CUIS waits are not forcibly unwound: they require
+their normal predicate/event and finish their local cleanup before a GEMDOS
+checkpoint. A nested child that never returns likewise delays its parent's
+cancellation indefinitely. These are explicit progress constraints, not a
+claim of preemptive or universal asynchronous cancellation. Adding safe
+interruption adapters belongs to #893/#713; never bypass operation-local cleanup.
+#909 remains the PROCESS wait consumer. libcmini #25 must implement one-time
+atexit plus Ptermgrp with EINVFN/EINVAL fallback before libc exit is advertised
+as group-wide. TLS and the QEMU 68060 limitation (#913) remain separate.

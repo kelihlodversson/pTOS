@@ -49,6 +49,15 @@ config CONF_WITH_NATIVE_SCHED
       Scheduling is cooperative and does not require CUIS or external libaes.
 
 
+config CONF_WITH_PTERMGRP
+    bool "Cooperative PROCESS group termination"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Terminate all managed threads of the calling PROCESS at safe kernel
+      boundaries. Nested synchronous children finish normally before their
+      suspended launcher thread can stop. No preemption is enabled.
+
 config CONF_WITH_PTHJOIN
     bool "Managed per-TID thread joins"
     depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE

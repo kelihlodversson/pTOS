@@ -172,6 +172,9 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
 #endif
         ));
 #endif
+#if CONF_WITH_PTERMGRP
+    case GEMDOS_PTERMGRP: return ksched_termgrp((UWORD)ARG_W(1));
+#endif
     case GEMDOS_SYIELD: return ksched_yield();
     case GEMDOS_PWAIT: return ksched_wait(-1, 2, 0);
     case GEMDOS_PWAIT3: return ksched_wait(-1, ARG_W(1), ARG_P(2));

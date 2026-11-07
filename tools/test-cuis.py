@@ -84,11 +84,14 @@ for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/" + preset + "_defconfig")
     assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
+    config.syms["CONF_WITH_PTERMGRP"].set_value(2)
+    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "n"
     config.syms["CONF_WITH_PTHJOIN"].set_value(2)
     assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
     config.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
     config.syms["CONF_WITH_PCLONE"].set_value(2)
     assert config.syms["CONF_WITH_PTHJOIN"].str_value == "y"
+    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "y"
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     config.syms["CONF_WITH_PCLONE"].set_value(0)
     assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
