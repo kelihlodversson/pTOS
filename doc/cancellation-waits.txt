@@ -25,9 +25,10 @@ CUIS mouse lock              No acquisition while blocked; predicate compares
                              never acquire mouse/capture as part of cancel.
 CUIS delay                   Stack-only timer predicate, no published pointer
                              or consumed event. Restore IRQs before cancel.
-CUIS window/event wait       Borrowed mutable window/client identities. Defer
-                             until #907 establishes stable close-vs-wait
-                             ownership for all concurrent operations.
+CUIS window/event wait       Retained client/window scope; retirement wakes
+                             EACCDN, cancellation puts references before the
+                             checkpoint. Readiness consumes no input; see
+                             cuis-lifetime.txt for scope and remaining gaps.
 CUIS session/input wait      client->input_wait points into syscall stack;
                              button-resume/history mutations need a defined
                              rollback. Defer rather than unwinding that frame.

@@ -1,0 +1,101 @@
+CUIS wait ownership (#907)
+==========================
+
+Audit before migration
+----------------------
+The live client registry owns CUIS_CLIENT storage. It is currently indexed by
+one live PD, but the monotonically allocated, non-recycled session handle is
+the GUI identity; neither PID, TID nor ASPACE is its identity. Windows belong
+to a client and have non-recycled native handles, distinct from their reusable
+16-bit GEM identifier. Future multiple AES identities per PROCESS (#896)
+require an explicit session selector, not a PID-derived session identity.
+
+Window/key/message waits borrow client/window pointers in a syscall-stack
+predicate record. Readiness examines queues without consuming them; separate
+read calls commit consumption. Session deregistration or window destruction
+currently frees that storage while a sibling can be suspended. This is the
+first migration target: retain object storage, retire the public identity
+before releasing registry ownership, and distinguish retirement from readiness.
+Cancellation must drop both references and restore IRQ state before termination.
+
+Session/input waits publish &wait.input from the syscall stack. Sampling can
+consume button edges, advance click tracking and transfer button_resume state.
+A sibling wait must not overwrite that publication. Full cancellation requires
+an explicit input transaction and history merge/rollback; it must not blindly
+restore a snapshot over newer IRQ input. This increment leaves it non-cancellable.
+
+Stream writes publish a kernel packet in client->pending_write before user
+copyin. Teardown owns it on fatal faults. Receiver predicates resolve a
+non-recycled handle on each check, so receiver retirement wakes a writer.
+Source retirement, concurrent writes and read copyout need distinct operation
+ownership before enabling cancellation. Do not add a checkpoint to these frames.
+
+Display/mouse admission holds no acquired lock; each loop resolves its client
+anew. The mouse predicate compares capture pointers only. Delay holds only a
+timer. Existing adapters restore IRQs before the termination checkpoint.
+Enumeration returns scalar identities; it does not transfer object ownership.
+Cohort, child-observer, console and completion policy remain unchanged. PROCESS
+wait/reap remains #909; CUIS is not a PROCESS lifetime owner.
+
+Synchronization boundary
+------------------------
+Current cooperative serialization plus the input IRQ mask protects registry,
+retirement and wait admission. Before preemption/SMP (#713), lookup+get and
+retire+unlink must become atomic with wait publication and wakeup, with a proven
+lock order. No termination callback may execute under the object/input lock.
+Per-CPU current-task state and nested-launcher restoration remain scheduler
+responsibilities. Retained GUI storage must not retain a stale PD identity.
+
+Implemented first increment
+---------------------------
+Registry/list membership owns one reference. Window/message/key event waits
+retain their client, and window waits retain the matching window, before the
+scheduler sees their stack predicate. Window references in these scopes are
+always paired with the client reference; there is no reference cycle. Delay
+and mouse-admission predicates also retain the client they inspect. Saturated
+reference counts fail without changing membership or consuming an event.
+
+Closing a window removes routing/list membership and retires its native handle;
+deregistering a session retires its identity, drops routing/cohort/directory
+membership, destroys owned resources and clears its borrowed PD before dropping
+the registry reference. Retained event scopes preserve only object storage,
+not the PD, filesystem state or ASPACE. A retained window/client cannot be
+reallocated until its last scope leaves. Even after storage is reused, native
+handles are never recycled; the signed handle limit fails explicitly. The
+reusable GEM window identifier must never substitute for that native identity.
+
+Retirement wakes an event/timer predicate and returns EACCDN, independently of
+normal readiness. Cancellation takes priority over readiness and timeout. The
+scheduler first removes the predicate; the caller puts window then client,
+restores IRQ state, and only then enters the standard termination checkpoint.
+No GUI callback or PROCESS cleanup is invoked with the input mask held.
+
+These waits advertise readiness only. A separate read commits queue consumption.
+Neither a READY result nor cancellation consumes a key/message/button edge,
+clears another thread's input_wait publication or changes button-resume history.
+Their rollback is precisely the release of the scope references; they cannot
+restore an old history snapshot over new IRQ input. Readiness is not a reservation:
+another reader may consume the event before a subsequent read, as before.
+
+Unconverted session/input and stream waits remain non-cancellable. Their raw
+source/client pointers are not made safe for concurrent SESSION_END by this
+increment. Do not interpret the scoped event retention as blanket ownership of
+all CUIS operations. A source-side stream operation token, input-history commit
+transaction, exclusive input_wait publication and per-operation retirement
+wakeups are the next migration work. Existing receiver-handle lookup and
+pending-packet teardown ownership remain unchanged, not new cancellation claims.
+No new configuration switches or generic scheduler/PROCESS policy are introduced.
+
+Validation scope
+----------------
+Production host service tests exercise cancellation before registration, during
+blocking and coincident readiness; normal readiness preserves messages. They
+also cover close/deregister during waits, replacement handles, explicit storage
+reuse, reference-acquisition rollback/saturation, another input_wait publication,
+unchanged history and repeated balanced setup/teardown. ASan/UBSan supplement
+the counting allocator; these are host models, not target execution.
+Native x32 managed SAME_PROCESS tests block in message/window waits, cancel via
+Ptermgrp, close a window from a sibling, and deregister/re-register a session
+while its old message waiter remains suspended. Whole-suite baseline checks and
+an independent shared-ASPACE PROCESS verify reclamation and isolation.
+ARM/m68k suites exercise unchanged non-GUI kernel behavior, not native CUIS.

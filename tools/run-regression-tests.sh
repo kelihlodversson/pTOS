@@ -558,6 +558,18 @@ if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
     record "native CUIS delay cancellation" FAIL "CUIS adapter worker did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS retained event cancellation: PASS' "$suite_log"; then
+    record "native CUIS retained event cancellation" FAIL "retained event worker did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS window/session retirement: PASS' "$suite_log"; then
+    record "native CUIS window/session retirement" FAIL "retirement worker did not pass"
+fi
+
 # -- the verdict ----------------------------------------------------------------
 
 show_logs

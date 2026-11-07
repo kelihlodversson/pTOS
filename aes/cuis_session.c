@@ -1,4 +1,4 @@
-/* Process-owned native GUI sessions; never interpret GEM/AES wire formats. */
+/* Native GUI session identities; never interpret GEM/AES wire formats. */
 #include "emutos.h"
 #include "cuis.h"
 #include "cuis_region.h"
@@ -34,6 +34,8 @@ typedef struct cuis_window {
     struct cuis_window *next;
     struct cuis_window *znext;
     ULONG handle;
+    ULONG references; /* Registry/list reference plus retained event waiters. */
+    BOOL retired;
     UWORD identifier; /* Globally unique among live windows; reusable after destruction. */
     LONG x, y, width, height;
     BOOL visible, redraw, managed_activation;
@@ -76,7 +78,9 @@ typedef struct {
 } CUIS_INPUT_WAIT;
 typedef struct cuis_client {
     struct cuis_client *next;
-    PD *owner;
+    PD *owner; /* Borrowed only while live; cleared at retirement. */
+    ULONG references; /* Registry owns one; waits retain storage, never PD. */
+    BOOL retired;
     ULONG handle;
     CUIS_WINDOW *windows, *background;
     struct cuis_client *background_next;
@@ -1032,6 +1036,31 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     return result;
 }
 
+/* Input IRQs excluded, cooperative kernel serialization. A retained GUI
+ * object does not retain PROCESS resources. Retirement removes all routing
+ * and registry membership before dropping the list's reference. */
+static BOOL client_get(CUIS_CLIENT *client)
+{
+    if (client->retired || client->references == 0xffffffffUL) return FALSE;
+    client->references++;
+    return TRUE;
+}
+static void client_put(CUIS_CLIENT *client)
+{
+    if (!--client->references) kfree(client);
+}
+static void window_put(CUIS_WINDOW *window)
+{
+    if (!--window->references) kfree(window);
+}
+static void window_retire(CUIS_WINDOW *window)
+{
+    UQUAD flags = cuis_input_lock();
+    window->retired = TRUE;
+    window_put(window);
+    cuis_input_unlock(flags);
+}
+
 /* Only waits with no published stack pointer or acquired resource opt in.
  * The caller restores its IRQ mask before entering the termination path. */
 static BOOL cancelable_wait(BOOL (*ready)(void *), void *argument)
@@ -1102,9 +1131,9 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 static BOOL mouse_available(void *argument)
 {
     CUIS_CLIENT *client = argument;
-    return !console_owner && !mouse_owner && (!pointer_buttons ||
+    return client->retired || (!console_owner && !mouse_owner && (!pointer_buttons ||
         surface_capture == client || background_capture == client ||
-        (pointer_capture && pointer_capture->client == client && !pointer_activation_drag));
+        (pointer_capture && pointer_capture->client == client && !pointer_activation_drag)));
 }
 
 static void end_keyboard(void)
@@ -1186,6 +1215,7 @@ static void end_mouse(void)
 
 LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 {
+    BOOL cancel;
     CUIS_CLIENT *client;
     CUIS_WINDOW *window;
     UQUAD flags;
@@ -1228,7 +1258,10 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
         /* Keep the availability test and waiter publication under the same
          * IRQ mask, just like DISPLAY_LOCK; no lock spans task execution. */
-        if (cancelable_wait(mouse_available, client)) return cancel_after_unlock(flags);
+        if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
+        cancel = cancelable_wait(mouse_available, client);
+        client_put(client);
+        if (cancel) return cancel_after_unlock(flags);
     }
 }
 
@@ -1239,6 +1272,7 @@ static void session_exit(PD *owner)
         CUIS_WINDOW *window;
         ULONG i;
         UQUAD flags = cuis_input_lock();
+        client->retired = TRUE; /* Predicates wake without targeting a replacement session. */
         cohort_leave(client);
         for (i = 0; i < CUIS_ENTRY_LIMIT; i++)
             if (directory_entries[i].owner == client) directory_entries[i].owner = NULL;
@@ -1265,7 +1299,7 @@ static void session_exit(PD *owner)
             client->windows = window->next;
             hide_window(window);
             window_total--;
-            kfree(window);
+            window_retire(window);
         }
         if (client->background) {
             clear_display_regions(client);
@@ -1274,11 +1308,12 @@ static void session_exit(PD *owner)
         flags = cuis_input_lock();
         surface_focus();
         cuis_pointer_sync();
-        cuis_input_unlock(flags);
         *link = client->next;
         if (client->stream_data) kfree(client->stream_data);
         if (client->pending_write) kfree(client->pending_write);
-        kfree(client);
+        client->owner = NULL;
+        client_put(client);
+        cuis_input_unlock(flags);
     }
 }
 
@@ -1342,6 +1377,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         if (next_handle > 0x7fffffffUL) return ENSMEM;
         client = kalloc(sizeof(*client));
         if (!client) return ENSMEM;
+        client->references = 1; client->retired = FALSE;
         client->windows = client->background = NULL;
         client->background_next = NULL; client->background_dirty = FALSE;
         client->background_registered = FALSE;
@@ -1814,6 +1850,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         if (!window) return ENSMEM;
         window->identifier = window_identifier();
         if (!window->identifier) { kfree(window); return ENSMEM; }
+        window->references = 1; window->retired = FALSE;
         window->client = client;
         window->handle = next_window_handle++;
         window->znext = NULL;
@@ -1864,7 +1901,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         *link = window->next;
         client->window_count--;
         window_total--;
-        kfree(window);
+        window_retire(window);
         break;
     case CUIS_WINDOW_CONFIGURE:
         if (!valid_geometry(b, c, d, e) ||
@@ -2188,6 +2225,7 @@ static BOOL wait_ready(void *argument)
     CUIS_WAIT *wait = argument;
     CUIS_WINDOW *window = wait->window;
     ULONG events = wait->events;
+    if (wait->client->retired || (window && window->retired)) return TRUE;
     if (window && (!window->visible || (events == CUIS_EVENT_KEY && focus_window != window))) return TRUE;
     if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
         ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
@@ -2197,44 +2235,55 @@ static BOOL wait_ready(void *argument)
     return wait->timeout >= 0 && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration;
 }
 
+/* One retained wait scope. No input queue is consumed here: READY only
+ * advertises data for the separate read operation. Cancel wins before ready.
+ * The predicate is unpublished by ksched before these references are put. */
+static LONG finish_event_wait(CUIS_WAIT *wait, UQUAD flags, LONG result, BOOL cancel)
+{
+    if (wait->window) window_put(wait->window);
+    client_put(wait->client);
+    if (cancel) return cancel_after_unlock(flags);
+    cuis_input_unlock(flags);
+    return result;
+}
+
 static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, UQUAD argument)
 {
     LONG timeout;
-    ULONG start, duration = 0;
+    ULONG duration = 0;
     UQUAD flags;
     CUIS_WAIT wait;
     timeout = (LONG)argument;
     if (argument != (UQUAD)(QUAD)timeout || timeout < -1) return EINVAL;
-    /* Include the current partial tick so a positive timeout cannot expire
-     * early just because the next 200 Hz tick was already imminent. */
+    /* Include the current partial tick: positive waits must not expire early. */
     if (timeout > 0) duration = (ULONG)timeout / 5 + ((ULONG)timeout % 5 != 0) + 1;
     flags = cuis_input_lock();
-    start = cuis_input_ticks();
+    if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
+    if (window && (window->client != client || window->retired || window->references == 0xffffffffUL)) {
+        client_put(client); cuis_input_unlock(flags); return EACCDN;
+    }
+    if (window) window->references++;
     wait.client = client; wait.window = window; wait.events = events;
-    wait.start = start; wait.duration = duration; wait.timeout = timeout;
+    wait.start = cuis_input_ticks(); wait.duration = duration; wait.timeout = timeout;
     for (;;) {
-        if (window && (!window->visible || (events == CUIS_EVENT_KEY && focus_window != window))) {
-            cuis_input_unlock(flags); return EACCDN;
-        }
+        if (ksched_cancellation_pending()) return finish_event_wait(&wait,flags,EACCDN,TRUE);
+        if (client->retired || (window && (window->retired || !window->visible ||
+            (events == CUIS_EVENT_KEY && focus_window != window))))
+            return finish_event_wait(&wait,flags,EACCDN,FALSE);
         if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
             ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
             ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
             ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))) ||
-            ((events & CUIS_EVENT_MESSAGE) && client->message_count)) {
-            cuis_input_unlock(flags); return 1;
-        }
-        if (timeout >= 0 && (ULONG)(cuis_input_ticks() - start) >= duration) {
-            cuis_input_unlock(flags);
-            return 0;
-        }
-        if (update_owner && update_owner->owner == run) {
-            cuis_input_unlock(flags);
-            return EACCDN;
-        }
+            ((events & CUIS_EVENT_MESSAGE) && client->message_count))
+            return finish_event_wait(&wait,flags,1,FALSE);
+        if (timeout >= 0 && (ULONG)(cuis_input_ticks() - wait.start) >= duration)
+            return finish_event_wait(&wait,flags,0,FALSE);
+        if (update_owner && update_owner->owner == run)
+            return finish_event_wait(&wait,flags,EACCDN,FALSE);
 #if CONF_WITH_X86_64_MEMTEST
         if (timeout == -1) cuis_input_test_wait(events);
 #endif
-        if (!ksched_block(wait_ready, &wait)) cuis_input_idle();
+        if (cancelable_wait(wait_ready, &wait)) return finish_event_wait(&wait,flags,EACCDN,TRUE);
     }
 }
 
@@ -2250,16 +2299,17 @@ LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds)
     if (!milliseconds) return ksched_yield();
     if (update_owner && update_owner->owner == run) return EACCDN;
     flags = cuis_input_lock();
+    if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
     wait.client = client; wait.window = NULL; wait.events = 0;
     wait.start = cuis_input_ticks(); wait.timeout = 0;
     wait.duration = (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1);
     for (;;) {
-        if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
+        if (ksched_cancellation_pending()) return finish_event_wait(&wait,flags,EACCDN,TRUE);
+        if (client->retired) return finish_event_wait(&wait,flags,EACCDN,FALSE);
         if (wait_ready(&wait)) break;
-        if (cancelable_wait(wait_ready, &wait)) return cancel_after_unlock(flags);
+        if (cancelable_wait(wait_ready, &wait)) return finish_event_wait(&wait,flags,EACCDN,TRUE);
     }
-    cuis_input_unlock(flags);
-    return E_OK;
+    return finish_event_wait(&wait,flags,E_OK,FALSE);
 }
 
 typedef struct {

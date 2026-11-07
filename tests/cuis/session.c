@@ -27,6 +27,7 @@ static union {
 static UBYTE stream_rings[8][CUIS_STREAM_BYTES * (1 + sizeof(UWORD))] __attribute__((aligned(16)));
 static ULONG stream_ring_count;
 static ULONG allocations, frees;
+static void *reuse_allocation;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
 static LONG copied[5];
@@ -96,9 +97,14 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
 static BOOL cancel_pending;
 static int cancel_on_wait;
 static BOOL cancel_after_wake;
+static void (*lifetime_wait_hook)(void);
 BOOL ksched_cancellation_pending(void) { return cancel_pending; }
 KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument)
 {
+    if (lifetime_wait_hook) {
+        void (*hook)(void)=lifetime_wait_hook; lifetime_wait_hook=NULL; hook();
+        return KSCHED_WAIT_READY;
+    }
     if (cancel_on_wait) { cancel_on_wait--; return KSCHED_WAIT_CANCELLED; }
     if (cancel_after_wake) { cancel_after_wake=FALSE; cancel_pending=TRUE; return KSCHED_WAIT_READY; }
     return ksched_block(ready, argument) ? KSCHED_WAIT_READY : KSCHED_WAIT_UNMANAGED;
@@ -262,6 +268,10 @@ void *kalloc(ULONG bytes)
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
         allocations == 1024)
         return NULL;
+    if (reuse_allocation) {
+        void *result=reuse_allocation; reuse_allocation=NULL; allocations++;
+        memset(result,0xa5,bytes); return result;
+    }
     if (bytes == sizeof(CUIS_CLIENT)) memset(&pool[allocations], 0xa5, bytes);
     return &pool[allocations++];
 }
@@ -292,6 +302,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "entries.c"
 #include "peers.c"
 #include "cohorts.c"
+#include "lifetime.c"
 
 static int cancellation_adapter_checks(void)
 {
@@ -326,6 +337,8 @@ int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=lifetime_checks();
+    if (rc) return rc;
     rc=cancellation_adapter_checks();
     if (rc) return rc;
     CHECK(cuis_service(99, ~0ULL) == EINVFN);

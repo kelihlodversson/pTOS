@@ -331,6 +331,7 @@ static void test_joins(void)
 static const char group_env[2]={0,0};
 static struct {
     volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done, atexit_calls;
+    volatile long session, window, wait_done;
     int32_t target, joiner, killer, nested, wait_child;
     unsigned char *stack[6];
 } group;
@@ -351,7 +352,7 @@ static int group_exists(const char *name)
     (void)Fclose(h); return 1;
 }
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-static long native_cuis(unsigned fn, long handle, unsigned long value)
+static long native_cuis(unsigned fn, long handle, unsigned long long value)
 {
     register unsigned long long ax __asm__("rax")=(0x103ULL<<32)|fn;
     register unsigned long long di __asm__("rdi")=(unsigned long)handle;
@@ -359,17 +360,36 @@ static long native_cuis(unsigned fn, long handle, unsigned long value)
     __asm__ volatile ("syscall" : "+a"(ax) : "r"(di), "r"(si) : "rcx","r11","memory","cc");
     return (long)ax;
 }
+static long native_cuis5(unsigned fn, long a, long b, long c, long d, long e)
+{
+    register unsigned long long ax __asm__("rax")=(0x103ULL<<32)|fn;
+    register unsigned long long di __asm__("rdi")=(long long)a;
+    register unsigned long long si __asm__("rsi")=(long long)b;
+    register unsigned long long dx __asm__("rdx")=(long long)c;
+    register unsigned long long r10 __asm__("r10")=(long long)d;
+    register unsigned long long r8 __asm__("r8")=(long long)e;
+    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di),"r"(si),"r"(dx),"r"(r10),"r"(r8) : "rcx","r11","memory","cc");
+    return (long)ax;
+}
+
 #endif
 static void group_nested(void *arg);
 static void group_target(void *arg)
 {
     (void)arg; group.ready|=1;
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-    if (group.mode==5) {
-        long session=native_cuis(0,0,0);
-        if (session<0) group.error=1;
-        (void)native_cuis(24,session,3600000UL);
-        group.returned=1; /* must cancel, not wait an hour or return success */
+    if (group.mode>=5) {
+        long rc;
+        group.session=native_cuis(0,0,0);
+        if (group.session<0) group.error=1;
+        if (group.mode==5) rc=native_cuis(24,group.session,3600000UL);
+        else if (group.mode==7 || group.mode==8) {
+            group.window=native_cuis5(3,1,1,32,32,0);
+            if (group.window<0 || native_cuis(6,group.window,0)) group.error=1;
+            rc=native_cuis5(20,group.window,8,-1,0,0); /* window/message wait */
+        } else rc=native_cuis(23,group.session,~0ULL);
+        if ((group.mode==8 || group.mode==9) && rc==-36L) group.wait_done=1;
+        else group.returned=1; /* cancellation must not return to user */
     }
 #endif
     if (group.mode==1 || group.mode==2) group_nested(arg);
@@ -405,6 +425,19 @@ static void group_killer(void *arg)
     (void)arg;
     while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
     if (!group.mode) { for (;;) (void)Syield(); }
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+    if (group.mode==8 || group.mode==9) {
+        if (group.mode==8) {
+            if (native_cuis(5,group.window,0)) group.error=1;
+        } else {
+            long replacement;
+            if (native_cuis(2,group.session,0)) group.error=1;
+            replacement=native_cuis(0,0,0);
+            if (replacement<=group.session) group.error=1;
+        }
+        while (!group.wait_done && !group.returned) (void)Syield();
+    }
+#endif
     group.requested=1;
     if (group.mode==4) {
         if (atexit(group_atexit)) group.error=1;
@@ -477,12 +510,13 @@ static void test_group_exit(void)
     }
     for (mode=0;mode<
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-        6
+        10
 #else
         5
 #endif
         ;mode++) {
         for (i=0;i<5;i++) (void)Fdelete(files[i]);
+        group.session=group.window=-1; group.wait_done=0;
         group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=group.atexit_calls=0;
         ptest_assert_msg(launch_entry(group_peer,CLONE_VM,group.stack[5],&peer_pid,&peer_tid)>0,"independent shared-ASPACE peer created");
         ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
@@ -653,6 +687,8 @@ void pclone_run_managed_tests(void)
         conws("native libc exit: PASS\r\n");
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
         conws("native CUIS delay cancellation: PASS\r\n");
+        conws("native CUIS retained event cancellation: PASS\r\n");
+        conws("native CUIS window/session retirement: PASS\r\n");
 #endif
 #endif
     }
