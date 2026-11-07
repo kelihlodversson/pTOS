@@ -29,7 +29,7 @@ static int stream_checks(void)
     CHECK(SW(b, 0, 1, 0) == EIMBA);
     fail_allocation = TRUE; CHECK(SW(b, 0x10000, 16, 0) == ENSMEM); fail_allocation = FALSE;
     fail_at_allocation = allocations + 1;
-    CHECK(SW(b, 0x10000, 16, 0) == ENSMEM && !(*find_owner(&first))->pending_write && !(*find_owner(&second))->stream_data);
+    CHECK(SW(b, 0x10000, 16, 0) == ENSMEM && !(*find_owner(&first))->stream_write && !(*find_owner(&second))->stream_data);
     fail_at_allocation = 0;
     CHECK(SW(b, 0x10000, 32767, 0) == 32767);
     CHECK(SW(b, 0x10000, 32767, 0) == 32767);
@@ -100,7 +100,7 @@ static int stream_checks(void)
     CHECK(cuis_window_service(CUIS_UPDATE_BEGIN, b, 0, 0, 0, 0) == E_OK);
     CHECK(SR(a, 0x20000, 1, 1, 0) == EACCDN);
     CHECK(SW(a, 0x10000, 32767, 0) == 32767 && SW(a, 0x10000, 32767, 0) == 32767 && SW(a, 0x10000, 2, 0) == 2);
-    CHECK(SW(a, 0x10000, 1, 1) == EACCDN && !(*find_owner(&first))->pending_write);
+    CHECK(SW(a, 0x10000, 1, 1) == EACCDN && !(*find_owner(&first))->stream_write);
     cuis_process_exit(&first);
     CHECK(allocations == frees && input_irqs && !input_bad_idle);
     return 0;

@@ -30,6 +30,20 @@ static union {
 } pool[1024];
 static UBYTE stream_rings[8][CUIS_STREAM_BYTES * (1 + sizeof(UWORD))] __attribute__((aligned(16)));
 static ULONG stream_ring_count;
+/* Stream lifetime cases use real allocation/free so ASan observes retirement
+ * UAFs, while the older broad fixtures retain their deterministic pool. */
+extern void *malloc(__SIZE_TYPE__ size);
+extern void free(void *memory);
+static BOOL stream_heap_mode, stream_heap_bad, stream_resident_copy;
+static struct { void *address; BOOL live; } stream_heap[1024];
+static ULONG stream_heap_count;
+static void (*stream_operation_hook)(int phase); /* 0 preflight, 1 copyin, 2 copyout */
+static void stream_hook(int phase)
+{
+    if (stream_operation_hook) {
+        void (*hook)(int)=stream_operation_hook; stream_operation_hook=NULL; hook(phase);
+    }
+}
 static ULONG allocations, frees;
 static void *reuse_allocation;
 static BOOL fail_allocation;
@@ -236,6 +250,7 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 }
 BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 {
+    if (!stream_resident_copy) stream_hook(0);
     if (region_exit_on_output) {
         region_exit_on_output = FALSE;
         cuis_process_exit(run);
@@ -275,10 +290,39 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
     child_copy_hook();
     memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
 }
+BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+{
+    stream_hook(0);
+    return !fail_copy && address >= 0x10000 && address <= 0x18000 && size <= 0x18000-address;
+}
+BOOL kproc_copy_from_user_resident(void *destination, UQUAD address, ULONG size)
+{
+    BOOL result;
+    stream_hook(1); stream_resident_copy=TRUE;
+    result=kproc_copy_from_user(destination,address,size);
+    stream_resident_copy=FALSE; return result;
+}
+BOOL kproc_copy_to_user_resident(UQUAD address, const void *source, ULONG size)
+{
+    BOOL result;
+    stream_hook(2); stream_resident_copy=TRUE;
+    result=kproc_copy_to_user(address,source,size);
+    stream_resident_copy=FALSE; return result;
+}
 const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
 
 void *kalloc(ULONG bytes)
 {
+    if (stream_heap_mode) {
+        void *p;
+        if (!bytes || fail_allocation || (fail_at_allocation && allocations==fail_at_allocation) ||
+            stream_heap_count==1024) return NULL;
+        p=malloc(bytes);
+        if (!p) return NULL;
+        memset(p,0xa5,bytes);
+        stream_heap[stream_heap_count].address=p; stream_heap[stream_heap_count++].live=TRUE;
+        allocations++; return p;
+    }
     if (bytes == sizeof(stream_rings[0])) {
         if (fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) || stream_ring_count == 8) return NULL;
         allocations++; return stream_rings[stream_ring_count++];
@@ -294,7 +338,17 @@ void *kalloc(ULONG bytes)
     if (bytes == sizeof(CUIS_CLIENT)) memset(&pool[allocations], 0xa5, bytes);
     return &pool[allocations++];
 }
-void kfree(void *memory) { (void)memory; frees++; }
+void kfree(void *memory)
+{
+    if (stream_heap_mode) {
+        ULONG i=stream_heap_count;
+        while (i) if (stream_heap[--i].address==memory && stream_heap[i].live) {
+            stream_heap[i].live=FALSE; free(memory); frees++; return;
+        }
+        stream_heap_bad=TRUE; return;
+    }
+    (void)memory; frees++;
+}
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "windows.c"
@@ -306,6 +360,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "messages.c"
 #include "delay.c"
 #include "streams.c"
+#include "stream_lifetime.c"
 #include "combined.c"
 #include "display.c"
 #include "notices.c"
@@ -360,6 +415,8 @@ int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=stream_lifetime_checks();
+    if (rc) return rc;
     rc=input_transaction_checks();
     if (rc) return rc;
     CHECK(!cancellation_bad);

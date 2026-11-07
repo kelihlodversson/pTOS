@@ -637,6 +637,16 @@ if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
     record "native CUIS exclusive combined wait lifetime" FAIL "combined wait lifetime worker did not pass"
 fi
 
+# Ownership evidence comes from the parent after the complete worker verdict,
+# including its final mapped-page baseline, never an early worker print.
+if [ "$machine" = pc-x86_64 ] &&
+   grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS retained stream ownership: PASS (parent verified)' "$suite_log"; then
+    record "native CUIS stream ownership" FAIL "parent did not verify the complete stream worker"
+fi
+
 # -- the verdict ----------------------------------------------------------------
 
 show_logs

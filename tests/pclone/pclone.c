@@ -5,6 +5,7 @@
 #include <mint/osbind.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
 
@@ -411,6 +412,189 @@ static void native_resume_peer(void *argument)
     } while (!(buttons&1));
     native_resume.second_tick=Ssystem(S_GETLVAL,0x4baL,0L);
     conws("CUIS resume second: READY\r\n");
+}
+static struct {
+    volatile long mode, ready, go, error, replacement, requested, returned;
+    long session, peer_session, parent_pid;
+    unsigned char *data, *output, *late;
+} native_stream;
+static long stream_call(unsigned fn,long session,void *data,long length,long block,long *sender)
+{
+    return native_cuis6(fn,(unsigned long)session,(unsigned long)data,(unsigned long)length,
+                        (unsigned long)block,(unsigned long)sender,0);
+}
+static void stream_native_peer(void *argument)
+{
+    long sender=-1,rc;
+    (void)argument;
+    if (native_stream.mode==0) {
+        if (stream_call(30,native_stream.session,native_stream.data,1,0,0)!=-36L ||
+            stream_call(31,native_stream.session,native_stream.output,16,0,&sender)!=16 ||
+            sender!=native_stream.parent_pid || native_stream.output[0]!=0x35) native_stream.error=1;
+        native_stream.data[0]=99;
+    } else if (native_stream.mode==1) {
+        long own=native_cuis(0,0,0);
+        if (own<0 || stream_call(30,native_stream.session,native_stream.data,16,0,0)!=16) native_stream.error=1;
+    } else if (native_stream.mode==2 || native_stream.mode==3 || native_stream.mode==6) {
+        native_stream.peer_session=native_cuis(0,0,0);
+        if (native_stream.peer_session<0) native_stream.error=1;
+        native_stream.ready=1;
+        while (!native_stream.go) (void)Syield();
+        if (native_stream.mode==6) return; /* PROCESS exit retires the retained receiver. */
+        if (native_stream.mode==3) {
+            if (native_cuis(2,native_stream.peer_session,0)) native_stream.error=1;
+            native_stream.replacement=native_cuis(0,0,0);
+            if (native_stream.replacement<=native_stream.peer_session ||
+                stream_call(89,native_stream.replacement,0,0,0,0)!=0) native_stream.error=1;
+            native_stream.ready=2;
+        }
+        while (native_stream.go!=2) (void)Syield();
+        rc=stream_call(89,native_stream.mode==3?native_stream.replacement:native_stream.peer_session,0,0,0,0);
+        if (rc!=(native_stream.mode==3?0:65536L)) native_stream.error=1;
+        if (native_stream.mode==2 &&
+            (stream_call(31,native_stream.peer_session,native_stream.output,4,0,&sender)!=4 ||
+             sender!=native_stream.parent_pid)) native_stream.error=1;
+    } else if (native_stream.mode==4) {
+        if (stream_call(31,native_stream.session,native_stream.output,1,0,0)!=-36L ||
+            stream_call(88,native_stream.session,native_stream.output,1,0,0)!=-36L) native_stream.error=1;
+        if (native_cuis(2,native_stream.session,0)) native_stream.error=1;
+        native_stream.replacement=native_cuis(0,0,0);
+        if (native_stream.replacement<=native_stream.session ||
+            stream_call(89,native_stream.replacement,0,0,0,0)!=0) native_stream.error=1;
+    } else if (native_stream.mode==5) {
+        if (stream_call(31,native_stream.session,native_stream.output,1,0,0)!=-36L ||
+            Mfree(native_stream.late)!=0) native_stream.error=1;
+        native_stream.late=0;
+        if (stream_call(30,native_stream.session,native_stream.data,16,0,0)!=16) native_stream.error=1;
+    }
+}
+static void stream_native_retire_writer(void *argument)
+{
+    (void)argument;
+    if (stream_call(30,native_stream.peer_session,native_stream.data,1,0,0)!=-36L ||
+        native_cuis(2,native_stream.session,0)) native_stream.error=1;
+    native_stream.replacement=native_cuis(0,0,0);
+    if (native_stream.replacement<=native_stream.session) native_stream.error=1;
+}
+static void stream_native_killer(void *argument)
+{
+    (void)argument; native_stream.requested=1;
+    (void)term_group(73);
+    native_stream.error=1;
+}
+static void stream_native_group(void *argument)
+{
+    int32_t pid,tid;
+    long own=native_cuis(0,0,0);
+    (void)argument;
+    if (own<0 || stream_call(30,native_stream.session,native_stream.data,32767,0,0)!=32767 ||
+        stream_call(30,native_stream.session,native_stream.data,32767,0,0)!=32767 ||
+        stream_call(30,native_stream.session,native_stream.data,2,0,0)!=2 ||
+        launch_entry(stream_native_killer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&tid)<=0) {
+        native_stream.error=1; return;
+    }
+    if (stream_call(30,native_stream.session,native_stream.data,16,1,0)!=16) native_stream.error=1;
+    native_stream.returned=1; /* Raw stream wait completes; cancellation is still deferred. */
+    (void)Syield(); /* Safe ordinary checkpoint after all stream resources are gone. */
+    native_stream.error=1;
+}
+static void test_native_streams(void)
+{
+    int mode,spin;
+    int32_t pid,tid,retire_pid,retire_tid,status;
+    long rc,sender,own,original=Pgetpid();
+    native_stream.data=(void *)Malloc(32767); native_stream.output=(void *)Malloc(32767);
+    ptest_assert_msg((long)native_stream.data>0 && (long)native_stream.output>0,"stream fixture buffers");
+    if ((long)native_stream.data<=0 || (long)native_stream.output<=0) {
+        if ((long)native_stream.data>0) (void)Mfree(native_stream.data);
+        if ((long)native_stream.output>0) (void)Mfree(native_stream.output);
+        return;
+    }
+    native_stream.parent_pid=original;
+    for (mode=0;mode<7;mode++) {
+        native_stream.mode=mode; native_stream.ready=native_stream.go=native_stream.error=0;
+        native_stream.replacement=-1; retire_tid=-1;
+        memset(native_stream.data,0x35,32767);
+        own=native_stream.session=native_cuis(0,0,0);
+        ptest_assert_msg(own>=0,"native stream session");
+        if (own<0) break;
+        if (mode==0) {
+            ptest_assert_msg(stream_call(30,own,native_stream.data,32767,0,0)==32767 &&
+                stream_call(30,own,native_stream.data,32767,0,0)==32767 &&
+                stream_call(30,own,native_stream.data,2,0,0)==2,"fill loopback destination");
+        }
+        if (mode==5) native_stream.late=(void *)Malloc(4096);
+        rc=launch_entry(stream_native_peer,CLONE_VM|((mode==1||mode==2||mode==3||mode==6)?0:CLONE_SAME_PROCESS),
+                        runnable_stacks[0],&pid,&tid);
+        ptest_assert_msg(rc>0,"stream peer constructed");
+        if (rc<=0) break;
+        if (mode==2 || mode==3 || mode==6) {
+            for (spin=0;spin<2000 && !native_stream.ready;spin++) (void)Syield();
+            ptest_assert_msg(native_stream.ready && !native_stream.error,"separate PROCESS stream receiver");
+            ptest_assert_msg(stream_call(30,native_stream.peer_session,native_stream.data,32767,0,0)==32767 &&
+                stream_call(30,native_stream.peer_session,native_stream.data,32767,0,0)==32767 &&
+                stream_call(30,native_stream.peer_session,native_stream.data,2,0,0)==2,"fill foreign destination");
+            if (mode==2) ptest_assert_msg(launch_entry(stream_native_retire_writer,CLONE_VM|CLONE_SAME_PROCESS,
+                runnable_stacks[2],&retire_pid,&retire_tid)>0,"source-retirement sibling");
+            native_stream.go=1;
+            ptest_assert_msg(stream_call(30,native_stream.peer_session,native_stream.data,16,1,0)==-36L,
+                             "blocked WRITE wakes on source or receiver retirement");
+            if (mode==2) {
+                ptest_assert_msg(join_tid(retire_tid,&status)==0 && status==0,"retirement sibling reaped");
+                own=native_stream.replacement;
+            } else ptest_assert_msg(stream_call(30,native_stream.peer_session,native_stream.data,16,0,0)==-36L,
+                                   "old receiver handle cannot target replacement");
+            native_stream.go=2;
+        } else if (mode==0) {
+            ptest_assert_msg(stream_call(30,own,native_stream.data,16,1,0)==16,"blocked writer progresses with independent reader slot");
+        } else {
+            rc=stream_call(31,own,mode==5?native_stream.late:native_stream.output,mode==1?8:16,1,&sender);
+            ptest_assert_msg(rc==(mode==4?-36L:mode==5?-40L:8L),"READ retirement or resident-only late copy failure");
+            if (mode==4) own=native_stream.replacement;
+            if (mode==1) ptest_assert_msg(sender==pid && native_stream.output[0]==0x35,"historical foreign sender and partial data");
+            if (mode==5) ptest_assert_msg(stream_call(31,own,native_stream.output,16,0,&sender)==16 &&
+                sender==original && native_stream.output[0]==0x35,"failed read leaves all bytes available");
+        }
+        if (mode==1 || mode==2 || mode==3 || mode==6) ptest_assert_msg((Pwaitpid(pid,0,0)&65535)==0,"stream PROCESS reaped");
+        else ptest_assert_msg(join_tid(tid,&status)==0 && status==0,"stream THREAD reaped");
+        ptest_assert_msg(!native_stream.error && Pgetpid()==original,"stream identities and independent parent survive");
+        if (mode==1) {
+            ptest_assert_msg(stream_call(88,own,native_stream.output,4,0,&sender)==4 && sender==pid &&
+                stream_call(89,own,0,0,0,0)==8 && stream_call(31,own,native_stream.output,8,0,&sender)==8 && sender==pid,
+                "PEEK preserves bytes and READ preserves sender after source exit");
+        }
+        if (mode==0) {
+            ptest_assert_msg(stream_call(31,own,native_stream.output,32767,0,0)==32767 &&
+                stream_call(31,own,native_stream.output,32767,0,0)==32767 && native_stream.output[32753]==0x35 &&
+                stream_call(31,own,native_stream.output,2,0,0)==2 && native_stream.output[0]==0x35,
+                "blocked WRITE owns its immutable copyin snapshot through wrap");
+        }
+        ptest_assert_msg(native_cuis(2,own,0)==0,"native stream session teardown");
+    }
+    native_stream.session=native_cuis(0,0,0); native_stream.error=native_stream.requested=native_stream.returned=0;
+    memset(native_stream.data,0x35,32767);
+    rc=launch_entry(stream_native_group,CLONE_VM,runnable_stacks[1],&pid,&tid);
+    ptest_assert_msg(rc>0,"pending-stream group constructed");
+    if (rc>0) {
+        for (spin=0;spin<2000 && !native_stream.requested;spin++) (void)Syield();
+        ptest_assert_msg(native_stream.requested && !native_stream.error,"group request during admitted raw stream wait");
+        for (spin=0;spin<16;spin++) {
+            ptest_assert_msg(Pwaitpid(pid,1,0)==0 && !native_stream.returned,"noncancellable stream retains group until ordinary progress");
+            (void)Syield();
+        }
+        ptest_assert_msg(stream_call(31,native_stream.session,native_stream.output,16,0,&sender)==16 && sender==pid,
+                         "independent PROCESS reader makes progress");
+        rc=Pwaitpid(pid,0,0);
+        ptest_assert_msg((rc>>16)==pid && (rc&65535)==73 && native_stream.returned && !native_stream.error,
+                         "group exits at later safe checkpoint with committed stream intact");
+        ptest_assert_msg(Pwaitpid(pid,1,0)==-33L && stream_call(89,native_stream.session,0,0,0,0)==65536L,
+                         "one PROCESS completion, no retraction of committed packet");
+    }
+    ptest_assert_msg(native_cuis(2,native_stream.session,0)==0 && Mfree(native_stream.data)==0 &&
+                     Mfree(native_stream.output)==0,"stream buffers and GUI resources reclaimed");
+    /* Whole managed worker status/baseline is checked by the parent suite;
+     * do not print a success verdict before those remaining assertions. */
+    conws("native CUIS retained stream cases: exercised\r\n");
 }
 static struct {
     volatile long session, mode, adopt, error, returned, first_tick;
@@ -875,6 +1059,7 @@ static void test_runnable(void)
 #if defined(TEST_WITH_PTERMGRP)
     test_group_exit();
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_PTHJOIN)
+    test_native_streams();
     test_native_resume();
 #endif
 #endif
@@ -965,6 +1150,10 @@ void test_pclone(void)
             status = Pwaitpid(child,0,0);
             ptest_assert_msg((status >> 16) == child && !(status & 65535),
                              "managed clone execution worker must pass");
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_PTERMGRP) && defined(TEST_WITH_PTHJOIN)
+            if ((status>>16)==child && !(status&65535))
+                conws("native CUIS retained stream ownership: PASS (parent verified)\r\n");
+#endif
         }
     }
 #endif

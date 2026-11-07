@@ -44,6 +44,7 @@ typedef enum {
     BUTTON_HISTORY_EVENT, BUTTON_HISTORY_EMPTY, BUTTON_HISTORY_GAP,
     BUTTON_HISTORY_POLICY, BUTTON_HISTORY_EXHAUSTED, BUTTON_HISTORY_RETIRED
 } CUIS_BUTTON_READ;
+typedef struct cuis_stream_operation CUIS_STREAM_OPERATION;
 typedef struct cuis_window {
     struct cuis_client *client;
     struct cuis_window *next;
@@ -120,7 +121,8 @@ typedef struct cuis_client {
     BOOL cohort_exit, cohort_delivered, cohort_accepted;
     UBYTE cohort_data[CUIS_COHORT_BYTES];
     LONG pid;
-    CUIS_PACKET *pending_write;
+    CUIS_STREAM_OPERATION *stream_read, *stream_write; /* Borrowed; continuations own records. */
+    UQUAD stream_sequence;
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
     ULONG stream_head, stream_bytes;
     struct { ULONG token; WORD pid, signal; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
@@ -156,6 +158,14 @@ typedef struct cuis_client {
     struct cuis_client *surface_next;
     LONG input_result[5]; /* key, count, x, y, packed buttons/modifiers */
 } CUIS_CLIENT;
+typedef enum { STREAM_ADMITTED, STREAM_PENDING, STREAM_COPYING, STREAM_COMMITTED, STREAM_RETIRED } CUIS_STREAM_STATE;
+struct cuis_stream_operation {
+    CUIS_CLIENT *source, *receiver; /* Source retained; extra receiver ref for WRITE. */
+    UQUAD token;
+    ULONG session, destination, kind, length, head;
+    CUIS_STREAM_STATE state;
+    CUIS_PACKET *packet; /* Sole owner until this operation is reclaimed. */
+};
 static CUIS_CLIENT *clients;
 static BOOL cohort_ready(CUIS_CLIENT *client);
 static void cohort_leave(CUIS_CLIENT *client);
@@ -1257,7 +1267,10 @@ static BOOL client_get(CUIS_CLIENT *client)
 }
 static void client_put(CUIS_CLIENT *client)
 {
-    if (!--client->references) kfree(client);
+    if (!--client->references) {
+        if (client->stream_data) kfree(client->stream_data);
+        kfree(client);
+    }
 }
 static void window_put(CUIS_WINDOW *window)
 {
@@ -1487,6 +1500,8 @@ static void session_exit(PD *owner)
         ULONG i;
         UQUAD flags = cuis_input_lock();
         client->retired = TRUE; /* Predicates wake without targeting a replacement session. */
+        if (client->stream_read) client->stream_read->state = STREAM_RETIRED;
+        if (client->stream_write) client->stream_write->state = STREAM_RETIRED;
         cohort_leave(client);
         for (i = 0; i < CUIS_ENTRY_LIMIT; i++)
             if (directory_entries[i].owner == client) directory_entries[i].owner = NULL;
@@ -1523,8 +1538,6 @@ static void session_exit(PD *owner)
         surface_focus();
         cuis_pointer_sync();
         *link = client->next;
-        if (client->stream_data) kfree(client->stream_data);
-        if (client->pending_write) kfree(client->pending_write);
         client->owner = NULL;
         client_put(client);
         cuis_input_unlock(flags);
@@ -1605,7 +1618,8 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->cohort_read_result = FALSE;
         client->cohort_exit = client->cohort_delivered = client->cohort_accepted = FALSE;
         client->pid = kproc_pid(run);
-        client->pending_write = NULL; client->stream_data = NULL;
+        client->stream_read = client->stream_write = NULL; client->stream_sequence = 0;
+        client->stream_data = NULL;
         client->stream_head = client->stream_bytes = 0;
         client->button_sequence = 0; client->button_policy = 1;
         client->history_head = client->history_count = 0; client->history_exhausted = FALSE;
@@ -2530,11 +2544,6 @@ LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds)
 }
 
 typedef struct {
-    ULONG handle, length;
-    BOOL write;
-} CUIS_STREAM_WAIT;
-
-typedef struct {
     CUIS_CLIENT *client;
     ULONG events, minimum, start, duration;
     BOOL resumed_button;
@@ -2983,100 +2992,160 @@ LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD mod
     return copied ? E_OK : EIMBA;
 }
 
+static CUIS_STREAM_OPERATION **stream_slot(CUIS_STREAM_OPERATION *operation)
+{
+    return operation->kind == CUIS_STREAM_WRITE ?
+        &operation->source->stream_write : &operation->source->stream_read;
+}
+static BOOL stream_owned(CUIS_STREAM_OPERATION *operation)
+{
+    return operation->state != STREAM_RETIRED && operation->state != STREAM_COMMITTED &&
+        operation->token && operation->token <= operation->source->stream_sequence &&
+        !operation->source->retired && !operation->receiver->retired &&
+        operation->source->handle == operation->session &&
+        operation->receiver->handle == operation->destination &&
+        *stream_slot(operation) == operation;
+}
 static BOOL stream_ready(void *argument)
 {
-    CUIS_STREAM_WAIT *wait = argument;
-    CUIS_CLIENT *peer = find_handle(wait->handle);
-    /* A waiting writer retains only the non-reused handle, never a pointer
-     * into a receiver which can exit while the writer is suspended. */
-    return !peer || (wait->write ?
-        CUIS_STREAM_BYTES - peer->stream_bytes >= wait->length :
-        peer->stream_bytes >= wait->length);
+    CUIS_STREAM_OPERATION *operation = argument;
+    if (!stream_owned(operation)) return TRUE;
+    return operation->kind == CUIS_STREAM_WRITE ?
+        CUIS_STREAM_BYTES-operation->receiver->stream_bytes >= operation->length :
+        operation->source->stream_bytes >= operation->length;
+}
+/* Consumes the owning handle. Teardown can retire, but never free this scope. */
+static LONG stream_finish(CUIS_STREAM_OPERATION **handle, UQUAD flags, LONG result)
+{
+    CUIS_STREAM_OPERATION *operation = *handle;
+    *handle = NULL;
+    if (operation) {
+        if (*stream_slot(operation) == operation) *stream_slot(operation) = NULL;
+        if (operation->packet) kfree(operation->packet);
+        if (operation->kind == CUIS_STREAM_WRITE) client_put(operation->receiver);
+        client_put(operation->source);
+        kfree(operation);
+    }
+    cuis_input_unlock(flags);
+    return result;
 }
 
-/* Exact byte-stream transfers. A parallel sender-ID ring preserves trusted
- * metadata for partial reads without imposing packet boundaries on payloads. */
+/* Exact transfers. Faulting preflight precedes resource admission; subsequent
+ * copies are resident-only, so they cannot xterm an owning continuation. */
 LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD length,
                          UQUAD block, UQUAD sender)
 {
-    CUIS_CLIENT *client = *find_owner(run), *peer;
-    CUIS_PACKET *packet;
-    CUIS_STREAM_WAIT wait;
+    CUIS_CLIENT *client, *peer;
+    CUIS_STREAM_OPERATION *operation;
+    CUIS_STREAM_OPERATION **slot;
     UQUAD flags;
-    ULONG bytes, at, i;
+    ULONG session, bytes, at, i;
     UWORD *senders;
-    LONG result, pid;
+    LONG pid;
+    BOOL write, copied;
+    UBYTE *storage;
     if (function != CUIS_STREAM_READ && function != CUIS_STREAM_WRITE &&
         function != CUIS_STREAM_PEEK && function != CUIS_STREAM_PENDING) return EINVFN;
     if (handle > 0x7fffffffULL || length > CUIS_STREAM_MAX || block > 1) return EINVAL;
-    if (!client) return EACCDN;
-    if (function != CUIS_STREAM_WRITE && handle != client->handle) return EACCDN;
+    flags = cuis_input_lock();
+    client = *find_owner(run);
+    if (!client || client->retired || (function != CUIS_STREAM_WRITE && handle != client->handle)) {
+        cuis_input_unlock(flags); return EACCDN;
+    }
     if (function == CUIS_STREAM_PENDING) {
-        if (buffer || length || block || sender) return EINVAL;
-        return (LONG)client->stream_bytes;
+        LONG result = buffer || length || block || sender ? EINVAL : (LONG)client->stream_bytes;
+        cuis_input_unlock(flags); return result;
     }
     peer = find_handle(handle);
-    if (!peer) return EACCDN;
-    if (!length) return 0;
-    wait.handle = (ULONG)handle; wait.length = (ULONG)length;
-    wait.write = function == CUIS_STREAM_WRITE;
-    if (wait.write) {
-        if (client->pending_write) return EACCDN;
-        packet = kalloc(sizeof(*packet) + (ULONG)length - 1);
-        if (!packet) return ENSMEM;
-        packet->sender_pid = client->pid;
-        /* Teardown also owns the snapshot if backing its input terminates
-         * the writer, or a future cancellation abandons this continuation. */
-        client->pending_write = packet;
-        if (!kproc_copy_from_user(packet->data, buffer, (ULONG)length)) {
-            client->pending_write = NULL; kfree(packet); return EIMBA;
-        }
-    }
-    if (wait.write) {
-        peer = find_handle(handle);
-        if (peer && !peer->stream_data)
-            peer->stream_data = kalloc(CUIS_STREAM_BYTES * (1 + sizeof(UWORD)));
-        if (!peer || !peer->stream_data) {
-            packet = client->pending_write; client->pending_write = NULL;
-            kfree(packet); return peer ? ENSMEM : EACCDN;
-        }
-    }
+    if (!peer || peer->retired) { cuis_input_unlock(flags); return EACCDN; }
+    if (!length) { cuis_input_unlock(flags); return 0; }
+    write = function == CUIS_STREAM_WRITE;
+    slot = write ? &client->stream_write : &client->stream_read;
+    if (*slot) { cuis_input_unlock(flags); return EACCDN; }
+    if (!write && !block && client->stream_bytes < length) { cuis_input_unlock(flags); return EAGAIN; }
+    session = client->handle; /* No borrowed pointer survives faulting preflight. */
+    cuis_input_unlock(flags);
+    if (write ? !kproc_validate_user_range(buffer,(ULONG)length) :
+        (!kproc_validate_user_write(buffer,(ULONG)length) ||
+         (sender && !kproc_validate_user_write(sender,sizeof(LONG))))) return EIMBA;
     flags = cuis_input_lock();
-    for (;;) {
-        peer = find_handle(handle);
-        if (!peer) { result = EACCDN; break; }
-        if (stream_ready(&wait)) {
-            if (wait.write) {
-                packet = client->pending_write;
-                at = (peer->stream_head + peer->stream_bytes) % CUIS_STREAM_BYTES;
-                bytes = CUIS_STREAM_BYTES - at;
-                if (bytes > length) bytes = (ULONG)length;
-                memcpy(peer->stream_data + at, packet->data, bytes);
-                if (bytes < length) memcpy(peer->stream_data, packet->data + bytes, (ULONG)length - bytes);
-                senders = (UWORD *)(peer->stream_data + CUIS_STREAM_BYTES);
-                for (i = 0; i < length; i++) senders[(at + i) % CUIS_STREAM_BYTES] = (UWORD)packet->sender_pid;
-                client->pending_write = NULL;
-                peer->stream_bytes += (ULONG)length;
-                cuis_input_unlock(flags);
-                kfree(packet);
-                return (LONG)length;
-            }
-            /* Back the whole output before the non-yielding copy/commit.
-             * Failed copyout leaves all bytes and sender metadata unread. */
+    client = *find_owner(run); peer = find_handle(handle);
+    if (!client || client->retired || client->handle != session || !peer || peer->retired) { cuis_input_unlock(flags); return EACCDN; }
+    slot = write ? &client->stream_write : &client->stream_read;
+    if (*slot) { cuis_input_unlock(flags); return EACCDN; }
+    if (client->stream_sequence == ~0ULL) { cuis_input_unlock(flags); return ERANGE; }
+    operation = kalloc(sizeof(*operation));
+    if (!operation) { cuis_input_unlock(flags); return ENSMEM; }
+    if (!client_get(client)) { kfree(operation); cuis_input_unlock(flags); return EACCDN; }
+    if (write && !client_get(peer)) {
+        client_put(client); kfree(operation); cuis_input_unlock(flags); return EACCDN;
+    }
+    operation->source = client; operation->receiver = peer;
+    operation->session = session; operation->destination = (ULONG)handle;
+    operation->token = ++client->stream_sequence;
+    operation->kind = function; operation->length = (ULONG)length; operation->head = 0;
+    operation->packet = NULL; operation->state = STREAM_ADMITTED;
+    *slot = operation;
+    if (write) {
+        cuis_input_unlock(flags);
+        operation->packet = kalloc(sizeof(*operation->packet)+(ULONG)length-1);
+        flags = cuis_input_lock();
+        if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+        if (!operation->packet) return stream_finish(&operation,flags,ENSMEM);
+        operation->packet->sender_pid = client->pid;
+        cuis_input_unlock(flags);
+        copied = kproc_copy_from_user_resident(operation->packet->data,buffer,(ULONG)length);
+        flags = cuis_input_lock();
+        if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+        if (!copied) return stream_finish(&operation,flags,EIMBA);
+        if (!peer->stream_data) {
             cuis_input_unlock(flags);
-            if (!kproc_validate_user_write(buffer, (ULONG)length) ||
-                (sender && !kproc_validate_user_write(sender, sizeof(LONG)))) return EIMBA;
+            storage = kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
             flags = cuis_input_lock();
-            if (!stream_ready(&wait)) continue;
-            senders = (UWORD *)(client->stream_data + CUIS_STREAM_BYTES);
-            pid = senders[client->stream_head];
-            bytes = CUIS_STREAM_BYTES - client->stream_head;
-            if (bytes > length) bytes = (ULONG)length;
-            if (!kproc_copy_to_user(buffer, client->stream_data + client->stream_head, bytes) ||
-                (bytes < length && !kproc_copy_to_user(buffer + bytes, client->stream_data, (ULONG)length - bytes)) ||
-                (sender && !kproc_copy_to_user(sender, &pid, sizeof(pid)))) {
-                cuis_input_unlock(flags); return EIMBA;
+            if (!stream_owned(operation)) {
+                if (storage) kfree(storage);
+                return stream_finish(&operation,flags,EACCDN);
             }
+            if (peer->stream_data) {
+                if (storage) kfree(storage); /* Another appender installed storage. */
+            } else {
+                if (!storage) return stream_finish(&operation,flags,ENSMEM);
+                peer->stream_data = storage;
+            }
+        }
+    }
+    operation->state = STREAM_PENDING;
+    for (;;) {
+        if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+        if (stream_ready(operation)) {
+            if (write) {
+                at = (peer->stream_head+peer->stream_bytes)%CUIS_STREAM_BYTES;
+                bytes = CUIS_STREAM_BYTES-at;
+                if (bytes > length) bytes = (ULONG)length;
+                memcpy(peer->stream_data+at,operation->packet->data,bytes);
+                if (bytes < length) memcpy(peer->stream_data,operation->packet->data+bytes,(ULONG)length-bytes);
+                senders = (UWORD *)(peer->stream_data+CUIS_STREAM_BYTES);
+                for (i = 0; i < length; i++) senders[(at+i)%CUIS_STREAM_BYTES] = (UWORD)operation->packet->sender_pid;
+                peer->stream_bytes += (ULONG)length;
+                operation->state = STREAM_COMMITTED;
+                return stream_finish(&operation,flags,(LONG)length);
+            }
+            /* Exclusive READ/PEEK owns the selected head. Appenders cannot
+             * overwrite unread bytes; client retention owns the ring lifetime. */
+            operation->head = client->stream_head; operation->state = STREAM_COPYING;
+            senders = (UWORD *)(client->stream_data+CUIS_STREAM_BYTES);
+            pid = senders[operation->head];
+            bytes = CUIS_STREAM_BYTES-operation->head;
+            if (bytes > length) bytes = (ULONG)length;
+            cuis_input_unlock(flags);
+            copied = kproc_copy_to_user_resident(buffer,client->stream_data+operation->head,bytes) &&
+                (bytes == length || kproc_copy_to_user_resident(buffer+bytes,client->stream_data,(ULONG)length-bytes)) &&
+                (!sender || kproc_copy_to_user_resident(sender,&pid,sizeof(pid)));
+            flags = cuis_input_lock();
+            if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+            if (!copied) return stream_finish(&operation,flags,EIMBA);
+            if (client->stream_head != operation->head || client->stream_bytes < length)
+                return stream_finish(&operation,flags,EAGAIN);
             /* Authenticate whole-range reads of opaque requests and results.
              * Prefix messages and partial overlap are ordinary bytes. A
              * result retains its producing token after cohort teardown. */
@@ -3094,29 +3163,22 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
                 client->cohort_read_offset = client->cohort_result_bytes-client->cohort_result_unread;
                 client->cohort_read_bytes = (ULONG)length; client->cohort_read_result = TRUE;
             }
-            if (function == CUIS_STREAM_PEEK) {
-                cuis_input_unlock(flags); return (LONG)length;
+            if (function != CUIS_STREAM_PEEK) {
+                client->cohort_result_unread = length >= client->cohort_result_unread ?
+                    0 : client->cohort_result_unread-(ULONG)length;
+                client->stream_head = (client->stream_head+(ULONG)length)%CUIS_STREAM_BYTES;
+                client->stream_bytes -= (ULONG)length;
+                if (client->cohort_id && client->cohort_delivered)
+                    client->cohort_unread = length >= client->cohort_unread ? 0 : client->cohort_unread-(ULONG)length;
             }
-            client->cohort_result_unread = length >= client->cohort_result_unread ?
-                0 : client->cohort_result_unread-(ULONG)length;
-            client->stream_head = (client->stream_head + (ULONG)length) % CUIS_STREAM_BYTES;
-            client->stream_bytes -= (ULONG)length;
-            if (client->cohort_id && client->cohort_delivered)
-                client->cohort_unread = length >= client->cohort_unread ? 0 : client->cohort_unread-(ULONG)length;
-            cuis_input_unlock(flags);
-            return (LONG)length;
+            operation->state = STREAM_COMMITTED;
+            return stream_finish(&operation,flags,(LONG)length);
         }
-        if (!block) { result = EAGAIN; break; }
-        if (update_owner == client) { result = EACCDN; break; }
-        if (!ksched_block(stream_ready, &wait)) cuis_input_idle();
+        if (!block) return stream_finish(&operation,flags,EAGAIN);
+        if (update_owner == client) return stream_finish(&operation,flags,EACCDN);
+        /* Ownership-only increment: no cancellation boundary in this frame. */
+        if (!ksched_block(stream_ready,operation)) cuis_input_idle();
     }
-    cuis_input_unlock(flags);
-    if (wait.write) {
-        packet = client->pending_write;
-        client->pending_write = NULL;
-        kfree(packet);
-    }
-    return result;
 }
 
 /* Flat calls; only the trusted producer can submit keyboard events. */

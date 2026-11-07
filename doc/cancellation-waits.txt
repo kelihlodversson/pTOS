@@ -35,9 +35,12 @@ CUIS session/input wait      Exclusive operation token; retained client owns
                              prefix; CANCELLED abandons observation, unpublishes,
                              puts and restores IRQs before checkpoint. Retirement
                              wakes EACCDN; bounded gaps/policy fail before commit.
-CUIS stream read/write       pending_write packet, client/peer lifetime and
-                             preflight copyout/commit. Defer until cancellation
-                             cleans each owner with stable session identity.
+CUIS stream read/write       Retained operation/source/receiver, sole packet
+                             owner and exclusive READ/PEEK cursor. Faulting
+                             preflight precedes admission; resident copy and
+                             validated commit preserve unread data on failure.
+                             Raw waits still defer cancellation until ordinary
+                             readiness/retirement; see cuis-stream-lifetime.txt.
 BIOS console input           IOREC predicate alone is simple, but callers can
                              hold GEMDOS console/driver state; BIOS and serial
                              paths have different return contracts. Defer;
@@ -83,9 +86,10 @@ and a reentrant termination hook. An exit-delivery guard must suppress both
 checkpoint recursion and forced wakeup of the hook's own wait; otherwise a
 pending request can turn a legitimately blocked hook into a busy loop.
 
-Stream cancellation still needs #907's source-operation and packet references
-and explicit rollback of input_wait, click history and pending_write before
-opting in. #909 zombie consumption is unchanged. Native custom vector-0x102
+Stream ownership now has retained source/receiver operations, sole packet
+ownership and exclusive READ/PEEK selection. Opting into cancellation still
+needs CANCELLED-wake cleanup and pre-commit arbitration/checkpoint tests; input
+transactions are already adapted. #909 zombie consumption is unchanged. Native custom vector-0x102
 hook fault injection is not established by the host model; native libc atexit
 handlers invoking GEMDOS are separately tested. Timer preemption and concurrent
 atexit registration remain outside this cooperative contract.
@@ -125,4 +129,6 @@ cancellation with PS/2 input, status/deadline assertions, independent PROCESS
 survival and resource baselines. Native kernel self-tests and host-only forced
 races remain separately identified. See cuis-lifetime.txt for all guarantees,
 bounded-retention limitations and #713's synchronization/lock-order requirements.
-Streams remain non-cancellable and their source/packet ownership is separate.
+Streams remain non-cancellable. Their retained operation/packet and exclusive
+read-range ownership now have a separate contract in cuis-stream-lifetime.txt;
+CANCELLED wake plus release/IRQ/checkpoint arbitration is the next opt-in proof.

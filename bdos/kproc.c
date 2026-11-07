@@ -3316,6 +3316,26 @@ BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size)
     memcpy((void *)(uintptr_t)address, src, size);
     return TRUE;
 }
+
+BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size)
+{
+    KPROC *kproc = kproc_find(run);
+    if (kproc && kproc->aspace)
+        return size && address < USER_VA_LIMIT && size <= USER_VA_LIMIT - address &&
+               aspace_copy_from_user(kproc->aspace, dst, address, size);
+    /* With no ASPACE the ordinary path checks only recorded kernel ranges. */
+    return kproc_copy_from_user(dst, address, size);
+}
+
+BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size)
+{
+    KPROC *kproc = kproc_find(run);
+    if (kproc && kproc->aspace)
+        return size && address < USER_VA_LIMIT && size <= USER_VA_LIMIT - address &&
+               aspace_copy_to_user(kproc->aspace, address, src, size);
+    return kproc_copy_to_user(address, src, size);
+}
+
 #endif
 
 #else /* CONF_WITH_KPROC */

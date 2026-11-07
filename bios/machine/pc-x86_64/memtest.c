@@ -3589,6 +3589,11 @@ static void test_mmap(void)
               "prepare read-only lazy mapping for kernel copies");
         run = b;
         value = 7;
+        CHECK(!kproc_copy_from_user_resident(&value, PTOS_MMAP_BASE + 2 * PAGE, sizeof(value)) &&
+              !kproc_copy_to_user_resident(PTOS_MMAP_BASE + PAGE, &value, sizeof(value)) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
+              !aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, NULL),
+              "resident-only copies never back lazy pages or terminate their caller");
         CHECK(!kproc_copy_to_user(PTOS_MMAP_BASE + 2 * PAGE - 4,
                                   &cross_page, sizeof(cross_page)) &&
               !aspace_translate(bs, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
@@ -3601,6 +3606,9 @@ static void test_mmap(void)
               aspace_translate(bs, PTOS_MMAP_BASE + 2 * PAGE, NULL, &prot) &&
               (prot & ASPACE_PROT_USER) && !(prot & ASPACE_PROT_WRITE),
               "kernel read faults the same reservation with its logical protection");
+        CHECK(kproc_copy_from_user_resident(&value, PTOS_MMAP_BASE + 2 * PAGE, sizeof(value)) &&
+              !kproc_copy_to_user_resident(PTOS_MMAP_BASE + 2 * PAGE, &value, sizeof(value)),
+              "resident copies honor preflight residency and current write protection");
         run = parent;
         CHECK(kproc_psetlimit(a, PSETLIMIT_DATA, PAGE) == 0,
               "set anonymous allocation limit");

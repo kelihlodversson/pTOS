@@ -168,30 +168,27 @@ that each injection executes from ring 3. The existing full GEM input/deadline/
 modal/keyboard/message/cohort/timer suite remains a gate. ARM/m68k tests remain
 non-GUI kernel validation; external CUIS/libaes ports belong to #898.
 
-Stream ownership design for the following iteration
----------------------------------------------------
-Existing source lookup returns a borrowed client pointer. One pending_write
-field excludes another writer only while it is non-NULL; read/peek operations
-have no corresponding owner. A receiver handle is re-resolved after scheduling,
-which protects against receiver-handle ABA, but does not retain source storage.
-SESSION_END can free the source packet/ring while its continuation is suspended;
-source retirement during copy/validation hooks and repeated writers/readers are
-independent cooperative lifetime hazards. No cancellation is added to streams.
+Retained stream operations (ownership-only increment)
+------------------------------------------------------
+READ/PEEK now share an exclusive cursor/metadata operation slot; WRITE has a
+separate slot. Each heap operation retains its source client and a WRITE also
+retains its receiver. Tokens are non-recycled per session and slots borrow,
+never own, operation storage. The continuation alone frees its packet/operation;
+SESSION_END retires but cannot prematurely free them. Final client put owns
+ring destruction. Faulting preflight happens before admission; resident-only
+copies after admission cannot demand backing or terminate the owning frame.
 
-Use a retained source operation identity (session handle + non-recycled token),
-with exclusive write and read admission slots as needed. The operation owns its
-packet; teardown retires/detaches it and wakes the operation, but does not free
-storage still used by copyin/copyout. The receiver must be retained or resolved
-and revalidated atomically at commit; retired receivers never receive a packet.
-Prepare all source bytes/output destinations before committing any ring indices,
-cohort provenance or sender metadata. Reads need a stable selected range across
-preflight and copyout so a competing consumer cannot drain it twice; copy failure
-must preserve unread bytes and cohort accounting. Match source/receiver tokens
-again before the serialized no-fail commit. Cancellation before commit drops
-only operation-owned resources; after commit it cannot retract delivered bytes.
-Exactly one final owner releases each packet, including fault and retirement
-paths. Callback unwinding must have an explicit cleanup contract before enabling
-cancellation. These are design requirements, not implemented stream guarantees.
+One validated bounded commit per kind protects bytes and sender/cohort metadata.
+PEEK preserves its existing metadata side effect without byte consumption.
+Partial user-buffer writes on copy failure remain possible; kernel cursor and
+provenance do not commit on failure. Concurrent readers cannot consume a prepared
+range. Session replacement cannot inherit an old operation. Detailed state,
+error/provenance semantics and limitations are in cuis-stream-lifetime.txt.
+
+Stream cancellation remains disabled. Raw waits require normal readiness or
+retirement before releasing operation resources; a pending group request may
+still be deferred until ordinary stream progress and a later safe checkpoint.
+No generic PROCESS owner, scheduler or transaction framework was introduced.
 
 Before preemption/SMP (#713)
 -----------------------------
@@ -210,8 +207,8 @@ disabled, and GUI ownership never moves into the generic scheduler.
 
 Footprint
 ----------
-The journal and compatibility provenance remain bounded, with no per-edge or
-per-operation allocation. history_first adds eight bytes to each of the two
+The input journal and compatibility provenance remain bounded, with no per-edge
+or input-operation allocation. Stream operations have a separate small heap record. history_first adds eight bytes to each of the two
 retained samplers (16 bytes/client on the current 64-bit compiler). Before this
 increment, CUIS_CLIENT was 4632 bytes (4608 at 18d28d8cb, 2024 before the journal).
 The earlier isolated producer microbenchmark was host-only and excluded full
