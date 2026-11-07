@@ -114,7 +114,9 @@ typedef struct cuis_client {
     UWORD pointer_hidden;
     MFORM pointer_style;
     CUIS_INPUT_FILTER input_filter;
-    CUIS_INPUT_WAIT *input_wait; /* Resident syscall stack, only while blocked. */
+    CUIS_INPUT_WAIT *input_wait; /* Borrowed sampler in retained client storage. */
+    CUIS_INPUT_WAIT active_input;
+    UQUAD wait_sequence, wait_operation; /* Session-local, never recycled. */
     CUIS_INPUT_WAIT button_resume;
     BOOL button_resume_active;
     CUIS_POINTER button_resume_edges[CUIS_POINTER_CAPACITY];
@@ -1395,6 +1397,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->stream_head = client->stream_bytes = 0;
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
+        client->wait_sequence = client->wait_operation = 0;
         client->button_resume_active = FALSE;
         client->button_resume_head = client->button_resume_count = 0;
         memset(client->children,0,sizeof(client->children));
@@ -2321,7 +2324,8 @@ typedef struct {
     CUIS_CLIENT *client;
     ULONG events, minimum, start, duration;
     BOOL resumed_button;
-    CUIS_INPUT_WAIT input;
+    CUIS_INPUT_WAIT *input;
+    UQUAD operation;
 } CUIS_SESSION_WAIT_STATE;
 
 static BOOL client_window(CUIS_CLIENT *client, CUIS_WINDOW *window)
@@ -2436,9 +2440,10 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     CUIS_WINDOW *control;
     LONG result = 0;
     CUIS_WINDOW *window = focus_window;
+    if (wait->client->retired) return 0;
     if (wait->events & CUIS_READY_INPUT) {
-        sample_input(wait->client, &wait->input, FALSE);
-        result |= wait->input.ready;
+        sample_input(wait->client, wait->input, FALSE);
+        result |= wait->input->ready;
         if ((wait->events & CUIS_READY_KEY) &&
             (keyboard_owner ? (keyboard_owner == wait->client && wait->client->key_count) :
              (window ? client_window(wait->client, window) && window->key_count :
@@ -2452,17 +2457,17 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
     if ((wait->events & CUIS_READY_COHORT) && cohort_ready(wait->client) &&
-        (!wait->input.tracking || result)) result |= CUIS_READY_COHORT;
+        (!wait->input->tracking || result)) result |= CUIS_READY_COHORT;
     if ((wait->events & CUIS_READY_DISPLAY) && !console_owner &&
         (display_owner == wait->client || display_available(wait->client)) &&
-        (!wait->input.tracking || result)) result |= CUIS_READY_DISPLAY;
+        (!wait->input->tracking || result)) result |= CUIS_READY_DISPLAY;
     /* Internal work must not end an unfinished multi-click wait. Keep its
      * count, snapshot and original deadline resident until a user event is
      * ready; report the pending surface alongside that event. */
     if ((wait->events & CUIS_READY_SURFACE) && !console_owner && !mouse_owner && surface_owner == wait->client &&
-        wait->client->surface_events && (!wait->input.tracking || result))
+        wait->client->surface_events && (!wait->input->tracking || result))
         result |= CUIS_READY_SURFACE;
-    if ((wait->events & CUIS_READY_CONTROL) && !console_owner && (!wait->input.tracking || result)) {
+    if ((wait->events & CUIS_READY_CONTROL) && !console_owner && (!wait->input->tracking || result)) {
         for (control = wait->client->windows; control; control = control->next)
             if (control->control_overflow || (!mouse_owner && control->control_count)) { result |= CUIS_READY_CONTROL; break; }
     }
@@ -2472,11 +2477,31 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
      * ready. The caller's independent TIMER deadline remains in force. */
     if ((wait->events & CUIS_READY_SERVICE) &&
         (ULONG)(cuis_input_ticks()-wait->start) >= 2 &&
-        (!wait->input.tracking || result)) result |= CUIS_READY_SERVICE;
+        (!wait->input->tracking || result)) result |= CUIS_READY_SERVICE;
     return result;
 }
 
-static BOOL session_wait_ready(void *argument) { return session_ready(argument) != 0; }
+static BOOL session_wait_ready(void *argument)
+{
+    CUIS_SESSION_WAIT_STATE *wait = argument;
+    return wait->client->retired || session_ready(wait) != 0;
+}
+static BOOL session_poll_ready(void *argument) { (void)argument; return TRUE; }
+
+/* Only the matching admitted operation may unpublish the sampler. Its client
+ * reference owns the sampler storage even after SESSION_END drops the registry.
+ * The scheduler has removed its predicate before calling this finalizer. */
+static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG result)
+{
+    CUIS_CLIENT *client = wait->client;
+    if (client->wait_operation == wait->operation) {
+        if (client->input_wait == wait->input) client->input_wait = NULL;
+        client->wait_operation = 0;
+    }
+    client_put(client);
+    cuis_input_unlock(flags);
+    return result;
+}
 
 /* Stream/notice checks do not consume data. Input completion captures a
  * key and predicate snapshot; one timer start survives all wakeups. No GEM
@@ -2491,23 +2516,30 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         ((events & CUIS_READY_STREAM) && (!minimum || minimum > CUIS_STREAM_MAX)) ||
         ((events & CUIS_READY_TIMER) && milliseconds > 0xffffffffULL)) return EINVAL;
     if (!client || handle != client->handle) return EACCDN;
-    if (events & CUIS_READY_INPUT) refresh_pointer_bounds();
     flags = cuis_input_lock();
-    memset(&wait.input, 0, sizeof(wait.input));
-    wait.input.events = (ULONG)events;
+    if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
+    if (client->wait_operation) { cuis_input_unlock(flags); return EACCDN; }
+    if (client->wait_sequence == ~0ULL) { cuis_input_unlock(flags); return ERANGE; }
+    if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
+    wait.client = client;
+    wait.operation = client->wait_operation = ++client->wait_sequence;
+    wait.input = &client->active_input;
+    if (events & CUIS_READY_INPUT) refresh_pointer_bounds();
+    memset(wait.input, 0, sizeof(*wait.input));
+    wait.input->events = (ULONG)events;
     wait.resumed_button = FALSE;
     if ((events & CUIS_READY_BUTTON) && client->button_resume_active) {
-        wait.input = client->button_resume;
-        wait.input.events = (ULONG)events;
+        *wait.input = client->button_resume;
+        wait.input->events = (ULONG)events;
         client->button_resume_active = FALSE;
         client->button_resume_head = client->button_resume_count = 0;
         wait.resumed_button = TRUE;
-        sample_input(client,&wait.input,FALSE);
+        sample_input(client,wait.input,FALSE);
     } else if (events & CUIS_READY_INPUT) {
-        sample_input(client,&wait.input,TRUE);
+        sample_input(client,wait.input,TRUE);
     }
     if (events & CUIS_READY_INPUT) {
-        client->input_wait = &wait.input;
+        client->input_wait = wait.input;
     }
     wait.client = client; wait.events = (ULONG)events; wait.minimum = (ULONG)minimum;
     wait.start = cuis_input_ticks();
@@ -2516,24 +2548,30 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     if ((events & CUIS_READY_TIMER) && !milliseconds && !(session_ready(&wait) & ~CUIS_READY_TIMER)) {
         /* A zero timer poll also gives cooperative peers one opportunity,
          * unless a requested source was already ready at the initial check. */
-        cuis_input_unlock(flags);
-        ksched_yield();
-        flags = cuis_input_lock();
+        /* Yield without entering a termination checkpoint inside an input
+         * operation whose history is not yet transactional. Unmanaged contexts
+         * cannot deliver managed cancellation; preserve their legacy poll. */
+        if (!ksched_block(session_poll_ready, NULL)) {
+            cuis_input_unlock(flags);
+            ksched_yield();
+            flags = cuis_input_lock();
+        }
     }
     for (;;) {
+        if (client->retired) return finish_session_wait(&wait,flags,EACCDN);
         ready = session_ready(&wait);
         if (ready) {
             if (events & CUIS_READY_INPUT) {
                 if (!(ready & CUIS_READY_BUTTON)) {
-                    if (((ready & CUIS_READY_CHILD) || wait.resumed_button) && wait.input.tracking) {
-                        client->button_resume = wait.input;
+                    if (((ready & CUIS_READY_CHILD) || wait.resumed_button) && wait.input->tracking) {
+                        client->button_resume = *wait.input;
                         client->button_resume.events = CUIS_READY_BUTTON;
                         client->button_resume.ready = 0;
                         client->button_resume_active = TRUE;
                         client->button_resume_head = client->button_resume_count = 0;
                     }
-                    wait.input.tracking = FALSE;
-                    sample_input(client, &wait.input, FALSE);
+                    wait.input->tracking = FALSE;
+                    sample_input(client, wait.input, FALSE);
                 }
                 client->input_result[0] = 0;
                 if (ready & CUIS_READY_KEY) {
@@ -2550,20 +2588,18 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
                 }
                 /* A per-call cap must not reduce a completed click count.
                  * Queued edges belong to newer input, not this snapshot. */
-                if ((ready & CUIS_READY_BUTTON) && wait.input.buttons == pointer_buttons &&
-                    !client->edge_count && wait.input.count > client->recent_count) {
-                    client->recent_buttons = pointer_buttons; client->recent_count = wait.input.count;
+                if ((ready & CUIS_READY_BUTTON) && wait.input->buttons == pointer_buttons &&
+                    !client->edge_count && wait.input->count > client->recent_count) {
+                    client->recent_buttons = pointer_buttons; client->recent_count = wait.input->count;
                 }
-                client->input_result[1] = ready & CUIS_READY_BUTTON ? wait.input.count : 0;
-                client->input_result[2] = wait.input.x; client->input_result[3] = wait.input.y;
-                client->input_result[4] = (wait.input.buttons & 0xffff) | ((wait.input.modifiers & 0xffff) << 16);
+                client->input_result[1] = ready & CUIS_READY_BUTTON ? wait.input->count : 0;
+                client->input_result[2] = wait.input->x; client->input_result[3] = wait.input->y;
+                client->input_result[4] = (wait.input->buttons & 0xffff) | ((wait.input->modifiers & 0xffff) << 16);
             }
-            client->input_wait = NULL;
-            cuis_input_unlock(flags); return ready;
+            return finish_session_wait(&wait,flags,ready);
         }
         if (update_owner == client) {
-            client->input_wait = NULL;
-            cuis_input_unlock(flags); return EACCDN;
+            return finish_session_wait(&wait,flags,EACCDN);
         }
         if (!ksched_block(session_wait_ready, &wait)) cuis_input_idle();
     }

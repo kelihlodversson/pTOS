@@ -570,6 +570,12 @@ if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
     record "native CUIS window/session retirement" FAIL "retirement worker did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS exclusive combined wait lifetime: PASS' "$suite_log"; then
+    record "native CUIS exclusive combined wait lifetime" FAIL "combined wait lifetime worker did not pass"
+fi
+
 # -- the verdict ----------------------------------------------------------------
 
 show_logs

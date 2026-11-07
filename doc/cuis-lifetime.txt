@@ -77,13 +77,12 @@ Their rollback is precisely the release of the scope references; they cannot
 restore an old history snapshot over new IRQ input. Readiness is not a reservation:
 another reader may consume the event before a subsequent read, as before.
 
-Unconverted session/input and stream waits remain non-cancellable. Their raw
-source/client pointers are not made safe for concurrent SESSION_END by this
-increment. Do not interpret the scoped event retention as blanket ownership of
-all CUIS operations. A source-side stream operation token, input-history commit
-transaction, exclusive input_wait publication and per-operation retirement
-wakeups are the next migration work. Existing receiver-handle lookup and
-pending-packet teardown ownership remain unchanged, not new cancellation claims.
+Combined input history and stream waits remain non-cancellable. The second
+increment below establishes combined-operation lifetime and retirement safety;
+stream source pointers still lack that protection. Do not interpret event
+retention as blanket ownership of all CUIS operations. Input-history commit and
+source-side stream operation ownership remain required. Existing receiver-handle
+lookup and pending-packet teardown are not new stream cancellation guarantees.
 No new configuration switches or generic scheduler/PROCESS policy are introduced.
 
 Validation scope
@@ -99,3 +98,148 @@ Ptermgrp, close a window from a sibling, and deregister/re-register a session
 while its old message waiter remains suspended. Whole-suite baseline checks and
 an independent shared-ASPACE PROCESS verify reclamation and isolation.
 ARM/m68k suites exercise unchanged non-GUI kernel behavior, not native CUIS.
+
+Combined-wait audit before the second increment
+-----------------------------------------------
+Combined waits currently sample into a syscall-stack CUIS_INPUT_WAIT and publish
+its address. Initial sample_input(TRUE) advances the persistent edge head/count
+through the first matching edge. Live button_enqueue() suppresses normal-history
+insertion while an active wait tracks clicks; sample_input(FALSE) latches live
+matches, rectangles and deadlines locally. Thus merely restoring queue indices
+cannot roll back a wait: some later edges never entered that queue at all.
+
+Preparing a resumed button wait copies client->button_resume, clears its active
+flag and cached resume-edge counters, and continues its original deadline. Child
+completion or selected maintenance wakes can save tracking back into resume.
+Successful combined completion consumes a key and publishes input_result; stream,
+notice, child, cohort, surface/display and timer predicates only advertise work.
+No messages or PROCESS completion records are consumed by combined readiness.
+Input filter changes, focus/keyboard/grab transitions can independently clear or
+move history; rollback must not reverse those policy changes or newer IRQ input.
+
+The zero-timer poll currently calls ksched_yield(), which may terminate at its
+own cancellation checkpoint before the enclosing operation unpublishes its
+input pointer. This must become a non-cancelling scheduling opportunity until
+history commit/rollback exists. Ordinary ksched_block() already defers cancellation
+and keeps the current operation continuation; no new scheduler is necessary.
+
+Admission must happen under the input IRQ mask before sampling or resume transfer.
+Only one combined operation per retained client is admitted (including non-input
+combined waits, which must not clear another operation's input publication).
+Session handle plus a non-recycled operation sequence identifies the owner;
+PROCESS/PD/TID/ASPACE are not the operation identity. The published sampler must
+reside in retained client storage. Retirement unpublishes it, marks the client
+retired, wakes its blocked predicate and leaves that storage alive until the
+operation returns. Matching finalization alone clears ownership and drops the
+reference. No replacement session can inherit the old operation.
+
+This is the exclusive-lifetime prerequisite, not transactional history. Pending
+cancellation before admission may checkpoint without touching history; cancellation
+after admission must wait for normal completion or session retirement. Do not add
+a CANCELLED wake until every tentative edge/resume change can be rolled back.
+
+Exclusive combined lifetime implementation
+------------------------------------------
+The retained client now contains active_input; input_wait borrows that sampler,
+never the syscall stack. wait_operation is a nonzero admission token from the
+client's monotonic 64-bit wait_sequence; sequence exhaustion fails ERANGE, reference
+exhaustion fails EACCDN, with no token consumed. Every combined wait (even timer
+or maintenance only) requires the single operation slot. A competing call fails
+EACCDN before pointer refresh, input sampling, resume transfer or publication.
+The active operation has one client reference and a private copy of its token.
+
+Normal return and retirement share finish_session_wait(): the matching owner
+unpublishes input_wait, clears the token, puts the retained client, and restores
+IRQs. Retirement may unpublish the sampler earlier to stop input routing, but
+cannot free its storage while the suspended owner holds its reference. The
+scheduler's stack predicate remains valid until its own continuation resumes;
+it is removed by ksched_block before operation finalization. The zero-timer poll
+uses a raw, non-cancelling scheduler opportunity. No generic scheduler change,
+GUI-owned PROCESS reference, dynamic operation allocation or new feature flag.
+
+Cancellation remains disabled AFTER admission. A pending request may stop a
+new operation before touching history, but an admitted operation finishes only
+on its ordinary predicate/deadline or retirement. A normal timer result can
+return before the next GEMDOS cancellation checkpoint; this is deliberate
+cooperative deferral, not a CANCELLED result. An unbounded input wait can still
+delay group completion indefinitely without a normal event or retirement.
+Do not claim input-history rollback or cancellable multi-click accumulation.
+
+Inside the published operation there is no user-memory access or user callback.
+Raw block/poll does not invoke termination. No arbitrary filesystem callback or
+private longjmp may abandon it. A sibling user fault does not terminate this
+owner; native tests verify normal sampler completion after such a fault. Forced
+unwind of the owning kernel frame is unsupported, not a recovery guarantee.
+
+Transaction still required
+-------------------------
+The next change must introduce one routed button-edge sequence source shared by
+normal and resume history, with an operation-local read cursor. Producers must
+record edges even during click tracking, defining a bounded overflow policy;
+commit advances only the owned prefix, and cancellation leaves the cursor
+uncommitted. Focus/grab/configuration history invalidations need generations,
+not stale head/count restoration. Resume adoption must remain tentative until
+commit and preserve its deadline, cached edges and newer IRQ events. Keyboard
+selection/commit and shared input_result publication need an equally explicit
+consumer boundary. Existing destructive sampling is unchanged in this increment.
+
+Stream ownership design for the following iteration
+---------------------------------------------------
+Existing source lookup returns a borrowed client pointer. One pending_write
+field excludes another writer only while it is non-NULL; read/peek operations
+have no corresponding owner. A receiver handle is re-resolved after scheduling,
+which protects against receiver-handle ABA, but does not retain source storage.
+SESSION_END can free the source packet/ring while its continuation is suspended;
+source retirement during copy/validation hooks and repeated writers/readers are
+independent cooperative lifetime hazards. No cancellation is added to streams.
+
+Use a retained source operation identity (session handle + non-recycled token),
+with exclusive write and read admission slots as needed. The operation owns its
+packet; teardown retires/detaches it and wakes the operation, but does not free
+storage still used by copyin/copyout. The receiver must be retained or resolved
+and revalidated atomically at commit; retired receivers never receive a packet.
+Prepare all source bytes/output destinations before committing any ring indices,
+cohort provenance or sender metadata. Reads need a stable selected range across
+preflight and copyout so a competing consumer cannot drain it twice; copy failure
+must preserve unread bytes and cohort accounting. Match source/receiver tokens
+again before the serialized no-fail commit. Cancellation before commit drops
+only operation-owned resources; after commit it cannot retract delivered bytes.
+Exactly one final owner releases each packet, including fault and retirement
+paths. Callback unwinding must have an explicit cleanup contract before enabling
+cancellation. These are design requirements, not implemented stream guarantees.
+
+Before preemption/SMP
+--------------------
+#713 must synchronize lookup+retain, exclusive admission, sampler publication,
+IRQ producer access, retirement, scheduler check/block/wakeup and matching final
+release. The current input mask plus cooperative no-yield commit sections are
+not SMP locking. Define scheduler/input/PROCESS lock order before adding timer
+preemption; no callback or termination checkpoint may run under the input lock.
+Per-CPU current task/nested launcher state and publication lifetime must remain
+coordinated with scheduler-root stack reclamation. A future history commit must
+serialize cancellation versus producer/consumer cursors and policy generations.
+
+Additional lock-order constraint: a future implementation must not make the
+pre-admission cancellation query take a blocking PROCESS lock while holding
+CUIS input exclusion if PROCESS teardown acquires CUIS in the reverse order.
+Use a safely published group-exit latch or prove a consistent order. Scheduler
+predicate execution and GUI admission likewise need a check/block protocol that
+does not hold conflicting scheduler/input locks across callbacks or handoff.
+
+Second-increment validation scope
+--------------------------------
+Production host tests cover admission conflicts without input/resume mutation,
+pre-admission cancellation, retained storage and matching cleanup, retirement
+and immediate replacement during an ordinary wait and a zero-timer poll,
+reference/sequence exhaustion, forced allocator failure with no new operation
+allocation, preserved normal key commit, pending-request deferral, and repeated
+balanced teardown. The existing production history/multi-click/button-resume
+suite passes; that is compatibility coverage, not transactional rollback proof.
+
+Native x32 SAME_PROCESS tests execute competing combined waits, retirement and
+replacement while the owner blocks, zero-timer retirement, a sibling user fault
+while a sampler is published, normal timer completion under pending group exit,
+and cancellation of the next operation before admission. An unrelated shared-VM
+PROCESS survives and whole-worker mapping counts return to baseline. No owning
+THREAD is forced out of an active non-transactional sampler. No native claim is
+made for cancellation during click accumulation or rollback of newer IRQ edges.

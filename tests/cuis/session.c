@@ -88,10 +88,15 @@ void cuis_input_clip_pointer(LONG *x, LONG *y)
 void cuis_input_call_pointer(SBYTE *packet) { (void)packet; legacy_pointer_calls++; }
 
 void cuis_input_test_wait(ULONG events) { (void)events; }
+static void (*input_operation_hook)(void);
 BOOL ksched_block(BOOL (*ready)(void *), void *argument)
 {
     (void)ready; (void)argument;
     if (input_irqs) input_bad_idle = TRUE;
+    if (input_operation_hook) {
+        void (*hook)(void)=input_operation_hook; input_operation_hook=NULL; hook();
+        return TRUE;
+    }
     return FALSE;
 }
 static BOOL cancel_pending;
@@ -303,6 +308,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "peers.c"
 #include "cohorts.c"
 #include "lifetime.c"
+#include "input_lifetime.c"
 
 static int cancellation_adapter_checks(void)
 {
@@ -337,6 +343,8 @@ int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=input_lifetime_checks();
+    if (rc) return rc;
     rc=lifetime_checks();
     if (rc) return rc;
     rc=cancellation_adapter_checks();

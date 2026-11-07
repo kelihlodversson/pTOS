@@ -29,9 +29,11 @@ CUIS window/event wait       Retained client/window scope; retirement wakes
                              EACCDN, cancellation puts references before the
                              checkpoint. Readiness consumes no input; see
                              cuis-lifetime.txt for scope and remaining gaps.
-CUIS session/input wait      client->input_wait points into syscall stack;
-                             button-resume/history mutations need a defined
-                             rollback. Defer rather than unwinding that frame.
+CUIS session/input wait      Exclusive operation token; retained client owns
+                             the sampler, no GUI-published syscall-stack pointer.
+                             Raw block/poll defers cancellation after admission;
+                             history transactions remain required. Retirement
+                             wakes and releases through matching cleanup.
 CUIS stream read/write       pending_write packet, client/peer lifetime and
                              preflight copyout/commit. Defer until cancellation
                              cleans each owner with stable session identity.

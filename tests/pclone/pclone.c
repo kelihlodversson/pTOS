@@ -382,13 +382,19 @@ static void group_target(void *arg)
         long rc;
         group.session=native_cuis(0,0,0);
         if (group.session<0) group.error=1;
-        if (group.mode==5) rc=native_cuis(24,group.session,3600000UL);
+        if (group.mode>=10) rc=native_cuis5(32,group.session,0,group.mode==10?8:10,group.mode==12?100:0,0);
+        else if (group.mode==5) rc=native_cuis(24,group.session,3600000UL);
         else if (group.mode==7 || group.mode==8) {
             group.window=native_cuis5(3,1,1,32,32,0);
             if (group.window<0 || native_cuis(6,group.window,0)) group.error=1;
             rc=native_cuis5(20,group.window,8,-1,0,0); /* window/message wait */
         } else rc=native_cuis(23,group.session,~0ULL);
-        if ((group.mode==8 || group.mode==9) && rc==-36L) group.wait_done=1;
+        if (group.mode==12 && rc==2) {
+            group.wait_done=1; /* admitted wait finishes normally */
+            (void)native_cuis5(32,group.session,0,8,0,0);
+            group.returned=1; /* pending cancellation must stop before new admission */
+        }
+        else if ((group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) && rc==-36L) group.wait_done=1;
         else group.returned=1; /* cancellation must not return to user */
     }
 #endif
@@ -398,6 +404,12 @@ static void group_target(void *arg)
 static void group_joiner(void *arg)
 {
     (void)arg; group.ready|=2;
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+    if (group.mode==12) {
+        *(volatile long *)0=1; /* sibling fault cannot abandon the active sampler */
+        group.error=1;
+    }
+#endif
 #if defined(TEST_WITH_PTHJOIN)
     if (join_tid(group.target,0)==0) group.error=1;
     group.returned=1;
@@ -426,7 +438,8 @@ static void group_killer(void *arg)
     while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
     if (!group.mode) { for (;;) (void)Syield(); }
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-    if (group.mode==8 || group.mode==9) {
+    if (group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) {
+        if (group.mode>=10 && native_cuis5(32,group.session,0,10,0,0)!=-36L) group.error=1;
         if (group.mode==8) {
             if (native_cuis(5,group.window,0)) group.error=1;
         } else {
@@ -434,6 +447,7 @@ static void group_killer(void *arg)
             if (native_cuis(2,group.session,0)) group.error=1;
             replacement=native_cuis(0,0,0);
             if (replacement<=group.session) group.error=1;
+            if (group.mode>=10 && native_cuis5(32,replacement,0,2,0,0)!=2) group.error=1;
         }
         while (!group.wait_done && !group.returned) (void)Syield();
     }
@@ -510,7 +524,7 @@ static void test_group_exit(void)
     }
     for (mode=0;mode<
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-        10
+        13
 #else
         5
 #endif
@@ -539,6 +553,7 @@ static void test_group_exit(void)
         ptest_assert_msg(!group.returned && !group.error,"cancelled parent continuations never return to user");
         ptest_assert_msg(Pwaitpid(pid,1,0)==-33L,"group zombie consumed only once");
         if (mode==1 || mode==2) ptest_assert_msg(group_exists("GRET0.ON") && group_exists("GRET1.ON") && group_exists("GRET2.ON"),"all nested PROCESSes complete normally before cancellation");
+        if (mode==12) ptest_assert_msg(group.wait_done,"normal sampler completes, then pending cancellation prevents new admission");
         if (mode==4) ptest_assert_msg(group.atexit_calls==1,"libc exit runs atexit once before group termination");
         group.child_go=1;
         if (mode==3) {
@@ -689,6 +704,7 @@ void pclone_run_managed_tests(void)
         conws("native CUIS delay cancellation: PASS\r\n");
         conws("native CUIS retained event cancellation: PASS\r\n");
         conws("native CUIS window/session retirement: PASS\r\n");
+        conws("native CUIS exclusive combined wait lifetime: PASS\r\n");
 #endif
 #endif
     }
