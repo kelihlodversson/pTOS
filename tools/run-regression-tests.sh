@@ -587,13 +587,16 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
 fi
 
 # Compilation and legacy compatibility are insufficient evidence of native
-# startup. Require the managed child worker's runtime verdict on both MMUs.
+# startup. Require managed startup and scheduler evidence on all three MMUs.
 case "$machine" in
     virt-arm|virt-m68k-aspace|pc-x86_64)
         if grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
            grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h"; then
             if ! grep -aq 'pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS' "$suite_log"; then
                 record "native managed clone execution" FAIL "native clone worker did not execute"
+            fi
+            if ! grep -aq 'native scheduler growth and mixed PROCESS/THREAD round-robin: tested' "$suite_log"; then
+                record "native scheduler growth/fairness" FAIL "mixed twelve-peer runtime assertions did not execute"
             fi
         fi
         ;;

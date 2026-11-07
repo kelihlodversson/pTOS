@@ -2218,8 +2218,8 @@ void x86_64_memtest_clone_yield(void)
             UWORD count = active_clone.scenario == 4 ? KSCHED_LIMIT : 1;
             active_clone.child_ticks = kproc_test_child_ticks(active_clone.parent);
             for (i = 0; i < count; i++) active_clone_construct(i);
-            if (active_clone.scenario == 4) CHECK(active_clone.successes == KSCHED_LIMIT-1,
-                  "actual active group exhausts its final slot without publishing an eighth child");
+            if (active_clone.scenario == 4) CHECK(active_clone.successes == KSCHED_LIMIT,
+                  "active group grows stable storage and publishes beyond its initial arena");
         } else if (active_clone.parent_yields == 2 && active_clone.successes && active_clone.scenario != 2 &&
                    active_clone.scenario != 4 && active_clone.scenario != 9) {
             LONG waited;
@@ -4309,7 +4309,7 @@ static void test_cuis_scheduler(void)
             }
             run = root;
             CHECK(ksched_run(programs, 0, results) == EINVAL, "scheduler rejects empty groups");
-            CHECK(ksched_run(programs, KSCHED_LIMIT + 1, results) == EINVAL, "scheduler enforces its task bound");
+            CHECK(ksched_run(programs, KSCHED_LIMIT + 1, results) == EINVAL, "scheduler validates its synchronous bootstrap batch bound");
             {
                 PD *duplicate[2] = { programs[0], programs[0] };
                 CHECK(ksched_run(duplicate, 2, results) == EINVAL, "scheduler rejects duplicate programs");
@@ -4386,7 +4386,7 @@ static void test_ring3(void)
 #endif
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
-    probe_expect(',', 0, "public SAME_PROCESS dispatch, private stacks/registers, Pterm/fault isolation, TSR refusal and exhaustion");
+    probe_expect(',', 0, "public SAME_PROCESS dispatch, private stacks/registers, Pterm/fault isolation, TSR refusal and scheduler growth");
     probe_expect('_',0x66,"initial Pterm retains PROCESS files until final sibling exit");
     probe_expect(';',0x66,"initial fault retains PROCESS resources and final sibling status");
     {
@@ -4609,6 +4609,7 @@ static void test_ring3(void)
         ULONG sessions = cuis_session_count();
         snap(&s);
         result = Pexec(PE_LOADGO, "C:\\GEM.TOS", "", NULL);
+        if (result) kcprintf("GEM lifecycle fixture returned %ld\n", (long)result);
         CHECK(result == 0, "standard GEM lifecycle, private globals and windowless timers");
         CHECK(cuis_session_count() == sessions, "implicit GEM sessions reclaimed on exit and _Exit");
         CHECK(cuis_context_test_reset(), "shared shell context persists after the final GUI client exits");

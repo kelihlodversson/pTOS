@@ -8,7 +8,7 @@ extern unsigned x32_thread_registers(unsigned seed);
 #define CALL(n,a,b,c) x32_probe_call(n,(S64)(unsigned long)(a),(S64)(unsigned long)(b),(S64)(unsigned long)(c))
 #define THREADS 3
 struct worker { unsigned long stack; int32_t tid,pid; unsigned seed; int kind; };
-static struct worker workers[7];
+static struct worker workers[12];
 static volatile unsigned count,ready,errors,release_workers,leader_stopped;
 static int process_pid, file_handle, check_cwd;
 static volatile int failure_status;
@@ -171,19 +171,22 @@ int x32_same_threads(int test)
         if(errors || CALL(0x10b,0,0,0)!=process_pid) { return fail(13); }
     }
     count=ready=errors=0;release_workers=0;
-    for(i=0;i<7;i++) if(create(&workers[i],0,CLONE_VM|CLONE_SAME_PROCESS)<=0) { return fail(14); }
+    for(i=0;i<12;i++) if(create(&workers[i],0,CLONE_VM|CLONE_SAME_PROCESS)<=0) { return fail(14); }
     {
+        /* Invalid resource policy cannot disturb twelve already-published siblings. */
         struct ptos_clone_args args={0};
         int32_t tid=-7,pid=-9;
-        args.flags=CLONE_VM|CLONE_SAME_PROCESS;args.entry=worker;
+        args.flags=CLONE_VM|CLONE_SAME_PROCESS|CLONE_COPY_CWD;args.entry=worker;
         args.stack_base=(void *)workers[0].stack;args.stack_size=8192;
         args.child_pid=&pid;args.child_tid=&tid;
-        if(CALL(GEMDOS_PCLONE,&args,32,0)!=-326 || tid!=-7 || pid!=-9) { return fail(15); }
+        result=CALL(GEMDOS_PCLONE,&args,32,0);
+        if(result!=-25) return fail(0x1500-(int)result);
+        if(tid!=-7 || pid!=-9) return fail(15);
     }
     release_workers=1;
-    while(count<7) yield();
+    while(count<12) yield();
     yield();
-    for(i=0;i<7;i++) if(CALL(0x49,workers[i].stack,0,0)) { return fail(16); }
+    for(i=0;i<12;i++) if(CALL(0x49,workers[i].stack,0,0)) { return fail(16); }
     return errors ? fail(17) : 0;
 }
 #endif

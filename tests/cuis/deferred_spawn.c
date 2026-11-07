@@ -72,7 +72,7 @@ int main(void)
     run = &owner;
     scheduler.active = TRUE;
     scheduler.initial = 1;
-    scheduler.tasks = tasks;
+    scheduler.tasks = tasks; initialize_task_table();
     scheduler.current = &tasks[0];
     scheduler.root.pd = &owner;
     tasks[0].state = TASK_RUNNING;

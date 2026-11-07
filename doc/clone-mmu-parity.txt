@@ -153,3 +153,19 @@ FPU setting. Explicit --fpu and --require-nonzero-fpiar avoid silently claiming
 FPU execution from a CPU-only run. CI adds this native 060 configuration to the
 existing pinned legacy matrix. QEMU's 68060 PFLUSHA limitation (#913) remains;
 physical 68030/040/060 hardware and ARM/m68k external CUIS are not claimed.
+
+Scheduler storage follow-up (#713)
+-----------------------------------
+The initial eight-record arena no longer limits active concurrency. Stable
+linked slots grow before publication and are freed only after root drain.
+Native tests on all three MMU targets create twelve mixed independent PROCESS
+and SAME_PROCESS continuations, assert the exact four-round dispatch order,
+block the parent, consume PROCESS/TID completions, repeat and free stack holds.
+Production host tests inject growth allocation failure, preserve output/context
+identity, test stable slot reuse and traverse grown PID/context/wait/orphan
+records. Historical fixed-capacity fixtures now verify >8 publication, including
+ordinary async mode 106 and deferred GEM handoff replacement. Failure rollback
+remains tested independently. See doc/native-scheduler-plan.txt for the remaining
+borrowed-root/global-admission contract, CPU-specific IRQ frame audit and
+staged preemption/locking plan. No preemption or global background task lifetime
+is implied by arena growth. CUIS stream cancellation remains disabled.

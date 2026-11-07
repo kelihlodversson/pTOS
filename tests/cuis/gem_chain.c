@@ -113,7 +113,15 @@ int gem_chain_client(int argc, char **argv)
     message[1] = me; message[3] = role;
     VERIFY(appl_write(parent,sizeof(message),message) == 1);
     if (role != 'd') VERIFY(receive(message,5000,aes_global) & MU_MESAG);
-    if (role == 'e') VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target));
+    /* Replace the staged handoff while helpers occupy the initial arena.
+     * The second snapshot uses the current WORK directory; restore its input
+     * environment only for preparation, then mutate it again before exit. */
+    if (role == 'e') {
+        target[1] = 'k';
+        *value = 'o';
+        VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target) == 1);
+        *value = 'M';
+    }
     if (role == 'f') __asm__ volatile ("ud2");
     if (role == 'x') _Exit(41);
     return 37;

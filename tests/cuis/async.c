@@ -59,7 +59,7 @@ static LONG waitpid(LONG pid, LONG flags, UQUAD usage)
 int main(int argc, char **argv, char **envp)
 {
     LONG session, pid, me, parent, status, sender, base;
-    LONG children[7];
+    LONG children[12];
     ULONG a, b, c, d, usage[2], i, j, child_env;
     char command[20];
     (void)envp;
@@ -165,22 +165,20 @@ int main(int argc, char **argv, char **envp)
         CHECK(waitpid(pid, 1, 0) == EFILNF);
     }
     tail(command, '0', session, me);
-    for (i = 0; i < 7; i++) { children[i] = spawn(argv[0], command); CHECK(children[i] > 0); }
-    CHECK(spawn(argv[0], command) == EAGAIN); /* Zombies also occupy a bounded slot. */
+    for (i = 0; i < 11; i++) { children[i] = spawn(argv[0], command); CHECK(children[i] > 0); }
+    /* Mode 106 follows the same growable reservation path as ordinary async
+     * load-go. Its image is consumed only after all preparation succeeds. */
     base = call(0x4b, 3, (uintptr_t)argv[0], (uintptr_t)command, (uintptr_t)environment);
     CHECK(base > 0);
-    child_env = (ULONG)(uintptr_t)USERPTR_TO_PTR(((PD *)(uintptr_t)(ULONG)base)->p_env);
-    CHECK(call(0x4b, 106, 0, (ULONG)base, 0) == EAGAIN);
-    CHECK(call(0x17d, (ULONG)base, sizeof(PD), 0, 0) == E_OK);
-    CHECK(call(0x49, (ULONG)base, 0, 0, 0) == E_OK);
-    CHECK(call(0x49, child_env, 0, 0, 0) == E_OK);
-    for (i = 0; i < 7; i++) {
+    children[11] = call(0x4b, 106, 0, (ULONG)base, 0);
+    CHECK(children[11] > 0);
+    for (i = 0; i < 12; i++) {
         status = call(0x109, ~0ULL, ~0ULL, ~0ULL, ~0ULL);
         CHECK(status > 0 && (status & 0xffff) == 0x34);
-        for (j = 0; j < 7 && children[j] != (LONG)((ULONG)status >> 16); j++) ;
-        CHECK(j < 7); children[j] = 0;
+        for (j = 0; j < 12 && children[j] != (LONG)((ULONG)status >> 16); j++) ;
+        CHECK(j < 12); children[j] = 0;
     }
-    for (i = 0; i < 7; i++) CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1);
+    for (i = 0; i < 12; i++) CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1);
     for (i = 0; i < 16; i++) {
         pid = spawn(argv[0], command); CHECK(pid > 0);
         CHECK(((ULONG)waitpid(pid, 0, 0) >> 16) == (ULONG)pid);

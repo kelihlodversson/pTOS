@@ -183,7 +183,7 @@ static void exit_check(void)
 {
     unsigned i;
     memset(tasks,0,sizeof(tasks));
-    scheduler.tasks = tasks; scheduler.active = TRUE;
+    scheduler.tasks = tasks; initialize_task_table(); scheduler.active = TRUE;
     tasks[0].program = nested ? &parent : &owner;
     tasks[0].process = (KPROC *)tasks[0].program;
     tasks[0].state = TASK_RUNNING; tasks[0].asynchronous = TRUE;

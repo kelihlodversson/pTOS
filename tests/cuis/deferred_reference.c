@@ -52,7 +52,7 @@ int main(void)
     run = &owner;
     scheduler.active = TRUE;
     scheduler.initial = 1;
-    scheduler.tasks = tasks;
+    scheduler.tasks = tasks; initialize_task_table();
     scheduler.current = &tasks[0];
     tasks[0].state = TASK_RUNNING;
     tasks[1].state = TASK_DEFERRED;

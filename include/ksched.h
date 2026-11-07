@@ -1,8 +1,10 @@
-/* Generic cooperative native scheduling; initially selected by CUIS. */
+/* Generic cooperative native scheduling, independent of GUI policy. */
 #ifndef KSCHED_H
 #define KSCHED_H
 #include "portab.h"
 #include "bdosdefs.h"
+/* Initial arena and maximum synchronous bootstrap batch, not a runnable-task
+ * limit. Active publication grows stable slots on demand; ENSMEM is retryable. */
 #define KSCHED_LIMIT 8U
 /* All programs must be prepared, unlaunched and distinct. Success consumes
  * them, writes their exit statuses, and returns after all tasks finish.

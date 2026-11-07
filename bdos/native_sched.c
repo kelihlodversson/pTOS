@@ -1,4 +1,4 @@
-/* Bounded cooperative kernel tasks, independent of the legacy AES scheduler.
+/* Cooperative kernel tasks, independent of the legacy AES scheduler.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
 #include "emutos.h"
 #include "biosext.h"
@@ -30,6 +30,7 @@ typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED,
 #endif
 } TASK_STATE;
 typedef struct kernel_task {
+    struct kernel_task *next_task; /* Stable arena link; never a lifetime reference. */
     PD *program, *parent;
     struct kernel_task *completion_owner; /* borrowed; NULL means this is the anchor */
     BOOL process_completed;
@@ -58,13 +59,53 @@ typedef struct kernel_task {
 } KERNEL_TASK;
 static struct {
     BOOL active;
-    UWORD initial, next;
-    KERNEL_TASK *tasks, *current;
+    UWORD initial;
+    KERNEL_TASK *tasks, *current, *next;
     NATIVE_SCHED_CONTEXT root;
     jmp_buf resume;
     uintptr_t flags;
     PROC_CLONE_TRANSACTION *pending_clone;
 } scheduler;
+/* The initial array preserves synchronous result positions. Additional slots
+ * are individually allocated and never moved/freed while a group is active:
+ * completion_owner, THREAD backends and reservations point into these records.
+ * IRQ exclusion/cooperative serialization protects traversal today, not SMP. */
+static void clear_task(KERNEL_TASK *task)
+{
+    KERNEL_TASK *next = task->next_task;
+    memset(task, 0, sizeof(*task));
+    task->next_task = next;
+}
+static void initialize_task_table(void)
+{
+    UWORD i;
+    memset(scheduler.tasks, 0, KSCHED_LIMIT * sizeof(*scheduler.tasks));
+    for (i = 0; i < KSCHED_LIMIT - 1; i++)
+        scheduler.tasks[i].next_task = &scheduler.tasks[i+1];
+}
+static BOOL allocate_task_table(void)
+{
+    scheduler.tasks = kalloc(KSCHED_LIMIT * sizeof(*scheduler.tasks));
+    if (!scheduler.tasks) return FALSE;
+    initialize_task_table();
+    return TRUE;
+}
+static KERNEL_TASK *async_tasks(void)
+{
+    return scheduler.initial < KSCHED_LIMIT ? &scheduler.tasks[scheduler.initial] :
+        scheduler.tasks[KSCHED_LIMIT-1].next_task;
+}
+static void free_task_table(void)
+{
+    KERNEL_TASK *task = scheduler.tasks[KSCHED_LIMIT-1].next_task;
+    while (task) {
+        KERNEL_TASK *next = task->next_task;
+        kfree(task);
+        task = next;
+    }
+    kfree(scheduler.tasks);
+    scheduler.tasks = scheduler.next = NULL;
+}
 static UQUAD next_identity;
 #if CONF_WITH_X86_64_MEMTEST
 static BOOL clone_masked;
@@ -234,11 +275,10 @@ UQUAD ksched_context_id(void)
 
 void ksched_context_restore(UQUAD identity)
 {
-    UWORD i;
+    KERNEL_TASK *task;
     scheduler.current = NULL;
     if (!scheduler.active || !identity) return;
-    for (i = 0; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
+    for (task = scheduler.tasks; task; task = task->next_task) {
         if (task->execution.identity == identity &&
             (task->state == TASK_RUNNING || task->state == TASK_BLOCKED)) {
             scheduler.current = task;
@@ -249,22 +289,21 @@ void ksched_context_restore(UQUAD identity)
 
 BOOL ksched_pid_reserved(WORD pid)
 {
-    UWORD i;
+    KERNEL_TASK *task;
 #if CONF_WITH_CUIS
     if (cuis_child_pid_reserved(pid)) return TRUE;
 #endif
     if (!scheduler.active) return FALSE;
-    for (i = 0; i < KSCHED_LIMIT; i++)
-        if (scheduler.tasks[i].state != TASK_UNUSED && scheduler.tasks[i].pid == pid) return TRUE;
+    for (task = scheduler.tasks; task; task = task->next_task)
+        if (task->state != TASK_UNUSED && task->pid == pid) return TRUE;
     return FALSE;
 }
 
 BOOL ksched_parent_pid(PD *pd, WORD *pid)
 {
-    UWORD i;
+    KERNEL_TASK *task;
     if (!scheduler.active) return FALSE;
-    for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
+    for (task = async_tasks(); task; task = task->next_task) {
         if (task->state != TASK_UNUSED && task->state != TASK_RESERVED && task->program == pd) {
             KERNEL_TASK *owner = completion_task(task);
             *pid = kproc_pid(owner->parent ? owner->parent : scheduler.root.pd);
@@ -278,7 +317,7 @@ BOOL ksched_parent_pid(PD *pd, WORD *pid)
  * synchronous children. No orphan keeps a pointer to its former parent. */
 void ksched_exiting(PD *pd, UWORD result)
 {
-    UWORD i;
+    KERNEL_TASK *task;
     KPROC *exiting;
 #if CONF_WITH_CUIS
     BOOL asynchronous = FALSE;
@@ -291,8 +330,7 @@ void ksched_exiting(PD *pd, UWORD result)
     if (!scheduler.active) return;
 #endif
     exiting = kproc_retain(pd); /* identity remains valid through committed cleanup */
-    for (i = 0; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
+    for (task = scheduler.tasks; task; task = task->next_task) {
         if (task->state == TASK_UNUSED || task->state == TASK_RESERVED) continue;
         if (task->parent == pd) {
             task->parent = NULL;
@@ -338,10 +376,9 @@ void ksched_exiting(PD *pd, UWORD result)
  * neither the exiting process nor its cleanup can resume after this hook. */
 static void activate_successors(KPROC *process, PD *pd, BOOL use_identity)
 {
-    UWORD i;
+    KERNEL_TASK *task;
     if (!scheduler.active) return;
-    for (i = 0; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
+    for (task = scheduler.tasks; task; task = task->next_task) {
         if (task->state == TASK_DEFERRED && task->deferred_owner == pd &&
             (!use_identity || !task->deferred_owner_identity ||
              task->deferred_owner_identity == process)) {
@@ -365,7 +402,7 @@ void ksched_exited_identity(KPROC *process, PD *pd)
 
 void ksched_fault(PD *pd, WORD signal)
 {
-    UWORD i;
+    KERNEL_TASK *task;
     if (!scheduler.active) {
 #if CONF_WITH_CUIS
         PD *parent = kproc_notification_parent(pd);
@@ -376,8 +413,7 @@ void ksched_fault(PD *pd, WORD signal)
     /* A foreign callback changes run, but retains the invoking task's
      * continuation. Attribute its fault to the owner, whose exit is deferred.
      * Nested synchronous children have no task entry of their own. */
-    for (i = 0; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
+    for (task = scheduler.tasks; task; task = task->next_task) {
         if (scheduler.current && scheduler.current->program == pd && task != scheduler.current)
             continue;
         if ((task->state == TASK_NEW || task->state == TASK_RUNNING ||
@@ -586,15 +622,15 @@ static void discard_deferred(KERNEL_TASK *task)
     if (thread) kthread_destroy(thread);
     kproc_release(process);
     if (owner) kproc_release(owner);
-    memset(task, 0, sizeof(*task));
+    clear_task(task);
 }
 LONG ksched_defer_cancel(void)
 {
-    UWORD i;
+    KERNEL_TASK *task;
     if (!ksched_spawn_allowed()) return EINVFN;
-    for (i = scheduler.initial; i < KSCHED_LIMIT; i++)
-        if (scheduler.tasks[i].state == TASK_DEFERRED && scheduler.tasks[i].deferred_owner == run)
-            discard_deferred(&scheduler.tasks[i]);
+    for (task = async_tasks(); task; task = task->next_task)
+        if (task->state == TASK_DEFERRED && task->deferred_owner == run)
+            discard_deferred(task);
     return E_OK;
 }
 LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0,FALSE); }
@@ -607,7 +643,6 @@ static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
 LONG ksched_spawn(PD *pd)
 #endif
 {
-    UWORD i;
     KERNEL_TASK *task;
     void *reservation = NULL;
     LONG reserved;
@@ -617,8 +652,8 @@ LONG ksched_spawn(PD *pd)
 #endif
     if (next_identity == ~0ULL) return EAGAIN;
     if (!kproc_unlaunched(pd) || kproc_user_root(pd)) return EIMBA;
-    for (i = 0; i < KSCHED_LIMIT; i++)
-        if (scheduler.tasks[i].program == pd) return EACCDN;
+    for (task = scheduler.tasks; task; task = task->next_task)
+        if (task->program == pd) return EACCDN;
     reserved = ksched_task_reserve(FALSE, &reservation);
     if (reserved != E_OK) return reserved;
     task = reservation;
@@ -695,10 +730,9 @@ typedef struct { PD *parent; WORD pid; } CHILD_WAIT;
 static BOOL child_ready(void *argument)
 {
     CHILD_WAIT *wait = argument;
-    UWORD i;
+    KERNEL_TASK *task;
     BOOL found = FALSE;
-    for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
+    for (task = async_tasks(); task; task = task->next_task) {
         if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->parent != wait->parent ||
             (wait->pid > 0 && task->pid != wait->pid)) continue;
         found = TRUE;
@@ -711,7 +745,7 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
 {
     CHILD_WAIT wait;
     uintptr_t flags;
-    UWORD i;
+    KERNEL_TASK *task;
     if (options & ~3) return EINVAL;
     /* No process-group or stopped-process model is implemented yet. */
     if (!pid || pid < -1) return EINVFN;
@@ -720,8 +754,7 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
     flags = native_sched_irq_save();
     for (;;) {
         BOOL found = FALSE;
-        for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
-            KERNEL_TASK *task = &scheduler.tasks[i];
+        for (task = async_tasks(); task; task = task->next_task) {
             ULONG status;
             if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->parent != run ||
                 (pid > 0 && task->pid != pid)) continue;
@@ -793,9 +826,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
         if (!kproc_unlaunched(programs[i]) || (!prepare && !kproc_user_root(programs[i]))) return EIMBA;
         for (j = 0; j < i; j++) if (programs[i] == programs[j]) return EINVAL;
     }
-    scheduler.tasks = kalloc(KSCHED_LIMIT * sizeof(*scheduler.tasks));
-    if (!scheduler.tasks) return ENSMEM;
-    memset(scheduler.tasks, 0, KSCHED_LIMIT * sizeof(*scheduler.tasks));
+    if (!allocate_task_table()) return ENSMEM;
     for (i = 0; i < count; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
         task->program = programs[i];
@@ -810,8 +841,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
                 kthread_stack_release(&scheduler.tasks[j].execution.stack);
                 kproc_release(scheduler.tasks[j].process);
             }
-            kfree(scheduler.tasks);
-            scheduler.tasks = NULL;
+            free_task_table();
             return ENSMEM;
         }
     }
@@ -822,8 +852,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
             kthread_stack_release(&scheduler.tasks[i].execution.stack);
             kproc_release(scheduler.tasks[i].process);
         }
-        kfree(scheduler.tasks);
-        scheduler.tasks = NULL;
+        free_task_table();
         return ENSMEM;
     }
     /* Every task acquires exactly one generic identity before publication.
@@ -836,8 +865,7 @@ static LONG run_group(PD * const *programs, UWORD count, LONG *results,
                 discard_task_execution(&scheduler.tasks[j]);
                 kproc_release(scheduler.tasks[j].process);
             }
-            kfree(scheduler.tasks);
-            scheduler.tasks = NULL;
+            free_task_table();
             return ENSMEM;
         }
     }
@@ -859,7 +887,7 @@ static LONG dispatch_group(UWORD count, LONG *results)
 {
     UWORD i;
     scheduler.initial = count;
-    scheduler.next = 0;
+    scheduler.next = scheduler.tasks;
     scheduler.current = NULL;
     scheduler.active = TRUE;
     native_sched_save(&scheduler.root);
@@ -873,13 +901,14 @@ static LONG dispatch_group(UWORD count, LONG *results)
     }
     for (;;) {
         BOOL pending = FALSE;
+        KERNEL_TASK *task, *first;
         scheduler.current = NULL;
-        /* Reclaim a finished task's stack only from this root stack. */
-        for (i = 0; i < KSCHED_LIMIT; i++)
-            reap_finished_on_root(&scheduler.tasks[i]);
-        for (i = 0; i < KSCHED_LIMIT; i++) {
-            UWORD slot = (scheduler.next + i) % KSCHED_LIMIT;
-            KERNEL_TASK *task = &scheduler.tasks[slot];
+        /* Reclaim only from root. Slots remain stable until root returns. */
+        for (task = scheduler.tasks; task; task = task->next_task)
+            reap_finished_on_root(task);
+        first = scheduler.next;
+        task = first;
+        do {
             if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
             if (task->state == TASK_DRAINING) { pending = TRUE; continue; }
             pending = TRUE;
@@ -888,7 +917,7 @@ static LONG dispatch_group(UWORD count, LONG *results)
 #endif
             if (task->state == TASK_BLOCKED && !task->ready(task->argument) &&
                 !cancel_wait_ready(task)) continue;
-            scheduler.next = (slot + 1) % KSCHED_LIMIT;
+            scheduler.next = task->next_task ? task->next_task : scheduler.tasks;
             scheduler.current = task;
             if (task->state == TASK_NEW) {
                 if (task->startup) {
@@ -902,13 +931,13 @@ static LONG dispatch_group(UWORD count, LONG *results)
             task->state = TASK_RUNNING;
             native_sched_restore(&task->execution.cpu);
             longjmp(task->execution.resume, 1);
-        }
+        } while ((task = task->next_task ? task->next_task : scheduler.tasks) != first);
         if (!pending) break;
         native_sched_idle();
     }
     for (i = 0; i < count; i++) results[i] = scheduler.tasks[i].result;
-    kfree(scheduler.tasks);
-    scheduler.tasks = scheduler.current = NULL;
+    free_task_table();
+    scheduler.current = NULL;
     scheduler.active = FALSE;
     scheduler.root.flags = scheduler.flags;
     native_sched_restore(&scheduler.root);
@@ -933,28 +962,31 @@ void ksched_test_fail_clone_slot(void) { fail_clone_slot = TRUE; }
  * across preparation callbacks and cannot be selected by recursive spawn. */
 LONG ksched_task_reserve(BOOL root, void **slot)
 {
-    KERNEL_TASK *task;
-    UWORD index = 0;
+    KERNEL_TASK *task, *last;
     if (!slot || *slot) return EINVAL;
     if (root) {
         if (scheduler.active || scheduler.tasks) return EAGAIN;
-    } else {
-        if (!ksched_spawn_allowed()) return EINVFN;
-        for (index = scheduler.initial; index < KSCHED_LIMIT; index++)
-            if (scheduler.tasks[index].state == TASK_UNUSED) break;
-        if (index == KSCHED_LIMIT) return EAGAIN;
-    }
+    } else if (!ksched_spawn_allowed()) return EINVFN;
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_clone_slot) { fail_clone_slot = FALSE; return ENSMEM; }
 #endif
     if (next_identity == ~0ULL) return EAGAIN;
     if (root) {
-        scheduler.tasks = kalloc(KSCHED_LIMIT * sizeof(*scheduler.tasks));
-        if (!scheduler.tasks) return ENSMEM;
-        memset(scheduler.tasks, 0, KSCHED_LIMIT * sizeof(*scheduler.tasks));
+        if (!allocate_task_table()) return ENSMEM;
+        task = scheduler.tasks;
+    } else {
+        for (task = async_tasks(); task && task->state != TASK_UNUSED; task = task->next_task) ;
+        if (!task) {
+            /* All fallible storage growth precedes publication. A failed
+             * allocation consumes neither identity nor caller handle. */
+            task = kalloc(sizeof(*task));
+            if (!task) return ENSMEM;
+            memset(task, 0, sizeof(*task));
+            for (last = scheduler.tasks; last->next_task; last = last->next_task) ;
+            last->next_task = task;
+        }
     }
-    task = &scheduler.tasks[index];
-    memset(task, 0, sizeof(*task));
+    clear_task(task);
     task->execution.identity = ++next_identity;
     task->state = TASK_RESERVED;
     *slot = task;
@@ -969,8 +1001,8 @@ void ksched_task_cancel(void **slot)
         (!scheduler.active && task != scheduler.tasks))
         panic("task cancellation outside private reservation");
     *slot = NULL;
-    memset(task, 0, sizeof(*task));
-    if (!scheduler.active) { kfree(scheduler.tasks); scheduler.tasks = NULL; }
+    clear_task(task);
+    if (!scheduler.active) free_task_table();
 }
 static void publish_task(void **slot, TASK_STATE state)
 {
@@ -982,10 +1014,9 @@ static void publish_task(void **slot, TASK_STATE state)
 void ksched_task_publish(void **slot) { publish_task(slot, TASK_NEW); }
 BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *startup)
 {
-    UWORD i;
+    KERNEL_TASK *task;
     if (!scheduler.active || scheduler.current || !startup) return FALSE;
-    for (i = 0; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
+    for (task = scheduler.tasks; task; task = task->next_task) {
         if (task->startup == startup)
             return !task->program && task->thread && !kthread_is_executing(task->thread) &&
                 (task->state == TASK_DONE || task->state == TASK_ZOMBIE || task->state == TASK_DRAINING);
