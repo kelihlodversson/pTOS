@@ -2834,7 +2834,9 @@ keep their existing adapters and shell loop.
 Normal GEM application launches use AES4 shel_write mode 0. Launch success
 no longer means that the desktop should exit: its windows, menus, state and
 event loop remain live while children execute. The busy cursor is cleared
-on return from launch. Standard CH_EXIT messages refresh directory listings
+on return from launch. EmuDesk explicitly collects its own completed child
+with nonblocking Pwaitpid when handling CH_EXIT; libaes does not reap for it.
+Standard CH_EXIT messages refresh directory listings
 without restarting the desktop. Both normal termination and faults use the
 existing libaes child-completion path. Classic SHW_CHAIN remains separate
 compatibility support; it is not EmuDesk's normal launch policy.

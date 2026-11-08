@@ -599,6 +599,14 @@ def libaes_desktop(guest):
     assert text.count("x32 libaes accessory READY") == 1
     assert "x32 libaes accessory FAIL" not in text
     assert "x32 libaes accessory EXIT" not in text
+    # The parent explicitly reaps; libaes CH_EXIT publication leaves the
+    # PROCESS result available. Every notified child is collected once.
+    exits = re.findall(r"x32 desktop CH_EXIT (\d+) [0-9a-f]+", text)
+    waits = re.findall(r"x32 desktop WAIT (\d+) ([0-9a-f]+)", text)
+    assert len(waits) == len(exits) and len(exits) >= 8, (exits, waits)
+    for pid, status in waits:
+        assert int(status, 16) >> 16 == int(pid), (pid, status)
+        assert sum(p == pid for p, _ in waits) == 1, (pid, waits)
     accessory_open(3)
     records = re.findall(r"x32 libaes accessory OPEN (\d+) (\d+)",guest.text())
     assert records[1] == records[2], records  # Window survived every child exit.
