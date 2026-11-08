@@ -153,8 +153,8 @@ extern int x86_64_demand_page(UQUAD address, UQUAD error_code);
 
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
-extern PD *run;
 #endif
+extern PD *run;
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
