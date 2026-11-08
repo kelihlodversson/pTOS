@@ -33,6 +33,9 @@ DEJAVU_VERSION=2.37
 DEJAVU_TARBALL_SHA256=fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7
 DEJAVU_TAG=version_$(echo "$DEJAVU_VERSION" | tr . _)
 DEJAVU_URL=https://github.com/dejavu-fonts/dejavu-fonts/releases/download/$DEJAVU_TAG/dejavu-fonts-ttf-$DEJAVU_VERSION.tar.bz2
+# The same 2.37 tarball asset, not an alternate version or mirror. Update this
+# ID with the version/checksums above. The archive hash verifies both routes.
+DEJAVU_ASSET_API=https://api.github.com/repos/dejavu-fonts/dejavu-fonts/releases/assets/2070169
 
 # file in the tarball : its name here : sha256
 fonts='
@@ -65,7 +68,11 @@ verify() {
 # Retry transient HTTP 5xx/timeouts only; checksum validation remains mandatory.
 # Each attempt is bounded and a persistent outage still fails packaging.
 echo "Fetching DejaVu fonts $DEJAVU_VERSION"
-curl -fsSL --retry 3 --connect-timeout 30 --max-time 180 "$DEJAVU_URL" -o "$work/dejavu.tar.bz2"
+if ! curl -fsSL --retry 3 --connect-timeout 30 --max-time 180 "$DEJAVU_URL" -o "$work/dejavu.tar.bz2"; then
+    echo "Release download unavailable; fetching the same pinned GitHub asset through its API" >&2
+    curl -fsSL --retry 3 --connect-timeout 30 --max-time 180 \
+        -H 'Accept: application/octet-stream' "$DEJAVU_ASSET_API" -o "$work/dejavu.tar.bz2"
+fi
 verify "$work/dejavu.tar.bz2" "$DEJAVU_TARBALL_SHA256" "the DejaVu tarball"
 tar -xjf "$work/dejavu.tar.bz2" -C "$work"
 src=$work/dejavu-fonts-ttf-$DEJAVU_VERSION
