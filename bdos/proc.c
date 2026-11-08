@@ -168,7 +168,11 @@ static void proc_release_block(void *base)
     /* the tables are in the record: release through it, then drop it */
     if (kproc_unlaunched((PD *)base))
         release_pd_files((PD *)base);
+#if CONF_WITH_USER_ASPACE
+    kproc_discard_after_free((PD *)base);
+#else
     kproc_discard((PD *)base);
+#endif
 #if CONF_WITH_USER_ASPACE
     /* a block lent to a launcher with an address space goes back, but only
      * after its basepage has been read: that launcher's page tables are loaded */
@@ -184,6 +188,9 @@ static void proc_release_block(void *base)
 static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
+#if CONF_WITH_USER_ASPACE
+    KPROC *observer = kproc_unlaunched(child) ? kproc_retain(child) : NULL;
+#endif
 
     /* (the tables go with the record: later users of the basepage find the
      * basepage's own, zero, ones and release nothing a second time) */
@@ -192,6 +199,10 @@ static void proc_drop_child_record(void *base)
     kproc_discard(child);
 #if CONF_WITH_USER_ASPACE
     kproc_unborrow(base);       /* lent to a launcher while it was built */
+    if (observer) {
+        kproc_publish_observers(observer);
+        kproc_release(observer);
+    }
 #endif
 }
 

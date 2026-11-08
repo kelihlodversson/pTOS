@@ -269,3 +269,5 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
     (void)startup;
     abort(); /* no published clone exists in this legacy fixture */
 }
+
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

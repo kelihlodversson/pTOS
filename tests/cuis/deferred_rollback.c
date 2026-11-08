@@ -327,3 +327,5 @@ int main(void)
     puts("Deferred rejection releases all references after interrupted close: PASS");
     return 0;
 }
+
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

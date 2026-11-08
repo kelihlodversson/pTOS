@@ -1,5 +1,5 @@
 PROCESS completion observation (#907 prerequisite)
-=================================================
+==========================================
 
 Implemented kernel C contract
 -----------------------------
@@ -149,7 +149,7 @@ Nested foreign PROCESSes do not match this identity and use their finalizer.
 
 A refused start may retain its stopped association until root reap. task_entry
 must not publish completion/abandonment before that deferred disposal commits.
-Canonical retirement publishes ABANDONED automatically when no status exists;
+The owning finalizer publishes ABANDONED after all resource reclamation when no status exists;
 normal managed completion publishes only after the existing wait-state store.
 Production host tests cover stopped-owner recognition, pending association,
 repeated disposal, cleanup/unwind readiness, and observer release after reap.
@@ -177,3 +177,22 @@ failed resolution or a full table preserves previous state. A uniquely owned
 old slot can be replaced in a full table. Root consumes no slot and releases its
 transient driver cookie. Existing Dsetpath still leaves the current drive alone;
 the trusted loader operation selects only the child's drive on success.
+
+Review corrections: retirement versus actual reclamation
+------------------------------------------------------
+Record unlink is never delivery readiness, including abandonment. Finalizers
+retain canonical identity through ixterm()/owned allocation cleanup and publish
+only afterwards. Discarding an unstarted basepage attaches one metadata-only
+reference to that allocation's final-release hook. Deferred pinned reclamation
+keeps that reference until the allocator actually releases the allocation;
+record unlink, failed free, and owner-address reuse cannot make it ready early.
+The hook performs only canonical publication/release, no allocation, I/O,
+scheduling, public reaping or allocator reentry. This is allocation lifetime
+ownership, not another PROCESS registry or completion copy.
+
+If a valid unassociated exit handoff is refused, its existing launcher owns a
+fallback observer reference until its child syscall stack is freed. Kernel-code
+children without a separate syscall stack publish after their inline cleanup.
+Attached THREAD exits still require their verified handoff and never use this
+fallback. Classic non-ASPACE KPROC omits observer-only metadata and is guarded
+against exceeding the shared fixed-pool payload at compile time.

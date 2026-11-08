@@ -2306,11 +2306,51 @@ static void ordinary_observation_yield(void)
           "independent observer survives exactly-once public reaping");
     ordinary_observation.checked=TRUE;
 }
+static void test_discarded_observation(void)
+{
+    UWORD mode;
+    static PD allocation_owner;
+    for (mode=0;mode<2;mode++) {
+        SNAP baseline;
+        PD *pd;
+        void *environment;
+        PROCESS_OBSERVER *observer=NULL;
+        KPROC *target;
+        PROCESS_COMPLETION completion;
+        snap(&baseline);
+        pd=new_basepage();
+        CHECK(pd!=NULL,"allocate unstarted observed basepage");
+        if (!pd) return;
+        environment=USERPTR_TO_PTR(pd->p_env);
+        target=kproc_retain(pd);
+        CHECK(process_observer_attach(target,&observer)==E_OK,
+              "retain actual unstarted PROCESS identity before discard");
+        kproc_release(target);
+        if (!mode) CHECK(Mfree(pd)==E_OK,"free unstarted observed basepage");
+        else {
+            procmem_set_owner(pd,&allocation_owner);
+            procmem_pin((VADDR)(uintptr_t)pd,PAGE,1);
+            proc_free_owned(&allocation_owner);
+            CHECK(!process_observer_ready(observer) && procmem_size(pd) &&
+                  process_observer_snapshot(observer,&completion) && completion.state==PROCESS_UNSTARTED,
+                  "retired observed basepage remains pending through actual deferred pin reclamation");
+            procmem_pin((VADDR)(uintptr_t)pd,PAGE,-1);
+        }
+        CHECK(!procmem_size(pd) && process_observer_ready(observer) &&
+              process_observer_snapshot(observer,&completion) && completion.state==PROCESS_ABANDONED &&
+              !completion.kind && !completion.status && !completion.order_low && !completion.order_high,
+              "actual final allocation release publishes abandonment without fabricated completion");
+        CHECK(Mfree(environment)==E_OK,"release separately owned unused environment");
+        process_observer_release(&observer);
+        same(&baseline,"discarded observation reclaims allocation, mappings, handles and retained identity");
+    }
+}
 static void test_ordinary_observation(void)
 {
     UWORD mode;
     int before=failures;
     static const char command[]={2,'O','p',0}, environment[]={0,0};
+    test_discarded_observation();
     for (mode=0;mode<5;mode++) {
         SNAP baseline;
         LONG loaded, status;
