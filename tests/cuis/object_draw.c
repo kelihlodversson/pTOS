@@ -138,8 +138,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (!accessory_entry || b != 4 || c != (accessory_self ? 7U : 99U) || e < 12) return EINVAL;
         __builtin_memcpy((void *)(uintptr_t)d,"  Accessory",12); return 12;
     }
-    if (fn == CUIS_PEER_PID && a == 7) return 7;
-    if (fn == CUIS_PEER_PID && a == 99) return accessory_gone ? EFILNF : 17;
+    if (fn == CUIS_PEER_QUERY && b == 7 && c == CUIS_PEER_STATE) return 0;
+    if (fn == CUIS_PEER_QUERY && b == 99 && c == CUIS_PEER_STATE) return accessory_gone ? EFILNF : 0;
     if (fn == CUIS_BACKGROUND) {
         if (b == 2) return background_state;
         if (!nesting) return EACCDN;

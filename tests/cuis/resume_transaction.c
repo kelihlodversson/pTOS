@@ -42,7 +42,7 @@ static void resume_wait_hook(void)
              * normal history, not become part of the completed resume prefix. */
             if (!cuis_pointer_packet(0,0,1,NULL,NULL)) resume_bad=1;
         } else if (resume_action==4) cancel_pending=TRUE;
-        else update_owner=resume_client; /* fail after observation, before input commit */
+        else input->history_read=BUTTON_HISTORY_GAP; /* Observed gap before input commit. */
     }
 }
 static int resume_transaction_checks(void)
@@ -72,8 +72,8 @@ static int resume_transaction_checks(void)
         cancellation_owner=action==4?resume_client:NULL;
         visits=cancellation_visits;
         resume_action=action; input_operation_hook=resume_wait_hook; before=frees;
-        CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==(action==1?EAGAIN:action==3?(LONG)CUIS_READY_BUTTON:EACCDN));
-        update_owner=NULL; cancel_pending=FALSE; cancellation_owner=NULL;
+        CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==(action==0?ERANGE:action==1?EAGAIN:action==3?(LONG)CUIS_READY_BUTTON:EACCDN));
+        cancel_pending=FALSE; cancellation_owner=NULL;
         CHECK(cancellation_visits==visits+(action==4) && !cancellation_bad);
         CHECK(!resume_bad && !input_operation_hook && input_irqs);
         if (action==2) {

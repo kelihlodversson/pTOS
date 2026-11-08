@@ -486,13 +486,19 @@ static void native_resume_peer(void *argument)
 }
 static struct {
     volatile long mode, ready, go, error, replacement, requested, returned;
-    long session, peer_session, parent_pid;
+    long session, peer_session, parent_pid, parent_client, peer_client;
     unsigned char *data, *output, *late;
 } native_stream;
 static long stream_call(unsigned fn,long session,void *data,long length,long block,long *sender)
 {
     return native_cuis6(fn,(unsigned long)session,(unsigned long)data,(unsigned long)length,
                         (unsigned long)block,(unsigned long)sender,0);
+}
+static long stream_client_id(long session)
+{
+    unsigned long identity[4]={0,0,0,0};
+    if (native_cuis6(76,session,session,5,(unsigned long)identity,sizeof(identity),0)!=16) return -1;
+    return (long)identity[0];
 }
 static void stream_native_peer(void *argument)
 {
@@ -501,11 +507,12 @@ static void stream_native_peer(void *argument)
     if (native_stream.mode==0) {
         if (stream_call(30,native_stream.session,native_stream.data,1,0,0)!=-36L ||
             stream_call(31,native_stream.session,native_stream.output,16,0,&sender)!=16 ||
-            sender!=native_stream.parent_pid || native_stream.output[0]!=0x35) native_stream.error=1;
+            sender!=native_stream.parent_client || native_stream.output[0]!=0x35) native_stream.error=1;
         native_stream.data[0]=99;
     } else if (native_stream.mode==1) {
         long own=native_cuis(0,0,0);
-        if (own<0 || stream_call(30,native_stream.session,native_stream.data,16,0,0)!=16) native_stream.error=1;
+        native_stream.peer_client=stream_client_id(own);
+        if (own<0 || native_stream.peer_client<=0 || stream_call(30,native_stream.session,native_stream.data,16,0,0)!=16) native_stream.error=1;
     } else if (native_stream.mode==2 || native_stream.mode==3 || native_stream.mode==6) {
         native_stream.peer_session=native_cuis(0,0,0);
         if (native_stream.peer_session<0) native_stream.error=1;
@@ -524,7 +531,7 @@ static void stream_native_peer(void *argument)
         if (rc!=(native_stream.mode==3?0:65536L)) native_stream.error=1;
         if (native_stream.mode==2 &&
             (stream_call(31,native_stream.peer_session,native_stream.output,4,0,&sender)!=4 ||
-             sender!=native_stream.parent_pid)) native_stream.error=1;
+             sender!=native_stream.parent_client)) native_stream.error=1;
     } else if (native_stream.mode==4) {
         if (stream_call(31,native_stream.session,native_stream.output,1,0,0)!=-36L ||
             stream_call(88,native_stream.session,native_stream.output,1,0,0)!=-36L) native_stream.error=1;
@@ -557,6 +564,7 @@ static void stream_native_group(void *argument)
 {
     int32_t pid,tid;
     long own=native_cuis(0,0,0);
+    native_stream.peer_client=stream_client_id(own);
     (void)argument;
     if (own<0 || stream_call(30,native_stream.session,native_stream.data,32767,0,0)!=32767 ||
         stream_call(30,native_stream.session,native_stream.data,32767,0,0)!=32767 ||
@@ -586,7 +594,7 @@ static void test_native_streams(void)
         native_stream.mode=mode; native_stream.ready=native_stream.go=native_stream.error=0;
         native_stream.replacement=-1; retire_tid=-1;
         memset(native_stream.data,0x35,32767);
-        own=native_stream.session=native_cuis(0,0,0);
+        own=native_stream.session=native_cuis(0,0,0); native_stream.parent_client=stream_client_id(own);
         ptest_assert_msg(own>=0,"native stream session");
         if (own<0) break;
         if (mode==0) {
@@ -622,16 +630,16 @@ static void test_native_streams(void)
             rc=stream_call(31,own,mode==5?native_stream.late:native_stream.output,mode==1?8:16,1,&sender);
             ptest_assert_msg(rc==(mode==4?-36L:mode==5?-40L:8L),"READ retirement or resident-only late copy failure");
             if (mode==4) own=native_stream.replacement;
-            if (mode==1) ptest_assert_msg(sender==pid && native_stream.output[0]==0x35,"historical foreign sender and partial data");
+            if (mode==1) ptest_assert_msg(sender==native_stream.peer_client && native_stream.output[0]==0x35,"historical foreign sender and partial data");
             if (mode==5) ptest_assert_msg(stream_call(31,own,native_stream.output,16,0,&sender)==16 &&
-                sender==original && native_stream.output[0]==0x35,"failed read leaves all bytes available");
+                sender==native_stream.parent_client && native_stream.output[0]==0x35,"failed read leaves all bytes available");
         }
         if (mode==1 || mode==2 || mode==3 || mode==6) ptest_assert_msg((Pwaitpid(pid,0,0)&65535)==0,"stream PROCESS reaped");
         else ptest_assert_msg(join_tid(tid,&status)==0 && status==0,"stream THREAD reaped");
         ptest_assert_msg(!native_stream.error && Pgetpid()==original,"stream identities and independent parent survive");
         if (mode==1) {
-            ptest_assert_msg(stream_call(88,own,native_stream.output,4,0,&sender)==4 && sender==pid &&
-                stream_call(89,own,0,0,0,0)==8 && stream_call(31,own,native_stream.output,8,0,&sender)==8 && sender==pid,
+            ptest_assert_msg(stream_call(88,own,native_stream.output,4,0,&sender)==4 && sender==native_stream.peer_client &&
+                stream_call(89,own,0,0,0,0)==8 && stream_call(31,own,native_stream.output,8,0,&sender)==8 && sender==native_stream.peer_client,
                 "PEEK preserves bytes and READ preserves sender after source exit");
         }
         if (mode==0) {
@@ -653,7 +661,7 @@ static void test_native_streams(void)
             ptest_assert_msg(Pwaitpid(pid,1,0)==0 && !native_stream.returned,"noncancellable stream retains group until ordinary progress");
             (void)Syield();
         }
-        ptest_assert_msg(stream_call(31,native_stream.session,native_stream.output,16,0,&sender)==16 && sender==pid,
+        ptest_assert_msg(stream_call(31,native_stream.session,native_stream.output,16,0,&sender)==16 && sender==native_stream.peer_client,
                          "independent PROCESS reader makes progress");
         rc=Pwaitpid(pid,0,0);
         ptest_assert_msg((rc>>16)==pid && (rc&65535)==73 && native_stream.returned && !native_stream.error,
@@ -695,6 +703,10 @@ static void native_cancel_peer(void *argument)
             printf("resume observer launch token=%ld result=%ld\r\n",token,launched); return;
         }
         while (!native_cancel.adopt) (void)Syield();
+        /* The leader publishes adopt and enters SESSION_WAIT without yielding.
+         * This peer can run again only after that resumed wait blocks. Gate
+         * the second physical press here, not at the leader's pre-wait flag. */
+        conws("CUIS cancel resume admitted: READY\r\n");
         do {
             if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
                 native_cancel.error=1; return;
@@ -754,7 +766,6 @@ static void native_cancel_leader(void *argument)
             if (buttons&1) (void)Syield();
         } while (buttons&1);
         native_cancel.adopt=1;
-        conws("CUIS cancel resume adopt: READY\r\n");
         (void)native_cuis5(32,native_cancel.session,0,16|2,5000,0);
     }
     native_cancel.wait_result=result;
@@ -880,8 +891,8 @@ static void group_target(void *arg)
         else if (group.mode==7 || group.mode==8) {
             group.window=native_cuis5(3,1,1,32,32,0);
             if (group.window<0 || native_cuis(6,group.window,0)) group.error=1;
-            rc=native_cuis5(20,group.window,8,-1,0,0); /* window/message wait */
-        } else rc=native_cuis(23,group.session,~0ULL);
+            rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
+        } else rc=native_cuis5(32,group.session,1,1,0,0); /* pending stream readiness */
         if (group.mode==12 && rc==2) {
             group.wait_done=1; /* rejected legacy outcome: pending cancellation must win */
             (void)native_cuis5(32,group.session,0,8,0,0);
@@ -1250,6 +1261,8 @@ void test_pclone(void)
          * intentionally a launcher continuation, not a second managed task.
          * Use the standard async launch to test Pclone's managed contract. */
         static const char tail[] = "\7--clone";
+        /* Publish the parent prefix before the fresh worker appends its log. */
+        ptest_log_flush();
         child = Pexec(100,"runtests.tos",tail,0);
         ptest_assert_msg(child > 0,"managed clone test worker must start");
         if (child > 0) {

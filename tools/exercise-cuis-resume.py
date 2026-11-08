@@ -69,7 +69,9 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
     command("mouse_button 1")
     marker("CUIS cancel resume checkpoint: READY")
     command("mouse_button 0")
-    marker("CUIS cancel resume adopt: READY")
+    # The cancellation peer emits this only after the leader has blocked in
+    # the resumed wait; a leader-side pre-wait marker admits input too early.
+    marker("CUIS cancel resume admitted: READY")
     command("mouse_button 1")
     marker("native CUIS resumed button cancellation: PASS")
     command("mouse_button 0")

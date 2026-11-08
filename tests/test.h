@@ -82,4 +82,8 @@ int ptest_summary(void);
  */
 void ptest_log_flush(void);
 
+/* Select append mode before a fresh worker prints or flushes any output.
+ * The outer harness keeps the default truncation of a previous run's log. */
+void ptest_log_append(void);
+
 #endif /* TEST_H */

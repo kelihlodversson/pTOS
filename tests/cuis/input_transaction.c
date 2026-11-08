@@ -31,7 +31,10 @@ static void transaction_hook(void)
         transaction_client->key_count=1; keyboard_owner=transaction_client; keyboard_depth=1;
         if (transaction_action==6) input_ticks+=1000; /* Button and timer become ready too. */
         cancel_pending=TRUE; /* Readiness must lose before commit. */
-    } else update_owner=transaction_client; /* Local failure before commit. */
+    } else {
+        /* A legitimate policy invalidation aborts before input commit. */
+        if (cuis_input_config(CUIS_INPUT_BUTTON,transaction_session,3,3,1,0,0)) transaction_bad=1;
+    }
 }
 static int input_transaction_checks(void)
 {
@@ -63,8 +66,8 @@ static int input_transaction_checks(void)
         transaction_action=action; input_operation_hook=transaction_hook;
         result=cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON|CUIS_READY_KEY|
                                  (action==6?CUIS_READY_TIMER:0),action==6?1:0);
-        update_owner=NULL; cancel_pending=FALSE; cancellation_owner=NULL;
-        CHECK(result==(action==1||action==3?EAGAIN:action==2?ERANGE:EACCDN));
+        cancel_pending=FALSE; cancellation_owner=NULL;
+        CHECK(result==(action==0||action==1||action==3?EAGAIN:action==2?ERANGE:EACCDN));
         CHECK(cancellation_visits==visits+(action>=4) && !cancellation_bad);
         CHECK(!transaction_bad && !input_operation_hook && input_irqs &&
               !transaction_client->wait_operation && !transaction_client->input_wait &&

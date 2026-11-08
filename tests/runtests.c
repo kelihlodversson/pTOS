@@ -18,12 +18,17 @@ void pclone_run_managed_tests(void);
 int main(void)
 {
     int failures;
+#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+    int worker = (unsigned char)_base->p_cmdlin[0] == 7 &&
+                 !memcmp(_base->p_cmdlin + 1, "--clone", 7);
+    if (worker)
+        ptest_log_append();
+#endif
 
     conws("pTOS regression tests\r\n\r\n");
 
 #if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
-    if ((unsigned char)_base->p_cmdlin[0] == 7 &&
-        !memcmp(_base->p_cmdlin + 1, "--clone", 7)) {
+    if (worker) {
         pclone_run_managed_tests();
         failures = ptest_failures();
         ptest_log_flush();
