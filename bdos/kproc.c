@@ -65,9 +65,7 @@ struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
     BOOL completed;
     UWORD exit_status;
-#if CONF_WITH_CUIS
-    char executable_name[33]; /* Bounded basename; GUI normalization stays in userspace. */
-#endif
+    char executable_name[33]; /* Bounded basename; presentation stays in userspace. */
 #if CONF_WITH_USER_CALLBACKS
     USER_CALLBACK_STATE *callbacks;
     UQUAD resume_rsp;
@@ -520,10 +518,13 @@ void kproc_destroy(PD *pd)
                 BOOL completed = kproc->completed;
                 UWORD status = kproc->exit_status;
                 KPROC *next = kproc->next;
+                char name[33];
 #if CONF_WITH_USER_ASPACE
                 KPROC *parent_identity = kproc->parent_identity;
 #endif
+                memcpy(name, kproc->executable_name, sizeof(name));
                 bzero(kproc, sizeof *kproc);
+                memcpy(kproc->executable_name, name, sizeof(name));
                 kproc->references = references;
                 kproc->pid = pid;
                 kproc->completed = completed;
@@ -547,7 +548,6 @@ WORD kproc_pid(PD *pd)
     return kproc ? kproc->pid : 0;
 }
 
-#if CONF_WITH_CUIS
 void kproc_set_executable_name(PD *pd, const char *path)
 {
     KPROC *k = kproc_find(pd);
@@ -558,12 +558,15 @@ void kproc_set_executable_name(PD *pd, const char *path)
     for (i = 0; i < 32 && base[i]; i++) k->executable_name[i] = base[i];
     k->executable_name[i] = 0;
 }
-const char *kproc_executable_name(PD *pd)
+LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity)
 {
-    KPROC *k = kproc_find(pd);
-    return k ? k->executable_name : "";
+    ULONG length;
+    if (!process) return EFILNF;
+    for (length = 0; process->executable_name[length]; length++) ;
+    if (capacity <= length) return ERANGE;
+    memcpy(name, process->executable_name, length + 1);
+    return (LONG)length;
 }
-#endif
 
 WORD kproc_parent_pid(PD *pd)
 {

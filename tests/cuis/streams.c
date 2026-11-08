@@ -7,9 +7,6 @@ static int stream_checks(void)
     run = &first; a = cuis_service(CUIS_SESSION_START, 0);
     run = &second; b = cuis_service(CUIS_SESSION_START, 0);
     CHECK(a >= 0 && b >= 0);
-    CHECK(cuis_directory_service(CUIS_SESSION_NAME, b, 0x20000, 33) == 11);
-    CHECK(!memcmp(stream_output, "GemTest.Prg", 12));
-    CHECK(cuis_directory_service(CUIS_SESSION_NAME, b, 0x20000, 1) == ERANGE);
     memcpy(stream_input, "GEMTEST ", 8);
     CHECK(cuis_directory_service(CUIS_SESSION_LABEL, a, 0x10000, 8) == EACCDN);
     CHECK(cuis_directory_service(CUIS_SESSION_LABEL, b, 0x10000, 8) == E_OK);

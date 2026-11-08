@@ -1780,6 +1780,7 @@ static void test_kproc(void)
     KPROC *retained, *second;
     WORD retained_pid;
     UWORD status;
+    char name[33];
     ULONG i;
 
     snap(&s);
@@ -1798,6 +1799,15 @@ static void test_kproc(void)
     second = kproc_retain(pds[0]);
     CHECK(retained && second && retained == second, "retain live process twice");
     retained_pid = kproc_pid(pds[0]);
+    kproc_set_executable_name(pds[0], "C:\\APPS/Original.Prg");
+    memset(name, 0x5a, sizeof(name));
+    CHECK(kproc_ref_name(retained, name, 12) == ERANGE && name[0] == 0x5a,
+          "PROCESS name short buffer is untouched");
+    CHECK(kproc_ref_name(retained, name, sizeof(name)) == 12 &&
+          !strcmp(name, "Original.Prg"), "PROCESS basename snapshot");
+    kproc_set_executable_name(pds[1], "D:/Other.ACC");
+    CHECK(kproc_ref_name(retained, name, sizeof(name)) == 12 &&
+          !strcmp(name, "Original.Prg"), "PROCESS metadata identity is independent");
     candidate = kalloc(sizeof(PD));
     CHECK(candidate != NULL, "PID exhaustion test basepage");
     if (candidate) {
@@ -1822,6 +1832,8 @@ static void test_kproc(void)
     CHECK(!kproc_ref_has_basepage(retained) && kproc_ref_pid(retained) == retained_pid &&
           kproc_ref_status(retained, &status) && status == 42,
           "retained completion survives record removal and basepage release");
+    CHECK(kproc_ref_name(retained, name, sizeof(name)) == 12 &&
+          !strcmp(name, "Original.Prg"), "PROCESS name survives PD reclamation");
     if (candidate) {
         kproc_test_pid_search(retained_pid - 1, 1);
         CHECK(!kproc_create(candidate), "retired identity reserves its PID");
