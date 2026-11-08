@@ -1296,14 +1296,17 @@ static void test_thread_reclaim(void *resource)
 }
 #endif
 
+#if CONF_WITH_NATIVE_SCHED
 static struct {
     BOOL enabled, seen;
     KPROC *owner;
     LONG handle;
     WORD pid;
 } deferred_reentry;
+#endif
 void x86_64_memtest_disposal_committed(PD *pd)
 {
+#if CONF_WITH_NATIVE_SCHED
     static char command[]={2,'O','n',0}, environment[]={0,0};
     PROCESS_OBSERVER *late=NULL;
     PROCESS_COMPLETION completion;
@@ -1325,6 +1328,7 @@ void x86_64_memtest_disposal_committed(PD *pd)
         if (third>0) CHECK(proc_exec_handle_close(deferred_reentry.owner,third)==E_OK,
                            "rejected competing commit retains safely closable preparation");
     }
+#endif
     if (pd != disposal_test_pd)
         return;
     disposal_test_commits++;
