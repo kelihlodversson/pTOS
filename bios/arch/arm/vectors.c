@@ -214,6 +214,22 @@ void int_timerc(void)
 #if CONF_WITH_USER_ASPACE
 /* bdos/proc.c: ends the process that is running, and resumes its launcher */
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
+#include "../../../bdos/kproc.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
+extern PD *run;
+/* Preserve architecture fault kind before proc_fault's generic fallback.
+ * Native scheduling owns per-THREAD intent until final PROCESS completion. */
+static void note_process_fault(WORD signal)
+{
+#if CONF_WITH_NATIVE_SCHED
+    ksched_fault(run, signal);
+#else
+    kproc_note_fault(run, signal);
+#endif
+}
+
 /* bdos/arch/arm/uspace.c: lazy pages (see there for the answers) */
 extern int arm_demand_page(ULONG address, ULONG fsr, int fetch);
 #endif
@@ -250,14 +266,19 @@ void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG f
 
             if (answer == 1)
                 return;
-            if (answer == 2)
+            if (answer == 2) {
+                note_process_fault(9);
                 proc_fault("no physical page left", fsr, far,
                            (UQUAD)(ULONG)stack_frame->user_pc, (UQUAD)stack_frame->user_sp);
-            if (answer == 3)
+            }
+            if (answer == 3) {
+                note_process_fault(10);
                 proc_fault("file mapping I/O error", fsr, far,
                            (UQUAD)(ULONG)stack_frame->user_pc, (UQUAD)stack_frame->user_sp);
+            }
         }
 #endif
+        if ((vector_addr >> 2) == 4) note_process_fault(4);
         proc_fault(cause, fsr, far, (UQUAD)(ULONG)stack_frame->user_pc,
                    (UQUAD)stack_frame->user_sp);
     }
