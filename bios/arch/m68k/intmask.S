@@ -28,6 +28,12 @@
 
         .text
 
+#if CONF_WITH_NATIVE_SCHED
+C_SYM(disable_interrupts):
+        jmp C_SYM(ksched_legacy_irq_disable)
+C_SYM(enable_interrupts):
+        jmp C_SYM(ksched_legacy_irq_enable)
+#else
 /* disable interrupts */
 C_SYM(disable_interrupts):
 #ifdef __mcoldfire__
@@ -59,3 +65,5 @@ C_SYM(enable_interrupts):
 
 savesr:
         .ds.w   1
+
+#endif /* CONF_WITH_NATIVE_SCHED */

@@ -12,6 +12,7 @@
 #include "proc_clone.h"
 #include "fs.h"
 #include "callback_cpu.h"
+#include "ksched_legacy_irq.h"
 #include "proc.h"
 #include <stddef.h>
 #include "kheap.h"
@@ -73,7 +74,8 @@ static struct {
 typedef struct {
     PD *loaded_process; /* first: frozen run ABI aliases this CPU-owned slot */
     UWORD number; /* logical boot CPU 0; no additional CPU may dispatch yet */
-    BOOL leaf_held;
+    BOOL leaf_held, legacy_irq_held;
+    uintptr_t legacy_irq_flags;
 #if CONF_WITH_USER_CALLBACKS
     USER_CALLBACK_CPU callback; /* frame chain includes watchdog deadlines */
 #endif
@@ -101,7 +103,12 @@ static NATIVE_SCHED_CPU boot_cpu;
 typedef char loaded_process_abi_offset[offsetof(NATIVE_SCHED_CPU,loaded_process)==0 ? 1:-1];
 #define KSCHED_STRING_(x) #x
 #define KSCHED_STRING(x) KSCHED_STRING_(x)
-extern PD *run __attribute__((alias(KSCHED_STRING(__USER_LABEL_PREFIX__) "boot_cpu")));
+/* An assembler alias leaves one complete storage object for instrumentation.
+ * A C variable alias of pointer size registers a second, overlapping ASan
+ * global and poisons the remaining CPU fields as the pointer's redzone. */
+__asm__(".globl " KSCHED_STRING(__USER_LABEL_PREFIX__) "run\n"
+        ".set " KSCHED_STRING(__USER_LABEL_PREFIX__) "run,"
+                KSCHED_STRING(__USER_LABEL_PREFIX__) "boot_cpu");
 #undef KSCHED_STRING
 #undef KSCHED_STRING_
 /* Deliberately boot-CPU-only. B1c/B2 must add architecture CPU-local selection;
@@ -142,9 +149,36 @@ static void runqueue_unlocked(void)
 {
     if (execution_cpu.leaf_held) panic("scheduler: operation under leaf exclusion");
 }
+uintptr_t ksched_legacy_irq_disable(void)
+{
+    uintptr_t flags=native_sched_irq_save();
+#if ARCH_ARM
+    /* Preserve legacy disable_interrupts' FIQ mask as well as IRQ. */
+    __asm__ volatile ("cpsid f" ::: "memory", "cc");
+#endif
+    runqueue_unlocked();
+    if (execution_cpu.legacy_irq_held)
+        panic("scheduler: nested legacy interrupt scope");
+    execution_cpu.legacy_irq_flags=flags;
+    execution_cpu.legacy_irq_held=TRUE;
+    return flags;
+}
+void ksched_legacy_irq_enable(void)
+{
+    uintptr_t flags;
+    runqueue_unlocked();
+    if (!execution_cpu.legacy_irq_held)
+        panic("scheduler: unmatched legacy interrupt scope");
+    flags=execution_cpu.legacy_irq_flags;
+    execution_cpu.legacy_irq_flags=0;
+    execution_cpu.legacy_irq_held=FALSE;
+    native_sched_irq_restore(flags);
+}
 void ksched_verify_switch_boundary(void)
 {
     runqueue_unlocked();
+    if (execution_cpu.legacy_irq_held)
+        panic("scheduler: legacy interrupt scope cannot switch");
 #if CONF_WITH_USER_CALLBACKS
     if (execution_cpu.callback.frame)
         panic("scheduler: callback continuation cannot switch");
@@ -549,7 +583,7 @@ KTHREAD_CONTEXT *ksched_interrupt_target(PD *pd, struct kaspace **space, ULONG *
 #if CONF_WITH_USER_CALLBACKS
     if (execution_cpu.callback.frame) return NULL;
 #endif
-    if (scheduler.stopping || !scheduler.active || execution_cpu.leaf_held ||
+    if (scheduler.stopping || !scheduler.active || execution_cpu.leaf_held || execution_cpu.legacy_irq_held ||
         !task || execution_cpu.inflight!=task || !task->execution.on_cpu ||
         task->execution.owner_cpu!=execution_cpu.number || task->state!=TASK_RUNNING ||
         task->program!=pd || !kthread_is_executing(task->thread)) return NULL;

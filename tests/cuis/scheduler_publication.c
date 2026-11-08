@@ -195,7 +195,16 @@ int main(void)
     UQUAD identity;
     KERNEL_TASK *t, *grown;
     CHILD_WAIT wait;
-    CHECK(&run==&execution_cpu.loaded_process);
+    { /* Inspect the exported linker ABI, not C's distinct-symbol folding. */
+        volatile uintptr_t exported=(uintptr_t)&run;
+        CHECK(exported==(uintptr_t)&execution_cpu.loaded_process);
+    }
+    {
+        uintptr_t flags=ksched_legacy_irq_disable();
+        CHECK(execution_cpu.legacy_irq_held && execution_cpu.legacy_irq_flags==flags);
+        ksched_legacy_irq_enable();
+        CHECK(!execution_cpu.legacy_irq_held && !execution_cpu.legacy_irq_flags);
+    }
     CHECK(ksched_controller_install(&kernel_controller));
     CHECK(ksched_task_reserve(TRUE,&root) == E_OK && root == table && table[0].state == TASK_RESERVED);
     identity = next_identity;

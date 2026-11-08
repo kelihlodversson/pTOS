@@ -1,0 +1,84 @@
+Native blocking boundary for downstream #929
+============================================
+This is the stable ownership/ordering contract for a future Fpoll_time64
+consumer, not a descriptor poll engine or a new public syscall. No Fpoll,
+Fselect, time64 ABI, generic deadline service or pollable PROCESS endpoint is
+implemented here. #909 alone owns public PROCESS wait/reaping; #928 owns
+non-consuming PROCESS observation. GUI policy remains outside this boundary.
+
+Current interfaces
+-------------------
+ksched_wait_cancelable(predicate, retained_context) returns READY, CANCELLED or
+UNMANAGED. READY is an observation requiring operation-local revalidation and
+commit, not ownership or event consumption. CANCELLED wins coincident readiness
+until commit; the caller unpublishes its interest, rolls back tentative state,
+releases references and restores IRQ state BEFORE ksched_cancel_point(). An
+UNMANAGED caller has not registered a blocked task and must use an explicitly
+supported unmanaged entry or return its documented error; it must not spin.
+
+KSCHED_WAIT_SEQUENCE/OBSERVATION and internal admission-ticket waits provide the
+check/block generation foundation. They are ordinary C under owner exclusion,
+not atomic counters or an SMP wake primitive. Raw callback waits still rely on
+cooperative level-predicate scans; they are NOT ready-made interrupt-safe poll
+subscriptions. No downstream caller may infer otherwise from these names.
+
+Required register/check/block/wake transaction
+-----------------------------------------------
+1. Own the blocked operation and pin every referenced object before admission.
+   Retain the open file/handle incarnation, not an integer descriptor alone;
+   close/reuse of the descriptor must not redirect a pending interest.
+2. Under the event owner's exclusion, register the interest, snapshot its
+   non-recycled generation, and evaluate readiness/cancellation/deadline.
+   Allocate subscription storage and pin/copy user destinations before taking
+   the leaf. Never invoke a readiness callback while holding the runqueue leaf.
+3. Under the same owner exclusion, enter the leaf and compare the generation.
+   A change means retry, never sleep on the old observation. Otherwise publish
+   BLOCKED and its retained operation before releasing the owner exclusion.
+4. Publish event/retirement/cancellation state under its owner, then advance the
+   generation and perform bounded leaf wake publication. The producer before
+   step3 changes the observed stamp; after step3 it sees an admitted waiter.
+   Root park must pair this with the backend's atomic pending-IRQ/idle boundary.
+5. Re-evaluate under the owner on wake. A wake is a hint, not a consumed event.
+   Disarm/unlink all interests before final reference release or stack reclaim.
+   Final-reference destructors and callbacks run outside the leaf and outside
+   any CUIS/input exclusion; no predicate retains a retired syscall-stack pointer.
+6. Commit validated output/consumption once, without a yield or callback after
+   the first irreversible store. A subsequent cancellation cannot retract it.
+   A copyout failure must retain kernel events/claims until explicit cleanup;
+   partially changed user memory is possible without protected write preparation.
+
+Cancellation, deadlines and teardown
+--------------------------------------
+The future timeout owner must supply an absolute monotonic deadline with a
+specified clock domain and checked conversion/overflow rules. Relative timeout
+retries must not extend it. An expired deadline must participate in the same
+admission generation/check/wake protocol; incrementing a timer counter alone is
+not a wake guarantee. Zero timeout is a nonblocking readiness transaction.
+Cancellation takes precedence before operation commit, including coincident
+readiness or timeout. Return/error encoding belongs to #929, not the scheduler.
+
+Close/retirement invalidates admission and wakes existing interests, but keeps
+retained object storage alive until all operations detach. Interruption cannot
+unwind arbitrary driver/filesystem/copyout frames. Unsupported non-interruptible
+operations wait for their normal safe boundary and must report that limitation.
+An unrelated PROCESS sharing ASPACE cannot consume or cancel another operation.
+Unstarted rollback is abandonment, never invented completion. Cleanup is
+idempotent through an owned handle; generation exhaustion refuses/fails stop
+before wrap and never revives an older subscription.
+
+Synchronization and remaining gate
+------------------------------------
+Required nesting order: PROCESS membership/completion -> mapping/lease ->
+admission/operation owner -> runqueue leaf. Retaining references across stages
+is not permission to hold those locks across allocation, callbacks or copyout.
+Order peers at the same rank by retained object identity. Leaf sections contain
+only bounded queue/wake metadata, no allocation, I/O, copy, predicate callback,
+notification, handoff or last-reference destructor. No blocking PROCESS lock
+beneath CUIS/input exclusion. Local IRQ exclusion is not an SMP lock.
+
+Before IRQ-driven rescheduling or #929 implementation, event owners need the
+actual synchronization implementing this protocol (including 64-bit generation
+accesses on 32-bit targets), retained descriptor operations, wake routing and
+per-CPU root-entry ownership. Existing cooperative tests/stamped result waits
+are a foundation, not proof that every filesystem/device wait is concurrent-safe.
+B2/C, timer preemption and SMP remain disabled.
