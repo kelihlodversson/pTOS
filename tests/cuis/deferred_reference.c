@@ -81,3 +81,5 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
     (void)startup;
     abort(); /* no published clone exists in this legacy fixture */
 }
+
+void ksched_admission_release(KSCHED_ADMISSION *h) { if(h->identity) abort(); }

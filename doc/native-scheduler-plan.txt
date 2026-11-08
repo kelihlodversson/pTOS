@@ -291,8 +291,9 @@ reference and, when tracked, one KPROC identity reference for its result owner.
 Its external owning handle is only a non-recycled 64-bit token, never a record
 address. IDs start at one, are consumed only after successful construction and
 fail ERANGE at exhaustion; reference overflow and nonempty output handles fail.
-Records have independent references for the task arena/producer and synchronous
-waiter/consumer. Multiple admissions/results may coexist even though overlapping
+Records have independent references for per-task producers and synchronous
+waiter/consumer. Producers carry their own admission token and result cell;
+the arena index is no longer completion authority. Multiple admissions/results may coexist even though overlapping
 root activations are still rejected. Fixed result cells cover the explicit
 bootstrap batch (up to eight), not the number of globally allowed tasks.
 
@@ -308,8 +309,9 @@ Protocol under serialized cooperative execution:
 3. Publish fully prepared tasks through the existing no-fail transition. No
    admission allocation, callback, copyout or dispatch is inserted after the
    first visible output store. One runqueue/root/backend policy remains.
-4. Root reaps stopped execution resources off their stacks. Each initial
-   PROCESS anchor publishes its status once into its admission cell, only after
+4. Root reaps stopped execution resources off their stacks. Each
+   PROCESS anchor with an internal producer publishes once into its own retained
+   admission/cell, independent of task-table position, only after
    final THREAD completion. DRAINING anchors do not publish THREAD statuses as
    PROCESS results. Async zombies are still independently retained for #909.
 5. Completion observation does not consume public zombies. An internal take
@@ -366,3 +368,124 @@ allocation/destructor/readiness callback/copyout under the future runqueue lock;
 no blocking PROCESS lock under CUIS/input exclusion. Wait generations/predicate
 rechecks, shutdown admission and mapping/copyout lifetimes remain before B/C.
 Local IRQ exclusion is not an SMP lock. Timer preemption remains disabled.
+
+
+A2c first increment: detachable managed waiters (global admission still gated)
+-----------------------------------------------------------------------------
+No claim of completed A2c or native user-visible background execution. This
+increment removes two ownership dependencies and implements/tests the managed
+waiter prerequisite before changing global admission.
+
+Per-task completion: KERNEL_TASK owns a KSCHED_ADMISSION producer handle and a
+result cell. All initial producer references are prepared before stack/image
+adoption; rollback releases them. Root completion uses those fields directly,
+then releases that task's producer. It never searches initial arena positions
+or reads a global active admission. A grown overflow task can publish to an
+independent admission. Final drain checks outstanding producers by scanning the
+whole linked arena, not initial result indices. scheduler.initial now controls
+ONLY the still-gated bootstrap arena reservation/reuse policy; it is not result
+ownership. SAME_PROCESS worker completion still belongs to its PROCESS anchor. Ordinary
+async tasks without an internal producer retain the existing PROCESS zombie/
+observer completion path; no second public result/reap record is fabricated.
+
+Logical PPID: the scheduler override is removed. KPROC.parent_identity is the
+sole native PROCESS-parent authority, with PPID 0 after that parent retires.
+A kernel execution controller is not a replacement logical parent. The GEM
+chain test deliberately now asserts PPID 0 for a successor whose source has
+retired, including the existing normal/fault/nested/deferred roles; the old
+assertion compared the global activation's controller PID. Existing native
+KPROC parent-retirement/PD-reuse and notification tests remain in place.
+
+Managed result attachment: KSCHED_WAITER is another non-recycled 64-bit operation
+token, bound to (retained KPROC identity, TID, scheduler execution identity).
+Its kernel record owns a reference to the result admission and an identity-only
+actor reference. It stores NO PD, result destination, jmp_buf or CPU frame.
+A stale token cannot resolve reused storage. Wrong actor/TID/execution, invalid
+count, exhausted IDs, nonempty handles or allocation/ref failure reject without
+output delivery. Multiple TIDs may observe readiness, but only the existing
+admission's one successful consumer takes results. This is not Pthjoin or Pwait.
+
+ksched_result_wait() is internal and managed-execution-only. It verifies the
+current THREAD belongs to run (rejecting separate nested Pexec/foreign callback
+execution), admits its ticket, and blocks using the existing
+ksched_wait_cancelable() and task-owned CPU continuation. The predicate argument
+is retained kernel operation storage, not a pointer to a caller's local token.
+The existing round-robin resumes that same THREAD as soon as ITS result is ready;
+unrelated runnable/blocked continuations need not drain. Ready/consumed/abandoned
+states wake the operation to deliver a result or a terminal error. No new queue,
+dispatcher, public PROCESS waiter or callback mechanism is introduced.
+
+Before result consumption, pending cancellation wins even for already-complete
+results. The operation detaches/releases its owned refs, restores IRQ state,
+then enters the existing safe checkpoint. It cannot unwind arbitrary kernel or
+nested launcher frames. After successful consumption there is no rollback of
+delivered results. Explicit detach is idempotent through the owning handle and
+abandons only that attachment; another TID may still consume an unclaimed result.
+PROCESS completion still abandons admissions through the existing KPROC identity.
+
+An execution that never explicitly detaches cannot leak its ticket: scheduler
+root retires matching (PROCESS,TID,execution) attachments after the backend has
+stopped that continuation, before freeing KTHREAD/execution stacks. That task
+is DONE/ZOMBIE/DRAINING and its readiness predicate cannot be called again.
+Unpublish precedes final ref release; abandoned caller-stack handles become
+inert tokens, not dangling operation pointers. Retirement MUST NOT be invoked
+at cancellation-request time for a resumable blocked execution. No current
+stack is freed by this mechanism, and there is no strong reference cycle.
+
+Verification distinguishes evidence:
+- Production host lifetime tests exercise independent attachments, wrong actor/
+  TID/execution, one consumer, detach/rebind, late producer, quiescent retirement,
+  same-PD replacement, stale tokens, allocation/ref failure, overflow/exhaustion
+  and exact allocation/identity/controller baselines under three configurations.
+- A production-scheduler host fixture models IRQ/CPU and nonreturning xterm:
+  cancellation before readiness and coincident with already-complete results
+  releases all ticket refs before checkpoint, preserves output and restores IRQs;
+  a distinct nested PROCESS is rejected without cancellation/unwind. Normal,
+  ASan/UBSan and fortified-host tests are distinct from native execution.
+- Native test-gated kernel assertions run on real user syscall continuations.
+  A managed async THREAD with a parent blocked in Pwait attaches a private
+  admission, suspends through the real CPU backend, receives a root-produced
+  completion, resumes with the same PROCESS/TID/execution and returns while its
+  parent remains blocked. A deliberately abandoned ticket is released at that
+  actual THREAD's root reap. This proves managed attachment/handoff, not a new
+  public clone/Pexec/background facility; completion injection is kernel-only.
+  Existing user programs still exercise twelve mixed peers, CPU/FPU/MMU state,
+  nested Pexec, joins, group cancellation, independent PROCESSes and reclamation.
+
+Exact blockers before global admission:
+1. completion_owner is a borrowed pointer to a stable PROCESS anchor. The old
+   initial arena and growth nodes stay alive until activation drain. Independent
+   task-record reuse needs explicit anchor-dependent ownership (including the
+   leader-first DRAINING case), reservations, observers and public zombie refs.
+2. The outer UNMANAGED synchronous attachment still has a gated waiter_resume
+   and drains before returning. It is not a managed TID. Managed tickets do not
+   create an unmanaged execution identity or an early-return/root-entry pump.
+   A later Syield/idle entry needs its own valid, bounded caller attachment and
+   a park/resume transition while live tasks remain, including blocked tasks.
+3. scheduler.active currently combines execution-in-root and activation/runqueue
+   ownership. Root park currently clears CPU state and frees the whole arena.
+   These transitions and wait/publication visibility must be separated before
+   admitting ordinary async work outside a group. Do not clear gates to bypass
+   this missing protocol. Extend the SAME queue/backend; #909 remains public
+   PROCESS consumption, with independent CUIS observers.
+
+Next A2c increment: reference-count PROCESS anchors/task storage, separate
+root-entry attachment from runqueue existence, implement a bounded unmanaged
+cooperative pump, then reserve/publish ordinary async admission into it. Require
+native user proof that the launcher RETURNS with a live child and a LATER entry
+executes that child, on all three MMUs, before enabling it. That proof is absent
+in this increment; global admission stays disabled and preemption stays off.
+
+Milestone B synchronization additions: serialize registry attach/detach/take
+against TID retirement and admission completion; protect operation refs across
+predicate evaluation. 64-bit IDs on 32-bit MMUs need protected/atomic accesses.
+Quiescent retirement must remove readiness visibility before destructor runs.
+Membership/completion -> mapping/lease -> leaf-runqueue remains the order;
+registration and readiness check/block must become one generation/predicate
+protocol before preemption. No final release, allocation, user copy or callbacks
+under a future runqueue lock; no PROCESS lock below CUIS/input exclusion. Current
+IRQ exclusion plus cooperative serialization is not an SMP locking design.
+
+The intermittent physical-button CUIS cancellation assertion recorded in A2b
+remains OPEN. Passed repeats are not a fix. No CUIS stream cancellation (#907)
+or API-minimization work (#915), GUI ports, TLS, fork or non-MMU scheduling.

@@ -256,6 +256,8 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
 fi
 if grep -q '^CONF_WITH_NATIVE_SCHED *= *y' obj/auto.conf; then
     grep -q 'native scheduler durable controller/completion abandonment: PASS' "$log"
+    grep -q 'native managed TID admission wait/resume: PASS' "$log"
+    grep -q 'native quiescent waiter retirement: PASS' "$log"
 fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"

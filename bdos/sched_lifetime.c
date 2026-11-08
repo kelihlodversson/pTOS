@@ -127,3 +127,92 @@ PD *ksched_admission_owner_pd(const KSCHED_ADMISSION *handle)
     ADMISSION *p=lookup(handle);
     return p && !p->abandoned && p->owner ? kproc_live_pd(p->owner) : NULL;
 }
+
+/* Attachments store neither CPU continuations nor result destinations. Managed
+ * continuations belong to KTHREAD/task storage; public PROCESS zombies are
+ * completely independent. Registry/ref changes are cooperatively serialized. */
+typedef struct result_waiter {
+    struct result_waiter *next;
+    UQUAD identity, execution;
+    ULONG tid;
+    KPROC *actor;
+    KSCHED_ADMISSION admission;
+} RESULT_WAITER;
+static RESULT_WAITER *result_waiters;
+static UQUAD last_waiter;
+
+static RESULT_WAITER *find_waiter(const KSCHED_WAITER *handle)
+{
+    RESULT_WAITER *p;
+    if (handle && handle->identity)
+        for (p=result_waiters;p;p=p->next) if (p->identity==handle->identity) return p;
+    return NULL;
+}
+LONG ksched_waiter_attach(const KSCHED_ADMISSION *admission,KPROC *actor,
+                         ULONG tid,UQUAD execution,UWORD count,KSCHED_WAITER *out)
+{
+    ADMISSION *record=lookup(admission);
+    RESULT_WAITER *p;
+    if (!out || out->identity || !record || count!=record->count || !tid || !execution) return EINVAL;
+    if (!actor || record->owner!=actor || record->abandoned || record->consumed) return EACCDN;
+    if (last_waiter==~0ULL) return ERANGE;
+    p=kalloc(sizeof(*p)); if (!p) return ENSMEM;
+    memset(p,0,sizeof(*p));
+    p->actor=kproc_retain_live(actor);
+    if (!p->actor || !ksched_admission_retain(admission,&p->admission)) {
+        if (p->actor) kproc_release(p->actor);
+        kfree(p); return EACCDN;
+    }
+    p->tid=tid; p->execution=execution;
+    p->identity=++last_waiter;
+    p->next=result_waiters; result_waiters=p;
+    out->identity=p->identity;
+    return E_OK;
+}
+void *ksched_waiter_context(const KSCHED_WAITER *handle) { return find_waiter(handle); }
+BOOL ksched_waiter_ready(void *context)
+{
+    RESULT_WAITER *p=context;
+    ADMISSION *record;
+    UWORD i;
+    if (!p) return TRUE;
+    record=lookup(&p->admission);
+    if (!record || record->abandoned || record->consumed || !kproc_live_pd(p->actor)) return TRUE;
+    for (i=0;i<record->count;i++) if (!record->result[i].complete) return FALSE;
+    return TRUE;
+}
+LONG ksched_waiter_take(const KSCHED_WAITER *handle,KPROC *actor,ULONG tid,
+                       UQUAD execution,LONG *results,UWORD count)
+{
+    RESULT_WAITER *p=find_waiter(handle);
+    if (!p) return EINVAL;
+    if (p->actor!=actor || p->tid!=tid || p->execution!=execution) return EACCDN;
+    return ksched_admission_take(&p->admission,results,count);
+}
+static void remove_waiter(RESULT_WAITER **link)
+{
+    RESULT_WAITER *p=*link;
+    *link=p->next; /* unpublish before any destructor */
+    ksched_admission_release(&p->admission);
+    kproc_release(p->actor);
+    kfree(p);
+}
+void ksched_waiter_detach(KSCHED_WAITER *handle)
+{
+    RESULT_WAITER **link;
+    UQUAD identity;
+    if (!handle) return;
+    identity=handle->identity; handle->identity=0;
+    for (link=&result_waiters;*link;link=&(*link)->next)
+        if ((*link)->identity==identity) { remove_waiter(link); return; }
+}
+void ksched_waiter_retire(KPROC *actor,ULONG tid,UQUAD execution)
+{
+    RESULT_WAITER **link=&result_waiters;
+    while (*link) {
+        RESULT_WAITER *p=*link;
+        if (p->actor==actor && p->tid==tid && p->execution==execution)
+            remove_waiter(link);
+        else link=&p->next;
+    }
+}

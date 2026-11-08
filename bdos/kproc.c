@@ -937,10 +937,6 @@ const char *kproc_executable_name(PD *pd)
 WORD kproc_parent_pid(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
-#if CONF_WITH_NATIVE_SCHED
-    WORD pid;
-    if (ksched_parent_pid(pd, &pid)) return pid;
-#endif
 
 #if CONF_WITH_USER_ASPACE
     if (kproc && kproc->parent_identity)

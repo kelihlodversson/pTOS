@@ -113,7 +113,7 @@ static void root_lifetime_check(void)
               !scheduler.active && !scheduler.current && !scheduler.tasks && root_entries==1);
         CHECK(!memcmp(&scheduler.root,&empty,sizeof(empty)) &&
               !memcmp(scheduler.waiter_resume,no_waiter,sizeof(no_waiter)));
-        CHECK(!scheduler.waiter.identity && !scheduler.admission.identity);
+        CHECK(!scheduler.waiter.identity);
         memset(caller,0x7d,sizeof(*caller)); /* Old identity storage is reusable. */
         output[0]=output[1]=-77;
     }
@@ -130,7 +130,6 @@ int main(void)
 {
     void *root = NULL, *slots[KSCHED_LIMIT] = { NULL };
     UWORD i;
-    WORD parent_pid = 123;
     UQUAD identity;
     KERNEL_TASK *t, *grown;
     CHILD_WAIT wait;
@@ -166,15 +165,27 @@ int main(void)
     CHECK(table[KSCHED_LIMIT-1].next_task==grown && grown->state==TASK_UNUSED && frees==2);
     CHECK(ksched_task_reserve(FALSE,&slots[KSCHED_LIMIT-1])==E_OK &&
           slots[KSCHED_LIMIT-1]==grown && allocations==5); /* stable high-water reuse */
+    {
+        KSCHED_ADMISSION independent={0};
+        LONG result=-95;
+        CHECK(ksched_admission_create(NULL,1,&independent)==E_OK &&
+              ksched_admission_retain(&independent,&grown->completion));
+        grown->result_slot=0; grown->result=95; grown->state=TASK_DONE;
+        scheduler.current=NULL;
+        CHECK(reap_finished_on_root(grown) && grown->result_published && !grown->completion.identity &&
+              ksched_admission_take(&independent,&result,1)==E_OK && result==95);
+        ksched_admission_release(&independent);
+        scheduler.current=table;
+        clear_task(grown); grown->state=TASK_RESERVED;
+    }
     /* A privately bound slot is still invisible to waits/exit callbacks. */
     table[1].parent = &parent; table[1].program = &child; table[1].process = (KPROC *)&child; table[1].pid = 42;
     wait.parent = &parent; wait.pid = 42;
     CHECK(child_ready(&wait)); /* no published child */
-    CHECK(!ksched_parent_pid(&child,&parent_pid) && parent_pid == 123);
     ksched_exiting(&child,7);
     CHECK(!table[1].exited && table[1].program == &child && !notifications);
     for (i = 0; i < KSCHED_LIMIT; i++) ksched_task_cancel(&slots[i]);
-    CHECK(frees == 2);
+    CHECK(frees == 3);
     CHECK(ksched_task_reserve(FALSE,&slots[0]) == E_OK && slots[0] == &table[1]);
     table[1].program = &child; table[1].process = (KPROC *)&child; table[1].parent = &parent; table[1].pid = 42;
     ksched_task_publish(&slots[0]); CHECK(!slots[0] && table[1].state == TASK_NEW);
@@ -187,7 +198,7 @@ int main(void)
     CHECK(grown && grown->state==TASK_UNUSED);
     grown->state=TASK_NEW; grown->parent=&parent; grown->program=&peer;
     grown->process=(KPROC *)&peer; grown->pid=43;
-    CHECK(ksched_pid_reserved(43) && ksched_parent_pid(&peer,&parent_pid) && parent_pid==42);
+    CHECK(ksched_pid_reserved(43));
     grown->state=TASK_BLOCKED;
     grown->execution.identity=++next_identity;
     ksched_context_restore(grown->execution.identity);
@@ -200,7 +211,7 @@ int main(void)
     ksched_exiting(&parent,8);
     CHECK(!table[1].parent && table[1].state == TASK_DONE && !grown->parent && grown->program == &peer);
     /* A replacement at the same PD address cannot inherit the old children. */
-    CHECK(child_ready(&wait) && !notifications && allocations == 5 && frees == 2);
+    CHECK(child_ready(&wait) && !notifications && allocations == 6 && frees == 3);
     /* A refused legacy start must be DONE/root-reapable, not DRAINING
      * forever as though a runnable sibling still retained its PROCESS. */
     for (t=table;t;t=t->next_task) clear_task(t);
@@ -213,20 +224,20 @@ int main(void)
     /* A retired attachment must lose its jump target, not just its result
      * permission. The producer can still finish after the consumer is gone. */
     ksched_admission_release(&scheduler.waiter);
-    ksched_admission_release(&scheduler.admission);
+    ksched_admission_release(&table[0].completion);
     CHECK(ksched_admission_create((KPROC *)&parent,1,&scheduler.waiter)==E_OK &&
-          ksched_admission_retain(&scheduler.waiter,&scheduler.admission));
+          ksched_admission_retain(&scheduler.waiter,&table[0].completion));
     scheduler.waiter_attached=TRUE;
     memset(scheduler.waiter_resume,0xa5,sizeof(scheduler.waiter_resume));
     ksched_exiting(&parent,9);
     CHECK(!scheduler.waiter_attached && !scheduler.waiter.identity &&
-          ksched_admission_abandoned(&scheduler.admission));
+          ksched_admission_abandoned(&table[0].completion));
     for (i=0;i<sizeof(scheduler.waiter_resume);i++)
         CHECK(!((UBYTE *)scheduler.waiter_resume)[i]);
     {
         LONG untouched=-91;
-        CHECK(ksched_admission_complete(&scheduler.admission,0,9) &&
-              ksched_admission_take(&scheduler.admission,&untouched,1)==EACCDN && untouched==-91);
+        CHECK(ksched_admission_complete(&table[0].completion,0,9) &&
+              ksched_admission_take(&table[0].completion,&untouched,1)==EACCDN && untouched==-91);
         ksched_exiting(&parent,10); /* duplicate notification cannot restore it */
         CHECK(!scheduler.waiter_attached && !scheduler.waiter.identity);
     }
@@ -241,3 +252,5 @@ int main(void)
 #endif
     return 0;
 }
+
+ULONG kthread_tid(const KTHREAD *t) { (void)t; return 17; }

@@ -81,6 +81,72 @@ int main(void)
         ksched_admission_release(&producer);
         CHECK(allocated==freed && old.refs==1 && !admissions && controller.references==1);
     }
+    for (cycle=0;cycle<32;cycle++) {
+        KSCHED_WAITER first={0}, second={0}, stale_waiter;
+        UQUAD previous=last_waiter;
+        CHECK(ksched_admission_create(&old,2,&a)==E_OK);
+        fail_alloc=TRUE;
+        CHECK(ksched_waiter_attach(&a,&old,17,101,2,&first)==ENSMEM && !first.identity && last_waiter==previous);
+        fail_alloc=FALSE; fail_ref=TRUE;
+        CHECK(ksched_waiter_attach(&a,&old,17,101,2,&first)==EACCDN && !first.identity && last_waiter==previous);
+        fail_ref=FALSE;
+        CHECK(ksched_waiter_attach(&a,&replacement,17,101,2,&first)==EACCDN && !first.identity);
+        CHECK(ksched_waiter_attach(&a,&old,0,101,2,&first)==EINVAL && !first.identity);
+        CHECK(ksched_waiter_attach(&a,&old,17,0,2,&first)==EINVAL && !first.identity);
+        CHECK(ksched_waiter_attach(&a,&old,17,101,1,&first)==EINVAL && !first.identity);
+        CHECK(ksched_waiter_attach(&a,&old,17,101,2,&first)==E_OK);
+        CHECK(ksched_waiter_attach(&a,&old,17,101,2,&first)==EINVAL);
+        CHECK(ksched_waiter_attach(&a,&old,18,102,2,&second)==E_OK && first.identity!=second.identity);
+        CHECK(!ksched_waiter_ready(ksched_waiter_context(&first)));
+        CHECK(ksched_admission_complete(&a,0,51));
+        CHECK(!ksched_waiter_ready(ksched_waiter_context(&second)));
+        ksched_waiter_retire(&replacement,17,101); /* same PD cannot steal an attachment */
+        CHECK(ksched_waiter_context(&first));
+        ksched_waiter_retire(&old,17,999); /* nor a different execution of the same TID */
+        CHECK(ksched_waiter_context(&first));
+        CHECK(ksched_admission_complete(&a,1,52));
+        CHECK(ksched_waiter_ready(ksched_waiter_context(&first)));
+        CHECK(ksched_waiter_take(&first,&old,18,101,output,2)==EACCDN && output[0]==-7);
+        CHECK(ksched_waiter_take(&first,&old,17,102,output,2)==EACCDN && output[0]==-7);
+        CHECK(ksched_waiter_take(&first,&replacement,17,101,output,2)==EACCDN && output[0]==-7);
+        CHECK(ksched_waiter_take(&first,&old,17,101,output,2)==E_OK && output[0]==51 && output[1]==52);
+        output[0]=-7; output[1]=-8;
+        CHECK(ksched_waiter_ready(ksched_waiter_context(&second)) &&
+              ksched_waiter_take(&second,&old,18,102,output,2)==EACCDN && output[0]==-7);
+        ksched_waiter_detach(&first); ksched_waiter_detach(&first);
+        stale_waiter=second;
+        ksched_waiter_retire(&old,18,102); ksched_waiter_retire(&old,18,102);
+        CHECK(!ksched_waiter_context(&second) && ksched_waiter_take(&second,&old,18,102,output,2)==EINVAL);
+        ksched_waiter_detach(&second);
+        ksched_admission_release(&a);
+        CHECK(ksched_admission_create(&old,1,&a)==E_OK);
+        CHECK(ksched_waiter_attach(&a,&old,17,103,1,&first)==E_OK && first.identity>stale_waiter.identity);
+        ksched_waiter_detach(&stale_waiter); /* stale handle cannot detach replacement */
+        CHECK(ksched_waiter_context(&first));
+        ksched_waiter_retire(&old,17,103); /* retire just this TID, preserve unconsumed result */
+        CHECK(!ksched_admission_abandoned(&a) && !ksched_waiter_context(&first));
+        CHECK(ksched_waiter_attach(&a,&old,19,104,1,&second)==E_OK);
+        CHECK(ksched_admission_complete(&a,0,53) &&
+              ksched_waiter_take(&second,&old,19,104,output,1)==E_OK && output[0]==53);
+        ksched_waiter_detach(&first); ksched_waiter_detach(&second); ksched_admission_release(&a);
+        output[0]=-7;
+        CHECK(!result_waiters && !admissions && old.refs==1 && replacement.refs==1 && allocated==freed && controller.references==1);
+    }
+    {
+        KSCHED_WAITER wait={0};
+        CHECK(ksched_admission_create(&old,1,&a)==E_OK && ksched_waiter_attach(&a,&old,20,105,1,&wait)==E_OK);
+        old.live=FALSE; old.pd=NULL; ksched_admission_owner_exited(&old);
+        CHECK(ksched_waiter_ready(ksched_waiter_context(&wait)) &&
+              ksched_waiter_take(&wait,&old,20,105,output,1)==EACCDN && output[0]==-7);
+        ksched_waiter_retire(&old,20,105); ksched_waiter_detach(&wait); ksched_admission_release(&a);
+        old.live=TRUE; old.pd=&recycled_pd;
+        CHECK(ksched_admission_create(&old,1,&a)==E_OK);
+        last_waiter=~0ULL;
+        CHECK(ksched_waiter_attach(&a,&old,20,106,1,&wait)==ERANGE && !wait.identity);
+        ksched_admission_release(&a);
+        CHECK(!result_waiters && !admissions && old.refs==1 && allocated==freed && controller.references==1);
+    }
+    puts("TID-bound result attachments: independent waits, one consumer, detach/rebind, quiescent retirement, ABA and rollback: PASS (production code)");
     last_admission=~0ULL;
     CHECK(ksched_admission_create(&old,1,&a)==ERANGE && !a.identity && old.refs==1 && allocated==freed);
     puts("Controller/admission lifetime: identities, partial completion, one consumer, abandonment, PD reuse and allocation rollback: PASS (production code)");

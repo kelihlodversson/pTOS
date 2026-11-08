@@ -108,7 +108,6 @@ LONG ksched_join(ULONG tid, UQUAD status);
 #endif
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
-BOOL ksched_parent_pid(PD *pd, WORD *pid);
 void ksched_exiting(PD *pd, UWORD status);
 /* CUIS successor activation after complete teardown; pd is identity only. */
 void ksched_exited(PD *pd);

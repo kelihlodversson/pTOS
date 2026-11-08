@@ -188,3 +188,15 @@ retirement and root reap; host fault-injection models PROCESS/procmem endpoints.
 See doc/native-scheduler-plan.txt for the ownership and no-fail protocol.
 See doc/native-scheduler-plan.txt; no parent-return/background or preemption
 capability is claimed. No GUI ports, TLS or non-MMU scheduling added.
+
+A2c managed waiter prerequisite (#713)
+-------------------------------------
+Tasks now own their internal admission producer/cell independently of arena
+index; logical PPID comes only from retained KPROC parent identity. TID-bound
+result attachments block/resume through the existing backend and are retired
+only after execution is quiescent. Native kernel assertions exercise a real
+user THREAD's suspend/resume while its parent remains blocked, and abandoned
+attachment cleanup at root reap. Host CPU models cover cancellation/ref rollback.
+This is NOT user-visible background admission: unmanaged early return/root
+re-entry and independent anchor/storage reuse remain gated. No preemption.
+See doc/native-scheduler-plan.txt for exact remaining blockers and test scope.

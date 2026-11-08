@@ -100,3 +100,9 @@ ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -ffunction-sections -fdata-se
     -iquote bdos/arch/x86_64 -iquote fs tests/wait_cancel.c -Wl,--gc-sections -o "$work/wait-cancel"
 "$work/wait-cancel"
 echo 'Scheduler cancellation admission, nested identity and reentrant termination hook: PASS (host model)'
+
+${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie -no-pie \
+    -ffunction-sections -fdata-sections -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 -idirafter include -iquote bdos -iquote fs \
+    tests/sched_result_wait.c bdos/sched_lifetime.c -Wl,--gc-sections -o "$work/result-wait"
+"$work/result-wait"

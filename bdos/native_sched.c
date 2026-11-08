@@ -35,6 +35,8 @@ typedef struct kernel_task {
     PD *program, *parent;
     struct kernel_task *completion_owner; /* borrowed; NULL means this is the anchor */
     BOOL process_completed, result_published;
+    KSCHED_ADMISSION completion; /* producer ownership, independent of arena position */
+    UWORD result_slot;          /* cell in that admission, never a task-table index */
 #if CONF_WITH_PTERMGRP
     BOOL cancel_boundary; /* only waits whose callers explicitly checkpoint */
     BOOL cancel_delivering; /* termination hooks must not recursively cancel */
@@ -66,7 +68,7 @@ static struct {
     jmp_buf resume;             /* Always points into root_stack, never a launcher. */
     BOOL root_started, parked, waiter_attached;
     jmp_buf waiter_resume;      /* Borrowed continuation only during a gated drain. */
-    KSCHED_ADMISSION admission, waiter; /* independent producer/consumer references */
+    KSCHED_ADMISSION waiter; /* gated unmanaged consumer; producers belong to tasks */
     PROC_CLONE_TRANSACTION *pending_clone;
 } scheduler;
 /* Permanent kernel storage, outside procmem and all PROCESS/ASPACE owners.
@@ -84,13 +86,14 @@ static void check_root_stack(void)
         root_stack[0] != ROOT_STACK_GUARD)
         panic("scheduler: invalid persistent root stack");
 }
-/* The initial array preserves synchronous result positions. Additional slots
- * are individually allocated and never moved/freed while a group is active:
+/* The initial array holds bootstrap records; each task owns result provenance.
+ * Additional slots are allocated and never moved/freed while a group is active:
  * completion_owner, THREAD backends and reservations point into these records.
  * IRQ exclusion/cooperative serialization protects traversal today, not SMP. */
 static void clear_task(KERNEL_TASK *task)
 {
     KERNEL_TASK *next = task->next_task;
+    ksched_admission_release(&task->completion);
     memset(task, 0, sizeof(*task));
     task->next_task = next;
 }
@@ -105,6 +108,7 @@ static BOOL allocate_task_table(UWORD count)
 {
     KPROC *owner;
     LONG error;
+    UWORD i;
     scheduler.tasks = kalloc(KSCHED_LIMIT * sizeof(*scheduler.tasks));
     if (!scheduler.tasks) return FALSE;
     initialize_task_table();
@@ -112,11 +116,20 @@ static BOOL allocate_task_table(UWORD count)
     error = (run && kproc_pid(run) && !owner) ? EACCDN :
         ksched_admission_create(owner, count, &scheduler.waiter);
     kproc_release(owner);
-    if (error != E_OK || !ksched_admission_retain(&scheduler.waiter, &scheduler.admission)) {
+    if (error != E_OK) {
         ksched_admission_release(&scheduler.waiter);
         kfree(scheduler.tasks);
         scheduler.tasks = NULL;
         return FALSE;
+    }
+    for (i=0;i<count;i++) {
+        if (!ksched_admission_retain(&scheduler.waiter,&scheduler.tasks[i].completion)) {
+            while (i) ksched_admission_release(&scheduler.tasks[--i].completion);
+            ksched_admission_release(&scheduler.waiter);
+            kfree(scheduler.tasks); scheduler.tasks=NULL;
+            return FALSE;
+        }
+        scheduler.tasks[i].result_slot=i;
     }
     return TRUE;
 }
@@ -127,7 +140,10 @@ static KERNEL_TASK *async_tasks(void)
 }
 static void free_task_table(void)
 {
-    KERNEL_TASK *task = scheduler.tasks[KSCHED_LIMIT-1].next_task;
+    KERNEL_TASK *task;
+    for (task=scheduler.tasks;task;task=task->next_task)
+        ksched_admission_release(&task->completion);
+    task = scheduler.tasks[KSCHED_LIMIT-1].next_task;
     while (task) {
         KERNEL_TASK *next = task->next_task;
         kfree(task);
@@ -137,7 +153,6 @@ static void free_task_table(void)
     scheduler.tasks = scheduler.next = NULL;
     if (!scheduler.active && !scheduler.waiter_attached) {
         ksched_admission_abandon(&scheduler.waiter);
-        ksched_admission_release(&scheduler.admission);
         ksched_admission_release(&scheduler.waiter);
     }
 }
@@ -202,6 +217,58 @@ static void lifetime_probe_reap(KERNEL_TASK *task)
 }
 #endif
 static UQUAD next_identity;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+/* Kernel-only native assertion over real user continuations. This does NOT
+ * enable unmanaged/background admission or expose a test syscall. */
+static struct {
+    KSCHED_ADMISSION producer;
+    KSCHED_WAITER abandoned;
+    UQUAD execution;
+    BOOL pending, resumed, reaped;
+} wait_probe;
+static void wait_probe_on_root(void)
+{
+    if (!wait_probe.pending) return;
+    if (!ksched_admission_complete(&wait_probe.producer,1,82))
+        panic("scheduler: native wait completion");
+    wait_probe.pending=FALSE;
+    ksched_admission_release(&wait_probe.producer);
+}
+static void wait_probe_on_yield(void)
+{
+    KERNEL_TASK *task=scheduler.current, *parent;
+    KSCHED_ADMISSION admission={0};
+    LONG results[2]={-81,-82};
+    KTHREAD *thread;
+    ULONG tid;
+    if (wait_probe.execution || !task || !task->asynchronous || task->completion_owner || !task->parent) return;
+    for (parent=scheduler.tasks;parent;parent=parent->next_task)
+        if (parent->program==task->parent && parent->state==TASK_BLOCKED) break;
+    if (!parent || !(thread=ksched_exit_thread(run))) return;
+    if (kproc_parent_pid(task->program)!=kproc_pid(parent->program))
+        panic("scheduler: logical parent depends on global admission");
+    tid=kthread_tid(thread); wait_probe.execution=ksched_context_id();
+    if (ksched_admission_create(task->process,2,&admission) ||
+        !ksched_admission_complete(&admission,0,81) ||
+        !ksched_admission_retain(&admission,&wait_probe.producer))
+        panic("scheduler: native waiter preparation");
+    wait_probe.pending=TRUE;
+    if (ksched_result_wait(&admission,results,2) || results[0]!=81 || results[1]!=82 ||
+        scheduler.current!=task || ksched_context_id()!=wait_probe.execution ||
+        ksched_exit_thread(run)!=thread || kthread_tid(thread)!=tid ||
+        parent->state!=TASK_BLOCKED || wait_probe.pending)
+        panic("scheduler: native TID waiter resumed wrong execution");
+    ksched_admission_release(&admission);
+    /* Simulate an abandoned owning handle without a borrowed stack pointer.
+     * Root must retire it after this real execution has stopped. */
+    if (ksched_admission_create(task->process,1,&admission) ||
+        ksched_waiter_attach(&admission,task->process,tid,wait_probe.execution,1,&wait_probe.abandoned))
+        panic("scheduler: native abandoned waiter preparation");
+    ksched_admission_release(&admission);
+    wait_probe.resumed=TRUE;
+    kcprintf("native managed TID admission wait/resume: PASS\n");
+}
+#endif
 #if CONF_WITH_X86_64_MEMTEST
 static BOOL clone_masked;
 BOOL ksched_test_clone_masked(void) { return clone_masked; }
@@ -396,20 +463,6 @@ BOOL ksched_pid_reserved(WORD pid)
     if (!scheduler.active) return FALSE;
     for (task = scheduler.tasks; task; task = task->next_task)
         if (task->state != TASK_UNUSED && task->pid == pid) return TRUE;
-    return FALSE;
-}
-
-BOOL ksched_parent_pid(PD *pd, WORD *pid)
-{
-    KERNEL_TASK *task;
-    if (!scheduler.active) return FALSE;
-    for (task = async_tasks(); task; task = task->next_task) {
-        if (task->state != TASK_UNUSED && task->state != TASK_RESERVED && task->program == pd) {
-            KERNEL_TASK *owner = completion_task(task);
-            *pid = kproc_pid(owner->parent ? owner->parent : ksched_admission_owner_pd(&scheduler.admission));
-            return TRUE;
-        }
-    }
     return FALSE;
 }
 
@@ -648,12 +701,51 @@ static BOOL cancellation_wait(BOOL (*ready)(void *), void *argument)
     return ksched_wait_cancelable(ready, argument) != KSCHED_WAIT_UNMANAGED;
 }
 
+LONG ksched_result_wait(const KSCHED_ADMISSION *admission,LONG *results,UWORD count)
+{
+    KTHREAD *thread=ksched_exit_thread(run);
+    KSCHED_WAITER waiter={0};
+    KPROC *actor;
+    ULONG tid;
+    UQUAD execution;
+    uintptr_t flags;
+    LONG error;
+    BOOL cancelled=FALSE;
+    if (!thread) return EINVFN; /* unmanaged/global entry remains gated */
+    if (!results) return EINVAL;
+    actor=kthread_process(thread); tid=kthread_tid(thread); execution=ksched_context_id();
+    flags=native_sched_irq_save();
+    error=ksched_waiter_attach(admission,actor,tid,execution,count,&waiter);
+    if (error) { native_sched_irq_restore(flags); return error; }
+    while (!ksched_waiter_ready(ksched_waiter_context(&waiter))) {
+        if (ksched_wait_cancelable(ksched_waiter_ready,ksched_waiter_context(&waiter))==KSCHED_WAIT_CANCELLED) {
+            cancelled=TRUE; break;
+        }
+    }
+    /* Even an already-complete result cannot outrun pending cancellation. */
+    if (ksched_cancellation_pending()) cancelled=TRUE;
+    /* Revalidate the actual restored execution, not just captured credentials. */
+    if (cancelled || ksched_exit_thread(run)!=thread || kthread_process(thread)!=actor ||
+        kthread_tid(thread)!=tid || ksched_context_id()!=execution)
+        error=EACCDN;
+    else error=ksched_waiter_take(&waiter,actor,tid,execution,results,count);
+    ksched_waiter_detach(&waiter);
+    native_sched_irq_restore(flags);
+#if CONF_WITH_PTERMGRP
+    if (cancelled) ksched_cancel_point();
+#endif
+    return error;
+}
+
 static BOOL always_ready(void *argument) { (void)argument; return TRUE; }
 LONG ksched_yield(void)
 {
     uintptr_t flags;
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_MMAP
     x86_64_memtest_clone_yield(); /* process context, before IRQ exclusion */
+#endif
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    wait_probe_on_yield();
 #endif
     flags = native_sched_irq_save();
     cancellation_wait(always_ready, NULL);
@@ -909,6 +1001,16 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
     if (scheduler.current || (task->state != TASK_DONE && task->state != TASK_ZOMBIE && task->state != TASK_DRAINING))
         return FALSE;
     if (task->thread) {
+        ksched_waiter_retire(task->process,kthread_tid(task->thread),task->execution.identity);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+        if (task->execution.identity==wait_probe.execution && wait_probe.resumed) {
+            if (ksched_waiter_context(&wait_probe.abandoned))
+                panic("scheduler: quiescent waiter survived execution");
+            ksched_waiter_detach(&wait_probe.abandoned); /* stale handle is harmless */
+            if (!wait_probe.reaped) kcprintf("native quiescent waiter retirement: PASS\n");
+            wait_probe.reaped=TRUE;
+        }
+#endif
         check_task_thread(task, 4);
         if (!kthread_reap(task->thread))
             panic("scheduler: root cannot reap unfinished thread");
@@ -921,14 +1023,12 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
         kproc_release(task->process);
         task->process = NULL;
     }
-    if (!task->result_published && (task->state==TASK_DONE || task->state==TASK_ZOMBIE)) {
-        UWORD index;
-        for (index=0;index<scheduler.initial;index++) if (task==&scheduler.tasks[index]) {
-            if (!ksched_admission_complete(&scheduler.admission,index,task->result))
-                panic("scheduler: duplicate internal completion");
-            task->result_published=TRUE;
-            break;
-        }
+    if (task->completion.identity && (task->state==TASK_DONE || task->state==TASK_ZOMBIE)) {
+        if (task->result_published ||
+            !ksched_admission_complete(&task->completion,task->result_slot,task->result))
+            panic("scheduler: duplicate internal completion");
+        task->result_published=TRUE;
+        ksched_admission_release(&task->completion);
     }
     if (task->asynchronous && task->state == TASK_DONE) {
         task->pid = 0;
@@ -1033,6 +1133,9 @@ static void scheduler_root_entry(void)
         KERNEL_TASK *task, *first;
         scheduler.current = NULL;
         check_root_stack();
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+        wait_probe_on_root();
+#endif
         /* Reclaim only from root. Slots remain stable until root returns. */
         for (task = scheduler.tasks; task; task = task->next_task)
             reap_finished_on_root(task);
@@ -1066,12 +1169,11 @@ static void scheduler_root_entry(void)
         native_sched_idle();
     }
     {
-        UWORD i;
-        for (i = 0; i < scheduler.initial; i++)
-            if (!scheduler.tasks[i].result_published)
+        KERNEL_TASK *task;
+        for (task=scheduler.tasks;task;task=task->next_task)
+            if (task->completion.identity)
                 panic("scheduler: missing internal completion");
     }
-    ksched_admission_release(&scheduler.admission);
     free_task_table();
     scheduler.current = NULL;
     scheduler.active = FALSE;
@@ -1174,7 +1276,7 @@ LONG ksched_task_reserve(BOOL root, void **slot)
             last->next_task = task;
         }
     }
-    clear_task(task);
+    if (!root) clear_task(task);
     task->execution.identity = ++next_identity;
     task->state = TASK_RESERVED;
     *slot = task;

@@ -594,6 +594,17 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
     record "native scheduler lifetime" FAIL "retained-result retirement assertions did not execute"
 fi
 
+# Internal TID result waits execute through native root suspension/resume;
+# these are kernel assertions, not global background-admission evidence.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native managed TID admission wait/resume: PASS' "$suite_log" ||
+       ! grep -aq 'native quiescent waiter retirement: PASS' "$suite_log"; then
+        record "native TID admission waiter" FAIL "suspend/resume and quiescent retirement assertions did not execute"
+    fi
+fi
+
 # Compilation and legacy compatibility are insufficient evidence of native
 # startup. Require managed startup and scheduler evidence on all three MMUs.
 case "$machine" in
