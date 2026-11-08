@@ -15,6 +15,14 @@ volatile LONG hz_200;
 static unsigned allocations, frees;
 static BOOL fail_allocate;
 static PROCESS_OBSERVER *during_retirement;
+static void (*allocation_finished)(void *);
+static void *allocation_token;
+BOOL procmem_on_free(void *base, void (*notify)(void *), void *token)
+{
+    assert(base==&child && !allocation_finished && token && notify);
+    allocation_finished=notify; allocation_token=token;
+    return TRUE;
+}
 static UQUAD retained_number;
 static WORD retained_pid;
 void *kalloc(ULONG bytes) { void *p; if (fail_allocate) return NULL; p=calloc(1,bytes); if(p) allocations++; return p; }
@@ -104,9 +112,10 @@ int main(void)
     assert(kproc_begin_exit(&child)); kproc_destroy(&child);
     assert(process_observer_snapshot(a,&snap) && snap.state==PROCESS_ABANDONED &&
            snap.kind==PROCESS_COMPLETION_NONE && !snap.status && !snap.signal && !snap.order_low && !snap.order_high);
+    assert(!process_observer_ready(a)); kproc_publish_observers(p);
     assert(process_observer_ready(a)); process_observer_release(&a); kproc_release(p);
     {
-        PD slow, fast;
+        PD slow = {0}, fast = {0};
         PROCESS_OBSERVER *one=NULL, *two=NULL;
         PROCESS_COMPLETION first, second;
         assert(kproc_create(&slow) && kproc_create(&fast));
@@ -138,8 +147,19 @@ int main(void)
       p->threads=NULL; /* Safe root detach in the scheduler fixture. */
       assert(kproc_begin_disposal(p,&claimed) && claimed==&child); }
     kproc_destroy(&child);
+    assert(!process_observer_ready(a)); kproc_publish_observers(p);
     assert(process_observer_ready(a) && process_observer_snapshot(a,&snap) && snap.state==PROCESS_ABANDONED);
     process_observer_release(&a); kproc_release(p);
+    /* The real KPROC discard retains metadata until the allocator, not the
+     * record unlink, confirms final reclamation (including delayed pins). */
+    assert(kproc_create(&child));
+    assert(process_observer_attach(kproc_find(&child),&a)==E_OK);
+    kproc_discard_after_free(&child);
+    assert(!process_observer_ready(a) && !kproc_ref_has_basepage(a));
+    assert(allocation_finished && allocation_token==a);
+    allocation_finished(allocation_token);
+    allocation_finished=NULL; allocation_token=NULL;
+    assert(process_observer_ready(a)); process_observer_release(&a);
     assert(kproc_begin_exit(&caller)); kproc_destroy(&caller);
     assert(allocations==frees && !kproc_list && !retired_processes);
     puts("Production KPROC observation: full status/fault, retirement, PD reuse, multiple references and rollback: PASS");

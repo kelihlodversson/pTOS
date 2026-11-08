@@ -1038,7 +1038,6 @@ void kproc_destroy(PD *pd)
                 __asm__ volatile ("" : : : "memory");
 #if CONF_WITH_USER_ASPACE
                 kproc->retired = TRUE;
-                if (!kproc->completed) kproc_publish_observers(kproc);
                 kproc_release(parent_identity);
 #endif
             }
@@ -1241,6 +1240,25 @@ void kproc_mark_started(PD *pd)
 
     if (kproc)
         kproc->started = TRUE;
+}
+
+static void publish_discarded_identity(void *token)
+{
+    KPROC *process = token;
+    kproc_publish_observers(process);
+    kproc_release(process);
+}
+
+/* Basepage disposal precedes allocator release. Keep only its canonical
+ * metadata until the allocation's final pin and ownership are gone. */
+void kproc_discard_after_free(PD *pd)
+{
+    KPROC *process = kproc_unlaunched(pd) ? kproc_retain(pd) : NULL;
+    if (process && !procmem_on_free(pd, publish_discarded_identity, process)) {
+        kproc_release(process);
+        panic("discarded PROCESS allocation has no completion owner");
+    }
+    kproc_discard(pd);
 }
 
 BOOL kproc_discard(PD *pd)
