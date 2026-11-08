@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "emutos.h"
+#include "string.h"
 #include "../bdos/process_exec.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"exec handles:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 struct identity {
@@ -16,12 +17,15 @@ static PD first_pd, second_pd;
 static struct identity first, second, children[16];
 static unsigned loads, allocations, frees, cancellations, publications;
 static LONG load_error;
+static BOOL request_mode;
 static BOOL fail_allocate;
+static int fail_after=-1;
+static void test_request_engine(KPROC *owner);
 PD *run=&first_pd;
 struct process_exec_handle **kproc_exec_handles(KPROC *p)
 { return p ? &((struct identity *)p)->handles : NULL; }
 PD *kproc_live_pd(const KPROC *p) { return p ? ((const struct identity *)p)->pd : NULL; }
-void *kalloc(ULONG bytes) { void *p; if(fail_allocate)return NULL; p=calloc(1,bytes); if(p)allocations++; return p; }
+void *kalloc(ULONG bytes) { void *p; if(fail_allocate || fail_after==0)return NULL; if(fail_after>0)fail_after--; p=calloc(1,bytes); if(p)allocations++; return p; }
 void kfree(void *p) { CHECK(p); frees++; free(p); }
 KPROC *kproc_retain_identity(KPROC *p)
 { struct identity *i=(struct identity *)p; if(i->refs==~0U)return NULL; CHECK(i->refs); i->refs++; return p; }
@@ -33,6 +37,8 @@ long proc_exec_prepare(char *path,char *tail,char *env,char *cwd,KPROC **out,voi
 {
     struct identity *child;
     CHECK(!*out && !*prepared && path && tail && env && cwd);
+    if(request_mode) CHECK(!strcmp(path,"program") && !strcmp(tail,"tail") &&
+                          !memcmp(env,"A=B\0",5) && !strcmp(cwd,"C:\\DIR"));
     if(load_error)return load_error;
     CHECK(loads<16); child=&children[loads++];
     child->refs=2; child->resources=TRUE;
@@ -96,8 +102,11 @@ int main(void)
     second.pd=&first_pd; first.pd=NULL;
     CHECK(proc_exec_handle_snapshot(foreign,two,&result)==EIHNDL);
     CHECK(proc_exec_handle_snapshot(owner,two,&result)==EACCDN);
+    test_request_engine(foreign);
     last_handle=0x7fffffffUL; /* Private host cursor only: production never resets. */
-    CHECK(proc_exec_handle_prepare(foreign,"p","t","e","d")==EAGAIN && loads==3);
+    CHECK(proc_exec_handle_prepare(foreign,"p","t","e","d")==EAGAIN && loads==4);
     puts("Production PROCESS rights: private preparation, one commit, close, retained leases, owner retirement and stale handles: PASS");
     return 0;
 }
+
+#include "process_exec_request_cases.h"

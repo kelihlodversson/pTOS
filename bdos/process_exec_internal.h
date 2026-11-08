@@ -14,5 +14,7 @@ LONG proc_exec_handle_snapshot(KPROC *owner, ULONG handle, PROCESS_COMPLETION *o
 LONG proc_exec_handle_close(KPROC *owner, ULONG handle);
 LONG proc_exec_retain_observer(KPROC *owner, ULONG handle, BOOL require_prepared, PROCESS_OBSERVER **out);
 void proc_exec_owner_exit(KPROC *owner);
+/* Request engine only; public dispatch remains disabled until all policies pass. */
+LONG proc_exec_request(KPROC *owner, UQUAD address, UQUAD size);
 #endif
 #endif

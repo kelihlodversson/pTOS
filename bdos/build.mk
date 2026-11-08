@@ -43,4 +43,4 @@ obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)
 obj-$(CONF_WITH_MMAP) += fileback.o
 
 # Native kernel tasks for external libaes, independent of kernel AES.
-obj-$(CONF_WITH_NATIVE_SCHED) += process_exec.o native_sched.o native_sched_entry.o kthread_context.o $(if $(ARCH_X86_64),thread_startup_x32.o,thread_startup32.o) thread_return.o
+obj-$(CONF_WITH_NATIVE_SCHED) += process_exec.o process_exec_request.o native_sched.o native_sched_entry.o kthread_context.o $(if $(ARCH_X86_64),thread_startup_x32.o,thread_startup32.o) thread_return.o
