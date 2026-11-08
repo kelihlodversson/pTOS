@@ -243,3 +243,28 @@ Additional native evidence: pinned Amiberry68030/68882 also passes 25/0 caches
 off/on; debugger reads show nonzero captured frames, zero mismatches and nonzero
 FPIAR in both modes. The FSAVE image remains opaque and model-tagged. This is
 not a claim of native -mfastcall validation or of QEMU68060 support.
+
+B1c first ownership increment
+-----------------------------
+Native x32/ARM/m68k loaded launcher chains now live in NATIVE_SCHED_CPU, accessed
+by the architecture backend through ksched_loaded_launcher/set_loaded_launcher.
+They are saved/restored with the execution CPU image, never owned by a PROCESS
+or the runnable arena. The setter rejects runqueue-leaf mutation. The chain
+still borrows only the live, pinned launcher continuations: native root detach
+clears its saved caller image, and each launcher restores the previous chain
+before its own continuation ends. Non-scheduler builds retain legacy storage.
+CPU selection remains explicitly boot-CPU-only; these accessors do not enable
+SMP or asynchronous kernel switching.
+
+m68k removes global uenter staging. A 16-byte, offset-asserted kernel record
+lives in the launcher and is passed using the kernel ABI. Entry masks IRQs,
+copies PC/USP/SSP/argument before user RTE, and leaves no pointer into that
+record published. The optional register argument is temporarily owned by the
+new syscall stack and consumed before RTE; the original exception-frame shape
+and empty supervisor SP are preserved. No field is read after longjmp.
+
+Remaining B1c work is explicit: the loaded run ABI slot, errbuf/errcode/errdrv
+and callback/watchdog/error scratch still need CPU/execution ownership across
+all entry paths, including legacy/kernel launches. Global compatibility slots
+cannot simply be renamed into SMP support. B2/C remain gated on those audits,
+complete restore eligibility and safe user-return synchronization.

@@ -263,3 +263,20 @@ reason to force cancellation before a valid initial-input commit.
 Stream cancellation and #915 API minimization remain separate. #897's final
 feature-flag consolidation remains. Broader KEY_WAIT/CLOCK cleanup is independent
 and is not merged into this scheduler increment.
+
+B1 capture and loaded launcher follow-up
+---------------------------------------
+ARM capture is IRQ-masked; m68k capture briefly raises local IPL7, restores the
+entry mask, and returns through the original hardware frame. Neither is an
+SMP exclusion mechanism. Preallocated image publication must acquire/release
+with a CPU-local owner protocol before remote readers are allowed. THREAD/CPU/
+ASPACE and launcher-stack validation is mandatory; root acknowledgement clears
+validity before stack reclamation on every backend. Extended m68k exception
+formats and FPU restart/control eligibility are not silently admitted.
+
+The CPU owns its loaded launcher chain and backend snapshots retain suspended
+continuation ownership. No arena cleanup owns that chain; no caller stack is
+retained after root detachment. Before CPU migration/SMP, backend selection,
+loaded run/disk-error/callback/watchdog state, and exception-stack ownership
+must be complete. The existing owner-before-mapping-before-leaf hierarchy and
+no allocation/callback/copy/destructor under the runqueue leaf remain unchanged.

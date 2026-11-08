@@ -333,3 +333,11 @@ continues to return through original IRQ frames; no preemption is enabled.
 The same format-0 capture/return probe also passes pinned Amiberry68030/68882
 25/0 caches off/on with real nonzero-FPIAR capture counts. Native fastcall and
 extended fault-frame decoding remain explicitly unverified/gated.
+
+B1c launcher and m68k staging ownership
+--------------------------------------
+Native launcher chains are CPU-owned; m68k entry uses a launcher-local immutable
+argument record instead of global staging. Local native x32/ARM/m68k suites
+pass 23/0, 27/0 and 26/0 respectively, each with five shutdown checks. This is
+an independently verified B1c increment, not completion of loaded run/disk-error
+or callback-state conversion, and not authority to resume a captured IRQ copy.
