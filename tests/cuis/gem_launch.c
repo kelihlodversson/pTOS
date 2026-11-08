@@ -68,7 +68,7 @@ int gem_launch_checks(short *global, char **envp)
     char cwd[128], after[128];
     unsigned char dta[64], saved_dta[64];
     uint64_t original_dta;
-    short pid, message[8] = { 0 }, a, b, c, d;
+    short pid, peer, message[8] = { 0 }, a, b, c, d;
     unsigned pass, i;
     /* Do not claim complete AES_SHELL support for a single launch submode. */
     VERIFY(appl_getinfo(AES_SHELL,&a,&b,&c,&d) == 0 && !a && !b && !c && !d);
@@ -90,14 +90,16 @@ int gem_launch_checks(short *global, char **envp)
         VERIFY(wind_update(BEG_UPDATE) == 1);
         pid = pass ? mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,command,tail,global) :
                      shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,command,tail);
-        VERIFY(pid > 0 && pid != global[2] && wind_update(END_UPDATE) == 1 && !wind_update(END_UPDATE));
+        VERIFY(pid > 0 && pid != (short)process_call(0x10b,0,0,0) && wind_update(END_UPDATE) == 1 && !wind_update(END_UPDATE));
         VERIFY(equal(command,"APPS\\GEMSHELL.TOS"));
         for (i = 0; i < sizeof(tail); i++) VERIFY(saved[i] == tail[i]);
         VERIFY(process_call(0x2f,0,0,0) == (uintptr_t)dta);
         for (i = 0; i < sizeof(dta); i++) VERIFY(saved_dta[i] == dta[i]);
-        VERIFY(receive(message,2000,global) == MU_MESAG && message[0] == 0x7e10 && message[1] == pid);
+        VERIFY(receive(message,2000,global) == MU_MESAG && message[0] == 0x7e10);
+        peer = message[1];
+        VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (unsigned short)peer)) == pid);
         message[0] = 0x7e11; message[1] = global[2];
-        VERIFY(mt_appl_write(pid,sizeof(message),message,global) == 1);
+        VERIFY(mt_appl_write(peer,sizeof(message),message,global) == 1);
         VERIFY((int32_t)process_call(0x13a,pid,0,0) == (int32_t)(((uint32_t)pid << 16) | 43));
         /* Unlike SWM_LAUNCH, SHW_PARALLEL sends no death-of-child message. */
         VERIFY(receive(message,0,global) == MU_TIMER);

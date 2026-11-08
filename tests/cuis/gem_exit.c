@@ -56,7 +56,7 @@ static int synchronous_exit_checks(short *global)
             result = native_ui(CUIS_CHILD_RESULT,session,0,0,0);
             VERIFY(result > 0 && (result & 0xffff) == (uint16_t)codes[variant]);
             pid = (short)((uint32_t)result >> 16);
-            VERIFY(pid > 0 && pid != global[2]);
+            VERIFY(pid > 0 && pid != process(0x10b,0,0,0,0));
             VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,codes[variant]));
             VERIFY(native_ui(CUIS_CHILD_RESULT,session,0,0,0) == 0);
             VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == -36);
@@ -81,7 +81,7 @@ int gem_exit_checks(short *global)
         /* Mode 0 infers GEM from the extension; wisgr is ignored. */
         pid = i ? mt_shel_write(SWM_LAUNCH,99,CL_NORMAL,"APPS\\GEMCHILD.APP",tail,global) :
                   shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail);
-        VERIFY(pid > 0);
+        VERIFY(pid > 0 && pid != process(0x10b,0,0,0,0));
         VERIFY((receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,results[i]));
         VERIFY(process(0x13a,pid,1,0,0) == -33); /* Only the notified child was reaped. */
         VERIFY(receive(message,0,global) == MU_TIMER); /* Exactly one notification. */
@@ -89,7 +89,7 @@ int gem_exit_checks(short *global)
     tail[1] = 'n';
     /* An ordinary Pexec child is not observed or reaped by libaes. */
     pid = (short)process(0x4b,100,(uintptr_t)"APPS\\GEMCHILD.PRG",(uintptr_t)tail,0);
-    VERIFY(pid > 0);
+    VERIFY(pid > 0 && pid != process(0x10b,0,0,0,0));
     VERIFY(receive(message,20,global) == MU_TIMER);
     VERIFY(process(0x13a,pid,0,0,0) == (int32_t)(((uint32_t)pid << 16) | 0x34));
     /* Explicitly collecting a shell child retains its full-word GEM notice. */

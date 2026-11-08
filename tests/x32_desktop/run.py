@@ -486,6 +486,13 @@ def libaes_desktop(guest):
     guest.click()
     guest.wait("x32 desktop program TARGET")
 
+    def registered_client(text):
+        # READY identifies an AES client/window; LAUNCH identifies PROCESS.
+        client,window = map(int,re.findall(r"x32 desktop client READY (\d+) (\d+)",text)[-1])
+        pid = int(re.findall(r"x32 desktop LAUNCH (\d+) ",text)[-1])
+        assert client > 0 and window > 0 and pid > 0
+        return client,window,pid
+
     def launch(count):
         time.sleep(0.6)  # Each Open is an independent gesture, beyond dclick time.
         text = guest.text()
@@ -498,19 +505,18 @@ def libaes_desktop(guest):
         guest.click()
         guest.key("ctrl-o")
         text = guest.wait(r"x32 desktop client READY \d+ \d+",count,regex=True)
-        pairs = re.findall(r"x32 desktop client READY (\d+) (\d+)",text)
         assert text.count("x32 desktop LIBAES PASS") == 1
-        return tuple(map(int,pairs[-1]))
+        return registered_client(text)
 
     first = launch(1)
     # Launch another process while the first remains blocked for GEM input.
     second = launch(2)
-    assert first[0] != second[0] and first[1] != second[1]
+    assert first[0] != second[0] and first[1] != second[1] and first[2] != second[2]
     assert "x32 desktop client EXIT" not in guest.text()
     guest.screenshot("two-applications")
     accessory_open(2)  # Same resident process survives other applications.
-    for (pid,window),key,status in ((first,"q","0025"),(second,"f","0400")):
-        guest.move(750,110+(pid&1)*280)
+    for (client,window,pid),key,status in ((first,"q","0025"),(second,"f","0400")):
+        guest.move(750,110+(client&1)*280)
         guest.click()
         guest.key(key)
         text = guest.wait("x32 desktop CH_EXIT %d %s" % (pid,status))
@@ -528,12 +534,12 @@ def libaes_desktop(guest):
     for letter in "param": guest.key(letter)
     guest.key("ret")
     text = guest.wait(r"x32 desktop client READY \d+ \d+",3,regex=True)
-    third = tuple(map(int,re.findall(r"x32 desktop client READY (\d+) (\d+)",text)[-1]))
+    third = registered_client(text)
     assert "x32 desktop client PARAMETERS PASS %d " % third[0] in text
     guest.move(750,110+(third[0]&1)*280)
     guest.click()
     guest.key("q")
-    guest.wait("x32 desktop CH_EXIT %d 0025" % third[0])
+    guest.wait("x32 desktop CH_EXIT %d 0025" % third[2])
     background = launch(4)
     # Full-screen text children do not terminate or restart the desktop.
     for count,kind,key,status in ((1,"TOS","q","0025"),(2,"TOS","f","0400"),(3,"TTP","q","0025")):
@@ -569,7 +575,7 @@ def libaes_desktop(guest):
             guest.move(750,110+(background[0]&1)*280)
             guest.click()
             guest.key("q")
-            guest.wait("x32 desktop CH_EXIT %d 0025" % background[0])
+            guest.wait("x32 desktop CH_EXIT %d 0025" % background[2])
     if not guest.embedded_console:
         before = len(guest.text())
         guest.key("ctrl-z")
@@ -588,7 +594,7 @@ def libaes_desktop(guest):
     guest.wait("x32 desktop window OPEN",2)
     text = guest.text()
     assert text.count("x32 desktop LIBAES PASS") == 1
-    for pid,window in (first,second):
+    for client,window,pid in (first,second):
         assert text.count("x32 desktop CH_EXIT %d " % pid) == 1
     assert text.count("x32 libaes accessory READY") == 1
     assert "x32 libaes accessory FAIL" not in text
@@ -715,8 +721,9 @@ def main():
                 pid = int(re.findall(r"x32 desktop LAUNCH (\d+) ", text)[-1])
                 assert pid > 0
                 if launch_case == "gem":
-                    guest.wait(r"x32 desktop client READY \d+ \d+", timeout=30, regex=True)
-                    guest.move(750, 110+(pid & 1)*280)
+                    client_text=guest.wait(r"x32 desktop client READY \d+ \d+", timeout=30, regex=True)
+                    client_id=int(re.findall(r"x32 desktop client READY (\d+) \d+",client_text)[-1])
+                    guest.move(750, 110+(client_id & 1)*280)
                     guest.click()
                 else:
                     guest.wait("x32 launch directory " + launch_case.upper(), timeout=30)

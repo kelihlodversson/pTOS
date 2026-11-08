@@ -188,14 +188,14 @@ int main(int argc, char **argv, char **envp)
         /* GEM appl_write needs no receiver handshake or permission API. */
         CHECK(probe_packet_write(owner, handle, 1, 2, 3, 4) == sizeof(PROBE_PACKET));
     }
-    CHECK(raw(CUIS_SESSION_START, ~0ULL) == handle);
+    CHECK(raw(CUIS_SESSION_START, ~0ULL) == EINVAL && probe_session_open() == handle);
     CHECK(raw(CUIS_SESSION_QUERY, (1ULL << 32) | (ULONG)handle) == EINVAL);
     CHECK(raw(CUIS_SESSION_END, (1ULL << 32) | (ULONG)handle) == EINVAL);
     CHECK(raw(CUIS_SESSION_END, ~0ULL) == EINVAL);
     CHECK(probe_session_query(-1) == EINVAL);
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
     {
-        static const ULONG retired[]={10,11,12,13,14,16,17,18,19,21,22,23,25,52};
+        static const ULONG retired[]={10,11,12,13,14,16,17,18,19,21,22,23,25,28,29,52};
         ULONG retired_index;
         for (retired_index=0;retired_index<sizeof(retired)/sizeof(retired[0]);retired_index++)
             CHECK(probe_call6(retired[retired_index],handle,0,0,0,0,0) == EINVFN);

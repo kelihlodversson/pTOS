@@ -210,6 +210,10 @@ BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
     copied[(address - 0x1000) / 4] = *(const LONG *)source;
     return TRUE;
 }
+BOOL kproc_validate_user_range(VADDR address, ULONG size)
+{
+    return !fail_copy && address>=0x10000 && address<=0x18000 && size<=0x18000-address;
+}
 BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
 {
     if (fail_copy || address < 0x10000 || address > 0x18000 || size > 0x18000 - address) return FALSE;
@@ -241,6 +245,21 @@ void *kalloc(ULONG bytes)
     return &pool[allocations++];
 }
 void kfree(void *memory) { (void)memory; frees++; }
+static ULONG process_references;
+KPROC *kproc_retain(PD *pd)
+{
+    if (!pd) return NULL;
+    process_references++; return (KPROC *)pd;
+}
+void kproc_release(KPROC *process)
+{
+    if (!process || !process_references) __builtin_abort();
+    process_references--;
+}
+UQUAD kproc_ref_number(const KPROC *process)
+{
+    return process == (KPROC *)&first ? 0x100000001ULL : 0x200000001ULL;
+}
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "windows.c"
@@ -265,6 +284,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "child_completion.c"
 #include "entries.c"
 #include "peers.c"
+#include "client_identity.c"
 #include "cohorts.c"
 
 int main(void)
@@ -278,7 +298,8 @@ int main(void)
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM);
     CHECK(!allocations && !cuis_session_count());
     fail_allocation = FALSE;
-    owner = cuis_service(CUIS_SESSION_START, ~0ULL);
+    CHECK(cuis_service(CUIS_SESSION_START, ~0ULL) == EINVAL);
+    owner = cuis_service(CUIS_SESSION_START, 0);
     CHECK(owner == 0 && cuis_session_count() == 1);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == owner && allocations == 1);
     CHECK(cuis_service(CUIS_SESSION_QUERY, 0x100000000ULL | (ULONG)owner) == EINVAL);
@@ -308,7 +329,7 @@ int main(void)
     next_handle = 0x7fffffffUL;
     CHECK(cuis_service(CUIS_SESSION_START, 0) == 0x7fffffffL);
     /* An existing session can still be returned after handle exhaustion. */
-    CHECK(cuis_service(CUIS_SESSION_START, ~0ULL) == 0x7fffffffL);
+    CHECK(cuis_service(CUIS_SESSION_START, 0) == 0x7fffffffL);
     cuis_process_exit(&first);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM && !cuis_session_count());
     CHECK(allocations == frees);
@@ -373,6 +394,8 @@ int main(void)
     rc = console_abandoned_launch_checks();
     if (rc) return rc;
     rc = entry_checks();
+    if (rc) return rc;
+    rc = client_identity_checks();
     if (rc) return rc;
     rc = peer_checks();
     if (rc) return rc;

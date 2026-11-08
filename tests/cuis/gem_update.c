@@ -39,7 +39,7 @@ static int rectangles(short window, short cover)
 #include "control_message.h"
 int main(int argc, char **argv, char **envp)
 {
-    short id, window, cover, message[8], global[15], x, y, w, h;
+    short id, peer, window, cover, message[8], global[15], x, y, w, h;
     LONG child, status;
     int result;
     char tail[3] = { 1, 'c', 0 };
@@ -103,9 +103,11 @@ int main(int argc, char **argv, char **envp)
     tail[1] = 'o';
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMUPD.TOS", (uintptr_t)tail, (uintptr_t)environment);
     VERIFY(child > 0 && control_message(message) == 1 && message[0] == 900);
+    peer = message[1];
+    VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);
     VERIFY(wind_update(BEG_UPDATE) == 1);
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && y == 1 && h == 4);
-    VERIFY(appl_write((short)child, 16, message) == 1);
+    VERIFY(appl_write(peer, 16, message) == 1);
     status = process(0x13a, child, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     /* The existing list survives peer cleanup; FIRST later refreshes it. */
@@ -115,7 +117,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_get(window, WF_NEXTXYWH, &x, &y, &w, &h) == 1 && !w && !h);
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && w == 18 && h == 18);
     VERIFY(appl_exit() == 1); /* Session teardown also releases an explicit lock. */
-    VERIFY(appl_init() == id && wind_update(BEG_UPDATE | NO_BLOCK) == 1);
+    id = appl_init(); VERIFY(id > 0 && wind_update(BEG_UPDATE | NO_BLOCK) == 1);
     VERIFY(wind_update(END_UPDATE) == 1 && appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM update/regions: PASS\r\n";

@@ -78,6 +78,49 @@ void test_ssystem_info(void)
                          "zero PROCESS name capacity is refused");
     }
 
+    if (Ssystem(SS_INQUIRE, -7, 0L) == 0) {
+        struct { unsigned long low, high; long pid; unsigned long selector; } identity, request;
+        ptest_assert_msg(Ssystem(SS_INQUIRE, -8, 0L) == 0,
+                         "generic PROCESS identity service is missing");
+        memset(&identity, 0, sizeof(identity));
+        ptest_assert_msg(sizeof(identity) == 16 &&
+                         Ssystem(-8, (long)&identity, (long)sizeof(identity)) == 0 &&
+                         (identity.low || identity.high) && identity.pid == Pgetpid(),
+                         "current PROCESS identity snapshot");
+        memset(&request, 0, sizeof(request)); request.pid = identity.pid; request.selector = 2;
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)) == 0 &&
+                         !memcmp(&request, &identity, sizeof(identity)), "PROCESS lookup by PID");
+        request = identity; request.pid = 0; request.selector = 1;
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)) == 0 &&
+                         !memcmp(&request, &identity, sizeof(identity)), "PROCESS lookup by number");
+        ptest_assert_msg(Ssystem(-8, -1L, (long)sizeof(request)) == EIMBA,
+                         "wrapping PROCESS identity request is refused");
+        ptest_assert_msg(Ssystem(-8, 0L, (long)sizeof(request)) == EIMBA,
+                         "inaccessible PROCESS identity request is refused");
+        request=identity; request.low=~0UL; request.high=~0UL; request.pid=0; request.selector=1;
+        { unsigned char unchanged[16]; memcpy(unchanged,&request,16);
+          ptest_assert_msg(Ssystem(-8,(long)&request,(long)sizeof(request)) == -20 &&
+                           !memcmp(unchanged,&request,16), "unknown PROCESS number leaves output unchanged"); }
+#if defined(TEST_WITH_USER_ASPACE) && defined(TEST_WITH_MMAP)
+        { long readonly=trap_1_wllllll(0x17e,0L,4096L,1L,0x22L,-1L,0L);
+          ptest_assert_msg(readonly>0,"prepare an explicitly read-only snapshot mapping");
+          if (readonly>0) {
+            volatile const unsigned long *words=(volatile const unsigned long *)readonly;
+            ptest_assert_msg(Ssystem(-8,readonly,16L)==EIMBA &&
+                             !words[0] && !words[1] && !words[2] && !words[3],
+                             "read-only PROCESS snapshot copyout fails without modifying input");
+            ptest_assert_msg(trap_1_wll(0x17f,readonly,4096L)==0,"release snapshot mapping");
+          }
+        }
+#endif
+        request = identity; request.selector = 1;
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)) == -25 &&
+                         request.pid == identity.pid && request.selector == 1,
+                         "ambiguous PROCESS query is refused without modifying input");
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)-1) == -25,
+                         "short PROCESS query is refused");
+    }
+
     /* S_INQUIRE: every mode the call implements, and one that does not */
     {
         static const long modes[] = {

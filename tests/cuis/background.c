@@ -14,7 +14,7 @@ static int background_checks(void)
     CHECK(cuis_background(1ULL<<32,1) == EINVAL && cuis_background(a,5) == EINVAL);
     CHECK(cuis_background(a,1) == EACCDN && cuis_background(a,2) == 0);
     CHECK(cuis_display_lock(a,1,0) == E_OK && cuis_background(a,1) == E_OK);
-    CHECK(background_front == ca && cuis_background(a,2) == 3 && cuis_display_info(3) == 1);
+    CHECK(background_front == ca && cuis_background(a,2) == 3 && cuis_display_info(3) == ca->aes_id);
     CHECK(cuis_background(a,3) == E_OK && cuis_background(a,2) == 1);
     CHECK(BGREG(a,0) == 1 && copied[0] == 0 && copied[1] == 0);
     CHECK(copied[2] == display_width && copied[3] == display_height && BGREG(a,1) == 0);

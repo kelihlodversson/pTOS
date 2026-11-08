@@ -1,5 +1,6 @@
 /* Exercise the public GEM bindings against a failing/private transport. */
 #include "gem.h"
+#include "process_identity.h"
 #include "../../lib/aes/native_bindings.h"
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
@@ -21,6 +22,11 @@ void *aes_temporary_alloc(LONG bytes) { return region_alloc_failure ? NULL : mal
 WORD aes_resource_discard(void *memory) { free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static ULONG published_tag;
+static ULONG client_id = 7;
+static BOOL shared_process_peer;
+static LONG last_message_peer;
+static ULONG peer_queries, peer_enumerations;
+#define SIBLING_HANDLE 2147483601L
 static char published_label[8];
 static const char *executable_name = "GemTest.Prg";
 static LONG active_peer = EFILNF;
@@ -121,6 +127,15 @@ LONG aes_menu_dispatch(WORD *global)
 void aes_menu_reset(void) { }
 UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
 {
+    if (fn == 0x154 && a == 0xfff8) {
+        PROCESS_IDENTITY *identity = (PROCESS_IDENTITY *)(uintptr_t)b;
+        if (c != sizeof(*identity)) return EINVAL;
+        if (identity->selector == PROCESS_IDENTITY_PID && identity->pid != pid) return (UQUAD)(QUAD)ESRCH;
+        if (identity->selector == PROCESS_IDENTITY_NUMBER &&
+            (identity->number_low != 123 || identity->number_high != 5)) return (UQUAD)(QUAD)ESRCH;
+        identity->number_low = 123; identity->number_high = 5; identity->pid = pid; identity->selector = 0;
+        return E_OK;
+    }
     if (fn == 0x154 && a == 0xfff9) {
         ULONG length = __builtin_strlen(executable_name);
         if (c <= length) return (UQUAD)(QUAD)ERANGE;
@@ -178,19 +193,35 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (fn == CUIS_ENTRY_OWNER) return b < 6 && (registered_items & (1U << b)) ? handle : EFILNF;
     if (fn == CUIS_PEER_RAISE) {
-        if (a != (UQUAD)handle || b != (UQUAD)handle) return EACCDN;
-        active_peer = handle; return E_OK;
+        if (a != (UQUAD)handle || (b != (UQUAD)handle && !(shared_process_peer && b == SIBLING_HANDLE))) return EACCDN;
+        active_peer = (LONG)b; return E_OK;
     }
     if (fn == CUIS_SESSION_TAG) { published_tag = (ULONG)b; return E_OK; }
-    if (fn == CUIS_PEER_NEXT) return b == ~0ULL || b < (UQUAD)handle ? handle : EFILNF;
+    if (fn == CUIS_PEER_NEXT) {
+        peer_enumerations++;
+        if (b == ~0ULL || b < (UQUAD)handle) return handle;
+        return shared_process_peer && b < SIBLING_HANDLE ? SIBLING_HANDLE : EFILNF;
+    }
     if (fn == CUIS_PEER_QUERY) {
+        peer_queries++;
+        if (c == CUIS_PEER_HANDLE) {
+            if (b == client_id) return handle;
+            return shared_process_peer && b == 41 ? SIBLING_HANDLE : EFILNF;
+        }
         if (c == CUIS_PEER_BACKGROUND) return EFILNF;
         if (c == CUIS_PEER_ACTIVE) return active_peer;
-        if (b != (UQUAD)handle) return EFILNF;
+        if (b != (UQUAD)handle && !(shared_process_peer && b == SIBLING_HANDLE)) return EFILNF;
+        if (c == CUIS_PEER_IDENTITY) {
+            CUIS_PEER_IDENTITY_DATA identity;
+            identity.client_id = b == SIBLING_HANDLE ? 41 : client_id;
+            identity.process_low = 123; identity.process_high = 5; identity.reserved = 0;
+            if (e != sizeof(identity)) return EINVAL;
+            __builtin_memcpy((void *)(uintptr_t)d,&identity,sizeof(identity)); return sizeof(identity);
+        }
         if (c == CUIS_PEER_TAG) return published_tag;
         if (c == CUIS_PEER_LABEL) {
             if (e < 8) return ERANGE;
-            __builtin_memcpy((void *)(uintptr_t)d,published_label,8); return 8;
+            __builtin_memcpy((void *)(uintptr_t)d,b == SIBLING_HANDLE ? "SIBLING " : published_label,8); return 8;
         }
         return (LONG)peer_state_flags;
     }
@@ -324,8 +355,6 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         return label_result;
     }
     if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a,published_label,8) ? EFILNF : handle;
-    if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
-    if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
@@ -387,6 +416,9 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK) {
         if (failure) return failure;
         pipe_block = (ULONG)d;
+        if (shared_process_peer && fn == CUIS_STREAM_WRITE && a == SIBLING_HANDLE) {
+            last_message_peer = (LONG)a; return (LONG)c;
+        }
         if (a != (UQUAD)handle) return EACCDN;
         if (fn == CUIS_STREAM_WRITE) {
             if (pipe_count + c > sizeof(pipe_data)) return EAGAIN;
@@ -1390,7 +1422,7 @@ int main(void)
     live = FALSE; /* Authoritative kernel teardown invalidates stale library state. */
     CHECK(appl_yield() == 0 && evnt_timer(0) == 0);
     CHECK(appl_init() == 7 && appl_exit() == 1 && closes == 2);
-    pid = 32767;
+    pid = 32767; client_id = 32767;
     CHECK(appl_init() == 32767 && gl_apid == 32767 && appl_exit() == 1 && closes == 3);
     label_result = EACCDN;
     CHECK(mt_appl_init(other) == -1 && !live && gl_apid == -1 && other[2] == -1 && closes == 4);
@@ -1398,7 +1430,7 @@ int main(void)
         char name[9] = { 'u', 'n', 't', 'o', 'u', 'c', 'h', 'e', 'd' };
         short type = -7, found = -7;
         CHECK(appl_search(APP_FIRST,name,&type,&found) == 0 && type == -7 && found == -7);
-        label_result = 0; pid = 7;
+        label_result = 0; pid = 7; client_id = 7;
         CHECK(appl_init() == 7);
         CHECK(appl_control(7,APC_INFO,&type) == 1 && type == 0);
         CHECK(appl_control(7,APC_TOP,NULL) == 1);
@@ -1426,5 +1458,30 @@ int main(void)
         executable_name = "GemTest.Prg";
     }
     CHECK(lifecycle_poll_checks() == 0);
+    /* Two GUI clients share one PROCESS/PID; normal routes use AES IDs. */
+    {
+        char name[9];
+        short type, found;
+        client_id = 42; shared_process_peer = TRUE; pid = 7;
+        CHECK(appl_init() == 42 && aes_global[2] == 42 && appl_find(NULL) == 42);
+        CHECK(appl_find("GEMTEST ") == 42);
+        CHECK(appl_find((const char *)(uintptr_t)0xffff0007UL) == 41);
+        CHECK(appl_find((const char *)(uintptr_t)0xfffe002aUL) == 7);
+        CHECK(appl_find((const char *)(uintptr_t)0xfffe0029UL) == 7);
+        CHECK(appl_find((const char *)(uintptr_t)0xffff002aUL) == -1);
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && found == 42);
+        CHECK(appl_search(APP_NEXT,name,&type,&found) == 1 && found == 41 &&
+              !__builtin_memcmp(name,"SIBLING ",8));
+        peer_queries=peer_enumerations=0;
+        CHECK(appl_control(41,APC_TOP,NULL) == 1 && active_peer == SIBLING_HANDLE);
+        CHECK(peer_queries==1 && peer_enumerations==0);
+        peer_queries=peer_enumerations=0;
+        last_message_peer = 0;
+        CHECK(appl_write(41,16,message) == 1 && last_message_peer == SIBLING_HANDLE);
+        CHECK(peer_queries==1 && peer_enumerations==0);
+        CHECK(appl_write(7,16,message) == 0 && appl_control(7,APC_TOP,NULL) == 0);
+        CHECK(appl_exit() == 1);
+        shared_process_peer = FALSE; client_id = 7;
+    }
     return 0;
 }

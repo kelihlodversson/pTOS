@@ -48,7 +48,7 @@ int gem_explicit_checks(short *global)
         }
         VERIFY(directory_call(0x19,0,0) == 2 && directory_call(0x47,(uintptr_t)current,3) == 0);
         VERIFY(equal(current,"\\GEMSYS"));
-        VERIFY(pid > 0 && pid != global[2]);
+        VERIFY(pid > 0 && pid != directory_call(0x10b,0,0));
         /* The console lease exists before the child gets its first timeslice. */
         result = wind_update(BEG_UPDATE|NO_BLOCK);
         VERIFY(result == (kind == TOSAPP ? 0 : 1));
