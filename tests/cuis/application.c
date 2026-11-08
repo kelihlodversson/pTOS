@@ -119,6 +119,11 @@ LONG aes_menu_dispatch(WORD *global)
     return E_OK;
 }
 void aes_menu_reset(void) { }
+UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
+{
+    if (fn == 0x154 && a == 0x000a && b == 0x4ba && !c) return menu_ticks;
+    return (UQUAD)(QUAD)EINVFN;
+}
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -319,7 +324,6 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a,published_label,8) ? EFILNF : handle;
     if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
     if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
-    if (fn == CUIS_CLOCK) return menu_ticks & 0x7fffffffUL;
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
@@ -1284,6 +1288,12 @@ int main(void)
     short message[8] = { 123, 7, 0, 4, 5, 6, 7, 8 }, result[8];
     ULONG count;
     short held;
+    /* Generic time remains usable before any GUI endpoint is registered. */
+    menu_ticks = 0x80000001UL;
+    CHECK(aes_clock_ticks() == 1 && !starts && !live);
+    menu_ticks = 0xffffffffUL;
+    CHECK(aes_clock_ticks() == 0x7fffffffL && !starts && !live);
+    menu_ticks = 0;
     CHECK(gl_apid == -1 && aes_global[2] == -1);
     CHECK(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1 && !window_at_calls);
     CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);

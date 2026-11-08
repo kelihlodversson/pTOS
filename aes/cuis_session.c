@@ -1217,9 +1217,7 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
-    if (function == CUIS_CLOCK) {
-        result = argument ? EINVAL : (LONG)(cuis_input_ticks() & 0x7fffffffUL);
-    } else if (function == CUIS_SURFACE_STATUS) {
+    if (function == CUIS_SURFACE_STATUS) {
         if (argument > 2) result = EINVAL;
         else if (argument == 2) {
             if (surface_owner != client) result = EACCDN;
@@ -3189,34 +3187,31 @@ LONG cuis_input_service(ULONG function, UQUAD handle, UQUAD argument)
     UQUAD flags;
     ULONG key;
 
-    if (function != CUIS_KEY_READ && function != CUIS_KEY_WAIT) return EINVFN;
+    if (function != CUIS_KEY_READ) return EINVFN;
     if (handle > 0x7fffffffULL) return EINVAL;
     client = *find_owner(run);
     if (!client) return EACCDN;
     for (window = client->windows; window && window->handle != handle;
          window = window->next) ;
     if (!window) return EACCDN;
-    if (function == CUIS_KEY_READ) {
-        flags = cuis_input_lock();
-        if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
-        if (!window->key_count) { cuis_input_unlock(flags); return 0; }
+    flags = cuis_input_lock();
+    if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
+    if (!window->key_count) { cuis_input_unlock(flags); return 0; }
+    cuis_input_unlock(flags);
+    /* Back lazy/COW output memory before the short queue transaction. */
+    if (!kproc_validate_user_write(argument, sizeof(key))) return EIMBA;
+    flags = cuis_input_lock();
+    if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
+    if (!window->key_count) { cuis_input_unlock(flags); return 0; }
+    key = window->keys[window->key_head];
+    if (!kproc_copy_to_user(argument, &key, sizeof(key))) {
         cuis_input_unlock(flags);
-        /* Back lazy/COW output memory before the short queue transaction. */
-        if (!kproc_validate_user_write(argument, sizeof(key))) return EIMBA;
-        flags = cuis_input_lock();
-        if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
-        if (!window->key_count) { cuis_input_unlock(flags); return 0; }
-        key = window->keys[window->key_head];
-        if (!kproc_copy_to_user(argument, &key, sizeof(key))) {
-            cuis_input_unlock(flags);
-            return EIMBA;
-        }
-        window->key_head = (window->key_head + 1) % CUIS_KEY_CAPACITY;
-        window->key_count--;
-        cuis_input_unlock(flags);
-        return 1;
+        return EIMBA;
     }
-    return wait_events(client, window, CUIS_EVENT_KEY, argument);
+    window->key_head = (window->key_head + 1) % CUIS_KEY_CAPACITY;
+    window->key_count--;
+    cuis_input_unlock(flags);
+    return 1;
 }
 
 static CUIS_WINDOW *input_window(UQUAD handle)
