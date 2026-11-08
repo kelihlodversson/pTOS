@@ -2,7 +2,7 @@
 #ifndef KSCHED_SEQUENCE_H
 #define KSCHED_SEQUENCE_H
 #include "portab.h"
-#include "kprint.h"
+#include "biosext.h" /* owns panic() and its noreturn/format declaration */
 
 /* The owner retains this storage through observation/admission. Access under
  * owner exclusion (local IRQ exclusion on today's single CPU); this is NOT an
