@@ -721,8 +721,9 @@ def main():
                 pid = int(re.findall(r"x32 desktop LAUNCH (\d+) ", text)[-1])
                 assert pid > 0
                 if launch_case == "gem":
-                    guest.wait(r"x32 desktop client READY \d+ \d+", timeout=30, regex=True)
-                    guest.move(750, 110+(pid & 1)*280)
+                    client_text=guest.wait(r"x32 desktop client READY \d+ \d+", timeout=30, regex=True)
+                    client_id=int(re.findall(r"x32 desktop client READY (\d+) \d+",client_text)[-1])
+                    guest.move(750, 110+(client_id & 1)*280)
                     guest.click()
                 else:
                     guest.wait("x32 launch directory " + launch_case.upper(), timeout=30)
