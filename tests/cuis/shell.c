@@ -23,7 +23,7 @@ static char tried[16][AES_SHELL_PATH];
 static const char *found;
 static LONG launch_result = 42;
 static LONG watch_result = 17, cancellations, observed_launches, deferred_calls;
-static LONG deferred_result;
+static LONG deferred_result, completion_error, reservations;
 static UQUAD launched_console;
 static int launches, native_calls;
 static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
@@ -92,7 +92,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     (void)e; (void)f;
     native_calls++;
     if (a != 9) return EACCDN;
-    if (fn == CUIS_CHILD_RESULT) return 0;
+    if (fn == CUIS_CHILD_RESULT) return completion_error;
     if (fn == CUIS_PROCESS_DEFER || fn == CUIS_PROCESS_DEFER_DIRECTORY) {
         if (f) return EINVAL;
         if (e) strcpy(launched_directory,(const char *)(uintptr_t)e); else launched_directory[0] = 0;
@@ -117,7 +117,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         return launch_result;
     }
     if (fn != CUIS_CHILD_WATCH) return EINVFN;
-    if (b == CUIS_CHILD_RESERVE) return watch_result;
+    if (b == CUIS_CHILD_RESERVE) { reservations++; return watch_result; }
     if (c != 17) return EACCDN;
     if (b == CUIS_CHILD_CANCEL) { cancellations++; return E_OK; }
     return EINVFN;
@@ -322,6 +322,8 @@ static int argument_checks(void)
     SHELW extended = { name,0,0,NULL,custom,0,0 };
     static const char expected[] = "ONLY=child\0ARGV=NULL:2\0D:\\CHANGED\\GOOD\\NEXT.PRG\0one two\0 \0a'b\0C:\\test\0\0";
     int before;
+    LONG before_reservations;
+    ULONG before_allocations;
     found = "GOOD\\NEXT.PRG";
     strcpy(tail+1,"\"one two\" '' 'a''b' C:\\test"); tail[0] = strlen(tail+1);
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
@@ -347,6 +349,18 @@ static int argument_checks(void)
     fail_allocation = FALSE; launch_result = ENSMEM;
     VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) && !allocation_balance);
     launch_result = 42;
+    /* Prepared environment ownership must roll back even when admission
+     * cannot start because an earlier completion could not be serviced. */
+    before = launches; before_reservations = reservations;
+    before_allocations = allocation_attempts; completion_error = EIMBA;
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail));
+    VERIFY(launches == before && reservations == before_reservations && !allocation_balance);
+    VERIFY(allocation_attempts == before_allocations+1 &&
+           !memcmp(custom,"ONLY=child\0ARGV=\0old\0old-argument\0\0",sizeof(custom)));
+    completion_error = 0; watch_result = EAGAIN;
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail));
+    VERIFY(launches == before && reservations == before_reservations+1 && !allocation_balance);
+    watch_result = 17;
     extended.env = empty_environment;
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
     VERIFY(!memcmp(launched_environment,"ARGV=\0D:\\CHANGED\\GOOD\\NEXT.PRG\0\0",32) && !allocation_balance);

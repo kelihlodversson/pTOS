@@ -19,4 +19,8 @@ void aes_frames_resume(void);
 BOOL aes_frames_dialog(BOOL begin);
 LONG aes_application_session(short *global);
 LONG aes_child_messages(LONG session);
+LONG aes_child_launch(LONG session, const char *path, const char *tail,
+                      const char *environment, const char *directory, BOOL console, BOOL observed);
+LONG aes_child_defer(LONG session, const char *path, const char *tail,
+                     const char *environment, const char *directory);
 #endif

@@ -145,6 +145,12 @@ UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
     if (fn == 0x154 && a == 0x000a && b == 0x4ba && !c) return menu_ticks;
     return (UQUAD)(QUAD)EINVFN;
 }
+/* Launch policy is exercised by the separate production shell harness. */
+UQUAD aes_gemdos_call4(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
+{
+    (void)fn; (void)a; (void)b; (void)c; (void)d;
+    return (UQUAD)(QUAD)EINVFN;
+}
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
