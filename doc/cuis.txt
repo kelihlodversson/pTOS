@@ -499,21 +499,12 @@ no user-callable test injection interface is exposed.
 
 Pointer routing and combined waits
 ----------------------------------
-CUIS extends the flat register ABI with:
-
- 19 POINTER_READ RDI=owned window, RSI=LONG *x, RDX=LONG *y,
-                 R10=ULONG *buttons, R8=ULONG *state
- 20 EVENT_WAIT   RDI=owned window, RSI=event mask,
-                 RDX=sign-extended LONG timeout_ms
-
-libaes exports aes_pointer_read(window, x, y, buttons, state) and
-aes_event_wait(window, events, timeout_ms). POINTER_READ returns 1 for one
-snapshot, 0 when empty, or a negative GEMDOS error. Coordinates are absolute
-screen pixels. Buttons use bit 0 for left and bit 1 for right; state bits 0-1
-identify changed buttons and CUIS_POINTER_INSIDE (bit 2) identifies the
-window currently hit by the pointer. Capture can deliver outside snapshots.
-All four outputs are validated before copying; failed copyout retains the
-snapshot. Empty reads do not inspect output pointers.
+EVENT_WAIT takes an owned window, an event mask and a sign-extended LONG
+millisecond timeout. libaes uses it for native window-control dragging.
+INPUT_STATE supplies current absolute screen coordinates, button bits and
+modifiers. SESSION_WAIT with INPUT_BUTTON commits input from event history;
+INPUT_RESULT returns the retryable snapshot. A press and release delivered
+before the waiter resumes therefore retain the historical button result.
 
 A trusted relative mouse packet is clamped to the physical display and live
 VDI viewport. Hit testing uses the topmost shown window and half-open bounds.
@@ -2030,8 +2021,8 @@ CUIS adds three generic scalar operations under CONF_WITH_CUIS:
   ownership rules as WINDOW_CONFIGURE apply.
 - 56 CONTROL_READ(window,out_x,out_y,out_buttons,out_changed): read one trusted
   border-pointer record, returning 1, empty 0, or a negative error. All outputs
-  are LONGs, coordinates are screen-relative, and changed has the same button
-  bits as POINTER_READ. The caller must own the window. Failed output copies
+  are LONGs, coordinates are screen-relative, and changed uses bit 0 for left and bit 1
+  for right button transitions. The caller must own the window. Failed output copies
   do not pop the record. ERANGE cancels tracking after queue overflow or a
   target invalidation; no GEM gadget IDs, trees or messages enter the kernel.
 

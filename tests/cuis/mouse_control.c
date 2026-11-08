@@ -19,7 +19,7 @@ static int mouse_control_checks(void)
     CHECK(ML(a,0,0) == EACCDN && ML(b,1,0) == EACCDN);
     CHECK(ML(a,1,1) == E_OK && ML(a,1,0) == E_OK && mouse_depth == 2 && focus_window == wb);
     CHECK(cuis_mouse_active() && !ca->windows);
-    run = &second; CHECK(pointer_drain(window)); run = &first;
+    run = &second; clear_pointer_fixture(window); run = &first;
     CHECK(point_at(210,210,1) && focus_window == wb && !pointer_activation_drag);
     CHECK(ca->edge_count == 1 && !cb->edge_count && !wb->pointer_count);
     CHECK(cuis_keyboard_event(0x1234) && wb->key_count == 1);

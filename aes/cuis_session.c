@@ -2690,7 +2690,7 @@ LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout)
     refresh_pointer_bounds();
     return wait_events(*find_owner(run), window, (ULONG)events, timeout);
 }
-static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
+LONG cuis_control_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
 {
     CUIS_WINDOW *window;
     CUIS_POINTER event, *queue;
@@ -2700,13 +2700,13 @@ static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD but
     if (handle > 0x7fffffffULL) return EINVAL;
     window = input_window(handle);
     if (!window) return EACCDN;
-    if (control && mouse_owner && !window->control_overflow) return 0;
-    queue = control ? window->controls : window->pointer;
-    head = control ? &window->control_head : &window->pointer_head;
-    count = control ? &window->control_count : &window->pointer_count;
-    overflow = control ? &window->control_overflow : &window->pointer_overflow;
+    if (mouse_owner && !window->control_overflow) return 0;
+    queue = window->controls;
+    head = &window->control_head;
+    count = &window->control_count;
+    overflow = &window->control_overflow;
     flags = cuis_input_lock();
-    if (control && (!window->visible || window != window_front || window != focus_window)) cancel_controls(window);
+    if (!window->visible || window != window_front || window != focus_window) cancel_controls(window);
     if (*overflow) {
         *overflow = FALSE;
         cuis_input_unlock(flags); return ERANGE;
@@ -2734,15 +2734,6 @@ static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD but
     (*count)--;
     cuis_input_unlock(flags);
     return 1;
-}
-
-LONG cuis_pointer_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
-{
-    return read_pointer(FALSE,handle,x,y,buttons,changed);
-}
-LONG cuis_control_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
-{
-    return read_pointer(TRUE,handle,x,y,buttons,changed);
 }
 
 /* Generic notices are converted by libaes, then atomically appended as opaque
