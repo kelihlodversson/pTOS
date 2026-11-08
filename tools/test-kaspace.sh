@@ -14,6 +14,9 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -iquote bdos/arch/x86_64 tests/kthread_stack.c \
     bdos/kthread_context.c -o "$work/thread-test"
 "$work/thread-test"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 tests/x32_irq_frame.c -o "$work/irq-frame"
+"$work/irq-frame"
 for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
     CONFIG_= python3 - "$preset" "$work/config" <<'PY'
 import kconfiglib, sys
@@ -84,6 +87,11 @@ k.write_config(sys.argv[1])
 PY
 CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
     --header "$work/autoconf.h" --makefile "$work/auto.conf"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+    -iquote include -I"$work" -Iinclude/arch/x86_64 -iquote bdos \
+    -Ibios/machine/pc-x86_64 -Ibios/arch/x86_64 -Ibios -Iutil \
+    tests/x32_irq_capture.c -Wl,--gc-sections -o "$work/irq-capture"
+"$work/irq-capture"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
     -iquote bdos/arch/x86_64 tests/thread_startup.c bdos/thread_startup.c bdos/kaspace.c \

@@ -627,6 +627,14 @@ case "$machine" in
         ;;
 esac
 
+if [ "$machine" = pc-x86_64 ] &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   grep -Eq '^#define CONF_WITH_(EXIT_HANDOFF_TEST|X86_64_MEMTEST) 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$suite_log"; then
+        record "native user IRQ capture" FAIL "real ring-3 register pattern was not captured"
+    fi
+fi
+
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"

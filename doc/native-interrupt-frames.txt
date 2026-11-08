@@ -100,3 +100,78 @@ Amiberry v8.5.0 68060 passes 25/0 caches off/on with strict nonzero FPIAR.
 Classic 192 KiB ROM/test disk, clone ABI/decoder, ELF52 and gitready pass.
 Pinned Hatari Falcon/TT execution and isolated latest-epic combined validation
 are recorded separately in the PR/checkpoint evidence after their completion.
+
+B1b first increment: x32 device-IRQ capture
+-------------------------------------------
+include/arch/x86_64/irqframe.h defines the exact 688-byte FXSAVE/GPR/vector/
+user-iretq image. C checks every field offset and total size; irqasm.S shares
+these constants. Before device dispatch/callbacks, it passes the original image
+to bdos/arch/x86_64/interrupt_user.c. It still restores that original FXSAVE,
+GPR and iretq image; the captured copy is never installed as a continuation.
+
+The generic target query admits only the boot CPU's pinned RUNNING execution,
+matching live KTHREAD/PROCESS/ASPACE and current PD. Nested Pexec executing a
+different PROCESS, blocked/stopped threads and leaf critical sections are
+ineligible. The query changes no reference counts and invokes no callbacks.
+It requires the existing masked device-IRQ entry and cannot yield. THREAD owns
+preallocated backend capture storage before publication. No IRQ allocation,
+user copy, demand fault, notification or reschedule occurs.
+
+The architecture backend validates native user CS/SS, low user RIP/RSP,
+RFLAGS privilege bits, vector/padding, CR3 against the retained KASPACE backend,
+and exact IRQ-frame/TSS-top/syscall-top binding. It copies all 512 FXSAVE bytes,
+15 GPRs and the user iretq frame, stamps execution/TID/CPU and advances a bounded
+per-execution capture sequence. Exhaustion refuses capture rather than wrapping.
+Only numeric register/source-address provenance is copied; it is never used
+as a borrowed image pointer or dereferenced after IRQ return. Existing KTHREAD
+ownership retains ASPACE and stack holds; this adds no second resource owner.
+
+The valid flag means only a copied diagnostic image within this on-CPU dispatch.
+It does NOT authorize restoring it, prove mapping permissions for future return,
+or represent a newly captured kernel IRQ. Root acknowledgement invalidates it
+before stack/record reclamation. B2 must require a fresh eligible user boundary
+and revalidate bindings/leases; it must never resume an old diagnostic snapshot.
+TLS and AVX/XSAVE state are unsupported; this is the existing x87/MMX/SSE ABI.
+
+A native ring-3 probe sets distinct nonzero upper/lower 64-bit GPR patterns,
+all 16 XMM registers, x87 ST0/control, MXCSR and DF, then executes a bounded
+no-syscall/no-yield loop. The test-gated kernel checks the actual captured bytes;
+root reports the result outside IRQ. The user probe also checks GPR, FPU/SSE
+and DF preservation after IRQ return. This is capture/return evidence, NOT
+CPU-bound scheduling progress or preemption. The memory-test boot requires this
+marker plus its existing full verdict. Ordinary desktop kernels still capture,
+but compile out kernel pattern diagnostics; the desktop user probe remains.
+
+Production-code host tests model CPU queries and check immutable source/copy
+ownership, failed CR3/stack binding, sequence exhaustion and unchanged kernel
+IRQ behavior. Separate scheduler tests reject foreign CPU, nested PROCESS,
+incompatible ASPACE, blocked and leaf-held targets. Native memory/GEM/form/input
+and desktop23/0+five shutdown checks pass; ARM27/0+five and m68k04026/0+five are
+compatibility execution, not new interrupted-frame evidence. Sanitized and
+fortified ownership/capture tests remain separately identified as host execution.
+
+Remaining B1b/B1c
+------------------
+ARM and m68k interrupted-user payload capture remains planned above; existing
+native clone/FPU execution does not prove it. Before any captured frame may
+escape its original exception, finish CPU-local loaded launcher/error state,
+ARM banked/exception/VFP ownership and m68k uenter/FPU/frame staging. x32 loaded
+current_launch, run/errbuf and syscall compatibility globals also remain boot-
+CPU-only; this increment neither converts those globals nor switches kernel
+frames. B1c and B2 are not complete. Preemption stays disabled.
+
+Current capability matrix (first B1b increment)
+------------------------------------------------
+                                x32              ARM MMU          m68k MMU
+Cooperative native scheduling   native tested    native tested    native tested
+Full copied device-IRQ image    native tested    not implemented  not implemented
+Captured image restore/dispatch unavailable      unavailable      unavailable
+Loaded-state B1c conversion     incomplete       incomplete       incomplete
+Timer preemption / SMP          disabled         disabled         disabled
+
+Native compatibility additionally passes pinned Hatari Falcon/TT030/04025/0
+in each mode and Amiberry68060 25/0 caches off/on, strict nonzero FPIAR in both.
+These m68k results do not establish interrupted-user payload capture. x32 eager
+scheduler-disabled boot, classic192KiB ROM/test disk, clone ABI/decoder, ELF52
+and gitready pass. Latest-epic combined validation is tracked separately from
+this branch's architecture evidence and exact-head GitHub CI.

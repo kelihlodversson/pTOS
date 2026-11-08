@@ -286,3 +286,13 @@ Clearing a backend-loaded current pointer cannot authorize reclamation. Record
 reuse, trimming and execution-resource destruction reject on-CPU continuations.
 This is a common architecture-neutral ownership prerequisite, not complete IRQ
 register-frame capture, SMP support or permission to switch an IRQ continuation.
+
+B1b x32 capture foundation
+---------------------------
+The first B1b increment copies the architecture's original full device-IRQ
+GPR/FXSAVE/user-iret image into preallocated THREAD backend storage, bound to
+CPU/execution/TID, retained ASPACE CR3 and TSS/syscall/IRQ stack identity. The
+original IRQ return path is unchanged. Real 64-bit ring-3 GPR/x87/XMM/DF patterns
+exercise capture and return; host models cover binding and lifetime rejection.
+See native-interrupt-frames.txt for the full contract, remaining ARM/m68k capture
+and B1c loaded-state conversion. No timer dispatch or preemption is enabled.

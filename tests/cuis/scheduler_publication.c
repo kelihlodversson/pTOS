@@ -104,7 +104,11 @@ void native_sched_enter(uintptr_t top, void (*entry)(void))
     __asm__ volatile ("mov %0,%%rsp; jmp *%1" :: "r"(top), "r"(entry) : "memory");
     __builtin_unreachable();
 }
-BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
+static BOOL modeled_execution;
+static struct kaspace *modeled_space=(struct kaspace *)1;
+BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return modeled_execution; }
+struct kaspace *kthread_aspace(const KTHREAD *t) { (void)t; return modeled_space; }
+struct kaspace *kproc_active_space(const KPROC *p) { (void)p; return (struct kaspace *)1; }
 BOOL kthread_start(KTHREAD *t) { (void)t; abort(); }
 BOOL kthread_reap(KTHREAD *t) { CHECK(allow_reap && t); return TRUE; }
 void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
@@ -258,6 +262,22 @@ int main(void)
     cpu_claim_task(grown);
     ksched_context_restore(grown->execution.identity);
     CHECK(execution_cpu.current==grown && ksched_context_id()==grown->execution.identity);
+    {
+        struct kaspace *space=NULL; ULONG tid=0;
+        grown->state=TASK_RUNNING; grown->thread=(KTHREAD *)1; modeled_execution=TRUE;
+        CHECK(ksched_interrupt_target(&peer,&space,&tid)==&grown->execution && tid==17);
+        CHECK(!ksched_interrupt_target(&child,&space,&tid)); /* nested separate PROCESS */
+        modeled_space=(struct kaspace *)2;
+        CHECK(!ksched_interrupt_target(&peer,&space,&tid)); modeled_space=(struct kaspace *)1;
+        grown->execution.owner_cpu=1;
+        CHECK(!ksched_interrupt_target(&peer,&space,&tid)); grown->execution.owner_cpu=0;
+        execution_cpu.leaf_held=TRUE;
+        CHECK(!ksched_interrupt_target(&peer,&space,&tid)); execution_cpu.leaf_held=FALSE;
+        grown->state=TASK_BLOCKED;
+        CHECK(!ksched_interrupt_target(&peer,&space,&tid));
+        modeled_execution=FALSE; grown->thread=NULL;
+        puts("IRQ capture target: CPU pin, live THREAD, PROCESS/ASPACE and nested identity exclusions: PASS (host model)");
+    }
     /* Backend restore clears the loaded pointer before root acknowledges the
      * old execution. Neither this gap nor terminal state permits reclamation. */
     ksched_context_restore(0);

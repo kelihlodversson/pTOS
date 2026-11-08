@@ -265,4 +265,9 @@ if sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'; then
     echo 'Process fault after memory tests completed' >&2
     exit 1
 fi
+if [ "$expected" = PASS ] && grep -q '^#define CONF_WITH_NATIVE_SCHED 1' obj/autoconf.h; then
+    grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$log" || {
+        echo "Missing actual ring-3 interrupted-user capture evidence" >&2; exit 1;
+    }
+fi
 echo "Private Mmap/Munmap/Mprot boot tests passed ($expected)."
