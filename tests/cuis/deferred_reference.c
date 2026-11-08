@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "emutos.h"
 #include "string.h"
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "deferred reference:%d: %s\n", __LINE__, #c); abort(); } } while (0)

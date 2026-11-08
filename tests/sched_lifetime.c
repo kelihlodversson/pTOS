@@ -10,15 +10,44 @@ struct kproc { PD *pd; ULONG refs; BOOL live; };
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"admission:%d: %s\n",__LINE__,#x); abort(); } } while (0)
 static PD kernel_pd, recycled_pd;
 static unsigned allocated, freed, pins;
-static BOOL fail_alloc, fail_ref;
-void *kalloc(ULONG bytes) { void *p; if (fail_alloc) return NULL; p=malloc(bytes); if (p) allocated++; return p; }
+static BOOL fail_alloc, fail_ref, reentrant_release, expect_sequence_panic;
+static KSCHED_WAITER reentrant_neighbor;
+static unsigned prepare_injection;
+static KSCHED_ADMISSION *preparing_admission;
+void *kalloc(ULONG bytes)
+{
+    void *p;
+    if (fail_alloc) return NULL;
+    p=malloc(bytes); if (p) allocated++;
+    if (prepare_injection) {
+        unsigned action=prepare_injection; prepare_injection=0;
+        if (action==1) last_admission=~0ULL;
+        else if (action==2) ksched_admission_abandon(preparing_admission);
+        else if (action==3) last_waiter=~0ULL;
+    }
+    return p;
+}
 void kfree(void *p) { CHECK(p); freed++; free(p); }
-void panic(const char *fmt, ...) { (void)fmt; abort(); }
+void panic(const char *fmt, ...)
+{
+    if (expect_sequence_panic && !strcmp(fmt,"scheduler: wait sequence exhausted")) {
+        puts("Wait sequence exhaustion: fail-stop without wrapping/reusing an observation: PASS");
+        exit(0);
+    }
+    abort();
+}
 UQUAD procmem_gen(const void *p) { return p==&kernel_pd?99:0; }
 BOOL procmem_range_live(VADDR p,VADDR n) { return p==(VADDR)(uintptr_t)&kernel_pd && n==sizeof(PD); }
 void procmem_pin(VADDR p,VADDR n,int d) { CHECK(p==(VADDR)(uintptr_t)&kernel_pd && n==sizeof(PD) && d==1); pins++; }
 KPROC *kproc_retain_live(KPROC *p) { if (fail_ref || !p->live) return NULL; p->refs++; return p; }
-void kproc_release(KPROC *p) { CHECK(p && p->refs>1); p->refs--; }
+void kproc_release(KPROC *p)
+{
+    CHECK(p && p->refs>1); p->refs--;
+    if (reentrant_release) {
+        reentrant_release=FALSE;
+        ksched_waiter_detach(&reentrant_neighbor);
+    }
+}
 PD *kproc_live_pd(const KPROC *p) { return p->live?p->pd:NULL; }
 int main(void)
 {
@@ -133,6 +162,48 @@ int main(void)
         CHECK(!result_waiters && !admissions && old.refs==1 && replacement.refs==1 && allocated==freed && controller.references==1);
     }
     {
+        KSCHED_WAITER matched={0};
+        KSCHED_WAIT_OBSERVATION observed;
+        CHECK(ksched_admission_create(&old,1,&a)==E_OK);
+        CHECK(ksched_waiter_attach(&a,&old,40,400,1,&matched)==E_OK &&
+              ksched_waiter_attach(&a,&old,41,401,1,&reentrant_neighbor)==E_OK);
+        ksched_waiter_observe(ksched_waiter_context(&matched),&observed);
+        CHECK(!ksched_sequence_changed(&observed) && !ksched_waiter_ready(ksched_waiter_context(&matched)));
+        CHECK(ksched_admission_complete(&a,0,81) && ksched_sequence_changed(&observed));
+        ksched_waiter_observe(ksched_waiter_context(&matched),&observed);
+        CHECK(ksched_waiter_take(&matched,&old,40,400,output,1)==E_OK && output[0]==81 && ksched_sequence_changed(&observed));
+        reentrant_release=TRUE;
+        /* Head is an unmatched neighbor. The first matching destruction removes
+         * that neighbor: a traversal retaining &neighbor->next would use freed
+         * storage after the callback. Production retires its whole set first. */
+        ksched_waiter_retire(&old,40,400);
+        CHECK(!reentrant_release && !result_waiters && !reentrant_neighbor.identity && !ksched_waiter_context(&matched));
+        ksched_waiter_detach(&matched); ksched_admission_release(&a);
+        CHECK(allocated==freed && old.refs==1 && controller.references==1);
+        output[0]=-7;
+    }
+    puts("Completion generation, consumption and reentrant retirement/unmatched-neighbor destruction: PASS");
+    {
+        UQUAD before=last_admission, waiter_before;
+        KSCHED_WAITER ticket={0};
+        prepare_injection=1;
+        CHECK(ksched_admission_create(&old,1,&a)==ERANGE && !a.identity && allocated==freed && old.refs==1);
+        last_admission=before; /* isolated fault injection, no token was published */
+        CHECK(ksched_admission_create(&old,1,&a)==E_OK);
+        preparing_admission=&a; prepare_injection=2;
+        waiter_before=last_waiter;
+        CHECK(ksched_waiter_attach(&a,&old,50,500,1,&ticket)==EACCDN && !ticket.identity &&
+              last_waiter==waiter_before && !result_waiters && old.refs==2);
+        ksched_admission_release(&a);
+        CHECK(ksched_admission_create(&old,1,&a)==E_OK);
+        prepare_injection=3;
+        CHECK(ksched_waiter_attach(&a,&old,50,500,1,&ticket)==ERANGE && !ticket.identity && !result_waiters && old.refs==2);
+        last_waiter=waiter_before;
+        ksched_admission_release(&a); preparing_admission=NULL;
+        CHECK(allocated==freed && old.refs==1 && controller.references==1);
+    }
+    puts("Fallible preparation revalidates completion retirement and token exhaustion before publication: PASS");
+    {
         KSCHED_WAITER wait={0};
         CHECK(ksched_admission_create(&old,1,&a)==E_OK && ksched_waiter_attach(&a,&old,20,105,1,&wait)==E_OK);
         old.live=FALSE; old.pd=NULL; ksched_admission_owner_exited(&old);
@@ -150,5 +221,10 @@ int main(void)
     last_admission=~0ULL;
     CHECK(ksched_admission_create(&old,1,&a)==ERANGE && !a.identity && old.refs==1 && allocated==freed);
     puts("Controller/admission lifetime: identities, partial completion, one consumer, abandonment, PD reuse and allocation rollback: PASS (production code)");
-    return 0;
+    {
+        KSCHED_WAIT_SEQUENCE exhausted={~0ULL};
+        expect_sequence_panic=TRUE;
+        ksched_sequence_advance(&exhausted);
+        abort();
+    }
 }

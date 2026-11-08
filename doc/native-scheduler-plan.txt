@@ -198,9 +198,11 @@ predicates/destructors/allocations/user copies must execute outside future runqu
 locks. No blocking PROCESS lock under CUIS/input exclusion. 64-bit token accesses
 on 32-bit MMUs need protected accesses; local IRQ exclusion is not an SMP lock.
 
-The intermittent x32 physical-button CUIS cancellation observation remains OPEN;
-passing repeats do not fix it. Stream cancellation #907 and CUIS minimization
-#915 stay deferred. No GUI ports, TLS, fork or non-MMU scheduling is introduced.
+The physical-button CI observation is traced in doc/native-scheduler-sync.txt:
+input could precede wait admission and validly return READY. The independently
+reviewed admission-fence tests preserve assertions/deadlines and reproduce the
+pre-admission result; exact-head CI remains a separate gate. Stream cancellation
+#907 and CUIS minimization #915 stay deferred. No GUI ports, TLS, fork or non-MMU scheduling is introduced.
 
 Timer/return readiness by architecture
 ---------------------------------------
@@ -263,3 +265,12 @@ operations reentrant. ARM banked LR/SP/FPSCR, m68k uenter and x32 TSS/current
 launch state require per-CPU ownership. Generic PROCESS waiting stays #909;
 TLS #908, non-MMU #911 and ARM/m68k GUI #898 are not scheduler prerequisites.
 CUIS stream cancellation stays disabled under its existing #907 contract.
+
+B0 synchronization foundation
+------------------------------
+See doc/native-scheduler-sync.txt for the production ownership/lock inventory,
+checked single-CPU leaf exclusion, stamped completion check/block admission,
+split-phase retirement and global shutdown-admission boundary. The document
+separates implemented guarantees from required owner locks, wait generations,
+record pins, per-CPU execution state and architecture user frames before B1/B2.
+Neither this boundary nor local IRQ masking provides SMP synchronization.

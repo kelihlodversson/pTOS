@@ -4,6 +4,9 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 #include "setjmp.h"
+#if ARCH_ARM
+#include "asm.h"
+#endif
 #if ARCH_X86_64
 #include "process.h"
 typedef X86_64_PROCESS_CONTEXT NATIVE_SCHED_CONTEXT;
@@ -69,7 +72,16 @@ static inline void native_sched_irq_restore(uintptr_t flags)
 { __asm__ volatile ("msr cpsr_c,%0" :: "r"(flags) : "memory", "cc"); }
 static inline uintptr_t native_sched_masked(uintptr_t flags) { return flags | 0x80; }
 /* IRQs service the clock/devices; the dispatcher remains cooperative. */
-static inline void native_sched_idle(void) { __asm__ volatile ("cpsie i; wfi; cpsid i" ::: "memory"); }
+/* WFI observes a pending IRQ even while CPSR.I is set. Do not enable IRQs
+ * before WFI: an IRQ could run/clear its source in that gap and leave a ready
+ * queue asleep. Service the pending IRQ after waking, then return masked. */
+static inline void native_sched_idle(void)
+{
+    data_sync_barrier();
+    __asm__ volatile ("wfi; cpsie i" ::: "memory", "cc");
+    instruction_sync_barrier();
+    __asm__ volatile ("cpsid i" ::: "memory", "cc");
+}
 #else
 static inline uintptr_t native_sched_irq_save(void)
 {

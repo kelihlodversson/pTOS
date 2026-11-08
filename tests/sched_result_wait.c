@@ -81,7 +81,30 @@ int main(void)
     assert(ksched_result_wait(&admission,&output,1)==EINVFN && output==-7 && irq_flags==0x200 && process.refs==2);
     assert(!scheduler.current && allocations==frees+1);
     scheduler.current=&task;
-    assert(ksched_admission_complete(&admission,0,47));
+    {
+        KSCHED_WAITER retained={0};
+        KSCHED_WAIT_OBSERVATION observation;
+        void *context;
+        assert(ksched_waiter_attach(&admission,&process,17,100,1,&retained)==E_OK);
+        context=ksched_waiter_context(&retained);
+        ksched_waiter_observe(context,&observation);
+        assert(!ksched_waiter_ready(context));
+        /* Producer acts in the exact check-to-block window. No CPU switch
+         * may happen and no stale predicate may become published. */
+        assert(ksched_admission_complete(&admission,0,47));
+        assert(!block_admit(&task,ksched_waiter_ready,context,&observation) &&
+               task.state==TASK_RUNNING && !task.ready && !task.argument && !runqueue_held && irq_flags==0x200);
+        pending=TRUE;
+        assert(wait_observed(ksched_waiter_ready,context,&observation)==KSCHED_WAIT_CANCELLED &&
+               task.state==TASK_RUNNING && !task.ready && !task.cancel_boundary && output==-7);
+        pending=FALSE;
+        ksched_waiter_observe(context,&observation);
+        assert(block_admit(&task,ksched_waiter_ready,context,&observation) &&
+               task.state==TASK_BLOCKED && task.ready==ksched_waiter_ready);
+        task.state=TASK_RUNNING; task.ready=NULL; task.argument=NULL; /* modeled root resume */
+        ksched_waiter_detach(&retained);
+    }
+    puts("Completion in check/block window retries without sleep; coincident cancellation wins without consumption: PASS (host CPU model)");
     assert(ksched_result_wait(&admission,&output,1)==E_OK && output==47 && irq_flags==0x200);
     output=-7;
     assert(ksched_result_wait(&admission,&output,1)==EACCDN && output==-7 && irq_flags==0x200);

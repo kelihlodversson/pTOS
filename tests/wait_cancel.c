@@ -2,6 +2,7 @@
 #include "emutos.h"
 #undef CONF_WITH_PTERMGRP
 #define CONF_WITH_PTERMGRP 1
+#include "cuis/scheduler_irq_model.h"
 #include "../bdos/native_sched.c"
 #include <assert.h>
 #include <stdlib.h>
@@ -48,3 +49,5 @@ int main(void)
     ksched_cancel_point();
     abort();
 }
+
+void panic(const char *message, ...) { (void)message; abort(); }

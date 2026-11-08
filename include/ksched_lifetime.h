@@ -3,6 +3,7 @@
 #define KSCHED_LIFETIME_H
 #include "portab.h"
 #include "bdosdefs.h"
+#include "ksched_sequence.h"
 struct kproc;
 /* An owning reference identified only by a non-recycled token. Retain before
  * copying ownership; release consumes and clears the handle. Stale IDs never
@@ -35,6 +36,9 @@ LONG ksched_result_wait(const KSCHED_ADMISSION *, LONG *results, UWORD count);
 LONG ksched_waiter_attach(const KSCHED_ADMISSION *, struct kproc *actor,
                          ULONG tid, UQUAD execution, UWORD count, KSCHED_WAITER *empty);
 void *ksched_waiter_context(const KSCHED_WAITER *); /* borrowed until detach/quiescent retirement */
+/* Snapshot before predicate, under owner exclusion. The ticket/execution must
+ * retain context and sequence storage through block/resume or quiescent stop. */
+void ksched_waiter_observe(void *context, KSCHED_WAIT_OBSERVATION *);
 BOOL ksched_waiter_ready(void *context); /* scheduler predicate, no callbacks/copies */
 LONG ksched_waiter_take(const KSCHED_WAITER *, struct kproc *actor, ULONG tid,
                        UQUAD execution, LONG *results, UWORD count);

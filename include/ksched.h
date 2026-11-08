@@ -22,6 +22,9 @@ LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result);
 BOOL ksched_active(void); /* persistent runqueue exists */
 BOOL ksched_dispatching(void); /* attached root execution, not queue lifetime */
 BOOL ksched_async_allowed(void);
+/* Irreversible system shutdown, not PROCESS cancellation. No resources are
+ * destroyed here; callers must never resume dispatch after shutting files down. */
+void ksched_shutdown_begin(void);
 PD *ksched_launch_controller(PD *pd); /* current task only, never a nested launcher */
 #if CONF_WITH_NATIVE_SCHED
 struct thread_startup_draft;

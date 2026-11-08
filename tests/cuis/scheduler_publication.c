@@ -17,6 +17,7 @@ typedef char kernel_context_fits_host_buffer[sizeof(jmp_buf) >= 13*sizeof(long) 
 #define setjmp cuis_root_setjmp
 #define longjmp cuis_root_longjmp
 #endif
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"publication:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static BOOL allocate_task_table(UWORD count)
@@ -29,16 +30,24 @@ PD *run;
 jmp_buf errbuf;
 static BOOL root_fault;
 static unsigned root_release_calls, process_releases;
-static BOOL allow_reap;
+static BOOL allow_reap, reenter_cancel;
+static void *replacement_reservation;
 static LONG fault_output;
 void *kalloc(ULONG bytes)
 {
     void *p;
+    CHECK(!runqueue_held);
     if (bytes == sizeof(table)) { allocations++; return table; }
     if (bytes == sizeof(KERNEL_TASK) && fail_growth) return NULL;
     p = malloc(bytes); if (p) allocations++; return p;
 }
-void kfree(void *p) { CHECK(p); if (p != table) free(p); frees++; }
+void kfree(void *p)
+{
+    CHECK(p && !runqueue_held);
+    if(p==table) CHECK(scheduler.tasks!=table && !scheduler.active);
+    if(p!=table) free(p);
+    frees++;
+}
 void panic(const char *fmt, ...)
 {
     if (root_fault && !strcmp(fmt,"scheduler root: cleanup callback escaped") &&
@@ -53,7 +62,13 @@ PD *kproc_notification_parent(PD *p) { (void)p; return NULL; }
 KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
 void kproc_release(KPROC *p)
 {
+    CHECK(!runqueue_held);
     if (p) process_releases++;
+    if (reenter_cancel && p==(KPROC *)&parent) {
+        reenter_cancel=FALSE;
+        CHECK(!scheduler.entry_owner && !scheduler.waiter.identity);
+        CHECK(ksched_task_reserve(TRUE,&replacement_reservation)==E_OK);
+    }
     if (root_fault && p==(KPROC *)&child) { root_release_calls++; longjmp(errbuf,1); }
 }
 WORD kproc_pid(PD *p) { return p ? 42 : 0; }
@@ -265,6 +280,8 @@ int main(void)
         anchor->dependents=1; anchor->result=91;
         worker->state=TASK_DONE; worker->process=(KPROC *)&child;
         worker->thread=(KTHREAD *)1; worker->completion_owner=anchor;
+        free_task_table(); /* cannot detach a live/dependent arena */
+        CHECK(scheduler.tasks==table && scheduler.active);
         CHECK(reap_finished_on_root(anchor) && anchor->dependents==1 &&
               anchor->process && anchor->state==TASK_DRAINING &&
               ksched_admission_take(&result,&status,1)==EAGAIN && status==-99);
@@ -311,8 +328,43 @@ int main(void)
         CHECK(!scheduler.waiter_attached && !scheduler.waiter.identity);
     }
     puts("Attached waiter retirement: cleared continuation, late producer and unchanged output: PASS (host)");
-    scheduler.current = NULL; scheduler.active=FALSE; free_task_table();
+    {
+        void *pending_slot=NULL, *unchanged=NULL;
+        unsigned before;
+        scheduler.current=&table[0]; table[0].state=TASK_RUNNING; run=&parent;
+        CHECK(ksched_task_reserve(FALSE,&pending_slot)==E_OK);
+        before=allocations;
+        ksched_shutdown_begin(); ksched_shutdown_begin();
+        CHECK(!ksched_async_allowed() && ksched_yield()==EACCDN &&
+              ksched_task_reserve(TRUE,&unchanged)==EACCDN &&
+              ksched_task_reserve(FALSE,&unchanged)==EACCDN && !unchanged && allocations==before);
+        ksched_task_cancel(&pending_slot); ksched_task_cancel(&pending_slot);
+        CHECK(!pending_slot && !runqueue_held);
+        scheduler.stopping=FALSE; /* only this isolated fixture can cold-start again */
+    }
+    puts("Shutdown closes admission/entry before cleanup; private reservations remain abortable: PASS (host)");
+    /* Drop the fixture's synthetic, non-owning task fields before testing
+     * whole-arena reclamation (production requires all resource owners gone). */
+    for(t=table;t;t=t->next_task) clear_task(t);
+    scheduler.current = NULL; free_task_table();
     CHECK(allocations == frees && !scheduler.tasks);
+    {
+        void *old_reservation=NULL;
+        UQUAD replacement_identity;
+        run=&parent;
+        CHECK(ksched_task_reserve(TRUE,&old_reservation)==E_OK);
+        reenter_cancel=TRUE;
+        ksched_task_cancel(&old_reservation);
+        CHECK(!old_reservation && replacement_reservation && !reenter_cancel &&
+              scheduler.entry_owner==(KPROC *)&parent && scheduler.waiter.identity);
+        replacement_identity=scheduler.waiter.identity;
+        CHECK(((KERNEL_TASK *)replacement_reservation)->completion.identity==replacement_identity);
+        ksched_task_cancel(&old_reservation); /* old consumed handle cannot touch replacement */
+        CHECK(scheduler.waiter.identity==replacement_identity && scheduler.entry_owner==(KPROC *)&parent);
+        ksched_task_cancel(&replacement_reservation);
+        CHECK(!scheduler.tasks && !scheduler.waiter.identity && !scheduler.entry_owner && allocations==frees);
+    }
+    puts("Reentrant cancelled admission: detach-before-release preserves replacement owner/result identity: PASS (host)");
     puts("Shared scheduler growth/publication: exhaustion, private reservations, cancellation, blocked/early wait and orphan identity: PASS");
 #ifndef __SANITIZE_ADDRESS__
     root_lifetime_check();

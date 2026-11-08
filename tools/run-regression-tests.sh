@@ -586,6 +586,12 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
     record "exit handoff rollback" FAIL "configured injection was not exercised"
 fi
 
+# Generation publication in the check-to-block window must reject sleeping.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native completion sequence check/block retry: PASS' "$suite_log"; then
+    record "native completion sequence" FAIL "check/block sequence assertion did not execute"
+fi
+
 # Test-only assertions cross a real user PROCESS retirement and root reap.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&

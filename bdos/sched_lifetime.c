@@ -15,6 +15,7 @@ typedef struct admission {
     struct admission *next;
     UQUAD identity;
     ULONG references;
+    KSCHED_WAIT_SEQUENCE changes;
     KPROC *owner; /* completion identity only, never live PROCESS resources */
     UWORD count;
     BOOL abandoned, consumed;
@@ -58,6 +59,15 @@ LONG ksched_admission_create(KPROC *owner,UWORD count,KSCHED_ADMISSION *out)
     if (!ksched_controller_pd() || controller.references==0xffffffffUL) return EACCDN;
     p=kalloc(sizeof(*p)); if (!p) return ENSMEM;
     if (owner && !(retained=kproc_retain_live(owner))) { kfree(p); return EACCDN; }
+    /* Preparation may acquire resources; revalidate before linking identity.
+     * The future completion-owner lock covers this final commit, not kalloc
+     * or last-reference rollback. Current callers serialize kernel execution. */
+    if (last_admission==~0ULL || controller.references==0xffffffffUL ||
+        (retained && !kproc_live_pd(retained))) {
+        LONG error=last_admission==~0ULL ? ERANGE : EACCDN;
+        kfree(p); if (retained) kproc_release(retained);
+        return error;
+    }
     memset(p,0,sizeof(*p));
     p->owner=retained; p->count=count; p->references=1;
     controller.references++;
@@ -80,12 +90,17 @@ void ksched_admission_release(KSCHED_ADMISSION *handle)
     identity=handle->identity; handle->identity=0;
     for (link=&admissions;*link;link=&(*link)->next) if ((*link)->identity==identity) {
         ADMISSION *p=*link;
+        if (!p->references) panic("scheduler: admission reference underflow");
         if (--p->references) return;
         *link=p->next; /* unpublish before any last-reference operation */
-        if (p->owner) kproc_release(p->owner);
         if (controller.references<=1) panic("scheduler: controller reference underflow");
         controller.references--;
-        kfree(p); return;
+        {
+            KPROC *owner=p->owner;
+            kfree(p);
+            if (owner) kproc_release(owner);
+        }
+        return;
     }
 }
 BOOL ksched_admission_complete(const KSCHED_ADMISSION *handle,UWORD index,LONG status)
@@ -93,6 +108,7 @@ BOOL ksched_admission_complete(const KSCHED_ADMISSION *handle,UWORD index,LONG s
     ADMISSION *p=lookup(handle);
     if (!p || index>=p->count || p->result[index].complete || p->consumed) return FALSE;
     p->result[index].status=status; p->result[index].complete=TRUE;
+    ksched_sequence_advance(&p->changes);
     return TRUE;
 }
 LONG ksched_admission_take(const KSCHED_ADMISSION *handle,LONG *results,UWORD count)
@@ -104,6 +120,7 @@ LONG ksched_admission_take(const KSCHED_ADMISSION *handle,LONG *results,UWORD co
     for (i=0;i<count;i++) if (!p->result[i].complete) return EAGAIN;
     for (i=0;i<count;i++) results[i]=p->result[i].status;
     p->consumed=TRUE;
+    ksched_sequence_advance(&p->changes);
     return E_OK;
 }
 BOOL ksched_admission_ready(const KSCHED_ADMISSION *handle)
@@ -121,13 +138,15 @@ BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *handle)
 void ksched_admission_abandon(const KSCHED_ADMISSION *handle)
 {
     ADMISSION *p=lookup(handle);
-    if (p) p->abandoned=TRUE;
+    if (p && !p->abandoned) { p->abandoned=TRUE; ksched_sequence_advance(&p->changes); }
 }
 void ksched_admission_owner_exited(KPROC *owner)
 {
     ADMISSION *p;
     if (!owner) return;
-    for (p=admissions;p;p=p->next) if (p->owner==owner) p->abandoned=TRUE;
+    for (p=admissions;p;p=p->next) if (p->owner==owner && !p->abandoned) {
+        p->abandoned=TRUE; ksched_sequence_advance(&p->changes);
+    }
 }
 PD *ksched_admission_owner_pd(const KSCHED_ADMISSION *handle)
 {
@@ -160,16 +179,23 @@ LONG ksched_waiter_attach(const KSCHED_ADMISSION *admission,KPROC *actor,
 {
     ADMISSION *record=lookup(admission);
     RESULT_WAITER *p;
+    KSCHED_ADMISSION held={0};
     if (!out || out->identity || !record || count!=record->count || !tid || !execution) return EINVAL;
     if (!actor || record->owner!=actor || record->abandoned || record->consumed) return EACCDN;
     if (last_waiter==~0ULL) return ERANGE;
-    p=kalloc(sizeof(*p)); if (!p) return ENSMEM;
+    /* Pin identity before fallible preparation, then revalidate state. */
+    if (!ksched_admission_retain(admission,&held)) return EACCDN;
+    p=kalloc(sizeof(*p));
+    if (!p) { ksched_admission_release(&held); return ENSMEM; }
     memset(p,0,sizeof(*p));
     p->actor=kproc_retain_live(actor);
-    if (!p->actor || !ksched_admission_retain(admission,&p->admission)) {
+    if (!p->actor || !kproc_live_pd(actor) || record->abandoned || record->consumed || last_waiter==~0ULL) {
+        LONG error=last_waiter==~0ULL ? ERANGE : EACCDN;
+        ksched_admission_release(&held);
         if (p->actor) kproc_release(p->actor);
-        kfree(p); return EACCDN;
+        kfree(p); return error;
     }
+    p->admission=held;
     p->tid=tid; p->execution=execution;
     p->identity=++last_waiter;
     p->next=result_waiters; result_waiters=p;
@@ -177,6 +203,13 @@ LONG ksched_waiter_attach(const KSCHED_ADMISSION *admission,KPROC *actor,
     return E_OK;
 }
 void *ksched_waiter_context(const KSCHED_WAITER *handle) { return find_waiter(handle); }
+void ksched_waiter_observe(void *context, KSCHED_WAIT_OBSERVATION *observation)
+{
+    RESULT_WAITER *p=context;
+    ADMISSION *record=p ? lookup(&p->admission) : NULL;
+    if (!record) panic("scheduler: observation without retained admission");
+    ksched_sequence_observe(&record->changes,observation);
+}
 BOOL ksched_waiter_ready(void *context)
 {
     RESULT_WAITER *p=context;
@@ -196,10 +229,8 @@ LONG ksched_waiter_take(const KSCHED_WAITER *handle,KPROC *actor,ULONG tid,
     if (p->actor!=actor || p->tid!=tid || p->execution!=execution) return EACCDN;
     return ksched_admission_take(&p->admission,results,count);
 }
-static void remove_waiter(RESULT_WAITER **link)
+static void dispose_waiter(RESULT_WAITER *p)
 {
-    RESULT_WAITER *p=*link;
-    *link=p->next; /* unpublish before any destructor */
     ksched_admission_release(&p->admission);
     kproc_release(p->actor);
     kfree(p);
@@ -211,15 +242,26 @@ void ksched_waiter_detach(KSCHED_WAITER *handle)
     if (!handle) return;
     identity=handle->identity; handle->identity=0;
     for (link=&result_waiters;*link;link=&(*link)->next)
-        if ((*link)->identity==identity) { remove_waiter(link); return; }
+        if ((*link)->identity==identity) {
+            RESULT_WAITER *p=*link; *link=p->next;
+            dispose_waiter(p); return;
+        }
 }
 void ksched_waiter_retire(KPROC *actor,ULONG tid,UQUAD execution)
 {
-    RESULT_WAITER **link=&result_waiters;
+    RESULT_WAITER **link=&result_waiters, *retired=NULL;
+    /* Detach the whole matching set before releasing anything. A release may
+     * reenter registry operations; never carry a registry link across it. */
     while (*link) {
         RESULT_WAITER *p=*link;
         if (p->actor==actor && p->tid==tid && p->execution==execution)
-            remove_waiter(link);
+        {
+            *link=p->next; p->next=retired; retired=p;
+        }
         else link=&p->next;
+    }
+    while (retired) {
+        RESULT_WAITER *p=retired; retired=p->next;
+        dispose_waiter(p);
     }
 }
