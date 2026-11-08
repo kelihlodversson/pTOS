@@ -71,6 +71,7 @@ static struct {
 #define ROOT_STACK_BYTES (16UL * 1024)
 #define ROOT_STACK_GUARD 0x713a2001UL
 typedef struct {
+    PD *loaded_process; /* first: frozen run ABI aliases this CPU-owned slot */
     UWORD number; /* logical boot CPU 0; no additional CPU may dispatch yet */
     BOOL leaf_held;
 #if CONF_WITH_USER_CALLBACKS
@@ -94,6 +95,15 @@ typedef struct {
     ULONG stack[ROOT_STACK_BYTES/sizeof(ULONG)] __attribute__((aligned(16)));
 } NATIVE_SCHED_CPU;
 static NATIVE_SCHED_CPU boot_cpu;
+/* TOS exports &run in OSHEADER. Keep that ABI without a second mutable mirror.
+ * Only boot CPU dispatch exists; a future CPU selector must not export its
+ * private slot as another system-wide TOS pointer or activate SMP here. */
+typedef char loaded_process_abi_offset[offsetof(NATIVE_SCHED_CPU,loaded_process)==0 ? 1:-1];
+#define KSCHED_STRING_(x) #x
+#define KSCHED_STRING(x) KSCHED_STRING_(x)
+extern PD *run __attribute__((alias(KSCHED_STRING(__USER_LABEL_PREFIX__) "boot_cpu")));
+#undef KSCHED_STRING
+#undef KSCHED_STRING_
 /* Deliberately boot-CPU-only. B1c/B2 must add architecture CPU-local selection;
  * callers must not infer SMP or asynchronous dispatch from this accessor. */
 static NATIVE_SCHED_CPU *native_sched_cpu(void) { return &boot_cpu; }

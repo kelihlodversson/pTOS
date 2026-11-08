@@ -26,7 +26,7 @@ static KERNEL_TASK table[KSCHED_LIMIT];
 static PD parent, child, peer, kernel_controller;
 static UWORD allocations, frees, notifications;
 static BOOL fail_growth;
-PD *run;
+
 
 static BOOL root_fault;
 static unsigned root_release_calls, process_releases;
@@ -194,6 +194,7 @@ int main(void)
     UQUAD identity;
     KERNEL_TASK *t, *grown;
     CHILD_WAIT wait;
+    CHECK(&run==&execution_cpu.loaded_process);
     CHECK(ksched_controller_install(&kernel_controller));
     CHECK(ksched_task_reserve(TRUE,&root) == E_OK && root == table && table[0].state == TASK_RESERVED);
     identity = next_identity;

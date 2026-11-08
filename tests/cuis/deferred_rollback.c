@@ -13,6 +13,9 @@
 #include "procmem.h"
 #include "process.h"
 
+#if CONF_WITH_NATIVE_SCHED
+PD *run; /* modeled CPU slot: this fixture does not link the dispatcher */
+#endif
 static FS_ERROR_STATE fixture_error;
 FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred rollback:%d: %s\n",__LINE__,#c); abort(); } } while (0)
