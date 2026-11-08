@@ -49,17 +49,9 @@ LONG aes_window_clip(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LO
                       (uintptr_t)x, (uintptr_t)y, (uintptr_t)width, (uintptr_t)height);
 }
 
-LONG aes_window_focus(LONG window)
-{
-    return cuis_call(CUIS_FOCUS_REQUEST, window);
-}
 LONG aes_window_focused(LONG window)
 {
     return cuis_call(CUIS_FOCUS_QUERY, window);
-}
-LONG aes_window_unfocus(LONG window)
-{
-    return cuis_call(CUIS_FOCUS_RELEASE, window);
 }
 
 LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state)

@@ -2057,7 +2057,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
 
     if (!((function >= CUIS_WINDOW_CREATE && function <= CUIS_WINDOW_LOWER) ||
           function == CUIS_UPDATE_BEGIN || function == CUIS_UPDATE_END ||
-          function == CUIS_FOCUS_REQUEST || function == CUIS_FOCUS_QUERY || function == CUIS_FOCUS_RELEASE ||
+          function == CUIS_FOCUS_QUERY ||
           function == CUIS_WINDOW_IDENTIFY || function == CUIS_WINDOW_OUTSET || function == CUIS_WINDOW_POLICY ||
           function == CUIS_WINDOW_CONTENT || function == CUIS_WINDOW_CORNER)) return EINVFN;
     client = *find_owner(run);
@@ -2220,17 +2220,6 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         route_pointer(0);
         cuis_input_unlock(flags);
         damage_windows();
-        break;
-    case CUIS_FOCUS_REQUEST:
-        if (!window->visible) return EINVAL;
-        if (window != window_front) return EACCDN;
-        if (set_focus(window)) damage_windows();
-        break;
-    case CUIS_FOCUS_RELEASE:
-        flags = cuis_input_lock();
-        changed = focus_window == window && set_focus(NULL);
-        cuis_input_unlock(flags);
-        if (changed) damage_windows();
         break;
     }
     return E_OK;
