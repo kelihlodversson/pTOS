@@ -77,7 +77,8 @@ int main(int argc, char **argv, char **envp)
     handle = raw(CUIS_SERVICE_CLASS, CUIS_SESSION_START, 0, 0, 0, 0, 0, 0);
     GEM_TEST_CHECK(handle >= 0);
     for (i = 0; i < 3; i++) {
-        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_MESSAGE_SEND, handle, 11, 22, 33, 44, 0) == E_OK);
+        w[0]=11; w[1]=22; w[2]=33; w[3]=44;
+        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_STREAM_WRITE, handle, (uintptr_t)w, sizeof(w), 0, 0, 0) == sizeof(w));
         tail[0] = i == 2 ? 127 : 1; tail[1] = i == 1 ? 'x' : 'c';
         child = PROC(0x4b, 100, (uintptr_t)"APPS\\GEMSHELL.TOS", (uintptr_t)tail, (uintptr_t)(i == 2 ? argv_environment : environment));
         GEM_TEST_CHECK(child > 0 && child != id);
@@ -86,9 +87,9 @@ int main(int argc, char **argv, char **envp)
         GEM_TEST_CHECK(status == (LONG)(((ULONG)child << 16) | (i == 1 ? 41 : 37)));
         GEM_TEST_CHECK(gem_buffer_after_child(globals) == 0);
         GEM_TEST_CHECK(gem_metadata_after_child(globals) == 0);
-        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_MESSAGE_READ, handle, (uintptr_t)&sender,
-                  (uintptr_t)&w[0], (uintptr_t)&w[1], (uintptr_t)&w[2], (uintptr_t)&w[3]) == 1);
-        GEM_TEST_CHECK(sender == handle && w[0] == 11 && w[1] == 22 && w[2] == 33 && w[3] == 44);
+        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_STREAM_READ, handle, (uintptr_t)w,
+                           sizeof(w), 0, (uintptr_t)&sender, 0) == sizeof(w));
+        GEM_TEST_CHECK(sender == pid && w[0] == 11 && w[1] == 22 && w[2] == 33 && w[3] == 44);
         GEM_TEST_CHECK(aes_global[3] == 1234 && gl_apid == id && globals[2] == id);
     }
     GEM_TEST_CHECK(evnt_timer(0) == 1 && mt_appl_exit(globals) == 1);

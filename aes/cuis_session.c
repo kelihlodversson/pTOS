@@ -16,7 +16,6 @@
 
 extern PD *run;
 
-#define CUIS_MESSAGE_CAPACITY 16U
 #define CUIS_KEY_CAPACITY 16U
 #define CUIS_POINTER_CAPACITY 16U
 #define CUIS_WINDOW_LIMIT 256UL
@@ -55,11 +54,6 @@ typedef struct cuis_window {
 } CUIS_WINDOW;
 
 typedef struct {
-    ULONG sender;
-    ULONG words[4];
-} CUIS_MESSAGE;
-
-typedef struct {
     LONG x, y, width, height;
     BOOL leave;
 } CUIS_INPUT_RECTANGLE;
@@ -83,8 +77,6 @@ typedef struct cuis_client {
     BOOL background_dirty;
     BOOL background_registered;
     ULONG window_count;
-    CUIS_MESSAGE messages[CUIS_MESSAGE_CAPACITY];
-    UWORD message_head, message_count;
     UBYTE label[CUIS_LABEL_MAX];
     ULONG label_length;
     ULONG tag; /* Opaque library metadata; native CUIS does not interpret it. */
@@ -1325,7 +1317,6 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->background_next = NULL; client->background_dirty = FALSE;
         client->background_registered = FALSE;
         client->window_count = 0;
-        client->message_head = client->message_count = 0;
         client->label_length = 0;
         client->tag = 0;
         client->cohort_id = client->cohort_bytes = client->cohort_unread = 0;
@@ -2171,8 +2162,7 @@ static BOOL wait_ready(void *argument)
     if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
         ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
         ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
-        ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))) ||
-        ((events & CUIS_EVENT_MESSAGE) && wait->client->message_count)) return TRUE;
+        ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count)))) return TRUE;
     return wait->timeout >= 0 && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration;
 }
 
@@ -2198,8 +2188,7 @@ static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, 
         if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
             ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
             ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
-            ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))) ||
-            ((events & CUIS_EVENT_MESSAGE) && client->message_count)) {
+            ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count)))) {
             cuis_input_unlock(flags); return 1;
         }
         if (timeout >= 0 && (ULONG)(cuis_input_ticks() - start) >= duration) {
@@ -2749,7 +2738,7 @@ LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout)
 {
     CUIS_WINDOW *window;
     if (handle > 0x7fffffffULL || !events ||
-        (events & ~(UQUAD)(CUIS_EVENT_KEY | CUIS_EVENT_POINTER | CUIS_EVENT_REDRAW | CUIS_EVENT_MESSAGE | CUIS_EVENT_CONTROL))) return EINVAL;
+        (events & ~(UQUAD)(CUIS_EVENT_KEY | CUIS_EVENT_POINTER | CUIS_EVENT_REDRAW | CUIS_EVENT_CONTROL))) return EINVAL;
     window = input_window(handle);
     if (!window) return EACCDN;
     refresh_pointer_bounds();
@@ -2938,63 +2927,6 @@ LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUA
         cuis_input_unlock(flags); return EIMBA;
     }
     cuis_input_unlock(flags); return E_OK;
-}
-
-/* Opaque peer data cannot manufacture a trusted input or redraw event. */
-LONG cuis_message_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
-                          UQUAD d, UQUAD e, UQUAD f)
-{
-    CUIS_CLIENT *client, *peer;
-    CUIS_MESSAGE message;
-    UQUAD flags;
-
-    if (function < CUIS_MESSAGE_SEND || function > CUIS_MESSAGE_WAIT) return EINVFN;
-    if (a > 0x7fffffffULL) return EINVAL;
-    client = *find_owner(run);
-    if (!client) return EACCDN;
-    if (function == CUIS_MESSAGE_SEND) {
-        if (b > 0xffffffffULL || c > 0xffffffffULL ||
-            d > 0xffffffffULL || e > 0xffffffffULL) return EINVAL;
-        for (peer = clients; peer && peer->handle != a; peer = peer->next) ;
-        if (!peer) return EACCDN;
-        flags = cuis_input_lock();
-        if (peer->message_count == CUIS_MESSAGE_CAPACITY) {
-            cuis_input_unlock(flags); return EAGAIN;
-        }
-        message.sender = client->handle;
-        message.words[0] = (ULONG)b; message.words[1] = (ULONG)c;
-        message.words[2] = (ULONG)d; message.words[3] = (ULONG)e;
-        peer->messages[(peer->message_head + peer->message_count) % CUIS_MESSAGE_CAPACITY] = message;
-        peer->message_count++;
-        cuis_input_unlock(flags);
-        return E_OK;
-    }
-    if (a != client->handle) return EACCDN;
-    if (function == CUIS_MESSAGE_WAIT) return wait_events(client, NULL, CUIS_EVENT_MESSAGE, b);
-    if (function == CUIS_MESSAGE_READ) {
-        if (!client->message_count) return 0;
-        /* Back all five outputs before the short IRQ-masked copy/pop. */
-        if (!kproc_validate_user_write(b, sizeof(ULONG)) ||
-            !kproc_validate_user_write(c, sizeof(ULONG)) ||
-            !kproc_validate_user_write(d, sizeof(ULONG)) ||
-            !kproc_validate_user_write(e, sizeof(ULONG)) ||
-            !kproc_validate_user_write(f, sizeof(ULONG))) return EIMBA;
-        flags = cuis_input_lock();
-        if (!client->message_count) { cuis_input_unlock(flags); return 0; }
-        message = client->messages[client->message_head];
-        if (!kproc_copy_to_user(b, &message.sender, sizeof(ULONG)) ||
-            !kproc_copy_to_user(c, &message.words[0], sizeof(ULONG)) ||
-            !kproc_copy_to_user(d, &message.words[1], sizeof(ULONG)) ||
-            !kproc_copy_to_user(e, &message.words[2], sizeof(ULONG)) ||
-            !kproc_copy_to_user(f, &message.words[3], sizeof(ULONG))) {
-            cuis_input_unlock(flags); return EIMBA;
-        }
-        client->message_head = (client->message_head + 1) % CUIS_MESSAGE_CAPACITY;
-        client->message_count--;
-        cuis_input_unlock(flags);
-        return 1;
-    }
-    return EINVFN;
 }
 
 /* Opaque process completion notices. GEM layout is supplied by libaes. */

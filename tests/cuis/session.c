@@ -30,8 +30,6 @@ static ULONG allocations, frees;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
 static LONG copied[5];
-static PD *input_message_sender;
-static LONG input_message_destination;
 static BOOL fail_copy;
 static UQUAD fail_copy_address;
 static BOOL input_irqs = TRUE, input_bad_idle;
@@ -161,13 +159,6 @@ void cuis_input_idle(void)
     }
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
-    if (input_message_sender) {
-        PD *saved = run;
-        run = input_message_sender;
-        input_message_sender = NULL;
-        cuis_message_service(CUIS_MESSAGE_SEND, input_message_destination, 11, 22, 33, 44, 0);
-        run = saved;
-    }
     if (mouse_release_owner) {
         PD *saved = run;
         run = mouse_release_owner;
@@ -264,7 +255,6 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "focus.c"
 #include "input.c"
 #include "pointer.c"
-#include "messages.c"
 #include "delay.c"
 #include "streams.c"
 #include "combined.c"
@@ -341,8 +331,6 @@ int main(void)
     rc = pointer_checks();
     if (rc) return rc;
     rc = window_limit_checks();
-    if (rc) return rc;
-    rc = message_checks();
     if (rc) return rc;
     rc = delay_checks();
     if (rc) return rc;

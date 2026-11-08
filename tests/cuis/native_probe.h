@@ -105,18 +105,4 @@ static inline LONG probe_event_wait(LONG window, ULONG events, LONG timeout_ms)
     return probe_call6(CUIS_EVENT_WAIT, (QUAD)window, events, (QUAD)timeout_ms, 0, 0, 0);
 }
 
-static inline LONG probe_message_send(LONG destination, ULONG a, ULONG b, ULONG c, ULONG d)
-{
-    return probe_call6(CUIS_MESSAGE_SEND, (QUAD)destination, a, b, c, d, 0);
-}
-static inline LONG probe_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, ULONG *d)
-{
-    return probe_call6(CUIS_MESSAGE_READ, (QUAD)session, (uintptr_t)sender,
-                      (uintptr_t)a, (uintptr_t)b, (uintptr_t)c, (uintptr_t)d);
-}
-static inline LONG probe_message_wait(LONG session, LONG timeout_ms)
-{
-    return probe_call5(CUIS_MESSAGE_WAIT, session, timeout_ms, 0, 0, 0);
-}
-
 #endif
