@@ -138,7 +138,9 @@ ULONG kproc_count(void);                /* live records, for leak tests and S_ME
  * that was never launched, whose inherited file and directory references
  * are therefore still held. */
 BOOL kproc_discard(PD *pd);
+#if CONF_WITH_USER_ASPACE
 void kproc_discard_after_free(PD *pd);
+#endif
 BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched */
 #endif
 #if CONF_WITH_USER_ASPACE
