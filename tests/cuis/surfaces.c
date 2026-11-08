@@ -30,9 +30,7 @@ static int surface_checks(void)
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,a,1) & CUIS_SURFACE_DIRTY);
     window = cuis_window_service(CUIS_WINDOW_CREATE,0,0,100,100,0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
-    CHECK(cuis_clip_service(window,0,0x1000,0x1004,0x1008,0x100c) == 1 && copied[1] == 19 && copied[3] == 81);
-    CHECK(cuis_window_service(CUIS_UPDATE_END,window,0,0,0,0) == E_OK);
+    CHECK(cuis_region_service(window,0,0x1000,0x1004,0x1008,0x100c) == 1 && copied[1] == 19 && copied[3] == 81);
     CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
     run = &second;
@@ -141,7 +139,7 @@ static int surface_cleanup_checks(void)
             CHECK(surface_focus_pending && surface_owner == *find_owner(&third));
         }
         cuis_process_exit(&first);
-        CHECK(!display_owner && !update_owner && surface_owner == *find_owner(&second));
+        CHECK(!display_owner && surface_owner == *find_owner(&second));
         cuis_process_exit(&second); cuis_process_exit(&third);
         CHECK(!surface_owner && !surface_front && allocations == frees);
     }

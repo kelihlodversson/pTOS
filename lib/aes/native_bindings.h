@@ -13,9 +13,6 @@ LONG aes_window_show(LONG handle);
 LONG aes_window_hide(LONG handle);
 LONG aes_window_raise(LONG handle);
 LONG aes_window_lower(LONG handle);
-LONG aes_update_begin(LONG window);
-LONG aes_update_end(LONG window);
-LONG aes_window_clip(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height);
 LONG aes_window_focused(LONG window);
 LONG aes_event_wait(LONG window, ULONG events, LONG timeout_ms);
 #endif

@@ -68,8 +68,6 @@ static int combined_checks(void)
     input_irqs = TRUE;
     window = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 10, 10, 0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, window, 0, 0, 0, 0) == E_OK);
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN, window, 0, 0, 0, 0) == E_OK);
-    CHECK(CW(a, 16, 1, 0) == EACCDN && CW(a, 0, 2, 1) == EACCDN);
     CHECK(CW(a, 0, 2, 0) == CUIS_READY_TIMER && CS(a, 16) == 16);
     CHECK(CW(a, 16, 1, 0) == CUIS_READY_STREAM);
     /* A custom vector leaves the backend's Line-A fields untouched when

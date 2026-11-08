@@ -89,8 +89,7 @@ static int background_checks(void)
     CHECK(cuis_display_lock(b,1,0) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_BEGIN,b,22) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_END,b,0) == E_OK && cuis_display_lock(b,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
-    CHECK(cuis_windows_reset(b) == E_OK && !update_owner && !cb->windows && !cb->window_count);
+    CHECK(cuis_windows_reset(b) == E_OK && !cb->windows && !cb->window_count);
     CHECK(cuis_display_lock(b,1,0) == E_OK);
     region_exit_on_output = TRUE;
     CHECK(BGREG(b,0) == EIMBA && !*find_owner(run));
