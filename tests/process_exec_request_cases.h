@@ -69,7 +69,11 @@ static void test_request_engine(KPROC *owner)
     output_failure=TRUE; /* PREPARE accepts readable, non-writable request memory. */
     handle=proc_exec_request(owner,0x1000,72);
     CHECK(handle>0 && !output_copies && loads==before_loads+1 && publications==before_publications);
-    memset(r,0,sizeof(*r)); r->operation=PROCESS_EXEC_SNAPSHOT; r->handle=handle;
+    memset(r,0,sizeof(*r)); r->operation=PROCESS_EXEC_CANCEL_DEFERRED; r->handle=handle;
+    CHECK(proc_exec_request(owner,0x1000,72)==EINVAL && !cancel_requests);
+    r->handle=0;
+    CHECK(proc_exec_request(owner,0x1000,72)==E_OK && cancel_requests==1);
+    r->operation=PROCESS_EXEC_SNAPSHOT; r->handle=handle;
     memset(&r->completion,0xaa,sizeof(r->completion)); output_prefix=0;
     CHECK(proc_exec_request(owner,0x1000,72)==EIMBA && r->completion.state==0xaaaaaaaaUL);
     output_prefix=16;

@@ -4,10 +4,10 @@ PROCESS launch request transport (#907 / #931)
 Implementation checkpoint
 -------------------------
 The ordinary loader, private prepare/cancel/publish admission, canonical
-PROCESS observers, PROCESS-owned asynchronous launch rights and faultable
-request decoder are implemented. Public Ssystem dispatch is NOT enabled yet.
-Deferred policy/CANCEL_DEFERRED and their lifecycle/rollback signoff remain
-required before assigning/enabling a dispatch selector. The eight CUIS CHILD
+PROCESS observers, PROCESS-owned launch rights, generic deferred replacement
+and a faultable request decoder are implemented. Public Ssystem dispatch is
+NOT enabled yet. Filesystem rollback signoff remains required before
+assigning/enabling a dispatch selector. The eight CUIS CHILD
 selectors remain active; no private ABI compatibility aliases are introduced.
 
 Fixed native-endian layout
@@ -70,8 +70,10 @@ a later recoverable error. Other retained observer leases remain usable.
 CANCEL_DEFERRED is designed as an idempotent current-PROCESS operation with zero
 handle and arguments. It cancels only the current owner's held, unexecuted
 successor. It cannot kill a runnable PROCESS. Failed replacement must preserve
-the old successor. The request engine currently rejects this unpublished policy
-until generic deferral is implemented; there is no enabled public placeholder.
+the old successor. The request engine implements this unpublished policy using the existing
+scheduler admission, without GUI registration. Canonical predecessor identity
+is retained before preparation; PD reuse cannot activate a successor. CLOSE
+of a committed deferred handle drops observation without cancelling execution.
 
 Errors and lifetime
 -------------------
@@ -79,7 +81,7 @@ EINVAL: wrong size/alignment, reserved/non-operation input, invalid policy.
 EIMBA: unreadable user range or failed/partial SNAPSHOT copyout.
 ERANGE: unterminated/oversized string or environment.
 EIHNDL: zero, stale, closed or unowned handle within current PROCESS scope.
-EACCDN: foreign/retired PROCESS authority or a second COMMIT.
+EACCDN: foreign/retired PROCESS authority, second COMMIT or reentrant selection.
 ENSMEM/EAGAIN and ordinary loader/filesystem errors retain their usual meaning.
 No output is copied on an error except a possibly partial SNAPSHOT region.
 
@@ -92,6 +94,13 @@ without an exposed registry cursor, then clears live resources. Committed
 children remain independent; prepared children are abandoned safely. The
 current cooperative boot-CPU owner protocol serializes this work; enabling
 preemption/SMP requires #713 owner synchronization, not a second scheduler.
+
+Deferred replacement holds a nonblocking PROCESS selection transaction across
+old-successor destruction. Reentrant replacement/cancellation fails before
+mutation. The in-flight owned handle rejects CLOSE, repeated COMMIT and late
+prepared-lease attachment; snapshots remain safe. Unrelated PREPARE/CLOSE may
+reenter cleanup. Native tests inject these operations at the old child
+disposal boundary, proving the replacement remains selected exactly once.
 
 The existing bounded no-unwind filesystem cleanup contract still applies.
 Exhausted close retries retain an SFT reference rather than double-close it.

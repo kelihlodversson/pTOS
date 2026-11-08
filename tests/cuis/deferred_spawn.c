@@ -15,6 +15,12 @@ static void *execution;
 static void (*reclaimer)(void *);
 static BOOL stopped;
 PD *run;
+static BOOL committing;
+BOOL kproc_exec_commit_begin(KPROC *p)
+{ CHECK(p==(KPROC *)&owner); if(committing)return FALSE; committing=TRUE; return TRUE; }
+void kproc_exec_commit_end(KPROC *p)
+{ CHECK(p==(KPROC *)&owner && committing); committing=FALSE; }
+
 
 LONG cuis_service(ULONG function, UQUAD handle) { CHECK(function == CUIS_SESSION_QUERY && handle == 23); return E_OK; }
 LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *pd) { (void)session; (void)token; (void)pd; abort(); }
@@ -117,21 +123,21 @@ int main(void)
         unsigned disposed = disposals;
         scheduler.current = &tasks[0];
         tasks[1].program = NULL; /* Modeled finalizer revokes the retired PD. */
-        CHECK(ksched_process_prepare(&child,NULL) == EINVAL);
+        CHECK(ksched_process_prepare(&child,FALSE,NULL) == EINVAL);
         slot = (void *)1;
-        CHECK(ksched_process_prepare(&child,&slot) == EINVAL && slot == (void *)1);
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == EINVAL && slot == (void *)1);
         slot = NULL; prepare_ok = FALSE;
-        CHECK(ksched_process_prepare(&child,&slot) == ENSMEM && !slot &&
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == ENSMEM && !slot &&
               !references && !stacks && !identities);
         prepare_ok = TRUE;
-        CHECK(ksched_process_prepare(&child,&slot) == E_OK && slot == &tasks[1]);
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == E_OK && slot == &tasks[1]);
         CHECK(tasks[1].state == TASK_RESERVED && references == 1 && stacks == 1 && identities == 1);
         wait.parent = &owner; wait.pid = 42;
         CHECK(child_ready(&wait));
         ksched_process_cancel(&slot); ksched_process_cancel(&slot);
         CHECK(!slot && !references && !stacks && !identities && disposals == disposed+1 &&
               tasks[1].state == TASK_UNUSED);
-        CHECK(ksched_process_prepare(&child,&slot) == E_OK);
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == E_OK);
         CHECK(ksched_process_publish(&slot) == 42 && !slot && tasks[1].state == TASK_NEW &&
               !child_ready(&wait));
         tasks[1].state = TASK_DONE; scheduler.current = NULL;

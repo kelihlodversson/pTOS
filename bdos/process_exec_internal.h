@@ -8,7 +8,7 @@ struct process_exec_handle;
 /* Only the current live PROCESS may create/use rights. Owner retirement uses
  * its existing finalizer, never a GUI session, PID lookup, THREAD exit or reaper.
  * Trusted input strings remain valid for the synchronous preparation call. */
-LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *environment, char *directory);
+LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy);
 LONG proc_exec_handle_commit(KPROC *owner, ULONG handle);
 LONG proc_exec_handle_snapshot(KPROC *owner, ULONG handle, PROCESS_COMPLETION *out);
 LONG proc_exec_handle_close(KPROC *owner, ULONG handle);

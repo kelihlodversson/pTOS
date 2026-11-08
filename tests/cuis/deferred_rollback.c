@@ -122,7 +122,7 @@ void ksched_exiting(PD *p, UWORD status)
 {
     CHECK(fake_completion && p == &image && status == 37 && completion_stage++ == 1 && records);
 }
-void ksched_exited(PD *p)
+void ksched_exited_identity(KPROC *process, PD *p)
 {
     CHECK(fake_completion && p == &image && completion_stage++ == 2 && !records && !allocations);
 }
@@ -204,7 +204,7 @@ LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token)
     publications++;
     return spawn_result;
 }
-LONG ksched_process_prepare(PD *p, void **slot)
+LONG ksched_process_prepare(PD *p, BOOL deferred, void **slot)
 {
     CHECK(observer_mode && p==&image && slot && !*slot && records==1);
     CHECK(observer_refs==1 && observer_output && !*observer_output);
@@ -312,7 +312,7 @@ int main(void)
             observer_output=&out;
             expected=stage==0?EINVFN:stage==1?EFILNF:stage==2?EPLFMT:
                      stage==3?EPTHNF:stage==4?ENSMEM:stage==5?EAGAIN:E_OK;
-            CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\TARGET",&out,&prepared)==expected);
+            CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\TARGET",0,&out,&prepared)==expected);
             if (stage<6) CHECK(!prepared && !out && !observer_refs && !allocations && !records);
             else {
                 CHECK(out==(KPROC *)&image && observer_refs==1 && !publications && prepared==&image);

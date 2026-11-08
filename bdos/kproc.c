@@ -107,6 +107,7 @@ struct kproc {
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
+    BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
@@ -385,6 +386,17 @@ KPROC *kproc_retain_identity(KPROC *process)
 struct process_exec_handle **kproc_exec_handles(KPROC *owner)
 {
     return owner && !owner->retired ? &owner->exec_handles : NULL;
+}
+BOOL kproc_exec_commit_begin(KPROC *owner)
+{
+    if (!kproc_live_pd(owner) || owner->exec_committing) return FALSE;
+    owner->exec_committing = TRUE;
+    return TRUE;
+}
+void kproc_exec_commit_end(KPROC *owner)
+{
+    if (!owner || !owner->exec_committing) panic("PROCESS launch selection ownership lost");
+    owner->exec_committing = FALSE;
 }
 
 #endif

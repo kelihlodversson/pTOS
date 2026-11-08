@@ -36,7 +36,7 @@ long proc_exec_observe(char *path, char *tail, char *environment, char *director
  * Success transfers the image to *prepared and returns E_OK, not a PID. Caller
  * must publish or cancel it exactly once; output references are kernel-owned.
  * Failure leaves both outputs empty and reclaims the unstarted image. */
-long proc_exec_prepare(char *path, char *tail, char *environment, char *directory,
+long proc_exec_prepare(char *path, char *tail, char *environment, char *directory, ULONG policy,
                        struct kproc **observer, void **prepared);
 #endif
 #if CONF_WITH_CUIS

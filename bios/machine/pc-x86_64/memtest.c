@@ -1282,8 +1282,35 @@ static void test_thread_reclaim(void *resource)
 }
 #endif
 
+static struct {
+    BOOL enabled, seen;
+    KPROC *owner;
+    LONG handle;
+    WORD pid;
+} deferred_reentry;
 void x86_64_memtest_disposal_committed(PD *pd)
 {
+    static char command[]={2,'O','n',0}, environment[]={0,0};
+    PROCESS_OBSERVER *late=NULL;
+    PROCESS_COMPLETION completion;
+    LONG third;
+    if (deferred_reentry.enabled && kproc_pid(pd)==deferred_reentry.pid) {
+        deferred_reentry.enabled=FALSE;
+        deferred_reentry.seen=TRUE;
+        CHECK(proc_exec_handle_commit(deferred_reentry.owner,deferred_reentry.handle)==EACCDN &&
+              proc_exec_handle_close(deferred_reentry.owner,deferred_reentry.handle)==EACCDN &&
+              proc_exec_retain_observer(deferred_reentry.owner,deferred_reentry.handle,TRUE,&late)==EACCDN &&
+              !late && ksched_defer_cancel()==EACCDN,
+              "replacement callbacks cannot close, recommit, bind late leases or cancel the in-flight transaction");
+        third=proc_exec_handle_prepare(deferred_reentry.owner,"C:\\X32HELLO.TOS",command,environment,NULL,
+                                       PROCESS_EXEC_DEFER_REPLACEMENT);
+        CHECK(third>0 && proc_exec_handle_commit(deferred_reentry.owner,third)==EACCDN &&
+              proc_exec_handle_snapshot(deferred_reentry.owner,third,&completion)==E_OK &&
+              completion.state==PROCESS_UNSTARTED,
+              "reentrant replacement can prepare private rights but cannot publish a competing successor");
+        if (third>0) CHECK(proc_exec_handle_close(deferred_reentry.owner,third)==E_OK,
+                           "rejected competing commit retains safely closable preparation");
+    }
     if (pd != disposal_test_pd)
         return;
     disposal_test_commits++;
@@ -2236,6 +2263,65 @@ static struct {
     LONG pid;
     LONG handle;
 } ordinary_observation;
+static void ordinary_deferred_commit(void)
+{
+    PROCESS_COMPLETION completion;
+    PROCESS_OBSERVER *late=NULL, *replacement=NULL, *second=NULL;
+    LONG next;
+    static char command[]={2,'O','n',0}, environment[]={0,0};
+    CHECK(proc_exec_retain_observer(ordinary_observation.parent,ordinary_observation.handle,TRUE,&late)==EACCDN && !late,
+          "committed held successor is not an attachable prepared transaction");
+    CHECK(ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
+          "deferred successor has no public child-wait ownership");
+    if (ordinary_observation.scenario==8) {
+        CHECK(ksched_defer_cancel()==E_OK && ksched_defer_cancel()==E_OK &&
+              process_observer_ready(ordinary_observation.observer) &&
+              process_observer_snapshot(ordinary_observation.observer,&completion) &&
+              completion.state==PROCESS_ABANDONED && !completion.kind && !completion.order_low,
+              "explicit generic cancellation abandons only the selected unexecuted successor");
+        CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK,
+              "cancelled deferred observation closes independently");
+        ordinary_observation.handle=0;
+        ordinary_observation.checked=TRUE;
+    } else if (ordinary_observation.scenario==9) {
+        CHECK(proc_exec_handle_prepare(ordinary_observation.parent,"C:\\MISSING.TOS",command,environment,NULL,
+                                       PROCESS_EXEC_DEFER_REPLACEMENT)==EFILNF &&
+              !process_observer_ready(ordinary_observation.observer),
+              "failed replacement preparation preserves the prior selected successor");
+    } else if (ordinary_observation.scenario==10) {
+        CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK &&
+              !process_observer_ready(ordinary_observation.observer),
+              "CLOSE never cancels an already committed deferred successor");
+        ordinary_observation.handle=0;
+    } else if (ordinary_observation.scenario==11) {
+        next=proc_exec_handle_prepare(ordinary_observation.parent,"C:\\X32HELLO.TOS",command,environment,NULL,
+                                      PROCESS_EXEC_DEFER_REPLACEMENT);
+        CHECK(next>ordinary_observation.handle &&
+              proc_exec_retain_observer(ordinary_observation.parent,next,TRUE,&replacement)==E_OK &&
+              process_observer_attach(replacement,&second)==E_OK,
+              "replacement owns fresh prepared rights and canonical observers before commit");
+        if (next<=0 || !replacement) return;
+        deferred_reentry.owner=ordinary_observation.parent;
+        deferred_reentry.handle=next;
+        deferred_reentry.pid=(WORD)ordinary_observation.pid;
+        deferred_reentry.seen=FALSE;
+        deferred_reentry.enabled=TRUE;
+        CHECK(proc_exec_handle_commit(ordinary_observation.parent,next)==kproc_ref_pid(replacement) &&
+              deferred_reentry.seen && process_observer_ready(ordinary_observation.observer) &&
+              process_observer_snapshot(ordinary_observation.observer,&completion) &&
+              completion.state==PROCESS_ABANDONED && !completion.kind && !completion.order_low,
+              "successful replacement abandons the old successor without a fabricated completion");
+        deferred_reentry.enabled=FALSE;
+        CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK,
+              "superseded deferred rights close without touching their replacement");
+        process_observer_release(&ordinary_observation.observer);
+        process_observer_release(&ordinary_observation.second);
+        ordinary_observation.observer=replacement;
+        ordinary_observation.second=second;
+        ordinary_observation.pid=kproc_ref_pid(replacement);
+        ordinary_observation.handle=next;
+    }
+}
 static void ordinary_observation_yield(void)
 {
     KTHREAD *thread;
@@ -2250,7 +2336,8 @@ static void ordinary_observation_yield(void)
         command[2]=ordinary_observation.scenario==2 ? 'f':'n';
         if (ordinary_observation.scenario >= 3) {
             LONG result=proc_exec_handle_prepare(ordinary_observation.parent,"C:\\X32HELLO.TOS",
-                                                  command,environment,NULL);
+                                                  command,environment,NULL,ordinary_observation.scenario>=7 ?
+                                                  PROCESS_EXEC_DEFER_REPLACEMENT:PROCESS_EXEC_ASYNC);
             CHECK(result>0,"ordinary loader returns a PROCESS-owned prepared handle");
             if (result<=0) return;
             ordinary_observation.handle=result;
@@ -2297,8 +2384,16 @@ static void ordinary_observation_yield(void)
                 CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK,
                       "closing committed rights before child execution does not cancel or reap it");
                 ordinary_observation.handle=0;
-            }
+            } else if (ordinary_observation.scenario>=7) ordinary_deferred_commit();
         }
+        return;
+    }
+    if (ordinary_observation.scenario>=7) {
+        CHECK(!process_observer_ready(ordinary_observation.observer) &&
+              process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
+              snapshot.state==PROCESS_UNSTARTED && ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
+              "selected successor remains unexecuted across the live owner's later native yields");
+        ordinary_observation.checked=TRUE;
         return;
     }
     if (ordinary_observation.scenario==1)
@@ -2374,7 +2469,7 @@ static void test_ordinary_observation(void)
     int before=failures;
     static const char command[]={2,'O','p',0}, environment[]={0,0};
     test_discarded_observation();
-    for (mode=0;mode<7;mode++) {
+    for (mode=0;mode<12;mode++) {
         SNAP baseline;
         LONG loaded, status;
         PD *program;
@@ -2391,6 +2486,17 @@ static void test_ordinary_observation(void)
         CHECK(ksched_run(&program,1,&status)==E_OK && status==0x1357 && ordinary_observation.checked,
               "ordinary observed child and parent execute actual native continuations");
         ordinary_observation.enabled=FALSE;
+        if (mode>=7 && mode!=8) {
+            PROCESS_COMPLETION parent_done, child_done;
+            CHECK(process_observer_ready(ordinary_observation.observer) &&
+                  process_observer_snapshot(ordinary_observation.observer,&child_done) &&
+                  child_done.state==PROCESS_COMPLETED && child_done.kind==PROCESS_COMPLETION_NORMAL &&
+                  child_done.status==0xffff && !child_done.signal &&
+                  kproc_ref_completion(ordinary_observation.parent,&parent_done) &&
+                  (child_done.order_high>parent_done.order_high ||
+                   (child_done.order_high==parent_done.order_high && child_done.order_low>parent_done.order_low)),
+                  "generic successor executes only after canonical predecessor retirement without GUI registration");
+        }
         if (mode==5) {
             PROCESS_COMPLETION abandoned;
             CHECK(process_observer_ready(ordinary_observation.observer) &&

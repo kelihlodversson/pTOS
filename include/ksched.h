@@ -94,14 +94,19 @@ LONG ksched_spawn(PD *pd);
  * Cancel consumes a prepared slot and disposes off-stack, outside exclusion.
  * Publish consumes it exactly once, without allocation/copy/callback/yield.
  * These are serialized owner operations, not a new scheduler or runqueue. */
-LONG ksched_process_prepare(PD *pd, void **slot);
+/* deferred retains the canonical predecessor before image transfer. */
+LONG ksched_process_prepare(PD *pd, BOOL deferred, void **slot);
 LONG ksched_process_publish(void **slot);
+/* Commit preflight can reject reentrant selection without consuming the slot.
+ * Deferred cleanup precedes no-fail publication; no callback runs in publish. */
+LONG ksched_process_commit(void **slot);
 void ksched_process_cancel(void **slot);
+/* Idempotent cancellation of only the current PROCESS's selected held successor.
+ * Uncommitted preparations and already runnable children are unaffected. */
+LONG ksched_defer_cancel(void);
 /* Internal observed launch, available only with CUIS. */
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token);
 LONG ksched_defer(PD *pd, ULONG session);
-LONG ksched_defer_cancel(void);
-void proc_dispose_deferred(PD *program);
 #if CONF_WITH_USER_ASPACE
 struct kproc;
 void proc_dispose_process(struct kproc *process);
@@ -114,8 +119,7 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
 BOOL ksched_parent_pid(PD *pd, WORD *pid);
 void ksched_exiting(PD *pd, UWORD status);
-/* CUIS successor activation after complete teardown; pd is identity only. */
-void ksched_exited(PD *pd);
+/* Generic successor activation after complete teardown; identity is retained. */
 #if CONF_WITH_USER_ASPACE
 void ksched_exited_identity(struct kproc *process, PD *pd);
 #endif
