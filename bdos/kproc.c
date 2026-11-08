@@ -64,12 +64,15 @@ enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
 struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
     UQUAD number;                /* Generic non-recycled PROCESS identity. */
+#if CONF_WITH_USER_ASPACE
     UQUAD completion_order;
-    BOOL completed, retired, observer_ready; /* Published terminal flags; not SMP locks. */
+    BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
+    WORD exit_signal; /* Pending only for final execution; immutable at completion. */
+#endif
+    BOOL completed;
     BOOL started;
     WORD pid; /* Identity prefix is never cleared during retirement. */
     UWORD exit_status;
-    WORD exit_signal; /* Pending only for final execution; immutable at completion. */
     char executable_name[33]; /* Bounded basename; presentation stays in userspace. */
 #if CONF_WITH_USER_CALLBACKS
     USER_CALLBACK_STATE *callbacks;
@@ -173,7 +176,9 @@ struct kproc {
 };
 
 static KPROC *kproc_list;
+#if CONF_WITH_USER_ASPACE
 static UQUAD last_completion_order; /* Serialized terminal publication, not IRQ producer state. */
+#endif
 static KPROC *retired_processes; /* identities retained after removal from lookup */
 
 /* KPROC records are kernel-only objects.  On x86-64 they live in the
@@ -184,6 +189,7 @@ static KPROC *retired_processes; /* identities retained after removal from looku
 #define KPROC_FREE(k)   kfree(k)
 #else
 #define KPROC_ALLOC()   MGET(KPROC)
+typedef char KPROC_POOL_PAYLOAD_FITS[sizeof(KPROC) <= OSM_PAYLOAD_BYTES ? 1 : -1];
 #define KPROC_FREE(k)   xmfreblk(k)
 #endif
 
@@ -444,6 +450,7 @@ BOOL kproc_ref_status(const KPROC *process, UWORD *status)
     if (status) *status = process->exit_status;
     return TRUE;
 }
+#if CONF_WITH_USER_ASPACE
 static BOOL completion_flag(const BOOL *flag)
 {
     return *(const volatile BOOL *)flag; /* Single-copy IRQ observation, not SMP acquire. */
@@ -500,6 +507,7 @@ void kproc_note_fault(PD *pd, WORD signal)
     if (process && !process->completed && !process->exit_signal && signal > 0)
         process->exit_signal = signal;
 }
+#endif
 void kproc_complete(PD *pd, UWORD status)
 {
     KPROC *process = kproc_find(pd);
@@ -1028,9 +1036,9 @@ void kproc_destroy(PD *pd)
                 kproc->disposal_state = PROCESS_RETIRED;
 #endif
                 __asm__ volatile ("" : : : "memory");
+#if CONF_WITH_USER_ASPACE
                 kproc->retired = TRUE;
                 if (!kproc->completed) kproc_publish_observers(kproc);
-#if CONF_WITH_USER_ASPACE
                 kproc_release(parent_identity);
 #endif
             }
