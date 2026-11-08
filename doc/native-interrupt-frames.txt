@@ -81,3 +81,22 @@ Use an isolated validation branch for latest epic/#907 + the #910/#914 stack;
 never merge unrelated CUIS removals into this scheduler PR to make tests pass.
 Preserve both #917 physical-input admission fences and keep their cooperative
 precondition explicit until C introduces an operation-admission handshake.
+
+B1a validation (CPU ownership, not full interrupt-frame evidence)
+----------------------------------------------------------------
+Production-code host tests explicitly restore a cleared loaded-current pointer
+while the old execution is terminal: root reap refuses it until CPU handoff
+acknowledgement. They also cover both anchor-release orders, admission rollback,
+shutdown, retirement/reentrancy, detached results, blocked tasks and root reuse.
+GCC13 fortified and ASan/UBSan CUIS/ownership suites pass. Hosted CPU/MMU contexts
+are models; these results do not establish architecture IRQ register capture.
+
+Actual native execution: x32 desktop 23/0 plus five shutdown checks; ARM Cortex-A7
+27/0 plus five; m68k 68040 26/0 plus five. Existing public A2c launcher-return/
+later-child dispatch, twelve mixed PROCESS/THREAD peers, nested launchers,
+CPU/FPU state, joins, group cancellation, fault/TSR and cleanup tests are retained.
+The x32 memory/GEM/input boot suite and eager scheduler-disabled boot pass.
+Amiberry v8.5.0 68060 passes 25/0 caches off/on with strict nonzero FPIAR.
+Classic 192 KiB ROM/test disk, clone ABI/decoder, ELF52 and gitready pass.
+Pinned Hatari Falcon/TT execution and isolated latest-epic combined validation
+are recorded separately in the PR/checkpoint evidence after their completion.
