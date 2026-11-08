@@ -179,7 +179,7 @@ int main(int argc, char **argv, char **envp)
         for (j = 0; j < 12 && children[j] != (LONG)((ULONG)status >> 16); j++) ;
         CHECK(j < 12); children[j] = 0;
     }
-    for (i = 0; i < 12; i++) CHECK(probe_packet_read(session, &packet) == sizeof(PROBE_PACKET));
+    for (i = 0; i < 12; i++) CHECK(probe_packet_read(session,&packet) == sizeof(PROBE_PACKET));
     for (i = 0; i < 16; i++) {
         pid = spawn(argv[0], command); CHECK(pid > 0);
         CHECK(((ULONG)waitpid(pid, 0, 0) >> 16) == (ULONG)pid);
