@@ -17,6 +17,9 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 tests/x32_irq_frame.c -o "$work/irq-frame"
 "$work/irq-frame"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 tests/arm_irq_frame.c -o "$work/arm-irq-frame"
+"$work/arm-irq-frame"
 for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
     CONFIG_= python3 - "$preset" "$work/config" <<'PY'
 import kconfiglib, sys

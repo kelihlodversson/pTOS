@@ -1421,6 +1421,8 @@ static void scheduler_root_entry(void)
         wait_probe_on_root();
 #if ARCH_X86_64
         x86_64_irq_capture_report();
+#elif ARCH_ARM && CONF_WITH_EXIT_HANDOFF_TEST
+        arm_irq_capture_report();
 #endif
 #endif
         /* Reclaim only from root. Referenced slots remain stable across entries. */

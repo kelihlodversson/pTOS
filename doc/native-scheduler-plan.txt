@@ -307,3 +307,15 @@ all #917 admission fences and the later resumed-wait handshake. Native x32
 ASan/UBSan and fortified GCC13 pass. The IRQ capture verdict is required only
 when its public Pclone worker is configured; internal-only scheduling does not
 execute that register-pattern probe. No preemption or restore path is enabled.
+
+B1b ARM capture checkpoint
+-------------------------
+The common dispatcher still makes no asynchronous scheduling decision. ARM IRQ
+entry now captures the complete integer/banked/VFP user frame into preallocated
+THREAD-owned storage, bound to its active launcher stack and actual MMU root.
+Original stack frames alone drive exception return. Native Cortex-A7 runs pass
+27 suites plus five shutdown checks, including the actual user IRQ pattern,
+A2c detached background execution and twelve mixed PROCESS/THREAD peers. Host
+frame-binding and ownership tests pass ASan/UBSan and fortified GCC13; those
+host inputs are synthetic, not native context evidence. m68k interrupted-frame
+capture and full CPU-local launcher/error conversion remain B1b/B1c work.

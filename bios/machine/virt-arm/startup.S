@@ -8,6 +8,9 @@
 #include "asmdefs.h"
 #include "header.h"
 #include "arch/arm/fpusave.h"
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#include "arch/arm/irqframe.h"
+#endif
 #include "virt_memmap.h"
 
         .globl  C_SYM(os_entry)
@@ -619,11 +622,19 @@ C_SYM(arm_dispatch_irq):
     sub    lr, lr, #4
     srsfd  sp!, #0x13
     cps    #0x13
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    ARM_IRQ_PUSH_CAPTURE
+#else
     stmfd  sp!, {r0-r3, ip, lr}
     FPU_PUSH_ALL r0                 /* the interrupted code's FPU state */
+#endif
     bl     C_SYM(virt_int_handler)
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    ARM_IRQ_POP_CAPTURE
+#else
     FPU_POP_ALL r0
     ldmfd  sp!, {r0-r3, ip, lr}
+#endif
     rfefd  sp!
 
     .globl C_SYM(arm_dispatch_fiq)

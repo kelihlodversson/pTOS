@@ -635,6 +635,15 @@ if [ "$machine" = pc-x86_64 ] &&
     fi
 fi
 
+if [ "$machine" = virt-arm ] &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native ARM interrupted-user integer/VFP/banked capture: PASS' "$suite_log"; then
+        record "native ARM user IRQ capture" FAIL "real user integer/VFP/banked pattern was not captured"
+    fi
+fi
+
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"
