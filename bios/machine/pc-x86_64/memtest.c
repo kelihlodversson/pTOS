@@ -1872,6 +1872,32 @@ static void test_kproc(void)
     CHECK(kproc_ref_status(second, &status) && status == 42,
           "second reference retains completed process");
     kproc_release(second);
+    {
+        PD *replacement=kalloc(sizeof(PD));
+        CHECK(replacement!=NULL,"PID reuse basepage");
+        if (replacement) {
+            PROCESS_IDENTITY fresh;
+            UQUAD saved;
+            ULONG count=kproc_count();
+            bzero(replacement,sizeof(*replacement));
+            saved=kproc_test_number_cursor(~(UQUAD)0);
+            replacement->p_uft[0]=7;
+            CHECK(!kproc_create(replacement) && replacement->p_uft[0]==7 && kproc_count()==count,
+                  "full number exhaustion rejects actual construction without side effects");
+            CHECK(kproc_test_number_cursor(saved)==~(UQUAD)0,"restore unissued injected exhaustion cursor");
+            bzero(replacement,sizeof(*replacement));
+            if (saved<0xffffffffULL) (void)kproc_test_number_cursor(0xffffffffULL);
+            kproc_test_pid_search(retained_pid-1,1);
+            CHECK(kproc_create(replacement),"PID reuse after final identity reference");
+            memset(&fresh,0,sizeof(fresh));
+            CHECK(kproc_identity_info(replacement,&fresh)==E_OK && fresh.pid==retained_pid &&
+                  fresh.number_high && ((UQUAD)fresh.number_low|((UQUAD)fresh.number_high<<32))>number,
+                  "real construction crosses low word and recycled PID gets a new PROCESS number");
+            kproc_test_pid_search(0,0);
+            kproc_destroy(replacement); kfree(replacement);
+            CHECK(kproc_count()==count,"number exhaustion and PID reuse restore resource baseline");
+        }
+    }
     identity.pid = 0; identity.selector = PROCESS_IDENTITY_NUMBER;
     CHECK(kproc_identity_info(NULL, &identity) == ESRCH,
           "last reference release retires generic PROCESS lookup without an alias");

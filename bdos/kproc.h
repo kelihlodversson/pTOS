@@ -81,6 +81,7 @@ void kproc_complete(PD *pd, UWORD status);
 /* Exercise the production allocator on a local test cursor, never reset the
  * live registry's non-recycled number counter. */
 BOOL kproc_test_number_next(UQUAD *previous, UQUAD *number);
+UQUAD kproc_test_number_cursor(UQUAD replacement); /* serialized test injection only */
 /* Restrict the next PID search to a bounded number of candidates for tests. */
 void kproc_test_pid_search(WORD previous, UWORD candidates);
 #if CONF_WITH_USER_ASPACE

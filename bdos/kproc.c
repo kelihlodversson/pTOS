@@ -239,6 +239,12 @@ BOOL kproc_test_number_next(UQUAD *previous, UQUAD *number)
 {
     return process_number_next(previous, number);
 }
+UQUAD kproc_test_number_cursor(UQUAD replacement)
+{
+    UQUAD previous=last_process_number;
+    last_process_number=replacement;
+    return previous;
+}
 #endif
 
 BOOL kproc_create(PD *pd)
