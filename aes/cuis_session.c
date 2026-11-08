@@ -1592,8 +1592,6 @@ LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
     CUIS_CLIENT *client = *find_owner(run), *peer, *found = NULL;
     UBYTE label[CUIS_LABEL_MAX];
-    ULONG n;
-    const char *name;
     if (!client) return EACCDN;
     if (function == CUIS_LABEL_FIND) {
         if (!b || b > CUIS_LABEL_MAX) return EINVAL;
@@ -1614,12 +1612,6 @@ LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         return peer ? peer->pid : EFILNF;
     }
     if (a != client->handle) return EACCDN;
-    if (function == CUIS_SESSION_NAME) {
-        name = kproc_executable_name(run);
-        for (n = 0; name[n]; n++) ;
-        if (c > 0xffffffffULL || c < n + 1) return ERANGE;
-        return kproc_copy_to_user(b, name, n + 1) ? (LONG)n : EIMBA;
-    }
     if (function == CUIS_SESSION_LABEL) {
         if (c > CUIS_LABEL_MAX) return EINVAL;
         if (c && !kproc_copy_from_user(label, b, (ULONG)c)) return EIMBA;

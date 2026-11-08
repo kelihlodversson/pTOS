@@ -52,6 +52,29 @@ void test_ssystem_info(void)
         return;
     }
 
+    /* Generic PROCESS metadata does not require an AES registration. */
+#ifdef TEST_WITH_KPROC
+    ptest_assert_msg(Ssystem(SS_INQUIRE, -7, 0L) == 0,
+                     "generic PROCESS metadata service is missing");
+#else
+    ptest_assert_msg(Ssystem(SS_INQUIRE, -7, 0L) == EINVFN,
+                     "PROCESS metadata advertised without PROCESS records");
+#endif
+    if (Ssystem(SS_INQUIRE, -7, 0L) == 0) {
+        long length;
+        memset(big, 0x5a, sizeof(big));
+        length = Ssystem(-7, (long)big, (long)sizeof(big));
+        ptest_assert_msg(length > 0 && length <= 32 && big[length] == 0,
+                         "PROCESS basename is bounded and terminated");
+        ptest_assert_msg(!strchr(big, '/') && !strchr(big, '\\') && !strchr(big, ':'),
+                         "PROCESS name contains no directory");
+        memset(big, 0x5a, sizeof(big));
+        ptest_assert_msg(Ssystem(-7, (long)big, length) == ERANGE && big[0] == 0x5a,
+                         "short PROCESS name buffer is untouched");
+        ptest_assert_msg(Ssystem(-7, (long)big, 0L) == ERANGE && big[0] == 0x5a,
+                         "zero PROCESS name capacity is refused");
+    }
+
     /* S_INQUIRE: every mode the call implements, and one that does not */
     {
         static const long modes[] = {

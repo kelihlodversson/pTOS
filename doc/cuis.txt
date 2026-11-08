@@ -748,7 +748,6 @@ update fail with EACCDN. Ready/zero/poll operations retain their normal behavior
 
 Native CUIS calls use flat registers and scalar lengths/handles/errors:
 
- 25 SESSION_NAME(handle, buffer, capacity) -> basename length (NUL appended)
  26 SESSION_LABEL(handle, bytes, length)   -> E_OK; opaque labels up to 32 bytes
  27 LABEL_FIND(bytes, length)             -> peer handle
  28 PEER_PID(handle)                      -> registered peer PID
@@ -3393,3 +3392,12 @@ through GEMDOS Ssystem(S_GETLVAL,0x4ba,0). The userspace adapter retains the
 low-31-bit tick ring and original timer deadline across internal GUI wakes.
 This clock requires neither a CUIS session nor GUI registration. The maximum
 supported 32-bit millisecond timeout remains shorter than its wrap.
+
+Executable identity (#907)
+-------------------------
+libaes reads the current loaded-image basename from generic
+Ssystem(S_PROCNAME=-7), independently of CUIS registration. PROCESS metadata
+is copied from a retained identity into kernel-local storage before copyout;
+its bounded name survives PROCESS retirement without retaining the PD. AES
+label folding, eight-character naming and .ACC classification remain libaes
+policy. Private CUIS slot 25 is retired and returns EINVFN.

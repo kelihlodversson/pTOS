@@ -121,6 +121,12 @@ LONG aes_menu_dispatch(WORD *global)
 void aes_menu_reset(void) { }
 UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
 {
+    if (fn == 0x154 && a == 0xfff9) {
+        ULONG length = __builtin_strlen(executable_name);
+        if (c <= length) return (UQUAD)(QUAD)ERANGE;
+        __builtin_memcpy((void *)(uintptr_t)b,executable_name,length+1);
+        return length;
+    }
     if (fn == 0x154 && a == 0x000a && b == 0x4ba && !c) return menu_ticks;
     return (UQUAD)(QUAD)EINVFN;
 }
@@ -313,10 +319,6 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_WINDOW_LOWER) || fn == CUIS_FOCUS_QUERY || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
         return window_transport(fn, a);
-    if (fn == CUIS_SESSION_NAME) {
-        ULONG length = __builtin_strlen(executable_name);
-        __builtin_memcpy((void *)(uintptr_t)b,executable_name,length+1); return length;
-    }
     if (fn == CUIS_SESSION_LABEL) {
         if (!label_result) __builtin_memcpy(published_label,(void *)(uintptr_t)b,8);
         return label_result;

@@ -55,7 +55,7 @@ static BOOL publish_label(LONG handle)
 {
     char name[33], label[8];
     ULONG length, tag = APP_APPLICATION;
-    LONG result = cuis_call6(CUIS_SESSION_NAME, handle, (uintptr_t)name, sizeof(name), 0, 0, 0);
+    LONG result = (LONG)aes_gemdos_call(0x154, 0xfff9, (uintptr_t)name, sizeof(name));
     if (result < 0) return FALSE;
     length = (ULONG)result;
     if (length >= 4 && name[length-4] == '.' &&

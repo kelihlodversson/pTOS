@@ -204,3 +204,13 @@ cleanup and scheduling limits. References: FreeMiNT sys/k_exec.c,
 sys/k_exit.c and doc/programmer/man/man2/Pwait3.2. Raw MiNT wait status puts
 normal exit in the low byte and a terminating signal in the next byte;
 POSIX libc wrappers perform their normal conversion.
+
+Ssystem(S_PROCNAME = -7, buffer, capacity)
+  Generic current PROCESS loaded-image basename, available with KPROC. Returns
+  its byte length excluding NUL (at most 32); copies the complete terminated
+  name only when capacity is greater than that length. ERANGE leaves the
+  buffer untouched; an invalid destination returns EIMBA. Capacity is a full
+  native-width signed argument. No AES registration is involved. The kernel
+  snapshots retained identity metadata before user copyout; retired identities
+  keep their basename without retaining a basepage or live resources. GEM
+  labels and accessory classification remain libaes policy.

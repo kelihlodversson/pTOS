@@ -2,7 +2,6 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
-const char *kproc_executable_name(PD *pd);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
 #include "../../aes/cuis_session.c"
@@ -227,7 +226,6 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
     child_copy_hook();
     memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
 }
-const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
 
 void *kalloc(ULONG bytes)
 {
