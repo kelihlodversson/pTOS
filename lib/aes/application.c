@@ -85,15 +85,8 @@ static LONG client_identity(LONG session, LONG peer, CUIS_PEER_IDENTITY_DATA *id
 
 static LONG client_by_id(LONG session, short id)
 {
-    LONG peer, after = -1;
-    CUIS_PEER_IDENTITY_DATA identity;
-    for (;;) {
-        peer = cuis_call6(CUIS_PEER_NEXT,session,(QUAD)after,0,0,0,0);
-        if (peer < 0) return peer;
-        after = peer;
-        if (client_identity(session,peer,&identity) == E_OK && identity.client_id == (ULONG)id)
-            return peer;
-    }
+    if (id<=0) return EFILNF;
+    return cuis_call6(CUIS_PEER_QUERY,session,id,CUIS_PEER_HANDLE,0,0,0);
 }
 
 static LONG process_identity(PROCESS_IDENTITY *identity)
@@ -336,13 +329,6 @@ short mt_appl_write(short id, short length, void *buffer, short *global)
     if (!registered(global) || id <= 0 || length < 0 || (length && !buffer)) return 0;
     peer = client_by_id(application_session,id);
     if (peer < 0) return 0;
-    if (length == 16) {
-        WORD message[8];
-        memcpy(message,buffer,sizeof(message));
-        message[1]=application_id; /* GEM sender is this client, never a caller PID. */
-        return cuis_call6(CUIS_STREAM_WRITE,peer,(uintptr_t)message,length,1,
-                          (UQUAD)application_session+1,0)==length ? 1 : 0;
-    }
     return cuis_call6(CUIS_STREAM_WRITE, peer, (uintptr_t)buffer, length, 1, (UQUAD)application_session+1, 0) == length ? 1 : 0;
 }
 short appl_write(short id, short length, void *buffer) { return mt_appl_write(id, length, buffer, aes_global); }

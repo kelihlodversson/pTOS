@@ -102,6 +102,7 @@
 #define CUIS_PEER_BACKGROUND 3UL
 #define CUIS_PEER_ACTIVE 4UL
 #define CUIS_PEER_IDENTITY 5UL
+#define CUIS_PEER_HANDLE 6UL /* QUERY: short AES ID -> opaque endpoint, no copyout. */
 /* GUI client identity and opaque owning PROCESS number are distinct. Multiple
  * clients may name one PROCESS. This descriptor contains no PID or TID. */
 typedef struct {

@@ -3056,6 +3056,10 @@ reserves its PROCESS PID, so retirement must release it promptly after the
 last operation lease ends. The descriptor is
 snapshotted under the GUI lock before copyout, so no peer pointer survives
 user access. Several client descriptors may share one PROCESS number.
+HANDLE (field 6) takes a positive short AES ID in peer and returns its live
+opaque endpoint in one bounded scan. Address/capacity must be zero. This is
+routing lookup, not ownership acquisition or PID conversion; normal appl_write
+and APC_TOP need one query, without enumerating every endpoint.
 Wrong descriptor size is EINVAL; stale endpoint is EFILNF; failed copyout is
 EIMBA with no consumption. Private slots 28 and 29 are retired (EINVFN).
 The existing caller binding is not a promise of one client per PID; future
@@ -3422,7 +3426,9 @@ Additional endpoints in one PROCESS (#907, not full #896)
 SESSION_START(0) returns/creates the default endpoint. SESSION_START(1), named
 CUIS_SESSION_NEW, creates a fresh endpoint with the same authenticated caller
 PROCESS. Other START arguments are EINVAL. Default window/input binding is not
-changed. QUERY/END, peer enumeration/descriptors and bounded nonblocking stream
+changed. Retiring the default does not promote an explicit survivor: START(0)
+then creates a new default, while PROCESS cleanup still visits all endpoints.
+QUERY/END, peer enumeration/descriptors and bounded nonblocking stream
 operations accept an explicitly owned endpoint handle. PROCESS cleanup retires
 all endpoints, whereas END retires only its named endpoint. No THREAD scheduler
 binding or separate C-runtime instance is implied. libaes's current shared
@@ -3437,9 +3443,10 @@ WRITE's sender argument is zero for the default source, or source endpoint
 handle + 1 for an explicit source. This is an owned endpoint selector, never a
 PID, PROCESS number, AES ID or user-supplied authenticated sender. READ/PEEK keep
 that argument's existing output-pointer meaning. libaes passes its source
-endpoint explicitly. Ordinary 16-byte appl_write messages copy/normalize the
-short sender to the calling AES client without modifying caller memory. Raw
-CUIS bytes remain opaque; the kernel's sender ring and cohort read-token checks
+endpoint explicitly. appl_write preserves every caller payload byte, including
+16-byte application protocols. In-tree GEM message producers use AES client IDs
+in sender fields; payload fields are never authentication. The kernel's sender
+ring and cohort read-token checks
 remain authoritative (a first-byte sender is not whole-message authentication).
 
 AES client IDs now advance from 1 through 32767 without recycling during a boot.

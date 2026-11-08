@@ -24,12 +24,15 @@ static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e
 }
 #define PROC(fn,a,b,c,d) raw(1,fn,a,b,c,d,0,0)
 /* Public native GUI endpoint operations in one real PROCESS/address space. */
-static int two_client_identity(short id, LONG pid)
+static int two_client_identity(short *idp, LONG pid)
 {
+    short id=*idp;
     LONG primary, extra, peer, after, sender, seen=0;
     PROCESS_IDENTITY process={0,0,0,0}, again={0,0,0,0};
     CUIS_PEER_IDENTITY_DATA a,b;
     WORD data[8]={700,32766,0,123,456,0,0,0}, out[8];
+    static const char label[8]={'S','E','C','O','N','D',' ',' '};
+    short type,found,mode=APP_FIRST; char name[9]; int visits=0;
     primary=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0,0,0);
     extra=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,CUIS_SESSION_NEW,0,0,0,0,0);
     GEM_TEST_CHECK(primary>=0 && extra>primary);
@@ -46,18 +49,36 @@ static int two_client_identity(short id, LONG pid)
         if(peer==extra) seen|=2;
     }
     GEM_TEST_CHECK(seen==3 && appl_find((const char *)(uintptr_t)(0xffff0000UL|(UWORD)pid))==id);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_LABEL,extra,(uintptr_t)label,8,0,0,0)==0 &&
+                   raw(CUIS_SERVICE_CLASS,CUIS_SESSION_TAG,extra,APP_APPLICATION,0,0,0,0)==0 &&
+                   appl_find("SECOND")== (short)b.client_id);
+    while(appl_search(mode,name,&type,&found)) {
+        mode=APP_NEXT; GEM_TEST_CHECK(++visits<=32767);
+        if(found==id) seen|=4;
+        if(found==(short)b.client_id) seen|=8;
+    }
+    GEM_TEST_CHECK(seen==15);
     GEM_TEST_CHECK(appl_write((short)b.client_id,16,data)==1 && data[1]==32766);
     GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_READ,extra,(uintptr_t)out,16,0,(uintptr_t)&sender,0)==16 &&
-                   sender==id && out[1]==id && out[3]==123 && out[4]==456);
+                   sender==id && out[1]==32766 && out[3]==123 && out[4]==456);
     GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_WRITE,primary,(uintptr_t)data,16,0,(UQUAD)extra+1,0)==16);
     GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_READ,primary,(uintptr_t)out,16,0,(uintptr_t)&sender,0)==16 &&
                    sender==(LONG)b.client_id && out[3]==123);
     GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_END,extra,0,0,0,0,0)==0 &&
                    raw(CUIS_SERVICE_CLASS,CUIS_SESSION_QUERY,primary,0,0,0,0,0)==0);
     GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_PEER_QUERY,primary,extra,CUIS_PEER_IDENTITY,(uintptr_t)&b,16,0)==EFILNF);
+    GEM_TEST_CHECK(appl_find("SECOND")==-1);
     GEM_TEST_CHECK(PROC(0x154,(WORD)-8,(uintptr_t)&again,sizeof(again),0)==0 &&
                    again.pid==process.pid && again.number_low==process.number_low && again.number_high==process.number_high);
     GEM_TEST_CHECK(appl_find((const char *)(uintptr_t)(0xffff0000UL|(UWORD)pid))==id && appl_yield()==1);
+    /* Exercise the opposite retirement order: explicit survives default. */
+    extra=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,CUIS_SESSION_NEW,0,0,0,0,0);
+    GEM_TEST_CHECK(extra>primary && appl_exit()==1);
+    peer=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0,0,0);
+    GEM_TEST_CHECK(peer>extra && raw(CUIS_SERVICE_CLASS,CUIS_SESSION_QUERY,extra,0,0,0,0,0)==0);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_END,peer,0,0,0,0,0)==0 &&
+                   raw(CUIS_SERVICE_CLASS,CUIS_SESSION_END,extra,0,0,0,0,0)==0);
+    *idp=appl_init(); GEM_TEST_CHECK(*idp>id);
     { static const char text[]="native same-PROCESS two-client identity/routing/retirement: verified\r\n";
       (void)PROC(0x40,1,sizeof(text)-1,(uintptr_t)text,0); }
     return 0;
@@ -88,7 +109,7 @@ int main(int argc, char **argv, char **envp)
         return gem_launch_child(globals,argc,argv,envp);
     if (argc > 1 && argv[1][0] == 'n') return 0x1234;
     if (argc == 1) {
-        GEM_TEST_CHECK(two_client_identity(id,pid)==0);
+        GEM_TEST_CHECK(two_client_identity(&id,pid)==0 && mt_appl_init(globals)==id);
         GEM_TEST_CHECK(menu_register(id+1,"Wrong identity") == -1);
         GEM_TEST_CHECK(menu_register(REG_NEWNAME,"ACCTEST ") == 0);
         GEM_TEST_CHECK(appl_find("ACCTEST ") == id);

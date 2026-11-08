@@ -745,7 +745,7 @@ static void background_remove(CUIS_CLIENT *client)
     }
 }
 
-static CUIS_CLIENT **find_owner(PD *owner)
+static CUIS_CLIENT **find_any_owner(PD *owner)
 {
     CUIS_CLIENT **link;
     for (link = &clients; *link && (*link)->owner != owner;
@@ -753,8 +753,19 @@ static CUIS_CLIENT **find_owner(PD *owner)
     return link;
 }
 
+/* Implicit GUI operations bind only the default endpoint. Explicit survivors
+ * must never silently become the default after SESSION_END. PROCESS cleanup
+ * deliberately uses find_any_owner() to retire every endpoint. */
+static CUIS_CLIENT **find_owner(PD *owner)
+{
+    CUIS_CLIENT **link;
+    for (link=&clients; *link && ((*link)->owner!=owner || (*link)->explicit_client);
+         link=&(*link)->next) ;
+    return link;
+}
+
 /* An endpoint handle authenticates a GUI operation within the current PROCESS.
- * The default implicit window/input binding remains the first client; explicit
+ * The default implicit window/input binding remains the default client; explicit
  * peer/stream/session operations may address additional clients. */
 static CUIS_CLIENT *owned_client(UQUAD handle)
 {
@@ -1253,7 +1264,7 @@ void cuis_process_exit(PD *owner)
         damage_windows(); cuis_pointer_sync();
         cuis_input_unlock(flags);
     }
-    while ((client=*find_owner(owner))!=NULL) session_exit_client(client);
+    while ((client=*find_any_owner(owner))!=NULL) session_exit_client(client);
 }
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -1621,7 +1632,7 @@ LONG cuis_entry_service(ULONG function, UQUAD session, UQUAD slot, UQUAD peer, U
 /* Labels are opaque bytes. Filename/GEM naming policy belongs to libaes. */
 LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
-    CUIS_CLIENT *client = *find_owner(run), *peer, *found = NULL;
+    CUIS_CLIENT *client = function==CUIS_SESSION_LABEL ? owned_client(a) : *find_owner(run), *peer, *found = NULL;
     UBYTE label[CUIS_LABEL_MAX];
     if (!client) return EACCDN;
     if (function == CUIS_LABEL_FIND) {
@@ -1692,8 +1703,14 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
             result = E_OK;
         }
     } else if (function != CUIS_PEER_QUERY) result = EINVFN;
-    else if (field > CUIS_PEER_IDENTITY || handle > 0x7fffffffULL || bytes > CUIS_LABEL_MAX) result = EINVAL;
-    else if (field == CUIS_PEER_BACKGROUND || field == CUIS_PEER_ACTIVE) {
+    else if (field > CUIS_PEER_HANDLE || handle > 0x7fffffffULL || bytes > CUIS_LABEL_MAX) result = EINVAL;
+    else if (field == CUIS_PEER_HANDLE) {
+        if (!handle || handle>32767 || address || bytes) result=EINVAL;
+        else {
+            for (peer=clients; peer; peer=peer->next)
+                if (peer->aes_id==handle) { result=(LONG)peer->handle; break; }
+        }
+    } else if (field == CUIS_PEER_BACKGROUND || field == CUIS_PEER_ACTIVE) {
         if (handle || address || bytes) result = EINVAL;
         else {
             selected = field == CUIS_PEER_BACKGROUND ? background_front : console_owner ? NULL :

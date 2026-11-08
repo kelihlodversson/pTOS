@@ -41,6 +41,15 @@ static int client_identity_checks(void)
     CHECK(cuis_service(CUIS_SESSION_END,a)==0 && cuis_service(CUIS_SESSION_QUERY,replacement)==0);
     CHECK(cuis_stream_service(CUIS_STREAM_WRITE,replacement,0x10000,16,0,(ULONG)replacement+1)==16 &&
           cuis_stream_service(CUIS_STREAM_READ,replacement,0x20000,16,0,0x1000)==16 && copied[0]==(LONG)next.client_id);
+    /* A surviving explicit endpoint does not become the implicit default. */
+    CHECK(!*find_owner(run) && *find_any_owner(run)==find_handle(replacement));
+    a=cuis_service(CUIS_SESSION_START,0);
+    CHECK(a>replacement && !find_handle(a)->explicit_client &&
+          *find_owner(run)==find_handle(a) && cuis_service(CUIS_SESSION_START,0)==a);
+    CHECK(cuis_peer_service(CUIS_PEER_QUERY,a,next.client_id,CUIS_PEER_HANDLE,0,0)==replacement);
+    CHECK(cuis_peer_service(CUIS_PEER_QUERY,a,old_sender,CUIS_PEER_HANDLE,0,0)==EFILNF);
+    CHECK(cuis_peer_service(CUIS_PEER_QUERY,a,0,CUIS_PEER_HANDLE,0,0)==EINVAL);
+    CHECK(cuis_peer_service(CUIS_PEER_QUERY,a,next.client_id,CUIS_PEER_HANDLE,1,0)==EINVAL);
     cuis_process_exit(&first); cuis_process_exit(&first);
     CHECK(!cuis_session_count() && process_references==references && allocations==frees);
     /* Exhaustion is fail-closed, with no handle, reference or allocation change. */

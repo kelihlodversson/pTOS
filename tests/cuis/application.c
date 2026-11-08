@@ -25,6 +25,7 @@ static ULONG published_tag;
 static ULONG client_id = 7;
 static BOOL shared_process_peer;
 static LONG last_message_peer;
+static ULONG peer_queries, peer_enumerations;
 #define SIBLING_HANDLE 2147483601L
 static char published_label[8];
 static const char *executable_name = "GemTest.Prg";
@@ -197,10 +198,16 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (fn == CUIS_SESSION_TAG) { published_tag = (ULONG)b; return E_OK; }
     if (fn == CUIS_PEER_NEXT) {
+        peer_enumerations++;
         if (b == ~0ULL || b < (UQUAD)handle) return handle;
         return shared_process_peer && b < SIBLING_HANDLE ? SIBLING_HANDLE : EFILNF;
     }
     if (fn == CUIS_PEER_QUERY) {
+        peer_queries++;
+        if (c == CUIS_PEER_HANDLE) {
+            if (b == client_id) return handle;
+            return shared_process_peer && b == 41 ? SIBLING_HANDLE : EFILNF;
+        }
         if (c == CUIS_PEER_BACKGROUND) return EFILNF;
         if (c == CUIS_PEER_ACTIVE) return active_peer;
         if (b != (UQUAD)handle && !(shared_process_peer && b == SIBLING_HANDLE)) return EFILNF;
@@ -451,10 +458,8 @@ static int child_message_checks(void)
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
-        expected[1]=7; /* This ordinary appl_write is authenticated as the AES client. */
         CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,expected) == 1);
         CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,expected,16) && !pipe_count);
-        expected[1]=0; /* Actual generic child notifications below retain system sender zero. */
         CHECK(appl_write(7,16,forged) == 1);
         stream_only_wakes = 1;
         /* Filtering an internal message must preserve the original timer. */
@@ -1467,9 +1472,13 @@ int main(void)
         CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && found == 42);
         CHECK(appl_search(APP_NEXT,name,&type,&found) == 1 && found == 41 &&
               !__builtin_memcmp(name,"SIBLING ",8));
+        peer_queries=peer_enumerations=0;
         CHECK(appl_control(41,APC_TOP,NULL) == 1 && active_peer == SIBLING_HANDLE);
+        CHECK(peer_queries==1 && peer_enumerations==0);
+        peer_queries=peer_enumerations=0;
         last_message_peer = 0;
         CHECK(appl_write(41,16,message) == 1 && last_message_peer == SIBLING_HANDLE);
+        CHECK(peer_queries==1 && peer_enumerations==0);
         CHECK(appl_write(7,16,message) == 0 && appl_control(7,APC_TOP,NULL) == 0);
         CHECK(appl_exit() == 1);
         shared_process_peer = FALSE; client_id = 7;
