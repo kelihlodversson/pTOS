@@ -84,9 +84,9 @@
 __extension__                                                   \
 ({                                                              \
     long _rc;                                                   \
-    FS_ERROR_STATE _saved;                                             \
+    FS_ERROR_SCOPE _saved;                                             \
                                                                 \
-    _saved = *fs_error_current();                     \
+    fs_error_scope_save(_saved);                     \
     if (setjmp(errbuf))                                         \
     {                                                           \
         _rc = errcode;                                          \
@@ -94,7 +94,7 @@ __extension__                                                   \
     }                                                           \
     else                                                        \
         _rc = (call);                                           \
-    *fs_error_current() = _saved;                     \
+    fs_error_scope_restore(_saved);                     \
     _rc;                                                        \
 })
 

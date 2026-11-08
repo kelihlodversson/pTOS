@@ -16,8 +16,12 @@
 #if CONF_WITH_NATIVE_SCHED
 PD *run; /* modeled CPU slot: this fixture does not link the dispatcher */
 #endif
+#if CONF_WITH_NATIVE_SCHED
 static FS_ERROR_STATE fixture_error;
 FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred rollback:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 
 /* Static, non-PIE blocks fit in the GEMDOS basepage's 32-bit pointers. */
