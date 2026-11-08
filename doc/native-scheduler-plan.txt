@@ -341,3 +341,15 @@ argument record instead of global staging. Local native x32/ARM/m68k suites
 pass 23/0, 27/0 and 26/0 respectively, each with five shutdown checks. This is
 an independently verified B1c increment, not completion of loaded run/disk-error
 or callback-state conversion, and not authority to resume a captured IRQ copy.
+
+K1 loaded state / K2 gate
+--------------------------
+CPU storage now owns the exported run ABI slot, complete loaded disk-error
+record and callback/watchdog execution chain. Launchers, callbacks and syscall
+returns restore their enclosing error scope before reclamation/cancellation.
+Loader error backups are lexical. Backend switches reject callback/leaf frames.
+m68k capture rejects unknown/mismatched hardware FPU cookies and all extended
+exception frames. See native-interrupt-frames.txt for lexical m68k fault-frame ownership and the
+remaining copied-frame restart, outer-return depth and SMP selection gates.
+K1 covers current boot-CPU cooperative loaded execution; B2/C remain disabled. native-blocking-contract.txt documents #929's
+required blocking contract without adding a descriptor engine or public API.

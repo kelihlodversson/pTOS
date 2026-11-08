@@ -268,3 +268,105 @@ and callback/watchdog/error scratch still need CPU/execution ownership across
 all entry paths, including legacy/kernel launches. Global compatibility slots
 cannot simply be renamed into SMP support. B2/C remain gated on those audits,
 complete restore eligibility and safe user-return synchronization.
+
+K1 loaded execution scopes (supersedes the remaining-B1c inventory above)
+------------------------------------------------------------------------
+The selected CPU owns FS_ERROR_STATE: the loaded disk-error jump target,
+errcode, errdrv and rwerr. Each backend snapshots/restores the entire record,
+not merely the jump registers. Root clears every field before installing its
+own fail-stop target. Scoped disk calls and teardown restore the entire
+surrounding record on ordinary and exceptional return. Exit finalization still
+fails stop if a cleanup callback escapes; this is not filesystem transaction
+recovery and does not remove the documented bounded-close limitation.
+
+Each synchronous launcher now retains an immutable copy of its enclosing error
+scope before setjmp. After longjmp it restores that scope before reclaiming the
+child syscall stack or invoking finalizers. The enclosing scope is never
+modified across setjmp/longjmp. Native syscall return similarly restores its
+caller's scope before the cancellation checkpoint. Callback frames save/restore
+their invoking error scope before releasing their private stack. Loader image
+and error backup storage are invocation-local; successful loading uninstalls its
+local target before later admission, cleanup or nested launch.
+
+The frozen OSHEADER &run ABI is an alias of the first, offset-asserted PROCESS
+slot in the boot CPU record. There is no second mutable run mirror. All existing
+C/assembly consumers retain their symbol and pointer representation. Classic
+non-native kernels retain the original standalone slot. This is a boot-CPU
+compatibility contract, NOT CPU discovery, migration or SMP: additional CPUs
+must select their own current execution, while the system-wide legacy TOS ABI
+requires a separately specified compatibility policy.
+
+The loaded callback frame chain, invocation depth and token clock belong to the
+selected CPU. Watchdog deadlines belong to their retained callback frames;
+nested frames inherit the earliest deadline. Exhausted return tokens refuse
+invocation without wrap. Work-hook registration is shared service metadata,
+not a suspended execution. A callback cannot block/migrate; backend switching
+fails stop with a callback frame or leaf exclusion active. IRQ capture excludes
+callbacks even when their owner equals the scheduled PROCESS. Teardown refuses
+to retire an owner while a callback still references its live continuation.
+
+m68k exception/FPU eligibility audit
+------------------------------------
+Capture and restore eligibility are deliberately distinct. No copied exception
+frame is installed by these changes. Original device frames alone drive RTE.
+Header inspection reads only SR and format/vector before admission. The exact
+72-byte format-0 capture requires a supported model, a hardware interrupt vector
+(24..255), a matching stack top/root and a user, non-master frame. Every other
+format is rejected BEFORE copying any extended payload:
+
+  0: short interrupt frame; diagnostic capture only, never copied-frame restore.
+  1: throwaway/master interrupt state; not an independent user continuation.
+  2/3: instruction/coprocessor effective-address state; no copied-return decoder.
+  4: 060 access-error state; precise fault replay is owned by the fault handler.
+  7: 040 access-error/writeback state; replay may perform outstanding writes.
+  9: coprocessor/internal state; not interchangeable with a short interrupt.
+  A/B: 030 bus pipeline/data-cycle state; RTE may restart the original cycle.
+  5/6/8/C..F: not accepted by the supported MMU interrupt backend, including
+             formats belonging to other CPU generations or reserved formats.
+
+The existing userfault.c decoders for 030 A/B, 040 7 and 060 4 retain their
+original exception-stack ownership and restart/writeback decisions. They do not
+authorize detaching/copying those frames. Cross-check: Linux v6.12
+arch/m68k/include/asm/traps.h defines distinct fmt2/3/4/7/9/A/B payloads; no
+payload length is guessed or copied by the scheduler from that classification.
+
+FSAVE admission uses the actual processor.S hardware cookie: no FPU; 030 with
+coprocessor 68881/68882 (0x20000/0x40000/0x60000); 040 internal (0x80000); or
+060 internal (0x100000). Memory-mapped SFP004, unknown cookies and mismatched
+CPU/FPU pairs are rejected before executing FSAVE. Existing backend save/restore
+immediately reinstates the original FPU; opaque null/idle/busy images remain
+model-tagged diagnostics, not a validated remote restart ABI. FSAVE header and
+pending-FPU-exception eligibility, TC/SRP/control restoration, frame generation,
+mapping stability and exception-stack acknowledgement must be proven before B2.
+Nonzero FPIAR evidence remains emulator-specific; native fastcall is unverified.
+
+B2 readiness assessment
+------------------------
+K1 completes the loaded run/error/callback/watchdog ownership conversion for
+current single-CPU cooperative dispatch. m68k user fault and lazy-busfault entry
+now pass the original exception frame by the kernel ABI, retaining it on that
+invocation's stack. User fault classification uses that frame's vector and live
+USP, never reusable proc_enum/proc_usp staging. Those low-memory globals remain
+machine panic diagnostics only. ARM already passes its frame/control state as
+invocation arguments. x32 loaded GS swap state is now in its per-CPU entry record;
+compile-time assertions preserve assembly's kernel_rsp/user_rsp offsets.
+
+Legacy VDI/AES mask scopes also use CPU-owned flags and explicit active ownership
+on native kernels. Nesting/unmatched release fail stop; a live scope excludes
+backend switch and user IRQ capture. ARM mouse IRQ movement now uses its own
+lexical CPSR save/restore instead of claiming a scope it never released. Classic
+non-native implementations retain their ABI and original save-slot behavior.
+These scopes are not owner locks or SMP synchronization.
+
+K1 does not establish copied-frame restartability. ARM exception/VFP pending-state
+eligibility and x32 syscall/TSS/GS nesting still need outer-user-return depth and
+owner checks before B2. Hardware descriptor/banked exception stacks belong to the
+single boot CPU; architecture CPU selection and legacy TOS ABI policy must be
+specified before activating another CPU. Callback/filesystem kernel execution
+remains non-preemptible. Capture validity expires at verified root handoff.
+
+There is no captured-frame restore, deferred IRQ rescheduling, timer dispatch
+or SMP. Before B2, add owner-protected generations/pins to raw join/PROCESS and
+device predicate waits, validate restored frames natively on EACH backend, and
+prove exception-stack acknowledgement before any stack reuse. No raw callback
+predicate is upgraded to concurrent wake safety by this ownership increment.
