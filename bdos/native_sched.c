@@ -718,17 +718,19 @@ LONG ksched_result_wait(const KSCHED_ADMISSION *admission,LONG *results,UWORD co
     error=ksched_waiter_attach(admission,actor,tid,execution,count,&waiter);
     if (error) { native_sched_irq_restore(flags); return error; }
     while (!ksched_waiter_ready(ksched_waiter_context(&waiter))) {
-        if (ksched_wait_cancelable(ksched_waiter_ready,ksched_waiter_context(&waiter))==KSCHED_WAIT_CANCELLED) {
-            cancelled=TRUE; break;
-        }
+        KSCHED_WAIT_RESULT wait=ksched_wait_cancelable(ksched_waiter_ready,ksched_waiter_context(&waiter));
+        if (wait==KSCHED_WAIT_CANCELLED) { cancelled=TRUE; break; }
+        if (wait==KSCHED_WAIT_UNMANAGED) { error=EINVFN; break; }
     }
     /* Even an already-complete result cannot outrun pending cancellation. */
     if (ksched_cancellation_pending()) cancelled=TRUE;
     /* Revalidate the actual restored execution, not just captured credentials. */
-    if (cancelled || ksched_exit_thread(run)!=thread || kthread_process(thread)!=actor ||
-        kthread_tid(thread)!=tid || ksched_context_id()!=execution)
-        error=EACCDN;
-    else error=ksched_waiter_take(&waiter,actor,tid,execution,results,count);
+    if (error==E_OK) {
+        if (cancelled || ksched_exit_thread(run)!=thread || kthread_process(thread)!=actor ||
+            kthread_tid(thread)!=tid || ksched_context_id()!=execution)
+            error=EACCDN;
+        else error=ksched_waiter_take(&waiter,actor,tid,execution,results,count);
+    }
     ksched_waiter_detach(&waiter);
     native_sched_irq_restore(flags);
 #if CONF_WITH_PTERMGRP
@@ -1000,6 +1002,10 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
 {
     if (scheduler.current || (task->state != TASK_DONE && task->state != TASK_ZOMBIE && task->state != TASK_DRAINING))
         return FALSE;
+    /* Terminal task predicates must be unpublished before dropping the
+     * kernel operation that supplied their argument or reclaiming its stack. */
+    task->ready=NULL;
+    task->argument=NULL;
     if (task->thread) {
         ksched_waiter_retire(task->process,kthread_tid(task->thread),task->execution.identity);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST

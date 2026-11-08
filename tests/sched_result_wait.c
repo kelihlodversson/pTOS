@@ -30,7 +30,7 @@ static PD process_pd, kernel_pd, nested_pd;
 static KPROC process={&process_pd,1};
 static KTHREAD thread={&process,17};
 static KERNEL_TASK task;
-static BOOL pending;
+static BOOL pending, lose_context;
 static unsigned allocations, frees, exits;
 static jmp_buf terminated;
 PD *run;
@@ -40,7 +40,13 @@ BOOL kthread_is_executing(const KTHREAD *t) { return t==&thread; }
 BOOL kproc_group_status(const KPROC *p,UWORD *status) { assert(p==&process); if(status)*status=61; return pending; }
 KPROC *kproc_retain_live(KPROC *p) { assert(p==&process); p->refs++; return p; }
 void kproc_release(KPROC *p) { assert(p==&process && p->refs>1); p->refs--; }
-PD *kproc_live_pd(const KPROC *p) { assert(p==&process); return p->pd; }
+PD *kproc_live_pd(const KPROC *p)
+{
+    assert(p==&process);
+    /* Fault-model an invalidated managed context before block admission. */
+    if(lose_context) { lose_context=FALSE; scheduler.current=NULL; }
+    return p->pd;
+}
 void *kalloc(ULONG bytes) { void *p=malloc(bytes); if(p)allocations++; return p; }
 void kfree(void *p) { assert(p); frees++; free(p); }
 void panic(const char *s,...) { (void)s; abort(); }
@@ -71,6 +77,10 @@ int main(void)
     run=&nested_pd; pending=TRUE;
     assert(ksched_result_wait(&admission,&output,1)==EINVFN && !exits && output==-7 && irq_flags==0x200);
     run=&process_pd; pending=FALSE;
+    lose_context=TRUE;
+    assert(ksched_result_wait(&admission,&output,1)==EINVFN && output==-7 && irq_flags==0x200 && process.refs==2);
+    assert(!scheduler.current && allocations==frees+1);
+    scheduler.current=&task;
     assert(ksched_admission_complete(&admission,0,47));
     assert(ksched_result_wait(&admission,&output,1)==E_OK && output==47 && irq_flags==0x200);
     output=-7;

@@ -171,8 +171,10 @@ int main(void)
         CHECK(ksched_admission_create(NULL,1,&independent)==E_OK &&
               ksched_admission_retain(&independent,&grown->completion));
         grown->result_slot=0; grown->result=95; grown->state=TASK_DONE;
+        grown->ready=child_ready; grown->argument=&wait;
         scheduler.current=NULL;
-        CHECK(reap_finished_on_root(grown) && grown->result_published && !grown->completion.identity &&
+        CHECK(reap_finished_on_root(grown) && !grown->ready && !grown->argument &&
+              grown->result_published && !grown->completion.identity &&
               ksched_admission_take(&independent,&result,1)==E_OK && result==95);
         ksched_admission_release(&independent);
         scheduler.current=table;
