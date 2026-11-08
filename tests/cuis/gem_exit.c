@@ -71,19 +71,22 @@ int gem_exit_checks(short *global)
     char tail[3] = { 1,'n',0 };
     short message[8], pid, earlier, a, b, c, d;
     unsigned i;
-    static const char roles[] = { 'n','e','f' };
-    static const short results[] = { 0x1234,0x5678,0x0400 };
+    static const char roles[] = { 'n','e','f','t' };
+    static const short results[] = { 0x1234,0x5678,0x0400,-1 };
+    static const unsigned short waited[] = { 0x34,0x78,0x0400,0xff };
     VERIFY(appl_getinfo(AES_MESSAGE,&a,&b,&c,&d) == 1 && (a & 0x20) && !b && !c && !d);
     VERIFY(!shel_write(SWM_LAUNCH,0,2,"APPS\\GEMCHILD.PRG",tail));
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\ABSENT.TOS",tail));
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < sizeof(roles); i++) {
         tail[1] = roles[i];
         /* Mode 0 infers GEM from the extension; wisgr is ignored. */
         pid = i ? mt_shel_write(SWM_LAUNCH,99,CL_NORMAL,"APPS\\GEMCHILD.APP",tail,global) :
                   shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail);
         VERIFY(pid > 0 && pid != process(0x10b,0,0,0,0));
         VERIFY((receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,results[i]));
-        VERIFY(process(0x13a,pid,1,0,0) == -33); /* Only the notified child was reaped. */
+        /* CH_EXIT does not consume the independent public PROCESS zombie. */
+        VERIFY(process(0x13a,pid,1,0,0) == (int32_t)(((uint32_t)pid << 16) | waited[i]));
+        VERIFY(process(0x13a,pid,1,0,0) == -33); /* One public reap. */
         VERIFY(receive(message,0,global) == MU_TIMER); /* Exactly one notification. */
     }
     tail[1] = 'n';
@@ -92,17 +95,24 @@ int gem_exit_checks(short *global)
     VERIFY(pid > 0 && pid != process(0x10b,0,0,0,0));
     VERIFY(receive(message,20,global) == MU_TIMER);
     VERIFY(process(0x13a,pid,0,0,0) == (int32_t)(((uint32_t)pid << 16) | 0x34));
-    /* Explicitly collecting a shell child retains its full-word GEM notice. */
-    pid = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail);
-    VERIFY(pid > 0 && process(0x13a,pid,0,0,0) == (int32_t)(((uint32_t)pid << 16) | 0x34));
-    VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,0x1234));
-    VERIFY(receive(message,0,global) == MU_TIMER);
+    /* The opposite order retains full normal words and fault encoding too. */
+    for (i = 0; i < sizeof(roles); i++) {
+        tail[1] = roles[i];
+        pid = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail);
+        VERIFY(pid > 0 && process(0x13a,pid,0,0,0) == (int32_t)(((uint32_t)pid << 16) | waited[i]));
+        VERIFY(process(0x13a,pid,1,0,0) == -33);
+        VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,results[i]));
+        VERIFY(receive(message,0,global) == MU_TIMER);
+    }
+    tail[1] = 'n';
     /* A fixed ET_EXEC without relocation tables must keep its link address. */
     pid = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\FIXED.PRG",tail);
     VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,0x2468));
+    VERIFY(process(0x13a,pid,1,0,0) == (int32_t)(((uint32_t)pid << 16) | 0x68));
     /* The same fixed executable can run without an AES session as text. */
     pid = shel_write(SWM_LAUNCH,TOSAPP,CL_NORMAL,"APPS\\FIXED.TOS",tail);
     VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,0x2468));
+    VERIFY(process(0x13a,pid,1,0,0) == (int32_t)(((uint32_t)pid << 16) | 0x68));
     /* Completion/reaping of A before launching B must preserve exit FIFO. */
     tail[1] = 'e';
     earlier = shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail);
