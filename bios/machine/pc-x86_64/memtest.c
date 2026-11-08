@@ -2502,6 +2502,9 @@ static void test_ordinary_observation(void)
         ordinary_observation.enabled=FALSE;
         if (mode>=7 && mode!=8) {
             PROCESS_COMPLETION parent_done, child_done;
+            /* A2c returns the synchronous attachment when its parent completes.
+             * Drive independent work through the existing cooperative entry. */
+            settle_scheduler();
             CHECK(process_observer_ready(ordinary_observation.observer) &&
                   process_observer_snapshot(ordinary_observation.observer,&child_done) &&
                   child_done.state==PROCESS_COMPLETED && child_done.kind==PROCESS_COMPLETION_NORMAL &&
