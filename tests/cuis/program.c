@@ -85,18 +85,18 @@ static int key_checks(LONG window)
 #endif
     CHECK(probe_window_unfocus(window) == E_OK && probe_window_focus(window) == E_OK);
     CHECK(probe_key_read(window, (ULONG *)0) == 0);
-    CHECK(probe_key_wait(window, 0) == 0);
-    CHECK(probe_key_wait(window, -2) == EINVAL);
-    CHECK(probe_key_wait(window, 1) == 0);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 0);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, -2) == EINVAL);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 1) == 0);
     CHECK(probe_update_begin(window) == E_OK);
-    CHECK(probe_key_wait(window, 10) == EACCDN);
-    CHECK(probe_key_wait(window, 0) == 0);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 10) == EACCDN);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 0);
     CHECK(probe_update_end(window) == E_OK);
 #if CONF_WITH_X86_64_MEMTEST
     /* The boot fixture produces one translated keyboard event from the next
      * real PIT IRQ only after this call reaches its atomic sleep path. */
-    CHECK(probe_key_wait(window, -1) == 1);
-    CHECK(probe_key_wait(window, 0) == 1);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, -1) == 1);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 1);
     CHECK(probe_key_read(window, (ULONG *)0) == EIMBA);
     CHECK(probe_key_read(window, (ULONG *)(uintptr_t)raw_key_read) == EIMBA);
     CHECK(raw_key_read(window, (1ULL << 32) | (uintptr_t)&key) == EIMBA);
@@ -225,7 +225,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_message_read(owner, NULL, NULL, NULL, NULL, NULL) == EACCDN);
         CHECK(probe_message_send(owner, 1, 2, 3, 4) == EACCDN);
         CHECK(probe_key_read(parent_window, (ULONG *)0) == EACCDN);
-        CHECK(probe_key_wait(parent_window, 0) == EACCDN);
+        CHECK(probe_event_wait(parent_window, CUIS_EVENT_KEY, 0) == EACCDN);
         CHECK(probe_event_wait(parent_window, CUIS_EVENT_POINTER, 0) == EACCDN);
         CHECK(probe_pointer_read(parent_window, (LONG *)0, (LONG *)0, (ULONG *)0, (ULONG *)0) == EACCDN);
     }
