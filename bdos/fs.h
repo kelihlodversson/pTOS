@@ -651,7 +651,7 @@ FTAB *getpfsslot(int h);
 #define CL_KEEP 0x0008      /* flush file metadata/data, keep its OFD linked */
 #define CL_FULL 0x0004      /* even though it's a directory, full close */
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
 LONG fs_set_process_directory(char *path, PD *process);
 #endif
 
