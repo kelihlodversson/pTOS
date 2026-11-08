@@ -57,18 +57,14 @@ static inline LONG probe_window_lower(LONG handle)
     return probe_call(CUIS_WINDOW_LOWER, handle);
 }
 
-static inline LONG probe_update_begin(LONG window)
+
+static inline LONG probe_display_lock(LONG session, LONG acquire, LONG block)
 {
-    return probe_call(CUIS_UPDATE_BEGIN, window);
+    return probe_call6(CUIS_DISPLAY_LOCK,session,acquire,block,0,0,0);
 }
-static inline LONG probe_update_end(LONG window)
+static inline LONG probe_window_region(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height)
 {
-    return probe_call(CUIS_UPDATE_END, window);
-}
-static inline LONG probe_window_clip(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height)
-{
-    return probe_call6(CUIS_WINDOW_CLIP, (QUAD)window, index,
-                      (uintptr_t)x, (uintptr_t)y, (uintptr_t)width, (uintptr_t)height);
+    return probe_call6(CUIS_WINDOW_REGION,window,index,(uintptr_t)x,(uintptr_t)y,(uintptr_t)width,(uintptr_t)height);
 }
 
 static inline LONG probe_window_focused(LONG window)
