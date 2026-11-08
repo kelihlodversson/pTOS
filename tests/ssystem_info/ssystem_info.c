@@ -66,8 +66,11 @@ void test_ssystem_info(void)
         length = Ssystem(-7, (long)big, (long)sizeof(big));
         ptest_assert_msg(length > 0 && length <= 32 && big[length] == 0,
                          "PROCESS basename is bounded and terminated");
-        ptest_assert_msg(!strchr(big, '/') && !strchr(big, '\\') && !strchr(big, ':'),
-                         "PROCESS name contains no directory");
+        if (length > 0 && length <= 32 && big[length] == 0)
+            ptest_assert_msg(!strchr(big, '/') && !strchr(big, '\\') && !strchr(big, ':'),
+                             "PROCESS name contains no directory");
+        ptest_assert_msg(Ssystem(-7, -1L, 33L) == EIMBA,
+                         "wrapping PROCESS metadata destination is refused");
         memset(big, 0x5a, sizeof(big));
         ptest_assert_msg(Ssystem(-7, (long)big, length) == ERANGE && big[0] == 0x5a,
                          "short PROCESS name buffer is untouched");

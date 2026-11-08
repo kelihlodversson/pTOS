@@ -683,10 +683,10 @@ static LONG ssystem_procname(long address, long capacity)
     kproc_release(process);
     if (length < 0) return length;
     if (capacity <= length) return ERANGE;
+    if (!address || (uintptr_t)address > ~(uintptr_t)0 - ((ULONG)length + 1)) return EIMBA;
 #if CONF_WITH_USER_ASPACE
     if (!kproc_copy_to_user((UQUAD)(uintptr_t)address, name, (ULONG)length + 1)) return EIMBA;
 #else
-    if (!address) return EIMBA;
     memcpy((void *)address, name, (ULONG)length + 1);
 #endif
     return length;
