@@ -1373,15 +1373,22 @@ WORD hndl_msg(void)
             shutdown_pending = FALSE; shutdown_token = 0;
         }
         break;
-    case CH_EXIT: /* Refresh listings while keeping windows and state. */
-#if CONF_WITH_X32_DESKTOP_TEST
+    case CH_EXIT: /* Parent consumes its public completion, then refreshes. */
         {
-            char message[80];
-            extern void desk_test_record(const char *text);
-            sprintf(message,"x32 desktop CH_EXIT %d %04x\r\n",G.g_rmsg[3],(UWORD)G.g_rmsg[4]);
-            desk_test_record(message);
-        }
+            LONG waited = desk_reap_child(G.g_rmsg[3]);
+#if CONF_WITH_X32_DESKTOP_TEST
+            {
+                char message[80];
+                extern void desk_test_record(const char *text);
+                sprintf(message,"x32 desktop CH_EXIT %d %04x\r\n",G.g_rmsg[3],(UWORD)G.g_rmsg[4]);
+                desk_test_record(message);
+                sprintf(message,"x32 desktop WAIT %d %08lx\r\n",G.g_rmsg[3],(ULONG)waited);
+                desk_test_record(message);
+            }
+#else
+            (void)waited;
 #endif
+        }
         desk_refresh_request();
         break;
 #endif

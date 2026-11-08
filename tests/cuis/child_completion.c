@@ -109,7 +109,9 @@ static int child_completion_checks(void)
     client->stream_bytes = CUIS_STREAM_BYTES-1;
     CHECK(CHILD_P(child_session,status,0x10000,16) == EAGAIN && child_reaps == 1 && CHILD_R(child_session) == status);
     client->stream_bytes = 16;
-    CHECK(CHILD_P(child_session,status,0x10000,16) == E_OK && child_reaps == 2);
+    CHECK(CHILD_P(child_session,status,0x10000,16) == E_OK && child_reaps == 1);
+    CHECK(!test_children[0].reaped && ksched_wait(10,1,0) == status && child_reaps == 2);
+    CHECK(ksched_wait(10,1,0) == EFILNF && child_reaps == 2);
     CHECK(CHILD_R(child_session) == 0 && !cuis_child_pid_reserved(10));
     CHECK(cuis_stream_service(CUIS_STREAM_READ,child_session,0x20000,32,0,0) == 32);
     CHECK(stream_output[0] == 0x31 && stream_output[31] == 0x31);
@@ -148,7 +150,7 @@ static int child_completion_checks(void)
     /* Replacing the same PID/status while copying must invalidate the old token. */
     child_copy_mode = 1;
     CHECK(CHILD_P(child_session,status,0x10000,16) == EACCDN && CHILD_R(child_session) == status);
-    CHECK(CHILD_P(child_session,status,0x10000,16) == E_OK && child_reaps == 4);
+    CHECK(CHILD_P(child_session,status,0x10000,16) == E_OK && child_reaps == 2);
     test_children[0].reaped = test_children[0].started = FALSE;
     child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
     CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(10)) == E_OK);

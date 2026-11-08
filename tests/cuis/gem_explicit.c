@@ -59,6 +59,7 @@ int gem_explicit_checks(short *global)
             VERIFY(mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,3000,
                                  0,0,0,0,0,0,global) == MU_MESAG);
             VERIFY(message[0] == CH_EXIT && !message[1] && !message[2] && message[3] == pid && message[4] == 37);
+            VERIFY(waitpid(pid) == (int32_t)(((uint32_t)pid << 16) | 37));
         }
         VERIFY(wind_update(BEG_UPDATE|NO_BLOCK) && wind_update(END_UPDATE));
         VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
