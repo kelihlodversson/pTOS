@@ -32,6 +32,11 @@ static unsigned completion_stage;
 static PD *pending_request;
 static LONG rejection;
 
+static BOOL observer_mode, fail_observer_retain, deny_start;
+static LONG header_error, load_error, directory_error, spawn_result;
+static unsigned observer_refs, publications;
+static KPROC **observer_output;
+
 jmp_buf errbuf;
 long errcode;
 int errdrv;
@@ -82,12 +87,24 @@ void kproc_destroy(PD *p)
     CHECK(p == &image && records == 1);
     /* A close error must not jump past the remaining references. */
     CHECK(references[0] == 2 && references[1] == 1);
-    CHECK(directory_releases == 2 && dirtbl[3].use == 1 && dirtbl[4].use == 1);
+    CHECK(directory_releases == (observer_mode && load_error ? 0U : 2U) &&
+          dirtbl[3].use == 1 && dirtbl[4].use == 1);
     records--;
 }
 BOOL kproc_unlaunched(PD *p) { return p == &image && records; }
-KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
-void kproc_release(KPROC *p) { (void)p; }
+KPROC *kproc_retain(PD *p)
+{
+    if (observer_mode) {
+        CHECK(p==&image);
+        if (fail_observer_retain) { fail_observer_retain=FALSE; return NULL; }
+        observer_refs++;
+    }
+    return (KPROC *)p;
+}
+void kproc_release(KPROC *p)
+{
+    if (observer_mode && p) { CHECK(observer_refs); observer_refs--; }
+}
 BOOL kproc_begin_disposal(KPROC *p, PD **pd) { *pd = (PD *)p; return TRUE; }
 BOOL kproc_pending_completion(const KPROC *p, UWORD *status)
 {
@@ -96,6 +113,7 @@ BOOL kproc_pending_completion(const KPROC *p, UWORD *status)
     *status = 37;
     return TRUE;
 }
+void kproc_publish_observers(KPROC *p) { (void)p; }
 void kproc_complete(PD *p, UWORD status)
 {
     CHECK(fake_completion && p == &image && status == 37 && !completion_stage++);
@@ -150,14 +168,14 @@ LONG kpgmhdrld(char *path, PGMHDR01 *header, FH *handle)
 {
     memset(header,0,sizeof(*header));
     *handle = NUMSTD+2;
-    return E_OK;
+    return header_error;
 }
 LONG kpgmld(PD *p, FH handle, PGMHDR01 *header, const char *path)
 {
     CHECK(p == &image && records == 1 && handle == NUMSTD+2);
-    return E_OK;
+    return load_error;
 }
-BOOL ksched_spawn_allowed(void) { return TRUE; }
+BOOL ksched_spawn_allowed(void) { return !deny_start; }
 LONG ksched_defer(PD *p, ULONG session)
 {
     CHECK(p == &image && session == 23 && pending_request == &pending);
@@ -167,9 +185,9 @@ LONG ksched_defer(PD *p, ULONG session)
 }
 LONG fs_set_process_directory(char *directory, PD *process)
 {
-    CHECK(process == &image && !strcmp(directory,"C:\\MISSING"));
+    CHECK(process == &image && !strcmp(directory,observer_mode ? "C:\\TARGET" : "C:\\MISSING"));
     CHECK(run == &parent && pending_request == &pending);
-    return EPTHNF;
+    return observer_mode ? directory_error : EPTHNF;
 }
 void elf_set_load_into_caller(BOOL wanted) { CHECK(!wanted); }
 void proc_align_stack(PD *p) { CHECK(p == &image); }
@@ -178,7 +196,14 @@ void invalidate_instruction_cache(const UBYTE *address, ULONG length) { }
 /* Other Pexec modes must not run during this regression. */
 BOOL ksched_active(void) { abort(); }
 LONG ksched_spawn(PD *p) { abort(); }
-LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token) { abort(); }
+LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token)
+{
+    CHECK(observer_mode && p==&image && !session && !token && records==1);
+    CHECK(observer_refs==1 && observer_output && !*observer_output);
+    CHECK(references[0]==4 && references[1]==2 && dirtbl[3].use==2 && dirtbl[4].use==2);
+    publications++;
+    return spawn_result;
+}
 LONG ksched_exec(PD *p, BOOL take, LONG *result) { abort(); }
 BOOL kproc_check_launch(PD *p, PD *caller) { abort(); }
 ASPACE *kproc_user_aspace(PD *p) { abort(); }
@@ -239,6 +264,35 @@ int main(void)
     directory_releases = attempts = interrupted = invalidations = 0;
     CHECK(xexec_deferred("NEXT.PRG",tail,env,23) == rejection);
     CHECK(completion_stage == 3 && !allocations && !records);
+    observer_mode=TRUE; fake_completion=FALSE; inject_errors=0;
+    {
+        KPROC *out=NULL, *sentinel=(KPROC *)123;
+        unsigned stage;
+        CHECK(proc_exec_observe("NEXT.PRG",tail,env,NULL,NULL)==EINVAL);
+        CHECK(proc_exec_observe("NEXT.PRG",tail,env,NULL,&sentinel)==EINVAL && sentinel==(KPROC *)123);
+        for (stage=0;stage<7;stage++) {
+            LONG expected;
+            CHECK(!allocations && !records && !observer_refs && !out);
+            references[0]=2; references[1]=1; dirtbl[3].use=dirtbl[4].use=1;
+            directory_releases=attempts=interrupted=invalidations=publications=0;
+            deny_start=stage==0; header_error=stage==1?EFILNF:0;
+            load_error=stage==2?EPLFMT:0; directory_error=stage==3?EPTHNF:0;
+            fail_observer_retain=stage==4; spawn_result=stage==5?EAGAIN:123;
+            observer_output=&out;
+            expected=stage==0?EINVFN:stage==1?EFILNF:stage==2?EPLFMT:
+                     stage==3?EPTHNF:stage==4?ENSMEM:stage==5?EAGAIN:123;
+            CHECK(proc_exec_observe("NEXT.PRG",tail,env,"C:\\TARGET",&out)==expected);
+            if (stage<6) CHECK(!out && !observer_refs && !allocations && !records);
+            else {
+                CHECK(out==(KPROC *)&image && observer_refs==1 && publications==1);
+                proc_discard_scheduled(&image); /* abandon unstarted image, not an invented exit */
+                CHECK(!allocations && !records && observer_refs==1);
+                kproc_release(out); out=NULL;
+            }
+            CHECK(references[0]==2 && references[1]==1 && dirtbl[3].use==1 && dirtbl[4].use==1);
+        }
+    }
+    puts("Ordinary Pexec observer: prepared before publication, unchanged outputs, load/CWD/admission rollback: PASS");
     puts("Deferred rejection releases all references after interrupted close: PASS");
     return 0;
 }

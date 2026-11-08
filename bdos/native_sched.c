@@ -581,6 +581,13 @@ BOOL ksched_finish_exit(KPROC *process, PD *pd, UWORD status)
     BOOL final;
     if (!thread) return TRUE; /* Nested synchronous child, not this task's process. */
     final = kproc_exit_handoff_pending(process);
+    /* Fault intent belongs to this execution, never to a surviving sibling.
+     * Group exit preserves its first normal status instead of a later fault. */
+    if (final && execution_cpu.current->signal
+#if CONF_WITH_PTERMGRP
+        && !kproc_group_status(process, NULL)
+#endif
+       ) kproc_note_fault(pd, execution_cpu.current->signal);
     if (kthread_process(thread) != process || !kthread_finish_exit(thread, status))
         panic("scheduler: invalid launcher exit handoff");
     execution_cpu.current->exited = TRUE;
@@ -790,6 +797,7 @@ void ksched_fault(PD *pd, WORD signal)
 {
     KERNEL_TASK *task;
     if (!scheduler.active) {
+        kproc_note_fault(pd, signal);
 #if CONF_WITH_CUIS
         PD *parent = kproc_notification_parent(pd);
         if (parent) cuis_child_fault(parent,kproc_pid(pd),signal);
@@ -815,6 +823,7 @@ void ksched_fault(PD *pd, WORD signal)
             return;
         }
     }
+    kproc_note_fault(pd, signal); /* Nested child: no THREAD slot or live siblings. */
 #if CONF_WITH_CUIS
     /* Nested synchronous children have no task slot of their own. */
     {
@@ -861,6 +870,9 @@ static void task_entry(void)
         KERNEL_TASK *owner = completion_task(task);
         if (owner->process_completed || refused) {
             owner->state = owner->asynchronous && owner->parent ? TASK_ZOMBIE : TASK_DONE;
+            /* Status and resources are finalized; wait visibility precedes
+             * generic observer readiness. A refused launch is abandoned. */
+            kproc_publish_observers(owner->process);
 #if CONF_WITH_CUIS
             if (owner->state == TASK_ZOMBIE)
                 cuis_child_completed(owner->parent,owner->pid,

@@ -62,6 +62,7 @@ PD *kproc_notification_parent(PD *p)
     return parent_retired ? NULL : kproc_get_parent(p);
 }
 WORD kproc_pid(PD *p) { CHECK(p == &owner && owner_record); return 11; }
+void kproc_publish_observers(KPROC *p) { (void)p; }
 void kproc_complete(PD *p, UWORD status)
 {
     CHECK(p == &owner && owner_record && status == 37 && cleanup_commits == 1);

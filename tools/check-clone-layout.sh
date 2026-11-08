@@ -17,3 +17,9 @@ echo 'Clone user ABI size, offsets, pointer widths and alignment: PASS (compile 
 "$@" -ffreestanding -std=c99 -Wall -Wextra -Werror -Iinclude -Ibdos \
     -c tests/process_identity_layout.c -o "$work/process-layout.o"
 echo 'PROCESS/peer identity field sizes, offsets, packing/alignment: PASS (compile only)'
+"$@" -ffreestanding -std=c99 -Wall -Wextra -Werror -Iinclude -x c \
+    -c -o "$work/completion-layout.o" - <<'EOF'
+#include "process_completion.h"
+#include "process_exec.h"
+EOF
+echo 'PROCESS completion snapshot size/offset/alignment: PASS (compile only)'

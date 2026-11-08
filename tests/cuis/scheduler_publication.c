@@ -26,6 +26,7 @@ static KERNEL_TASK table[KSCHED_LIMIT];
 static PD parent, child, peer, kernel_controller;
 static UWORD allocations, frees, notifications;
 static BOOL fail_growth;
+static unsigned refused_disposals;
 PD *run;
 jmp_buf errbuf;
 static BOOL root_fault;
@@ -77,11 +78,14 @@ PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
 UQUAD procmem_gen(const void *p) { return p==&kernel_controller ? 1 : 2; }
 BOOL procmem_range_live(VADDR p,VADDR n) { return p==(VADDR)(uintptr_t)&kernel_controller && n==sizeof(PD); }
 void procmem_pin(VADDR p,VADDR n,int delta) { CHECK(p==(VADDR)(uintptr_t)&kernel_controller && n==sizeof(PD) && delta==1); }
+void kproc_publish_observers(KPROC *p)
+{ CHECK(p==(KPROC *)&child && table[0].state==TASK_DONE && refused_disposals==1); }
+
 void cuis_child_completed(PD *p, WORD pid, UWORD status)
 { (void)p; (void)pid; (void)status; notifications++; }
 BOOL cuis_child_pid_reserved(WORD pid) { (void)pid; return FALSE; }
 static BOOL refused_stopped;
-static unsigned refused_disposals;
+
 LONG proc_start_scheduled(PD *p, BOOL take) { (void)take; CHECK(p==&child); return EIMBA; }
 BOOL kthread_stop(KTHREAD *t) { CHECK(t==(KTHREAD *)1 && !refused_stopped); refused_stopped=TRUE; return TRUE; }
 BOOL kthread_is_stopped(const KTHREAD *t) { CHECK(t==(KTHREAD *)1); return refused_stopped; }

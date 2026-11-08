@@ -4,6 +4,7 @@
 
 #include "portab.h"
 #include "thread_startup.h"
+#include "process_completion.h"
 struct kproc;
 struct kthread;
 typedef struct proc_clone_transaction PROC_CLONE_TRANSACTION;
@@ -84,6 +85,9 @@ LONG proc_clone_observe_async(PROC_CLONE_TRANSACTION *, PROC_CLONE_OBSERVER **);
 void proc_clone_observer_release(PROC_CLONE_OBSERVER **);
 PROC_CLONE_OBSERVER_STATE proc_clone_observer_state(const PROC_CLONE_OBSERVER *);
 BOOL proc_clone_observer_result(const PROC_CLONE_OBSERVER *, PROC_CLONE_COMPLETION *);
+/* NEW_PROCESS only: authoritative rich PROCESS snapshot; SAME_PROCESS TID
+ * results must never be mistaken for CH_EXIT/PROCESS completion. */
+BOOL proc_clone_observer_process_snapshot(const PROC_CLONE_OBSERVER *, PROCESS_COMPLETION *);
 LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *transaction,
                                  const THREAD_STARTUP_OBSERVER *observer, void *context);
 LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *transaction);
