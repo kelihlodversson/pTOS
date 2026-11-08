@@ -71,10 +71,6 @@ LONG aes_key_read(LONG window, ULONG *key)
 {
     return cuis_call6(CUIS_KEY_READ, (QUAD)window, (uintptr_t)key, 0, 0, 0, 0);
 }
-LONG aes_key_wait(LONG window, LONG timeout_ms)
-{
-    return cuis_call5(CUIS_KEY_WAIT, window, timeout_ms, 0, 0, 0);
-}
 
 LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state)
 {

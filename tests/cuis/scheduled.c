@@ -51,7 +51,7 @@ int main(int argc, char **argv, char **envp)
     if (first) {
         CHECK(probe_window_show(window) == E_OK && probe_window_focus(window) == E_OK);
         CHECK(probe_message_send(peer, 65, 0, 0, 0) == E_OK);
-        CHECK(probe_key_wait(window, -1) == EACCDN); /* Another task takes focus. */
+        CHECK(probe_event_wait(window, CUIS_EVENT_KEY, -1) == EACCDN); /* Another task takes focus. */
         CHECK(probe_message_send(peer, 66, 0, 0, 0) == E_OK);
     } else {
         CHECK(probe_message_wait(session, -1) == 1);

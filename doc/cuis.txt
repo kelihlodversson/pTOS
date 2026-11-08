@@ -464,14 +464,14 @@ focus state and paths remain under the external libaes CUIS configuration.
 
 Focused keyboard queues and atomic waits
 ---------------------------------------
-CUIS adds flat keyboard calls using only RDI and RSI:
+CUIS provides a flat keyboard read using only RDI and RSI:
 
  17 KEY_READ  RDI=owned window, RSI=ULONG *key
- 18 KEY_WAIT  RDI=owned window, RSI=sign-extended LONG timeout_ms
 
-libaes exports aes_key_read(window, key) and aes_key_wait(window, timeout_ms).
+Private native keyboard reads use aes_key_read(window, key). Keyboard waits
+use EVENT_WAIT with CUIS_EVENT_KEY; GEM evnt_* uses SESSION_WAIT.
 READ returns 1 after copying one key, 0 if empty, or a negative GEMDOS error.
-WAIT returns 1 when a key is pending without consuming it, 0 on timeout, or
+EVENT_WAIT with CUIS_EVENT_KEY returns 1 when a key is pending without consuming it, 0 on timeout, or
 a negative error. Zero milliseconds polls; -1 waits indefinitely. Other
 negative or noncanonical timeout values return EINVAL. Unused registers
 are ignored. Unknown/stale/foreign handles and unfocused windows return
@@ -565,7 +565,8 @@ Pointer overflow counts as pending; redraw remains pending until REDRAW is
 read. KEY-only waits require focus; mixed waits can observe pointer/redraw in
 a background window, while keyboard readiness still requires focus. Windows
 must be shown. Unknown mask bits and malformed timeouts return EINVAL.
-Timeout and owned-update restrictions match KEY_WAIT. Predicate checks and
+Zero timeout polls, -1 waits indefinitely, and other negative or noncanonical
+timeouts fail EINVAL. Blocking while owning an update fails EACCDN. Predicate checks and
 sleep use the same IRQ exclusion, avoiding lost wakeups between sources.
 
 Host tests exercise ownership, capture, enter/leave, coalescing, overflow,
