@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "emutos.h"
 #include "arch/m68k/irqframe.h"
+#include "arch/m68k/userentry.h"
 #define CHECK(x) do { if (!(x)) abort(); } while (0)
 int main(void)
 {

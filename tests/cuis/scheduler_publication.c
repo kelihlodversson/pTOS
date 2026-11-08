@@ -127,6 +127,8 @@ static void root_lifetime_check(void)
     NATIVE_SCHED_CONTEXT empty;
     jmp_buf no_waiter;
     memset(&empty,0,sizeof(empty)); memset(no_waiter,0,sizeof(no_waiter));
+    CHECK(!ksched_loaded_launcher());
+    ksched_set_loaded_launcher(&empty); /* Live test launcher, independent of arena. */
     for (cycle=0;cycle<32;cycle++) {
         LONG output[2]={-1,-1};
         PD *caller=cycle&1?&parent:&peer;
@@ -139,12 +141,14 @@ static void root_lifetime_check(void)
         CHECK(output[0]==(LONG)cycle+100 && output[1]==(LONG)cycle+200);
         CHECK(execution_cpu.root_started && execution_cpu.parked && !execution_cpu.waiter_attached &&
               !scheduler.active && !execution_cpu.current && !scheduler.tasks && root_entries==1);
+        CHECK(ksched_loaded_launcher()==&empty);
         CHECK(!memcmp(&execution_cpu.root,&empty,sizeof(empty)) &&
               !memcmp(execution_cpu.waiter_resume,no_waiter,sizeof(no_waiter)));
         CHECK(!execution_cpu.waiter.identity);
         memset(caller,0x7d,sizeof(*caller)); /* Old identity storage is reusable. */
         output[0]=output[1]=-77;
     }
+    ksched_set_loaded_launcher(NULL);
     /* Returning one admission must not drain another live blocked task.
      * A later bounded entry with no runnable work parks without spinning or
      * preserving a caller stack; a final entry reclaims the stopped peer. */

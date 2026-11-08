@@ -72,6 +72,7 @@ static struct {
 typedef struct {
     UWORD number; /* logical boot CPU 0; no additional CPU may dispatch yet */
     BOOL leaf_held;
+    void *loaded_launcher; /* CPU-loaded nested chain, saved in each execution context. */
     KERNEL_TASK *current, *inflight;
     BOOL entered, pump;
     ULONG budget;
@@ -92,6 +93,13 @@ static NATIVE_SCHED_CPU boot_cpu;
  * callers must not infer SMP or asynchronous dispatch from this accessor. */
 static NATIVE_SCHED_CPU *native_sched_cpu(void) { return &boot_cpu; }
 #define execution_cpu (*native_sched_cpu())
+void *ksched_loaded_launcher(void) { return execution_cpu.loaded_launcher; }
+void ksched_set_loaded_launcher(void *launcher)
+{
+    if (execution_cpu.leaf_held) panic("scheduler: launcher change under runqueue leaf");
+    execution_cpu.loaded_launcher=launcher;
+}
+
 /* B0 single-CPU leaf exclusion. This names/checks the critical boundary; IRQ
  * masking is not an SMP lock. Replace its exclusion with an IRQ-safe spinlock
  * before multiple CPUs may mutate the queue. No callbacks/destructors/copies,

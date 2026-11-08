@@ -130,13 +130,20 @@ struct uspace_launch {
     volatile ULONG exit_resident_len;
     volatile BOOL exit_final;
 };
-static struct uspace_launch *uspace_launch;
+#if CONF_WITH_NATIVE_SCHED
+static struct uspace_launch *get_uspace_launch(void) { return ksched_loaded_launcher(); }
+static void set_uspace_launch(struct uspace_launch *launch) { ksched_set_loaded_launcher(launch); }
+#else
+static struct uspace_launch *legacy_launch;
+static struct uspace_launch *get_uspace_launch(void) { return legacy_launch; }
+static void set_uspace_launch(struct uspace_launch *launch) { legacy_launch=launch; }
+#endif
 #if CONF_WITH_NATIVE_SCHED
 /* Borrowed only during IRQ capture on this CPU. The launcher retains the
  * transferred syscall stack; no ownership is moved into the captured image. */
 BOOL arm_process_irq_stack(PD *pd, uintptr_t *base, uintptr_t *top)
 {
-    struct uspace_launch *launch=uspace_launch;
+    struct uspace_launch *launch=get_uspace_launch();
     if (!launch || launch->pd!=pd || !launch->stack_phys || launch->exit_process) return FALSE;
     *base=(uintptr_t)pmem32_virt(launch->stack_phys); *top=launch->stack_top;
     return TRUE;
@@ -153,7 +160,7 @@ void native_sched_save(NATIVE_SCHED_CONTEXT *context)
 #ifdef __ARM_PCS_VFP
     __asm__ volatile ("vmrs %0,fpscr" : "=r"(context->fpscr));
 #endif
-    context->launch = uspace_launch;
+    context->launch = get_uspace_launch();
     context->native_task = ksched_context_id();
     memcpy(context->disk_error, errbuf, sizeof(errbuf));
     aspace_hw_switch(aspace_kernel_root());
@@ -162,7 +169,7 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 {
     native_sched_irq_disable();
     run = context->pd;
-    uspace_launch = context->launch;
+    set_uspace_launch(context->launch);
     ksched_context_restore(context->native_task);
     memcpy(errbuf, context->disk_error, sizeof(errbuf));
     aspace_hw_switch(context->root);
@@ -179,7 +186,7 @@ static BOOL injected_exit_failure;
 
 BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
-    struct uspace_launch *launch = uspace_launch;
+    struct uspace_launch *launch = get_uspace_launch();
     KPROC *process;
     if (!launch || launch->pd != pd || !launch->stack_phys || launch->exit_process)
         return FALSE;
@@ -255,12 +262,12 @@ void gouser(void)
      * launcher returns the exit code. xterm() restores `run`; deferred
      * finalization keeps the child mappings alive until this safe continuation.
      */
-    launch.previous = uspace_launch;
+    launch.previous = get_uspace_launch();
     launch.pd = p;
     launch.stack_phys = kstack_phys;
     launch.stack_top = kstack_top;
     launch.exit_process = NULL;
-    uspace_launch = &launch;
+    set_uspace_launch(&launch);
     __asm__ volatile ("mrs %0, cpsr" : "=r" (launcher_status));
     if (setjmp(launch.resume) == 0) {
         aspace_hw_switch(root);
@@ -275,7 +282,7 @@ void gouser(void)
 #endif
         arm_enter_user(entry, user_sp, (ULONG)(uintptr_t)p, (ULONG)kstack_top);
     }
-    uspace_launch = launch.previous;
+    set_uspace_launch(launch.previous);
     {
         ASPACE_ROOT launcher = kproc_user_root(run);
 
@@ -310,8 +317,8 @@ void termuser(void)
      * bdos/proc.c's xterm() already did `run = kproc_get_parent(p);
      * run->p_dreg[0] = rc;`: the exit code is where proc_go()'s caller reads it.
      */
-    if (uspace_launch)
-        longjmp(uspace_launch->resume, 1);
+    if (get_uspace_launch())
+        longjmp(get_uspace_launch()->resume, 1);
 
     panic("process terminated with no launch to resume, rc=%ld\n", (long)run->p_dreg[0]);
 }

@@ -27,6 +27,12 @@ BOOL ksched_async_allowed(void);
 void ksched_shutdown_begin(void);
 PD *ksched_launch_controller(PD *pd); /* current task only, never a nested launcher */
 #if CONF_WITH_NATIVE_SCHED
+/* Architecture backend only. Borrowed chain points into still-live launcher
+ * continuations pinned to this CPU, never into a retired/unattached caller.
+ * Saved/restored with NATIVE_SCHED_CONTEXT; no allocation/reference changes.
+ * CPU selection remains boot-CPU-only until SMP admission/locks exist. */
+void *ksched_loaded_launcher(void);
+void ksched_set_loaded_launcher(void *launcher);
 struct thread_startup_draft;
 struct thread_startup_stack;
 struct proc_clone_transaction;

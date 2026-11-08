@@ -41,17 +41,12 @@
 #include "fs.h"
 #endif
 #include "uaccess.h"
+#include "arch/m68k/userentry.h"
 
 extern long osif(short *pw);                    /* bdos/bdosmain.c */
 
 void gouser(void);
 void termuser(void) NORETURN;
-extern void m68k_enter_user(void) NORETURN;
-
-/* what m68k_enter_user() (uspaceasm.S) reads */
-struct {
-    ULONG entry, user_sp, kstack_top, argument;
-} uenter;
 
 /* the FPU state of a process (uspaceasm.S): the FSAVE frame (the longest, of
  * the 68881/2, is 216 bytes), fpcr/fpsr/fpiar, fp0-fp7 */
@@ -140,11 +135,18 @@ struct uspace_launch {
     volatile ULONG exit_resident_len;
     volatile BOOL exit_final;
 };
-static struct uspace_launch *uspace_launch;
+#if CONF_WITH_NATIVE_SCHED
+static struct uspace_launch *get_uspace_launch(void) { return ksched_loaded_launcher(); }
+static void set_uspace_launch(struct uspace_launch *launch) { ksched_set_loaded_launcher(launch); }
+#else
+static struct uspace_launch *legacy_launch;
+static struct uspace_launch *get_uspace_launch(void) { return legacy_launch; }
+static void set_uspace_launch(struct uspace_launch *launch) { legacy_launch=launch; }
+#endif
 #if CONF_WITH_NATIVE_SCHED
 BOOL m68k_process_irq_stack(PD *pd, uintptr_t *base, uintptr_t *top)
 {
-    struct uspace_launch *launch=uspace_launch;
+    struct uspace_launch *launch=get_uspace_launch();
     if (!launch || launch->pd!=pd || !launch->stack_phys || launch->exit_process) return FALSE;
     *base=(uintptr_t)pmem32_virt(launch->stack_phys); *top=launch->stack_top;
     return TRUE;
@@ -158,7 +160,7 @@ void native_sched_save(NATIVE_SCHED_CONTEXT *context)
     context->pd = run;
     context->root = aspace_hw_current();
     __asm__ volatile ("move.l %%usp,%0" : "=a"(context->user_sp));
-    context->launch = uspace_launch;
+    context->launch = get_uspace_launch();
     context->native_task = ksched_context_id();
     memcpy(context->disk_error, errbuf, sizeof(errbuf));
     if (fputype) m68k_fpu_save(&context->fpu);
@@ -168,7 +170,7 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 {
     native_sched_irq_disable();
     run = context->pd;
-    uspace_launch = context->launch;
+    set_uspace_launch(context->launch);
     ksched_context_restore(context->native_task);
     memcpy(errbuf, context->disk_error, sizeof(errbuf));
     aspace_hw_switch(context->root);
@@ -183,7 +185,7 @@ static BOOL injected_exit_failure;
 
 BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
-    struct uspace_launch *launch = uspace_launch;
+    struct uspace_launch *launch = get_uspace_launch();
     KPROC *process;
     if (!launch || launch->pd != pd || !launch->stack_phys || launch->exit_process)
         return FALSE;
@@ -260,12 +262,12 @@ void gouser(void)
      * launcher returns the exit code. xterm() restores `run`; deferred
      * finalization keeps the child mappings alive until this safe continuation.
      */
-    launch.previous = uspace_launch;
+    launch.previous = get_uspace_launch();
     launch.pd = p;
     launch.stack_phys = kstack_phys;
     launch.stack_top = kstack_top;
     launch.exit_process = NULL;
-    uspace_launch = &launch;
+    set_uspace_launch(&launch);
     /* the FPU of the launcher is what the child will not see, and what the
      * launcher gets back when it ends */
     if (fputype)
@@ -273,6 +275,7 @@ void gouser(void)
     __asm__ volatile ("move.w %%sr,%0" : "=d" (launcher_status));
     if (setjmp(launch.resume) == 0) {
         ULONG initial[2];
+        M68K_USER_ENTRY initial_entry;
 
         aspace_hw_switch(root);
         /* the code of an ELF image was written through the data side (the loader reads
@@ -292,19 +295,19 @@ void gouser(void)
             if (!kproc_copy_to_user(user_sp, initial, sizeof(initial)))
                 panic("cannot write the first words of the stack of a process\n");
         }       /* (a standard entry has the initial stack of the ELF ABI, built by the kernel) */
-        uenter.entry = entry;
-        uenter.user_sp = user_sp;
-        uenter.kstack_top = (ULONG)kstack_top;
-        uenter.argument = 0;
+        initial_entry.entry = entry;
+        initial_entry.user_sp = user_sp;
+        initial_entry.kstack_top = (ULONG)kstack_top;
+        initial_entry.argument = 0;
 #if CONF_WITH_NATIVE_SCHED
-        if (prepared) uenter.argument = prepared->argument;
+        if (prepared) initial_entry.argument = prepared->argument;
 #endif
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) thread_startup_entering(startup);
 #endif
-        m68k_enter_user();
+        m68k_enter_user(&initial_entry);
     }
-    uspace_launch = launch.previous;
+    set_uspace_launch(launch.previous);
     {
         ASPACE_ROOT launcher = kproc_user_root(run);
 
@@ -341,8 +344,8 @@ void termuser(void)
      * bdos/proc.c's xterm() already did `run = kproc_get_parent(p);
      * run->p_dreg[0] = rc;`: the exit code is where proc_go()'s caller reads it.
      */
-    if (uspace_launch)
-        longjmp(uspace_launch->resume, 1);
+    if (get_uspace_launch())
+        longjmp(get_uspace_launch()->resume, 1);
 
     panic("process terminated with no launch to resume, rc=%ld\n", (long)run->p_dreg[0]);
 }
