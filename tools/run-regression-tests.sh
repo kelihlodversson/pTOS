@@ -644,6 +644,15 @@ if [ "$machine" = virt-arm ] &&
     fi
 fi
 
+if [ "$machine" = virt-m68k-aspace ] &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native m68k interrupted-user GPR/USP/FPU format-0 capture: PASS' "$suite_log"; then
+        record "native m68k user IRQ capture" FAIL "real user GPR/USP/FPU pattern was not captured"
+    fi
+fi
+
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"

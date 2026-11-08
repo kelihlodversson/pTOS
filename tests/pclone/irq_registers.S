@@ -256,5 +256,130 @@ clone_irq_registers:
         vpop {d16-d31}
         vpop {d0-d15}
         pop {r4-r12,pc}
+#elif defined(__mc68000__)
+#define IRQ_CAT_(a,b) a##b
+#define IRQ_CAT(a,b) IRQ_CAT_(a,b)
+#define IRQ_SYM(name) IRQ_CAT(__USER_LABEL_PREFIX__,name)
+        .cpu 68040
+        .text
+        .balign 2
+        .globl IRQ_SYM(clone_irq_registers)
+IRQ_SYM(clone_irq_registers):
+        movem.l %d2-%d7/%a2-%a6,-(%sp)
+#ifndef __FASTCALL__
+        move.l 48(%sp),%d0
+#endif
+        lea -336(%sp),%sp
+        move.l %d0,324(%sp)
+        tst.l %d0
+        jeq 6f
+        fmovem.x %fp0-%fp7,228(%sp)
+        fmovem.l %fpcr/%fpsr/%fpiar,216(%sp)
+        clr.l -(%sp)
+        clr.l -(%sp)
+        clr.l -(%sp)
+        fmovem.l (%sp)+,%fpcr/%fpsr/%fpiar
+        move.l #0x71307130,%d0
+        fmove.l %d0,%fp0
+        fmove.l %d0,%fp1
+        fmove.l %d0,%fp2
+        fmove.l %d0,%fp3
+        fmove.l %d0,%fp4
+        fmove.l %d0,%fp5
+        fmove.l %d0,%fp6
+irq_fpu_last:
+        fmove.l %d0,%fp7
+        lea irq_fpu_last(%pc),%a6
+        move.l %a6,%d0
+        fmove.l %d0,%fpiar /* explicit nonzero control-state pattern */
+        fmove.l %fpiar,%d0
+        movea.l %d0,%a6 /* actual FPIAR: QEMU may model only zero */
+        jra 8f
+6:      suba.l %a6,%a6
+8:      move.l #0x71307130,%d1
+        move.l %d1,%d2
+        move.l %d1,%d3
+        move.l %d1,%d4
+        move.l %d1,%d5
+        move.l %d1,%d6
+        movea.l %d1,%a0
+        movea.l %d1,%a1
+        movea.l %d1,%a2
+        movea.l %d1,%a3
+        movea.l %d1,%a4
+        movea.l %d1,%a5
+        move.l #4000000,%d0
+        move.l #0x71307137,%d7
+1:      subq.l #1,%d0
+        jne 1b
+        move.l %d7,328(%sp)
+        move.l #0x71307130,%d7
+        tst.l %d0
+        jne 2f
+        cmp.l %d1,%d7
+        jne 2f
+        cmp.l %d2,%d7
+        jne 2f
+        cmp.l %d3,%d7
+        jne 2f
+        cmp.l %d4,%d7
+        jne 2f
+        cmp.l %d5,%d7
+        jne 2f
+        cmp.l %d6,%d7
+        jne 2f
+        cmp.l %a0,%d7
+        jne 2f
+        cmp.l %a1,%d7
+        jne 2f
+        cmp.l %a2,%d7
+        jne 2f
+        cmp.l %a3,%d7
+        jne 2f
+        cmp.l %a4,%d7
+        jne 2f
+        cmp.l %a5,%d7
+        jne 2f
+        cmpi.l #0x71307137,328(%sp)
+        jne 2f
+        tst.l 324(%sp)
+        jeq 9f
+        fmove.l %fpiar,%d0
+        cmp.l %a6,%d0
+        jne 2f
+        fmove.l %fp0,%d0
+        cmp.l %d7,%d0
+        jne 2f
+        fmove.l %fp1,%d0
+        cmp.l %d7,%d0
+        jne 2f
+        fmove.l %fp2,%d0
+        cmp.l %d7,%d0
+        jne 2f
+        fmove.l %fp3,%d0
+        cmp.l %d7,%d0
+        jne 2f
+        fmove.l %fp4,%d0
+        cmp.l %d7,%d0
+        jne 2f
+        fmove.l %fp5,%d0
+        cmp.l %d7,%d0
+        jne 2f
+        fmove.l %fp6,%d0
+        cmp.l %d7,%d0
+        jne 2f
+        fmove.l %fp7,%d0
+        cmp.l %d7,%d0
+        jne 2f
+9:      moveq #0,%d0
+        jra 3f
+2:      moveq #1,%d0
+3:      tst.l 324(%sp)
+        jeq 4f
+        fmovem.x 228(%sp),%fp0-%fp7
+        fmovem.l 216(%sp),%fpcr/%fpsr/%fpiar
+4:      lea 336(%sp),%sp
+        movem.l (%sp)+,%d2-%d7/%a2-%a6
+        rts
 #endif
         .section .note.GNU-stack,"",%progbits

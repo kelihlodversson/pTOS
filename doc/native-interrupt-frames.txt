@@ -204,3 +204,42 @@ The test driver requires that evidence for configured Cortex-A7 clone suites.
 This is interrupted-frame capture, not CPU-bound peer progress or preemption.
 Host frame validation is labeled synthetic; native results are recorded in the
 PR capability matrix. m68k CPU-specific frames/FSAVE capture remains separate.
+
+B1b m68k first capture increment (hardware format 0 only)
+-------------------------------------------------------
+Real IRQ entry saves D0-D7/A0-A6 and USP before any device C handler. The saved
+SR/PC/format-vector header is the actual CPU exception, not int_timerc's
+synthetic supervisor return frame. QEMU Goldfish entry and Amiga CIA entry are
+hooked before their synthetic timer callbacks; Atari's hardware int_timerc
+entry is hooked directly. A supervisor callback is ineligible. All original
+register pops/RTE paths remain unchanged. Local IPL7 exclusion covers capture,
+not dispatch and not SMP synchronization.
+
+Only 030/040/060 hardware format-0 user IRQs pass admission: the exact image is
+72 bytes (USP, fifteen GPRs and eight hardware bytes). Other formats are rejected
+before copying payload, never guessed to have this size. The THREAD-owned copy
+binds the active launcher/syscall-stack interval, actual MMU root, CPU/model and
+FPU identity. The existing m68k_fpu_save/restore backend captures opaque FSAVE,
+FP0-FP7 and FPCR/FPSR/FPIAR into preallocated storage, restoring immediately.
+The bounded 216-byte FSAVE capacity and 324-byte backend layout are shared and
+asserted, not reinterpreted as a portable restart-frame ABI. Unsupported bus,
+fault, throwaway and extended-frame decoding remains B1b work before any restore.
+TC/SRP/control eligibility and full loaded-launcher/error/scratch conversion
+remain prerequisites; a format-0 diagnostic copy grants no switch capability.
+Root acknowledgement invalidates capture eligibility on every architecture.
+
+Real native probes busy-loop with independent D/A/USP/FPU patterns and verify
+the original IRQ return. QEMU68040 permits zero-only FPIAR, which is explicitly
+not nonzero-FPIAR evidence. Pinned Amiberry68060 is tested with explicit FPU,
+caches off/on and the existing strict nonzero-FPIAR verdict. Its debugger also
+reads test-only kernel capture counters before stopping: captured pattern count
+must be nonzero, mismatch count zero, and nonzero FPIAR captures nonzero. This
+avoids treating a passing user restore test as proof that kernel capture ran.
+Debug READ_MEM uses physical addresses; the runner converts the Amiga kernel
+window explicitly. No kernel pointer or test opcode is exposed to user mode.
+Native fastcall execution remains unverified; compile support is not a claim.
+
+Additional native evidence: pinned Amiberry68030/68882 also passes 25/0 caches
+off/on; debugger reads show nonzero captured frames, zero mismatches and nonzero
+FPIAR in both modes. The FSAVE image remains opaque and model-tagged. This is
+not a claim of native -mfastcall validation or of QEMU68060 support.

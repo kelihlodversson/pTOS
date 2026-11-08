@@ -32,11 +32,7 @@ static inline void native_sched_idle(void) { __asm__ volatile ("sti; hlt; cli" :
 /* A continuation lives on its own supervisor stack. setjmp retains C's
  * callee-saved registers; trap frames on that stack retain user registers. */
 #if ARCH_M68K
-struct fpuctx {
-    UBYTE frame[216];
-    ULONG ctl[3];
-    UBYTE regs[96];
-};
+#include "arch/m68k/fpuctx.h"
 #endif
 typedef struct {
     PD *pd;

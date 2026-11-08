@@ -59,6 +59,8 @@ static volatile struct clone_probe {
 } probe;
 #if defined(__x86_64__) || (defined(__arm__) && defined(__ARM_NEON))
 extern long clone_irq_registers(void);
+#elif defined(__mc68000__)
+extern long clone_irq_registers(long fpu);
 #endif
 static void runnable_entry(void *argument)
 {
@@ -70,6 +72,8 @@ static void runnable_entry(void *argument)
 #endif
 #if defined(__x86_64__) || (defined(__arm__) && defined(__ARM_NEON))
     if (clone_irq_registers()) p->error |= 8;
+#elif defined(__mc68000__)
+    if (clone_irq_registers(has_fpu)) p->error |= 8;
 #endif
     p->pid = Pgetpid();
     p->local = (unsigned long)&local;
