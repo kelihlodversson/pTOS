@@ -43,7 +43,11 @@ unstarted child and preserves the output. This trusted API has no GUI session,
 console flag or callback, and never calls a public wait/reaper. Its existing
 serialized loader/no-unwind/bounded-close contract still applies. The current
 CWD implementation reuses the existing FAT process-directory helper, now also
-available to non-GUI native scheduler configurations.
+available to non-GUI native scheduler configurations. With PLUGGABLE_FS,
+explicit child-CWD setup returns EINVFN and rolls back before publication:
+that resolver is still bound to run, and its cookie indices are not FAT slots.
+Inherited CWD remains supported. A PROCESS-owned PFS resolver is a remaining
+public-loader prerequisite; switching global run is not a permitted workaround.
 
 Readiness and synchronization
 -----------------------------

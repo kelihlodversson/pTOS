@@ -680,8 +680,15 @@ long xrename(WORD n, char *p1, char *p2)
 #if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
 LONG fs_set_process_directory(char *path, PD *process)
 {
-    /* Current process CWD storage is provided by the existing FAT backend. */
+#if CONF_WITH_PLUGGABLE_FS
+    /* The PFS CWD resolver is currently bound to run. Never switch that global
+     * to prepare another PROCESS, or interpret its cookie indices as FAT slots.
+     * Explicit child-CWD preparation needs a process-owned PFS resolver first. */
+    UNUSED(path); UNUSED(process);
+    return EINVFN;
+#else
     return DISK_CALL(fat_set_process_directory(path, process));
+#endif
 }
 #endif
 
