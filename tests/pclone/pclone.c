@@ -820,7 +820,7 @@ static void group_target(void *arg)
             group.window=native_cuis5(3,1,1,32,32,0);
             if (group.window<0 || native_cuis(6,group.window,0)) group.error=1;
             rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
-        } else rc=native_cuis(23,group.session,~0ULL);
+        } else rc=native_cuis5(32,group.session,1,1,0,0); /* pending stream readiness */
         if (group.mode==12 && rc==2) {
             group.wait_done=1; /* rejected legacy outcome: pending cancellation must win */
             (void)native_cuis5(32,group.session,0,8,0,0);
