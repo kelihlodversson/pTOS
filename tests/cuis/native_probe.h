@@ -71,17 +71,9 @@ static inline LONG probe_window_clip(LONG window, ULONG index, LONG *x, LONG *y,
                       (uintptr_t)x, (uintptr_t)y, (uintptr_t)width, (uintptr_t)height);
 }
 
-static inline LONG probe_window_focus(LONG window)
-{
-    return probe_call(CUIS_FOCUS_REQUEST, window);
-}
 static inline LONG probe_window_focused(LONG window)
 {
     return probe_call(CUIS_FOCUS_QUERY, window);
-}
-static inline LONG probe_window_unfocus(LONG window)
-{
-    return probe_call(CUIS_FOCUS_RELEASE, window);
 }
 
 

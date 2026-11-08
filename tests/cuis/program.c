@@ -230,15 +230,18 @@ int main(int argc, char **argv, char **envp)
           second.g_w == 10 && second.g_h == 10 && inside(19, 19, &second));
     rc = update_checks(window);
     if (rc) return rc;
-    CHECK(probe_window_focus(window) == E_OK);
+    CHECK(probe_call6(CUIS_WINDOW_POLICY,window,1,0,0,0,0) == E_OK);
+    CHECK(probe_window_raise(window) == E_OK);
     CHECK(probe_window_focused(window) == 1);
-    CHECK(probe_window_unfocus(window) == E_OK && probe_window_focused(window) == 0);
-    CHECK(probe_window_focus(window) == E_OK);
+    CHECK(probe_window_hide(window) == E_OK && probe_window_focused(window) == 0);
+    CHECK(probe_window_show(window) == E_OK);
+    CHECK(probe_call6(CUIS_WINDOW_POLICY,window,1,0,0,0,0) == E_OK);
+    CHECK(probe_window_raise(window) == E_OK);
     if (argc == 2) {
         CHECK(probe_update_begin(window) == E_OK);
         CHECK(probe_window_focused(window) == 1);
-        CHECK(probe_window_unfocus(window) == EAGAIN);
-        CHECK(probe_window_focus(parent_window) == EACCDN);
+        CHECK(probe_window_hide(window) == EAGAIN);
+        CHECK(probe_window_raise(parent_window) == EACCDN);
         rc = libaes_drawing_exit_handle();
         if (rc) return rc;
         for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_LOWER; function++)
@@ -302,7 +305,8 @@ int main(int argc, char **argv, char **envp)
     CHECK(probe_window_destroy(window) == EACCDN);
     window = probe_window_create(0, 0, 10, 10);
     CHECK(window >= 0 && probe_window_show(window) == E_OK);
-    CHECK(probe_window_focus(window) == E_OK);
+    CHECK(probe_call6(CUIS_WINDOW_POLICY,window,1,0,0,0,0) == E_OK);
+    CHECK(probe_window_raise(window) == E_OK);
     CHECK(probe_update_begin(window) == E_OK);
     /* Leave the reopened session to library finalization. */
     {

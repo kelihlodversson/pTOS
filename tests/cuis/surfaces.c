@@ -33,15 +33,19 @@ static int surface_checks(void)
     CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
     CHECK(cuis_clip_service(window,0,0x1000,0x1004,0x1008,0x100c) == 1 && copied[1] == 19 && copied[3] == 81);
     CHECK(cuis_window_service(CUIS_UPDATE_END,window,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
     run = &second;
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,20) == E_OK);
     run = &first;
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
-    /* Re-requesting an already focused window retains the explicit current
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
+    /* Raising an already focused window retains the explicit current
      * surface; an actual focus transition hands it back. */
-    CHECK(cuis_window_service(CUIS_FOCUS_RELEASE,window,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_HIDE,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,a,0) & CUIS_SURFACE_OWNED);
     refresh_pointer_bounds();
     pointer_suppressed = pointer_legacy_drag = FALSE;
@@ -146,7 +150,8 @@ static int surface_cleanup_checks(void)
     run = &first; a = cuis_service(CUIS_SESSION_START,0);
     wa = cuis_window_service(CUIS_WINDOW_CREATE,0,30,100,100,0);
     CHECK(wa >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,wa,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,wa,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,19) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,a,1) & CUIS_SURFACE_DIRTY);
     pointer_suppressed = pointer_legacy_drag = FALSE;

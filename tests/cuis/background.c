@@ -190,7 +190,8 @@ static int background_release_checks(void)
     pointer_buttons = 0;
     CHECK(point_at(50,50,1) && background_capture == desktop);
     CHECK(point_at(210,210,1) && background_capture == desktop && !pointer_capture);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
     CHECK(focus_window == peer->windows && !content_contains(focus_window));
     run = &first;
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,a,1,0,1,0,0) == E_OK);

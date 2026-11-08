@@ -311,7 +311,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (!display_nesting && colour_peer_pending) publish_peer_colours();
         return E_OK;
     }
-    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_WINDOW_LOWER) || fn == CUIS_UPDATE_BEGIN || fn == CUIS_UPDATE_END || fn == CUIS_FOCUS_QUERY || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
         return window_transport(fn, a);
     if (fn == CUIS_SESSION_NAME) {
         ULONG length = __builtin_strlen(executable_name);

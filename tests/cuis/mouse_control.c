@@ -128,7 +128,8 @@ static int fresh_mouse_checks(void)
     run = &first; session = cuis_service(CUIS_SESSION_START,0); client = *find_owner(run);
     window = cuis_window_service(CUIS_WINDOW_CREATE,0,20,200,150,0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
     refresh_pointer_bounds(); pointer_suppressed = pointer_legacy_drag = FALSE;
     CHECK(point_at(40,60,0) && point_at(40,60,1) && point_at(40,60,0));
     CHECK(client->edge_count == 2);

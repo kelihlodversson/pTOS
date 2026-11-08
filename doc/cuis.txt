@@ -423,25 +423,16 @@ lifetime and console transitions retain their original behavior.
 
 Focus ownership foundation
 --------------------------
-CUIS adds three flat calls, each taking an owned window handle in RDI:
-
- 14 FOCUS_REQUEST  return zero on success or a negative GEMDOS error
- 15 FOCUS_QUERY    return 1 if focused, 0 if not, or a negative error
- 16 FOCUS_RELEASE  return zero on success or a negative error
-
-libaes exports aes_window_focus, aes_window_focused and aes_window_unfocus.
-Unused register slots are ignored. Malformed full-width handles return
+CUIS_FOCUS_QUERY takes an owned window handle and returns 1 if focused, 0
+if not, or a negative GEMDOS error. Malformed full-width handles return
 EINVAL; absent sessions and unknown/stale/foreign handles return EACCDN.
-A hidden window cannot request focus (EINVAL). Only the currently frontmost
-visible CUIS window may claim focus; a request for another visible window returns
-EACCDN. No foreign focus handle is exposed by QUERY.
+No foreign focus handle is exposed.
 
-Showing, raising and lowering windows do not automatically transfer focus.
-Focus and stacking remain distinct: an already-focused visible window can
-remain focused after being lowered. Repeating a focus request for the focused
-front window is a no-op. Releasing a non-focused owned window is also a no-op;
-releasing the focused window clears focus without selecting a fallback. Actual focus changes mark all visible CUIS
-windows for redraw so future decorations can reflect the change.
+libaes configures managed activation through WINDOW_POLICY. Showing or
+raising a managed window transfers focus; lowering the focused managed
+window selects the new front window. Unmanaged windows retain their
+existing stacking behavior. Raising an already focused front window is a
+no-op. Actual focus changes mark visible windows for redraw.
 
 Hiding/destroying a focused window transfers focus to the remaining front
 visible window, or clears it if none remains. The same rule applies while
