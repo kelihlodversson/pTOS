@@ -458,7 +458,7 @@ static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
 }
 static LONG arrow_message(struct gem_window *window, LONG session)
 {
-    LONG now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+    LONG now = aes_clock_ticks();
     if (now < 0) return now;
     window->arrow_tick = now;
     window->control_message = WM_ARROWED;
@@ -584,7 +584,7 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
          * two-tick dispatch interval, never in a tight loop or by waiting
          * with the display. */
         if (n < 16 && repeat_control(window->control)) {
-            LONG now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+            LONG now = aes_clock_ticks();
             if (now < 0) { result = now; goto done; }
             if ((((ULONG)now-(ULONG)window->arrow_tick) & 0x7fffffffUL) >= 2) {
                 result = arrow_message(window,session);

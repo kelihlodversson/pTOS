@@ -1968,8 +1968,6 @@ CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
 - 51 SURFACE_STATUS(session,action): action 0 queries OWNED/DIRTY/POINTER bits,
   action 1 acknowledges pending work, action 2 invalidates an owned surface.
   Acknowledge does not discard work during modal mouse control.
-- 52 CLOCK(session,0): returns the low 31 bits of the 200 Hz tick counter.
-  The maximum supported 32-bit millisecond timeout is shorter than its wrap.
 - 53 SURFACE_BEGIN(session,height): under the display lock, stages a positive
   strip height and grants painting without changing ownership or fallback order.
 - 54 SURFACE_END(session,commit): commits with 1 or cancels with 0 under the
@@ -3511,3 +3509,11 @@ unimplemented capabilities or prevent the scoped initial cutover.
 Complete the desktop/accessory, standard GEM, RCS, callback/fault/cleanup,
 CLI/fallback, legacy architecture and release matrix before integration. Merge
 current master into the epic and resolve conflicts before marking #681 ready.
+
+Generic timer clock source (#907)
+--------------------------------
+libaes deadline and arrow-repeat calculations read the authoritative hz_200
+through GEMDOS Ssystem(S_GETLVAL,0x4ba,0). The userspace adapter retains the
+low-31-bit tick ring and original timer deadline across internal GUI wakes.
+This clock requires neither a CUIS session nor GUI registration. The maximum
+supported 32-bit millisecond timeout remains shorter than its wrap.

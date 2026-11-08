@@ -219,7 +219,7 @@ BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
     if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
     context_read_hook();
     if (address >= 0x20000) {
-        memcpy(stream_output + address - 0x20000, source, size); return TRUE;
+        memcpy(stream_output + (address - 0x20000), source, size); return TRUE;
     }
     copied[(address - 0x1000) / 4] = *(const LONG *)source;
     return TRUE;
@@ -238,7 +238,7 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
     }
     context_copy_hook();
     child_copy_hook();
-    memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
+    memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
 }
 const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
 

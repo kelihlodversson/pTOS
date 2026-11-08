@@ -993,9 +993,7 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
-    if (function == CUIS_CLOCK) {
-        result = argument ? EINVAL : (LONG)(cuis_input_ticks() & 0x7fffffffUL);
-    } else if (function == CUIS_SURFACE_STATUS) {
+    if (function == CUIS_SURFACE_STATUS) {
         if (argument > 2) result = EINVAL;
         else if (argument == 2) {
             if (surface_owner != client) result = EACCDN;
