@@ -4902,11 +4902,19 @@ static void test_ring3(void)
 #endif
     same(&s, "failed exit handoff rollback");
     observe_probe_fault = TRUE;
+#if !CONF_WITH_NATIVE_SCHED
+    /* A managed THREAD must never fall back while still attached. The
+     * nested probe above covers its untracked child's refusal path. */
     x86_64_memtest_fail_next_exit_handoff();
-    CHECK(run_probe('\001') == 0xffff, "refused fault exit handoff preserves full fault result");
+#endif
+    CHECK(run_probe('\001') == 0xffff, "fault exit preserves full result and independent observation");
     observe_probe_fault = FALSE;
     same(&s, "failed fault handoff observer rollback");
-    CHECK(fallback_observer_stages == 4, "refused exit handoff publishes retained observer after stack reclamation");
+#if CONF_WITH_NATIVE_SCHED
+    CHECK(fallback_observer_stages == 2, "nested refused exit publishes observer after stack reclamation");
+#else
+    CHECK(fallback_observer_stages == 4, "refused normal/fault exits publish observers after stack reclamation");
+#endif
 
     /*
      * A ring-3 process runs another from inside its own system call
