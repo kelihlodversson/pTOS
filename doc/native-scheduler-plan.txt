@@ -296,3 +296,14 @@ original IRQ return path is unchanged. Real 64-bit ring-3 GPR/x87/XMM/DF pattern
 exercise capture and return; host models cover binding and lifetime rejection.
 See native-interrupt-frames.txt for the full contract, remaining ARM/m68k capture
 and B1c loaded-state conversion. No timer dispatch or preemption is enabled.
+
+Stack reconciliation after #910 merge
+-------------------------------------
+Epic079c896e6 contains the managed-thread implementation and subsequent CUIS
+identity/operation cleanup. PR914 now targets epic directly. Reconciliation
+retains the original scheduler commits rather than replaying #910, including
+all #917 admission fences and the later resumed-wait handshake. Native x32
+23/0, ARM27/0 and m68k04026/0 each pass five shutdown checks; production host
+ASan/UBSan and fortified GCC13 pass. The IRQ capture verdict is required only
+when its public Pclone worker is configured; internal-only scheduling does not
+execute that register-pattern probe. No preemption or restore path is enabled.
