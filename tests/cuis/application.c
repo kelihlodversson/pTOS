@@ -119,6 +119,11 @@ LONG aes_menu_dispatch(WORD *global)
     return E_OK;
 }
 void aes_menu_reset(void) { }
+UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
+{
+    if (fn == 0x154 && a == 0x000a && b == 0x4ba && !c) return menu_ticks;
+    return (UQUAD)(QUAD)EINVFN;
+}
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -319,7 +324,6 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a,published_label,8) ? EFILNF : handle;
     if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
     if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
-    if (fn == CUIS_CLOCK) return menu_ticks & 0x7fffffffUL;
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
