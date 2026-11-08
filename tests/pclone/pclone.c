@@ -1192,6 +1192,8 @@ void test_pclone(void)
          * intentionally a launcher continuation, not a second managed task.
          * Use the standard async launch to test Pclone's managed contract. */
         static const char tail[] = "\7--clone";
+        /* Publish the parent prefix before the fresh worker appends its log. */
+        ptest_log_flush();
         child = Pexec(100,"runtests.tos",tail,0);
         ptest_assert_msg(child > 0,"managed clone test worker must start");
         if (child > 0) {
