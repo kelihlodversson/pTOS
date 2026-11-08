@@ -321,7 +321,7 @@ obj/libaes/shell_metadata.o: lib/aes/shell_metadata.c lib/aes/application.h lib/
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 
-obj/libaes/children.o: lib/aes/children.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/gem.h $(AUTOCONF_H)
+obj/libaes/children.o: lib/aes/children.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/gem.h include/bdosdefs.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 

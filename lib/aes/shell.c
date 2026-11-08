@@ -137,7 +137,7 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     BOOL set_directory;
     SHELL_ARGUMENTS arguments;
     const char *environment = NULL;
-    LONG pid = 0, session, watch = 0;
+    LONG pid = 0, session;
     UWORD extensions = (UWORD)mode & 0xff00;
     BOOL parse;
     WORD kind = GEMAPP;
@@ -179,27 +179,15 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
             environment ? environment : parse || (UBYTE)tail[0] == 127 ? aes_shell_environment : NULL,
             environment ? 32766UL : environment_bytes,&arguments)) return 0;
     if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN) {
-        pid = cuis_call6(set_directory ? CUIS_PROCESS_DEFER_DIRECTORY : CUIS_PROCESS_DEFER,session,(uintptr_t)path,
-            (uintptr_t)arguments.tail,(uintptr_t)arguments.environment,set_directory ? (uintptr_t)directory : 0,0) == E_OK ? 1 : 0;
+        pid = aes_child_defer(session,path,arguments.tail,arguments.environment,
+                              set_directory ? directory : NULL) == E_OK ? 1 : 0;
         goto finished;
     }
     kind = mode == SWM_LAUNCH ? application_kind(path) : graphical;
     if (kind < 0) goto finished;
-    if (mode == SWM_LAUNCH || execution == SHW_IMMED) {
-        if (aes_child_messages(session) < 0) goto finished;
-        watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
-        if (watch <= 0) goto finished;
-    }
-    if (set_directory) {
-        pid = cuis_call6(kind == TOSAPP ? CUIS_CONSOLE_LAUNCH_DIRECTORY : CUIS_CHILD_LAUNCH_DIRECTORY,
-            session,watch,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment,(uintptr_t)directory);
-    } else if (watch || kind == TOSAPP) {
-        /* The ordinary fixed-address loader installs the observer at spawn,
-         * atomically with launch, before the child can execute or be reaped. */
-        pid = cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment,kind == TOSAPP);
-    } else {
-        pid = (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)arguments.tail,(uintptr_t)arguments.environment);
-    }
+    pid = aes_child_launch(session,path,arguments.tail,arguments.environment,
+                           set_directory ? directory : NULL,kind == TOSAPP,
+                           mode == SWM_LAUNCH || execution == SHW_IMMED);
 finished:
     if (arguments.environment) (void)aes_resource_discard(arguments.environment);
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
