@@ -1,0 +1,155 @@
+PROCESS completion observation (#907 prerequisite)
+=================================================
+
+Implemented kernel C contract
+-----------------------------
+KPROC is the only completion registry. process_observer.h aliases an observer
+handle to a retained KPROC identity; it allocates no second completion record.
+process_observer_attach(target,&empty) retains a live target, rejects nonempty
+outputs and leaves outputs unchanged on failure. Multiple observers share that
+same canonical identity. process_observer_release(&handle) consumes this reference
+once; repeated release is harmless. Neither operation reaps a public zombie.
+
+process_observer_snapshot() copies PROCESS_COMPLETION from the authoritative
+record. UNSTARTED and RUNNING carry kind NONE, status/signal zero. COMPLETED
+carries either NORMAL with the full UWORD status (including 0xffff), or SIGNAL
+with an explicit signal and zero normal status. ABANDONED has no exit status.
+A numeric PROCESS number is not an owning observer. The fixed 32-byte snapshot
+contains a split non-recycled PROCESS number, PID, state, kind, UWORD status and
+WORD signal and split 64-bit delivery ordinal, with explicit layout/alignment assertions on all three MMU ABIs.
+
+Fault attribution remains per scheduler execution while siblings survive. Only
+final THREAD handoff records its fault in KPROC; a prior sibling's fault cannot
+change a later final normal exit. Group exit preserves its first normal status.
+Untracked nested/legacy execution retains its own first fault intent. Existing
+kproc_complete() publishes once at the final execution boundary. Existing MiNT
+Pwait encoding is unchanged; signal kind is never guessed from 0xffff bits.
+
+KPROC retirement clears only live-resource fields, never the identity/completion
+prefix. Thus a retained observer cannot see a transient zero PID/status while
+cleanup is in progress. Abandonment is published after teardown. Final reference
+release frees metadata without PD, ASPACE, file/directory or execution resources.
+
+proc_clone_observe_async() reuses this reference ownership. Its legacy result
+method remains compatible; proc_clone_observer_process_snapshot() provides the
+rich authoritative snapshot only for NEW_PROCESS. SAME_PROCESS observations
+remain TID-only and cannot produce PROCESS/CH_EXIT completion.
+
+proc_exec_observe(path,tail,env,optional_CWD,&empty_observer) reuses ordinary
+Pexec(100) loading, inheritance, directory setup and scheduler admission. It
+acquires the observer before any runnable publication and stores the kernel
+output only after success. Load/CWD/reference/admission failure destroys the
+unstarted child and preserves the output. This trusted API has no GUI session,
+console flag or callback, and never calls a public wait/reaper. Its existing
+serialized loader/no-unwind/bounded-close contract still applies. The current
+CWD implementation reuses the existing FAT process-directory helper, now also
+available to non-GUI native scheduler configurations. With PLUGGABLE_FS,
+explicit child-CWD setup returns EINVFN and rolls back before publication:
+that resolver is still bound to run, and its cookie indices are not FAT slots.
+Inherited CWD remains supported. A PROCESS-owned PFS resolver is a remaining
+public-loader prerequisite; switching global run is not a permitted workaround.
+
+Readiness and synchronization
+-----------------------------
+process_observer_ready() is a non-consuming predicate over retained identity's
+published delivery-ready flag, including abandonment so an operation can clean up.
+Committing status does NOT make an observer ready: resource teardown and the
+managed task's ZOMBIE/DONE transition precede readiness. Nested/unmanaged
+finalization publishes only after cleanup/successor callbacks return. A failed
+no-unwind cleanup never publishes readiness. Snapshots can expose committed
+status earlier, but cannot be used as a readiness predicate. Every successful
+completion publication assigns one immutable monotonic 64-bit ordinal, shared
+by all observers, so userspace can order already-ready children independently
+of launch-list order. Zero means not delivered or abandoned. Exhaustion fail-stops
+without wrapping. No second completion queue exists.
+It acquires no owner lock, allocates nothing and invokes no callback/copyout.
+Full snapshot copying is separate from IRQ readiness. GUI wait preflight must
+acquire its own observer references outside GUI exclusion; wait cleanup releases
+those references only after unpublishing, outside GUI/input and runqueue locks.
+
+Today PROCESS/ref operations are serialized by one cooperative boot CPU.
+Single-copy terminal reads plus compiler ordering preserve the current IRQ view;
+they are NOT SMP release/acquire or a substitute for owner synchronization.
+Before preemption/SMP, PROCESS registry/handle lookup+retain, snapshot and final
+unlink/release need the PROCESS owner protocol. Payload/terminal publication
+needs release/acquire; IRQ readiness must remain nonblocking. Owner membership
+and completion precede mapping/lease; the runqueue is a leaf. No allocation,
+copy, callback or last-reference destructor under that leaf; no blocking owner
+lock under CUIS input exclusion. Retained wait leases prevent final free while
+IRQ readiness accesses the object.
+
+Proposed public transport -- NOT enabled
+---------------------------------------
+include/process_exec.h is a fixed-size proposal for review with the CUIS agent,
+not a functional syscall declaration. Dispatch numbering is unassigned and no
+public frontdoor is enabled. No CUIS CHILD operation
+is removed by this prerequisite. A caller cannot use numeric S_PROCIDENT polling
+as a replacement for owned observation or consume Pwait on behalf of another.
+
+PREPARE would snapshot path/tail/env/optional absolute CWD and ordinary async or
+deferred-replacement policy, own image/resource rollback and attach observation
+before returning an opaque positive non-recycled PROCESS-owned handle. The
+request is 72 bytes with fixed 32-bit address fields on x32 ILP32/ARM A32/m68k.
+No GUI policy, AES identity or callback belongs in this generic request.
+
+COMMIT would revalidate prepared identity/leases and publish with no allocation,
+callback, yield, copy fault or rollback after the first visible store. PREPARE
+returns the handle as a scalar; COMMIT returns PID as a scalar and preserves the
+handle. Neither copies outputs after publication. SNAPSHOT
+would only peek KPROC (retryable; a copy fault may partially modify the user
+buffer but consumes no completion); CLOSE would abort an uncommitted image or release the
+committed observation, never public-reap. A valid owned CLOSE has no failure
+after consumption. It never cancels an already committed deferred successor.
+CANCEL_DEFERRED is an explicit idempotent current-PROCESS operation (zero handle
+and other arguments) that disposes only its unpublished successor, not an
+executing PROCESS. Failed replacement preparation/commit preserves the old
+pending successor. Cancelled unstarted identities become ABANDONED, with no
+CH_EXIT result or fabricated completion. Owner final execution cleanup would
+abandon uncommitted handles and release committed observers, independently of
+retained wait/PID identities. Invalid requests/copyout must preserve ownership
+and outputs. Deferral must retain owner identity, never a reusable PD pointer.
+
+Needed backend helper, not yet implemented: proc_exec_retain_observer(owner,
+handle,require_prepared,&empty). It must authenticate the calling PROCESS and
+retain the canonical target before leaving the owner protocol; require_prepared
+is for GUI console-lease attachment before publication. The GUI adapter will
+own lease policy and rollback, not loader/scheduler/completion ownership.
+
+The CUIS agent proposes SESSION_WAIT's unused arguments for an observer-handle
+array/count. Preflight would acquire generic references; operation-local leases
+would OR nonblocking generic readiness into existing event predicates. No GUI
+completion registry, PID owner, timer polling or second wait queue. A separate
+minimal GUI console lease is required; DISPLAY_LOCK cannot authorize a prepared
+PROCESS or restore console ownership on retirement. These interfaces require
+separate implementation/review before the eight CHILD selectors can be removed.
+#909 remains the sole public PROCESS reaper. COHORT/delay migration stays deferred.
+
+Native ordinary-loader evidence
+-------------------------------
+The x32 memory/GEM boot suite executes proc_exec_observe from a real managed
+parent's Syield boundary. Separate ordinary ELF children terminate normally
+with full status 0xffff or fault with SIGILL. Both observer-first/Pwait-first
+orders, multiple retained observers and duplicate public-wait rejection are
+checked, and resource snapshots return to baseline. Pwait's existing normal
+status encoding remains eight bits (0x00ff here); the authoritative observer
+preserves 0xffff. This adds no test-only public syscall or GUI completion queue.
+The canonical terminal ordinal cannot exhaust before the non-recycled PROCESS
+number namespace in valid execution: each identity contributes at most once.
+The overflow guard is fail-stop corruption/exhaustion protection, never reuse.
+Public adapters must treat COMPLETED with ordinal zero as status commitment
+only, not delivery readiness. ABANDONED is terminal without a completion event.
+
+Stopped execution and refused start
+-----------------------------------
+ksched_finalizing_process() recognizes the retained PROCESS of the still-running
+scheduler continuation even after launcher handoff has stopped its KTHREAD.
+Using ksched_exit_thread() here is wrong: it intentionally refuses a stopped
+THREAD and would prematurely publish a managed observer before ZOMBIE/DONE.
+Nested foreign PROCESSes do not match this identity and use their finalizer.
+
+A refused start may retain its stopped association until root reap. task_entry
+must not publish completion/abandonment before that deferred disposal commits.
+Canonical retirement publishes ABANDONED automatically when no status exists;
+normal managed completion publishes only after the existing wait-state store.
+Production host tests cover stopped-owner recognition, pending association,
+repeated disposal, cleanup/unwind readiness, and observer release after reap.

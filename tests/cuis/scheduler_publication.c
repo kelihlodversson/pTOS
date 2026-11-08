@@ -71,6 +71,7 @@ void kproc_release(KPROC *p)
     }
     if (root_fault && p==(KPROC *)&child) { root_release_calls++; longjmp(errbuf,1); }
 }
+void kproc_publish_observers(KPROC *p) { (void)p; observer_publications++; }
 WORD kproc_pid(PD *p) { return p ? 42 : 0; }
 KPROC *kproc_retain_live(KPROC *p) { return p; }
 PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
@@ -81,7 +82,7 @@ void cuis_child_completed(PD *p, WORD pid, UWORD status)
 { (void)p; (void)pid; (void)status; notifications++; }
 BOOL cuis_child_pid_reserved(WORD pid) { (void)pid; return FALSE; }
 static BOOL refused_stopped;
-static unsigned refused_disposals;
+static unsigned refused_disposals, observer_publications;
 LONG proc_start_scheduled(PD *p, BOOL take) { (void)take; CHECK(p==&child); return EIMBA; }
 BOOL kthread_stop(KTHREAD *t) { CHECK(t==(KTHREAD *)1 && !refused_stopped); refused_stopped=TRUE; return TRUE; }
 BOOL kthread_is_stopped(const KTHREAD *t) { CHECK(t==(KTHREAD *)1); return refused_stopped; }
@@ -349,9 +350,11 @@ int main(void)
     execution_cpu.current=&table[0];
     table[0].state=TASK_RUNNING;table[0].program=&child;
     table[0].process=(KPROC *)&child;table[0].thread=(KTHREAD *)1;
+    CHECK(ksched_finalizing_process((KPROC *)&child));
     if(!setjmp(execution_cpu.resume)) task_entry();
     CHECK(table[0].state==TASK_DONE && refused_stopped && refused_disposals==1 &&
-          !table[0].program && !table[0].process_completed && table[0].result==EIMBA);
+          !table[0].program && !table[0].process_completed && table[0].result==EIMBA &&
+          !observer_publications && !ksched_finalizing_process((KPROC *)&child));
     /* A retired attachment must lose its jump target, not just its result
      * permission. The producer can still finish after the consumer is gone. */
     ksched_admission_release(&execution_cpu.waiter);
