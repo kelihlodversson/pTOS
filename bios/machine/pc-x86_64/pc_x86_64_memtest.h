@@ -15,6 +15,7 @@ UQUAD x86_64_memtest_kstack_bytes(void);
 void x86_64_memtest_exit_handoff(struct kproc *process, PD *pd,
                                 UQUAD stack_phys, UWORD status, UWORD stage);
 void x86_64_memtest_fail_next_exit_handoff(void);
+void x86_64_memtest_fallback_observer(struct kproc *process, BOOL ready);
 #if CONF_WITH_NATIVE_SCHED
 struct kthread;
 #if CONF_WITH_MMAP

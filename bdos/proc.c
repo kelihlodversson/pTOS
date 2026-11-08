@@ -1494,6 +1494,9 @@ void xterm(UWORD rc)
 {
     PFVOID userterm;
     PD *p = run;
+#if CONF_WITH_USER_ASPACE
+    KPROC *fallback_observer = NULL;
+#endif
 #if CONF_WITH_NATIVE_SCHED
     KTHREAD *thread = ksched_exit_thread(p);
 #if CONF_WITH_PTERMGRP
@@ -1548,6 +1551,9 @@ void xterm(UWORD rc)
     kproc_require_no_threads(p);
     if (!kproc_begin_exit(p))
         panic("xterm: process disposal already committed");
+    fallback_observer = kproc_retain(p);
+    if (!fallback_observer) panic("fallback observer retention failed");
+    if (proc_defer_observer(p, fallback_observer)) fallback_observer = NULL;
 #endif
 #if CONF_WITH_KPROC
     kproc_complete(p, rc);
@@ -1573,6 +1579,14 @@ void xterm(UWORD rc)
      * termuser() will enter the gouser() code at the proper place.
      * sep 2005 RCL
      */
+#if CONF_WITH_USER_ASPACE
+    /* A kernel-code child has no separate syscall stack. User children defer
+     * this publication to their retained launcher, after stack reclamation. */
+    if (fallback_observer) {
+        kproc_publish_observers(fallback_observer);
+        kproc_release(fallback_observer);
+    }
+#endif
     run->p_dreg[0] = rc;
     termuser();
 }

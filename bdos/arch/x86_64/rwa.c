@@ -146,6 +146,7 @@ struct x86_64_process_launch {
     WORD entry_type;
 #if CONF_WITH_USER_ASPACE
     KPROC * volatile exit_process;
+    KPROC * volatile fallback_observer;
     volatile UWORD exit_status;
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
@@ -159,6 +160,21 @@ static X86_64_PROCESS_LAUNCH *current_launch;
 static BOOL fail_next_exit_handoff;
 void x86_64_memtest_fail_next_exit_handoff(void) { fail_next_exit_handoff = TRUE; }
 #endif
+/* Retain only canonical completion identity through refused exit handoff.
+ * The active syscall stack remains owned by this existing launcher. */
+BOOL proc_defer_observer(PD *pd, KPROC *observer)
+{
+    X86_64_PROCESS_LAUNCH *launch = current_launch;
+    if (!launch || launch->pd != pd || !launch->stack_phys) return FALSE;
+    if (!observer || launch->exit_process || launch->fallback_observer)
+        panic("duplicate fallback observer ownership");
+    launch->fallback_observer = observer;
+#if CONF_WITH_X86_64_MEMTEST
+    x86_64_memtest_fallback_observer(observer, FALSE);
+#endif
+    return TRUE;
+}
+
 BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
     KPROC *process;
@@ -270,7 +286,13 @@ void x86_64_process_cancel(X86_64_PROCESS_CONTEXT *context, PD *root)
         UQUAD stack_phys = launch->stack_phys;
 
 #if CONF_WITH_USER_ASPACE
-        if (launch->exit_process) {
+        if (launch->fallback_observer) {
+            KPROC *observer = launch->fallback_observer;
+            launch->fallback_observer = NULL;
+            kstack_free(stack_phys);
+            kproc_publish_observers(observer);
+            kproc_release(observer);
+        } else if (launch->exit_process) {
             KPROC *process = launch->exit_process;
             UWORD status = launch->exit_status;
             BOOL resident = launch->exit_resident;
@@ -362,6 +384,7 @@ void gouser_entry(WORD entry_type)
         launch.entry_type = entry_type;
 #if CONF_WITH_USER_ASPACE
         launch.exit_process = NULL;
+        launch.fallback_observer = NULL;
 #endif
 
 
@@ -467,6 +490,7 @@ void gouser_entry(WORD entry_type)
         launch.entry_type = entry_type;
 #if CONF_WITH_USER_ASPACE
         launch.exit_process = NULL;
+        launch.fallback_observer = NULL;
 #endif
         current_launch = &launch;
         __asm__ volatile ("pushfq; popq %0" : "=r"(launcher_flags) :: "memory");
@@ -510,6 +534,13 @@ void gouser_entry(WORD entry_type)
             x86_64_write_cr3(launcher_pml4 ? launcher_pml4 : x86_64_kernel_pml4_phys());
         }
 #if CONF_WITH_USER_ASPACE
+        if (launch.fallback_observer) {
+            kproc_publish_observers(launch.fallback_observer);
+#if CONF_WITH_X86_64_MEMTEST
+            x86_64_memtest_fallback_observer(launch.fallback_observer, TRUE);
+#endif
+            kproc_release(launch.fallback_observer);
+        }
         if (launch.exit_process) {
             KPROC *process = launch.exit_process;
 #if CONF_WITH_X86_64_MEMTEST
