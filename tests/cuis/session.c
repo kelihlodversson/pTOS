@@ -545,5 +545,8 @@ int main(void)
     rc = cohort_origin_checks();
     if (rc) return rc;
     rc = cohort_result_checks();
-    return rc ? rc : process_defer_checks();
+    if (rc) return rc;
+    rc = process_defer_checks();
+    CHECK(!process_references);
+    return rc;
 }
