@@ -11,6 +11,6 @@ void test_global_scheduler(void)
     if(h>=0) (void)Fclose(h);
     ptest_pass();
 #else
-    ptest_begin("global_scheduler"); ptest_skip("native MMU scheduler disabled");
+    (void)Cconws("  global_scheduler... SKIP (native MMU scheduler disabled)\r\n");
 #endif
 }
