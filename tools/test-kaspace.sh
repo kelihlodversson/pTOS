@@ -30,6 +30,9 @@ PY
     [ "$preset" != virt-m68k-aspace ] || arch_include=include/arch/m68k
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
         -I"$arch_include" -idirafter include -iquote bdos \
+        -c tests/sched_sequence_header.c -o "$work/sequence-header.o"
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
+        -I"$arch_include" -idirafter include -iquote bdos \
         tests/kaspace_mmap_policy.c bdos/kaspace.c -o "$work/mmap-policy"
     "$work/mmap-policy"
     echo "KASPACE mmap policy ($preset configuration, host execution): PASS"

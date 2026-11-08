@@ -1280,7 +1280,7 @@ static LONG dispatch_group(UWORD count, LONG *results);
 
 static LONG run_group(PD * const *programs,UWORD count,LONG *results,BOOL take_ownership,BOOL prepare)
 {
-    KERNEL_TASK *slots[KSCHED_LIMIT];
+    KERNEL_TASK *slots[KSCHED_LIMIT]={NULL};
     UWORD i,j;
     if(scheduler.stopping) return EACCDN;
     if(scheduler.entered || scheduler.waiter_attached || scheduler.waiter.identity) return EAGAIN;
@@ -1296,6 +1296,8 @@ static LONG run_group(PD * const *programs,UWORD count,LONG *results,BOOL take_o
     }
     for(i=0;i<count;i++) {
         KERNEL_TASK *task=slots[i];
+        if(!task || task->state!=TASK_RESERVED)
+            panic("scheduler: incomplete prepared batch");
         task->program=programs[i]; task->pid=kproc_pid(programs[i]);
         task->execution.identity=++next_identity; task->take_ownership=take_ownership;
         task->process=kproc_retain(programs[i]);
@@ -1310,6 +1312,7 @@ static LONG run_group(PD * const *programs,UWORD count,LONG *results,BOOL take_o
     return dispatch_group(count,results);
 failed:
     for(i=0;i<count;i++) {
+        if(!slots[i]) continue; /* only acquired slots have rollback ownership */
         discard_task_execution(slots[i]);
         kproc_release(slots[i]->process); slots[i]->process=NULL;
         clear_task(slots[i]);
