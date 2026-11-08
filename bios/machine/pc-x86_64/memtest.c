@@ -2233,6 +2233,7 @@ static struct {
     KPROC *parent;
     PROCESS_OBSERVER *observer, *second;
     LONG pid;
+    void *prepared;
 } ordinary_observation;
 static void ordinary_observation_yield(void)
 {
@@ -2246,7 +2247,14 @@ static void ordinary_observation_yield(void)
     ordinary_observation.yields++;
     if (ordinary_observation.yields==1) {
         command[2]=ordinary_observation.scenario==2 ? 'f':'n';
-        ordinary_observation.pid=proc_exec_observe("C:\\X32HELLO.TOS",command,environment,NULL,
+        if (ordinary_observation.scenario >= 3) {
+            LONG result=proc_exec_prepare("C:\\X32HELLO.TOS",command,environment,NULL,
+                                          &ordinary_observation.observer,&ordinary_observation.prepared);
+            CHECK(result==E_OK && ordinary_observation.prepared,
+                  "ordinary loader retains a fully prepared private admission");
+            if (result!=E_OK) return;
+            ordinary_observation.pid=kproc_ref_pid(ordinary_observation.observer);
+        } else ordinary_observation.pid=proc_exec_observe("C:\\X32HELLO.TOS",command,environment,NULL,
                                                   &ordinary_observation.observer);
         CHECK(ordinary_observation.pid>0 && ordinary_observation.observer,
               "ordinary loader attaches retained observer before asynchronous publication");
@@ -2259,6 +2267,25 @@ static void ordinary_observation_yield(void)
         return;
     }
     if (!ordinary_observation.observer) return;
+    if (ordinary_observation.scenario>=3 && ordinary_observation.yields==2) {
+        CHECK(process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
+              snapshot.state==PROCESS_UNSTARTED && !process_observer_ready(ordinary_observation.observer) &&
+              ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
+              "prepared ordinary child remains non-runnable and not wait-visible across native yield");
+        if (ordinary_observation.scenario==4) {
+            ksched_process_cancel(&ordinary_observation.prepared);
+            CHECK(!ordinary_observation.prepared && process_observer_ready(ordinary_observation.observer) &&
+                  process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
+                  snapshot.state==PROCESS_ABANDONED && !snapshot.kind && !snapshot.status &&
+                  !snapshot.order_low && !snapshot.order_high &&
+                  ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
+                  "cancelled prepared image abandons canonical identity without public completion");
+            ordinary_observation.checked=TRUE;
+        } else CHECK(ksched_process_publish(&ordinary_observation.prepared)==ordinary_observation.pid &&
+                     !ordinary_observation.prepared,
+                     "commit consumes prepared admission exactly once before user execution");
+        return;
+    }
     if (ordinary_observation.scenario==1)
         CHECK(ksched_wait_ready(process_observer_ready,ordinary_observation.observer)==KSCHED_WAIT_READY &&
               process_observer_snapshot(ordinary_observation.observer,&snapshot) && snapshot.status==0xffff,
@@ -2284,7 +2311,7 @@ static void test_ordinary_observation(void)
     UWORD mode;
     int before=failures;
     static const char command[]={2,'O','p',0}, environment[]={0,0};
-    for (mode=0;mode<3;mode++) {
+    for (mode=0;mode<5;mode++) {
         SNAP baseline;
         LONG loaded, status;
         PD *program;
