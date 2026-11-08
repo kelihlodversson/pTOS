@@ -94,48 +94,38 @@ static int key_checks(LONG window)
 #endif
     return 0;
 }
-#if CONF_WITH_X86_64_MEMTEST
-static LONG raw_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, UQUAD state)
-{
-    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_POINTER_READ;
-    register UQUAD di __asm__("rdi") = (QUAD)window, si __asm__("rsi") = (uintptr_t)x;
-    register UQUAD dx __asm__("rdx") = (uintptr_t)y, r10 __asm__("r10") = (uintptr_t)buttons;
-    register UQUAD r8 __asm__("r8") = state;
-    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di), "r"(si), "r"(dx), "r"(r10), "r"(r8)
-        : "rcx", "r11", "memory", "cc");
-    return (LONG)ax;
-}
-#endif
 static int pointer_checks(void)
 {
-    LONG window, x, y, rc;
-    ULONG buttons, state, i;
-    window = probe_window_create(0, 0, 0x7fffffffL, 0x7fffffffL);
+    LONG session=probe_session_open(), window, x, y, buttons, modifiers;
+    CHECK(probe_call6(CUIS_INPUT_STATE,session,(uintptr_t)&x,(uintptr_t)&y,
+                     (uintptr_t)&buttons,(uintptr_t)&modifiers,0) == E_OK);
+    /* The IRQ moves one pixel right and up. Start outside the target so
+     * hover readiness cannot satisfy EVENT_WAIT before the IRQ is armed. */
+    window=probe_window_create(x+1,y-1,10,10);
     CHECK(window >= 0 && probe_window_show(window) == E_OK);
-    for (i = 0; i < 17; i++) {
-        rc = probe_pointer_read(window, &x, &y, &buttons, &state);
-        CHECK(rc >= 0);
-        if (!rc) break;
-    }
-    CHECK(rc == 0);
-    CHECK(probe_event_wait(window, CUIS_EVENT_REDRAW | CUIS_EVENT_POINTER, 0) == 1);
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == EACCDN);
-    CHECK(probe_event_wait(window, CUIS_EVENT_POINTER | CUIS_EVENT_KEY, 0) == 0);
-    CHECK(probe_event_wait(window, 0, 0) == EINVAL);
-    CHECK(probe_event_wait(window, 32, 0) == EINVAL);
-    CHECK(probe_event_wait(window, CUIS_EVENT_POINTER, -2) == EINVAL);
-    CHECK(probe_event_wait(window, CUIS_EVENT_POINTER, 1) == 0);
+    CHECK(probe_event_wait(window,CUIS_EVENT_POINTER,0) == 0);
+    CHECK(probe_event_wait(window,CUIS_EVENT_KEY,0) == EACCDN);
+    CHECK(probe_event_wait(window,0,0) == EINVAL);
+    CHECK(probe_event_wait(window,32,0) == EINVAL);
+    CHECK(probe_event_wait(window,CUIS_EVENT_POINTER,-2) == EINVAL);
+    CHECK(probe_event_wait(window,CUIS_EVENT_POINTER,1) == 0);
 #if CONF_WITH_X86_64_MEMTEST
-    /* A real IRQ delivers a press and release before this waiter resumes. */
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY | CUIS_EVENT_POINTER, -1) == 1);
-    CHECK(probe_window_focused(window) == 1);
-    CHECK(probe_pointer_read(window, &x, &y, &buttons, (ULONG *)0) == EIMBA);
-    CHECK(raw_pointer_read(window, &x, &y, &buttons, (1ULL << 32) | (uintptr_t)&state) == EIMBA);
-    CHECK(probe_pointer_read(window, &x, &y, &buttons, &state) == 1);
-    CHECK(buttons == 1 && (state & CUIS_POINTER_CHANGED) == 1 && (state & CUIS_POINTER_INSIDE));
-    CHECK(probe_pointer_read(window, &x, &y, &buttons, &state) == 1);
-    CHECK(buttons == 0 && (state & CUIS_POINTER_CHANGED) == 1);
-    CHECK(probe_pointer_read(window, &x, &y, &buttons, &state) == 0);
+    {
+        LONG values[5];
+        CHECK(probe_call6(CUIS_INPUT_BUTTON,session,1,1,1,0,0) == E_OK);
+        /* A real IRQ delivers a press and release before the waiter resumes.
+         * Session history retains the press even though live state is up. */
+        CHECK(probe_event_wait(window,CUIS_EVENT_POINTER,-1) == 1);
+        CHECK(probe_window_focused(window) == 1);
+        CHECK(probe_call6(CUIS_SESSION_WAIT,session,0,CUIS_READY_BUTTON,0,0,0) == CUIS_READY_BUTTON);
+        CHECK(probe_call6(CUIS_INPUT_RESULT,session,0,(uintptr_t)&values[1],(uintptr_t)&values[2],
+                         (uintptr_t)&values[3],(uintptr_t)&values[4]) == EIMBA);
+        CHECK(probe_call6(CUIS_INPUT_RESULT,session,(uintptr_t)&values[0],(uintptr_t)&values[1],
+                         (uintptr_t)&values[2],(uintptr_t)&values[3],(uintptr_t)&values[4]) == E_OK);
+        CHECK(values[1] == 1 && (values[4]&3) == 1);
+        CHECK(probe_call6(CUIS_INPUT_STATE,session,(uintptr_t)&x,(uintptr_t)&y,
+                         (uintptr_t)&buttons,(uintptr_t)&modifiers,0) == E_OK && buttons == 0);
+    }
 #endif
     CHECK(probe_window_destroy(window) == E_OK);
     return 0;
@@ -190,7 +180,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_call6(CUIS_INPUT_RESULT,owner,0,0,0,0,0) == EACCDN);
         CHECK(probe_event_wait(parent_window, CUIS_EVENT_KEY, 0) == EACCDN);
         CHECK(probe_event_wait(parent_window, CUIS_EVENT_POINTER, 0) == EACCDN);
-        CHECK(probe_pointer_read(parent_window, (LONG *)0, (LONG *)0, (ULONG *)0, (ULONG *)0) == EACCDN);
+        CHECK(probe_call6(CUIS_INPUT_STATE,owner,0,0,0,0,0) == EACCDN);
     }
     handle = probe_session_open();
     CHECK(handle >= 0 && probe_session_open() == handle);

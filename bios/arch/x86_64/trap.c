@@ -390,8 +390,6 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
              fn == CUIS_POINTER_STYLE ? cuis_pointer_style(frame->rdi, frame->rsi, frame->rdx) :
              fn == CUIS_CONTROL_READ ? cuis_control_service(frame->rdi,
                  frame->rsi, frame->rdx, frame->r10, frame->r8) :
-             fn == CUIS_POINTER_READ ? cuis_pointer_service(frame->rdi,
-                 frame->rsi, frame->rdx, frame->r10, frame->r8) :
              fn == CUIS_EVENT_WAIT ? cuis_event_service(frame->rdi, frame->rsi, frame->rdx) :
              fn == CUIS_WINDOW_CLIP ? cuis_clip_service(frame->rdi, frame->rsi,
                  frame->rdx, frame->r10, frame->r8, frame->r9) :
