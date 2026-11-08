@@ -391,6 +391,8 @@ static void native_resume_peer(void *argument)
     static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
     long x,y,buttons,modifiers,token;
     (void)argument;
+    /* Announce fresh input only after the leader has admitted its wait. */
+    conws("CUIS resume first: READY\r\n");
     do {
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
             native_resume.error=1; return;
@@ -756,7 +758,6 @@ static void test_native_resume(void)
     result=launch_entry(native_resume_peer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&tid);
     RESUME_CHECK(result>0,"native SAME_PROCESS child observer peer");
     if (result<=0) goto out;
-    conws("CUIS resume first: READY\r\n");
     result=native_cuis5(32,native_resume.session,0,16|2048|2,5000,0);
     RESUME_CHECK(result==2048 && !native_resume.error,"child wake checkpoints first click before deadline");
     if (result!=2048 || native_resume.error) goto joined;
