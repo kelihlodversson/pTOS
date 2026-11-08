@@ -34,7 +34,6 @@ void cuis_pointer_sync(void);
 LONG cuis_vdi_policy(void);
 BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect);
 BOOL cuis_keyboard_event(ULONG key);
-LONG cuis_input_service(ULONG function, UQUAD handle, UQUAD argument);
 BOOL cuis_pointer_packet(WORD dx, WORD dy, ULONG buttons, LONG *x, LONG *y);
 void cuis_mouse_packet(SBYTE *packet);
 LONG cuis_control_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed);

@@ -112,7 +112,8 @@ static int region_checks(void)
     CHECK(update_count == 4 && CLIP(a, 0) == 1 && copied[3] == 2);
     CHECK(update_window->redraw);
     CHECK(W(CUIS_UPDATE_END, a) == E_OK && !cuis_update_active());
-    CHECK(W(CUIS_WINDOW_REDRAW, a) == 1);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(W(CUIS_UPDATE_END, a) == EACCDN);
     CHECK(W(CUIS_UPDATE_BEGIN, a) == E_OK && update_count == 1);
     CHECK(CLIP(a, 0) == 1 && copied[2] == 10 && copied[3] == 10);

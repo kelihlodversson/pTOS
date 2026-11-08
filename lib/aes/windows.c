@@ -35,11 +35,6 @@ LONG aes_window_lower(LONG handle)
     return cuis_call(CUIS_WINDOW_LOWER, handle);
 }
 
-LONG aes_window_redraw(LONG handle)
-{
-    return cuis_call(CUIS_WINDOW_REDRAW, handle);
-}
-
 LONG aes_update_begin(LONG window)
 {
     return cuis_call(CUIS_UPDATE_BEGIN, window);
@@ -65,11 +60,6 @@ LONG aes_window_focused(LONG window)
 LONG aes_window_unfocus(LONG window)
 {
     return cuis_call(CUIS_FOCUS_RELEASE, window);
-}
-
-LONG aes_key_read(LONG window, ULONG *key)
-{
-    return cuis_call6(CUIS_KEY_READ, (QUAD)window, (uintptr_t)key, 0, 0, 0, 0);
 }
 
 LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state)

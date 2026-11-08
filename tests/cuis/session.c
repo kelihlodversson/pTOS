@@ -60,7 +60,7 @@ static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
 static ULONG input_packet_mode;
-static BOOL input_drop_focus, input_drop_on_validate;
+static BOOL input_drop_focus;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
 static void context_copy_hook(void);
 static void context_read_hook(void);
@@ -246,10 +246,6 @@ BOOL kproc_validate_user_write(UQUAD address, ULONG size)
         region_exit_on_output = FALSE;
         cuis_process_exit(run);
         return FALSE;
-    }
-    if (input_drop_on_validate) {
-        input_drop_on_validate = FALSE;
-        set_focus(NULL);
     }
     if (address >= 0x20000 && address <= 0x28000 && size <= 0x28000 - address) return TRUE;
     return size == sizeof(LONG) && address >= 0x1000 && address <= 0x1010 &&
