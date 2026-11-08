@@ -8,6 +8,7 @@ int libaes_drawing_checks(void);
 int libaes_drawing_exit_handle(void);
 typedef char object_x32_size[(sizeof(OBJECT) == 24) ? 1 : -1];
 extern int64_t client_pexec(const char *path, const char *tail, const char *env);
+static const char empty_environment[2] = {0,0};
 
 /* Deliberately poison unused slots. Session calls must never inspect them. */
 static LONG raw(ULONG function, UQUAD handle)
@@ -262,7 +263,7 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 8; i++) tail[10 + i] = digits[((ULONG)window >> ((7 - i) * 4)) & 15];
     for (i = 0; i < 4; i++) {
         tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : i == 2 ? 'f' : 'o';
-        CHECK(client_pexec(argv[0], tail, "") == (i >= 2 ? 0xffff : 77));
+        CHECK(client_pexec(argv[0], tail, empty_environment) == (i >= 2 ? 0xffff : 77));
         {
             PROBE_PACKET packet;
             CHECK(probe_packet_read(handle,&packet) == sizeof(packet));
@@ -285,7 +286,7 @@ int main(int argc, char **argv, char **envp)
     if (rc) return rc;
     CHECK(probe_update_begin(window) == E_OK);
     tail[1] = 'u';
-    CHECK(client_pexec(argv[0], tail, "") == 77);
+    CHECK(client_pexec(argv[0], tail, empty_environment) == 77);
     CHECK(probe_update_end(window) == E_OK);
     {
         PROBE_PACKET packet;
