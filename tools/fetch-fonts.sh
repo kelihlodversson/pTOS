@@ -62,8 +62,10 @@ verify() {
     fi
 }
 
+# Retry transient HTTP 5xx/timeouts only; checksum validation remains mandatory.
+# Each attempt is bounded and a persistent outage still fails packaging.
 echo "Fetching DejaVu fonts $DEJAVU_VERSION"
-curl -fsSL "$DEJAVU_URL" -o "$work/dejavu.tar.bz2"
+curl -fsSL --retry 3 --connect-timeout 30 --max-time 180 "$DEJAVU_URL" -o "$work/dejavu.tar.bz2"
 verify "$work/dejavu.tar.bz2" "$DEJAVU_TARBALL_SHA256" "the DejaVu tarball"
 tar -xjf "$work/dejavu.tar.bz2" -C "$work"
 src=$work/dejavu-fonts-ttf-$DEJAVU_VERSION
