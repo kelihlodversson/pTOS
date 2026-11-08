@@ -386,11 +386,7 @@ struct process_exec_handle **kproc_exec_handles(KPROC *owner)
 {
     return owner && !owner->retired ? &owner->exec_handles : NULL;
 }
-void kproc_exec_owner_exit(PD *pd)
-{
-    KPROC *owner = kproc_find(pd); /* The finalizer owns this live record. */
-    if (owner) proc_exec_owner_exit(owner);
-}
+
 #endif
 
 KPROC *kproc_retain(PD *pd)
@@ -1001,6 +997,11 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+            /* Registry cursor is detached; the lookup reference still owns
+             * this identity. Child teardown cannot invalidate an outer link. */
+            proc_exec_owner_exit(kproc);
+#endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
             if (kproc->test_controller_first) clone_drop_controller(kproc);
 #endif

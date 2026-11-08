@@ -79,7 +79,6 @@ KPROC *kproc_retain_identity(KPROC *process);
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 struct process_exec_handle;
 struct process_exec_handle **kproc_exec_handles(KPROC *owner);
-void kproc_exec_owner_exit(PD *pd);
 #endif
 WORD kproc_ref_pid(const KPROC *process);
 /* Completion may already have been recorded while the PD is still present. */

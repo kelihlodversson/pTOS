@@ -95,5 +95,3 @@ int main(void)
 }
 
 void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }
-
-void kproc_exec_owner_exit(PD *pd) { (void)pd; }
