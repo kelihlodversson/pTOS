@@ -2,7 +2,11 @@
  * suspended kernel continuation. No PROCESS identity owns this jump target. */
 #ifndef FS_ERROR_H
 #define FS_ERROR_H
+/* Respect an already selected kernel jump ABI. Hosted fixtures may instead
+ * select libc's ABI through their setjmp shim before including this header. */
+#ifndef SETJMP_H
 #include <setjmp.h>
+#endif
 typedef struct {
     jmp_buf jump;
     long code, rw;
