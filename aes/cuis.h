@@ -26,8 +26,6 @@ LONG cuis_region_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y, UQUAD widt
 LONG cuis_service(ULONG function, UQUAD handle);
 LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
                          UQUAD d, UQUAD e);
-LONG cuis_clip_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
-                       UQUAD width, UQUAD height);
 LONG cuis_pointer_style(UQUAD handle, UQUAD form, UQUAD hidden);
 void cuis_pointer_sync(void);
 LONG cuis_vdi_policy(void);

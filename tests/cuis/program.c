@@ -194,6 +194,12 @@ int main(int argc, char **argv, char **envp)
     CHECK(raw(CUIS_SESSION_END, ~0ULL) == EINVAL);
     CHECK(probe_session_query(-1) == EINVAL);
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
+    {
+        static const ULONG retired[]={10,11,12,13,14,16,17,18,19,21,22,23,52};
+        ULONG retired_index;
+        for (retired_index=0;retired_index<sizeof(retired)/sizeof(retired[0]);retired_index++)
+            CHECK(probe_call6(retired[retired_index],handle,0,0,0,0,0) == EINVFN);
+    }
     if (argc == 2 && argv[1][0] == 'u') {
         LONG x, y, w, h;
         rc = libaes_drawing_exit_handle();
