@@ -123,3 +123,18 @@ minimal GUI console lease is required; DISPLAY_LOCK cannot authorize a prepared
 PROCESS or restore console ownership on retirement. These interfaces require
 separate implementation/review before the eight CHILD selectors can be removed.
 #909 remains the sole public PROCESS reaper. COHORT/delay migration stays deferred.
+
+Native ordinary-loader evidence
+-------------------------------
+The x32 memory/GEM boot suite executes proc_exec_observe from a real managed
+parent's Syield boundary. Separate ordinary ELF children terminate normally
+with full status 0xffff or fault with SIGILL. Both observer-first/Pwait-first
+orders, multiple retained observers and duplicate public-wait rejection are
+checked, and resource snapshots return to baseline. Pwait's existing normal
+status encoding remains eight bits (0x00ff here); the authoritative observer
+preserves 0xffff. This adds no test-only public syscall or GUI completion queue.
+The canonical terminal ordinal cannot exhaust before the non-recycled PROCESS
+number namespace in valid execution: each identity contributes at most once.
+The overflow guard is fail-stop corruption/exhaustion protection, never reuse.
+Public adapters must treat COMPLETED with ordinal zero as status commitment
+only, not delivery readiness. ABANDONED is terminal without a completion event.

@@ -54,6 +54,7 @@
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc_clone.h"
+#include "../../../bdos/process_observer.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
 #include "../../../bdos/arch/x86_64/thread_return_x32.h"
@@ -2213,10 +2214,92 @@ static LONG active_clone_construct(UWORD index)
     }
     return error;
 }
+static struct {
+    BOOL enabled, checked;
+    UWORD scenario, yields;
+    KPROC *parent;
+    PROCESS_OBSERVER *observer, *second;
+    LONG pid;
+} ordinary_observation;
+static void ordinary_observation_yield(void)
+{
+    KTHREAD *thread;
+    PROCESS_COMPLETION snapshot;
+    LONG waited;
+    char command[] = {2,'O','n',0};
+    static char environment[] = {0,0};
+    if (!ordinary_observation.enabled || !(thread=ksched_exit_thread(run)) ||
+        kthread_process(thread)!=ordinary_observation.parent || ordinary_observation.checked) return;
+    ordinary_observation.yields++;
+    if (ordinary_observation.yields==1) {
+        command[2]=ordinary_observation.scenario==2 ? 'f':'n';
+        ordinary_observation.pid=proc_exec_observe("C:\\X32HELLO.TOS",command,environment,NULL,
+                                                  &ordinary_observation.observer);
+        CHECK(ordinary_observation.pid>0 && ordinary_observation.observer,
+              "ordinary loader attaches retained observer before asynchronous publication");
+        if (ordinary_observation.pid<=0) return;
+        CHECK(process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
+              snapshot.state==PROCESS_UNSTARTED && !process_observer_ready(ordinary_observation.observer),
+              "ordinary observation is published before child user execution");
+        CHECK(process_observer_attach(ordinary_observation.observer,&ordinary_observation.second)==E_OK,
+              "multiple observers share the actual ordinary child identity");
+        return;
+    }
+    if (!ordinary_observation.observer) return;
+    if (ordinary_observation.scenario==1)
+        CHECK(ksched_wait_ready(process_observer_ready,ordinary_observation.observer)==KSCHED_WAIT_READY &&
+              process_observer_snapshot(ordinary_observation.observer,&snapshot) && snapshot.status==0xffff,
+              "observer-first ordinary completion is independent of Pwait");
+    waited=ksched_wait((WORD)ordinary_observation.pid,ordinary_observation.scenario==1 ? 1:0,0);
+    CHECK((WORD)((ULONG)waited>>16)==ordinary_observation.pid &&
+          (UWORD)waited==(ordinary_observation.scenario==2 ? 0x0400:0x00ff),
+          "ordinary observer does not consume the public PROCESS wait result");
+    CHECK(process_observer_ready(ordinary_observation.observer) &&
+          process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
+          snapshot.state==PROCESS_COMPLETED && (snapshot.order_low || snapshot.order_high) &&
+          (ordinary_observation.scenario==2 ? snapshot.kind==PROCESS_COMPLETION_SIGNAL &&
+             snapshot.signal==4 && !snapshot.status : snapshot.kind==PROCESS_COMPLETION_NORMAL &&
+             snapshot.status==0xffff && !snapshot.signal),
+          "actual ordinary Pexec snapshot distinguishes full normal ffff from SIGILL after Pwait");
+    CHECK(process_observer_snapshot(ordinary_observation.second,&snapshot) &&
+          ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
+          "independent observer survives exactly-once public reaping");
+    ordinary_observation.checked=TRUE;
+}
+static void test_ordinary_observation(void)
+{
+    UWORD mode;
+    int before=failures;
+    static const char command[]={2,'O','p',0}, environment[]={0,0};
+    for (mode=0;mode<3;mode++) {
+        SNAP baseline;
+        LONG loaded, status;
+        PD *program;
+        snap(&baseline);
+        loaded=Pexec(PE_LOAD,"C:\\X32HELLO.TOS",command,environment);
+        CHECK(loaded>0,"load real ordinary observer parent");
+        if (loaded<=0) break;
+        program=(PD *)(uintptr_t)loaded;
+        CHECK(proc_prepare_scheduled(program)==E_OK,"prepare real ordinary observer parent");
+        bzero(&ordinary_observation,sizeof(ordinary_observation));
+        ordinary_observation.scenario=mode;
+        ordinary_observation.parent=kproc_retain(program);
+        ordinary_observation.enabled=TRUE;
+        CHECK(ksched_run(&program,1,&status)==E_OK && status==0x1357 && ordinary_observation.checked,
+              "ordinary observed child and parent execute actual native continuations");
+        ordinary_observation.enabled=FALSE;
+        process_observer_release(&ordinary_observation.observer);
+        process_observer_release(&ordinary_observation.second);
+        kproc_release(ordinary_observation.parent);
+        same(&baseline,"ordinary observation/Pwait releases all identities, mappings and stacks");
+    }
+    kcprintf("x86-64 ordinary PROCESS observation: %s\n",failures==before ? "PASS":"FAIL");
+}
 void x86_64_memtest_clone_yield(void)
 {
     UWORD i;
     KTHREAD *thread;
+    ordinary_observation_yield();
     if (!active_clone.enabled || !(thread = ksched_exit_thread(run))) return;
     if (kthread_process(thread) == active_clone.parent) {
         active_clone.parent_yields++;
@@ -4675,6 +4758,9 @@ static void test_ring3(void)
     }
     test_cuis_scheduler();
     test_async_processes();
+#if CONF_WITH_MMAP
+    test_ordinary_observation();
+#endif
     {
         SNAP s;
         LONG result;
