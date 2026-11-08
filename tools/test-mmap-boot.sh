@@ -241,6 +241,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM update/regions: PASS' "$log"
     grep -q 'x32 GEM window lifecycle: PASS' "$log"
     grep -q 'x32 GEM combined events: PASS' "$log"
+    grep -q 'x32 GEM reverse completion order and independent reaping: PASS' "$log"
     test "$(grep -c 'x32 async orphan: PASS' "$log")" -ge 4
     grep -q 'x86-64 async process calls: PASS' "$log"
     grep -q 'x86-64 CUIS scheduler: PASS' "$log"

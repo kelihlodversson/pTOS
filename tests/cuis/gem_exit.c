@@ -32,6 +32,57 @@ static int exit_message(short *message, short pid, short code)
     return message[0] == CH_EXIT && !message[1] && !message[2] && message[3] == pid &&
            message[4] == code && !message[5] && !message[6] && !message[7];
 }
+#define ORDER_READY 0x7e30
+#define ORDER_GO 0x7e31
+int gem_exit_order_child(int argc, char **argv)
+{
+    short parent = 0, id, message[8] = { ORDER_READY,0,0,0,0,0,0,0 };
+    unsigned i, number = 0;
+    VERIFY(argc == 3 && argv[1][0] == 'o' && !argv[1][1]);
+    for (i = 0; argv[2][i]; i++) {
+        VERIFY(argv[2][i] >= '0' && argv[2][i] <= '9' && number <= 3276);
+        number = number*10 + argv[2][i]-'0';
+    }
+    VERIFY(number && number <= 32767); parent = (short)number;
+    id = appl_init(); VERIFY(id > 0);
+    message[1] = message[3] = id;
+    VERIFY(appl_write(parent,sizeof(message),message));
+    VERIFY(evnt_mesag(message) && message[0] == ORDER_GO && message[1] == parent);
+    VERIFY(appl_exit());
+    return 0x3456;
+}
+static int ordered_exit_checks(short *global)
+{
+    char tail[16] = { 0,'o',' ' }, reverse[5], fast_tail[3] = { 1,'e',0 };
+    unsigned number = (unsigned short)global[2], used = 3, digits = 0;
+    short first, second, peer, message[8], go[8] = { ORDER_GO,0,0,0,0,0,0,0 };
+    do { reverse[digits++] = '0'+number%10; number /= 10; } while (number);
+    while (digits) tail[used++] = reverse[--digits];
+    tail[0] = used-1;
+    first = mt_shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"APPS\\GEMCHILD.PRG",tail,global);
+    VERIFY(first > 0 && receive(message,2000,global) == MU_MESAG && message[0] == ORDER_READY);
+    peer = message[3];
+    VERIFY(peer > 0 && message[1] == peer &&
+           mt_appl_find((const char *)(uintptr_t)(0xfffe0000UL | (unsigned short)peer),global) == first);
+    second = mt_shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"APPS\\GEMCHILD.PRG",fast_tail,global);
+    VERIFY(second > 0 && second != first);
+    /* Hold the first child alive until the second has completed. No timer
+     * or scheduler ordering assumption decides which PROCESS exits first. */
+    VERIFY(process(0x13a,second,0,0,0) == (int32_t)(((uint32_t)second << 16) | 0x78));
+    go[1] = global[2];
+    VERIFY(mt_appl_write(peer,sizeof(go),go,global));
+    VERIFY(process(0x13a,first,0,0,0) == (int32_t)(((uint32_t)first << 16) | 0x56));
+    /* Both public completions are consumed before either notification read. */
+    VERIFY(mt_appl_read(APR_NOWAIT,sizeof(message),message,global) && exit_message(message,second,0x5678));
+    VERIFY(mt_appl_read(APR_NOWAIT,sizeof(message),message,global) && exit_message(message,first,0x3456));
+    VERIFY(receive(message,0,global) == MU_TIMER);
+    VERIFY(process(0x13a,first,1,0,0) == -33 && process(0x13a,second,1,0,0) == -33);
+    {
+        static const char marker[] = "x32 GEM reverse completion order and independent reaping: PASS\r\n";
+        (void)ptos_write(1,marker,sizeof(marker)-1);
+    }
+    return 0;
+}
 static int synchronous_exit_checks(short *global)
 {
     char tail[3] = { 1,'n',0 };
@@ -124,5 +175,6 @@ int gem_exit_checks(short *global)
     VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,0x1234));
     VERIFY(receive(message,0,global) == MU_TIMER);
     VERIFY(synchronous_exit_checks(global) == 0);
+    VERIFY(ordered_exit_checks(global) == 0);
     return 0;
 }
