@@ -1154,6 +1154,18 @@ void test_pclone(void);
 void test_pclone(void)
 {
     ptest_begin("pclone");
+    /* These no-argument calls must fail before creating a child or blocking
+     * the parent until saved-context/private-VM/exec-detach support exists.
+     * Exercise the actual native trap and signed error result repeatedly. */
+    {
+        long pid = Pgetpid();
+        int fork_cycle;
+        for (fork_cycle = 0; fork_cycle < 16; fork_cycle++) {
+            ptest_assert_msg(Pfork() == -32L,"Pfork capability gate returns EINVFN");
+            ptest_assert_msg(Pvfork() == -32L,"Pvfork capability gate returns EINVFN without blocking");
+        }
+        ptest_assert_msg(Pgetpid() == pid,"rejected fork preserves caller PID");
+    }
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     {
         static unsigned char stack[256] __attribute__((aligned(16)));
