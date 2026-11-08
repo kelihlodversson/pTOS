@@ -634,6 +634,10 @@ static void native_cancel_peer(void *argument)
             printf("resume observer launch token=%ld result=%ld\r\n",token,launched); return;
         }
         while (!native_cancel.adopt) (void)Syield();
+        /* The leader publishes adopt and enters SESSION_WAIT without yielding.
+         * This peer can run again only after that resumed wait blocks. Gate
+         * the second physical press here, not at the leader's pre-wait flag. */
+        conws("CUIS cancel resume admitted: READY\r\n");
         do {
             if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
                 native_cancel.error=1; return;
@@ -693,7 +697,6 @@ static void native_cancel_leader(void *argument)
             if (buttons&1) (void)Syield();
         } while (buttons&1);
         native_cancel.adopt=1;
-        conws("CUIS cancel resume adopt: READY\r\n");
         (void)native_cuis5(32,native_cancel.session,0,16|2,5000,0);
     }
     native_cancel.wait_result=result;
