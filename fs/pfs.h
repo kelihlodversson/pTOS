@@ -245,6 +245,9 @@ LONG pfs_do_dfree(WORD drv, ULONG *buf);
 LONG pfs_do_mkdir(const char *path);
 LONG pfs_do_rmdir(const char *path);
 LONG pfs_do_chdir(const char *path);
+/* Trusted loader operation: resolve against the target PROCESS, select its
+ * drive only on success, and never switch the calling PROCESS/global run. */
+LONG pfs_set_process_directory(const char *path, PD *process);
 LONG pfs_do_getdir(char *buf, WORD drv);
 LONG pfs_do_open(const char *path, WORD mode);
 LONG pfs_do_create(const char *path, UWORD attr);
