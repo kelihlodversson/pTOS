@@ -57,11 +57,6 @@ static inline LONG probe_window_lower(LONG handle)
     return probe_call(CUIS_WINDOW_LOWER, handle);
 }
 
-static inline LONG probe_window_redraw(LONG handle)
-{
-    return probe_call(CUIS_WINDOW_REDRAW, handle);
-}
-
 static inline LONG probe_update_begin(LONG window)
 {
     return probe_call(CUIS_UPDATE_BEGIN, window);
@@ -87,11 +82,6 @@ static inline LONG probe_window_focused(LONG window)
 static inline LONG probe_window_unfocus(LONG window)
 {
     return probe_call(CUIS_FOCUS_RELEASE, window);
-}
-
-static inline LONG probe_key_read(LONG window, ULONG *key)
-{
-    return probe_call6(CUIS_KEY_READ, (QUAD)window, (uintptr_t)key, 0, 0, 0, 0);
 }
 
 

@@ -68,40 +68,28 @@ static int update_checks(LONG window)
     CHECK(probe_window_destroy(occluder) == E_OK);
     return 0;
 }
-#if CONF_WITH_X86_64_MEMTEST
-static LONG raw_key_read(LONG window, UQUAD output)
-{
-    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_KEY_READ;
-    register UQUAD di __asm__("rdi") = (QUAD)window, si __asm__("rsi") = output;
-    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di), "r"(si)
-        : "rcx", "r11", "memory", "cc");
-    return (LONG)ax;
-}
-#endif
 static int key_checks(LONG window)
 {
+    CHECK(probe_call6(CUIS_WINDOW_POLICY,window,1,0,0,0,0) == E_OK);
+    CHECK(probe_window_raise(window) == E_OK);
+    CHECK(probe_event_wait(window,CUIS_EVENT_KEY,0) == 0);
+    CHECK(probe_event_wait(window,CUIS_EVENT_KEY,-2) == EINVAL);
+    CHECK(probe_event_wait(window,CUIS_EVENT_KEY,1) == 0);
 #if CONF_WITH_X86_64_MEMTEST
-    ULONG key;
-#endif
-    CHECK(probe_window_unfocus(window) == E_OK && probe_window_focus(window) == E_OK);
-    CHECK(probe_key_read(window, (ULONG *)0) == 0);
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 0);
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, -2) == EINVAL);
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 1) == 0);
-    CHECK(probe_update_begin(window) == E_OK);
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 10) == EACCDN);
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 0);
-    CHECK(probe_update_end(window) == E_OK);
-#if CONF_WITH_X86_64_MEMTEST
-    /* The boot fixture produces one translated keyboard event from the next
-     * real PIT IRQ only after this call reaches its atomic sleep path. */
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, -1) == 1);
-    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 1);
-    CHECK(probe_key_read(window, (ULONG *)0) == EIMBA);
-    CHECK(probe_key_read(window, (ULONG *)(uintptr_t)raw_key_read) == EIMBA);
-    CHECK(raw_key_read(window, (1ULL << 32) | (uintptr_t)&key) == EIMBA);
-    CHECK(probe_key_read(window, &key) == 1 && ((key >> 16) & 0xff) == 0x25);
-    CHECK(raw_key_read(window, ~0ULL) == 0);
+    {
+        LONG session=probe_session_open();
+        LONG values[5];
+        CHECK(probe_event_wait(window,CUIS_EVENT_KEY,-1) == 1);
+        CHECK(probe_call6(CUIS_SESSION_WAIT,session,0,CUIS_READY_KEY,0,0,0) == CUIS_READY_KEY);
+        CHECK(probe_call6(CUIS_INPUT_RESULT,session,0,(uintptr_t)&values[1],(uintptr_t)&values[2],
+                         (uintptr_t)&values[3],(uintptr_t)&values[4]) == EIMBA);
+        CHECK(probe_call6(CUIS_INPUT_RESULT,session,(1ULL<<32)|(uintptr_t)&values[0],(uintptr_t)&values[1],
+                         (uintptr_t)&values[2],(uintptr_t)&values[3],(uintptr_t)&values[4]) == EIMBA);
+        CHECK(probe_call6(CUIS_INPUT_RESULT,session,(uintptr_t)&values[0],(uintptr_t)&values[1],
+                         (uintptr_t)&values[2],(uintptr_t)&values[3],(uintptr_t)&values[4]) == E_OK);
+        CHECK(((values[0] >> 16)&255) == 0x25);
+        CHECK(probe_event_wait(window,CUIS_EVENT_KEY,0) == 0);
+    }
 #endif
     return 0;
 }
@@ -130,7 +118,6 @@ static int pointer_checks(void)
     }
     CHECK(rc == 0);
     CHECK(probe_event_wait(window, CUIS_EVENT_REDRAW | CUIS_EVENT_POINTER, 0) == 1);
-    CHECK(probe_window_redraw(window) == 1);
     CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == EACCDN);
     CHECK(probe_event_wait(window, CUIS_EVENT_POINTER | CUIS_EVENT_KEY, 0) == 0);
     CHECK(probe_event_wait(window, 0, 0) == EINVAL);
@@ -199,7 +186,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_session_close(owner) == EACCDN);
         CHECK(probe_call6(CUIS_STREAM_READ,owner,0,20,0,0,0) == EACCDN);
         CHECK(probe_packet_write(owner, 0, 1, 2, 3, 4) == EACCDN);
-        CHECK(probe_key_read(parent_window, (ULONG *)0) == EACCDN);
+        CHECK(probe_call6(CUIS_INPUT_RESULT,owner,0,0,0,0,0) == EACCDN);
         CHECK(probe_event_wait(parent_window, CUIS_EVENT_KEY, 0) == EACCDN);
         CHECK(probe_event_wait(parent_window, CUIS_EVENT_POINTER, 0) == EACCDN);
         CHECK(probe_pointer_read(parent_window, (LONG *)0, (LONG *)0, (ULONG *)0, (ULONG *)0) == EACCDN);
@@ -228,21 +215,14 @@ int main(int argc, char **argv, char **envp)
     }
     window = probe_window_create(-10, 20, 100, 80);
     CHECK(window >= 0);
-    CHECK(probe_window_redraw(window) == 0);
     CHECK(probe_window_raise(window) == EINVAL);
     CHECK(probe_window_show(window) == E_OK);
-    CHECK(probe_window_redraw(window) == 1);
-    CHECK(probe_window_redraw(window) == 0);
     CHECK(probe_window_hide(window) == E_OK);
-    CHECK(probe_window_redraw(window) == 0);
     CHECK(probe_window_show(window) == E_OK);
     CHECK(probe_window_lower(window) == E_OK);
     CHECK(probe_window_raise(window) == E_OK);
-    CHECK(probe_window_redraw(window) == 1);
     CHECK(probe_window_configure(window, -20, 30, 120, 90) == E_OK);
-    CHECK(probe_window_redraw(window) == 1);
     CHECK(probe_window_configure(window, -20, 30, 120, 90) == E_OK);
-    CHECK(probe_window_redraw(window) == 0);
     CHECK(probe_window_configure(window, 1, 2, 3, 0) == EINVAL);
     CHECK(probe_window_destroy(-1) == EINVAL);
     CHECK(probe_window_create(0x7fffffffL, 0, 1, 1) == EINVAL);
@@ -261,7 +241,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_window_focus(parent_window) == EACCDN);
         rc = libaes_drawing_exit_handle();
         if (rc) return rc;
-        for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_REDRAW; function++)
+        for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_LOWER; function++)
             CHECK(raw(function, parent_window) == EACCDN);
         CHECK(probe_window_destroy(parent_window) == EACCDN);
         CHECK(probe_window_configure(parent_window, 0, 0, 1, 1) == EACCDN);
@@ -290,8 +270,6 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_window_focused(window) == 1);
         CHECK(probe_update_begin(window) == E_OK);
         CHECK(probe_update_end(window) == E_OK);
-        CHECK(probe_window_redraw(window) == 1);
-        CHECK(probe_window_redraw(window) == 0);
         CHECK(probe_window_configure(window, -10, 20, 100, 80) == E_OK);
     }
     rc = message_checks(handle, window);
