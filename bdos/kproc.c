@@ -226,6 +226,21 @@ ULONG kproc_count(void)
     return n;
 }
 
+/* Caller supplies PROCESS-owner serialization. This is not an SMP atomic. */
+static BOOL process_number_next(UQUAD *previous, UQUAD *number)
+{
+    if (*previous == ~(UQUAD)0) return FALSE;
+    *number = *previous + 1;
+    *previous = *number;
+    return TRUE;
+}
+#if CONF_WITH_X86_64_MEMTEST
+BOOL kproc_test_number_next(UQUAD *previous, UQUAD *number)
+{
+    return process_number_next(previous, number);
+}
+#endif
+
 BOOL kproc_create(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
@@ -244,7 +259,10 @@ BOOL kproc_create(PD *pd)
         KPROC_FREE(kproc);
         return FALSE;
     }
-    kproc->number = ++last_process_number;
+    if (!process_number_next(&last_process_number, &kproc->number)) {
+        KPROC_FREE(kproc);
+        return FALSE;
+    }
     kproc->start_tick = (ULONG)hz_200;
     kproc->dta = (DTAINFO *)pd->p_cmdlin;
     /* Take over the tables the basepage may already hold; from now on the

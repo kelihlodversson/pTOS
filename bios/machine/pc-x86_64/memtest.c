@@ -1781,11 +1781,20 @@ static void test_kproc(void)
     WORD retained_pid;
     UWORD status;
     char name[33];
-    UQUAD number;
+    UQUAD number, previous, allocated;
     PROCESS_IDENTITY identity;
     ULONG i;
 
     snap(&s);
+    previous = 0xffffffffULL;
+    CHECK(kproc_test_number_next(&previous, &allocated) && allocated == 0x100000000ULL &&
+          previous == allocated, "PROCESS number carries through its high word");
+    previous = ~(UQUAD)0 - 1;
+    CHECK(kproc_test_number_next(&previous, &allocated) && allocated == ~(UQUAD)0,
+          "last PROCESS number can be allocated");
+    allocated = 0x55;
+    CHECK(!kproc_test_number_next(&previous, &allocated) && previous == ~(UQUAD)0 && allocated == 0x55,
+          "PROCESS number exhaustion neither wraps nor modifies output");
     pds = kalloc(FAKE_PDS * sizeof(PD *));
     CHECK(pds != NULL, "pd vector");
     if (!pds)

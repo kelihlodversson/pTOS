@@ -78,6 +78,9 @@ BOOL kproc_ref_has_basepage(const KPROC *process);
 BOOL kproc_ref_status(const KPROC *process, UWORD *status);
 void kproc_complete(PD *pd, UWORD status);
 #if CONF_WITH_X86_64_MEMTEST
+/* Exercise the production allocator on a local test cursor, never reset the
+ * live registry's non-recycled number counter. */
+BOOL kproc_test_number_next(UQUAD *previous, UQUAD *number);
 /* Restrict the next PID search to a bounded number of candidates for tests. */
 void kproc_test_pid_search(WORD previous, UWORD candidates);
 #if CONF_WITH_USER_ASPACE

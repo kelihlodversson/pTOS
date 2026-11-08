@@ -3051,7 +3051,9 @@ IDENTITY (field 5) copies exactly 16 bytes of CUIS_PEER_IDENTITY_DATA:
 client_id, process_low, process_high, reserved=0. The positive short client ID
 belongs to the GUI endpoint; the non-recycled PROCESS number is generic KPROC
 identity, not a PID/TID or pointer. The client retains KPROC identity until
-final reclamation, without extending live PD/resources. The descriptor is
+final reclamation, without extending live PD/resources. This reference also
+reserves its PROCESS PID, so retirement must release it promptly after the
+last operation lease ends. The descriptor is
 snapshotted under the GUI lock before copyout, so no peer pointer survives
 user access. Several client descriptors may share one PROCESS number.
 Wrong descriptor size is EINVAL; stale endpoint is EFILNF; failed copyout is

@@ -226,3 +226,10 @@ Ssystem(S_PROCIDENT = -8, PROCESS_IDENTITY *, sizeof(PROCESS_IDENTITY))
   Retained retired identities remain discoverable without retaining live
   resources. Snapshot queries grant no owning reference or wait/reap rights.
   This service is independent of CUIS and has no endpoint discovery policy.
+
+PROCESS number allocation and registry lookup/retain currently use the
+existing cooperative PROCESS-owner serialization. No local IRQ mask is an
+SMP lock; preemption/SMP enablement requires the owning synchronization
+contract first. Exhaustion refuses creation instead of wrapping through zero
+or reusing an identity. Endpoint-held identity references also reserve the
+PID until prompt endpoint final reclamation; they keep no live resources.
