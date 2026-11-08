@@ -54,11 +54,6 @@ LONG aes_window_focused(LONG window)
     return cuis_call(CUIS_FOCUS_QUERY, window);
 }
 
-LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state)
-{
-    return cuis_call6(CUIS_POINTER_READ, (QUAD)window, (uintptr_t)x,
-                      (uintptr_t)y, (uintptr_t)buttons, (uintptr_t)state, 0);
-}
 LONG aes_event_wait(LONG window, ULONG events, LONG timeout_ms)
 {
     return cuis_call6(CUIS_EVENT_WAIT, (QUAD)window, events, (QUAD)timeout_ms, 0, 0, 0);

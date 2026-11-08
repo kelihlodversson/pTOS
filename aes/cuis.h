@@ -37,7 +37,6 @@ BOOL cuis_keyboard_event(ULONG key);
 BOOL cuis_pointer_packet(WORD dx, WORD dy, ULONG buttons, LONG *x, LONG *y);
 void cuis_mouse_packet(SBYTE *packet);
 LONG cuis_control_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed);
-LONG cuis_pointer_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed);
 LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout);
 LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds);
 LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c);
