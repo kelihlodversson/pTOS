@@ -2,11 +2,12 @@
  * CPU/MMU resources are absent; any unexpected heavyweight release aborts. */
 #include <stdlib.h>
 #include <stdio.h>
-#include <assert.h>
 #include "emutos.h"
 #include "string.h"
 #include "../bdos/kproc.c"
 #include "process_observer.h"
+#undef assert
+#include <assert.h>
 
 PD caller, child;
 PD *run = &caller;
