@@ -138,3 +138,18 @@ number namespace in valid execution: each identity contributes at most once.
 The overflow guard is fail-stop corruption/exhaustion protection, never reuse.
 Public adapters must treat COMPLETED with ordinal zero as status commitment
 only, not delivery readiness. ABANDONED is terminal without a completion event.
+
+Stopped execution and refused start
+-----------------------------------
+ksched_finalizing_process() recognizes the retained PROCESS of the still-running
+scheduler continuation even after launcher handoff has stopped its KTHREAD.
+Using ksched_exit_thread() here is wrong: it intentionally refuses a stopped
+THREAD and would prematurely publish a managed observer before ZOMBIE/DONE.
+Nested foreign PROCESSes do not match this identity and use their finalizer.
+
+A refused start may retain its stopped association until root reap. task_entry
+must not publish completion/abandonment before that deferred disposal commits.
+Canonical retirement publishes ABANDONED automatically when no status exists;
+normal managed completion publishes only after the existing wait-state store.
+Production host tests cover stopped-owner recognition, pending association,
+repeated disposal, cleanup/unwind readiness, and observer release after reap.

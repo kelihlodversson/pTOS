@@ -126,6 +126,19 @@ int main(void)
         assert(process_observer_snapshot(two,&snap) && snap.order_low==second.order_low);
         process_observer_release(&one); process_observer_release(&two);
     }
+    /* Refused-start disposal can remain pending until root drops membership.
+     * Membership is modeled here; registry/ref/retirement code is production. */
+    assert(kproc_create(&child)); p=kproc_retain(&child);
+    assert(process_observer_attach(p,&a)==E_OK);
+    p->threads=(KTHREAD *)1;
+    { PD *claimed=NULL;
+      assert(!kproc_begin_disposal(p,&claimed) && !claimed && !process_observer_ready(a));
+      assert(!kproc_begin_disposal(p,&claimed) && !claimed);
+      p->threads=NULL; /* Safe root detach in the scheduler fixture. */
+      assert(kproc_begin_disposal(p,&claimed) && claimed==&child); }
+    kproc_destroy(&child);
+    assert(process_observer_ready(a) && process_observer_snapshot(a,&snap) && snap.state==PROCESS_ABANDONED);
+    process_observer_release(&a); kproc_release(p);
     assert(kproc_begin_exit(&caller)); kproc_destroy(&caller);
     assert(allocations==frees && !kproc_list && !retired_processes);
     puts("Production KPROC observation: full status/fault, retirement, PD reuse, multiple references and rollback: PASS");

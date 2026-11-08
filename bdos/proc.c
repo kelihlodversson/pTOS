@@ -1441,7 +1441,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
         panic("invalid exit handoff");
     kproc_complete(p, status);
 #if CONF_WITH_NATIVE_SCHED
-    managed = ksched_exit_thread(p) != NULL;
+    managed = ksched_finalizing_process(process);
     ksched_exiting(p, status);
 #endif
 #if CONF_WITH_PROCMEM

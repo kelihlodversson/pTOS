@@ -26,7 +26,7 @@ static KERNEL_TASK table[KSCHED_LIMIT];
 static PD parent, child, peer, kernel_controller;
 static UWORD allocations, frees, notifications;
 static BOOL fail_growth;
-static unsigned refused_disposals;
+static unsigned refused_disposals, observer_publications;
 PD *run;
 jmp_buf errbuf;
 static BOOL root_fault;
@@ -79,7 +79,7 @@ UQUAD procmem_gen(const void *p) { return p==&kernel_controller ? 1 : 2; }
 BOOL procmem_range_live(VADDR p,VADDR n) { return p==(VADDR)(uintptr_t)&kernel_controller && n==sizeof(PD); }
 void procmem_pin(VADDR p,VADDR n,int delta) { CHECK(p==(VADDR)(uintptr_t)&kernel_controller && n==sizeof(PD) && delta==1); }
 void kproc_publish_observers(KPROC *p)
-{ CHECK(p==(KPROC *)&child && table[0].state==TASK_DONE && refused_disposals==1); }
+{ (void)p; observer_publications++; }
 
 void cuis_child_completed(PD *p, WORD pid, UWORD status)
 { (void)p; (void)pid; (void)status; notifications++; }
@@ -344,9 +344,11 @@ int main(void)
     execution_cpu.current=&table[0];
     table[0].state=TASK_RUNNING;table[0].program=&child;
     table[0].process=(KPROC *)&child;table[0].thread=(KTHREAD *)1;
+    CHECK(ksched_finalizing_process((KPROC *)&child));
     if(!setjmp(execution_cpu.resume)) task_entry();
     CHECK(table[0].state==TASK_DONE && refused_stopped && refused_disposals==1 &&
-          !table[0].program && !table[0].process_completed && table[0].result==EIMBA);
+          !table[0].program && !table[0].process_completed && table[0].result==EIMBA &&
+          !observer_publications && !ksched_finalizing_process((KPROC *)&child));
     /* A retired attachment must lose its jump target, not just its result
      * permission. The producer can still finish after the consumer is gone. */
     ksched_admission_release(&execution_cpu.waiter);
