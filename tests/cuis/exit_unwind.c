@@ -24,7 +24,11 @@ FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 MPB pmd, pmdalt;
 int has_alt_ram;
-static void inject(unsigned at) { if (phase == at) longjmp(errbuf, 1); }
+static void inject(unsigned at)
+{
+    errcode=-101; errdrv=7; rwerr=-102;
+    if (phase == at) longjmp(errbuf, 1);
+}
 BOOL kproc_commit_exit_handoff(KPROC *p, PD **pd)
 {
     CHECK(p == (KPROC *)&child && !disposing);
@@ -65,6 +69,7 @@ int main(void)
         commits = publications = releases = destroyed = successors = 0;
         disposing = FALSE;
         dirs[0] = 1;
+        errcode=-31; errdrv=3; rwerr=-32;
         memset(errbuf, 0x5a, sizeof(errbuf));
         memcpy(original_error, errbuf, sizeof(errbuf));
         if (!setjmp(fatal)) {
@@ -75,6 +80,7 @@ int main(void)
             CHECK(phase && !proc_resident_pd && !proc_resident_len);
         }
         CHECK(!memcmp(original_error, errbuf, sizeof(errbuf)));
+        CHECK(errcode==-31 && errdrv==3 && rwerr==-32);
         CHECK(commits == 1 && publications == 1 && releases == 1);
         CHECK(successors == (phase == 0 || phase == 4));
     }

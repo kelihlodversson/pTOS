@@ -50,6 +50,7 @@ typedef struct callback_frame {
     int gs_swapped;
     ULONG token, result, deadline;
     BOOL alternate, failed;
+    FS_ERROR_STATE error;
     jmp_buf resume;
     UBYTE fpu[512] __attribute__((aligned(16)));
 } CALLBACK_FRAME;
@@ -426,6 +427,7 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     cb->refs++;
     frame->owner = cb->owner;
     frame->caller = run;
+    frame->error = *fs_error_current();
     frame->resume_rsp = kproc_resume_rsp(frame->owner);
     frame->kernel_rsp = x86_64_get_kernel_stack();
     frame->user_rsp = x86_64_get_saved_user_rsp();
@@ -488,6 +490,7 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     callback_cpu()->frame = frame->previous;
     callback_cpu()->depth--;
     run = frame->caller;
+    *fs_error_current() = frame->error;
     aspace_leave(frame->root);
     x86_64_set_kernel_stack(frame->kernel_rsp);
     x86_64_set_saved_user_rsp(frame->user_rsp);

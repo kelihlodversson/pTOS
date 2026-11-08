@@ -27,6 +27,7 @@
 #include "gemerror.h"
 #include "bdosstub.h"
 #include "setjmp.h"
+#include "fs_error.h"
 #include "kproc.h"
 #include "kprint.h"
 #include "biosext.h"
@@ -119,6 +120,7 @@ int arm_demand_page(ULONG address, ULONG fsr, int fetch)
  * Pexec() in progress, innermost first.
  */
 struct uspace_launch {
+    FS_ERROR_STATE error; /* immutable enclosing scope across setjmp/longjmp */
     jmp_buf resume;
     struct uspace_launch *previous;
     PD *pd;
@@ -154,6 +156,7 @@ BOOL arm_process_irq_stack(PD *pd, uintptr_t *base, uintptr_t *top)
 void native_sched_save(NATIVE_SCHED_CONTEXT *context)
 {
     context->flags = native_sched_irq_save();
+    ksched_verify_switch_boundary();
     context->pd = run;
     context->root = aspace_hw_current();
     __asm__ volatile ("stmia %0,{sp,lr}^" :: "r"(&context->user_sp) : "memory");
@@ -262,6 +265,7 @@ void gouser(void)
      * launcher returns the exit code. xterm() restores `run`; deferred
      * finalization keeps the child mappings alive until this safe continuation.
      */
+    launch.error = *fs_error_current();
     launch.previous = get_uspace_launch();
     launch.pd = p;
     launch.stack_phys = kstack_phys;
@@ -283,6 +287,7 @@ void gouser(void)
         arm_enter_user(entry, user_sp, (ULONG)(uintptr_t)p, (ULONG)kstack_top);
     }
     set_uspace_launch(launch.previous);
+    *fs_error_current() = launch.error;
     {
         ASPACE_ROOT launcher = kproc_user_root(run);
 

@@ -139,6 +139,7 @@ void bdos_trap2(void)
  * comment.  NULL when nothing is currently launched.
  */
 struct x86_64_process_launch {
+    FS_ERROR_STATE error; /* immutable enclosing scope across setjmp/longjmp */
     jmp_buf resume;
     X86_64_PROCESS_LAUNCH *previous;
     PD *pd;
@@ -212,6 +213,9 @@ extern void x86_64_set_irq_stack(UQUAD rsp);
 void x86_64_process_save(X86_64_PROCESS_CONTEXT *context)
 {
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(context->flags) :: "memory");
+#if CONF_WITH_NATIVE_SCHED
+    ksched_verify_switch_boundary();
+#endif
     __asm__ volatile ("fxsave %0" : "=m"(context->fpu));
     context->pd = run;
     context->cr3 = x86_64_read_cr3();
@@ -363,6 +367,7 @@ void gouser_entry(WORD entry_type)
         void (*target)(PD *) = (void (*)(PD *))exec_os;
         X86_64_PROCESS_LAUNCH launch;
 
+        launch.error = *fs_error_current();
         launch.previous = get_current_launch();
         launch.pd = p;
         launch.stack_phys = 0;
@@ -385,6 +390,7 @@ void gouser_entry(WORD entry_type)
          * original caller -- run has already been reassigned to it by
          * xterm() by this point. */
         set_current_launch(launch.previous);
+        *fs_error_current() = launch.error;
     } else {
         /*
          * A real, loaded process (#334).  Its address space was already
@@ -468,6 +474,7 @@ void gouser_entry(WORD entry_type)
          * context needs is put back below: its stack for the next call, its
          * page tables, its GS state, its saved user RSP.
          */
+        launch.error = *fs_error_current();
         launch.previous = get_current_launch();
         launch.pd = p;
         launch.stack_phys = kstack_phys;
@@ -491,6 +498,7 @@ void gouser_entry(WORD entry_type)
                               standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);
         }
         set_current_launch(launch.previous);
+        *fs_error_current() = launch.error;
         /* Pterm() was a system call, still on the child's stack with the
          * kernel GS base swapped in: normalise that first, then restore the
          * launcher's own state.  Only now is the child's stack unused. */

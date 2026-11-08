@@ -33,6 +33,8 @@ PD *ksched_launch_controller(PD *pd); /* current task only, never a nested launc
  * CPU selection remains boot-CPU-only until SMP admission/locks exist. */
 void *ksched_loaded_launcher(void);
 void ksched_set_loaded_launcher(void *launcher);
+/* Backend assertion only: never switch a leaf or callback continuation. */
+void ksched_verify_switch_boundary(void);
 struct thread_startup_draft;
 struct thread_startup_stack;
 struct proc_clone_transaction;

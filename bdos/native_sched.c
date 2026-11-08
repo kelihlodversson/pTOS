@@ -132,6 +132,14 @@ static void runqueue_unlocked(void)
 {
     if (execution_cpu.leaf_held) panic("scheduler: operation under leaf exclusion");
 }
+void ksched_verify_switch_boundary(void)
+{
+    runqueue_unlocked();
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame)
+        panic("scheduler: callback continuation cannot switch");
+#endif
+}
 /* Caller is root on its verified permanent stack. No current/IRQ continuation
  * can still execute on the acknowledged task's stack after this point. */
 static void cpu_acknowledge_handoff(void)
