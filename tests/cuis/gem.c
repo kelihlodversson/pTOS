@@ -96,6 +96,7 @@ int main(int argc, char **argv, char **envp)
     if (argc > 1 && (argv[1][0] == 'a' || argv[1][0] == 'r'))
         return gem_argv_child(argc,argv,envp);
     /* Exit/fault before AES registration must still notify the shell parent. */
+    if (argc > 1 && argv[1][0] == 'o') return gem_exit_order_child(argc,argv);
     if (argc > 1 && argv[1][0] == 'e') return 0x5678;
     if (argc > 1 && argv[1][0] == 't') return -1;
     if (argc > 1 && argv[1][0] == 'f') __asm__ volatile ("ud2");

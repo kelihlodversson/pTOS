@@ -2,6 +2,7 @@
 #include <gem.h>
 #include "ptos.h"
 #include "gem_lifecycle.h"
+#include "gem_process.h"
 #define VERIFY(c) do { if (!(c)) { report(__LINE__); return 0x6800 | __LINE__; } } while (0)
 static void report(unsigned line)
 {
@@ -24,8 +25,13 @@ static short launch(char role, int acc)
 }
 static int receive(short message[8])
 {
-    return evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,10000,
-                      0,0,0,0,0,0) & MU_MESAG;
+    int ready = evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,10000,
+                           0,0,0,0,0,0) & MU_MESAG;
+    /* This test parent owns collection, independently of AES delivery. */
+    if (ready && message[0] == CH_EXIT &&
+        gem_wait_child(message[3]) != (int32_t)(((uint32_t)(unsigned short)message[3] << 16) |
+                                                ((unsigned short)message[4] & 255))) return 0;
+    return ready;
 }
 static int ready(short pid, short result[8])
 {

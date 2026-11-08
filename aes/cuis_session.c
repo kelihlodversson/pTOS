@@ -3445,9 +3445,8 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
         senders[(at+i) % CUIS_STREAM_BYTES] = (UWORD)client->aes_id;
     }
     client->stream_bytes += (ULONG)c;
-    /* Only this explicitly observed child is reaped. If the application
-     * already collected it through MiNT, its retained notice is still valid. */
-    (void)ksched_wait(client->children[index].pid,1,0);
+    /* Publishing a GUI notice consumes only its adapter record. Public
+     * PROCESS completion belongs exclusively to the independent Pwait path. */
     child_remove(client,index);
     result = E_OK;
 child_done:
