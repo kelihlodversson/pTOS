@@ -56,6 +56,11 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
 
     # Cancellation owns a separate PROCESS; the outer worker shares ASPACE
     # and must survive both group exits. Physical presses enter admitted waits.
+    marker("CUIS initial button: READY")
+    command("mouse_button 1")
+    marker("native CUIS initial button before admission: PASS")
+    command("mouse_button 0")
+
     marker("CUIS cancel button: READY")
     command("mouse_button 1")
     marker("native CUIS tracked button cancellation: PASS")
