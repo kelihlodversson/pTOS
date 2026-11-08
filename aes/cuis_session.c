@@ -22,7 +22,7 @@ extern PD *run;
 #define CUIS_STREAM_BYTES 65536UL
 #define CUIS_BUTTON_HISTORY_CAPACITY (4U * CUIS_POINTER_CAPACITY)
 typedef struct {
-    LONG sender_pid;
+    LONG sender_id;
     UBYTE data[1];
 } CUIS_PACKET;
 typedef struct {
@@ -112,7 +112,8 @@ typedef struct cuis_client {
     BOOL cohort_read_result;
     BOOL cohort_exit, cohort_delivered, cohort_accepted;
     UBYTE cohort_data[CUIS_COHORT_BYTES];
-    LONG pid;
+    UWORD aes_id;
+    KPROC *process;
     CUIS_STREAM_OPERATION *stream_read, *stream_write; /* Borrowed; continuations own records. */
     UQUAD stream_sequence;
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
@@ -177,6 +178,7 @@ static ULONG next_child_token;
 static ULONG input_interval = 450;
 static void sample_input_waits(void);
 static ULONG next_handle;
+static UWORD next_aes_id = 1;
 static ULONG next_window_handle;
 /* Front to back, containing only visible windows from all sessions. */
 static CUIS_WINDOW *window_front;
@@ -1168,7 +1170,7 @@ LONG cuis_display_info(UQUAD selector)
         screen_get_current_mode_desc(&mode);
         if (!mode.width || !mode.height) result = EINVFN;
         else result = selector == 0 ? mode.width : selector == 1 ? mode.height :
-            selector == 2 ? surface_height : background_front ? background_front->pid : 0;
+            selector == 2 ? surface_height : background_front ? background_front->aes_id : 0;
     }
     cuis_input_unlock(flags); return result;
 }
@@ -1233,6 +1235,7 @@ static void client_put(CUIS_CLIENT *client)
 {
     if (!--client->references) {
         if (client->stream_data) kfree(client->stream_data);
+        kproc_release(client->process);
         kfree(client);
     }
 }
@@ -1551,7 +1554,10 @@ ULONG cuis_session_count(void)
 
 LONG cuis_service(ULONG function, UQUAD handle)
 {
-    CUIS_CLIENT *client;
+    CUIS_CLIENT *client, *scan;
+    KPROC *process;
+    ULONG attempts;
+    UWORD candidate;
     UQUAD flags;
 
     switch (function) {
@@ -1560,12 +1566,15 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client = *find_owner(run);
         if (client) return (LONG)client->handle;
         if (cohort.owner) return EAGAIN; /* A stable, closed cohort is in progress. */
-        if (!kproc_pid(run)) return EACCDN;
+
         /* Keep every successful result non-negative and never recycle a
          * handle. Stop at the signed 32-bit limit instead of wrapping. */
         if (next_handle > 0x7fffffffUL) return ENSMEM;
+        process = kproc_retain(run);
+        if (!process) return EACCDN;
         client = kalloc(sizeof(*client));
-        if (!client) return ENSMEM;
+        if (!client) { kproc_release(process); return ENSMEM; }
+        client->process = process;
         client->references = 1; client->retired = FALSE;
         client->windows = client->background = NULL;
         client->background_next = NULL; client->background_dirty = FALSE;
@@ -1578,7 +1587,6 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->cohort_result_token = client->cohort_result_bytes = client->cohort_result_unread = 0;
         client->cohort_read_result = FALSE;
         client->cohort_exit = client->cohort_delivered = client->cohort_accepted = FALSE;
-        client->pid = kproc_pid(run);
         client->stream_read = client->stream_write = NULL; client->stream_sequence = 0;
         client->stream_data = NULL;
         client->stream_head = client->stream_bytes = 0;
@@ -1598,8 +1606,19 @@ LONG cuis_service(ULONG function, UQUAD handle)
         memset(&client->input_filter, 0, sizeof(client->input_filter));
         memset(client->input_result, 0, sizeof(client->input_result));
         client->owner = run;
-        client->handle = next_handle++;
         flags = cuis_input_lock();
+        for (attempts = 0; attempts < 32767; attempts++) {
+            candidate = next_aes_id;
+            next_aes_id = candidate == 32767 ? 1 : candidate + 1;
+            for (scan = clients; scan && scan->aes_id != candidate; scan = scan->next) ;
+            if (!scan) break;
+        }
+        if (scan || next_handle > 0x7fffffffUL) {
+            cuis_input_unlock(flags);
+            kproc_release(process); kfree(client); return ENSMEM;
+        }
+        client->aes_id = candidate;
+        client->handle = next_handle++;
         client->next = clients;
         clients = client;
         cuis_input_unlock(flags);
@@ -1689,7 +1708,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         if (!client->stream_data) client->stream_data = kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
         if (!client->stream_data) { result = ENSMEM; goto out; }
         cohort.owner = client; cohort.token = ++next_cohort; cohort.phase = 1;
-        cohort.sender = (WORD)client->pid;
+        cohort.sender = (WORD)client->aes_id;
         for (peer = clients; peer; peer = peer->next) if (peer != client) {
             peer->cohort_id = cohort.token; peer->cohort_bytes = peer->cohort_unread = 0;
             peer->cohort_delivered = peer->cohort_accepted = peer->cohort_exit = FALSE;
@@ -1767,7 +1786,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
             else cohort.phase = 4; /* Keep registration closed until caller leaves/aborts. */
         } else {
             client->cohort_unread = client->stream_bytes+client->cohort_bytes;
-            cohort_append(client,client->cohort_data,client->cohort_bytes,(WORD)cohort.owner->pid);
+            cohort_append(client,client->cohort_data,client->cohort_bytes,(WORD)cohort.owner->aes_id);
             client->cohort_delivered = TRUE;
         }
         goto out;
@@ -1822,7 +1841,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         result = EACCDN;
     else {
         memcpy(cohort.data,data,length); cohort.bytes = length;
-        cohort.sender = (WORD)client->pid; cohort.phase = 3;
+        cohort.sender = (WORD)client->aes_id; cohort.phase = 3;
     }
 out:
     cuis_input_unlock(flags); return result;
@@ -1887,16 +1906,7 @@ LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c)
                 (!found || peer->handle < found->handle)) found = peer;
         return found ? (LONG)found->handle : EFILNF;
     }
-    if (function == CUIS_PEER_BY_PID) {
-        if (!a || a > 32767) return EINVAL;
-        for (peer = clients; peer && peer->pid != (LONG)a; peer = peer->next) ;
-        return peer ? (LONG)peer->handle : EFILNF;
-    }
     if (a > 0x7fffffffULL) return EINVAL;
-    if (function == CUIS_PEER_PID) {
-        peer = find_handle(a);
-        return peer ? peer->pid : EFILNF;
-    }
     if (a != client->handle) return EACCDN;
     if (function == CUIS_SESSION_LABEL) {
         if (c > CUIS_LABEL_MAX) return EINVAL;
@@ -1956,7 +1966,7 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
             result = E_OK;
         }
     } else if (function != CUIS_PEER_QUERY) result = EINVFN;
-    else if (field > CUIS_PEER_ACTIVE || handle > 0x7fffffffULL || bytes > CUIS_LABEL_MAX) result = EINVAL;
+    else if (field > CUIS_PEER_IDENTITY || handle > 0x7fffffffULL || bytes > CUIS_LABEL_MAX) result = EINVAL;
     else if (field == CUIS_PEER_BACKGROUND || field == CUIS_PEER_ACTIVE) {
         if (handle || address || bytes) result = EINVAL;
         else {
@@ -1972,13 +1982,25 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
                 result = (LONG)peer->label_length;
                 if (result) memcpy(label,peer->label,(ULONG)result);
             }
+        } else if (field == CUIS_PEER_IDENTITY) {
+            if (bytes != sizeof(CUIS_PEER_IDENTITY_DATA)) result = EINVAL;
+            else {
+                CUIS_PEER_IDENTITY_DATA identity;
+                UQUAD number = kproc_ref_number(peer->process);
+                identity.client_id = peer->aes_id;
+                identity.process_low = (ULONG)number;
+                identity.process_high = (ULONG)(number >> 32);
+                identity.reserved = 0;
+                memcpy(label, &identity, sizeof(identity));
+                result = sizeof(identity);
+            }
         } else if (address || bytes) result = EINVAL;
         else if (field == CUIS_PEER_TAG) result = (LONG)peer->tag;
         else result = (peer->surface_height ? CUIS_PEER_HAS_SURFACE : 0) |
                       (peer->background_registered ? CUIS_PEER_HAS_BACKGROUND : 0);
     }
     cuis_input_unlock(flags);
-    if (function == CUIS_PEER_QUERY && field == CUIS_PEER_LABEL && result > 0 &&
+    if (function == CUIS_PEER_QUERY && (field == CUIS_PEER_LABEL || field == CUIS_PEER_IDENTITY) && result > 0 &&
         !kproc_copy_to_user(address,label,(ULONG)result)) return EIMBA;
     return result;
 }
@@ -2979,7 +3001,7 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
         flags = cuis_input_lock();
         if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
         if (!operation->packet) return stream_finish(&operation,flags,ENSMEM);
-        operation->packet->sender_pid = client->pid;
+        operation->packet->sender_id = client->aes_id;
         cuis_input_unlock(flags);
         copied = kproc_copy_from_user_resident(operation->packet->data,buffer,(ULONG)length);
         flags = cuis_input_lock();
@@ -3012,7 +3034,7 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
                 memcpy(peer->stream_data+at,operation->packet->data,bytes);
                 if (bytes < length) memcpy(peer->stream_data,operation->packet->data+bytes,(ULONG)length-bytes);
                 senders = (UWORD *)(peer->stream_data+CUIS_STREAM_BYTES);
-                for (i = 0; i < length; i++) senders[(at+i)%CUIS_STREAM_BYTES] = (UWORD)operation->packet->sender_pid;
+                for (i = 0; i < length; i++) senders[(at+i)%CUIS_STREAM_BYTES] = (UWORD)operation->packet->sender_id;
                 peer->stream_bytes += (ULONG)length;
                 operation->state = STREAM_COMMITTED;
                 return stream_finish(&operation,flags,(LONG)length);
@@ -3191,7 +3213,7 @@ LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD 
     senders = (UWORD *)(client->stream_data + CUIS_STREAM_BYTES);
     for (i = 0; i < d; i++) {
         client->stream_data[(at + i) % CUIS_STREAM_BYTES] = data[i];
-        senders[(at + i) % CUIS_STREAM_BYTES] = (UWORD)client->pid;
+        senders[(at + i) % CUIS_STREAM_BYTES] = (UWORD)client->aes_id;
     }
     client->stream_bytes += (ULONG)d;
     window->notices &= ~(ULONG)b;
@@ -3243,7 +3265,7 @@ LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUA
         if (window) {
             for (client = clients; client && !owner; client = client->next)
                 for (scan = client->windows; scan; scan = scan->next) if (scan == window) { owner = client; break; }
-            values[0] = window->identifier; values[1] = owner ? owner->pid : 0;
+            values[0] = window->identifier; values[1] = owner ? owner->aes_id : 0;
             values[2] = window->znext ? window->znext->identifier : 0;
         }
     } else {
@@ -3251,7 +3273,7 @@ LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUA
             for (scan = client->windows; scan; scan = scan->next) if (scan->identifier == a) { owner = client; window = scan; break; }
         if (!window) { cuis_input_unlock(flags); return EACCDN; }
         if (window->visible) for (scan = window_front; scan && scan != window; scan = scan->znext) above = scan;
-        values[0] = owner->pid; values[1] = window->visible;
+        values[0] = owner->aes_id; values[1] = window->visible;
         values[2] = window->visible && above ? above->identifier : 0;
         values[3] = window->visible && window->znext ? window->znext->identifier : 0;
     }
@@ -3391,7 +3413,7 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
     senders = (UWORD *)(client->stream_data+CUIS_STREAM_BYTES);
     for (i = 0; i < c; i++) {
         client->stream_data[(at+i) % CUIS_STREAM_BYTES] = data[i];
-        senders[(at+i) % CUIS_STREAM_BYTES] = (UWORD)client->pid;
+        senders[(at+i) % CUIS_STREAM_BYTES] = (UWORD)client->aes_id;
     }
     client->stream_bytes += (ULONG)c;
     /* Only this explicitly observed child is reaped. If the application

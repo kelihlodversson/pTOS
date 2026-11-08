@@ -33,7 +33,7 @@ static LONG spawn(char role)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, parent, message[8], received[8], global[15], state[6];
+    short id, parent, peer, message[8], received[8], global[15], state[6];
     UBYTE payload[80], excess[64];
     ULONG i;
     LONG pid, status;
@@ -51,7 +51,7 @@ int main(int argc, char **argv, char **envp)
         }
         parent = appl_find("GEMEVNT "); VERIFY(parent > 0 && parent != id);
         for (i = 0; i < 8; i++) message[i] = 0;
-        message[1] = id;
+        message[1] = id; message[3] = (short)process(0x10b,0,0,0,0);
         if (argv[1][0] != 'z') {
             message[0] = 900; VERIFY(appl_write(parent, 16, message) == 1);
             VERIFY(evnt_timer(argv[1][0] == 't' ? 500 : 20) == 1);
@@ -93,17 +93,19 @@ int main(int argc, char **argv, char **envp)
     VERIFY(multi(MU_MESAG, ~0UL, (short *)(uintptr_t)main, state, NULL) == 0 && state[0] == 99);
     VERIFY(appl_read(-1, 16, received) == 1); /* Failed copyout retained the message. */
     pid = spawn('p'); VERIFY(pid > 0);
-    VERIFY(evnt_mesag(received) == 1 && received[0] == 900);
-    VERIFY(multi(MU_MESAG | MU_TIMER, 1000, received, state, NULL) == MU_MESAG && received[0] == 901 && received[1] == pid);
+    VERIFY(evnt_mesag(received) == 1 && received[0] == 900 && received[3] == pid);
+    peer = received[1]; VERIFY(peer > 0);
+    VERIFY(multi(MU_MESAG | MU_TIMER, 1000, received, state, NULL) == MU_MESAG && received[0] == 901 && received[1] == peer && received[3] == pid);
     VERIFY(state_valid(state) && process(0x13a, pid, 0, 0, 0) == (LONG)(((ULONG)pid << 16) | 37));
     pid = spawn('t'); VERIFY(pid > 0);
-    VERIFY(evnt_mesag(received) == 1 && received[0] == 900);
+    VERIFY(evnt_mesag(received) == 1 && received[0] == 900 && received[3] == pid);
+    peer = received[1]; VERIFY(peer > 0);
     received[0] = 123;
     VERIFY(multi(MU_MESAG | MU_TIMER, 1, received, state, global) == MU_TIMER && received[0] == 123);
-    VERIFY(multi(MU_MESAG, ~0UL, received, state, global) == MU_MESAG && received[0] == 901 && received[1] == pid);
+    VERIFY(multi(MU_MESAG, ~0UL, received, state, global) == MU_MESAG && received[0] == 901 && received[1] == peer && received[3] == pid);
     VERIFY(process(0x13a, pid, 0, 0, 0) == (LONG)(((ULONG)pid << 16) | 37));
     pid = spawn('z'); VERIFY(pid > 0);
-    VERIFY(multi(MU_MESAG | MU_TIMER, 0, received, state, NULL) == (MU_MESAG | MU_TIMER) && received[1] == pid);
+    VERIFY(multi(MU_MESAG | MU_TIMER, 0, received, state, NULL) == (MU_MESAG | MU_TIMER) && received[1] > 0 && received[3] == pid);
     VERIFY(process(0x13a, pid, 0, 0, 0) == (LONG)(((ULONG)pid << 16) | 37));
     pid = spawn('f'); VERIFY(pid > 0);
     status = process(0x13a, pid, 0, 0, 0);

@@ -64,6 +64,7 @@ enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
  * native pointers and the user-range snapshot in this kernel-only record. */
 struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
+    UQUAD number;                /* Generic non-recycled PROCESS identity. */
     BOOL completed;
     UWORD exit_status;
     char executable_name[33]; /* Bounded basename; presentation stays in userspace. */
@@ -186,6 +187,7 @@ static KPROC *retired_processes; /* identities retained after removal from looku
 
 #define KPROC_PID_MAX   32767
 static WORD last_pid;
+static UQUAD last_process_number;
 #if CONF_WITH_X86_64_MEMTEST
 static UWORD test_pid_candidates;
 void kproc_test_pid_search(WORD previous, UWORD candidates)
@@ -244,12 +246,28 @@ ULONG kproc_count(void)
     return n;
 }
 
+/* Caller supplies PROCESS-owner serialization. This is not an SMP atomic. */
+static BOOL process_number_next(UQUAD *previous, UQUAD *number)
+{
+    if (*previous == ~(UQUAD)0) return FALSE;
+    *number = *previous + 1;
+    *previous = *number;
+    return TRUE;
+}
+#if CONF_WITH_X86_64_MEMTEST
+BOOL kproc_test_number_next(UQUAD *previous, UQUAD *number)
+{
+    return process_number_next(previous, number);
+}
+#endif
+
 BOOL kproc_create(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
 
     if (kproc)
         return TRUE;
+    if (last_process_number == ~(UQUAD)0) return FALSE;
     kproc = KPROC_ALLOC();
     if (!kproc)
         return FALSE;
@@ -258,6 +276,10 @@ BOOL kproc_create(PD *pd)
     kproc->pd = pd;
     kproc->pid = new_pid();
     if (!kproc->pid) {
+        KPROC_FREE(kproc);
+        return FALSE;
+    }
+    if (!process_number_next(&last_process_number, &kproc->number)) {
         KPROC_FREE(kproc);
         return FALSE;
     }
@@ -331,13 +353,53 @@ BOOL kproc_test_share_active(PD *pd, KASPACE *space)
 #endif
 #endif
 
-KPROC *kproc_retain(PD *pd)
+static KPROC *kproc_reference(KPROC *process)
 {
-    KPROC *process = kproc_find(pd);
-    if (!process || process->references == ~(ULONG)0)
-        return NULL;
+    if (!process || process->references == ~(ULONG)0) return NULL;
     process->references++;
     return process;
+}
+
+KPROC *kproc_retain(PD *pd)
+{
+    return kproc_reference(kproc_find(pd));
+}
+
+UQUAD kproc_ref_number(const KPROC *process)
+{
+    return process ? process->number : 0;
+}
+
+LONG kproc_identity_info(PD *caller, PROCESS_IDENTITY *info)
+{
+    KPROC *process;
+    UQUAD number = (UQUAD)info->number_low | ((UQUAD)info->number_high << 32);
+    if (info->selector == PROCESS_IDENTITY_CURRENT) {
+        if (number || info->pid) return EINVAL;
+        process = kproc_find(caller);
+    } else {
+        if (info->selector == PROCESS_IDENTITY_NUMBER) {
+            if (!number || info->pid) return EINVAL;
+        } else if (info->selector == PROCESS_IDENTITY_PID) {
+            if (number || info->pid <= 0 || info->pid > 32767) return EINVAL;
+        } else return EINVAL;
+        for (process = kproc_list; process; process = process->next)
+            if (info->selector == PROCESS_IDENTITY_NUMBER ? process->number == number :
+                process->pid == info->pid) break;
+        if (!process)
+            for (process = retired_processes; process; process = process->next)
+                if (info->selector == PROCESS_IDENTITY_NUMBER ? process->number == number :
+                    process->pid == info->pid) break;
+    }
+    if (!process) return ESRCH;
+    process = kproc_reference(process);
+    if (!process) return ENSMEM;
+    info->number_low = (ULONG)process->number;
+    info->number_high = (ULONG)(process->number >> 32);
+    info->pid = process->pid;
+    info->selector = PROCESS_IDENTITY_CURRENT;
+    kproc_release(process);
+    return E_OK;
 }
 
 void kproc_release(KPROC *process)
@@ -884,6 +946,7 @@ void kproc_destroy(PD *pd)
             {
                 ULONG references = kproc->references;
                 WORD pid = kproc->pid;
+                UQUAD number = kproc->number;
                 BOOL completed = kproc->completed;
                 UWORD status = kproc->exit_status;
                 KPROC *next = kproc->next;
@@ -896,6 +959,7 @@ void kproc_destroy(PD *pd)
                 memcpy(kproc->executable_name, name, sizeof(name));
                 kproc->references = references;
                 kproc->pid = pid;
+                kproc->number = number;
                 kproc->completed = completed;
                 kproc->exit_status = status;
                 kproc->next = next;

@@ -2996,9 +2996,20 @@ static void test_kproc(void)
     WORD retained_pid;
     UWORD status;
     char name[33];
+    UQUAD number, previous, allocated;
+    PROCESS_IDENTITY identity;
     ULONG i;
 
     snap(&s);
+    previous = 0xffffffffULL;
+    CHECK(kproc_test_number_next(&previous, &allocated) && allocated == 0x100000000ULL &&
+          previous == allocated, "PROCESS number carries through its high word");
+    previous = ~(UQUAD)0 - 1;
+    CHECK(kproc_test_number_next(&previous, &allocated) && allocated == ~(UQUAD)0,
+          "last PROCESS number can be allocated");
+    allocated = 0x55;
+    CHECK(!kproc_test_number_next(&previous, &allocated) && previous == ~(UQUAD)0 && allocated == 0x55,
+          "PROCESS number exhaustion neither wraps nor modifies output");
     pds = kalloc(FAKE_PDS * sizeof(PD *));
     CHECK(pds != NULL, "pd vector");
     if (!pds)
@@ -3014,6 +3025,11 @@ static void test_kproc(void)
     second = kproc_retain(pds[0]);
     CHECK(retained && second && retained == second, "retain live process twice");
     retained_pid = kproc_pid(pds[0]);
+    number = kproc_ref_number(retained);
+    memset(&identity, 0, sizeof(identity));
+    CHECK(number && kproc_identity_info(pds[1], &identity) == E_OK &&
+          ((UQUAD)identity.number_low | ((UQUAD)identity.number_high << 32)) != number,
+          "PROCESS identities are independent of caller and basepage address");
     kproc_set_executable_name(pds[0], "C:\\APPS/Original.Prg");
     memset(name, 0x5a, sizeof(name));
     CHECK(kproc_ref_name(retained, name, 12) == ERANGE && name[0] == 0x5a,
@@ -3042,6 +3058,12 @@ static void test_kproc(void)
     CHECK(kproc_begin_exit(pds[0]) && !kproc_begin_exit(pds[0]),
           "normal exit commits process cleanup once");
     kproc_destroy(pds[0]);
+    CHECK(kproc_create(pds[0]), "reuse a retired PROCESS basepage address");
+    memset(&identity, 0, sizeof(identity));
+    CHECK(kproc_identity_info(pds[0], &identity) == E_OK &&
+          ((UQUAD)identity.number_low | ((UQUAD)identity.number_high << 32)) != number &&
+          identity.pid != retained_pid, "PD reuse cannot redirect PROCESS number or PID");
+    kproc_destroy(pds[0]);
     kfree(pds[0]);
     pds[0] = NULL;
     CHECK(!kproc_ref_has_basepage(retained) && kproc_ref_pid(retained) == retained_pid &&
@@ -3049,6 +3071,12 @@ static void test_kproc(void)
           "retained completion survives record removal and basepage release");
     CHECK(kproc_ref_name(retained, name, sizeof(name)) == 12 &&
           !strcmp(name, "Original.Prg"), "PROCESS name survives PD reclamation");
+    memset(&identity, 0, sizeof(identity));
+    identity.number_low = (ULONG)number; identity.number_high = (ULONG)(number >> 32);
+    identity.selector = PROCESS_IDENTITY_NUMBER;
+    CHECK(kproc_ref_number(retained) == number &&
+          kproc_identity_info(NULL, &identity) == E_OK && identity.pid == retained_pid,
+          "retained generic PROCESS identity survives PD reuse and reclamation");
     if (candidate) {
         kproc_test_pid_search(retained_pid - 1, 1);
         CHECK(!kproc_create(candidate), "retired identity reserves its PID");
@@ -3059,6 +3087,9 @@ static void test_kproc(void)
     CHECK(kproc_ref_status(second, &status) && status == 42,
           "second reference retains completed process");
     kproc_release(second);
+    identity.pid = 0; identity.selector = PROCESS_IDENTITY_NUMBER;
+    CHECK(kproc_identity_info(NULL, &identity) == ESRCH,
+          "last reference release retires generic PROCESS lookup without an alias");
     for (i = 1; i < FAKE_PDS && pds[i]; i++) {
         kproc_destroy(pds[i]);
         kproc_destroy(pds[i]);                  /* second destroy is a no-op */

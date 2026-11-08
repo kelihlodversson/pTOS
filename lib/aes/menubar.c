@@ -97,7 +97,7 @@ static BOOL flush(LONG session, BOOL block)
     /* A selected accessory may exit while its queue is full. Its session
      * handle is never recycled; discard instead of opening a replacement. */
     if (bar.message[0] == AC_OPEN && result == EACCDN &&
-        cuis_call6(CUIS_PEER_PID,bar.recipient,0,0,0,0,0) < 0) { bar.pending = FALSE; return TRUE; }
+        cuis_call6(CUIS_PEER_QUERY,session,bar.recipient,CUIS_PEER_STATE,0,0,0) < 0) { bar.pending = FALSE; return TRUE; }
     return result == EAGAIN;
 }
 static BOOL refresh(void)
