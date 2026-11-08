@@ -55,6 +55,7 @@
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc_clone.h"
 #include "../../../bdos/process_observer.h"
+#include "../../../bdos/process_exec_internal.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
 #include "../../../bdos/arch/x86_64/thread_return_x32.h"
@@ -2233,7 +2234,7 @@ static struct {
     KPROC *parent;
     PROCESS_OBSERVER *observer, *second;
     LONG pid;
-    void *prepared;
+    LONG handle;
 } ordinary_observation;
 static void ordinary_observation_yield(void)
 {
@@ -2248,11 +2249,14 @@ static void ordinary_observation_yield(void)
     if (ordinary_observation.yields==1) {
         command[2]=ordinary_observation.scenario==2 ? 'f':'n';
         if (ordinary_observation.scenario >= 3) {
-            LONG result=proc_exec_prepare("C:\\X32HELLO.TOS",command,environment,NULL,
-                                          &ordinary_observation.observer,&ordinary_observation.prepared);
-            CHECK(result==E_OK && ordinary_observation.prepared,
-                  "ordinary loader retains a fully prepared private admission");
-            if (result!=E_OK) return;
+            LONG result=proc_exec_handle_prepare(ordinary_observation.parent,"C:\\X32HELLO.TOS",
+                                                  command,environment,NULL);
+            CHECK(result>0,"ordinary loader returns a PROCESS-owned prepared handle");
+            if (result<=0) return;
+            ordinary_observation.handle=result;
+            CHECK(proc_exec_retain_observer(ordinary_observation.parent,result,TRUE,
+                                            &ordinary_observation.observer)==E_OK,
+                  "native owned handle authenticates a pre-publication observer lease");
             ordinary_observation.pid=kproc_ref_pid(ordinary_observation.observer);
         } else ordinary_observation.pid=proc_exec_observe("C:\\X32HELLO.TOS",command,environment,NULL,
                                                   &ordinary_observation.observer);
@@ -2273,17 +2277,28 @@ static void ordinary_observation_yield(void)
               ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
               "prepared ordinary child remains non-runnable and not wait-visible across native yield");
         if (ordinary_observation.scenario==4) {
-            ksched_process_cancel(&ordinary_observation.prepared);
-            CHECK(!ordinary_observation.prepared && process_observer_ready(ordinary_observation.observer) &&
+            CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK &&
+                  proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==EIHNDL,
+                  "native CLOSE consumes prepared rights exactly once");
+            CHECK(process_observer_ready(ordinary_observation.observer) &&
                   process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
                   snapshot.state==PROCESS_ABANDONED && !snapshot.kind && !snapshot.status &&
                   !snapshot.order_low && !snapshot.order_high &&
                   ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
                   "cancelled prepared image abandons canonical identity without public completion");
             ordinary_observation.checked=TRUE;
-        } else CHECK(ksched_process_publish(&ordinary_observation.prepared)==ordinary_observation.pid &&
-                     !ordinary_observation.prepared,
-                     "commit consumes prepared admission exactly once before user execution");
+        } else if (ordinary_observation.scenario==5) {
+            ordinary_observation.checked=TRUE; /* Owner exit must abandon its preparation. */
+        } else {
+            CHECK(proc_exec_handle_commit(ordinary_observation.parent,ordinary_observation.handle)==ordinary_observation.pid &&
+                  proc_exec_handle_commit(ordinary_observation.parent,ordinary_observation.handle)==EACCDN,
+                  "commit consumes prepared admission exactly once before user execution");
+            if (ordinary_observation.scenario==6) {
+                CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK,
+                      "closing committed rights before child execution does not cancel or reap it");
+                ordinary_observation.handle=0;
+            }
+        }
         return;
     }
     if (ordinary_observation.scenario==1)
@@ -2304,6 +2319,14 @@ static void ordinary_observation_yield(void)
     CHECK(process_observer_snapshot(ordinary_observation.second,&snapshot) &&
           ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
           "independent observer survives exactly-once public reaping");
+    if (ordinary_observation.handle) {
+        CHECK(proc_exec_handle_snapshot(ordinary_observation.parent,ordinary_observation.handle,&snapshot)==E_OK &&
+              snapshot.status==0xffff && snapshot.kind==PROCESS_COMPLETION_NORMAL,
+              "owned snapshot preserves full completion after public reaping");
+        CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK &&
+              process_observer_ready(ordinary_observation.observer),
+              "closing committed rights preserves independent native observer leases");
+    }
     ordinary_observation.checked=TRUE;
 }
 static void test_discarded_observation(void)
@@ -2351,7 +2374,7 @@ static void test_ordinary_observation(void)
     int before=failures;
     static const char command[]={2,'O','p',0}, environment[]={0,0};
     test_discarded_observation();
-    for (mode=0;mode<5;mode++) {
+    for (mode=0;mode<7;mode++) {
         SNAP baseline;
         LONG loaded, status;
         PD *program;
@@ -2368,6 +2391,13 @@ static void test_ordinary_observation(void)
         CHECK(ksched_run(&program,1,&status)==E_OK && status==0x1357 && ordinary_observation.checked,
               "ordinary observed child and parent execute actual native continuations");
         ordinary_observation.enabled=FALSE;
+        if (mode==5) {
+            PROCESS_COMPLETION abandoned;
+            CHECK(process_observer_ready(ordinary_observation.observer) &&
+                  process_observer_snapshot(ordinary_observation.observer,&abandoned) &&
+                  abandoned.state==PROCESS_ABANDONED && !abandoned.kind && !abandoned.order_low,
+                  "final PROCESS exit abandons owned uncommitted launch while retained lease survives");
+        }
         process_observer_release(&ordinary_observation.observer);
         process_observer_release(&ordinary_observation.second);
         kproc_release(ordinary_observation.parent);

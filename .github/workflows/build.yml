@@ -61,6 +61,8 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test retained PROCESS completion ownership
         run: /tmp/elf-shared-venv/bin/python tools/test-process-observer.py
+      - name: Test PROCESS-owned launch rights
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-exec-handles.py
       - name: Test PROCESS-owned PFS directory preparation
         run: /tmp/elf-shared-venv/bin/python tools/test-process-directory-pfs.py
       - name: Test regression worker log preservation

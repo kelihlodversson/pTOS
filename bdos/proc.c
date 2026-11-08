@@ -453,6 +453,9 @@ static void ixterm(PD *r)
  * The unassociated legacy fallback still runs before returning to its launcher. */
 static void proc_release_resources(PD *p, BOOL resident_exit)
 {
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+    kproc_exec_owner_exit(p);
+#endif
 #if CONF_WITH_KPROC
     release_pd_files(p);
 #endif

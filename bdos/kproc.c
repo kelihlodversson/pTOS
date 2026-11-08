@@ -14,6 +14,7 @@
 #include "kproc.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "process_exec_internal.h"
 #endif
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
@@ -106,6 +107,7 @@ struct kproc {
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
+    struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
     BOOL group_exiting;
@@ -373,6 +375,23 @@ static KPROC *kproc_reference(KPROC *process)
     process->references++;
     return process;
 }
+
+KPROC *kproc_retain_identity(KPROC *process)
+{
+    if (!process || !process->references) return NULL;
+    return kproc_reference(process);
+}
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+struct process_exec_handle **kproc_exec_handles(KPROC *owner)
+{
+    return owner && !owner->retired ? &owner->exec_handles : NULL;
+}
+void kproc_exec_owner_exit(PD *pd)
+{
+    KPROC *owner = kproc_find(pd); /* The finalizer owns this live record. */
+    if (owner) proc_exec_owner_exit(owner);
+}
+#endif
 
 KPROC *kproc_retain(PD *pd)
 {

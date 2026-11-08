@@ -73,6 +73,14 @@ LONG kproc_identity_info(PD *caller, PROCESS_IDENTITY *info);
  * References are serialized by the current cooperative kernel. */
 KPROC *kproc_retain(PD *pd);
 void kproc_release(KPROC *process);
+/* Duplicate an already owned live or retired identity; caller keeps its own
+ * reference across this serialized acquisition. No numeric lookup/authority. */
+KPROC *kproc_retain_identity(KPROC *process);
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+struct process_exec_handle;
+struct process_exec_handle **kproc_exec_handles(KPROC *owner);
+void kproc_exec_owner_exit(PD *pd);
+#endif
 WORD kproc_ref_pid(const KPROC *process);
 /* Completion may already have been recorded while the PD is still present. */
 BOOL kproc_ref_has_basepage(const KPROC *process);
