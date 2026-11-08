@@ -19,9 +19,9 @@ static void check_irq_pattern(const ARM_USER_IRQ_FRAME *f)
         if (i==1 ? f->r[i]>4000000UL : f->r[i]!=0x71307130UL) irq_pattern_bad=TRUE;
     if (f->user_lr!=0x7130713eUL) irq_pattern_bad=TRUE;
 #if FPU_ALL_BYTES == 264
-    if (*(const ULONG *)f->vfp!=0x00400000UL) irq_pattern_bad=TRUE;
-    for (i=8;i<FPU_ALL_BYTES;i+=4)
-        if (*(const ULONG *)(f->vfp+i)!=0x71307130UL) irq_pattern_bad=TRUE;
+    if (f->vfp[0]!=0x00400000UL) irq_pattern_bad=TRUE;
+    for (i=2;i<FPU_ALL_BYTES/4;i++)
+        if (f->vfp[i]!=0x71307130UL) irq_pattern_bad=TRUE;
 #else
     irq_pattern_bad=TRUE; /* The native pattern probe targets Cortex-A7 D32. */
 #endif

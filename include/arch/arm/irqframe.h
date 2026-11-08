@@ -13,7 +13,7 @@
 #include <stddef.h>
 typedef struct {
 #if FPU_ALL_BYTES
-    UBYTE vfp[FPU_ALL_BYTES]; /* FPSCR/pad, D16-D31 if present, then D0-D15. */
+    ULONG vfp[FPU_ALL_BYTES/4]; /* FPSCR/pad, D16-D31 if present, then D0-D15. */
 #endif
     /* IRQ SP may be zero: SRS uses only the retained SVC stack. */
     ULONG user_sp, user_lr, irq_sp, irq_lr, svc_sp, svc_lr;
