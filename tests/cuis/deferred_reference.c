@@ -11,7 +11,7 @@
 static PD owner, successor, other;
 static KERNEL_TASK tasks[KSCHED_LIMIT];
 static unsigned phase;
-PD *run;
+
 
 #if CONF_WITH_USER_ASPACE
 void proc_dispose_process(KPROC *process)

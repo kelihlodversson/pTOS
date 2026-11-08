@@ -79,7 +79,9 @@ static void proc_go(PD *p, WORD entry_type);
  * global variables
  */
 
-PD      *run;           /* ptr to PD for current process */
+#if !CONF_WITH_NATIVE_SCHED
+PD      *run;           /* classic single-execution ABI storage */
+#endif /* native kernels export the CPU-owned slot from native_sched.c */
 
 #if CONF_WITH_USER_ASPACE
 /* Kernel code marks a freshly created ROM basepage here before Pexec(). */
@@ -281,7 +283,6 @@ static void xexec_free(void *addr)
  * carries no alignment guarantee beyond the compiler's incidental default.
  */
 static WORD    supstk[SUPSIZ] __attribute__((aligned(8))); /* common sup stack for all processes */
-static jmp_buf bakbuf;         /* longjmp buffer */
 
 
 /*
@@ -491,7 +492,6 @@ static WORD envsize(char *env)
 /* these variables are used to avoid the following warning:
  * variable `foo' might be clobbered by `longjmp' or `vfork'
  */
-static PD *cur_p;
 
 #if CONF_WITH_CUIS
 static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory);
@@ -527,6 +527,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
     long needed;
     FH fh;
+    PD *cur_p; /* assigned before setjmp, never changed across its return */
+    FS_ERROR_STATE loader_error;
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
@@ -760,11 +762,11 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         kproc_mark_legacy(p);
 #endif
 
-    /* use static variable to avoid the obscure longjmp warning */
+    /* The loaded image and enclosing target belong to this invocation. */
     cur_p = p;
 
     /* we have now allocated memory, so we need to intercept longjmp. */
-    memcpy(bakbuf, errbuf, sizeof(errbuf));
+    loader_error = *fs_error_current();
     if (setjmp(errbuf)) {
 
         KDEBUG(("Error and longjmp in xexec()!\n"));
@@ -778,11 +780,15 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         /* we still have to jump back to bdosmain.c so that the proper error
          * handling can occur.
          */
-        longjmp(bakbuf, 1);
+        memcpy(errbuf, loader_error.jump, sizeof(errbuf));
+        longjmp(errbuf, 1);
     }
 
     /* now, load the rest of the program, perform relocation, close the file */
     rc = kpgmld(cur_p, fh, &hdr, path);
+    /* No later launch/admission/cleanup may retain this loader frame as its
+     * disk-error target, especially across nested synchronous Pexec. */
+    *fs_error_current() = loader_error;
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
