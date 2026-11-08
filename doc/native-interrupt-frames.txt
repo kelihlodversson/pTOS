@@ -122,7 +122,8 @@ RFLAGS privilege bits, vector/padding, CR3 against the retained KASPACE backend,
 and exact IRQ-frame/TSS-top/syscall-top binding. It copies all 512 FXSAVE bytes,
 15 GPRs and the user iretq frame, stamps execution/TID/CPU and advances a bounded
 per-execution capture sequence. Exhaustion refuses capture rather than wrapping.
-No user pointer or borrowed IRQ-image pointer is retained. Existing KTHREAD
+Only numeric register/source-address provenance is copied; it is never used
+as a borrowed image pointer or dereferenced after IRQ return. Existing KTHREAD
 ownership retains ASPACE and stack holds; this adds no second resource owner.
 
 The valid flag means only a copied diagnostic image within this on-CPU dispatch.
@@ -158,3 +159,19 @@ ARM banked/exception/VFP ownership and m68k uenter/FPU/frame staging. x32 loaded
 current_launch, run/errbuf and syscall compatibility globals also remain boot-
 CPU-only; this increment neither converts those globals nor switches kernel
 frames. B1c and B2 are not complete. Preemption stays disabled.
+
+Current capability matrix (first B1b increment)
+------------------------------------------------
+                                x32              ARM MMU          m68k MMU
+Cooperative native scheduling   native tested    native tested    native tested
+Full copied device-IRQ image    native tested    not implemented  not implemented
+Captured image restore/dispatch unavailable      unavailable      unavailable
+Loaded-state B1c conversion     incomplete       incomplete       incomplete
+Timer preemption / SMP          disabled         disabled         disabled
+
+Native compatibility additionally passes pinned Hatari Falcon/TT030/04025/0
+in each mode and Amiberry68060 25/0 caches off/on, strict nonzero FPIAR in both.
+These m68k results do not establish interrupted-user payload capture. x32 eager
+scheduler-disabled boot, classic192KiB ROM/test disk, clone ABI/decoder, ELF52
+and gitready pass. Latest-epic combined validation is tracked separately from
+this branch's architecture evidence and exact-head GitHub CI.
