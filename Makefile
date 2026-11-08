@@ -1016,7 +1016,7 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/x32_probe/clone_threads.c tests/x32_probe/clone_registers.S tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+obj/x32/x32probe.elf: tests/pclone/irq_registers.S tests/x32_probe/clone_threads.c tests/x32_probe/clone_registers.S tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
                     tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
@@ -1942,7 +1942,9 @@ $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 ifneq ($(filter pclone,$(TEST_SUITES)),)
-TEST_SUITE_OBJ += obj/clone_registers.o
+TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
+obj/clone_irq_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
 obj/clone_registers.o: tests/pclone/registers.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 endif
@@ -2173,7 +2175,28 @@ GROUPCH.TOS: $(TEST_STARTUP) obj/group_child.o $(LIBCMINI_LIB)
 TEST_GROUP_FILES = GROUPCH.TOS
 endif
 
-TEST_HD_FILES = $(TEST_GROUP_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
+ifdef CONF_WITH_NATIVE_SCHED
+define global-prog
+obj/global_$(1).o: tests/global_scheduler/boot.c $$(AUTOCONF_H) | obj
+	$$(TEST_CC) $$(TEST_CFLAGS) -DGLOBAL_ROLE=$(2) $$(DEPFLAGS) -c $$< -o $$@
+$(3): $$(TEST_STARTUP) obj/global_$(1).o $$(LIBCMINI_LIB)
+	@mkdir -p $$(dir $$@)
+	$$(TEST_LD) $$(TEST_LDFLAGS) $$(TEST_STARTUP) obj/global_$(1).o -L$$(dir $$(LIBCMINI_LIB)) -lcmini $$(TEST_LIBS) -o $$@
+endef
+$(eval $(call global-prog,child,0,GLOBALCH.TOS))
+$(eval $(call global-prog,source,1,GLBSRC.TOS))
+$(eval $(call global-prog,check,2,GLBCHK.TOS))
+$(eval $(call global-prog,async,3,obj/global_async.tos))
+obj/global-stage/.stamp: GLBSRC.TOS GLBCHK.TOS obj/global_async.tos
+	@rm -rf obj/global-stage
+	@mkdir -p obj/global-stage/AUTO
+	@cp obj/global_async.tos obj/global-stage/AUTO/GLBTEST.PRG
+	@touch $@
+TEST_GLOBAL_FILES = GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS
+TEST_GLOBAL_BUILD = GLOBALCH.TOS obj/global-stage/.stamp
+endif
+
+TEST_HD_FILES = $(TEST_GLOBAL_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2189,9 +2212,9 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_GROUP_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_GLOBAL_BUILD) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
-	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd
 test-hd: test-hd.img
@@ -2208,7 +2231,7 @@ test-hd-shell.img: test-hd.img runtests.tos
 	@rm -rf $(TEST_SHELL_STAGE)
 	@mkdir -p $(TEST_SHELL_STAGE)
 	@cp runtests.tos $(TEST_SHELL_STAGE)/SHELL.TOS
-	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_SHELL_STAGE)/SHELL.TOS $(filter-out $(EMUCON_TOS),$(TEST_HD_FILES)) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_SHELL_STAGE)/SHELL.TOS $(filter-out $(EMUCON_TOS),$(TEST_HD_FILES)) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd-shell
 test-hd-shell: test-hd-shell.img
@@ -2220,11 +2243,11 @@ test-hd-shell: test-hd-shell.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(TEST_GLOBAL_BUILD) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)
-	@cp -R $(TEST_HD_FILES) $(TEST_DIR)/
+	@cp -R $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DIR)/
 	@cp -R $(TEST_DESTDIR) $(TEST_FONT_STAGE) $(TEST_DIR)/
 
 ifdef ARCH_ARM
@@ -2255,7 +2278,7 @@ endif
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
-           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS GROUPCH.TOS \
+           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS GROUPCH.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
            test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img

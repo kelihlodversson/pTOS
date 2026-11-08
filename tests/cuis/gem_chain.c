@@ -61,7 +61,9 @@ int gem_chain_client(int argc, char **argv)
     if (role == 't' || role == 'u' || role == 'v' || role == 'w' || role == 'k') {
         VERIFY(shel_envrn(&value,"CHAIN_ENV=") == 1 && value && equal(value,"original"));
         VERIFY(call(1,0x47,(uintptr_t)directory,0,0,0) == 0 && equal(directory,role == 'k' ? "\\WORK" : "\\APPS"));
-        VERIFY(call(1,0x10c,0,0,0,0) == (int32_t)decode(argv[1]+17)); /* Stable controller. */
+        /* The creator has retired before deferred activation. Its retained
+         * PROCESS identity is an orphan (PPID 0), not the scheduler's controller. */
+        VERIFY(decode(argv[1]+17) == 0 && call(1,0x10c,0,0,0,0) == 0);
         if (role == 'v' || role == 'w') {
             VERIFY(call(1,0x40,1,5,(uintptr_t)"CHAIN",0) == 5);
             if (role == 'w') VERIFY(call(1,0x40,2,3,(uintptr_t)"ERR",0) == 3);
@@ -114,7 +116,15 @@ int gem_chain_client(int argc, char **argv)
     message[1] = me; message[3] = role; message[4] = (short)call(1,0x10b,0,0,0,0);
     VERIFY(appl_write(parent,sizeof(message),message) == 1);
     if (role != 'd') VERIFY(receive(message,5000,aes_global) & MU_MESAG);
-    if (role == 'e') VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target));
+    /* Replace the staged handoff while helpers occupy the initial arena.
+     * The second snapshot uses the current WORK directory; restore its input
+     * environment only for preparation, then mutate it again before exit. */
+    if (role == 'e') {
+        target[1] = 'k';
+        *value = 'o';
+        VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target) == 1);
+        *value = 'M';
+    }
     if (role == 'f') __asm__ volatile ("ud2");
     if (role == 'x') _Exit(41);
     return 37;
@@ -129,7 +139,7 @@ int gem_chain_checks(short *global)
     int32_t status;
     for (i = 0; i < sizeof(roles); i++) {
         tail[1] = roles[i]; encode(tail+2,(uint32_t)global[2]);
-        encode(tail+10,(uint32_t)call(1,0x10c,0,0,0,0));
+        encode(tail+10,0); /* expected logical PPID after creator retirement */
         status = call(1,0x4b,roles[i] == 'd' ? 0 : 100,(uintptr_t)"APPS\\CHAIN.PRG",
                       (uintptr_t)tail,(uintptr_t)environment);
         if (roles[i] == 'd') {

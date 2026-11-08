@@ -163,7 +163,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  * context -- leaves the swapped state behind; x86_64_syscall_abandoned()
  * restores it.
  */
-static volatile int syscall_gs_swapped;
+/* The loaded swap state belongs to this CPU alongside its entry stack slots. */
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
@@ -171,13 +171,13 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
      * Pexec and AES dispatch. No global latch can leak to another return. */
 
     if (from_ring3)
-        syscall_gs_swapped = 1;
+        percpu.syscall_gs_swapped = 1;
 #if CONF_WITH_USER_CALLBACKS
     if (from_ring3) {
         kproc_record_rsp(run, x86_64_get_saved_user_rsp());
         if (!user_callback_syscall_allowed(frame->rax, frame->rdi)) {
             frame->rax = (UQUAD)(QUAD)EACCDN;
-            syscall_gs_swapped = 0;
+            percpu.syscall_gs_swapped = 0;
             return;
         }
     }
@@ -192,7 +192,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         user_callback_return_work(x86_64_get_saved_user_rsp(), TRUE);
 #endif
     if (from_ring3)
-        syscall_gs_swapped = 0;
+        percpu.syscall_gs_swapped = 0;
 }
 
 /*
@@ -235,11 +235,11 @@ void x86_64_set_saved_user_rsp(UQUAD rsp)
  */
 int x86_64_gs_to_user(void)
 {
-    int was = syscall_gs_swapped;
+    int was = percpu.syscall_gs_swapped;
 
     if (was) {
         __asm__ volatile ("swapgs" ::: "memory");
-        syscall_gs_swapped = 0;
+        percpu.syscall_gs_swapped = 0;
     }
     return was;
 }
@@ -247,14 +247,14 @@ int x86_64_gs_to_user(void)
 void x86_64_gs_back_to_syscall(void)
 {
     __asm__ volatile ("swapgs" ::: "memory");
-    syscall_gs_swapped = 1;
+    percpu.syscall_gs_swapped = 1;
 }
 
 void x86_64_syscall_abandoned(void)
 {
-    if (syscall_gs_swapped) {
+    if (percpu.syscall_gs_swapped) {
         __asm__ volatile ("swapgs" ::: "memory");
-        syscall_gs_swapped = 0;
+        percpu.syscall_gs_swapped = 0;
     }
 }
 

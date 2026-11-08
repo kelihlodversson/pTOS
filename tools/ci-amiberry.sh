@@ -42,7 +42,7 @@ import kconfiglib
 k=kconfiglib.Kconfig()
 k.load_config()
 assert k.syms['CONF_WITH_USER_ASPACE'].str_value == 'y'
-for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP'):
+for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP','CONF_WITH_EXIT_HANDOFF_TEST'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name
 k.write_config()
@@ -61,6 +61,21 @@ PYCONFIG
         failed="$failed $name"
         echo "::endgroup::"
         continue
+    fi
+
+    if [ "${NATIVE_THREADS:-0}" = 1 ]; then
+        irq_state=$(awk '/^ +0x[0-9a-f]+ +m68k_irq_test_state$/ { print $1; exit }' emutos.map)
+        if [ -z "$irq_state" ]; then
+            echo "::error::$name: native IRQ capture state is missing"
+            failed="$failed $name"
+            echo "::endgroup::"
+            continue
+        fi
+        # IPC READ_MEM addresses physical RAM, not the kernel's MMU window.
+        if grep -q '^#define CONF_AMIGA_HIGHER_HALF 1' obj/autoconf.h; then
+            irq_state=$(python3 -c "print(hex(int('$irq_state',16) & 0x7fffffff))")
+        fi
+        managed="$managed --irq-capture-state $irq_state"
     fi
 
     # an image with an address space for every process has no desktop: the

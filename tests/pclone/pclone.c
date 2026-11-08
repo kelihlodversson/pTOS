@@ -57,6 +57,11 @@ static volatile struct clone_probe {
     int mode;
     volatile long gate, done, child_pid, child_tid;
 } probe;
+#if defined(__x86_64__) || (defined(__arm__) && defined(__ARM_NEON))
+extern long clone_irq_registers(void);
+#elif defined(__mc68000__)
+extern long clone_irq_registers(long fpu);
+#endif
 static void runnable_entry(void *argument)
 {
     volatile struct clone_probe *p = argument;
@@ -64,6 +69,11 @@ static void runnable_entry(void *argument)
     int i;
 #if defined(__mc68000__)
     if (has_fpu && clone_fpu_initial()) p->error |= 1;
+#endif
+#if defined(__x86_64__) || (defined(__arm__) && defined(__ARM_NEON))
+    if (clone_irq_registers()) p->error |= 8;
+#elif defined(__mc68000__)
+    if (clone_irq_registers(has_fpu)) p->error |= 8;
 #endif
     p->pid = Pgetpid();
     p->local = (unsigned long)&local;
@@ -132,11 +142,73 @@ static void retiring_parent(void *argument)
     if (launch_entry(orphan_entry,CLONE_VM,runnable_stacks[2],&pid,&tid) <= 0) p->error = 1;
     p->child_pid = pid;
 }
-static void exhaustion_entry(void *argument)
+static void gated_entry(void *argument)
 {
     volatile struct clone_probe *p = argument;
     while (!p->gate) (void)Syield();
     p->done++;
+}
+/* Twelve live continuations exceed the bootstrap arena on every MMU target.
+ * The trace tests actual cooperative dispatch, not a modeled ready queue. */
+#define SCHEDULE_PEERS 12
+#define SCHEDULE_ROUNDS 4
+static struct {
+    unsigned char *stack[SCHEDULE_PEERS];
+    int32_t pid[SCHEDULE_PEERS], tid[SCHEDULE_PEERS];
+    volatile int trace[SCHEDULE_PEERS*SCHEDULE_ROUNDS], used, error;
+} schedule_probe;
+static void schedule_entry(void *argument)
+{
+    volatile unsigned long local = 0x13572468UL;
+    int index, round;
+    (void)argument;
+    for (index=0; index<SCHEDULE_PEERS; index++)
+        if ((unsigned long)&local >= (unsigned long)schedule_probe.stack[index] &&
+            (unsigned long)&local < (unsigned long)(schedule_probe.stack[index]+RUNNABLE_STACK_SIZE)) break;
+    if (index==SCHEDULE_PEERS) { schedule_probe.error=1; return; }
+    for (round=0; round<SCHEDULE_ROUNDS; round++) {
+        if (Pgetpid()!=schedule_probe.pid[index] || local!=0x13572468UL ||
+            schedule_probe.used>=SCHEDULE_PEERS*SCHEDULE_ROUNDS) { schedule_probe.error=1; return; }
+        schedule_probe.trace[schedule_probe.used++]=index;
+        (void)Syield();
+    }
+}
+static void test_scheduler_growth(void)
+{
+    int cycle, i, j;
+    long result;
+    for (i=0;i<SCHEDULE_PEERS;i++) {
+        schedule_probe.stack[i]=(unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
+        ptest_assert_msg((long)schedule_probe.stack[i]>0,"fairness user stack allocation");
+        if ((long)schedule_probe.stack[i]<=0) return;
+    }
+    for (cycle=0;cycle<2;cycle++) {
+        schedule_probe.used=schedule_probe.error=0;
+        for (i=0;i<SCHEDULE_PEERS;i++) {
+            result=launch_entry(schedule_entry,CLONE_VM|(i&1?CLONE_SAME_PROCESS:0),schedule_probe.stack[i],
+                                &schedule_probe.pid[i],&schedule_probe.tid[i]);
+            ptest_assert_msg(result>0 && result==schedule_probe.tid[i],"mixed PROCESS/THREAD admission beyond arena");
+            if (result<=0) return;
+            ptest_assert_msg((schedule_probe.pid[i]==Pgetpid())==(i&1),"scheduler preserves shared/distinct PID policy");
+            for (j=0;j<i;j++) ptest_assert_msg(schedule_probe.tid[i]!=schedule_probe.tid[j],"unique live scheduler TIDs");
+            ptest_assert_msg(!schedule_probe.used,"no dispatch before publication returns");
+        }
+        /* Block the parent; all twelve peers must progress in FIFO RR order. */
+        for (i=0;i<SCHEDULE_PEERS;i+=2) {
+            result=Pwaitpid(schedule_probe.pid[i],0,0);
+            ptest_assert_msg((result>>16)==schedule_probe.pid[i] && !(result&65535),"independent PROCESS completion after fair dispatch");
+        }
+        (void)Syield(); (void)Syield();
+        ptest_assert_msg(!schedule_probe.error && schedule_probe.used==SCHEDULE_PEERS*SCHEDULE_ROUNDS,"all independent and sibling continuations progress");
+        for (i=0;i<SCHEDULE_PEERS*SCHEDULE_ROUNDS;i++)
+            ptest_assert_msg(schedule_probe.trace[i]==i%SCHEDULE_PEERS,"one circular round-robin across arena growth");
+#if defined(TEST_WITH_PTHJOIN)
+        for (i=1;i<SCHEDULE_PEERS;i+=2)
+            ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,schedule_probe.tid[i],0)==0,"late sibling join after safe root reclaim");
+#endif
+    }
+    for (i=0;i<SCHEDULE_PEERS;i++) ptest_assert_msg(Mfree(schedule_probe.stack[i])==0,"repeated fair dispatch releases stack holds");
+    conws("native scheduler growth and mixed PROCESS/THREAD round-robin: tested\r\n");
 }
 static void test_lifecycle(void)
 {
@@ -184,27 +256,28 @@ static void test_lifecycle(void)
     (void)Syield(); (void)Syield();
     ptest_assert_msg(probe.done && Pwaitpid(probe.child_pid,1,0) == -33L,
                      "orphan must finish without misdirecting completion to grandparent");
+    test_scheduler_growth();
     probe.done = probe.gate = 0;
     for (made = 0; made < 12; made++) {
         long memory = Malloc(RUNNABLE_STACK_SIZE);
-        ptest_assert_msg(memory > 0,"exhaustion stack allocation");
+        ptest_assert_msg(memory > 0,"growable scheduler stack allocation");
         if (memory <= 0) break;
         stacks[made] = (unsigned char *)memory;
         pid = tid = -99;
-        result = launch_entry(exhaustion_entry,CLONE_VM|CLONE_SAME_PROCESS,stacks[made],&pid,&tid);
+        result = launch_entry(gated_entry,CLONE_VM|CLONE_SAME_PROCESS,stacks[made],&pid,&tid);
         if (result <= 0) {
-            ptest_assert_msg(result == -326L && pid == -99 && tid == -99,
-                             "slot exhaustion must preserve output sentinels");
+            ptest_assert_msg(pid == -99 && tid == -99,
+                             "failed growing publication must preserve output sentinels");
             ptest_assert_msg(Mfree(stacks[made]) == 0,"failed publication must release stack hold");
             break;
         }
         ptest_assert_msg(Mfree(stacks[made]) < 0,"runnable user stack cannot be freed");
     }
-    ptest_assert_msg(made > 0 && made < 12 && !probe.done,"bounded scheduler exhausts before dispatch");
+    ptest_assert_msg(made == 12 && !probe.done,"scheduler grows beyond bootstrap arena before dispatch");
     probe.gate = 1;
     for (i = 0; i < 64 && probe.done < made; i++) (void)Syield();
     (void)Syield(); (void)Syield();
-    ptest_assert_msg(probe.done == made,"all published siblings finish after exhaustion");
+    ptest_assert_msg(probe.done == made,"all published siblings finish after arena growth");
     for (i = 0; i < made; i++)
         ptest_assert_msg(Mfree(stacks[i]) == 0,"root reap releases each stack once");
 }
