@@ -152,7 +152,7 @@ extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
 extern int x86_64_demand_page(UQUAD address, UQUAD error_code);
 
 #include "bdosdefs.h"
-#include "kproc.h"
+#include "../../../bdos/kproc.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
