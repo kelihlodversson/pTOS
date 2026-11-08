@@ -125,6 +125,9 @@ static void cpu_acknowledge_handoff(void)
     if (task) {
         if (!task->execution.on_cpu || task->execution.owner_cpu!=execution_cpu.number)
             panic("scheduler: foreign CPU handoff");
+#if ARCH_X86_64 && CONF_WITH_USER_ASPACE
+        task->execution.interrupted_user.valid=FALSE;
+#endif
         task->execution.on_cpu=FALSE;
         execution_cpu.inflight=NULL;
     }
@@ -503,6 +506,19 @@ BOOL ksched_async_allowed(void)
     if (execution_cpu.entered || execution_cpu.waiter_attached || execution_cpu.waiter.identity) return FALSE;
     owner=kproc_retain(run); allowed=owner && kproc_live_pd(owner)==run;
     kproc_release(owner); return allowed;
+}
+
+KTHREAD_CONTEXT *ksched_interrupt_target(PD *pd, struct kaspace **space, ULONG *tid)
+{
+    KERNEL_TASK *task=execution_cpu.current;
+    if (scheduler.stopping || !scheduler.active || execution_cpu.leaf_held ||
+        !task || execution_cpu.inflight!=task || !task->execution.on_cpu ||
+        task->execution.owner_cpu!=execution_cpu.number || task->state!=TASK_RUNNING ||
+        task->program!=pd || !kthread_is_executing(task->thread)) return NULL;
+    *space=kthread_aspace(task->thread);
+    if (!*space || *space!=kproc_active_space(task->process)) return NULL;
+    *tid=kthread_tid(task->thread);
+    return &task->execution;
 }
 
 KTHREAD *ksched_exit_thread(PD *pd)
@@ -1403,6 +1419,9 @@ static void scheduler_root_entry(void)
         check_root_stack();
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
         wait_probe_on_root();
+#if ARCH_X86_64
+        x86_64_irq_capture_report();
+#endif
 #endif
         /* Reclaim only from root. Referenced slots remain stable across entries. */
         for (task = scheduler.tasks; task; task = task->next_task)

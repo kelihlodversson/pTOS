@@ -5,6 +5,7 @@
 typedef long long S64;
 extern S64 x32_probe_call(unsigned long long,S64,S64,S64);
 extern unsigned x32_thread_registers(unsigned seed);
+extern long clone_irq_registers(void);
 #define CALL(n,a,b,c) x32_probe_call(n,(S64)(unsigned long)(a),(S64)(unsigned long)(b),(S64)(unsigned long)(c))
 #define THREADS 3
 struct worker { unsigned long stack; int32_t tid,pid; unsigned seed; int kind; };
@@ -22,6 +23,7 @@ static void worker(void *argument)
     volatile unsigned canary=w->seed;
     unsigned long local=(unsigned long)&canary;
     if (CALL(0x10b,0,0,0)!=process_pid || w->pid!=process_pid || w->tid<=0 || local<w->stack || local>=w->stack+8192) errors|=1;
+    if (clone_irq_registers()) errors|=4;
     if (x32_thread_registers(w->seed) || canary!=w->seed) errors|=2;
     ready++;
     while(!release_workers) yield();

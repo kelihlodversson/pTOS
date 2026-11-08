@@ -1,0 +1,138 @@
+/* All-register ring-3 timer IRQ pattern, no syscall/yield during observation.
+ * Does not demonstrate scheduling/preemption: a bounded busy loop only. */
+#if defined(__x86_64__)
+        .text
+        .globl clone_irq_registers
+        .type clone_irq_registers,@function
+clone_irq_registers:
+        push %rbx
+        push %rbp
+        push %r12
+        push %r13
+        push %r14
+        push %r15
+        sub $1032,%rsp
+        fxsave (%rsp)
+        fninit
+        fld1
+        ldmxcsr irq_mxcsr(%rip)
+        movdqa irq_xmm(%rip),%xmm0
+        movdqa %xmm0,%xmm1
+        movdqa %xmm0,%xmm2
+        movdqa %xmm0,%xmm3
+        movdqa %xmm0,%xmm4
+        movdqa %xmm0,%xmm5
+        movdqa %xmm0,%xmm6
+        movdqa %xmm0,%xmm7
+        movdqa %xmm0,%xmm8
+        movdqa %xmm0,%xmm9
+        movdqa %xmm0,%xmm10
+        movdqa %xmm0,%xmm11
+        movdqa %xmm0,%xmm12
+        movdqa %xmm0,%xmm13
+        movdqa %xmm0,%xmm14
+        movdqa %xmm0,%xmm15
+        movabs $0x7130000000713001,%rax
+        movabs $0x7130000000713002,%rbx
+        movabs $0x7130000000713004,%rdx
+        movabs $0x7130000000713005,%rsi
+        movabs $0x7130000000713006,%rdi
+        movabs $0x7130000000713007,%rbp
+        movabs $0x7130000000713008,%r8
+        movabs $0x7130000000713009,%r9
+        movabs $0x7130000000713010,%r10
+        movabs $0x7130000000713011,%r11
+        movabs $0x7130000000713012,%r12
+        movabs $0x7130000000713013,%r13
+        movabs $0x7130000000713014,%r14
+        mov $2000000,%ecx
+        std /* IRQ entry must clear DF for C, then restore the original flags */
+        movabs $0x7130000000713015,%r15
+1:      pause
+        loop 1b
+        xor %r15d,%r15d /* invalidate test marker before inspecting registers */
+        cmp irq_expected_rax(%rip),%rax
+        jne 2f
+        cmp irq_expected_rbx(%rip),%rbx
+        jne 2f
+        cmp irq_expected_rdx(%rip),%rdx
+        jne 2f
+        cmp irq_expected_rsi(%rip),%rsi
+        jne 2f
+        cmp irq_expected_rdi(%rip),%rdi
+        jne 2f
+        cmp irq_expected_rbp(%rip),%rbp
+        jne 2f
+        cmp irq_expected_r8(%rip),%r8
+        jne 2f
+        cmp irq_expected_r9(%rip),%r9
+        jne 2f
+        cmp irq_expected_r10(%rip),%r10
+        jne 2f
+        cmp irq_expected_r11(%rip),%r11
+        jne 2f
+        cmp irq_expected_r12(%rip),%r12
+        jne 2f
+        cmp irq_expected_r13(%rip),%r13
+        jne 2f
+        cmp irq_expected_r14(%rip),%r14
+        jne 2f
+        test %rcx,%rcx
+        jne 2f
+        pushfq
+        pop %rdx
+        test $0x400,%edx
+        jz 2f
+        cld
+        fxsave 512(%rsp)
+        cmpw $0x37f,512(%rsp)
+        jne 2f
+        cmpb $0x80,516(%rsp)
+        jne 2f
+        movabs $0x8000000000000000,%rdx
+        cmp %rdx,544(%rsp)
+        jne 2f
+        cmpw $0x3fff,552(%rsp)
+        jne 2f
+        cmpl $0x1f80,536(%rsp)
+        jne 2f
+        lea 672(%rsp),%rdi
+        movabs $0x7130713071307130,%rdx
+        mov $32,%ecx
+4:      cmp %rdx,(%rdi)
+        jne 2f
+        add $8,%rdi
+        loop 4b
+        xor %eax,%eax
+        jmp 3f
+2:      cld
+        mov $1,%eax
+3:      fxrstor (%rsp)
+        add $1032,%rsp
+        pop %r15
+        pop %r14
+        pop %r13
+        pop %r12
+        pop %rbp
+        pop %rbx
+        ret
+        .section .rodata
+        .balign 16
+irq_xmm: .quad 0x7130713071307130,0x7130713071307130
+irq_expected_rax: .quad 0x7130000000713001
+irq_expected_rbx: .quad 0x7130000000713002
+irq_expected_rdx: .quad 0x7130000000713004
+irq_expected_rsi: .quad 0x7130000000713005
+irq_expected_rdi: .quad 0x7130000000713006
+irq_expected_rbp: .quad 0x7130000000713007
+irq_expected_r8: .quad 0x7130000000713008
+irq_expected_r9: .quad 0x7130000000713009
+irq_expected_r10: .quad 0x7130000000713010
+irq_expected_r11: .quad 0x7130000000713011
+irq_expected_r12: .quad 0x7130000000713012
+irq_expected_r13: .quad 0x7130000000713013
+irq_expected_r14: .quad 0x7130000000713014
+irq_expected_r15: .quad 0x7130000000713015
+irq_mxcsr: .long 0x1f80
+#endif
+        .section .note.GNU-stack,"",%progbits

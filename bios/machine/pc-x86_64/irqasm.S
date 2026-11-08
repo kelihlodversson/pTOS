@@ -21,6 +21,7 @@
 #endif
 
 #include "asmdefs.h"
+#include "arch/x86_64/irqframe.h"
 
         .text
 
@@ -89,7 +90,7 @@ x86_64_irq_common:
         push    %r14
         push    %r15
 
-        mov     120(%rsp), %rdi   /* the vector number, pushed by the stub,
+        mov     (X86_IRQ_VECTOR-X86_IRQ_FX_BYTES)(%rsp), %rdi   /* the vector number, pushed by the stub,
                                    * now 15 registers (120 bytes) below the
                                    * current %rsp -- read while that offset
                                    * is still this simple, before the FPU/
@@ -114,28 +115,35 @@ x86_64_irq_common:
          * leaving CR0/CR4 configured for SSE is why this can run with no
          * separate FPU-enable step of its own.
          */
-        sub     $512, %rsp
+        sub     $X86_IRQ_FX_BYTES, %rsp
         fxsave  (%rsp)
 
         cld     /* see isr.S's own comment: the ABI requires DF clear at
                  * any C call boundary, and an IRQ can interrupt code
                  * that had set it */
 
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+        /* Capture BEFORE dispatch/callback code changes live scratch state.
+         * The original frame remains authoritative and is never edited. */
+        mov     %rsp, %rdi
+        call    C_SYM(x86_64_capture_user_irq)
+        mov     X86_IRQ_VECTOR(%rsp), %rdi
+#endif
         call    C_SYM(x86_64_pc_irq_dispatch)
 
 #if CONF_WITH_USER_CALLBACKS
         /* The PIC has been acknowledged. Only a user interruption is a
          * safe point: a kernel IRQ may have interrupted an allocator. */
-        testb   $3, 656(%rsp)    /* frame->cs = 512 + 144 */
+        testb   $3, X86_IRQ_CS(%rsp)    /* frame->cs = 512 + 144 */
         jz      1f
-        movq    672(%rsp), %rdi  /* frame->rsp = 512 + 160 */
+        movq    X86_IRQ_RSP(%rsp), %rdi  /* frame->rsp = 512 + 160 */
         movl    $1, %esi         /* User IRQ boundaries allow deferred hooks. */
         call    C_SYM(user_callback_return_work)
 1:
 #endif
 
         fxrstor (%rsp)
-        add     $512, %rsp
+        add     $X86_IRQ_FX_BYTES, %rsp
 
         pop     %r15
         pop     %r14
