@@ -2,7 +2,6 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
-const char *kproc_executable_name(PD *pd);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
 /* Exercise the production cleanup-to-checkpoint call, with scheduler/THREAD
@@ -296,7 +295,6 @@ BOOL kproc_copy_to_user_resident(UQUAD address, const void *source, ULONG size)
     result=kproc_copy_to_user(address,source,size);
     stream_resident_copy=FALSE; return result;
 }
-const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
 
 void *kalloc(ULONG bytes)
 {

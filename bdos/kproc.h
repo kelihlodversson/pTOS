@@ -101,9 +101,12 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * 0 is the kernel's own context, which has none and is every boot-time basepage's
  * launcher. */
 WORD kproc_pid(PD *pd);                 /* 0: no record */
-#if CONF_WITH_CUIS
+/* Immutable loaded-image basename, retained with PROCESS identity after exit.
+ * Copies a complete NUL-terminated snapshot to kernel storage, or ERANGE
+ * without writing. The caller owns the reference; no PD is borrowed. */
 void kproc_set_executable_name(PD *pd, const char *path);
-const char *kproc_executable_name(PD *pd);
+LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity);
+#if CONF_WITH_CUIS
 /* Snapshot all live standard-handle aliases into OPNFILES counters. */
 void kproc_standard_file_refs(ULONG *references);
 #endif
