@@ -11,6 +11,7 @@
 #include "thread_startup.h"
 #include "proc_clone.h"
 #include "fs.h"
+#include "callback_cpu.h"
 #include "proc.h"
 #include <stddef.h>
 #include "kheap.h"
@@ -72,6 +73,10 @@ static struct {
 typedef struct {
     UWORD number; /* logical boot CPU 0; no additional CPU may dispatch yet */
     BOOL leaf_held;
+#if CONF_WITH_USER_CALLBACKS
+    USER_CALLBACK_CPU callback; /* frame chain includes watchdog deadlines */
+#endif
+    FS_ERROR_STATE loaded_error; /* includes code/drive, not only longjmp registers */
     void *loaded_launcher; /* CPU-loaded nested chain, saved in each execution context. */
     KERNEL_TASK *current, *inflight;
     BOOL entered, pump;
@@ -93,6 +98,10 @@ static NATIVE_SCHED_CPU boot_cpu;
  * callers must not infer SMP or asynchronous dispatch from this accessor. */
 static NATIVE_SCHED_CPU *native_sched_cpu(void) { return &boot_cpu; }
 #define execution_cpu (*native_sched_cpu())
+#if CONF_WITH_USER_CALLBACKS
+USER_CALLBACK_CPU *ksched_callback_cpu(void) { return &execution_cpu.callback; }
+#endif
+FS_ERROR_STATE *fs_error_current(void) { return &execution_cpu.loaded_error; }
 void *ksched_loaded_launcher(void) { return execution_cpu.loaded_launcher; }
 void ksched_set_loaded_launcher(void *launcher)
 {
@@ -519,6 +528,9 @@ BOOL ksched_async_allowed(void)
 KTHREAD_CONTEXT *ksched_interrupt_target(PD *pd, struct kaspace **space, ULONG *tid)
 {
     KERNEL_TASK *task=execution_cpu.current;
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame) return NULL;
+#endif
     if (scheduler.stopping || !scheduler.active || execution_cpu.leaf_held ||
         !task || execution_cpu.inflight!=task || !task->execution.on_cpu ||
         task->execution.owner_cpu!=execution_cpu.number || task->state!=TASK_RUNNING ||
@@ -1015,6 +1027,10 @@ static BOOL always_ready(void *argument) { (void)argument; return TRUE; }
 LONG ksched_yield(void)
 {
     uintptr_t flags;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    FS_ERROR_STATE saved_error;
+    LONG error_pattern;
+#endif
     if (scheduler.stopping) return EACCDN;
     if (!ksched_spawn_allowed()) {
         if (!execution_cpu.entered && scheduler.tasks) return enter_root(TRUE,NULL,NULL);
@@ -1028,7 +1044,19 @@ LONG ksched_yield(void)
     wait_probe_on_yield();
 #endif
     flags = native_sched_irq_save();
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    /* Actual kernel continuation handoffs, not a prepared-image inspection.
+     * Restore the enclosing syscall's complete error scope before cancellation. */
+    saved_error=*fs_error_current();
+    error_pattern=(LONG)(ksched_context_id() & 0x3fffffffUL);
+    errcode=error_pattern; rwerr=~error_pattern; errdrv=(int)(error_pattern & 15);
+#endif
     cancellation_wait(always_ready, NULL);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    if (errcode!=error_pattern || rwerr!=~error_pattern || errdrv!=(int)(error_pattern & 15))
+        panic("scheduler: disk-error continuation crossed execution owners");
+    *fs_error_current()=saved_error;
+#endif
     native_sched_irq_restore(flags);
 #if CONF_WITH_PTERMGRP
     ksched_cancel_point();
@@ -1410,7 +1438,7 @@ static void scheduler_root_entry(void)
      * Recoverable close retries stay local; an escaping disk error is fatal,
      * with no retry of partially committed retirement/publication. */
     if (setjmp(errbuf)) panic("scheduler root: cleanup callback escaped");
-    memcpy(execution_cpu.root.disk_error, errbuf, sizeof(errbuf));
+    execution_cpu.root.disk_error = *fs_error_current();
     if (execution_cpu.pending_clone) {
         PROC_CLONE_TRANSACTION *tx = execution_cpu.pending_clone;
         execution_cpu.pending_clone = NULL;

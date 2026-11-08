@@ -1380,7 +1380,7 @@ void proc_dispose_process(KPROC *process)
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len)
 {
     PD *p;
-    jmp_buf saved_error;
+    FS_ERROR_STATE saved_error;
 
     /* Only the disk-error unwinder is supported by cleanup callbacks.
      * kdos_fclose catches recoverable errors locally. An escaping disk error
@@ -1389,9 +1389,9 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
      * On this fatal path consume the caller's handoff reference ourselves;
      * panic must not return. Arbitrary private longjmp targets are forbidden.
      */
-    memcpy(saved_error, errbuf, sizeof(errbuf));
+    saved_error = *fs_error_current();
     if (setjmp(errbuf)) {
-        memcpy(errbuf, saved_error, sizeof(errbuf));
+        *fs_error_current() = saved_error;
 #if CONF_WITH_PROCMEM
         proc_resident_pd = NULL;
         proc_resident_len = 0;
@@ -1418,7 +1418,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 #if CONF_WITH_CUIS
     ksched_exited_identity(process, p);
 #endif
-    memcpy(errbuf, saved_error, sizeof(errbuf));
+    *fs_error_current() = saved_error;
 }
 
 BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)

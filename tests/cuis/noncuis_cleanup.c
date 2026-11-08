@@ -10,6 +10,8 @@
 #include "procmem.h"
 #include "bdosstub.h"
 
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"non-CUIS cleanup:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD owner, child;
 static SBYTE child_files[NUMSTD];
@@ -17,9 +19,9 @@ static UBYTE child_dirs[NUMCURDIR];
 static unsigned record, allocations, references, attempts, invalidations, directories;
 static unsigned first_closes;
 static BOOL exhaust;
-jmp_buf errbuf;
-long errcode;
-int errdrv;
+
+
+
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 

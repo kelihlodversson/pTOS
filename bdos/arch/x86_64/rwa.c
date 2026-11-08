@@ -92,7 +92,7 @@ static void clone_restore_fsbase(UQUAD value)
 extern void x86_64_enter_prepared_user(const X32_THREAD_ENTRY_IMAGE *) NORETURN;
 #endif
 
-extern jmp_buf errbuf;
+/* Loaded error state is declared by process.h. */
 
 /*
  * Declared directly, not through a shared header: bdos/build.mk's
@@ -222,7 +222,7 @@ void x86_64_process_save(X86_64_PROCESS_CONTEXT *context)
 #if CONF_WITH_NATIVE_SCHED
     context->native_task = ksched_context_id();
 #endif
-    memcpy(context->disk_error, errbuf, sizeof(errbuf));
+    context->disk_error = *fs_error_current();
     context->in_syscall = x86_64_gs_to_user();
     x86_64_write_cr3(x86_64_kernel_pml4_phys());
 }
@@ -236,7 +236,7 @@ void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *context)
 #if CONF_WITH_NATIVE_SCHED
     ksched_context_restore(context->native_task);
 #endif
-    memcpy(errbuf, context->disk_error, sizeof(errbuf));
+    *fs_error_current() = context->disk_error;
     x86_64_write_cr3(context->cr3);
     x86_64_set_kernel_stack(context->kernel_rsp);
     x86_64_set_saved_user_rsp(context->user_rsp);

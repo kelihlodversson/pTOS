@@ -8,6 +8,8 @@
 #include "mem.h"
 #include "procmem.h"
 #include "../../bdos/proc.c"
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"exit unwind:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD child;
 static SBYTE files[NUMSTD];
@@ -15,9 +17,9 @@ static UBYTE dirs[NUMCURDIR];
 static unsigned phase, commits, publications, releases, destroyed, successors;
 static BOOL disposing;
 static jmp_buf fatal, original_error;
-jmp_buf errbuf;
-long errcode;
-int errdrv;
+
+
+
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 MPB pmd, pmdalt;

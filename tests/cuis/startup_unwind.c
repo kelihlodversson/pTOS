@@ -4,12 +4,14 @@
 #include <stdlib.h>
 #include "emutos.h"
 #include "../../bdos/thread_startup.c"
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #define CHECK(c) do { if (!(c)) abort(); } while (0)
 static THREAD_STARTUP_DRAFT record;
 static THREAD_STARTUP_DRAFT *handle;
 static UWORD phase, released, freed;
 static jmp_buf fatal, original;
-jmp_buf errbuf;
+
 BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *draft)
 { CHECK(draft == &record); return phase != 2; }
 void kaspace_lease_release(KASPACE_LEASE **lease) { CHECK(!*lease); }

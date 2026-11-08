@@ -5,6 +5,7 @@
 #include "emutos.h"
 #include "fs.h"
 #include "user_callback.h"
+#include "callback_cpu.h"
 #include "kproc.h"
 #include "proc.h"
 #include "gemerror.h"
@@ -53,9 +54,12 @@ typedef struct callback_frame {
     UBYTE fpu[512] __attribute__((aligned(16)));
 } CALLBACK_FRAME;
 
-static CALLBACK_FRAME *active;
-static ULONG next_token;
-static UWORD depth;
+#if CONF_WITH_NATIVE_SCHED
+static USER_CALLBACK_CPU *callback_cpu(void) { return ksched_callback_cpu(); }
+#else
+static USER_CALLBACK_CPU legacy_callback;
+static USER_CALLBACK_CPU *callback_cpu(void) { return &legacy_callback; }
+#endif
 static void (*work_hooks[4])(void);
 extern PD *run;
 
@@ -270,7 +274,7 @@ static BOOL on_altstack(PD *pd)
 {
     CALLBACK_FRAME *frame;
 
-    for (frame = active; frame; frame = frame->previous)
+    for (frame = callback_cpu()->frame; frame; frame = frame->previous)
         if (frame->owner == pd && frame->alternate)
             return TRUE;
     return FALSE;
@@ -280,7 +284,7 @@ static BOOL owner_active(PD *pd)
 {
     CALLBACK_FRAME *frame;
 
-    for (frame = active; frame; frame = frame->previous)
+    for (frame = callback_cpu()->frame; frame; frame = frame->previous)
         if (frame->owner == pd)
             return TRUE;
     return FALSE;
@@ -352,13 +356,13 @@ BOOL user_callback_fault(void)
 {
     USER_CALLBACK_STATE *state;
 
-    if (!active || active->owner != run)
+    if (!callback_cpu()->frame || callback_cpu()->frame->owner != run)
         return FALSE;
     state = kproc_callbacks_get(run);
     if (state)
         revoke(state);
-    active->failed = TRUE;
-    longjmp(active->resume, 1);
+    callback_cpu()->frame->failed = TRUE;
+    longjmp(callback_cpu()->frame->resume, 1);
 }
 
 static void check_fatal(void)
@@ -401,11 +405,15 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     state = kproc_callbacks_get(cb->owner);
     if (!state || state->fatal)
         return EACCDN;
-    if (depth == USER_CALLBACK_DEPTH) {
+    if (callback_cpu()->depth == USER_CALLBACK_DEPTH) {
         /* Abort the requesting callback, never an unrelated registered owner. */
         user_callback_fault();
         return EACCDN;
     }
+    /* Tokens authenticate a return to this CPU's live chain. Exhaustion may
+     * refuse a new call, but must never make an old token current again. */
+    if (callback_cpu()->token == ~(ULONG)0)
+        return EAGAIN;
     frame = kalloc(sizeof(*frame));
     if (!frame)
         return ENSMEM;
@@ -422,13 +430,11 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     frame->kernel_rsp = x86_64_get_kernel_stack();
     frame->user_rsp = x86_64_get_saved_user_rsp();
     frame->irq_rsp = x86_64_get_irq_stack();
-    frame->previous = active;
+    frame->previous = callback_cpu()->frame;
     frame->deadline = (ULONG)hz_200 + 100; /* 500ms, also includes nested calls */
-    if (active && (LONG)(frame->deadline - active->deadline) > 0)
-        frame->deadline = active->deadline;
-    frame->token = ++next_token;
-    if (!frame->token)
-        frame->token = ++next_token;
+    if (callback_cpu()->frame && (LONG)(frame->deadline - callback_cpu()->frame->deadline) > 0)
+        frame->deadline = callback_cpu()->frame->deadline;
+    frame->token = ++callback_cpu()->token;
     frame->flags = interrupt_off();
     __asm__ volatile ("fxsave %0" : "=m"(frame->fpu));
     run = frame->owner;
@@ -457,8 +463,8 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     frame->failed |= sp < bottom + 4096 ||
         top > (frame->alternate ? (UQUAD)state->stack.ss_sp + state->stack.ss_size : USER_STACK_TOP);
     frame->gs_swapped = x86_64_gs_to_user();
-    active = frame;
-    depth++;
+    callback_cpu()->frame = frame;
+    callback_cpu()->depth++;
     if (!setjmp(frame->resume)) {
         if (frame->failed)
             user_callback_fault();
@@ -479,8 +485,8 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     }
     interrupt_off();
     x86_64_syscall_abandoned();
-    active = frame->previous;
-    depth--;
+    callback_cpu()->frame = frame->previous;
+    callback_cpu()->depth--;
     run = frame->caller;
     aspace_leave(frame->root);
     x86_64_set_kernel_stack(frame->kernel_rsp);
@@ -525,11 +531,11 @@ LONG user_callback_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD pc)
     LONG rc;
 
     if (fn == USER_CALLBACK_RETURN) {
-        if (!active || active->owner != run || a != active->token ||
+        if (!callback_cpu()->frame || callback_cpu()->frame->owner != run || a != callback_cpu()->frame->token ||
             pc != USER_CALLBACK_IMAGE + 15)
             return EACCDN;
-        active->result = (ULONG)b;
-        longjmp(active->resume, 1);
+        callback_cpu()->frame->result = (ULONG)b;
+        longjmp(callback_cpu()->frame->resume, 1);
     }
     if (fn == USER_CALLBACK_CHAIN) {
         if (!state || a >= state->ncaps ||
@@ -566,12 +572,12 @@ BOOL user_callback_syscall_allowed(UQUAD call, UQUAD first)
     UQUAD service = call >> 32;
 
     check_fatal();
-    if (!active)
+    if (!callback_cpu()->frame)
         return TRUE;
-    if (kproc_resume_rsp(run) < active->stack_bottom ||
-        kproc_resume_rsp(run) > active->stack_top)
+    if (kproc_resume_rsp(run) < callback_cpu()->frame->stack_bottom ||
+        kproc_resume_rsp(run) > callback_cpu()->frame->stack_top)
         user_callback_fault();
-    if ((LONG)((ULONG)hz_200 - active->deadline) >= 0)
+    if ((LONG)((ULONG)hz_200 - callback_cpu()->frame->deadline) >= 0)
         user_callback_fault();
     /* Blocking/scheduling AES calls cannot suspend a callback continuation. */
     if (service == 0x101)
@@ -591,7 +597,7 @@ BOOL user_callback_syscall_allowed(UQUAD call, UQUAD first)
 
 BOOL user_callback_active(void)
 {
-    return active != NULL;
+    return callback_cpu()->frame != NULL;
 }
 
 BOOL user_callback_work_register(void (*work)(void))
@@ -612,12 +618,12 @@ BOOL user_callback_work_register(void (*work)(void))
 void user_callback_return_work(UQUAD rsp, BOOL allow_hooks)
 {
     kproc_record_rsp(run, rsp);
-    if (active && (rsp < active->stack_bottom || rsp > active->stack_top))
+    if (callback_cpu()->frame && (rsp < callback_cpu()->frame->stack_bottom || rsp > callback_cpu()->frame->stack_top))
         user_callback_fault();
-    if (active && (LONG)((ULONG)hz_200 - active->deadline) >= 0)
+    if (callback_cpu()->frame && (LONG)((ULONG)hz_200 - callback_cpu()->frame->deadline) >= 0)
         user_callback_fault();
     check_fatal();
-    if (!active && allow_hooks) {
+    if (!callback_cpu()->frame && allow_hooks) {
         UWORD i;
 
         for (i = 0; i < ARRAY_SIZE(work_hooks); i++)
@@ -634,6 +640,8 @@ void user_callback_process_exit(PD *pd)
 
     if (!state)
         return;
+    if (owner_active(pd))
+        panic("callback owner retired with a live continuation");
     revoke(state);
     for (i = 0; i < state->ncaps; i++)
         release(state->cap[i].target);

@@ -23,9 +23,9 @@ static unsigned identity_completions, cleanup_commits;
 static unsigned thread_destroys;
 static jmp_buf exit_resume;
 
-jmp_buf errbuf;
-long errcode;
-int errdrv;
+
+
+
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 MPB pmd, pmdalt;

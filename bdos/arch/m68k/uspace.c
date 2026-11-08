@@ -162,7 +162,7 @@ void native_sched_save(NATIVE_SCHED_CONTEXT *context)
     __asm__ volatile ("move.l %%usp,%0" : "=a"(context->user_sp));
     context->launch = get_uspace_launch();
     context->native_task = ksched_context_id();
-    memcpy(context->disk_error, errbuf, sizeof(errbuf));
+    context->disk_error = *fs_error_current();
     if (fputype) m68k_fpu_save(&context->fpu);
     aspace_hw_switch(aspace_kernel_root());
 }
@@ -172,7 +172,7 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
     run = context->pd;
     set_uspace_launch(context->launch);
     ksched_context_restore(context->native_task);
-    memcpy(errbuf, context->disk_error, sizeof(errbuf));
+    *fs_error_current() = context->disk_error;
     aspace_hw_switch(context->root);
     __asm__ volatile ("move.l %0,%%usp" :: "a"(context->user_sp) : "memory");
     if (fputype) m68k_fpu_restore(&context->fpu);

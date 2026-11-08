@@ -4,6 +4,7 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 #include "setjmp.h"
+#include "fs_error.h"
 #if ARCH_ARM
 #include "asm.h"
 #endif
@@ -46,7 +47,7 @@ typedef struct {
 #endif
     void *launch;
     UQUAD native_task;
-    jmp_buf disk_error;
+    FS_ERROR_STATE disk_error;
 #if ARCH_M68K
     struct fpuctx fpu;
 #endif
@@ -102,7 +103,7 @@ static inline void native_sched_root_context(NATIVE_SCHED_CONTEXT *c,PD *pd,uint
     c->native_task=0;
 #endif
     c->flags=native_sched_masked(c->flags);
-    for (i=0;i<sizeof(c->disk_error);i++) ((UBYTE *)c->disk_error)[i]=0;
+    for (i=0;i<sizeof(c->disk_error);i++) ((UBYTE *)&c->disk_error)[i]=0;
 #if ARCH_X86_64
     c->kernel_rsp=top; c->irq_rsp=top+8; c->user_rsp=0; c->in_syscall=0;
 #else

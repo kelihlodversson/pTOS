@@ -11,6 +11,7 @@
 #include "portab.h"
 #include "bdosdefs.h"
 #include "setjmp.h"
+#include "fs_error.h"
 
 #define ENTRY_PROGRAM   0
 #define ENTRY_ACCESSORY 1
@@ -26,7 +27,7 @@ typedef struct {
 #if CONF_WITH_NATIVE_SCHED
     UQUAD native_task;
 #endif
-    jmp_buf disk_error;
+    FS_ERROR_STATE disk_error;
     int in_syscall;
     UBYTE fpu[512] __attribute__((aligned(16)));
 } X86_64_PROCESS_CONTEXT;

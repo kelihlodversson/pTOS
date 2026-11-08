@@ -27,15 +27,26 @@ typedef struct {
     ULONG root, expected_root, model, fpu_type;
     uintptr_t stack_base, stack_top, frame_address;
 } M68K_IRQ_BINDING;
+/* Values are the hardware _FPU cookies returned by processor.S. A nonzero
+ * value alone does not authorize FSAVE: SFP004 is memory-mapped, and a frame
+ * from another CPU/FPU pair is not an interchangeable restore image. */
+static inline BOOL m68k_irq_fpu_supported(ULONG model, ULONG fpu)
+{
+    if (model!=30 && model!=40 && model!=60) return FALSE;
+    if (!fpu) return TRUE;
+    if (model==30) return fpu==0x20000UL || fpu==0x40000UL || fpu==0x60000UL;
+    return model==40 ? fpu==0x80000UL : fpu==0x100000UL;
+}
 /* Only hardware format-0 interrupt frames are admitted. Bus/fault, throwaway
  * and extended formats require separate exact model-specific decoders before
  * they can ever be captured. Never read their payload as this fixed image. */
 static inline BOOL m68k_irq_user_valid(const M68K_USER_IRQ_FRAME *f,
                                       const M68K_IRQ_BINDING *b, ULONG limit)
 {
-    return (b->model==30 || b->model==40 || b->model==60) &&
+    return m68k_irq_fpu_supported(b->model,b->fpu_type) &&
         !(f->sr&0x3000) && !(f->format_vector&0xf000) &&
-        !(f->format_vector&3) && f->pc && f->pc<limit && !(f->pc&1) &&
+        !(f->format_vector&3) && (f->format_vector&0xfff)>=24*4 &&
+        (f->format_vector&0xfff)<=255*4 && f->pc && f->pc<limit && !(f->pc&1) &&
         f->usp && f->usp<limit && !(f->usp&1) &&
         b->root && b->root==b->expected_root &&
         b->frame_address>=b->stack_base && !(b->frame_address&1) &&

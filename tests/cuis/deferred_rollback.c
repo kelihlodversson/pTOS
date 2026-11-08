@@ -13,6 +13,8 @@
 #include "procmem.h"
 #include "process.h"
 
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred rollback:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 
 /* Static, non-PIE blocks fit in the GEMDOS basepage's 32-bit pointers. */
@@ -32,9 +34,9 @@ static unsigned completion_stage;
 static PD *pending_request;
 static LONG rejection;
 
-jmp_buf errbuf;
-long errcode;
-int errdrv;
+
+
+
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 MPB pmd, pmdalt;

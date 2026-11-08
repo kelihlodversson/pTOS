@@ -162,7 +162,7 @@ void native_sched_save(NATIVE_SCHED_CONTEXT *context)
 #endif
     context->launch = get_uspace_launch();
     context->native_task = ksched_context_id();
-    memcpy(context->disk_error, errbuf, sizeof(errbuf));
+    context->disk_error = *fs_error_current();
     aspace_hw_switch(aspace_kernel_root());
 }
 void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
@@ -171,7 +171,7 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
     run = context->pd;
     set_uspace_launch(context->launch);
     ksched_context_restore(context->native_task);
-    memcpy(errbuf, context->disk_error, sizeof(errbuf));
+    *fs_error_current() = context->disk_error;
     aspace_hw_switch(context->root);
     __asm__ volatile ("ldmia %0,{sp,lr}^; nop" :: "r"(&context->user_sp) : "memory");
 #ifdef __ARM_PCS_VFP

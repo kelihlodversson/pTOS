@@ -27,7 +27,7 @@ static PD parent, child, peer, kernel_controller;
 static UWORD allocations, frees, notifications;
 static BOOL fail_growth;
 PD *run;
-jmp_buf errbuf;
+
 static BOOL root_fault;
 static unsigned root_release_calls, process_releases;
 static BOOL allow_reap, reenter_cancel;
@@ -91,11 +91,12 @@ static unsigned root_entries;
 void x86_64_process_save(X86_64_PROCESS_CONTEXT *c)
 {
     memset(c,0,sizeof(*c)); c->pd=run; c->flags=modeled_flags;
+    c->disk_error=*fs_error_current();
     c->launch=(X86_64_PROCESS_LAUNCH *)run; /* Deliberately reusable identity. */
     modeled_flags=0;
 }
 void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *c)
-{ run=c->pd; modeled_flags=c->flags; }
+{ run=c->pd; *fs_error_current()=c->disk_error; modeled_flags=c->flags; }
 void native_sched_enter(uintptr_t top, void (*entry)(void))
 {
     CHECK(run==&kernel_controller && !execution_cpu.root.launch);
@@ -133,7 +134,9 @@ static void root_lifetime_check(void)
         table[0].state=table[1].state=TASK_DONE;
         table[0].result=cycle+100; table[1].result=cycle+200;
         run=caller; modeled_flags=cycle&1?0x200:0;
+        errcode=-(LONG)cycle-20; errdrv=cycle; rwerr=cycle+1000;
         CHECK(dispatch_group(2,output)==E_OK && run==caller && modeled_flags==(cycle&1?0x200:0));
+        CHECK(errcode==-(LONG)cycle-20 && errdrv==(int)cycle && rwerr==(LONG)cycle+1000);
         CHECK(output[0]==(LONG)cycle+100 && output[1]==(LONG)cycle+200);
         CHECK(execution_cpu.root_started && execution_cpu.parked && !execution_cpu.waiter_attached &&
               !scheduler.active && !execution_cpu.current && !scheduler.tasks && root_entries==1);
@@ -270,6 +273,11 @@ int main(void)
         struct kaspace *space=NULL; ULONG tid=0;
         grown->state=TASK_RUNNING; grown->thread=(KTHREAD *)1; modeled_execution=TRUE;
         CHECK(ksched_interrupt_target(&peer,&space,&tid)==&grown->execution && tid==17);
+        #if CONF_WITH_USER_CALLBACKS
+        execution_cpu.callback.frame=(struct callback_frame *)1;
+        CHECK(!ksched_interrupt_target(&peer,&space,&tid));
+        execution_cpu.callback.frame=NULL;
+#endif
         CHECK(!ksched_interrupt_target(&child,&space,&tid)); /* nested separate PROCESS */
         modeled_space=(struct kaspace *)2;
         CHECK(!ksched_interrupt_target(&peer,&space,&tid)); modeled_space=(struct kaspace *)1;
