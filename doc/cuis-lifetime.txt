@@ -6,9 +6,11 @@ Identity and retained storage
 A CUIS session is a non-recycled native handle, not a PID, TID, PD or ASPACE.
 The registry owns one CUIS_CLIENT reference; wait scopes retain inspected client
 and window storage. Native window handles are non-recycled, distinct from the
-reusable GEM window identifier. #896's future multiple AES identities in one
-PROCESS require an explicit session selector. GUI references never retain
-PROCESS resources or substitute for #909's PROCESS wait/reap ownership.
+reusable GEM window identifier. Explicit session selectors now admit multiple
+AES client IDs in one PROCESS; implicit THREAD/client binding remains #896.
+Each endpoint retains only its KPROC identity until final client_put, never live
+PD/ASPACE/descriptors or #909's PROCESS wait/reap rights. Secondary stream waits
+remain nonblocking until their binding and cancellation contract is established.
 
 Close/deregister removes public lookup and routing first, marks storage retired,
 clears borrowed PD ownership, and wakes retained waiters. Final put alone frees
@@ -16,7 +18,7 @@ storage. A replacement handle/storage cannot satisfy the old predicate. Window
 wait scopes pair a retained window with its client. Saturated references and
 exhausted handles/tokens fail before publishing a partial operation.
 
-Event/key/message/window waits advertise readiness without consuming queues;
+Event/key/control/window waits advertise readiness without consuming queues;
 separate read operations still commit consumption. They release references and
 restore IRQs before the cooperative termination checkpoint. Delay, display and
 mouse-admission adapters have the same cleanup boundary. Foreign display/update/

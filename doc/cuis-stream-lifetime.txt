@@ -49,8 +49,10 @@ Only the continuation consumes its operation handle and frees its packet/ref(s).
 SESSION_END retires slots/public identity and removes routing; it never frees an
 active operation or its packet. Final client put owns the byte/sender ring.
 Retained storage cannot be reused; a replacement session never revives an old
-operation. No GUI reference retains PD/KPROC/PROCESS resources. A numeric sender
-PID is historical metadata, not a retained live PROCESS or GUI identity.
+operation. Each endpoint retains KPROC completion identity until final client
+put, without retaining live PD/ASPACE/descriptors. Sender metadata records the
+AES client ID, never a PID; non-recycled IDs cannot alias a replacement client.
+The opaque endpoint handle plus PROCESS ownership authenticates the source.
 
 Faulting buffer preflight precedes admission and any allocation. Handles, not
 borrowed pointers, survive that boundary. Re-lookup revalidates the original
@@ -139,6 +141,6 @@ READY/CANCELLED arbitration before commit, consuming operation cleanup before
 IRQ restoration/checkpoint, and native admitted-wait cancellation/rollback tests.
 No timers/assertions are relaxed. Preemption, generic waits/reaping, TLS and GUI
 ports remain their existing sibling scopes. libcmini and its source pin do not
-change. Per-session transfer+provenance-query serialization and historical PID
-metadata remain ABI limits; operation IDs do not create per-THREAD AES clients
+change. Per-session transfer+provenance-query serialization and historical
+first-byte sender metadata remain ABI limits; operation IDs do not create per-THREAD AES clients
 or an unbounded per-result history.

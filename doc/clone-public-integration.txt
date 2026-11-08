@@ -33,7 +33,8 @@ flags & ~0x0f: EINVAL.
 SAME_PROCESS without VM: EINVAL.
 SAME_PROCESS with resource-copy bits: EINVAL (resources already belong to PROCESS).
 VM alone, optionally with resource-copy bits: NEW_PROCESS/SHARE_VM.
-VM|SAME_PROCESS: add a THREAD/TID to the current PROCESS/ASPACE on managed x32.
+VM|SAME_PROCESS: add a THREAD/TID to the current PROCESS/ASPACE on managed
+x32, ARM MMU or m68k MMU.
 No VM or SAME_PROCESS: independent PROCESS/ASPACE, EINVFN until a private backend.
 Do not mistake any shared-ASPACE policy for sharing PID or PROCESS resources.
 
