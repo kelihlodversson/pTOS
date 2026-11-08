@@ -17,6 +17,8 @@ typedef struct {
 
 typedef struct {
     UQUAD identity;
+    BOOL on_cpu; /* cleared only after verified scheduler-root handoff */ /* pin until verified root handoff, independent of current slot */
+    UWORD owner_cpu;
     KTHREAD_STACK stack;
     KTHREAD_STACK syscall_stack; /* transferred once to the existing launcher */
     NATIVE_SCHED_CONTEXT cpu;

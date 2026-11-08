@@ -44,7 +44,7 @@ PD *kproc_live_pd(const KPROC *p)
 {
     assert(p==&process);
     /* Fault-model an invalidated managed context before block admission. */
-    if(lose_context) { lose_context=FALSE; scheduler.current=NULL; }
+    if(lose_context) { lose_context=FALSE; execution_cpu.current=NULL; }
     return p->pd;
 }
 void *kalloc(ULONG bytes) { void *p=malloc(bytes); if(p)allocations++; return p; }
@@ -67,7 +67,7 @@ int main(void)
     LONG output=-7;
     unsigned mode;
     assert(ksched_controller_install(&kernel_pd));
-    scheduler.active=TRUE; scheduler.current=&task;
+    scheduler.active=TRUE; execution_cpu.current=&task;
     task.program=&process_pd; task.process=&process; task.thread=&thread;
     task.state=TASK_RUNNING; task.execution.identity=100;
     run=&process_pd;
@@ -79,8 +79,8 @@ int main(void)
     run=&process_pd; pending=FALSE;
     lose_context=TRUE;
     assert(ksched_result_wait(&admission,&output,1)==EINVFN && output==-7 && irq_flags==0x200 && process.refs==2);
-    assert(!scheduler.current && allocations==frees+1);
-    scheduler.current=&task;
+    assert(!execution_cpu.current && allocations==frees+1);
+    execution_cpu.current=&task;
     {
         KSCHED_WAITER retained={0};
         KSCHED_WAIT_OBSERVATION observation;
@@ -93,7 +93,7 @@ int main(void)
          * may happen and no stale predicate may become published. */
         assert(ksched_admission_complete(&admission,0,47));
         assert(!block_admit(&task,ksched_waiter_ready,context,&observation) &&
-               task.state==TASK_RUNNING && !task.ready && !task.argument && !runqueue_held && irq_flags==0x200);
+               task.state==TASK_RUNNING && !task.ready && !task.argument && !execution_cpu.leaf_held && irq_flags==0x200);
         pending=TRUE;
         assert(wait_observed(ksched_waiter_ready,context,&observation)==KSCHED_WAIT_CANCELLED &&
                task.state==TASK_RUNNING && !task.ready && !task.cancel_boundary && output==-7);

@@ -30,7 +30,7 @@ void xterm(UWORD status)
 int main(void)
 {
     run=(PD *)0x1000;
-    scheduler.active=TRUE; scheduler.current=&tasks[0]; scheduler.tasks=tasks; initialize_task_table();
+    scheduler.active=TRUE; execution_cpu.current=&tasks[0]; scheduler.tasks=tasks; initialize_task_table();
     tasks[0].program=run; tasks[0].thread=(KTHREAD *)0x2000; tasks[0].state=TASK_RUNNING;
     tasks[0].process=(KPROC *)0x2000;
     tasks[0].execution.cpu.pd=run; tasks[0].cancel_boundary=TRUE;

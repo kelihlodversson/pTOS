@@ -1,0 +1,83 @@
+B1: architecture-owned interrupted-user state (#713)
+====================================================
+
+Implementation plan and boundaries
+-----------------------------------
+B0 repair comes first (panic declaration and prepared-slot initialization with
+strict GCC13/architecture warning gates). B1 does not enable a timer dispatcher,
+reschedule request or arbitrary kernel/IRQ continuation switch.
+
+B1a: separate global queue ownership from boot-CPU execution/root/attachment
+storage; pin a dispatched execution to that CPU until verified root handoff.
+Reaping and record reuse must reject an on-CPU execution even if the loaded
+current-task pointer has already been cleared by backend context restoration.
+Exercise the actual existing x32/ARM/m68k cooperative backends, nested Pexec,
+A2c return/park/resume, cancellation and exactly-once cleanup. This is the first
+independent production increment, not a claim of complete interrupted frames.
+
+B1b x32: reuse irqasm.S's saved 15 GPRs, FXSAVE and five-word user iretq frame.
+Define shared C/assembly offsets and validate user CS/SS, RFLAGS, RIP/RSP and
+frame origin. Retain CR3/ASPACE and TSS/syscall/IRQ-stack identity separately
+from the register payload. Copy only into preallocated THREAD-owned storage;
+keep the original IRQ return unmodified until capture/register-pattern tests
+pass. A kernel-mode IRQ must never be mistaken for a five-word user frame.
+
+B1b ARM Cortex-A7: extend the existing IRQ SRS/return wrapper with all R0-R12,
+user SP/LR, SPSR/CPSR/return PC, full D0-D31/FPSCR and the banked IRQ/SVC SP/LR
+needed to identify and abandon the exception continuation safely. Preserve
+8-byte stack alignment and use C/assembly layout assertions. Existing syscall
+frames cannot substitute for this: SVC dispatch may clobber scratch R12 and
+IRQ code currently saves only the ABI-required subset. Capture tests precede
+any modified RFE/exception-return path.
+
+B1b m68k: retain D0-D7/A0-A6, USP, supervisor/exception-stack identity, SR/PC,
+vector/format and exact exception-frame bytes, plus MMU root/control identity.
+Decode sizes by CPU/model and format; never copy a guessed constant length for
+030/040/060 bus/fault frames. Save the CPU-specific FSAVE state, FP0-FP7 and
+FPCR/FPSR/FPIAR using existing architecture primitives. Validate all supported
+formats and reject unsupported frames without changing RTE. Use QEMU040,
+pinned Hatari030/040 and Amiberry060 caches off/on with nonzero FPIAR; do not
+claim QEMU060 or native fastcall evidence without execution.
+
+B1c: bind each captured frame to retained THREAD/execution/CPU/ASPACE identities
+and explicit stack owners. Reconcile loaded launcher and error-continuation
+compatibility globals with CPU-local storage before IRQ captures may escape
+the current exception. No allocation/callback/user copy in IRQ capture. A
+capture is not permission to resume: safe exception-stack acknowledgement and
+return validation are mandatory before any eventual restore path.
+
+B2 alone adds deferred requests and a verified outer USER-return handoff, with
+owner/leaf/callback/fault/nested-launcher exclusions and revalidation. C alone
+adds controlled user-only preemption and CPU-bound no-Syield progress tests.
+SMP remains disabled: a boot-CPU slot/accessor is not an SMP implementation.
+
+Current B1a ownership
+---------------------
+The shared queue owns stable task records, RR cursor, admission and shutdown
+policy. A separate CPU-local execution record owns current/in-flight execution,
+root stack/context/resume, scoped caller attachment, pending clone handoff and
+leaf-recursion state. There is one boot CPU today; additional CPUs must supply
+architecture-local selection and actual shared-queue locking before activation.
+
+Dispatch claims the execution for that CPU before transferring control. It
+remains on-CPU through nested synchronous launchers, blocking preparation,
+termination intent and launcher finalization. Restoring the root context may
+clear the loaded current pointer, but cannot release this claim. Only the root,
+after verifying it is on its own permanent stack, acknowledges the handoff.
+Then and only then may THREAD/backend resources or task records be reaped/reused.
+The claim is a lifetime pin, not a second stack owner or completion mechanism.
+
+Root CPU snapshots include their launcher/error images; task snapshots retain
+the corresponding suspended execution images. The architecture-loaded
+current_launch/active and global run/errbuf compatibility slots still belong to
+the single boot CPU and are not safe for multiple CPUs or asynchronous kernel
+switching. Their full conversion is B1c, not implemented by renaming a structure.
+No full interrupted-user register payload is captured/restored by B1a. Existing
+cooperative setjmp/native contexts are not advertised as interrupt frames.
+
+Integration evidence must distinguish scheduler-stack/CPU ownership tests,
+modeled host contexts, real native execution and complete IRQ-frame preservation.
+Use an isolated validation branch for latest epic/#907 + the #910/#914 stack;
+never merge unrelated CUIS removals into this scheduler PR to make tests pass.
+Preserve both #917 physical-input admission fences and keep their cooperative
+precondition explicit until C introduces an operation-admission handshake.

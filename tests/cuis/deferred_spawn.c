@@ -73,8 +73,8 @@ int main(void)
     run = &owner;
     scheduler.active = TRUE;
     scheduler.tasks = tasks; initialize_task_table();
-    scheduler.current = &tasks[0];
-    scheduler.root.pd = &owner;
+    execution_cpu.current = &tasks[0];
+    execution_cpu.root.pd = &owner;
     tasks[0].state = TASK_RUNNING;
     CHECK(ksched_defer(&child,23) == ENSMEM);
     CHECK(!preparations && !commits && !references && !stacks && !identities);
@@ -99,7 +99,7 @@ int main(void)
     stopped = TRUE; /* Backend handoff has abandoned the user continuation. */
     tasks[1].state = TASK_ZOMBIE;
     CHECK(!reap_finished_on_root(&tasks[1]) && stacks == 1 && references == 1);
-    scheduler.current = NULL;
+    execution_cpu.current = NULL;
     CHECK(reap_finished_on_root(&tasks[1]) && !stacks && references == 1);
     {
         unsigned reaped = stack_releases;
