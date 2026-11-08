@@ -586,8 +586,33 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
     record "exit handoff rollback" FAIL "configured injection was not exercised"
 fi
 
+# Generation publication in the check-to-block window must reject sleeping.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native completion sequence check/block retry: PASS' "$suite_log"; then
+    record "native completion sequence" FAIL "check/block sequence assertion did not execute"
+fi
+
+# Test-only assertions cross a real user PROCESS retirement and root reap.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native scheduler durable controller/completion abandonment: PASS' "$suite_log"; then
+    record "native scheduler lifetime" FAIL "retained-result retirement assertions did not execute"
+fi
+
+# Internal TID result waits execute through native root suspension/resume;
+# these are kernel assertions, not global background-admission evidence.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native managed TID admission wait/resume: PASS' "$suite_log" ||
+       ! grep -aq 'native quiescent waiter retirement: PASS' "$suite_log"; then
+        record "native TID admission waiter" FAIL "suspend/resume and quiescent retirement assertions did not execute"
+    fi
+fi
+
 # Compilation and legacy compatibility are insufficient evidence of native
-# startup. Require the managed child worker's runtime verdict on both MMUs.
+# startup. Require managed startup and scheduler evidence on all three MMUs.
 case "$machine" in
     virt-arm|virt-m68k-aspace|pc-x86_64)
         if grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
@@ -595,9 +620,20 @@ case "$machine" in
             if ! grep -aq 'pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS' "$suite_log"; then
                 record "native managed clone execution" FAIL "native clone worker did not execute"
             fi
+            if ! grep -aq 'native scheduler growth and mixed PROCESS/THREAD round-robin: tested' "$suite_log"; then
+                record "native scheduler growth/fairness" FAIL "mixed twelve-peer runtime assertions did not execute"
+            fi
         fi
         ;;
 esac
+
+if [ "$machine" = pc-x86_64 ] &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   grep -Eq '^#define CONF_WITH_(EXIT_HANDOFF_TEST|X86_64_MEMTEST) 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$suite_log"; then
+        record "native user IRQ capture" FAIL "real ring-3 register pattern was not captured"
+    fi
+fi
 
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then

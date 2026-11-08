@@ -1,0 +1,265 @@
+Native scheduler B0: ownership, exclusion and wait publication (#713)
+====================================================================
+
+Scope and guarantees
+---------------------
+A2c's one persistent root/runqueue and public background admission remain.
+Timer preemption and SMP are DISABLED. B0 is checked single-CPU exclusion and
+an explicit migration contract, not a claim that the kernel is SMP-safe.
+runqueue_enter/leave mask/restore local IRQ state and reject recursive leaf
+entry. Local IRQ masking does not serialize another CPU. An IRQ-safe spinlock
+and per-CPU execution state must replace/extend this boundary before SMP.
+No new feature flag or GUI responsibility is introduced.
+
+Normal leaf sections contain only bounded kernel metadata operations. Never
+allocate, perform I/O/user copy, call readiness/notification code, release the
+last reference, or switch continuations inside them. Fail-stop invariant panics
+are not recoverable operations. Host fixtures assert allocation, free and PROCESS
+release occur outside leaf exclusion. Root checks the boundary before callbacks,
+reclamation, idle and entry; existing safe-context stack guards remain.
+
+Owner/lock hierarchy (required before concurrent dispatch)
+----------------------------------------------------------
+Rank 10: PROCESS membership/live resources, group-exit latch, KTHREAD membership
+and TID completion/join dependency ownership. Hold strong kernel identities;
+never lock by a reusable PD. Order multiple owners by retained kernel object
+identity, not unrelated PID/TID/context ID namespaces.
+Rank 20: admission/result/ticket registry ownership and exactly-once claims.
+Rank 30: KASPACE mapping/reservation/lease and backing identity ownership.
+Rank 40: leaf runqueue/reservation/anchor/attachment metadata.
+
+Owner completion precedes mapping/lease and queue publication. Release locks
+in reverse order; detach/unlink resources first, then run destructors outside
+ALL leaf locks. Allocate/pin outside the final no-fail section and revalidate
+under the corresponding owner lock before commit. No callback/allocation/yield
+between the first visible output store and final runnable publication.
+
+Filesystem and CUIS/input ownership remain operation-local. No blocking PROCESS
+lock under CUIS/input exclusion. Neither filesystem I/O nor arbitrary input/
+readiness callbacks may be called while holding a runqueue lock. Event owners
+may briefly nest leaf wake publication, then release all locks before handoff.
+A future root must pin predicate/owner identity, drop the queue lock, evaluate
+readiness under its owner exclusion, and revalidate its stamp/identity before
+selection. Today's root is the only dispatcher/reclaimer and calls predicates
+without holding its leaf exclusion.
+
+Production-path audit
+----------------------
+Path / current owner / B0 transition / remaining concurrency work:
+
+- KPROC association, group-exit and KTHREAD start/stop (kproc.c/kthread.c):
+  strong THREAD -> PROCESS/ASPACE, non-owning PROCESS membership. The last
+  execution owner, not an observer ref, releases live resources. Cooperative
+  kernel execution serializes membership today. Rank-10 membership, first-status
+  latch and final-completion ownership must be synchronized before remote stop.
+  A cancelled context must acknowledge quiescence before its CPU/stack is reaped.
+
+- reserve_record/prepare_batch/ksched_task_reserve/publish_task:
+  a private RESERVED slot cannot dispatch or become wait-visible. Fallible stack,
+  image, observer and admission preparation precedes publication. The final state
+  publication is a short leaf section. The synchronous consumer and entry identity
+  exclude callback admissions until preparation commits/aborts. Before SMP, use
+  a reservation/in-flight publication lease for shutdown versus publication;
+  local IRQ exclusion and no-yield publication are insufficient across CPUs.
+
+- completion_owner/dependents/task_entry/reap_finished_on_root:
+  worker owns its anchor until stopped KTHREAD/root reap; the initial THREAD may
+  be DRAINING. Dependency acquire/release is a short leaf section. Two root passes
+  handle either list order. Results and PROCESS identity cannot retire with live
+  dependents. User/syscall/scheduler stacks keep their existing distinct owners;
+  no context may reclaim the stack on which it executes. A future remote reaper
+  needs an explicit stopped-continuation acknowledgement and record pin.
+
+- clear_task/trim_unused_records/free_task_table:
+  clear uses a private RESERVED retirement state while dropping a producer outside
+  leaf exclusion, then publishes UNUSED. A producer destructor cannot reuse a
+  half-cleared slot. Trimming unlinks/repairs RR under leaf, then frees outside.
+  Whole-arena detach clears global tasks/next/active BEFORE release/free. A callback
+  cannot find the old arena. No live/dependent/producer/reservation/zombie record
+  is eligible. Root remains sole grown-record trimmer; before SMP synchronize
+  traversal pins, slot reuse and the single-reclaimer role.
+
+- ADMISSION and RESULT_WAITER (sched_lifetime.c):
+  handles are non-recycled identities with explicit producer/consumer/ticket refs.
+  Constructors retain identity before fallible work and revalidate live state,
+  abandonment/consumption and counter exhaustion before linking. Final admission
+  unlink/controller accounting precedes any owner destructor. Quiescent waiter
+  retirement detaches ALL matching nodes before destroying any: no registry link
+  crosses reentrant cleanup. Actor resources are not retained by observer tickets.
+  Rank-20 lookup/ref/claim operations still require a real lock for SMP; borrowed
+  predicate contexts are valid only through owning execution/stop acknowledgement.
+
+- result take versus PROCESS retirement:
+  validate actor identity/live state, count, completion and one consumer before
+  any output store. Kernel result delivery is bounded and non-yielding. Owner
+  retirement abandons records by retained KPROC identity, never PD equality;
+  late producers cannot deliver into retired/reused caller storage. An executing
+  THREAD retains live resources until its safe stop. Before SMP, serialize take
+  with owner retirement and retain/claim the destination execution through commit.
+
+- enter_root/root park/ksched_exiting:
+  caller attachment and queue lifetime are separate. Attachment fields and park/
+  detach transitions use leaf exclusion. Move entry-owner/result references into
+  private locals under leaf, erase globally visible return/predicate state, then
+  release outside. A retired caller's jump buffer is cleared before release;
+  no later root entry borrows it. An attached waiter still excludes reentrant
+  entry during final result delivery. CPU save/restore and callbacks remain
+  outside leaf; no interrupt may dispatch a partially constructed kernel frame.
+
+- KASPACE maps/fault/leases/user copies (kaspace.c, kproc.c, backends):
+  THREAD strong references retain ASPACE storage, not permission stability.
+  Startup seals/durable stack holds prevent overlapping mapping changes; ordinary
+  lazy faults/COW share retained reservation metadata. Mapping mutation and lease
+  validation need rank-30 serialization. Retain backing/file identity before
+  dropping mapping exclusion for I/O/callbacks and revalidate afterward. No fault,
+  allocation or user copy under leaf. Preemptible copyout needs a mapping/operation
+  lease or a pin/revalidate protocol, not a borrowed page-table translation.
+
+- public Pwait and Pthjoin (native_sched.c, kthread.c):
+  existing consumers remain authoritative (#909 for PROCESS waits). Predicate
+  arguments live on retained task stacks, or only within a scoped unmanaged root
+  attachment. Root unpublishes predicates before ticket/stack retirement. Join
+  claims retain TID completion independently of stacks and are cancelled on stop.
+  Copyout happens outside IRQ/leaf exclusion, before no-fail consumption. This
+  relies on non-yielding kernel copies today. Before SMP pin/claim zombie/TID,
+  prepare mappings, copy outside queue lock, then consume under owner exclusion;
+  never let another reaper recycle a record during that copy.
+
+Generation check/block/wake protocol
+-------------------------------------
+KSCHED_WAIT_SEQUENCE is a durable owner generation, not an event queue. Snapshot
+before querying the predicate; retain the source operation for the entire wait.
+Every readiness/terminal-state publication advances its sequence after storing
+state. Completion, take and idempotent abandon/owner retirement implement this
+for internal admission tickets. A 64-bit exhausted sequence fails stop before
+wrapping; a stale observation must never authorize sleeping across an ABA.
+All accesses need owner exclusion, including protected 64-bit accesses on 32-bit
+MMUs. The plain C helper itself is NOT an atomic primitive.
+
+Consumer protocol:
+1. Under owner exclusion, retain operation/context and snapshot generation.
+2. Evaluate readiness outside leaf. Cancellation takes precedence until commit.
+3. Enter leaf while owner exclusion still protects the observation. If generation
+   changed, do not publish BLOCKED: leave and retry readiness. Otherwise publish
+   the predicate/context and BLOCKED state before releasing the exclusion.
+4. Release all owner/leaf locks before the verified continuation handoff.
+5. On wake, restore the owning continuation; recheck cancellation/readiness.
+   Clean up ticket/local resources and restore IRQs before termination checkpoint.
+6. Successful consumption is final; later cancellation cannot retract output.
+
+Producer protocol:
+1. Under owner exclusion, publish durable readiness/terminal state, then advance
+   its generation. Do not consume someone else's event as a wakeup mechanism.
+2. Under leaf, wake/mark the already admitted waiter (or arrange an IRQ/IPI to
+   wake an idle root), then release both locks. A producer before consumer step3
+   changes its stamp; a producer afterward sees its BLOCKED publication. Neither
+   side can miss the other. A sequence write alone is not an SMP wake/IPI.
+
+B0 applies the stamped admission to internal result-ticket waits. Raw callback
+waits, Syield, join/PROCESS waits and existing CUIS adapters retain their current
+level-predicate table scans and cooperative check/block contract; raw READY still
+requires the caller to validate/commit its own resource. Raw Syield always hands
+off as before. This does NOT make transient/unretained device events safe, nor
+claim every source is ready for concurrent SMP wakeup. Before B2 external wake
+publication, extend stamps/pins to those owners and prove their enqueue handshake.
+
+Root idle after a false scan must not lose an IRQ between check and sleep. x32's
+STI;HLT interrupt shadow and m68k STOP's atomic SR/unmask/sleep are retained.
+ARM now executes masked DSB;WFI, then CPSIE/ISB to service the pending IRQ before
+masking again. Enabling IRQs BEFORE WFI could service/clear a source in the gap.
+All return masked to the root, recheck predicates and keep scheduling cooperative.
+
+Shutdown admission versus cleanup
+-----------------------------------
+After validating Shutdown mode and latching its existing one-shot state,
+xshutdown closes native admission/dispatch BEFORE files/mappings/buffers.
+ksched_shutdown_begin is idempotent and does not reclaim tasks/stacks. Reserve,
+clone preflight, new root entry and scheduling waits reject further admission.
+Already prepared private reservations remain explicitly abortable. Publishing
+one after shutdown is an invariant failure, never a partial runnable result.
+The machine stops/resets; this is not PROCESS/group cancellation or a public
+shutdown drain protocol. No borrowed waiter is resumed after global teardown.
+Before SMP, serialize the shutdown latch with in-flight no-fail publication and
+stop/ack all other CPUs before closing shared resources. The present serialized,
+nonreturning shutdown cannot stand in for that quiescence protocol.
+
+Global state versus execution state
+------------------------------------
+Global queue/owner data: stable task arena/list, next RR cursor, reservations,
+anchor dependencies, stopping latch; admission/ticket/TID registries and identity
+clocks belong to their resource owners, not the CPU controller.
+
+B1a now groups current/in-flight execution, root context/stack/attachment,
+pending clone publication and leaf-held state in an explicit boot-CPU record.
+Dispatch pins an execution until verified root handoff; loaded current-pointer
+clearing cannot release the pin. The queue/arena and RR cursor stay global.
+See native-interrupt-frames.txt for implemented boundaries and architecture plan.
+
+Still required before asynchronous B1/B2 capture can escape an exception:
+architecture CPU-local selection and conversion of loaded launcher/error and
+architecture scratch slots. The following full inventory must remain CPU-owned:
+current task/execution; root CPU snapshot,
+resume/stack/start/park/entered state; attached caller jump, identity, predicate,
+pump budget; leaf-held/owner-critical depth; pending clone commit/slot; current
+launcher/nested depth, errbuf,
+x32 TSS/syscall state, ARM banked SP/LR/SPSR/FPSCR, m68k uenter staging/exception
+state. A root may not execute on two CPUs or migrate a borrowed kernel frame.
+
+B1 preallocates complete architecture-owned interrupted-USER frames (all integer,
+CPU control/user return and FPU state, CPU-specific exception shape and retained
+THREAD/ASPACE/stack identity). An IRQ records/requests only. B2 establishes a
+verified outer USER-return handoff, checking kernel/owner/leaf/callback/nested-
+launcher activity before rescheduling and acknowledging the interrupted stack.
+C alone enables timer-driven user progress. No arbitrary kernel IRQ continuation
+switch, SMP, TLS, fork or non-MMU scheduler is implemented here.
+
+Evidence and remaining scope
+------------------------------
+Production host tests cover a completion in the exact predicate/block window,
+cancellation over coincident readiness, unchanged output/IRQ cleanup, generation
+exhaustion, constructor invalidation/exhaustion during allocation, reentrant
+neighbor retirement, both anchor orders and leaf-free destructors/arena detach,
+and shutdown closing admission while a reservation remains abortable.
+Native test-gated assertions execute the stamped retry on actual user syscall
+continuations on all three MMUs. They supplement, not replace, the public A2c
+launcher-return/later-child execution, twelve-peer CPU/FPU/MMU, nested Pexec,
+join/group exit, resource and shutdown regressions. Host CPU models are separate
+from native user execution; ASan excludes the kernel-private hosted stack ABI.
+
+Physical-button CI gate: scoped ordering diagnosis
+---------------------------------------------------
+The failure in Build 42456777612 is an input-admission test race, not evidence
+of a lost kernel cancellation request. The old leader printed READY before
+calling SESSION_WAIT. Host PS/2 input could arrive in that interval. The initial
+held-button sample is intentionally a quick check: it can commit READY_BUTTON
+(count=1) before the peer has ever run/requested group cancellation. Cancelling
+after that commit cannot retract the valid result.
+
+The independent #907 investigation deliberately held the leader in INPUT_STATE
+polling after READY, before SESSION_WAIT, without Syield. Real hardware-injected
+input reproduced the CI signature (returned=1, result=16 and first/now in the
+same tick). CUIS sampling and proc_clone's publish-without-dispatch implementation
+are unchanged between f8fe7d5ca and 014ba61f7; A2c timing can expose that old gap
+but did not introduce the quick-check policy.
+
+Cherry-picked source c02f5fee3 adds a deterministic native BEFORE-admission
+press test requiring READY_BUTTON/count=1, then places cancellation READY in the
+peer's first dispatch, after leader admission/block. Source 1f0e6ed8e applies the
+same fence to the initial resume test. Assertions and deadlines remain intact;
+no kernel input/cancellation policy is changed. These are independent PR #917
+test changes, not its broader CUIS cleanup.
+
+A byte-verified f8fe7d5ca scheduler with c02f5fee3's test/driver applied passed two
+full native x32 runs: 22/0 and five shutdown checks each. B0 with that test passed
+23/0 and five shutdown checks, including A2c; final validation includes both
+fences. This is deterministic ordering evidence plus cross-baseline execution,
+not a claim based on a passing retry. Exact-head CI remains an independent gate.
+
+The peer-first fence is explicitly COOPERATIVE: before C permits a newly
+published peer to preempt the leader, replace that test handshake with a verified
+operation-admission signal. This is a test synchronization prerequisite, not a
+reason to force cancellation before a valid initial-input commit.
+
+Stream cancellation and #915 API minimization remain separate. #897's final
+feature-flag consolidation remains. Broader KEY_WAIT/CLOCK cleanup is independent
+and is not merged into this scheduler increment.

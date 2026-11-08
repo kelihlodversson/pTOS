@@ -87,8 +87,8 @@ int x32_public_clone_checks(void)
     S64 stack = CALL(0x48,8192,0,0), result, waited;
     unsigned size;
     int m;
-    unsigned long stacks[7];
-    int32_t pids[7];
+    unsigned long stacks[12];
+    int32_t pids[12];
     int i;
     if (stack <= 0) return 1;
     args.entry=entry; args.argument=(void *)0xfedcba98UL;
@@ -162,11 +162,11 @@ int x32_public_clone_checks(void)
         args.stack_base=(void *)(unsigned long)stack;
     }
 #endif
-    /* All slots are reserved without yielding; the eighth creation must leave
-     * outputs and the existing return slot unchanged. */
+    /* Grow past the bootstrap arena without yielding, then wait/reclaim every
+     * independently identified PROCESS. */
     early=1;
     args.child_tid=&tid; args.child_pid=&pid;
-    for (i=0;i<7;i++) {
+    for (i=0;i<11;i++) {
         S64 allocated=CALL(0x48,8192,0,0);
         if (allocated<=0) return 13;
         stacks[i]=(unsigned long)allocated;
@@ -177,11 +177,13 @@ int x32_public_clone_checks(void)
     args.stack_base=(void *)(unsigned long)stack;
     tid=-7;pid=-9;
     *(volatile unsigned long *)((unsigned long)stack+8184)=0x12345678UL;
-    if (CALL(GEMDOS_PCLONE,&args,32,0)!=-326 || tid!=-7 || pid!=-9 ||
-        *(volatile unsigned long *)((unsigned long)stack+8184)!=0x12345678UL) return 15;
-    for (i=0;i<7;i++) {
+    result=CALL(GEMDOS_PCLONE,&args,32,0);
+    if (result<=0) return 0x1500-(int)result;
+    if (tid!=result || pid<=0) return 15;
+    pids[11]=pid;
+    for (i=0;i<12;i++) {
         S64 finished=x32_probe_call(0x13a,pids[i],0,0);
-        if (finished<0 || (finished&0xffff) || CALL(0x49,stacks[i],0,0)) return 16;
+        if (finished<0 || (finished&0xffff) || (i<11 && CALL(0x49,stacks[i],0,0))) return 16;
     }
     if (CALL(0x49,stack,0,0)) return 12;
     return 0;

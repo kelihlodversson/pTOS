@@ -14,6 +14,7 @@
 #include "kproc.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "ksched_lifetime.h"
 #endif
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
@@ -1009,10 +1010,6 @@ LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity)
 WORD kproc_parent_pid(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
-#if CONF_WITH_NATIVE_SCHED
-    WORD pid;
-    if (ksched_parent_pid(pd, &pid)) return pid;
-#endif
 
 #if CONF_WITH_USER_ASPACE
     if (kproc && kproc->parent_identity)
@@ -1321,8 +1318,26 @@ BOOL kproc_prepare_async_thread(PD *pd, PD *parent, PD *controller, KTHREAD **th
     KPROC *kproc = kproc_find(pd);
     if (thread) *thread = NULL;
     if (!kproc || kproc->started || kproc->aspace) return FALSE;
-    kproc->async_parent = controller;
-    return kproc_prepare_user_thread(pd, parent, thread);
+    {
+        KPROC *identity=kproc_find(parent), *retained=NULL;
+        PD *old=kproc->async_parent;
+        /* A detached kernel launch may have no logical parent. A non-NULL
+         * parent must be tracked: the controller is never a substitute PPID. */
+        if (!controller || (parent && !identity) ||
+            (identity && !(retained=kproc_retain_live(identity)))) return FALSE;
+        kproc->async_parent=controller;
+        if (!kproc_prepare_user_thread(pd,parent,thread)) {
+            kproc->async_parent=old; kproc_release(retained); return FALSE;
+        }
+        /* Logical parent identity and execution controller have separate lives.
+         * All fallible reference acquisition preceded the image transfer. */
+        kproc_release(kproc->parent_identity);
+        kproc->parent_identity=retained;
+        kproc->parent_untracked=FALSE;
+        kproc->parent_gen=0;
+        kproc->parent=controller;
+        return TRUE;
+    }
 }
 
 BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller)
@@ -1416,6 +1431,13 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
                                    ASPACE_PROT_WRITE)) {
         return prepare_failed(kproc, owner);
     }
+#if CONF_WITH_NATIVE_SCHED
+    /* The kernel controller mapping belongs to the ASPACE, not whichever
+     * PROCESS first launches through it. It survives all shared-VM peers. */
+    if (!kproc->async_parent && parent!=ksched_controller_pd() &&
+        !aspace_map_procmem(as,(VADDR)(uintptr_t)ksched_controller_pd(),sizeof(PD),ASPACE_PROT_WRITE))
+        return prepare_failed(kproc,owner);
+#endif
     if (!build_ancestors(kproc, as, parent)) {
         return prepare_failed(kproc, owner);
     }

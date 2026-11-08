@@ -4,6 +4,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred spawn:%d: %s\n",__LINE__,#c); abort(); } } while (0)
@@ -71,10 +72,9 @@ int main(void)
 {
     run = &owner;
     scheduler.active = TRUE;
-    scheduler.initial = 1;
-    scheduler.tasks = tasks;
-    scheduler.current = &tasks[0];
-    scheduler.root.pd = &owner;
+    scheduler.tasks = tasks; initialize_task_table();
+    execution_cpu.current = &tasks[0];
+    execution_cpu.root.pd = &owner;
     tasks[0].state = TASK_RUNNING;
     CHECK(ksched_defer(&child,23) == ENSMEM);
     CHECK(!preparations && !commits && !references && !stacks && !identities);
@@ -99,7 +99,7 @@ int main(void)
     stopped = TRUE; /* Backend handoff has abandoned the user continuation. */
     tasks[1].state = TASK_ZOMBIE;
     CHECK(!reap_finished_on_root(&tasks[1]) && stacks == 1 && references == 1);
-    scheduler.current = NULL;
+    execution_cpu.current = NULL;
     CHECK(reap_finished_on_root(&tasks[1]) && !stacks && references == 1);
     {
         unsigned reaped = stack_releases;
@@ -128,3 +128,23 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 /* This fixture only reserves within an existing group. */
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
+
+void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
+BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
+void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }
+PD *ksched_controller_pd(void) { return &owner; }
+
+BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD index,LONG status)
+{ (void)h; (void)index; (void)status; abort(); } /* async slots are not launch results */
+
+void ksched_waiter_retire(KPROC *p,ULONG tid,UQUAD execution) { (void)p; (void)tid; (void)execution; }
+ULONG kthread_tid(const KTHREAD *t) { (void)t; return 17; }
+
+PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
+
+void ksched_admission_abandon(const KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+
+LONG ksched_admission_create(KPROC *p,UWORD n,KSCHED_ADMISSION *h)
+{ (void)p; (void)n; (void)h; abort(); } /* no synchronous admission in this fixture */
+BOOL ksched_admission_retain(const KSCHED_ADMISSION *a,KSCHED_ADMISSION *b)
+{ (void)a; (void)b; abort(); }

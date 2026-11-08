@@ -1,19 +1,31 @@
-/* Generic cooperative native scheduling; initially selected by CUIS. */
+/* Generic cooperative native scheduling, independent of GUI policy. */
 #ifndef KSCHED_H
 #define KSCHED_H
 #include "portab.h"
 #include "bdosdefs.h"
+/* Initial arena and maximum synchronous bootstrap batch, not a runnable-task
+ * limit. Active publication grows stable slots on demand; ENSMEM is retryable. */
 #define KSCHED_LIMIT 8U
-/* All programs must be prepared, unlaunched and distinct. Success consumes
- * them, writes their exit statuses, and returns after all tasks finish.
- * Failure before launch leaves every program with the caller. */
+/* Dispatch/idle uses permanent kernel stack/context storage. An unmanaged
+ * synchronous attachment returns when its own retained results are complete;
+ * independent background tasks remain on the same queue. No caller result
+ * buffer/CPU continuation is retained after that attachment returns.
+ * Programs must be prepared, unlaunched and distinct. Success consumes them
+ * and writes their final PROCESS statuses. Failure before launch leaves every
+ * program with its caller. Bounded unmanaged Syield pumps pending work. */
 LONG ksched_run(PD * const *programs, UWORD count, LONG *results);
 /* Bootstrap an unprepared ordinary synchronous launch. Allocations precede
  * image preparation. A retained PE_GO image keeps
  * its caller's ownership; other launches transfer ownership at user entry.
  * Success consumes the launch and returns its full synchronous exit status. */
 LONG ksched_exec(PD *program, BOOL take_ownership, LONG *result);
-BOOL ksched_active(void);
+BOOL ksched_active(void); /* persistent runqueue exists */
+BOOL ksched_dispatching(void); /* attached root execution, not queue lifetime */
+BOOL ksched_async_allowed(void);
+/* Irreversible system shutdown, not PROCESS cancellation. No resources are
+ * destroyed here; callers must never resume dispatch after shutting files down. */
+void ksched_shutdown_begin(void);
+PD *ksched_launch_controller(PD *pd); /* current task only, never a nested launcher */
 #if CONF_WITH_NATIVE_SCHED
 struct thread_startup_draft;
 struct thread_startup_stack;
@@ -21,7 +33,8 @@ struct proc_clone_transaction;
 struct kproc;
 struct kthread;
 /* Shared publication storage for legacy process launches and trusted clone.
- * root=TRUE reserves a fresh group; FALSE requires the current managed task.
+ * root=TRUE prepares a synchronous admission; FALSE reserves global async
+ * storage from a live caller or the current managed task.
  * *slot must be NULL. TASK_RESERVED is neither runnable nor wait-visible and
  * cannot be reused by preparation callbacks. Calls are serialized/no-yield;
  * future preemption/SMP exclusion belongs to #713. This grants no THREAD start.
@@ -38,7 +51,8 @@ void ksched_task_cancel(void **slot);
 void ksched_task_publish(void **slot);
 BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 /* Backends mask dispatch/IRQs and validate that source owns the current task.
- * Root is borrowed only while its blocked continuation owns the group. */
+ * The compatibility controller is a pinned kernel-only basepage with no
+ * PROCESS/PID; logical parent and synchronous result owners are separate. */
 typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
 /* Nonmasking query during serialized preparation; begin revalidates it. */
 BOOL ksched_clone_context(struct kproc *source, PD **controller);
@@ -100,7 +114,6 @@ LONG ksched_join(ULONG tid, UQUAD status);
 #endif
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
-BOOL ksched_parent_pid(PD *pd, WORD *pid);
 void ksched_exiting(PD *pd, UWORD status);
 /* CUIS successor activation after complete teardown; pd is identity only. */
 void ksched_exited(PD *pd);

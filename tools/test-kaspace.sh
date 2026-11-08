@@ -14,6 +14,9 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -iquote bdos/arch/x86_64 tests/kthread_stack.c \
     bdos/kthread_context.c -o "$work/thread-test"
 "$work/thread-test"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 tests/x32_irq_frame.c -o "$work/irq-frame"
+"$work/irq-frame"
 for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
     CONFIG_= python3 - "$preset" "$work/config" <<'PY'
 import kconfiglib, sys
@@ -28,6 +31,9 @@ PY
     arch_include=include/arch/x86_64
     [ "$preset" != virt-arm-aspace ] || arch_include=include/arch/arm
     [ "$preset" != virt-m68k-aspace ] || arch_include=include/arch/m68k
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
+        -I"$arch_include" -idirafter include -iquote bdos \
+        -c tests/sched_sequence_header.c -o "$work/sequence-header.o"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
         -I"$arch_include" -idirafter include -iquote bdos \
         tests/kaspace_mmap_policy.c bdos/kaspace.c -o "$work/mmap-policy"
@@ -60,6 +66,11 @@ PYCONFIG
         -iquote fs tests/clone_observer.c -Wl,--gc-sections -o "$work/clone-observer"
     "$work/clone-observer"
     echo "Owned clone observer ($preset configuration, host execution): PASS"
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-pie -no-pie \
+        -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
+        tests/sched_lifetime.c -o "$work/sched-lifetime"
+    "$work/sched-lifetime"
+    echo "Scheduler lifetime ($preset configuration, host execution): PASS"
 
 done
 echo 'KASPACE ownership and failed adoption: PASS'
@@ -76,6 +87,11 @@ k.write_config(sys.argv[1])
 PY
 CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
     --header "$work/autoconf.h" --makefile "$work/auto.conf"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+    -iquote include -I"$work" -Iinclude/arch/x86_64 -iquote bdos \
+    -Ibios/machine/pc-x86_64 -Ibios/arch/x86_64 -Ibios -Iutil \
+    tests/x32_irq_capture.c -Wl,--gc-sections -o "$work/irq-capture"
+"$work/irq-capture"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
     -iquote bdos/arch/x86_64 tests/thread_startup.c bdos/thread_startup.c bdos/kaspace.c \
@@ -95,3 +111,9 @@ ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -ffunction-sections -fdata-se
     -iquote bdos/arch/x86_64 -iquote fs tests/wait_cancel.c -Wl,--gc-sections -o "$work/wait-cancel"
 "$work/wait-cancel"
 echo 'Scheduler cancellation admission, nested identity and reentrant termination hook: PASS (host model)'
+
+${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie -no-pie \
+    -ffunction-sections -fdata-sections -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 -idirafter include -iquote bdos -iquote fs \
+    tests/sched_result_wait.c bdos/sched_lifetime.c -Wl,--gc-sections -o "$work/result-wait"
+"$work/result-wait"

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "emutos.h"
 #include "string.h"
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "deferred reference:%d: %s\n", __LINE__, #c); abort(); } } while (0)
@@ -51,9 +52,8 @@ int main(void)
 {
     run = &owner;
     scheduler.active = TRUE;
-    scheduler.initial = 1;
-    scheduler.tasks = tasks;
-    scheduler.current = &tasks[0];
+    scheduler.tasks = tasks; initialize_task_table();
+    execution_cpu.current = &tasks[0];
     tasks[0].state = TASK_RUNNING;
     tasks[1].state = TASK_DEFERRED;
     tasks[1].program = &successor;
@@ -81,3 +81,10 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
     (void)startup;
     abort(); /* no published clone exists in this legacy fixture */
 }
+
+void ksched_admission_release(KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+
+void panic(const char *format,...) { (void)format; abort(); }
+
+KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
+PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }

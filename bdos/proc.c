@@ -39,6 +39,7 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "ksched_lifetime.h"
 #include "kthread.h"
 #if CONF_WITH_CUIS
 #include "bdosbind.h"
@@ -144,7 +145,7 @@ static BOOL schedule_launch(PD *p)
 {
     /* ROM entry points and explicit accessory starts retain their existing
      * launch path. A nested Pexec already has a stable group controller. */
-    return kernel_code_pd != p && !ksched_active();
+    return kernel_code_pd != p && !ksched_dispatching();
 }
 
 static LONG run_scheduled(PD *p, BOOL take_ownership)
@@ -587,7 +588,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return (long)p;
 #if CONF_WITH_NATIVE_SCHED
     case PE_ASYNC_GO_FREE:
-        if (!ksched_spawn_allowed()) return EINVFN;
+        if (!ksched_async_allowed()) return EINVFN;
         p = (PD *)tail;
         rc = check_launch(p);
         if (rc) return rc;
@@ -595,7 +596,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         give_back_image(p, FALSE);
         return ksched_spawn(p);
     case PE_ASYNC_LOADGO:
-        if (!ksched_spawn_allowed()) return EINVFN;
+        if (!ksched_async_allowed()) return EINVFN;
         break;
 #endif
     case PE_GOTHENFREE:
@@ -1208,6 +1209,9 @@ static void proc_enter_user(WORD entry_type)
 
 static void proc_go(PD *p, WORD entry_type)
 {
+#if CONF_WITH_NATIVE_SCHED
+    PD *controller=ksched_launch_controller(p);
+#endif
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
     /* PTR_TO_USERPTR(), not the unchecked cast: `run` here is always
      * either a real, alloc_tpa()'d PD or the first process's parent,
@@ -1217,10 +1221,14 @@ static void proc_go(PD *p, WORD entry_type)
      * back and dereference it on every Pterm(), so a truncated value
      * here would fault there instead of trapping at the point of
      * corruption. */
+#if CONF_WITH_NATIVE_SCHED
+    p->p_parent=PTR_TO_USERPTR(controller ? controller : run);
+#else
     p->p_parent = PTR_TO_USERPTR(run);
+#endif
 #if CONF_WITH_KPROC
 #if CONF_WITH_NATIVE_SCHED
-    if (!kproc_clone_startup(p))
+    if (!controller && !kproc_clone_startup(p))
 #endif
         kproc_set_parent(p, run);   /* clone parent retain was prepared before commit */
 #endif
@@ -1247,7 +1255,7 @@ LONG proc_prepare_scheduled(PD *p)
 {
     if (!kproc_unlaunched(p)) return EIMBA;
     give_back_image(p, FALSE);
-    return kproc_prepare_user(p, run) ? E_OK : ENSMEM;
+    return kproc_prepare_async(p,run,ksched_controller_pd()) ? E_OK : ENSMEM;
 }
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {

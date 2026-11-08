@@ -7,6 +7,7 @@
 #include "procmem.h"
 #include "mem.h"
 #include "bdosstub.h"
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred exit:%d: %s\n",__LINE__,#c); abort(); } } while (0)
@@ -183,7 +184,7 @@ static void exit_check(void)
 {
     unsigned i;
     memset(tasks,0,sizeof(tasks));
-    scheduler.tasks = tasks; scheduler.active = TRUE;
+    scheduler.tasks = tasks; initialize_task_table(); scheduler.active = TRUE;
     tasks[0].program = nested ? &parent : &owner;
     tasks[0].process = (KPROC *)tasks[0].program;
     tasks[0].state = TASK_RUNNING; tasks[0].asynchronous = TRUE;
@@ -258,3 +259,7 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
     (void)startup;
     abort(); /* no published clone exists in this legacy fixture */
 }
+
+void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
+BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
+void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }
