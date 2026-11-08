@@ -295,6 +295,12 @@ static void xexec_free(void *addr)
  * carries no alignment guarantee beyond the compiler's incidental default.
  */
 static WORD    supstk[SUPSIZ] __attribute__((aligned(8))); /* common sup stack for all processes */
+#if !CONF_WITH_USER_ASPACE
+/* Classic non-MMU launches reuse the supervisor stack and never participate
+ * in native scheduling. Preserve their small-ROM loader implementation. */
+static jmp_buf bakbuf;
+static PD *cur_p;
+#endif
 
 
 /*
@@ -548,8 +554,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
     long needed;
     FH fh;
+#if CONF_WITH_USER_ASPACE
     PD *cur_p; /* assigned before setjmp, never changed across its return */
-    FS_ERROR_STATE loader_error;
+    FS_ERROR_SCOPE loader_error;
+#endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
     PROCESS_OBSERVER *observed = NULL;
 #else
@@ -798,7 +806,11 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     cur_p = p;
 
     /* we have now allocated memory, so we need to intercept longjmp. */
-    loader_error = *fs_error_current();
+#if CONF_WITH_USER_ASPACE
+    fs_error_scope_save(loader_error);
+#else
+    memcpy(bakbuf, errbuf, sizeof(errbuf));
+#endif
     if (setjmp(errbuf)) {
 
         KDEBUG(("Error and longjmp in xexec()!\n"));
@@ -812,15 +824,21 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         /* we still have to jump back to bdosmain.c so that the proper error
          * handling can occur.
          */
-        memcpy(errbuf, loader_error.jump, sizeof(errbuf));
+#if CONF_WITH_USER_ASPACE
+        memcpy(errbuf, fs_error_scope_jump(loader_error), sizeof(errbuf));
         longjmp(errbuf, 1);
+#else
+        longjmp(bakbuf, 1);
+#endif
     }
 
     /* now, load the rest of the program, perform relocation, close the file */
     rc = kpgmld(cur_p, fh, &hdr, path);
     /* No later launch/admission/cleanup may retain this loader frame as its
      * disk-error target, especially across nested synchronous Pexec. */
-    *fs_error_current() = loader_error;
+#if CONF_WITH_USER_ASPACE
+    fs_error_scope_restore(loader_error);
+#endif
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */

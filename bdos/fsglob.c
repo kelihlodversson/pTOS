@@ -37,6 +37,5 @@ FTAB sft[OPNFILES];
 /* Native execution uses the selected CPU's loaded continuation. Classic
  * kernels retain one legacy instance; neither path exposes an owning PD. */
 #if !CONF_WITH_NATIVE_SCHED
-static FS_ERROR_STATE legacy_error;
-FS_ERROR_STATE *fs_error_current(void) { return &legacy_error; }
+FS_ERROR_STATE fs_legacy_error;
 #endif
