@@ -27,6 +27,15 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "n"
 
+# Native scheduling is selectable without either AES on all MMU targets.
+for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
+    config = kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config("configs/" + preset + "_defconfig")
+    config.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
+    assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y"
+    assert config.syms["CONF_WITH_CUIS"].str_value == "n"
+    assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
+
 # The external GEM desktop/resources must survive removal of both kernel
 # AES implementations. Shared options retain their normal desktop defaults.
 config = kconfiglib.Kconfig(warn_to_stderr=False)
@@ -69,6 +78,23 @@ for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
     assert config.syms["CONF_WITH_PCLONE"].str_value == "n", preset
     config.syms["CONF_WITH_PCLONE"].set_value(2)
     assert config.syms["CONF_WITH_PCLONE"].str_value == "y", preset
+
+# Joining depends on managed native execution, not either GUI implementation.
+for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
+    config = kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config("configs/" + preset + "_defconfig")
+    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
+    config.syms["CONF_WITH_PTERMGRP"].set_value(2)
+    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "n"
+    config.syms["CONF_WITH_PTHJOIN"].set_value(2)
+    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
+    config.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
+    config.syms["CONF_WITH_PCLONE"].set_value(2)
+    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "y"
+    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "y"
+    assert config.syms["CONF_WITH_CUIS"].str_value == "n"
+    config.syms["CONF_WITH_PCLONE"].set_value(0)
+    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
 
 # Master's 32-bit address-space presets must not enable kernel AES; they
 # retain the external CLI until libaes is ported to those architectures.
@@ -141,6 +167,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     native.load_config("configs/pc-x86_64_defconfig")
     native.syms["CONF_WITH_ELF_SHARED"].set_value(2)
     native.syms["CONF_WITH_LIBAES"].set_value(2)
+    # These fixtures mock physical stacks; real stack-address assertions run
+    # in the QEMU memtest, not on the host process's stack.
+    native.syms["CONF_WITH_X86_64_MEMTEST"].set_value(0)
     native.write_config(str(rollback / "config"))
     subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
                     "--config", str(rollback / "config"), "--header",
@@ -164,8 +193,12 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_spawn.c", "-o", str(rollback / "deferred_spawn")], check=True)
     subprocess.run([str(rollback / "deferred_spawn")], check=True)
     unwind_command = [arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c")]
+    subprocess.run(unwind_command + ["tests/cuis/scheduler_publication.c", "-o", str(rollback / "scheduler-publication")], check=True)
+    subprocess.run([str(rollback / "scheduler-publication")], check=True)
     subprocess.run(unwind_command + ["tests/cuis/exit_unwind.c", "-o", str(rollback / "exit-unwind")], check=True)
     subprocess.run([str(rollback / "exit-unwind")], check=True)
+    subprocess.run(unwind_command + ["tests/cuis/startup_unwind.c", "-o", str(rollback / "startup-unwind")], check=True)
+    subprocess.run([str(rollback / "startup-unwind")], check=True)
     noncuis = work / "noncuis-cleanup"
     noncuis.mkdir()
     plain = kconfiglib.Kconfig(warn_to_stderr=False)

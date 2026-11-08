@@ -11,7 +11,7 @@
 typedef struct ptos_clone_args CLONE_USER_V1;
 #else
 typedef struct {
-    uint32_t flags, entry, argument, stack_base, stack_size, tls, child_tid;
+    uint32_t flags, entry, argument, stack_base, stack_size, tls, child_tid, child_pid;
 } CLONE_USER_V1;
 #endif
 
@@ -21,7 +21,7 @@ typedef struct {
     uint32_t flags, stack_size;
     void (*entry)(void *);
     void *argument, *stack_base, *tls;
-    int32_t *child_tid;
+    int32_t *child_tid, *child_pid;
 } CLONE_ARGS;
 
 /* Decode a kernel-owned snapshot. This does not validate or retain user memory. */

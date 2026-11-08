@@ -4,13 +4,16 @@
 #include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
-#include "../../bdos/arch/x86_64/native_sched.c"
+#include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred spawn:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD owner, child;
 static KERNEL_TASK tasks[KSCHED_LIMIT];
 static unsigned references, owner_references, stacks, identities, preparations, commits, disposals, stack_releases;
 static BOOL prepare_ok, identity_ok, owner_ok;
+static void *execution;
+static void (*reclaimer)(void *);
+static BOOL stopped;
 PD *run;
 
 LONG cuis_service(ULONG function, UQUAD handle) { CHECK(function == CUIS_SESSION_QUERY && handle == 23); return E_OK; }
@@ -21,8 +24,24 @@ KPROC *kproc_retain(PD *pd)
 { if (pd == &owner) { if (!owner_ok) return NULL; owner_references++; return (KPROC *)pd; } CHECK(pd == &child); references++; return (KPROC *)pd; }
 void kproc_release(KPROC *p)
 { if (p == (KPROC *)&owner) { CHECK(owner_references); owner_references--; return; } CHECK(p == (KPROC *)&child && references); references--; }
-BOOL kproc_prepare_async(PD *p, PD *parent, PD *controller)
-{ CHECK(p == &child && parent == &owner && controller == &owner); preparations++; return prepare_ok; }
+BOOL kproc_prepare_async_thread(PD *p, PD *parent, PD *controller, KTHREAD **thread)
+{
+    CHECK(p == &child && parent == &owner && controller == &owner);
+    /* Real preparation callback: its unpublished slot cannot be selected by
+     * reentrant reservation. Cancel the nested storage without acquiring refs. */
+    {
+        void *nested = NULL;
+        CHECK(tasks[1].state == TASK_RESERVED && tasks[1].program == &child);
+        CHECK(ksched_spawn(&child) == EACCDN);
+        CHECK(ksched_task_reserve(FALSE, &nested) == E_OK && nested == &tasks[2]);
+        ksched_task_cancel(&nested);
+        CHECK(!nested && tasks[1].state == TASK_RESERVED);
+    }
+    preparations++; *thread = NULL;
+    if (!prepare_ok) return FALSE;
+    *thread = kthread_create(p);
+    return *thread != NULL;
+}
 void kproc_commit_async(PD *p) { CHECK(p == &child); commits++; }
 WORD kproc_pid(PD *p) { if (p == &owner) return 7; CHECK(p == &child); return 42; }
 BOOL kthread_stack_allocate(KTHREAD_STACK *s)
@@ -36,7 +55,16 @@ void kthread_stack_release(KTHREAD_STACK *s)
     stack_releases++; stacks--; s->physical = s->top = 0;
 }
 KTHREAD *kthread_create(PD *p) { CHECK(p == &child); if (!identity_ok) return NULL; identities++; return (KTHREAD *)p; }
-void kthread_destroy(KTHREAD *t) { CHECK(t == (KTHREAD *)&child && identities); identities--; }
+BOOL kthread_set_execution(KTHREAD *t, void *resource, void (*reclaim)(void *))
+{ CHECK(t == (KTHREAD *)&child && identities == 1 && !execution); execution = resource; reclaimer = reclaim; return TRUE; }
+void kthread_destroy(KTHREAD *t)
+{
+    CHECK(t == (KTHREAD *)&child && identities);
+    CHECK(execution == &tasks[1].execution);
+    reclaimer(execution); execution = NULL; reclaimer = NULL; identities--;
+}
+BOOL kthread_reap(KTHREAD *t) { CHECK(stopped); kthread_destroy(t); return TRUE; }
+void panic(const char *format, ...) { (void)format; abort(); }
 void proc_dispose_process(KPROC *p) { CHECK(p == (KPROC *)&child); disposals++; }
 
 int main(void)
@@ -49,16 +77,16 @@ int main(void)
     scheduler.root.pd = &owner;
     tasks[0].state = TASK_RUNNING;
     CHECK(ksched_defer(&child,23) == ENSMEM);
-    CHECK(preparations == 1 && !commits && !references && !stacks && !identities);
+    CHECK(!preparations && !commits && !references && !stacks && !identities);
+    owner_ok = TRUE;
+    CHECK(ksched_defer(&child,23) == ENSMEM);
+    CHECK(preparations == 1 && !commits && !references && !owner_references && !stacks && !identities);
     prepare_ok = TRUE;
     CHECK(ksched_defer(&child,23) == ENSMEM);
     CHECK(preparations == 2 && !commits && !references && !stacks && !identities);
     identity_ok = TRUE;
-    CHECK(ksched_defer(&child,23) == ENSMEM);
-    CHECK(preparations == 3 && !commits && !references && !owner_references && !stacks && !identities);
-    owner_ok = TRUE;
     CHECK(ksched_defer(&child,23) == E_OK);
-    CHECK(tasks[1].state == TASK_DEFERRED && tasks[1].deferred_thread &&
+    CHECK(tasks[1].state == TASK_DEFERRED && tasks[1].thread &&
           references == 1 && owner_references == 1 && stacks == 1 && identities == 1 && commits == 1);
     CHECK(ksched_defer_cancel() == E_OK);
     CHECK(!references && !owner_references && !stacks && !identities && disposals == 1);
@@ -66,8 +94,9 @@ int main(void)
     ksched_exited_identity((KPROC *)&child, &owner);
     CHECK(tasks[1].state == TASK_DEFERRED && owner_references == 1 && identities == 1);
     ksched_exited_identity((KPROC *)&owner, &owner);
-    CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_thread &&
-          references == 1 && !owner_references && stacks == 1 && !identities);
+    CHECK(tasks[1].state == TASK_NEW && tasks[1].thread == (KTHREAD *)&child &&
+          references == 1 && !owner_references && stacks == 1 && identities == 1);
+    stopped = TRUE; /* Backend handoff has abandoned the user continuation. */
     tasks[1].state = TASK_ZOMBIE;
     CHECK(!reap_finished_on_root(&tasks[1]) && stacks == 1 && references == 1);
     scheduler.current = NULL;
@@ -83,3 +112,19 @@ int main(void)
     puts("Deferred scheduler construction, rollback and identity handoff: PASS");
     return 0;
 }
+
+/* Legacy scheduler fixtures must never acquire clone startup ownership. */
+void thread_startup_abort(THREAD_STARTUP_DRAFT **startup)
+{
+    if (startup && *startup) abort();
+}
+
+void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
+{
+    (void)startup;
+    abort(); /* no published clone exists in this legacy fixture */
+}
+
+/* This fixture only reserves within an existing group. */
+void *kalloc(ULONG bytes) { (void)bytes; abort(); }
+void kfree(void *pointer) { (void)pointer; abort(); }

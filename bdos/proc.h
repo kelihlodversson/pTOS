@@ -45,7 +45,7 @@ struct kthread;
  * native scheduler integration is rejected while it is active. */
 BOOL proc_prepare_completion(struct kproc *process, struct kthread *thread, UWORD status);
 #endif
-WORD xtermres(long blkln, WORD rc);
+long xtermres(long blkln, WORD rc);
 
 #if CONF_WITH_USER_ASPACE
 void mark_kernel_code_pd(PD *p);

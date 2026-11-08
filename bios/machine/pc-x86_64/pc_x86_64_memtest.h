@@ -15,6 +15,13 @@ UQUAD x86_64_memtest_kstack_bytes(void);
 void x86_64_memtest_exit_handoff(struct kproc *process, PD *pd,
                                 UQUAD stack_phys, UWORD status, UWORD stage);
 void x86_64_memtest_fail_next_exit_handoff(void);
+#if CONF_WITH_NATIVE_SCHED
+struct kthread;
+#if CONF_WITH_MMAP
+void x86_64_memtest_clone_yield(void);
+#endif
+void x86_64_memtest_task_thread(struct kthread *thread, UQUAD stack_phys, UWORD stage);
+#endif
 #endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
 void x86_64_memtest_callback_entry(UQUAD flags);

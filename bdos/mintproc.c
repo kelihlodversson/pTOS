@@ -26,6 +26,7 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "threadcalls.h"
 #endif
 
 /* what Dgetpath() may write (bdos/uaccess.c UA_PATHBUF) */
@@ -161,6 +162,19 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
 #endif
 #endif
 #if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_PTHJOIN
+    case GEMDOS_PTHJOIN:
+        return ksched_join((ULONG)ARG_P(1), ARG_P(
+#if CONF_WITH_NATIVE_ABI
+            2
+#else
+            3
+#endif
+        ));
+#endif
+#if CONF_WITH_PTERMGRP
+    case GEMDOS_PTERMGRP: return ksched_termgrp((UWORD)ARG_W(1));
+#endif
     case GEMDOS_SYIELD: return ksched_yield();
     case GEMDOS_PWAIT: return ksched_wait(-1, 2, 0);
     case GEMDOS_PWAIT3: return ksched_wait(-1, ARG_W(1), ARG_P(2));

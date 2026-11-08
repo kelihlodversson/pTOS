@@ -1,0 +1,155 @@
+Native managed clone execution on MMU kernels (#892 / #713 / #893)
+================================================================
+
+One dispatcher, three CPU backends
+----------------------------------
+
+CONF_WITH_NATIVE_SCHED is selectable on USER_ASPACE kernels independently of
+CUIS/libaes. bdos/native_sched.c is the existing bounded cooperative dispatcher,
+not a new scheduler. KTHREAD_CONTEXT and scheduler-stack helpers now live in
+bdos/. Queue states, root-only reap, observer lifetime, PROCESS anchors, child
+waits, publication and thread-only exit policy are unchanged shared code.
+
+native_sched_backend.h supplies CPU save/restore, IRQ state, idle and fresh
+supervisor-stack entry. x32 delegates to its existing process context. ARM/m68k
+retain run, the launch-chain pointer, address-space root, errbuf, banked user
+SP (and ARM LR), interrupt state and the private continuation token. setjmp on
+the owning supervisor stack saves C callee-saved registers. User trap frames
+save user registers. ARM also restores kernel FPSCR and setjmp's d8-d15; its
+trap frames preserve the complete user VFP state. m68k saves/restores the full
+FSAVE frame, FP0-FP7 and FPCR/FPSR/FPIAR. CPU context code lives in the existing
+architecture uspace launcher, where that launch-chain state is authoritative.
+
+Initial user contexts
+----------------------
+
+ARM: ARM-mode AAPCS32 entry, R0=argument, aligned SP, LR=kernel-selected return
+bridge. Remaining GPRs and VFP data/control state start at zero. RFE restores
+user CPSR=0x10 (IRQs enabled, no supervisor privilege). The existing SVC stack
+and exception-return mechanism are reused; each THREAD owns separate kernel
+and scheduler stacks. The prepared frame does not use an x32 red zone.
+
+m68k: SR=0, USP points to the native return-PC/argument frame, SSP is the
+independent syscall stack; the existing format-0 RTE enters user mode. GPRs
+start at zero (A0 carries the pointer argument for configured -mfastcall).
+Normal C stack arguments remain available. FRESTORE null alone does not define
+FPU data registers: the existing entry now initializes all data/control
+registers explicitly after reset, before exposing user state. The common
+68881/040/060 save/restore mechanism is retained. Two-byte-aligned frames and
+PID/TID outputs can cross physically discontiguous pages; aliases for every
+piece are secured before sealing and the no-fail publication stores.
+
+A common trusted-bridge registry owns the RX mapping and durable lease; only
+its instruction bytes and ABI differ. ARM/m68k use the reserved 0x0fff1000 page,
+outside interpreter/ancestor/image, heap and growing stack ranges. x32 keeps
+its existing bridge address. Public void entries return status zero through
+Pterm. This is the existing thread-only launcher handoff, not another syscall
+or termination engine. Non-NULL TLS stays unsupported.
+
+Ownership and safe exit
+------------------------
+
+The shared transaction prepares CPU state, two kernel stacks, user-stack hold,
+bridge, controller/parent identities, observer and protected output aliases.
+Reservation, sealing, output writes and publication remain serialized/no-yield.
+A task cannot dispatch before every owner has transferred. Failure rolls back
+only acquired resources and does not publish outputs or a runnable task.
+
+ARM/m68k launchers take the prepared task's syscall stack once, mark startup
+entry, and use the same kproc_prepare_thread_exit_handoff/ksched_finish_exit
+contract as x32. Pterm/normal return/fault stop only the current THREAD. A
+resumed launcher restores its own root, reclaims the abandoned syscall stack,
+and finalizes PROCESS resources only for the last THREAD. Root later reaps
+the separate scheduler stack, startup/observer and durable user-stack hold.
+The initial task's non-runnable DRAINING PROCESS anchor survives leader-first
+exit. Observers retain identities, not dangling PDs or parent resources.
+Ptermres with siblings fails before changing residency; sole-thread legacy
+TSR/finalization and the existing fail-stop cleanup contract are retained.
+
+Managed execution remains a real restriction: a nested synchronous Pexec is a
+launcher continuation inside its caller's task, not a new scheduler task.
+Pclone from that unassociated context still returns EINVFN. Tests launch a
+managed worker with the standard async Pexec path, preserving this boundary.
+
+Native regression evidence and limits
+--------------------------------------
+
+The CI ARM/m68k user-ASPACE jobs select PCLONE and NATIVE_SCHED without CUIS or
+libaes. The runner requires the managed clone worker verdict as well as the
+full regression verdict. The worker uses actual SVC #1 / packed trap #1 calls:
+NEW_PROCESS and SAME_PROCESS, shared PID versus distinct PID/TID, independent
+stacks, repeated return/Pterm/fault cycles, blocking and early waits, orphaned
+children, leader-first exit/final completion, TSR refusal with live siblings,
+slot exhaustion/unchanged outputs, durable stack holds and final Mfree.
+
+Assembly probes run inside actual cloned contexts and switch between threads
+with different stack-derived integer/FPU patterns. ARM checks R4-R11 and all
+available D registers/FPSCR across SVC yield; m68k checks D2-D7/A2-A6 and, when
+its FPU cookie is nonzero, FP0-FP7 and FPCR/FPSR/FPIAR. The local QEMU 68040 reads FPIAR as zero even immediately after a nonzero
+write: the probe compares the observable before/after value, and does not
+claim nonzero FPIAR execution coverage. Initial m68k FPU state and two-byte,
+cross-page startup frames/outputs have explicit tests. Existing compatibility,
+nested Pexec/fault/TSR/rollback and five shutdown tests still run on each board.
+
+Native QEMU targets: Cortex-A7 ARM and 68040 m68k. Additional pinned emulator
+evidence is below. Other ARM cores, physical 68030/68060 hardware, and userland
+-mfastcall execution are not claimed from compilation. Local m68k regression builds may omit ELF shared libraries; that
+is not shared-library runtime coverage. Host ownership/sanitizer tests and ABI
+cross-compilation are separately identified, not native execution evidence.
+
+Remaining phase boundaries and preemption
+------------------------------------------
+
+No timer preemption/SMP or non-MMU shadow scheduling is enabled. #713 must
+synchronize THREAD membership/final exit, PROCESS anchors and slot reuse,
+KASPACE leases/mutations and output stores, callback state and filesystem
+reentrancy, with a proven lock order. IRQ exclusion alone is not SMP safety.
+Architecture launch chains, errbuf and current-task state remain cooperative
+per-CPU state; m68k's existing uenter staging must not be preempted between
+publication of its CPU-entry arguments and RTE. Kernel FPSCR, banked user
+registers and exception/IRQ stacks must stay in the context-switch audit.
+No IRQ or filesystem callback may yield through half-completed construction
+or finalization. Root reclamation requires the old continuation to be dead.
+
+#892 retains remaining clone policies/private-VM and loader integration work;
+#893 implements opt-in managed Pthjoin and cooperative Ptermgrp; see
+thread-joining.txt and group-exit.txt for their supported boundaries; #909 owns generic PROCESS
+wait/reaping evolution. Shared-VM Pexec is #894, TLS #908, non-MMU scheduling
+#911, and ARM/m68k external libaes/CUIS #898. These are not implemented here.
+
+Pinned 68k emulator execution (Phase 4 integration)
+--------------------------------------------------
+
+The same managed clone/join/group/libc-exit worker passes on pinned Hatari
+23bc3060ebf0da348cc842e358c102ba88002b56 (repository PMOVE patch) with Falcon
+68030, TT 68030, Falcon 68040 and TT 68040 MMU configurations: 24 suites each.
+Those runs do not establish FPU coverage when the emulator's FPU is disabled.
+
+Pinned Amiberry v8.5.0 / 2a622d2674c4114d3600c4cda004c857d4878bdf passes
+amiga-aspace040 with CPU/MMU/FPU=68060, both with caches disabled and with
+compatible/cache emulation enabled: 24 suites each, required managed clone,
+Pthjoin, Ptermgrp, libc exit and nonzero-FPIAR verdicts. Actual FP0-FP7/control
+register patterns are exercised across cooperative yields. The Amiga kernel
+uses CONF_WITH_MFASTCALL; user/library -mfastcall execution is still not claimed
+from that fact. The libc binding separately compiles with -mshort, -mfastcall
+and their combination; native userland multilib execution remains a follow-up.
+
+This uncovered a real initial-entry stack bug masked by the old Amiberry FPU=0
+setting. A NULL FRESTORE (SP)+ consumes four bytes on 6888x/040 and twelve on
+060. Adding another eight bytes discarded the 060 RTE frame (captured user
+fault PC=0). User entry now uses non-postincrement FRESTORE and releases exactly
+the twelve bytes it allocated. The same existing entry/scheduler backend is
+retained; no new switcher or lifetime owner is introduced. FPU-enabled runs
+failed before this fix and pass the strict nonzero-FPIAR gate afterward.
+
+Reproduce with the pinned emulator and the existing SDK/toolchains:
+
+  AMIBERRY=/path/to/pinned/amiberry NATIVE_THREADS=1 AMIBERRY_FPU=68060 \
+    REQUIRE_FPIAR=1 sh tools/ci-amiberry.sh amiga-aspace040:68060
+
+The script runs both cache modes, requires dedicated native verdicts and keeps
+native logs separate from legacy logs. Its defaults preserve the old emulator
+FPU setting. Explicit --fpu and --require-nonzero-fpiar avoid silently claiming
+FPU execution from a CPU-only run. CI adds this native 060 configuration to the
+existing pinned legacy matrix. QEMU's 68060 PFLUSHA limitation (#913) remains;
+physical 68030/040/060 hardware and ARM/m68k external CUIS are not claimed.

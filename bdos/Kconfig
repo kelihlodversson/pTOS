@@ -10,14 +10,17 @@
 menu "GEMDOS (BDOS)"
 
 config CONF_WITH_PCLONE
-    bool "Experimental Pclone argument validation"
+    bool "Experimental Pclone"
     depends on CONF_WITH_KPROC
     default n
     help
       Route Pclone through its architecture ABI dispatcher and validate its
-      initial arguments on address-space kernels. A valid request returns
-      EINVFN because the clone backend is not implemented yet. On kernels
-      without user address spaces, all requests currently return EINVFN.
+      arguments on address-space kernels. Managed native tasks on x32, ARM MMU
+      and m68k MMU can create a distinct process sharing their address space
+      with CLONE_VM, or add a thread to the current process with
+      CLONE_VM | CLONE_SAME_PROCESS. Unsupported policies, private-VM startup
+      and unmanaged execution contexts return EINVFN.
+      Kernels without user address spaces return EINVFN without reading args.
 
 config CONF_PCLONE_STACK_ALIGNMENT
     int
@@ -37,13 +40,33 @@ config CONF_PCLONE_ENTRY_ALIGNMENT
     default 2
 
 config CONF_WITH_NATIVE_SCHED
-    bool
-    depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    bool "Cooperative native scheduling"
+    depends on CONF_WITH_USER_ASPACE
     help
       Kernel-owned cooperative native process scheduling and standard MiNT
       asynchronous launch, yield and child waits. Selected by CUIS initially;
       independent of GUI session and input services. No preemption or Pfork.
-      Other architecture backends follow their isolated address spaces.
+      Available on x32, ARM MMU and m68k MMU user-address-space kernels.
+      Scheduling is cooperative and does not require CUIS or external libaes.
+
+
+config CONF_WITH_PTERMGRP
+    bool "Cooperative PROCESS group termination"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Terminate all managed threads of the calling PROCESS at safe kernel
+      boundaries. Nested synchronous children finish normally before their
+      suspended launcher thread can stop. No preemption is enabled.
+
+config CONF_WITH_PTHJOIN
+    bool "Managed per-TID thread joins"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Retain small per-TID completion records after safe execution-stack reap.
+      Pthjoin joins only managed threads in the calling PROCESS; no GUI,
+      preemption, asynchronous signals or group termination is implied.
 
 
 config CONF_LOGSEC_SIZE

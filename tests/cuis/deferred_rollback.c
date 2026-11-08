@@ -188,6 +188,7 @@ void kproc_set_creator(PD *p, PD *caller) { abort(); }
 void kproc_hand_over(PD *caller, PD *p) { abort(); }
 void kproc_set_give_back(PD *p, BOOL give_back) { abort(); }
 void kproc_set_parent(PD *p, PD *caller) { abort(); }
+void *kproc_clone_startup(PD *p) { abort(); }
 UQUAD kproc_ancestors_va(PD *p) { abort(); }
 void kproc_mark_started(PD *p) { abort(); }
 void proc_launch_prepare(PD *p, void *stack) { abort(); }

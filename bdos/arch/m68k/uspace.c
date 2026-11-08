@@ -32,6 +32,13 @@
 #include "biosext.h"
 #include "procmem.h"
 #include "aspace32.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#include "native_sched_backend.h"
+#include "thread_startup32.h"
+#include "string.h"
+#include "fs.h"
+#endif
 #include "uaccess.h"
 
 extern long osif(short *pw);                    /* bdos/bdosmain.c */
@@ -42,16 +49,18 @@ extern void m68k_enter_user(void) NORETURN;
 
 /* what m68k_enter_user() (uspaceasm.S) reads */
 struct {
-    ULONG entry, user_sp, kstack_top;
+    ULONG entry, user_sp, kstack_top, argument;
 } uenter;
 
 /* the FPU state of a process (uspaceasm.S): the FSAVE frame (the longest, of
  * the 68881/2, is 216 bytes), fpcr/fpsr/fpiar, fp0-fp7 */
+#if !CONF_WITH_NATIVE_SCHED
 struct fpuctx {
     UBYTE frame[216];
     ULONG ctl[3];
     UBYTE regs[96];
 };
+#endif
 extern void m68k_fpu_save(struct fpuctx *ctx);
 extern void m68k_fpu_restore(const struct fpuctx *ctx);
 extern LONG fputype;                            /* 0: no FPU (bios/bios.c) */
@@ -128,8 +137,38 @@ struct uspace_launch {
     volatile UWORD exit_status;
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
+    volatile BOOL exit_final;
 };
 static struct uspace_launch *uspace_launch;
+#if CONF_WITH_NATIVE_SCHED
+/* IRQ exclusion covers the serialized cooperative handoff, not execution.
+ * User registers stay in the suspended trap frame on this context's stack.
+ * Never publish another task until its continuation and resource owners exist. */
+void native_sched_save(NATIVE_SCHED_CONTEXT *context)
+{
+    context->flags = native_sched_irq_save();
+    context->pd = run;
+    context->root = aspace_hw_current();
+    __asm__ volatile ("move.l %%usp,%0" : "=a"(context->user_sp));
+    context->launch = uspace_launch;
+    context->native_task = ksched_context_id();
+    memcpy(context->disk_error, errbuf, sizeof(errbuf));
+    if (fputype) m68k_fpu_save(&context->fpu);
+    aspace_hw_switch(aspace_kernel_root());
+}
+void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
+{
+    native_sched_irq_disable();
+    run = context->pd;
+    uspace_launch = context->launch;
+    ksched_context_restore(context->native_task);
+    memcpy(errbuf, context->disk_error, sizeof(errbuf));
+    aspace_hw_switch(context->root);
+    __asm__ volatile ("move.l %0,%%usp" :: "a"(context->user_sp) : "memory");
+    if (fputype) m68k_fpu_restore(&context->fpu);
+    native_sched_irq_restore(context->flags);
+}
+#endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
 static BOOL injected_exit_failure;
 #endif
@@ -147,14 +186,25 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
     if (!process)
         return FALSE;
 #if CONF_WITH_EXIT_HANDOFF_TEST
-    if (!injected_exit_failure) {
+    if (!injected_exit_failure
+#if CONF_WITH_NATIVE_SCHED
+        && !ksched_exit_thread(pd)
+#endif
+    ) {
         injected_exit_failure = TRUE;
         kproc_release(process);
         kcprintf("exit handoff: injected preparation rollback\n");
         return FALSE;
     }
 #endif
+#if CONF_WITH_NATIVE_SCHED
+    launch->exit_final = !ksched_exit_thread(pd) ||
+                         kproc_thread_is_sole(process, ksched_exit_thread(pd));
+    if (!kproc_prepare_thread_exit_handoff(process, ksched_exit_thread(pd))) {
+#else
+    launch->exit_final = TRUE;
     if (!kproc_prepare_exit_handoff(process)) {
+#endif
         kproc_release(process);
         return FALSE;
     }
@@ -175,7 +225,20 @@ void gouser(void)
     struct fpuctx fpu;
     ULONG launcher_status;
     uintptr_t kstack_top;
-    PADDR kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+    PADDR kstack_phys;
+#if CONF_WITH_NATIVE_SCHED
+    THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
+    const THREAD_STARTUP32 *prepared = startup ? thread_startup_image(startup) : NULL;
+    THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
+    if (ksched_take_syscall_stack(p, &syscall_owner)) {
+        kstack_phys = syscall_owner.physical;
+        kstack_top = syscall_owner.top;
+    } else
+#endif
+        kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+#if CONF_WITH_NATIVE_SCHED
+    if (prepared) { entry = prepared->entry; user_sp = prepared->sp; }
+#endif
 
     if (!entry)                 /* no image: a basepage with its code in its TPA */
         entry = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
@@ -210,7 +273,11 @@ void gouser(void)
         /* what a program finds on its stack: a return address, and the basepage.
          * Written through the kernel's copy, which backs the page of a lazy stack
          * (a store from here would be a fault of the kernel) */
-        if (!kproc_standard_entry(p)) {
+        if (
+#if CONF_WITH_NATIVE_SCHED
+            !prepared &&
+#endif
+            !kproc_standard_entry(p)) {
             user_sp -= 8;
             initial[0] = 0;
             initial[1] = (ULONG)(uintptr_t)p;
@@ -220,6 +287,13 @@ void gouser(void)
         uenter.entry = entry;
         uenter.user_sp = user_sp;
         uenter.kstack_top = (ULONG)kstack_top;
+        uenter.argument = 0;
+#if CONF_WITH_NATIVE_SCHED
+        if (prepared) uenter.argument = prepared->argument;
+#endif
+#if CONF_WITH_NATIVE_SCHED
+        if (prepared) thread_startup_entering(startup);
+#endif
         m68k_enter_user();
     }
     uspace_launch = launch.previous;
@@ -238,8 +312,13 @@ void gouser(void)
     kstack_free(kstack_phys);
     if (launch.exit_process) {
         KPROC *process = launch.exit_process;
-        proc_finalize_exit(process, launch.exit_status,
-                           launch.exit_resident, launch.exit_resident_len);
+#if CONF_WITH_NATIVE_SCHED
+        if (ksched_finish_exit(process, launch.pd, launch.exit_status) != launch.exit_final)
+            panic("thread exit finalization changed");
+#endif
+        if (launch.exit_final)
+            proc_finalize_exit(process, launch.exit_status,
+                               launch.exit_resident, launch.exit_resident_len);
         run->p_dreg[0] = launch.exit_status;
         kproc_release(process);
     }

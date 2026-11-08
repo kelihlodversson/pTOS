@@ -15,6 +15,7 @@ LONG cuis_display_info(UQUAD selector);
 LONG cuis_windows_reset(UQUAD session);
 #if CONF_WITH_X86_64_MEMTEST
 BOOL cuis_context_test_reset(void);
+BOOL cuis_button_history_test(void);
 #endif
 LONG cuis_context(UQUAD session, UQUAD slot, UQUAD action, UQUAD address, UQUAD bytes, UQUAD offset);
 LONG cuis_setting(UQUAD slot, UQUAD value, UQUAD other, UQUAD other_value, UQUAD mask);

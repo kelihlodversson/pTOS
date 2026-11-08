@@ -26,7 +26,7 @@ static int stream_checks(void)
     CHECK(SW(b, 0, 1, 0) == EIMBA);
     fail_allocation = TRUE; CHECK(SW(b, 0x10000, 16, 0) == ENSMEM); fail_allocation = FALSE;
     fail_at_allocation = allocations + 1;
-    CHECK(SW(b, 0x10000, 16, 0) == ENSMEM && !(*find_owner(&first))->pending_write && !(*find_owner(&second))->stream_data);
+    CHECK(SW(b, 0x10000, 16, 0) == ENSMEM && !(*find_owner(&first))->stream_write && !(*find_owner(&second))->stream_data);
     fail_at_allocation = 0;
     CHECK(SW(b, 0x10000, 32767, 0) == 32767);
     CHECK(SW(b, 0x10000, 32767, 0) == 32767);

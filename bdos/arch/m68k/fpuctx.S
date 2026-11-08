@@ -15,6 +15,7 @@
 
         .globl  C_SYM(m68k_fpu_save)
         .globl  C_SYM(m68k_fpu_restore)
+        .globl  C_SYM(m68k_fpu_init)
 
         .text
 
@@ -58,6 +59,25 @@ C_SYM(m68k_fpu_restore):
         fmovem.l FPU_CTL(%a1),%fpcr/%fpsr/%fpiar
 fpu_restore_frame:
         frestore (%a1)
+        rts
+
+/* A NULL FRESTORE frame resets control state, but does not specify the data
+ * register contents. Initialize them too before exposing a fresh user context.
+ * These common 68881/040/060 operations do not need a new FPU switcher. */
+C_SYM(m68k_fpu_init):
+        moveq   #0,d0
+        fmove.l d0,%fp0
+        fmove.l d0,%fp1
+        fmove.l d0,%fp2
+        fmove.l d0,%fp3
+        fmove.l d0,%fp4
+        fmove.l d0,%fp5
+        fmove.l d0,%fp6
+        fmove.l d0,%fp7
+        clr.l   -(sp)
+        clr.l   -(sp)
+        clr.l   -(sp)
+        fmovem.l (sp)+,%fpcr/%fpsr/%fpiar
         rts
 
 #endif /* CONF_WITH_USER_ASPACE */

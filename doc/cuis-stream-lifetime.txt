@@ -1,0 +1,146 @@
+CUIS stream ownership audit and migration (#907)
+===============================================
+
+Before migration
+----------------
+WRITE borrows its source client across copyin and blocking, publishes a packet
+in pending_write, and gives teardown a competing free owner. Receiver lookups
+use non-recycled handles but source SESSION_END can free both packet and client
+while the writer still uses them. READ/PEEK borrow client/ring across output
+preflight and have no cursor admission; another reader can drain the selected
+bytes. PEEK does not consume bytes but DOES publish cohort-read metadata, so it
+must serialize with READ. PENDING only snapshots the byte count.
+
+Ordinary kproc user-copy validation can xterm on lazy OOM or file I/O failure.
+It cannot run after admitting resources unless a separate unwind owner exists.
+No generic PROCESS ownership or callback-unwind mechanism belongs in CUIS.
+
+Path inventory
+--------------
+WRITE: source operation owns packet/snapshot and source+receiver refs. Receiver
+may close independently. After preflight, copy and wait hold no borrowed PD;
+slot/token/state/capacity checks precede byte+sender append. One finish frees the
+packet and both refs on every return. Failure publishes no receiver bytes.
+READ/PEEK: source operation owns client/ring lifetime and exclusive selected head.
+Output preflight is unowned; resident copy can fail or observe retirement safely.
+Only a successful final validation consumes bytes or publishes read metadata.
+PENDING: masked scalar count snapshot; no packet, cursor ownership or user copy.
+Cohort/notice/child appends: existing bounded snapshots and handle/token relookup
+precede append; their capacity commits do not change stream_head. They may append
+while a read owns the prefix. READ/PEEK are the sole consumers of that cursor.
+SESSION_END/exit: retire slots/identity, remove lookup and release registry refs;
+never free active records/packets. Final storage ref releases the ring. Repeated
+old-handle close cannot target a replacement session.
+
+Implemented ownership contract
+-------------------------------
+Each nonempty READ/PEEK/WRITE has a heap operation identified by source session,
+non-recycled 64-bit token and kind/state. The client has borrowed read and write
+slots; an operation owns source storage and (for WRITE) receiver storage. READ
+and PEEK share one exclusive cursor/metadata slot; WRITE has a separate slot,
+so a reader can drain a same-session writer's full destination. Different source
+writers serialize destination append under input exclusion, not a receiver lock.
+PENDING is an atomic query and does not acquire an operation.
+
+ADMITTED -> PENDING -> COPYING (read/peek) -> COMMITTED -> reclaimed
+                 \-> RETIRED/failed -----------------> reclaimed
+
+Only the continuation consumes its operation handle and frees its packet/ref(s).
+SESSION_END retires slots/public identity and removes routing; it never frees an
+active operation or its packet. Final client put owns the byte/sender ring.
+Retained storage cannot be reused; a replacement session never revives an old
+operation. Each endpoint retains KPROC completion identity until final client
+put, without retaining live PD/ASPACE/descriptors. Sender metadata records the
+AES client ID, never a PID; non-recycled IDs cannot alias a replacement client.
+The opaque endpoint handle plus PROCESS ownership authenticates the source.
+
+Faulting buffer preflight precedes admission and any allocation. Handles, not
+borrowed pointers, survive that boundary. Re-lookup revalidates the original
+source and receiver. After admission, resident-only copies never demand pages,
+perform disk I/O or terminate the caller. An unmap/protection change while
+blocked therefore fails copy safely instead of abandoning an owning frame.
+Unexpected kernel faults/private callback unwinds are not recoverable APIs.
+Blocking READ now rejects invalid output before waiting; empty nonblocking READ
+keeps EAGAIN without probing output. Zero length remains a no-op.
+
+WRITE owns its immutable packet from allocation through completion; receiver
+ring storage is staged and installed only after revalidation. Commit rechecks
+live identities/slot/token/state and capacity, then appends bytes and sender IDs
+without allocation, callback or yield. Failure changes no receiver indices.
+Source retirement before commit prevents delivery; after commit bytes cannot be
+retracted. Receiver retirement wakes a waiting operation and rejects commit.
+
+READ/PEEK hold exclusive cursor admission from selection through copy/commit.
+Appenders can progress but cannot overwrite unread selected bytes. Retained
+client storage keeps the ring alive even if SESSION_END occurs during copyout.
+All copyout calls must succeed and ownership/head/range must still be valid
+before kernel consumption/provenance publication. User output MAY be partially
+modified after a later wrapped-chunk/sender copy failure or retirement. Kernel
+head/count/unread/token state remains unconsumed by the failed operation.
+
+PEEK deliberately preserves its existing cohort-read metadata side effect while
+leaving head/count/cohort unread unchanged. It is not a reservation after return:
+another successful reader may consume before a following READ. Provenance is computed from current
+cohort state at commit, not a stale prepared snapshot; teardown cannot publish
+an obsolete cohort claim. Results retain their producing token after cohort
+teardown. Partial/mixed reads report the first byte's sender; whole-range cohort
+attribution follows the existing bounds. Another successful operation may replace
+the per-session metadata cache; clients serialize transfer plus metadata query.
+
+Cancellation remains disabled
+------------------------------
+Raw scheduler block preserves the owning continuation until ordinary readiness
+or retirement. No forced cancellation of copy frames or new PROCESS waiter.
+A group request can remain pending until a receiver drains/retires or a writer
+produces data. After safe return a later ordinary checkpoint may terminate the
+thread, but cannot undo committed bytes. Cancellation-aware waits require a
+separate proof and native tests after this ownership foundation is validated.
+
+Before preemption/SMP (#713)
+-----------------------------
+Synchronize lookup/retain/admission/retirement, token and packet ownership,
+receiver ring installation, selected read range and cohort mutation, atomic
+capacity/head/provenance commit, predicate check/block/wakeup and final put.
+64-bit tokens need protected accesses on future 32-bit GUI targets. Resident
+copy alone is not a mapping lease: preemption needs mapping/copy lifetime and
+copyout synchronization plus an explicit scheduler/input/PROCESS lock order.
+No blocking PROCESS lock under input exclusion with inverse teardown order;
+no callback/termination under locks, no conflicting locks across handoff. Current
+task/launcher state must be per-CPU. Cooperative no-yield sections and local IRQ
+exclusion are not SMP locks. No new Kconfig flag or generic scheduler policy.
+
+Validation and remaining limits
+-------------------------------
+Production host fixtures use real malloc/free for these cases, so ASan/UBSan can
+detect retirement UAFs; a counted ledger checks all records, packets, rings and
+client refs are released once. Tests cover competing writers at ADMITTED/PENDING,
+READ/PEEK conflicts, independent read/write progress and both slots blocked during
+source retirement, source/receiver close and replacement, retirement in preflight/
+copyin/copyout, token/ref exhaustion, each allocation failure stage, wrapped output
+and sender failure without kernel consumption, repeated PEEK and later reads,
+cohort teardown during a prepared copy, partial provenance and repeated cleanup.
+A wrapped failure explicitly proves user prefix bytes may already be modified.
+These mocks do not claim recovery from an arbitrary private longjmp after
+admission. Fatal native OOM/disk-I/O preflight injection is not established by
+host-returning failure hooks; production preflight occurs before ownership.
+
+Native x32 ring-3 public calls exercise same-PROCESS readers/writers, foreign
+PROCESS senders and historical sender IDs after exit, full-ring blocking/snapshot
+immutability, READ/PEEK admission conflicts, source/receiver close/re-registration,
+receiver PROCESS exit, late-unmapped output failure with unread bytes intact,
+and group exit deferred across a raw stream wait. The independent shared-ASPACE
+reader drains data, then the writer reaches a normal checkpoint with committed
+bytes intact and one PROCESS completion. The complete worker checks mapped-page
+baseline and stack release; the parent alone prints the stream PASS verdict
+after checking worker exit status. Kernel resident-copy assertions separately
+verify no first-touch backing and permission checks. These are distinct from
+host-only forced copy callbacks and native kernel self-tests.
+
+Cancellation is deliberately not enabled in this ownership increment. Next:
+READY/CANCELLED arbitration before commit, consuming operation cleanup before
+IRQ restoration/checkpoint, and native admitted-wait cancellation/rollback tests.
+No timers/assertions are relaxed. Preemption, generic waits/reaping, TLS and GUI
+ports remain their existing sibling scopes. libcmini and its source pin do not
+change. Per-session transfer+provenance-query serialization and historical
+first-byte sender metadata remain ABI limits; operation IDs do not create per-THREAD AES clients
+or an unbounded per-result history.
