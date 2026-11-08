@@ -95,7 +95,7 @@ static short event_once(short events, short clicks, short button_mask, short but
         if (events & MU_MESAG) wait_mask |= CUIS_READY_DISPLAY;
     }
     if (clocked) {
-        now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+        now = aes_clock_ticks();
         if (now < 0) return 0;
         elapsed = ((ULONG)now-(ULONG)start) & 0x7fffffffUL;
         ticks = elapsed >= duration ? 0 : duration-elapsed;
@@ -168,17 +168,16 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short message[], unsigned long interval, short *mx, short *my,
                     short *buttons, short *modifiers, short *key, short *click_count, short *global)
 {
-    LONG start = 0, session;
+    LONG start = 0;
     ULONG duration;
     short result;
     BOOL clocked = (events & MU_TIMER) &&
         ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered() ||
          aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening());
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
-    session = aes_application_session(global);
     duration = interval/5 + (interval%5 != 0) + (interval != 0);
     if (clocked) {
-        start = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+        start = aes_clock_ticks();
         if (start < 0) return 0;
     }
     for (;;) {

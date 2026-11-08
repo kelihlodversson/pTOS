@@ -20,7 +20,7 @@ operations migrate; they are not the native CUIS protocol.
 GEM source compatibility is the public contract. Applications use standard
 GEM headers, function names, signatures, structures, constants and return
 conventions (appl_*, evnt_*, wind_*, menu_*, form_*, objc_*, graf_*, rsrc_*,
-shel_* and scrp_*). The aes_session_*, aes_window_*, aes_message_* and similar
+shel_* and scrp_*). The aes_session_*, aes_window_* and similar
 CUIS wrappers currently exported for migration tests are transitional
 implementation helpers, not a replacement application API. Move these behind
 the library boundary as the standard adapters migrate; applications must not
@@ -464,14 +464,14 @@ focus state and paths remain under the external libaes CUIS configuration.
 
 Focused keyboard queues and atomic waits
 ---------------------------------------
-CUIS adds flat keyboard calls using only RDI and RSI:
+CUIS provides a flat keyboard read using only RDI and RSI:
 
  17 KEY_READ  RDI=owned window, RSI=ULONG *key
- 18 KEY_WAIT  RDI=owned window, RSI=sign-extended LONG timeout_ms
 
-libaes exports aes_key_read(window, key) and aes_key_wait(window, timeout_ms).
+Private native keyboard reads use aes_key_read(window, key). Keyboard waits
+use EVENT_WAIT with CUIS_EVENT_KEY; GEM evnt_* uses SESSION_WAIT.
 READ returns 1 after copying one key, 0 if empty, or a negative GEMDOS error.
-WAIT returns 1 when a key is pending without consuming it, 0 on timeout, or
+EVENT_WAIT with CUIS_EVENT_KEY returns 1 when a key is pending without consuming it, 0 on timeout, or
 a negative error. Zero milliseconds polls; -1 waits indefinitely. Other
 negative or noncanonical timeout values return EINVAL. Unused registers
 are ignored. Unknown/stale/foreign handles and unfocused windows return
@@ -565,7 +565,8 @@ Pointer overflow counts as pending; redraw remains pending until REDRAW is
 read. KEY-only waits require focus; mixed waits can observe pointer/redraw in
 a background window, while keyboard readiness still requires focus. Windows
 must be shown. Unknown mask bits and malformed timeouts return EINVAL.
-Timeout and owned-update restrictions match KEY_WAIT. Predicate checks and
+Zero timeout polls, -1 waits indefinitely, and other negative or noncanonical
+timeouts fail EINVAL. Blocking while owning an update fails EACCDN. Predicate checks and
 sleep use the same IRQ exclusion, avoiding lost wakeups between sources.
 
 Host tests exercise ownership, capture, enter/leave, coalescing, overflow,
@@ -579,52 +580,12 @@ queued legacy motion/cursor notifications and advance a generation checked
 before applying an in-flight native motion callback's result. IRQ fixtures
 cover guarded motion and reject an older callback completion after CUIS input.
 
-Bounded peer messages
----------------------
-CUIS transports opaque peer data separately from trusted input and redraws:
-
- 21 MESSAGE_SEND  RDI=destination session, RSI/RDX/R10/R8=ULONG words 0-3
- 22 MESSAGE_READ  RDI=owned session, RSI=LONG *sender,
-                  RDX/R10/R8/R9=ULONG *words 0-3 (four separate outputs)
- 23 MESSAGE_WAIT  RDI=owned session, RSI=sign-extended LONG timeout_ms
-
-Transitional libaes test wrappers are aes_message_send(destination, a, b,
-c, d), aes_message_read(session, sender, a, b, c, d), and
-aes_message_wait(session, timeout_ms). These are transport helpers, not the
-GEM application API; normal applications use appl_write/read and
-evnt_mesag/multi after their library adapters migrate. No request/reply
-structure or receiver grant handshake is used. Any registered client can
-send to another registered client, as normal GEM messaging requires.
-
-Payload words are unsigned 32-bit values; send slots with upper bits set
-return EINVAL. CUIS does not decode GEM message IDs or payloads. A peer
-message cannot fabricate trusted CUIS keyboard, pointer, focus or redraw
-notifications. Sender identity is assigned by the kernel, never supplied by
-the sender. Session handles are never reused. Peer discovery, mapping to GEM
-application IDs and GEM message adaptation remain later library work.
-
-SEND returns E_OK on acceptance, EAGAIN when the destination's 16-message
-FIFO is full, EACCDN for an absent destination or unregistered caller, or
-EINVAL for malformed slots. It never blocks, allocates or evicts an accepted
-message. Messages from all peers share FIFO acceptance order. These scalar
-results are private transport conventions, not appl_write return values.
-
-READ returns 1 after copying the kernel sender and all four payload words,
-0 when empty, or a negative error. All outputs are validated/backed before
-copyout, and a failed copy leaves the oldest message queued. Empty reads
-ignore output pointers. Reading another session is forbidden. Sender exit
-preserves accepted messages with the historical sender handle. Receiver exit
-discards its queue; no message holds a process/window pointer or file reference.
-
-CUIS_EVENT_MESSAGE (8) extends EVENT_WAIT: any queued message for the window
-owner makes it ready, independently of focus. A successful wait returns 1 and
-consumes nothing. MESSAGE_WAIT uses the same atomic predicate/sleep, timeout
-and owned-update rules without requiring a window or focus. Existing event
-masks retain their behavior. Managed tasks yield to the kernel scheduler; unmanaged callers retain the
-IRQ sleep path. Public asynchronous launch integration remains later work.
-Host tests model a peer posting at the sleep boundary; native boot tests
-verify scalar transport, cross-process delivery without a handshake,
-copyout recovery, queue bounds, ownership, readiness and timeouts.
+Peer messages use the opaque STREAM_WRITE/READ/PEEK services. Message
+readiness composes through SESSION_WAIT with CUIS_READY_STREAM and a byte
+minimum. No separate four-word message queue or message EVENT_WAIT bit exists.
+Native process/scheduler fixtures exchange explicit application packets over
+these active streams; a packet's reply endpoint is payload, not authenticated
+kernel provenance. Public GEM messages remain libaes policy.
 
 Kernel-managed native task scheduling
 -------------------------------------
@@ -679,9 +640,9 @@ Boot fixtures run two isolated standard-ELF/libaes clients through 64 message
 exchanges, with private data/library state and SSE checks. They also exercise
 focus-loss wakeup, all-blocked timeouts, a nested child's timed wait, normal
 exit, _Exit, faults, group bounds/duplicate rejection, allocation failure
-before launch and exact allocator/resource reclamation. Test-only kernel
-bootstrap messages supply known peer handles until application discovery
-migrates; no new application API is required.
+before launch and exact allocator/resource reclamation. Clients discover
+fixture labels through the existing directory and exchange stream packets;
+there is no kernel bootstrap transport or additional application API.
 
 Standard asynchronous process calls in managed groups
 ---------------------------------------------------
@@ -774,7 +735,7 @@ gl_apid and gl_ap_version. include/gem.h declares this implemented subset;
 the same application fixture also compiles against GEMlib's normal headers.
 This is the first public adapter slice, not a complete GEM AES replacement.
 Discovery and application pipes are described below. Message/timer combinations are described below; window/input event adapters
-remain subsequent work. At that stage aes_session_*/aes_window_*/aes_message_* exports
+remain subsequent work. At that stage aes_session_*/aes_window_* exports
 remain transitional test/migration interfaces, not application requirements.
 
 appl_init implicitly opens the process's CUIS session and returns its kernel
@@ -1967,8 +1928,6 @@ CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
 - 51 SURFACE_STATUS(session,action): action 0 queries OWNED/DIRTY/POINTER bits,
   action 1 acknowledges pending work, action 2 invalidates an owned surface.
   Acknowledge does not discard work during modal mouse control.
-- 52 CLOCK(session,0): returns the low 31 bits of the 200 Hz tick counter.
-  The maximum supported 32-bit millisecond timeout is shorter than its wrap.
 - 53 SURFACE_BEGIN(session,height): under the display lock, stages a positive
   strip height and grants painting without changing ownership or fallback order.
 - 54 SURFACE_END(session,commit): commits with 1 or cancels with 0 under the
@@ -3510,3 +3469,11 @@ unimplemented capabilities or prevent the scoped initial cutover.
 Complete the desktop/accessory, standard GEM, RCS, callback/fault/cleanup,
 CLI/fallback, legacy architecture and release matrix before integration. Merge
 current master into the epic and resolve conflicts before marking #681 ready.
+
+Generic timer clock source (#907)
+--------------------------------
+libaes deadline and arrow-repeat calculations read the authoritative hz_200
+through GEMDOS Ssystem(S_GETLVAL,0x4ba,0). The userspace adapter retains the
+low-31-bit tick ring and original timer deadline across internal GUI wakes.
+This clock requires neither a CUIS session nor GUI registration. The maximum
+supported 32-bit millisecond timeout remains shorter than its wrap.

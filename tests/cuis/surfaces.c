@@ -17,10 +17,6 @@ static int surface_checks(void)
     CHECK(cuis_session_wait(b,0,CUIS_READY_KEY,0) == CUIS_READY_KEY);
     CHECK((*find_owner(run))->input_result[0] == 0x1e0061);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,b,3) == EINVAL);
-    CHECK(cuis_surface_service(CUIS_CLOCK,b,1) == EINVAL);
-    input_ticks = 0xffffffffUL;
-    CHECK(cuis_surface_service(CUIS_CLOCK,b,0) == 0x7fffffffL);
-    input_ticks = 0;
     run = &first;
     CHECK(cuis_display_lock(a,1,1) == E_OK);
     CHECK(cuis_vdi_clip(0,&rect) && rect.y == 20 && rect.height == display_height-20);

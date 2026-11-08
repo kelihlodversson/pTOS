@@ -49,8 +49,6 @@ static void *reuse_allocation;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
 static LONG copied[5];
-static PD *input_message_sender;
-static LONG input_message_destination;
 static BOOL fail_copy;
 static UQUAD fail_copy_address;
 static BOOL input_irqs = TRUE, input_bad_idle;
@@ -210,13 +208,6 @@ void cuis_input_idle(void)
     }
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
-    if (input_message_sender) {
-        PD *saved = run;
-        run = input_message_sender;
-        input_message_sender = NULL;
-        cuis_message_service(CUIS_MESSAGE_SEND, input_message_destination, 11, 22, 33, 44, 0);
-        run = saved;
-    }
     if (mouse_release_owner) {
         PD *saved = run;
         run = mouse_release_owner;
@@ -269,7 +260,7 @@ BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
     if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
     context_read_hook();
     if (address >= 0x20000) {
-        memcpy(stream_output + address - 0x20000, source, size); return TRUE;
+        memcpy(stream_output + (address - 0x20000), source, size); return TRUE;
     }
     copied[(address - 0x1000) / 4] = *(const LONG *)source;
     return TRUE;
@@ -288,7 +279,7 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
     }
     context_copy_hook();
     child_copy_hook();
-    memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
+    memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
 }
 BOOL kproc_validate_user_range(UQUAD address, ULONG size)
 {
@@ -357,7 +348,6 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "focus.c"
 #include "input.c"
 #include "pointer.c"
-#include "messages.c"
 #include "delay.c"
 #include "streams.c"
 #include "stream_lifetime.c"
@@ -485,8 +475,6 @@ int main(void)
     rc = pointer_checks();
     if (rc) return rc;
     rc = window_limit_checks();
-    if (rc) return rc;
-    rc = message_checks();
     if (rc) return rc;
     rc = delay_checks();
     if (rc) return rc;

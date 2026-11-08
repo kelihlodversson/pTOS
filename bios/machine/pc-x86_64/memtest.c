@@ -4317,11 +4317,8 @@ static void test_cuis_scheduler(void)
             if (handles[i] < 0) break;
         }
         if (i == 2) {
-            for (i = 0; i < 2; i++) {
-                run = programs[i];
-                CHECK(cuis_message_service(CUIS_MESSAGE_SEND, handles[i], handles[1-i], 0, 0, 0, 0) == E_OK,
-                      "bootstrap a known peer without adding an application-facing API");
-            }
+            /* Clients discover fixture labels and exchange ordinary stream
+             * packets themselves; no kernel-only message bootstrap exists. */
             run = root;
             CHECK(ksched_run(programs, 0, results) == EINVAL, "scheduler rejects empty groups");
             CHECK(ksched_run(programs, KSCHED_LIMIT + 1, results) == EINVAL, "scheduler validates its synchronous bootstrap batch bound");

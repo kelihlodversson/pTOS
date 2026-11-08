@@ -71,10 +71,6 @@ LONG aes_key_read(LONG window, ULONG *key)
 {
     return cuis_call6(CUIS_KEY_READ, (QUAD)window, (uintptr_t)key, 0, 0, 0, 0);
 }
-LONG aes_key_wait(LONG window, LONG timeout_ms)
-{
-    return cuis_call5(CUIS_KEY_WAIT, window, timeout_ms, 0, 0, 0);
-}
 
 LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state)
 {
@@ -84,18 +80,4 @@ LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *stat
 LONG aes_event_wait(LONG window, ULONG events, LONG timeout_ms)
 {
     return cuis_call6(CUIS_EVENT_WAIT, (QUAD)window, events, (QUAD)timeout_ms, 0, 0, 0);
-}
-
-LONG aes_message_send(LONG destination, ULONG a, ULONG b, ULONG c, ULONG d)
-{
-    return cuis_call6(CUIS_MESSAGE_SEND, (QUAD)destination, a, b, c, d, 0);
-}
-LONG aes_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, ULONG *d)
-{
-    return cuis_call6(CUIS_MESSAGE_READ, (QUAD)session, (uintptr_t)sender,
-                      (uintptr_t)a, (uintptr_t)b, (uintptr_t)c, (uintptr_t)d);
-}
-LONG aes_message_wait(LONG session, LONG timeout_ms)
-{
-    return cuis_call5(CUIS_MESSAGE_WAIT, session, timeout_ms, 0, 0, 0);
 }

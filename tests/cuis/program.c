@@ -1,6 +1,6 @@
 /* Real standard-ELF clients, with overlapping lifetimes in distinct spaces. */
 #include "config.h"
-#include "native_probe.h"
+#include "stream_probe.h"
 #include "gemerror.h"
 #include "ptos.h"
 int libaes_object_checks(void);
@@ -85,18 +85,18 @@ static int key_checks(LONG window)
 #endif
     CHECK(probe_window_unfocus(window) == E_OK && probe_window_focus(window) == E_OK);
     CHECK(probe_key_read(window, (ULONG *)0) == 0);
-    CHECK(probe_key_wait(window, 0) == 0);
-    CHECK(probe_key_wait(window, -2) == EINVAL);
-    CHECK(probe_key_wait(window, 1) == 0);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 0);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, -2) == EINVAL);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 1) == 0);
     CHECK(probe_update_begin(window) == E_OK);
-    CHECK(probe_key_wait(window, 10) == EACCDN);
-    CHECK(probe_key_wait(window, 0) == 0);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 10) == EACCDN);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 0);
     CHECK(probe_update_end(window) == E_OK);
 #if CONF_WITH_X86_64_MEMTEST
     /* The boot fixture produces one translated keyboard event from the next
      * real PIT IRQ only after this call reaches its atomic sleep path. */
-    CHECK(probe_key_wait(window, -1) == 1);
-    CHECK(probe_key_wait(window, 0) == 1);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, -1) == 1);
+    CHECK(probe_event_wait(window, CUIS_EVENT_KEY, 0) == 1);
     CHECK(probe_key_read(window, (ULONG *)0) == EIMBA);
     CHECK(probe_key_read(window, (ULONG *)(uintptr_t)raw_key_read) == EIMBA);
     CHECK(raw_key_read(window, (1ULL << 32) | (uintptr_t)&key) == EIMBA);
@@ -152,46 +152,21 @@ static int pointer_checks(void)
     CHECK(probe_window_destroy(window) == E_OK);
     return 0;
 }
-static LONG raw_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, UQUAD d)
-{
-    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_MESSAGE_READ;
-    register UQUAD di __asm__("rdi") = (QUAD)session, si __asm__("rsi") = (uintptr_t)sender;
-    register UQUAD dx __asm__("rdx") = (uintptr_t)a, r10 __asm__("r10") = (uintptr_t)b;
-    register UQUAD r8 __asm__("r8") = (uintptr_t)c, r9 __asm__("r9") = d;
-    __asm__ volatile ("syscall" : "+a"(ax)
-        : "r"(di), "r"(si), "r"(dx), "r"(r10), "r"(r8), "r"(r9)
-        : "rcx", "r11", "memory", "cc");
-    return (LONG)ax;
-}
 static int message_checks(LONG session, LONG window)
 {
-    LONG sender = -1;
-    ULONG a, b, c, d, i;
-    CHECK(probe_message_read(session, NULL, NULL, NULL, NULL, NULL) == 0);
-    CHECK(probe_message_wait(session, 0) == 0);
-    CHECK(probe_message_wait(session, -2) == EINVAL);
-    CHECK(probe_message_send(-1, 0, 0, 0, 0) == EINVAL);
-    for (i = 0; i < 16; i++) CHECK(probe_message_send(session, i, 0xffffffffUL, 3, 4) == E_OK);
-    CHECK(probe_message_send(session, 99, 0, 0, 0) == EAGAIN);
-    CHECK(probe_event_wait(window, CUIS_EVENT_MESSAGE | CUIS_EVENT_KEY, 0) == 1);
-    CHECK(probe_message_wait(session, -1) == 1);
-    CHECK(probe_message_read(session, &sender, &a, &b, &c, NULL) == EIMBA && sender == -1);
-    CHECK(raw_message_read(session, &sender, &a, &b, &c,
-                           (1ULL << 32) | (uintptr_t)&d) == EIMBA && sender == -1);
-    CHECK(probe_message_read(session, &sender, &a, &b, &c, (ULONG *)(uintptr_t)raw) == EIMBA && sender == -1);
-    for (i = 0; i < 16; i++) {
-        CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1);
-        CHECK(sender == session && a == i && b == 0xffffffffUL && c == 3 && d == 4);
-    }
-    CHECK(probe_message_read(session, NULL, NULL, NULL, NULL, NULL) == 0);
-    CHECK(probe_event_wait(window, CUIS_EVENT_MESSAGE, 1) == 0);
-    CHECK(probe_message_wait(session, 1) == 0);
-    CHECK(probe_update_begin(window) == E_OK);
-    CHECK(probe_message_wait(session, 1) == EACCDN);
-    CHECK(probe_message_send(session, 7, 0, 0, 0) == E_OK);
-    CHECK(probe_message_wait(session, -1) == 1);
-    CHECK(probe_update_end(window) == E_OK);
-    CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == 7);
+    PROBE_PACKET packet;
+    LONG ready;
+    (void)window;
+    CHECK(probe_packet_wait(session,0) == CUIS_READY_TIMER);
+    CHECK(probe_packet_write(session,session,7,22,33,44) == sizeof(packet));
+    CHECK(probe_packet_wait(session,-1) == CUIS_READY_STREAM);
+    /* Readiness does not consume; rejected output cannot consume bytes. */
+    CHECK(probe_call6(CUIS_STREAM_READ,session,0,sizeof(packet),0,0,0) == EIMBA);
+    CHECK(probe_packet_wait(session,-1) == CUIS_READY_STREAM);
+    CHECK(probe_packet_read(session,&packet) == sizeof(packet));
+    CHECK(packet.endpoint == session && packet.word[0] == 7 && packet.word[3] == 44);
+    ready = probe_packet_wait(session,1);
+    CHECK(ready == CUIS_READY_TIMER);
     return 0;
 }
 int main(int argc, char **argv, char **envp)
@@ -222,10 +197,10 @@ int main(int argc, char **argv, char **envp)
         }
         CHECK(probe_session_query(owner) == EACCDN);
         CHECK(probe_session_close(owner) == EACCDN);
-        CHECK(probe_message_read(owner, NULL, NULL, NULL, NULL, NULL) == EACCDN);
-        CHECK(probe_message_send(owner, 1, 2, 3, 4) == EACCDN);
+        CHECK(probe_call6(CUIS_STREAM_READ,owner,0,20,0,0,0) == EACCDN);
+        CHECK(probe_packet_write(owner, 0, 1, 2, 3, 4) == EACCDN);
         CHECK(probe_key_read(parent_window, (ULONG *)0) == EACCDN);
-        CHECK(probe_key_wait(parent_window, 0) == EACCDN);
+        CHECK(probe_event_wait(parent_window, CUIS_EVENT_KEY, 0) == EACCDN);
         CHECK(probe_event_wait(parent_window, CUIS_EVENT_POINTER, 0) == EACCDN);
         CHECK(probe_pointer_read(parent_window, (LONG *)0, (LONG *)0, (ULONG *)0, (ULONG *)0) == EACCDN);
     }
@@ -233,7 +208,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(handle >= 0 && probe_session_open() == handle);
     if (argc == 2) {
         /* GEM appl_write needs no receiver handshake or permission API. */
-        CHECK(probe_message_send(owner, 1, 2, 3, 4) == E_OK);
+        CHECK(probe_packet_write(owner, handle, 1, 2, 3, 4) == sizeof(PROBE_PACKET));
     }
     CHECK(raw(CUIS_SESSION_START, ~0ULL) == handle);
     CHECK(raw(CUIS_SESSION_QUERY, (1ULL << 32) | (ULONG)handle) == EINVAL);
@@ -306,11 +281,10 @@ int main(int argc, char **argv, char **envp)
         tail[1] = i == 0 ? 'c' : i == 1 ? 'l' : i == 2 ? 'f' : 'o';
         CHECK(client_pexec(argv[0], tail, "") == (i >= 2 ? 0xffff : 77));
         {
-            LONG sender;
-            ULONG a, b, c, d;
-            CHECK(probe_message_read(handle, &sender, &a, &b, &c, &d) == 1);
-            CHECK(sender > handle && a == 1 && b == 2 && c == 3 && d == 4);
-            CHECK(probe_message_read(handle, NULL, NULL, NULL, NULL, NULL) == 0);
+            PROBE_PACKET packet;
+            CHECK(probe_packet_read(handle,&packet) == sizeof(packet));
+            CHECK(packet.endpoint > handle && packet.word[0] == 1 && packet.word[1] == 2 && packet.word[2] == 3 && packet.word[3] == 4);
+            CHECK(probe_packet_wait(handle,0) == CUIS_READY_TIMER);
         }
         CHECK(probe_session_query(handle) == E_OK);
         CHECK(probe_window_focused(window) == 1);
@@ -333,10 +307,9 @@ int main(int argc, char **argv, char **envp)
     CHECK(client_pexec(argv[0], tail, "") == 77);
     CHECK(probe_update_end(window) == E_OK);
     {
-        LONG sender;
-        ULONG a, b, c, d;
-        CHECK(probe_message_read(handle, &sender, &a, &b, &c, &d) == 1);
-        CHECK(sender > handle && a == 1 && b == 2 && c == 3 && d == 4);
+        PROBE_PACKET packet;
+        CHECK(probe_packet_read(handle,&packet) == sizeof(packet));
+        CHECK(packet.endpoint > handle && packet.word[0] == 1 && packet.word[1] == 2 && packet.word[2] == 3 && packet.word[3] == 4);
     }
     CHECK(probe_window_destroy(window) == E_OK);
     CHECK(probe_window_destroy(window) == EACCDN);

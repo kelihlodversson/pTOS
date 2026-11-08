@@ -1,6 +1,6 @@
 /* Exercise standard MiNT process calls; no custom scheduling syscall. */
 #include "config.h"
-#include "native_probe.h"
+#include "stream_probe.h"
 #include "gemerror.h"
 #include "sysconf.h"
 #include "bdosdefs.h"
@@ -58,9 +58,10 @@ static LONG waitpid(LONG pid, LONG flags, UQUAD usage)
 }
 int main(int argc, char **argv, char **envp)
 {
-    LONG session, pid, me, parent, status, sender, base;
+    LONG session, pid, me, parent, status, base;
+    PROBE_PACKET packet;
     LONG children[12];
-    ULONG a, b, c, d, usage[2], i, j, child_env;
+    ULONG usage[2], i, j, child_env;
     char command[20];
     (void)envp;
     CHECK(argc == 2);
@@ -73,8 +74,8 @@ int main(int argc, char **argv, char **envp)
         WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
         CHECK(vcall(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&ws, 0, 0) == E_OK);
         CHECK(vcall(VDI_SERVICE_VECTOR, ws.handle, 125, (uintptr_t)fault_button, (uintptr_t)&old) == E_OK);
-        CHECK(probe_message_send((LONG)unhex(argv[1]+2), me, 0, 0, 0) == E_OK);
-        CHECK(probe_message_wait(session, -1) == 1);
+        CHECK(probe_packet_write((LONG)unhex(argv[1]+2), session, me, 0, 0, 0) == sizeof(PROBE_PACKET));
+        CHECK(probe_packet_wait(session, -1) == 1);
         return 0x6000; /* The foreign callback must terminate us before returning. */
     }
 #endif
@@ -84,8 +85,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(call(0x3d, (uintptr_t)argv[0], 0, 0, 0) >= 0); /* exit must close this */
         if (mode == 'd') {
             CHECK(call(0x10c, 0, 0, 0, 0) != parent);
-            CHECK(probe_message_send((LONG)unhex(argv[1]+2), 1, 2, 3, 4) == EACCDN);
-            CHECK(probe_message_wait(session, 5) == 0);
+            CHECK(probe_packet_write((LONG)unhex(argv[1]+2), session, 1, 2, 3, 4) == EACCDN);
+            CHECK(probe_packet_wait(session, 5) == CUIS_READY_TIMER);
             {
                 static const char marker[] = "x32 async orphan: PASS\r\n";
                 ptos_write(1, marker, sizeof(marker)-1);
@@ -93,10 +94,10 @@ int main(int argc, char **argv, char **envp)
             return 0;
         }
         CHECK(call(0x10c, 0, 0, 0, 0) == parent);
-        CHECK(probe_message_send((LONG)unhex(argv[1]+2), me, parent, 3, 4) == E_OK);
+        CHECK(probe_packet_write((LONG)unhex(argv[1]+2), session, me, parent, 3, 4) == sizeof(PROBE_PACKET));
         if (mode == '1') _Exit(77);
         if (mode == '2') __asm__ volatile ("ud2");
-        CHECK(probe_message_wait(session, 5) == 0);
+        CHECK(probe_packet_wait(session, 5) == CUIS_READY_TIMER);
         return 0x1234;
     }
     if (argv[1][0] == 'o' || argv[1][0] == 'z' || argv[1][0] == 'v' || argv[1][0] == 'f') {
@@ -120,13 +121,13 @@ int main(int argc, char **argv, char **envp)
         CHECK(vcall(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&ws, 0, 0) == E_OK);
         tail(command, '0', session, me); command[1] = 'b';
         pid = spawn(argv[0], command); CHECK(pid > 0);
-        CHECK(probe_message_wait(session, -1) == 1);
-        CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == (ULONG)pid);
+        CHECK(probe_packet_wait(session, -1) == 1);
+        CHECK(probe_packet_read(session, &packet) == sizeof(PROBE_PACKET) && packet.word[0] == (ULONG)pid);
         CHECK(vcall(VDI_SERVICE_VECTOR, ws.handle, 125, (uintptr_t)safe_button, (uintptr_t)&old) == E_OK);
         CHECK(old.old_handler != 0);
         ((void (*)(WORD))(uintptr_t)old.old_handler)(0x1234);
         CHECK(call(0x10b, 0, 0, 0, 0) == me); /* The invoking parent survives. */
-        CHECK(probe_message_send(sender, 0, 0, 0, 0) == E_OK); /* Resume the owner for deferred exit. */
+        CHECK(probe_packet_write(packet.endpoint, session, 0, 0, 0, 0) == sizeof(PROBE_PACKET)); /* Resume the owner for deferred exit. */
         CHECK(waitpid(pid, 0, 0) == (LONG)(((ULONG)pid << 16) | 0x0400));
         CHECK(vcall(VDI_SERVICE_CLOSE, ws.handle, 0, 0, 0) == E_OK);
         {
@@ -153,8 +154,8 @@ int main(int argc, char **argv, char **envp)
         CHECK(waitpid(pid, 1, ~0ULL) == 0); /* Child has not run yet. */
         CHECK(waitpid(me, 1, 0) == EFILNF);
         CHECK(call(0xff, 0, 0, 0, 0) == 0);
-        CHECK(probe_message_wait(session, -1) == 1);
-        CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1 && a == (ULONG)pid && b == (ULONG)me);
+        CHECK(probe_packet_wait(session, -1) == 1);
+        CHECK(probe_packet_read(session, &packet) == sizeof(PROBE_PACKET) && packet.word[0] == (ULONG)pid && packet.word[1] == (ULONG)me);
         CHECK(waitpid(pid, 0, (1ULL << 32) | (uintptr_t)usage) == EIMBA);
         CHECK(waitpid(pid, 0, (uintptr_t)main) == EIMBA);
         if (i == 3) status = call(0x11c, 0, (uintptr_t)usage, ~0ULL, ~0ULL);
@@ -178,11 +179,11 @@ int main(int argc, char **argv, char **envp)
         for (j = 0; j < 12 && children[j] != (LONG)((ULONG)status >> 16); j++) ;
         CHECK(j < 12); children[j] = 0;
     }
-    for (i = 0; i < 12; i++) CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1);
+    for (i = 0; i < 12; i++) CHECK(probe_packet_read(session,&packet) == sizeof(PROBE_PACKET));
     for (i = 0; i < 16; i++) {
         pid = spawn(argv[0], command); CHECK(pid > 0);
         CHECK(((ULONG)waitpid(pid, 0, 0) >> 16) == (ULONG)pid);
-        CHECK(probe_message_read(session, &sender, &a, &b, &c, &d) == 1);
+        CHECK(probe_packet_read(session, &packet) == sizeof(PROBE_PACKET));
     }
     {
         static const char empty_tail[] = { 0, 0 };
@@ -195,7 +196,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(pid > 0 && waitpid(pid, 0, 0) == (LONG)((ULONG)pid << 16));
         CHECK(call(0x4b, 0, (uintptr_t)argv[0], (uintptr_t)nested_tail, (uintptr_t)environment) == 0);
         CHECK(call(0xff, 0, 0, 0, 0) == E_OK);
-        CHECK(probe_message_wait(session, 10) == 0);
+        CHECK(probe_packet_wait(session, 10) == CUIS_READY_TIMER);
     }
     CHECK(call(0x109, 0, 0, 0, 0) == EFILNF);
     {
