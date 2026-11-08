@@ -1261,6 +1261,7 @@ void kproc_mark_started(PD *pd)
         kproc->started = TRUE;
 }
 
+#if CONF_WITH_USER_ASPACE
 static void publish_discarded_identity(void *token)
 {
     KPROC *process = token;
@@ -1279,6 +1280,7 @@ void kproc_discard_after_free(PD *pd)
     }
     kproc_discard(pd);
 }
+#endif
 
 BOOL kproc_discard(PD *pd)
 {
