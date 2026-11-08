@@ -27,8 +27,6 @@ static int delay_checks(void)
     delay_tick_step = 1;
     window = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 10, 10, 0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, window, 0, 0, 0, 0) == E_OK);
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN, window, 0, 0, 0, 0) == E_OK);
-    CHECK(cuis_delay_service(first_session, 1) == EACCDN);
     CHECK(cuis_delay_service(first_session, 0) == E_OK);
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(cuis_delay_service(first_session, 0) == EACCDN);

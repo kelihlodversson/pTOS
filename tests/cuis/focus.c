@@ -15,9 +15,6 @@ static int focus_checks(void)
     CHECK(F(CUIS_WINDOW_RAISE,a) == E_OK && !input_window(a)->redraw);
     CHECK(F(CUIS_FOCUS_QUERY,0x100000000ULL|(ULONG)a) == EINVAL);
     CHECK(F(CUIS_FOCUS_QUERY,~0ULL) == EINVAL);
-    CHECK(F(CUIS_UPDATE_BEGIN,a) == E_OK);
-    CHECK(F(CUIS_FOCUS_QUERY,a) == 1 && F(CUIS_WINDOW_HIDE,a) == EAGAIN);
-    CHECK(F(CUIS_UPDATE_END,a) == E_OK);
     run=&second;
     CHECK(cuis_service(CUIS_SESSION_START,0) >= 0);
     CHECK(F(CUIS_FOCUS_QUERY,a) == EACCDN && F(CUIS_WINDOW_RAISE,a) == EACCDN);

@@ -20,7 +20,6 @@ static int display_checks(void)
     CHECK(cuis_vdi_policy() == 1 && cuis_vdi_clip(0, &clip));
     CHECK(!clip.x && !clip.y && clip.width == display_width && clip.height == display_height);
     CHECK(!cuis_vdi_clip(1, &clip));
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN, a, 0, 0, 0, 0) == EAGAIN);
     CHECK(cuis_delay_service(first_session, 1) == E_OK && display_depth == 2);
     CHECK(cuis_window_service(CUIS_WINDOW_OUTSET, a, 65536, 0, 0, 0) == EINVAL);
     CHECK(cuis_window_service(CUIS_WINDOW_OUTSET, a, 2, 2, 0, 0) == E_OK);

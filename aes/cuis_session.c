@@ -142,10 +142,6 @@ static LONG pointer_x, pointer_y, pointer_width, pointer_height;
 static ULONG pointer_buttons;
 static BOOL pointer_activation_drag, pointer_control_drag;
 static BOOL pointer_initialized, pointer_seen, pointer_suppressed, pointer_legacy_drag;
-static CUIS_CLIENT *update_owner;
-static CUIS_WINDOW *update_window;
-static CUIS_RECT *update_clips;
-static ULONG update_count;
 static CUIS_CLIENT *mouse_owner;
 static CUIS_CLIENT *keyboard_owner;
 static ULONG keyboard_depth;
@@ -239,7 +235,7 @@ static void surface_register(CUIS_CLIENT *client, UWORD height)
 }
 static void surface_focus(void)
 {
-    if (!surface_focus_pending || display_owner || update_owner || surface_capture) return;
+    if (!surface_focus_pending || display_owner || surface_capture) return;
     surface_focus_pending = FALSE;
     if (focus_window && focus_window->client->surface_height && surface_owner != focus_window->client)
         surface_choose(focus_window->client);
@@ -257,16 +253,6 @@ static void surface_fallback(CUIS_CLIENT *exclude)
     for (client = surface_front; client; client = client->surface_next)
         if (client != exclude) break;
     surface_choose(client);
-}
-
-static void end_update(void)
-{
-    if (update_clips) kfree(update_clips);
-    update_clips = NULL;
-    update_count = 0;
-    update_owner = NULL;
-    surface_focus();
-    update_window = NULL;
 }
 
 static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total)
@@ -311,18 +297,6 @@ static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total
     if (!count) { kfree(a); a = NULL; }
     *rects = a;
     *total = count;
-    return E_OK;
-}
-
-static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
-{
-    LONG result;
-    if (console_owner || update_owner || display_owner) return EAGAIN;
-    if (!window->visible) return EINVAL;
-    result = visible_regions(window, &update_clips, &update_count);
-    if (result < 0) return result;
-    update_owner = client;
-    update_window = window;
     return E_OK;
 }
 
@@ -792,7 +766,7 @@ static void clear_display_regions(CUIS_CLIENT *client)
 static BOOL display_available(void *argument)
 {
     (void)argument;
-    return !console_owner && !display_owner && !update_owner;
+    return !console_owner && !display_owner;
 }
 
 LONG cuis_pointer_style(UQUAD handle, UQUAD address, UQUAD hidden)
@@ -1011,7 +985,7 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     } else if (function == CUIS_SURFACE_REGISTER) {
         screen_get_current_mode_desc(&mode);
         if (argument && (argument > 32767 || argument >= mode.height || !mode.width)) result = EINVAL;
-        else if ((display_owner && display_owner != client) || (update_owner && update_owner != client) ||
+        else if ((display_owner && display_owner != client) ||
                  (surface_capture && surface_capture != client)) result = EAGAIN;
         else {
             if (surface_painter) result = EACCDN;
@@ -1045,7 +1019,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             display_depth++;
             cuis_input_unlock(flags); return E_OK;
         }
-        if (!console_owner && !display_owner && !update_owner) {
+        if (!console_owner && !display_owner) {
             screen_get_current_mode_desc(&mode);
             if (!mode.width || !mode.height) { cuis_input_unlock(flags); return EINVFN; }
             display_clip.x = display_clip.y = 0;
@@ -1057,11 +1031,10 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
          * that owner can be waiting for this gesture's mouse control.
          * EACCDN distinguishes contention from the EAGAIN borrow case below;
          * ordinary nonblocking callers retain their existing EAGAIN result. */
-        if (block && mouse_owner == client && update_owner != client) {
+        if (block && mouse_owner == client) {
             cuis_input_unlock(flags); return EACCDN;
         }
-        /* Waiting for a per-window section owned by this caller deadlocks. */
-        if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
+        if (!block) { cuis_input_unlock(flags); return EAGAIN; }
         /* This is an IRQ mask, not a held mutex. ksched_block requires
          * masked IRQs and restores the selected task's saved context; idle
          * uses STI/HLT/CLI. Unlocking here would race the availability check
@@ -1196,7 +1169,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             sample_input_waits();
             cuis_input_unlock(flags); return E_OK;
         }
-        if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
+        if (!block) { cuis_input_unlock(flags); return EAGAIN; }
         /* Keep the availability test and waiter publication under the same
          * IRQ mask, just like DISPLAY_LOCK; no lock spans task execution. */
         if (!ksched_block(mouse_available, client)) cuis_input_idle();
@@ -1230,7 +1203,6 @@ static void session_exit(PD *owner)
         if (surface_owner == client) surface_fallback(client);
         if (mouse_owner == client) end_mouse();
         cuis_input_unlock(flags);
-        if (update_owner == client) end_update();
         if (display_owner == client) { clear_display_regions(client); display_owner = NULL; display_depth = 0; }
         while ((window = client->windows) != NULL) {
             client->windows = window->next;
@@ -1268,7 +1240,7 @@ void cuis_process_exit(PD *owner)
 }
 
 #if CONF_WITH_X86_64_MEMTEST
-BOOL cuis_update_active(void) { return update_owner != NULL || display_owner != NULL; }
+BOOL cuis_update_active(void) { return display_owner != NULL; }
 BOOL cuis_mouse_active(void) { return mouse_owner != NULL; }
 BOOL cuis_focus_active(void) { return focus_window != NULL; }
 BOOL cuis_pointer_attached(void) { return pointer_hover != NULL || pointer_capture != NULL; }
@@ -1426,7 +1398,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
     owner = cohort.owner == client;
     if (function == CUIS_COHORT_BEGIN) {
         if (cohort.owner || console_owner || mouse_owner || keyboard_owner || pointer_capture ||
-            background_capture || surface_capture || update_owner || display_owner) { result = EAGAIN; goto out; }
+            background_capture || surface_capture || display_owner) { result = EAGAIN; goto out; }
         if (next_cohort == 0x7fffffffUL) { result = ENSMEM; goto out; }
         if (!client->stream_data) client->stream_data = kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
         if (!client->stream_data) { result = ENSMEM; goto out; }
@@ -1686,7 +1658,7 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
         CUIS_WINDOW **link, *window, *selected_windows = NULL, **tail = &selected_windows;
         if (handle > 0x7fffffffULL) result = EINVAL;
         else if (!(peer = find_handle(handle))) result = EFILNF;
-        else if (console_owner || update_owner || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
+        else if (console_owner || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
                  pointer_capture || background_capture || surface_capture) result = EAGAIN;
         else {
             /* Extract one client's windows without reversing their order or
@@ -1770,14 +1742,13 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     BOOL changed;
 
     if (!((function >= CUIS_WINDOW_CREATE && function <= CUIS_WINDOW_LOWER) ||
-          function == CUIS_UPDATE_BEGIN || function == CUIS_UPDATE_END ||
           function == CUIS_FOCUS_QUERY ||
           function == CUIS_WINDOW_IDENTIFY || function == CUIS_WINDOW_OUTSET || function == CUIS_WINDOW_POLICY ||
           function == CUIS_WINDOW_CONTENT || function == CUIS_WINDOW_CORNER)) return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
     if (function == CUIS_WINDOW_CREATE) {
-        if (update_owner || (display_owner && display_owner != client)) return EAGAIN;
+        if (display_owner && display_owner != client) return EAGAIN;
         if (!valid_geometry(a, b, c, d)) return EINVAL;
         if (window_total >= CUIS_WINDOW_LIMIT || client->window_count >= CUIS_WINDOWS_PER_SESSION ||
             next_window_handle > 0x7fffffffUL) return ENSMEM;
@@ -1818,14 +1789,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     window = *link;
     if (!window) return EACCDN;
     if (function == CUIS_WINDOW_IDENTIFY) return window->identifier;
-    if (function == CUIS_UPDATE_BEGIN) return begin_update(client, window);
-    if (function == CUIS_UPDATE_END) {
-        if (update_owner != client || update_window != window) return EACCDN;
-        end_update();
-        return E_OK;
-    }
     if (function == CUIS_FOCUS_QUERY) return focus_window == window ? 1 : 0;
-    if (update_owner || (display_owner && display_owner != client)) return EAGAIN;
+    if (display_owner && display_owner != client) return EAGAIN;
     switch (function) {
     case CUIS_WINDOW_DESTROY:
         if (window->pending_regions) kfree(window->pending_regions);
@@ -1950,7 +1915,6 @@ LONG cuis_windows_reset(UQUAD handle)
     if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
     if (mouse_owner == client) end_mouse();
     if (keyboard_owner == client) end_keyboard();
-    if (update_owner == client) end_update();
     cuis_input_unlock(flags);
     result = cuis_display_lock(handle,1,1);
     if (result != E_OK) return result;
@@ -1965,28 +1929,6 @@ LONG cuis_windows_reset(UQUAD handle)
     display_depth = 0; display_owner = NULL;
     surface_focus(); cuis_pointer_sync();
     cuis_input_unlock(flags); return E_OK;
-}
-
-/* Indexed copyout has no mutable cursor: failed copyout can be retried without
- * dropping a region. Validate every destination before writing any output. */
-LONG cuis_clip_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
-                       UQUAD width, UQUAD height)
-{
-    CUIS_RECT *rect;
-    if (handle > 0x7fffffffULL || index > 0xffffffffULL) return EINVAL;
-    if (!update_owner || update_owner->owner != run ||
-        update_window->handle != handle) return EACCDN;
-    if (index >= update_count) return 0;
-    if (!kproc_validate_user_write(x, sizeof(LONG)) ||
-        !kproc_validate_user_write(y, sizeof(LONG)) ||
-        !kproc_validate_user_write(width, sizeof(LONG)) ||
-        !kproc_validate_user_write(height, sizeof(LONG))) return EIMBA;
-    rect = &update_clips[(ULONG)index];
-    if (!kproc_copy_to_user(x, &rect->x, sizeof(LONG)) ||
-        !kproc_copy_to_user(y, &rect->y, sizeof(LONG)) ||
-        !kproc_copy_to_user(width, &rect->width, sizeof(LONG)) ||
-        !kproc_copy_to_user(height, &rect->height, sizeof(LONG))) return EIMBA;
-    return 1;
 }
 
 /* User-output access can tear down the process/window. Resolve identities
@@ -2100,7 +2042,6 @@ LONG cuis_vdi_policy(void)
 {
     if (console_owner) return EAGAIN;
     if (display_owner) return display_owner->owner == run ? 1 : EAGAIN;
-    if (update_owner) return update_owner->owner == run ? 1 : EAGAIN;
     return *find_owner(run) ? EACCDN : 0;
 }
 BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
@@ -2115,15 +2056,7 @@ BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
         }
         return TRUE;
     }
-    if (!update_owner || update_owner->owner != run || index >= update_count)
-        return FALSE;
-    *rect = update_clips[index];
-    if (surface_owner && rect->y < surface_owner->surface_height) {
-        LONG cut = surface_owner->surface_height-rect->y;
-        if (cut > rect->height) cut = rect->height;
-        rect->y += cut; rect->height -= cut;
-    }
-    return TRUE;
+    return FALSE;
 }
 
 typedef struct {
@@ -2176,10 +2109,6 @@ static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, 
             cuis_input_unlock(flags);
             return 0;
         }
-        if (update_owner && update_owner->owner == run) {
-            cuis_input_unlock(flags);
-            return EACCDN;
-        }
 #if CONF_WITH_X86_64_MEMTEST
         if (timeout == -1) cuis_input_test_wait(events);
 #endif
@@ -2197,7 +2126,6 @@ LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds)
     if (handle > 0x7fffffffULL || milliseconds > 0xffffffffULL) return EINVAL;
     if (!client || client->handle != handle) return EACCDN;
     if (!milliseconds) return ksched_yield();
-    if (update_owner && update_owner->owner == run) return EACCDN;
     flags = cuis_input_lock();
     wait.client = client; wait.window = NULL; wait.events = 0;
     wait.start = cuis_input_ticks(); wait.timeout = 0;
@@ -2457,10 +2385,6 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
             client->input_wait = NULL;
             cuis_input_unlock(flags); return ready;
         }
-        if (update_owner == client) {
-            client->input_wait = NULL;
-            cuis_input_unlock(flags); return EACCDN;
-        }
         if (!ksched_block(session_wait_ready, &wait)) cuis_input_idle();
     }
 }
@@ -2660,7 +2584,6 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
             return (LONG)length;
         }
         if (!block) { result = EAGAIN; break; }
-        if (update_owner == client) { result = EACCDN; break; }
         if (!ksched_block(stream_ready, &wait)) cuis_input_idle();
     }
     cuis_input_unlock(flags);
@@ -3070,8 +2993,7 @@ static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQU
         /* Own update nesting is released by the resident desktop after the
          * launch returns. Foreign drawing and all modal grabs must be idle. */
         flags = cuis_input_lock();
-        if (console_owner || console_launcher || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
-            (update_owner && update_owner != client)) {
+        if (console_owner || console_launcher || (display_owner && display_owner != client) || mouse_owner || keyboard_owner) {
             cuis_input_unlock(flags);
             if (token) (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
             return EAGAIN;

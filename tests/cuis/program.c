@@ -26,9 +26,9 @@ static LONG raw(ULONG function, UQUAD handle)
 #undef CHECK
 #define CHECK(condition) do { if (!(condition)) return 0x4000 | __LINE__; } while (0)
 /* Poison high address bits without letting the x32 C pointer ABI truncate. */
-static LONG raw_clip(LONG window, UQUAD index, LONG *x, LONG *y, LONG *w, UQUAD height)
+static LONG raw_region(LONG window, UQUAD index, LONG *x, LONG *y, LONG *w, UQUAD height)
 {
-    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_WINDOW_CLIP;
+    register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_WINDOW_REGION;
     register UQUAD di __asm__("rdi") = (QUAD)window, si __asm__("rsi") = index;
     register UQUAD dx __asm__("rdx") = (uintptr_t)x, r10 __asm__("r10") = (uintptr_t)y;
     register UQUAD r8 __asm__("r8") = (uintptr_t)w, r9 __asm__("r9") = height;
@@ -37,35 +37,35 @@ static LONG raw_clip(LONG window, UQUAD index, LONG *x, LONG *y, LONG *w, UQUAD 
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
-static int update_checks(LONG window)
+static int region_checks(LONG window)
 {
     LONG x, y, width, height, occluder;
-    CHECK(probe_update_begin(window) == E_OK);
-    CHECK(probe_window_clip(window, 0, &x, &y, &width, &height) == 1);
+    CHECK(probe_display_lock(probe_session_open(),1,0) == E_OK);
+    CHECK(probe_window_region(window, 0, &x, &y, &width, &height) == 1);
     CHECK(x == 0 && y == 30 && width == 100 && height == 90);
     x = 777;
-    CHECK(probe_window_clip(window, 0, &x, &y, &width, (LONG *)0) == EIMBA);
+    CHECK(probe_window_region(window, 0, &x, &y, &width, (LONG *)0) == EIMBA);
     CHECK(x == 777);
-    CHECK(raw_clip(window, 0, &x, &y, &width, (1ULL << 32) | (uintptr_t)&height) == EIMBA);
+    CHECK(raw_region(window, 0, &x, &y, &width, (1ULL << 32) | (uintptr_t)&height) == EIMBA);
     CHECK(x == 777);
-    CHECK(probe_window_clip(window, 0, &x, &y, &width, (LONG *)(uintptr_t)raw) == EIMBA);
-    CHECK(raw_clip(window, 1ULL << 32, &x, &y, &width, (uintptr_t)&height) == EINVAL);
-    CHECK(probe_window_clip(window, 0, &x, &y, &width, &height) == 1);
-    CHECK(probe_window_clip(window, 1, (LONG *)0, (LONG *)0, (LONG *)0, (LONG *)0) == 0);
-    CHECK(probe_update_begin(window) == EAGAIN);
-    CHECK(probe_window_hide(window) == EAGAIN);
-    CHECK(probe_update_end(window) == E_OK);
+    CHECK(probe_window_region(window, 0, &x, &y, &width, (LONG *)(uintptr_t)raw) == EIMBA);
+    CHECK(raw_region(window, 1ULL << 32, &x, &y, &width, (uintptr_t)&height) == EINVAL);
+    CHECK(probe_window_region(window, 0, &x, &y, &width, &height) == 1);
+    CHECK(probe_window_region(window, 1, (LONG *)0, (LONG *)0, (LONG *)0, (LONG *)0) == 0);
+    CHECK(probe_display_lock(probe_session_open(),1,0) == E_OK);
+    CHECK(probe_display_lock(probe_session_open(),0,0) == E_OK);
+    CHECK(probe_display_lock(probe_session_open(),0,0) == E_OK);
     occluder = probe_window_create(0, 40, 20, 10);
     CHECK(occluder >= 0 && probe_window_show(occluder) == E_OK);
-    CHECK(probe_update_begin(window) == E_OK);
-    CHECK(probe_window_clip(window, 0, &x, &y, &width, &height) == 1);
+    CHECK(probe_display_lock(probe_session_open(),1,0) == E_OK);
+    CHECK(probe_window_region(window, 0, &x, &y, &width, &height) == 1);
     CHECK(x == 0 && y == 30 && width == 100 && height == 10);
-    CHECK(probe_window_clip(window, 1, &x, &y, &width, &height) == 1);
+    CHECK(probe_window_region(window, 1, &x, &y, &width, &height) == 1);
     CHECK(x == 0 && y == 50 && width == 100 && height == 70);
-    CHECK(probe_window_clip(window, 2, &x, &y, &width, &height) == 1);
+    CHECK(probe_window_region(window, 2, &x, &y, &width, &height) == 1);
     CHECK(x == 20 && y == 40 && width == 80 && height == 10);
-    CHECK(probe_window_clip(window, 3, &x, &y, &width, &height) == 0);
-    CHECK(probe_update_end(window) == E_OK);
+    CHECK(probe_window_region(window, 3, &x, &y, &width, &height) == 0);
+    CHECK(probe_display_lock(probe_session_open(),0,0) == E_OK);
     CHECK(probe_window_destroy(occluder) == E_OK);
     return 0;
 }
@@ -194,14 +194,20 @@ int main(int argc, char **argv, char **envp)
     CHECK(raw(CUIS_SESSION_END, ~0ULL) == EINVAL);
     CHECK(probe_session_query(-1) == EINVAL);
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
+    {
+        static const ULONG retired[]={10,11,12,13,14,16,17,18,19,21,22,23,52};
+        ULONG retired_index;
+        for (retired_index=0;retired_index<sizeof(retired)/sizeof(retired[0]);retired_index++)
+            CHECK(probe_call6(retired[retired_index],handle,0,0,0,0,0) == EINVFN);
+    }
     if (argc == 2 && argv[1][0] == 'u') {
         LONG x, y, w, h;
         rc = libaes_drawing_exit_handle();
         if (rc) return rc;
         CHECK(probe_window_create(0, 0, 1, 1) == EAGAIN);
-        CHECK(probe_update_end(parent_window) == EACCDN);
+        CHECK(probe_display_lock(owner,0,0) == EACCDN);
         CHECK(probe_window_focused(parent_window) == EACCDN);
-        CHECK(probe_window_clip(parent_window, 0, &x, &y, &w, &h) == EACCDN);
+        CHECK(probe_window_region(parent_window, 0, &x, &y, &w, &h) == EACCDN);
         return 77;
     }
     window = probe_window_create(-10, 20, 100, 80);
@@ -219,7 +225,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(probe_window_create(0x7fffffffL, 0, 1, 1) == EINVAL);
     CHECK(rc_intersect(&first, &second) && second.g_x == 10 && second.g_y == 10 &&
           second.g_w == 10 && second.g_h == 10 && inside(19, 19, &second));
-    rc = update_checks(window);
+    rc = region_checks(window);
     if (rc) return rc;
     CHECK(probe_call6(CUIS_WINDOW_POLICY,window,1,0,0,0,0) == E_OK);
     CHECK(probe_window_raise(window) == E_OK);
@@ -229,10 +235,9 @@ int main(int argc, char **argv, char **envp)
     CHECK(probe_call6(CUIS_WINDOW_POLICY,window,1,0,0,0,0) == E_OK);
     CHECK(probe_window_raise(window) == E_OK);
     if (argc == 2) {
-        CHECK(probe_update_begin(window) == E_OK);
+        CHECK(probe_display_lock(probe_session_open(),1,0) == E_OK);
         CHECK(probe_window_focused(window) == 1);
-        CHECK(probe_window_hide(window) == EAGAIN);
-        CHECK(probe_window_raise(parent_window) == EACCDN);
+            CHECK(probe_window_raise(parent_window) == EACCDN);
         rc = libaes_drawing_exit_handle();
         if (rc) return rc;
         for (function = CUIS_WINDOW_SHOW; function <= CUIS_WINDOW_LOWER; function++)
@@ -262,8 +267,8 @@ int main(int argc, char **argv, char **envp)
         }
         CHECK(probe_session_query(handle) == E_OK);
         CHECK(probe_window_focused(window) == 1);
-        CHECK(probe_update_begin(window) == E_OK);
-        CHECK(probe_update_end(window) == E_OK);
+        CHECK(probe_display_lock(probe_session_open(),1,0) == E_OK);
+        CHECK(probe_display_lock(probe_session_open(),0,0) == E_OK);
         CHECK(probe_window_configure(window, -10, 20, 100, 80) == E_OK);
     }
     rc = message_checks(handle, window);
@@ -274,10 +279,10 @@ int main(int argc, char **argv, char **envp)
     if (rc) return rc;
     rc = libaes_drawing_checks();
     if (rc) return rc;
-    CHECK(probe_update_begin(window) == E_OK);
+    CHECK(probe_display_lock(probe_session_open(),1,0) == E_OK);
     tail[1] = 'u';
     CHECK(client_pexec(argv[0], tail, empty_environment) == 77);
-    CHECK(probe_update_end(window) == E_OK);
+    CHECK(probe_display_lock(probe_session_open(),0,0) == E_OK);
     {
         PROBE_PACKET packet;
         CHECK(probe_packet_read(handle,&packet) == sizeof(packet));
@@ -298,7 +303,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(window >= 0 && probe_window_show(window) == E_OK);
     CHECK(probe_call6(CUIS_WINDOW_POLICY,window,1,0,0,0,0) == E_OK);
     CHECK(probe_window_raise(window) == E_OK);
-    CHECK(probe_update_begin(window) == E_OK);
+    CHECK(probe_display_lock(probe_session_open(),1,0) == E_OK);
     /* Leave the reopened session to library finalization. */
     {
         static const char pass[] = "x32 libaes objects: PASS\r\nx32 CUIS visibility: PASS\r\nx32 CUIS clipping: PASS\r\nx32 CUIS focus: PASS\r\nx32 CUIS keyboard: PASS\r\nx32 CUIS pointer/events: PASS\r\nx32 CUIS messages: PASS\r\nx32 libaes/CUIS sessions: PASS\r\n";
