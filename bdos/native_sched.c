@@ -351,6 +351,36 @@ static void wait_probe_on_root(void)
     wait_probe.pending=FALSE;
     ksched_admission_release(&wait_probe.producer);
 }
+/* Independent of the parent-blocked ticket test: x32's kernel memory suite
+ * drives real ring-3 yields without a public Pwait parent task. */
+static BOOL sequence_probed;
+static void sequence_probe_on_yield(void)
+{
+    KERNEL_TASK *task=scheduler.current;
+    KSCHED_ADMISSION admission={0};
+    KSCHED_WAITER ticket={0};
+    KSCHED_WAIT_OBSERVATION observation;
+    KTHREAD *thread;
+    void *context;
+    ULONG tid;
+    LONG output=-91;
+    if (sequence_probed || !task || task->program!=run ||
+        !(thread=ksched_exit_thread(run)) || ksched_cancellation_pending()) return;
+    tid=kthread_tid(thread);
+    if (ksched_admission_create(task->process,1,&admission) ||
+        ksched_waiter_attach(&admission,task->process,tid,task->execution.identity,1,&ticket))
+        panic("scheduler: native sequence preparation");
+    context=ksched_waiter_context(&ticket);
+    ksched_waiter_observe(context,&observation);
+    if (ksched_waiter_ready(context) || !ksched_admission_complete(&admission,0,91) ||
+        wait_observed(ksched_waiter_ready,context,&observation)!=KSCHED_WAIT_READY ||
+        scheduler.current!=task || task->state!=TASK_RUNNING || task->ready || task->argument ||
+        ksched_waiter_take(&ticket,task->process,tid,task->execution.identity,&output,1) || output!=91)
+        panic("scheduler: native sequence check/block retry");
+    ksched_waiter_detach(&ticket); ksched_admission_release(&admission);
+    sequence_probed=TRUE;
+    kcprintf("native completion sequence check/block retry: PASS\n");
+}
 static void wait_probe_on_yield(void)
 {
     KERNEL_TASK *task=scheduler.current, *parent;
@@ -376,24 +406,6 @@ static void wait_probe_on_yield(void)
         parent->state!=TASK_BLOCKED || wait_probe.pending)
         panic("scheduler: native TID waiter resumed wrong execution");
     ksched_admission_release(&admission);
-    {
-        KSCHED_WAITER ticket={0};
-        KSCHED_WAIT_OBSERVATION observation;
-        void *context;
-        LONG output=-91;
-        if (ksched_admission_create(task->process,1,&admission) ||
-            ksched_waiter_attach(&admission,task->process,tid,wait_probe.execution,1,&ticket))
-            panic("scheduler: native sequence preparation");
-        context=ksched_waiter_context(&ticket);
-        ksched_waiter_observe(context,&observation);
-        if (ksched_waiter_ready(context) || !ksched_admission_complete(&admission,0,91) ||
-            wait_observed(ksched_waiter_ready,context,&observation)!=KSCHED_WAIT_READY ||
-            scheduler.current!=task || task->state!=TASK_RUNNING || task->ready || task->argument ||
-            ksched_waiter_take(&ticket,task->process,tid,wait_probe.execution,&output,1) || output!=91)
-            panic("scheduler: native sequence check/block retry");
-        ksched_waiter_detach(&ticket); ksched_admission_release(&admission);
-        kcprintf("native completion sequence check/block retry: PASS\n");
-    }
     /* Simulate an abandoned owning handle without a borrowed stack pointer.
      * Root must retire it after this real execution has stopped. */
     if (ksched_admission_create(task->process,1,&admission) ||
@@ -950,6 +962,7 @@ LONG ksched_yield(void)
     x86_64_memtest_clone_yield(); /* process context, before IRQ exclusion */
 #endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    sequence_probe_on_yield();
     wait_probe_on_yield();
 #endif
     flags = native_sched_irq_save();
