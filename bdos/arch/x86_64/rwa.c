@@ -172,7 +172,7 @@ void x86_64_memtest_fail_next_exit_handoff(void) { fail_next_exit_handoff = TRUE
  * The active syscall stack remains owned by this existing launcher. */
 BOOL proc_defer_observer(PD *pd, KPROC *observer)
 {
-    X86_64_PROCESS_LAUNCH *launch = current_launch;
+    X86_64_PROCESS_LAUNCH *launch = get_current_launch();
     if (!launch || launch->pd != pd || !launch->stack_phys) return FALSE;
     if (!observer || launch->exit_process || launch->fallback_observer)
         panic("duplicate fallback observer ownership");
