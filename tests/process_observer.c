@@ -110,9 +110,11 @@ int main(void)
     assert(p->pid==retained_pid && p->number>retained_number);
     assert(process_observer_attach(p,&a)==0);
     assert(kproc_begin_exit(&child)); kproc_destroy(&child);
+    assert(!process_observer_ready(a) && process_observer_snapshot(a,&snap) &&
+           snap.state==PROCESS_UNSTARTED);
+    kproc_publish_observers(p);
     assert(process_observer_snapshot(a,&snap) && snap.state==PROCESS_ABANDONED &&
            snap.kind==PROCESS_COMPLETION_NONE && !snap.status && !snap.signal && !snap.order_low && !snap.order_high);
-    assert(!process_observer_ready(a)); kproc_publish_observers(p);
     assert(process_observer_ready(a)); process_observer_release(&a); kproc_release(p);
     {
         PD slow = {0}, fast = {0};
@@ -155,7 +157,8 @@ int main(void)
     assert(kproc_create(&child));
     assert(process_observer_attach(kproc_find(&child),&a)==E_OK);
     kproc_discard_after_free(&child);
-    assert(!process_observer_ready(a) && !kproc_ref_has_basepage(a));
+    assert(!process_observer_ready(a) && !kproc_ref_has_basepage(a) &&
+           process_observer_snapshot(a,&snap) && snap.state==PROCESS_UNSTARTED);
     assert(allocation_finished && allocation_token==a);
     allocation_finished(allocation_token);
     allocation_finished=NULL; allocation_token=NULL;

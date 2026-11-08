@@ -497,7 +497,7 @@ BOOL kproc_ref_completion(const KPROC *process, PROCESS_COMPLETION *out)
         snapshot.kind = process->exit_signal ? PROCESS_COMPLETION_SIGNAL : PROCESS_COMPLETION_NORMAL;
         if (process->exit_signal) snapshot.signal = process->exit_signal;
         else snapshot.status = process->exit_status;
-    } else if (completion_flag(&process->retired)) snapshot.state = PROCESS_ABANDONED;
+    } else if (completion_flag(&process->observer_ready)) snapshot.state = PROCESS_ABANDONED;
     else snapshot.state = process->started ? PROCESS_RUNNING : PROCESS_UNSTARTED;
     *out = snapshot;
     return TRUE;
@@ -1239,6 +1239,7 @@ void kproc_mark_started(PD *pd)
         kproc->started = TRUE;
 }
 
+#if CONF_WITH_USER_ASPACE
 static void publish_discarded_identity(void *token)
 {
     KPROC *process = token;
@@ -1257,6 +1258,7 @@ void kproc_discard_after_free(PD *pd)
     }
     kproc_discard(pd);
 }
+#endif
 
 BOOL kproc_discard(PD *pd)
 {
