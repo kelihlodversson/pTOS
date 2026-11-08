@@ -33,8 +33,8 @@ int has_alt_ram;
 
 static void still_deferred(void)
 {
-    CHECK(tasks[1].state == TASK_DEFERRED && tasks[1].deferred_owner == &owner);
-    CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner == &other);
+    CHECK(tasks[1].state == TASK_DEFERRED && tasks[1].deferred_owner_identity == (KPROC *)&owner);
+    CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner_identity == (KPROC *)&other);
 }
 SBYTE *kproc_uft(PD *p)
 {
@@ -180,9 +180,9 @@ void termuser(void)
     CHECK(run == &parent && parent.p_dreg[0] == 37 && observer_publications);
     CHECK(!owner_record && !child_record && !owner_memory && term_handlers == 1);
     CHECK(identity_completions == 1 && cleanup_commits == 1);
-    CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner);
+    CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner_identity);
     CHECK(tasks[1].thread == (KTHREAD *)&successor && !thread_destroys);
-    CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner == &other);
+    CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner_identity == (KPROC *)&other);
     CHECK(completions == (unsigned)(nested && !parent_retired));
     CHECK(references[0] == successor_aliases && sft[0].f_use == (int)successor_aliases);
     if (successor_aliases)
@@ -199,9 +199,9 @@ static void exit_check(void)
     tasks[0].program = nested ? &parent : &owner;
     tasks[0].process = (KPROC *)tasks[0].program;
     tasks[0].state = TASK_RUNNING; tasks[0].asynchronous = TRUE;
-    tasks[1].program = &successor; tasks[1].deferred_owner = &owner; tasks[1].state = TASK_DEFERRED;
+    tasks[1].program = &successor; tasks[1].deferred_owner_identity = (KPROC *)&owner; tasks[1].state = TASK_DEFERRED;
     tasks[1].thread = (KTHREAD *)&successor;
-    tasks[2].deferred_owner = &other; tasks[2].state = TASK_DEFERRED;
+    tasks[2].deferred_owner_identity = (KPROC *)&other; tasks[2].state = TASK_DEFERRED;
     memset(owner_files,0,sizeof(owner_files));
     memset(successor_files,0,sizeof(successor_files));
     memset(sft,0,sizeof(sft));

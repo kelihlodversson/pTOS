@@ -15,6 +15,7 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #include "ksched_lifetime.h"
+#include "process_exec_internal.h"
 #endif
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
@@ -107,6 +108,8 @@ struct kproc {
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
+    BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
+    struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
     BOOL group_exiting;
@@ -374,6 +377,30 @@ static KPROC *kproc_reference(KPROC *process)
     process->references++;
     return process;
 }
+
+KPROC *kproc_retain_identity(KPROC *process)
+{
+    if (!process || !process->references) return NULL;
+    return kproc_reference(process);
+}
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+struct process_exec_handle **kproc_exec_handles(KPROC *owner)
+{
+    return owner && !owner->retired ? &owner->exec_handles : NULL;
+}
+BOOL kproc_exec_commit_begin(KPROC *owner)
+{
+    if (!kproc_live_pd(owner) || owner->exec_committing) return FALSE;
+    owner->exec_committing = TRUE;
+    return TRUE;
+}
+void kproc_exec_commit_end(KPROC *owner)
+{
+    if (!owner || !owner->exec_committing) panic("PROCESS launch selection ownership lost");
+    owner->exec_committing = FALSE;
+}
+
+#endif
 
 KPROC *kproc_retain(PD *pd)
 {
@@ -983,6 +1010,11 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+            /* Registry cursor is detached; the lookup reference still owns
+             * this identity. Child teardown cannot invalidate an outer link. */
+            proc_exec_owner_exit(kproc);
+#endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
             if (kproc->test_controller_first) clone_drop_controller(kproc);
 #endif
@@ -1239,6 +1271,7 @@ void kproc_mark_started(PD *pd)
         kproc->started = TRUE;
 }
 
+#if CONF_WITH_USER_ASPACE
 static void publish_discarded_identity(void *token)
 {
     KPROC *process = token;
@@ -1257,6 +1290,7 @@ void kproc_discard_after_free(PD *pd)
     }
     kproc_discard(pd);
 }
+#endif
 
 BOOL kproc_discard(PD *pd)
 {

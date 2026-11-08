@@ -10,7 +10,13 @@
 
 static PD owner, successor, other;
 static KERNEL_TASK tasks[KSCHED_LIMIT];
-static unsigned phase;
+static unsigned phase, owner_refs;
+PD *run;
+static BOOL committing;
+BOOL kproc_exec_commit_begin(KPROC *p)
+{ CHECK(p==(KPROC *)&owner); if(committing)return FALSE; committing=TRUE; return TRUE; }
+void kproc_exec_commit_end(KPROC *p)
+{ CHECK(p==(KPROC *)&owner && committing); committing=FALSE; }
 
 
 #if CONF_WITH_USER_ASPACE
@@ -29,8 +35,11 @@ void proc_dispose_deferred(PD *pd)
 }
 #endif
 
+KPROC *kproc_retain(PD *pd)
+{ CHECK(pd==&owner); owner_refs++; return (KPROC *)pd; }
 void kproc_release(KPROC *process)
 {
+    if (process==(KPROC *)&owner) { CHECK(owner_refs); owner_refs--; return; }
     CHECK(phase == 2 && process == (KPROC *)&successor);
     phase++;
 }
@@ -59,13 +68,13 @@ int main(void)
     tasks[1].program = &successor;
     tasks[1].process = (KPROC *)&successor;
     tasks[1].thread = (KTHREAD *)&successor;
-    tasks[1].deferred_owner = &owner;
+    tasks[1].deferred_owner_identity = (KPROC *)&owner; owner_refs=1;
     tasks[1].execution.stack.physical = 123;
     tasks[2].state = TASK_DEFERRED;
-    tasks[2].deferred_owner = &other;
-    CHECK(ksched_defer_cancel() == E_OK && phase == 3);
+    tasks[2].deferred_owner_identity = (KPROC *)&other;
+    CHECK(ksched_defer_cancel() == E_OK && phase == 3 && !owner_refs);
     CHECK(tasks[2].state == TASK_DEFERRED);
-    CHECK(ksched_defer_cancel() == E_OK && phase == 3);
+    CHECK(ksched_defer_cancel() == E_OK && phase == 3 && !owner_refs);
     puts("Deferred cancellation releases its process reference and stack once: PASS");
     return 0;
 }

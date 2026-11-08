@@ -73,6 +73,17 @@ LONG kproc_identity_info(PD *caller, PROCESS_IDENTITY *info);
  * References are serialized by the current cooperative kernel. */
 KPROC *kproc_retain(PD *pd);
 void kproc_release(KPROC *process);
+/* Duplicate an already owned live or retired identity; caller keeps its own
+ * reference across this serialized acquisition. No numeric lookup/authority. */
+KPROC *kproc_retain_identity(KPROC *process);
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+struct process_exec_handle;
+struct process_exec_handle **kproc_exec_handles(KPROC *owner);
+/* Logical nonblocking transaction admission under the cooperative owner
+ * protocol. Prevent reentrant successor selection across destructor callbacks. */
+BOOL kproc_exec_commit_begin(KPROC *owner);
+void kproc_exec_commit_end(KPROC *owner);
+#endif
 WORD kproc_ref_pid(const KPROC *process);
 /* Completion may already have been recorded while the PD is still present. */
 BOOL kproc_ref_has_basepage(const KPROC *process);
@@ -138,7 +149,9 @@ ULONG kproc_count(void);                /* live records, for leak tests and S_ME
  * that was never launched, whose inherited file and directory references
  * are therefore still held. */
 BOOL kproc_discard(PD *pd);
+#if CONF_WITH_USER_ASPACE
 void kproc_discard_after_free(PD *pd);
+#endif
 BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched */
 #endif
 #if CONF_WITH_USER_ASPACE

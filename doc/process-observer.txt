@@ -41,13 +41,10 @@ acquires the observer before any runnable publication and stores the kernel
 output only after success. Load/CWD/reference/admission failure destroys the
 unstarted child and preserves the output. This trusted API has no GUI session,
 console flag or callback, and never calls a public wait/reaper. Its existing
-serialized loader/no-unwind/bounded-close contract still applies. The current
-CWD implementation reuses the existing FAT process-directory helper, now also
-available to non-GUI native scheduler configurations. With PLUGGABLE_FS,
-explicit child-CWD setup returns EINVFN and rolls back before publication:
-that resolver is still bound to run, and its cookie indices are not FAT slots.
-Inherited CWD remains supported. A PROCESS-owned PFS resolver is a remaining
-public-loader prerequisite; switching global run is not a permitted workaround.
+serialized loader/no-unwind/bounded-close contract still applies. Explicit CWD preparation uses the existing filesystem
+service with target-PROCESS FAT or PFS resolution. PFS acquires its own cookie
+and replacement table storage before dropping inherited references; it never
+switches global run. Inherited CWD remains unchanged when no directory is given.
 
 Readiness and synchronization
 -----------------------------
@@ -109,11 +106,12 @@ abandon uncommitted handles and release committed observers, independently of
 retained wait/PID identities. Invalid requests/copyout must preserve ownership
 and outputs. Deferral must retain owner identity, never a reusable PD pointer.
 
-Needed backend helper, not yet implemented: proc_exec_retain_observer(owner,
-handle,require_prepared,&empty). It must authenticate the calling PROCESS and
-retain the canonical target before leaving the owner protocol; require_prepared
-is for GUI console-lease attachment before publication. The GUI adapter will
-own lease policy and rollback, not loader/scheduler/completion ownership.
+The trusted owned-rights backend now implements proc_exec_retain_observer(owner,
+handle,require_prepared,&empty). It authenticates the current canonical PROCESS
+and duplicates the canonical identity, including already-retired completion.
+require_prepared supports GUI console-lease attachment before publication. No
+GUI lease is introduced by that helper. The numeric public request handler and
+deferred policy extraction remain separate work, not an enabled syscall here.
 
 The CUIS agent proposes SESSION_WAIT's unused arguments for an observer-handle
 array/count. Preflight would acquire generic references; operation-local leases
@@ -196,3 +194,18 @@ children without a separate syscall stack publish after their inline cleanup.
 Attached THREAD exits still require their verified handoff and never use this
 fallback. Classic non-ASPACE KPROC omits observer-only metadata and is guarded
 against exceeding the shared fixed-pool payload at compile time.
+
+PROCESS-owned rights staging
+---------------------------
+The initial trusted handle backend owns a per-KPROC list of rights, not another
+PROCESS registry. Each right owns either a private prepared admission or one
+canonical completion reference after publication. Positive handle numbers never
+wrap or recycle. PID, PD, TID and AES client identity never authenticate them.
+The current live PROCESS may prepare, commit once, snapshot without consumption,
+close, and retain operation-local observer leases. CLOSE of committed rights
+never cancels or reaps the child, including before it first executes. Final
+PROCESS teardown closes all owned preparations and observations before resource
+retirement; stopping a sibling THREAD does not run this cleanup. Leases survive
+handle closure and parent retirement without retaining heavy retired resources.
+The public 72-byte request and CANCEL_DEFERRED transport remain disabled while
+the deferred policy and argument/copyout frontdoor are completed and tested.

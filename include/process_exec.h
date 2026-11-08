@@ -33,6 +33,9 @@ typedef struct {
 typedef char PROCESS_EXEC_REQUEST_LAYOUT[
     sizeof(PROCESS_EXEC_REQUEST)==72 && __alignof__(PROCESS_EXEC_REQUEST)==4 &&
     offsetof(PROCESS_EXEC_REQUEST,operation)==0 && offsetof(PROCESS_EXEC_REQUEST,handle)==4 &&
-    offsetof(PROCESS_EXEC_REQUEST,path)==16 && offsetof(PROCESS_EXEC_REQUEST,completion)==32 &&
+    offsetof(PROCESS_EXEC_REQUEST,policy)==8 && offsetof(PROCESS_EXEC_REQUEST,reserved)==12 &&
+    offsetof(PROCESS_EXEC_REQUEST,path)==16 && offsetof(PROCESS_EXEC_REQUEST,tail)==20 &&
+    offsetof(PROCESS_EXEC_REQUEST,environment)==24 && offsetof(PROCESS_EXEC_REQUEST,directory)==28 &&
+    offsetof(PROCESS_EXEC_REQUEST,completion)==32 &&
     offsetof(PROCESS_EXEC_REQUEST,reserved_tail)==64 ? 1 : -1];
 #endif
