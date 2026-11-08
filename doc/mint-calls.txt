@@ -214,3 +214,15 @@ Ssystem(S_PROCNAME = -7, buffer, capacity)
   snapshots retained identity metadata before user copyout; retired identities
   keep their basename without retaining a basepage or live resources. GEM
   labels and accessory classification remain libaes policy.
+
+Ssystem(S_PROCIDENT = -8, PROCESS_IDENTITY *, sizeof(PROCESS_IDENTITY))
+  Fixed 16-byte in/out snapshot defined in process_identity.h. Selector zero
+  queries the current PROCESS and requires zero number/PID. Selector NUMBER
+  requires a nonzero number and zero PID; selector PID requires a PID in
+  1..32767 and zero number. Output supplies number_low/high, PID and zero
+  selector. Unknown identity returns ESRCH; malformed requests/size return
+  EINVAL without modifying input. Copy faults return EIMBA. Numbers never
+  recycle, including PD/PID reuse; they are not pointers, TIDs or AES IDs.
+  Retained retired identities remain discoverable without retaining live
+  resources. Snapshot queries grant no owning reference or wait/reap rights.
+  This service is independent of CUIS and has no endpoint discovery policy.

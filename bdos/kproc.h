@@ -61,6 +61,11 @@ void kproc_set_dta(PD *pd, DTAINFO *dta);
 DTAINFO *kproc_get_dta(PD *pd);
 #if CONF_WITH_KPROC
 typedef struct kproc KPROC;
+#include "process_identity.h"
+/* Snapshot queries never own wait/reap rights. Numbers are not kernel pointers,
+ * PIDs, TIDs or GUI client IDs. Retained identity reserves its number/PID only. */
+UQUAD kproc_ref_number(const KPROC *process);
+LONG kproc_identity_info(PD *caller, PROCESS_IDENTITY *info);
 /* A successful retain owns one reference. The live PD lookup holds another.
  * After destruction the retained record is an identity/completion snapshot:
  * it does not retain or provide access to the PD or live process resources.

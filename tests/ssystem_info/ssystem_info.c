@@ -78,6 +78,31 @@ void test_ssystem_info(void)
                          "zero PROCESS name capacity is refused");
     }
 
+    if (Ssystem(SS_INQUIRE, -7, 0L) == 0) {
+        struct { unsigned long low, high; long pid; unsigned long selector; } identity, request;
+        ptest_assert_msg(Ssystem(SS_INQUIRE, -8, 0L) == 0,
+                         "generic PROCESS identity service is missing");
+        memset(&identity, 0, sizeof(identity));
+        ptest_assert_msg(sizeof(identity) == 16 &&
+                         Ssystem(-8, (long)&identity, (long)sizeof(identity)) == 0 &&
+                         (identity.low || identity.high) && identity.pid == Pgetpid(),
+                         "current PROCESS identity snapshot");
+        memset(&request, 0, sizeof(request)); request.pid = identity.pid; request.selector = 2;
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)) == 0 &&
+                         !memcmp(&request, &identity, sizeof(identity)), "PROCESS lookup by PID");
+        request = identity; request.pid = 0; request.selector = 1;
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)) == 0 &&
+                         !memcmp(&request, &identity, sizeof(identity)), "PROCESS lookup by number");
+        ptest_assert_msg(Ssystem(-8, -1L, (long)sizeof(request)) == EIMBA,
+                         "wrapping PROCESS identity request is refused");
+        request = identity; request.selector = 1;
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)) == -25 &&
+                         request.pid == identity.pid && request.selector == 1,
+                         "ambiguous PROCESS query is refused without modifying input");
+        ptest_assert_msg(Ssystem(-8, (long)&request, (long)sizeof(request)-1) == -25,
+                         "short PROCESS query is refused");
+    }
+
     /* S_INQUIRE: every mode the call implements, and one that does not */
     {
         static const long modes[] = {
