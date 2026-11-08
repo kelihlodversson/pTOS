@@ -2092,9 +2092,15 @@ static void clone_observer_release(void *context)
 {
     CLONE_RUN_OBSERVER *watch = context;
     UWORD status;
+    PROCESS_COMPLETION completion;
     CHECK(watch->registered == 1 && !watch->released, "registered clone observer releases once");
     if (kproc_ref_status(watch->process, &status)) {
         watch->completed++;
+        CHECK(kproc_ref_terminal(watch->process) && kproc_ref_completion(watch->process,&completion) &&
+              completion.state==PROCESS_COMPLETED && (completion.order_low || completion.order_high) &&
+              (completion.kind==PROCESS_COMPLETION_NORMAL ? completion.status==status :
+               completion.kind==PROCESS_COMPLETION_SIGNAL && completion.signal>0 && !completion.status),
+              "native clone authoritative snapshot follows resource and wait publication");
         CHECK(status == watch->expected && !kproc_ref_has_basepage(watch->process),
               "observer retains correct completed PID/status after live resources retire");
     }

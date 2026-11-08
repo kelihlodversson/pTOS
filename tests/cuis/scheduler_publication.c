@@ -10,6 +10,7 @@
 static KERNEL_TASK table[KSCHED_LIMIT];
 static PD parent, child, peer;
 static UWORD allocations, frees, notifications;
+static unsigned refused_disposals;
 PD *run;
 void *kalloc(ULONG bytes)
 { CHECK(bytes == sizeof(table)); allocations++; return table; }
@@ -19,11 +20,13 @@ void kproc_usage(PD *p, ULONG usage[8]) { (void)p; memset(usage,0,8*sizeof(*usag
 PD *kproc_notification_parent(PD *p) { (void)p; return NULL; }
 KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
 void kproc_release(KPROC *p) { (void)p; }
+void kproc_publish_observers(KPROC *p)
+{ CHECK(p==(KPROC *)&child && table[0].state==TASK_DONE && refused_disposals==1); }
 WORD kproc_pid(PD *p) { (void)p; return 42; }
 void cuis_child_completed(PD *p, WORD pid, UWORD status)
 { (void)p; (void)pid; (void)status; notifications++; }
 static BOOL refused_stopped;
-static unsigned refused_disposals;
+
 LONG proc_start_scheduled(PD *p, BOOL take) { (void)take; CHECK(p==&child); return EIMBA; }
 BOOL kthread_stop(KTHREAD *t) { CHECK(t==(KTHREAD *)1 && !refused_stopped); refused_stopped=TRUE; return TRUE; }
 BOOL kthread_is_stopped(const KTHREAD *t) { CHECK(t==(KTHREAD *)1); return refused_stopped; }

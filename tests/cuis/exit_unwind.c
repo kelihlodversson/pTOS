@@ -14,6 +14,7 @@ static SBYTE files[NUMSTD];
 static UBYTE dirs[NUMCURDIR];
 static unsigned phase, commits, publications, releases, destroyed, successors;
 static BOOL disposing;
+static unsigned observer_publications;
 static jmp_buf fatal, original_error;
 jmp_buf errbuf;
 long errcode;
@@ -28,6 +29,9 @@ BOOL kproc_commit_exit_handoff(KPROC *p, PD **pd)
     CHECK(p == (KPROC *)&child && !disposing);
     disposing = TRUE; commits++; *pd = &child; return TRUE;
 }
+KTHREAD *ksched_exit_thread(PD *p) { CHECK(p==&child); return NULL; }
+void kproc_publish_observers(KPROC *p)
+{ CHECK(p==(KPROC *)&child && destroyed && successors); observer_publications++; }
 void kproc_complete(PD *p, UWORD status)
 { CHECK(p == &child && status == 37 && disposing); publications++; }
 void ksched_exiting(PD *p, UWORD status)
@@ -61,16 +65,17 @@ int main(void)
      * retirement. The retained identity, not a reconstructed PD, is released. */
     for (phase = 0; phase <= 4; phase++) {
         commits = publications = releases = destroyed = successors = 0;
-        disposing = FALSE;
+        disposing = FALSE; observer_publications=0;
         dirs[0] = 1;
         memset(errbuf, 0x5a, sizeof(errbuf));
         memcpy(original_error, errbuf, sizeof(errbuf));
         if (!setjmp(fatal)) {
             proc_finalize_exit((KPROC *)&child, 37, TRUE, 4096);
             CHECK(!phase && !releases && !proc_resident_pd);
+            CHECK(observer_publications==1);
             kproc_release((KPROC *)&child);
         } else {
-            CHECK(phase && !proc_resident_pd && !proc_resident_len);
+            CHECK(phase && !proc_resident_pd && !proc_resident_len && !observer_publications);
         }
         CHECK(!memcmp(original_error, errbuf, sizeof(errbuf)));
         CHECK(commits == 1 && publications == 1 && releases == 1);

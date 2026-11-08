@@ -18,6 +18,13 @@ void panic(const char *fmt, ...) { (void)fmt; abort(); }
 KPROC *kproc_retain_live(KPROC *p) { if (!p->live) return NULL; p->references++; return p; }
 void kproc_release(KPROC *p) { assert(p && p->references > 1); p->references--; }
 WORD kproc_ref_pid(const KPROC *p) { return p->pid; }
+BOOL kproc_ref_completion(const KPROC *p, PROCESS_COMPLETION *out)
+{
+    memset(out,0,sizeof(*out)); out->pid=p->pid;
+    out->state=p->completed ? PROCESS_COMPLETED : PROCESS_RUNNING;
+    if (p->completed) { out->kind=PROCESS_COMPLETION_NORMAL; out->status=p->status; }
+    return TRUE;
+}
 BOOL kproc_ref_status(const KPROC *p, UWORD *status) { if (!p->completed) return FALSE; *status = p->status; return TRUE; }
 KASPACE *kproc_active_space(const KPROC *p) { return p->live ? space : NULL; }
 BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *t) { (void)t; return p->live; }
@@ -40,6 +47,7 @@ int main(void)
     PROC_CLONE_TRANSACTION tx[2];
     PROC_CLONE_OBSERVER *observer[2] = { NULL, NULL }, *sentinel = (PROC_CLONE_OBSERVER *)123;
     PROC_CLONE_COMPLETION result = { 9, 8, 7 };
+    PROCESS_COMPLETION snapshot;
     unsigned i;
     memset(draft,0,sizeof(draft)); memset(tx,0,sizeof(tx));
     for (i=0; i<2; i++) { tx[i].source=&source; tx[i].process=&target[i]; tx[i].space=space;
@@ -67,6 +75,8 @@ int main(void)
     proc_clone_observer_release(&observer[0]); proc_clone_observer_release(&observer[0]);
     assert(target[0].references==2); detach(&draft[0]); assert(target[0].references==1);
     target[1].completed=TRUE; target[1].live=FALSE; target[1].status=0xffff;
+    assert(proc_clone_observer_process_snapshot(observer[1],&snapshot) &&
+           snapshot.state==PROCESS_COMPLETED && snapshot.kind==PROCESS_COMPLETION_NORMAL && snapshot.status==0xffff);
     detach(&draft[1]); /* Root releases first; caller can observe after wait/reap. */
     assert(proc_clone_observer_state(observer[1])==PROC_CLONE_OBSERVER_REAPED && target[1].references==2);
     assert(proc_clone_observer_result(observer[1],&result) && result.pid==32 && result.tid==72 && result.status==0xffff);
@@ -93,6 +103,8 @@ int main(void)
     assert(proc_clone_observe_async(&tx[0],&observer[0])==E_OK);
     observer[0]->state=PROC_CLONE_OBSERVER_PUBLISHED;
     assert(!proc_clone_observer_result(observer[0],&result));
+    memset(&snapshot,0x5a,sizeof(snapshot));
+    assert(!proc_clone_observer_process_snapshot(observer[0],&snapshot) && snapshot.pid==0x5a5a5a5a);
     thread_done=TRUE;thread_status=0x1234;
     detach(&draft[0]);
     assert(!observer[0]->thread && !target[0].completed &&

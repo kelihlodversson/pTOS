@@ -51,13 +51,13 @@ PYCONFIG
         --header "$work/autoconf.h" --makefile "$work/auto.conf"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        -iquote fs tests/proc_clone.c bdos/proc_clone.c bdos/thread_startup.c bdos/kthread.c bdos/kaspace.c \
+        -iquote fs tests/proc_clone.c bdos/proc_clone.c bdos/process_observer.c bdos/thread_startup.c bdos/kthread.c bdos/kaspace.c \
         -Wl,--gc-sections -o "$work/proc-clone"
     "$work/proc-clone"
     echo "Trusted clone construction ($preset configuration, host execution): PASS"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        -iquote fs tests/clone_observer.c -Wl,--gc-sections -o "$work/clone-observer"
+        -iquote fs tests/clone_observer.c bdos/process_observer.c -Wl,--gc-sections -o "$work/clone-observer"
     "$work/clone-observer"
     echo "Owned clone observer ($preset configuration, host execution): PASS"
 

@@ -8,6 +8,7 @@
 #include "procmem.h"
 #include "kthread.h"
 #include "proc_clone.h"
+#include "process_observer.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 extern PD *run;
@@ -175,7 +176,7 @@ static void observer_put(PROC_CLONE_OBSERVER *observer)
 {
     if (!observer || !observer->references) panic("clone observer reference underflow");
     if (--observer->references) return;
-    kproc_release(observer->process); kfree(observer);
+    process_observer_release(&observer->process); kfree(observer);
 }
 static LONG observer_acquire(void *context)
 {
@@ -210,8 +211,9 @@ LONG proc_clone_observe_async(PROC_CLONE_TRANSACTION *tx, PROC_CLONE_OBSERVER **
     observer->thread = observer->same_process ? tx->thread : NULL;
     observer->thread_completed = FALSE;
     observer->thread_status = 0;
-    observer->process = kproc_retain_live(tx->process);
-    if (!observer->process) { kfree(observer); return EACCDN; }
+    observer->process = NULL;
+    error = process_observer_attach(tx->process, &observer->process);
+    if (error) { kfree(observer); return error; }
     if (injected(5)) { observer_put(observer); return ENSMEM; }
     observer->pid = kproc_ref_pid(tx->process); observer->tid = kthread_tid(tx->thread);
     observer->state = PROC_CLONE_OBSERVER_PREPARED;
@@ -228,6 +230,13 @@ void proc_clone_observer_release(PROC_CLONE_OBSERVER **handle)
 }
 PROC_CLONE_OBSERVER_STATE proc_clone_observer_state(const PROC_CLONE_OBSERVER *observer)
 { return observer->state; }
+BOOL proc_clone_observer_process_snapshot(const PROC_CLONE_OBSERVER *observer, PROCESS_COMPLETION *out)
+{
+    if (!observer || observer->same_process ||
+        (observer->state != PROC_CLONE_OBSERVER_PUBLISHED && observer->state != PROC_CLONE_OBSERVER_REAPED))
+        return FALSE;
+    return process_observer_snapshot(observer->process, out);
+}
 BOOL proc_clone_observer_result(const PROC_CLONE_OBSERVER *observer, PROC_CLONE_COMPLETION *out)
 {
     UWORD status;

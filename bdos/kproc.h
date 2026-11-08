@@ -62,6 +62,7 @@ DTAINFO *kproc_get_dta(PD *pd);
 #if CONF_WITH_KPROC
 typedef struct kproc KPROC;
 #include "process_identity.h"
+#include "process_completion.h"
 /* Snapshot queries never own wait/reap rights. Numbers are not kernel pointers,
  * PIDs, TIDs or GUI client IDs. Retained identity reserves its number/PID only. */
 UQUAD kproc_ref_number(const KPROC *process);
@@ -77,6 +78,14 @@ WORD kproc_ref_pid(const KPROC *process);
 BOOL kproc_ref_has_basepage(const KPROC *process);
 BOOL kproc_ref_status(const KPROC *process, UWORD *status);
 void kproc_complete(PD *pd, UWORD status);
+/* Pending fault intent is not completion. Scheduler callers attribute it only
+ * to the final THREAD; untracked nested/legacy PROCESSes have no sibling state. */
+void kproc_note_fault(PD *pd, WORD signal);
+BOOL kproc_ref_completion(const KPROC *process, PROCESS_COMPLETION *out);
+/* Delivery readiness is later than snapshot availability. Caller retains the
+ * identity; publish only after teardown and scheduler/public-wait publication. */
+BOOL kproc_ref_terminal(const KPROC *process);
+void kproc_publish_observers(KPROC *process);
 #if CONF_WITH_X86_64_MEMTEST
 /* Exercise the production allocator on a local test cursor, never reset the
  * live registry's non-recycled number counter. */
