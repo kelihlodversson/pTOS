@@ -271,6 +271,19 @@ static ULONG dir_refs(void)
     return sum;
 }
 
+/* A synchronous launch now returns at its own PROCESS completion. Tests
+ * retaining observer contexts must explicitly drive independent descendants
+ * before asserting final resource baselines or releasing those contexts. */
+static void settle_scheduler(void)
+{
+#if CONF_WITH_NATIVE_SCHED
+    ULONG start=(ULONG)hz_200;
+    if(ksched_dispatching()) return;
+    while(ksched_active() && (ULONG)((ULONG)hz_200-start)<1000) ksched_yield();
+    CHECK(!ksched_active(),"independent scheduler work drains through explicit cooperative entries");
+#endif
+}
+
 static void snap(SNAP *s)
 {
     s->dir_refs = dir_refs();
@@ -288,6 +301,7 @@ static BOOL same(const SNAP *a, const char *what)
     SNAP b;
     BOOL ok;
 
+    settle_scheduler();
     snap(&b);
     ok = a->pmem_free == b.pmem_free &&
          a->heap.live_blocks == b.heap.live_blocks &&
@@ -2338,6 +2352,7 @@ static void test_clone_execution(void)
         }
         bzero(exit_handoff_stages,sizeof(exit_handoff_stages)); exit_handoff_watch = TRUE;
         result = proc_clone_exec(&tx,&done);
+        settle_scheduler(); /* owned asynchronous observers may outlive this result */
         active_clone.enabled = FALSE;
         exit_handoff_watch = FALSE;
         CHECK(run == pd && aspace_is_current(as) && (mode == 11 ? !kproc_active_space(source) : kproc_active_space(source) == space) && kproc_ref_has_basepage(source),

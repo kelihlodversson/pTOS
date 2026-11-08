@@ -19,6 +19,7 @@ BOOL ksched_admission_complete(const KSCHED_ADMISSION *, UWORD index, LONG statu
 /* All-or-nothing kernel result delivery. Failure leaves outputs unchanged.
  * Exactly one successful take; this does not consume any public PID zombie. */
 LONG ksched_admission_take(const KSCHED_ADMISSION *, LONG *results, UWORD count);
+BOOL ksched_admission_ready(const KSCHED_ADMISSION *); /* terminal error or all cells complete */
 BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *);
 void ksched_admission_abandon(const KSCHED_ADMISSION *);
 void ksched_admission_owner_exited(struct kproc *owner);

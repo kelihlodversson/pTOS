@@ -51,7 +51,6 @@ int main(void)
 {
     run = &owner;
     scheduler.active = TRUE;
-    scheduler.initial = 1;
     scheduler.tasks = tasks; initialize_task_table();
     scheduler.current = &tasks[0];
     tasks[0].state = TASK_RUNNING;
@@ -83,3 +82,8 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 }
 
 void ksched_admission_release(KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+
+void panic(const char *format,...) { (void)format; abort(); }
+
+KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
+PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }

@@ -145,7 +145,7 @@ static BOOL schedule_launch(PD *p)
 {
     /* ROM entry points and explicit accessory starts retain their existing
      * launch path. A nested Pexec already has a stable group controller. */
-    return kernel_code_pd != p && !ksched_active();
+    return kernel_code_pd != p && !ksched_dispatching();
 }
 
 static LONG run_scheduled(PD *p, BOOL take_ownership)
@@ -588,7 +588,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return (long)p;
 #if CONF_WITH_NATIVE_SCHED
     case PE_ASYNC_GO_FREE:
-        if (!ksched_spawn_allowed()) return EINVFN;
+        if (!ksched_async_allowed()) return EINVFN;
         p = (PD *)tail;
         rc = check_launch(p);
         if (rc) return rc;
@@ -596,7 +596,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         give_back_image(p, FALSE);
         return ksched_spawn(p);
     case PE_ASYNC_LOADGO:
-        if (!ksched_spawn_allowed()) return EINVFN;
+        if (!ksched_async_allowed()) return EINVFN;
         break;
 #endif
     case PE_GOTHENFREE:

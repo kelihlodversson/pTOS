@@ -71,7 +71,6 @@ int main(void)
 {
     run = &owner;
     scheduler.active = TRUE;
-    scheduler.initial = 1;
     scheduler.tasks = tasks; initialize_task_table();
     scheduler.current = &tasks[0];
     scheduler.root.pd = &owner;
@@ -139,3 +138,12 @@ BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD index,LONG status
 
 void ksched_waiter_retire(KPROC *p,ULONG tid,UQUAD execution) { (void)p; (void)tid; (void)execution; }
 ULONG kthread_tid(const KTHREAD *t) { (void)t; return 17; }
+
+PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
+
+void ksched_admission_abandon(const KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+
+LONG ksched_admission_create(KPROC *p,UWORD n,KSCHED_ADMISSION *h)
+{ (void)p; (void)n; (void)h; abort(); } /* no synchronous admission in this fixture */
+BOOL ksched_admission_retain(const KSCHED_ADMISSION *a,KSCHED_ADMISSION *b)
+{ (void)a; (void)b; abort(); }

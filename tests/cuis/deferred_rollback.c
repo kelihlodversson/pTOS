@@ -244,3 +244,6 @@ int main(void)
 }
 
 PD *ksched_launch_controller(PD *p) { (void)p; return NULL; }
+
+BOOL ksched_dispatching(void) { return ksched_active(); }
+BOOL ksched_async_allowed(void) { return ksched_spawn_allowed(); }

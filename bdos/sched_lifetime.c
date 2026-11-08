@@ -106,6 +106,13 @@ LONG ksched_admission_take(const KSCHED_ADMISSION *handle,LONG *results,UWORD co
     p->consumed=TRUE;
     return E_OK;
 }
+BOOL ksched_admission_ready(const KSCHED_ADMISSION *handle)
+{
+    ADMISSION *p=lookup(handle); UWORD i;
+    if(!p || p->abandoned || p->consumed || (p->owner && !kproc_live_pd(p->owner))) return TRUE;
+    for(i=0;i<p->count;i++) if(!p->result[i].complete) return FALSE;
+    return TRUE;
+}
 BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *handle)
 {
     ADMISSION *p=lookup(handle);

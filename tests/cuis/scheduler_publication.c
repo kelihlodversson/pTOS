@@ -19,6 +19,8 @@ typedef char kernel_context_fits_host_buffer[sizeof(jmp_buf) >= 13*sizeof(long) 
 #endif
 #include "../../bdos/native_sched.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"publication:%d: %s\n",__LINE__,#c); abort(); } } while (0)
+static BOOL allocate_task_table(UWORD count)
+{ KERNEL_TASK *slots[KSCHED_LIMIT]; return prepare_batch(count,slots); }
 static KERNEL_TASK table[KSCHED_LIMIT];
 static PD parent, child, peer, kernel_controller;
 static UWORD allocations, frees, notifications;
@@ -26,7 +28,8 @@ static BOOL fail_growth;
 PD *run;
 jmp_buf errbuf;
 static BOOL root_fault;
-static unsigned root_release_calls;
+static unsigned root_release_calls, process_releases;
+static BOOL allow_reap;
 static LONG fault_output;
 void *kalloc(ULONG bytes)
 {
@@ -50,6 +53,7 @@ PD *kproc_notification_parent(PD *p) { (void)p; return NULL; }
 KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
 void kproc_release(KPROC *p)
 {
+    if (p) process_releases++;
     if (root_fault && p==(KPROC *)&child) { root_release_calls++; longjmp(errbuf,1); }
 }
 WORD kproc_pid(PD *p) { return p ? 42 : 0; }
@@ -87,12 +91,13 @@ void native_sched_enter(uintptr_t top, void (*entry)(void))
 }
 BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
 BOOL kthread_start(KTHREAD *t) { (void)t; abort(); }
-BOOL kthread_reap(KTHREAD *t) { (void)t; abort(); }
+BOOL kthread_reap(KTHREAD *t) { CHECK(allow_reap && t); return TRUE; }
 void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
 { (void)tx; (void)slot; abort(); }
 #ifndef __SANITIZE_ADDRESS__
 /* Actual hosted stack switches; privileged context/MMU effects are modeled.
  * Hosted ASan cannot validate this kernel's private alternate-stack ABI. */
+static BOOL never_ready(void *argument) { CHECK(argument==&child); return FALSE; }
 static void root_lifetime_check(void)
 {
     unsigned cycle;
@@ -117,6 +122,36 @@ static void root_lifetime_check(void)
         memset(caller,0x7d,sizeof(*caller)); /* Old identity storage is reusable. */
         output[0]=output[1]=-77;
     }
+    /* Returning one admission must not drain another live blocked task.
+     * A later bounded entry with no runnable work parks without spinning or
+     * preserving a caller stack; a final entry reclaims the stopped peer. */
+    {
+        LONG output=-1;
+        CHECK(allocate_task_table(1));
+        table[0].state=TASK_DONE; table[0].result=311;
+        table[1].state=TASK_BLOCKED; table[1].process=(KPROC *)&child;
+        table[1].ready=never_ready; table[1].argument=&child;
+        CHECK(dispatch_group(1,&output)==E_OK && output==311 && scheduler.active &&
+              scheduler.tasks==table && table[1].state==TASK_BLOCKED && !scheduler.current &&
+              !scheduler.waiter_attached && !scheduler.entry_owner && !scheduler.entry_argument);
+        {
+            void *reserved[KSCHED_LIMIT]={0}; UWORD n;
+            UQUAD previous;
+            for(n=0;n<KSCHED_LIMIT-1;n++) CHECK(ksched_task_reserve(FALSE,&reserved[n])==E_OK);
+            previous=next_identity; fail_growth=TRUE;
+            CHECK(ksched_task_reserve(FALSE,&reserved[KSCHED_LIMIT-1])==ENSMEM &&
+                  !reserved[KSCHED_LIMIT-1] && next_identity==previous && table[1].state==TASK_BLOCKED);
+            fail_growth=FALSE;
+            for(n=0;n<KSCHED_LIMIT;n++) ksched_task_cancel(&reserved[n]);
+            CHECK(scheduler.active && table[1].state==TASK_BLOCKED && !scheduler.waiter.identity);
+        }
+        output=-77; run=&peer; modeled_flags=0x200;
+        CHECK(enter_root(TRUE,NULL,NULL)==E_OK && output==-77 && run==&peer && modeled_flags==0x200 &&
+              table[1].state==TASK_BLOCKED && !scheduler.entry_ready && !scheduler.entry_argument && !scheduler.entry_owner);
+        table[1].state=TASK_DONE;
+        CHECK(enter_root(TRUE,NULL,NULL)==E_OK && !scheduler.active && !scheduler.tasks && output==-77);
+    }
+    puts("Detached admission: early result, independent blocked task, bounded later entry and final arena reclaim: PASS (CPU modeled)");
     CHECK(allocations==frees);
     puts("Persistent root: 32 real hosted park/resume stack handoffs, copied results and no retired identity: PASS (CPU modeled)");
     CHECK(allocate_task_table(2));
@@ -144,8 +179,8 @@ int main(void)
     identity=next_identity;
     CHECK(ksched_task_reserve(TRUE,&root)==EAGAIN && !root && allocations==2 && next_identity==identity);
     scheduler.waiter_attached=FALSE;
-    CHECK(allocate_task_table(2)); scheduler.active = TRUE;
-    scheduler.initial = 1; scheduler.current = table; table[0].state = TASK_RUNNING; run = &parent;
+    CHECK(allocate_task_table(1)); scheduler.active = TRUE;
+    scheduler.current = table; table[0].state = TASK_RUNNING; run = &parent;
     for (i = 0; i < KSCHED_LIMIT-1; i++) {
         CHECK(ksched_task_reserve(FALSE,&slots[i]) == E_OK && slots[i] == &table[i+1]);
         CHECK(table[i+1].state == TASK_RESERVED);
@@ -174,7 +209,7 @@ int main(void)
         grown->ready=child_ready; grown->argument=&wait;
         scheduler.current=NULL;
         CHECK(reap_finished_on_root(grown) && !grown->ready && !grown->argument &&
-              grown->result_published && !grown->completion.identity &&
+              grown->state==TASK_UNUSED && !grown->completion.identity &&
               ksched_admission_take(&independent,&result,1)==E_OK && result==95);
         ksched_admission_release(&independent);
         scheduler.current=table;
@@ -190,6 +225,7 @@ int main(void)
     CHECK(frees == 3);
     CHECK(ksched_task_reserve(FALSE,&slots[0]) == E_OK && slots[0] == &table[1]);
     table[1].program = &child; table[1].process = (KPROC *)&child; table[1].parent = &parent; table[1].pid = 42;
+    table[1].asynchronous=TRUE;
     ksched_task_publish(&slots[0]); CHECK(!slots[0] && table[1].state == TASK_NEW);
     CHECK(!child_ready(&wait));
     table[0].state = TASK_BLOCKED;
@@ -198,7 +234,7 @@ int main(void)
      * wait predicate. A separate child keeps its independent pending state. */
     grown=table[KSCHED_LIMIT-1].next_task;
     CHECK(grown && grown->state==TASK_UNUSED);
-    grown->state=TASK_NEW; grown->parent=&parent; grown->program=&peer;
+    grown->state=TASK_NEW; grown->asynchronous=TRUE; grown->parent=&parent; grown->program=&peer;
     grown->process=(KPROC *)&peer; grown->pid=43;
     CHECK(ksched_pid_reserved(43));
     grown->state=TASK_BLOCKED;
@@ -214,6 +250,36 @@ int main(void)
     CHECK(!table[1].parent && table[1].state == TASK_DONE && !grown->parent && grown->program == &peer);
     /* A replacement at the same PD address cannot inherit the old children. */
     CHECK(child_ready(&wait) && !notifications && allocations == 6 && frees == 3);
+    /* A worker owns its anchor through root reap, in either list order.
+     * Stopped leader execution is not PROCESS/result/record retirement. */
+    ksched_admission_release(&scheduler.waiter);
+    for(i=0;i<2;i++) {
+        KERNEL_TASK *anchor=&table[i], *worker=&table[1-i];
+        KSCHED_ADMISSION result={0}; LONG status=-99;
+        unsigned before=process_releases;
+        for(t=table;t;t=t->next_task) clear_task(t);
+        CHECK(ksched_admission_create(NULL,1,&result)==E_OK &&
+              ksched_admission_retain(&result,&anchor->completion));
+        scheduler.current=NULL;
+        anchor->state=TASK_DRAINING; anchor->process=(KPROC *)&child;
+        anchor->dependents=1; anchor->result=91;
+        worker->state=TASK_DONE; worker->process=(KPROC *)&child;
+        worker->thread=(KTHREAD *)1; worker->completion_owner=anchor;
+        CHECK(reap_finished_on_root(anchor) && anchor->dependents==1 &&
+              anchor->process && anchor->state==TASK_DRAINING &&
+              ksched_admission_take(&result,&status,1)==EAGAIN && status==-99);
+        anchor->state=TASK_DONE; /* final PROCESS completion */
+        CHECK(reap_finished_on_root(anchor) && anchor->process &&
+              process_releases==before && anchor->completion.identity);
+        allow_reap=TRUE;
+        CHECK(reap_finished_on_root(worker) && !anchor->dependents &&
+              worker->state==TASK_UNUSED && !worker->thread && !worker->completion_owner);
+        allow_reap=FALSE;
+        CHECK(reap_finished_on_root(anchor) && anchor->state==TASK_UNUSED &&
+              process_releases==before+2 && ksched_admission_take(&result,&status,1)==E_OK && status==91);
+        ksched_admission_release(&result);
+    }
+    puts("Counted PROCESS anchors: leader-first, both record orders, delayed result and exactly-once release: PASS (host)");
     /* A refused legacy start must be DONE/root-reapable, not DRAINING
      * forever as though a runnable sibling still retained its PROCESS. */
     for (t=table;t;t=t->next_task) clear_task(t);
@@ -229,6 +295,7 @@ int main(void)
     ksched_admission_release(&table[0].completion);
     CHECK(ksched_admission_create((KPROC *)&parent,1,&scheduler.waiter)==E_OK &&
           ksched_admission_retain(&scheduler.waiter,&table[0].completion));
+    scheduler.entry_owner=kproc_retain(&parent);
     scheduler.waiter_attached=TRUE;
     memset(scheduler.waiter_resume,0xa5,sizeof(scheduler.waiter_resume));
     ksched_exiting(&parent,9);
