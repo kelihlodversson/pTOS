@@ -241,6 +241,21 @@ void *kalloc(ULONG bytes)
     return &pool[allocations++];
 }
 void kfree(void *memory) { (void)memory; frees++; }
+static ULONG process_references;
+KPROC *kproc_retain(PD *pd)
+{
+    if (!pd) return NULL;
+    process_references++; return (KPROC *)pd;
+}
+void kproc_release(KPROC *process)
+{
+    if (!process || !process_references) __builtin_abort();
+    process_references--;
+}
+UQUAD kproc_ref_number(const KPROC *process)
+{
+    return process == (KPROC *)&first ? 0x100000001ULL : 0x200000001ULL;
+}
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "windows.c"
@@ -265,6 +280,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "child_completion.c"
 #include "entries.c"
 #include "peers.c"
+#include "client_identity.c"
 #include "cohorts.c"
 
 int main(void)
@@ -373,6 +389,8 @@ int main(void)
     rc = console_abandoned_launch_checks();
     if (rc) return rc;
     rc = entry_checks();
+    if (rc) return rc;
+    rc = client_identity_checks();
     if (rc) return rc;
     rc = peer_checks();
     if (rc) return rc;

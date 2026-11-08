@@ -657,8 +657,8 @@ Discovery and application pipes are described below. Message/timer combinations 
 remain subsequent work. At that stage aes_session_*/aes_window_* exports
 remain transitional test/migration interfaces, not application requirements.
 
-appl_init implicitly opens the process's CUIS session and returns its kernel
-PID as a positive short application ID (1..32767), or -1 on failure. Opaque
+appl_init implicitly opens the caller's CUIS client and returns its distinct
+AES client ID (1..32767), or -1 on failure. This ID is not a PID or TID. Opaque
 CUIS handles remain private and are never truncated to produce application
 IDs. Repeated initialization reuses the process registration. The caller's
 15-word global array is initialized with AES global-layout ABI 0x0400,
@@ -701,13 +701,19 @@ kernel records only a bounded, unmodified basename (up to 32 bytes) and
 opaque label bytes; GEM normalization remains in userspace. Anonymous
 basepage-only programs need not have a name. Duplicate labels resolve to
 the oldest still-registered session. Exit removes the label; reopening the
-same process uses a fresh private handle and the same PID application ID.
+same PROCESS uses a fresh private handle and may receive a different AES ID.
+A closed client ID can eventually be reused; private endpoint handles never
+recycle and continue to protect blocked operations against replacement.
 
 appl_find accepts normal eight-character names (short NUL-terminated names
 are padded), NULL/upper-word-zero self lookup, and the MultiTOS 0xffff/PID
 and 0xfffe/application-ID pointer selectors. Only registered peers convert;
 missing, exited or unregistered applications return -1. Handles are resolved
-and checked before conversion to a positive short PID; they are not narrowed.
+and checked before conversion to a positive short AES ID; they are not narrowed.
+The 0xffff selector converts a generic PROCESS PID to the lowest live AES
+client ID among its endpoints; 0xfffe converts an AES ID to its generic
+PROCESS PID. Ordinary discovery, writes and activation route by AES ID, never
+PID. Several clients may share a PROCESS number/PID without aliasing.
 Standard appl_getinfo AES_PROCESS (4) returns 1 with outputs 0,1,0,1:
 cooperative scheduling, PID conversion, no appl_search, native rsrc_rcfix.
 AES_INQUIRE (6) returns 1 with outputs 1,0,0,0, advertising APR_NOWAIT only.
@@ -726,7 +732,7 @@ neither interprets GEM message types nor rewrites opaque byte streams.
 Boolean APIs return 1 on success and 0 on error, not native negative errors.
 
 Each receiver has a lazy 65536-byte payload ring and a parallel 16-bit sender
-PID ring (192 KiB total), independent of message/write boundaries. Partial
+AES-client-ID ring (192 KiB total), independent of message/write boundaries. Partial
 reads immediately free capacity. A transfer's 32767-byte maximum is below
 half the byte capacity, avoiding metadata/packet fragmentation deadlocks
 between exact reads and atomic writes. One pending write snapshot per
@@ -734,7 +740,7 @@ sender is bounded by the same transfer limit and is attached to its session
 before user copying can fault. There are no unbounded packet lists. Native
 sender metadata comes from the kernel and survives sender exit; it describes
 the first byte read and is separate from peer-supplied GEM header contents.
-Historical sender PIDs are not authentication of a currently live process.
+Historical sender client IDs are not authentication of a currently live process.
 Peer bytes do not manufacture trusted keyboard/pointer/redraw events.
 
 All queued storage and pending snapshots are released on session/process
@@ -750,16 +756,12 @@ Native CUIS calls use flat registers and scalar lengths/handles/errors:
 
  26 SESSION_LABEL(handle, bytes, length)   -> E_OK; opaque labels up to 32 bytes
  27 LABEL_FIND(bytes, length)             -> peer handle
- 28 PEER_PID(handle)                      -> registered peer PID
- 29 PEER_BY_PID(pid)                      -> registered peer handle
  30 STREAM_WRITE(peer, buffer, length, block) -> exact byte count
- 31 STREAM_READ(own, buffer, length, block, optional_sender_pid) -> exact count
+ 31 STREAM_READ(own, buffer, length, block, optional_sender_id) -> exact count
 
 Invalid arguments/ownership and missing peers return ordinary negative
-errors. block is 0 (EAGAIN when not ready) or 1 (wait). These services and
-process-basename storage compile only with CONF_WITH_CUIS. The previous
-four-word opaque queue remains transitional; the public GEM pipe does not
-inherit its fixed size. Message/timer combined waits are described below; input/window integration
+errors. block is 0 (EAGAIN when not ready) or 1 (wait). These GUI services compile only with CONF_WITH_CUIS;
+PROCESS basename and identity snapshots are generic Ssystem services. Message/timer combined waits are described below; input/window integration
 remains subsequent work.
 
 Host tests cover lookup/ownership, capacity and allocation failures,
@@ -1031,15 +1033,15 @@ ordinary button input. Existing pointer capture/release suppression remains
 in force when that window hides or exits. Input is routed to the current focus
 until the application actually tops the requested window.
 
-wind_get(WF_TOP) ignores the input handle and returns top ID, owner AES/PID,
+wind_get(WF_TOP) ignores the input handle and returns top ID, owner AES client ID,
 next ID below, and zero. WF_BOTTOM returns the bottom visible window ID,
 excluding the desktop, with other outputs zero. An empty stack returns ID 0.
 WF_OWNER accepts a live global ID (including another app's window) and returns
-owner AES/PID, open status, ID above and ID below; closed windows report no
+owner AES client ID, open status, ID above and ID below; closed windows report no
 neighbors. Queries are read-only; they do not grant permission to mutate a
 foreign window. Invalid/deleted IDs return GEM failure without changing
 outputs. Native metadata is range-checked before conversion to GEM shorts;
-invalid identifiers/PIDs or non-Boolean open status fail without truncation.
+invalid identifiers/client IDs or non-Boolean open status fail without truncation.
 Foreign geometry and desktop handle-0 metadata remain later work.
 No additional appl_getinfo extension bits are advertised in this slice.
 
@@ -1065,17 +1067,17 @@ Native additions, all under CONF_WITH_CUIS:
      Atomically appends 1-32 captured opaque bytes to the caller's own pipe
      and acknowledges the specified owned pending notice. No GEM header or
      format is interpreted in the kernel. Sender metadata remains the current
-     process PID independently of user-generated payload fields. A full pipe
+     AES client ID independently of user-generated payload fields. A full pipe
      returns EAGAIN without consuming the notice; source-copy/allocation or
      ownership failure likewise leaves it pending. Source access can fault,
      so client identity is checked again before publication. Notice flag
      updates and pipe publication use the same short IRQ exclusion.
 
-  41 STACK_QUERY(position, id*, owner_pid*, below_id*) -> E_OK / error.
+  41 STACK_QUERY(position, id*, owner_client_id*, below_id*) -> E_OK / error.
      Position 0 selects the front, 1 the back. Requires a registered caller;
      all three outputs are validated LONGs, with zero for an empty stack.
 
-  42 WINDOW_INFO(identifier, owner_pid*, visible*, above_id*, below_id*)
+  42 WINDOW_INFO(identifier, owner_client_id*, visible*, above_id*, below_id*)
      -> E_OK / error. Returns registered global window metadata as LONGs.
      Read-only stack/owner queries remain available during display updates.
 
@@ -3045,6 +3047,17 @@ Native metadata calls use flat arguments after the CUIS opcode:
 PEER_QUERY LABEL copies up to 32 opaque bytes without adding a terminator;
 TAG returns the tag, STATE returns HAS_SURFACE/HAS_BACKGROUND flags. BACKGROUND
 and ACTIVE return those peers' handles and require peer/address/capacity zero.
+IDENTITY (field 5) copies exactly 16 bytes of CUIS_PEER_IDENTITY_DATA:
+client_id, process_low, process_high, reserved=0. The positive short client ID
+belongs to the GUI endpoint; the non-recycled PROCESS number is generic KPROC
+identity, not a PID/TID or pointer. The client retains KPROC identity until
+final reclamation, without extending live PD/resources. The descriptor is
+snapshotted under the GUI lock before copyout, so no peer pointer survives
+user access. Several client descriptors may share one PROCESS number.
+Wrong descriptor size is EINVAL; stale endpoint is EFILNF; failed copyout is
+EIMBA with no consumption. Private slots 28 and 29 are retired (EINVFN).
+The existing caller binding is not a promise of one client per PID; future
+THREAD/client bindings remain #896/#915 work.
 LABEL requires enough buffer space. The library publishes eight-byte labels
 and stores its GEM type and NM_APTERM consent in the opaque tag. Native code
 does not interpret the tag or impose GEM naming/type policy. Raising rejects

@@ -195,7 +195,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(probe_session_query(-1) == EINVAL);
     CHECK(raw(CUIS_SESSION_QUERY, handle) == E_OK);
     {
-        static const ULONG retired[]={10,11,12,13,14,16,17,18,19,21,22,23,25,52};
+        static const ULONG retired[]={10,11,12,13,14,16,17,18,19,21,22,23,25,28,29,52};
         ULONG retired_index;
         for (retired_index=0;retired_index<sizeof(retired)/sizeof(retired[0]);retired_index++)
             CHECK(probe_call6(retired[retired_index],handle,0,0,0,0,0) == EINVFN);

@@ -41,7 +41,7 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(appl_yield() == 0 && evnt_timer(0) == 0 && appl_exit() == 0);
     pid = PROC(0x10b, 0, 0, 0, 0);
     id = appl_init();
-    GEM_TEST_CHECK(id > 0 && id == pid && gl_apid == id && aes_global[2] == id && aes_global[1] == -1);
+    GEM_TEST_CHECK(id > 0 && appl_find((const char *)(uintptr_t)(0xffff0000UL | (UWORD)pid)) == id && gl_apid == id && aes_global[2] == id && aes_global[1] == -1);
     GEM_TEST_CHECK(appl_init() == id && mt_appl_init(globals) == id);
     if (argc > 1 && (argv[1][0] == 'l' || argv[1][0] == 'm'))
         return gem_launch_child(globals,argc,argv,envp);
@@ -52,11 +52,13 @@ int main(int argc, char **argv, char **envp)
         GEM_TEST_CHECK(appl_find("ACCTEST ") == id);
         for (i = 0; i < 6; i++) GEM_TEST_CHECK(mt_menu_register(id,"  Accessory",globals) == (short)i);
         GEM_TEST_CHECK(menu_register(id,"Full") == -1);
-        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(globals) == id);
+        GEM_TEST_CHECK(appl_exit() == 1);
+        id = appl_init(); GEM_TEST_CHECK(id > 0 && mt_appl_init(globals) == id);
         GEM_TEST_CHECK(appl_find("ACCTEST ") == -1);
         /* All six old registrations disappeared when the session ended. */
         for (i = 0; i < 6; i++) GEM_TEST_CHECK(menu_register(id,"  Replacement") == (short)i);
-        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(globals) == id);
+        GEM_TEST_CHECK(appl_exit() == 1);
+        id = appl_init(); GEM_TEST_CHECK(id > 0 && mt_appl_init(globals) == id);
     }
     aes_global[3] = 1234;
     GEM_TEST_CHECK(mt_appl_yield(globals) == 1 && mt_evnt_timer(1, globals) == 1);
@@ -81,7 +83,7 @@ int main(int argc, char **argv, char **envp)
         GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_STREAM_WRITE, handle, (uintptr_t)w, sizeof(w), 0, 0, 0) == sizeof(w));
         tail[0] = i == 2 ? 127 : 1; tail[1] = i == 1 ? 'x' : 'c';
         child = PROC(0x4b, 100, (uintptr_t)"APPS\\GEMSHELL.TOS", (uintptr_t)tail, (uintptr_t)(i == 2 ? argv_environment : environment));
-        GEM_TEST_CHECK(child > 0 && child != id);
+        GEM_TEST_CHECK(child > 0 && child != pid);
         GEM_TEST_CHECK(evnt_timer(20) == 1 && appl_yield() == 1);
         status = PROC(0x13a, child, 0, 0, 0);
         GEM_TEST_CHECK(status == (LONG)(((ULONG)child << 16) | (i == 1 ? 41 : 37)));
@@ -89,12 +91,13 @@ int main(int argc, char **argv, char **envp)
         GEM_TEST_CHECK(gem_metadata_after_child(globals) == 0);
         GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_STREAM_READ, handle, (uintptr_t)w,
                            sizeof(w), 0, (uintptr_t)&sender, 0) == sizeof(w));
-        GEM_TEST_CHECK(sender == pid && w[0] == 11 && w[1] == 22 && w[2] == 33 && w[3] == 44);
+        GEM_TEST_CHECK(sender == id && w[0] == 11 && w[1] == 22 && w[2] == 33 && w[3] == 44);
         GEM_TEST_CHECK(aes_global[3] == 1234 && gl_apid == id && globals[2] == id);
     }
     GEM_TEST_CHECK(evnt_timer(0) == 1 && mt_appl_exit(globals) == 1);
     GEM_TEST_CHECK(gl_apid == -1 && aes_global[2] == -1 && globals[2] == -1);
-    GEM_TEST_CHECK(appl_exit() == 0 && appl_init() == id && appl_exit() == 1);
+    GEM_TEST_CHECK(appl_exit() == 0);
+    id = appl_init(); GEM_TEST_CHECK(id > 0 && appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM lifecycle/timers: PASS\r\n";
         static const char buffer_marker[] = "x32 GEM shared shell buffer: PASS\r\n";
