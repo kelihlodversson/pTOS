@@ -13,10 +13,13 @@ static int focus_checks(void)
     CHECK(F(CUIS_FOCUS_QUERY, a) == 0);
     CHECK(F(CUIS_FOCUS_REQUEST, a) == EINVAL);
     CHECK(F(CUIS_WINDOW_SHOW, a) == E_OK);
-    CHECK(F(CUIS_WINDOW_REDRAW, a) == 1);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(F(CUIS_FOCUS_REQUEST, a) == E_OK && F(CUIS_FOCUS_QUERY, a) == 1);
-    CHECK(F(CUIS_WINDOW_REDRAW, a) == 1);
-    CHECK(F(CUIS_FOCUS_REQUEST, a) == E_OK && F(CUIS_WINDOW_REDRAW, a) == 0);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(F(CUIS_FOCUS_REQUEST, a) == E_OK && input_window(a)->redraw == 0);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     for (fn = CUIS_FOCUS_REQUEST; fn <= CUIS_FOCUS_RELEASE; fn++) {
         CHECK(F(fn, 0x100000000ULL | (ULONG)a) == EINVAL);
         CHECK(F(fn, ~0ULL) == EINVAL);
@@ -40,10 +43,13 @@ static int focus_checks(void)
     CHECK(F(CUIS_WINDOW_LOWER, b) == E_OK && F(CUIS_FOCUS_QUERY, b) == 1);
     CHECK(F(CUIS_FOCUS_REQUEST, b) == EACCDN);
     CHECK(F(CUIS_WINDOW_RAISE, b) == E_OK && F(CUIS_FOCUS_QUERY, b) == 1);
-    CHECK(F(CUIS_WINDOW_REDRAW, b) == 1);
+    CHECK(input_window(b)->redraw == 1);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(F(CUIS_FOCUS_RELEASE, b) == E_OK && F(CUIS_FOCUS_QUERY, b) == 0);
-    CHECK(F(CUIS_WINDOW_REDRAW, b) == 1);
-    CHECK(F(CUIS_FOCUS_RELEASE, b) == E_OK && F(CUIS_WINDOW_REDRAW, b) == 0);
+    CHECK(input_window(b)->redraw == 1);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(F(CUIS_FOCUS_RELEASE, b) == E_OK && input_window(b)->redraw == 0);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(F(CUIS_FOCUS_REQUEST, b) == E_OK);
     CHECK(F(CUIS_WINDOW_HIDE, b) == E_OK && F(CUIS_FOCUS_QUERY, b) == 0);
     run = &first;

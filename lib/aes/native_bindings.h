@@ -13,14 +13,12 @@ LONG aes_window_show(LONG handle);
 LONG aes_window_hide(LONG handle);
 LONG aes_window_raise(LONG handle);
 LONG aes_window_lower(LONG handle);
-LONG aes_window_redraw(LONG handle);
 LONG aes_update_begin(LONG window);
 LONG aes_update_end(LONG window);
 LONG aes_window_clip(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height);
 LONG aes_window_focus(LONG window);
 LONG aes_window_focused(LONG window);
 LONG aes_window_unfocus(LONG window);
-LONG aes_key_read(LONG window, ULONG *key);
 LONG aes_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state);
 LONG aes_event_wait(LONG window, ULONG events, LONG timeout_ms);
 #endif

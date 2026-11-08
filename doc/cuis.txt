@@ -269,7 +269,7 @@ clipping, rendering coordination and event delivery remain subsequent work. No l
 All new kernel paths compile only with CONF_WITH_CUIS, selected by the
 external CONF_WITH_LIBAES feature.
 
-Visibility, stacking and redraw polling
+Visibility, stacking and damage
 --------------------------------------
 Additional calls in CUIS class 0x103 each take the window handle in RDI:
 
@@ -277,10 +277,9 @@ Additional calls in CUIS class 0x103 each take the window handle in RDI:
   7 HIDE     remove a visible window
   8 RAISE    move a visible window to the front
   9 LOWER    move a visible window to the back
- 10 REDRAW   consume a pending redraw indication (1 pending, 0 none)
 
 All return a negative GEMDOS error on failure. SHOW/HIDE/RAISE/LOWER return
-zero on success. libaes exports aes_window_show/hide/raise/lower/redraw.
+zero on success. libaes exports aes_window_show/hide/raise/lower.
 Unused registers are ignored; ownership and full-width handle validation
 are identical to the earlier window calls. SHOW on an already-visible
 window and HIDE on a hidden one are no-ops. RAISE/LOWER on a hidden window
@@ -297,14 +296,10 @@ next SHOW schedules one. Repeated changes coalesce. Invalid operations
 leave both order and pending redraws intact. Closing a session or exiting
 removes all its visible windows and marks surviving windows for redraw.
 
-REDRAW is owner-local, nonblocking polling, not an event wait. It clears
-only that window's pending indication; subsequent changes set it again.
-The syscall runs synchronously in the existing serialized kernel service
-path, without allocating queue entries. It does not authorize framebuffer
-writes. The snapshot/update calls below provide metadata coordination. Physical
-display clipping, VDI enforcement and atomic event waits remain necessary
-for complete concurrent rendering support. No pixels, legacy AES windows or input focus are changed
-by this slice. A full GEM wind_* adapter also remains subsequent work.
+Damage is observed through EVENT_WAIT or managed NOTICE_PEEK and delivered
+through NOTICE_PUBLISH. Libaes constructs the GEM redraw bytes. Publication
+clears the matching notice only after successful stream admission; failed
+copyout or queue pressure leaves it pending. DISPLAY_LOCK controls drawing.
 
 Visible-region snapshots and update sections
 -------------------------------------------
@@ -332,7 +327,7 @@ There is one nonblocking update section across CUIS sessions. A successful
 BEGIN freezes geometry/stacking operations until END. While held, all
 window mutations (including creation and otherwise-idempotent operations)
 return EAGAIN after the normal ownership checks. Another BEGIN, including
-a nested BEGIN, also returns EAGAIN. REDRAW polling remains permitted. A
+a nested BEGIN, also returns EAGAIN. A
 matching owner/window END releases the snapshot and update section;
 wrong-owner/window END returns EACCDN. This is not a recursive lock or an
 atomic event wait. Callers must finish promptly and retry busy operations.
@@ -464,18 +459,10 @@ focus state and paths remain under the external libaes CUIS configuration.
 
 Focused keyboard queues and atomic waits
 ---------------------------------------
-CUIS provides a flat keyboard read using only RDI and RSI:
-
- 17 KEY_READ  RDI=owned window, RSI=ULONG *key
-
-Private native keyboard reads use aes_key_read(window, key). Keyboard waits
-use EVENT_WAIT with CUIS_EVENT_KEY; GEM evnt_* uses SESSION_WAIT.
-READ returns 1 after copying one key, 0 if empty, or a negative GEMDOS error.
-EVENT_WAIT with CUIS_EVENT_KEY returns 1 when a key is pending without consuming it, 0 on timeout, or
-a negative error. Zero milliseconds polls; -1 waits indefinitely. Other
-negative or noncanonical timeout values return EINVAL. Unused registers
-are ignored. Unknown/stale/foreign handles and unfocused windows return
-EACCDN; malformed full-width handles return EINVAL.
+Trusted keyboard input is consumed through SESSION_WAIT and its INPUT_RESULT
+snapshot. A ready wait commits one key; a rejected result copy leaves that
+snapshot available for retry. EVENT_WAIT(CUIS_EVENT_KEY) observes readiness
+without consuming keys. There is no separate private native keyboard read.
 
 Each window has a fixed 16-key FIFO. The existing BIOS keyboard translation
 feeds the focused window through an IRQ-safe, allocation-free producer.
@@ -561,8 +548,7 @@ EVENT_WAIT accepts any nonempty combination of CUIS_EVENT_KEY (1),
 CUIS_EVENT_POINTER (2), and CUIS_EVENT_REDRAW (4). It returns 1 if any requested
 source is pending, 0 on timeout, or a negative error; it consumes nothing and
 returns no event mask. Callers poll their requested sources after waking.
-Pointer overflow counts as pending; redraw remains pending until REDRAW is
-read. KEY-only waits require focus; mixed waits can observe pointer/redraw in
+Pointer overflow counts as pending; redraw remains pending until its managed notice is published. KEY-only waits require focus; mixed waits can observe pointer/redraw in
 a background window, while keyboard readiness still requires focus. Windows
 must be shown. Unknown mask bits and malformed timeouts return EINVAL.
 Zero timeout polls, -1 waits indefinitely, and other negative or noncanonical

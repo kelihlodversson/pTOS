@@ -74,11 +74,11 @@ static int pointer_checks(void)
     CHECK(PREAD(a) == ERANGE);
     CHECK(PREAD(a) == 1 && copied[2] == 1 && !(copied[3] & CUIS_POINTER_CHANGED));
     CHECK(point_at(40, 25, 0)); CHECK(pointer_drain(a));
-    CHECK(PW(CUIS_WINDOW_REDRAW, a) >= 0);
+    input_window(a)->redraw = FALSE; /* Start the readiness fixture without damage. */
     CHECK(cuis_event_service(a, CUIS_EVENT_KEY | CUIS_EVENT_POINTER | CUIS_EVENT_REDRAW, 0) == 0);
     CHECK(cuis_keyboard_event(123));
     CHECK(cuis_event_service(a, CUIS_EVENT_KEY | CUIS_EVENT_POINTER, 0) == 1);
-    CHECK(cuis_input_service(CUIS_KEY_READ, a, 0x1000) == 1);
+    CHECK(cuis_session_wait((*find_owner(run))->handle,0,CUIS_READY_KEY,0) == CUIS_READY_KEY);
     CHECK(PW(CUIS_UPDATE_BEGIN, a) == E_OK);
     CHECK(cuis_event_service(a, CUIS_EVENT_POINTER, 10) == EACCDN);
     CHECK(PW(CUIS_UPDATE_END, a) == E_OK);
