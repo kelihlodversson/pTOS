@@ -2,6 +2,7 @@
 #include <gem.h>
 #include "ptos.h"
 #include "gem_argv.h"
+#include "gem_process.h"
 static int failure(unsigned line)
 {
     const char *digits = "0123456789abcdef";
@@ -52,6 +53,7 @@ static int completed(short pid, short status, short *global)
         message,2000,NULL,NULL,NULL,NULL,NULL,NULL,global) == MU_MESAG);
     if (message[4] != status) (void)failure((unsigned short)message[4]);
     VERIFY(message[0] == CH_EXIT && !message[1] && !message[2] && message[3] == pid && message[4] == status);
+    VERIFY(gem_wait_child(pid) == (int32_t)(((uint32_t)pid << 16) | ((unsigned short)status & 255)));
     VERIFY(mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
         message,0,NULL,NULL,NULL,NULL,NULL,NULL,global) == MU_TIMER);
     return 0;

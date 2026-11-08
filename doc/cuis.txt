@@ -2704,7 +2704,8 @@ GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
     if the same completion is still at its head. Failed copies, allocation,
     or pipe capacity leave it pending; reentrant reservation changes cannot
     publish or consume a replacement notice. Only a successful publication
-    consumes the record and nonblockingly reaps that specific child if it is still a native zombie. No unrelated child is read.
+    consumes the adapter record. It never consumes public PROCESS completion;
+    Pwaitpid can independently reap the child before or after publication.
 
 Capacity is reserved before CUIS_CHILD_LAUNCH, which runs the standard
 asynchronous load-and-go path with a stack-scoped observer. The observer is
@@ -2738,8 +2739,9 @@ completion, copy/allocation/backpressure failures, explicit native waits,
 reentrant cancellation/replacement/session exit, PID retention, a completion
 interrupting a two-click predicate and unchanged caller output on failure.
 Normal-header x32 clients cover full-word exits, exit/fault before appl_init,
-exactly-once messages, automatic selective reaping, explicit Pwaitpid retaining
-a notice, unrelated Pexec children and unchanged SHW_PARALLEL behavior.
+exactly-once messages and public reaping in either order, full normal 0xffff
+versus fault encoding, unrelated Pexec children and unchanged SHW_PARALLEL
+behavior.
 
 The transitional native AES binding calls its 16-byte message type
 AES_CLIENT_MESSAGE, avoiding a collision with GEMlib's standard AES_MESSAGE
@@ -2832,7 +2834,9 @@ keep their existing adapters and shell loop.
 Normal GEM application launches use AES4 shel_write mode 0. Launch success
 no longer means that the desktop should exit: its windows, menus, state and
 event loop remain live while children execute. The busy cursor is cleared
-on return from launch. Standard CH_EXIT messages refresh directory listings
+on return from launch. EmuDesk explicitly collects its own completed child
+with nonblocking Pwaitpid when handling CH_EXIT; libaes does not reap for it.
+Standard CH_EXIT messages refresh directory listings
 without restarting the desktop. Both normal termination and faults use the
 existing libaes child-completion path. Classic SHW_CHAIN remains separate
 compatibility support; it is not EmuDesk's normal launch policy.
