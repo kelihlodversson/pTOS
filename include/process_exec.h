@@ -8,6 +8,7 @@
 #define PROCESS_EXEC_COMMIT 1UL
 #define PROCESS_EXEC_SNAPSHOT 2UL
 #define PROCESS_EXEC_CLOSE 3UL
+#define PROCESS_EXEC_CANCEL_DEFERRED 4UL
 #define PROCESS_EXEC_ASYNC 0UL
 #define PROCESS_EXEC_DEFER_REPLACEMENT 1UL
 /* Size is a separate Ssystem argument. All current user ABIs have 32-bit
@@ -16,6 +17,11 @@
  * operation/handle and zero other inputs. Reserved fields must be zero.
  * PREPARE returns a positive owned handle as its scalar syscall result, COMMIT
  * returns PID and keeps the handle as observer. Neither operation copies out.
+ * CANCEL_DEFERRED has no handle/arguments: cancel the calling PROCESS's
+ * unpublished successor, if any. Idempotent; never cancel a running PROCESS.
+ * A failed replacement PREPARE/COMMIT must preserve the previous successor.
+ * CLOSE of a valid owned handle consumes it without a later failure. Closing
+ * a committed observer never cancels its successor; cancellation is explicit.
  * SNAPSHOT alone copies a retryable non-consuming snapshot; a copy fault may
  * partially modify user memory but cannot consume the handle/completion. */
 typedef struct {

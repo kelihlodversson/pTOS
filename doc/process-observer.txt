@@ -98,7 +98,13 @@ returns the handle as a scalar; COMMIT returns PID as a scalar and preserves the
 handle. Neither copies outputs after publication. SNAPSHOT
 would only peek KPROC (retryable; a copy fault may partially modify the user
 buffer but consumes no completion); CLOSE would abort an uncommitted image or release the
-committed observation, never public-reap. Owner final execution cleanup would
+committed observation, never public-reap. A valid owned CLOSE has no failure
+after consumption. It never cancels an already committed deferred successor.
+CANCEL_DEFERRED is an explicit idempotent current-PROCESS operation (zero handle
+and other arguments) that disposes only its unpublished successor, not an
+executing PROCESS. Failed replacement preparation/commit preserves the old
+pending successor. Cancelled unstarted identities become ABANDONED, with no
+CH_EXIT result or fabricated completion. Owner final execution cleanup would
 abandon uncommitted handles and release committed observers, independently of
 retained wait/PID identities. Invalid requests/copyout must preserve ownership
 and outputs. Deferral must retain owner identity, never a reusable PD pointer.
