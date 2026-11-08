@@ -183,6 +183,19 @@ static BOOL exit_handoff_watch;
 static ULONG exit_handoff_stages[4];
 static UQUAD exit_handoff_free_before;
 
+static unsigned fallback_observer_stages;
+void x86_64_memtest_fallback_observer(KPROC *process, BOOL ready)
+{
+    PROCESS_COMPLETION completion;
+    CHECK(kproc_ref_terminal(process) == ready, "fallback readiness follows syscall stack reclamation");
+    CHECK(kproc_ref_has_basepage(process) != ready, "fallback identity does not retain retired basepage");
+    CHECK(kproc_ref_completion(process, &completion), "fallback canonical completion snapshot");
+    if (ready)
+        CHECK(completion.state == PROCESS_COMPLETED &&
+              (completion.order_low || completion.order_high), "fallback completion gets terminal order");
+    fallback_observer_stages++;
+}
+
 void x86_64_memtest_exit_handoff(KPROC *process, PD *pd, UQUAD stack_phys,
                                 UWORD status, UWORD stage)
 {
@@ -3594,10 +3607,12 @@ void x86_64_memtest_callback_lazy_oom(void)
 }
 #endif
 
+static BOOL observe_probe_fault;
 static long run_probe(char mode)
 {
     char tail[2];
     PD *pd;
+    KPROC *fault_observer = NULL;
     long rc;
 
     tail[0] = mode;
@@ -3620,6 +3635,10 @@ static long run_probe(char mode)
         proc_free_owned(pd);
         return -1000;
     }
+    if (observe_probe_fault) {
+        fault_observer = kproc_retain(pd);
+        CHECK(fault_observer != NULL, "fault probe observer attaches before execution");
+    }
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
     if (mode == '=' || mode == '<' || mode == '(' || mode == ')' || mode == '"' ||
         mode == '.' || mode == '>' || mode == ',' || mode == '_' || mode == ';' || mode == '/' || mode == '-' || mode == '*') {
@@ -3635,6 +3654,15 @@ static long run_probe(char mode)
         set_owner(pd, pd);
         set_owner(USERPTR_TO_PTR(pd->p_env), pd);
         proc_free_owned(pd);
+    }
+    if (fault_observer) {
+        PROCESS_COMPLETION completion;
+        CHECK(kproc_ref_terminal(fault_observer) && !kproc_ref_has_basepage(fault_observer),
+              "fault probe observer ready after stack and PROCESS retirement");
+        CHECK(kproc_ref_completion(fault_observer,&completion) &&
+              completion.kind == PROCESS_COMPLETION_SIGNAL && completion.signal == 4 &&
+              !completion.status, "native fault producer preserves SIGILL with scheduler enabled or disabled");
+        kproc_release(fault_observer);
     }
     return rc;
 }
@@ -4873,6 +4901,12 @@ static void test_ring3(void)
     CHECK(run_probe('e') == 0, "failed exit handoff preserves legacy termination");
 #endif
     same(&s, "failed exit handoff rollback");
+    observe_probe_fault = TRUE;
+    x86_64_memtest_fail_next_exit_handoff();
+    CHECK(run_probe('\001') == 0xffff, "refused fault exit handoff preserves full fault result");
+    observe_probe_fault = FALSE;
+    same(&s, "failed fault handoff observer rollback");
+    CHECK(fallback_observer_stages == 4, "refused exit handoff publishes retained observer after stack reclamation");
 
     /*
      * A ring-3 process runs another from inside its own system call

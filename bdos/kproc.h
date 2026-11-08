@@ -199,6 +199,9 @@ BOOL kproc_begin_disposal(KPROC *process, PD **pd);
 /* Architecture launcher: FALSE leaves legacy single-thread teardown safe.
  * Success retains identity and commits to its safe continuation. */
 BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len);
+/* On TRUE the existing launcher consumes this reference, publishing only
+ * after its child syscall stack is reclaimed. FALSE transfers nothing. */
+BOOL proc_defer_observer(PD *pd, KPROC *observer);
 /* Borrow handoff reference on success. Escaping disk errors consume it and
  * panic; other teardown callbacks must not exit non-locally. */
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len);

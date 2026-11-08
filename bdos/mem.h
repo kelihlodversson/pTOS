@@ -37,6 +37,8 @@ extern  ULONG   malloc_align_stram;
  * in osmem.c
  */
 
+#define OSM_PAYLOAD_BYTES 128 /* Shared fixed-pool payload; consumers must fit. */
+
 /*  xmgetblk - get a block of memory from the o/s pool. */
 void *xmgetblk(WORD memtype);
 
