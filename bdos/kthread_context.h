@@ -7,6 +7,10 @@
 #include "procmem.h"
 #if ARCH_X86_64 && CONF_WITH_USER_ASPACE
 #include "arch/x86_64/irqframe.h"
+#elif ARCH_ARM && CONF_WITH_USER_ASPACE
+#include "arch/arm/irqframe.h"
+#elif ARCH_M68K && CONF_WITH_USER_ASPACE
+#include "arch/m68k/irqframe.h"
 #endif
 
 /* Embedded backend for a generic KTHREAD. Its private continuation token is
@@ -28,6 +32,10 @@ typedef struct {
     jmp_buf resume;
 #if ARCH_X86_64 && CONF_WITH_USER_ASPACE
     X86_USER_IRQ_CAPTURE interrupted_user; /* preallocated; no detached IRQ lifetime */
+#elif ARCH_ARM && CONF_WITH_USER_ASPACE
+    ARM_USER_IRQ_CAPTURE interrupted_user;
+#elif ARCH_M68K && CONF_WITH_USER_ASPACE
+    M68K_USER_IRQ_CAPTURE interrupted_user;
 #endif
 } KTHREAD_CONTEXT;
 

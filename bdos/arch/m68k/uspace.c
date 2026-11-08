@@ -35,6 +35,7 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #include "native_sched_backend.h"
+#include "arch/m68k/irqframe.h"
 #include "thread_startup32.h"
 #include "string.h"
 #include "fs.h"
@@ -141,6 +142,13 @@ struct uspace_launch {
 };
 static struct uspace_launch *uspace_launch;
 #if CONF_WITH_NATIVE_SCHED
+BOOL m68k_process_irq_stack(PD *pd, uintptr_t *base, uintptr_t *top)
+{
+    struct uspace_launch *launch=uspace_launch;
+    if (!launch || launch->pd!=pd || !launch->stack_phys || launch->exit_process) return FALSE;
+    *base=(uintptr_t)pmem32_virt(launch->stack_phys); *top=launch->stack_top;
+    return TRUE;
+}
 /* IRQ exclusion covers the serialized cooperative handoff, not execution.
  * User registers stay in the suspended trap frame on this context's stack.
  * Never publish another task until its continuation and resource owners exist. */

@@ -10,6 +10,9 @@
 #define DBG_CHECK_READ_BYTE 0   // to trace check_read_byte() calls
 
 #include "asmdefs.h"
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#include "arch/m68k/irqframe.h"
+#endif
 
 // ==== Definitions ==========================================================
 
@@ -568,6 +571,9 @@ vbl_end:
 #define REAL_TIMER_C_HANDLER (CONF_WITH_MFP && !CONF_COLDFIRE_TIMER_C)
 
 C_SYM(int_timerc):
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+        M68K_IRQ_CAPTURE
+#endif
         addq.l  #1, C_SYM(hz_200).w           // increment 200 Hz counter
 
 #ifdef __mcoldfire__

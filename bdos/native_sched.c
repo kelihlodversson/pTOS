@@ -125,7 +125,7 @@ static void cpu_acknowledge_handoff(void)
     if (task) {
         if (!task->execution.on_cpu || task->execution.owner_cpu!=execution_cpu.number)
             panic("scheduler: foreign CPU handoff");
-#if ARCH_X86_64 && CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE
         task->execution.interrupted_user.valid=FALSE;
 #endif
         task->execution.on_cpu=FALSE;
@@ -1433,6 +1433,10 @@ static void scheduler_root_entry(void)
         wait_probe_on_root();
 #if ARCH_X86_64
         x86_64_irq_capture_report();
+#elif ARCH_ARM && CONF_WITH_EXIT_HANDOFF_TEST
+        arm_irq_capture_report();
+#elif ARCH_M68K && CONF_WITH_EXIT_HANDOFF_TEST
+        m68k_irq_capture_report();
 #endif
 #endif
         /* Reclaim only from root. Referenced slots remain stable across entries. */
