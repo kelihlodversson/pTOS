@@ -61,7 +61,7 @@ int main(int argc, char **argv, char **envp)
     LONG session, pid, me, parent, status, base;
     PROBE_PACKET packet;
     LONG children[12];
-    ULONG usage[2], i, j;
+    ULONG usage[2], i, j, child_env;
     char command[20];
     (void)envp;
     CHECK(argc == 2);
