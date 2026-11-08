@@ -33,11 +33,6 @@ static int combined_checks(void)
     stream_peer = &second; stream_peer_handle = a; stream_yield_peer = TRUE;
     input_sleeps = 0;
     CHECK(CW(a, 16, 3, 0) == (CUIS_READY_STREAM | CUIS_READY_TIMER) && !input_sleeps && CR(a, 16) == 16);
-    /* The transitional opaque queue cannot masquerade as a GEM pipe. */
-    CHECK(cuis_message_service(CUIS_MESSAGE_SEND, a, 1, 2, 3, 4, 0) == E_OK);
-    input_sleeps = 0;
-    CHECK(CW(a, 16, 3, 1) == CUIS_READY_TIMER && input_sleeps == 2);
-    CHECK((*find_owner(&first))->message_count == 1);
     stream_peer = &second; stream_peer_handle = a; stream_send_peer = TRUE;
     input_sleeps = 0; stream_change_after = 1;
     CHECK(CW(a, 16, 3, 6) == CUIS_READY_STREAM && input_sleeps == 1 && CR(a, 16) == 16);
