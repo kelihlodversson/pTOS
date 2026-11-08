@@ -396,7 +396,7 @@ static LONG flush_control(struct gem_window *window, LONG session)
     message[0] = window->control_message; message[3] = window->id;
     message[4] = window->control_rectangle.g_x; message[5] = window->control_rectangle.g_y;
     message[6] = window->control_rectangle.g_w; message[7] = window->control_rectangle.g_h;
-    result = cuis_call6(CUIS_STREAM_WRITE,session,(uintptr_t)message,16,0,0,0);
+    result = cuis_call6(CUIS_STREAM_WRITE,session,(uintptr_t)message,16,0,(UQUAD)session+1,0);
     if (result == EAGAIN) { control_pipe_blocked = TRUE; return E_OK; }
     if (result != 16) return result < 0 ? result : EACCDN;
     window->control_message = 0;

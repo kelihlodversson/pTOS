@@ -12,6 +12,7 @@
 #include "gem_argv.h"
 #include "gem_lifecycle.h"
 #include "gem_explicit.h"
+#include "process_identity.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -22,6 +23,46 @@ static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e
     return (LONG)ax;
 }
 #define PROC(fn,a,b,c,d) raw(1,fn,a,b,c,d,0,0)
+/* Public native GUI endpoint operations in one real PROCESS/address space. */
+static int two_client_identity(short id, LONG pid)
+{
+    LONG primary, extra, peer, after, sender, seen=0;
+    PROCESS_IDENTITY process={0,0,0,0}, again={0,0,0,0};
+    CUIS_PEER_IDENTITY_DATA a,b;
+    WORD data[8]={700,32766,0,123,456,0,0,0}, out[8];
+    primary=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0,0,0);
+    extra=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,CUIS_SESSION_NEW,0,0,0,0,0);
+    GEM_TEST_CHECK(primary>=0 && extra>primary);
+    GEM_TEST_CHECK(PROC(0x154,(WORD)-8,(uintptr_t)&process,sizeof(process),0)==0 && process.pid==pid);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_PEER_QUERY,primary,primary,CUIS_PEER_IDENTITY,(uintptr_t)&a,16,0)==16);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_PEER_QUERY,extra,extra,CUIS_PEER_IDENTITY,(uintptr_t)&b,16,0)==16);
+    GEM_TEST_CHECK(a.client_id==(ULONG)id && b.client_id!=a.client_id &&
+                   a.process_low==b.process_low && a.process_high==b.process_high &&
+                   a.process_low==process.number_low && a.process_high==process.number_high);
+    for(after=-1;;after=peer) {
+        peer=raw(CUIS_SERVICE_CLASS,CUIS_PEER_NEXT,primary,(QUAD)after,0,0,0,0);
+        if(peer<0) break;
+        if(peer==primary) seen|=1;
+        if(peer==extra) seen|=2;
+    }
+    GEM_TEST_CHECK(seen==3 && appl_find((const char *)(uintptr_t)(0xffff0000UL|(UWORD)pid))==id);
+    GEM_TEST_CHECK(appl_write((short)b.client_id,16,data)==1 && data[1]==32766);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_READ,extra,(uintptr_t)out,16,0,(uintptr_t)&sender,0)==16 &&
+                   sender==id && out[1]==id && out[3]==123 && out[4]==456);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_WRITE,primary,(uintptr_t)data,16,0,(UQUAD)extra+1,0)==16);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_READ,primary,(uintptr_t)out,16,0,(uintptr_t)&sender,0)==16 &&
+                   sender==(LONG)b.client_id && out[3]==123);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_END,extra,0,0,0,0,0)==0 &&
+                   raw(CUIS_SERVICE_CLASS,CUIS_SESSION_QUERY,primary,0,0,0,0,0)==0);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_PEER_QUERY,primary,extra,CUIS_PEER_IDENTITY,(uintptr_t)&b,16,0)==EFILNF);
+    GEM_TEST_CHECK(PROC(0x154,(WORD)-8,(uintptr_t)&again,sizeof(again),0)==0 &&
+                   again.pid==process.pid && again.number_low==process.number_low && again.number_high==process.number_high);
+    GEM_TEST_CHECK(appl_find((const char *)(uintptr_t)(0xffff0000UL|(UWORD)pid))==id && appl_yield()==1);
+    { static const char text[]="native same-PROCESS two-client identity/routing/retirement: verified\r\n";
+      (void)PROC(0x40,1,sizeof(text)-1,(uintptr_t)text,0); }
+    return 0;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     short id, globals[15], a = 1, b = 2, c = 3, d = 4;
@@ -47,6 +88,7 @@ int main(int argc, char **argv, char **envp)
         return gem_launch_child(globals,argc,argv,envp);
     if (argc > 1 && argv[1][0] == 'n') return 0x1234;
     if (argc == 1) {
+        GEM_TEST_CHECK(two_client_identity(id,pid)==0);
         GEM_TEST_CHECK(menu_register(id+1,"Wrong identity") == -1);
         GEM_TEST_CHECK(menu_register(REG_NEWNAME,"ACCTEST ") == 0);
         GEM_TEST_CHECK(appl_find("ACCTEST ") == id);

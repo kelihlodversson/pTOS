@@ -87,6 +87,7 @@ typedef struct cuis_client {
     BOOL cohort_exit, cohort_delivered, cohort_accepted;
     UBYTE cohort_data[CUIS_COHORT_BYTES];
     UWORD aes_id;
+    BOOL explicit_client; /* Additional endpoint: explicit bounded operations, no implicit wait binding. */
     KPROC *process; /* Retained identity, never a borrowed live PD. */
     CUIS_PACKET *pending_write;
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
@@ -133,7 +134,7 @@ static ULONG next_child_token;
 static ULONG input_interval = 450;
 static void sample_input_waits(void);
 static ULONG next_handle;
-static UWORD next_aes_id = 1;
+static UWORD last_aes_id; /* Never recycled: unread sender metadata must not alias a new client. */
 static ULONG next_window_handle;
 /* Front to back, containing only visible windows from all sessions. */
 static CUIS_WINDOW *window_front;
@@ -752,6 +753,17 @@ static CUIS_CLIENT **find_owner(PD *owner)
     return link;
 }
 
+/* An endpoint handle authenticates a GUI operation within the current PROCESS.
+ * The default implicit window/input binding remains the first client; explicit
+ * peer/stream/session operations may address additional clients. */
+static CUIS_CLIENT *owned_client(UQUAD handle)
+{
+    CUIS_CLIENT *client;
+    for (client=clients;client;client=client->next)
+        if (client->owner==run && client->handle==handle) return client;
+    return NULL;
+}
+
 static void clear_display_regions(CUIS_CLIENT *client)
 {
     CUIS_WINDOW *window;
@@ -1178,10 +1190,11 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     }
 }
 
-static void session_exit(PD *owner)
+static void session_exit_client(CUIS_CLIENT *client)
 {
-    CUIS_CLIENT **link = find_owner(owner), *client = *link;
-    if (client) {
+    CUIS_CLIENT **link=&clients;
+    while (*link && *link!=client) link=&(*link)->next;
+    if (*link) {
         CUIS_WINDOW *window;
         ULONG i;
         UQUAD flags = cuis_input_lock();
@@ -1230,6 +1243,7 @@ static void session_exit(PD *owner)
 
 void cuis_process_exit(PD *owner)
 {
+    CUIS_CLIENT *client;
     if (console_owner && console_owner == owner) {
         UQUAD flags = cuis_input_lock();
         console_owner = NULL;
@@ -1239,7 +1253,7 @@ void cuis_process_exit(PD *owner)
         damage_windows(); cuis_pointer_sync();
         cuis_input_unlock(flags);
     }
-    session_exit(owner);
+    while ((client=*find_owner(owner))!=NULL) session_exit_client(client);
 }
 
 #if CONF_WITH_X86_64_MEMTEST
@@ -1273,27 +1287,27 @@ ULONG cuis_session_count(void)
 
 LONG cuis_service(ULONG function, UQUAD handle)
 {
-    CUIS_CLIENT *client, *scan;
+    CUIS_CLIENT *client;
     KPROC *process;
-    ULONG attempts;
-    UWORD candidate;
     UQUAD flags;
 
     switch (function) {
     case CUIS_SESSION_START:
+        if (handle > CUIS_SESSION_NEW) return EINVAL;
         refresh_pointer_bounds();
         client = *find_owner(run);
-        if (client) return (LONG)client->handle;
+        if (client && !handle) return (LONG)client->handle;
         if (cohort.owner) return EAGAIN; /* A stable, closed cohort is in progress. */
 
         /* Keep every successful result non-negative and never recycle a
          * handle. Stop at the signed 32-bit limit instead of wrapping. */
-        if (next_handle > 0x7fffffffUL) return ENSMEM;
+        if (next_handle > 0x7fffffffUL || last_aes_id==32767) return ENSMEM;
         process = kproc_retain(run);
         if (!process) return EACCDN;
         client = kalloc(sizeof(*client));
         if (!client) { kproc_release(process); return ENSMEM; }
         client->process = process;
+        client->explicit_client = handle == CUIS_SESSION_NEW;
         client->windows = client->background = NULL;
         client->background_next = NULL; client->background_dirty = FALSE;
         client->background_registered = FALSE;
@@ -1322,28 +1336,25 @@ LONG cuis_service(ULONG function, UQUAD handle)
         memset(client->input_result, 0, sizeof(client->input_result));
         client->owner = run;
         flags = cuis_input_lock();
-        for (attempts = 0; attempts < 32767; attempts++) {
-            candidate = next_aes_id;
-            next_aes_id = candidate == 32767 ? 1 : candidate + 1;
-            for (scan = clients; scan && scan->aes_id != candidate; scan = scan->next) ;
-            if (!scan) break;
-        }
-        if (scan || next_handle > 0x7fffffffUL) {
+        if (last_aes_id==32767 || next_handle > 0x7fffffffUL) {
             cuis_input_unlock(flags);
             kproc_release(process); kfree(client); return ENSMEM;
         }
-        client->aes_id = candidate;
+        client->aes_id = ++last_aes_id;
         client->handle = next_handle++;
-        client->next = clients;
-        clients = client;
+        if (handle == CUIS_SESSION_NEW) {
+            CUIS_CLIENT **tail=&clients;
+            while (*tail) tail=&(*tail)->next;
+            client->next=NULL; *tail=client; /* Preserve existing default binding. */
+        } else { client->next=clients; clients=client; }
         cuis_input_unlock(flags);
         return (LONG)client->handle;
     case CUIS_SESSION_QUERY:
     case CUIS_SESSION_END:
         if (handle > 0x7fffffffULL) return EINVAL;
-        client = *find_owner(run);
-        if (!client || handle != client->handle) return EACCDN;
-        if (function == CUIS_SESSION_END) session_exit(run);
+        client = owned_client(handle);
+        if (!client) return EACCDN;
+        if (function == CUIS_SESSION_END) session_exit_client(client);
         return E_OK;
     default:
         return EINVFN;
@@ -1644,8 +1655,8 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
     LONG result = EFILNF;
     if (session > 0x7fffffffULL) return EINVAL;
     flags = cuis_input_lock();
-    client = *find_owner(run);
-    if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
+    client = owned_client(session);
+    if (!client) { cuis_input_unlock(flags); return EACCDN; }
     if (function == CUIS_SESSION_TAG) {
         if (handle > 0x7fffffffULL) result = EINVAL;
         else { client->tag = (ULONG)handle; result = E_OK; }
@@ -2501,7 +2512,26 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
     if (function != CUIS_STREAM_READ && function != CUIS_STREAM_WRITE &&
         function != CUIS_STREAM_PEEK && function != CUIS_STREAM_PENDING) return EINVFN;
     if (handle > 0x7fffffffULL || length > CUIS_STREAM_MAX || block > 1) return EINVAL;
+    if (function == CUIS_STREAM_WRITE && sender) {
+        if (sender > 0x80000000ULL) return EINVAL;
+        client=owned_client(sender-1); /* Explicit authenticated source handle + 1. */
+    } else if (function != CUIS_STREAM_WRITE) client=owned_client(handle);
     if (!client) return EACCDN;
+    if (client->explicit_client && function != CUIS_STREAM_PENDING) {
+        ULONG source=client->handle;
+        /* No per-THREAD implicit GUI binding is provided yet (#896). Admit
+         * only bounded operations; perform all lazy/COW preparation before
+         * reacquiring the source, so retirement callbacks cannot leave a
+         * borrowed source pointer. No yield/mapping mutation follows this
+         * preflight under the documented cooperative copy contract. */
+        if (block) return EINVFN;
+        if (length && (function == CUIS_STREAM_WRITE ?
+             !kproc_validate_user_range(buffer,(ULONG)length) :
+             (!kproc_validate_user_write(buffer,(ULONG)length) ||
+              (sender && !kproc_validate_user_write(sender,sizeof(LONG)))))) return EIMBA;
+        client=owned_client(source);
+        if (!client) return EACCDN;
+    }
     if (function != CUIS_STREAM_WRITE && handle != client->handle) return EACCDN;
     if (function == CUIS_STREAM_PENDING) {
         if (buffer || length || block || sender) return EINVAL;

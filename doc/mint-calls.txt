@@ -233,3 +233,13 @@ SMP lock; preemption/SMP enablement requires the owning synchronization
 contract first. Exhaustion refuses creation instead of wrapping through zero
 or reusing an identity. Endpoint-held identity references also reserve the
 PID until prompt endpoint final reclamation; they keep no live resources.
+
+PROCESS_IDENTITY uses four fixed-width 32-bit fields with explicit 4-byte
+alignment, 16-byte size and compile-time width/offset/alignment assertions on all
+three MMU ABIs. The numeric PROCESS number grants no reference, permission or
+completion right. Identity lookups acquire a transient registry reference and
+return copied values only. A CUIS endpoint's retained identity may reserve a PID
+until retirement; it does not retain PD, descriptors, ASPACE or execution state.
+Live/retired lookup plus retain, final unlink/release and counter allocation must
+share PROCESS-owner synchronization before preemption/SMP. Local IRQ exclusion
+alone is not that lock. GUI locks must not acquire a blocking PROCESS lock.

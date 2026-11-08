@@ -5,6 +5,7 @@
 
 #define CUIS_SERVICE_CLASS 0x103UL
 #define CUIS_SESSION_START 0UL
+#define CUIS_SESSION_NEW 1UL /* START argument: fresh endpoint, same owning PROCESS. */
 #define CUIS_SESSION_QUERY 1UL
 #define CUIS_SESSION_END 2UL
 #define CUIS_WINDOW_CREATE 3UL
@@ -107,9 +108,9 @@ typedef struct {
     ULONG client_id;
     ULONG process_low, process_high;
     ULONG reserved;
-} CUIS_PEER_IDENTITY_DATA;
+} __attribute__((aligned(4))) CUIS_PEER_IDENTITY_DATA;
 typedef char CUIS_PEER_IDENTITY_LAYOUT[
-    sizeof(CUIS_PEER_IDENTITY_DATA) == 16 &&
+    sizeof(CUIS_PEER_IDENTITY_DATA) == 16 && __alignof__(CUIS_PEER_IDENTITY_DATA) == 4 &&
     offsetof(CUIS_PEER_IDENTITY_DATA,client_id) == 0 &&
     offsetof(CUIS_PEER_IDENTITY_DATA,process_low) == 4 &&
     offsetof(CUIS_PEER_IDENTITY_DATA,process_high) == 8 &&

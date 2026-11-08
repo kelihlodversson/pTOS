@@ -336,7 +336,14 @@ short mt_appl_write(short id, short length, void *buffer, short *global)
     if (!registered(global) || id <= 0 || length < 0 || (length && !buffer)) return 0;
     peer = client_by_id(application_session,id);
     if (peer < 0) return 0;
-    return cuis_call6(CUIS_STREAM_WRITE, peer, (uintptr_t)buffer, length, 1, 0, 0) == length ? 1 : 0;
+    if (length == 16) {
+        WORD message[8];
+        memcpy(message,buffer,sizeof(message));
+        message[1]=application_id; /* GEM sender is this client, never a caller PID. */
+        return cuis_call6(CUIS_STREAM_WRITE,peer,(uintptr_t)message,length,1,
+                          (UQUAD)application_session+1,0)==length ? 1 : 0;
+    }
+    return cuis_call6(CUIS_STREAM_WRITE, peer, (uintptr_t)buffer, length, 1, (UQUAD)application_session+1, 0) == length ? 1 : 0;
 }
 short appl_write(short id, short length, void *buffer) { return mt_appl_write(id, length, buffer, aes_global); }
 

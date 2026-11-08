@@ -188,7 +188,7 @@ int main(int argc, char **argv, char **envp)
         /* GEM appl_write needs no receiver handshake or permission API. */
         CHECK(probe_packet_write(owner, handle, 1, 2, 3, 4) == sizeof(PROBE_PACKET));
     }
-    CHECK(raw(CUIS_SESSION_START, ~0ULL) == handle);
+    CHECK(raw(CUIS_SESSION_START, ~0ULL) == EINVAL && probe_session_open() == handle);
     CHECK(raw(CUIS_SESSION_QUERY, (1ULL << 32) | (ULONG)handle) == EINVAL);
     CHECK(raw(CUIS_SESSION_END, (1ULL << 32) | (ULONG)handle) == EINVAL);
     CHECK(raw(CUIS_SESSION_END, ~0ULL) == EINVAL);

@@ -92,7 +92,7 @@ static BOOL flush(LONG session, BOOL block)
     LONG result;
     if (!bar.pending) return TRUE;
     result = cuis_call6(CUIS_STREAM_WRITE,bar.message[0] == AC_OPEN ? bar.recipient : session,
-                        (uintptr_t)bar.message,16,bar.message[0] == AC_OPEN && bar.recipient != session && block,0,0);
+                        (uintptr_t)bar.message,16,bar.message[0] == AC_OPEN && bar.recipient != session && block,(UQUAD)session+1,0);
     if (result == 16) { bar.pending = FALSE; return TRUE; }
     /* A selected accessory may exit while its queue is full. Its session
      * handle is never recycled; discard instead of opening a replacement. */

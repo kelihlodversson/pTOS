@@ -3416,3 +3416,41 @@ is copied from a retained identity into kernel-local storage before copyout;
 its bounded name survives PROCESS retirement without retaining the PD. AES
 label folding, eight-character naming and .ACC classification remain libaes
 policy. Private CUIS slot 25 is retired and returns EINVFN.
+
+Additional endpoints in one PROCESS (#907, not full #896)
+---------------------------------------------------------
+SESSION_START(0) returns/creates the default endpoint. SESSION_START(1), named
+CUIS_SESSION_NEW, creates a fresh endpoint with the same authenticated caller
+PROCESS. Other START arguments are EINVAL. Default window/input binding is not
+changed. QUERY/END, peer enumeration/descriptors and bounded nonblocking stream
+operations accept an explicitly owned endpoint handle. PROCESS cleanup retires
+all endpoints, whereas END retires only its named endpoint. No THREAD scheduler
+binding or separate C-runtime instance is implied. libaes's current shared
+runtime globals still select one application context; full MagiC multi-context
+window/input bindings and cancellable secondary waits remain #896/dependency work.
+Blocking stream operations on an additional endpoint return EINVFN. Such
+nonblocking operations prepare lazy/COW user buffers before reacquiring endpoint
+identity; no yield or mapping mutation may intervene under the cooperative
+copy contract. Future preemption needs mapping/operation lifetime synchronization.
+
+WRITE's sender argument is zero for the default source, or source endpoint
+handle + 1 for an explicit source. This is an owned endpoint selector, never a
+PID, PROCESS number, AES ID or user-supplied authenticated sender. READ/PEEK keep
+that argument's existing output-pointer meaning. libaes passes its source
+endpoint explicitly. Ordinary 16-byte appl_write messages copy/normalize the
+short sender to the calling AES client without modifying caller memory. Raw
+CUIS bytes remain opaque; the kernel's sender ring and cohort read-token checks
+remain authoritative (a first-byte sender is not whole-message authentication).
+
+AES client IDs now advance from 1 through 32767 without recycling during a boot.
+Exhaustion returns ENSMEM before publishing a handle or consuming references.
+Existing endpoints remain usable. This deliberate bound prevents unread stream,
+cohort or application messages from attributing an old sender to a replacement
+client. An AES ID is a short routing name, not an enduring capability; only the
+non-recycled opaque endpoint handle plus PROCESS ownership authorizes operations.
+
+Native GEM regression creates two endpoints in one real PROCESS/ASPACE, checks
+both descriptor PROCESS numbers against S_PROCIDENT/PID, routes ordinary GEM and
+explicit opaque stream messages, verifies deterministic lowest-ID PID conversion,
+and retires one client without completing PROCESS. Host production-code tests
+cover both endpoint release orders, stale handles, failure and ID exhaustion.

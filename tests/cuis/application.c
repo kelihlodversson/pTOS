@@ -451,8 +451,10 @@ static int child_message_checks(void)
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
+        expected[1]=7; /* This ordinary appl_write is authenticated as the AES client. */
         CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,expected) == 1);
         CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,expected,16) && !pipe_count);
+        expected[1]=0; /* Actual generic child notifications below retain system sender zero. */
         CHECK(appl_write(7,16,forged) == 1);
         stream_only_wakes = 1;
         /* Filtering an internal message must preserve the original timer. */
