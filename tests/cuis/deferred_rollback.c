@@ -303,3 +303,4 @@ PD *ksched_launch_controller(PD *p) { (void)p; return NULL; }
 
 BOOL ksched_dispatching(void) { return ksched_active(); }
 BOOL ksched_async_allowed(void) { return ksched_spawn_allowed(); }
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

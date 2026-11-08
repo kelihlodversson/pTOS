@@ -49,6 +49,10 @@
 
 void *procmem_alloc(ULONG bytes, UWORD flags);
 BOOL procmem_free(void *p);
+/* Attach one retained identity's no-I/O/no-reentry finalizer to an allocation.
+ * It runs only after actual release, including deferred pinned reclamation.
+ * Failure transfers nothing; neither the reusable base nor owner is the token. */
+BOOL procmem_on_free(void *base, void (*notify)(void *), void *token);
 /* Gives the pages after the first `bytes` (whole pages, at least one) of a live
  * allocation back to the window.  The caller has unmapped them from every
  * address space (aspace_shrink_procmem()) first.  FALSE if p is no allocation. */

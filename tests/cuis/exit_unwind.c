@@ -104,3 +104,5 @@ int main(void)
     puts("Finalization callback unwind contract: PASS");
     return 0;
 }
+
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

@@ -274,3 +274,4 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
 BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
 void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }
