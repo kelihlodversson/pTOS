@@ -189,7 +189,16 @@ Global queue/owner data: stable task arena/list, next RR cursor, reservations,
 anchor dependencies, stopping latch; admission/ticket/TID registries and identity
 clocks belong to their resource owners, not the CPU controller.
 
-Must become per-CPU before B1/B2: current task/execution; root CPU snapshot,
+B1a now groups current/in-flight execution, root context/stack/attachment,
+pending clone publication and leaf-held state in an explicit boot-CPU record.
+Dispatch pins an execution until verified root handoff; loaded current-pointer
+clearing cannot release the pin. The queue/arena and RR cursor stay global.
+See native-interrupt-frames.txt for implemented boundaries and architecture plan.
+
+Still required before asynchronous B1/B2 capture can escape an exception:
+architecture CPU-local selection and conversion of loaded launcher/error and
+architecture scratch slots. The following full inventory must remain CPU-owned:
+current task/execution; root CPU snapshot,
 resume/stack/start/park/entered state; attached caller jump, identity, predicate,
 pump budget; leaf-held/owner-critical depth; pending clone commit/slot; current
 launcher/nested depth, errbuf,

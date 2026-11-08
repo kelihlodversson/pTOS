@@ -274,3 +274,15 @@ split-phase retirement and global shutdown-admission boundary. The document
 separates implemented guarantees from required owner locks, wait generations,
 record pins, per-CPU execution state and architecture user frames before B1/B2.
 Neither this boundary nor local IRQ masking provides SMP synchronization.
+
+B1a CPU execution ownership (preemption remains disabled)
+---------------------------------------------------------
+See doc/native-interrupt-frames.txt for the explicit x32/ARM/m68k frame plan,
+current implementation and remaining B1b/B1c boundaries. The shared runqueue no
+longer stores current execution, root stack/context, caller attachment or clone
+handoff state. A boot-CPU record owns these; a dispatched task stays pinned to
+that CPU until the root verifies its own stack and acknowledges the handoff.
+Clearing a backend-loaded current pointer cannot authorize reclamation. Record
+reuse, trimming and execution-resource destruction reject on-CPU continuations.
+This is a common architecture-neutral ownership prerequisite, not complete IRQ
+register-frame capture, SMP support or permission to switch an IRQ continuation.
