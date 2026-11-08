@@ -603,7 +603,8 @@ def libaes_desktop(guest):
     # PROCESS result available. Every notified child is collected once.
     exits = re.findall(r"x32 desktop CH_EXIT (\d+) [0-9a-f]+", text)
     waits = re.findall(r"x32 desktop WAIT (\d+) ([0-9a-f]+)", text)
-    assert len(waits) == len(exits) and len(exits) >= 8, (exits, waits)
+    expected = 7 if guest.embedded_console else 8
+    assert len(waits) == len(exits) == expected, (exits, waits, expected)
     for pid, status in waits:
         assert int(status, 16) >> 16 == int(pid), (pid, status)
         assert sum(p == pid for p, _ in waits) == 1, (pid, waits)
