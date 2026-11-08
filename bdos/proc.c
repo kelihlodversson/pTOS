@@ -495,35 +495,41 @@ static PD *cur_p;
 
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe);
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL);
+    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)
 {
     if (!out || *out) return EINVAL;
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out,NULL));
+}
+long proc_exec_prepare(char *path, char *tail, char *env, char *directory,
+                       PROCESS_OBSERVER **out, void **prepared)
+{
+    if (!out || *out || !prepared || *prepared) return EINVAL;
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out,prepared));
 }
 #endif
 #if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL,NULL));
 }
 long xexec_deferred(char *path, char *tail, char *env, ULONG session)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL,NULL));
 }
 long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL));
 }
 #endif
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe)
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared)
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -540,6 +546,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     PROCESS_OBSERVER *observed = NULL;
 #else
     UNUSED(observe);
+    UNUSED(prepared);
 #endif
 #if !CONF_WITH_CUIS
     UNUSED(session); UNUSED(token); UNUSED(deferred);
@@ -858,6 +865,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         }
 #endif
         if (rc == E_OK) {
+            if (prepared) rc = ksched_process_prepare(cur_p, prepared);
+            else
 #if CONF_WITH_CUIS
             rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
 #else

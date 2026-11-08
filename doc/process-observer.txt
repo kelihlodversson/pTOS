@@ -153,3 +153,27 @@ Canonical retirement publishes ABANDONED automatically when no status exists;
 normal managed completion publishes only after the existing wait-state store.
 Production host tests cover stopped-owner recognition, pending association,
 repeated disposal, cleanup/unwind readiness, and observer release after reap.
+
+Prepared-loader staging (#907 / #931)
+------------------------------------
+proc_exec_prepare() reuses the same exec_common loader, CWD acquisition and
+canonical observer attachment as proc_exec_observe(), but returns E_OK with a
+private ksched_process_prepare() reservation. The image, THREAD and execution
+stack are owned by that reservation before the caller receives it. It is not
+runnable or public-wait visible. Failure preserves both empty output slots and
+reclaims the unstarted image. A successful caller must consume the reservation
+exactly once through ksched_process_publish() or ksched_process_cancel().
+Publication performs no allocation, copy, callback or yield; cancellation runs
+resource teardown outside scheduler exclusion and prevents reentrant reuse of
+backend storage until the THREAD reclaimer finishes. Ordinary asynchronous and
+legacy GUI/deferred admission share this preparation path; no second loader or
+runqueue is introduced. These trusted staging helpers do not enable the proposed
+public transport or provide user-owned numeric handles yet.
+
+Explicit PFS child CWD now resolves against the target PROCESS's inherited
+current-directory references, without changing global run. Replacement acquires
+its directory cookie and table slot before releasing the old shared reference;
+failed resolution or a full table preserves previous state. A uniquely owned
+old slot can be replaced in a full table. Root consumes no slot and releases its
+transient driver cookie. Existing Dsetpath still leaves the current drive alone;
+the trusted loader operation selects only the child's drive on success.

@@ -204,6 +204,15 @@ LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token)
     publications++;
     return spawn_result;
 }
+LONG ksched_process_prepare(PD *p, void **slot)
+{
+    CHECK(observer_mode && p==&image && slot && !*slot && records==1);
+    CHECK(observer_refs==1 && observer_output && !*observer_output);
+    CHECK(!publications);
+    if (spawn_result < 0) return spawn_result;
+    *slot=p;
+    return E_OK;
+}
 LONG ksched_exec(PD *p, BOOL take, LONG *result) { abort(); }
 BOOL kproc_check_launch(PD *p, PD *caller) { abort(); }
 ASPACE *kproc_user_aspace(PD *p) { abort(); }
@@ -285,6 +294,28 @@ int main(void)
             if (stage<6) CHECK(!out && !observer_refs && !allocations && !records);
             else {
                 CHECK(out==(KPROC *)&image && observer_refs==1 && publications==1);
+                proc_discard_scheduled(&image); /* abandon unstarted image, not an invented exit */
+                CHECK(!allocations && !records && observer_refs==1);
+                kproc_release(out); out=NULL;
+            }
+            CHECK(references[0]==2 && references[1]==1 && dirtbl[3].use==1 && dirtbl[4].use==1);
+        }
+        for (stage=0;stage<7;stage++) {
+            LONG expected;
+            void *prepared=NULL;
+            CHECK(!allocations && !records && !observer_refs && !out);
+            references[0]=2; references[1]=1; dirtbl[3].use=dirtbl[4].use=1;
+            directory_releases=attempts=interrupted=invalidations=publications=0;
+            deny_start=stage==0; header_error=stage==1?EFILNF:0;
+            load_error=stage==2?EPLFMT:0; directory_error=stage==3?EPTHNF:0;
+            fail_observer_retain=stage==4; spawn_result=stage==5?EAGAIN:123;
+            observer_output=&out;
+            expected=stage==0?EINVFN:stage==1?EFILNF:stage==2?EPLFMT:
+                     stage==3?EPTHNF:stage==4?ENSMEM:stage==5?EAGAIN:E_OK;
+            CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\TARGET",&out,&prepared)==expected);
+            if (stage<6) CHECK(!prepared && !out && !observer_refs && !allocations && !records);
+            else {
+                CHECK(out==(KPROC *)&image && observer_refs==1 && !publications && prepared==&image);
                 proc_discard_scheduled(&image); /* abandon unstarted image, not an invented exit */
                 CHECK(!allocations && !records && observer_refs==1);
                 kproc_release(out); out=NULL;

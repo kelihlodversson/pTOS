@@ -578,8 +578,85 @@ LONG ksched_join(ULONG tid, UQUAD address)
 }
 #endif
 
+LONG ksched_process_prepare(PD *pd, void **slot)
+{
+    UWORD i;
+    KERNEL_TASK *task;
+    void *reservation = NULL;
+    LONG reserved;
+    if (!slot || *slot) return EINVAL;
+    if (!ksched_spawn_allowed()) return EINVFN;
+    if (next_identity == ~0ULL) return EAGAIN;
+    if (!kproc_unlaunched(pd) || kproc_user_root(pd)) return EIMBA;
+    for (i = 0; i < KSCHED_LIMIT; i++)
+        if (scheduler.tasks[i].program == pd) return EACCDN;
+    reserved = ksched_task_reserve(FALSE, &reservation);
+    if (reserved != E_OK) return reserved;
+    task = reservation;
+    /* Reserve the image identity too: recursive preparation must not start
+     * a second construction for the same PD in a different reserved slot. */
+    task->program = pd;
+    if (!kthread_stack_allocate(&task->execution.stack)) {
+        ksched_task_cancel(&reservation);
+        return ENSMEM;
+    }
+    task->process = kproc_retain(pd);
+    if (!task->process) {
+        kthread_stack_release(&task->execution.stack);
+        ksched_task_cancel(&reservation);
+        return ENSMEM;
+    }
+    /* The optional THREAD is constructed inside preparation, before its
+     * irreversible image move; publication and stack transfer cannot fail. */
+    if (!kproc_prepare_async_thread(pd, run, scheduler.root.pd, &task->thread)) {
+        kproc_release(task->process);
+        kthread_stack_release(&task->execution.stack);
+        ksched_task_cancel(&reservation);
+        return ENSMEM;
+    }
+    adopt_task_execution(task);
+    task->pid = kproc_pid(pd);
+    task->parent = run;
+    task->asynchronous = TRUE;
+    task->take_ownership = TRUE;
+    kproc_commit_async(pd);
+    *slot = reservation;
+    return E_OK;
+}
+
+LONG ksched_process_publish(void **slot)
+{
+    KERNEL_TASK *task = *slot;
+    LONG pid = task->pid;
+    if (task->state != TASK_RESERVED || !task->process || !task->thread)
+        panic("process publication without preparation");
+    ksched_task_publish(slot);
+    return pid;
+}
+
+void ksched_process_cancel(void **slot)
+{
+    KERNEL_TASK *task;
+    KPROC *process;
+    KTHREAD *thread;
+    if (!slot || !*slot) return;
+    task = *slot;
+    if (task->state != TASK_RESERVED || !task->process || !task->thread)
+        panic("process cancellation without preparation");
+    *slot = NULL;
+    process = task->process;
+    thread = task->thread;
+    /* Prevent callbacks from reusing the backend until its reclaimer returns. */
+    task->state = TASK_DONE;
+    task->program = NULL;
+    task->thread = NULL;
+    proc_dispose_process(process);
+    kthread_destroy(thread);
+    kproc_release(process);
+    memset(task, 0, sizeof(*task));
+}
+
 #if CONF_WITH_CUIS
-static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred);
 static void discard_deferred(KERNEL_TASK *task)
 {
 #if !CONF_WITH_USER_ASPACE
@@ -619,99 +696,50 @@ LONG ksched_defer_cancel(void)
             discard_deferred(&scheduler.tasks[i]);
     return E_OK;
 }
+static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
+{
+    void *slot = NULL;
+    KPROC *owner = NULL;
+    KERNEL_TASK *task;
+    LONG result;
+    if (!ksched_spawn_allowed()) return EINVFN;
+    if (deferred) {
+        if (cuis_service(CUIS_SESSION_QUERY, session) != E_OK) return EACCDN;
+        owner = kproc_retain(run);
+        if (!owner && kproc_pid(run)) return ENSMEM;
+    } else if (session || token) {
+        result = cuis_child_bind_spawn(session, token, pd);
+        if (result != E_OK) return result;
+    }
+    result = ksched_process_prepare(pd, &slot);
+    if (result != E_OK) {
+        if (owner) kproc_release(owner);
+        return result;
+    }
+    if (deferred) {
+        task = slot;
+        ksched_defer_cancel();
+        task->parent = NULL;
+        task->deferred_owner = run;
+        task->deferred_owner_identity = owner;
+        publish_task(&slot, TASK_DEFERRED);
+        return E_OK;
+    }
+    return ksched_process_publish(&slot);
+}
 LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0,FALSE); }
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
 { return spawn_configured(pd,session,token,FALSE); }
 LONG ksched_defer(PD *pd, ULONG session)
 { return spawn_configured(pd,session,0,TRUE); }
-static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
 #else
 LONG ksched_spawn(PD *pd)
-#endif
 {
-    UWORD i;
-    KERNEL_TASK *task;
-    void *reservation = NULL;
-    LONG reserved;
-    if (!ksched_spawn_allowed()) return EINVFN;
-#if CONF_WITH_CUIS
-    if (deferred && cuis_service(CUIS_SESSION_QUERY,session) != E_OK) return EACCDN;
-#endif
-    if (next_identity == ~0ULL) return EAGAIN;
-    if (!kproc_unlaunched(pd) || kproc_user_root(pd)) return EIMBA;
-    for (i = 0; i < KSCHED_LIMIT; i++)
-        if (scheduler.tasks[i].program == pd) return EACCDN;
-    reserved = ksched_task_reserve(FALSE, &reservation);
-    if (reserved != E_OK) return reserved;
-    task = reservation;
-    /* Reserve the image identity too: recursive preparation must not start
-     * a second construction for the same PD in a different reserved slot. */
-    task->program = pd;
-    if (!kthread_stack_allocate(&task->execution.stack)) {
-        ksched_task_cancel(&reservation);
-        return ENSMEM;
-    }
-    task->process = kproc_retain(pd);
-    if (!task->process) {
-        kthread_stack_release(&task->execution.stack);
-        ksched_task_cancel(&reservation);
-        return ENSMEM;
-    }
-#if CONF_WITH_CUIS
-    if (!deferred && (session || token)) {
-        LONG result = cuis_child_bind_spawn(session,token,pd);
-        if (result != E_OK) {
-            kproc_release(task->process);
-            kthread_stack_release(&task->execution.stack);
-            ksched_task_cancel(&reservation);
-            return result;
-        }
-    }
-#endif
-#if CONF_WITH_CUIS
-    /* Acquire the predecessor identity before image preparation can consume
-     * a staged image. No fallible acquisitions may follow that transfer. */
-    if (deferred) {
-        task->deferred_owner_identity = kproc_retain(run);
-        if (!task->deferred_owner_identity && kproc_pid(run)) {
-            kproc_release(task->process);
-            kthread_stack_release(&task->execution.stack);
-            ksched_task_cancel(&reservation);
-            return ENSMEM;
-        }
-    }
-#endif
-    /* The optional THREAD is constructed inside preparation, before its
-     * irreversible image move; publication and stack transfer cannot fail. */
-    if (!kproc_prepare_async_thread(pd, run, scheduler.root.pd, &task->thread)) {
-#if CONF_WITH_CUIS
-        if (task->deferred_owner_identity) kproc_release(task->deferred_owner_identity);
-#endif
-        kproc_release(task->process);
-        kthread_stack_release(&task->execution.stack);
-        ksched_task_cancel(&reservation);
-        return ENSMEM;
-    }
-    adopt_task_execution(task);
-    task->pid = kproc_pid(pd);
-    task->parent = run;
-    task->asynchronous = TRUE;
-    task->take_ownership = TRUE;
-    kproc_commit_async(pd);
-#if CONF_WITH_CUIS
-    if (deferred) {
-        /* Publish only after every fallible preparation. Requests are detached
-         * shell handoffs, not children the exiting caller must later reap. */
-        ksched_defer_cancel();
-        task->parent = NULL;
-        task->deferred_owner = run;
-        publish_task(&reservation, TASK_DEFERRED);
-        return E_OK;
-    }
-#endif
-    ksched_task_publish(&reservation);
-    return task->pid;
+    void *slot = NULL;
+    LONG result = ksched_process_prepare(pd, &slot);
+    return result == E_OK ? ksched_process_publish(&slot) : result;
 }
+#endif
 
 typedef struct { PD *parent; WORD pid; } CHILD_WAIT;
 static BOOL child_ready(void *argument)

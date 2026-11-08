@@ -32,6 +32,12 @@ struct kproc;
  * Existing loader paths/environment and bounded no-unwind cleanup apply. */
 long proc_exec_observe(char *path, char *tail, char *environment, char *directory,
                        struct kproc **observer);
+/* Same loader and observer acquisition, but hold a private scheduler admission.
+ * Success transfers the image to *prepared and returns E_OK, not a PID. Caller
+ * must publish or cancel it exactly once; output references are kernel-owned.
+ * Failure leaves both outputs empty and reclaims the unstarted image. */
+long proc_exec_prepare(char *path, char *tail, char *environment, char *directory,
+                       struct kproc **observer, void **prepared);
 #endif
 #if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);

@@ -88,6 +88,15 @@ BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
  * Spawn consumes an unprepared, loaded basepage only on success. */
 BOOL ksched_spawn_allowed(void);
 LONG ksched_spawn(PD *pd);
+/* Successful preparation consumes a loaded unstarted image into private
+ * TASK_RESERVED ownership, including its THREAD and execution stack. Nothing
+ * is runnable/wait-visible. Failure leaves image ownership with the caller.
+ * Cancel consumes a prepared slot and disposes off-stack, outside exclusion.
+ * Publish consumes it exactly once, without allocation/copy/callback/yield.
+ * These are serialized owner operations, not a new scheduler or runqueue. */
+LONG ksched_process_prepare(PD *pd, void **slot);
+LONG ksched_process_publish(void **slot);
+void ksched_process_cancel(void **slot);
 /* Internal observed launch, available only with CUIS. */
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token);
 LONG ksched_defer(PD *pd, ULONG session);
