@@ -13,3 +13,7 @@ esac
 "$@" -ffreestanding -std=c99 -Wall -Wextra -Werror -Iinclude -Ibdos \
     -c tests/clone/abi_layout.c -o "$work/layout.o"
 echo 'Clone user ABI size, offsets, pointer widths and alignment: PASS (compile only)'
+
+"$@" -ffreestanding -std=c99 -Wall -Wextra -Werror -Iinclude -Ibdos \
+    -c tests/process_identity_layout.c -o "$work/process-layout.o"
+echo 'PROCESS/peer identity field sizes, offsets, packing/alignment: PASS (compile only)'

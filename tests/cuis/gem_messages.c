@@ -45,7 +45,9 @@ int main(int argc, char **argv, char **envp)
         VERIFY(appl_write(parent, 16, message) == 1);
         if (argv[1][0] == 'd') {
             VERIFY(evnt_mesag(header) == 1 && header[0] == 800);
-            VERIFY(appl_exit() == 1 && appl_init() == id);
+            VERIFY(appl_exit() == 1);
+            id = appl_init(); VERIFY(id > 0);
+            message[1] = id;
             VERIFY(appl_read(-1, 16, header) == 0); /* Reopen did not inherit the old pipe. */
             message[0] = 801;
             VERIFY(appl_write(parent, 16, message) == 1 && evnt_timer(1) == 1);
@@ -62,13 +64,14 @@ int main(int argc, char **argv, char **envp)
         message[0] = 704; VERIFY(appl_write(parent, 16, message) == 1);
         VERIFY(appl_exit() == 1);
         VERIFY(process(0xff, 0, 0, 0, 0) == 0); /* Let the parent observe discovery removal. */
-        VERIFY(appl_init() == id);
+        id = appl_init(); VERIFY(id > 0);
+        message[1] = id; message[3] = (short)process(0x10b,0,0,0,0);
         message[0] = 705; VERIFY(appl_write(parent, 16, message) == 1);
         return 37; /* The queued reply survives the sender's finalization/exit. */
     }
     VERIFY(appl_find("GEMMSG  ") == id);
-    VERIFY(appl_find((const char *)(uintptr_t)(0xffff0000UL | (UWORD)id)) == id);
-    VERIFY(appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)id)) == id);
+    VERIFY(appl_find((const char *)(uintptr_t)(0xffff0000UL | (UWORD)process(0x10b,0,0,0,0))) == id);
+    VERIFY(appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)id)) == process(0x10b,0,0,0,0));
     VERIFY(appl_find("ABSENT  ") == -1);
     VERIFY(appl_read(-1, 16, header) == 0 && appl_read(id, -1, header) == 0);
     VERIFY(appl_write(id, 0, NULL) == 1 && appl_read(id, 0, NULL) == 1);
@@ -78,8 +81,10 @@ int main(int argc, char **argv, char **envp)
     VERIFY(appl_write(id, 7, data) == 1 && appl_write(id, 9, data + 7) == 1);
     VERIFY(evnt_mesag(header) == 1 && equal((UBYTE *)header, data, 16));
     pid = spawn('p'); VERIFY(pid > 0);
-    VERIFY(evnt_mesag(message) == 1 && message[0] == 700 && message[1] == pid);
-    peer = appl_find("GEMPEER "); VERIFY(peer == pid);
+    VERIFY(evnt_mesag(message) == 1 && message[0] == 700);
+    peer = appl_find("GEMPEER ");
+    VERIFY(peer > 0 && message[1] == peer &&
+           appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == pid);
     header[0] = 701; header[1] = id; header[2] = 64;
     for (i = 3; i < 8; i++) header[i] = 0;
     for (i = 0; i < 16; i++) data[i] = ((UBYTE *)header)[i];
@@ -92,15 +97,16 @@ int main(int argc, char **argv, char **envp)
     VERIFY(appl_write(peer, 16, message) == 1);
     VERIFY(evnt_mesag(message) == 1 && message[0] == 704);
     VERIFY(appl_find("GEMPEER ") == -1);
-    VERIFY(appl_find((const char *)(uintptr_t)(0xffff0000UL | (UWORD)peer)) == -1);
+    VERIFY(appl_find((const char *)(uintptr_t)(0xffff0000UL | (UWORD)pid)) == -1);
     VERIFY(appl_write(peer, 16, message) == 0);
-    VERIFY(evnt_mesag(message) == 1 && message[0] == 705 && message[1] == peer);
+    VERIFY(evnt_mesag(message) == 1 && message[0] == 705 && message[1] > 0 && message[1] != peer && message[3] == pid);
     status = process(0x13a, pid, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)pid << 16) | 37));
     VERIFY(appl_find("GEMPEER ") == -1);
     pid = spawn('d'); VERIFY(pid > 0);
-    VERIFY(evnt_mesag(message) == 1 && message[0] == 700 && message[1] == pid);
-    peer = (short)pid;
+    VERIFY(evnt_mesag(message) == 1 && message[0] == 700);
+    peer = message[1];
+    VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == pid);
     message[0] = 800; message[1] = id;
     for (i = 0; i < 16; i++) data[i] = ((UBYTE *)message)[i];
     VERIFY(appl_write(peer, 32767, data) == 1 && appl_write(peer, 32767, data) == 1);

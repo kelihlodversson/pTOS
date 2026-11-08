@@ -12,6 +12,7 @@
 #include "gem_argv.h"
 #include "gem_lifecycle.h"
 #include "gem_explicit.h"
+#include "process_identity.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -22,6 +23,67 @@ static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e
     return (LONG)ax;
 }
 #define PROC(fn,a,b,c,d) raw(1,fn,a,b,c,d,0,0)
+/* Public native GUI endpoint operations in one real PROCESS/address space. */
+static int two_client_identity(short *idp, LONG pid)
+{
+    short id=*idp;
+    LONG primary, extra, peer, after, sender, seen=0;
+    PROCESS_IDENTITY process={0,0,0,0}, again={0,0,0,0};
+    CUIS_PEER_IDENTITY_DATA a,b;
+    WORD data[8]={700,32766,0,123,456,0,0,0}, out[8];
+    static const char label[8]={'S','E','C','O','N','D',' ',' '};
+    short type,found,mode=APP_FIRST; char name[9]; int visits=0;
+    primary=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0,0,0);
+    extra=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,CUIS_SESSION_NEW,0,0,0,0,0);
+    GEM_TEST_CHECK(primary>=0 && extra>primary);
+    GEM_TEST_CHECK(PROC(0x154,(WORD)-8,(uintptr_t)&process,sizeof(process),0)==0 && process.pid==pid);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_PEER_QUERY,primary,primary,CUIS_PEER_IDENTITY,(uintptr_t)&a,16,0)==16);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_PEER_QUERY,extra,extra,CUIS_PEER_IDENTITY,(uintptr_t)&b,16,0)==16);
+    GEM_TEST_CHECK(a.client_id==(ULONG)id && b.client_id!=a.client_id &&
+                   a.process_low==b.process_low && a.process_high==b.process_high &&
+                   a.process_low==process.number_low && a.process_high==process.number_high);
+    for(after=-1;;after=peer) {
+        peer=raw(CUIS_SERVICE_CLASS,CUIS_PEER_NEXT,primary,(QUAD)after,0,0,0,0);
+        if(peer<0) break;
+        if(peer==primary) seen|=1;
+        if(peer==extra) seen|=2;
+    }
+    GEM_TEST_CHECK(seen==3 && appl_find((const char *)(uintptr_t)(0xffff0000UL|(UWORD)pid))==id);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_LABEL,extra,(uintptr_t)label,8,0,0,0)==0 &&
+                   raw(CUIS_SERVICE_CLASS,CUIS_SESSION_TAG,extra,APP_APPLICATION,0,0,0,0)==0 &&
+                   appl_find("SECOND")== (short)b.client_id);
+    while(appl_search(mode,name,&type,&found)) {
+        mode=APP_NEXT; GEM_TEST_CHECK(++visits<=32767);
+        if(found==id) seen|=4;
+        if(found==(short)b.client_id) seen|=8;
+    }
+    GEM_TEST_CHECK(seen==15);
+    GEM_TEST_CHECK(appl_write((short)b.client_id,16,data)==1 && data[1]==32766);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_READ,extra,(uintptr_t)out,16,0,(uintptr_t)&sender,0)==16 &&
+                   sender==id && out[1]==32766 && out[3]==123 && out[4]==456);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_WRITE,primary,(uintptr_t)data,16,0,(UQUAD)extra+1,0)==16);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_STREAM_READ,primary,(uintptr_t)out,16,0,(uintptr_t)&sender,0)==16 &&
+                   sender==(LONG)b.client_id && out[3]==123);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_END,extra,0,0,0,0,0)==0 &&
+                   raw(CUIS_SERVICE_CLASS,CUIS_SESSION_QUERY,primary,0,0,0,0,0)==0);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_PEER_QUERY,primary,extra,CUIS_PEER_IDENTITY,(uintptr_t)&b,16,0)==EFILNF);
+    GEM_TEST_CHECK(appl_find("SECOND")==-1);
+    GEM_TEST_CHECK(PROC(0x154,(WORD)-8,(uintptr_t)&again,sizeof(again),0)==0 &&
+                   again.pid==process.pid && again.number_low==process.number_low && again.number_high==process.number_high);
+    GEM_TEST_CHECK(appl_find((const char *)(uintptr_t)(0xffff0000UL|(UWORD)pid))==id && appl_yield()==1);
+    /* Exercise the opposite retirement order: explicit survives default. */
+    extra=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,CUIS_SESSION_NEW,0,0,0,0,0);
+    GEM_TEST_CHECK(extra>primary && appl_exit()==1);
+    peer=raw(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0,0,0);
+    GEM_TEST_CHECK(peer>extra && raw(CUIS_SERVICE_CLASS,CUIS_SESSION_QUERY,extra,0,0,0,0,0)==0);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_END,peer,0,0,0,0,0)==0 &&
+                   raw(CUIS_SERVICE_CLASS,CUIS_SESSION_END,extra,0,0,0,0,0)==0);
+    *idp=appl_init(); GEM_TEST_CHECK(*idp>id);
+    { static const char text[]="native same-PROCESS two-client identity/routing/retirement: verified\r\n";
+      (void)PROC(0x40,1,sizeof(text)-1,(uintptr_t)text,0); }
+    return 0;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     short id, globals[15], a = 1, b = 2, c = 3, d = 4;
@@ -41,22 +103,25 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(appl_yield() == 0 && evnt_timer(0) == 0 && appl_exit() == 0);
     pid = PROC(0x10b, 0, 0, 0, 0);
     id = appl_init();
-    GEM_TEST_CHECK(id > 0 && id == pid && gl_apid == id && aes_global[2] == id && aes_global[1] == -1);
+    GEM_TEST_CHECK(id > 0 && appl_find((const char *)(uintptr_t)(0xffff0000UL | (UWORD)pid)) == id && gl_apid == id && aes_global[2] == id && aes_global[1] == -1);
     GEM_TEST_CHECK(appl_init() == id && mt_appl_init(globals) == id);
     if (argc > 1 && (argv[1][0] == 'l' || argv[1][0] == 'm'))
         return gem_launch_child(globals,argc,argv,envp);
     if (argc > 1 && argv[1][0] == 'n') return 0x1234;
     if (argc == 1) {
+        GEM_TEST_CHECK(two_client_identity(&id,pid)==0 && mt_appl_init(globals)==id);
         GEM_TEST_CHECK(menu_register(id+1,"Wrong identity") == -1);
         GEM_TEST_CHECK(menu_register(REG_NEWNAME,"ACCTEST ") == 0);
         GEM_TEST_CHECK(appl_find("ACCTEST ") == id);
         for (i = 0; i < 6; i++) GEM_TEST_CHECK(mt_menu_register(id,"  Accessory",globals) == (short)i);
         GEM_TEST_CHECK(menu_register(id,"Full") == -1);
-        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(globals) == id);
+        GEM_TEST_CHECK(appl_exit() == 1);
+        id = appl_init(); GEM_TEST_CHECK(id > 0 && mt_appl_init(globals) == id);
         GEM_TEST_CHECK(appl_find("ACCTEST ") == -1);
         /* All six old registrations disappeared when the session ended. */
         for (i = 0; i < 6; i++) GEM_TEST_CHECK(menu_register(id,"  Replacement") == (short)i);
-        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(globals) == id);
+        GEM_TEST_CHECK(appl_exit() == 1);
+        id = appl_init(); GEM_TEST_CHECK(id > 0 && mt_appl_init(globals) == id);
     }
     aes_global[3] = 1234;
     GEM_TEST_CHECK(mt_appl_yield(globals) == 1 && mt_evnt_timer(1, globals) == 1);
@@ -77,23 +142,25 @@ int main(int argc, char **argv, char **envp)
     handle = raw(CUIS_SERVICE_CLASS, CUIS_SESSION_START, 0, 0, 0, 0, 0, 0);
     GEM_TEST_CHECK(handle >= 0);
     for (i = 0; i < 3; i++) {
-        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_MESSAGE_SEND, handle, 11, 22, 33, 44, 0) == E_OK);
+        w[0]=11; w[1]=22; w[2]=33; w[3]=44;
+        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_STREAM_WRITE, handle, (uintptr_t)w, sizeof(w), 0, 0, 0) == sizeof(w));
         tail[0] = i == 2 ? 127 : 1; tail[1] = i == 1 ? 'x' : 'c';
         child = PROC(0x4b, 100, (uintptr_t)"APPS\\GEMSHELL.TOS", (uintptr_t)tail, (uintptr_t)(i == 2 ? argv_environment : environment));
-        GEM_TEST_CHECK(child > 0 && child != id);
+        GEM_TEST_CHECK(child > 0 && child != pid);
         GEM_TEST_CHECK(evnt_timer(20) == 1 && appl_yield() == 1);
         status = PROC(0x13a, child, 0, 0, 0);
         GEM_TEST_CHECK(status == (LONG)(((ULONG)child << 16) | (i == 1 ? 41 : 37)));
         GEM_TEST_CHECK(gem_buffer_after_child(globals) == 0);
         GEM_TEST_CHECK(gem_metadata_after_child(globals) == 0);
-        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_MESSAGE_READ, handle, (uintptr_t)&sender,
-                  (uintptr_t)&w[0], (uintptr_t)&w[1], (uintptr_t)&w[2], (uintptr_t)&w[3]) == 1);
-        GEM_TEST_CHECK(sender == handle && w[0] == 11 && w[1] == 22 && w[2] == 33 && w[3] == 44);
+        GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_STREAM_READ, handle, (uintptr_t)w,
+                           sizeof(w), 0, (uintptr_t)&sender, 0) == sizeof(w));
+        GEM_TEST_CHECK(sender == id && w[0] == 11 && w[1] == 22 && w[2] == 33 && w[3] == 44);
         GEM_TEST_CHECK(aes_global[3] == 1234 && gl_apid == id && globals[2] == id);
     }
     GEM_TEST_CHECK(evnt_timer(0) == 1 && mt_appl_exit(globals) == 1);
     GEM_TEST_CHECK(gl_apid == -1 && aes_global[2] == -1 && globals[2] == -1);
-    GEM_TEST_CHECK(appl_exit() == 0 && appl_init() == id && appl_exit() == 1);
+    GEM_TEST_CHECK(appl_exit() == 0);
+    id = appl_init(); GEM_TEST_CHECK(id > 0 && appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM lifecycle/timers: PASS\r\n";
         static const char buffer_marker[] = "x32 GEM shared shell buffer: PASS\r\n";

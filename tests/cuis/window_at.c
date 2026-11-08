@@ -15,7 +15,8 @@ static int window_at_checks(void)
     CHECK(AT(0,0) == 0); /* Hidden metadata is never hit. */
     CHECK(cuis_window_service(CUIS_WINDOW_OUTSET,a,2,2,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_WINDOW_SHOW,a,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,a,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,a,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,a,0,0,0,0) == E_OK);
     CHECK(AT(-20,-10) == ia && AT(79,69) == ia);
     CHECK(AT(-21,0) == 0 && AT(0,-11) == 0 && AT(80,0) == 0 && AT(0,70) == 0);
     CHECK(AT(80,70) == 0); /* The visual shadow has no input bounds. */

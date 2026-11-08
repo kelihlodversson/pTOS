@@ -92,12 +92,12 @@ static BOOL flush(LONG session, BOOL block)
     LONG result;
     if (!bar.pending) return TRUE;
     result = cuis_call6(CUIS_STREAM_WRITE,bar.message[0] == AC_OPEN ? bar.recipient : session,
-                        (uintptr_t)bar.message,16,bar.message[0] == AC_OPEN && bar.recipient != session && block,0,0);
+                        (uintptr_t)bar.message,16,bar.message[0] == AC_OPEN && bar.recipient != session && block,(UQUAD)session+1,0);
     if (result == 16) { bar.pending = FALSE; return TRUE; }
     /* A selected accessory may exit while its queue is full. Its session
      * handle is never recycled; discard instead of opening a replacement. */
     if (bar.message[0] == AC_OPEN && result == EACCDN &&
-        cuis_call6(CUIS_PEER_PID,bar.recipient,0,0,0,0,0) < 0) { bar.pending = FALSE; return TRUE; }
+        cuis_call6(CUIS_PEER_QUERY,session,bar.recipient,CUIS_PEER_STATE,0,0,0) < 0) { bar.pending = FALSE; return TRUE; }
     return result == EAGAIN;
 }
 static BOOL refresh(void)

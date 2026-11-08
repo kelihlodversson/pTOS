@@ -27,6 +27,11 @@ static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
+static short process_client(LONG pid)
+{
+    if (pid <= 0 || pid > 32767) return -1;
+    return appl_find((const char *)(uintptr_t)(0xffff0000UL | (UWORD)pid));
+}
 void gem_form_input_stage(short stage)
 {
     static const char form[] = "x32 GEM form input: READY\r\n";
@@ -465,7 +470,7 @@ int main(int argc, char **argv, char **envp)
         return 0;
     }
     if (argc > 1 && argv[1][0] == 'l') {
-        short parent = (short)process(0x10c,0,0,0,0);
+        short parent = process_client(process(0x10c,0,0,0,0));
         VERIFY(parent > 0 && wind_update(BEG_UPDATE) == 1);
         control[0] = 0x7001; control[1] = global[2];
         VERIFY(appl_write(parent,16,control) == 1);
@@ -517,7 +522,7 @@ int main(int argc, char **argv, char **envp)
     }
     if (argc > 1 && (argv[1][0] == 'r' || argv[1][0] == 'R')) {
         OBJECT *tree;
-        short parent = (short)process(0x10c,0,0,0,0);
+        short parent = process_client(process(0x10c,0,0,0,0));
         VERIFY(rsrc_load("GEMTEST.RSC") == 1 && rsrc_gaddr(R_TREE,0,&tree) == 1);
         if (argv[1][0] == 'R') { fault_callback(NULL); return 99; }
         tree[0].ob_x = 1234;
@@ -538,7 +543,7 @@ int main(int argc, char **argv, char **envp)
         return 0;
     }
     if (argc > 1 && argv[1][0] == 'm') {
-        short parent = (short)process(0x10c,0,0,0,0), window;
+        short parent = process_client(process(0x10c,0,0,0,0)), window;
         VERIFY(gem_menubar_install(handle,3) == 1);
         window = wind_create(0,300,100,100,80);
         VERIFY(window > 0 && wind_open(window,300,100,100,80) == 1);
@@ -611,11 +616,11 @@ int main(int argc, char **argv, char **envp)
                     VERIFY(wind_set(window,WF_TOP,0,0,0,0) == 1 && evnt_timer(0) == 1);
                     VERIFY(gem_probe_pixel(handle,130,5) == 2);
                     control[0] = 0x7021;
-                    VERIFY(appl_write((short)child,16,control) == 1);
+                    VERIFY(appl_write(process_client(child),16,control) == 1);
                     VERIFY(control_message(control) == 1 && control[0] == 0x7022);
                     VERIFY(gem_probe_pixel(handle,130,5) == 3);
                     control[0] = 0x7023;
-                    VERIFY(appl_write((short)child,16,control) == 1);
+                    VERIFY(appl_write(process_client(child),16,control) == 1);
                     VERIFY(process(0x13a,child,0,0,0) == (LONG)((ULONG)child<<16));
                     VERIFY(evnt_timer(0) == 1 && gem_probe_pixel(handle,130,5) == 2);
                     VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
@@ -641,7 +646,7 @@ int main(int argc, char **argv, char **envp)
     status = gem_resource_native(1,cellw,cellh); if (status) return status;
     status = gem_resource_original(); if (status) return status;
     control[0] = 0x7011;
-    VERIFY(appl_write((short)child,16,control) == 1);
+    VERIFY(appl_write(process_client(child),16,control) == 1);
     VERIFY(process(0x13a,child,0,0,0) == (LONG)((ULONG)child<<16));
     tail[1] = 'R';
     child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
@@ -675,16 +680,16 @@ int main(int argc, char **argv, char **envp)
     status = gem_mono_checks(handle); if (status) return status;
     status = geometry_checks(handle); if (status) return status;
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
-    update = gem_probe_update_begin(); VERIFY(update >= 0);
+    update = gem_probe_display_begin(); VERIFY(update >= 0);
     status = gem_button_checks(1); if (status) return status;
     box.ob_spec.index = 0x1172;
-    VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
+    VERIFY(objc_draw(&box,0,0,8,8,40,40) == 1);
     VERIFY(gem_probe_pixel(handle,10,10) == 2 && gem_probe_pixel(handle,4,4) == 0);
-    VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1);
+    VERIFY(objc_change(&box,0,0,8,8,40,40,OS_SELECTED,1) == 1);
     VERIFY(gem_probe_pixel(handle,10,10) != 2 && gem_probe_pixel(handle,4,4) == 0);
-    VERIFY(objc_change(&box,0,0,0,0,100,100,0,1) == 1);
+    VERIFY(objc_change(&box,0,0,8,8,40,40,0,1) == 1);
     VERIFY(gem_probe_pixel(handle,10,10) == 2 && gem_probe_pixel(handle,4,4) == 0);
-    VERIFY(gem_probe_update_end(update) == 0);
+    VERIFY(gem_probe_display_end(update) == 0);
     box.ob_spec.index = 0x1170;
     VERIFY(wind_update(BEG_UPDATE) == 1);
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1 && gem_probe_pixel(handle,26,26) == 0);

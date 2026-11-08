@@ -61,6 +61,11 @@ void kproc_set_dta(PD *pd, DTAINFO *dta);
 DTAINFO *kproc_get_dta(PD *pd);
 #if CONF_WITH_KPROC
 typedef struct kproc KPROC;
+#include "process_identity.h"
+/* Snapshot queries never own wait/reap rights. Numbers are not kernel pointers,
+ * PIDs, TIDs or GUI client IDs. Retained identity reserves its number/PID only. */
+UQUAD kproc_ref_number(const KPROC *process);
+LONG kproc_identity_info(PD *caller, PROCESS_IDENTITY *info);
 /* A successful retain owns one reference. The live PD lookup holds another.
  * After destruction the retained record is an identity/completion snapshot:
  * it does not retain or provide access to the PD or live process resources.
@@ -73,6 +78,10 @@ BOOL kproc_ref_has_basepage(const KPROC *process);
 BOOL kproc_ref_status(const KPROC *process, UWORD *status);
 void kproc_complete(PD *pd, UWORD status);
 #if CONF_WITH_X86_64_MEMTEST
+/* Exercise the production allocator on a local test cursor, never reset the
+ * live registry's non-recycled number counter. */
+BOOL kproc_test_number_next(UQUAD *previous, UQUAD *number);
+UQUAD kproc_test_number_cursor(UQUAD replacement); /* serialized test injection only */
 /* Restrict the next PID search to a bounded number of candidates for tests. */
 void kproc_test_pid_search(WORD previous, UWORD candidates);
 #if CONF_WITH_USER_ASPACE
@@ -101,9 +110,12 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * 0 is the kernel's own context, which has none and is every boot-time basepage's
  * launcher. */
 WORD kproc_pid(PD *pd);                 /* 0: no record */
-#if CONF_WITH_CUIS
+/* Immutable loaded-image basename, retained with PROCESS identity after exit.
+ * Copies a complete NUL-terminated snapshot to kernel storage, or ERANGE
+ * without writing. The caller owns the reference; no PD is borrowed. */
 void kproc_set_executable_name(PD *pd, const char *path);
-const char *kproc_executable_name(PD *pd);
+LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity);
+#if CONF_WITH_CUIS
 /* Snapshot all live standard-handle aliases into OPNFILES counters. */
 void kproc_standard_file_refs(ULONG *references);
 #endif

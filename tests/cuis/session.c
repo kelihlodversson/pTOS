@@ -2,7 +2,6 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
-const char *kproc_executable_name(PD *pd);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
 /* Exercise the production cleanup-to-checkpoint call, with scheduler/THREAD
@@ -49,8 +48,6 @@ static void *reuse_allocation;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
 static LONG copied[5];
-static PD *input_message_sender;
-static LONG input_message_destination;
 static BOOL fail_copy;
 static UQUAD fail_copy_address;
 static BOOL input_irqs = TRUE, input_bad_idle;
@@ -62,7 +59,7 @@ static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
 static ULONG input_packet_mode;
-static BOOL input_drop_focus, input_drop_on_validate;
+static BOOL input_drop_focus;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
 static void context_copy_hook(void);
 static void context_read_hook(void);
@@ -210,13 +207,6 @@ void cuis_input_idle(void)
     }
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
-    if (input_message_sender) {
-        PD *saved = run;
-        run = input_message_sender;
-        input_message_sender = NULL;
-        cuis_message_service(CUIS_MESSAGE_SEND, input_message_destination, 11, 22, 33, 44, 0);
-        run = saved;
-    }
     if (mouse_release_owner) {
         PD *saved = run;
         run = mouse_release_owner;
@@ -256,10 +246,6 @@ BOOL kproc_validate_user_write(UQUAD address, ULONG size)
         cuis_process_exit(run);
         return FALSE;
     }
-    if (input_drop_on_validate) {
-        input_drop_on_validate = FALSE;
-        set_focus(NULL);
-    }
     if (address >= 0x20000 && address <= 0x28000 && size <= 0x28000 - address) return TRUE;
     return size == sizeof(LONG) && address >= 0x1000 && address <= 0x1010 &&
            !(address & 3);
@@ -269,7 +255,7 @@ BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
     if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
     context_read_hook();
     if (address >= 0x20000) {
-        memcpy(stream_output + address - 0x20000, source, size); return TRUE;
+        memcpy(stream_output + (address - 0x20000), source, size); return TRUE;
     }
     copied[(address - 0x1000) / 4] = *(const LONG *)source;
     return TRUE;
@@ -288,7 +274,7 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
     }
     context_copy_hook();
     child_copy_hook();
-    memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
+    memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
 }
 BOOL kproc_validate_user_range(UQUAD address, ULONG size)
 {
@@ -309,7 +295,6 @@ BOOL kproc_copy_to_user_resident(UQUAD address, const void *source, ULONG size)
     result=kproc_copy_to_user(address,source,size);
     stream_resident_copy=FALSE; return result;
 }
-const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
 
 void *kalloc(ULONG bytes)
 {
@@ -349,6 +334,21 @@ void kfree(void *memory)
     }
     (void)memory; frees++;
 }
+static ULONG process_references;
+KPROC *kproc_retain(PD *pd)
+{
+    if (!pd) return NULL;
+    process_references++; return (KPROC *)pd;
+}
+void kproc_release(KPROC *process)
+{
+    if (!process || !process_references) __builtin_abort();
+    process_references--;
+}
+UQUAD kproc_ref_number(const KPROC *process)
+{
+    return process == (KPROC *)&first ? 0x100000001ULL : 0x200000001ULL;
+}
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "windows.c"
@@ -357,7 +357,6 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "focus.c"
 #include "input.c"
 #include "pointer.c"
-#include "messages.c"
 #include "delay.c"
 #include "streams.c"
 #include "stream_lifetime.c"
@@ -375,6 +374,7 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "child_completion.c"
 #include "entries.c"
 #include "peers.c"
+#include "client_identity.c"
 #include "cohorts.c"
 #include "lifetime.c"
 #include "input_lifetime.c"
@@ -438,7 +438,8 @@ int main(void)
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM);
     CHECK(!allocations && !cuis_session_count());
     fail_allocation = FALSE;
-    owner = cuis_service(CUIS_SESSION_START, ~0ULL);
+    CHECK(cuis_service(CUIS_SESSION_START, ~0ULL) == EINVAL);
+    owner = cuis_service(CUIS_SESSION_START, 0);
     CHECK(owner == 0 && cuis_session_count() == 1);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == owner && allocations == 1);
     CHECK(cuis_service(CUIS_SESSION_QUERY, 0x100000000ULL | (ULONG)owner) == EINVAL);
@@ -468,7 +469,7 @@ int main(void)
     next_handle = 0x7fffffffUL;
     CHECK(cuis_service(CUIS_SESSION_START, 0) == 0x7fffffffL);
     /* An existing session can still be returned after handle exhaustion. */
-    CHECK(cuis_service(CUIS_SESSION_START, ~0ULL) == 0x7fffffffL);
+    CHECK(cuis_service(CUIS_SESSION_START, 0) == 0x7fffffffL);
     cuis_process_exit(&first);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM && !cuis_session_count());
     CHECK(allocations == frees);
@@ -485,8 +486,6 @@ int main(void)
     rc = pointer_checks();
     if (rc) return rc;
     rc = window_limit_checks();
-    if (rc) return rc;
-    rc = message_checks();
     if (rc) return rc;
     rc = delay_checks();
     if (rc) return rc;
@@ -536,6 +535,8 @@ int main(void)
     if (rc) return rc;
     rc = entry_checks();
     if (rc) return rc;
+    rc = client_identity_checks();
+    if (rc) return rc;
     rc = peer_checks();
     if (rc) return rc;
     rc = cohort_checks();
@@ -545,5 +546,8 @@ int main(void)
     rc = cohort_origin_checks();
     if (rc) return rc;
     rc = cohort_result_checks();
-    return rc ? rc : process_defer_checks();
+    if (rc) return rc;
+    rc = process_defer_checks();
+    CHECK(!process_references);
+    return rc;
 }

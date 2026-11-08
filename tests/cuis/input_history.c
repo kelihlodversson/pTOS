@@ -1,4 +1,8 @@
 /* Production routed producer, observational cursors and tentative quick check. */
+static void history_reject_observation(void)
+{
+    (*find_owner(run))->active_input.history_read=BUTTON_HISTORY_GAP;
+}
 static int input_history_checks(void)
 {
     CUIS_CLIENT *client;
@@ -59,9 +63,8 @@ static int input_history_checks(void)
     /* Real failure after publication must not consume a rejected prefix. */
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,3,3,1,0,0)==0);
     head=client->edge_head; count=client->edge_count;
-    update_owner=client;
-    CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON,0)==EACCDN);
-    update_owner=NULL;
+    input_operation_hook=history_reject_observation;
+    CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON,0)==ERANGE && !input_operation_hook);
     CHECK(client->edge_head==head && client->edge_count==count && !client->wait_operation &&
           !client->input_wait && client->references==1 && !client->input_result[1]);
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,1,1,0,0)==0);

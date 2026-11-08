@@ -29,7 +29,7 @@ static int headless_window_checks(short *global)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, window, message[8], globals[15], x = 99, y, w, h;
+    short id, peer, window, message[8], globals[15], x = 99, y, w, h;
     int result;
     BOOL graphics;
     LONG child, status;
@@ -60,16 +60,18 @@ int main(int argc, char **argv, char **envp)
     VERIFY(appl_init() == id && wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1);
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMWIN.TOS", (uintptr_t)tail, (uintptr_t)environment);
     VERIFY(child > 0 && control_message(message) == 1 && message[0] == 899);
+    peer = message[1];
+    VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);
     message[0] = 900; message[1] = id; message[2] = 0; message[3] = window;
     message[4] = message[5] = message[6] = message[7] = 0;
-    VERIFY(appl_write((short)child, 16, message) == 1 && control_message(message) == 1);
+    VERIFY(appl_write(peer, 16, message) == 1 && control_message(message) == 1);
     VERIFY(message[3] != window && wind_delete(message[3]) == 0);
-    VERIFY(appl_write((short)child, 16, message) == 1);
+    VERIFY(appl_write(peer, 16, message) == 1);
     status = process(0x13a, child, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     VERIFY(wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1 && x == 10 && y == 20);
     VERIFY(mt_appl_exit(globals) == 1 && wind_delete(window) == 0);
-    VERIFY(appl_init() == id && wind_get(window, WF_KIND, &x, &y, &w, &h) == 0);
+    id = appl_init(); VERIFY(id > 0 && wind_get(window, WF_KIND, &x, &y, &w, &h) == 0);
     VERIFY(appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM window lifecycle: PASS\r\n";

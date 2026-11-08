@@ -718,6 +718,17 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     case 's':
+        if (sys(GEMDOS, 0x154, -8, 0x400, 16) != EIMBA ||
+            sys(GEMDOS, 0x154, -8, (s64)0xffffffff80000000LL, 16) != EIMBA ||
+            sys(GEMDOS, 0x154, -8, 0x400, (s64)0x100000010LL) != -25)
+            bad |= 128;
+        /* Generic PROCESS metadata rejects kernel and non-x32 destinations,
+         * and never truncates a high capacity into a small positive size. */
+        if (sys(GEMDOS, 0x154, -7, 0x400, 33) != EIMBA ||
+            sys(GEMDOS, 0x154, -7, (s64)0xffffffff80000000LL, 33) != EIMBA ||
+            sys(GEMDOS, 0x154, -7, 0x400, (s64)0x100000021LL) != EIMBA ||
+            sys(GEMDOS, 0x154, -7, 0x400, -1) != -64)
+            bad |= 64;
         if (sys(BIOS, 5, 0x102, 0x500000, 0) != EACCDN)
             bad |= 1;                   /* Setexc(etv_term, user address) */
         /* this very (running) basepage a second time, and mode 50 */

@@ -2,6 +2,7 @@
 #define LSWRITE(h,n,b) cuis_stream_service(CUIS_STREAM_WRITE,h,0x10000,n,b,0)
 #define LSREAD(h,n,b) cuis_stream_service(CUIS_STREAM_READ,h,0x20000,n,b,0x1000)
 static LONG lifetime_source, lifetime_receiver, lifetime_replacement;
+static LONG lifetime_sender, lifetime_peer_sender;
 static CUIS_CLIENT *lifetime_stream_source, *lifetime_stream_receiver;
 static int stream_action, stream_bad;
 static ULONG stream_checkpoint_visits;
@@ -13,7 +14,7 @@ static void stream_retire_source(void)
     if (cuis_service(CUIS_SESSION_END,lifetime_source)) stream_bad=1;
     if (!lifetime_stream_source->retired || operation->state!=STREAM_RETIRED ||
         lifetime_stream_source->references!=1) stream_bad=1;
-    if (operation->packet && operation->packet->sender_pid!=1) stream_bad=1;
+    if (operation->packet && operation->packet->sender_id!=lifetime_sender) stream_bad=1;
     lifetime_replacement=cuis_service(CUIS_SESSION_START,0);
     if (lifetime_replacement<=lifetime_source || *find_owner(run)==lifetime_stream_source ||
         cuis_service(CUIS_SESSION_END,lifetime_source)!=EACCDN) stream_bad=1;
@@ -112,9 +113,9 @@ static int stream_lifetime_checks(void)
     stream_heap_mode=TRUE;
     for (cycle=0;cycle<3;cycle++) {
         for (action=0;action<9;action++) {
-            run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0);
+            run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_sender=find_handle(lifetime_source)->aes_id;
             lifetime_stream_source=*find_owner(run);
-            run=&second; lifetime_receiver=cuis_service(CUIS_SESSION_START,0);
+            run=&second; lifetime_receiver=cuis_service(CUIS_SESSION_START,0); lifetime_peer_sender=find_handle(lifetime_receiver)->aes_id;
             lifetime_stream_receiver=*find_owner(run); run=&first;
             CHECK(lifetime_source>=0 && lifetime_receiver>=0);
             memset(stream_input,0x35,sizeof(stream_input)); stream_action=action;
@@ -172,7 +173,7 @@ static int stream_lifetime_checks(void)
             } else if (action==3) {
                 input_operation_hook=stream_block_hook;
                 CHECK(LSREAD(lifetime_source,16,1)==16 && !input_operation_hook && !stream_bad &&
-                      copied[0]==1 && stream_output[0]==0x35 && !lifetime_stream_source->stream_bytes &&
+                      copied[0]==lifetime_sender && stream_output[0]==0x35 && !lifetime_stream_source->stream_bytes &&
                       !lifetime_stream_source->stream_read && !lifetime_stream_source->stream_write);
             } else if (action==5 || action==6) {
                 stream_operation_hook=stream_copy_hook;
@@ -196,7 +197,7 @@ static int stream_lifetime_checks(void)
                 else {
                     CHECK(lifetime_stream_source->stream_bytes==24 && lifetime_stream_source->stream_head==0 &&
                           stream_output[0]==0x35 && !lifetime_stream_source->stream_read);
-                    CHECK(LSREAD(lifetime_source,8,0)==8 && copied[0]==2 &&
+                    CHECK(LSREAD(lifetime_source,8,0)==8 && copied[0]==lifetime_peer_sender &&
                           LSREAD(lifetime_source,16,0)==16 && !lifetime_stream_source->stream_bytes);
                 }
             }
@@ -205,7 +206,7 @@ static int stream_lifetime_checks(void)
         }
         /* Wrapped copyout may modify user bytes before failure, never kernel
          * cursor/provenance. Repeated PEEK preserves bytes but publishes metadata. */
-        run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_stream_source=*find_owner(run);
+        run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_sender=find_handle(lifetime_source)->aes_id; lifetime_stream_source=*find_owner(run);
         CHECK(LSWRITE(lifetime_source,32767,0)==32767 && LSREAD(lifetime_source,32767,0)==32767 &&
               LSWRITE(lifetime_source,32763,0)==32763 && LSREAD(lifetime_source,32763,0)==32763);
         CHECK(lifetime_stream_source->stream_head==65530 && LSWRITE(lifetime_source,16,0)==16);
@@ -218,14 +219,14 @@ static int stream_lifetime_checks(void)
         fail_copy_address=0;
         for (i=0;i<2;i++) CHECK(cuis_stream_service(CUIS_STREAM_PEEK,lifetime_source,0x20000,16,0,0)==16 &&
                                lifetime_stream_source->stream_head==head && lifetime_stream_source->stream_bytes==count);
-        CHECK(LSREAD(lifetime_source,16,0)==16 && copied[0]==1 && !lifetime_stream_source->stream_bytes);
+        CHECK(LSREAD(lifetime_source,16,0)==16 && copied[0]==lifetime_sender && !lifetime_stream_source->stream_bytes);
         cuis_process_exit(&first);
         CHECK(allocations==frees && !stream_heap_bad);
     }
     /* Independent READ and WRITE slots may both block. Retiring their source
      * must leave each continuation as the sole cleanup owner of its own record. */
-    run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_stream_source=*find_owner(run);
-    run=&second; lifetime_receiver=cuis_service(CUIS_SESSION_START,0); run=&first;
+    run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_sender=find_handle(lifetime_source)->aes_id; lifetime_stream_source=*find_owner(run);
+    run=&second; lifetime_receiver=cuis_service(CUIS_SESSION_START,0); lifetime_peer_sender=find_handle(lifetime_receiver)->aes_id; run=&first;
     CHECK(LSWRITE(lifetime_receiver,32767,0)==32767 && LSWRITE(lifetime_receiver,32767,0)==32767 &&
           LSWRITE(lifetime_receiver,2,0)==2);
     input_operation_hook=stream_both_block;
@@ -236,8 +237,8 @@ static int stream_lifetime_checks(void)
     CHECK(allocations==frees && !stream_heap_bad);
     /* Provenance is committed from current cohort state, including teardown
      * during a prepared copy. PEEK deliberately publishes metadata, not bytes. */
-    run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_stream_source=*find_owner(run);
-    run=&second; lifetime_receiver=cuis_service(CUIS_SESSION_START,0);
+    run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_sender=find_handle(lifetime_source)->aes_id; lifetime_stream_source=*find_owner(run);
+    run=&second; lifetime_receiver=cuis_service(CUIS_SESSION_START,0); lifetime_peer_sender=find_handle(lifetime_receiver)->aes_id;
     result=cuis_cohort_service(CUIS_COHORT_BEGIN,lifetime_receiver,0,0,0,0,0);
     CHECK(result>0);
     CHECK(!cuis_cohort_service(CUIS_COHORT_STAGE,lifetime_receiver,result,lifetime_source,0x10000,16,0) &&
@@ -257,7 +258,7 @@ static int stream_lifetime_checks(void)
     stream_action=9; stream_operation_hook=stream_copy_hook;
     CHECK(LSREAD(lifetime_source,4,0)==4 && !stream_bad && !stream_operation_hook &&
           !cohort.owner && !lifetime_stream_source->cohort_read_token && lifetime_stream_source->stream_bytes==8);
-    CHECK(LSREAD(lifetime_source,8,0)==8 && copied[0]==2 && !lifetime_stream_source->stream_bytes);
+    CHECK(LSREAD(lifetime_source,8,0)==8 && copied[0]==lifetime_peer_sender && !lifetime_stream_source->stream_bytes);
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(allocations==frees && !stream_heap_bad);
     for (i=0;i<stream_heap_count;i++) CHECK(!stream_heap[i].live);

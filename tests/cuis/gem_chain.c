@@ -81,7 +81,7 @@ int gem_chain_client(int argc, char **argv)
     }
     target[1] = role == 'r' ? 'u' : 't';
     if (output >= 0) target[1] = role == 'q' ? 'w' : 'v';
-    encode(target+2,(uint32_t)parent); encode(target+10,(uint32_t)me);
+    encode(target+2,(uint32_t)parent); encode(target+10,(uint32_t)call(1,0x10b,0,0,0,0));
     encode(target+18,decode(argv[1]+9));
     program = role == 'j' ? "DELETED.PRG" : "CHAIN.PRG";
     if (role == 'z' || role == 'n') {
@@ -108,9 +108,10 @@ int gem_chain_client(int argc, char **argv)
     *value = 'M'; /* The successor must keep the already copied environment. */
     VERIFY(call(1,0x3b,(uintptr_t)"C:\\WORK",0,0,0) == 0);
     VERIFY(evnt_timer(20) == 1 && shel_get(state,4) == 1 && equal(state,"PEND"));
-    VERIFY(appl_exit() == 1 && call(1,0xff,0,0,0,0) == 0 && appl_init() == me);
+    VERIFY(appl_exit() == 1 && call(1,0xff,0,0,0,0) == 0);
+    me = appl_init(); VERIFY(me > 0);
     VERIFY(shel_get(state,4) == 1 && equal(state,"PEND"));
-    message[1] = me; message[3] = role;
+    message[1] = me; message[3] = role; message[4] = (short)call(1,0x10b,0,0,0,0);
     VERIFY(appl_write(parent,sizeof(message),message) == 1);
     if (role != 'd') VERIFY(receive(message,5000,aes_global) & MU_MESAG);
     if (role == 'e') VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target));
@@ -123,7 +124,7 @@ int gem_chain_checks(short *global)
     static const char roles[] = { 's','r','c','f','x','d','j','e','o','p','q','z','n' };
     static const char environment[] = "CHAIN_ENV=original\0\0";
     char tail[128] = { 17 }, contents[9];
-    short source, message[8], helpers[5];
+    short source, source_client, helper_client, message[8], helpers[5];
     unsigned i, j;
     int32_t status;
     for (i = 0; i < sizeof(roles); i++) {
@@ -135,11 +136,14 @@ int gem_chain_checks(short *global)
             VERIFY(status == 37);
             VERIFY(receive(message,2000,global) & MU_MESAG);
             VERIFY(message[0] == 0x7d10 && message[3] == roles[i]);
-            source = message[1];
+            source_client = message[1]; source = message[4];
+            VERIFY(source_client > 0 && source > 0);
         } else {
             VERIFY(status > 0); source = (short)status;
             VERIFY(receive(message,2000,global) & MU_MESAG);
-            VERIFY(message[0] == 0x7d10 && message[1] == source && message[3] == roles[i]);
+            source_client = message[1];
+            VERIFY(message[0] == 0x7d10 && message[3] == roles[i] && message[4] == source && source_client > 0 &&
+                   appl_find((const char *)(uintptr_t)(0xfffe0000UL | (unsigned short)source_client)) == source);
             VERIFY(receive(message,0,global) == MU_TIMER); /* Source is still alive. */
             if (roles[i] == 'e') {
                 tail[1] = 'h';
@@ -149,20 +153,21 @@ int gem_chain_checks(short *global)
                 }
             }
             message[0] = 0x7d11; message[1] = global[2];
-            VERIFY(appl_write(source,sizeof(message),message) == 1);
+            VERIFY(appl_write(source_client,sizeof(message),message) == 1);
             status = call(1,0x13a,source,0,0,0);
             VERIFY(status == (int32_t)(((uint32_t)source << 16) | (roles[i] == 'f' ? 0x0400 : roles[i] == 'x' ? 41 : 37)));
         }
         if (roles[i] == 'c') VERIFY(receive(message,20,global) == MU_TIMER);
         else {
             VERIFY(receive(message,2000,global) & MU_MESAG);
-            VERIFY(message[0] == 0x7d12 && message[3] == source && message[1] != source);
+            VERIFY(message[0] == 0x7d12 && message[3] == source && message[1] != source_client);
         }
         if (roles[i] == 'e') {
             VERIFY(evnt_timer(20) == 1);
             for (j = 0; j < 5; j++) {
                 message[0] = 0x7d11; message[1] = global[2];
-                VERIFY(appl_write(helpers[j],sizeof(message),message) == 1);
+                helper_client = appl_find((const char *)(uintptr_t)(0xffff0000UL | (unsigned short)helpers[j]));
+                VERIFY(helper_client > 0 && appl_write(helper_client,sizeof(message),message) == 1);
                 VERIFY(call(1,0x13a,helpers[j],0,0,0) == (int32_t)((uint32_t)helpers[j] << 16));
             }
         }

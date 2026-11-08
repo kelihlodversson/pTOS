@@ -792,7 +792,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return rc;
     }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_KPROC
     kproc_set_executable_name(cur_p, path);
 #endif
     /* at this point the program has been correctly loaded in memory, and
