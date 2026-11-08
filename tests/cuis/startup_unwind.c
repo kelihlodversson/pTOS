@@ -4,8 +4,12 @@
 #include <stdlib.h>
 #include "emutos.h"
 #include "../../bdos/thread_startup.c"
+#if CONF_WITH_NATIVE_SCHED
 static FS_ERROR_STATE fixture_error;
 FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 #define CHECK(c) do { if (!(c)) abort(); } while (0)
 static THREAD_STARTUP_DRAFT record;
 static THREAD_STARTUP_DRAFT *handle;

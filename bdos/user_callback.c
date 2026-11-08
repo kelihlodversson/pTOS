@@ -5,6 +5,7 @@
 #include "emutos.h"
 #include "fs.h"
 #include "user_callback.h"
+#include "biosext.h"
 #include "callback_cpu.h"
 #include "kproc.h"
 #include "proc.h"
