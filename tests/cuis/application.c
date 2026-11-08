@@ -1288,6 +1288,12 @@ int main(void)
     short message[8] = { 123, 7, 0, 4, 5, 6, 7, 8 }, result[8];
     ULONG count;
     short held;
+    /* Generic time remains usable before any GUI endpoint is registered. */
+    menu_ticks = 0x80000001UL;
+    CHECK(aes_clock_ticks() == 1 && !starts && !live);
+    menu_ticks = 0xffffffffUL;
+    CHECK(aes_clock_ticks() == 0x7fffffffL && !starts && !live);
+    menu_ticks = 0;
     CHECK(gl_apid == -1 && aes_global[2] == -1);
     CHECK(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1 && !window_at_calls);
     CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
