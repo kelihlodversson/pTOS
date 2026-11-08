@@ -155,6 +155,14 @@ static void check_task_thread(KERNEL_TASK *task, UWORD stage)
 #endif
 }
 
+BOOL ksched_finalizing_process(const KPROC *process)
+{
+    KERNEL_TASK *task=scheduler.current;
+    /* The THREAD is already stopped by launcher handoff. Its scheduler
+     * continuation still owns final PROCESS/wait publication until root. */
+    return scheduler.active && task && task->state==TASK_RUNNING && task->process==process;
+}
+
 BOOL ksched_finish_exit(KPROC *process, PD *pd, UWORD status)
 {
     KTHREAD *thread = ksched_exit_thread(pd);
@@ -447,7 +455,9 @@ static void task_entry(void)
             owner->state = owner->asynchronous && owner->parent ? TASK_ZOMBIE : TASK_DONE;
             /* Status and resources are finalized; wait visibility precedes
              * generic observer readiness. A refused launch is abandoned. */
-            kproc_publish_observers(owner->process);
+            if (owner->process_completed) kproc_publish_observers(owner->process);
+            /* A refused unstarted task may still retain its association.
+             * Retirement during root reap publishes abandonment, not status. */
 #if CONF_WITH_CUIS
             if (owner->state == TASK_ZOMBIE)
                 cuis_child_completed(owner->parent,owner->pid,

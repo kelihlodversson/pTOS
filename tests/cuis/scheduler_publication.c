@@ -10,7 +10,7 @@
 static KERNEL_TASK table[KSCHED_LIMIT];
 static PD parent, child, peer;
 static UWORD allocations, frees, notifications;
-static unsigned refused_disposals;
+static unsigned refused_disposals, observer_publications;
 PD *run;
 void *kalloc(ULONG bytes)
 { CHECK(bytes == sizeof(table)); allocations++; return table; }
@@ -21,7 +21,7 @@ PD *kproc_notification_parent(PD *p) { (void)p; return NULL; }
 KPROC *kproc_retain(PD *p) { return (KPROC *)p; }
 void kproc_release(KPROC *p) { (void)p; }
 void kproc_publish_observers(KPROC *p)
-{ CHECK(p==(KPROC *)&child && table[0].state==TASK_DONE && refused_disposals==1); }
+{ (void)p; observer_publications++; }
 WORD kproc_pid(PD *p) { (void)p; return 42; }
 void cuis_child_completed(PD *p, WORD pid, UWORD status)
 { (void)p; (void)pid; (void)status; notifications++; }
@@ -85,9 +85,11 @@ int main(void)
     memset(table,0,sizeof(table));scheduler.current=&table[0];
     table[0].state=TASK_RUNNING;table[0].program=&child;
     table[0].process=(KPROC *)&child;table[0].thread=(KTHREAD *)1;
+    CHECK(ksched_finalizing_process((KPROC *)&child));
     if(!setjmp(scheduler.resume)) task_entry();
     CHECK(table[0].state==TASK_DONE && refused_stopped && refused_disposals==1 &&
-          !table[0].program && !table[0].process_completed && table[0].result==EIMBA);
+          !table[0].program && !table[0].process_completed && table[0].result==EIMBA &&
+          !observer_publications && !ksched_finalizing_process((KPROC *)&child));
     puts("Shared scheduler publication: exhaustion, private reservations, cancellation, blocked/early wait and orphan identity: PASS");
     return 0;
 }
