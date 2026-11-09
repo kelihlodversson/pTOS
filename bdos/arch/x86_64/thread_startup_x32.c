@@ -165,7 +165,8 @@ LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
     /* The integrated cooperative context has no general segment/TLS switch
      * contract. Capture all fields, but do not admit nondefault state until
      * its scheduler/launcher nesting restoration has native evidence. */
-    if (saved->user.ds != X86_64_USER_DATA_SEL || saved->user.es != X86_64_USER_DATA_SEL ||
+    if ((saved->user.ds && saved->user.ds != X86_64_USER_DATA_SEL) ||
+        (saved->user.es && saved->user.es != X86_64_USER_DATA_SEL) ||
         saved->user.fs || saved->user.gs || saved->user.fs_base || saved->user.gs_base)
         return EINVFN;
     if (draft->syscall_physical == draft->scheduler_stack.physical ||

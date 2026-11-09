@@ -52,7 +52,8 @@ user GS half while SWAPGS is active). The existing prepared-user IRET path now
 loads those fields, the retained shared CR3 and the child's fresh stack binding.
 The enclosing launcher restores both FS and user GS bases. Only RAX changes to
 zero. RCX/R11 have their documented SYSCALL return meanings, not pre-SYSCALL
-values. Nondefault DS/ES and nonzero FS/GS selector/base state is captured but
+values. DS/ES may be null or the user-data selector. Other segment state and
+nonzero FS/GS selector/base state is captured but
 rejected: general segment/TLS switching and nested restoration are not yet
 proved in the integrated cooperative context. No AVX, TLS runtime or
 IRQ/preemption restore capability is implied.
