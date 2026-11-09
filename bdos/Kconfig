@@ -69,7 +69,7 @@ config CONF_WITH_PTHJOIN
       preemption, asynchronous signals or group termination is implied.
 
 config CONF_WITH_FORK_RETURN_TEST
-    depends on ARCH_X86_64
+    depends on ARCH_X86_64 || ARCH_ARM
     bool "Native saved syscall-return probe (test only)"
     depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
     depends on !ARCH_M68K || !CONF_WITH_MFASTCALL

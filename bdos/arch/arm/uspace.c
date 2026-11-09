@@ -40,6 +40,10 @@
 #include "fs.h"
 #endif
 #include "arch/arm/fpusave.h"
+#include "syscall_return.h"
+#if CONF_WITH_FORK_RETURN_TEST
+extern void arm_enter_saved_user(const void *, ULONG) NORETURN;
+#endif
 
 extern long osif(long *pw);                     /* bdos/bdosmain.c */
 
@@ -78,6 +82,29 @@ void arm_gemdos_dispatch(struct uframe *f)
 
     for (i = 0; i < 8; i++)
         pw[i] = (long)f->r[i];
+#if CONF_WITH_FORK_RETURN_TEST
+    if (pw[0] == 0x190 && !pw[1] && ((ULONG)pw[2] & 0xffff0000UL) == FORK_RETURN_PROBE) {
+        SYSCALL_RETURN saved;
+        typedef char frame_size_check[(sizeof(saved.user) == sizeof(*f)) ? 1 : -1];
+        (void)sizeof(frame_size_check);
+#if FPU_ALL_BYTES
+        {
+            ULONG fpexc;
+            __asm__ volatile ("vmrs %0,fpexc" : "=r"(fpexc));
+            if ((fpexc & 0xc0000000UL) != 0x40000000UL) {
+                f->r[0] = EINVFN; return; /* no pending VFP restart image */
+            }
+        }
+#endif
+        memset(&saved, 0, sizeof(saved));
+        memcpy(&saved.user, f, sizeof(*f));
+        saved.mappings.entry = f->lr;
+        saved.mappings.stack_base = (f->usp - 256) & ~15UL;
+        saved.mappings.stack_size = 512;
+        f->r[0] = proc_clone_return_probe(&saved, (UWORD)pw[2]);
+        return;
+    }
+#endif
     if (pw[0] == SUPER)
         f->r[0] = (ULONG)(pw[1] == 1 ? 0L : EACCDN);
     else
@@ -274,6 +301,9 @@ void gouser(void)
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) {
             thread_startup_entering(startup);
+#if CONF_WITH_FORK_RETURN_TEST
+            if (prepared->saved_return) arm_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
+#endif
             arm_enter_prepared_user(prepared, (ULONG)kstack_top);
         }
 #endif
