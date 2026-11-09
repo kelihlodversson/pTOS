@@ -124,13 +124,16 @@ LONG proc_exec_retain_observer(KPROC *owner, ULONG number, BOOL require_prepared
 }
 void proc_exec_owner_exit(KPROC *owner)
 {
-    struct process_exec_handle **head = kproc_exec_handles(owner);
-    if (!head) return;
-    while (*head) {
-        struct process_exec_handle *handle = *head;
-        *head = handle->next;
+    KSCHED_CLEANUP_SCOPE scope={0};
+    struct process_exec_handle **head;
+    ksched_cleanup_begin(&scope);
+    head=kproc_exec_handles(owner);
+    if (head) while (*head) {
+        struct process_exec_handle *handle=*head;
+        *head=handle->next;
         dispose_handle(handle);
     }
+    ksched_cleanup_end(&scope);
 }
 
 LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy)
