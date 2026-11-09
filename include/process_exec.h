@@ -20,8 +20,10 @@
  * CANCEL_DEFERRED has no handle/arguments: cancel the calling PROCESS's
  * unpublished successor, if any. Idempotent; never cancel a running PROCESS.
  * A failed replacement PREPARE/COMMIT must preserve the previous successor.
- * CLOSE of a valid owned handle consumes it without a later failure. Closing
- * a committed observer never cancels its successor; cancellation is explicit.
+ * CLOSE consumes a valid owned handle once, including when it returns a
+ * filesystem cleanup error. The right cannot be retried: residual references
+ * belong to the SFT service. Closing a committed observer never cancels its
+ * successor; cancellation is explicit.
  * SNAPSHOT alone copies a retryable non-consuming snapshot; a copy fault may
  * partially modify user memory but cannot consume the handle/completion. */
 typedef struct {
