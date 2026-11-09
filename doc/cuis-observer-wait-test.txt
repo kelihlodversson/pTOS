@@ -33,5 +33,8 @@ Validation layers
   canonical observer references, mapped user arrays and scheduler handoffs.
   It checks CLOSE during a retained wait, endpoint retirement, combined child/
   stream/timer readiness, cancellation cleanup and exact resource baselines.
+  A separate pending-child case has no immediate timer/admission injection: the
+  parent blocks on the observer-aware scheduler predicate while another real
+  PROCESS executes and completes, then reaps independently through Pwait.
 Neither layer is the receipt-runtime publisher-fault/sibling-recovery proof.
 No receipt runtime or production CHILD migration is included in this increment.

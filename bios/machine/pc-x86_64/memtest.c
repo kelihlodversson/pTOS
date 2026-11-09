@@ -2426,7 +2426,7 @@ static void native_observer_wait_hook(void)
  * while the execution-scoped cleanup still owns the independent lease. */
 void x86_64_memtest_observer_wait_admitted(void)
 {
-    if (!native_observer_wait.inside) return;
+    if (!native_observer_wait.inside || !native_observer_wait.active) return;
     native_observer_wait_hook();
     ksched_yield();
 }
@@ -2470,6 +2470,40 @@ static void test_native_observer_wait(KPROC *owner,BOOL cancel)
         process_observer_release(&native_observer_wait.observer);
         process_observer_release(&native_observer_wait.alias);
         same(&baseline,"observed wait releases actual PROCESS aliases, client storage, files and mappings");
+    }
+    /* No admission injection or timer is permitted here. The child can run
+     * only after SESSION_WAIT publishes its real scheduler predicate. */
+    {
+        PROCESS_COMPLETION completion;
+        LONG pid;
+        int blocked_before=failures;
+        native_observer_wait.session=cuis_service(CUIS_SESSION_START,0);
+        native_observer_wait.handle=proc_exec_handle_prepare(owner,path,tail,environment,NULL,PROCESS_EXEC_ASYNC);
+        CHECK(native_observer_wait.session>=0 && native_observer_wait.handle>0 &&
+              proc_exec_retain_observer(owner,native_observer_wait.handle,FALSE,&native_observer_wait.observer)==E_OK,
+              "construct pending native observer for a real blocked SESSION_WAIT");
+        handle=(ULONG)native_observer_wait.handle;
+        CHECK(kproc_copy_to_user_checked(native_observer_wait.data,&handle,sizeof(handle))==E_OK,
+              "stage real pending-child handle array");
+        pid=proc_exec_handle_commit(owner,handle);
+        CHECK(pid>0 && proc_exec_handle_snapshot(owner,handle,&completion)==E_OK &&
+              completion.state!=PROCESS_COMPLETED && !process_observer_ready(native_observer_wait.observer),
+              "published child is pending and cannot execute before parent blocks");
+        native_observer_wait.active=FALSE;native_observer_wait.inside=TRUE;
+        ready=cuis_session_wait(native_observer_wait.session,0,CUIS_READY_CHILD,0,native_observer_wait.data,1);
+        native_observer_wait.inside=FALSE;
+        CHECK(ready==CUIS_READY_CHILD && !cuis_observer_test_leases() &&
+              process_observer_snapshot(native_observer_wait.observer,&completion) &&
+              completion.state==PROCESS_COMPLETED && completion.status==0xffff,
+              "another real PROCESS completes while observer-aware scheduler predicate is retained, waking the blocked parent");
+        ready=ksched_wait((WORD)pid,1,0);
+        CHECK(ready>=0 && (UWORD)ready==0xff && proc_exec_handle_close(owner,handle)==E_OK,
+              "real blocked observer wait leaves public completion independent");
+        process_observer_release(&native_observer_wait.observer);
+        CHECK(cuis_service(CUIS_SESSION_END,native_observer_wait.session)==E_OK,
+              "retire actual blocked-wait endpoint after predicate detach and observer release");
+        same(&baseline,"real pending observer scheduler wake releases all child, wait and endpoint resources");
+        kcprintf("x86-64 blocked CUIS observer predicate: %s\n",failures==blocked_before ? "PASS":"FAIL");
     }
     CHECK(kproc_munmap(run,native_observer_wait.data,PAGE)==E_OK,"release native handle array mapping");
 }
