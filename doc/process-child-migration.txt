@@ -106,13 +106,16 @@ Native acceptance fixtures (retain existing deadlines)
 -----------------------------------------------------
 
 Existing tests/cuis/gem_exit.c already checks both Pwait/CH_EXIT orders, reverse
-completion order and exactly-once messages using real GEM applications. Existing
-process_transport tests independently check normal 0xffff, real fault completion,
+completion order and exactly-once messages using real GEM applications. Its
+normal-return role t returns -1 (the full UWORD 0xffff); fault role f separately
+expects signal encoding 0x0400. Keep both cases in both consumption orders.
+Existing process_transport tests independently check normal 0xffff, real fault completion,
 both Pwait/observer orders and stale/one-shot rights through the actual trap on
 x32, ARM A32 and m68k040. These are complementary, not interchangeable.
 
 Extend the native GEM fixtures when the handoff is implemented to cover:
-- Full normal 0xffff through CH_EXIT in both Pwait orders, distinct from fault.
+- Retain full normal 0xffff through CH_EXIT in both Pwait orders, distinct from
+  fault, while moving observation onto generic rights.
 - Child completion before shel_write returns; reverse completion order.
 - Stream-full EAGAIN and failed publication copy, followed by one successful
   notification and no duplicate, including cancellation after stream commit.
