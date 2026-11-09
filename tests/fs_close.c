@@ -34,8 +34,13 @@ void flush(BCB *b)
     if (probe_busy) {
         FS_CLOSE_REPORT nested;
         CHECK(!fs_sft_accessible(0) && fs_sft_busy(0));
-        CHECK(fs_close_once(NUMSTD,FALSE,&nested)==EACCDN);
-        CHECK(nested.disposition==FS_CLOSE_RETAINED);
+        if ((ULONG)sft[0].f_use>sft[0].f_cleanup_refs) {
+            CHECK(fs_close_once(NUMSTD,FALSE,&nested)==EACCDN);
+            CHECK(nested.disposition==FS_CLOSE_RETAINED);
+        } else {
+            CHECK(fs_close_once(NUMSTD,FALSE,&nested)==EIHNDL);
+            CHECK(nested.disposition==FS_CLOSE_NOT_OWNED);
+        }
     }
     if (fail_disk) { errcode=EWRITF; errdrv=0; rwerr=EWRITF; longjmp(errbuf,1); }
     b->b_dirty=FALSE;
