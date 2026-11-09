@@ -125,3 +125,5 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
+
+void panic(const char *format, ...) { (void)format; abort(); }
