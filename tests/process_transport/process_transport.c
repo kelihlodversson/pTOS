@@ -52,7 +52,7 @@ void test_process_transport(void)
         memset(&r,0,sizeof(r));
         r.path=(unsigned long)"C:\\NOEXEC.TOS"; r.tail=(unsigned long)tail; r.environment=(unsigned long)env;
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==EFILNF,"PREPARE preserves missing-file constructor error");
-        r.path=(unsigned long)"C:\\PIEPROBE.TOS";
+        r.path=(unsigned long)"C:\\PROCXIT.TOS";
         handle=Ssystem(PROCEXEC,(long)&r,72L);
         ptest_assert_msg(handle>0,"prepare ordinary PROCESS without GUI registration");
         if(handle<=0) { ptest_pass(); return; }
@@ -62,7 +62,7 @@ void test_process_transport(void)
         r.operation=3;
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0 &&
                          Ssystem(PROCEXEC,(long)&r,72L)==EIHNDL,"CLOSE consumes preparation exactly once");
-        memset(&r,0,sizeof(r)); r.path=(unsigned long)"C:\\PIEPROBE.TOS";
+        memset(&r,0,sizeof(r)); r.path=(unsigned long)"C:\\PROCXIT.TOS";
         r.tail=(unsigned long)tail; r.environment=(unsigned long)env;
         handle=Ssystem(PROCEXEC,(long)&r,72L);
         ptest_assert_msg(handle>0,"prepare runnable PROCESS");
@@ -77,13 +77,37 @@ void test_process_transport(void)
             Syield();
         }
         ptest_assert_msg(result==0 && r.completion.state==2 && r.completion.kind==1 &&
-                         r.completion.status==0 && r.completion.signal==0,
+                         r.completion.status==0xffff && r.completion.signal==0,
                          "non-consuming normal PROCESS completion");
         ptest_assert_msg(Pwaitpid((int)pid,1,0)>0,"observation must not consume public Pwaitpid");
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0 && r.completion.state==2,
                          "public reaping must not consume observation");
         r.operation=3;
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0,"CLOSE completed observation");
+        /* Reverse the consumption order and distinguish normal ffff from
+         * an actual fatal fault: public Pwait first, then retained snapshot. */
+        tail[0]=0;
+        {
+            char fault_tail[]={1,'F',0};
+            memset(&r,0,sizeof(r)); r.path=(unsigned long)"C:\\PROCXIT.TOS";
+            r.tail=(unsigned long)fault_tail; r.environment=(unsigned long)env;
+            handle=Ssystem(PROCEXEC,(long)&r,72L);
+            ptest_assert_msg(handle>0,"prepare faulting PROCESS");
+            if(handle<=0) { ptest_pass(); return; }
+            memset(&r,0,sizeof(r)); r.operation=1; r.handle=(unsigned long)handle;
+            pid=Ssystem(PROCEXEC,(long)&r,72L);
+            result=0;
+            for(i=0;i<512 && result==0;i++) {
+                Syield(); result=Pwaitpid((int)pid,1,0);
+            }
+            ptest_assert_msg(pid>0 && result>0,"public wait observes fault before snapshot");
+            r.operation=2;
+            ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0 && r.completion.state==2 &&
+                             r.completion.kind==2 && r.completion.signal>0 && r.completion.status==0,
+                             "early public reaping preserves distinct retained fault completion");
+            r.operation=3;
+            ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0,"CLOSE faulted observation");
+        }
         memset(&r,0,sizeof(r)); r.operation=4;
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0 &&
                          Ssystem(PROCEXEC,(long)&r,72L)==0,"idempotent CANCEL_DEFERRED");
