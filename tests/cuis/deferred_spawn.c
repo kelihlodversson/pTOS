@@ -14,13 +14,13 @@ static unsigned references, owner_references, stacks, identities, preparations, 
 static BOOL prepare_ok, identity_ok, owner_ok;
 static void *execution;
 static void (*reclaimer)(void *);
-static BOOL stopped, inject_retirement;
+static BOOL stopped, inject_retirement, legacy_call;
 PD *run;
 static BOOL committing;
 BOOL kproc_exec_commit_begin(KPROC *p)
 { CHECK(p==(KPROC *)&owner); if(committing)return FALSE; committing=TRUE; return TRUE; }
 void kproc_exec_commit_end(KPROC *p)
-{ CHECK(p==(KPROC *)&owner && committing); committing=FALSE; }
+{ CHECK(p==(KPROC *)&owner && committing); if(legacy_call) CHECK(ksched_cleanup_active()); committing=FALSE; }
 
 
 LONG cuis_service(ULONG function, UQUAD handle) { CHECK(function == CUIS_SESSION_QUERY && handle == 23); return E_OK; }
@@ -30,7 +30,7 @@ ASPACE_ROOT kproc_user_root(PD *pd) { CHECK(pd == &child); return 0; }
 KPROC *kproc_retain(PD *pd)
 { if (pd == &owner) { if (!owner_ok) return NULL; owner_references++; return (KPROC *)pd; } CHECK(pd == &child); references++; return (KPROC *)pd; }
 void kproc_release(KPROC *p)
-{ if (p == (KPROC *)&owner) { CHECK(owner_references); owner_references--; return; } CHECK(p == (KPROC *)&child && references); references--; }
+{ if (p == (KPROC *)&owner) { if (legacy_call) CHECK(ksched_cleanup_active()); CHECK(owner_references); owner_references--; return; } CHECK(p == (KPROC *)&child && references); references--; }
 BOOL kproc_prepare_async_thread(PD *p, PD *parent, PD *controller, KTHREAD **thread)
 {
     CHECK(p == &child && parent == &owner && controller == &owner);
@@ -92,6 +92,15 @@ void proc_dispose_process(KPROC *p)
     disposals++;
 }
 
+static LONG legacy_defer(void)
+{
+    LONG result;
+    legacy_call=TRUE;
+    result=ksched_defer(&child,23);
+    CHECK(!ksched_cleanup_active() && !tasks[0].cleanup_depth);
+    legacy_call=FALSE;
+    return result;
+}
 int main(void)
 {
     run = &owner;
@@ -101,21 +110,23 @@ int main(void)
     scheduler.current = &tasks[0];
     scheduler.root.pd = &owner;
     tasks[0].state = TASK_RUNNING;
-    CHECK(ksched_defer(&child,23) == ENSMEM);
+    tasks[0].program=&owner; tasks[0].process=(KPROC *)&owner;
+    tasks[0].thread=(KTHREAD *)&owner; tasks[0].execution.identity=71;
+    CHECK(legacy_defer() == ENSMEM);
     CHECK(!preparations && !commits && !references && !stacks && !identities);
     owner_ok = TRUE;
-    CHECK(ksched_defer(&child,23) == ENSMEM);
+    CHECK(legacy_defer() == ENSMEM);
     CHECK(preparations == 1 && !commits && !references && !owner_references && !stacks && !identities);
     prepare_ok = TRUE;
-    CHECK(ksched_defer(&child,23) == ENSMEM);
+    CHECK(legacy_defer() == ENSMEM);
     CHECK(preparations == 2 && !commits && !references && !stacks && !identities);
     identity_ok = TRUE;
-    CHECK(ksched_defer(&child,23) == E_OK);
+    CHECK(legacy_defer() == E_OK);
     CHECK(tasks[1].state == TASK_DEFERRED && tasks[1].thread &&
           references == 1 && owner_references == 1 && stacks == 1 && identities == 1 && commits == 1);
     CHECK(ksched_defer_cancel() == E_OK);
     CHECK(!references && !owner_references && !stacks && !identities && disposals == 1);
-    CHECK(ksched_defer(&child,23) == E_OK);
+    CHECK(legacy_defer() == E_OK);
     ksched_exited_identity((KPROC *)&child, &owner);
     CHECK(tasks[1].state == TASK_DEFERRED && owner_references == 1 && identities == 1);
     ksched_exited_identity((KPROC *)&owner, &owner);
@@ -184,10 +195,10 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
 
-BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
+BOOL kthread_is_executing(const KTHREAD *t) { return t==(KTHREAD *)&owner; }
 
-ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
+ULONG kthread_tid(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return 7; }
 
-KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
+KPROC *kthread_process(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return (KPROC *)&owner; }
 
 KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }
