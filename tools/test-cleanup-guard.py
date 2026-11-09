@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     (work/'setjmp.h').write_text('#include <setjmp.h>\n')
     cc=shlex.split(os.environ.get('HOSTCC','cc'))
     subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
-        '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
+        '-ffunction-sections','-fdata-sections','-iquote',str(work),'-iquote','include',
         '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
         'tests/cuis/cleanup_guard.c','-Wl,--gc-sections','-o',str(work/'observer')],check=True)
     subprocess.run([str(work/'observer')],check=True)
