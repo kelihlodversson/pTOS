@@ -10,6 +10,31 @@ NOT enabled yet. Filesystem rollback signoff remains required before
 assigning/enabling a dispatch selector. The eight CUIS CHILD
 selectors remain active; no private ABI compatibility aliases are introduced.
 
+Test-only dispatch preparation (#935)
+------------------------------------
+CONF_WITH_PROCESS_EXEC_TEST is an explicit validation-only option, default n,
+depending on USER_ASPACE, NATIVE_SCHED and SSYSTEM. Normal configurations return
+EINVFN for S_PROCEXEC=((WORD)0xfff7), signed -9. S_INQUIRE does not advertise
+this mode even in opt-in test kernels. No ordinary public activation is
+approved by this option, and no CUIS selector is removed.
+
+arg1 is native long at xssystem and becomes (UQUAD)(uintptr_t)arg1: native32
+pointers are zero-extended, while genuine LP64 high bits are preserved for
+rejection. arg2 is validated at full native width and must equal exactly72;
+negative or high-width lengths are never truncated to their low32 bits.
+The adapter enters the execution-owned scope before retaining the caller's
+canonical PROCESS, invokes the existing request engine, releases its temporary
+PROCESS reference while protected, then ends the scope without delivery.
+The existing post-operation checkpoint in osif is the single return boundary;
+no extra checkpoint is added inside xssystem or the request decoder.
+
+Materialization retains the accepted K5 limit: current single-CPU,
+non-preemptive built-in no-yield/no-mapping-reentry provider only. Replaceable
+BIOS/critical-error callbacks reentering mapping teardown require a separate
+authoritative mapping lease/generation contract. No general fatal unwind,
+preemption or SMP safety is implied. Final corrected/reviewed #933, focused
+C3a and native/trap/full validation acceptance remain activation prerequisites.
+
 Fixed native-endian layout
 --------------------------
 PROCESS_EXEC_REQUEST is exactly 72 bytes, aligned to 4:
@@ -64,8 +89,10 @@ a prefix of user output, but cannot consume completion, observation, or Pwait.
 
 CLOSE supplies operation and handle only. It unlinks owned rights before
 cleanup, aborts an uncommitted image or releases committed observation, and
-never reaps or cancels a committed child. A valid consumed CLOSE cannot return
-a later recoverable error. Other retained observer leases remain usable.
+never reaps or cancels a committed child. Cleanup may return a negative error
+after consumption: the handle remains closed and repeating CLOSE is EIHNDL.
+Residual file ownership belongs to the canonical SFT service. Other retained
+observer leases remain usable.
 
 CANCEL_DEFERRED is designed as an idempotent current-PROCESS operation with zero
 handle and arguments. It cancels only the current owner's held, unexecuted

@@ -37,6 +37,9 @@
 #include "fs.h"            /* OPNFILES */
 #include "biosext.h"       /* phys_pages_total() */
 #include "kproc.h"
+#if CONF_WITH_PROCESS_EXEC_TEST
+#include "process_exec_internal.h"
+#endif
 #include "bdosstub.h"
 #if CONF_WITH_MMU_PROBE
 #include "mmuprobe.h"
@@ -841,6 +844,10 @@ LONG xssystem(WORD mode, long arg1, long arg2)
         return ssystem_procname(arg1, arg2);
     case S_PROCIDENT:
         return ssystem_procident(arg1, arg2);
+#endif
+#if CONF_WITH_PROCESS_EXEC_TEST
+    case S_PROCEXEC:
+        return proc_exec_dispatch(arg1,arg2);
 #endif
     case S_OSNAME:
         return ssystem_osname();
