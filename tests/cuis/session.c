@@ -4,6 +4,10 @@
 long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
+/* CUIS selects native scheduling in production. The broad hosted runner uses
+ * a non-CUIS preset but includes this source explicitly. Match that dependency. */
+#undef CONF_WITH_NATIVE_SCHED
+#define CONF_WITH_NATIVE_SCHED 1
 /* Exercise the production cleanup-to-checkpoint call, with scheduler/THREAD
  * termination mocked below so the host can inspect the post-cleanup state. */
 #undef CONF_WITH_PTERMGRP
