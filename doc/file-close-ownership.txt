@@ -137,3 +137,10 @@ medium is used for the native invalidation fixture; this is not hardware media
 removal evidence. Future owner locking must span alias retirement and slot
 invalidation in PROCESS-before-filesystem order; local cooperative serialization
 and no-yield metadata walks do not constitute an SMP registry lock.
+
+The same authoritative alias retirement applies to any final SFT consumption,
+not only media invalidation. In particular, a negative-but-consuming PFS close
+followed by an erroneous numeric retry cannot leave a dead standard alias for
+later PROCESS disposal. Aliases are unpublished before a consuming PFS finalizer
+can reenter cleanup; non-consuming FAT failures retain their mappings. This
+changes neither error visibility nor the existing public numeric-handle policy.

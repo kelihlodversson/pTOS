@@ -62,7 +62,8 @@ long ixwrite(OFD *fd,long n,void *p) { (void)fd;(void)n;(void)p; abort(); }
 CLNO getrealcl(CLNO n,DMD *d) { (void)n;(void)d; abort(); }
 void clfix(CLNO n,CLNO v,DMD *d) { (void)n;(void)v;(void)d; abort(); }
 static LONG driver_close(PFSCOOKIE *cookie) { CHECK(cookie==&sft[0].f_pfs); closes++; return pfs_error; }
-static void driver_release(PFSCOOKIE *cookie) { CHECK(cookie==&sft[0].f_pfs); releases++; }
+static void driver_release(PFSCOOKIE *cookie)
+{ CHECK(cookie==&sft[0].f_pfs && owner.p_uft[0]!=NUMSTD); releases++; }
 LONG pfs_handle_close(PFSCOOKIE *cookie) { return cookie->fs->close(cookie); }
 static LONG driver_release_file(PFSCOOKIE *cookie)
 { driver_release(cookie); return release_error; }
@@ -163,11 +164,11 @@ int main(void)
     CHECK(fs_sft_claim(0));
     driver.close=driver_close; driver.release=driver_release;
     sft[0].f_own=&owner; sft[0].f_use=2; sft[0].f_pfs.fs=&driver;
-    pfs_error=EWRITF;
+    pfs_error=EWRITF; owner.p_uft[0]=NUMSTD;
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF && result.disposition==FS_CLOSE_CONSUMED);
     CHECK(sft[0].f_use==1 && !sft[0].f_cleanup_refs && closes==1 && !releases);
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF && result.disposition==FS_CLOSE_CONSUMED);
-    CHECK(closes==2 && releases==1 && !sft[0].f_use && !sft[0].f_own);
+    CHECK(closes==2 && releases==1 && !sft[0].f_use && !sft[0].f_own && owner.p_uft[0]<0);
     CHECK(fs_sft_claim(0));
     sft[0].f_own=&owner; sft[0].f_use=1; sft[0].f_pfs.fs=&driver;
     driver.release_file=driver_release_file; pfs_error=0; release_error=EWRITF;
