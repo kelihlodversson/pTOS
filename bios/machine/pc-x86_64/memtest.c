@@ -2325,6 +2325,9 @@ static void test_native_exec_request(KPROC *owner)
     data=kproc_mmap(run,0,2*PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     if ((LONG)data>0) {
         UBYTE byte=1;
+        CHECK(kproc_copy_from_user_checked(NULL,~(VADDR)0,0)==E_OK &&
+              kproc_copy_to_user_checked(~(VADDR)0,NULL,0)==E_OK,
+              "zero-length checked copies do not access user memory");
         CHECK(kproc_copy_from_user_checked(&byte,data,1)==E_OK && !byte,
               "checked generic copy materializes a valid untouched lazy page");
         x86_64_pmem_test_fail_after(1);

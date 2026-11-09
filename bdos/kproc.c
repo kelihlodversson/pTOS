@@ -3541,13 +3541,17 @@ static LONG checked_copy_range(VADDR address, ULONG size, BOOL write)
 }
 LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size)
 {
-    LONG error=checked_copy_range(address,size,FALSE);
+    LONG error;
+    if (!size) return E_OK;
+    error=checked_copy_range(address,size,FALSE);
     if (error!=E_OK) return error;
     return kproc_copy_from_user_resident(dst,address,size) ? E_OK : EIMBA;
 }
 LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size)
 {
-    LONG error=checked_copy_range(address,size,TRUE);
+    LONG error;
+    if (!size) return E_OK;
+    error=checked_copy_range(address,size,TRUE);
     if (error!=E_OK) return error;
     return kproc_copy_to_user_resident(address,src,size) ? E_OK : EIMBA;
 }

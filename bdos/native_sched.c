@@ -763,6 +763,10 @@ static LONG finish_deferred_commit(void **slot, KPROC *owner)
     LONG result;
     cancel_successors(owner);
     result = ksched_process_publish(slot);
+    /* Preparation transferred loader ownership, and predecessor teardown is
+     * irreversible. A lost reservation here is internal corruption, not a
+     * recoverable loader error (which would invite double disposal). */
+    if (result < 0) panic("deferred publication lost prepared task");
     kproc_exec_commit_end(owner);
     return result;
 }
@@ -813,7 +817,7 @@ static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
         return result;
     }
     if (owner) {
-        result = finish_deferred_commit(&slot, owner);
+        (void)finish_deferred_commit(&slot, owner);
         kproc_release(owner);
         return E_OK;
     }
