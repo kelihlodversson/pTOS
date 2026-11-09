@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Production SFT close ownership and bounded recovery; disk I/O is injected."""
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+import kconfiglib
+ROOT=Path(__file__).resolve().parents[1]
+os.chdir(ROOT)
+os.environ['CONFIG_']=''
+with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
+    work=Path(directory)
+    config=kconfiglib.Kconfig(warn_to_stderr=False)
+    config.load_config('configs/virt-arm-aspace_defconfig')
+    config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2)
+    config.write_config(str(work/'config'))
+    subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
+                    '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
+    (work/'setjmp.h').write_text('#include <setjmp.h>\n')
+    cc=shlex.split(os.environ.get('HOSTCC','cc'))
+    subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
+        '-ffunction-sections','-fdata-sections','-iquote',str(work),'-iquote','include',
+        '-Iinclude/arch/x86_64','-Iinclude','-iquote','bdos','-iquote','fs',
+        'tests/fs_close.c','bdos/fsclose.c','bdos/fsopnclo.c','-Wl,--gc-sections','-o',str(work/'close')],check=True)
+    subprocess.run([str(work/'close')],check=True)

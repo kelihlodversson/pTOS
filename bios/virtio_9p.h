@@ -53,9 +53,10 @@ ULONG v9p_root_fid(void);
 LONG v9p_walk(ULONG fromfid, WORD nwname, const char *const *wname,
               ULONG *outfid, QID9P *outqid);
 
-/* Releases 'fid' (Tclunk) and returns its pool slot, regardless of
- * whether the server's reply indicated success - a fid this driver can
- * no longer account for must never be reused. */
+/* Tclunk consumes the caller's fid. A validated Rclunk/Rlerror releases its
+ * pool slot; a transport/malformed-reply failure quarantines that fid until
+ * connection reset, preventing ambiguous remote identity reuse. Returns the
+ * error in either case; no automatic retry or retained PROCESS is involved. */
 LONG v9p_clunk(ULONG fid);
 
 /* Opens 'fid' for I/O (Tlopen) with Linux-style open(2) flags - GEMDOS's

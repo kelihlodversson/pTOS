@@ -1292,6 +1292,51 @@ void x86_64_memtest_disposal_committed(PD *pd)
 
 /* Detached cancellation keeps filesystem and mapping resources alive until
  * the last non-runnable association is detached. */
+/* Native kernel execution with a real FAT handle and real PROCESS teardown.
+ * Only the repeated I/O error is injected; recovery uses the actual backend. */
+static void test_residual_file_ownership(void)
+{
+    SNAP s;
+    PD *saved=run,*pd;
+    KPROC *identity;
+    FS_CLOSE_REPORT report;
+    FS_CLEANUP_TOKEN token;
+    FS_CLEANUP_STATUS status;
+    LONG handle;
+    ULONG transferred;
+    snap(&s);
+    pd=new_basepage();
+    if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd);
+    CHECK(identity!=NULL,"retain cleanup diagnostic identity");
+    run=pd;
+    handle=DISK_CALL(xopen("C:\\X32HELLO.TOS",0));
+    run=saved;
+    CHECK(handle>=NUMSTD && handle<NUMHANDLES,"open real residual-cleanup FAT reference");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        token.handle=(WORD)handle; token.incarnation=sft[handle-NUMSTD].f_incarnation;
+        fs_close_test_exhaust((WORD)handle);
+    }
+    proc_dispose_process(identity);
+    fs_close_test_exhaust(-1);
+    CHECK(!kproc_ref_has_basepage(identity),"residual file does not retain PD or execution resources");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(kproc_ref_file_cleanup(identity,&transferred)==EWRITF && transferred==1,
+              "retained identity preserves first cleanup error and exact transfer count");
+        CHECK(fs_cleanup_snapshot(&token,&status)==E_OK && status.references==1 &&
+              status.state==FS_CLEANUP_PENDING,"retired PROCESS transfers one exact file incarnation");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==EIHNDL,
+              "ordinary close cannot consume a kernel-owned residual reference");
+        CHECK(fs_cleanup_retry(&token,&report)==E_OK && report.disposition==FS_CLOSE_CONSUMED,
+              "explicit bounded recovery releases actual residual FAT reference");
+        CHECK(fs_cleanup_retry(&token,&report)==EIHNDL,
+              "repeated recovery cannot close or destroy twice");
+    }
+    kproc_release(identity);
+    same(&s,"residual file recovery returns exact resource baseline");
+}
+
 static void test_kthread_live_disposal(void)
 {
     SNAP s;
@@ -5549,6 +5594,7 @@ void x86_64_memtest_run(void)
     test_clone_execution();
 #endif
 #endif
+    test_residual_file_ownership();
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();
