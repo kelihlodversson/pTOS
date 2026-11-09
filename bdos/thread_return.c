@@ -115,6 +115,39 @@ VADDR thread_return_bridge_address(const THREAD_RETURN_BRIDGE *bridge)
 {
     return thread_return_bridge_valid(bridge) ? RETURN_VA : 0;
 }
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_arch_bridge_acquire_cloned(KASPACE *source, KASPACE *space, void **out)
+{
+    THREAD_RETURN_BRIDGE *original, *bridge;
+    ASPACE *as = kaspace_backend(space);
+    PADDR before, copied;
+    UWORD prot;
+    LONG error;
+    if (!out || *out || !source || !space || source == space) return EINVAL;
+    for (original = bridges; original && original->space != source; original = original->next) { }
+    if (!original) return thread_startup_arch_bridge_acquire(space, out);
+    if (!thread_return_bridge_valid(original) ||
+        !aspace_translate(kaspace_backend(source), RETURN_VA, &before, NULL) ||
+        !aspace_translate(as, RETURN_VA, &copied, &prot) || before != copied ||
+        prot != (ASPACE_PROT_USER | ASPACE_PROT_EXEC) ||
+        !aspace_private_range_ok(as, RETURN_VA, USER_PAGE_SIZE)) return EACCDN;
+    bridge = kalloc(sizeof(*bridge));
+    if (!bridge) return ENSMEM;
+    bridge->space = kaspace_share(space);
+    if (!bridge->space) { kfree(bridge); return ENSMEM; }
+    bridge->users = 1;
+    error = kaspace_lease_acquire(space, RETURN_VA, USER_PAGE_SIZE,
+                                ASPACE_PROT_USER | ASPACE_PROT_EXEC, &bridge->hold);
+    if (!error && !kaspace_lease_hold_private(bridge->hold)) error = EIMBA;
+    if (error) {
+        kaspace_lease_release(&bridge->hold); kaspace_put(bridge->space); kfree(bridge);
+        return error;
+    }
+    bridge->next = bridges; bridges = bridge;
+    *out = bridge;
+    return E_OK;
+}
+#endif
 
 VADDR thread_return_bridge_zero_address(const THREAD_RETURN_BRIDGE *bridge)
 {

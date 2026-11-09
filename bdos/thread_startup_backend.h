@@ -5,6 +5,9 @@ struct aspace;
 /* Backend-owned trusted bridge capability; no architecture type leaks into
  * the generic transaction or caller-provided startup arguments. */
 LONG thread_startup_arch_bridge_acquire(struct kaspace *space, void **bridge);
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_arch_bridge_acquire_cloned(struct kaspace *source, struct kaspace *space, void **bridge);
+#endif
 BOOL thread_startup_arch_bridge_valid(const void *bridge);
 VADDR thread_startup_arch_bridge_address(const void *bridge);
 void thread_startup_arch_bridge_release(void **bridge);
@@ -14,6 +17,9 @@ void thread_startup_arch_bridge_release(void **bridge);
  * memory or install the object in a running THREAD. */
 LONG thread_startup_arch_prepare(struct aspace *space, const THREAD_STARTUP_ARGS *args, const void *return_bridge,
                                  void **image);
+#if CONF_WITH_FORK_RETURN_TEST
+LONG thread_startup_arch_allocate_saved(struct aspace *, const THREAD_STARTUP_ARGS *, void **);
+#endif
 LONG thread_startup_arch_validate(const struct aspace *space, const THREAD_STARTUP_ARGS *args);
 void thread_startup_arch_abort(void *image);
 LONG thread_startup_arch_public_return(void *image, const void *bridge);

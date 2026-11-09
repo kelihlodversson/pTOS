@@ -1,0 +1,76 @@
+PRIVATE_VM saved-return reconciliation: validation only
+======================================================
+
+Upstream: epic197d05ce6d71efb8e626df5b4e7db11d29f5c3fc (#931 merged).
+Inputs: saved-return #9323f9f7ff75, COW #9343c14f2606 and the saved-return
+adapter from isolated proof9ef7292a8. This branch is a reproducible validation
+combination, not an accepted production increment or merge proposal. #933 is
+not imported; its owner resolves its new-epic conflicts. #914 is not imported.
+
+Reconciliation performed
+------------------------
+Applied the previous proof to the current epic and brought in #934's final
+controller/bridge/COW tests. Preserved #931's KPROC launch-right fields,
+commit admission, checked user-copy functions and disposal paths. No change to
+filesystem references, scheduler/preemption, executable loading or public waits.
+
+Both startup policies use one startup_prepare transaction. Saved-return uses
+owned architecture return images without an unused function-return bridge;
+ordinary private entry startup authenticates and retains its cloned bridge.
+proc_clone distinguishes retained source_space from constructed child space.
+The saved-return copy uses child.space; x32 copies user registers/FXSAVE while
+retaining the constructor-selected child CR3. ARM/m68k retain their THREAD's
+child KASPACE attachment and fresh RFE/RTE launcher paths. Independent syscall
+and scheduler stacks are allocated by existing architecture owners.
+
+Combined test flags retain both private tagged probe transports and all public
+EINVFN gates. The harness requires the PRIVATE_VM same-trap runtime marker in
+addition to entry/COW and shared-return markers. The private return assembly
+also checks FP data/control after child COW writes: x32 x87/XMM0/XMM15/MXCSR,
+ARM d0/d31/FPSCR, and supported m68k040 FP0/FP7/control plus observable FPIAR/
+FPSR. QEMU's zero-only FPIAR does not prove nonzero-FPIAR preservation.
+
+The headless x32 build exposed a test-probe declaration previously hidden behind
+USER_CALLBACKS; its KPROC include/run declaration now follows FORK_RETURN_TEST.
+Its regression profile disables the separate embedded X86_64_MEMTEST, whose
+non-GUI scheduler combination has pre-existing conditional-include failures.
+This profile is not evidence for embedded MEMTEST or desktop GUI acceptance.
+The existing kernel/user warnings must be assessed separately by target.
+
+Production integration plan after acceptance
+-------------------------------------------
+1. Keep #934 independently reviewed. Once exact-head CI and owner review pass,
+   reconcile it against the current epic as its own prerequisite, or stack the
+   next increment on the accepted topic. Refresh the base again before doing
+   so. Never merge this validation combination wholesale.
+2. Reconcile #932 against that accepted base, retaining its reviewed CPU/FPU
+   capability restrictions and syscall-boundary authentication. Extract only
+   the saved-image/no-unused-bridge, child-root and source-vs-target adapter
+   changes from this branch. Keep the shared and private policies distinct.
+3. Review this adapter as a focused increment; run same-trap private execution
+   and independent COW/lifetime tests natively on x32, A32 and m68k040. Include
+   post-fault FP checks, both write orders, nested private trees, parent-first
+   orphan survival, faults/OOM, constructor failure and one public reap. State
+   which cases use same-trap return versus explicit-entry lifecycle probes.
+4. Keep public Pfork/Pvfork and generic PRIVATE_VM Pclone EINVFN. Complete the
+   separate #933-approved descriptor namespace/reference migration and supported
+   PROCESS runtime inheritance before any public Pfork policy adapter.
+
+Evidence belongs to the exact resulting validation commit and configuration.
+The old9ef7292a8 native results must not be relabelled as this newer source.
+Broader same-trap nested fork/parent-death and fault-cancellation stress remain
+acceptance work even when the independent explicit-entry COW tree tests pass.
+
+Local validation of this source combination
+------------------------------------------
+Native QEMU: x32 headless22/0, ARM Cortex-A7 A3226/0, m68k04025/0; each five
+shutdown checks. Both shared/private saved-return markers and the independent
+entry/COW/orphan markers passed. Post-COW FP assertions passed on all three.
+The entry tests provide nested/orphan/parent-first/OOM lifecycle coverage; no
+same-trap nested/orphan coverage is implied. Public Pfork/Pvfork rejection tests
+still pass. No #933 file-error injection or complete inheritance is present.
+Host: KASPACE/startup/join/clone ownership, COW production metadata normally,
+ASan/UBSan and fortified host compiler, CUIS/PROCESS lifecycle, ABI/decoder,
+51 ELF tests and gitready pass. Host MMU mechanics remain models. Fortified
+host results are not relabelled as GCC13 unless that compiler is used. Desktop,
+ROM and remote CI results must be recorded separately for this new source.

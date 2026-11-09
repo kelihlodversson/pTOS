@@ -81,3 +81,48 @@ C_SYM(m68k_fpu_init):
         rts
 
 #endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_FORK_RETURN_TEST
+        /* Unlike launcher preservation, snapshot all user registers even for
+         * a NULL FSAVE image. No old kernel/peer FP registers may leak. */
+        .globl C_SYM(m68k_fpu_save_complete)
+C_SYM(m68k_fpu_save_complete):
+#if CONF_WITH_MFASTCALL
+        move.l a0,a1
+#else
+        move.l 4(sp),a1
+#endif
+        fsave (%a1)
+        tst.l (%a1)
+        jeq .Lsaved_fpu_idle
+        cmpi.b #0x40,(%a1)
+        jeq .Lsaved_fpu_version
+        cmpi.b #0x41,(%a1)
+        jne .Lsaved_fpu_refuse
+.Lsaved_fpu_version:
+        tst.b 1(%a1)
+        jne .Lsaved_fpu_refuse
+        tst.w 2(%a1)
+        jne .Lsaved_fpu_refuse
+.Lsaved_fpu_idle:
+        fmovem.x %fp0-%fp7,FPU_REGS(%a1)
+        fmovem.l %fpcr/%fpsr/%fpiar,FPU_CTL(%a1)
+        moveq #0,d0
+        rts
+.Lsaved_fpu_refuse:
+        /* Do not execute FMOVEM against an unadmitted pending/busy image. */
+        frestore (%a1)
+        moveq #-32,d0
+        rts
+        .globl C_SYM(m68k_fpu_restore_complete)
+C_SYM(m68k_fpu_restore_complete):
+#if CONF_WITH_MFASTCALL
+        move.l a0,a1
+#else
+        move.l 4(sp),a1
+#endif
+        fmovem.x FPU_REGS(%a1),%fp0-%fp7
+        fmovem.l FPU_CTL(%a1),%fpcr/%fpsr/%fpiar
+        frestore (%a1)
+        rts
+#endif
