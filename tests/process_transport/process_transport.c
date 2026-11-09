@@ -19,13 +19,13 @@ typedef struct {
     unsigned short status;
     short signal;
     unsigned long order_low,order_high;
-} COMPLETION;
+} __attribute__((aligned(4))) COMPLETION;
 typedef struct {
     unsigned long operation,handle,policy,reserved;
     unsigned long path,tail,environment,directory;
     COMPLETION completion;
     unsigned long reserved_tail[2];
-} REQUEST;
+} __attribute__((aligned(4))) REQUEST;
 void test_process_transport(void);
 void test_process_transport(void)
 {
