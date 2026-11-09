@@ -364,3 +364,15 @@ User-frame restore, owner locks/IRQ wake admission, final return eligibility and
 timer preemption are still gated. The independent residual-file ownership fix
 is PR #933; #931 retains responsibility for its own TASK_RETIRING and outer
 cleanup-cancellation/fatal-copy safety. None changes PROCESS reaping (#909).
+
+B2a: IRQ wake / idle ownership
+-----------------------------
+A CPU-owned wake epoch now pairs owner-sequence publication with root's final
+idle admission. Maskable IRQ entry notifies without dispatching or retaining a
+driver pointer. Root rechecks before the existing atomic backend idle and clears
+admission on wake/park. The retained blocked operation owns its event source.
+Native tests exercise a real IRQ wake plus same-execution resumption; the host
+fixture injects admission/park interleavings separately. No assembly user-return
+path is replaced. B2b restartable-frame proof and B2c deferred handoff remain
+gated; fork's independently owned syscall-return startup (#932) is a different
+contract and does not authorize restoring diagnostic IRQ captures.

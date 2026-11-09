@@ -2,6 +2,7 @@
 #include "emutos.h"
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
 #include "kthread_context.h"
+#include "ksched.h"
 #include "kaspace.h"
 #include "aspace32.h"
 #include "../../../bios/processor.h"
@@ -46,6 +47,9 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     M68K_USER_IRQ_CAPTURE *capture;
     M68K_IRQ_BINDING binding;
     ULONG tid;
+    /* Wake metadata only; no kernel-frame capture or scheduler transfer. IRQ
+     * readiness is durable before this handler returns on the original frame. */
+    ksched_irq_notify();
     /* Inspect only the header until exact model/format admission. The format
      * word exists on every supported MMU CPU. Synthetic timer frames are S=1. */
     if ((frame->sr&0x2000) || (frame->format_vector&0xf000)) return;

@@ -2,6 +2,7 @@
 #include "emutos.h"
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
 #include "kthread_context.h"
+#include "ksched.h"
 #include "kaspace.h"
 #include "aspace32.h"
 #include "string.h"
@@ -41,6 +42,9 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     ARM_USER_IRQ_CAPTURE *capture;
     ARM_IRQ_BINDING binding;
     ULONG tid;
+    /* Wake metadata only; no kernel-frame capture or scheduler transfer. IRQ
+     * readiness is durable before this handler returns on the original frame. */
+    ksched_irq_notify();
     if ((frame->cpsr&0x1f)!=0x10) return; /* Never interpret a kernel IRQ as user. */
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return; /* Includes nested different-PROCESS launchers. */

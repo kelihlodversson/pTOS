@@ -302,3 +302,39 @@ Future SMP must acquire the event owner before the leaf and pair publication
 with targeted wake routing. Reading a 64-bit source under local IRQ exclusion
 on current ARM/m68k is not an atomic remote-CPU access. No destructor or callback
 is introduced into a leaf section by this protocol.
+
+B2a single-CPU interrupt wake / idle admission
+---------------------------------------------
+The permanent CPU owns a non-recycled wake epoch and one idle-armed bit.
+ksched_wake_sequence(source) publishes an already-owned event sequence plus the
+CPU epoch under local IRQ exclusion. The event owner must publish durable
+readiness first and retain its storage through every admitted wait's return.
+The notifier retains no owner pointer and runs no callback/destructor/copy.
+ksched_irq_notify() records a maskable IRQ without changing runnable policy.
+The existing saved-register IRQ entry hooks call it even for kernel/root IRQs;
+those frames still do NOT become captured user continuations.
+
+Root snapshots the epoch before readiness/reclamation callbacks, scans with
+maskable IRQs excluded, then compares/arms under the same exclusion. A producer
+that ran during the scan invalidates the sleep token. A later pending IRQ is
+handled by the backend's indivisible idle entry: x32 STI/HLT/CLI; A32 masked WFI
+followed by IRQ enable/ISB/remask; m68k STOP/remask. Return and park both disarm.
+Notifications while root is parked persist as an epoch change, but do not
+schedule an unmanaged caller or imply CPU-bound progress without Syield.
+
+The atomicity claim is single CPU, maskable IRQs only. FIQ/NMI publication,
+remote wake/IPIs, migration and SMP are unsupported. Future owner locks must
+precede leaf runqueue publication; epoch accesses on 32-bit CPUs need real
+atomic/CPU-owner synchronization before remote producers exist. No callbacks,
+allocation, user copies or last-reference release occur in wake admission.
+A notification cannot clear group cancellation or consume readiness payload.
+
+The host fixture enumerates notifications before/after admission and across
+park, duplicate-arm rejection and no-wrap exhaustion using production state
+helpers. Native test-only root code injects a pre-arm publication, refuses the
+stale token, then arms and executes the real backend idle until a hardware IRQ
+publishes its blocked owner's generation. The same managed continuation must
+resume with its false predicate and detached wait metadata. This deliberate
+test idle may run while a peer is runnable; production idle remains strictly
+after the full runqueue scan. It is hardware IRQ/idle evidence, not copied-frame
+restore, timer preemption or a simulated host CPU verdict.

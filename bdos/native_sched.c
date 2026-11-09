@@ -4,6 +4,7 @@
 #include "biosext.h"
 #include "ksched.h"
 #include "ksched_lifetime.h"
+#include "ksched_wake.h"
 #include "kproc.h"
 #include "native_sched_backend.h"
 #include "kthread_context.h"
@@ -80,6 +81,7 @@ typedef struct {
     FS_ERROR_STATE loaded_error; /* includes code/drive, not only longjmp registers */
     void *loaded_launcher; /* CPU-loaded nested chain, saved in each execution context. */
     KERNEL_TASK *current, *inflight;
+    KSCHED_WAKE_STATE wake; /* permanent CPU-owned IRQ/idle handshake */
     BOOL entered, pump;
     ULONG budget;
     BOOL (*entry_ready)(void *);
@@ -437,6 +439,34 @@ static void lifetime_probe_reap(KERNEL_TASK *task)
     lifetime_probe.owner=NULL;
 }
 #endif
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+static volatile BOOL irq_wake_probe_pending;
+static KSCHED_WAIT_SEQUENCE generation_probe;
+static BOOL generation_pending;
+#endif
+void ksched_irq_notify(void)
+{
+    uintptr_t flags=native_sched_irq_save();
+    ksched_wake_publish(&execution_cpu.wake);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    /* Only armed by verified root test code immediately before real idle.
+     * The producer is an actual maskable IRQ, never a simulated user frame. */
+    if (irq_wake_probe_pending) {
+        irq_wake_probe_pending=FALSE;
+        ksched_sequence_advance(&generation_probe);
+        generation_pending=FALSE;
+    }
+#endif
+    native_sched_irq_restore(flags);
+}
+void ksched_wake_sequence(KSCHED_WAIT_SEQUENCE *source)
+{
+    uintptr_t flags=native_sched_irq_save();
+    if (!source) panic("scheduler: missing wake owner");
+    ksched_sequence_advance(source);
+    ksched_wake_publish(&execution_cpu.wake);
+    native_sched_irq_restore(flags);
+}
 static UQUAD next_identity;
 static KSCHED_WAIT_RESULT wait_observed(BOOL (*ready)(void *), void *argument,
                                         const KSCHED_WAIT_OBSERVATION *observation);
@@ -449,15 +479,29 @@ static struct {
     UQUAD execution;
     BOOL pending, resumed, reaped;
 } wait_probe;
-static KSCHED_WAIT_SEQUENCE generation_probe;
-static BOOL generation_pending;
 static BOOL generation_never_ready(void *owner)
 { return owner!=&generation_probe; }
 static void wait_probe_on_root(void)
 {
     if (generation_pending) {
-        generation_pending=FALSE;
-        ksched_sequence_advance(&generation_probe);
+        UQUAD before=execution_cpu.wake.sequence;
+        KSCHED_WAIT_SEQUENCE owner={0};
+        /* Inject publication after a completed scan but before idle admission.
+         * The production handshake must refuse the stale sleep token. */
+        ksched_wake_sequence(&owner);
+        if (ksched_wake_arm(&execution_cpu.wake,before) || execution_cpu.wake.armed)
+            panic("scheduler: wake lost before idle admission");
+        before=execution_cpu.wake.sequence;
+        irq_wake_probe_pending=TRUE;
+        if (!ksched_wake_arm(&execution_cpu.wake,before))
+            panic("scheduler: native IRQ wake admission");
+        /* Test-only bounded idle at root, even if a peer is runnable. No
+         * dispatcher policy changes: production idle remains after full scan. */
+        native_sched_idle();
+        if (irq_wake_probe_pending || generation_pending ||
+            execution_cpu.wake.sequence==before || execution_cpu.wake.armed)
+            panic("scheduler: real IRQ failed to release idle admission");
+        ksched_wake_disarm(&execution_cpu.wake);
     }
     if (!wait_probe.pending) return;
     if (!ksched_admission_complete(&wait_probe.producer,1,82))
@@ -507,6 +551,7 @@ static void sequence_probe_on_yield(void)
     sequence_probed=TRUE;
     kcprintf("native completion sequence check/block retry: PASS\n");
     kcprintf("native owner generation wake with false predicate: PASS\n");
+    kcprintf("native IRQ wake/idle admission and blocked-owner resume: PASS\n");
 }
 static void wait_probe_on_yield(void)
 {
@@ -1671,6 +1716,11 @@ static void scheduler_root_entry(void)
     for (;;) {
         BOOL pending = FALSE;
         KERNEL_TASK *task, *first;
+        UQUAD wake_observed;
+        /* Root owns its mask until the backend's atomic idle sequence. This
+         * also makes 64-bit owner stamps indivisible on current 32-bit CPUs. */
+        native_sched_irq_disable();
+        wake_observed=execution_cpu.wake.sequence;
         check_root_stack();
         cpu_acknowledge_handoff();
         if (scheduler.stopping) panic("scheduler: dispatch during shutdown");
@@ -1726,8 +1776,12 @@ static void scheduler_root_entry(void)
         if (execution_cpu.waiter_attached && execution_cpu.pump) break; /* no runnable work: return, never spin */
         if (!pending && execution_cpu.waiter_attached) panic("scheduler: missing synchronous completion");
         runqueue_unlocked();
-        native_sched_idle();
+        native_sched_irq_disable();
+        if (!ksched_wake_arm(&execution_cpu.wake,wake_observed)) continue;
+        native_sched_idle(); /* pending IRQ + idle is indivisible in each backend */
+        ksched_wake_disarm(&execution_cpu.wake);
     }
+    ksched_wake_disarm(&execution_cpu.wake);
     if(table_empty()) free_task_table();
     {
         KPROC *owner;

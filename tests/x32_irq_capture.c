@@ -7,6 +7,8 @@
 PD *run;
 static KTHREAD_CONTEXT execution;
 static BOOL owned=TRUE;
+static unsigned notifications;
+void ksched_irq_notify(void) { notifications++; }
 static UQUAD root=0x1000, top;
 KTHREAD_CONTEXT *ksched_interrupt_target(PD *pd, struct kaspace **space, ULONG *tid)
 { (void)pd; *space=(struct kaspace *)1; *tid=17; return owned ? &execution : NULL; }
@@ -37,6 +39,7 @@ int main(void)
     c->sequence=~(UQUAD)0; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==~(UQUAD)0);
     c->sequence=7; owned=FALSE; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==7);
     owned=TRUE; f.cs=8; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==7);
+    CHECK(notifications==7); /* kernel/rejected IRQs still notify, never become user images */
     puts("x32 capture producer: copied frame, unchanged IRQ source, binding rejection and sequence exhaustion: PASS (CPU queries modeled)");
     return 0;
 }

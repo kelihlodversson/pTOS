@@ -108,3 +108,14 @@ Event producers still need owner-protected state/sequence publication and an
 atomic IRQ pending/idle wake boundary before asynchronous admission is enabled.
 No #929 poll engine, deadline provider, copied IRQ-frame restore, user-return
 reschedule, timer preemption or SMP capability follows from this increment.
+
+B2a notification integration
+----------------------------
+An owner using ksched_wait_cancelable_observed publishes durable predicate state
+then calls ksched_wake_sequence while still under owner/IRQ exclusion. The
+source must remain retained until all waits detach. The helper advances the
+source and permanent CPU wake epoch without retaining an operation pointer.
+IRQ entry also records an epoch wake, permitting root to recheck level sources.
+The root check-to-idle handshake is now implemented for one CPU/maskable IRQs;
+this does not supply descriptor subscriptions, deadlines, Fpoll or SMP locking.
+See native-scheduler-sync.txt for the exact backend admission and test limits.
