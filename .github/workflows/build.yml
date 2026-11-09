@@ -130,6 +130,9 @@ jobs:
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
+          for name in ("CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP"):
+              config.syms[name].set_value(2)
+              assert config.syms[name].str_value == "y"
           config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].set_value(2)
           assert config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].str_value == "y"
           config.write_config()
