@@ -29,6 +29,12 @@ static void reenter_root(void)
     scheduler.current = NULL; /* Model cleanup yielding to the verified root. */
     CHECK(!reap_finished_on_root(&tasks[1]));
     scheduler.current = previous;
+    {
+        void *nested = NULL;
+        CHECK(ksched_task_reserve(FALSE, &nested) == E_OK && nested != &tasks[1]);
+        ksched_task_cancel(&nested);
+        CHECK(!nested && tasks[1].state == TASK_RETIRING && tasks[1].execution.stack.physical == 123);
+    }
     root_attempts++;
 }
 void proc_dispose_process(KPROC *process)
