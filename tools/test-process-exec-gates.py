@@ -60,6 +60,17 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
         assert bool(re.search(r'case\s+\(\(WORD\)0xfff7\)', inquiry)) == production, name
         dispatch = source.split('LONG xssystem(', 1)[1]
         assert ('return proc_exec_dispatch(arg1,arg2);' in dispatch) == (production or test), name
+        if production:
+            # Link and execute the actual adapter/decoder for future production
+            # and both-gate validation configurations, still only on the host.
+            subprocess.run(shlex.split(os.environ.get('HOSTCC', 'cc')) + [
+                '-fno-builtin', '-std=gnu90', '-O2', '-Wall', '-Wextra', '-Werror',
+                '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections',
+                '-iquote', 'include', '-I'+str(work), '-Iinclude/arch/x86_64',
+                '-idirafter', 'include', '-iquote', 'bdos', '-iquote', 'fs',
+                'tests/process_exec_dispatch.c', '-Wl,--gc-sections', '-o', str(work / name)],
+                check=True)
+            subprocess.run([str(work / name)], check=True)
         print('PROCESS gate '+name+': selection/build/discovery PASS')
     for preset in ('atari256', 'pc-x86_64-eager'):
         config = kconfiglib.Kconfig(str(root), warn_to_stderr=False)
