@@ -2385,6 +2385,91 @@ static void test_native_exec_request(KPROC *owner)
     CHECK(kproc_munmap(run,lazy_environment,PAGE)==E_OK && kproc_munmap(run,data,2*PAGE)==E_OK,
           "reclaim actual user request and materialized lazy environment mappings");
 }
+#if CONF_WITH_CUIS_OBSERVER_TEST
+static struct {
+    BOOL inside, active, in_hook, seen;
+    ULONG action;
+    KPROC *owner;
+    LONG session, handle;
+    VADDR data;
+    PROCESS_OBSERVER *observer, *alias;
+} native_observer_wait;
+static void native_observer_wait_hook(void)
+{
+    if (!native_observer_wait.active || native_observer_wait.in_hook) return;
+    native_observer_wait.active=FALSE; native_observer_wait.in_hook=TRUE;
+    CHECK(cuis_observer_test_leases()==1,"real SESSION_WAIT retains its PROCESS lease through scheduler handoff");
+    native_observer_wait.seen=TRUE;
+    if (native_observer_wait.action==3) {
+        CHECK(kproc_request_group_exit(native_observer_wait.owner,0x2468),
+              "group cancellation latches while observed wait owns protected cleanup");
+    } else if (native_observer_wait.action==1) {
+        CHECK(cuis_service(CUIS_SESSION_END,native_observer_wait.session)==E_OK,
+              "retire actual endpoint while canonical observed wait retains it");
+    } else {
+        CHECK(proc_exec_handle_close(native_observer_wait.owner,native_observer_wait.handle)==E_OK &&
+              cuis_observer_test_leases()==1,
+              "CLOSE consumes preparation without revoking the actual retained GUI wait lease");
+        native_observer_wait.handle=0;
+        CHECK(cuis_stream_service(CUIS_STREAM_WRITE,native_observer_wait.session,
+                                  native_observer_wait.data+64,16,0,0)==16,
+              "publish stream packet while real child observation becomes ready");
+    }
+    native_observer_wait.in_hook=FALSE;
+}
+/* Deterministic native admission injection. All PROCESS/CUIS operations are
+ * real, after wait publication and outside exclusion; Syield crosses root
+ * while the execution-scoped cleanup still owns the independent lease. */
+void x86_64_memtest_observer_wait_admitted(void)
+{
+    if (!native_observer_wait.inside) return;
+    native_observer_wait_hook();
+    ksched_yield();
+}
+static void test_native_observer_wait(KPROC *owner,BOOL cancel)
+{
+    SNAP baseline;
+    ULONG action, handle;
+    LONG ready;
+    static char path[]="C:\\X32HELLO.TOS", tail[]={2,'O','n',0}, environment[]={0,0};
+    native_observer_wait.data=kproc_mmap(run,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    handle=0;
+    CHECK((LONG)native_observer_wait.data>0 &&
+          kproc_copy_to_user_checked(native_observer_wait.data,&handle,sizeof(handle))==E_OK,
+          "materialize native scalar-array mapping before per-operation reference baseline");
+    if ((LONG)native_observer_wait.data<=0) return;
+    snap(&baseline);
+    for (action=cancel?3:0;action<(cancel?4:3);action++) {
+        native_observer_wait.owner=owner; native_observer_wait.action=action;
+        native_observer_wait.seen=FALSE; native_observer_wait.in_hook=FALSE;
+        native_observer_wait.session=cuis_service(CUIS_SESSION_START,0);
+        native_observer_wait.handle=proc_exec_handle_prepare(owner,path,tail,environment,NULL,PROCESS_EXEC_ASYNC);
+        CHECK((LONG)native_observer_wait.data>0 && native_observer_wait.session>=0 && native_observer_wait.handle>0,
+              "construct actual native endpoint, prepared PROCESS and user handle array");
+        if ((LONG)native_observer_wait.data<=0 || native_observer_wait.session<0 || native_observer_wait.handle<=0) return;
+        handle=(ULONG)native_observer_wait.handle;
+        CHECK(proc_exec_retain_observer(owner,handle,FALSE,&native_observer_wait.observer)==E_OK &&
+              process_observer_attach(native_observer_wait.observer,&native_observer_wait.alias)==E_OK &&
+              kproc_copy_to_user_checked(native_observer_wait.data,&handle,sizeof(handle))==E_OK,
+              "retain independent native aliases and materialize the real user scalar array");
+        native_observer_wait.inside=TRUE; native_observer_wait.active=TRUE;
+        ready=cuis_session_wait(native_observer_wait.session,16,CUIS_READY_CHILD|CUIS_READY_STREAM|CUIS_READY_TIMER,
+                                0,native_observer_wait.data,1);
+        native_observer_wait.inside=FALSE;
+        CHECK(!cancel && native_observer_wait.seen && !cuis_observer_test_leases(),
+              "real wait detaches and releases observers before returning/checkpoint");
+        CHECK(ready==(action==1 ? EACCDN:(LONG)(CUIS_READY_CHILD|CUIS_READY_STREAM|CUIS_READY_TIMER)),
+              "real child/stream/timer readiness combines, or exact endpoint retirement rejects the wait");
+        if (native_observer_wait.handle)
+            CHECK(proc_exec_handle_close(owner,native_observer_wait.handle)==E_OK,"close remaining retired-endpoint preparation");
+        if (action!=1) CHECK(cuis_service(CUIS_SESSION_END,native_observer_wait.session)==E_OK,"release native test endpoint");
+        process_observer_release(&native_observer_wait.observer);
+        process_observer_release(&native_observer_wait.alias);
+        same(&baseline,"observed wait releases actual PROCESS aliases, client storage, files and mappings");
+    }
+    CHECK(kproc_munmap(run,native_observer_wait.data,PAGE)==E_OK,"release native handle array mapping");
+}
+#endif
 static void ordinary_deferred_commit(void)
 {
     PROCESS_COMPLETION completion;
@@ -2458,6 +2543,15 @@ static void ordinary_observation_yield(void)
         kthread_process(thread)!=ordinary_observation.parent || ordinary_observation.checked) return;
     ordinary_observation.yields++;
     if (ordinary_observation.yields==1) {
+#if CONF_WITH_CUIS_OBSERVER_TEST
+        if (ordinary_observation.scenario==14) {
+            ordinary_observation.checked=TRUE;
+            test_native_observer_wait(ordinary_observation.parent,TRUE);
+            CHECK(FALSE,"cancelled native observed wait must terminate only after cleanup");
+            return;
+        }
+        if (ordinary_observation.scenario==3) test_native_observer_wait(ordinary_observation.parent,FALSE);
+#endif
         if (ordinary_observation.scenario==3) test_native_exec_request(ordinary_observation.parent);
         command[2]=ordinary_observation.scenario==2 ? 'f':'n';
         if (ordinary_observation.scenario >= 3) {
@@ -2614,7 +2708,7 @@ static void test_ordinary_observation(void)
     int before=failures;
     static const char command[]={2,'O','p',0}, environment[]={0,0};
     test_discarded_observation();
-    for (mode=0;mode<(CONF_WITH_PTERMGRP ? 14:12);mode++) {
+    for (mode=0;mode<(CONF_WITH_PTERMGRP ? (CONF_WITH_CUIS_OBSERVER_TEST ? 15:14):12);mode++) {
         SNAP baseline;
         LONG loaded, status;
         PD *program;
@@ -2631,6 +2725,15 @@ static void test_ordinary_observation(void)
         CHECK(ksched_run(&program,1,&status)==E_OK && status==(mode>=12 ? 0x2468:0x1357) && ordinary_observation.checked,
               "ordinary observed child and parent execute actual native continuations");
         ordinary_observation.enabled=FALSE;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+        if (mode==14) {
+            native_observer_wait.inside=FALSE; native_observer_wait.active=FALSE;
+            CHECK(native_observer_wait.seen && !cuis_observer_test_leases(),
+                  "actual cancellation releases wait leases before PROCESS retirement");
+            process_observer_release(&native_observer_wait.observer);
+            process_observer_release(&native_observer_wait.alias);
+        }
+#endif
         if (mode>=7 && mode<=11 && mode!=8) {
             PROCESS_COMPLETION parent_done, child_done;
             CHECK(process_observer_ready(ordinary_observation.observer) &&
@@ -2666,6 +2769,12 @@ void x86_64_memtest_clone_yield(void)
         CHECK(!ksched_cleanup_active(),"nested distinct PROCESS has no carrier cleanup suppression");
         retiring_probe.nested_seen=TRUE;
     }
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    if (native_observer_wait.inside) {
+        native_observer_wait_hook();
+        return;
+    }
+#endif
     ordinary_observation_yield();
     if (!active_clone.enabled || !(thread = ksched_exit_thread(run))) return;
     if (kthread_process(thread) == active_clone.parent) {

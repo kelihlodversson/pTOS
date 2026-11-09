@@ -43,7 +43,11 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD peer, UQUAD field, U
 LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD length,
                          UQUAD block, UQUAD sender);
-LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds);
+#if CONF_WITH_CUIS_OBSERVER_TEST
+ULONG cuis_observer_test_leases(void); /* Prototype ownership diagnostics only. */
+#endif
+LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds,
+                       UQUAD observers, UQUAD count);
 LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD modifiers);
 void cuis_process_exit(PD *owner);
 LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c);

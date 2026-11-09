@@ -114,6 +114,17 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument)
     }
     return FALSE;
 }
+static ULONG cleanup_depth;
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{
+    if (scope->active) __builtin_abort();
+    scope->active=TRUE; scope->caller=run; scope->depth=++cleanup_depth;
+}
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{
+    if (!scope->active || scope->caller!=run || scope->depth!=cleanup_depth) __builtin_abort();
+    cleanup_depth--; scope->active=FALSE;
+}
 static BOOL cancel_pending;
 static CUIS_CLIENT *cancellation_owner;
 static BOOL cancellation_bad;
@@ -121,7 +132,7 @@ static ULONG cancellation_visits;
 void ksched_cancel_point(void)
 {
     cancellation_visits++;
-    if (!input_irqs) cancellation_bad=TRUE;
+    if (!input_irqs || cleanup_depth) cancellation_bad=TRUE;
     if (cancellation_owner && (cancellation_owner->input_wait || cancellation_owner->wait_operation ||
         cancellation_owner->resume_operation || cancellation_owner->references!=1)) cancellation_bad=TRUE;
 }
@@ -351,6 +362,7 @@ UQUAD kproc_ref_number(const KPROC *process)
 }
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
+#include "observer_wait.c"
 #include "windows.c"
 #include "visibility.c"
 #include "regions.c"
@@ -415,6 +427,8 @@ int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=observer_wait_checks();
+    if (rc) return rc;
     rc=stream_lifetime_checks();
     if (rc) return rc;
     rc=input_transaction_checks();

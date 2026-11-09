@@ -1,0 +1,37 @@
+Bounded CUIS SESSION_WAIT observer prototype (#907 / #940)
+
+CONF_WITH_CUIS_OBSERVER_TEST defaults off and requires CUIS, native scheduling
+and user address spaces. No shipped preset enables it. It does not activate
+S_PROCEXEC, modify public discovery, or remove a CUIS selector.
+
+SESSION_WAIT retains arguments a-d. In the prototype only, e is a fixed32
+user address and f is an element count (maximum 16). e=f=0 preserves the
+existing call. A nonempty array requires CUIS_READY_CHILD. Entries are ULONG
+PROCESS-owned opaque launch rights, not PID, AES client ID or kernel pointers.
+The entire checked array is copied before importing any observer. Zero and
+duplicate scalar handles are invalid; distinct rights aliasing one canonical
+observer each acquire and release an independent lease. Stale/foreign rights
+are rejected by the authoritative PROCESS transport.
+
+The calling PROCESS and exact endpoint are retained across fallible preflight.
+Readiness ORs canonical level-triggered observation into the existing combined
+input/message/timer predicate. CLOSE does not revoke an imported lease. Every
+exit unpublishes its own predicate under input exclusion, restores IRQ state,
+then releases observer, client and temporary PROCESS references before ending
+the execution cleanup scope and reaching the existing cancellation checkpoint.
+No final KPROC release is introduced inside input/runqueue exclusion.
+
+The checked-copy backing restriction remains the built-in single-CPU,
+non-preemptive no-yield/no-mapping-reentry provider. This is not arbitrary
+callback/fatal-unwind, preemption or SMP safety.
+
+Validation layers
+- tools/test-cuis-observers.py executes the production CUIS session source with
+  modeled PROCESS/scheduler services in both gate modes; it checks aliases,
+  failed imports/copies, endpoint retirement, cancellation and combined readiness.
+- The gated x32 MEMTEST fixture uses real prepared PROCESS handles, independent
+  canonical observer references, mapped user arrays and scheduler handoffs.
+  It checks CLOSE during a retained wait, endpoint retirement, combined child/
+  stream/timer readiness, cancellation cleanup and exact resource baselines.
+Neither layer is the receipt-runtime publisher-fault/sibling-recovery proof.
+No receipt runtime or production CHILD migration is included in this increment.
