@@ -142,3 +142,53 @@ handoff and notification transaction -> native GUI matrix -> delete 66/67/68.
 Then C4b removes 69/90/91 and C4c removes 70/92. Count deletions only after
 all callers, wrappers, handlers, storage, tests and documentation have migrated.
 Nine COHORT selectors remain a separate shutdown-policy milestone.
+
+Kernel-owner C4a agreement and proposed wait layout
+--------------------------------------------------
+
+Recorded design/test-only agreement:
+https://github.com/kelihlodversson/pTOS/pull/937#issuecomment-6737807156
+
+Use bounded OPERATION-LOCAL observer leases imported from libaes's owned handle
+array during SESSION_WAIT preflight, outside CUIS exclusion. Retain before
+predicate registration, authenticate the endpoint and admitted operation token,
+and OR process_observer_ready into the existing level predicate. Do not add a
+persistent GUI completion/status queue. Keep all leases until the scheduler has
+detached its predicate. On every outcome, unpublish under input exclusion,
+restore IRQs/unlock, release observers outside exclusion, then reach the existing
+safe cancellation boundary. finish_session_wait currently calls client_put
+before unlock; its last-reference path needs an explicit audit/refactor rather
+than adding final KPROC releases inside that exclusion.
+
+CLOSE does NOT revoke independent observer leases. A concurrent wait may retain
+canonical metadata after CLOSE; its own teardown releases that lease. Session
+retirement explicitly detaches its operation, rather than requiring generic
+CLOSE to call CUIS. ABANDONED is ready for cleanup without CH_EXIT.
+
+Concrete proposed wire extension for owner review, not yet enabled:
+- Preserve SESSION_WAIT arguments a..d: endpoint, stream minimum, event mask,
+  milliseconds. Use presently unused e/f for owned-handle-array address/count.
+- Array consists only of fixed 32-bit ULONG handles, at most 16 entries (the
+  existing per-client launch bound). Address must be 4-byte aligned and bounded
+  as a 32-bit user range; count/width/overflow are checked before copy.
+- Zero count requires zero address and means no PROCESS readiness sources.
+  Nonzero count requires CUIS_READY_CHILD. Reject duplicate/zero/foreign/stale
+  handles before admitting input/scheduler state; unwind partial leases once.
+- Copy the bounded array using the established checked-copy contract, then
+  authenticate current PROCESS ownership for each handle with require_prepared
+  FALSE. No borrowed user pointer survives preflight. Native UQUAD trap inputs
+  are checked before narrowing; the array itself contains no native pointers.
+- Endpoint authentication uses the opaque endpoint owned by the caller, not
+  find-the-first-client-for-PID policy. Revalidate endpoint identity/retirement
+  and operation token after any fallible preflight. Per-client libaes storage
+  supplies only that recipient's rights, even when clients share a PROCESS.
+- Store at most 16 retained observer pointers in the operation's own lifetime.
+  Readiness is level-triggered, never consumes an observer or public completion,
+  and retains the existing input history/multi-click/deadline machinery.
+
+The bounded layout and publication-after-checkpoint behavior still require
+explicit source-level review before ABI implementation. Existing STREAM_WRITE
+commits whole packets, but a userspace mark-after-syscall is not by itself a
+proof against cancellation/THREAD retirement at the syscall return checkpoint.
+Test and resolve that boundary for the per-client delivery state; do not silently
+weaken exactly-once or add a generic CUIS callback to PROCESS CLOSE.
