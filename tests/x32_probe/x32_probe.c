@@ -1819,6 +1819,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         bad_address = (u32 *)0x4ba;
         bad = (int)*(volatile u32 *)bad_address;
         break;
+    case '\001':
+        __asm__ volatile ("ud2");
+        break;
     case 'p':
         __asm__ volatile ("hlt");
         break;

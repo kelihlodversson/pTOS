@@ -65,7 +65,14 @@ enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
 struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
     UQUAD number;                /* Generic non-recycled PROCESS identity. */
+#if CONF_WITH_USER_ASPACE
+    UQUAD completion_order;
+    BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
+    WORD exit_signal; /* Pending only for final execution; immutable at completion. */
+#endif
     BOOL completed;
+    BOOL started;
+    WORD pid; /* Identity prefix is never cleared during retirement. */
     UWORD exit_status;
     char executable_name[33]; /* Bounded basename; presentation stays in userspace. */
 #if CONF_WITH_USER_CALLBACKS
@@ -74,14 +81,12 @@ struct kproc {
 #endif
     PD *pd;
     DTAINFO *dta;
-    BOOL started;               /* proc_go() has launched it */
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
 #if CONF_WITH_USER_ASPACE
     KPROC *parent_identity;     /* owning identity, never live parent resources */
     BOOL parent_untracked;      /* legacy kernel parent without a KPROC */
     UQUAD parent_gen;            /* generation if that parent has an allocation */
 #endif
-    WORD pid;                   /* its process id, 1..KPROC_PID_MAX, never reused while it lives */
     SBYTE prio;                 /* Psetpriority(): kept, and with no effect (scheduling is cooperative) */
     ULONG start_tick;           /* hz_200 when the record was made, for Prusage() */
     ULONG child_ticks;          /* the ticks the processes it launched have used up */
@@ -172,6 +177,9 @@ struct kproc {
 };
 
 static KPROC *kproc_list;
+#if CONF_WITH_USER_ASPACE
+static UQUAD last_completion_order; /* Serialized terminal publication, not IRQ producer state. */
+#endif
 static KPROC *retired_processes; /* identities retained after removal from lookup */
 
 /* KPROC records are kernel-only objects.  On x86-64 they live in the
@@ -182,6 +190,7 @@ static KPROC *retired_processes; /* identities retained after removal from looku
 #define KPROC_FREE(k)   kfree(k)
 #else
 #define KPROC_ALLOC()   MGET(KPROC)
+typedef char KPROC_POOL_PAYLOAD_FITS[sizeof(KPROC) <= OSM_PAYLOAD_BYTES ? 1 : -1];
 #define KPROC_FREE(k)   xmfreblk(k)
 #endif
 
@@ -442,11 +451,70 @@ BOOL kproc_ref_status(const KPROC *process, UWORD *status)
     if (status) *status = process->exit_status;
     return TRUE;
 }
+#if CONF_WITH_USER_ASPACE
+static BOOL completion_flag(const BOOL *flag)
+{
+    return *(const volatile BOOL *)flag; /* Single-copy IRQ observation, not SMP acquire. */
+}
+BOOL kproc_ref_terminal(const KPROC *process)
+{
+    return process && completion_flag(&process->observer_ready);
+}
+void kproc_publish_observers(KPROC *process)
+{
+    /* Completion data may precede teardown. Only the finalizer/scheduler which
+     * owns terminal publication may expose readiness, after resource release
+     * and (for managed tasks) the existing public-wait state transition. */
+    if (!process || !process->retired) panic("observer publication before retirement");
+    if (process->observer_ready) return;
+    if (process->completed) {
+        if (last_completion_order == ~(UQUAD)0)
+            panic("PROCESS completion order exhausted"); /* Never wrap/recycle. */
+        process->completion_order = ++last_completion_order;
+    }
+    __asm__ volatile ("" : : : "memory");
+    process->observer_ready = TRUE;
+}
+BOOL kproc_ref_completion(const KPROC *process, PROCESS_COMPLETION *out)
+{
+    PROCESS_COMPLETION snapshot;
+    if (!process || !out) return FALSE;
+    snapshot.number_low = (ULONG)process->number;
+    snapshot.number_high = (ULONG)(process->number >> 32);
+    snapshot.pid = process->pid;
+    snapshot.kind = PROCESS_COMPLETION_NONE;
+    snapshot.status = 0;
+    snapshot.signal = 0;
+    snapshot.order_low = snapshot.order_high = 0;
+    if (completion_flag(&process->observer_ready)) {
+        __asm__ volatile ("" : : : "memory");
+        snapshot.order_low = (ULONG)process->completion_order;
+        snapshot.order_high = (ULONG)(process->completion_order >> 32);
+    }
+    if (completion_flag(&process->completed)) {
+        __asm__ volatile ("" : : : "memory");
+        snapshot.state = PROCESS_COMPLETED;
+        snapshot.kind = process->exit_signal ? PROCESS_COMPLETION_SIGNAL : PROCESS_COMPLETION_NORMAL;
+        if (process->exit_signal) snapshot.signal = process->exit_signal;
+        else snapshot.status = process->exit_status;
+    } else if (completion_flag(&process->observer_ready)) snapshot.state = PROCESS_ABANDONED;
+    else snapshot.state = process->started ? PROCESS_RUNNING : PROCESS_UNSTARTED;
+    *out = snapshot;
+    return TRUE;
+}
+void kproc_note_fault(PD *pd, WORD signal)
+{
+    KPROC *process = kproc_find(pd);
+    if (process && !process->completed && !process->exit_signal && signal > 0)
+        process->exit_signal = signal;
+}
+#endif
 void kproc_complete(PD *pd, UWORD status)
 {
     KPROC *process = kproc_find(pd);
     if (process && !process->completed) {
         process->exit_status = status;
+        __asm__ volatile ("" : : : "memory"); /* Publish payload before the IRQ-visible flag. */
         process->completed = TRUE;
     }
 }
@@ -514,6 +582,9 @@ BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
     KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next, BOOL identity_only)
 {
     KASPACE *as;
+#if !CONF_WITH_NATIVE_SCHED
+    UNUSED(identity_only);
+#endif
     if (!thread || !construction_space || !p ||
 #if CONF_WITH_PTERMGRP
         p->group_exiting ||
@@ -950,27 +1021,24 @@ void kproc_destroy(PD *pd)
             /* Only immutable identity and completion survive. In particular,
              * no retained reference may dereference the now-releasable PD. */
             {
-                ULONG references = kproc->references;
-                WORD pid = kproc->pid;
-                UQUAD number = kproc->number;
-                BOOL completed = kproc->completed;
-                UWORD status = kproc->exit_status;
                 KPROC *next = kproc->next;
-                char name[33];
 #if CONF_WITH_USER_ASPACE
                 KPROC *parent_identity = kproc->parent_identity;
 #endif
-                memcpy(name, kproc->executable_name, sizeof(name));
-                bzero(kproc, sizeof *kproc);
-                memcpy(kproc->executable_name, name, sizeof(name));
-                kproc->references = references;
-                kproc->pid = pid;
-                kproc->number = number;
-                kproc->completed = completed;
-                kproc->exit_status = status;
+                /* IRQ readiness can inspect a retained identity during cleanup.
+                 * Never zero its identity/completion prefix and restore it later. */
+                bzero((UBYTE *)kproc + offsetof(KPROC,pd),
+                      sizeof(*kproc) - offsetof(KPROC,pd));
+#if CONF_WITH_USER_CALLBACKS
+                kproc->callbacks = NULL; kproc->resume_rsp = 0;
+#endif
                 kproc->next = next;
 #if CONF_WITH_USER_ASPACE
                 kproc->disposal_state = PROCESS_RETIRED;
+#endif
+                __asm__ volatile ("" : : : "memory");
+#if CONF_WITH_USER_ASPACE
+                kproc->retired = TRUE;
                 kproc_release(parent_identity);
 #endif
             }
@@ -1170,6 +1238,27 @@ void kproc_mark_started(PD *pd)
     if (kproc)
         kproc->started = TRUE;
 }
+
+#if CONF_WITH_USER_ASPACE
+static void publish_discarded_identity(void *token)
+{
+    KPROC *process = token;
+    kproc_publish_observers(process);
+    kproc_release(process);
+}
+
+/* Basepage disposal precedes allocator release. Keep only its canonical
+ * metadata until the allocation's final pin and ownership are gone. */
+void kproc_discard_after_free(PD *pd)
+{
+    KPROC *process = kproc_unlaunched(pd) ? kproc_retain(pd) : NULL;
+    if (process && !procmem_on_free(pd, publish_discarded_identity, process)) {
+        kproc_release(process);
+        panic("discarded PROCESS allocation has no completion owner");
+    }
+    kproc_discard(pd);
+}
+#endif
 
 BOOL kproc_discard(PD *pd)
 {
@@ -2694,6 +2783,9 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
 /* backs the page of a lazy area; the stack remembers how far down it has been */
 static int back_page(KPROC *kproc, VADDR va, UWORD access)
 {
+#if !CONF_WITH_MMAP
+    UNUSED(access);
+#endif
     UWORD prot;
 
 #if CONF_WITH_MMAP

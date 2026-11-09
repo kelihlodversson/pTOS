@@ -127,6 +127,7 @@ struct uspace_launch {
     PADDR stack_phys;
     uintptr_t stack_top;
     KPROC * volatile exit_process;
+    KPROC * volatile fallback_observer;
     volatile UWORD exit_status;
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
@@ -186,6 +187,18 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 #if CONF_WITH_EXIT_HANDOFF_TEST
 static BOOL injected_exit_failure;
 #endif
+
+/* Retain only canonical completion identity through refused exit handoff.
+ * The active syscall stack remains owned by this existing launcher. */
+BOOL proc_defer_observer(PD *pd, KPROC *observer)
+{
+    struct uspace_launch *launch = get_uspace_launch();
+    if (!launch || launch->pd != pd || !launch->stack_phys) return FALSE;
+    if (!observer || launch->exit_process || launch->fallback_observer)
+        panic("duplicate fallback observer ownership");
+    launch->fallback_observer = observer;
+    return TRUE;
+}
 
 BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
@@ -271,6 +284,7 @@ void gouser(void)
     launch.stack_phys = kstack_phys;
     launch.stack_top = kstack_top;
     launch.exit_process = NULL;
+    launch.fallback_observer = NULL;
     set_uspace_launch(&launch);
     __asm__ volatile ("mrs %0, cpsr" : "=r" (launcher_status));
     if (setjmp(launch.resume) == 0) {
@@ -301,6 +315,10 @@ void gouser(void)
     if (launch.exit_process && !kproc_user_root(launch.pd))
         panic("exit handoff lost child mappings");
     kstack_free(kstack_phys);
+    if (launch.fallback_observer) {
+        kproc_publish_observers(launch.fallback_observer);
+        kproc_release(launch.fallback_observer);
+    }
     if (launch.exit_process) {
         KPROC *process = launch.exit_process;
 #if CONF_WITH_NATIVE_SCHED

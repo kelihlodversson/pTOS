@@ -89,3 +89,5 @@ int main(void)
     puts("Exhausted close retries leave one reference without double release: PASS");
     return 0;
 }
+
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

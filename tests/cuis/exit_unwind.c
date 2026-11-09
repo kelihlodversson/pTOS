@@ -22,7 +22,8 @@ static PD child;
 static SBYTE files[NUMSTD];
 static UBYTE dirs[NUMCURDIR];
 static unsigned phase, commits, publications, releases, destroyed, successors;
-static BOOL disposing;
+static BOOL disposing, managed_completion, wait_visible;
+static unsigned observer_publications;
 static jmp_buf fatal, original_error;
 
 
@@ -41,6 +42,10 @@ BOOL kproc_commit_exit_handoff(KPROC *p, PD **pd)
     CHECK(p == (KPROC *)&child && !disposing);
     disposing = TRUE; commits++; *pd = &child; return TRUE;
 }
+BOOL ksched_finalizing_process(const KPROC *p)
+{ CHECK(p==(KPROC *)&child); return managed_completion; }
+void kproc_publish_observers(KPROC *p)
+{ CHECK(p==(KPROC *)&child && destroyed && successors && (!managed_completion || wait_visible)); observer_publications++; }
 void kproc_complete(PD *p, UWORD status)
 { CHECK(p == &child && status == 37 && disposing); publications++; }
 void ksched_exiting(PD *p, UWORD status)
@@ -72,9 +77,12 @@ int main(void)
 {
     /* Re-entered cleanup is never attempted, even after notification or
      * retirement. The retained identity, not a reconstructed PD, is released. */
+    unsigned scheduler_case;
+    for (scheduler_case=0;scheduler_case<2;scheduler_case++)
     for (phase = 0; phase <= 4; phase++) {
         commits = publications = releases = destroyed = successors = 0;
-        disposing = FALSE;
+        disposing = FALSE; observer_publications=0;
+        managed_completion=scheduler_case!=0; wait_visible=FALSE;
         dirs[0] = 1;
         errcode=-31; errdrv=3; rwerr=-32;
         memset(errbuf, 0x5a, sizeof(errbuf));
@@ -82,9 +90,15 @@ int main(void)
         if (!setjmp(fatal)) {
             proc_finalize_exit((KPROC *)&child, 37, TRUE, 4096);
             CHECK(!phase && !releases && !proc_resident_pd);
+            CHECK(observer_publications==(managed_completion ? 0U:1U));
+            if (managed_completion) {
+                wait_visible=TRUE; /* Existing scheduler ZOMBIE/DONE transition. */
+                kproc_publish_observers((KPROC *)&child);
+            }
+            CHECK(observer_publications==1);
             kproc_release((KPROC *)&child);
         } else {
-            CHECK(phase && !proc_resident_pd && !proc_resident_len);
+            CHECK(phase && !proc_resident_pd && !proc_resident_len && !observer_publications);
         }
         CHECK(!memcmp(original_error, errbuf, sizeof(errbuf)));
         CHECK(errcode==-31 && errdrv==3 && rwerr==-32);
@@ -94,3 +108,5 @@ int main(void)
     puts("Finalization callback unwind contract: PASS");
     return 0;
 }
+
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

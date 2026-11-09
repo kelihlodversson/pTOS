@@ -86,6 +86,9 @@ void ksched_cancel_point(void);
 void ksched_enter_exit(PD *pd); /* suppress recursive delivery through termination hooks */
 LONG ksched_termgrp(UWORD status);
 #endif
+/* Finalizer ownership survives THREAD stop; nested foreign PROCESSes do not
+ * use this task's public-wait publication boundary. No reference transfer. */
+BOOL ksched_finalizing_process(const struct kproc *process);
 BOOL ksched_finish_exit(struct kproc *process, PD *pd, UWORD status);
 /* Saved with kernel process contexts, including legacy AES coroutines.
  * Zero is unmanaged; identities are never reused, even across groups. */

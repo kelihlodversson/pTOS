@@ -62,6 +62,17 @@ PD *kproc_notification_parent(PD *p)
     return parent_retired ? NULL : kproc_get_parent(p);
 }
 WORD kproc_pid(PD *p) { CHECK(p == &owner && owner_record); return 11; }
+static unsigned observer_publications;
+void kproc_publish_observers(KPROC *p)
+{
+    CHECK(p == (KPROC *)&owner && !owner_record && !owner_memory);
+    observer_publications++;
+}
+BOOL proc_defer_observer(PD *pd, KPROC *observer)
+{
+    CHECK(pd == &owner && observer == (KPROC *)&owner && owner_record);
+    return FALSE; /* Kernel-code fixture has no separate syscall stack. */
+}
 void kproc_complete(PD *p, UWORD status)
 {
     CHECK(p == &owner && owner_record && status == 37 && cleanup_commits == 1);
@@ -166,7 +177,7 @@ long kernel_trap(long call, long a, long b, long c, long d)
 }
 void termuser(void)
 {
-    CHECK(run == &parent && parent.p_dreg[0] == 37);
+    CHECK(run == &parent && parent.p_dreg[0] == 37 && observer_publications);
     CHECK(!owner_record && !child_record && !owner_memory && term_handlers == 1);
     CHECK(identity_completions == 1 && cleanup_commits == 1);
     CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner);
@@ -263,3 +274,4 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
 BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
 void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }
