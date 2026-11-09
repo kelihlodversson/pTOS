@@ -2,6 +2,7 @@
  * Include the implementation so its internal helper can be called directly;
  * unused entry points are discarded by the host test's section GC. */
 #include "../../bdos/fsopnclo.c"
+void panic(const char *format, ...) { (void)format; __builtin_trap(); }
 
 static void *escape[5];
 static CLNO disk[2][8];
