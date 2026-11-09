@@ -3,6 +3,7 @@
  * selector or production user ABI is introduced by this fixture. */
 #include "config.h"
 #include "pclone.h"
+#include "threadcalls.h"
 #if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
 extern long long x32_probe_call(unsigned long long,long long,long long,long long);
 #define RF_CALL(n,a,b,c) x32_probe_call(n,(long long)(unsigned long)(a),(long long)(unsigned long)(b),(long long)(unsigned long)(c))
@@ -37,9 +38,10 @@ int x32_receipt_fault_checks(void)
         result=RF_CALL(GEMDOS_PCLONE,&args,sizeof(args),0);
         if(result<=0 || result!=tid[i] || pid[i]!=RF_CALL(0x10b,0,0,0))return 52;
     }
-    result=RF_CALL(0x11e,tid[1],0,0);
+    result=RF_CALL(GEMDOS_PTHJOIN,tid[1],0,0);
     if(result)return 53;
     for(i=0;i<2;i++)if(RF_CALL(0x49,stack[i],0,0))return 54;
+    RF_CALL(0xff,0,0,0); /* prove leader reached successful join and stack frees */
     return 0;
 }
 #endif

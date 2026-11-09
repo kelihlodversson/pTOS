@@ -144,21 +144,34 @@ LONG cuis_receipt_test_query(CUIS_RECEIPT_TEST_RECORD *record)
 {
     CUIS_CLIENT *source;
     CUIS_RECEIPT_TEST_RECORD snapshot;
-    CUIS_RECEIPT_SLOT *slot;
+    CUIS_RECEIPT_SLOT *slot=NULL;
     UBYTE packet[32];
     ULONG address,capacity;
-    UQUAD flags=cuis_input_lock();
-    source=receipt_source(record);
-    if (!source || !source->receipt_table) { cuis_input_unlock(flags); return EACCDN; }
-    slot=&source->receipt_table->slots[record->slot];
-    if (!slot->state || (receipt_pair(record->attempt_low,record->attempt_high) && !receipt_exact(source,record))) {
-        cuis_input_unlock(flags); return EIHNDL;
+    UQUAD flags,generation;
+    if (!record || record->operation || record->slot>=RECEIPT_SLOTS ||
+        record->destination || record->destination_low || record->destination_high ||
+        record->key_low || record->key_high || record->tag || record->state ||
+        record->bytes>sizeof(packet) || (!record->packet != !record->bytes)) return EINVAL;
+    address=record->packet;capacity=record->bytes;
+    if (capacity>0x100000000ULL-address) return EIMBA;
+    flags=cuis_input_lock();source=receipt_source(record);
+    if (!source) { cuis_input_unlock(flags); return EACCDN; }
+    if (source->receipt_table) slot=&source->receipt_table->slots[record->slot];
+    generation=receipt_pair(record->attempt_low,record->attempt_high);
+    if (generation && (!slot || !slot->state || slot->generation!=generation)) {
+        cuis_input_unlock(flags);return EIHNDL;
     }
-    address=record->packet; capacity=record->bytes;
-    receipt_record(source,record->slot,&snapshot); memcpy(packet,slot->packet,slot->bytes);
+    if (slot && slot->state) {
+        receipt_record(source,record->slot,&snapshot);memcpy(packet,slot->packet,slot->bytes);
+    } else {
+        memset(&snapshot,0,sizeof(snapshot));
+        snapshot.source=snapshot.source_low=source->handle;snapshot.slot=record->slot;
+    }
+    snapshot.packet=address;
     cuis_input_unlock(flags);
-    if (address && (capacity<snapshot.bytes || kproc_copy_to_user_checked(address,packet,snapshot.bytes))) return EIMBA;
-    *record=snapshot; return E_OK;
+    if (address && capacity<snapshot.bytes) return ERANGE;
+    if (address && snapshot.bytes && kproc_copy_to_user_checked(address,packet,snapshot.bytes)) return EIMBA;
+    *record=snapshot;return E_OK;
 }
 LONG cuis_receipt_test_prepare(const CUIS_RECEIPT_TEST_RECORD *record)
 {

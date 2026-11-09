@@ -627,6 +627,9 @@ worker return. B joins the actual faulted THREAD (status ffff), verifies PROCESS
 completion has not occurred, drains A's packet, recovers COMMITTED, retries
 without appending, then publishes and drains N+1. ACK/CLOSE/RECLAIM and exact
 outer PROCESS/heap/mapping baselines complete before the source PROCESS exits.
+The leader uses GEMDOS_PTHJOIN from threadcalls.h, then frees both user stacks
+and reaches a separately checked final Syield marker; an early leader return
+cannot be masked by the last sibling's PROCESS exit status.
 The hook invokes production receipt code; there is no invented receipt trap or
 injected kernel exception inside a cleanup scope. This proves the stated user
 THREAD fault boundary, not arbitrary kernel callback/fatal-unwind safety.

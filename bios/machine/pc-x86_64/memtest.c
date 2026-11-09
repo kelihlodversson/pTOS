@@ -2479,7 +2479,8 @@ static void test_native_observer_wait(KPROC *owner,BOOL cancel)
 static BOOL native_receipt_active;
 #if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
 static struct {
-    BOOL active;
+    BOOL active,leader_verified;
+    UQUAD owner_number;
     ULONG phase,leader,publisher,hook_tids[4];
     KPROC *owner;
     LONG source,destination,pid,second_pid;
@@ -2493,11 +2494,16 @@ static void native_receipt_fault_yield(void)
     KTHREAD *thread=ksched_exit_thread(run);
     ULONG tid,hook;
     PROCESS_COMPLETION completion,other;
+    CUIS_RECEIPT_TEST_RECORD query={0};
     WORD packet[8]={80,0,0,0,(WORD)0xffff,0,0,0},copied[8];
     LONG result;
     ULONG turn,joined_status=0;
     static char path[]="C:\\X32HELLO.TOS",tail[]={2,'O','n',0},second_tail[]={2,'O','y',0},environment[]={0,0};
     if(!thread)return;
+    if(receipt_fault.phase==5 && kthread_tid(thread)==receipt_fault.leader &&
+       kproc_ref_number(kthread_process(thread))==receipt_fault.owner_number) {
+        receipt_fault.leader_verified=TRUE;return;
+    }
     /* Test-only rendezvous uses the existing scheduler predicate, not a new
      * wait service. B cannot finish until publisher A has snapshotted N. */
     if(receipt_fault.second_pid>0 && kproc_ref_pid(kthread_process(thread))==receipt_fault.second_pid && receipt_fault.phase<2) {
@@ -2514,6 +2520,7 @@ static void native_receipt_fault_yield(void)
     receipt_fault.hook_tids[hook]=tid;
     if(!receipt_fault.phase) {
         receipt_fault.leader=tid;receipt_fault.owner=kproc_retain(run);
+        receipt_fault.owner_number=kproc_ref_number(receipt_fault.owner);
         receipt_fault.source=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);
         receipt_fault.destination=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);
         receipt_fault.data=kproc_mmap(run,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
@@ -2589,9 +2596,12 @@ static void native_receipt_fault_yield(void)
             CHECK(cuis_stream_service(CUIS_STREAM_READ,receipt_fault.destination,receipt_fault.data+128,sizeof(packet),0,0)==sizeof(packet) &&
                   kproc_copy_from_user_checked(copied,receipt_fault.data+128,sizeof(copied))==E_OK && copied[3]==receipt_fault.pid,
                   "surviving sibling drains actual committed packet before receipt recovery");
-            receipt_fault.receipt.packet=0;receipt_fault.receipt.bytes=0;
-            CHECK(cuis_receipt_test_query(&receipt_fault.receipt)==E_OK && receipt_fault.receipt.state==CUIS_RECEIPT_COMMITTED,
-                  "surviving sibling recovers durable COMMITTED after receiver drain");
+            query.source=receipt_fault.receipt.source;query.source_low=receipt_fault.receipt.source_low;
+            query.source_high=receipt_fault.receipt.source_high;query.slot=receipt_fault.receipt.slot;
+            query.attempt_low=receipt_fault.receipt.attempt_low;query.attempt_high=receipt_fault.receipt.attempt_high;
+            CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_COMMITTED,
+                  "surviving sibling recovers durable COMMITTED from source/slot/generation alone after receiver drain");
+            receipt_fault.receipt=query;
             CHECK(cuis_receipt_test_commit(&receipt_fault.receipt)==sizeof(packet) &&
                   cuis_stream_service(CUIS_STREAM_PENDING,receipt_fault.destination,0,0,0,0)==0,
                   "actual fault recovery cannot append a duplicate after receiver drain");
@@ -5476,7 +5486,7 @@ static void test_ring3(void)
         bzero(&receipt_fault,sizeof(receipt_fault));receipt_fault.active=TRUE;
         probe_expect(2,0,"actual publisher THREAD fault, sibling recovery after receiver drain, no duplicate CH_EXIT");
         receipt_fault.active=FALSE;
-        CHECK(receipt_fault.phase==5 && !receipt_fault.owner,"native receipt recovery fixture reaches full cleanup");
+        CHECK(receipt_fault.phase==5 && !receipt_fault.owner && receipt_fault.leader_verified,"native receipt leader joins survivor and frees both stacks after full cleanup");
         if(receipt_fault.owner) { kproc_release(receipt_fault.owner);receipt_fault.owner=NULL; }
         kcprintf("x86-64 receipt publisher fault/recovery: %s\n",failures==receipt_before ? "PASS":"FAIL");
     }

@@ -81,6 +81,13 @@ static void complete_receipt_child(CUIS_RECEIPT_TEST_RECORD *record,ULONG order)
     PROCESS_COMPLETION *c=&receipt_children[record->tag-100].completion;
     c->state=PROCESS_COMPLETED;c->kind=PROCESS_COMPLETION_NORMAL;c->status=0xffff;c->order_low=order;
 }
+static CUIS_RECEIPT_TEST_RECORD query_identity(CUIS_RECEIPT_TEST_RECORD receipt)
+{
+    CUIS_RECEIPT_TEST_RECORD query={0};
+    query.source=receipt.source;query.source_low=receipt.source_low;query.source_high=receipt.source_high;
+    query.slot=receipt.slot;query.attempt_low=receipt.attempt_low;query.attempt_high=receipt.attempt_high;
+    return query;
+}
 static int receipt_runtime_checks(void)
 {
     CUIS_RECEIPT_TEST_RECORD a,b,old,query,quota[256];
@@ -95,10 +102,30 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_launch(source,destination,0,"child",tail,environment,&a)>0);
     CHECK(cuis_receipt_test_launch(source,destination,1,"child",tail,environment,&b)>0);
     CHECK(a.state==CUIS_RECEIPT_BOUND && a.tag!=b.tag && receipt_active==2);
+    query=query_identity(a);query.source_high=1;
+    CHECK(cuis_receipt_test_query(&query)==EACCDN);
+    query=query_identity(a);query.source=query.source_low=destination;
+    CHECK(cuis_receipt_test_query(&query)==EACCDN);
+    query=query_identity(a);query.slot=16;
+    CHECK(cuis_receipt_test_query(&query)==EINVAL);
+    query=query_identity(a);query.attempt_low=query.attempt_high=0;query.slot=15;
+    CHECK(cuis_receipt_test_query(&query)==E_OK && !query.state && !query.attempt_low && !query.tag);
+    {
+        LONG empty=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);
+        CHECK(empty>=0);memset(&query,0,sizeof(query));query.source=query.source_low=empty;
+        CHECK(cuis_receipt_test_query(&query)==E_OK && !query.state && !query.tag);
+        CHECK(cuis_service(CUIS_SESSION_END,empty)==E_OK);
+    }
     memset(stream_input,0x41,16);a.packet=0x10000;a.bytes=16;
     CHECK(cuis_receipt_test_prepare(&a)==E_OK);
     memset(stream_input,0x42,16);b.packet=0x10000;b.bytes=16;
     CHECK(cuis_receipt_test_prepare(&b)==E_OK);
+    query=query_identity(a);query.packet=0x20000;query.bytes=8;
+    CHECK(cuis_receipt_test_query(&query)==ERANGE && query.bytes==8 && query.packet==0x20000);
+    query=query_identity(a);query.packet=0x20000;query.bytes=32;
+    CHECK(cuis_receipt_test_query(&query)==E_OK && query.packet==0x20000 && query.bytes==16 && stream_output[0]==0x41);
+    query=query_identity(a);query.attempt_low++;
+    CHECK(cuis_receipt_test_query(&query)==EIHNDL);
     complete_receipt_child(&a,10);complete_receipt_child(&b,11);
     /* Publisher A stalled. Publisher B must not pass its canonical ordinal. */
     CHECK(cuis_receipt_test_commit(&b)==EAGAIN && !find_handle(destination)->stream_bytes);
@@ -107,7 +134,7 @@ static int receipt_runtime_checks(void)
     CHECK(stream_output[0]==0x41);run=&first;
     /* THREAD loss is modeled by discarding local success, then sibling QUERY.
      * Receiver has drained; the endpoint-owned receipt remains authoritative. */
-    query=a;query.packet=0;query.bytes=0;
+    query=query_identity(a);query.packet=0;query.bytes=0;
     CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_COMMITTED);
     before=find_handle(destination)->stream_bytes;
     CHECK(cuis_receipt_test_commit(&a)==16 && find_handle(destination)->stream_bytes==before);
@@ -119,7 +146,7 @@ static int receipt_runtime_checks(void)
     CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==E_OK);
     CHECK(cuis_receipt_test_commit(&a)==16 && !find_handle(destination)->stream_bytes);
     CHECK(cuis_receipt_test_reclaim(&a)==E_OK && cuis_receipt_test_reclaim(&a)==E_OK);
-    query=a;query.packet=0;
+    query=query_identity(a);query.packet=0;
     CHECK(cuis_receipt_test_query(&query)==E_OK &&
           query.state==(CUIS_RECEIPT_RECLAIMED|CUIS_RECEIPT_COMMITTED_OUTCOME));
     old=a;
@@ -130,7 +157,7 @@ static int receipt_runtime_checks(void)
     /* Full destination cannot create a false COMMITTED outcome. */
     a.packet=0x10000;a.bytes=16;CHECK(cuis_receipt_test_prepare(&a)==E_OK);complete_receipt_child(&a,12);
     find_handle(destination)->stream_bytes=CUIS_STREAM_BYTES;
-    CHECK(cuis_receipt_test_commit(&a)==EAGAIN);query=a;query.packet=0;
+    CHECK(cuis_receipt_test_commit(&a)==EAGAIN);query=query_identity(a);query.packet=0;
     CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_PREPARED);
     find_handle(destination)->stream_bytes=0;
     run=&second;CHECK(cuis_service(CUIS_SESSION_END,destination)==E_OK);
@@ -143,7 +170,7 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_launch(source,replacement,0,"child",tail,environment,&query)==EAGAIN);
     a.packet=0x10000;a.bytes=16;memset(stream_input,0x43,16);
     fail_copy=TRUE;CHECK(cuis_receipt_test_prepare(&a)==EIMBA);fail_copy=FALSE;
-    query=a;query.packet=0;
+    query=query_identity(a);query.packet=0;
     CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_BOUND);
     CHECK(cuis_receipt_test_prepare(&a)==E_OK);
     memset(stream_input,0x44,16);CHECK(cuis_receipt_test_prepare(&a)==EACCDN);
@@ -151,9 +178,9 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_commit(&a)==EACCDN && !find_handle(replacement)->stream_bytes);
     cancel_pending=FALSE;CHECK(cuis_receipt_test_ack(&a)==EIHNDL);
     CHECK(cuis_receipt_test_commit(&a)==16);
-    query=a;query.packet=0x20000;query.bytes=16;fail_copy=TRUE;
+    query=query_identity(a);query.packet=0x20000;query.bytes=16;fail_copy=TRUE;
     CHECK(cuis_receipt_test_query(&query)==EIMBA);fail_copy=FALSE;
-    query=a;query.packet=0;CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_COMMITTED);
+    query=query_identity(a);query.packet=0;CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_COMMITTED);
     CHECK(cuis_receipt_test_ack(&a)==E_OK);receipt_close_error=TRUE;
     CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==EACCDN);receipt_close_error=FALSE;
     before=find_handle(replacement)->stream_bytes;
@@ -171,7 +198,7 @@ static int receipt_runtime_checks(void)
     extra=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(extra>=0);
     CHECK(cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN && receipt_active==256);
     for(i=0;i<256;i++) CHECK(proc_exec_handle_close((KPROC *)run,quota[i].tag)==E_OK && cuis_receipt_test_reclaim(&quota[i])==E_OK);
-    query=quota[0];query.packet=0;
+    query=query_identity(quota[0]);query.packet=0;
     CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_RECLAIMED);
     CHECK(!receipt_active && cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN);
     CHECK(cuis_service(CUIS_SESSION_END,extra)==E_OK);
