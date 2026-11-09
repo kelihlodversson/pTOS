@@ -83,6 +83,31 @@ int main(void)
         assert(kaspace_stack_hold_acquire(one,0x1000,4096,&hold) == EINVAL);
         kaspace_lease_release(&hold);
     }
+    {
+        KASPACE_LEASE *parent = NULL, *child = NULL;
+        UWORD saved = a.protection[0];
+        unsigned before = allocations - frees;
+        /* A reservation alone cannot turn an absent/lazy page into a hold.
+         * This is a prerequisite boundary, NOT shared-Pexec acceptance. */
+        a.protection[0] = 0;
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&child) == EIMBA);
+        assert(!child && allocations - frees == before);
+        a.protection[0] = saved;
+        /* Two independent resident mapping holds compose, but say nothing
+         * about an allocation generation or its source PD's lifetime. */
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&parent) == E_OK);
+        fail_alloc = 1;
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&child) == ENSMEM);
+        fail_alloc = 0;
+        assert(!child && kaspace_lease_valid(parent));
+        assert(!kaspace_mapping_change(&a,0x1000,4096));
+        assert(kaspace_stack_hold_acquire(one,0x1000,4096,&child) == E_OK);
+        kaspace_lease_release(&parent);
+        assert(kaspace_lease_valid(child));
+        assert(!kaspace_mapping_change(&a,0x1000,4096));
+        kaspace_lease_release(&child);
+        assert(allocations - frees == before);
+    }
     assert(kaspace_lease_seal(leases,2));
     assert(!kaspace_mapping_change(&a,0x1000,2*USER_PAGE_SIZE));
     assert(kaspace_lease_valid(leases[0]) && kaspace_lease_valid(leases[1]));
