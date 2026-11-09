@@ -98,3 +98,16 @@ unchanged. No combined remote-CI result is claimed for this validation branch.
 still pending. #933 advanced separately tob57afa701 after its owner's new-epic
 reconciliation; it remains outside this validation tree and no descriptor API
 agreement is implied.
+
+Embedded x32 MEMTEST follow-up
+-----------------------------
+Fresh native QEMU boot at source744a75ecb with CONF_WITH_X86_64_MEMTEST=y,
+CONF_WITH_CUIS=y and both private/saved-return test gates enabled passes
+x86-64 clone PROCESS factory, mmap syscalls, GEM/form/input and final
+x86-64 memtest PASS, then reaches EmuCON. tools/test-mmap-boot.sh reports
+'Private Mmap/Munmap/Mprot boot tests passed (PASS)' with
+MMAP_BOOT_FORM_INPUT=1. This is separate from the earlier headless/desktop
+regression profiles; it is not inferred from them. No source change was needed.
+Config SHA256:986f97301502ca0e416e253e77961918315084dfed0f7f1067f4c6a5f8210858
+EFI SHA256:674dadb89996b575d8c36fb0d8b57482767fdaa50b158768bfaa362e67633a23
+This configuration still contains no #933 descriptor-reference implementation.
