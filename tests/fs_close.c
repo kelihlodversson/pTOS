@@ -14,9 +14,18 @@ FTAB sft[OPNFILES];
 BCB *bufl[2];
 PD owner;
 PD *run=&owner;
+#ifdef FS_ERROR_H
+#if CONF_WITH_NATIVE_SCHED
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
+#else
 jmp_buf errbuf;
 long errcode,rwerr;
 int errdrv;
+#endif
 static unsigned freed,flushes,invalidations,closes,releases;
 static BOOL fail_disk,probe_busy;
 static LONG pfs_error,release_error;
