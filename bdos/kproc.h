@@ -155,6 +155,9 @@ BOOL kproc_group_status(const KPROC *process, UWORD *status);
 #endif
 BOOL kproc_thread_start_allowed(const KPROC *process);
 BOOL kproc_thread_is_sole(KPROC *process, struct kthread *thread);
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kproc_has_aspace_peer(const KPROC *process);
+#endif
 /* Caller already holds the identity; only live resources may be acquired. */
 KPROC *kproc_retain_live(KPROC *process);
 PD *kproc_live_pd(const KPROC *process); /* borrowed during serialized live-resource operation */

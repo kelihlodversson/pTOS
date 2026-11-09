@@ -927,6 +927,13 @@ void kstack_free(PADDR phys)
     if (phys)
         x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);
 }
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kstack_contains(PADDR phys, uintptr_t address)
+{
+    uintptr_t base = X86_64_PHYS_MAP_BASE + phys;
+    return phys && address >= base && address - base < X86_64_KSTACK_PAGES * X86_64_PAGE_SIZE;
+}
+#endif
 
 #if CONF_WITH_X86_64_MEMTEST
 BOOL x86_64_memtest_kstack_contains(UQUAD phys, UQUAD address)

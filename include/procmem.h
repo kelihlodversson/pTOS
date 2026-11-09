@@ -425,6 +425,9 @@ BOOL aspace_load_private(ASPACE *as, VADDR va, VADDR memsz,
  */
 PADDR kstack_alloc(uintptr_t *top);
 void kstack_free(PADDR phys);
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kstack_contains(PADDR phys, uintptr_t address);
+#endif
 
 /* Private backing pages the address space owns (diagnostics, tests). */
 ULONG aspace_private_pages(const ASPACE *as);

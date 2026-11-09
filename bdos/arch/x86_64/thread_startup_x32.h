@@ -19,6 +19,9 @@ typedef struct {
     KTHREAD_STACK scheduler_stack;
     PADDR syscall_physical;
     uintptr_t syscall_top;
+#if CONF_WITH_FORK_RETURN_TEST
+    BOOL saved_return;
+#endif
 } X32_THREAD_STARTUP_DRAFT;
 /* Separate release owners: launcher after syscall abandonment, scheduler root
  * after task continuation is irrevocably stopped. Moving these never starts a

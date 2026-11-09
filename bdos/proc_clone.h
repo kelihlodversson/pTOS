@@ -9,6 +9,7 @@ struct kproc;
 struct kthread;
 typedef struct proc_clone_transaction PROC_CLONE_TRANSACTION;
 typedef struct proc_clone_observer PROC_CLONE_OBSERVER;
+struct syscall_return;
 typedef struct { WORD pid; ULONG tid; } PROC_CLONE_IDENTITIES;
 typedef struct { WORD pid; ULONG tid; LONG status; } PROC_CLONE_COMPLETION;
 typedef enum { PROC_CLONE_OBSERVER_PREPARED, PROC_CLONE_OBSERVER_PUBLISHED,

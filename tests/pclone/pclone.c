@@ -48,6 +48,65 @@ long clone_fpu_initial(void);
 unsigned long clone_fpu_observed, clone_fpu_expected_iar;
 #endif
 static long has_fpu;
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+long fork_return_native(void *, unsigned long);
+volatile unsigned long fork_return_bad, fork_return_child_pid;
+volatile unsigned long fork_return_use_fpu, fork_return_expected_iar, fork_return_expected_fpsr;
+volatile unsigned long fork_return_child_sp, fork_return_parent_sp, fork_return_child_tid;
+static void test_saved_return(void)
+{
+    unsigned char *stack = malloc(8192);
+    long pid, status, pages[8], baseline, parent_tid;
+    int stage, cycle;
+    ptest_begin("shared-VM syscall return (not Pfork)");
+    ptest_assert_msg(stack != NULL,"allocate shared-VM saved-return test stack");
+    if (!stack) { ptest_pass(); return; }
+#if defined(__mc68000__)
+    {
+        long cpu = 0;
+        (void)Ssystem(S_GETCOOKIE,0x5f435055L,&cpu);
+        if (cpu != 40) {
+            ptest_assert_msg(fork_return_native(stack + 4096, 0) == -32L,
+                             "unvalidated m68k saved-return CPU remains unsupported");
+            free(stack); ptest_pass(); return;
+        }
+    }
+    (void)Ssystem(S_GETCOOKIE,0x5f465055L,(long *)&fork_return_use_fpu);
+#endif
+    memset(stack, 0, 8192);
+    Prusage(pages); baseline = pages[4];
+    parent_tid = fork_return_native(stack + 4096, 0xfffe);
+    ptest_assert_msg(parent_tid > 0,"native parent has managed THREAD identity");
+    for (stage = 1; stage <= 7; stage++) {
+        fork_return_bad = fork_return_child_pid = 0;
+        pid = fork_return_native(stack + 4096, stage);
+        ptest_assert_msg(pid == -39L,"saved-return preparation rollback returns ENSMEM");
+        ptest_assert_msg(!fork_return_bad && !fork_return_child_pid,"failed preparation never executes child");
+    }
+    for (cycle = 0; cycle < 8; cycle++) {
+        fork_return_bad = fork_return_child_pid = 0;
+        pid = fork_return_native(stack + 4096, 0);
+        ptest_assert_msg(pid > 0 && pid != Pgetpid(),"saved return parent gets distinct child PID");
+        ptest_assert_msg(!fork_return_bad && fork_return_child_pid == (unsigned long)pid,
+                         "child executed after same originating trap with preserved user state");
+        ptest_assert_msg(fork_return_child_tid > 0 && fork_return_child_tid != (unsigned long)parent_tid,
+                         "saved return creates a distinct native THREAD/TID");
+        ptest_assert_msg(fork_return_child_sp == fork_return_parent_sp,
+                         "shared-VM proof retains original user SP");
+        if (pid > 0) {
+            status = Pwaitpid(pid, 0, 0);
+            ptest_assert_msg((status >> 16) == pid && (status & 65535) == 73,
+                             "saved-return child exits and is publicly reaped once");
+            ptest_assert_msg(Pwaitpid(pid, 1, 0) < 0,"saved-return child cannot be reaped twice");
+        }
+    }
+    Prusage(pages);
+    ptest_assert_msg(pages[4] == baseline,"saved-return repeated rollback/exit restores mapped pages");
+    free(stack);
+    ptest_pass();
+    if (!ptest_failures()) conws("native shared-VM syscall-return probe (not Pfork): PASS\r\n");
+}
+#endif
 static unsigned long stack_trim;
 static unsigned char *runnable_stacks[3];
 #define RUNNABLE_STACK_SIZE 32768UL
@@ -1120,6 +1179,9 @@ static void test_runnable(void)
 void pclone_run_managed_tests(void);
 void pclone_run_managed_tests(void)
 {
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+    test_saved_return();
+#endif
     ptest_begin("pclone managed execution");
     test_runnable();
     ptest_pass();

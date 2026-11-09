@@ -913,6 +913,13 @@ void kstack_free(PADDR phys)
     if (phys)
         pmem32_free(phys, KSTACK_PAGES);
 }
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kstack_contains(PADDR phys, uintptr_t address)
+{
+    uintptr_t base = (uintptr_t)pmem32_virt(phys);
+    return phys && address >= base && address - base < KSTACK_PAGES * PAGE;
+}
+#endif
 
 /*
  * Supervisor-only access to someone else's process blocks, for exactly as long
