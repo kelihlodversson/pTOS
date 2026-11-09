@@ -488,6 +488,7 @@ static void wait_probe_on_root(void)
 {
     if (generation_pending) {
         UQUAD before=execution_cpu.wake.sequence;
+        UWORD unrelated=0;
         KSCHED_WAIT_SEQUENCE owner={0};
         /* Inject publication after a completed scan but before idle admission.
          * The production handshake must refuse the stale sleep token. */
@@ -500,7 +501,15 @@ static void wait_probe_on_root(void)
             panic("scheduler: native IRQ wake admission");
         /* Test-only bounded idle at root, even if a peer is runnable. No
          * dispatcher policy changes: production idle remains after full scan. */
-        native_sched_idle();
+        do {
+            native_sched_idle();
+            /* STOP/WFI/HLT may return for an unrelated interrupt whose entry
+             * is not an owner-notification hook (Amiga VBL precedes CIA).
+             * Production root rescans after such a spurious wake. Keep this
+             * probe blocked until its actual owner IRQ, with a finite bound. */
+            if (irq_wake_probe_pending && ++unrelated==64)
+                panic("scheduler: owner IRQ missing after unrelated wakes");
+        } while (irq_wake_probe_pending);
         if (irq_wake_probe_pending || generation_pending ||
             execution_cpu.wake.sequence==before || execution_cpu.wake.armed)
             panic("scheduler: real IRQ failed to release idle admission");

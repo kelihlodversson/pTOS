@@ -20,7 +20,12 @@ int main(void)
         CHECK(!ksched_wake_arm(&state,scan) && !state.armed);
         scan=state.sequence;
         CHECK(ksched_wake_arm(&state,scan) && state.armed);
-        ksched_wake_publish(&state); /* IRQ pending after atomic admission */
+        /* Unrelated IRQ returns from idle without publishing this owner.
+         * Rescan/disarm/rearm is valid; the owner is still not satisfied. */
+        CHECK(state.sequence==scan && state.armed);
+        ksched_wake_disarm(&state);
+        CHECK(ksched_wake_arm(&state,scan));
+        ksched_wake_publish(&state); /* owner IRQ after atomic admission */
         CHECK(!state.armed && state.sequence!=scan);
         scan=state.sequence;
         CHECK(ksched_wake_arm(&state,scan));

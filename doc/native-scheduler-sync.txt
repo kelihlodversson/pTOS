@@ -338,3 +338,11 @@ resume with its false predicate and detached wait metadata. This deliberate
 test idle may run while a peer is runnable; production idle remains strictly
 after the full runqueue scan. It is hardware IRQ/idle evidence, not copied-frame
 restore, timer preemption or a simulated host CPU verdict.
+
+Idle is permitted to return for an unrelated IRQ without an owner publication.
+Production root disarms and rescans; it never infers event readiness from an
+IRQ return alone. The native test retains the owner predicate across up to
+64 unrelated hardware wakes, then still requires the exact owner generation
+and detached wait metadata. Amiga VBL can wake STOP before the CIA entry that
+publishes the test owner. This is bounded spurious-wake handling, not a longer
+test timeout or a relaxed owner/event assertion.
