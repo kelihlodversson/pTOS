@@ -182,3 +182,11 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 /* This fixture only reserves within an existing group. */
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
+
+BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
+
+ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
+
+KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
+
+KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }

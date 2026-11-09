@@ -20,6 +20,21 @@ struct thread_startup_stack;
 struct proc_clone_transaction;
 struct kproc;
 struct kthread;
+/* Execution-owned cooperative cleanup scope. Zero-initialize before enter.
+ * Pending queries/latches stay visible; only delivery is deferred. End validates
+ * LIFO/execution ownership and never terminates. Checkpoint only after the
+ * outer operation has settled all local resources. Not a fault/longjmp guard. */
+typedef struct {
+    struct kthread *thread;
+    struct kproc *process;
+    PD *caller;
+    UQUAD execution;
+    ULONG tid, depth;
+    BOOL active;
+} KSCHED_CLEANUP_SCOPE;
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *empty);
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope);
+BOOL ksched_cleanup_active(void);
 /* Shared publication storage for legacy process launches and trusted clone.
  * root=TRUE reserves a fresh group; FALSE requires the current managed task.
  * *slot must be NULL. TASK_RESERVED is neither runnable nor wait-visible and

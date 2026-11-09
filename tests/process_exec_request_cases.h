@@ -1,8 +1,11 @@
+#ifndef PROCESS_EXEC_REQUEST_CASES_H
+#define PROCESS_EXEC_REQUEST_CASES_H
 /* Production request decoder with modeled faultable user memory. */
 #include "../bdos/process_exec_request.c"
 static union { ULONG align; UBYTE bytes[65536]; } request_memory;
 static ULONG read_failure, output_prefix;
 static BOOL output_failure;
+static LONG input_error=EIMBA;
 static unsigned output_copies;
 BOOL kproc_copy_from_user(void *out,VADDR address,ULONG bytes)
 {
@@ -20,6 +23,10 @@ BOOL kproc_copy_to_user(VADDR address,const void *in,ULONG bytes)
     }
     memcpy(request_memory.bytes+(ULONG)address,in,bytes); return TRUE;
 }
+LONG kproc_copy_from_user_checked(void *out,VADDR address,ULONG bytes)
+{ return kproc_copy_from_user(out,address,bytes) ? E_OK : input_error; }
+LONG kproc_copy_to_user_checked(VADDR address,const void *in,ULONG bytes)
+{ return kproc_copy_to_user(address,in,bytes) ? E_OK : EIMBA; }
 static PROCESS_EXEC_REQUEST *request_fixture(void)
 {
     PROCESS_EXEC_REQUEST *r=(PROCESS_EXEC_REQUEST *)(request_memory.bytes+0x1000);
@@ -30,7 +37,7 @@ static PROCESS_EXEC_REQUEST *request_fixture(void)
     memcpy(request_memory.bytes+r->environment,"A=B\0",5);
     memcpy(request_memory.bytes+r->directory,"C:\\DIR",7);
     run->p_env=PTR_TO_USERPTR_UNCHECKED((char *)(uintptr_t)r->environment);
-    read_failure=0; output_failure=FALSE; output_prefix=0; output_copies=0;
+    read_failure=0; input_error=EIMBA; output_failure=FALSE; output_prefix=0; output_copies=0;
     return r;
 }
 static void test_request_engine(KPROC *owner)
@@ -96,6 +103,13 @@ static void test_request_engine(KPROC *owner)
     r->operation=PROCESS_EXEC_CLOSE; i=output_copies;
     CHECK(proc_exec_request(owner,0x1000,72)==E_OK && output_copies==i && allocations==frees);
     CHECK(proc_exec_request(owner,0x1000,72)==EIHNDL && !children[before_loads].refs);
+    for (i=0;i<2;i++) {
+        r=request_fixture(); read_failure=r->environment+2;
+        input_error=i ? EREADF:ENSMEM;
+        CHECK(proc_exec_request(owner,0x1000,72)==input_error && allocations==frees && !cleanup_nesting);
+    }
     request_mode=FALSE;
     puts("Production PROCESS request: bounded copies, malformed ABI, partial copyout, scalar commit and retryable completion: PASS");
 }
+
+#endif

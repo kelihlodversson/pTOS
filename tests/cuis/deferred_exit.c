@@ -272,3 +272,7 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 }
 
 void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }
+
+ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
+
+KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }

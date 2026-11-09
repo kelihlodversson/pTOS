@@ -6,6 +6,13 @@
 #include "string.h"
 #include "../bdos/process_exec.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"exec handles:%d: %s\n",__LINE__,#c); abort(); } } while (0)
+static ULONG cleanup_nesting;
+static BOOL cancellation_pending;
+BOOL ksched_cancellation_pending(void) { return cancellation_pending; }
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(!scope->active); scope->active=TRUE; scope->depth=++cleanup_nesting; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(scope->active && scope->depth==cleanup_nesting); cleanup_nesting--; scope->active=FALSE; }
 struct identity {
     struct process_exec_handle *handles;
     PD *pd;

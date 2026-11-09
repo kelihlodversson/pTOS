@@ -94,3 +94,9 @@ int main(void)
     puts("Shared scheduler publication: exhaustion, private reservations, cancellation, blocked/early wait and orphan identity: PASS");
     return 0;
 }
+
+BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
+
+ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
+
+KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
