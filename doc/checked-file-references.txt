@@ -1,10 +1,11 @@
 Checked live SFT references -- stage A prerequisite (#895/#892/#893)
 ==================================================================
-Base: unmerged #933 a0a76ca48, containing epic197d05ce6 and the reviewed
-ordinary-alias exhaustion correction. Earlier d588 acceptance was superseded
-pending fresh correction review. This separate increment changes no public
-ABI or inheritance policy. Public fork/private
-clone/PROCESS dispatch and descriptor namespace migration remain gated.
+Integration base: epic 4e7c2cf4673a30103d0fa022933988c6453a92f0,
+which already contains accepted #933 and #936. This is only the focused
+checked-reference increment; it does not replay #933 or enable inheritance.
+Public fork/private clone/PROCESS dispatch and descriptor namespace migration
+remain gated. Historical failure reproductions and reviews remain in closed
+#939; #943 is the current integration candidate.
 
 fs_reference_acquire(source, descriptor, expected_incarnation, empty_out)
 authenticates a retained live CURRENT KPROC and its existing trusted binding.
