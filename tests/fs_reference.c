@@ -50,10 +50,12 @@ int main(void)
     CHECK(fs_close_bounded(0,FALSE,&report)==E_OK);
     CHECK(fs_close_bounded(NUMSTD,FALSE,&report)==E_OK && sft[0].f_use==2);
     /* Staged-only reference is not an explicit source binding or raw close. */
-    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&empty)==EACCDN);
+    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&empty)==EIHNDL &&
+          !empty.owned && sft[0].f_use==2 && sft[0].f_staged_refs==2);
     CHECK(fs_close_once(NUMSTD,FALSE,&report)==EIHNDL && sft[0].f_use==2);
     source_live=FALSE; retiring=TRUE;
-    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&empty)==EACCDN);
+    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&empty)==EACCDN &&
+          !empty.owned && sft[0].f_use==2 && sft[0].f_staged_refs==2);
     CHECK(fs_reference_close(&a,FALSE,&report)==E_OK && !a.owned && sft[0].f_use==1);
     CHECK(fs_reference_close(&a,TRUE,&report)==EIHNDL);
     /* The remaining live reference owns backend state, not a live PROCESS. */
@@ -98,6 +100,26 @@ int main(void)
     CHECK(fs_reference_close(&a,TRUE,&report)==EWRITF && !a.owned &&
           report.disposition==FS_CLOSE_CONSUMED && !sft[0].f_use && !sft[0].f_staged_refs);
     CHECK(fs_reference_close(&a,TRUE,&report)==EIHNDL);
+    /* Releasing a staged owner must not mistake its temporarily charged count
+     * for exhaustion of an ordinary alias which still owns the backend. */
+    open_file(); incarnation=sft[0].f_incarnation;
+    CHECK(ixforce(0,NUMSTD,&owner)==E_OK);
+    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==E_OK);
+    CHECK(fs_close_once(NUMSTD,FALSE,&report)==E_OK && sft[0].f_use==2);
+    CHECK(fs_reference_close(&a,FALSE,&report)==E_OK && !a.owned &&
+          owner.p_uft[0]==NUMSTD && sft[0].f_use==1 && !sft[0].f_staged_refs && fs_sft_accessible(0));
+    CHECK(fs_close_once(0,FALSE,&report)==E_OK && !sft[0].f_use);
+    /* Repeated numeric closes exhaust ordinary aliases while staging keeps
+     * the backend alive. Neither reacquisition nor retirement may see a ghost. */
+    open_file(); incarnation=sft[0].f_incarnation;
+    CHECK(ixforce(0,NUMSTD,&owner)==E_OK);
+    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==E_OK);
+    CHECK(fs_close_once(NUMSTD,FALSE,&report)==E_OK && owner.p_uft[0]==NUMSTD);
+    CHECK(fs_close_once(NUMSTD,FALSE,&report)==E_OK && owner.p_uft[0]==get_default_handle(0) &&
+          sft[0].f_use==1 && sft[0].f_staged_refs==1 && !fs_sft_accessible(0));
+    CHECK(fs_reference_acquire((KPROC *)&owner,0,incarnation,&empty)==EIHNDL && !empty.owned);
+    CHECK(fs_reference_close(&a,TRUE,&report)==E_OK && !a.owned && !sft[0].f_staged_refs);
+    puts("Numeric close exhaustion unpublishes standard aliases before staged owner release: PASS (host)");
     puts("Production checked live SFT refs: authenticated acquire, alias counts, retirement-independent ownership, exact close/transfer, invalidation and PFS errors: PASS (host)");
     return 0;
 }

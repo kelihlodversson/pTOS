@@ -20,7 +20,7 @@ BOOL fs_sft_busy(int n) { return valid_slot(n) && sft[n].f_close_busy; }
 BOOL fs_sft_accessible(int n)
 {
     return valid_slot(n) && sft[n].f_own && !sft[n].f_close_busy &&
-        sft[n].f_use>0 && (ULONG)sft[n].f_use>sft[n].f_cleanup_refs;
+        sft[n].f_use>0 && (ULONG)sft[n].f_use>sft[n].f_cleanup_refs+sft[n].f_staged_refs;
 }
 BOOL fs_sft_claim(int n)
 {
@@ -49,6 +49,15 @@ void fs_sft_invalidated(int n)
     f->f_staged_refs=0; /* authoritative invalidation revokes live staging too */
     f->f_cleanup_state=FS_CLEANUP_INVALIDATED;
     f->f_cleanup_last_error=E_CHNG;
+}
+/* Residual references keep the backend alive, not ordinary descriptors.
+ * Numeric closes may consume the final ordinary alias before the final total
+ * count. Clear only aliases naming this slot; preserve callback rebindings. */
+static void unpublish_exhausted_aliases(WORD handle)
+{
+    FTAB *f=&sft[handle-NUMSTD];
+    if (f->f_use>=0 && (ULONG)f->f_use<=f->f_cleanup_refs+f->f_staged_refs)
+        kproc_standard_file_invalidate(handle);
 }
 /* pTOS defines jmp_buf as a concrete register array in include/setjmp.h;
  * these copies preserve its own setjmp.S ABI, as DISK_CALL does. This is
@@ -110,6 +119,7 @@ static LONG close_once(volatile WORD h, BOOL cleanup, BOOL staged, FS_CLOSE_REPO
         f->f_cleanup_consumed++;
         if (!f->f_cleanup_refs) f->f_cleanup_state=FS_CLEANUP_COMPLETE;
     }
+    if (consumed && !staged) unpublish_exhausted_aliases(h);
     /* A final PFS release may rebind the unpublished standard entry. Only
      * relinquish this operation's old mapping, never a callback's new alias.
      * Slot reuse itself is excluded until f_close_busy is cleared below. */
@@ -157,6 +167,8 @@ static LONG bounded_close(WORD h, BOOL cleanup, BOOL staged, BOOL dispose, FS_CL
     *out=step; out->error=first;
     if (dispose && out->disposition==FS_CLOSE_RETAINED && !transfer_reference(out))
         panic("filesystem: retirement lost its file reference");
+    if (!staged && out->disposition==FS_CLOSE_TRANSFERRED)
+        unpublish_exhausted_aliases(out->token.handle);
     return first;
 }
 LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
@@ -229,6 +241,7 @@ LONG fs_reference_close(FS_FILE_REFERENCE *reference, BOOL dispose, FS_CLOSE_REP
         if (f->f_incarnation!=reference->incarnation || !f->f_staged_refs)
             panic("live file reference lost during close");
         f->f_staged_refs--; reference->owned=FALSE;
+        unpublish_exhausted_aliases(reference->handle);
     }
     reference->closing=FALSE;
     return error;

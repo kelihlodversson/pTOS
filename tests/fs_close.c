@@ -209,6 +209,14 @@ int main(void)
     CHECK(fs_close_bounded(NUMSTD+1,FALSE,&result)==EWRITF &&
           result.disposition==FS_CLOSE_CONSUMED && !sft[1].f_use && !sft[1].f_own &&
           closes==6 && releases==4);
+    open_file();
+    CHECK(ixforce(0,NUMSTD,&owner)==E_OK);
+    fail_disk=TRUE;
+    CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF && sft[0].f_cleanup_refs==1);
+    second=result.token; fail_disk=FALSE;
+    CHECK(fs_close_once(NUMSTD,FALSE,&result)==E_OK && sft[0].f_use==1 &&
+          sft[0].f_cleanup_refs==1 && owner.p_uft[0]==get_default_handle(0));
+    CHECK(fs_cleanup_retry(&second,&result)==E_OK && !sft[0].f_use);
     retiring=TRUE;
     CHECK(!fs_sft_claim(0));
     CHECK(ixforce(0,-1,&owner)==EACCDN);

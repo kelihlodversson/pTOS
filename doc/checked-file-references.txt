@@ -38,7 +38,14 @@ never access the replacement. The old live-reference record cannot pin a reused
 numeric slot. An unknown NOT_OWNED while an unrevoked reference is expected is
 an invariant violation for callers, not permission to retry a numeric close.
 
-Ordinary close cannot consume f_staged_refs. PROCESS retirement excludes them
+Ordinary access/close cannot consume f_staged_refs. When numeric consumption or
+transfer exhausts ordinary refs, standard aliases naming that slot are
+unpublished before retirement; a held staged/backend reference is not evidence
+of a live descriptor. Callback rebindings to other slots survive. Staged close
+normalizes only AFTER its own count is relinquished, so it cannot unpublish a
+still-live ordinary alias through a temporary count imbalance. StageB must
+publish/resolve authenticated bindings explicitly, not expose raw staged slots
+through legacy getofd/global lookup. PROCESS retirement excludes them
 from its legacy explicit-reference inference, closes its own aliases/explicit
 reference only, and replaces f_own's retiring PD address with the existing
 neutral owner. Staging survives without that PROCESS's execution resources.

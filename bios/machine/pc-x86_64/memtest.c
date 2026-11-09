@@ -51,6 +51,7 @@
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/kthread_context.h"
 #include "../../../bdos/fs.h"
+#include "../../../bdos/console.h"
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc_clone.h"
@@ -1374,10 +1375,11 @@ void x86_64_memtest_disposal_committed(PD *pd)
  * Only the repeated I/O error is injected; recovery uses the actual backend. */
 static void test_checked_file_references(void)
 {
+    int initial_failures=failures;
     SNAP before;
     PD *saved=run,*pd;
     KPROC *identity;
-    FS_FILE_REFERENCE first=FS_FILE_REFERENCE_INIT,second=FS_FILE_REFERENCE_INIT;
+    FS_FILE_REFERENCE first=FS_FILE_REFERENCE_INIT,second=FS_FILE_REFERENCE_INIT,empty=FS_FILE_REFERENCE_INIT;
     FS_CLOSE_REPORT report;
     FS_CLEANUP_TOKEN recovery;
     LONG handle;
@@ -1399,6 +1401,12 @@ static void test_checked_file_references(void)
         CHECK(ixforce(0,(int)handle,pd)==E_OK &&
               fs_reference_acquire(identity,0,incarnation,&second)==E_OK,
               "acquire one exact reference per standard binding");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==E_OK && PD_UFT(pd)[0]==handle,
+              "first numeric close preserves remaining real ordinary alias");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==E_OK &&
+              PD_UFT(pd)[0]==get_default_handle(0) &&
+              fs_reference_acquire(identity,0,incarnation,&empty)==EIHNDL && !empty.owned,
+              "last ordinary numeric close unpublishes alias and rejects ghost acquisition");
     }
     run=saved;
     proc_dispose_process(identity);
@@ -1420,7 +1428,47 @@ static void test_checked_file_references(void)
     }
     kproc_release(identity);
     same(&before,"checked reference retirement/rollback restores baseline");
-    kprintf("native checked SFT references across PROCESS retirement: PASS\r\n");
+    if (failures==initial_failures) kprintf("native checked SFT references across PROCESS retirement: PASS\r\n");
+}
+
+static void test_residual_alias_retirement(void)
+{
+    int initial_failures=failures;
+    SNAP before;
+    PD *pd,*saved=run;
+    KPROC *identity;
+    LONG handle;
+    FS_CLOSE_REPORT report;
+    FS_CLEANUP_TOKEN recovery;
+    snap(&before);
+    pd=new_basepage(); if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd); run=pd;
+    handle=DISK_CALL(xopen("C:\\X32HELLO.TOS",0));
+    CHECK(handle>=NUMSTD && handle<NUMHANDLES,"residual-alias real FAT file");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(ixforce(0,(int)handle,pd)==E_OK,"residual-alias standard mapping");
+        fs_close_test_exhaust((WORD)handle);
+        CHECK(fs_close_bounded((WORD)handle,TRUE,&report)==EWRITF &&
+              report.disposition==FS_CLOSE_TRANSFERRED,"residual-alias transfer explicit owner");
+        recovery=report.token; fs_close_test_exhaust(-1);
+        { LONG closed=fs_close_once((WORD)handle,FALSE,&report);
+          kprintf("alias-close diag handle=%ld rc=%ld use=%d residual=%lu uft=%d default=%d disposition=%u\r\n",
+                  (long)handle,(long)closed,sft[handle-NUMSTD].f_use,
+                  (unsigned long)sft[handle-NUMSTD].f_cleanup_refs,
+                  (int)PD_UFT(pd)[0],(int)get_default_handle(0),(unsigned)report.disposition);
+        CHECK(closed==E_OK &&
+              PD_UFT(pd)[0]==get_default_handle(0) && sft[handle-NUMSTD].f_use==1 &&
+              sft[handle-NUMSTD].f_cleanup_refs==1,"last ordinary close unpublishes exhausted standard alias"); }
+    }
+    run=saved; proc_dispose_process(identity);
+    CHECK(!kproc_ref_has_basepage(identity),"residual-only PROCESS retires without duplicate close");
+    if (handle>=NUMSTD && handle<NUMHANDLES)
+        CHECK(fs_cleanup_retry(&recovery,&report)==E_OK &&
+              fs_cleanup_retry(&recovery,&report)==EIHNDL,"residual-alias exact final recovery");
+    kproc_release(identity);
+    same(&before,"residual alias retirement restores baseline");
+    if (failures==initial_failures) kprintf("native exhausted ordinary aliases with retained SFT owner: PASS\r\n");
 }
 
 static void test_residual_file_ownership(void)
@@ -6095,6 +6143,7 @@ void x86_64_memtest_run(void)
 #endif
     test_residual_file_ownership();
     test_checked_file_references();
+    test_residual_alias_retirement();
     test_invalidated_standard_aliases();
     test_kthread_live_disposal();
     test_kthread_completion();
