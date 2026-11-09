@@ -8,7 +8,7 @@
  * owner exclusion (local IRQ exclusion on today's single CPU); this is NOT an
  * atomic/SMP primitive. A future owner lock precedes the leaf runqueue lock.
  * State is durable/level-triggered; a sequence is not an event payload. */
-typedef struct { UQUAD value; } KSCHED_WAIT_SEQUENCE;
+typedef struct ksched_wait_sequence { UQUAD value; } KSCHED_WAIT_SEQUENCE;
 typedef struct ksched_wait_observation {
     const KSCHED_WAIT_SEQUENCE *source;
     UQUAD value;

@@ -27,6 +27,13 @@ BOOL ksched_async_allowed(void);
 void ksched_shutdown_begin(void);
 PD *ksched_launch_controller(PD *pd); /* current task only, never a nested launcher */
 #if CONF_WITH_NATIVE_SCHED
+/* IRQ entry/owner publication only: no callback, allocation or dispatch.
+ * The owner publishes durable readiness before ending its masked IRQ/owner
+ * section. A registered wait retains the source; notification retains no
+ * caller/driver pointer. Not an SMP wake/IPI interface. */
+void ksched_irq_notify(void);
+struct ksched_wait_sequence;
+void ksched_wake_sequence(struct ksched_wait_sequence *source);
 /* Architecture backend only. Borrowed chain points into still-live launcher
  * continuations pinned to this CPU, never into a retired/unattached caller.
  * Saved/restored with NATIVE_SCHED_CONTEXT; no allocation/reference changes.

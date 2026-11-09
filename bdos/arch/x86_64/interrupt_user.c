@@ -3,6 +3,7 @@
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
 #include "kthread_context.h"
+#include "ksched.h"
 #include "kaspace.h"
 #include "../../../bios/arch/x86_64/trap.h"
 #include "../../../bios/arch/x86_64/gdt.h"
@@ -45,6 +46,9 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     X86_USER_IRQ_CAPTURE *capture;
     X86_IRQ_BINDING binding;
     ULONG tid;
+    /* Wake metadata only; no kernel-frame capture or scheduler transfer. IRQ
+     * readiness is durable before this handler returns on the original frame. */
+    ksched_irq_notify();
     if (frame->cs!=X86_64_USER_CODE_SEL) return; /* no kernel-frame interpretation */
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return;
