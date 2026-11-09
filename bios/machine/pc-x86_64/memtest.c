@@ -1372,6 +1372,57 @@ void x86_64_memtest_disposal_committed(PD *pd)
  * the last non-runnable association is detached. */
 /* Native kernel execution with a real FAT handle and real PROCESS teardown.
  * Only the repeated I/O error is injected; recovery uses the actual backend. */
+static void test_checked_file_references(void)
+{
+    SNAP before;
+    PD *saved=run,*pd;
+    KPROC *identity;
+    FS_FILE_REFERENCE first=FS_FILE_REFERENCE_INIT,second=FS_FILE_REFERENCE_INIT;
+    FS_CLOSE_REPORT report;
+    FS_CLEANUP_TOKEN recovery;
+    LONG handle;
+    UQUAD incarnation;
+    snap(&before);
+    pd=new_basepage();
+    if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd);
+    run=pd;
+    handle=DISK_CALL(xopen("C:\\X32HELLO.TOS",0));
+    CHECK(handle>=NUMSTD && handle<NUMHANDLES,"checked reference real FAT open");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        incarnation=sft[handle-NUMSTD].f_incarnation;
+        CHECK(fs_reference_acquire(identity,(WORD)handle,incarnation+1,&first)==EIHNDL && !first.owned,
+              "stale binding cannot acquire replacement");
+        CHECK(fs_reference_acquire(identity,(WORD)handle,incarnation,&first)==E_OK && first.owned,
+              "authenticate explicit source reference");
+        CHECK(ixforce(0,(int)handle,pd)==E_OK &&
+              fs_reference_acquire(identity,0,incarnation,&second)==E_OK,
+              "acquire one exact reference per standard binding");
+    }
+    run=saved;
+    proc_dispose_process(identity);
+    CHECK(!kproc_ref_has_basepage(identity),"staged references do not retain source PD");
+    if (first.owned && second.owned) {
+        CHECK(sft[handle-NUMSTD].f_use==2 && sft[handle-NUMSTD].f_staged_refs==2 &&
+              sft[handle-NUMSTD].f_own!=pd,"retirement closes only descriptor-owned refs");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==EIHNDL &&
+              fs_reference_close(&first,FALSE,&report)==E_OK && !first.owned,
+              "raw numeric close cannot consume a staged owner");
+        fs_close_test_exhaust((WORD)handle);
+        CHECK(fs_reference_close(&second,TRUE,&report)==EWRITF && !second.owned &&
+              report.disposition==FS_CLOSE_TRANSFERRED,"bounded staged failure transfers original ownership");
+        recovery=report.token;
+        fs_close_test_exhaust(-1);
+        CHECK(fs_reference_close(&second,TRUE,&report)==EIHNDL &&
+              fs_cleanup_retry(&recovery,&report)==E_OK &&
+              fs_cleanup_retry(&recovery,&report)==EIHNDL,"exact staged transfer recovery is once-only");
+    }
+    kproc_release(identity);
+    same(&before,"checked reference retirement/rollback restores baseline");
+    kprintf("native checked SFT references across PROCESS retirement: PASS\r\n");
+}
+
 static void test_residual_file_ownership(void)
 {
     SNAP s;
@@ -6043,6 +6094,7 @@ void x86_64_memtest_run(void)
 #endif
 #endif
     test_residual_file_ownership();
+    test_checked_file_references();
     test_invalidated_standard_aliases();
     test_kthread_live_disposal();
     test_kthread_completion();

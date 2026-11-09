@@ -27,6 +27,10 @@ with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
     subprocess.run(flags+['tests/fs_close.c','bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'close')],check=True)
     subprocess.run([str(work/'close')],check=True)
 
+    subprocess.run(flags+['tests/fs_reference.c','bdos/fsclose.c','bdos/fsopnclo.c',
+        'bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'reference')],check=True)
+    subprocess.run([str(work/'reference')],check=True)
+
     config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),

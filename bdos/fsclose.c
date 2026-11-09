@@ -27,7 +27,7 @@ BOOL fs_sft_claim(int n)
     FTAB *f;
     if (!kproc_file_references_allowed(run) || !valid_slot(n) || last_incarnation==~(UQUAD)0) return FALSE;
     f=&sft[n];
-    if (f->f_own || f->f_use || f->f_close_busy || f->f_cleanup_refs) return FALSE;
+    if (f->f_own || f->f_use || f->f_close_busy || f->f_cleanup_refs || f->f_staged_refs) return FALSE;
     f->f_incarnation=++last_incarnation;
     f->f_cleanup_issued=f->f_cleanup_consumed=f->f_cleanup_invalid_from=0;
     f->f_cleanup_first_error=f->f_cleanup_last_error=0;
@@ -46,6 +46,7 @@ void fs_sft_invalidated(int n)
     if (f->f_cleanup_refs) f->f_cleanup_invalid_from=f->f_cleanup_consumed+1;
     f->f_cleanup_consumed=f->f_cleanup_issued;
     f->f_cleanup_refs=0;
+    f->f_staged_refs=0; /* authoritative invalidation revokes live staging too */
     f->f_cleanup_state=FS_CLEANUP_INVALIDATED;
     f->f_cleanup_last_error=E_CHNG;
 }
@@ -59,7 +60,7 @@ static void save_error(CLOSE_ERROR_SCOPE *s)
 static void restore_error(const CLOSE_ERROR_SCOPE *s)
 { memcpy(errbuf,s->jump,sizeof(errbuf)); errcode=s->code; rwerr=s->rw; errdrv=s->drive; }
 
-LONG fs_close_once(volatile WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
+static LONG close_once(volatile WORD h, BOOL cleanup, BOOL staged, FS_CLOSE_REPORT *out)
 {
     CLOSE_ERROR_SCOPE saved;
     volatile BOOL consumed=FALSE;
@@ -82,7 +83,8 @@ LONG fs_close_once(volatile WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
         return out->error=out->last_error=EIHNDL;
     f=&sft[n]; out->token.handle=h; out->token.incarnation=f->f_incarnation;
     if (!f->f_incarnation) panic("filesystem: live slot without incarnation");
-    if (cleanup ? !f->f_cleanup_refs : (ULONG)f->f_use<=f->f_cleanup_refs)
+    if (cleanup ? !f->f_cleanup_refs : staged ? !f->f_staged_refs :
+        (ULONG)f->f_use<=f->f_cleanup_refs+f->f_staged_refs)
         return out->error=out->last_error=EIHNDL;
     if (cleanup) out->token.reference=f->f_cleanup_consumed+1;
     out->disposition=FS_CLOSE_RETAINED;
@@ -118,6 +120,8 @@ LONG fs_close_once(volatile WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
     out->error=out->last_error=error;
     return error;
 }
+LONG fs_close_once(WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
+{ return close_once(h,cleanup,FALSE,out); }
 /* A transfer reclassifies one already-owned reference; it does not increment
  * f_use, retain a PROCESS, allocate memory, or consume a peer's reference. */
 static BOOL transfer_reference(FS_CLOSE_REPORT *r)
@@ -139,13 +143,13 @@ static BOOL transfer_reference(FS_CLOSE_REPORT *r)
     r->disposition=FS_CLOSE_TRANSFERRED;
     return TRUE;
 }
-static LONG bounded_close(WORD h, BOOL cleanup, BOOL dispose, FS_CLOSE_REPORT *out)
+static LONG bounded_close(WORD h, BOOL cleanup, BOOL staged, BOOL dispose, FS_CLOSE_REPORT *out)
 {
     FS_CLOSE_REPORT step;
     LONG first=0;
     UWORD tries;
     for (tries=0;tries<=BLKDEVNUM;tries++) {
-        fs_close_once(h,cleanup,&step);
+        close_once(h,cleanup,staged,&step);
         if (!tries) first=step.error;
         if (step.disk_error) mark_bcbs_invalid(step.drive);
         if (step.disposition==FS_CLOSE_CONSUMED || !step.disk_error) break;
@@ -156,7 +160,69 @@ static LONG bounded_close(WORD h, BOOL cleanup, BOOL dispose, FS_CLOSE_REPORT *o
     return first;
 }
 LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
-{ return bounded_close(h,FALSE,dispose,out); }
+{ return bounded_close(h,FALSE,FALSE,dispose,out); }
+/* Existing legacy binding resolver for this prerequisite. Stage B replaces
+ * resolution for ALL managed descriptors, not just inherited child tables.
+ * Caller holds source identity and reversible descriptor admission; this
+ * check/count publication is non-yielding under today's single-CPU contract. */
+LONG fs_reference_acquire(KPROC *source, WORD descriptor, UQUAD expected,
+                          FS_FILE_REFERENCE *out)
+{
+    PD *pd;
+    WORD handle=descriptor;
+    FTAB *f;
+    ULONG aliases[OPNFILES];
+    if (!out || out->owned || out->closing || !expected) return EINVAL;
+    pd=kproc_live_pd(source);
+    if (!pd || pd!=run || !kproc_file_references_allowed(pd)) return EACCDN;
+    if (descriptor<0) return EIHNDL;
+    if (descriptor<NUMSTD) handle=PD_UFT(pd)[descriptor];
+    if (handle<NUMSTD || !valid_slot(handle-NUMSTD)) return EIHNDL;
+    f=&sft[handle-NUMSTD];
+    if (f->f_incarnation!=expected || !fs_sft_accessible(handle-NUMSTD)) return EIHNDL;
+    if (IS_BIOS_HANDLE((long)f->f_ofd)) return EIHNDL;
+    if (descriptor>=NUMSTD) {
+        /* f_own alone can survive the original explicit close. Do not mint
+         * from someone else's standard alias, quarantine or staged owner. */
+        kproc_standard_file_refs(aliases);
+        if (f->f_own!=pd || (ULONG)f->f_use<=aliases[handle-NUMSTD]+
+                f->f_cleanup_refs+f->f_staged_refs) return EACCDN;
+    }
+    if ((unsigned int)f->f_use==((unsigned int)~0U>>1) ||
+        f->f_staged_refs==~(ULONG)0) return EAGAIN;
+    f->f_use++; f->f_staged_refs++;
+    out->handle=handle; out->incarnation=expected; out->owned=TRUE;
+    return E_OK;
+}
+LONG fs_reference_close(FS_FILE_REFERENCE *reference, BOOL dispose, FS_CLOSE_REPORT *out)
+{
+    FTAB *f;
+    LONG error;
+    if (!reference || !out) return EINVAL;
+    memset(out,0,sizeof(*out)); out->disposition=FS_CLOSE_NOT_OWNED;
+    if (!reference->owned) return out->error=out->last_error=EIHNDL;
+    if (reference->closing) {
+        out->disposition=FS_CLOSE_RETAINED;
+        return out->error=out->last_error=EACCDN;
+    }
+    if (!valid_slot(reference->handle-NUMSTD)) panic("invalid live file reference");
+    f=&sft[reference->handle-NUMSTD];
+    if (f->f_incarnation!=reference->incarnation || !f->f_own || !f->f_staged_refs) {
+        /* Media invalidation owns revocation, never a numeric replacement. */
+        error=f->f_incarnation==reference->incarnation ? E_CHNG : EIHNDL;
+        reference->owned=FALSE;
+        return out->error=out->last_error=error;
+    }
+    reference->closing=TRUE;
+    error=bounded_close(reference->handle,FALSE,TRUE,dispose,out);
+    if (out->disposition==FS_CLOSE_CONSUMED || out->disposition==FS_CLOSE_TRANSFERRED) {
+        if (f->f_incarnation!=reference->incarnation || !f->f_staged_refs)
+            panic("live file reference lost during close");
+        f->f_staged_refs--; reference->owned=FALSE;
+    }
+    reference->closing=FALSE;
+    return error;
+}
 LONG fs_cleanup_snapshot(const FS_CLEANUP_TOKEN *token, FS_CLEANUP_STATUS *out)
 {
     int n;
@@ -184,7 +250,7 @@ LONG fs_cleanup_retry(const FS_CLEANUP_TOKEN *token, FS_CLOSE_REPORT *out)
     /* FIFO keeps exact once-only transfer rights without an allocated record
      * per failed alias. A later ticket cannot consume an earlier owner. */
     if (token->reference!=sft[token->handle-NUMSTD].f_cleanup_consumed+1) return EAGAIN;
-    error=bounded_close(token->handle,TRUE,FALSE,out);
+    error=bounded_close(token->handle,TRUE,FALSE,FALSE,out);
     sft[token->handle-NUMSTD].f_cleanup_last_error=out->last_error;
     return error;
 }

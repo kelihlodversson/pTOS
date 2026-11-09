@@ -17,7 +17,7 @@ static SBYTE child_files[NUMSTD];
 static UBYTE child_dirs[NUMCURDIR];
 static unsigned record, allocations, references, attempts, invalidations, directories;
 static unsigned first_closes;
-static BOOL exhaust,cleanup_started,probe_retirement;
+static BOOL exhaust,cleanup_started,probe_retirement,staged_only;
 static OFD independent_file;
 static unsigned blocked_rebinds;
 static unsigned transferred;
@@ -48,7 +48,7 @@ void procmem_free_owned(const void *pd, void (*before)(void *))
 {
     CHECK(pd == &owner && allocations == 1);
     before(&child);
-    CHECK(!record && references == (exhaust ? 1U : 0U) && directories == 1);
+    CHECK(!record && references == (exhaust || staged_only ? 1U : 0U) && directories == 1);
     CHECK(child_files[0]==get_default_handle(0) &&
           child_files[1]==get_default_handle(1));
     allocations = 0;
@@ -79,7 +79,7 @@ long fs_close_backend(WORD handle,volatile BOOL *consumed)
         return E_OK;
     }
     if (handle == NUMSTD) {
-        CHECK(references == 2);
+        CHECK(references == (staged_only ? 1U : 2U));
         first_closes++;
         references--;
         sft[0].f_use=0; sft[0].f_own=NULL; *consumed=TRUE;
@@ -154,6 +154,23 @@ int main(void)
     directories=0;
     proc_free_owned(&owner);
     CHECK(!allocations && !record && !references && sft[1].f_own==&owner && sft[1].f_use==1);
+    /* The real PROCESS sweep must not infer a detached checked owner as
+     * another explicit descriptor belonging to a retiring source. */
+    cleanup_started=FALSE; record=allocations=references=1;
+    staged_only=TRUE; directories=0;
+    for (attempts=0;attempts<NUMSTD;attempts++) child_files[attempts]=-1;
+    CHECK(fs_sft_claim(0)); sft[0].f_own=&child; sft[0].f_use=1; sft[0].f_staged_refs=1;
+    proc_free_owned(&owner);
+    CHECK(!record && !allocations && references==1 && sft[0].f_use==1 &&
+          sft[0].f_staged_refs==1 && sft[0].f_own!=&child);
+    {
+        FS_FILE_REFERENCE detached=FS_FILE_REFERENCE_INIT;
+        FS_CLOSE_REPORT result;
+        detached.handle=NUMSTD; detached.incarnation=sft[0].f_incarnation; detached.owned=TRUE;
+        CHECK(fs_reference_close(&detached,TRUE,&result)==E_OK && !detached.owned &&
+              !sft[0].f_use && !sft[0].f_staged_refs && !references);
+    }
+    puts("Production PROCESS retirement preserves staged reference without retaining source PD: PASS (host)");
     puts("Exhausted close retries leave one reference without double release: PASS");
     return 0;
 }
