@@ -14,7 +14,7 @@ static unsigned references, owner_references, stacks, identities, preparations, 
 static BOOL prepare_ok, identity_ok, owner_ok;
 static void *execution;
 static void (*reclaimer)(void *);
-static BOOL stopped;
+static BOOL stopped, inject_retirement;
 PD *run;
 static BOOL committing;
 BOOL kproc_exec_commit_begin(KPROC *p)
@@ -72,7 +72,25 @@ void kthread_destroy(KTHREAD *t)
 }
 BOOL kthread_reap(KTHREAD *t) { CHECK(stopped); kthread_destroy(t); return TRUE; }
 void panic(const char *format, ...) { (void)format; abort(); }
-void proc_dispose_process(KPROC *p) { CHECK(p == (KPROC *)&child); disposals++; }
+void proc_dispose_process(KPROC *p)
+{
+    CHECK(p == (KPROC *)&child && scheduler_model_flags == 0x200);
+    if (inject_retirement) {
+        KERNEL_TASK *previous=scheduler.current;
+        void *stale=&tasks[1];
+        CHILD_WAIT wait;
+        inject_retirement=FALSE;
+        CHECK(tasks[1].state==TASK_RETIRING && !tasks[1].parent && !tasks[1].process &&
+              !tasks[1].thread && references==1 && identities==1 && stacks==1);
+        scheduler.current=NULL;
+        CHECK(!reap_finished_on_root(&tasks[1]));
+        scheduler.current=previous;
+        wait.parent=&owner; wait.pid=42;
+        CHECK(child_ready(&wait) && ksched_process_commit(&stale)==EACCDN && stale==&tasks[1]);
+        CHECK(references==1 && identities==1 && stacks==1);
+    }
+    disposals++;
+}
 
 int main(void)
 {
@@ -134,8 +152,9 @@ int main(void)
         CHECK(tasks[1].state == TASK_RESERVED && references == 1 && stacks == 1 && identities == 1);
         wait.parent = &owner; wait.pid = 42;
         CHECK(child_ready(&wait));
+        inject_retirement=TRUE;
         ksched_process_cancel(&slot); ksched_process_cancel(&slot);
-        CHECK(!slot && !references && !stacks && !identities && disposals == disposed+1 &&
+        CHECK(!inject_retirement && !slot && !references && !stacks && !identities && disposals == disposed+1 &&
               tasks[1].state == TASK_UNUSED);
         CHECK(ksched_process_prepare(&child,FALSE,&slot) == E_OK);
         CHECK(ksched_process_publish(&slot) == 42 && !slot && tasks[1].state == TASK_NEW &&
