@@ -24,6 +24,7 @@
 #if CONF_WITH_USER_ASPACE
 #include "proc_clone.h"
 #include "process_observer.h"
+#include "process_exec.h"
 #endif
 #include "gemerror.h"
 #include "biosbind.h"
@@ -506,35 +507,42 @@ static PD *cur_p;
 
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe);
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL);
+    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)
 {
     if (!out || *out) return EINVAL;
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out,NULL));
+}
+long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG policy,
+                       PROCESS_OBSERVER **out, void **prepared)
+{
+    if (!out || *out || !prepared || *prepared || policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,
+                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared));
 }
 #endif
 #if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL,NULL));
 }
 long xexec_deferred(char *path, char *tail, char *env, ULONG session)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL,NULL));
 }
 long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL));
 }
 #endif
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe)
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared)
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -551,9 +559,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     PROCESS_OBSERVER *observed = NULL;
 #else
     UNUSED(observe);
+    UNUSED(prepared);
 #endif
 #if !CONF_WITH_CUIS
-    UNUSED(session); UNUSED(token); UNUSED(deferred);
+    UNUSED(session); UNUSED(token);
+#if !CONF_WITH_NATIVE_SCHED
+    UNUSED(deferred);
+#endif
 #endif
 #if !CONF_WITH_NATIVE_SCHED
     UNUSED(directory);
@@ -869,6 +881,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         }
 #endif
         if (rc == E_OK) {
+            if (prepared) rc = ksched_process_prepare(cur_p, deferred, prepared);
+            else
 #if CONF_WITH_CUIS
             rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
 #else
@@ -876,11 +890,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
         }
         if (rc < 0) {
-#if CONF_WITH_CUIS
-            if (deferred) proc_dispose_deferred(cur_p);
-            else
-#endif
-                proc_discard_scheduled(cur_p);
+            proc_discard_scheduled(cur_p);
 #if CONF_WITH_USER_ASPACE
             kproc_release(observed);
 #endif
@@ -1355,19 +1365,6 @@ void proc_discard_accessory(PD *p)
     proc_discard_scheduled(p);
 }
 
-#if CONF_WITH_CUIS
-/* Pending successors were loaded with child-owned allocations. Their public
- * basepage is not mapped in the requesting process after async preparation. */
-void proc_dispose_deferred(PD *p)
-{
-#if CONF_WITH_USER_ASPACE
-    proc_dispose_retained(p);
-#else
-    proc_release_resources(p, FALSE);
-#endif
-}
-#endif
-
 void proc_dispose_detached(PD *p)
 {
 #if CONF_WITH_USER_ASPACE
@@ -1406,9 +1403,9 @@ void proc_dispose_process(KPROC *process)
 #endif
     }
     proc_release_resources(p, FALSE);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     if (complete)
-        ksched_exited(p);
+        ksched_exited_identity(process, p);
 #endif
     kproc_publish_observers(process);
 }
@@ -1457,7 +1454,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     UNUSED(resident_len);
 #endif
     proc_release_resources(p, TRUE);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     ksched_exited_identity(process, p);
 #endif
 #if CONF_WITH_NATIVE_SCHED
@@ -1507,9 +1504,13 @@ void xterm(UWORD rc)
     PD *p = run;
 #if CONF_WITH_USER_ASPACE
     KPROC *fallback_observer = NULL;
+#if CONF_WITH_NATIVE_SCHED
+    KPROC *exit_identity;
+#endif
 #endif
 #if CONF_WITH_NATIVE_SCHED
     KTHREAD *thread = ksched_exit_thread(p);
+    if (ksched_cleanup_active()) panic("nonreturning termination inside protected cleanup");
 #if CONF_WITH_PTERMGRP
     if (thread) {
         ksched_enter_exit(p);
@@ -1564,6 +1565,9 @@ void xterm(UWORD rc)
         panic("xterm: process disposal already committed");
     fallback_observer = kproc_retain(p);
     if (!fallback_observer) panic("fallback observer retention failed");
+#if CONF_WITH_NATIVE_SCHED
+    exit_identity = fallback_observer; /* Borrowed from local or launcher ownership. */
+#endif
     if (proc_defer_observer(p, fallback_observer)) fallback_observer = NULL;
 #endif
 #if CONF_WITH_KPROC
@@ -1580,10 +1584,10 @@ void xterm(UWORD rc)
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
 #endif
     proc_release_resources(p, TRUE);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     /* All process resources are gone. No cleanup can return to the caller
      * through the disk-error handler after making its successor runnable. */
-    ksched_exited(p);
+    ksched_exited_identity(exit_identity, p);
 #endif
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.

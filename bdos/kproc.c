@@ -14,6 +14,7 @@
 #include "kproc.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "process_exec_internal.h"
 #endif
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
@@ -106,6 +107,8 @@ struct kproc {
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
+    BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
+    struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
     BOOL group_exiting;
@@ -373,6 +376,30 @@ static KPROC *kproc_reference(KPROC *process)
     process->references++;
     return process;
 }
+
+KPROC *kproc_retain_identity(KPROC *process)
+{
+    if (!process || !process->references) return NULL;
+    return kproc_reference(process);
+}
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+struct process_exec_handle **kproc_exec_handles(KPROC *owner)
+{
+    return owner && !owner->retired ? &owner->exec_handles : NULL;
+}
+BOOL kproc_exec_commit_begin(KPROC *owner)
+{
+    if (!kproc_live_pd(owner) || owner->exec_committing) return FALSE;
+    owner->exec_committing = TRUE;
+    return TRUE;
+}
+void kproc_exec_commit_end(KPROC *owner)
+{
+    if (!owner || !owner->exec_committing) panic("PROCESS launch selection ownership lost");
+    owner->exec_committing = FALSE;
+}
+
+#endif
 
 KPROC *kproc_retain(PD *pd)
 {
@@ -982,6 +1009,11 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+            /* Registry cursor is detached; the lookup reference still owns
+             * this identity. Child teardown cannot invalidate an outer link. */
+            proc_exec_owner_exit(kproc);
+#endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
             if (kproc->test_controller_first) clone_drop_controller(kproc);
 #endif
@@ -2867,15 +2899,15 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 /* The same, and the pages of its lazy areas that are not there yet get their
  * physical pages now (what a read or write of them by the process would do).
  * The first pass rejects a range before any page is backed.  A range that is
- * fine but cannot be backed ends the process. */
-static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
+ * fine but cannot be backed returns its precise error to the owning wrapper. */
+static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write, BOOL *backing_failed)
 {
 #if CONF_WITH_DEMAND_PAGING
     VADDR first = address & ~(USER_PAGE_SIZE - 1);
     VADDR last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
 
     if (!range_allowed(kproc, address, size, write))
-        return FALSE;
+        return EIMBA;
     for (page = first; page <= last; page += USER_PAGE_SIZE) {
         UWORD prot;
         int rc;
@@ -2883,20 +2915,36 @@ static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
             (!write || (prot & ASPACE_PROT_WRITE))) continue;
         rc = back_page(kproc, page, write ? ASPACE_PROT_WRITE : 0);
         if (rc != 1) {
-            if (rc == 3) {
-                kcprintf("process: file mapping I/O error\n");
-#if CONF_WITH_NATIVE_SCHED
-                ksched_fault(run, 10); /* SIGBUS */
-#endif
-                xterm((UWORD)-1);
-            }
-            lazy_oom();
+            if (backing_failed) *backing_failed=TRUE;
+            return rc==0 ? EIMBA : rc==3 ? EREADF : ENSMEM;
         }
     }
-    return TRUE;
+    return E_OK;
 #else
-    return range_allowed(kproc, address, size, write);   /* all of it is there */
+    UNUSED(backing_failed);
+    return range_allowed(kproc, address, size, write) ? E_OK : EIMBA;   /* all of it is there */
 #endif
+}
+
+/* Preserve fatal ordinary-copy semantics; resource-owning operations use the
+ * same backing engine's checked result and settle ownership before returning. */
+static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
+{
+    BOOL backing_failed=FALSE;
+    LONG error=back_user_range(kproc,address,size,write,&backing_failed);
+    if (error==E_OK) return TRUE;
+    if (error==EIMBA && !backing_failed) return FALSE;
+#if CONF_WITH_DEMAND_PAGING
+    if (error==EREADF) {
+        kcprintf("process: file mapping I/O error\n");
+#if CONF_WITH_NATIVE_SCHED
+        ksched_fault(run,10);
+#endif
+        xterm((UWORD)-1);
+    }
+    lazy_oom();
+#endif
+    return FALSE;
 }
 
 /*
@@ -3480,6 +3528,32 @@ BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size)
         return aspace_copy_to_user(kproc->aspace, address, src, size);
     memcpy((void *)(uintptr_t)address, src, size);
     return TRUE;
+}
+
+/* Error-returning copies share range checks, lazy backing and resident copy
+ * with ordinary uaccess. No THREAD termination may bypass local C cleanup. */
+static LONG checked_copy_range(VADDR address, ULONG size, BOOL write)
+{
+    KPROC *process=kproc_find(run);
+    if (!process || !size || address>=USER_VA_LIMIT || size>USER_VA_LIMIT-address) return EIMBA;
+    if (process->aspace) return back_user_range(process,address,size,write,NULL);
+    return validate_user(address,size,write) ? E_OK : EIMBA;
+}
+LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size)
+{
+    LONG error;
+    if (!size) return E_OK;
+    error=checked_copy_range(address,size,FALSE);
+    if (error!=E_OK) return error;
+    return kproc_copy_from_user_resident(dst,address,size) ? E_OK : EIMBA;
+}
+LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size)
+{
+    LONG error;
+    if (!size) return E_OK;
+    error=checked_copy_range(address,size,TRUE);
+    if (error!=E_OK) return error;
+    return kproc_copy_to_user_resident(address,src,size) ? E_OK : EIMBA;
 }
 
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size)

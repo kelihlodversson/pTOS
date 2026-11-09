@@ -4,6 +4,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred spawn:%d: %s\n",__LINE__,#c); abort(); } } while (0)
@@ -13,8 +14,14 @@ static unsigned references, owner_references, stacks, identities, preparations, 
 static BOOL prepare_ok, identity_ok, owner_ok;
 static void *execution;
 static void (*reclaimer)(void *);
-static BOOL stopped;
+static BOOL stopped, inject_retirement, legacy_call;
 PD *run;
+static BOOL committing;
+BOOL kproc_exec_commit_begin(KPROC *p)
+{ CHECK(p==(KPROC *)&owner); if(committing)return FALSE; committing=TRUE; return TRUE; }
+void kproc_exec_commit_end(KPROC *p)
+{ CHECK(p==(KPROC *)&owner && committing); if(legacy_call) CHECK(ksched_cleanup_active()); committing=FALSE; }
+
 
 LONG cuis_service(ULONG function, UQUAD handle) { CHECK(function == CUIS_SESSION_QUERY && handle == 23); return E_OK; }
 LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *pd) { (void)session; (void)token; (void)pd; abort(); }
@@ -23,7 +30,7 @@ ASPACE_ROOT kproc_user_root(PD *pd) { CHECK(pd == &child); return 0; }
 KPROC *kproc_retain(PD *pd)
 { if (pd == &owner) { if (!owner_ok) return NULL; owner_references++; return (KPROC *)pd; } CHECK(pd == &child); references++; return (KPROC *)pd; }
 void kproc_release(KPROC *p)
-{ if (p == (KPROC *)&owner) { CHECK(owner_references); owner_references--; return; } CHECK(p == (KPROC *)&child && references); references--; }
+{ if (p == (KPROC *)&owner) { if (legacy_call) CHECK(ksched_cleanup_active()); CHECK(owner_references); owner_references--; return; } CHECK(p == (KPROC *)&child && references); references--; }
 BOOL kproc_prepare_async_thread(PD *p, PD *parent, PD *controller, KTHREAD **thread)
 {
     CHECK(p == &child && parent == &owner && controller == &owner);
@@ -65,8 +72,35 @@ void kthread_destroy(KTHREAD *t)
 }
 BOOL kthread_reap(KTHREAD *t) { CHECK(stopped); kthread_destroy(t); return TRUE; }
 void panic(const char *format, ...) { (void)format; abort(); }
-void proc_dispose_process(KPROC *p) { CHECK(p == (KPROC *)&child); disposals++; }
+void proc_dispose_process(KPROC *p)
+{
+    CHECK(p == (KPROC *)&child && scheduler_model_flags == 0x200);
+    if (inject_retirement) {
+        KERNEL_TASK *previous=scheduler.current;
+        void *stale=&tasks[1];
+        CHILD_WAIT wait;
+        inject_retirement=FALSE;
+        CHECK(tasks[1].state==TASK_RETIRING && !tasks[1].parent && !tasks[1].process &&
+              !tasks[1].thread && references==1 && identities==1 && stacks==1);
+        scheduler.current=NULL;
+        CHECK(!reap_finished_on_root(&tasks[1]));
+        scheduler.current=previous;
+        wait.parent=&owner; wait.pid=42;
+        CHECK(child_ready(&wait) && ksched_process_commit(&stale)==EACCDN && stale==&tasks[1]);
+        CHECK(references==1 && identities==1 && stacks==1);
+    }
+    disposals++;
+}
 
+static LONG legacy_defer(void)
+{
+    LONG result;
+    legacy_call=TRUE;
+    result=ksched_defer(&child,23);
+    CHECK(!ksched_cleanup_active() && !tasks[0].cleanup_depth);
+    legacy_call=FALSE;
+    return result;
+}
 int main(void)
 {
     run = &owner;
@@ -76,21 +110,23 @@ int main(void)
     scheduler.current = &tasks[0];
     scheduler.root.pd = &owner;
     tasks[0].state = TASK_RUNNING;
-    CHECK(ksched_defer(&child,23) == ENSMEM);
+    tasks[0].program=&owner; tasks[0].process=(KPROC *)&owner;
+    tasks[0].thread=(KTHREAD *)&owner; tasks[0].execution.identity=71;
+    CHECK(legacy_defer() == ENSMEM);
     CHECK(!preparations && !commits && !references && !stacks && !identities);
     owner_ok = TRUE;
-    CHECK(ksched_defer(&child,23) == ENSMEM);
+    CHECK(legacy_defer() == ENSMEM);
     CHECK(preparations == 1 && !commits && !references && !owner_references && !stacks && !identities);
     prepare_ok = TRUE;
-    CHECK(ksched_defer(&child,23) == ENSMEM);
+    CHECK(legacy_defer() == ENSMEM);
     CHECK(preparations == 2 && !commits && !references && !stacks && !identities);
     identity_ok = TRUE;
-    CHECK(ksched_defer(&child,23) == E_OK);
+    CHECK(legacy_defer() == E_OK);
     CHECK(tasks[1].state == TASK_DEFERRED && tasks[1].thread &&
           references == 1 && owner_references == 1 && stacks == 1 && identities == 1 && commits == 1);
     CHECK(ksched_defer_cancel() == E_OK);
     CHECK(!references && !owner_references && !stacks && !identities && disposals == 1);
-    CHECK(ksched_defer(&child,23) == E_OK);
+    CHECK(legacy_defer() == E_OK);
     ksched_exited_identity((KPROC *)&child, &owner);
     CHECK(tasks[1].state == TASK_DEFERRED && owner_references == 1 && identities == 1);
     ksched_exited_identity((KPROC *)&owner, &owner);
@@ -109,6 +145,36 @@ int main(void)
     CHECK(reap_finished_on_root(&tasks[1]) && !references && !stacks &&
           tasks[1].state == TASK_UNUSED && !tasks[1].pid);
     CHECK(!reap_finished_on_root(&tasks[1]));
+    /* The generic transport can hold a fully prepared child across a syscall
+     * return. It is neither runnable nor visible to public child waits. */
+    {
+        void *slot = NULL;
+        CHILD_WAIT wait;
+        unsigned disposed = disposals;
+        scheduler.current = &tasks[0];
+        tasks[1].program = NULL; /* Modeled finalizer revokes the retired PD. */
+        CHECK(ksched_process_publish(NULL)==EINVAL && ksched_process_publish(&slot)==EINVAL);
+        CHECK(ksched_process_prepare(&child,FALSE,NULL) == EINVAL);
+        slot = (void *)1;
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == EINVAL && slot == (void *)1);
+        slot = NULL; prepare_ok = FALSE;
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == ENSMEM && !slot &&
+              !references && !stacks && !identities);
+        prepare_ok = TRUE;
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == E_OK && slot == &tasks[1]);
+        CHECK(tasks[1].state == TASK_RESERVED && references == 1 && stacks == 1 && identities == 1);
+        wait.parent = &owner; wait.pid = 42;
+        CHECK(child_ready(&wait));
+        inject_retirement=TRUE;
+        ksched_process_cancel(&slot); ksched_process_cancel(&slot);
+        CHECK(!inject_retirement && !slot && !references && !stacks && !identities && disposals == disposed+1 &&
+              tasks[1].state == TASK_UNUSED);
+        CHECK(ksched_process_prepare(&child,FALSE,&slot) == E_OK);
+        CHECK(ksched_process_publish(&slot) == 42 && !slot && tasks[1].state == TASK_NEW &&
+              !child_ready(&wait));
+        tasks[1].state = TASK_DONE; scheduler.current = NULL;
+        CHECK(reap_finished_on_root(&tasks[1]) && !references && !stacks && !identities);
+    }
     puts("Deferred scheduler construction, rollback and identity handoff: PASS");
     return 0;
 }
@@ -128,3 +194,11 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 /* This fixture only reserves within an existing group. */
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
+
+BOOL kthread_is_executing(const KTHREAD *t) { return t==(KTHREAD *)&owner; }
+
+ULONG kthread_tid(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return 7; }
+
+KPROC *kthread_process(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return (KPROC *)&owner; }
+
+KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }

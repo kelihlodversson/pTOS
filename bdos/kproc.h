@@ -73,6 +73,17 @@ LONG kproc_identity_info(PD *caller, PROCESS_IDENTITY *info);
  * References are serialized by the current cooperative kernel. */
 KPROC *kproc_retain(PD *pd);
 void kproc_release(KPROC *process);
+/* Duplicate an already owned live or retired identity; caller keeps its own
+ * reference across this serialized acquisition. No numeric lookup/authority. */
+KPROC *kproc_retain_identity(KPROC *process);
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+struct process_exec_handle;
+struct process_exec_handle **kproc_exec_handles(KPROC *owner);
+/* Logical nonblocking transaction admission under the cooperative owner
+ * protocol. Prevent reentrant successor selection across destructor callbacks. */
+BOOL kproc_exec_commit_begin(KPROC *owner);
+void kproc_exec_commit_end(KPROC *owner);
+#endif
 WORD kproc_ref_pid(const KPROC *process);
 /* Completion may already have been recorded while the PD is still present. */
 BOOL kproc_ref_has_basepage(const KPROC *process);
@@ -395,6 +406,10 @@ BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);
 /* No demand backing, allocation, I/O or xterm. Call after ordinary preflight;
  * later mapping changes fail instead of unwinding resource-owning callers. */
+/* Materialize legitimate lazy pages but return EIMBA/ENSMEM/EREADF instead
+ * of terminating. Existing ordinary copies keep their fatal fault policy. */
+LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
+LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size);
 #endif
