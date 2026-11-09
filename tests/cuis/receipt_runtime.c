@@ -119,6 +119,9 @@ static int receipt_runtime_checks(void)
     CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==E_OK);
     CHECK(cuis_receipt_test_commit(&a)==16 && !find_handle(destination)->stream_bytes);
     CHECK(cuis_receipt_test_reclaim(&a)==E_OK && cuis_receipt_test_reclaim(&a)==E_OK);
+    query=a;query.packet=0;
+    CHECK(cuis_receipt_test_query(&query)==E_OK &&
+          query.state==(CUIS_RECEIPT_RECLAIMED|CUIS_RECEIPT_COMMITTED_OUTCOME));
     old=a;
     CHECK(cuis_receipt_test_launch(source,destination,0,"child",tail,environment,&a)>0 && a.attempt_low>old.attempt_low);
     CHECK(cuis_receipt_test_commit(&old)==EIHNDL && cuis_receipt_test_ack(&old)==EIHNDL);
@@ -168,6 +171,8 @@ static int receipt_runtime_checks(void)
     extra=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(extra>=0);
     CHECK(cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN && receipt_active==256);
     for(i=0;i<256;i++) CHECK(proc_exec_handle_close((KPROC *)run,quota[i].tag)==E_OK && cuis_receipt_test_reclaim(&quota[i])==E_OK);
+    query=quota[0];query.packet=0;
+    CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_RECLAIMED);
     CHECK(!receipt_active && cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN);
     CHECK(cuis_service(CUIS_SESSION_END,extra)==E_OK);
     for(i=1;i<16;i++)CHECK(cuis_service(CUIS_SESSION_END,quota_sources[i])==E_OK);

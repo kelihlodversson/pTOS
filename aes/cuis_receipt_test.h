@@ -9,6 +9,8 @@
 #define CUIS_RECEIPT_COMMITTED 3UL
 #define CUIS_RECEIPT_ACKNOWLEDGED 4UL
 #define CUIS_RECEIPT_RECLAIMED 5UL
+/* QUERY retains the terminal publication outcome in its bounded floor. */
+#define CUIS_RECEIPT_COMMITTED_OUTCOME 0x80000000UL
 typedef struct {
     ULONG operation, source, destination, slot;
     ULONG source_low, source_high, destination_low, destination_high;

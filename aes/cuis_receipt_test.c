@@ -53,6 +53,7 @@ static void receipt_record(CUIS_CLIENT *source,ULONG index,CUIS_RECEIPT_TEST_REC
     out->slot=index; out->attempt_low=(ULONG)slot->generation; out->attempt_high=(ULONG)(slot->generation>>32);
     out->key_low=(ULONG)slot->key; out->key_high=(ULONG)(slot->key>>32);
     out->bytes=slot->bytes; out->state=slot->state; out->tag=slot->tag;
+    if (slot->state==CUIS_RECEIPT_RECLAIMED && slot->committed) out->state|=CUIS_RECEIPT_COMMITTED_OUTCOME;
 }
 LONG cuis_receipt_test_launch(ULONG source_id,ULONG destination_id,ULONG index,
                              char *path,char *tail,char *environment,CUIS_RECEIPT_TEST_RECORD *out)

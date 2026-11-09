@@ -578,7 +578,9 @@ charged until exact endpoint retirement; active attempts are counted separately.
 No allocation or counter wrap can evict an outcome. Slots store endpoint/attempt
 identity, an opaque PROCESS right tag and immutable bytes, never a retained
 observer or copied PROCESS completion/order. ACK preserves the committed outcome;
-RECLAIM preserves a generation fence. Adapter policy must finish observation and
+RECLAIM preserves a generation fence and QUERY exposes whether its terminal
+outcome was committed (internal state bit31) or cancelled. These test-only C
+state constants do not assign a public operation/selector. Adapter policy must finish observation and
 right cleanup before reclaiming; a negative consumed CLOSE never resets progress.
 
 The trusted launch fixture creates only an ordinary ASYNC generic PREPARE right.
