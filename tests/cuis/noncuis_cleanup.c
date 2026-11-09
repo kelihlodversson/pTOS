@@ -48,6 +48,8 @@ void procmem_free_owned(const void *pd, void (*before)(void *))
     CHECK(pd == &owner && allocations == 1);
     before(&child);
     CHECK(!record && references == (exhaust ? 1U : 0U) && directories == 1);
+    CHECK(child_files[0]==get_default_handle(0) &&
+          child_files[1]==get_default_handle(1));
     allocations = 0;
 }
 void decr_curdir_usage(int index) { CHECK(index == 3); directories++; }
@@ -114,7 +116,7 @@ int main(void)
      * Then actual proc_free_owned must leave the replacement reference alone. */
     record=allocations=1; references=0; exhaust=FALSE;
     CHECK(fs_sft_claim(1)); sft[1].f_own=&child; sft[1].f_use=1;
-    child_files[0]=NUMSTD+1; child_files[1]=0;
+    child_files[0]=NUMSTD+1; child_files[1]=get_default_handle(1);
     fs_sft_invalidated(1); sft[1].f_own=NULL; sft[1].f_use=0;
     CHECK(child_files[0]<0 && fs_sft_claim(1));
     sft[1].f_own=&owner; sft[1].f_use=1;

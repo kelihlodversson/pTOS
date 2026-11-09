@@ -49,6 +49,10 @@ void fs_sft_invalidated(int n)
     f->f_cleanup_state=FS_CLEANUP_INVALIDATED;
     f->f_cleanup_last_error=E_CHNG;
 }
+/* pTOS defines jmp_buf as a concrete register array in include/setjmp.h;
+ * these copies preserve its own setjmp.S ABI, as DISK_CALL does. This is
+ * intentionally not a portable hosted-libc jmp_buf abstraction. CPU-owned
+ * execution save/restore also preserves the complete disk-error scope. */
 typedef struct { jmp_buf jump; long code,rw; int drive; } CLOSE_ERROR_SCOPE;
 static void save_error(CLOSE_ERROR_SCOPE *s)
 { memcpy(s->jump,errbuf,sizeof(errbuf)); s->code=errcode; s->rw=rwerr; s->drive=errdrv; }
