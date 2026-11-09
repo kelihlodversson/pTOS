@@ -57,6 +57,19 @@ shutdown; this patch does not create a global staging registry or force-release
 other operations. All finalizing close work must run outside leaf/GUI/IRQ
 exclusion. Output reports distinguish errors from ownership.
 
+Reentrant close and residual transfer
+------------------------------------
+The active backend close records its ordinary/staged/service reference class.
+A transfer can reserve only an available reference of its caller's own class,
+excluding an in-flight close of that class. Staged counts cannot fund ordinary
+retirement tickets, and an active staged close cannot hide a distinct ordinary
+reference. Recursive numeric disposal with no independent ordinary reference
+returns EACCDN/NOT_OWNED without issuing a ticket; close_once's retryable busy
+report is unchanged. The original owner completes its close. A separately
+owned ordinary reference can still transfer while another close is active.
+Tests use a real PFS callback, standard force/close, staged owners and exact
+residual recovery; callbacks perform no recursive backend close.
+
 Synchronization and migration
 -----------------------------
 Today source binding validation/count publication is a non-yielding single-CPU

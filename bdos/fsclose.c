@@ -31,7 +31,7 @@ BOOL fs_sft_claim(int n)
     f->f_incarnation=++last_incarnation;
     f->f_cleanup_issued=f->f_cleanup_consumed=f->f_cleanup_invalid_from=0;
     f->f_cleanup_first_error=f->f_cleanup_last_error=0;
-    f->f_cleanup_state=0; f->f_close_cleanup=FALSE;
+    f->f_cleanup_state=0; f->f_close_cleanup=FALSE; f->f_close_staged=FALSE;
     return TRUE;
 }
 void fs_sft_invalidated(int n)
@@ -98,7 +98,7 @@ static LONG close_once(volatile WORD h, BOOL cleanup, BOOL staged, FS_CLOSE_REPO
     if (cleanup) out->token.reference=f->f_cleanup_consumed+1;
     out->disposition=FS_CLOSE_RETAINED;
     if (f->f_close_busy) return out->error=out->last_error=EACCDN;
-    f->f_close_busy=TRUE; f->f_close_cleanup=cleanup;
+    f->f_close_busy=TRUE; f->f_close_cleanup=cleanup; f->f_close_staged=staged;
     save_error(&saved);
     if (setjmp(errbuf)) {
         if (consumed) panic("filesystem: consuming close finalizer escaped");
@@ -126,7 +126,7 @@ static LONG close_once(volatile WORD h, BOOL cleanup, BOOL staged, FS_CLOSE_REPO
     if (consumed && standard>=0 && PD_UFT(run)[standard]==h)
         PD_UFT(run)[standard]=get_default_handle(standard);
     restore_error(&saved);
-    f->f_close_busy=FALSE; f->f_close_cleanup=FALSE;
+    f->f_close_busy=FALSE; f->f_close_cleanup=FALSE; f->f_close_staged=FALSE;
     out->error=out->last_error=error;
     return error;
 }
@@ -134,17 +134,20 @@ LONG fs_close_once(WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
 { return close_once(h,cleanup,FALSE,out); }
 /* A transfer reclassifies one already-owned reference; it does not increment
  * f_use, retain a PROCESS, allocate memory, or consume a peer's reference. */
-static BOOL transfer_reference(FS_CLOSE_REPORT *r)
+static BOOL transfer_reference(FS_CLOSE_REPORT *r, BOOL staged)
 {
     int n=r->token.handle-NUMSTD;
     FTAB *f;
-    ULONG active_user;
+    ULONG available,active;
     if (!valid_slot(n)) return FALSE;
     f=&sft[n];
-    active_user=f->f_close_busy && !f->f_close_cleanup ? 1 : 0;
     if (f->f_incarnation!=r->token.incarnation || f->f_use<=0 ||
-        (ULONG)f->f_use<=f->f_cleanup_refs+active_user ||
+        (ULONG)f->f_use<f->f_cleanup_refs+f->f_staged_refs ||
         f->f_cleanup_issued==~(UQUAD)0) return FALSE;
+    available=staged ? f->f_staged_refs :
+        (ULONG)f->f_use-f->f_cleanup_refs-f->f_staged_refs;
+    active=f->f_close_busy && !f->f_close_cleanup && f->f_close_staged==staged ? 1UL:0UL;
+    if (available<=active) return FALSE;
     r->token.reference=++f->f_cleanup_issued;
     f->f_cleanup_refs++;
     if (!f->f_cleanup_first_error) f->f_cleanup_first_error=r->error;
@@ -165,8 +168,17 @@ static LONG bounded_close(WORD h, BOOL cleanup, BOOL staged, BOOL dispose, FS_CL
         if (step.disposition==FS_CLOSE_CONSUMED || !step.disk_error) break;
     }
     *out=step; out->error=first;
-    if (dispose && out->disposition==FS_CLOSE_RETAINED && !transfer_reference(out))
-        panic("filesystem: retirement lost its file reference");
+    if (dispose && out->disposition==FS_CLOSE_RETAINED) {
+        FTAB *f=&sft[out->token.handle-NUMSTD];
+        /* Retained EACCDN from a recursive numeric close is not an independent
+         * disposal right when the sole ordinary reference is already in flight.
+         * Preserve close_once's retryable report; never manufacture a ticket. */
+        if (!staged && f->f_close_busy && (ULONG)f->f_use<=f->f_cleanup_refs+
+            f->f_staged_refs+(!f->f_close_cleanup && !f->f_close_staged ? 1UL:0UL))
+            out->disposition=FS_CLOSE_NOT_OWNED;
+        else if (!transfer_reference(out,staged))
+            panic("filesystem: retirement lost its file reference");
+    }
     if (!staged && out->disposition==FS_CLOSE_TRANSFERRED)
         unpublish_exhausted_aliases(out->token.handle);
     return first;
