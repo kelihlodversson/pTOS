@@ -41,8 +41,13 @@
 /* pages of a per-process kernel stack (kstack_alloc()) */
 #define X86_64_KSTACK_PAGES 4
 
+#include "aspace_cow_types.h"
 struct aspace {
     UQUAD magic;
+#if CONF_WITH_PRIVATE_CLONE
+    struct cow_mapping *cow;
+    BOOL clone_building;
+#endif
     UQUAD pml4_phys;
     UQUAD *pages;               /* kheap vector: PML4 first, then tables */
     ULONG count;
@@ -100,6 +105,9 @@ BOOL aspace_file_cow(const ASPACE *as, UQUAD va)
 
 static void release_backing(UQUAD entry)
 {
+#if CONF_WITH_PRIVATE_CLONE
+    if (cow_release_backing(entry & PTE_ADDR)) return;
+#endif
 #if CONF_WITH_MMAP
     if (entry & PTE_FILE) { file_page_put(entry & PTE_ADDR); return; }
 #endif
@@ -131,7 +139,11 @@ static BOOL record_page(struct aspace *as, UQUAD phys)
  * before it is handed over so it cannot be forgotten. */
 static UQUAD alloc_table_page(void *ctx)
 {
-    UQUAD phys = x86_64_pmem_try_alloc_pages(1, 0);
+    UQUAD phys =
+#if CONF_WITH_PRIVATE_CLONE
+        (((ASPACE *)ctx)->clone_building && clone_injected()) ? X86_64_PMEM_NONE :
+#endif
+        x86_64_pmem_try_alloc_pages(1, 0);
 
     if (phys == X86_64_PMEM_NONE)
         return X86_64_PGTABLE_NO_PAGE;
@@ -223,6 +235,10 @@ static void free_owned_pages(struct aspace *as)
                 l1 = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (l2[i2] & PTE_ADDR));
                 for (i1 = 0; i1 < 512; i1++)
                     if ((l1[i1] & PTE_PRESENT) && (l1[i1] & X86_64_PTE_OWNED)) {
+#if CONF_WITH_PRIVATE_CLONE
+                        cow_unlink_mapping(as, ((UQUAD)i4 << 39) | ((UQUAD)i3 << 30) |
+                            ((UQUAD)i2 << 21) | ((UQUAD)i1 << 12));
+#endif
                         release_backing(l1[i1]);
                         l1[i1] = 0;
                         as->nowned--;
@@ -285,6 +301,9 @@ ULONG aspace_table_pages(const ASPACE *as)
 
 BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
 {
+#if CONF_WITH_PRIVATE_CLONE
+    if (cow_find(as, va)) return FALSE;
+#endif
     if (!kaspace_mapping_change(as, va, X86_64_PAGE_SIZE)) return FALSE;
     if ((va | phys) & (X86_64_PAGE_SIZE - 1))
         return FALSE;
@@ -306,6 +325,15 @@ BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if (!bytes || va + bytes < va || !procmem_range_live(va, bytes))
         return FALSE;
+#if CONF_WITH_PRIVATE_CLONE
+    /* A fork snapshot may occupy a VA whose old procmem owner has exited.
+     * A new global procmem allocation must not overwrite that private copy. */
+    for (page = va & ~(VADDR)(USER_PAGE_SIZE - 1);
+         page < va + bytes; page += USER_PAGE_SIZE) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, page);
+        if (pte && (*pte & PTE_PRESENT) && (*pte & X86_64_PTE_OWNED)) return FALSE;
+    }
+#endif
     /* Pin before mapping, and remember it before pinning, so every pin has
      * a record that destroy undoes; a half-finished mapping is covered too. */
     if (as->npins == as->pin_capacity) {
@@ -681,6 +709,9 @@ BOOL aspace_unmap_private(ASPACE *as, UQUAD va, UQUAD bytes)
         UQUAD entry = *pte;
 
         *pte = 0;
+#if CONF_WITH_PRIVATE_CLONE
+        cow_unlink_mapping(as, va + i * X86_64_PAGE_SIZE);
+#endif
         release_backing(entry);
         as->nowned--;
     }
@@ -737,6 +768,9 @@ BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
 
         if (pte && (*pte & PTE_PRESENT)) {
+#if CONF_WITH_PRIVATE_CLONE
+            cow_unlink_mapping(as, va + i * X86_64_PAGE_SIZE);
+#endif
             release_backing(*pte);
             *pte = 0;
             as->nowned--;
@@ -783,6 +817,9 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
     if (!range_is_private(from, va, pages))
         return FALSE;
+#if CONF_WITH_PRIVATE_CLONE
+    for (i = 0; i < pages; i++) if (cow_find(from, va + i * X86_64_PAGE_SIZE)) return FALSE;
+#endif
     for (i = 0; i < pages; i++)
         if (aspace_translate(to, va + i * X86_64_PAGE_SIZE, NULL, NULL))
             return FALSE;
@@ -851,8 +888,17 @@ static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL 
 
         if (prot & ASPACE_PROT_USER)
             e |= PTE_USER;
+#if CONF_WITH_PRIVATE_CLONE
+        {
+            struct cow_mapping *mapping = cow_find(as, va + i * X86_64_PAGE_SIZE);
+            if (mapping) mapping->protection = prot;
+            if ((prot & ASPACE_PROT_WRITE) && !(*pte & PTE_FILE) && !mapping)
+                e |= PTE_WRITABLE;
+        }
+#else
         if ((prot & ASPACE_PROT_WRITE) && !(*pte & PTE_FILE))
             e |= PTE_WRITABLE;
+#endif
         if (!(prot & ASPACE_PROT_EXEC))
             e |= PTE_NX;
         *pte = e;
@@ -972,6 +1018,9 @@ void aspace_unborrow(ASPACE *as, UQUAD va, UQUAD bytes)
             pinned = TRUE;
             break;
         }
+#if CONF_WITH_PRIVATE_CLONE
+    if (!pinned) return; /* never unmap a copied/private former borrow */
+#endif
     page = va & ~(X86_64_PAGE_SIZE - 1);
     end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
     for (; page < end; page += X86_64_PAGE_SIZE)
@@ -1004,3 +1053,94 @@ BOOL aspace_regrant(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
         x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
     return ok;
 }
+
+#if CONF_WITH_PRIVATE_CLONE
+#define COW_FREE(p) x86_64_pmem_free_pages((p), 1)
+#define COW_ALLOC() (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST ? X86_64_PMEM_NONE : x86_64_pmem_try_alloc_pages(1, 0))
+#define COW_ALIAS(p) ((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (p)))
+#define COW_RAM(p) x86_64_pmem_is_allocated(p)
+#define COW_NONE X86_64_PMEM_NONE
+#define COW_CODE_CHANGED() ((void)0)
+static void cow_flush(const ASPACE *as)
+{
+    if (aspace_is_current(as)) x86_64_write_cr3(as->pml4_phys);
+}
+static BOOL cow_replace(ASPACE *as, VADDR va, PADDR physical, UWORD prot)
+{
+    UQUAD *pte = x86_64_user_pte(as->pml4_phys, va), value;
+    if (!pte || !(*pte & PTE_PRESENT) || !(*pte & X86_64_PTE_OWNED)) return FALSE;
+    value = physical | PTE_PRESENT | X86_64_PTE_OWNED;
+    if ((*pte & PTE_ADDR) == physical) value |= *pte & 0x60; /* per-root accessed/dirty */
+    if (prot & ASPACE_PROT_WRITE) value |= PTE_WRITABLE;
+    if (prot & ASPACE_PROT_USER) value |= PTE_USER;
+    if (!(prot & ASPACE_PROT_EXEC)) value |= PTE_NX;
+    *pte = value;
+    return TRUE;
+}
+static BOOL cow_map(ASPACE *as, VADDR va, PADDR physical, UWORD prot, BOOL owned)
+{
+    if (!aspace_map_page(as, va, physical, prot)) return FALSE;
+    if (owned) {
+        *x86_64_user_pte(as->pml4_phys, va) |= X86_64_PTE_OWNED;
+        as->nowned++;
+    }
+    return TRUE;
+}
+static LONG cow_file_leaf(ASPACE *child, VADDR va, PADDR physical, UWORD protection)
+{
+#if CONF_WITH_MMAP
+    FILE_PAGE *page;
+    for (page = file_pages; page; page = page->next) if (page->physical == physical) {
+        if (page->references == ~(ULONG)0 || file_page_refs == ~(ULONG)0) return EAGAIN;
+        if (!cow_map(child, va, physical, protection & ~ASPACE_PROT_WRITE, TRUE)) return ENSMEM;
+        *x86_64_user_pte(child->pml4_phys, va) |= PTE_FILE;
+        page->references++; file_page_refs++;
+        return E_OK;
+    }
+#else
+    UNUSED(child); UNUSED(va); UNUSED(physical); UNUSED(protection);
+#endif
+    return 1;
+}
+#include "aspace_cow.h"
+LONG aspace_clone(ASPACE *source, ASPACE **out)
+{
+    ASPACE *child;
+    UQUAD *l4, *l3, *l2, *l1;
+    ULONG i3, i2, i1;
+    LONG error = E_OK;
+    if (!source || !out || *out) return EINVAL;
+    if (!kaspace_cow_change(source, 0, USER_VA_LIMIT)) return EACCDN;
+    if (clone_injected()) return ENSMEM;
+    child = aspace_create();
+    if (!child) return ENSMEM;
+    child->clone_building = TRUE;
+    l4 = COW_ALIAS(source->pml4_phys);
+    if (!(l4[0] & PTE_PRESENT)) goto ready;
+    l3 = COW_ALIAS(l4[0] & PTE_ADDR);
+    for (i3 = 0; i3 < USER_VA_LIMIT / 0x40000000ULL; i3++) {
+        if (!(l3[i3] & PTE_PRESENT)) continue;
+        if (l3[i3] & PTE_PS) { if (l3[i3] & PTE_USER) { error = EINVFN; goto failed; } continue; }
+        l2 = COW_ALIAS(l3[i3] & PTE_ADDR);
+        for (i2 = 0; i2 < 512; i2++) {
+            if (!(l2[i2] & PTE_PRESENT)) continue;
+            if (l2[i2] & PTE_PS) { if (l2[i2] & PTE_USER) { error = EINVFN; goto failed; } continue; }
+            l1 = COW_ALIAS(l2[i2] & PTE_ADDR);
+            for (i1 = 0; i1 < 512; i1++) if (l1[i1] & PTE_PRESENT) {
+                VADDR va = ((UQUAD)i3 << 30) | ((UQUAD)i2 << 21) | ((UQUAD)i1 << 12);
+                UWORD prot;
+                aspace_translate(source, va, NULL, &prot);
+                error = cow_clone_leaf(source, child, va, l1[i1] & PTE_ADDR, prot,
+                                      (l1[i1] & X86_64_PTE_OWNED) != 0);
+                if (error) goto failed;
+            }
+        }
+    }
+ready:
+    cow_finish_source(source, TRUE); child->clone_building = FALSE;
+    *out = child; return E_OK;
+failed:
+    aspace_destroy(child); cow_finish_source(source, FALSE);
+    return error;
+}
+#endif

@@ -2791,6 +2791,12 @@ int kproc_demand_page(PD *pd, VADDR va, UWORD access)
 
     if (!kproc || !kproc->aspace)
         return 0;
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        int result = aspace_cow_fault(kproc->aspace, va, access);
+        if (result >= 0) return result;
+    }
+#endif
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_demand_page(kproc->active_space, va, access);
@@ -2849,6 +2855,10 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
         if (aspace_translate(kproc->aspace, page, NULL, &prot)) {
             if (!(prot & ASPACE_PROT_USER)) return FALSE;
             if (write && !(prot & ASPACE_PROT_WRITE)) {
+#if CONF_WITH_PRIVATE_CLONE
+                if (aspace_logical_protection(kproc->aspace, page, &prot) &&
+                    (prot & ASPACE_PROT_USER) && (prot & ASPACE_PROT_WRITE)) continue;
+#endif
 #if CONF_WITH_MMAP
                 if (aspace_file_cow(kproc->aspace, page) &&
                     kaspace_mmap_protection(kproc->active_space, page, &prot) &&

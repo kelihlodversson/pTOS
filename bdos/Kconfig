@@ -9,6 +9,15 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_PRIVATE_CLONE
+    bool "Experimental independent MMU address-space clone"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING
+    default n
+    help
+      Transactional private address-space cloning and anonymous COW on the
+      validated x32, ARMv7 and m68k 68040 MMU backends. This does not enable
+      public Pfork/Pvfork or supply fork resource inheritance.
+
 config CONF_WITH_PCLONE
     bool "Experimental Pclone"
     depends on CONF_WITH_KPROC
