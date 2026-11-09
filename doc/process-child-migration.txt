@@ -615,10 +615,27 @@ Evidence boundaries
   stream append/read/drain, duplicate retry, ACK tombstones and exact outer
   PROCESS/heap/mapping resource baselines.
 
-The native fixture does not yet kill a publishing THREAD after commit or prove
-surviving sibling takeover. Those native fault/interleaving and full quota tests
-remain mandatory before runtime acceptance or CHILD selector removal. The source
-must also receive independent review of the ordinary BIND-to-COMMIT IRQ boundary.
+A second real x32 probe creates publisher A and survivor/publisher B as distinct
+SAME_PROCESS THREADs. A snapshots ordinal N then stalls. A test-only rendezvous
+using the existing scheduler predicate permits child B to complete N+1 only
+after that snapshot. Publisher B stages its real packet and receives EAGAIN
+when trying to overtake A. A then commits and returns through the test Syield
+hook; ring-3 UD2 executes before any userspace delivery bookkeeping or publishing
+worker return. B joins the actual faulted THREAD (status ffff), verifies PROCESS
+completion has not occurred, drains A's packet, recovers COMMITTED, retries
+without appending, then publishes and drains N+1. ACK/CLOSE/RECLAIM and exact
+outer PROCESS/heap/mapping baselines complete before the source PROCESS exits.
+The hook invokes production receipt code; there is no invented receipt trap or
+injected kernel exception inside a cleanup scope. This proves the stated user
+THREAD fault boundary, not arbitrary kernel callback/fatal-unwind safety.
+
+The production-C hosted fixture additionally fills all 256 active attempts and
+16 fixed tables, checks exhaustion before publication, reclaims all attempts,
+and proves empty generation fences still consume table quota. It checks a
+negative consumed CLOSE cannot reopen publication. Native interrupted ACK,
+CLOSE/destructor faults, retirement at every receipt state and exhaustive alias/
+lease overlap cases remain acceptance work. The source must receive independent
+review of the ordinary BIND-to-COMMIT IRQ boundary and full runtime contract.
 Public activation has a separate acceptance gate and is not blocked by this GUI
 prototype. K5 remains the built-in single-CPU, non-preemptive no-yield/no-mapping-
 reentry backing provider; no arbitrary callback/unwind, preemption or SMP claim.

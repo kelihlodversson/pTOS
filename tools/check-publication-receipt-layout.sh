@@ -13,5 +13,8 @@ esac
 "$@" -ffreestanding -std=gnu90 -Wall -Wextra -Werror -Iinclude -x c \
     -c -o "$work/layout.o" - <<'SOURCE'
 #include "tests/cuis/publication_receipt_wire.h"
+#define CONF_WITH_CUIS_RECEIPT_TEST 1
+#include "aes/cuis_receipt_test.h"
+typedef char same_runtime_and_review_size[sizeof(CUIS_RECEIPT_TEST_RECORD)==sizeof(TEST_PUBLICATION_RECEIPT) ? 1:-1];
 SOURCE
 echo 'Receipt REVIEW record size, every offset, scalar/address width and alignment: PASS (compile only)'

@@ -2477,6 +2477,150 @@ static void test_native_observer_wait(KPROC *owner,BOOL cancel)
 #if CONF_WITH_CUIS_RECEIPT_TEST
 #include "../../../aes/cuis_receipt_test.h"
 static BOOL native_receipt_active;
+#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+static struct {
+    BOOL active;
+    ULONG phase,leader,publisher,hook_tids[4];
+    KPROC *owner;
+    LONG source,destination,pid,second_pid;
+    VADDR data;
+    CUIS_RECEIPT_TEST_RECORD receipt,second;
+} receipt_fault;
+static BOOL receipt_second_admitted(void *unused) { (void)unused;return receipt_fault.phase>=2; }
+static BOOL receipt_later_attempted(void *unused) { (void)unused;return receipt_fault.phase>=3; }
+static void native_receipt_fault_yield(void)
+{
+    KTHREAD *thread=ksched_exit_thread(run);
+    ULONG tid,hook;
+    PROCESS_COMPLETION completion,other;
+    WORD packet[8]={80,0,0,0,(WORD)0xffff,0,0,0},copied[8];
+    LONG result;
+    ULONG turn,joined_status=0;
+    static char path[]="C:\\X32HELLO.TOS",tail[]={2,'O','n',0},second_tail[]={2,'O','y',0},environment[]={0,0};
+    if(!thread)return;
+    /* Test-only rendezvous uses the existing scheduler predicate, not a new
+     * wait service. B cannot finish until publisher A has snapshotted N. */
+    if(receipt_fault.second_pid>0 && kproc_ref_pid(kthread_process(thread))==receipt_fault.second_pid && receipt_fault.phase<2) {
+        UQUAD flags=cuis_input_lock();
+        CHECK(ksched_wait_cancelable(receipt_second_admitted,NULL)==KSCHED_WAIT_READY,
+              "second actual child waits until publisher A has snapshotted N");
+        cuis_input_unlock(flags);return;
+    }
+    tid=kthread_tid(thread);
+    for(hook=0;hook<4;hook++)if(receipt_fault.hook_tids[hook]==tid)return;
+    for(hook=0;hook<4 && receipt_fault.hook_tids[hook];hook++);
+    CHECK(hook<4,"bounded fixture recursion ownership is per THREAD, never a cross-thread switch");
+    if(hook==4)return;
+    receipt_fault.hook_tids[hook]=tid;
+    if(!receipt_fault.phase) {
+        receipt_fault.leader=tid;receipt_fault.owner=kproc_retain(run);
+        receipt_fault.source=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);
+        receipt_fault.destination=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);
+        receipt_fault.data=kproc_mmap(run,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        CHECK(receipt_fault.owner && receipt_fault.source>=0 && receipt_fault.destination>=0 && (LONG)receipt_fault.data>0,
+              "real fault-recovery source PROCESS and distinct per-client endpoints");
+        receipt_fault.pid=cuis_receipt_test_launch(receipt_fault.source,receipt_fault.destination,0,path,tail,environment,&receipt_fault.receipt);
+        receipt_fault.second_pid=cuis_receipt_test_launch(receipt_fault.source,receipt_fault.destination,1,path,second_tail,environment,&receipt_fault.second);
+        CHECK(receipt_fault.pid>0 && receipt_fault.second_pid>0,"native fault fixture binds both children before execution");
+        for(turn=0;turn<32;turn++) {
+            CHECK(proc_exec_handle_snapshot(receipt_fault.owner,receipt_fault.receipt.tag,&completion)==E_OK,
+                  "real fault fixture observes canonical child completion");
+            CHECK(proc_exec_handle_snapshot(receipt_fault.owner,receipt_fault.second.tag,&other)==E_OK,
+                  "real second publisher retains its canonical completion identity");
+            if(completion.state==PROCESS_COMPLETED)break;
+            ksched_yield();
+        }
+        CHECK(turn<32 && completion.status==0xffff && completion.kind==PROCESS_COMPLETION_NORMAL,
+              "native fault fixture retains full normal ffff child result");
+        CHECK(other.state!=PROCESS_COMPLETED && !other.order_low && !other.order_high,
+              "child B is still pending before publisher A's snapshot");
+        packet[3]=(WORD)receipt_fault.pid;
+        CHECK(kproc_copy_to_user_checked(receipt_fault.data,packet,sizeof(packet))==E_OK,"materialize real fault fixture packet");
+        receipt_fault.receipt.packet=receipt_fault.data;receipt_fault.receipt.bytes=sizeof(packet);
+        CHECK(cuis_receipt_test_prepare(&receipt_fault.receipt)==E_OK,"prepare immutable packet before publisher THREAD admission");
+        receipt_fault.phase=1;
+    } else if(kthread_process(thread)==receipt_fault.owner && tid!=receipt_fault.leader) {
+        if(receipt_fault.phase==2 && tid==receipt_fault.publisher) {
+            UQUAD flags=cuis_input_lock();
+            CHECK(ksched_wait_cancelable(receipt_later_attempted,NULL)==KSCHED_WAIT_READY,
+                  "publisher A remains stalled until B has attempted its later ordinal");
+            cuis_input_unlock(flags);
+        }
+        if(receipt_fault.phase==1) {
+            receipt_fault.publisher=tid;
+            CHECK(proc_exec_handle_snapshot(receipt_fault.owner,receipt_fault.receipt.tag,&completion)==E_OK &&
+                  completion.state==PROCESS_COMPLETED,"publisher A snapshots canonical N and stalls before commit");
+            kcprintf("receipt FIFO: A snapshot ordinal %lx:%lx, stalled\n",(long)completion.order_high,(long)completion.order_low);
+            receipt_fault.phase=2;
+        } else if(receipt_fault.phase==2 && tid!=receipt_fault.publisher) {
+            for(turn=0;turn<32;turn++) {
+                CHECK(proc_exec_handle_snapshot(receipt_fault.owner,receipt_fault.second.tag,&other)==E_OK,
+                      "publisher B observes only canonical child B completion");
+                if(other.state==PROCESS_COMPLETED)break;
+                ksched_yield();
+            }
+            CHECK(turn<32 && other.status==0xffff && other.kind==PROCESS_COMPLETION_NORMAL,
+                  "child B completes after A's snapshot, with canonical ordinal N+1");
+            packet[3]=(WORD)receipt_fault.second_pid;
+            CHECK(kproc_copy_to_user_checked(receipt_fault.data,packet,sizeof(packet))==E_OK,
+                  "construct second immutable CH_EXIT test packet only after real completion");
+            receipt_fault.second.packet=receipt_fault.data;receipt_fault.second.bytes=sizeof(packet);
+            CHECK(cuis_receipt_test_prepare(&receipt_fault.second)==E_OK,"publisher B stages its actual completion packet");
+            CHECK(proc_exec_handle_snapshot(receipt_fault.owner,receipt_fault.receipt.tag,&completion)==E_OK &&
+                  (((UQUAD)other.order_high<<32)|other.order_low)>(((UQUAD)completion.order_high<<32)|completion.order_low),
+                  "canonical B ordinal is strictly later than the stalled A snapshot");
+            CHECK(cuis_receipt_test_commit(&receipt_fault.second)==EAGAIN &&
+                  cuis_stream_service(CUIS_STREAM_PENDING,receipt_fault.destination,0,0,0,0)==0,
+                  "concurrent publisher B cannot append N+1 while publisher A is stalled");
+            kcprintf("receipt FIFO: B ordinal %lx:%lx blocked before A commit\n",(long)other.order_high,(long)other.order_low);
+            receipt_fault.phase=3;
+        } else if(receipt_fault.phase==3 && tid==receipt_fault.publisher) {
+            CHECK(cuis_receipt_test_commit(&receipt_fault.receipt)==sizeof(packet),"publisher THREAD commits actual packet and receipt before user bookkeeping");
+            kcprintf("receipt FIFO: A COMMITTED before publisher user UD2\n");
+            receipt_fault.phase=4;
+        } else if(receipt_fault.phase==4 && tid!=receipt_fault.publisher) {
+            /* Let the publisher return through Syield and execute real ring-3
+             * UD2. This sibling blocks through the authoritative THREAD join;
+             * no injected PROCESS status or simulated fault stands in for it. */
+            result=ksched_join(receipt_fault.publisher,receipt_fault.data+256);
+            CHECK(result==E_OK && kproc_copy_from_user_checked(&joined_status,receipt_fault.data+256,sizeof(joined_status))==E_OK && joined_status==0xffff,"actual publisher THREAD faults after commit while sibling PROCESS survives");
+            CHECK(kproc_ref_completion(receipt_fault.owner,&completion) && completion.state!=PROCESS_COMPLETED,
+                  "THREAD-only fault has not completed the owning PROCESS");
+            CHECK(cuis_stream_service(CUIS_STREAM_READ,receipt_fault.destination,receipt_fault.data+128,sizeof(packet),0,0)==sizeof(packet) &&
+                  kproc_copy_from_user_checked(copied,receipt_fault.data+128,sizeof(copied))==E_OK && copied[3]==receipt_fault.pid,
+                  "surviving sibling drains actual committed packet before receipt recovery");
+            receipt_fault.receipt.packet=0;receipt_fault.receipt.bytes=0;
+            CHECK(cuis_receipt_test_query(&receipt_fault.receipt)==E_OK && receipt_fault.receipt.state==CUIS_RECEIPT_COMMITTED,
+                  "surviving sibling recovers durable COMMITTED after receiver drain");
+            CHECK(cuis_receipt_test_commit(&receipt_fault.receipt)==sizeof(packet) &&
+                  cuis_stream_service(CUIS_STREAM_PENDING,receipt_fault.destination,0,0,0,0)==0,
+                  "actual fault recovery cannot append a duplicate after receiver drain");
+            kcprintf("receipt recovery: real THREAD fault joined, packet drained, replay appended zero bytes\n");
+            CHECK(cuis_receipt_test_commit(&receipt_fault.second)==sizeof(packet) &&
+                  cuis_stream_service(CUIS_STREAM_READ,receipt_fault.destination,receipt_fault.data+128,sizeof(packet),0,0)==sizeof(packet) &&
+                  kproc_copy_from_user_checked(copied,receipt_fault.data+128,sizeof(copied))==E_OK && copied[3]==receipt_fault.second_pid,
+                  "surviving publisher B appends canonical N+1 only after recovered A, exactly once each");
+            CHECK(cuis_receipt_test_ack(&receipt_fault.receipt)==E_OK &&
+                  proc_exec_handle_close(receipt_fault.owner,receipt_fault.receipt.tag)==E_OK &&
+                  cuis_receipt_test_reclaim(&receipt_fault.receipt)==E_OK &&
+                  cuis_receipt_test_ack(&receipt_fault.second)==E_OK &&
+                  proc_exec_handle_close(receipt_fault.owner,receipt_fault.second.tag)==E_OK &&
+                  cuis_receipt_test_reclaim(&receipt_fault.second)==E_OK,
+                  "surviving sibling completes both ACK, observation cleanup and RECLAIM transactions");
+            result=ksched_wait((WORD)receipt_fault.pid,1,0);
+            CHECK(result>=0 && (UWORD)result==0xff,"fault recovery leaves child's public PROCESS completion consumable");
+            result=ksched_wait((WORD)receipt_fault.second_pid,1,0);
+            CHECK(result>=0 && (UWORD)result==0xff,"canonical FIFO delivery leaves second public completion independent");
+            CHECK(cuis_service(CUIS_SESSION_END,receipt_fault.source)==E_OK &&
+                  cuis_service(CUIS_SESSION_END,receipt_fault.destination)==E_OK &&
+                  kproc_munmap(run,receipt_fault.data,PAGE)==E_OK,"sibling releases real receipt endpoint and packet resources");
+            kproc_release(receipt_fault.owner);receipt_fault.owner=NULL;receipt_fault.phase=5;
+        }
+    }
+    receipt_fault.hook_tids[hook]=0;
+}
+#endif
+
 static void test_native_receipt_runtime(KPROC *owner)
 {
     CUIS_RECEIPT_TEST_RECORD records[2], *first, *second;
@@ -2849,6 +2993,9 @@ void x86_64_memtest_clone_yield(void)
     }
 #endif
 #if CONF_WITH_CUIS_RECEIPT_TEST
+#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+    if (receipt_fault.active) { native_receipt_fault_yield(); return; }
+#endif
     if (native_receipt_active) return;
 #endif
     ordinary_observation_yield();
@@ -5323,6 +5470,17 @@ static void test_ring3(void)
         CHECK(aspace_file_cross_shares() != shares, "nested CUIS clients reuse DSO pages");
         kcprintf("x86-64 CUIS sessions: %s\n", failures == before ? "PASS" : "FAIL");
     }
+#if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN && CONF_WITH_MMAP
+    {
+        int receipt_before=failures;
+        bzero(&receipt_fault,sizeof(receipt_fault));receipt_fault.active=TRUE;
+        probe_expect(2,0,"actual publisher THREAD fault, sibling recovery after receiver drain, no duplicate CH_EXIT");
+        receipt_fault.active=FALSE;
+        CHECK(receipt_fault.phase==5 && !receipt_fault.owner,"native receipt recovery fixture reaches full cleanup");
+        if(receipt_fault.owner) { kproc_release(receipt_fault.owner);receipt_fault.owner=NULL; }
+        kcprintf("x86-64 receipt publisher fault/recovery: %s\n",failures==receipt_before ? "PASS":"FAIL");
+    }
+#endif
     test_cuis_scheduler();
     test_async_processes();
 #if CONF_WITH_MMAP

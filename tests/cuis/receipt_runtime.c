@@ -14,13 +14,14 @@ static struct {
     PROCESS_COMPLETION completion;
     ULONG leases;
     BOOL open,committed;
-} receipt_children[64];
+} receipt_children[512];
+static BOOL receipt_close_error;
 static ULONG receipt_next,receipt_import_count,receipt_release_count;
 LONG proc_exec_handle_prepare(KPROC *owner,char *path,char *tail,char *environment,char *directory,ULONG policy)
 {
     ULONG i=receipt_next++;
     (void)path;(void)tail;(void)environment;(void)directory;
-    if (owner!=(KPROC *)run || !input_irqs || !cleanup_depth || i>=64 || policy!=PROCESS_EXEC_ASYNC) __builtin_abort();
+    if (owner!=(KPROC *)run || !input_irqs || !cleanup_depth || i>=512 || policy!=PROCESS_EXEC_ASYNC) __builtin_abort();
     receipt_children[i].open=TRUE;
     receipt_children[i].completion.state=PROCESS_UNSTARTED;
     receipt_children[i].completion.number_low=i+1;
@@ -46,7 +47,7 @@ LONG proc_exec_handle_close(KPROC *owner,ULONG handle)
     ULONG i=handle-100;
     if (owner!=(KPROC *)run || !input_irqs || i>=receipt_next) __builtin_abort();
     if (!receipt_children[i].open) return EIHNDL;
-    receipt_children[i].open=FALSE; return E_OK;
+    receipt_children[i].open=FALSE; return receipt_close_error ? EACCDN:E_OK;
 }
 static LONG receipt_fixture_import(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_OBSERVER **out)
 {
@@ -82,10 +83,12 @@ static void complete_receipt_child(CUIS_RECEIPT_TEST_RECORD *record,ULONG order)
 }
 static int receipt_runtime_checks(void)
 {
-    CUIS_RECEIPT_TEST_RECORD a,b,old,query;
+    CUIS_RECEIPT_TEST_RECORD a,b,old,query,quota[256];
+    LONG quota_sources[16],extra;
     LONG source,destination,replacement;
-    ULONG before,refs=process_references,i;
+    ULONG before,refs=process_references,i,j;
     char tail[]={0,0},environment[]={0,0};
+    stream_heap_mode=TRUE;
     run=&first; source=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(source>=0);
     run=&second;destination=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(destination>=0);
     run=&first;receipt_fixture_active=TRUE;
@@ -148,13 +151,32 @@ static int receipt_runtime_checks(void)
     query=a;query.packet=0x20000;query.bytes=16;fail_copy=TRUE;
     CHECK(cuis_receipt_test_query(&query)==EIMBA);fail_copy=FALSE;
     query=a;query.packet=0;CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_COMMITTED);
-    CHECK(cuis_receipt_test_ack(&a)==E_OK && proc_exec_handle_close((KPROC *)run,a.tag)==E_OK &&
-          cuis_receipt_test_reclaim(&a)==E_OK);
+    CHECK(cuis_receipt_test_ack(&a)==E_OK);receipt_close_error=TRUE;
+    CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==EACCDN);receipt_close_error=FALSE;
+    before=find_handle(replacement)->stream_bytes;
+    CHECK(cuis_receipt_test_commit(&a)==16 && find_handle(replacement)->stream_bytes==before &&
+          proc_exec_handle_close((KPROC *)run,a.tag)==EIHNDL && cuis_receipt_test_reclaim(&a)==E_OK);
     CHECK(!receipt_active && receipt_import_count==receipt_release_count);
+    /* Exhaust actual fixed tables and all 256 active slots. Empty generation
+     * fences remain charged; no allocator pressure may evict them. */
+    quota_sources[0]=source;
+    for(i=0;i<16;i++) {
+        if(i) { quota_sources[i]=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(quota_sources[i]>=0); }
+        for(j=0;j<16;j++) CHECK(cuis_receipt_test_launch(quota_sources[i],replacement,j,"child",tail,environment,&quota[16*i+j])>0);
+    }
+    CHECK(receipt_active==256);
+    extra=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(extra>=0);
+    CHECK(cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN && receipt_active==256);
+    for(i=0;i<256;i++) CHECK(proc_exec_handle_close((KPROC *)run,quota[i].tag)==E_OK && cuis_receipt_test_reclaim(&quota[i])==E_OK);
+    CHECK(!receipt_active && cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN);
+    CHECK(cuis_service(CUIS_SESSION_END,extra)==E_OK);
+    for(i=1;i<16;i++)CHECK(cuis_service(CUIS_SESSION_END,quota_sources[i])==E_OK);
+
     for(i=0;i<receipt_next;i++)CHECK(!receipt_children[i].open && !receipt_children[i].leases);
     CHECK(cuis_service(CUIS_SESSION_END,source)==E_OK);run=&second;
     CHECK(cuis_service(CUIS_SESSION_END,replacement)==E_OK);run=&first;
-    CHECK(process_references==refs && !clients && !cleanup_depth && input_irqs);
+    CHECK(process_references==refs && !clients && !cleanup_depth && input_irqs && !stream_heap_bad && allocations==frees);
+    stream_heap_mode=FALSE;
     return 0;
 }
 int main(void)
