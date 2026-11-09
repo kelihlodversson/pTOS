@@ -1,0 +1,165 @@
+PROCESS descriptor resolution call-site inventory (#895 / #933)
+==============================================================
+
+Non-invasive source audit. No descriptor API is implemented or accepted by
+this document. Upstream baseline197d05ce6d71efb8e626df5b4e7db11d29f5c3fc;
+filesystem-owner overlay inspected separately at0789321f0960a7112198fc08a59b093cb0419cdc.
+Line anchors below refer to the epic baseline unless explicitly marked #933;
+function names identify sites when owner changes move line numbers. The fork
+validation605a4ab79 does not import #933. Existing kernel/legacy namespaces
+must be preserved until a coherent owner-reviewed migration is ready.
+
+Reproduce the initial census at the baseline with:
+  rg -n 'sft\[|syshnd\(|PD_UFT\(|getofd\(|getpfsslot\(' bdos fs
+Also inspect raw handle arithmetic, indirect close/backing operations and
+macros in fs.h/pfs.h. A text match is not proof that a site handles user-local
+numbers: internal raw slots must stay distinguishable from public descriptors.
+
+Resolution and dispatch
+-----------------------
+ID   Current site                       Global dependency / required transition
+R01  bdos/fsmain.c:458 syshnd            h>=NUMSTD means h-NUMSTD; standard h is
+                                       redirected through PD_UFT(run). Replace
+                                       with one authenticated PROCESS binding
+                                       resolution, including BIOS-device tags.
+R02  bdos/fsmain.c:475 getofd            Returns raw sft[n].f_ofd after syshnd.
+R03  bdos/fsmain.c:500 getpfsslot        Same path returns a mutable FTAB pointer.
+                                       Resolve/pin exact slot+incarnation once;
+                                       retain existing FAT/PFS object owners.
+R04  bdos/bdosmain.c:984 osif            Redirects console standards via UFT.
+R05  bdos/bdosmain.c:1089,1097,1104       Independently indexes SFT for typ&0x80
+     osif pointer/handle validation     validation before syscall execution.
+                                       Must share the same binding resolver,
+                                       not bypass R01 or translate twice.
+R06  bdos/console.c                     xconstat/console input/output families
+     PD_UFT/HXFORM uses                 turn UFT entries into BIOS channels.
+                                       Separate actual BIOS bindings from file
+                                       bindings; preserve default devices and
+                                       redirected standard-stream behavior.
+R07  bdos/fsio.c:307,346,477,587          eof/xlseek/xread/xwrite resolve FAT/PFS
+                                       via R02/R03, mutate common OFD position
+                                       or PFSCOOKIE.pos. Do not copy per-child
+                                       positions or duplicate driver cookies.
+R08  bdos/fsdir.c:475,491 xgsdtof        Same FAT/PFS lookup; bind exact identity
+                                       before metadata operations/copyout.
+
+Allocation, duplication and close
+---------------------------------
+A01  bdos/fsopnclo.c:198 opnfil          Finds free global f_own, sets f_use=1,
+                                       returns slot+NUMSTD. Open/create must
+                                       also reserve/publish a local binding;
+                                       rollback must consume its reference.
+A02  bdos/fsopnclo.c:90,111              xcreat/xopen route through native/PFS
+                                       allocation. Preserve errors/devices and
+                                       choose local number independently.
+A03  fs/pfs.c:760 pfs_alloc_handle      Allocates global slot, copies one cookie
+                                       into it. Keep cookie/position shared in
+                                       the authoritative SFT object; install
+                                       a local binding without copying cookie.
+A04  bdos/fshand.c:46 ixforce           h is raw global nonstandard handle;
+                                       writes target PD_UFT and increments
+                                       f_use. Resolve source owner, checked
+                                       acquire, replace only old local binding
+                                       generation, then authoritative release.
+A05  bdos/fshand.c:107 xdup             Reads standard UFT, allocates new SFT,
+                                       copies OFD; foreign PFS dup is rejected.
+                                       Agree legacy API scope independently
+                                       from inheritance; do not silently add
+                                       nonstandard Fdup or PFS cookie copying.
+A06  bdos/fsopnclo.c:392 xclose         Raw SFT decrements/finalization; standard
+                                       reset precedes backend work on epic.
+     #933 fs_close_once/bounded         Owner service now reports consumption,
+                                       residual transfer and exact incarnation.
+                                       Public close starts from a live binding;
+                                       raw owner/backend close must NOT be
+                                       fed a local descriptor a second time.
+A07  #933 fs_sft_claim/access/busy       Allocation and active-close admission
+                                       are SFT-internal. None authenticates an
+                                       inheritable live PROCESS binding or is
+                                       a checked live-reference acquire API.
+A08  #933 kproc_begin_file_cleanup,     Irreversible cleanup/destruction admission
+     kproc_file_references_allowed     includes post-unlink identity coverage.
+                                       Not a reversible fork snapshot lock.
+
+Backing, invalidation and internal handles
+-----------------------------------------
+B01  bdos/fileback.c:44 fileback_get    getpfsslot/getofd interpret caller handle;
+                                       foreign PFS mapping rejected. Resolve
+                                       local binding once, retain existing OFD
+                                       backing pin independent of descriptor
+                                       close; no second backing lifetime model.
+B02  fs/fatfs_pfs.c:164,186             fat_open/fat_create create internal
+                                       handles used by directory/cookie work.
+B03  fs/fatfs_pfs.c:637,692             fat_rename has temporary hnew and raw
+                                       SFT cleanup. Use explicit internal owner
+                                       references, not ambiguous local numbers.
+B04  fs/fatfs_pfs.c:816,823,835         fat_close/read/write use fc->index as
+                                       a numeric GEMDOS/SFT handle. Classify
+                                       that cookie representation explicitly;
+                                       it cannot follow another current PROCESS
+                                       or be translated twice after migration.
+B05  bdos/fsopnclo.c:308 sftdel,        Scan all SFT aliases of an OFD and retire
+     :324 invalidate_file,             whole media identities. #933 invalidates
+     :353 ofd_invalidate_drive          standard aliases before reuse. Extend
+                                       authoritative revocation to every local
+                                       binding of that exact incarnation first.
+B06  bdos/fsopnclo.c:620 ixdel          Checks f_own against run, closes standard
+                                       aliases and global slots in loops. Must
+                                       not close a peer's local reference or a
+                                       replacement number; retain filesystem
+                                       unlink/pin semantics through the owner.
+B07  bdos/kfile.c kdos_fopen/close/     Kernel callers currently use current
+     read/seek                          PROCESS handles. They need local lookup
+                                       too; explicit backend/internal references
+                                       require a distinct owner API/type.
+B08  bdos/xshutdown.c:48               Raw all-SFT flush/close sweep. Coordinate
+                                       PROCESS binding retirement with service
+                                       quarantine; avoid consuming refs twice.
+
+PROCESS construction and retirement
+-----------------------------------
+P01  bdos/proc.c:957                   init_pd_standard_files_from inherits only
+                                       NUMSTD aliases via ixforce. Fork factory
+                                       must enumerate all eligible local bindings
+                                       using checked owner acquire, once each.
+P02  bdos/proc.c:1019                  proc_create_clone_process creates empty
+                                       environment and optional standards/CWD.
+                                       No full descriptor/runtime inheritance.
+P03  bdos/proc.c init_pd_files/xexec    Ordinary Pexec uses legacy initialization.
+                                       ALL managed PROCESSes must acquire valid
+                                       local tables, not just fork children.
+                                       Agree documented Pexec inheritance vs
+                                       accidental global-handle visibility;
+                                       preserve supported defaults explicitly.
+P04  bdos/proc.c:362 release_pd_files   Infers explicit refs from f_own+alias
+                                       counts, closes standards, then sweeps
+                                       owner slots. #933 adds exact disposition,
+                                       destruction admission and residual owner.
+                                       Replace inference for table-owned refs
+                                       exactly once; keep legacy non-ASPACE path.
+P05  bdos/kproc.c                      Trusted UFT shadow, live-standard counts
+                                       and authoritative invalidation helpers
+                                       must include local nonstandard bindings.
+                                       Retired PROCESSes must not retain tables
+                                       merely to own service residual references.
+P06  bdos/process_exec.c (merged#931)   Prepared launch/observer rights are NOT
+                                       GEMDOS descriptors or shared file refs;
+                                       exec_committing is NOT descriptor admission.
+
+Includes/constants: bdos/fsglob.c defines SFT storage; bdos/fs.h defines FTAB
+and limits; fs/pfs.h documents native/foreign cookie handling. Audit these
+representations without converting private backend indices into user handles.
+
+Migration acceptance
+--------------------
+A resolver-only patch is insufficient because R05, A04/A06 and B03/B04 bypass
+or reinterpret it. The owner must define internal-reference versus local-handle
+boundaries before staged activation. One coherent gate must migrate every
+managed PROCESS creation/lookup/operation/retirement path, while legacy
+non-ASPACE uses its existing implementation. No fork-only table. Source
+binding admission must reject reentrant close/rebind while copying its owned
+prefix and must not reuse the irreversible retirement latch.
+
+Checked acquire/expected-incarnation release and implementation ownership are
+still awaiting the #933 owner's explicit decision. This audit authorizes no
+SFT-counter, ticket, cleanup or callback policy changes.

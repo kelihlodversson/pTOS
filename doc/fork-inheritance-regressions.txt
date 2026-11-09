@@ -1,0 +1,178 @@
+Fork inheritance regression baseline and specifications (#895)
+==============================================================
+
+This is a test specification, not executable inheritance or a passing feature
+claim. No unapproved SFT API, fake acquire implementation or fork-only handle
+table is added. Full inheritance is absent; public Pfork remains EINVFN.
+
+Evidence vocabulary
+-------------------
+CONTROL-PASS: an existing executed regression, limited to its stated source,
+configuration and mechanism. SPEC-MISSING: required behavior for which the
+current implementation lacks the capability; specification has not been run
+as a successful acceptance test. BLOCKED-OWNER: requires the accepted #933 live
+reference/expected-incarnation service and its namespace/admission contract.
+An unimplemented test is never counted as a pass or silently skipped in CI.
+No intentionally failing public-Pfork test is added to a green regression job.
+
+Existing controls, not full inheritance
+--------------------------------------
+C01 CONTROL-PASS: tests/pclone/pclone.c:test_pclone rejects actual Pfork/Pvfork
+calls with signed EINVFN and preserves PID. Recorded source605a4ab79 has native
+x32 headless/desktop22/0, ARM26/0 and m68k04025/0, each five shutdown checks.
+These are historical exact-source runs, not fresh all-architecture results for
+this documentation change.
+
+C02 CONTROL-PASS (fresh embedded configuration): source744a75ecb with embedded
+X86_64_MEMTEST enabled, native x32 QEMU, tools/test-mmap-boot.sh with form/input
+exercise: x86-64 clone PROCESS factory, mmap syscalls, GEM controls/forms and
+final memtest PASS. test_proc_clone_factory uses real low-memory PD/environment,
+PID, stdout alias plus explicit FAT handle, CWD and rollback. It does NOT prove
+independent child nonstandard bindings or a fork-return syscall. The earlier
+headless/desktop suites excluded this embedded configuration and are separate.
+
+C03 CONTROL-PASS: tests/pclone/pclone.c:test_private_return/private_entry and
+fork_return.S at605a4ab79 prove private same-trap nested/orphan/COW-OOM/FP and
+explicit-entry anonymous/file-mapping isolation. No complete descriptor or
+environment inheritance is claimed. KASPACE metadata host tests use modeled
+MMUs and are not native inheritance evidence.
+
+C04 OWNER-REPORTED, NOT OUR ACCEPTANCE: #9330789321f0's close, recovery,
+retirement/rebind and hosted-unwind regressions are separate owner evidence.
+They are not imported or rerun by this document and do not approve the proposed
+inheritance acquire/close APIs. The irreversible retirement latch is not a
+reversible source-descriptor snapshot guard.
+
+Required native fixture layout
+------------------------------
+Use a real managed parent, ordinary files on native FAT and every actually
+supported PFS driver. Create standards and descriptors above NUMSTD, two local
+aliases of one underlying open identity, a distinct independent open and a
+BIOS device binding. Fill known data; position the shared open at a nonzero
+byte. Record authenticated source binding/slot/incarnation/generation and
+owner counters through a TEST-ONLY diagnostic under the responsible owner.
+Do not expose raw reference-mutation interfaces or create a second registry.
+
+Run each case through the existing test-gated PRIVATE_VM same-trap constructor
+until public activation is reviewed. After public Pfork is ready, repeat via
+opcode0x11b. Use canonical PROCESS observers for diagnostic non-consuming
+snapshots and #909 for exactly one public reap. Never use a public wait as a
+resource-release trigger. Synchronize children via existing scheduler/wait
+facilities; do not rely on timing or a fork-only polling/reaper loop.
+
+Descriptor namespace and sharing cases
+-------------------------------------
+I01 BLOCKED-OWNER: parent/child each receive local h identifying one common
+OFD/PFS open position. Parent reads byteN, child next readsN+1, parent nextN+2.
+Verify independently owned bindings, equal underlying incarnation, exact added
+references and unchanged data. A separate open retains its separate offset.
+
+I02 SPEC-MISSING / BLOCKED-OWNER: child closes local h, opens another object
+which reuses h, and writes it. Parent h still names the original object and can
+continue. Reverse the roles. Check original and replacement incarnation and
+binding-generation identities; no stale close/reap may touch the replacement.
+The legacy global-SFT number and factory's absent nonstandard child reference
+cannot establish this behavior; do not bless accidental global visibility.
+
+I03 BLOCKED-OWNER: two standards plus one nonstandard alias share a single SFT
+incarnation. Child construction acquires three binding references, not one
+per unique slot. Close in every order; the common object survives until the
+last actual reference. BIOS aliases acquire no SFT reference. Check overflow
+failure before increment and no backend release after a failed acquire.
+
+I04 BLOCKED-OWNER: Fforce redirects a standard, Fdup preserves the supported
+legacy API's scope and common offset, and close/rebind changes only the current
+PROCESS's namespace. Include redirection back to BIOS defaults. Foreign PFS
+cookie duplication remains an explicit error until the owner supports it;
+never copy driver cookies to make an inheritance test pass.
+
+I05 BLOCKED-OWNER: parent-first and child-first normal exit, THREAD-only exit
+with a surviving sibling (where allowed), final PROCESS exit, group exit and
+orphan adoption. A THREAD exit must not close PROCESS-owned bindings. Keep
+fork's sole-thread/exclusive-ASPACE admission restriction; sibling lifetime
+coverage can use the existing nonfork thread API. Verify file offsets/data,
+exact final ownership and canonical once-only reaping.
+
+I06 BLOCKED-OWNER: nested same-trap private tree with aliases and independent
+opens at each level. Exit ancestors before descendants; repeat with opposite
+order. Reuse local numbers/PIDs and reject stale binding/incarnation evidence.
+Each surviving PROCESS must retain its own descriptors and address space.
+
+Transaction, faults and authoritative cleanup
+--------------------------------------------
+I07 BLOCKED-OWNER: inject failure on acquisition1..N and immediately afterN.
+For k acquisitions, release exactly that acquired prefix. Source bindings,
+positions, CWD and environment stay unchanged; no runnable child or published
+PID result. Repeat every later fallible factory/VM/startup/observer/copyout
+boundary with N already acquired references and reverse-order cleanup checks.
+
+I08 BLOCKED-OWNER: reentrant consuming finalizer installs a replacement in the
+same local number, both a different incarnation and the same incarnation with
+a newer binding generation. Outer close removes only its original binding.
+During PROCESS destruction, new attachment must instead follow #933's denied
+admission contract, including callbacks after unlink of an unstarted child.
+Test earlier/current/later standard indices and unrelated live PROCESSes.
+
+I09 BLOCKED-OWNER: retained FAT close failure during rollback/exit, bounded
+retry exhaustion, transfer of exactly the original reference, exact-ticket
+recovery and stale replay rejection after reuse. Preserve the original clone
+error; report cleanup diagnostics separately. Source data/descriptors remain
+valid. A permanent service-owned quarantine is reported with its exact
+identity/count, not hidden as zero resources or owned by an unpublished child.
+
+I10 BLOCKED-OWNER: negative-but-consuming PFS close/finalizer error. Remove the
+original binding even on error, never retry numeric close against a replacement.
+Close all legitimate peer references once and verify final backend release.
+
+I11 BLOCKED-OWNER: authoritative media invalidation revokes all standard AND
+nonstandard matching local bindings before SFT reuse. Reuse the same slot for
+an unrelated object; operations and retirement of stale old descriptors must
+not read, close or decrement the replacement. Media invalidation is an owner
+operation, not fabricated by the fork adapter.
+
+I12 BLOCKED-OWNER: file-backed mmap holds its existing backing reference while
+parent/child close/reuse descriptors. Mix clean/lazy file pages with anonymous
+COW, then private writes in both orders. Close/unmap/exit in both orders and
+verify the underlying file and backing lifetime. Foreign PFS mapping remains
+unsupported unless separately implemented. No direct SFT counter adjustment.
+
+I13 SPEC-MISSING / BLOCKED-OWNER: child user COW write fails allocation while
+it owns inherited files, then faults/exits; parent retains its local bindings
+and offset. Check source and child mapping/ref baselines plus exactly one file
+release per child binding. Repeat normal fault, failed construction and final
+child PROCESS completion. Existing COW-only OOM is a control, not this case.
+
+Environment, directories and runtime
+------------------------------------
+I14 SPEC-MISSING: parent mutates environment before fork; child sees identical
+bytes at the supported virtual address with correct KPROC/compatibility-PD
+metadata. Parent/child subsequent mutations isolate. Parent-first exit/free
+cannot invalidate child environment. Allocation failure must not replace the
+source environment; the current empty-environment factory is not sufficient.
+
+I15 BLOCKED-OWNER: different native FAT and PFS CWD/drive, child relative open,
+then child chdir without changing parent. Repeat parent-first/child-first exit
+and failed acquisition of each directory reference. Check native and PFS
+counts and callbacks, not only a copied path string.
+
+I16 SPEC-MISSING: executable identity, supported image/stack bounds, priority
+and limits are inherited while PID/TID, creation/accounting and completion are
+fresh. DTA/search requires an explicit policy: never copy a live kernel search
+pointer. Groups/credentials/signals/alarms absent in the checkpoint remain
+explicitly unsupported; no POSIX claim or manufactured signal-state test.
+
+I17 BLOCKED-OWNER: ordinary Pexec before/after table activation, all supported
+load/execute and async modes, kernel kdos_* helpers, standards, relative paths
+and descriptor teardown. Every managed PROCESS participates; no global-lookup
+escape for nonfork PROCESSes. Agree documented eligible-handle defaults before
+migration, distinguish old accidental global access, preserve non-ASPACE path.
+
+Acceptance reporting
+--------------------
+Run each implemented case natively on x32, ARM A32 and m68k040, plus production
+owner fixtures under correct hosted ASan/UBSan/fortified ABI and the existing
+ROM/ELF/layout checks. Report per-case source/config/backend/status; a blocked
+case is not PASS. Add real memory pressure separately from injected allocation
+failure. Keep CPU/FPU/TLS and public syscall capability gates until all required
+startup/inheritance/native and integration reviews pass. Pvfork has its own
+exit/committed-Pexec(200) dependency and is not covered by these fork cases.

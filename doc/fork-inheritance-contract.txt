@@ -13,7 +13,7 @@ Refreshed source checkpoint, 2026-11-09:
   saved return #932  3f9f7ff755d7f5c3a150df9b9f93eb1271eb9e74
   KASPACE/COW #934   3c14f2606535d383347d5975a1115aad0b9a2e17
   isolated proof    9ef7292a812b4463f6b921fedda442b517e9901d
-  SFT ownership933  b57afa7018d604e26c4528fd309eae3dcece4089
+  SFT ownership933  0789321f0960a7112198fc08a59b093cb0419cdc
 
 #931 is now merged into the upstream epic. #933 has reconciled the new epic
 and added retirement admission and the hosted-unwind fixture correction. Its
@@ -230,3 +230,10 @@ Public Pfork opcode0x11b is a later focused policy adapter after these gates.
 Pvfork remains separate and additionally requires a child-specific retained
 parent dependency and #894's successful committed Pexec(200) VM detach. Exec
 entry/failure, THREAD exit and public wait consumption must not release it.
+
+Detailed non-invasive follow-ups
+-------------------------------
+See doc/fork-descriptor-call-sites.txt for concrete global-identity bypasses,
+including osif validation and FAT/PFS internal cookies, and
+doc/fork-inheritance-regressions.txt for executed controls versus missing/
+owner-blocked acceptance cases. No explicit owner agreement is recorded.
