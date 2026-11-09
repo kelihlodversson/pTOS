@@ -81,4 +81,20 @@ Host: KASPACE/startup/join/clone ownership, COW production metadata normally,
 ASan/UBSan and fortified host compiler, CUIS/PROCESS lifecycle, ABI/decoder,
 51 ELF tests and gitready pass. Host MMU mechanics remain models. Fortified
 host results are not relabelled as GCC13 unless that compiler is used. Desktop,
-ROM and remote CI results must be recorded separately for this new source.
+ROM and remote CI results remain distinct from the COW topic's CI.
+
+Additional exact-source evidence
+-------------------------------
+Executable source605a4ab79f89496649b5c3285160b9bb7e78c695 passes headless x32
+22/0, Cortex-A7 A3226/0, m68k04025/0, each five shutdown checks, with the new
+same-trap nested/orphan/OOM and post-COW FP checks above. Desktop x32 at that
+same executable source also passes22/0 plus five shutdown checks, including
+CUIS hardware resume/history, input/event/stream cancellation and retirement.
+Both x32 profiles disable the separate embedded MEMTEST; no MEMTEST run claimed.
+Classic192KiB ROM was built atfc714278b: warning-free,8966 bytes free. The
+605a4 follow-up changes tests/harness/docs only; the ROM's kernel source is
+unchanged. No combined remote-CI result is claimed for this validation branch.
+#9343c14f2606 separately passed all four CI groups; focused owner review is
+still pending. #933 advanced separately tob57afa701 after its owner's new-epic
+reconciliation; it remains outside this validation tree and no descriptor API
+agreement is implied.
