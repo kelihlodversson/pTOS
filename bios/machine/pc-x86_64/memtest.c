@@ -2401,8 +2401,12 @@ static void native_observer_wait_hook(void)
     CHECK(cuis_observer_test_leases()==1,"real SESSION_WAIT retains its PROCESS lease through scheduler handoff");
     native_observer_wait.seen=TRUE;
     if (native_observer_wait.action==3) {
+#if CONF_WITH_PTERMGRP
         CHECK(kproc_request_group_exit(native_observer_wait.owner,0x2468),
               "group cancellation latches while observed wait owns protected cleanup");
+#else
+        CHECK(FALSE,"cancellation fixture requires group termination support");
+#endif
     } else if (native_observer_wait.action==1) {
         CHECK(cuis_service(CUIS_SESSION_END,native_observer_wait.session)==E_OK,
               "retire actual endpoint while canonical observed wait retains it");
