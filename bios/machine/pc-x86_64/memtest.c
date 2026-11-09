@@ -2288,6 +2288,60 @@ static struct {
     LONG pid;
     LONG handle;
 } ordinary_observation;
+/* Exercise the private decoder with real user mappings before a public
+ * syscall is enabled. Loader/observer ownership is production, not a model. */
+static void test_native_exec_request(KPROC *owner)
+{
+    VADDR data, request_address;
+    LONG handle;
+    PROCESS_EXEC_REQUEST request;
+    PROCESS_COMPLETION completion;
+    static const char path[]="C:\\X32HELLO.TOS", tail[]={2,'O','n',0}, environment[]={0,0};
+    data=kproc_mmap(run,0,2*PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    CHECK((LONG)data>0,"map actual user PROCESS request and arguments");
+    if ((LONG)data<=0) return;
+    request_address=data+PAGE-48; /* Snapshot output straddles the two pages. */
+    bzero(&request,sizeof(request));
+    request.operation=PROCESS_EXEC_PREPARE;
+    request.path=data; request.tail=data+128; request.environment=data+256;
+    CHECK(kproc_copy_to_user(data,path,sizeof(path)) &&
+          kproc_copy_to_user(data+128,tail,sizeof(tail)) &&
+          kproc_copy_to_user(data+256,environment,sizeof(environment)) &&
+          kproc_copy_to_user(request_address,&request,sizeof(request)),
+          "seed native fixed-width request and independently copied inputs");
+    CHECK(proc_exec_request(owner,request_address,((UQUAD)1<<32)+sizeof(request))==EINVAL &&
+          proc_exec_request(owner,0xfffffffcULL,sizeof(request))==EIMBA &&
+          proc_exec_request(owner,request_address+1,sizeof(request))==EINVAL,
+          "native decoder validates full-width size, user extent and alignment");
+    CHECK(kproc_mprot(run,data,2*PAGE,PROT_READ)==E_OK,
+          "make PREPARE request and copied arguments read-only");
+    handle=proc_exec_request(owner,request_address,sizeof(request));
+    CHECK(handle>0,"native PREPARE returns a scalar handle without writable request memory");
+    CHECK(kproc_mprot(run,data,2*PAGE,PROT_READ|PROT_WRITE)==E_OK,
+          "restore native request controls for non-consuming snapshots");
+    if (handle>0) {
+        bzero(&request,sizeof(request));
+        request.operation=PROCESS_EXEC_SNAPSHOT; request.handle=handle;
+        CHECK(kproc_copy_to_user(request_address,&request,sizeof(request)) &&
+              kproc_mprot(run,data+PAGE,PAGE,PROT_READ)==E_OK,
+              "protect the trailing half of a native completion copyout");
+        CHECK(proc_exec_request(owner,request_address,sizeof(request))==EIMBA,
+              "actual cross-page snapshot copyout failure preserves owned preparation");
+        CHECK(kproc_mprot(run,data+PAGE,PAGE,PROT_READ|PROT_WRITE)==E_OK &&
+              proc_exec_request(owner,request_address,sizeof(request))==E_OK &&
+              kproc_copy_from_user(&completion,request_address+offsetof(PROCESS_EXEC_REQUEST,completion),sizeof(completion)) &&
+              completion.state==PROCESS_UNSTARTED && !completion.kind &&
+              !completion.order_low && !completion.order_high,
+              "retry native snapshot after copyout failure without losing identity or consuming completion");
+        request.operation=PROCESS_EXEC_CLOSE;
+        CHECK(kproc_copy_to_user(request_address,&request,sizeof(request)) &&
+              kproc_mprot(run,data,2*PAGE,PROT_READ)==E_OK &&
+              proc_exec_request(owner,request_address,sizeof(request))==E_OK &&
+              proc_exec_request(owner,request_address,sizeof(request))==EIHNDL,
+              "native CLOSE consumes preparation once without copying user output");
+    }
+    CHECK(kproc_munmap(run,data,2*PAGE)==E_OK,"reclaim actual user request mappings");
+}
 static void ordinary_deferred_commit(void)
 {
     PROCESS_COMPLETION completion;
@@ -2361,6 +2415,7 @@ static void ordinary_observation_yield(void)
         kthread_process(thread)!=ordinary_observation.parent || ordinary_observation.checked) return;
     ordinary_observation.yields++;
     if (ordinary_observation.yields==1) {
+        if (ordinary_observation.scenario==3) test_native_exec_request(ordinary_observation.parent);
         command[2]=ordinary_observation.scenario==2 ? 'f':'n';
         if (ordinary_observation.scenario >= 3) {
             LONG result=proc_exec_handle_prepare(ordinary_observation.parent,"C:\\X32HELLO.TOS",
