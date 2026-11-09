@@ -482,6 +482,9 @@ OFD *getofd(int h)
     n = syshnd(h);
     if (n < 0)
         return NULL;
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_accessible(n)) return NULL;
+#endif
 
     return sft[n].f_ofd;
 }
@@ -507,6 +510,9 @@ FTAB *getpfsslot(int h)
     n = syshnd(h);
     if (n < 0)
         return NULL;
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_accessible(n)) return NULL;
+#endif
 
     if (!sft[n].f_pfs.fs)
         return NULL;

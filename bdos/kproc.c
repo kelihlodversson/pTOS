@@ -67,6 +67,8 @@ struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
     UQUAD number;                /* Generic non-recycled PROCESS identity. */
 #if CONF_WITH_USER_ASPACE
+    LONG cleanup_error;
+    ULONG cleanup_transferred;
     UQUAD completion_order;
     BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
     WORD exit_signal; /* Pending only for final execution; immutable at completion. */
@@ -1172,7 +1174,25 @@ SBYTE *kproc_uft(PD *pd)
     return kproc ? kproc->uft : pd->p_uft;
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
+/* Diagnostic only: residual file references are owned by the SFT service,
+ * never by this retained identity. The first error survives PD retirement. */
+void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
+{
+    KPROC *p=kproc_find(pd);
+    if (!p) return;
+    if (!p->cleanup_error && error<0) p->cleanup_error=error;
+    if (transferred) {
+        if (p->cleanup_transferred==~(ULONG)0) panic("file cleanup count exhausted");
+        p->cleanup_transferred++;
+    }
+}
+LONG kproc_ref_file_cleanup(const KPROC *p, ULONG *transferred)
+{
+    if (!p) return EINVAL;
+    if (transferred) *transferred=p->cleanup_transferred;
+    return p->cleanup_error;
+}
 void kproc_standard_file_refs(ULONG *references)
 {
     KPROC *kproc;

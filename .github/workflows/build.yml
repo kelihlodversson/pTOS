@@ -65,6 +65,8 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-process-exec-handles.py
       - name: Test PROCESS-owned PFS directory preparation
         run: /tmp/elf-shared-venv/bin/python tools/test-process-directory-pfs.py
+      - name: Test exact SFT close ownership and bounded recovery
+        run: /tmp/elf-shared-venv/bin/python tools/test-fs-close.py
       - name: Test regression worker log preservation
         run: python3 tools/test-testlib-log.py
       - name: Test clone ABI layout and pointer decoding
