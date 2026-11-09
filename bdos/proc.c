@@ -387,7 +387,7 @@ static void release_pd_files(PD *r)
 #if CONF_WITH_USER_ASPACE
             release_file_reference(r,h);
             /* Consumed or transferred: this PD no longer owns the alias. */
-            PD_UFT(r)[i]=0;
+            PD_UFT(r)[i]=get_default_handle(i);
 #elif CONF_WITH_PROCMEM && CONF_WITH_KCALL
             kdos_fclose(h);
 #else
