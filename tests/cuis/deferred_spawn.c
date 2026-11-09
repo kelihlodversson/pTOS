@@ -203,7 +203,8 @@ BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD index,LONG status
 { (void)h; (void)index; (void)status; abort(); } /* async slots are not launch results */
 
 void ksched_waiter_retire(KPROC *p,ULONG tid,UQUAD execution) { (void)p; (void)tid; (void)execution; }
-ULONG kthread_tid(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return 7; }
+ULONG kthread_tid(const KTHREAD *t)
+{ CHECK(t==(KTHREAD *)&owner || t==(KTHREAD *)&child); return t==(KTHREAD *)&owner ? 7 : 17; }
 
 PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
 
