@@ -27,7 +27,7 @@
 #endif
 extern PD *run;
 
-typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
+typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
 } TASK_STATE;
 typedef struct kernel_task {
@@ -799,7 +799,7 @@ void ksched_exiting(PD *pd, UWORD result)
         kproc_release(exiting); return;
     }
     for (task = scheduler.tasks; task; task = task->next_task) {
-        if (task->state == TASK_UNUSED || task->state == TASK_RESERVED) continue;
+        if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING) continue;
         if (task->parent == pd) {
             task->parent = NULL;
             if (task->state == TASK_ZOMBIE) task->state = TASK_DONE;
@@ -1164,16 +1164,27 @@ LONG ksched_join(ULONG tid, UQUAD address)
 
 static void discard_process_task(KERNEL_TASK *task)
 {
-    KPROC *process = task->process;
-    KPROC *owner = task->deferred_owner_identity;
-    KTHREAD *thread = task->thread;
+    KPROC *process, *owner;
+    KTHREAD *thread;
+    RUNQUEUE_GUARD guard = runqueue_enter();
     check_task_thread(task, 6);
-    /* Keep backend storage until the THREAD reclaimer returns. Callbacks may
-     * reenter admission, so DONE prevents reuse during resource destruction. */
-    task->state = TASK_DONE;
+    if (task->state != TASK_RESERVED && task->state != TASK_DEFERRED)
+        panic("process retirement outside private admission");
+    process = task->process;
+    owner = task->deferred_owner_identity;
+    thread = task->thread;
+    /* Transfer ownership to this continuation before any callback can yield.
+     * RETIRING is private: neither a public child nor a root-reapable task.
+     * Its backend/stack storage stays reserved until THREAD destruction ends. */
+    task->state = TASK_RETIRING;
     task->program = NULL;
+    task->parent = NULL;
+    task->process = NULL;
     task->thread = NULL;
     task->deferred_owner_identity = NULL;
+    task->ready = NULL;
+    task->argument = NULL;
+    runqueue_leave(guard);
     proc_dispose_process(process);
     if (thread) kthread_destroy(thread);
     kproc_release(process);
@@ -1413,8 +1424,15 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
 /* Called only after the scheduler has switched back to its root context.
  * A zombie keeps its process identity for waiters, but its continuation and
  * stack can never run again. Repeated passes leave already-reaped stacks alone. */
+#if CONF_WITH_X86_64_MEMTEST
+static ULONG retiring_root_passes;
+ULONG ksched_test_retiring_root_passes(void) { return retiring_root_passes; }
+#endif
 static BOOL reap_finished_on_root(KERNEL_TASK *task)
 {
+#if CONF_WITH_X86_64_MEMTEST
+    if (!execution_cpu.current && task->state == TASK_RETIRING) retiring_root_passes++;
+#endif
     runqueue_unlocked();
     if (execution_cpu.current || task->execution.on_cpu || (task->state != TASK_DONE && task->state != TASK_ZOMBIE && task->state != TASK_DRAINING))
         return FALSE;
@@ -1576,7 +1594,7 @@ static void scheduler_root_entry(void)
         first = scheduler.next;
         task = first;
         do {
-            if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
+            if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
             if (task->state == TASK_DRAINING) { pending = TRUE; continue; }
             pending = TRUE;
             if (task->state == TASK_DEFERRED) continue;

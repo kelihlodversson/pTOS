@@ -1,4 +1,5 @@
 /* Production PFS resolver/table; driver cookies have real counted ownership. */
+#include <ctype.h>
 #include "emutos.h"
 #include "../fs/pfs.c"
 #define CHECK(c) do { if (!(c)) { __builtin_printf("pfs:%d: %s\n",__LINE__,#c); __builtin_abort(); } } while (0)

@@ -1303,6 +1303,11 @@ static struct {
     LONG handle;
     WORD pid;
 } deferred_reentry;
+static struct {
+    BOOL enabled, seen, yielding, expect_yield;
+    WORD pid;
+    PROCESS_OBSERVER *observer;
+} retiring_probe;
 #endif
 void x86_64_memtest_disposal_committed(PD *pd)
 {
@@ -1311,6 +1316,22 @@ void x86_64_memtest_disposal_committed(PD *pd)
     PROCESS_OBSERVER *late=NULL;
     PROCESS_COMPLETION completion;
     LONG third;
+    if (retiring_probe.enabled && kproc_pid(pd)==retiring_probe.pid) {
+        ULONG root_passes=ksched_test_retiring_root_passes();
+        retiring_probe.enabled=FALSE;
+        retiring_probe.seen=TRUE;
+        CHECK(ksched_wait(retiring_probe.pid,1,0)==EFILNF,
+              "cleanup callback cannot observe an uncommitted or retiring public child");
+        if (retiring_probe.expect_yield) {
+            retiring_probe.yielding=TRUE;
+            CHECK(ksched_yield()==E_OK && ksched_test_retiring_root_passes()!=root_passes,
+                  "actual cleanup yields into root which visits but cannot reap the private retiring record");
+            retiring_probe.yielding=FALSE;
+        }
+        CHECK(process_observer_snapshot(retiring_probe.observer,&completion) &&
+              completion.state==PROCESS_UNSTARTED && !process_observer_ready(retiring_probe.observer),
+              "canonical pending observation survives root entry before THREAD destruction");
+    }
     if (deferred_reentry.enabled && kproc_pid(pd)==deferred_reentry.pid) {
         deferred_reentry.enabled=FALSE;
         deferred_reentry.seen=TRUE;
@@ -2319,13 +2340,16 @@ static void ordinary_deferred_commit(void)
               process_observer_attach(replacement,&second)==E_OK,
               "replacement owns fresh prepared rights and canonical observers before commit");
         if (next<=0 || !replacement) return;
+        retiring_probe.enabled=TRUE; retiring_probe.seen=FALSE; retiring_probe.expect_yield=TRUE;
+        retiring_probe.pid=(WORD)ordinary_observation.pid;
+        retiring_probe.observer=ordinary_observation.observer;
         deferred_reentry.owner=ordinary_observation.parent;
         deferred_reentry.handle=next;
         deferred_reentry.pid=(WORD)ordinary_observation.pid;
         deferred_reentry.seen=FALSE;
         deferred_reentry.enabled=TRUE;
         CHECK(proc_exec_handle_commit(ordinary_observation.parent,next)==kproc_ref_pid(replacement) &&
-              deferred_reentry.seen && process_observer_ready(ordinary_observation.observer) &&
+              deferred_reentry.seen && retiring_probe.seen && process_observer_ready(ordinary_observation.observer) &&
               process_observer_snapshot(ordinary_observation.observer,&completion) &&
               completion.state==PROCESS_ABANDONED && !completion.kind && !completion.order_low,
               "successful replacement abandons the old successor without a fabricated completion");
@@ -2347,7 +2371,7 @@ static void ordinary_observation_yield(void)
     LONG waited;
     char command[] = {2,'O','n',0};
     static char environment[] = {0,0};
-    if (!ordinary_observation.enabled || !(thread=ksched_exit_thread(run)) ||
+    if (retiring_probe.yielding || !ordinary_observation.enabled || !(thread=ksched_exit_thread(run)) ||
         kthread_process(thread)!=ordinary_observation.parent || ordinary_observation.checked) return;
     ordinary_observation.yields++;
     if (ordinary_observation.yields==1) {
@@ -2382,9 +2406,15 @@ static void ordinary_observation_yield(void)
               ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
               "prepared ordinary child remains non-runnable and not wait-visible across native yield");
         if (ordinary_observation.scenario==4) {
+            retiring_probe.enabled=TRUE; retiring_probe.seen=FALSE; retiring_probe.expect_yield=TRUE;
+            retiring_probe.pid=(WORD)ordinary_observation.pid;
+            retiring_probe.observer=ordinary_observation.observer;
             CHECK(proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==E_OK &&
                   proc_exec_handle_close(ordinary_observation.parent,ordinary_observation.handle)==EIHNDL,
                   "native CLOSE consumes prepared rights exactly once");
+            CHECK(retiring_probe.seen &&
+                  proc_exec_handle_commit(ordinary_observation.parent,ordinary_observation.handle)==EIHNDL,
+                  "CLOSE callback yields safely and subsequent COMMIT rejects the consumed preparation");
             CHECK(process_observer_ready(ordinary_observation.observer) &&
                   process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
                   snapshot.state==PROCESS_ABANDONED && !snapshot.kind && !snapshot.status &&
@@ -2393,6 +2423,9 @@ static void ordinary_observation_yield(void)
                   "cancelled prepared image abandons canonical identity without public completion");
             ordinary_observation.checked=TRUE;
         } else if (ordinary_observation.scenario==5) {
+            retiring_probe.enabled=TRUE; retiring_probe.seen=FALSE; retiring_probe.expect_yield=FALSE;
+            retiring_probe.pid=(WORD)ordinary_observation.pid;
+            retiring_probe.observer=ordinary_observation.observer;
             ordinary_observation.checked=TRUE; /* Owner exit must abandon its preparation. */
         } else {
             CHECK(proc_exec_handle_commit(ordinary_observation.parent,ordinary_observation.handle)==ordinary_observation.pid &&
@@ -2520,7 +2553,7 @@ static void test_ordinary_observation(void)
         }
         if (mode==5) {
             PROCESS_COMPLETION abandoned;
-            CHECK(process_observer_ready(ordinary_observation.observer) &&
+            CHECK(retiring_probe.seen && process_observer_ready(ordinary_observation.observer) &&
                   process_observer_snapshot(ordinary_observation.observer,&abandoned) &&
                   abandoned.state==PROCESS_ABANDONED && !abandoned.kind && !abandoned.order_low,
                   "final PROCESS exit abandons owned uncommitted launch while retained lease survives");

@@ -96,7 +96,15 @@ current cooperative boot-CPU owner protocol serializes this work; enabling
 preemption/SMP requires #713 owner synchronization, not a second scheduler.
 
 Deferred replacement holds a nonblocking PROCESS selection transaction across
-old-successor destruction. Reentrant replacement/cancellation fails before
+old-successor destruction. Private cancellation first marks the task RETIRING
+and detaches PROCESS/THREAD/predecessor and public parent ownership under the
+existing metadata exclusion. The cancelling continuation owns those references
+outside exclusion, including through callbacks/yields. Root cannot reap a
+RETIRING record and child waits cannot see it. Backend storage is reusable only
+after both destruction and final local reference releases finish through the
+canonical task-clear path. Linked scheduler reconciliation preserves links,
+anchors and admission accounting in that existing helper.
+Reentrant replacement/cancellation fails before
 mutation. The in-flight owned handle rejects CLOSE, repeated COMMIT and late
 prepared-lease attachment; snapshots remain safe. Unrelated PREPARE/CLOSE may
 reenter cleanup. Native tests inject these operations at the old child
