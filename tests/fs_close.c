@@ -35,6 +35,8 @@ static DMD media;
 void panic(const char *format, ...) { fprintf(stderr,"panic: %s\n",format); abort(); }
 SBYTE *kproc_uft(PD *pd) { return pd->p_uft; }
 SBYTE get_default_handle(int i) { (void)i; return -1; }
+void kproc_standard_file_invalidate(WORD handle)
+{ int i; for(i=0;i<NUMSTD;i++) if(owner.p_uft[i]==handle) owner.p_uft[i]=-1; }
 void mark_bcbs_invalid(int drive) { CHECK(drive==0); invalidations++; }
 void xmfreblk(void *p) { CHECK(p==&file); freed++; }
 void flush(BCB *b)
@@ -78,7 +80,7 @@ static void open_file(void)
 int main(void)
 {
     FS_CLOSE_REPORT result;
-    FS_CLEANUP_TOKEN old;
+    FS_CLEANUP_TOKEN old,second;
     UQUAD replacement;
     FS_CLEANUP_STATUS status;
     {
@@ -129,12 +131,34 @@ int main(void)
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF);
     old=result.token; replacement=sft[0].f_incarnation;
     fail_disk=FALSE;
-    file.o_dmd=&media;
+    file.o_dmd=&media; owner.p_uft[0]=NUMSTD;
     ofd_invalidate_drive(&media);
+    CHECK(owner.p_uft[0]==-1);
     CHECK(sft[0].f_incarnation==replacement && !sft[0].f_cleanup_refs);
     CHECK(fs_cleanup_snapshot(&old,&status)==0 && status.state==FS_CLEANUP_INVALIDATED);
     CHECK(fs_cleanup_retry(&old,&result)==EIHNDL && freed==5);
     CHECK(!sft[0].f_use && !sft[0].f_own && !sft[0].f_ofd);
+    /* Recovered tickets cannot revive on a later transfer in the SAME slot. */
+    open_file(); sft[0].f_use=2; fail_disk=TRUE;
+    CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF); old=result.token;
+    fail_disk=FALSE;
+    CHECK(fs_cleanup_retry(&old,&result)==0 && sft[0].f_use==1 && freed==5);
+    buffer.b_dirty=TRUE; fail_disk=TRUE;
+    CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF); second=result.token;
+    CHECK(second.incarnation==old.incarnation && second.reference>old.reference);
+    CHECK(fs_cleanup_snapshot(&old,&status)==0 && !status.references && status.state==FS_CLEANUP_COMPLETE);
+    CHECK(fs_cleanup_retry(&old,&result)==EIHNDL && sft[0].f_use==1 && sft[0].f_cleanup_refs==1);
+    fail_disk=FALSE;
+    CHECK(fs_cleanup_retry(&second,&result)==0 && freed==6);
+    /* Multiple transfer rights stay distinct, bounded and FIFO. */
+    open_file(); sft[0].f_use=2; fail_disk=TRUE;
+    CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF); old=result.token;
+    CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF); second=result.token;
+    CHECK(fs_cleanup_retry(&second,&result)==EAGAIN && sft[0].f_cleanup_refs==2);
+    fail_disk=FALSE;
+    CHECK(fs_cleanup_retry(&old,&result)==0 && sft[0].f_use==1 && !fs_sft_accessible(0));
+    CHECK(fs_cleanup_retry(&old,&result)==EIHNDL && sft[0].f_cleanup_refs==1);
+    CHECK(fs_cleanup_retry(&second,&result)==0 && freed==7);
     /* PFS errors consume a reference despite a negative return. */
     CHECK(fs_sft_claim(0));
     driver.close=driver_close; driver.release=driver_release;

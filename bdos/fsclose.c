@@ -7,6 +7,7 @@
 #include "bdosstub.h"
 #include "biosext.h"
 #include "console.h"
+#include "kproc.h"
 #include "string.h"
 
 static UQUAD last_incarnation;
@@ -28,6 +29,7 @@ BOOL fs_sft_claim(int n)
     f=&sft[n];
     if (f->f_own || f->f_use || f->f_close_busy || f->f_cleanup_refs) return FALSE;
     f->f_incarnation=++last_incarnation;
+    f->f_cleanup_issued=f->f_cleanup_consumed=f->f_cleanup_invalid_from=0;
     f->f_cleanup_first_error=f->f_cleanup_last_error=0;
     f->f_cleanup_state=0; f->f_close_cleanup=FALSE;
     return TRUE;
@@ -38,6 +40,11 @@ void fs_sft_invalidated(int n)
     if (f->f_close_busy) panic("filesystem: invalidation during active close");
     /* The filesystem's normal media-invalidation path owns disposal of the
      * handle group. It is not a forced free by the cleanup service. */
+    /* Do this before the filesystem makes the numeric slot reusable. Never
+     * let a retired alias close a replacement incarnation during PD cleanup. */
+    kproc_standard_file_invalidate((WORD)(n+NUMSTD));
+    if (f->f_cleanup_refs) f->f_cleanup_invalid_from=f->f_cleanup_consumed+1;
+    f->f_cleanup_consumed=f->f_cleanup_issued;
     f->f_cleanup_refs=0;
     f->f_cleanup_state=FS_CLEANUP_INVALIDATED;
     f->f_cleanup_last_error=E_CHNG;
@@ -73,6 +80,7 @@ LONG fs_close_once(volatile WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
     if (!f->f_incarnation) panic("filesystem: live slot without incarnation");
     if (cleanup ? !f->f_cleanup_refs : (ULONG)f->f_use<=f->f_cleanup_refs)
         return out->error=out->last_error=EIHNDL;
+    if (cleanup) out->token.reference=f->f_cleanup_consumed+1;
     out->disposition=FS_CLOSE_RETAINED;
     if (f->f_close_busy) return out->error=out->last_error=EACCDN;
     f->f_close_busy=TRUE; f->f_close_cleanup=cleanup;
@@ -93,6 +101,7 @@ LONG fs_close_once(volatile WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
     if (consumed && cleanup) {
         if (!f->f_cleanup_refs) panic("filesystem: cleanup reference underflow");
         f->f_cleanup_refs--;
+        f->f_cleanup_consumed++;
         if (!f->f_cleanup_refs) f->f_cleanup_state=FS_CLEANUP_COMPLETE;
     }
     if (consumed && standard>=0) PD_UFT(run)[standard]=get_default_handle(standard);
@@ -112,7 +121,9 @@ static BOOL transfer_reference(FS_CLOSE_REPORT *r)
     f=&sft[n];
     active_user=f->f_close_busy && !f->f_close_cleanup ? 1 : 0;
     if (f->f_incarnation!=r->token.incarnation || f->f_use<=0 ||
-        (ULONG)f->f_use<=f->f_cleanup_refs+active_user) return FALSE;
+        (ULONG)f->f_use<=f->f_cleanup_refs+active_user ||
+        f->f_cleanup_issued==~(UQUAD)0) return FALSE;
+    r->token.reference=++f->f_cleanup_issued;
     f->f_cleanup_refs++;
     if (!f->f_cleanup_first_error) f->f_cleanup_first_error=r->error;
     f->f_cleanup_last_error=r->last_error;
@@ -146,9 +157,14 @@ LONG fs_cleanup_snapshot(const FS_CLEANUP_TOKEN *token, FS_CLEANUP_STATUS *out)
     n=token->handle-NUMSTD;
     if (!valid_slot(n) || !token->incarnation || sft[n].f_incarnation!=token->incarnation) return EIHNDL;
     f=&sft[n];
-    out->token=*token; out->references=f->f_cleanup_refs;
+    if (!token->reference || token->reference>f->f_cleanup_issued) return EIHNDL;
+    out->token=*token;
+    out->pending_references=f->f_cleanup_refs;
+    out->references=token->reference>f->f_cleanup_consumed ? 1 : 0;
     out->first_error=f->f_cleanup_first_error; out->last_error=f->f_cleanup_last_error;
-    out->state=f->f_cleanup_state;
+    out->state=out->references ? FS_CLEANUP_PENDING :
+        f->f_cleanup_invalid_from && token->reference>=f->f_cleanup_invalid_from ?
+        FS_CLEANUP_INVALIDATED : FS_CLEANUP_COMPLETE;
     return E_OK;
 }
 LONG fs_cleanup_retry(const FS_CLEANUP_TOKEN *token, FS_CLOSE_REPORT *out)
@@ -157,6 +173,9 @@ LONG fs_cleanup_retry(const FS_CLEANUP_TOKEN *token, FS_CLOSE_REPORT *out)
     LONG error=fs_cleanup_snapshot(token,&status);
     if (error) return error;
     if (!status.references) return EIHNDL;
+    /* FIFO keeps exact once-only transfer rights without an allocated record
+     * per failed alias. A later ticket cannot consume an earlier owner. */
+    if (token->reference!=sft[token->handle-NUMSTD].f_cleanup_consumed+1) return EAGAIN;
     error=bounded_close(token->handle,TRUE,FALSE,out);
     sft[token->handle-NUMSTD].f_cleanup_last_error=out->last_error;
     return error;

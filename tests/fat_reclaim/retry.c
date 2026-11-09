@@ -4,6 +4,8 @@
 #include "../../bdos/fsopnclo.c"
 void panic(const char *format, ...) { (void)format; __builtin_trap(); }
 
+void kproc_standard_file_invalidate(WORD handle)
+{ if (handle<NUMSTD || handle>=NUMHANDLES) __builtin_trap(); }
 static void *escape[5];
 static CLNO disk[2][8];
 static CLNO pending_cluster;

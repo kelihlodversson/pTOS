@@ -49,15 +49,25 @@ the complete enclosing filesystem disk-error target before returning.
 
 Each allocation gets a monotonically increasing, non-recycled incarnation.
 Counter exhaustion refuses admission. A trusted FS_CLEANUP_TOKEN identifies
-slot plus incarnation. fs_cleanup_snapshot reports PENDING, COMPLETE or
+slot, incarnation and one monotonically issued transfer reference. fs_cleanup_snapshot reports PENDING, COMPLETE or
 INVALIDATED and the first/last error. fs_cleanup_retry performs one bounded
-recovery of one pending reference. A stale or already-consumed token fails;
+recovery of that exact pending reference. Transfers are recovered FIFO within
+one SFT: a pending later ticket returns EAGAIN without mutation until earlier
+tickets are consumed. Issued/consumed counters reject replay without allocating
+an unbounded per-reference log. A completed ticket never revives when a later
+alias is transferred within the same still-live SFT incarnation. Snapshot
+references is 0/1 for that ticket; pending_references is the aggregate count.
+First/last errors remain diagnostic history for the entire SFT incarnation. A stale or already-consumed token fails;
 it cannot close a replacement slot even if its OFD storage address is reused.
 There is no automatic retry. A permanent/unrepaired error stays quarantined,
 occupying bounded filesystem capacity until an explicit repair/retry or the
 filesystem's authoritative media invalidation. It never becomes a false
-successful close. Media invalidation disposes the old filesystem group via
-its existing finalizer and invalidates the cleanup reference, not vice versa.
+successful close. Media invalidation first unpublishes the authoritative standard aliases in
+all live KPROC tables (plus the loaded untracked kernel table), then makes the
+numeric SFT slot reusable through its existing finalizer. A retiring PROCESS
+must neither panic on a dead alias nor close a replacement through that number.
+Pending tickets become INVALIDATED; earlier recovered tickets remain COMPLETE.
+The filesystem disposes its old group, not the cleanup service.
 
 9P disposition
 --------------
@@ -110,3 +120,20 @@ cleanup and service through retirement. Native x32 memtest opens an actual FAT
 file, exhausts injected close errors during real PROCESS disposal, checks
 retired metadata and exact recovery, then checks resource baselines. These
 are distinct from real hardware I/O-failure evidence and from user-mode tests.
+
+K3 review corrections
+---------------------
+Review4510390362 exposed live standard aliases after media invalidation;
+review4510390418 exposed same-incarnation resurrection of a completed recovery
+right. The production alias invalidation helper and FIFO per-transfer identity
+above close those ownership gaps, rather than tolerating NOT_OWNED at PROCESS
+retirement or treating an SFT incarnation as a reusable batch-close right.
+Native x32 assertions now cover real PROCESS retirement after authoritative
+invalidation of a test-owned FAT OFD and immediate slot reuse, plus a real FAT
+handle recovered while an alias remains and a later failed transfer of that
+alias. Host tests exercise multiple distinct pending rights and FIFO refusal,
+production KPROC alias invalidation, and actual non-CUIS retirement. A synthetic
+medium is used for the native invalidation fixture; this is not hardware media
+removal evidence. Future owner locking must span alias retirement and slot
+invalidation in PROCESS-before-filesystem order; local cooperative serialization
+and no-yield metadata walks do not constitute an SMP registry lock.

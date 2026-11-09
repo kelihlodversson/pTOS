@@ -394,6 +394,7 @@ typedef struct
 #if CONF_WITH_USER_ASPACE
     UQUAD f_incarnation; /* never reused, even if slot/OFD addresses are */
     ULONG f_cleanup_refs;
+    UQUAD f_cleanup_issued, f_cleanup_consumed, f_cleanup_invalid_from;
     LONG f_cleanup_first_error, f_cleanup_last_error;
     UWORD f_cleanup_state;
     BOOL f_close_busy, f_close_cleanup;
