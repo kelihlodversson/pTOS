@@ -144,3 +144,11 @@ followed by an erroneous numeric retry cannot leave a dead standard alias for
 later PROCESS disposal. Aliases are unpublished before a consuming PFS finalizer
 can reenter cleanup; non-consuming FAT failures retain their mappings. This
 changes neither error visibility nor the existing public numeric-handle policy.
+
+A consuming PFS release callback may intentionally redirect a standard handle
+after the backend unpublishes the old final alias. The outer close resets the
+standard entry only while it still names its original numeric handle; the
+close-busy incarnation excludes reuse of that original slot during callback.
+A replacement alias and its use-count increment remain owned by the caller.
+The production regression invokes ixforce, getofd/getpfsslot and both subsequent
+closes, checking the replacement and finalizer counts through final disposal.

@@ -23,5 +23,5 @@ with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
     subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
         '-ffunction-sections','-fdata-sections','-iquote',str(work),'-iquote','include',
         '-Iinclude/arch/x86_64','-Iinclude','-iquote','bdos','-iquote','fs',
-        'tests/fs_close.c','bdos/fsclose.c','bdos/fsopnclo.c','-Wl,--gc-sections','-o',str(work/'close')],check=True)
+        'tests/fs_close.c','bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'close')],check=True)
     subprocess.run([str(work/'close')],check=True)

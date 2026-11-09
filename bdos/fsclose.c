@@ -108,7 +108,11 @@ LONG fs_close_once(volatile WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
         f->f_cleanup_consumed++;
         if (!f->f_cleanup_refs) f->f_cleanup_state=FS_CLEANUP_COMPLETE;
     }
-    if (consumed && standard>=0) PD_UFT(run)[standard]=get_default_handle(standard);
+    /* A final PFS release may rebind the unpublished standard entry. Only
+     * relinquish this operation's old mapping, never a callback's new alias.
+     * Slot reuse itself is excluded until f_close_busy is cleared below. */
+    if (consumed && standard>=0 && PD_UFT(run)[standard]==h)
+        PD_UFT(run)[standard]=get_default_handle(standard);
     restore_error(&saved);
     f->f_close_busy=FALSE; f->f_close_cleanup=FALSE;
     out->error=out->last_error=error;
