@@ -435,7 +435,6 @@ int main(void)
 }
 
 ULONG kthread_tid(const KTHREAD *t) { (void)t; return 17; }
-BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
 
 
 KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
