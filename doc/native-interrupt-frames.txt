@@ -370,3 +370,39 @@ or SMP. Before B2, add owner-protected generations/pins to raw join/PROCESS and
 device predicate waits, validate restored frames natively on EACH backend, and
 prove exception-stack acknowledgement before any stack reuse. No raw callback
 predicate is upgraded to concurrent wake safety by this ownership increment.
+
+B2b first restricted restore proof: fresh x32 same-entry round trip
+----------------------------------------------------------------
+Test-only EXIT_HANDOFF_TEST/X86_64_MEMTEST kernels now round-trip the known
+ring-3 register-pattern probe through its preallocated THREAD-owned capture.
+This happens BEFORE IRQ dispatch, callbacks, scheduler entry or any yield. The
+original frame/IRQ stack stays live and is the freshness witness. Validation
+requires exact execution generation/TID/CPU/sequence, original frame address,
+CR3/TSS stack bindings, user iret controls and byte-identical image. It does not
+accept user-supplied data or an old diagnostic image after context selection.
+
+For a recognized pattern only, the test deliberately zeros saved RAX and XMM
+bytes, then copies the complete validated 688-byte owned image onto its same
+IRQ stack. The existing assembly FXRSTOR/GPR pops/IRETQ return to the actually
+interrupted user instruction; the ring-3 fixture checks all register/FPU
+patterns. A final full suite verdict is required in addition to the root's
+round-trip marker. The boot driver requires that marker alongside capture.
+Host tests exercise identity/sequence/CPU/TID and changed-source rejection;
+modeled CPU queries are not native restore evidence.
+
+This is NOT a scheduler handoff or general restorable saved continuation.
+No different task/root/GS/FS/TSS selection occurs, and no syscall nesting or
+mapping lifetime changes between copy and return. The original hardware return
+path remains authoritative after the probe. Ordinary kernels remain capture-
+only. ARM and m68k copied-frame return proofs remain unavailable; their original
+exception return is unchanged. No deferred involuntary scheduling, arbitrary
+kernel/IRQ continuation switching, timer preemption or SMP is enabled.
+
+Next prerequisites: an independently owned resume transaction with stable
+mapping/materialization/stack holds across a scheduler boundary, validated
+outer-syscall and user/kernel GS/FS/TSS selection on x32; banked/SPSR/VFP return
+proof on A32; actual model-specific RTE/FSAVE/FPIAR proof on 030/040/060. The
+current same-entry validator must never be promoted into a delayed restore API
+by omitting its untouched-source/freshness requirement. B2a IRQ generation and
+idle admission semantics are unchanged. #933's cooperative no-reentry filesystem
+assumptions must be reviewed again before making those paths preemptible.

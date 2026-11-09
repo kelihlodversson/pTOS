@@ -274,5 +274,8 @@ if [ "$expected" = PASS ] && grep -q '^#define CONF_WITH_NATIVE_SCHED 1' obj/aut
     grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$log" || {
         echo "Missing actual ring-3 interrupted-user capture evidence" >&2; exit 1;
     }
+    grep -aq "native x32 fresh owned IRQ image round trip: PASS" "$log" || {
+        echo "Missing native fresh owned IRQ image round-trip evidence" >&2; exit 1;
+    }
 fi
 echo "Private Mmap/Munmap/Mprot boot tests passed ($expected)."

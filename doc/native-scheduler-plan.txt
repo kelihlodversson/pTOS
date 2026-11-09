@@ -376,3 +376,15 @@ fixture injects admission/park interleavings separately. No assembly user-return
 path is replaced. B2b restartable-frame proof and B2c deferred handoff remain
 gated; fork's independently owned syscall-return startup (#932) is a different
 contract and does not authorize restoring diagnostic IRQ captures.
+
+B2b restricted proof increment
+-----------------------------
+x32 test kernels can round-trip a freshly captured known user IRQ pattern
+through THREAD-owned storage back to the SAME entry stack before callbacks or
+scheduling. Host validation rejects changed image/binding/identity/sequence;
+native acceptance requires actual user register checks and the fresh-image
+marker plus final suite PASS. This is deliberately smaller than a restorable
+continuation across scheduler dispatch. Ordinary builds, A32 and m68k retain
+the original capture/return behavior; copied delayed restore and preemption
+remain disabled. See native-interrupt-frames.txt for the exact freshness and
+mapping/GS/TSS/stack limits. No #934/#936/GUI policy is imported here.

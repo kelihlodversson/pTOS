@@ -1,4 +1,4 @@
-/* IRQ entry image. Shared C/assembly offsets; no restore/dispatch capability. */
+/* IRQ entry image. No delayed restore/dispatch capability. */
 #ifndef X86_64_IRQFRAME_H
 #define X86_64_IRQFRAME_H
 #define X86_IRQ_FX_BYTES 512
@@ -81,6 +81,26 @@ typedef struct {
     UWORD cpu;
     BOOL valid;
 } X86_USER_IRQ_CAPTURE;
+/* Test proof only: this eligibility never authorizes a delayed continuation.
+ * Caller must be in the SAME IRQ entry, before dispatch/callback/yield. The
+ * untouched original is the freshness witness, not only a cached stack VA. */
+static inline BOOL x86_irq_same_entry_valid(const X86_USER_IRQ_CAPTURE *capture,
+    const X86_USER_IRQ_FRAME *original, const X86_IRQ_BINDING *current,
+    UQUAD execution, UQUAD sequence, ULONG tid, UWORD cpu, UQUAD limit)
+{
+    const X86_IRQ_BINDING *saved=&capture->binding;
+    const UBYTE *a=(const UBYTE *)&capture->image,*b=(const UBYTE *)original;
+    ULONG i;
+    if (!capture->valid || !sequence || capture->sequence!=sequence ||
+        !execution || capture->execution!=execution || capture->tid!=tid || capture->cpu!=cpu ||
+        current->frame_address!=(UQUAD)(uintptr_t)original ||
+        saved->frame_address!=current->frame_address || saved->cr3!=current->cr3 ||
+        saved->expected_cr3!=current->expected_cr3 || saved->syscall_top!=current->syscall_top ||
+        saved->irq_top!=current->irq_top || !x86_irq_user_valid(original,current,limit) ||
+        !x86_irq_user_valid(&capture->image,current,limit)) return FALSE;
+    for(i=0;i<sizeof(*original);i++) if(a[i]!=b[i]) return FALSE;
+    return TRUE;
+}
 void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame);
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
 void x86_64_irq_capture_report(void); /* root only, never from IRQ */

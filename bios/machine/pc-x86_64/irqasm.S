@@ -124,7 +124,8 @@ x86_64_irq_common:
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
         /* Capture BEFORE dispatch/callback code changes live scratch state.
-         * The original frame remains authoritative and is never edited. */
+         * The original frame remains authoritative. Test kernels may
+         * round-trip a fresh owned image here, before callbacks/dispatch. */
         mov     %rsp, %rdi
         call    C_SYM(x86_64_capture_user_irq)
         mov     X86_IRQ_VECTOR(%rsp), %rdi

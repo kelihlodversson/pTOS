@@ -1,4 +1,5 @@
-/* Capture only: never modifies/restores an IRQ continuation. */
+/* Diagnostic capture. Test kernels additionally prove a fresh same-entry
+ * copied-frame round trip; no delayed restore or scheduler handoff exists. */
 #include "emutos.h"
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
@@ -12,7 +13,7 @@
 #include "biosext.h"
 extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
-static ULONG irq_pattern_seen;
+static ULONG irq_pattern_seen, irq_roundtrip_seen;
 static BOOL irq_pattern_bad, irq_pattern_reported;
 static void check_irq_pattern(const X86_USER_IRQ_FRAME *f)
 {
@@ -37,6 +38,8 @@ void x86_64_irq_capture_report(void)
     if (!irq_pattern_seen || irq_pattern_reported) return;
     irq_pattern_reported=TRUE;
     kprintf("native x32 interrupted-user GPR/FXSAVE/iret capture: PASS\r\n");
+    if (!irq_roundtrip_seen) panic("x32 copied IRQ round trip not exercised");
+    kprintf("native x32 fresh owned IRQ image round trip: PASS\r\n");
 }
 #endif
 void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
@@ -68,6 +71,23 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     capture->valid=TRUE;
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
     check_irq_pattern(&capture->image);
+    /* Restricted proof BEFORE dispatch/callbacks: no yield, reference release,
+     * mapping change or GS/FS/TSS change can intervene. The original IRQ stack
+     * remains owned and live. Never use a prior capture after a scheduling or
+     * callback boundary. Unsupported/delayed restore remains unavailable. */
+    if (capture->image.r15==0x7130000000713015ULL) {
+        X86_USER_IRQ_FRAME *destination=(X86_USER_IRQ_FRAME *)(uintptr_t)frame;
+        if (!x86_irq_same_entry_valid(capture,frame,&binding,execution->identity,
+                                     capture->sequence,tid,execution->owner_cpu,USER_VA_LIMIT))
+            panic("x32 copied IRQ image ownership mismatch");
+        /* Deliberately clobber live saved fields so native user register checks
+         * fail if the owned image is not actually copied back. Keep control
+         * state untouched until the complete validated image is restored. */
+        destination->rax=0;
+        memset(destination->fx+160,0,256);
+        memcpy(destination,&capture->image,sizeof(*destination));
+        irq_roundtrip_seen++;
+    }
 #endif
 }
 #endif

@@ -4,6 +4,7 @@
 #include "emutos.h"
 #include "../bdos/arch/x86_64/interrupt_user.c"
 #define CHECK(x) do { if (!(x)) abort(); } while (0)
+void panic(const char *format, ...) { (void)format; abort(); }
 PD *run;
 static KTHREAD_CONTEXT execution;
 static BOOL owned=TRUE;
@@ -32,6 +33,17 @@ int main(void)
     CHECK(c->valid && c->sequence==1 && c->execution==123 && c->tid==17 && !c->cpu);
     CHECK(!memcmp(&c->image,&f,sizeof(f)) && !memcmp(&f,&before,sizeof(f)));
     CHECK(c->binding.frame_address==(uintptr_t)&f && c->binding.cr3==0x1000);
+    CHECK(x86_irq_same_entry_valid(c,&f,&c->binding,123,1,17,0,USER_VA_LIMIT));
+    CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,124,1,17,0,USER_VA_LIMIT));
+    CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,123,2,17,0,USER_VA_LIMIT));
+    CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,123,1,18,0,USER_VA_LIMIT));
+    CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,123,1,17,1,USER_VA_LIMIT));
+    f.fx[160]^=1;
+    CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,123,1,17,0,USER_VA_LIMIT));
+    f.fx[160]^=1;
+    c->valid=FALSE;
+    CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,123,1,17,0,USER_VA_LIMIT));
+    c->valid=TRUE;
     f.rax=0x5678; CHECK(c->image.rax==0x1234); /* copied, never borrowed */
     root=0x2000; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==1);
     root=0x1000; top-=16; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==1);
@@ -40,6 +52,6 @@ int main(void)
     c->sequence=7; owned=FALSE; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==7);
     owned=TRUE; f.cs=8; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==7);
     CHECK(notifications==7); /* kernel/rejected IRQs still notify, never become user images */
-    puts("x32 capture producer: copied frame, unchanged IRQ source, binding rejection and sequence exhaustion: PASS (CPU queries modeled)");
+    puts("x32 capture producer: copied frame, same-entry eligibility, unchanged IRQ source, binding rejection and sequence exhaustion: PASS (CPU queries modeled)");
     return 0;
 }
