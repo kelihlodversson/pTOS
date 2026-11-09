@@ -2317,7 +2317,7 @@ static struct {
  * syscall is enabled. Loader/observer ownership is production, not a model. */
 static void test_native_exec_request(KPROC *owner)
 {
-    VADDR data, request_address;
+    VADDR data, request_address, lazy_environment;
     LONG handle;
     PROCESS_EXEC_REQUEST request;
     PROCESS_COMPLETION completion;
@@ -2336,10 +2336,13 @@ static void test_native_exec_request(KPROC *owner)
     }
     CHECK((LONG)data>0,"map actual user PROCESS request and arguments");
     if ((LONG)data<=0) return;
+    lazy_environment=kproc_mmap(run,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    CHECK((LONG)lazy_environment>0,"map an untouched lazy environment for the PROCESS decoder");
+    if ((LONG)lazy_environment<=0) { kproc_munmap(run,data,2*PAGE); return; }
     request_address=data+PAGE-48; /* Snapshot output straddles the two pages. */
     bzero(&request,sizeof(request));
     request.operation=PROCESS_EXEC_PREPARE;
-    request.path=data; request.tail=data+128; request.environment=data+256;
+    request.path=data; request.tail=data+128; request.environment=lazy_environment;
     CHECK(kproc_copy_to_user(data,path,sizeof(path)) &&
           kproc_copy_to_user(data+128,tail,sizeof(tail)) &&
           kproc_copy_to_user(data+256,environment,sizeof(environment)) &&
@@ -2376,7 +2379,8 @@ static void test_native_exec_request(KPROC *owner)
               proc_exec_request(owner,request_address,sizeof(request))==EIHNDL,
               "native CLOSE consumes preparation once without copying user output");
     }
-    CHECK(kproc_munmap(run,data,2*PAGE)==E_OK,"reclaim actual user request mappings");
+    CHECK(kproc_munmap(run,lazy_environment,PAGE)==E_OK && kproc_munmap(run,data,2*PAGE)==E_OK,
+          "reclaim actual user request and materialized lazy environment mappings");
 }
 static void ordinary_deferred_commit(void)
 {

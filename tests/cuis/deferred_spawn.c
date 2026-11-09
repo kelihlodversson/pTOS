@@ -142,6 +142,7 @@ int main(void)
         unsigned disposed = disposals;
         scheduler.current = &tasks[0];
         tasks[1].program = NULL; /* Modeled finalizer revokes the retired PD. */
+        CHECK(ksched_process_publish(NULL)==EINVAL && ksched_process_publish(&slot)==EINVAL);
         CHECK(ksched_process_prepare(&child,FALSE,NULL) == EINVAL);
         slot = (void *)1;
         CHECK(ksched_process_prepare(&child,FALSE,&slot) == EINVAL && slot == (void *)1);

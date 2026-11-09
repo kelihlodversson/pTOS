@@ -27,7 +27,7 @@ void panic(const char *format,...)
 #define BAD(operation) do { expect_panic=TRUE; if(!setjmp(fatal)) { operation; abort(); } expect_panic=FALSE; scheduler_model_flags=0x200; } while(0)
 int main(void)
 {
-    KSCHED_CLEANUP_SCOPE outer={0}, inner={0}, child={0}, empty={0};
+    KSCHED_CLEANUP_SCOPE outer={0}, inner={0}, child={0}, empty={0}, stale;
     run=&parent; scheduler.active=TRUE; scheduler.tasks=tasks; scheduler.current=&tasks[0];
     tasks[0].program=tasks[1].program=&parent;
     tasks[0].process=tasks[1].process=(KPROC *)&parent;
@@ -49,8 +49,11 @@ int main(void)
     scheduler.current=&tasks[0];
     tasks[0].execution.identity++; BAD(ksched_cleanup_end(&inner)); tasks[0].execution.identity--;
     tids[0]++; BAD(ksched_cleanup_end(&inner)); tids[0]--;
+    tasks[0].process=(KPROC *)&nested; BAD(ksched_cleanup_end(&inner)); tasks[0].process=(KPROC *)&parent;
     ksched_cleanup_end(&inner); CHECK(ksched_cleanup_active());
+    stale=outer;
     ksched_cleanup_end(&outer); CHECK(!ksched_cleanup_active() && !deliveries && pending);
+    ksched_cleanup_begin(&inner); BAD(ksched_cleanup_end(&stale)); ksched_cleanup_end(&inner);
     BAD(ksched_cleanup_end(&outer)); BAD(ksched_cleanup_end(&empty));
     if (!setjmp(delivered)) { ksched_cancel_point(); abort(); }
     CHECK(deliveries==1 && pending);

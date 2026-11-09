@@ -29,7 +29,7 @@ typedef struct {
     struct kproc *process;
     PD *caller;
     UQUAD execution;
-    ULONG tid, depth;
+    ULONG tid, depth, ticket, parent_ticket;
     BOOL active;
 } KSCHED_CLEANUP_SCOPE;
 void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *empty);
