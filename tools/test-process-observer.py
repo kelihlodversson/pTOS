@@ -30,3 +30,16 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
         '-Iinclude/arch/x86_64','-Ibios/machine/pc-x86_64','-Ibios/arch/x86_64','-idirafter','include',
         'tests/process_allocation_observer.c','-Wl,--gc-sections','-o',str(work/'allocation')],check=True)
     subprocess.run([str(work/'allocation')],check=True)
+
+    # The same production registry with native owner teardown enabled: model
+    # a prepared-child finalizer at proc_exec_owner_exit and use real ixforce.
+    config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
+    config.write_config(str(work/'config'))
+    subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
+                    '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
+    subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
+        '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
+        '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
+        'tests/process_observer.c','bdos/process_observer.c','bdos/fshand.c',
+        '-Wl,--gc-sections','-o',str(work/'native-owner')],check=True)
+    subprocess.run([str(work/'native-owner')],check=True)
