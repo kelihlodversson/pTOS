@@ -66,6 +66,24 @@ BOOL aspace_logical_protection(const ASPACE *as, VADDR address, UWORD *protectio
     if (mapping) { *protection = mapping->protection; return TRUE; }
     return aspace_translate(as, address, NULL, protection);
 }
+/* Failed higher-level construction may discard the child after backend clone
+ * succeeded. Normalize exclusive source leaves without allocation or copies. */
+void aspace_cow_collapse(ASPACE *as)
+{
+    struct cow_mapping **link = &as->cow, *mapping;
+    BOOL changed = FALSE;
+    while ((mapping = *link)) {
+        if (mapping->frame->references == 1 &&
+            kaspace_cow_change(as, mapping->address, USER_PAGE_SIZE)) {
+            struct cow_frame *frame = mapping->frame;
+            if (!cow_replace(as, mapping->address, frame->physical, mapping->protection))
+                panic("COW exclusive collapse");
+            *link = mapping->next; kfree(mapping); cow_frame_drop(frame, FALSE);
+            changed = TRUE;
+        } else link = &mapping->next;
+    }
+    if (changed) cow_flush(as);
+}
 /* -1: not an anonymous COW leaf; 0: forbidden access; 1: retry; 2: OOM.
  * A COW change preserves the VA/rights/hold, but never a sealed write alias. */
 int aspace_cow_fault(ASPACE *as, VADDR address, UWORD access)

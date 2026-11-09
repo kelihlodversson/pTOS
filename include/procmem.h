@@ -244,6 +244,7 @@ ASPACE *aspace_create(void);
 LONG aspace_clone(ASPACE *source, ASPACE **result);
 BOOL aspace_logical_protection(const ASPACE *, VADDR, UWORD *);
 int aspace_cow_fault(ASPACE *, VADDR, UWORD);
+void aspace_cow_collapse(ASPACE *);
 ULONG aspace_cow_frames(void);
 ULONG aspace_cow_references(void);
 void aspace_clone_test_fail_after(ULONG count);

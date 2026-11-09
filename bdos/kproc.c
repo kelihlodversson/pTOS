@@ -546,6 +546,25 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     target->lim_data = source->lim_data;
     return TRUE;
 }
+#if CONF_WITH_PRIVATE_CLONE
+BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
+{
+    KPROC *peer;
+    if (!source || !source->active_space || !source->threads ||
+        !kproc_thread_is_sole(source, source->threads) || source->nheap || source->pending_space ||
+        source->give_back || source->lender || source->lost) return FALSE;
+    for (peer = kproc_list; peer; peer = peer->next)
+        if (peer != source && peer->active_space == source->active_space) return FALSE;
+    if (target) {
+        if (!kproc_clone_target_ready(target, NULL) || target->nheap) return FALSE;
+        target->stack_size = source->stack_size;
+        target->stack_low = source->stack_low;
+        target->stack_top = source->stack_top;
+        target->entry = source->entry;
+    }
+    return TRUE;
+}
+#endif
 
 KASPACE *kproc_active_space(const KPROC *process)
 {
