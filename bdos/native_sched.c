@@ -763,6 +763,10 @@ static LONG finish_deferred_commit(void **slot, KPROC *owner)
     LONG result;
     cancel_successors(owner);
     result = ksched_process_publish(slot);
+    /* Preparation transferred loader ownership, and predecessor teardown is
+     * irreversible. A lost reservation here is internal corruption, not a
+     * recoverable loader error (which would invite double disposal). */
+    if (result < 0) panic("deferred publication lost prepared task");
     kproc_exec_commit_end(owner);
     return result;
 }
@@ -790,7 +794,7 @@ void ksched_process_cancel(void **slot)
     discard_process_task(task);
 }
 #if CONF_WITH_CUIS
-static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
+static LONG spawn_configured_owned(PD *pd, ULONG session, ULONG token, BOOL deferred)
 {
     void *slot = NULL;
     KPROC *owner = NULL;
@@ -813,11 +817,23 @@ static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
         return result;
     }
     if (owner) {
-        result = finish_deferred_commit(&slot, owner);
+        (void)finish_deferred_commit(&slot, owner);
         kproc_release(owner);
         return E_OK;
     }
     return ksched_process_publish(&slot);
+}
+static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
+{
+    KSCHED_CLEANUP_SCOPE scope={0};
+    LONG result;
+    /* The legacy loader also owns a prepared image and predecessor commit
+     * transaction across destructor callbacks. Protect through the final
+     * reference release; delivery belongs to the outer syscall boundary. */
+    ksched_cleanup_begin(&scope);
+    result=spawn_configured_owned(pd,session,token,deferred);
+    ksched_cleanup_end(&scope);
+    return result;
 }
 LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0,FALSE); }
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
