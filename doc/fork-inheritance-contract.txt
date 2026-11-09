@@ -1,0 +1,179 @@
+Fork inheritance contract proposal (#895 / #892 / #893 / #933)
+============================================================
+
+Status and dependency boundary
+------------------------------
+This document proposes an interface, not implemented functionality or owner
+acceptance. Public Pfork/Pvfork remain EINVFN. Do not add this work to the
+independent-KASPACE prerequisite #934. Production PRIVATE_VM saved-return
+integration must wait for #934's independent review and exact-head CI.
+
+Refreshed source checkpoint, 2026-11-09:
+  epic #903          13028a3903456e3394275be4c916bdd9c54f3707
+  saved return #932  3f9f7ff755d7f5c3a150df9b9f93eb1271eb9e74
+  KASPACE/COW #934   3c14f2606535d383347d5975a1115aad0b9a2e17
+  isolated proof    9ef7292a812b4463f6b921fedda442b517e9901d
+  SFT ownership933  f38e56fd56474019c599eb55361495a676d37be6
+
+No #914/#931 implementation is imported. The current #933 close reports
+RETAINED, CONSUMED, TRANSFERRED and NOT_OWNED independently of error. Its
+FS_CLEANUP_TOKEN represents a residual transferred reference, not permission
+to manufacture or acquire an ordinary live reference. Existing fs_sft_claim
+and fs_sft_accessible do not supply the missing inheritance operation.
+
+Why the factory cannot just copy handles
+---------------------------------------
+proc_create_clone_process currently creates an empty environment, optionally
+copies NUMSTD aliases with ixforce, and retains CWD and limited identity state.
+KPROC's trusted uft is an independent NUMSTD array; nonstandard h still means
+global sft[h-NUMSTD]. syshnd/getofd/getpfsslot resolve that global namespace.
+release_pd_files infers the explicit reference from SFT f_own and alias counts.
+Consequently a child cannot independently close/reuse the same inherited
+numeric descriptor merely by sharing that raw SFT index or copying f_own.
+
+Fdup is not an inheritance implementation: it changes descriptor numbers,
+allocates another SFT slot, and rejects foreign PFS cookies to avoid independent
+positions/double release. Inheritance must retain one common open-file object
+and position while owning a separate binding/reference in each PROCESS.
+
+Proposed ownership model -- requires #933 owner agreement
+--------------------------------------------------------
+Keep SFT/OFD/PFS and #933's consumption/quarantine service authoritative. Add
+only PROCESS-local descriptor bindings, not another filesystem lifetime model.
+Each local standard/nonstandard binding owns one existing SFT reference or
+names a BIOS device. A filesystem binding records the underlying slot and
+non-recycled incarnation plus a local binding generation. Child tables have
+independent storage, counters and close/rebind state. Mutable tables are never
+shared, including between PROCESSes that happen to share an ASPACE.
+
+A standard alias and an explicit descriptor referencing the same SFT each own
+one reference. Multiple aliases are acquired once per binding, not once per
+unique SFT slot. The underlying open position/cookie remains shared. Device
+bindings carry no filesystem reference. Table slots distinguish empty from a
+valid BIOS binding. Close-on-exec/inherit bits may only be claimed if actually
+implemented; unsupported foreign-resource inheritance fails transactionally.
+
+The filesystem owner should provide checked operations with these semantics
+(names are proposals, not existing APIs):
+
+  fs_reference_acquire(source_binding, expected_incarnation, out_reference)
+    Authenticate one live source-owned binding, not a caller-supplied raw SFT
+    number. Reject invalidated, busy/closing, quarantine-only, exhausted or
+    saturated identities. Check/increment the exact SFT incarnation atomically
+    with cooperative PROCESS admission. Return one new owned reference with
+    shared underlying open-file state. No callbacks, I/O or allocation while
+    modifying the SFT count. Out remains empty on failure.
+
+  fs_reference_close(reference, dispose, out_report)
+    Close exactly the owned expected incarnation through #933. Reject stale
+    identity before touching a reused slot. Preserve RETAINED ownership even
+    if the return code is negative; CONSUMED removes ownership even on error.
+    dispose may TRANSFER the original reference to the SFT service without
+    incrementing f_use or retaining the child/PD/ASPACE. Do not create a second
+    quarantine or retry daemon. NOT_OWNED on a supposedly live binding is an
+    invariant failure unless authoritative invalidation already revoked it.
+
+A live binding's local generation is not FS_CLEANUP_TOKEN.reference. The latter
+is issued only by transfer. Reentrant finalizers can rebind a numeric descriptor
+to the same or another SFT incarnation: after close, remove only the original
+local binding generation. Preserve a replacement and its acquired reference,
+matching #933f38e56fd5's standard-alias rebind fix.
+
+The #933 owner must agree whether these checks belong in fsclose.c or another
+existing filesystem service. The fork adapter must not manipulate f_use,
+f_cleanup_refs, incarnations or transfer tickets directly.
+
+Resolution and ordinary operation
+---------------------------------
+All eligible handle operations must resolve (PROCESS, local descriptor) through
+one authoritative path, including getofd/getpfsslot, std redirection, close,
+Fforce/Fdup, file-backed mmap pins and kernel file helpers. Open allocates a
+local binding plus its SFT reference; close frees only that PROCESS's binding.
+A child may reuse a closed local number while its parent retains the original.
+Never translate a local number twice or expose raw slots as inherited handles.
+
+Authoritative media invalidation must revoke every matching PROCESS binding
+before SFT reuse, including nonstandard handles. Revocation consumes no new
+reference; it follows the existing filesystem invalidation disposition. The
+legacy f_own sweep must not also consume table-owned references. Transition of
+ordinary Pexec and nonfork PROCESSes requires explicit compatibility tests; do
+not switch just the fork child onto a table while leaving global-handle entry
+paths able to bypass it. Legacy non-ASPACE builds retain their current path.
+
+Construction transaction
+------------------------
+1. Require the source to be current, sole-threaded and the exclusive running
+   PROCESS on its ASPACE. Establish source PROCESS/descriptor mutation
+   admission using the existing scheduler/lifecycle contract. No SMP claim.
+2. Allocate child descriptor storage, environment/runtime records and all
+   bookkeeping before acquiring filesystem references. Snapshot eligible
+   source bindings under admission; authenticate their identities/generations.
+3. Acquire each child's reference through the checked service. Keep an exact
+   acquired prefix so a later failure releases only acquired bindings, once.
+4. Prepare CWD/environment/runtime, PRIVATE_VM and saved-return startup through
+   the existing proc_clone factory. Retain constructor-selected child root,
+   independent syscall/scheduler stacks and owned user return image.
+5. Prepare observer and all fallible user copyout/return work. Validate that
+   source bindings/admission, target identity and mappings remain live.
+6. Publish only after the existing no-fail boundary. No I/O/finalizer executes
+   inside scheduler leaf/IRQ exclusion. No child runs earlier.
+
+Rollback reverses acquired resources through their existing owners. It reports
+the original constructor error even when cleanup reports a separate error.
+CONSUMED/TRANSFERRED entries become empty exactly once; retained errors on
+unpublished-child disposal must use #933's transfer contract, preserving the
+service's residual reference without retaining dead execution resources.
+Source bindings stay unchanged. Full physical file reclamation cannot be
+promised after a permanently retained backend close; report quarantine instead
+of claiming a false zero-baseline result. Reentrant cleanup runs outside leaf
+exclusion with the source admission/identity pinned by the existing owner.
+
+Remaining PROCESS state
+-----------------------
+CWD/drive: retain native and PFS directory references independently, preflight
+counter bounds and roll back each acquired directory once. Active directory
+search/DTA semantics need an explicit supported policy; do not copy a live
+kernel search pointer into the child. Child DTA user VA must address its VM.
+
+Environment: preserve the parent's user-visible environment VA and bytes in
+PRIVATE_VM, and attach matching child KPROC/compatibility-PD metadata. The
+factory's new empty environment is not inherited environment. Do not hold a
+borrowed parent allocation/PD merely because cloned bytes are present.
+
+Metadata: inherit executable name, supported priority/resource limits and
+user-visible image/stack bounds; allocate fresh PID/TID, creation/accounting
+state and observer identity. Parent identity is retained independently of its
+PD. Preserve existing orphan adoption and exactly-once public #909 reaping.
+Process groups, credentials, signal dispositions/masks and alarms are not full
+MiNT/POSIX facilities in this checkpoint; mintproc documents no groups/users,
+and absent signal syscalls remain unsupported. Do not invent state or claim
+POSIX parity. Audit every supported runtime field before public activation.
+
+THREAD runtime: copy only authenticated user return state required by #932,
+select child KASPACE root and set child syscall result zero. Never inherit
+kernel stacks/continuations, scheduler ownership, callbacks/watchdogs, errbuf,
+active locks, outstanding file operations or completion/reap claims. Existing
+x32 FS/GS/AVX/TLS, ARM Thumb/pending-VFP, m68k030/060/fastcall gates stay intact.
+
+Acceptance before public Pfork
+------------------------------
+Native x32, ARM A32 and m68k040 tests must cover:
+- Standard + nonstandard descriptors, aliases of one SFT, shared file offsets,
+  local close/Fforce/Fdup/reuse, parent-first/child-first exit and nested forks.
+- FAT and supported PFS objects; consumed-error and retained-error close;
+  transfer/quarantine, authoritative media invalidation and same-number reuse;
+  reentrant finalizer replacement and stale-incarnation rejection.
+- Failure at each acquired binding, generic constructor and COW-fault boundary;
+  original error preservation, source unchanged, no unpublished runnable child,
+  exact reference baselines or explicitly identified service-owned quarantine.
+- Inherited CWD/drive, changed environment, DTA/runtime state, identities,
+  accounting and supported metadata; explicit errors for unsupported states.
+- Same-trap PRIVATE_VM PC/SP/CPU/FPU, both write and exit orders, nested trees,
+  orphan execution, one #909 reap and memory/reference reclamation.
+- Ordinary Pexec, non-GUI, 192 KiB ROM, non-MMU, sanitizer/fortify, ABI/ELF and
+  gitready regressions. Model tests cannot substitute for native execution.
+
+Public Pfork opcode0x11b is a later focused policy adapter after these gates.
+Pvfork remains separate and additionally requires a child-specific retained
+parent dependency and #894's successful committed Pexec(200) VM detach. Exec
+entry/failure, THREAD exit and public wait consumption must not release it.
