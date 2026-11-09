@@ -64,8 +64,11 @@ a prefix of user output, but cannot consume completion, observation, or Pwait.
 
 CLOSE supplies operation and handle only. It unlinks owned rights before
 cleanup, aborts an uncommitted image or releases committed observation, and
-never reaps or cancels a committed child. A valid consumed CLOSE cannot return
-a later recoverable error. Other retained observer leases remain usable.
+never reaps or cancels a committed child. A prepared CLOSE reports the first
+filesystem cleanup error after consuming the right. It cannot recreate a
+retryable launch handle: repeating CLOSE returns EIHNDL even after an error.
+Other retained observer leases remain usable. Historical cleanup diagnostics
+stay on the canonical PROCESS identity without changing completion layout.
 
 CANCEL_DEFERRED is designed as an idempotent current-PROCESS operation with zero
 handle and arguments. It cancels only the current owner's held, unexecuted
@@ -140,11 +143,23 @@ ENSMEM and backing I/O failure EREADF; none terminates the calling THREAD while
 argument buffers are locally owned. Ordinary uaccess retains its original
 fatal-fault behavior. Failed SNAPSHOT copyout never consumes retained result.
 
+The checked materialization contract is restricted to the built-in backing
+provider under the current single-CPU, non-preemptible kernel: it must neither
+yield nor reenter mapping teardown. IRQs may run and return without switching
+the kernel continuation. Replaceable BIOS/critical-error callbacks that can
+unmap or replace the borrowed mapping are outside this contract. Supporting
+them requires an authoritative generic mapping/materialization lease and
+generation validation; the cancellation scope is not that lease.
+
 The separately owned #933 filesystem-close contract remains an activation gate.
-Exhausted close retries retain an SFT reference rather than double-close it.
-Full public rollback signoff must resolve/document that ownership path; this
-checkpoint does not promise arbitrary driver longjmp recovery or hide a leak
-by retrying a test. No GUI callback or AES policy belongs in this transport.
+Exhausted close retries transfer the existing reference to the filesystem
+service, identified by exact SFT incarnation and transfer ticket. No retired
+PROCESS, ASPACE, KTHREAD or GUI client owns that residual reference. Failed
+PREPARE returns its original error and does not promise physical reclamation
+of quarantined filesystem state. A failed replacement preserves its old
+successor until irreversible predecessor destruction starts. No arbitrary
+nonlocal driver unwind guarantee or duplicate filesystem ownership service
+is introduced. No GUI callback or AES policy belongs in this transport.
 Console display/input attachment remains a separate authenticated GUI lease
 before COMMIT, and CH_EXIT construction remains libaes policy.
 
