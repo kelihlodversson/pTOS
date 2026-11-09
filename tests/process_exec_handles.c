@@ -18,6 +18,7 @@ struct identity {
     PD *pd;
     unsigned refs;
     BOOL resources;
+    LONG cleanup_error;
     PROCESS_COMPLETION completion;
 };
 static PD first_pd, second_pd;
@@ -30,7 +31,7 @@ static BOOL fail_allocate;
 static int fail_after=-1;
 static void test_request_engine(KPROC *owner);
 LONG kproc_ref_file_cleanup(const KPROC *p,ULONG *transferred)
-{ (void)p; if(transferred)*transferred=0; return E_OK; }
+{ const struct identity *i=(const struct identity *)p; CHECK(i && !i->resources && i->refs); if(transferred)*transferred=!!i->cleanup_error; return i->cleanup_error; }
 PD *run=&first_pd;
 struct process_exec_handle **kproc_exec_handles(KPROC *p)
 { return p ? &((struct identity *)p)->handles : NULL; }
@@ -87,7 +88,8 @@ int main(void)
     CHECK(proc_exec_handle_snapshot(owner,one,&result)==E_OK && result.state==PROCESS_UNSTARTED);
     CHECK(proc_exec_retain_observer(owner,one,TRUE,&lease)==E_OK && children[0].refs==3);
     CHECK(proc_exec_retain_observer(owner,one,TRUE,&lease)==EINVAL);
-    CHECK(proc_exec_handle_close(owner,one)==E_OK && cancellations==1 && !children[0].resources);
+    children[0].cleanup_error=EWRITF;
+    CHECK(proc_exec_handle_close(owner,one)==EWRITF && cancellations==1 && !children[0].resources);
     CHECK(proc_exec_handle_close(owner,one)==EIHNDL && children[0].refs==1);
     CHECK(process_observer_snapshot(lease,&result) && result.state==PROCESS_ABANDONED);
     process_observer_release(&lease); CHECK(!children[0].refs);
@@ -105,7 +107,9 @@ int main(void)
     CHECK(proc_exec_handle_snapshot(owner,two,&result)==E_OK && result.status==0xffff);
     CHECK(proc_exec_handle_snapshot(owner,two,&result)==E_OK && result.order_low==1);
     three=proc_exec_handle_prepare(owner,"p","t","e","d",PROCESS_EXEC_ASYNC); CHECK(three>two);
+    children[2].cleanup_error=EWRITF;
     proc_exec_owner_exit(owner);
+    CHECK(children[0].cleanup_error==EWRITF && children[2].cleanup_error==EWRITF);
     CHECK(!first.handles && allocations==frees && cancellations==2 && publications==1);
     CHECK(!children[1].resources && children[1].refs==1 && !children[2].refs);
     CHECK(process_observer_snapshot(lease,&result) && result.status==0xffff);

@@ -63,7 +63,11 @@ long fs_close_backend(WORD handle,volatile BOOL *consumed)
         return E_OK;
     }
     CHECK(handle == NUMSTD || handle == NUMSTD + 1);
-    if (probe_retirement && handle==NUMSTD+1) {
+    if (probe_retirement && handle==NUMSTD+1 && attempts==1) {
+        /* Model a consuming finalizer: the old current alias has already
+         * been unpublished before it calls back into real ixforce. */
+        child_files[1]=get_default_handle(1);
+        references--; sft[1].f_use=0; sft[1].f_own=NULL; *consumed=TRUE;
         CHECK(cleanup_started);
         CHECK(ixforce(0,NUMSTD+2,&child)==EACCDN); /* already visited */
         CHECK(ixforce(1,NUMSTD+2,&child)==EACCDN); /* current */
@@ -71,6 +75,8 @@ long fs_close_backend(WORD handle,volatile BOOL *consumed)
         blocked_rebinds+=3;
         if (owner.p_uft[0]<0) CHECK(ixforce(0,NUMSTD+2,&owner)==E_OK);
         CHECK(sft[2].f_use==2 && owner.p_uft[0]==NUMSTD+2);
+        attempts++;
+        return E_OK;
     }
     if (handle == NUMSTD) {
         CHECK(references == 2);
@@ -105,7 +111,7 @@ int main(void)
     proc_free_owned(&owner);
     CHECK(!allocations && !record && !references && first_closes == 1 &&
           attempts == 2 && invalidations == 1);
-    CHECK(blocked_rebinds==6 && sft[2].f_use==2 && owner.p_uft[0]==NUMSTD+2);
+    CHECK(blocked_rebinds==3 && sft[2].f_use==2 && owner.p_uft[0]==NUMSTD+2);
     probe_retirement=FALSE;
     { FS_CLOSE_REPORT result;
       CHECK(fs_close_once(0,FALSE,&result)==E_OK && owner.p_uft[0]<0 && sft[2].f_use==1);
