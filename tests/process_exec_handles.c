@@ -29,6 +29,8 @@ static BOOL request_mode;
 static BOOL fail_allocate;
 static int fail_after=-1;
 static void test_request_engine(KPROC *owner);
+LONG kproc_ref_file_cleanup(const KPROC *p,ULONG *transferred)
+{ (void)p; if(transferred)*transferred=0; return E_OK; }
 PD *run=&first_pd;
 struct process_exec_handle **kproc_exec_handles(KPROC *p)
 { return p ? &((struct identity *)p)->handles : NULL; }
