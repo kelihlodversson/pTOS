@@ -162,6 +162,12 @@ LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
         saved->user.rsp < saved->mappings.stack_base + 128 ||
         saved->user.rsp >= saved->mappings.stack_base + saved->mappings.stack_size ||
         (saved->user.rflags & 0x27000)) return EINVFN;
+    /* The integrated cooperative context has no general segment/TLS switch
+     * contract. Capture all fields, but do not admit nondefault state until
+     * its scheduler/launcher nesting restoration has native evidence. */
+    if (saved->user.ds != X86_64_USER_DATA_SEL || saved->user.es != X86_64_USER_DATA_SEL ||
+        saved->user.fs || saved->user.gs || saved->user.fs_base || saved->user.gs_base)
+        return EINVFN;
     if (draft->syscall_physical == draft->scheduler_stack.physical ||
         kstack_contains(draft->syscall_physical, (uintptr_t)saved) ||
         kstack_contains(draft->scheduler_stack.physical, (uintptr_t)saved)) return EACCDN;
