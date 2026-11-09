@@ -48,6 +48,7 @@ void panic(const char *fmt, ...)
 }
 SBYTE *kproc_uft(PD *p) { CHECK(p == &child && !destroyed); return files; }
 UBYTE *kproc_curdir(PD *p) { CHECK(p == &child && !destroyed); return dirs; }
+BOOL kproc_begin_file_cleanup(PD *p) { CHECK(p==&child && disposing); return TRUE; }
 void kproc_standard_file_refs(ULONG *refs) { memset(refs, 0, OPNFILES * sizeof(*refs)); }
 LONG fs_close_bounded(WORD h,BOOL dispose,FS_CLOSE_REPORT *out)
 { (void)h;(void)dispose;(void)out; abort(); }

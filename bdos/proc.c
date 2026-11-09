@@ -377,6 +377,9 @@ static void release_pd_files(PD *r)
 #if CONF_WITH_USER_ASPACE
     ULONG explicit_refs[OPNFILES];
 
+    /* Close admission before any callback can attach another reference to
+     * this retiring table, including an already-visited standard index. */
+    if (!kproc_begin_file_cleanup(r)) return;
     /* Snapshot before removing aliases. Residual kernel references are not
      * a retiring PROCESS's explicit handle, nor another live alias. */
     kproc_standard_file_refs(explicit_refs);

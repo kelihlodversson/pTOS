@@ -140,6 +140,10 @@ LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity);
 void kproc_standard_file_refs(ULONG *references);
 /* Authoritative media retirement: unpublish all standard aliases before reuse. */
 void kproc_standard_file_invalidate(WORD handle);
+/* Irreversible per-PROCESS file teardown admission; serialized by the
+ * cooperative owner. Reject callback attachment before the first release. */
+BOOL kproc_begin_file_cleanup(PD *pd);
+BOOL kproc_file_references_allowed(PD *pd);
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
 LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
 #endif

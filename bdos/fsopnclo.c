@@ -93,6 +93,9 @@ static long sftdel(FTAB *sftp);
 long xcreat(char *name, UBYTE attr)
 {
     int a = attr & ~FA_SUBDIR;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
     ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_create(name, (UWORD)a);
@@ -114,6 +117,9 @@ long xcreat(char *name, UBYTE attr)
 long xopen(char *name, WORD mod)
 {
     int m = mod & VALID_FOPEN_BITS;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
     ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_open(name, m);

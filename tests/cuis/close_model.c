@@ -6,6 +6,7 @@
 #include "string.h"
 #include "kproc.h"
 
+BOOL kproc_begin_file_cleanup(PD *pd) { (void)pd; return TRUE; }
 SBYTE get_default_handle(int index) { (void)index; return -1; }
 
 LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)

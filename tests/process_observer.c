@@ -79,6 +79,9 @@ int main(void)
     retained_number=p->number; retained_pid=p->pid;
     kproc_mark_started(&child);
     assert(process_observer_snapshot(a,&snap) && snap.state==PROCESS_RUNNING && snap.kind==PROCESS_COMPLETION_NONE);
+    assert(kproc_file_references_allowed(&child) && kproc_file_references_allowed(&caller));
+    assert(kproc_begin_file_cleanup(&child) && !kproc_begin_file_cleanup(&child));
+    assert(!kproc_file_references_allowed(&child) && kproc_file_references_allowed(&caller));
     kproc_note_file_cleanup(&child,EWRITF,TRUE);
     kproc_note_file_cleanup(&child,EINTRN,FALSE);
     kproc_complete(&child,0xffff); kproc_note_fault(&child,4); kproc_complete(&child,9);
