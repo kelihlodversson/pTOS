@@ -10,12 +10,23 @@ import kconfiglib
 ROOT=Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
 os.environ['CONFIG_']=''
+# No shipped preset opts ordinary applications into this validation interface.
+for preset in sorted(Path('configs').glob('*_defconfig')):
+    ordinary=kconfiglib.Kconfig(warn_to_stderr=False)
+    ordinary.load_config(str(preset))
+    assert ordinary.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n', str(preset)
+for preset in ('atari256', 'pc-x86_64-eager'):
+    unsupported=kconfiglib.Kconfig(warn_to_stderr=False)
+    unsupported.load_config('configs/'+preset+'_defconfig')
+    unsupported.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
+    assert unsupported.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n'
 with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     work=Path(directory)
     config=kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/pc-x86_64_defconfig')
     config.syms['CONF_WITH_ELF_SHARED'].set_value(0)
     config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
+    assert config.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n'
     config.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='y'
     config.write_config(str(work/'config'))

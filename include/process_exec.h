@@ -1,5 +1,5 @@
-/* DRAFT public transport layout for #907 review. No Ssystem handler is enabled
- * by this header; kernels currently return EINVFN for the proposed mode. */
+/* DRAFT transport layout for #907 review. Ordinary kernels return EINVFN;
+ * only explicit validation builds accept the unpublished Ssystem mode. */
 #ifndef PROCESS_EXEC_H
 #define PROCESS_EXEC_H
 #include "process_completion.h"

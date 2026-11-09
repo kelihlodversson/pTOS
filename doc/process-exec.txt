@@ -6,8 +6,8 @@ Implementation checkpoint
 The ordinary loader, private prepare/cancel/publish admission, canonical
 PROCESS observers, PROCESS-owned launch rights, generic deferred replacement
 and a faultable request decoder are implemented. Public Ssystem dispatch is
-NOT enabled yet. Filesystem rollback signoff remains required before
-assigning/enabling a dispatch selector. The eight CUIS CHILD
+NOT enabled for ordinary applications. Filesystem rollback signoff remains
+required before activation of the agreed dispatch selector. The eight CUIS CHILD
 selectors remain active; no private ABI compatibility aliases are introduced.
 
 Test-only dispatch preparation (#935)
