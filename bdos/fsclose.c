@@ -181,7 +181,11 @@ LONG fs_reference_acquire(KPROC *source, WORD descriptor, UQUAD expected,
     f=&sft[handle-NUMSTD];
     if (f->f_incarnation!=expected || f->f_cleanup_state==FS_CLEANUP_INVALIDATED ||
         !fs_sft_accessible(handle-NUMSTD)) return EIHNDL;
-    if (IS_BIOS_HANDLE((long)f->f_ofd)) return EIHNDL;
+    if (IS_BIOS_HANDLE((long)f->f_ofd) || (!f->f_ofd
+#if CONF_WITH_PLUGGABLE_FS
+        && !f->f_pfs.fs
+#endif
+        )) return EIHNDL;
     if (descriptor>=NUMSTD) {
         /* f_own alone can survive the original explicit close. Do not mint
          * from someone else's standard alias, quarantine or staged owner. */

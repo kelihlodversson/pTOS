@@ -29,7 +29,9 @@ int main(void)
     CHECK(fs_reference_acquire((KPROC *)&file,NUMSTD,incarnation,&a)==EACCDN);
     retiring=TRUE;
     CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==EACCDN);
-    retiring=FALSE; sft[0].f_close_busy=TRUE;
+    retiring=FALSE; sft[0].f_ofd=NULL;
+    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==EIHNDL && !a.owned);
+    sft[0].f_ofd=&file; sft[0].f_close_busy=TRUE;
     CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==EIHNDL);
     sft[0].f_close_busy=FALSE;
     sft[0].f_cleanup_state=FS_CLEANUP_INVALIDATED;
