@@ -6,9 +6,34 @@ Implementation checkpoint
 The ordinary loader, private prepare/cancel/publish admission, canonical
 PROCESS observers, PROCESS-owned launch rights, generic deferred replacement
 and a faultable request decoder are implemented. Public Ssystem dispatch is
-NOT enabled yet. Filesystem rollback signoff remains required before
-assigning/enabling a dispatch selector. The eight CUIS CHILD
+NOT enabled for ordinary applications. Filesystem rollback signoff remains
+required before activation of the agreed dispatch selector. The eight CUIS CHILD
 selectors remain active; no private ABI compatibility aliases are introduced.
+
+Test-only dispatch preparation (#935)
+------------------------------------
+CONF_WITH_PROCESS_EXEC_TEST is an explicit validation-only option, default n,
+depending on USER_ASPACE, NATIVE_SCHED and SSYSTEM. Normal configurations return
+EINVFN for S_PROCEXEC=((WORD)0xfff7), signed -9. S_INQUIRE does not advertise
+this mode even in opt-in test kernels. No ordinary public activation is
+approved by this option, and no CUIS selector is removed.
+
+arg1 is native long at xssystem and becomes (UQUAD)(uintptr_t)arg1: native32
+pointers are zero-extended, while genuine LP64 high bits are preserved for
+rejection. arg2 is validated at full native width and must equal exactly72;
+negative or high-width lengths are never truncated to their low32 bits.
+The adapter enters the execution-owned scope before retaining the caller's
+canonical PROCESS, invokes the existing request engine, releases its temporary
+PROCESS reference while protected, then ends the scope without delivery.
+The existing post-operation checkpoint in osif is the single return boundary;
+no extra checkpoint is added inside xssystem or the request decoder.
+
+Materialization retains the accepted K5 limit: current single-CPU,
+non-preemptive built-in no-yield/no-mapping-reentry provider only. Replaceable
+BIOS/critical-error callbacks reentering mapping teardown require a separate
+authoritative mapping lease/generation contract. No general fatal unwind,
+preemption or SMP safety is implied. Final corrected/reviewed #933, focused
+C3a and native/trap/full validation acceptance remain activation prerequisites.
 
 Fixed native-endian layout
 --------------------------

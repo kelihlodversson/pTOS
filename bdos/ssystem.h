@@ -168,6 +168,10 @@ struct mem_info {
  * ownership transfer, completion consumption or wait/reap authority. */
 #define S_PROCIDENT     ((WORD)0xfff8)
 
+/* Unpublished/test-gated PROCESS_EXEC_REQUEST transport. Native arg1 pointer,
+ * native arg2 size exactly72; S_INQUIRE deliberately never advertises it. */
+#define S_PROCEXEC      ((WORD)0xfff7)
+
 /* items of S_DESKSET */
 #define DESKSET_CEH         1   /* the critical error handler shows alerts: 0 or 1 */
 #define DESKSET_BACKGROUND  2   /* the pattern and colour of the AES desktop (a byte) */

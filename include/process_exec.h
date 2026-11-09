@@ -1,9 +1,9 @@
-/* DRAFT public transport layout for #907 review. No Ssystem handler is enabled
- * by this header; kernels currently return EINVFN for the proposed mode. */
+/* DRAFT transport layout for #907 review. Ordinary kernels return EINVFN;
+ * only explicit validation builds accept the unpublished Ssystem mode. */
 #ifndef PROCESS_EXEC_H
 #define PROCESS_EXEC_H
 #include "process_completion.h"
-/* Public dispatch selector is unassigned pending ABI review. */
+/* Agreed Ssystem selector -9 remains test-gated, never advertised. */
 #define PROCESS_EXEC_PREPARE 0UL
 #define PROCESS_EXEC_COMMIT 1UL
 #define PROCESS_EXEC_SNAPSHOT 2UL
