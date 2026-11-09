@@ -1,5 +1,7 @@
 /* Explicit shutdown composes production sweep, SFT recovery and FAT reclaim.
  * Disk failures/cluster storage are injected; no CPU switch is modeled. */
+#include "emutos.h"
+#include "biosext.h" /* panic attributes must precede the reused definition. */
 #define main close_backend_fixture_main
 #include "fs_close.c"
 #undef main
