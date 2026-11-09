@@ -2,8 +2,10 @@ Pfork / Pvfork prerequisite audit (#895)
 ======================================
 
 Baseline: epic/889-process-scheduling, 7ae4f508cc26df4d0efae19dd3849738f1de114f.
-This is an unsupported-capability checkpoint, NOT a working fork milestone.
-Neither syscall creates a child. Both explicitly return EINVFN (-32) before
+The original unsupported-capability audit is retained below. The F1 saved-
+return increment is described in doc/fork-return.txt: a test-only shared-VM
+continuation proof, not functional Pfork/Pvfork.
+Neither public syscall creates a child. Both explicitly return EINVFN (-32) before
 allocation, identity publication or parent suspension. No feature is enabled.
 
 ABI
@@ -25,14 +27,14 @@ uses direct kcalls. Do not enable supervisor fork by clearing an S bit in an
 otherwise unaudited kernel frame. Preserve the existing refusal until a
 separately validated supervisor-to-user transition exists.
 
-Current capability matrix (source audit, not new native execution evidence)
+Capability matrix (see fork-return.txt and PR #932 for native evidence)
 -------------------------------------------------------------------------
                                            x32      A7/A32     m68k MMU
 Managed function-entry CLONE_VM             yes      yes        yes
 Distinct PROCESS/PID and initial THREAD/TID yes      yes        yes
 Private syscall and scheduler stacks        yes      yes        yes
 Transactional prepared/no-fail publication  yes      yes        yes
-Fork syscall snapshot -> child restore      absent   absent     absent
+Saved-return test startup (F1, gated)        yes      A32        040 only
 Independent-VM kaspace_clone                EINVFN   EINVFN     EINVFN
 Fork anonymous writable-page COW             absent   absent     absent
 Pexec(200) committed detach                  absent   absent     absent
