@@ -34,3 +34,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
     subprocess.run(flags+['tests/fs_close_rights.c','bdos/fsclose.c','bdos/fsopnclo.c',
         'bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'rights')],check=True)
     subprocess.run([str(work/'rights')],check=True)
+
+    subprocess.run(flags+['tests/fs_close_shutdown.c','bdos/fsclose.c','bdos/fsopnclo.c',
+        'bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'shutdown')],check=True)
+    subprocess.run([str(work/'shutdown')],check=True)

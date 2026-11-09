@@ -41,6 +41,28 @@ static void close_files(void)
     volatile int i;
     volatile int k;
 
+#if CONF_WITH_USER_ASPACE
+    for (i=0;i<OPNFILES;i++) {
+        UQUAD incarnation=sft[i].f_incarnation;
+        /* Bound work to references owned at admission, never a callback's
+         * replacement incarnation or an unbounded stream of new aliases. */
+        for (k=sft[i].f_use;k>0 && sft[i].f_own &&
+             sft[i].f_incarnation==incarnation;k--) {
+            FS_CLOSE_REPORT result={0};
+            LONG error;
+            if (sft[i].f_cleanup_refs && (ULONG)sft[i].f_use==sft[i].f_cleanup_refs) {
+                FS_CLEANUP_TOKEN token;
+                token.handle=i+NUMSTD; token.incarnation=incarnation;
+                token.reference=sft[i].f_cleanup_consumed+1;
+                error=fs_cleanup_retry(&token,&result);
+            } else error=fs_close_bounded(i+NUMSTD,FALSE,&result);
+            if (error<0)
+                kprintf("Shutdown: file %d close error %ld (ownership %u)\n",
+                        (int)(i+NUMSTD),(long)error,(unsigned)result.disposition);
+            if (result.disposition!=FS_CLOSE_CONSUMED) break;
+        }
+    }
+#else
     for (i = 0; i < OPNFILES; i++)
         /* a slot used more than once (a redirected or inherited standard
          * handle) needs one close for each use before it is free; a disk
@@ -51,6 +73,7 @@ static void close_files(void)
                 break;
             xclose(i + NUMSTD);
         }
+#endif
 }
 
 /* write out every dirty disk buffer */

@@ -193,3 +193,20 @@ allocation cannot be reused before its destruction continuation returns.
 Production KPROC tests check admission after unlink and during the payload wipe,
 without granting the retained numeric identity live-PD access. Future owner-lock
 synchronization must cover both registry transitions and marker lifetime.
+
+Explicit shutdown is a recovery owner too
+----------------------------------------
+Shutdown's existing bounded file sweep must not feed service-only references
+back through ordinary xclose (which correctly rejects them). USER_ASPACE builds
+now consume live references normally and use the oldest exact FIFO transfer
+ticket for service-owned residuals, bounded to the admitted reference count and
+incarnation. Retained/permanent failures are reported and left owned; consuming
+errors do not cause duplicate close. Classic shutdown stays unchanged. This is
+an explicit shutdown attempt, not an automatic scheduler retry service.
+
+The production host shutdown test transfers an unlinked FAT file after a failed
+cluster flush, preserves its pending successor across repeated failure, then
+checks both clusters reclaimed after repair. It also checks bounded permanent
+failure/error reporting, mixed live/residual aliases, stale tickets and exactly
+once disposal. Disk storage/failure is injected; ordinary native shutdown checks
+remain separate evidence and do not claim a native failing-medium experiment.

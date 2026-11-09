@@ -29,6 +29,8 @@ int errdrv;
 static unsigned freed,flushes,invalidations,closes,releases;
 static BOOL fail_disk,probe_busy,rebind_standard,retiring;
 static LONG pfs_error,release_error;
+static BOOL chain_fixture;
+static CLNO cluster_chain[4];
 static OFD file;
 static BCB buffer;
 static DMD media;
@@ -60,8 +62,11 @@ void flush(BCB *b)
 long ixlseek(OFD *fd,long n) { (void)fd;(void)n; abort(); }
 long ixread(OFD *fd,long n,void *p) { (void)fd;(void)n;(void)p; abort(); }
 long ixwrite(OFD *fd,long n,void *p) { (void)fd;(void)n;(void)p; abort(); }
-CLNO getrealcl(CLNO n,DMD *d) { (void)n;(void)d; abort(); }
-void clfix(CLNO n,CLNO v,DMD *d) { (void)n;(void)v;(void)d; abort(); }
+CLNO getrealcl(CLNO n,DMD *d)
+{ CHECK(chain_fixture && d==&media && (n==2 || n==3)); return cluster_chain[n]; }
+void clfix(CLNO n,CLNO v,DMD *d)
+{ CHECK(chain_fixture && d==&media && (n==2 || n==3) && v==FREECLUSTER);
+  cluster_chain[n]=v; buffer.b_dirty=TRUE; buffer.b_dm=d; buffer.b_bufdrv=0; }
 static LONG driver_close(PFSCOOKIE *cookie) { CHECK(cookie==&sft[0].f_pfs || cookie==&sft[1].f_pfs); closes++; return pfs_error; }
 static void driver_release(PFSCOOKIE *cookie)
 {
