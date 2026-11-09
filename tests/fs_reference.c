@@ -32,6 +32,9 @@ int main(void)
     retiring=FALSE; sft[0].f_close_busy=TRUE;
     CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==EIHNDL);
     sft[0].f_close_busy=FALSE;
+    sft[0].f_cleanup_state=FS_CLEANUP_INVALIDATED;
+    CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==EIHNDL);
+    sft[0].f_cleanup_state=0;
     sft[0].f_use=(int)((unsigned int)~0U>>1);
     CHECK(fs_reference_acquire((KPROC *)&owner,NUMSTD,incarnation,&a)==EAGAIN);
     sft[0].f_use=1;
