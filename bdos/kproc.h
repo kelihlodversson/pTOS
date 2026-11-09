@@ -408,6 +408,10 @@ BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);
 /* No demand backing, allocation, I/O or xterm. Call after ordinary preflight;
  * later mapping changes fail instead of unwinding resource-owning callers. */
+/* Materialize legitimate lazy pages but return EIMBA/ENSMEM/EREADF instead
+ * of terminating. Existing ordinary copies keep their fatal fault policy. */
+LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
+LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size);
 #endif

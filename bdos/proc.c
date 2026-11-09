@@ -1551,6 +1551,7 @@ void xterm(UWORD rc)
 #endif
 #if CONF_WITH_NATIVE_SCHED
     KTHREAD *thread = ksched_exit_thread(p);
+    if (ksched_cleanup_active()) panic("nonreturning termination inside protected cleanup");
 #if CONF_WITH_PTERMGRP
     if (thread) {
         ksched_enter_exit(p);

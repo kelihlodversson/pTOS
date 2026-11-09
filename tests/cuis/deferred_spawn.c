@@ -141,6 +141,7 @@ int main(void)
         unsigned disposed = disposals;
         execution_cpu.current = &tasks[0];
         tasks[1].program = NULL; /* Modeled finalizer revokes the retired PD. */
+        CHECK(ksched_process_publish(NULL)==EINVAL && ksched_process_publish(&slot)==EINVAL);
         CHECK(ksched_process_prepare(&child,FALSE,NULL) == EINVAL);
         slot = (void *)1;
         CHECK(ksched_process_prepare(&child,FALSE,&slot) == EINVAL && slot == (void *)1);
@@ -201,3 +202,9 @@ LONG ksched_admission_create(KPROC *p,UWORD n,KSCHED_ADMISSION *h)
 { (void)p; (void)n; (void)h; abort(); } /* no synchronous admission in this fixture */
 BOOL ksched_admission_retain(const KSCHED_ADMISSION *a,KSCHED_ADMISSION *b)
 { (void)a; (void)b; abort(); }
+BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
+
+
+KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
+
+KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }

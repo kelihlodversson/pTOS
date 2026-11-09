@@ -275,3 +275,6 @@ void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }
 void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
 BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
 void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }
+
+
+KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }

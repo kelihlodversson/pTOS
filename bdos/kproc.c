@@ -2941,15 +2941,15 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 /* The same, and the pages of its lazy areas that are not there yet get their
  * physical pages now (what a read or write of them by the process would do).
  * The first pass rejects a range before any page is backed.  A range that is
- * fine but cannot be backed ends the process. */
-static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
+ * fine but cannot be backed returns its precise error to the owning wrapper. */
+static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write, BOOL *backing_failed)
 {
 #if CONF_WITH_DEMAND_PAGING
     VADDR first = address & ~(USER_PAGE_SIZE - 1);
     VADDR last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
 
     if (!range_allowed(kproc, address, size, write))
-        return FALSE;
+        return EIMBA;
     for (page = first; page <= last; page += USER_PAGE_SIZE) {
         UWORD prot;
         int rc;
@@ -2957,20 +2957,36 @@ static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
             (!write || (prot & ASPACE_PROT_WRITE))) continue;
         rc = back_page(kproc, page, write ? ASPACE_PROT_WRITE : 0);
         if (rc != 1) {
-            if (rc == 3) {
-                kcprintf("process: file mapping I/O error\n");
-#if CONF_WITH_NATIVE_SCHED
-                ksched_fault(run, 10); /* SIGBUS */
-#endif
-                xterm((UWORD)-1);
-            }
-            lazy_oom();
+            if (backing_failed) *backing_failed=TRUE;
+            return rc==0 ? EIMBA : rc==3 ? EREADF : ENSMEM;
         }
     }
-    return TRUE;
+    return E_OK;
 #else
-    return range_allowed(kproc, address, size, write);   /* all of it is there */
+    UNUSED(backing_failed);
+    return range_allowed(kproc, address, size, write) ? E_OK : EIMBA;   /* all of it is there */
 #endif
+}
+
+/* Preserve fatal ordinary-copy semantics; resource-owning operations use the
+ * same backing engine's checked result and settle ownership before returning. */
+static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
+{
+    BOOL backing_failed=FALSE;
+    LONG error=back_user_range(kproc,address,size,write,&backing_failed);
+    if (error==E_OK) return TRUE;
+    if (error==EIMBA && !backing_failed) return FALSE;
+#if CONF_WITH_DEMAND_PAGING
+    if (error==EREADF) {
+        kcprintf("process: file mapping I/O error\n");
+#if CONF_WITH_NATIVE_SCHED
+        ksched_fault(run,10);
+#endif
+        xterm((UWORD)-1);
+    }
+    lazy_oom();
+#endif
+    return FALSE;
 }
 
 /*
@@ -3554,6 +3570,28 @@ BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size)
         return aspace_copy_to_user(kproc->aspace, address, src, size);
     memcpy((void *)(uintptr_t)address, src, size);
     return TRUE;
+}
+
+/* Error-returning copies share range checks, lazy backing and resident copy
+ * with ordinary uaccess. No THREAD termination may bypass local C cleanup. */
+static LONG checked_copy_range(VADDR address, ULONG size, BOOL write)
+{
+    KPROC *process=kproc_find(run);
+    if (!process || !size || address>=USER_VA_LIMIT || size>USER_VA_LIMIT-address) return EIMBA;
+    if (process->aspace) return back_user_range(process,address,size,write,NULL);
+    return validate_user(address,size,write) ? E_OK : EIMBA;
+}
+LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size)
+{
+    LONG error=checked_copy_range(address,size,FALSE);
+    if (error!=E_OK) return error;
+    return kproc_copy_from_user_resident(dst,address,size) ? E_OK : EIMBA;
+}
+LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size)
+{
+    LONG error=checked_copy_range(address,size,TRUE);
+    if (error!=E_OK) return error;
+    return kproc_copy_to_user_resident(address,src,size) ? E_OK : EIMBA;
 }
 
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size)

@@ -141,3 +141,10 @@ ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
 void ksched_admission_abandon(const KSCHED_ADMISSION *h) { if(h->identity) abort(); }
 BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD i,LONG status)
 { (void)h; (void)i; (void)status; abort(); }
+
+BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
+
+
+KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
+
+KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }

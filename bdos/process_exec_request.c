@@ -7,6 +7,7 @@
 #include "string.h"
 #include "process_exec_internal.h"
 extern PD *run;
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 #define EXEC_PATH_MAX 1024UL
 #define EXEC_ENV_MAX 32766UL /* Existing loader envsize() counts in a WORD. */
 
@@ -19,12 +20,13 @@ static LONG copy_argument(ULONG address, ULONG capacity, BOOL environment, char 
     if (!buffer) return ENSMEM;
     *out = buffer;
     for (i = 0; i < capacity; i++) {
-        if (!kproc_copy_from_user(buffer+i, (UQUAD)address+i, 1)) return EIMBA;
+        LONG error=kproc_copy_from_user_checked(buffer+i,(UQUAD)address+i,1);
+        if (error!=E_OK) return error;
         if (!buffer[i] && (!environment || (i && !buffer[i-1]))) return E_OK;
     }
     return ERANGE;
 }
-LONG proc_exec_request(KPROC *owner, UQUAD address, UQUAD size)
+static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
 {
     PROCESS_EXEC_REQUEST request;
     PROCESS_COMPLETION completion;
@@ -35,7 +37,8 @@ LONG proc_exec_request(KPROC *owner, UQUAD address, UQUAD size)
     if (size != sizeof(request)) return EINVAL;
     if (!address || address > 0xffffffffULL - (sizeof(request)-1)) return EIMBA;
     if (address & 3) return EINVAL;
-    if (!kproc_copy_from_user(&request,address,sizeof(request))) return EIMBA;
+    result=kproc_copy_from_user_checked(&request,address,sizeof(request));
+    if (result!=E_OK) return result;
     if (request.reserved || request.reserved_tail[0] || request.reserved_tail[1]) return EINVAL;
     if (request.operation > PROCESS_EXEC_CANCEL_DEFERRED) return EINVFN;
     if (request.operation != PROCESS_EXEC_PREPARE) {
@@ -48,8 +51,8 @@ LONG proc_exec_request(KPROC *owner, UQUAD address, UQUAD size)
             if (result != E_OK) return result;
             /* Only this non-consuming operation copies out. A partial fault
              * cannot release a handle, consume Pwait, or erase completion. */
-            return kproc_copy_to_user(address+offsetof(PROCESS_EXEC_REQUEST,completion),
-                                      &completion,sizeof(completion)) ? E_OK : EIMBA;
+            return kproc_copy_to_user_checked(address+offsetof(PROCESS_EXEC_REQUEST,completion),
+                                              &completion,sizeof(completion));
         case PROCESS_EXEC_CLOSE:
             return proc_exec_handle_close(owner,request.handle);
         case PROCESS_EXEC_CANCEL_DEFERRED:
@@ -79,3 +82,14 @@ LONG proc_exec_request(KPROC *owner, UQUAD address, UQUAD size)
     if (path) kfree(path);
     return result;
 }
+
+LONG proc_exec_request(KPROC *owner, UQUAD address, UQUAD size)
+{
+    KSCHED_CLEANUP_SCOPE scope={0};
+    LONG result;
+    ksched_cleanup_begin(&scope);
+    result=exec_request_owned(owner,address,size);
+    ksched_cleanup_end(&scope);
+    return result;
+}
+#endif

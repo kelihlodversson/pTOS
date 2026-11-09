@@ -1304,15 +1304,15 @@ static struct {
     WORD pid;
 } deferred_reentry;
 static struct {
-    BOOL enabled, seen, yielding, expect_yield;
+    BOOL enabled, seen, yielding, expect_yield, request_cancel, in_nested, nested_seen;
     WORD pid;
-    PROCESS_OBSERVER *observer;
+    PROCESS_OBSERVER *observer, *peer;
 } retiring_probe;
 #endif
 void x86_64_memtest_disposal_committed(PD *pd)
 {
 #if CONF_WITH_NATIVE_SCHED
-    static char command[]={2,'O','n',0}, environment[]={0,0};
+    static char command[]={2,'O','n',0}, environment[]={0,0}, nested_command[]={2,'O','y',0};
     PROCESS_OBSERVER *late=NULL;
     PROCESS_COMPLETION completion;
     LONG third;
@@ -1320,6 +1320,21 @@ void x86_64_memtest_disposal_committed(PD *pd)
         ULONG root_passes=ksched_test_retiring_root_passes();
         retiring_probe.enabled=FALSE;
         retiring_probe.seen=TRUE;
+#if CONF_WITH_PTERMGRP
+        if (retiring_probe.request_cancel) {
+            KSCHED_CLEANUP_SCOPE nested_scope={0};
+            UWORD group_status;
+            KTHREAD *current=ksched_exit_thread(run);
+            CHECK(current && (kproc_group_status(kthread_process(current),NULL) ||
+                              kproc_request_group_exit(kthread_process(current),0x2468)),
+                  "a group-exit request can arrive during protected destruction");
+            CHECK(ksched_cleanup_active() && ksched_cancellation_pending() && ksched_termgrp(0x9999)==EACCDN,
+                  "protected cleanup observes pending exit and rejects unsupported nonreturning Ptermgrp");
+            ksched_cleanup_begin(&nested_scope); ksched_cancel_point(); ksched_cleanup_end(&nested_scope);
+            CHECK(kproc_group_status(kthread_process(current),&group_status) && group_status==0x2468,
+                  "nested guard release does not consume or deliver the admitted group exit");
+        }
+#endif
         CHECK(ksched_wait(retiring_probe.pid,1,0)==EFILNF,
               "cleanup callback cannot observe an uncommitted or retiring public child");
         if (retiring_probe.expect_yield) {
@@ -1327,6 +1342,16 @@ void x86_64_memtest_disposal_committed(PD *pd)
             CHECK(ksched_yield()==E_OK && ksched_test_retiring_root_passes()!=root_passes,
                   "actual cleanup yields into root which visits but cannot reap the private retiring record");
             retiring_probe.yielding=FALSE;
+            if (retiring_probe.peer) {
+                CHECK(process_observer_snapshot(retiring_probe.peer,&completion) &&
+                      completion.state!=PROCESS_UNSTARTED && ksched_cancellation_pending(),
+                      "pending cancellation cannot prevent another PROCESS progressing during protected Syield");
+                retiring_probe.in_nested=TRUE; retiring_probe.nested_seen=FALSE;
+                CHECK(Pexec(PE_LOADGO,"C:\\X32HELLO.TOS",nested_command,environment)==0xffff &&
+                      retiring_probe.nested_seen && ksched_cleanup_active() && ksched_cancellation_pending(),
+                      "a distinct nested Pexec child does not inherit its carrier cleanup guard");
+                retiring_probe.in_nested=FALSE;
+            }
         }
         CHECK(process_observer_snapshot(retiring_probe.observer,&completion) &&
               completion.state==PROCESS_UNSTARTED && !process_observer_ready(retiring_probe.observer),
@@ -2351,18 +2376,32 @@ static struct {
  * syscall is enabled. Loader/observer ownership is production, not a model. */
 static void test_native_exec_request(KPROC *owner)
 {
-    VADDR data, request_address;
+    VADDR data, request_address, lazy_environment;
     LONG handle;
     PROCESS_EXEC_REQUEST request;
     PROCESS_COMPLETION completion;
     static const char path[]="C:\\X32HELLO.TOS", tail[]={2,'O','n',0}, environment[]={0,0};
     data=kproc_mmap(run,0,2*PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    if ((LONG)data>0) {
+        UBYTE byte=1;
+        CHECK(kproc_copy_from_user_checked(&byte,data,1)==E_OK && !byte,
+              "checked generic copy materializes a valid untouched lazy page");
+        x86_64_pmem_test_fail_after(1);
+        CHECK(kproc_copy_from_user_checked(&byte,data+PAGE,1)==ENSMEM,
+              "checked generic copy returns lazy backing OOM without terminating the THREAD");
+        x86_64_pmem_test_fail_after(0);
+        CHECK(kproc_copy_from_user_checked(&byte,data+PAGE,1)==E_OK && !byte,
+              "lazy backing failure leaves a valid retryable user range");
+    }
     CHECK((LONG)data>0,"map actual user PROCESS request and arguments");
     if ((LONG)data<=0) return;
+    lazy_environment=kproc_mmap(run,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    CHECK((LONG)lazy_environment>0,"map an untouched lazy environment for the PROCESS decoder");
+    if ((LONG)lazy_environment<=0) { kproc_munmap(run,data,2*PAGE); return; }
     request_address=data+PAGE-48; /* Snapshot output straddles the two pages. */
     bzero(&request,sizeof(request));
     request.operation=PROCESS_EXEC_PREPARE;
-    request.path=data; request.tail=data+128; request.environment=data+256;
+    request.path=data; request.tail=data+128; request.environment=lazy_environment;
     CHECK(kproc_copy_to_user(data,path,sizeof(path)) &&
           kproc_copy_to_user(data+128,tail,sizeof(tail)) &&
           kproc_copy_to_user(data+256,environment,sizeof(environment)) &&
@@ -2399,7 +2438,8 @@ static void test_native_exec_request(KPROC *owner)
               proc_exec_request(owner,request_address,sizeof(request))==EIHNDL,
               "native CLOSE consumes preparation once without copying user output");
     }
-    CHECK(kproc_munmap(run,data,2*PAGE)==E_OK,"reclaim actual user request mappings");
+    CHECK(kproc_munmap(run,lazy_environment,PAGE)==E_OK && kproc_munmap(run,data,2*PAGE)==E_OK,
+          "reclaim actual user request and materialized lazy environment mappings");
 }
 static void ordinary_deferred_commit(void)
 {
@@ -2478,7 +2518,7 @@ static void ordinary_observation_yield(void)
         command[2]=ordinary_observation.scenario==2 ? 'f':'n';
         if (ordinary_observation.scenario >= 3) {
             LONG result=proc_exec_handle_prepare(ordinary_observation.parent,"C:\\X32HELLO.TOS",
-                                                  command,environment,NULL,ordinary_observation.scenario>=7 ?
+                                                  command,environment,NULL,ordinary_observation.scenario>=7 && ordinary_observation.scenario<=11 ?
                                                   PROCESS_EXEC_DEFER_REPLACEMENT:PROCESS_EXEC_ASYNC);
             CHECK(result>0,"ordinary loader returns a PROCESS-owned prepared handle");
             if (result<=0) return;
@@ -2505,7 +2545,17 @@ static void ordinary_observation_yield(void)
               snapshot.state==PROCESS_UNSTARTED && !process_observer_ready(ordinary_observation.observer) &&
               ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
               "prepared ordinary child remains non-runnable and not wait-visible across native yield");
-        if (ordinary_observation.scenario==4) {
+        if (ordinary_observation.scenario==4 || ordinary_observation.scenario>=12) {
+            retiring_probe.request_cancel=ordinary_observation.scenario>=12;
+#if CONF_WITH_PTERMGRP
+            if (retiring_probe.request_cancel) {
+                CHECK(proc_exec_observe("C:\\X32HELLO.TOS",command,environment,NULL,&retiring_probe.peer)>0,
+                      "prepare an independent peer before group cancellation");
+                if (ordinary_observation.scenario==13)
+                    CHECK(kproc_request_group_exit(ordinary_observation.parent,0x2468),
+                          "group cancellation may already be pending before cleanup guard entry");
+            }
+#endif
             retiring_probe.enabled=TRUE; retiring_probe.seen=FALSE; retiring_probe.expect_yield=TRUE;
             retiring_probe.pid=(WORD)ordinary_observation.pid;
             retiring_probe.observer=ordinary_observation.observer;
@@ -2539,7 +2589,7 @@ static void ordinary_observation_yield(void)
         }
         return;
     }
-    if (ordinary_observation.scenario>=7) {
+    if (ordinary_observation.scenario>=7 && ordinary_observation.scenario<=11) {
         CHECK(!process_observer_ready(ordinary_observation.observer) &&
               process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
               snapshot.state==PROCESS_UNSTARTED && ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
@@ -2620,7 +2670,7 @@ static void test_ordinary_observation(void)
     int before=failures;
     static const char command[]={2,'O','p',0}, environment[]={0,0};
     test_discarded_observation();
-    for (mode=0;mode<12;mode++) {
+    for (mode=0;mode<(CONF_WITH_PTERMGRP ? 14:12);mode++) {
         SNAP baseline;
         LONG loaded, status;
         PD *program;
@@ -2634,10 +2684,10 @@ static void test_ordinary_observation(void)
         ordinary_observation.scenario=mode;
         ordinary_observation.parent=kproc_retain(program);
         ordinary_observation.enabled=TRUE;
-        CHECK(ksched_run(&program,1,&status)==E_OK && status==0x1357 && ordinary_observation.checked,
+        CHECK(ksched_run(&program,1,&status)==E_OK && status==(mode>=12 ? 0x2468:0x1357) && ordinary_observation.checked,
               "ordinary observed child and parent execute actual native continuations");
         ordinary_observation.enabled=FALSE;
-        if (mode>=7 && mode!=8) {
+        if (mode>=7 && mode<=11 && mode!=8) {
             PROCESS_COMPLETION parent_done, child_done;
             /* A2c returns the synchronous attachment when its parent completes.
              * Drive independent work through the existing cooperative entry. */
@@ -2659,6 +2709,8 @@ static void test_ordinary_observation(void)
                   "final PROCESS exit abandons owned uncommitted launch while retained lease survives");
         }
         process_observer_release(&ordinary_observation.observer);
+        process_observer_release(&retiring_probe.peer);
+        retiring_probe.request_cancel=FALSE;
         process_observer_release(&ordinary_observation.second);
         kproc_release(ordinary_observation.parent);
         same(&baseline,"ordinary observation/Pwait releases all identities, mappings and stacks");
@@ -2669,6 +2721,10 @@ void x86_64_memtest_clone_yield(void)
 {
     UWORD i;
     KTHREAD *thread;
+    if (retiring_probe.in_nested) {
+        CHECK(!ksched_cleanup_active(),"nested distinct PROCESS has no carrier cleanup suppression");
+        retiring_probe.nested_seen=TRUE;
+    }
     ordinary_observation_yield();
     if (!active_clone.enabled || !(thread = ksched_exit_thread(run))) return;
     if (kthread_process(thread) == active_clone.parent) {

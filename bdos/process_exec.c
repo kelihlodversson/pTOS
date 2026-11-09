@@ -7,6 +7,7 @@
 #include "proc.h"
 #include "process_exec_internal.h"
 
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 struct process_exec_handle {
     struct process_exec_handle *next;
     ULONG number;
@@ -34,12 +35,12 @@ static void dispose_handle(struct process_exec_handle *handle)
     process_observer_release(&handle->observer);
     kfree(handle);
 }
-LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy)
+static LONG handle_prepare_owned(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy)
 {
     struct process_exec_handle *handle;
     struct process_exec_handle **head;
     LONG result;
-    if (!current_owner(owner)) return EACCDN;
+    if (!current_owner(owner) || ksched_cancellation_pending()) return EACCDN;
     if (policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
     if (last_handle == 0x7fffffffUL) return EAGAIN;
     head = kproc_exec_handles(owner);
@@ -58,11 +59,12 @@ LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *enviro
     result = proc_exec_prepare(path, tail, environment, directory, policy,
                                &handle->observer, &handle->prepared);
     if (result != E_OK) { kfree(handle); return result; }
+    if (ksched_cancellation_pending()) { dispose_handle(handle); return EACCDN; }
     handle->next = *head;
     *head = handle;
     return (LONG)handle->number;
 }
-LONG proc_exec_handle_commit(KPROC *owner, ULONG number)
+static LONG handle_commit_owned(KPROC *owner, ULONG number)
 {
     struct process_exec_handle **link, *handle;
     LONG result;
@@ -70,7 +72,7 @@ LONG proc_exec_handle_commit(KPROC *owner, ULONG number)
     link = find_handle(owner, number);
     if (!link) return EIHNDL;
     handle = *link;
-    if (!handle->prepared || handle->committing) return EACCDN;
+    if (!handle->prepared || handle->committing || ksched_cancellation_pending()) return EACCDN;
     /* Keep a stable record across callbacks which can insert other rights.
      * CLOSE and late prepared-lease attachment reject this in-flight record. */
     handle->committing = TRUE;
@@ -88,7 +90,7 @@ LONG proc_exec_handle_snapshot(KPROC *owner, ULONG number, PROCESS_COMPLETION *o
     if (!link) return EIHNDL;
     return process_observer_snapshot((*link)->observer, out) ? E_OK : EIMBA;
 }
-LONG proc_exec_handle_close(KPROC *owner, ULONG number)
+static LONG handle_close_owned(KPROC *owner, ULONG number)
 {
     struct process_exec_handle **link, *handle;
     if (!current_owner(owner)) return EACCDN;
@@ -126,3 +128,35 @@ void proc_exec_owner_exit(KPROC *owner)
         dispose_handle(handle);
     }
 }
+
+LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy)
+{
+    KSCHED_CLEANUP_SCOPE scope={0};
+    LONG result;
+    ksched_cleanup_begin(&scope);
+    result=handle_prepare_owned(owner,path,tail,environment,directory,policy);
+    ksched_cleanup_end(&scope);
+    return result;
+}
+
+LONG proc_exec_handle_commit(KPROC *owner, ULONG number)
+{
+    KSCHED_CLEANUP_SCOPE scope={0};
+    LONG result;
+    ksched_cleanup_begin(&scope);
+    result=handle_commit_owned(owner,number);
+    ksched_cleanup_end(&scope);
+    return result;
+}
+
+LONG proc_exec_handle_close(KPROC *owner, ULONG number)
+{
+    KSCHED_CLEANUP_SCOPE scope={0};
+    LONG result;
+    ksched_cleanup_begin(&scope);
+    result=handle_close_owned(owner,number);
+    ksched_cleanup_end(&scope);
+    return result;
+}
+
+#endif

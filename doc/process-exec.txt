@@ -110,7 +110,37 @@ prepared-lease attachment; snapshots remain safe. Unrelated PREPARE/CLOSE may
 reenter cleanup. Native tests inject these operations at the old child
 disposal boundary, proving the replacement remains selected exactly once.
 
-The existing bounded no-unwind filesystem cleanup contract still applies.
+Cleanup cancellation and user memory
+------------------------------------
+Every resource-owning transport entry nests an execution cleanup scope before
+acquisition. Its THREAD, canonical PROCESS, TID, execution generation, depth
+and nonrecycled per-execution scope ticket must match on LIFO release. An
+unmanaged/nested distinct-PROCESS caller has an explicitly inert scope and
+cannot inherit its carrier's protection. Release never checkpoints or kills.
+The outer public entry must checkpoint only after all scopes, local references,
+request buffers, reservations and IRQ state have been settled.
+
+Group requests and pending queries remain visible. Protected Syield uses an
+ordinary scheduler block so an already-pending request cannot suppress peer
+progress; it advertises no unsafe cancellation boundary. A guarded Ptermgrp
+is rejected before admitting a nonreturning request. Direct xterm of a guarded
+execution is an unsupported internal nonreturning callback and fail-stops;
+this scope does not make arbitrary exceptions or raw longjmp unwind safe.
+Distinct nested Pexec children terminate through their own lifecycle normally.
+
+PREPARE/COMMIT reject cancellation before publication. Once old successor
+destruction begins, COMMIT's irreversible boundary has been crossed: it must
+finish publication and ownership cleanup before the next safe checkpoint.
+CLOSE still consumes its valid right when cancellation was already pending.
+
+The decoder uses checked KPROC copies sharing ordinary range validation,
+lazy backing and the existing resident-copy implementation. Valid lazy pages
+are materialized. Invalid access returns EIMBA, backing allocation failure
+ENSMEM and backing I/O failure EREADF; none terminates the calling THREAD while
+argument buffers are locally owned. Ordinary uaccess retains its original
+fatal-fault behavior. Failed SNAPSHOT copyout never consumes retained result.
+
+The separately owned #933 filesystem-close contract remains an activation gate.
 Exhausted close retries retain an SFT reference rather than double-close it.
 Full public rollback signoff must resolve/document that ownership path; this
 checkpoint does not promise arbitrary driver longjmp recovery or hide a leak
