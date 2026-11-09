@@ -50,7 +50,7 @@ static void close_files(void)
              sft[i].f_incarnation==incarnation;k--) {
             FS_CLOSE_REPORT result={0};
             LONG error;
-            if (sft[i].f_cleanup_refs && (ULONG)sft[i].f_use==sft[i].f_cleanup_refs) {
+            if (sft[i].f_cleanup_refs && (ULONG)sft[i].f_use==sft[i].f_cleanup_refs+sft[i].f_staged_refs) {
                 FS_CLEANUP_TOKEN token;
                 token.handle=i+NUMSTD; token.incarnation=incarnation;
                 token.reference=sft[i].f_cleanup_consumed+1;
