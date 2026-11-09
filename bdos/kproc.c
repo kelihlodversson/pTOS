@@ -68,6 +68,7 @@ struct kproc {
     UQUAD number;                /* Generic non-recycled PROCESS identity. */
 #if CONF_WITH_USER_ASPACE
     BOOL file_cleanup_started; /* No new references once retirement starts. */
+    PD *destroying_pd; /* Non-owning address only during active destruction. */
     LONG cleanup_error;
     ULONG cleanup_transferred;
     UQUAD completion_order;
@@ -995,6 +996,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_ASPACE
             if (kproc->threads)
                 panic("kproc_destroy: attached non-runnable threads");
+            kproc->file_cleanup_started=TRUE;
 #endif
 
 #if CONF_WITH_CUIS
@@ -1008,6 +1010,12 @@ void kproc_destroy(PD *pd)
 #endif
 #if CONF_WITH_PTHJOIN
             kthread_forget_completions(kproc);
+#endif
+#if CONF_WITH_USER_ASPACE
+            /* The live-registry cursor must be detached before child cleanup
+             * can reenter. Preserve closed admission through that cleanup and
+             * the later payload wipe; this address owns no PD resource. */
+            kproc->destroying_pd=pd;
 #endif
             *link = kproc->next;
             /* Keep the PID reserved even if cleanup re-enters allocation. */
@@ -1077,6 +1085,9 @@ void kproc_destroy(PD *pd)
                 kproc_release(parent_identity);
 #endif
             }
+#if CONF_WITH_USER_ASPACE
+            kproc->destroying_pd=NULL; /* No callback/PD access after this point. */
+#endif
             kproc_release(kproc); /* drop the lookup's ownership */
             return;
         }
@@ -1182,9 +1193,17 @@ SBYTE *kproc_uft(PD *pd)
 #if CONF_WITH_USER_ASPACE
 /* Diagnostic only: residual file references are owned by the SFT service,
  * never by this retained identity. The first error survives PD retirement. */
-BOOL kproc_begin_file_cleanup(PD *pd)
+static KPROC *file_admission_owner(PD *pd)
 {
     KPROC *p=kproc_find(pd);
+    if (p || !pd) return p;
+    for (p=retired_processes;p;p=p->next)
+        if (p->destroying_pd==pd) return p;
+    return NULL;
+}
+BOOL kproc_begin_file_cleanup(PD *pd)
+{
+    KPROC *p=file_admission_owner(pd);
     if (!p) return TRUE; /* Trusted boot PD has no USER_ASPACE identity. */
     if (p->file_cleanup_started) return FALSE;
     p->file_cleanup_started=TRUE;
@@ -1192,7 +1211,7 @@ BOOL kproc_begin_file_cleanup(PD *pd)
 }
 BOOL kproc_file_references_allowed(PD *pd)
 {
-    KPROC *p=kproc_find(pd);
+    KPROC *p=file_admission_owner(pd);
     return !p || !p->file_cleanup_started;
 }
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)

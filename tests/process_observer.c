@@ -15,6 +15,7 @@ volatile LONG hz_200;
 SBYTE get_default_handle(int i) { (void)i; return -1; }
 static unsigned allocations, frees;
 static BOOL fail_allocate;
+static unsigned post_unlink_checks;
 static PROCESS_OBSERVER *during_retirement;
 static void (*allocation_finished)(void *);
 static void *allocation_token;
@@ -34,6 +35,10 @@ void bzero(void *p, size_t size)
     memset(p,0,size);
     if (during_retirement && p==(UBYTE *)during_retirement+offsetof(KPROC,pd)) {
         PROCESS_COMPLETION snap;
+        assert(!kproc_find(&child) && !kproc_file_references_allowed(&child));
+        assert(!kproc_begin_file_cleanup(&child));
+        assert(kproc_file_references_allowed(&caller));
+        post_unlink_checks++;
         assert(!process_observer_ready(during_retirement));
         assert(process_observer_snapshot(during_retirement,&snap));
         assert(snap.number_low==(ULONG)retained_number && snap.pid==retained_pid &&
@@ -42,7 +47,19 @@ void bzero(void *p, size_t size)
 }
 UQUAD procmem_gen(const void *p) { return p ? 1 : 0; }
 ULONG procmem_size(const void *p) { (void)p; return 0; }
-void kaspace_put(KASPACE *p) { assert(!p); }
+void kaspace_put(KASPACE *p)
+{
+    assert(!p);
+    /* Production kproc_destroy has detached the registry before reaching
+     * nested teardown/resource callbacks. Neither that phase nor the payload
+     * wipe may reopen a retiring parent's file admission as a boot PD. */
+    if (during_retirement) {
+        assert(!kproc_find(&child) && !kproc_file_references_allowed(&child));
+        assert(!kproc_begin_file_cleanup(&child));
+        assert(kproc_file_references_allowed(&caller));
+        post_unlink_checks++;
+    }
+}
 void kstack_free(PADDR p) { assert(!p); }
 
 void doassert(const char *file, long line, const char *function, const char *expression)
@@ -90,6 +107,7 @@ int main(void)
     during_retirement=a;
     assert(kproc_begin_exit(&child)); kproc_destroy(&child); during_retirement=NULL;
     assert(!kproc_ref_has_basepage(p) && p->retired && p->references==3);
+    assert(post_unlink_checks>=3 && !p->destroying_pd);
     assert(kproc_ref_file_cleanup(p,&references)==EWRITF && references==1);
     assert(!process_observer_ready(a)); /* Scheduler has not published wait yet. */
     kproc_publish_observers(p); kproc_publish_observers(p);

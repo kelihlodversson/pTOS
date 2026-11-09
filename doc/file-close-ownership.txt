@@ -181,3 +181,15 @@ if the kernel SETJMP_H guard is selected. Normal, ASan/UBSan and fortified GCC13
 suites are rerun with the actual hosted buffer. Native tests still use the
 pTOS register-array ABI; their evidence is separate and unchanged by this
 host-runner correction.
+
+Unlinking a retiring KPROC does not turn it into the trusted boot exception.
+During kproc_destroy, an address-only destroying_pd marker survives in the
+retained identity prefix until all prepared-child/resource/parent-release
+callbacks finish. Admission checks consult this active destruction identity
+in the existing retired list as well as the live list, including after payload
+wipe. The marker owns no PD/ASPACE/stack and is cleared before the final lookup
+reference release; no later notification may use it. The still-running PD
+allocation cannot be reused before its destruction continuation returns.
+Production KPROC tests check admission after unlink and during the payload wipe,
+without granting the retained numeric identity live-PD access. Future owner-lock
+synchronization must cover both registry transitions and marker lifetime.
