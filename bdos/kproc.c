@@ -2899,8 +2899,8 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 /* The same, and the pages of its lazy areas that are not there yet get their
  * physical pages now (what a read or write of them by the process would do).
  * The first pass rejects a range before any page is backed.  A range that is
- * fine but cannot be backed ends the process. */
-static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
+ * fine but cannot be backed returns its precise error to the owning wrapper. */
+static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write, BOOL *backing_failed)
 {
 #if CONF_WITH_DEMAND_PAGING
     VADDR first = address & ~(USER_PAGE_SIZE - 1);
@@ -2914,10 +2914,14 @@ static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
         if (aspace_translate(kproc->aspace, page, NULL, &prot) &&
             (!write || (prot & ASPACE_PROT_WRITE))) continue;
         rc = back_page(kproc, page, write ? ASPACE_PROT_WRITE : 0);
-        if (rc != 1) return rc == 3 ? EREADF : ENSMEM;
+        if (rc != 1) {
+            if (backing_failed) *backing_failed=TRUE;
+            return rc==0 ? EIMBA : rc==3 ? EREADF : ENSMEM;
+        }
     }
     return E_OK;
 #else
+    UNUSED(backing_failed);
     return range_allowed(kproc, address, size, write) ? E_OK : EIMBA;   /* all of it is there */
 #endif
 }
@@ -2926,9 +2930,10 @@ static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
  * same backing engine's checked result and settle ownership before returning. */
 static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 {
-    LONG error=back_user_range(kproc,address,size,write);
+    BOOL backing_failed=FALSE;
+    LONG error=back_user_range(kproc,address,size,write,&backing_failed);
     if (error==E_OK) return TRUE;
-    if (error==EIMBA) return FALSE;
+    if (error==EIMBA && !backing_failed) return FALSE;
 #if CONF_WITH_DEMAND_PAGING
     if (error==EREADF) {
         kcprintf("process: file mapping I/O error\n");
@@ -3531,7 +3536,7 @@ static LONG checked_copy_range(VADDR address, ULONG size, BOOL write)
 {
     KPROC *process=kproc_find(run);
     if (!process || !size || address>=USER_VA_LIMIT || size>USER_VA_LIMIT-address) return EIMBA;
-    if (process->aspace) return back_user_range(process,address,size,write);
+    if (process->aspace) return back_user_range(process,address,size,write,NULL);
     return validate_user(address,size,write) ? E_OK : EIMBA;
 }
 LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size)
