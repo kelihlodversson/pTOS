@@ -248,6 +248,9 @@ void aspace_cow_collapse(ASPACE *);
 ULONG aspace_cow_frames(void);
 ULONG aspace_cow_references(void);
 void aspace_clone_test_fail_after(ULONG count);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+void aspace_cow_test_fail_allocation(BOOL fail);
+#endif
 #endif
 void aspace_destroy(ASPACE *as);
 /* Makes `as` the address space in use (returns the root that was, for

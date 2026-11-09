@@ -55,6 +55,9 @@ long xclone(uint64_t address, uint64_t size)
                 if (size >= 0xc8920200ULL && size <= 0xc89202ffULL) {
                     aspace_clone_test_fail_after((ULONG)size & 255); value = E_OK;
                 }
+                if (size == 0xc8920300ULL || size == 0xc8920301ULL) {
+                    aspace_cow_test_fail_allocation(size == 0xc8920301ULL); value = E_OK;
+                }
                 kproc_release(source);
             }
             return value;

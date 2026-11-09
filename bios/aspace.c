@@ -1114,7 +1114,7 @@ LONG aspace_clone(ASPACE *source, ASPACE **out)
 #if ARCH_M68K
     {
         extern LONG mcpu;
-        if (mcpu != 40) return EINVFN;
+        if (mcpu != 40 || CONF_M68K_ROM_WINDOW) return EINVFN;
     }
 #elif defined(__ARM_ARCH) && __ARM_ARCH < 7
     return EINVFN;

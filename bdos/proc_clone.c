@@ -312,6 +312,8 @@ static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *tx, VADDR pid, VADDR tid)
 {
     if (!startup_target_live(tx)) return EACCDN;
+    /* Child-space output aliases cannot stand in for parent copyout. */
+    if (tx->space != tx->source_space && (pid || tid)) return EINVFN;
     return thread_startup_prepare_outputs(tx->startup, pid, tid);
 }
 

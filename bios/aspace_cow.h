@@ -3,6 +3,10 @@
 static struct cow_frame *cow_frames;
 static ULONG cow_frame_count, cow_reference_count;
 static ULONG clone_fail_after;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+static BOOL cow_fail_allocation;
+void aspace_cow_test_fail_allocation(BOOL fail) { cow_fail_allocation = fail; }
+#endif
 void aspace_clone_test_fail_after(ULONG count) { clone_fail_after = count; }
 static BOOL clone_injected(void)
 {
@@ -100,6 +104,9 @@ int aspace_cow_fault(ASPACE *as, VADDR address, UWORD access)
     frame = mapping->frame; protection = mapping->protection;
     physical = frame->physical;
     if (frame->references > 1) {
+#if CONF_WITH_PRIVATE_CLONE_TEST
+        if (cow_fail_allocation) { cow_fail_allocation = FALSE; return 2; }
+#endif
         physical = COW_ALLOC();
         if (physical == COW_NONE) return 2;
         memcpy(COW_ALIAS(physical), COW_ALIAS(frame->physical), USER_PAGE_SIZE);
@@ -133,7 +140,12 @@ static void cow_finish_source(ASPACE *source, BOOL commit)
         }
         link = &mapping->next;
     }
-    if (commit) cow_flush(source);
+    if (commit) {
+        /* Borrowed executable USER RAM was copied through physical aliases.
+         * Synchronize code once, before any child root can be installed. */
+        COW_CODE_CHANGED();
+        cow_flush(source);
+    }
 }
 /* One leaf of an unpublished child. No source permission changes until every
  * child table, mapping and reference is ready. Failure destroys child first. */

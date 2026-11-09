@@ -582,7 +582,8 @@ fi
 
 # The experimental VM test must execute, not merely compile.
 if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
-   ! grep -aq 'native independent KASPACE/COW entry probe (not Pfork): PASS' "$suite_log"; then
+   { ! grep -aq 'native independent KASPACE/COW entry probe (not Pfork): PASS' "$suite_log" ||
+     ! grep -aq 'native private orphan COW: PASS' "$suite_log"; }; then
     record "native independent VM/COW" FAIL "configured private clone probe did not pass"
 fi
 

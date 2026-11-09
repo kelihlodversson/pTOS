@@ -12,8 +12,7 @@ Native backend evidence: x32 QEMU, ARM A32 Cortex-A7 QEMU and m68k 68040 QEMU.
 The test-only explicit-entry probe is not a fork-return test. Saved-return
 integration belongs to #932 and must preserve the child constructor's root.
 030/6888x, 060, non-MMU and ARMv6 private cloning remain unsupported. Atari and
-Amiga MMU machines have no native private-clone evidence; leave the experimental
-option disabled there. Existing saved-return ABI/FPU gates remain applicable.
+Amiga ROM-window MMU machines are explicitly rejected before construction. Existing saved-return ABI/FPU gates remain applicable.
 
 Mapping and ownership contract
 ------------------------------
@@ -64,7 +63,12 @@ It uses private tagged Pclone size values; no production ABI opcode/flag is
 assigned. It checks distinct PID/TID/root, private global/heap/mmap writes in
 both write orders, lazy pages, independent stack storage, 24 injected backend
 construction failures, eight clone/wait cycles, one public reap per child and
-zero final COW frame/reference counts after the source PROCESS exits.
+zero final COW frame/reference counts after the source PROCESS exits. It also
+runs a three-generation private tree, parent-first exit with a surviving orphan
+(using existing scheduler adoption/cleanup), and an injected COW allocation
+failure that kills only the child and leaves parent data/mappings valid. Clean
+file pages and lazy file-backed pages are mixed with anonymous COW in the same
+clones; backing references survive descriptor close and child/parent teardown.
 
 tools/ci-regression.sh enables it for pc-x86_64, virt-arm-aspace and
 virt-m68k-aspace. tools/run-regression-tests.sh requires its runtime PASS marker.
@@ -72,7 +76,7 @@ The standalone production metadata tests in tools/test-private-aspace.sh use a
 modeled MMU, covering nested clones, parent-first teardown, exclusive promotion,
 COW OOM and exhaustive allocation rollback. They are not native evidence.
 
-Remaining acceptance work includes native nested/orphan trees, parent-first
-termination, memory-pressure fault cancellation, native file-backed mixtures,
-and saved-return PRIVATE_VM proof on every supported architecture. This
+Remaining acceptance work includes broader fault-cancellation pressure tests
+and complete inheritance. A separate isolated
+saved-return PRIVATE_VM validation checkpoint is documented in #895/#932. This
 prerequisite does not justify enabling public Pfork or Pvfork.
