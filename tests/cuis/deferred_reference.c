@@ -123,3 +123,15 @@ void panic(const char *format,...) { (void)format; abort(); }
 PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
+
+WORD kproc_pid(PD *p) { CHECK(p==&owner); return 7; }
+LONG ksched_admission_create(KPROC *p,UWORD n,KSCHED_ADMISSION *h)
+{ (void)p; (void)n; (void)h; abort(); }
+BOOL ksched_admission_retain(const KSCHED_ADMISSION *a,KSCHED_ADMISSION *b)
+{ (void)a; (void)b; abort(); }
+void ksched_waiter_retire(KPROC *p,ULONG tid,UQUAD execution)
+{ (void)p; (void)tid; (void)execution; abort(); }
+ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
+void ksched_admission_abandon(const KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD i,LONG status)
+{ (void)h; (void)i; (void)status; abort(); }
