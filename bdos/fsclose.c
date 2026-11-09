@@ -207,12 +207,17 @@ LONG fs_reference_close(FS_FILE_REFERENCE *reference, BOOL dispose, FS_CLOSE_REP
     }
     if (!valid_slot(reference->handle-NUMSTD)) panic("invalid live file reference");
     f=&sft[reference->handle-NUMSTD];
-    if (f->f_incarnation!=reference->incarnation || !f->f_own || !f->f_staged_refs) {
-        /* Media invalidation owns revocation, never a numeric replacement. */
+    if (f->f_incarnation!=reference->incarnation ||
+        (f->f_cleanup_state==FS_CLEANUP_INVALIDATED && !f->f_staged_refs)) {
+        /* Only authoritative media invalidation/reincarnation revokes a live
+         * owner. A lost count without that evidence is not a fake media error. */
         error=f->f_incarnation==reference->incarnation ? E_CHNG : EIHNDL;
         reference->owned=FALSE;
         return out->error=out->last_error=error;
     }
+    if (!f->f_own || !f->f_staged_refs || f->f_use<=0 ||
+        (ULONG)f->f_use<f->f_staged_refs+f->f_cleanup_refs)
+        panic("live file reference ownership lost");
     reference->closing=TRUE;
     error=bounded_close(reference->handle,FALSE,TRUE,dispose,out);
     if (out->disposition==FS_CLOSE_CONSUMED || out->disposition==FS_CLOSE_TRANSFERRED) {
