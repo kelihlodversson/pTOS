@@ -61,6 +61,12 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test bounded CUIS observer wait ownership (default off and gated)
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis-observers.py
+      - name: Test gated CUIS receipt runtime and canonical FIFO
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+          /tmp/elf-shared-venv/bin/python tests/cuis/publication_receipt.py
+          HOSTCC='gcc-13 -D_FORTIFY_SOURCE=3' /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+          HOSTCC='gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer' ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
       - name: Test retained PROCESS completion ownership
         run: /tmp/elf-shared-venv/bin/python tools/test-process-observer.py
       - name: Test PROCESS-owned launch rights
@@ -126,6 +132,20 @@ jobs:
           config.load_config()
           config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].set_value(2)
           assert config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].str_value == "y"
+          config.write_config()
+          PY
+          make CROSS_COMPILE= -j2
+          MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
+
+      - name: Boot-test gated receipt runtime through real PROCESS and CUIS rings
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_CUIS_RECEIPT_TEST"].set_value(2)
+          assert config.syms["CONF_WITH_CUIS_RECEIPT_TEST"].str_value == "y"
           config.write_config()
           PY
           make CROSS_COMPILE= -j2

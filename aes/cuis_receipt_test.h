@@ -1,0 +1,34 @@
+/* Narrow internal C entry points for the default-off #907 receipt prototype.
+ * No trap selector, STREAM extension or production userspace ABI is exposed. */
+#ifndef CUIS_RECEIPT_TEST_H
+#define CUIS_RECEIPT_TEST_H
+#include "portab.h"
+#if CONF_WITH_CUIS_RECEIPT_TEST
+#define CUIS_RECEIPT_BOUND 1UL
+#define CUIS_RECEIPT_PREPARED 2UL
+#define CUIS_RECEIPT_COMMITTED 3UL
+#define CUIS_RECEIPT_ACKNOWLEDGED 4UL
+#define CUIS_RECEIPT_RECLAIMED 5UL
+typedef struct {
+    ULONG operation, source, destination, slot;
+    ULONG source_low, source_high, destination_low, destination_high;
+    ULONG attempt_low, attempt_high, key_low, key_high;
+    ULONG packet, bytes, state, tag;
+} __attribute__((aligned(4))) CUIS_RECEIPT_TEST_RECORD;
+typedef char CUIS_RECEIPT_TEST_LAYOUT[
+    sizeof(CUIS_RECEIPT_TEST_RECORD)==64 && __alignof__(CUIS_RECEIPT_TEST_RECORD)==4 &&
+    offsetof(CUIS_RECEIPT_TEST_RECORD,source)==4 && offsetof(CUIS_RECEIPT_TEST_RECORD,slot)==12 &&
+    offsetof(CUIS_RECEIPT_TEST_RECORD,attempt_low)==32 && offsetof(CUIS_RECEIPT_TEST_RECORD,packet)==48 &&
+    offsetof(CUIS_RECEIPT_TEST_RECORD,tag)==60 ? 1:-1];
+/* Trusted transitional ASYNC launch fixture only. Installs the recoverable
+ * entitlement before COMMIT; no GUI callback from the generic launcher. */
+LONG cuis_receipt_test_launch(ULONG source,ULONG destination,ULONG slot,
+                             char *path,char *tail,char *environment,
+                             CUIS_RECEIPT_TEST_RECORD *out);
+LONG cuis_receipt_test_query(CUIS_RECEIPT_TEST_RECORD *record);
+LONG cuis_receipt_test_prepare(const CUIS_RECEIPT_TEST_RECORD *record);
+LONG cuis_receipt_test_commit(const CUIS_RECEIPT_TEST_RECORD *record);
+LONG cuis_receipt_test_ack(const CUIS_RECEIPT_TEST_RECORD *record);
+LONG cuis_receipt_test_reclaim(const CUIS_RECEIPT_TEST_RECORD *record);
+#endif
+#endif

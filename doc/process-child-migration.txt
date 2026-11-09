@@ -1,0 +1,624 @@
+#907: PROCESS activation and CHILD adapter preparation
+=====================================================
+
+Checkpoint: #935 403ef53ff, epic 197d05ce6. The public selector remains
+DISABLED. This document is a migration proposal, not activation acceptance.
+The 72-byte request and 32-byte completion layout are unchanged. There are
+77 live CUIS selectors: eight CHILD, nine COHORT, six #930, 54 #915.
+
+Activation prerequisite and review boundary
+------------------------------------------
+
+#933 must first receive final lifecycle acceptance, complete exact-head CI and
+be integrated into the actual epic. Reconcile #935 onto that actual base,
+not a historical validation merge. Preserve its separately reviewed C3a change:
+valid CLOSE unlinks/consumes the right even when cleanup reports an error;
+query canonical KPROC cleanup diagnostics before releasing the last observer.
+PREPARE still returns its original constructor failure. A negative CLOSE is
+not permission to retry a consumed right.
+
+The activation increment should change only the existing transport's build /
+configuration gate, S_INQUIRE discovery and corresponding acceptance tests.
+It must not modify request decoding, launch ownership, cancellation boundaries,
+completion observation, scheduler policy or the filesystem implementation.
+S_PROCEXEC remains signed Ssystem selector -9 (0xfff7), not a new trap family.
+Supported USER_ASPACE + NATIVE_SCHED + SSYSTEM kernels may expose it only after
+explicit owner activation approval. Other kernels return EINVFN for dispatch
+and inquiry. Ordinary presets must remain unchanged until that approval.
+
+Keep the temporary PROCESS reference inside the outer execution cleanup scope;
+release it before ending the scope. No checkpoint belongs in the adapter:
+osif's existing outer checkpoint delivers cancellation after operation-local
+buffers, detached rights and references are settled. Pending cancellation
+cannot undo a successful publication or consumed CLOSE.
+
+Retain K5: the checked-copy backing provider is the current single-CPU,
+non-preemptive built-in no-yield/no-mapping-reentry implementation. External
+BIOS/critical-error callbacks that reenter mapping teardown need a separate
+authoritative mapping lease/generation contract. This work makes no general
+fatal-unwind, preemption or SMP guarantee.
+
+C4a ownership handoff that must precede selector deletion
+-------------------------------------------------------
+
+Current children.c reserves a CUIS watch, calls CUIS launch 69/90/91 and
+receives only a PID. cuis_child_bind_spawn attaches the watch before execution;
+CUIS subsequently copies completion into children[] / child_order[]. Generic
+PROCESS transport cannot safely recover that observation after publication by
+looking up the returned PID. Doing so loses early exits and confuses PID reuse.
+
+Therefore removal of 66/67/68 requires a bounded handoff slice in the existing
+launch path, even though the final removal of 69/90/91 belongs to C4b:
+
+1. Establish a PROCESS-owned PREPARE right before runnable publication.
+2. Authenticate the owning PROCESS and destination AES endpoint separately.
+   Do not replace per-client endpoints with one client per PID/PROCESS.
+3. Use existing proc_exec_retain_observer(owner, handle, require_prepared, ...)
+   as the trusted kernel bridge. It retains the canonical KPROC metadata and
+   can reject committed/stale/foreign rights; it creates no completion registry.
+4. Before COMMIT, attach any required GUI readiness subscription and console /
+   display / input lease to the authenticated preparation. Commit must have no
+   remaining fallible attachment or userspace copyout.
+5. Return/retain the owned observation right in the matching libaes client
+   context. Owner exit already releases PROCESS rights; client exit must detach
+   its own subscriptions and close its own rights without cancelling committed
+   children or releasing another client's subscription.
+
+The exact GUI attachment/retirement interface is NOT implemented or agreed by
+this preparation. Three decisions require kernel/GUI ownership review:
+
+* How existing launch selectors hand the prepared generic right to libaes while
+  preserving their active callers until C4b. Do not infer a right from a PID.
+* How SESSION_WAIT's existing CUIS_READY_CHILD readiness observes canonical
+  completion without retaining children[] results as a second zombie registry.
+  It must stay ready during an unfinished double-click and through publication
+  failure; there is no Fpoll_time64 or pollable-endpoint migration here.
+* How successful ordinary STREAM_WRITE and observation/subscription retirement
+  compose under cancellation or reentry, so publication cannot be duplicated.
+  Closing the generic handle alone must not leave a GUI-owned retained lease.
+
+Do not disguise WATCH/RESULT/PUBLISH as three new selectors. If a legitimate
+shared endpoint adjustment is necessary, agree its narrow responsibility with
+#915/#930 owners before coding; their broader redesign remains excluded.
+
+C4a libaes notification transaction
+----------------------------------
+
+Retain only per-client notification rights and adapter progress in userspace;
+KPROC owns terminal status/order. SNAPSHOT is non-consuming and carries full
+PROCESS number, PID, state, kind, normal UWORD status, explicit signal and
+immutable terminal order. Never treat status 0xffff as a fault or a negative
+syscall result. SAME_PROCESS THREAD exit is not PROCESS_COMPLETED.
+
+Select terminal notices by the canonical 64-bit completion order, not launch
+order, PID or handle value. Keep GEM CH_EXIT layout in libaes: words 0=CH_EXIT,
+1/2=0, 3=PID, 4=full normal status or supported AES signal encoding, 5..7=0.
+Use the authenticated client's existing byte stream and sender provenance.
+
+A failed snapshot copyout leaves the right unchanged. A failed/uncommitted
+stream publication leaves notification retryable. After stream commit, record
+published progress before any fallible cleanup; a consumed CLOSE cleanup error
+must not make the notice publishable again. Cancellation after publication must
+not republish. Resolve this transaction boundary before replacing production
+callers; an unguarded userspace write-then-close sequence is not proof.
+
+Native acceptance fixtures (retain existing deadlines)
+-----------------------------------------------------
+
+Existing tests/cuis/gem_exit.c already checks both Pwait/CH_EXIT orders, reverse
+completion order and exactly-once messages using real GEM applications. Its
+normal-return role t returns -1 (the full UWORD 0xffff); fault role f separately
+expects signal encoding 0x0400. Keep both cases in both consumption orders.
+Existing process_transport tests independently check normal 0xffff, real fault completion,
+both Pwait/observer orders and stale/one-shot rights through the actual trap on
+x32, ARM A32 and m68k040. These are complementary, not interchangeable.
+
+Extend the native GEM fixtures when the handoff is implemented to cover:
+- Retain full normal 0xffff through CH_EXIT in both Pwait orders, distinct from
+  fault, while moving observation onto generic rights.
+- Child completion before shel_write returns; reverse completion order.
+- Stream-full EAGAIN and failed publication copy, followed by one successful
+  notification and no duplicate, including cancellation after stream commit.
+- Parent/client retirement, different clients within one PROCESS, PID reuse,
+  sibling THREAD exit, and exact observer/GUI lease resource baselines.
+- Child completion during unfinished double-click, simultaneous input/message /
+  timer readiness, without dropping input history or resetting deadlines.
+- Authenticated pre-COMMIT console leases and full rollback on attachment failure.
+
+The added tools/test-child-adapter.py fixture compiles the ACTUAL current
+lib/aes/children.c with a modeled CUIS transport. It pins full-word formatting,
+completion-order draining, EAGAIN/error retry, no duplicate success, bounded
+batching, reservation failure and graphical/console/directory/unobserved launch
+routing. It is hosted adapter-policy evidence, not a native observer/reaper test.
+Migrate its boundary mocks alongside the adapter once the interface is agreed;
+do not preserve obsolete CUIS mock calls as compatibility requirements.
+
+Delivery sequence
+-----------------
+
+Accepted #933 epic integration -> reconciled #935 exact-head acceptance ->
+explicit activation review -> separate activation increment -> reviewed C4a
+handoff and notification transaction -> native GUI matrix -> delete 66/67/68.
+Then C4b removes 69/90/91 and C4c removes 70/92. Count deletions only after
+all callers, wrappers, handlers, storage, tests and documentation have migrated.
+Nine COHORT selectors remain a separate shutdown-policy milestone.
+
+Kernel-owner C4a agreement and proposed wait layout
+--------------------------------------------------
+
+Recorded design/test-only agreement:
+https://github.com/kelihlodversson/pTOS/pull/937#issuecomment-6737807156
+
+Use bounded OPERATION-LOCAL observer leases imported from libaes's owned handle
+array during SESSION_WAIT preflight, outside CUIS exclusion. Retain before
+predicate registration, authenticate the endpoint and admitted operation token,
+and OR process_observer_ready into the existing level predicate. Do not add a
+persistent GUI completion/status queue. Keep all leases until the scheduler has
+detached its predicate. On every outcome, unpublish under input exclusion,
+restore IRQs/unlock, release observers outside exclusion, then reach the existing
+safe cancellation boundary. finish_session_wait currently calls client_put
+before unlock; its last-reference path needs an explicit audit/refactor rather
+than adding final KPROC releases inside that exclusion.
+
+CLOSE does NOT revoke independent observer leases. A concurrent wait may retain
+canonical metadata after CLOSE; its own teardown releases that lease. Session
+retirement explicitly detaches its operation, rather than requiring generic
+CLOSE to call CUIS. ABANDONED is ready for cleanup without CH_EXIT.
+
+Concrete proposed wire extension for owner review, not yet enabled:
+- Preserve SESSION_WAIT arguments a..d: endpoint, stream minimum, event mask,
+  milliseconds. Use presently unused e/f for owned-handle-array address/count.
+- Array consists only of fixed 32-bit ULONG handles, at most 16 entries (the
+  existing per-client launch bound). Address must be 4-byte aligned and bounded
+  as a 32-bit user range; count/width/overflow are checked before copy.
+- Zero count requires zero address and means no PROCESS readiness sources.
+  Nonzero count requires CUIS_READY_CHILD. Reject duplicate scalar handles and
+  zero/foreign/stale rights before admission; unwind partial leases once.
+  Distinct owned scalar handles for the same canonical observer are allowed:
+  OR readiness and balance every imported lease separately.
+- Copy the bounded array using the established checked-copy contract, then
+  authenticate current PROCESS ownership for each handle with require_prepared
+  FALSE. No borrowed user pointer survives preflight. Native UQUAD trap inputs
+  are checked before narrowing; the array itself contains no native pointers.
+- Endpoint authentication uses the opaque endpoint owned by the caller, not
+  find-the-first-client-for-PID policy. Revalidate endpoint identity/retirement
+  and operation token after any fallible preflight. Per-client libaes storage
+  supplies only that recipient's rights, even when clients share a PROCESS.
+- Store at most 16 retained observer pointers in the operation's own lifetime.
+  Readiness is level-triggered, never consumes an observer or public completion,
+  and retains the existing input history/multi-click/deadline machinery.
+
+The bounded layout and publication-after-checkpoint behavior still require
+explicit source-level review before ABI implementation. Existing STREAM_WRITE
+commits whole packets, but a userspace mark-after-syscall is not by itself a
+proof against cancellation/THREAD retirement at the syscall return checkpoint.
+Test and resolve that boundary for the per-client delivery state; do not silently
+weaken exactly-once or add a generic CUIS callback to PROCESS CLOSE.
+
+C4a publication-receipt amendment: REVIEW PROPOSAL, not enabled
+=============================================================
+
+The independent generic PROCESS transport may complete its activation review
+without this GUI receipt. This amendment changes neither S_PROCEXEC nor KPROC,
+Pwait, PROCESS CLOSE, or the canonical completion record. No receipt selector,
+STREAM_WRITE extension, numeric operation assignment or production handler is
+implemented here. Kernel/GUI transport owners must review this wire proposal,
+linearization, per-client binding and reclaim policy before implementation.
+
+Counterexample and the boundary we need
+--------------------------------------
+
+STREAM_WRITE can append all 16 CH_EXIT bytes atomically, then osif may terminate
+the publishing THREAD before it writes a userspace success flag. A sibling can
+still SNAPSHOT the non-consuming completion. The receiver might already have
+consumed the first packet: an empty stream does not prove non-publication.
+Rewriting the packet duplicates CH_EXIT. A byte-count query cannot repair this.
+
+We need a bounded source-endpoint-owned receipt, independent of the publishing
+THREAD. The transport stores ONLY opaque packet/attempt information, not child
+status, PROCESS zombies, exit order, observers or reaping rights. LibAes alone
+formats CH_EXIT, chooses entitled recipients and sorts canonical terminal order.
+
+Identity, staging and limits
+----------------------------
+
+Authority is the canonical calling PROCESS plus its exact source endpoint
+incarnation. An endpoint handle/generation is neither PID nor AES application ID.
+Retain/authenticate the caller and endpoint for each operation. A sibling THREAD
+in that same PROCESS may recover its client's receipt; a different PROCESS or
+another endpoint cannot. No raw PD or THREAD address is an authority token.
+
+A receipt identity is (source endpoint incarnation, slot, attempt generation).
+Each source has exactly 16 indexed slots. Generations are unsigned 64-bit,
+strictly increasing PER SLOT, never reused or wrapped. Exhaustion is ERANGE.
+A recycled numeric endpoint handle must have a new non-recycled generation.
+Current CUIS handles are themselves non-recycled incarnation identifiers; their
+zero-extended value can supply the generation until an explicitly reviewed
+endpoint representation changes. There is no PID-to-endpoint reconstruction.
+
+Each attempt immutably binds destination endpoint/generation, a caller-supplied
+opaque 64-bit delivery key, exact packet bytes (1..32), and sender provenance.
+LibAes uses the canonical PROCESS number as its delivery key, scoped by the
+recipient/source client; the transport does not interpret it as PROCESS data.
+Duplicate live/acknowledged keys across a source's 16 slots are rejected with
+EAGAIN; the adapter uses bounded QUERY enumeration to recover the existing
+identity, never creates another attempt or chooses another destination.
+Conflicting bytes/destination for an existing attempt are rejected.
+
+A source-client-owned transport binding (opaque owned-right recovery tag, key,
+destination incarnation, slot/generation) is installed BEFORE child COMMIT. It
+lives in recoverable endpoint metadata; libaes may cache it but THREAD-local or
+userspace success flags are not its authority. It stores no PROCESS completion
+or observer lease. A recovering sibling enumerates/reuses that exact binding;
+it never mints a new attempt for the same entitlement after a failed QUERY/CLOSE.
+The trusted pre-publication handoff and concurrent retirement need source review.
+
+Proposed bounds: 16 slots per source endpoint, at most 256 live BOUND / PREPARED /
+COMMITTED / ACKNOWLEDGED attempts across the transport, at most 32 opaque bytes
+per attempt. The per-slot generation/outcome fence is fixed metadata owned by
+the source client. Quota and staging allocation fail before publication.
+The fixed fence metadata is also globally capped: at most 16 allocated source
+tables of 16 slots (256 fences). A first bind reserves the entire table; empty
+tables/floors remain until source retirement. This is a proposed resource policy
+for review, not a frozen public limit. No timeout or memory pressure silently
+evicts an unacknowledged receipt. A
+non-recovering live client can exhaust its own bounded allocation; this is an
+observable admission failure, not permission to forget a committed outcome.
+Endpoint retirement releases that endpoint's entire table. There is no worker,
+retry queue, generic transaction manager or unbounded history.
+
+Proposed 64-byte review record (all ULONG fields; alignment 4)
+-------------------------------------------------------------
+
+Offset  Field
+ 0      operation (symbolic below; numeric values/selector NOT assigned)
+ 4      source endpoint handle
+ 8      destination endpoint handle
+12      slot index, 0..15
+16/20   source endpoint generation low/high
+24/28   destination endpoint generation low/high
+32/36   attempt generation low/high
+40/44   opaque delivery key low/high
+48      fixed 32-bit user packet address
+52      packet length, 1..32 for PREPARE
+56      output state/outcome
+60      opaque adapter recovery tag (generic owned-right scalar for libaes)
+
+All fields are fixed-width native-endian, including on LP64 kernels. Validate
+native trap address/length high bits BEFORE narrowing. The record length is
+exactly 64; packet range/alignment/overflow use the established checked-copy
+contract and K5 restriction. QUERY may copy exact staged bytes to the caller's
+bounded output buffer and copy the receipt identity/state; failed/partial copyout
+never changes a receipt. PREPARE copies all input before admission. Other
+operations do not recopy caller packet bytes or infer identity from a pointer.
+The 72/32 PROCESS records remain entirely unchanged.
+
+A trusted pre-publication GUI launch handoff reserves a BOUND slot/generation
+before child COMMIT (detailed below). It stores an opaque adapter tag, not a
+PROCESS reference or completion. PREPARE subsequently stages the actual packet
+in that existing binding; it does not allocate/promote an attempt generation.
+The initial handoff is an internal helper in the still-active legacy launch
+selectors, not a sixth public receipt operation. QUERY enumerates the source's
+16 slots to recover a binding even when the installing THREAD never returned.
+
+
+State machine and atomic commit
+-------------------------------
+
+RECLAIMED(floor) -> BOUND(next generation) -> PREPARED -> COMMITTED -> ACKNOWLEDGED
+BOUND/PREPARED -> RECLAIMED(uncommitted cancellation)
+ACKNOWLEDGED -> RECLAIMED(committed)
+
+RECLAIMED retains the last generation, key and terminal outcome as a fixed-size
+fence. It is not equivalent to 'publication did not happen'. Older generations
+are stale; queries/COMMIT of stale attempts cannot append. Generation advance
+requires an explicit new binding and the previous slot to be RECLAIMED.
+
+The five SYMBOLIC operations are PREPARE, QUERY, COMMIT, ACK and RECLAIM. This is
+a single-purpose GUI byte-stream receipt, not five new PROCESS operations. The
+choice of an existing stream envelope versus a narrowly scoped transport entry
+is deferred to owner review; no opcode/STREAM_WRITE extension is added here.
+
+The trusted BIND handoff reserves receipt/table quota, fixed packet staging,
+source authority and destination stream storage before child COMMIT. PREPARE
+later copies the immutable packet into that reserved slot; child status is not
+known at BIND time.
+Fallible copies, allocation and temporary client retention happen outside input
+exclusion under the accepted execution cleanup scope. Revalidate both endpoint
+incarnations before making PREPARED visible. A BIND failure admits no
+binding and appends nothing. Failed packet staging leaves BOUND, never COMMITTED.
+Stream capacity is tested again at COMMIT under exclusion; full capacity returns EAGAIN with PREPARED intact, never COMMITTED.
+Do not reserve stream bytes indefinitely while an uncommitted sender waits.
+
+COMMIT authenticates source/attempt and revalidates the original destination.
+Under the SAME bounded existing input/stream exclusion, with no allocation,
+user access, yield or fallible callback after its irreversible boundary:
+- append exact staged bytes to the destination ring;
+- append authenticated sender provenance;
+- make the receipt durably COMMITTED.
+
+All three become observable together. Retrying COMMIT on COMMITTED or
+ACKNOWLEDGED returns the original committed length without appending, even if
+the receiver drained its ring or retired. QUERY reports the durable outcome,
+never guesses from stream bytes. A PREPARED attempt whose destination retired
+cannot commit to a replacement incarnation; it may only be cancelled/reclaimed.
+Already committed delivery is not retargeted when its recipient retires.
+
+Receipts retain endpoint identities/opaque bytes, not dead execution resources.
+Do not keep a retired destination's PD, ASPACE, stack, descriptors, or whole
+stream alive just for an uncommitted receipt: retain temporary live client
+references only for an operation, and resolve/revalidate the stored destination
+incarnation at COMMIT. Drop final client/KPROC/observer references outside input
+exclusion. A source retirement unpublishes its table under exclusion and releases
+owned storage/references outside it. Committed packets already owned by a live
+receiver remain ordinary queued messages with their original sender provenance.
+
+ACK, recovery and the second ambiguity window
+---------------------------------------------
+
+ACK is idempotent and changes COMMITTED to ACKNOWLEDGED. It does NOT erase the
+attempt's identity, bytes, key or committed outcome. Failed ACK preflight changes
+nothing; loss of the publishing THREAD after durable ACK leaves ACKNOWLEDGED
+queryable. Acknowledging PREPARED is an error. This compact acknowledged tombstone
+must survive until observer/GUI-right cleanup finishes.
+
+LibAes recovery is:
+1. Recover the immutable client binding; QUERY the exact attempt (or enumerate
+   the source's bounded slots by its known key). Never infer success from bytes.
+2. If PREPARED, retry the same COMMIT. If COMMITTED/ACKNOWLEDGED, do not append.
+   If stale/RECLAIMED, never invent a replacement attempt for that entitlement.
+3. Record recipient delivery progress and ACK. Neither an ordinary userspace
+   progress flag nor successful receipt copyout is necessary to rediscover
+   COMMITTED/ACKNOWLEDGED after another THREAD takes over.
+4. Detach operation-local GUI wait leases and CLOSE the owned PROCESS right.
+   CLOSE errors after consumption do not restore the right or published state.
+   Recovery may see EIHNDL because a lost THREAD already consumed the known right;
+   that is cleanup recovery, never authorization to republish. Do not assume
+   arbitrary CLOSE errors all imply consumption without ownership authentication.
+5. Only after all aliases for this recipient entitlement and wait leases are
+   settled, RECLAIM the acknowledged receipt. Free staging; retain the bounded
+   last-generation/outcome fence. Publish the client slot reusable only after
+   this cleanup boundary. A stale surviving THREAD retains its OLD attempt and
+   cannot commit after slot reuse.
+
+There is deliberately no 'ACK immediately erases the record' shortcut: THREAD
+loss between ACK and CLOSE would otherwise reopen the same duplicate window.
+An ACKNOWLEDGED receipt cannot be overwritten by PREPARE. RECLAIM is explicit;
+correct adapter policy forbids reclaim/reuse while its old entitlement is live.
+The transport cannot know PROCESS CLOSE state and must not gain that dependency
+or a callback. This adapter ordering is a REQUIRED reviewed invariant, not a
+claim that arbitrary clients issuing premature RECLAIM get semantic CH_EXIT
+exactly-once. Ordinary applications can already send arbitrary GUI packets.
+
+Proof obligations and executed review fixtures
+----------------------------------------------
+
+For each valid attempt, append and COMMITTED share one linearization point;
+only PREPARED can append; every later COMMIT/QUERY/ACK observes the same outcome.
+Receiver consumption cannot clear it. THREAD death cannot clear source-owned
+receipt state. ACK keeps outcome through the final userspace cleanup interval.
+RECLAIM/slot reuse is permitted only after old delivery rights are consumed;
+stale attempts cannot act on a later generation. Per-client bindings prevent
+re-minting an attempt for a completed entitlement. Endpoint retirement ends that
+endpoint's entitlement; a new incarnation cannot recover or receive the old one.
+
+Executable tests/cuis/publication_receipt.py is explicitly a REVIEW MODEL, not
+production code or native evidence. It exercises fault after atomic commit,
+cancellation before userspace success, receiver consumption then sibling
+recovery, concurrent retry, immutable packet/key binding, source/destination
+retirement and reuse, stale attempts, quota/allocation/copy failure, stream-full
+EAGAIN, ACK interruption, consumed CLOSE error and generation exhaustion. Further
+model cases enumerate all 20 sibling ACK/CLOSE/RECLAIM interleavings with slot
+reuse, recover a preinstalled BOUND entitlement after installer loss, and check
+fixed fence-table quota separately from active receipts. It also
+contains negative controls demonstrating duplicate append when a commit receipt
+is lost or a slot is reclaimed before the old right closes. These controls fail
+the one-append invariant; their expected counterexample is not a relaxed product
+assertion. Existing child_adapter.c still tests actual production libaes policy.
+
+Before implementation approval, review: 64-byte layout; symbolic operation count;
+source/destination authority; generation exhaustion; slot/global quota; immutable
+client binding and alias dedup; non-yielding append+provenance+receipt commit;
+ACK/reclaim ordering; endpoint retirement; no final releases under exclusion.
+Before selector deletion, add real native publisher fault/cancellation at commit,
+sibling recovery AFTER receiver drain, interrupted ACK/CLOSE, endpoint reuse,
+queue-full retry, multiple clients/PROCESS and exact resource baselines to the
+existing x32 GEM fixtures. Both Pwait orders, normal 0xffff vs fault, reverse
+completion order and mixed double-click/input/message/timer readiness remain
+required. Hosted model success does not satisfy those native acceptance gates.
+
+Refinements after kernel-owner review (new proposal requiring follow-up review)
+-----------------------------------------------------------------------------
+
+Scoped prototype verdict for the preceding amendment:
+https://github.com/kelihlodversson/pTOS/pull/937#issuecomment-6739602733
+It accepts the direction and gated proof, NOT a public receipt ABI or activation.
+The refinements below address its binding, concurrency, wire and quota findings.
+
+Recoverable entitlement installation, without an early fictitious packet
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For C4a the existing launch handlers 69/90/91 remain the narrow trusted bridge:
+1. Generic PROCESS PREPARE creates the canonical owned right, still unpublished.
+2. Authenticate that right with require_prepared=TRUE and the exact GUI endpoint;
+   prepare all required console/display/input resources. No authority by PID.
+3. Under the endpoint transport domain, internally BIND a bounded slot with
+   source/destination incarnations, next non-recycled attempt generation,
+   canonical opaque key and adapter tag = the owned generic handle. Reserve
+   fixed metadata and packet storage. Store NO child status, ordinal or observer
+   lease in the binding. This source-client-owned BOUND metadata is recoverable
+   with QUERY, even if the installer never reaches userspace. It is an opaque
+   publication entitlement, not a second PROCESS registry or wait/reap service.
+4. Complete authenticated lease attachment before child COMMIT; publish through
+   the existing generic COMMIT. The legacy scalar PID return remains scalar;
+   libaes discovers the owned right via the durable binding/tag, not PID lookup.
+5. After canonical terminal readiness, libaes SNAPSHOTs the owned right and
+   constructs CH_EXIT. PREPARE then stages the real immutable packet; no packet
+   or exit status was fabricated at BIND time. Distinct clients in one PROCESS
+   have distinct source tables and entitlements.
+
+The existing guarded operation owns rollback before BIND and before generic
+COMMIT. Failure there unpublishes/cancels only its exact BOUND slot/generation
+under input exclusion, restores IRQs/unlocks, then closes the preparation and
+releases local references outside exclusion, preserving the constructor error. Reentry cannot clear a newer binding. If cancellation is admitted before
+publication, settle both owners before the safe checkpoint. After child COMMIT,
+the source endpoint owns recoverable BOUND metadata and the canonical PROCESS
+still owns the generic handle: publishing THREAD loss cannot erase either.
+If the PROCESS dies, its canonical handle finalizer and endpoint retirement each
+settle their own domains; no receipt callback is added to generic CLOSE.
+
+This depends on #931's reviewed cancellation/checked-copy envelopes. It does NOT
+claim that a fatal arbitrary kernel driver longjmp is made safe. A user THREAD
+fault after the kernel publication/return boundary is a required native test.
+A dying userspace lock owner is not required to install or recover the binding.
+Normal libaes client teardown must enumerate and settle its own rights before
+ending the endpoint. Raw private END misuse does not transfer canonical PROCESS
+rights into the stream service or give it permission to reap them.
+
+Sibling cleanup and reuse
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every recovery worker carries the exact immutable slot/generation/tag; it never
+reloads a reused slot and closes that new tag. ACK is idempotent. CLOSE names the
+old non-recycled generic handle; EIHNDL during recovery cannot affect a new right.
+RECLAIM of an older generation is stale, never a release of the current record.
+Only publish a client slot reusable after its old right/alias cleanup and wait
+leases have settled. A worker observing STALE stops that old recovery; it must
+not stage a new attempt for the old key. No thread-owned lock spans these calls.
+
+The model now enumerates all 20 order-preserving interleavings of two sibling
+ACK/CLOSE/RECLAIM sequences, reusing the slot as soon as the first valid cleanup
+finishes. Late old operations cannot append or close the replacement's right.
+This is still a model with serialized transport calls, not evidence that a
+production client binding implementation or native scheduler has that property.
+
+Field directions, unused values and response rules
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All record pointers are 4-byte aligned and exactly 64 bytes. Opaque packet byte
+buffers have BYTE alignment: an odd packet address is valid if its whole user
+range is valid. Do not impose a word-alignment rule on stream data.
+
+Exact operations PREPARE/COMMIT/ACK/RECLAIM take source+generation, slot+attempt,
+destination+generation, key and tag as input and match all against the binding.
+The record's state field is input zero. All unspecified/unused input fields must
+be zero. There is no wire version or compatibility selector.
+
+Operation  Packet fields                    Record/result
+PREPARE    input address + exact 1..32 bytes  scalar E_OK; no record output
+COMMIT     address=bytes=0                  scalar committed byte length
+ACK        address=bytes=0                  scalar E_OK; retains ACK tombstone
+RECLAIM    address=bytes=0                  scalar E_OK; keeps generation fence
+QUERY      output address + capacity 0..32  full 64-byte record output; scalar E_OK
+
+QUERY takes source+generation, concrete slot, and either exact attempt generation
+or zero to enumerate the CURRENT slot. Destination/generation, key, tag and state
+are zero input/output-only for QUERY. Generation zero is ONLY an enumeration
+request, never permission for COMMIT or PREPARE to select/promote a generation.
+Enumerate 16 concrete slots to find a key; no wildcard slot or unbounded scan.
+An unused slot returns generation zero/UNBOUND/tag zero. Only the trusted BIND
+helper allocates the next generation; exhaustion fails without wrapping.
+
+QUERY address=capacity=0 is metadata-only and returns actual staged packet length
+in packet_bytes. For byte retrieval, address must be nonzero and capacity 1..32;
+capacity below the staged length returns ERANGE without consuming or updating
+anything. Capture a bounded immutable reply under exclusion, unlock, copy packet
+then record using checked output. A partial copy failure returns EIMBA and changes
+no binding/receipt. The output record echoes the user packet_address; it never contains a kernel
+pointer. The caller trusts a reply only after scalar E_OK. QUERY can
+return a linearized old snapshot if another worker subsequently ACKs/reclaims;
+exact-generation follow-up operations still reject stale identities safely.
+
+Output state names distinguish UNBOUND, BOUND, PREPARED, COMMITTED,
+ACKNOWLEDGED, RECLAIMED_COMMITTED and RECLAIMED_CANCELLED. Numeric assignments
+remain for ABI review. COMMIT replay on COMMITTED/ACKNOWLEDGED returns the saved
+packet length even after receiver drain/retirement. RECLAIMED never authorizes
+append. ACK before commit is invalid. RECLAIM of a still-COMMITTED attempt is
+invalid until ACK; BOUND/PREPARED may be cancelled after right/lease cleanup.
+
+Error classes for review: EINVAL for malformed fields/count/length/alignment;
+EIMBA for bad user ranges/copy faults; EACCDN for source authority or conflicting
+immutable identity; EIHNDL for unknown/stale exact attempts; EAGAIN for duplicate
+key (recover by QUERY), exhausted quota or full stream; ERANGE for generation
+exhaustion/insufficient QUERY packet capacity; ENSMEM for allocation before
+admission. Errors never report COMMITTED without actual append+provenance commit.
+No fallible result copyout is added after COMMIT; its result is scalar only.
+
+Fixed fence accounting and C layout evidence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A first BIND allocates all 16 fixed fences atomically and consumes one of at most
+16 source tables globally. BOUND counts in the 256 total-slot/active-attempt
+bound, as do PREPARED, COMMITTED and ACKNOWLEDGED. RECLAIM frees attempt staging
+and active quota, but keeps the source's allocated table and its generation
+fences. Even an empty table stays charged until source endpoint retirement.
+Retirement unpublishes its table once and returns all 16 metadata slots once;
+reentrant/duplicate retire cannot return quota twice. No live endpoint can lose
+its generation floors because another client needs memory. These proposed small
+resource limits require owner review; allocation is lazy, not a static packet
+queue. The model checks table exhaustion independently of active-receipt quota.
+
+The test-only publication_receipt_wire.h declares the proposed record using
+real ULONG types, alignment 4 and assertions for size, scalar/address width and
+EVERY offset. check-publication-receipt-layout.sh compiles it with x32, ARM A32
+and m68k040 compilers. This is compile-only ABI evidence; it exposes no selector,
+handler, production structure or ARM/m68k userspace GUI implementation.
+
+Gated runtime prototype (#941, following accepted #937 3d1fedc46)
+---------------------------------------------------------------
+
+CONF_WITH_CUIS_RECEIPT_TEST requires the independent observer test gate and
+remains default off. Only trusted internal C fixture entry points exist. No
+numeric receipt opcode, public request decoder, production STREAM extension,
+public PROCESS activation or legacy CHILD cutover is added by this prototype.
+The fixed 64-byte record layout is preserved in cuis_receipt_test.h.
+
+Sixteen fixed source tables each contain sixteen fixed slots. Tables/fences are
+charged until exact endpoint retirement; active attempts are counted separately.
+No allocation or counter wrap can evict an outcome. Slots store endpoint/attempt
+identity, an opaque PROCESS right tag and immutable bytes, never a retained
+observer or copied PROCESS completion/order. ACK preserves the committed outcome;
+RECLAIM preserves a generation fence. Adapter policy must finish observation and
+right cleanup before reclaiming; a negative consumed CLOSE never resets progress.
+
+The trusted launch fixture creates only an ordinary ASYNC generic PREPARE right.
+All fallible transport storage and temporary references are obtained first. BIND
+and the existing no-allocation/no-callback/no-yield ordinary COMMIT path share
+input IRQ exclusion, so sibling QUERY/CLOSE/END cannot enter their interval in
+the supported cooperative kernel. This is NOT a general deferred-commit guard:
+deferred replacement has destructor callbacks and must never enter this helper.
+No callback is added to generic PROCESS code. Console lease attachment and the
+actual transitional legacy-launch integration remain separate review work.
+
+FIFO is checked at packet COMMIT: copy the bounded live entitlement identities,
+import operation-local canonical observers outside exclusion, then revalidate
+all slot identities/states under exclusion. Read canonical ready snapshots there.
+A lower terminal ordinal in any unpublished BOUND/PREPARED slot returns EAGAIN.
+No allocation, usercopy, callback or yield occurs between the ordinal check and
+atomic byte/provenance/COMMITTED publication. A stalled/dead publisher does not
+own a lock: its endpoint entitlement is recoverable by a sibling. Missing owned
+rights fail safely rather than guessing completion from a PID or queued bytes.
+Committed/acknowledged retries bypass observation and never append again, even
+when the receiver has drained or retired and the original right was closed.
+All imported leases and final client/PROCESS references are released outside
+input exclusion under the owning execution cleanup scope.
+
+Evidence boundaries
+- The existing 26 Python review-model cases remain negative controls.
+- tools/test-cuis-receipts.py executes the production receipt C and ordinary CUIS
+  stream read/ring code with modeled canonical PROCESS and scheduler services.
+  It covers bounded admission, real ring drain then retry, canonical ordering,
+  immutable packet retry, checked-copy failure, pending cancellation, ACK/CLOSE/
+  reclaim, stale generations and destination retirement/new endpoint identity.
+- The gated native x32 MEMTEST fixture uses actual generic prepared children,
+  canonical completion ordinals/status ffff, both public Pwait orders, real CUIS
+  stream append/read/drain, duplicate retry, ACK tombstones and exact outer
+  PROCESS/heap/mapping resource baselines.
+
+The native fixture does not yet kill a publishing THREAD after commit or prove
+surviving sibling takeover. Those native fault/interleaving and full quota tests
+remain mandatory before runtime acceptance or CHILD selector removal. The source
+must also receive independent review of the ordinary BIND-to-COMMIT IRQ boundary.
+Public activation has a separate acceptance gate and is not blocked by this GUI
+prototype. K5 remains the built-in single-CPU, non-preemptive no-yield/no-mapping-
+reentry backing provider; no arbitrary callback/unwind, preemption or SMP claim.

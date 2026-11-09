@@ -201,3 +201,11 @@ config CONF_WITH_NICELINES
 endif
 
 endmenu
+
+config CONF_WITH_CUIS_RECEIPT_TEST
+    bool "TEST ONLY: bounded CUIS publication receipt runtime"
+    depends on CONF_WITH_CUIS_OBSERVER_TEST
+    default n
+    help
+      Internal C prototype only. No public selector, production CHILD migration,
+      or PROCESS activation. Requires independent native recovery acceptance.

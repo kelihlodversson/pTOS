@@ -15,6 +15,7 @@
 #include "../bdos/uaccess.h"
 #if CONF_WITH_CUIS_OBSERVER_TEST
 #include "../bdos/process_exec_internal.h"
+#include "cuis_receipt_test.h"
 #endif
 
 extern PD *run;
@@ -120,6 +121,9 @@ typedef struct cuis_client {
     KPROC *process;
     CUIS_STREAM_OPERATION *stream_read, *stream_write;
     UQUAD stream_sequence;
+#if CONF_WITH_CUIS_RECEIPT_TEST
+    struct cuis_receipt_table *receipt_table;
+#endif
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
     ULONG stream_head, stream_bytes;
     struct { ULONG token; WORD pid, signal; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
@@ -1484,6 +1488,9 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     }
 }
 
+#if CONF_WITH_CUIS_RECEIPT_TEST
+static void receipt_retire(CUIS_CLIENT *client);
+#endif
 static void session_exit_client(CUIS_CLIENT *client)
 {
     CUIS_CLIENT **link=&clients;
@@ -1493,6 +1500,9 @@ static void session_exit_client(CUIS_CLIENT *client)
         ULONG i;
         UQUAD flags = cuis_input_lock();
         client->retired = TRUE; /* Predicates wake without targeting a replacement session. */
+#if CONF_WITH_CUIS_RECEIPT_TEST
+        receipt_retire(client);
+#endif
         if (client->stream_read) client->stream_read->state = STREAM_RETIRED;
         if (client->stream_write) client->stream_write->state = STREAM_RETIRED;
         cohort_leave(client);
@@ -1617,6 +1627,9 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->cohort_exit = client->cohort_delivered = client->cohort_accepted = FALSE;
         client->stream_read = client->stream_write = NULL; client->stream_sequence = 0;
         client->stream_data = NULL;
+#if CONF_WITH_CUIS_RECEIPT_TEST
+        client->receipt_table = NULL;
+#endif
         client->stream_head = client->stream_bytes = 0;
         client->button_sequence = 0; client->button_policy = 1;
         client->history_head = client->history_count = 0; client->history_exhausted = FALSE;
@@ -3703,3 +3716,7 @@ LONG cuis_process_defer_directory(UQUAD session, UQUAD path, UQUAD tail, UQUAD e
     if (!directory) return EINVAL;
     return process_defer(session,path,tail,environment,directory);
 }
+
+#if CONF_WITH_CUIS_RECEIPT_TEST
+#include "cuis_receipt_test.c"
+#endif
