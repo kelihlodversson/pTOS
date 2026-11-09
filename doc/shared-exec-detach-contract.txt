@@ -1,0 +1,181 @@
+Shared Pexec and committed executable replacement: policy draft
+==============================================================
+
+Scope: #894/#895 workstream; baseline epic197d05ce6. This is a committed design
+proposal, not implemented4/104/200/Pvfork functionality or owner signoff. The
+first supported-mode constructor migration is draft #936ca9ec88e4. Independent
+COW #934 and descriptor-owner #933 acceptance remain separate. No unreviewed
+scheduler, filesystem or public-transport implementation is imported here.
+
+Construction common to4/104
+--------------------------
+Use the same trusted proc_clone factory with a distinct PROCESS/initial THREAD
+and retained source KASPACE. Never SAME_PROCESS. New-PROCESS environment,
+basepage and execution resources must have authoritative owners; publicly
+writable PD fields are not ownership tokens. Sync versus async belongs in
+xexec's launch/wait policy, not a clone flag or a new wait implementation.
+
+Stage the following rights before any task is runnable:
+Resource                  Required right / current boundary to resolve
+Staged image              Exact PE_LOAD grant, source mapping bounds and
+                          generation; current load_parent/UH_LOADED is a
+                          per-PD ledger, not a durable shared-image right.
+Environment/basepage      Allocation-generation/pin rights plus user mappings;
+                          child must not own/free the parent's allocations
+                          merely because p_env/p_tbase contains their address.
+User stack                Distinct usable launch stack; never parent live SP
+                          or a fixed USER_STACK_TOP mapping already in use.
+Syscall/scheduler stacks  Fresh architecture-owned resources, existing root
+                          admission and stopped-stack reclamation only.
+Shared VM                 Retained KASPACE plus logical image/stack holds,
+                          not just another raw page-table pointer.
+PROCESS completion        Existing canonical observer prepared before publish;
+                          ordinary public #909 wait/reap policy stays unique.
+Descriptors/CWD           Existing supported Pexec inheritance; common all-
+                          descriptor migration waits for #933's accepted API.
+
+Kernel-owned image metadata must snapshot the authenticated staged layout and
+entry after checking the source's allocation/grant. Do not reread mutable PD
+fields after publication to decide what to free. Do not use move_loaded_image,
+UH_LENT/give-back or move_private to implement4/104: those describe isolated
+6/106 transfer/legacy supervisor compatibility, not simultaneous sharing.
+
+The image/environment/basepage lease must survive source-parent destruction.
+It cannot later dereference load_parent as an unretained/recycled PD. Reuse
+existing KASPACE logical holds and procmem allocation pins/generations where
+sufficient; obtain an explicit #892/#893 lifetime contract for the staged-image
+ledger/release transition instead of adding another allocation registry.
+
+Mfree/Mshrink/unmap policy must be explicit: either refuse a held range without
+changing its owner/ledger, or use the existing allocator's deferred release.
+Never report success and remove a live child's code/stack mapping. Child exit
+must release only its own holds and PROCESS resources, not parent image or
+common-ASPACE heap state. Last-ASPACE destruction and allocation-owner final
+release remain the existing generic services, not Pexec-specific frame frees.
+
+All fallible image/argument/stack/observer preparation occurs before publication.
+Use an exact reservation/admission generation so a reentrant load or stale grant
+cannot publish another task from the same consumed execution right. Failure
+leaves caller-owned PE_LOAD resources reusable/freeable and drops the acquired
+prefix once. Existing ordinary0/100/6/106 cleanup remains authoritative.
+
+Mode4: after publication, block through existing scheduler/PROCESS wait policy,
+return full supported child exit result and follow existing synchronous-Pexec
+consumption rules. Mode104 returns new child PID and leaves one public #909
+reap. Agree/verify the exact synchronous consumption rule against FreeMiNT and
+the existing Pexec adapter; do not create a second observer/reaper shortcut.
+
+Initial gates and test transport
+-------------------------------
+Keep public ring3 mode4/104 EINVFN until the complete ownership/native gates
+pass. A separately default-off internal native probe may exercise the policy
+without allocating a production ABI number. It must use real executable image
+entry/startup semantics, not substitute a supplied C function and call it Pexec.
+Preserve the existing load3 -> rejected4/104 -> successful6/free controls.
+
+Validate actual supported ELF/PRG layouts and startup argv/basepage/stack ABI.
+Pending isolated interpreter images cannot become shared merely by changing a
+root pointer. Reject unproved formats/states transactionally. Keep non-MMU/ROM
+legacy mode4 behavior separate. Initially restrict source thread/ASPACE peers
+where no reviewed construction/mutation contract exists; never claim broader
+preemption/SMP guarantees from the cooperative owner admission.
+
+Native fixture plan (not yet implemented positive tests)
+--------------------------------------------------------
+Run x32 headless/desktop, A32 and m68k040. Each positive case starts from a real
+PE_LOAD image; status includes source commit/config/image format.
+  S01 shared writes both directions at the same VA, new PID and initial TID.
+  S02 mode4 exit result; mode104 early/late Pwait and exactly one public reap.
+  S03 parent-first/child-first exit; orphan runs after parent PD retirement.
+  S04 nested sync/async Pexec, unrelated shared PROCESS remains live.
+  S05 Mfree/Mshrink/image/basepage/stack owner release while peer runs: observe
+      the defined rejection/deferred policy, then exact final release.
+  S06 fail each acquired mapping/allocation/observer/slot before publication;
+      source grant intact, no child runnable, once-only rollback.
+  S07 fault/normal/group termination, independent PROCESS completion and final
+      frame/allocation/handle baselines (or explicit service quarantine).
+  S08 existing0/3/6/100/106, staged-image patching, external desktop/accessory,
+      actual loader FP/stack ABI and legacy non-MMU compatibility.
+These are specifications, not PASS or invented skipped tests. Existing native
+clone SHARE_VM tests are controls, not executable image-launch acceptance.
+
+Reusable executable replacement transaction (200)
+-------------------------------------------------
+The same PROCESS/PID survives. Stage a replacement image in a fresh independent
+KASPACE while keeping the old shared VM, user return image and resources valid.
+Arguments/environment must be materialized before old mappings disappear. Use
+one loader-image draft consumed by new-process launch or replacement, not a
+second loader hidden in vfork. Do not clone the old VM just to discard it.
+Do not stage replacement by publishing an unrelated child and renaming its PID.
+
+Required owner states:
+  PREPARING -> READY -> COMMITTED -> OLD_EXECUTION_RECLAIMED
+  PREPARING/READY may ABORT, restoring the original caller result/error path.
+  COMMITTED never returns through the old user image and cannot roll back.
+
+READY owns the complete new image/space/stack/CPU-FPU entry data and all
+replacement bookkeeping. No I/O, allocation, fallible copyout or last-reference
+callback is allowed inside the short commit/publication exclusion. Pin the
+current execution identity/generation and PROCESS before checking eligibility.
+Start with the sole-current-THREAD restriction; unsupported siblings fail cleanly.
+
+The existing KPROC/KTHREAD contract refuses construction_space != active_space
+for an attached thread, and kthread_set_execution requires NEW. kthread_stop
+publishes stop/join/last-thread semantics. Therefore generic replacement needs
+an explicit owner-reviewed staged execution-rebind/handoff operation. Do NOT
+bypass these predicates, pretend exec is final THREAD/PROCESS exit, or copy a
+kernel C stack/jmp_buf/active trap continuation. Decide whether the same TID is
+retained; default preference is unchanged executing identity, with replacement
+execution storage and no spurious join/completion. This is not an agreed API.
+
+#713/#892 must specify the ordinary syscall-boundary handoff and existing root
+reclamation of old syscall/scheduler stacks. No timer preemption is required.
+Old #931 cleanup guards/callback/error scopes must close through their owners;
+exec must not abandon active tickets or reinterpret a fatal nonlocal unwind as
+successful commit. No arbitrary interrupted-kernel restore or new dispatcher.
+
+At COMMITTED, the PROCESS's authoritative image/root/runtime view selects the
+new VM and the old user return path is irrevocably disabled. Old execution and
+shared mappings remain retained until it cannot use them. Destruction occurs
+outside leaf/IRQ exclusion on the existing safe root. No COW frame is promoted
+writable merely by loader transfer. Failure before commit preserves parent
+suspension and returns the original negative GEMDOS error in the child.
+
+Vfork dependency consumption
+----------------------------
+A child-specific retained dependency may consume exactly one event:
+  - #893 final PROCESS completion, or
+  - successful independent-VM replacement COMMITTED, after disabling old return.
+Exec entry, failure/abandonment, THREAD-only exit, unrelated child completion,
+public wait/reap and GUI notification do not release it. No second registry.
+
+Bind notification to the child PROCESS plus dependency/execution generation;
+serialize cancellation/exit/commit so a stale event cannot release a replacement
+right twice. Parent death detaches its wait without freeing memory still used
+by the shared child. Child fault/group cancellation and rollback detach once.
+Keep initial shared-stack restrictions explicit; an assembly-only vfork-to-exit
+probe does not prove arbitrary libc/C shared-stack execution. Public Pvfork
+remains EINVFN until exit and committed200 paths and parent-lifetime cases pass.
+
+Native replacement acceptance (positive fixtures not implemented yet)
+-------------------------------------------------------------------
+  E01 same PID and canonical observer; correct new PC/SP/root/CPU/FPU state.
+  E02 failed load/argument/allocation/startup/commit validation returns in old
+      image without changing mappings, descriptors or vfork dependency.
+  E03 success never returns in old image; old shared VM remains valid in parent.
+  E04 old execution stacks/leases reclaimed once, including OOM/fault pressure.
+  E05 vfork-to-exit, vfork-to-exec, failed exec, parent death and cancellation;
+      THREAD-only exit/public wait never manufacture a release event.
+  E06 unsupported states rejected before commit; no new030/060/fastcall/TLS
+      capability inferred from QEMU040 or initial-state builds.
+
+Open decisions before implementation
+------------------------------------
+#892/#893: durable staged-image/allocation holds across source-PD destruction,
+           shared-range Mfree and final mapped-allocation ownership.
+#713/#892: replacement execution/space rebind, current-owner admission and root
+           stack retirement without THREAD/PROCESS completion or leaked scopes.
+#933:      checked inherited live references and exact-incarnation release,
+           common descriptor namespace migration, retained-close rollback.
+#894/#895: consume these contracts in the one loader/clone policy transaction;
+           keep sync/async and dependency notification out of subsystem owners.
