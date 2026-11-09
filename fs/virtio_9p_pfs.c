@@ -1030,7 +1030,7 @@ static LONG v9p_pfs_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
 
 /* ------------------------------------------------------------------ */
 
-static void v9p_pfs_release(PFSCOOKIE *fc)
+static LONG v9p_pfs_release_file(PFSCOOKIE *fc)
 {
     if (fc->aux > 0)
     {
@@ -1041,7 +1041,11 @@ static void v9p_pfs_release(PFSCOOKIE *fc)
         fc->aux = 0;
     }
     v9p_dircache_invalidate((ULONG)fc->index);
-    v9p_clunk((ULONG)fc->index);
+    return v9p_clunk((ULONG)fc->index);
+}
+static void v9p_pfs_release(PFSCOOKIE *fc)
+{
+    v9p_pfs_release_file(fc); /* Historical directory-cookie interface. */
 }
 
 static struct pfs_ops v9p_pfs_ops = {
@@ -1064,7 +1068,8 @@ static struct pfs_ops v9p_pfs_ops = {
     v9p_pfs_release,
     FALSE,              /* native_handles: this driver has no handle
                          * management of its own - see fs/pfs.h. */
-    v9p_pfs_fstat
+    v9p_pfs_fstat,
+    v9p_pfs_release_file
 };
 
 void v9p_pfs_init(void);   /* called from bios/bios.c after virtio_9p_init() */

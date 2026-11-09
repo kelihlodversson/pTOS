@@ -64,8 +64,12 @@ a prefix of user output, but cannot consume completion, observation, or Pwait.
 
 CLOSE supplies operation and handle only. It unlinks owned rights before
 cleanup, aborts an uncommitted image or releases committed observation, and
-never reaps or cancels a committed child. A valid consumed CLOSE cannot return
-a later recoverable error. Other retained observer leases remain usable.
+never reaps or cancels a committed child. Filesystem cleanup may return an
+error AFTER consumption: this is a diagnostic outcome, not a retryable launch
+right. The exact residual reference belongs to the SFT service, without retaining
+a PD/ASPACE/stack. Read canonical cleanup diagnostics before dropping the last
+observer; never reconstruct a handle after destruction. Other retained observer
+leases remain usable. Public dispatch remains disabled.
 
 CANCEL_DEFERRED is designed as an idempotent current-PROCESS operation with zero
 handle and arguments. It cancels only the current owner's held, unexecuted

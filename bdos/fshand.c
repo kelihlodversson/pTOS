@@ -16,6 +16,9 @@
 #include "emutos.h"
 #include "fs.h"
 #include "gemerror.h"
+#if CONF_WITH_USER_ASPACE
+#include "kproc.h"
+#endif
 #include "bdosstub.h"
 
 /*
@@ -50,6 +53,11 @@ long ixforce(int std, int h, PD *p)
     if ((std < 0) || (std >= NUMSTD))   /* validate standard handle */
         return EIHNDL;
 
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(p)) return EACCDN;
+    if (PD_UFT(p)[std]>=NUMSTD && fs_sft_busy(PD_UFT(p)[std]-NUMSTD))
+        return EACCDN;
+#endif
     if (h < 0)                  /* if the non-std handle is a BIOS handle, */
         PD_UFT(p)[std] = h;      /* just store it as-is in the PD table */
     else
@@ -111,6 +119,9 @@ long xdup(WORD h)
 
     if ((h < 0) || (h >= NUMSTD))
         return EIHNDL;          /* only dup standard */
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
 
     fh = PD_UFT(run)[h];
 
@@ -133,6 +144,9 @@ long xdup(WORD h)
         return EIHNDL;
 #endif
 
+#if CONF_WITH_USER_ASPACE
+    if (fh>=NUMSTD && !fs_sft_accessible((int)fh-NUMSTD)) return EIHNDL;
+#endif
     for (i = 0; i < OPNFILES; i++)      /* find the first free handle */
         if (!sft[i].f_own)
             break;
@@ -140,6 +154,9 @@ long xdup(WORD h)
     if (i == OPNFILES)
         return ENHNDL;          /* no free handles */
 
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_claim(i)) return ENHNDL;
+#endif
     sft[i].f_own = run;
 
     /*
