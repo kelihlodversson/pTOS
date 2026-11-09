@@ -162,6 +162,11 @@ BOOL kproc_has_aspace_peer(const KPROC *process);
 KPROC *kproc_retain_live(KPROC *process);
 PD *kproc_live_pd(const KPROC *process); /* borrowed during serialized live-resource operation */
 BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
+#if CONF_WITH_PRIVATE_CLONE
+/* Sole-thread/exclusive-VM source, no pending loader ledger. NULL target is
+ * preflight only; runtime bounds are copied without changing Pexec defaults. */
+BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source);
+#endif
 void proc_dispose_process(KPROC *process);
 struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */
 /* Explicit construction-space attachment never publishes active_space.

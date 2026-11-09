@@ -63,12 +63,12 @@ void thread_startup_arch_abort(void *resource)
     kfree(draft);
 }
 
-LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args, const void *return_bridge, void **image)
+static LONG build_image(ASPACE *space, const THREAD_STARTUP_ARGS *args, const void *return_bridge, void **image, BOOL saved)
 {
     X32_THREAD_STARTUP_DRAFT *draft;
     LONG error;
     if (!image || *image) return EINVAL;
-    if (!x32_return_bridge_matches(return_bridge, space)) return EIMBA;
+    if (!saved && !x32_return_bridge_matches(return_bridge, space)) return EIMBA;
     error = thread_startup_arch_validate(space, args);
     if (error) return error;
     draft = kalloc(sizeof(*draft));
@@ -172,9 +172,21 @@ LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
     if (draft->syscall_physical == draft->scheduler_stack.physical ||
         kstack_contains(draft->syscall_physical, (uintptr_t)saved) ||
         kstack_contains(draft->scheduler_stack.physical, (uintptr_t)saved)) return EACCDN;
-    draft->user = saved->user;
+    {
+        UQUAD root = draft->user.cr3;
+        draft->user = saved->user;
+        draft->user.cr3 = root;
+    }
     draft->user.rax = 0;
     draft->saved_return = TRUE;
     return E_OK;
 }
+#endif
+
+LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                const void *bridge, void **image)
+{ return build_image(space, args, bridge, image, FALSE); }
+#if CONF_WITH_FORK_RETURN_TEST
+LONG thread_startup_arch_allocate_saved(ASPACE *space, const THREAD_STARTUP_ARGS *args, void **image)
+{ return build_image(space, args, NULL, image, TRUE); }
 #endif

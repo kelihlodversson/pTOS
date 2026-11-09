@@ -53,6 +53,56 @@ long fork_return_native(void *, unsigned long);
 volatile unsigned long fork_return_bad, fork_return_child_pid;
 volatile unsigned long fork_return_use_fpu, fork_return_expected_iar, fork_return_expected_fpsr;
 volatile unsigned long fork_return_child_sp, fork_return_parent_sp, fork_return_child_tid;
+#if defined(TEST_WITH_PRIVATE_CLONE)
+volatile unsigned long fork_private_cell, fork_private_root, fork_private_tid, fork_private_pid;
+volatile unsigned char *fork_private_heap;
+static void test_private_return(void)
+{
+    unsigned char *stack = (unsigned char *)Malloc(8192);
+    long heap = Malloc(3*4096), pid, status;
+    int stage, cycle;
+    ptest_begin("private-VM syscall return/COW (not Pfork)");
+    ptest_assert_msg(stack && heap > 0,"allocate private-return buffers");
+    if (!stack || heap <= 0) { ptest_pass(); return; }
+    memset(stack,0,8192);
+    fork_private_heap=(unsigned char *)heap;
+    fork_private_root=pclone_trap(0,0x895ffffdUL);
+    fork_private_tid=pclone_trap(0,0x895ffffeUL);
+    fork_private_pid=Pgetpid();
+    for(stage=1;stage<=7;stage++) {
+        pid=fork_return_native(stack+4096,0x100|stage);
+        ptest_assert_msg(pid==-39L,"private construction rolls back without publishing");
+    }
+    for(stage=1;stage<=24;stage++) {
+        pid=fork_return_native(stack+4096,0x300|stage);
+        ptest_assert_msg(pid==-39L,"private mapping/table/ref allocation rollback");
+    }
+    for(cycle=0;cycle<8;cycle++) {
+        fork_private_cell=0x11223344UL;
+        fork_private_heap[17]=0x31; fork_private_heap[4096+31]=0x42;
+        fork_return_bad=0;
+        pid=fork_return_native(stack+4096,0x100);
+        if (pid<=0 || fork_return_bad) {
+            char message[96];
+            sprintf(message,"private cycle %d pid=%ld bad=%lu\r\n",cycle,pid,fork_return_bad);conws(message);
+        }
+        ptest_assert_msg(pid>0 && pid!=Pgetpid() && !fork_return_bad,"private parent resumes with child PID/state");
+        if(pid<=0)continue;
+        if(cycle&1) { fork_private_cell=0xaabbccddUL; fork_private_heap[17]=0x61; }
+        status=Pwaitpid(pid,0,0);
+        ptest_assert_msg((status>>16)==pid && (status&65535)==73,"private child validates root/TID/state/COW and exits");
+        ptest_assert_msg(Pwaitpid(pid,1,0)<0,"private child public status consumed once");
+        ptest_assert_msg(fork_private_cell==((cycle&1)?0xaabbccddUL:0x11223344UL),"private global writes isolated");
+        ptest_assert_msg(fork_private_heap[17]==((cycle&1)?0x61:0x31) && fork_private_heap[4096+31]==0x42,
+                         "private partial-page heap writes isolated");
+        ptest_assert_msg(fork_private_heap[8192+45]==0,"child lazy page does not materialize into parent");
+        fork_private_heap[8192+45]=0; /* same zero contents on later snapshots */
+    }
+    ptest_assert_msg(Mfree((void *)heap)==0 && Mfree(stack)==0,"private stack/heap release after waits");
+    ptest_pass();
+    if(!ptest_failures())conws("native PRIVATE_VM saved return and anonymous COW (not Pfork): PASS\r\n");
+}
+#endif
 static void test_saved_return(void)
 {
     unsigned char *stack = malloc(8192);
@@ -1181,6 +1231,9 @@ void pclone_run_managed_tests(void)
 {
 #if defined(TEST_WITH_FORK_RETURN_TEST)
     test_saved_return();
+#if defined(TEST_WITH_PRIVATE_CLONE)
+    test_private_return();
+#endif
 #endif
     ptest_begin("pclone managed execution");
     test_runnable();
@@ -1216,6 +1269,10 @@ void test_pclone(void);
 void test_pclone(void)
 {
     ptest_begin("pclone");
+#if defined(TEST_WITH_PRIVATE_CLONE) && defined(TEST_WITH_FORK_RETURN_TEST)
+    ptest_assert_msg(pclone_trap(0,0x895ffffcUL)==0 && pclone_trap(0,0x895ffffbUL)==0,
+                     "outer driver begins without inherited COW frame obligations");
+#endif
     /* These no-argument calls must fail before creating a child or blocking
      * the parent until saved-context/private-VM/exec-detach support exists.
      * Exercise the actual native trap and signed error result repeatedly. */
@@ -1280,6 +1337,10 @@ void test_pclone(void)
 #endif
         }
     }
+#endif
+#if defined(TEST_WITH_PRIVATE_CLONE) && defined(TEST_WITH_FORK_RETURN_TEST)
+    ptest_assert_msg(pclone_trap(0,0x895ffffcUL)==0 && pclone_trap(0,0x895ffffbUL)==0,
+                     "parent/child retirement restores global COW frame/reference baseline");
 #endif
     ptest_pass();
 }

@@ -238,6 +238,17 @@ typedef struct aspace ASPACE;     /* defined by the backend */
 #define USER_STACK_MIN   VADDR_C(0x00004000)   /* the least Psetlimit() allows */
 
 ASPACE *aspace_create(void);
+#if CONF_WITH_PRIVATE_CLONE
+/* Unpublished clone. Source permissions change only after every child resource
+ * is prepared. Borrowed RAM is copied; device mappings are unsupported. */
+LONG aspace_clone(ASPACE *source, ASPACE **result);
+BOOL aspace_logical_protection(const ASPACE *, VADDR, UWORD *);
+int aspace_cow_fault(ASPACE *, VADDR, UWORD);
+void aspace_cow_collapse(ASPACE *);
+ULONG aspace_cow_frames(void);
+ULONG aspace_cow_references(void);
+void aspace_clone_test_fail_after(ULONG count);
+#endif
 void aspace_destroy(ASPACE *as);
 /* Makes `as` the address space in use (returns the root that was, for
  * aspace_leave()): the kernel can then address its user pages by their user

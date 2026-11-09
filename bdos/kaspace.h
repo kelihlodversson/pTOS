@@ -22,7 +22,8 @@ BOOL kaspace_lease_valid(const KASPACE_LEASE *lease);
 BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count);
 void kaspace_lease_release(KASPACE_LEASE **lease);
 /* Durable private-mapping hold, distinct from the short sealed publication
- * window. May survive yields/user execution. Rejects borrowed and COW pages.
+ * window. May survive yields/user execution. Rejects borrowed and file pages;
+ * anonymous COW may change frames while retaining this logical VA hold.
  * The caller must release from a safe context after execution cannot resume. */
 BOOL kaspace_lease_hold_private(KASPACE_LEASE *lease);
 /* User stacks must lie in ordinary heap or anonymous mmap reservations, never
@@ -35,6 +36,11 @@ KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold); /* borrowed */
  * TRUE revokes overlapping preparation leases even if the mutation later fails.
  * Inputs are rounded out to pages. Backend lifetime is retained by each lease. */
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
+#if CONF_WITH_PRIVATE_CLONE
+/* Physical COW preserves logical VA/rights and durable stack holds. Reject
+ * preparation/sealed leases that may retain a cached physical write alias. */
+BOOL kaspace_cow_change(struct aspace *backend, VADDR address, VADDR bytes);
+#endif
 /* Ordinary Malloc reservations only. Loader image staging and loans remain
  * separately owned by KPROC and never put borrowed PDs in this table. */
 typedef struct {

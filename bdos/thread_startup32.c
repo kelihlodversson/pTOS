@@ -35,13 +35,13 @@ void thread_startup_arch_abort(void *image)
     kthread_stack_release(&draft->scheduler_stack);
     kfree(draft);
 }
-LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args,
-                                const void *bridge, void **image)
+static LONG build_image(ASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                const void *bridge, void **image, BOOL saved)
 {
     THREAD_STARTUP32 *draft;
     LONG error;
     if (!image || *image) return EINVAL;
-    if (!thread_return_bridge_matches(bridge, space)) return EIMBA;
+    if (!saved && !thread_return_bridge_matches(bridge, space)) return EIMBA;
     error = thread_startup_arch_validate(space, args);
     if (error) return error;
     draft = kalloc(sizeof(*draft));
@@ -156,4 +156,12 @@ LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
     draft->saved_return = user;
     return E_OK;
 }
+#endif
+
+LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                const void *bridge, void **image)
+{ return build_image(space, args, bridge, image, FALSE); }
+#if CONF_WITH_FORK_RETURN_TEST
+LONG thread_startup_arch_allocate_saved(ASPACE *space, const THREAD_STARTUP_ARGS *args, void **image)
+{ return build_image(space, args, NULL, image, TRUE); }
 #endif

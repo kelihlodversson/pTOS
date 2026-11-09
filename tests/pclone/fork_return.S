@@ -68,6 +68,10 @@ C_SYM(fork_return_native):
         movq %r14,%rax
         testl %eax,%eax
         jnz .Lx_parent
+#if defined(TEST_WITH_PRIVATE_CLONE)
+        testl $0x100,%r13d
+        jnz .Lx_private
+#endif
         movl %esp,C_SYM(fork_return_child_sp)(%rip)
         movabsq $0x10000010b,%rax
         syscall
@@ -79,6 +83,42 @@ C_SYM(fork_return_native):
         movl %eax,C_SYM(fork_return_child_tid)(%rip)
         movl $73,%edi
         jmp .Lx_exit
+#if defined(TEST_WITH_PRIVATE_CLONE)
+.Lx_private:
+        movabsq $0x100000190,%rax
+        xorl %edi,%edi
+        movl $0x895ffffd,%esi
+        syscall
+        cmpl C_SYM(fork_private_root)(%rip),%eax
+        je .Lx_private_bad
+        movabsq $0x100000190,%rax
+        movl $0x895ffffe,%esi
+        syscall
+        cmpl C_SYM(fork_private_tid)(%rip),%eax
+        je .Lx_private_bad
+        movabsq $0x10000010b,%rax
+        syscall
+        cmpl C_SYM(fork_private_pid)(%rip),%eax
+        je .Lx_private_bad
+        cmpl $0x11223344,C_SYM(fork_private_cell)(%rip)
+        jne .Lx_private_bad
+        movl C_SYM(fork_private_heap)(%rip),%edx
+        cmpb $0x31,17(%rdx)
+        jne .Lx_private_bad
+        cmpb $0x42,4127(%rdx)
+        jne .Lx_private_bad
+        cmpb $0,8237(%rdx)
+        jne .Lx_private_bad
+        movl $0x66778899,C_SYM(fork_private_cell)(%rip)
+        movb $0x71,17(%rdx)
+        movb $0x81,4127(%rdx)
+        movb $0x91,8237(%rdx)
+        movl $73,%edi
+        jmp .Lx_exit
+.Lx_private_bad:
+        movl $74,%edi
+        jmp .Lx_exit
+#endif
 .Lx_bad:
         movl $1,C_SYM(fork_return_bad)(%rip)
         testl %r14d,%r14d
@@ -154,6 +194,10 @@ C_SYM(fork_return_native):
         bne .La_bad
         cmp r0,#0
         bne .La_parent
+#if defined(TEST_WITH_PRIVATE_CLONE)
+        tst r5,#0x100
+        bne .La_private
+#endif
         ldr r2,=C_SYM(fork_return_child_sp)
         str sp,[r2]
         mov r0,#0x10b
@@ -168,6 +212,61 @@ C_SYM(fork_return_native):
         str r0,[r2]
         mov r1,#73
         b .La_exit
+#if defined(TEST_WITH_PRIVATE_CLONE)
+.La_private:
+        mov r0,#0x190
+        mov r1,#0
+        ldr r2,=0x895ffffd
+        svc 1
+        ldr r3,=C_SYM(fork_private_root)
+        ldr r3,[r3]
+        cmp r0,r3
+        beq .La_private_bad
+        mov r0,#0x190
+        ldr r2,=0x895ffffe
+        svc 1
+        ldr r3,=C_SYM(fork_private_tid)
+        ldr r3,[r3]
+        cmp r0,r3
+        beq .La_private_bad
+        mov r0,#0x10b
+        svc 1
+        ldr r3,=C_SYM(fork_private_pid)
+        ldr r3,[r3]
+        cmp r0,r3
+        beq .La_private_bad
+        ldr r3,=C_SYM(fork_private_cell)
+        ldr r0,[r3]
+        ldr r2,=0x11223344
+        cmp r0,r2
+        bne .La_private_bad
+        ldr r2,=C_SYM(fork_private_heap)
+        ldr r2,[r2]
+        ldrb r0,[r2,#17]
+        cmp r0,#0x31
+        bne .La_private_bad
+        ldr r6,=4127
+        ldrb r0,[r2,r6]
+        cmp r0,#0x42
+        bne .La_private_bad
+        ldr r7,=8237
+        ldrb r0,[r2,r7]
+        cmp r0,#0
+        bne .La_private_bad
+        ldr r0,=0x66778899
+        str r0,[r3]
+        mov r0,#0x71
+        strb r0,[r2,#17]
+        mov r0,#0x81
+        strb r0,[r2,r6]
+        mov r0,#0x91
+        strb r0,[r2,r7]
+        mov r1,#73
+        b .La_exit
+.La_private_bad:
+        mov r1,#74
+        b .La_exit
+#endif
 .La_bad:
         ldr r2,=C_SYM(fork_return_bad)
         mov r3,#1
@@ -273,6 +372,11 @@ C_SYM(fork_return_native):
 .Lm_no_check:
         tst.l %d0
         jne .Lm_parent
+#if defined(TEST_WITH_PRIVATE_CLONE)
+        move.l 6(%sp),%d1
+        btst #8,%d1
+        jne .Lm_private
+#endif
         move.l %sp,C_SYM(fork_return_child_sp)
         move.w #0x10b,-(%sp)
         trap #1
@@ -286,6 +390,46 @@ C_SYM(fork_return_native):
         move.l %d0,C_SYM(fork_return_child_tid)
         move.w #73,-(%sp)
         bra .Lm_exit
+#if defined(TEST_WITH_PRIVATE_CLONE)
+.Lm_private:
+        move.l #0x895ffffd,-(%sp)
+        clr.l -(%sp)
+        move.w #0x190,-(%sp)
+        trap #1
+        lea 10(%sp),%sp
+        cmp.l C_SYM(fork_private_root),%d0
+        jeq .Lm_private_bad
+        move.l #0x895ffffe,-(%sp)
+        clr.l -(%sp)
+        move.w #0x190,-(%sp)
+        trap #1
+        lea 10(%sp),%sp
+        cmp.l C_SYM(fork_private_tid),%d0
+        jeq .Lm_private_bad
+        move.w #0x10b,-(%sp)
+        trap #1
+        addq.l #2,%sp
+        cmp.l C_SYM(fork_private_pid),%d0
+        jeq .Lm_private_bad
+        cmpi.l #0x11223344,C_SYM(fork_private_cell)
+        jne .Lm_private_bad
+        move.l C_SYM(fork_private_heap),%a0
+        cmpi.b #0x31,17(%a0)
+        jne .Lm_private_bad
+        cmpi.b #0x42,4127(%a0)
+        jne .Lm_private_bad
+        cmpi.b #0,8237(%a0)
+        jne .Lm_private_bad
+        move.l #0x66778899,C_SYM(fork_private_cell)
+        move.b #0x71,17(%a0)
+        move.b #0x81,4127(%a0)
+        move.b #0x91,8237(%a0)
+        move.w #73,-(%sp)
+        bra .Lm_exit
+.Lm_private_bad:
+        move.w #74,-(%sp)
+        bra .Lm_exit
+#endif
 .Lm_bad_ccr:
         addq.l #2,%sp
 .Lm_bad:

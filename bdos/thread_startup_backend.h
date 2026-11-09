@@ -14,6 +14,9 @@ void thread_startup_arch_bridge_release(void **bridge);
  * memory or install the object in a running THREAD. */
 LONG thread_startup_arch_prepare(struct aspace *space, const THREAD_STARTUP_ARGS *args, const void *return_bridge,
                                  void **image);
+#if CONF_WITH_FORK_RETURN_TEST
+LONG thread_startup_arch_allocate_saved(struct aspace *, const THREAD_STARTUP_ARGS *, void **);
+#endif
 LONG thread_startup_arch_validate(const struct aspace *space, const THREAD_STARTUP_ARGS *args);
 void thread_startup_arch_abort(void *image);
 LONG thread_startup_arch_public_return(void *image, const void *bridge);
