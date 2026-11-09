@@ -5,6 +5,7 @@ PROCESS completion/reaping and scheduler behavior deliberately do not live here.
 """
 from dataclasses import dataclass, field
 import struct
+import itertools
 import threading
 import unittest
 
@@ -37,11 +38,12 @@ class Receipt:
     destination: Endpoint = None
     packet: bytes = b''
     committed: bool = False
+    tag: int = 0
 
 class Stream:
     """Each method is one modeled serialized transport operation."""
-    def __init__(self, slots=16, quota=256):
-        self.slots, self.quota = slots, quota
+    def __init__(self, slots=16, quota=256, max_tables=16):
+        self.slots, self.quota, self.max_tables = slots, quota, max_tables
         self.clients, self.tables = {}, {}
         self.lock = threading.Lock()
 
@@ -49,7 +51,6 @@ class Stream:
         if endpoint in self.clients:
             raise Rejected('incarnation reuse')
         self.clients[endpoint] = Client(owner, capacity=capacity)
-        self.tables[endpoint] = [Receipt() for _ in range(self.slots)]
 
     def _source(self, owner, source):
         client = self.clients.get(source)
@@ -60,34 +61,74 @@ class Stream:
     def _record(self, source, slot, generation):
         if not 0 <= slot < self.slots:
             raise Rejected('slot')
+        if source not in self.tables:
+            raise Rejected('no binding')
         receipt = self.tables[source][slot]
         if generation != receipt.generation or not generation:
             raise Rejected('stale attempt')
         return receipt
 
-    def prepare(self, owner, source, slot, generation, key, destination, packet,
-                fail_copy=False, fail_reserve=False):
+    def bind(self, owner, source, slot, generation, key, destination, tag, fail_reserve=False):
+        """Trusted legacy launch handoff, BEFORE child COMMIT; no packet yet.
+
+        Models endpoint transport metadata, not another PROCESS handle owner.
+        Tag is an opaque adapter recovery value; the stream never reaps it.
+        """
         with self.lock:
             self._source(owner, source)
-            if not 0 <= slot < self.slots or not key or not 0 < len(packet) <= 32:
-                raise Rejected('bounds')
-            r = self.tables[source][slot]
+            if not 0 <= slot < self.slots or not key or not 0 < tag <= 0xffffffff:
+                raise Rejected('binding bounds')
+            table = self.tables.get(source)
+            r = table[slot] if table else Receipt()
             if r.generation == generation and r.state != 'RECLAIMED':
-                if (r.key, r.destination, r.packet) != (key, destination, packet):
-                    raise Rejected('immutable attempt')
+                if (r.key, r.destination, r.tag) != (key, destination, tag):
+                    raise Rejected('immutable binding')
                 return
             if r.state != 'RECLAIMED' or generation != r.generation + 1 or generation > MAX_GENERATION:
                 raise Rejected('stale/busy/exhausted attempt')
-            if any(x.key == key and x.state != 'RECLAIMED' for x in self.tables[source]):
-                raise Rejected('key already bound: recover existing slot')
+            if any(x.key == key and x.state != 'RECLAIMED' for x in (table or [])):
+                raise Rejected('key already bound: enumerate existing slots')
             peer = self.clients.get(destination)
             if not peer or not peer.live:
                 raise Rejected('destination incarnation')
             active = sum(x.state != 'RECLAIMED' for table in self.tables.values() for x in table)
-            if fail_copy or fail_reserve or active >= self.quota:
-                raise Rejected('prepublication failure')
-            # All staging resources are reserved before making PREPARED durable.
-            self.tables[source][slot] = Receipt(generation, 'PREPARED', key, destination, bytes(packet))
+            if fail_reserve or active >= self.quota or (table is None and len(self.tables) == self.max_tables):
+                raise Rejected('prepublication reservation failure')
+            if table is None:
+                self.tables[source] = [Receipt() for _ in range(self.slots)]
+            self.tables[source][slot] = Receipt(generation, 'BOUND', key, destination, tag=tag)
+
+    def prepare(self, owner, source, slot, generation, key, destination, packet, fail_copy=False):
+        with self.lock:
+            self._source(owner, source)
+            if not 0 < len(packet) <= 32:
+                raise Rejected('packet bounds')
+            r = self._record(source, slot, generation)
+            if (r.key, r.destination) != (key, destination):
+                raise Rejected('immutable binding')
+            if r.state in ('PREPARED', 'COMMITTED', 'ACKNOWLEDGED'):
+                if r.packet != packet:
+                    raise Rejected('immutable packet')
+                return
+            if r.state != 'BOUND' or fail_copy:
+                raise Rejected('staging failure')
+            r.packet, r.state = bytes(packet), 'PREPARED'
+
+    def prepare_new(self, owner, source, slot, generation, key, destination, packet):
+        # Test fixture convenience, NOT a proposed wire operation.
+        self.bind(owner, source, slot, generation, key, destination, key & 0xffffffff)
+        self.prepare(owner, source, slot, generation, key, destination, packet)
+
+    def inspect_slot(self, owner, source, slot):
+        # Enumeration uses a concrete slot and input generation zero, not an
+        # implicit stale-token promotion. Output is nondestructive metadata.
+        with self.lock:
+            self._source(owner, source)
+            if not 0 <= slot < self.slots:
+                raise Rejected('slot')
+            table = self.tables.get(source)
+            r = table[slot] if table else Receipt()
+            return r.generation, r.state, r.key, r.destination, r.tag
 
     def query(self, owner, source, slot, generation):
         with self.lock:
@@ -130,7 +171,7 @@ class Stream:
         with self.lock:
             self._source(owner, source)
             r = self._record(source, slot, generation)
-            if r.state not in ('PREPARED', 'ACKNOWLEDGED', 'RECLAIMED'):
+            if r.state not in ('BOUND', 'PREPARED', 'ACKNOWLEDGED', 'RECLAIMED'):
                 raise Rejected('must ACK committed receipt first')
             r.state = 'RECLAIMED'
             # Last generation/outcome/key remain a bounded stale-attempt fence.
@@ -145,7 +186,7 @@ class Stream:
     def retire(self, endpoint):
         with self.lock:
             self.clients[endpoint].live = False
-            self.tables.pop(endpoint)  # Source-owned table; never retarget peer.
+            self.tables.pop(endpoint, None)  # Includes all fixed fences, exactly once.
 
 class Adapter:
     """One immutable binding, shared by surviving THREADs of a libaes client.
@@ -164,8 +205,12 @@ class Adapter:
     def args(self):
         return self.owner, self.source, self.slot, self.generation
 
-    def prepare(self, **failures):
-        self.s.prepare(*self.args, self.key, self.destination, self.packet, **failures)
+    def bind(self, **failures):
+        self.s.bind(*self.args, self.key, self.destination, self.key & 0xffffffff, **failures)
+
+    def prepare(self, fail_copy=False, fail_reserve=False):
+        self.bind(fail_reserve=fail_reserve)
+        self.s.prepare(*self.args, self.key, self.destination, self.packet, fail_copy=fail_copy)
 
     def finish(self, stop_after_ack=False, stop_after_close=False, close_error=False):
         state, committed, key, destination, _ = self.s.query(*self.args)
@@ -211,7 +256,7 @@ class ReceiptTests(unittest.TestCase):
 
     def test_staged_packet_cannot_change_with_user_buffer(self):
         packet = bytearray(self.a.packet)
-        self.s.prepare(*self.a.args, self.a.key, self.destination, packet)
+        self.s.prepare_new(*self.a.args, self.a.key, self.destination, packet)
         packet[0] ^= 255
         self.a.finish()
         self.assertEqual(self.s.consume(self.destination), [(self.source, self.a.packet)])
@@ -261,11 +306,13 @@ class ReceiptTests(unittest.TestCase):
         self.a.finish(); self.once()
 
     def test_copy_allocation_quota_failures_before_publication(self):
-        for failure in ('fail_copy', 'fail_reserve'):
-            with self.assertRaises(Rejected): self.a.prepare(**{failure: True})
-            self.assertEqual(self.s.tables[self.source][0].generation, 0)
-        self.s.quota = 0
-        with self.assertRaises(Rejected): self.a.prepare()
+        with self.assertRaises(Rejected): self.a.prepare(fail_reserve=True)
+        self.assertEqual(self.s.inspect_slot(101, self.source, 0)[0], 0)
+        with self.assertRaises(Rejected): self.a.prepare(fail_copy=True)
+        self.assertEqual(self.s.query(*self.a.args)[:2], ('BOUND', False))
+        self.a.prepare(); self.a.finish()
+        self.setUp(); self.s.quota = 0
+        with self.assertRaises(Rejected): self.a.bind()
         self.assertEqual(self.s.clients[self.destination].appends, 0)
 
     def test_immutable_reprepare_and_duplicate_key(self):
@@ -273,7 +320,7 @@ class ReceiptTests(unittest.TestCase):
         with self.assertRaises(Rejected):
             self.s.prepare(*self.a.args, self.a.key, self.destination, b'changed')
         with self.assertRaises(Rejected):
-            self.s.prepare(101, self.source, 1, 1, self.a.key, self.destination, self.a.packet)
+            self.s.prepare_new(101, self.source, 1, 1, self.a.key, self.destination, self.a.packet)
         self.a.finish(); self.once()
 
     def test_foreign_owner_and_endpoint_generation(self):
@@ -306,17 +353,97 @@ class ReceiptTests(unittest.TestCase):
         self.a.prepare(); self.a.finish()
         self.assertEqual(self.s.query(*self.a.args)[:2], ('RECLAIMED', True))
         with self.assertRaises(Rejected): self.s.commit(*self.a.args)
-        self.s.prepare(101, self.source, 0, 2, 92, self.destination, b'next')
+        self.s.prepare_new(101, self.source, 0, 2, 92, self.destination, b'next')
         with self.assertRaises(Rejected): self.s.commit(*self.a.args)
         with self.assertRaises(Rejected): self.s.ack(*self.a.args)
         self.once()
 
     def test_bounded_slots_and_generation_exhaustion(self):
+        self.a.bind()
+        self.s.tables[self.source][0].state = 'RECLAIMED'
         self.s.tables[self.source][0].generation = MAX_GENERATION
         with self.assertRaises(Rejected): self.a.prepare()
         with self.assertRaises(Rejected):
-            self.s.prepare(101, self.source, 16, 1, 99, self.destination, b'x')
+            self.s.prepare_new(101, self.source, 16, 1, 99, self.destination, b'x')
         self.assertEqual(len(self.s.tables[self.source]), 16)
+
+    def test_bound_before_child_commit_is_enumerable_after_installer_loss(self):
+        # PREPARE-right is represented only as opaque tag in endpoint binding.
+        # No packet/status can be fabricated before child runs.
+        self.a.bind()
+        generation, state, key, dest, tag = self.s.inspect_slot(101, self.source, 0)
+        self.assertEqual((generation, state, key, dest, tag), (1, 'BOUND', 91, self.destination, 91))
+        # Sibling finds durable binding; first installer never stored success.
+        self.a.prepare(); self.a.finish(); self.once()
+
+    def test_failed_prepublication_handoff_cancels_bound_slot(self):
+        self.a.bind()
+        self.a.right_open = False  # Guarded constructor rollback consumed right.
+        self.s.reclaim(*self.a.args)
+        self.assertEqual(self.s.query(*self.a.args)[:2], ('RECLAIMED', False))
+        self.assertEqual(self.s.clients[self.destination].appends, 0)
+
+    def test_every_sibling_cleanup_interleaving_preserves_reused_slot(self):
+        # Two ordered ACK/CLOSE/RECLAIM sequences: all 20 legal shuffles.
+        schedules = list(itertools.combinations(range(6), 3))
+        for first in schedules:
+            self.setUp(); self.a.prepare(); self.s.commit(*self.a.args)
+            steps = [0, 0]; replacement = None
+            for turn in range(6):
+                worker = 0 if turn in first else 1
+                step = steps[worker]; steps[worker] += 1
+                try:
+                    if step == 0:
+                        self.s.ack(*self.a.args)
+                    elif step == 1:
+                        self.a.right_open = False  # Exact old, nonrecycled right.
+                    else:
+                        self.s.reclaim(*self.a.args)
+                        if replacement is None:
+                            self.assertFalse(self.a.right_open)
+                            replacement = Adapter(self.s, 101, self.source, self.destination,
+                                                  generation=2, key=92)
+                            replacement.prepare()
+                except Rejected:
+                    # A stale old attempt is terminal for this cleanup worker;
+                    # never re-mint it or touch the replacement binding/right.
+                    self.assertIsNotNone(replacement)
+            self.assertFalse(self.a.right_open)
+            self.assertTrue(replacement.right_open)
+            replacement.finish()
+            self.assertEqual(self.s.clients[self.destination].appends, 2)
+
+    def test_multiple_clients_same_process_keep_receipts_distinct(self):
+        other = Endpoint(9, 14); self.s.register(other, 101)
+        second = Adapter(self.s, 101, other, self.destination)
+        self.a.prepare(); second.prepare()
+        self.a.finish(); second.finish()
+        self.assertEqual(self.s.consume(self.destination),
+                         [(self.source, self.a.packet), (other, second.packet)])
+
+    def test_acknowledged_quota_counts_until_reclaim(self):
+        self.s.quota = 1; self.a.prepare(); self.s.commit(*self.a.args)
+        self.s.ack(*self.a.args)
+        with self.assertRaises(Rejected):
+            self.s.bind(101, self.source, 1, 1, 92, self.destination, 92)
+        self.a.finish()
+        self.s.bind(101, self.source, 1, 1, 92, self.destination, 92)
+        self.s.reclaim(101, self.source, 1, 1)
+        self.s.reclaim(101, self.source, 1, 1)  # No duplicate quota consumption/release.
+
+    def test_fixed_fence_metadata_quota_and_retirement_accounting(self):
+        self.s.max_tables = 1; self.a.bind()
+        other = Endpoint(9, 14); self.s.register(other, 101)
+        with self.assertRaises(Rejected):
+            self.s.bind(101, other, 0, 1, 92, self.destination, 92)
+        self.s.reclaim(*self.a.args)
+        # Empty source table keeps all generation fences until endpoint retires.
+        self.assertEqual(sum(map(len, self.s.tables.values())), 16)
+        with self.assertRaises(Rejected):
+            self.s.bind(101, other, 0, 1, 92, self.destination, 92)
+        self.s.retire(self.source); self.s.retire(self.source)
+        self.s.bind(101, other, 0, 1, 92, self.destination, 92)
+        self.assertEqual(sum(map(len, self.s.tables.values())), 16)
 
     def test_wire_layout_both_byte_orders(self):
         for endian in ('<', '>'):
@@ -330,7 +457,7 @@ class ReceiptTests(unittest.TestCase):
         # publisher dies before userspace success flag; sibling writes again.
         self.a.prepare(); self.s.commit(*self.a.args); self.s.consume(self.destination)
         self.s.tables[self.source][0] = Receipt(1, 'PREPARED', self.a.key,
-                                               self.destination, self.a.packet)
+                                               self.destination, self.a.packet, tag=self.a.key)
         self.s.commit(*self.a.args)
         self.assertEqual(self.s.clients[self.destination].appends, 2)
         with self.assertRaises(AssertionError): self.once()
@@ -341,7 +468,7 @@ class ReceiptTests(unittest.TestCase):
         # Invalid adapter: erase/reuse ACK state while old PROCESS right lives.
         self.s.reclaim(*self.a.args)
         self.assertTrue(self.a.right_open)
-        self.s.prepare(101, self.source, 0, 2, self.a.key, self.destination, self.a.packet)
+        self.s.prepare_new(101, self.source, 0, 2, self.a.key, self.destination, self.a.packet)
         self.s.commit(101, self.source, 0, 2)
         self.assertEqual(self.s.clients[self.destination].appends, 2)
         with self.assertRaises(AssertionError): self.once()
