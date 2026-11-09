@@ -1,7 +1,9 @@
 Checked live SFT references -- stage A prerequisite (#895/#892/#893)
 ==================================================================
-Base: reviewed #933 d588e853f, which contains epic197d05ce6. This separate
-increment changes no public ABI or inheritance policy. Public fork/private
+Base: unmerged #933 a0a76ca48, containing epic197d05ce6 and the reviewed
+ordinary-alias exhaustion correction. Earlier d588 acceptance was superseded
+pending fresh correction review. This separate increment changes no public
+ABI or inheritance policy. Public fork/private
 clone/PROCESS dispatch and descriptor namespace migration remain gated.
 
 fs_reference_acquire(source, descriptor, expected_incarnation, empty_out)
