@@ -1,5 +1,5 @@
 PROCESS completion observation (#907 prerequisite)
-==========================================
+==================================================
 
 Implemented kernel C contract
 -----------------------------

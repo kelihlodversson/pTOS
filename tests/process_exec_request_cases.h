@@ -6,7 +6,7 @@ static union { ULONG align; UBYTE bytes[65536]; } request_memory;
 static ULONG read_failure, output_prefix;
 static BOOL output_failure;
 static LONG input_error=EIMBA;
-static unsigned output_copies;
+static unsigned output_copies, input_copies;
 BOOL kproc_copy_from_user(void *out,VADDR address,ULONG bytes)
 {
     if(address>sizeof(request_memory.bytes) || bytes>sizeof(request_memory.bytes)-address) return FALSE;
@@ -24,7 +24,7 @@ BOOL kproc_copy_to_user(VADDR address,const void *in,ULONG bytes)
     memcpy(request_memory.bytes+(ULONG)address,in,bytes); return TRUE;
 }
 LONG kproc_copy_from_user_checked(void *out,VADDR address,ULONG bytes)
-{ return kproc_copy_from_user(out,address,bytes) ? E_OK : input_error; }
+{ input_copies++; return kproc_copy_from_user(out,address,bytes) ? E_OK : input_error; }
 LONG kproc_copy_to_user_checked(VADDR address,const void *in,ULONG bytes)
 { return kproc_copy_to_user(address,in,bytes) ? E_OK : EIMBA; }
 static PROCESS_EXEC_REQUEST *request_fixture(void)
@@ -47,6 +47,25 @@ static void test_request_engine(KPROC *owner)
     LONG handle;
     unsigned i, before_loads=loads, before_publications=publications;
     request_mode=TRUE;
+    {
+        char *argument=NULL;
+        request_fixture();
+        request_memory.bytes[0x2fff]=0; read_failure=0x3000;
+        CHECK(copy_argument(0x2fff,1024,FALSE,&argument)==E_OK);
+        kfree(argument); argument=NULL;
+        request_memory.bytes[0x2ffe]=0; request_memory.bytes[0x2fff]=0;
+        CHECK(copy_argument(0x2ffe,32766,TRUE,&argument)==E_OK);
+        kfree(argument); argument=NULL;
+        request_fixture(); read_failure=0x1108;
+        CHECK(copy_argument(0x1100,1024,FALSE,&argument)==E_OK);
+        kfree(argument); argument=NULL;
+        request_fixture(); input_copies=0;
+        memset(request_memory.bytes+0x2000,'x',32764);
+        CHECK(copy_argument(0x2000,32766,TRUE,&argument)==E_OK && input_copies<600);
+        kfree(argument);
+        CHECK(allocations==frees);
+    }
+
     r=request_fixture();
     CHECK(proc_exec_request(owner,0x1000,71)==EINVAL);
     CHECK(proc_exec_request(owner,0x1000,0x100000048ULL)==EINVAL);
