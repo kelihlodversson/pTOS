@@ -172,8 +172,10 @@ Concrete proposed wire extension for owner review, not yet enabled:
   existing per-client launch bound). Address must be 4-byte aligned and bounded
   as a 32-bit user range; count/width/overflow are checked before copy.
 - Zero count requires zero address and means no PROCESS readiness sources.
-  Nonzero count requires CUIS_READY_CHILD. Reject duplicate/zero/foreign/stale
-  handles before admitting input/scheduler state; unwind partial leases once.
+  Nonzero count requires CUIS_READY_CHILD. Reject duplicate scalar handles and
+  zero/foreign/stale rights before admission; unwind partial leases once.
+  Distinct owned scalar handles for the same canonical observer are allowed:
+  OR readiness and balance every imported lease separately.
 - Copy the bounded array using the established checked-copy contract, then
   authenticate current PROCESS ownership for each handle with require_prepared
   FALSE. No borrowed user pointer survives preflight. Native UQUAD trap inputs
@@ -456,9 +458,9 @@ For C4a the existing launch handlers 69/90/91 remain the narrow trusted bridge:
    have distinct source tables and entitlements.
 
 The existing guarded operation owns rollback before BIND and before generic
-COMMIT. Failure there closes the preparation and removes/cancels only its exact
-BOUND slot/generation outside exclusion, preserving the original constructor
-error. Reentry cannot clear a newer binding. If cancellation is admitted before
+COMMIT. Failure there unpublishes/cancels only its exact BOUND slot/generation
+under input exclusion, restores IRQs/unlocks, then closes the preparation and
+releases local references outside exclusion, preserving the constructor error. Reentry cannot clear a newer binding. If cancellation is admitted before
 publication, settle both owners before the safe checkpoint. After child COMMIT,
 the source endpoint owns recoverable BOUND metadata and the canonical PROCESS
 still owns the generic handle: publishing THREAD loss cannot erase either.
@@ -522,7 +524,8 @@ in packet_bytes. For byte retrieval, address must be nonzero and capacity 1..32;
 capacity below the staged length returns ERANGE without consuming or updating
 anything. Capture a bounded immutable reply under exclusion, unlock, copy packet
 then record using checked output. A partial copy failure returns EIMBA and changes
-no binding/receipt. The caller trusts a reply only after scalar E_OK. QUERY can
+no binding/receipt. The output record echoes the user packet_address; it never contains a kernel
+pointer. The caller trusts a reply only after scalar E_OK. QUERY can
 return a linearized old snapshot if another worker subsequently ACKs/reclaims;
 exact-generation follow-up operations still reject stale identities safely.
 
