@@ -31,7 +31,7 @@ typedef struct kernel_task {
     PD *program, *parent;
     struct kernel_task *completion_owner; /* borrowed; NULL means this is the anchor */
     BOOL process_completed;
-    ULONG cleanup_serial, cleanup_ticket; /* Reject stale scope copies at a reused depth. */
+    UQUAD cleanup_serial, cleanup_ticket; /* Reject stale scope copies at a reused depth. */
     ULONG cleanup_depth; /* Owned by this validated execution, never its carrier child. */
 #if CONF_WITH_PTERMGRP
     BOOL cancel_boundary; /* only waits whose callers explicitly checkpoint */
@@ -123,7 +123,7 @@ void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
     if (thread) {
         KERNEL_TASK *task=scheduler.current;
         if (!task->execution.identity || !task->process || task->process!=kthread_process(thread) ||
-            task->cleanup_depth==0xffffffffUL || task->cleanup_serial==0xffffffffUL) panic("cleanup execution ownership invalid");
+            task->cleanup_depth==0xffffffffUL || task->cleanup_serial==~(UQUAD)0) panic("cleanup execution ownership invalid");
         scope->thread=thread; scope->process=task->process;
         scope->execution=task->execution.identity; scope->tid=kthread_tid(thread);
         scope->depth=++task->cleanup_depth;
@@ -147,7 +147,8 @@ void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
             task->cleanup_ticket!=scope->ticket || !scope->ticket || !scope->depth) panic("cleanup scope release is not nested in its execution");
         task->cleanup_depth--;
         task->cleanup_ticket=scope->parent_ticket;
-    } else if (thread || scope->depth || scope->execution) panic("unmanaged cleanup changed execution");
+    } else if (thread || scope->process || scope->tid || scope->depth || scope->execution ||
+               scope->ticket || scope->parent_ticket) panic("unmanaged cleanup changed execution");
     memset(scope,0,sizeof(*scope));
     native_sched_irq_restore(flags);
 }
