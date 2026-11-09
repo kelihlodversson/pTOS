@@ -1,0 +1,141 @@
+#907: PROCESS activation and CHILD adapter preparation
+=====================================================
+
+Checkpoint: #935 403ef53ff, epic 197d05ce6. The public selector remains
+DISABLED. This document is a migration proposal, not activation acceptance.
+The 72-byte request and 32-byte completion layout are unchanged. There are
+77 live CUIS selectors: eight CHILD, nine COHORT, six #930, 54 #915.
+
+Activation prerequisite and review boundary
+------------------------------------------
+
+#933 must first receive final lifecycle acceptance, complete exact-head CI and
+be integrated into the actual epic. Reconcile #935 onto that actual base,
+not a historical validation merge. Preserve its separately reviewed C3a change:
+valid CLOSE unlinks/consumes the right even when cleanup reports an error;
+query canonical KPROC cleanup diagnostics before releasing the last observer.
+PREPARE still returns its original constructor failure. A negative CLOSE is
+not permission to retry a consumed right.
+
+The activation increment should change only the existing transport's build /
+configuration gate, S_INQUIRE discovery and corresponding acceptance tests.
+It must not modify request decoding, launch ownership, cancellation boundaries,
+completion observation, scheduler policy or the filesystem implementation.
+S_PROCEXEC remains signed Ssystem selector -9 (0xfff7), not a new trap family.
+Supported USER_ASPACE + NATIVE_SCHED + SSYSTEM kernels may expose it only after
+explicit owner activation approval. Other kernels return EINVFN for dispatch
+and inquiry. Ordinary presets must remain unchanged until that approval.
+
+Keep the temporary PROCESS reference inside the outer execution cleanup scope;
+release it before ending the scope. No checkpoint belongs in the adapter:
+osif's existing outer checkpoint delivers cancellation after operation-local
+buffers, detached rights and references are settled. Pending cancellation
+cannot undo a successful publication or consumed CLOSE.
+
+Retain K5: the checked-copy backing provider is the current single-CPU,
+non-preemptive built-in no-yield/no-mapping-reentry implementation. External
+BIOS/critical-error callbacks that reenter mapping teardown need a separate
+authoritative mapping lease/generation contract. This work makes no general
+fatal-unwind, preemption or SMP guarantee.
+
+C4a ownership handoff that must precede selector deletion
+-------------------------------------------------------
+
+Current children.c reserves a CUIS watch, calls CUIS launch 69/90/91 and
+receives only a PID. cuis_child_bind_spawn attaches the watch before execution;
+CUIS subsequently copies completion into children[] / child_order[]. Generic
+PROCESS transport cannot safely recover that observation after publication by
+looking up the returned PID. Doing so loses early exits and confuses PID reuse.
+
+Therefore removal of 66/67/68 requires a bounded handoff slice in the existing
+launch path, even though the final removal of 69/90/91 belongs to C4b:
+
+1. Establish a PROCESS-owned PREPARE right before runnable publication.
+2. Authenticate the owning PROCESS and destination AES endpoint separately.
+   Do not replace per-client endpoints with one client per PID/PROCESS.
+3. Use existing proc_exec_retain_observer(owner, handle, require_prepared, ...)
+   as the trusted kernel bridge. It retains the canonical KPROC metadata and
+   can reject committed/stale/foreign rights; it creates no completion registry.
+4. Before COMMIT, attach any required GUI readiness subscription and console /
+   display / input lease to the authenticated preparation. Commit must have no
+   remaining fallible attachment or userspace copyout.
+5. Return/retain the owned observation right in the matching libaes client
+   context. Owner exit already releases PROCESS rights; client exit must detach
+   its own subscriptions and close its own rights without cancelling committed
+   children or releasing another client's subscription.
+
+The exact GUI attachment/retirement interface is NOT implemented or agreed by
+this preparation. Three decisions require kernel/GUI ownership review:
+
+* How existing launch selectors hand the prepared generic right to libaes while
+  preserving their active callers until C4b. Do not infer a right from a PID.
+* How SESSION_WAIT's existing CUIS_READY_CHILD readiness observes canonical
+  completion without retaining children[] results as a second zombie registry.
+  It must stay ready during an unfinished double-click and through publication
+  failure; there is no Fpoll_time64 or pollable-endpoint migration here.
+* How successful ordinary STREAM_WRITE and observation/subscription retirement
+  compose under cancellation or reentry, so publication cannot be duplicated.
+  Closing the generic handle alone must not leave a GUI-owned retained lease.
+
+Do not disguise WATCH/RESULT/PUBLISH as three new selectors. If a legitimate
+shared endpoint adjustment is necessary, agree its narrow responsibility with
+#915/#930 owners before coding; their broader redesign remains excluded.
+
+C4a libaes notification transaction
+----------------------------------
+
+Retain only per-client notification rights and adapter progress in userspace;
+KPROC owns terminal status/order. SNAPSHOT is non-consuming and carries full
+PROCESS number, PID, state, kind, normal UWORD status, explicit signal and
+immutable terminal order. Never treat status 0xffff as a fault or a negative
+syscall result. SAME_PROCESS THREAD exit is not PROCESS_COMPLETED.
+
+Select terminal notices by the canonical 64-bit completion order, not launch
+order, PID or handle value. Keep GEM CH_EXIT layout in libaes: words 0=CH_EXIT,
+1/2=0, 3=PID, 4=full normal status or supported AES signal encoding, 5..7=0.
+Use the authenticated client's existing byte stream and sender provenance.
+
+A failed snapshot copyout leaves the right unchanged. A failed/uncommitted
+stream publication leaves notification retryable. After stream commit, record
+published progress before any fallible cleanup; a consumed CLOSE cleanup error
+must not make the notice publishable again. Cancellation after publication must
+not republish. Resolve this transaction boundary before replacing production
+callers; an unguarded userspace write-then-close sequence is not proof.
+
+Native acceptance fixtures (retain existing deadlines)
+-----------------------------------------------------
+
+Existing tests/cuis/gem_exit.c already checks both Pwait/CH_EXIT orders, reverse
+completion order and exactly-once messages using real GEM applications. Existing
+process_transport tests independently check normal 0xffff, real fault completion,
+both Pwait/observer orders and stale/one-shot rights through the actual trap on
+x32, ARM A32 and m68k040. These are complementary, not interchangeable.
+
+Extend the native GEM fixtures when the handoff is implemented to cover:
+- Full normal 0xffff through CH_EXIT in both Pwait orders, distinct from fault.
+- Child completion before shel_write returns; reverse completion order.
+- Stream-full EAGAIN and failed publication copy, followed by one successful
+  notification and no duplicate, including cancellation after stream commit.
+- Parent/client retirement, different clients within one PROCESS, PID reuse,
+  sibling THREAD exit, and exact observer/GUI lease resource baselines.
+- Child completion during unfinished double-click, simultaneous input/message /
+  timer readiness, without dropping input history or resetting deadlines.
+- Authenticated pre-COMMIT console leases and full rollback on attachment failure.
+
+The added tools/test-child-adapter.py fixture compiles the ACTUAL current
+lib/aes/children.c with a modeled CUIS transport. It pins full-word formatting,
+completion-order draining, EAGAIN/error retry, no duplicate success, bounded
+batching, reservation failure and graphical/console/directory/unobserved launch
+routing. It is hosted adapter-policy evidence, not a native observer/reaper test.
+Migrate its boundary mocks alongside the adapter once the interface is agreed;
+do not preserve obsolete CUIS mock calls as compatibility requirements.
+
+Delivery sequence
+-----------------
+
+Accepted #933 epic integration -> reconciled #935 exact-head acceptance ->
+explicit activation review -> separate activation increment -> reviewed C4a
+handoff and notification transaction -> native GUI matrix -> delete 66/67/68.
+Then C4b removes 69/90/91 and C4c removes 70/92. Count deletions only after
+all callers, wrappers, handlers, storage, tests and documentation have migrated.
+Nine COHORT selectors remain a separate shutdown-policy milestone.
