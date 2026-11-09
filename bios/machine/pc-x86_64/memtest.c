@@ -51,6 +51,7 @@
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/kthread_context.h"
 #include "../../../bdos/fs.h"
+#include "../../../bdos/console.h"
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc_clone.h"
@@ -1374,6 +1375,7 @@ void x86_64_memtest_disposal_committed(PD *pd)
  * Only the repeated I/O error is injected; recovery uses the actual backend. */
 static void test_residual_alias_retirement(void)
 {
+    int initial_failures=failures;
     SNAP before;
     PD *pd,*saved=run;
     KPROC *identity;
@@ -1392,9 +1394,14 @@ static void test_residual_alias_retirement(void)
         CHECK(fs_close_bounded((WORD)handle,TRUE,&report)==EWRITF &&
               report.disposition==FS_CLOSE_TRANSFERRED,"residual-alias transfer explicit owner");
         recovery=report.token; fs_close_test_exhaust(-1);
-        CHECK(fs_close_once((WORD)handle,FALSE,&report)==E_OK &&
+        { LONG closed=fs_close_once((WORD)handle,FALSE,&report);
+          kprintf("alias-close diag handle=%ld rc=%ld use=%d residual=%lu uft=%d default=%d disposition=%u\r\n",
+                  (long)handle,(long)closed,sft[handle-NUMSTD].f_use,
+                  (unsigned long)sft[handle-NUMSTD].f_cleanup_refs,
+                  (int)PD_UFT(pd)[0],(int)get_default_handle(0),(unsigned)report.disposition);
+        CHECK(closed==E_OK &&
               PD_UFT(pd)[0]==get_default_handle(0) && sft[handle-NUMSTD].f_use==1 &&
-              sft[handle-NUMSTD].f_cleanup_refs==1,"last ordinary close unpublishes exhausted standard alias");
+              sft[handle-NUMSTD].f_cleanup_refs==1,"last ordinary close unpublishes exhausted standard alias"); }
     }
     run=saved; proc_dispose_process(identity);
     CHECK(!kproc_ref_has_basepage(identity),"residual-only PROCESS retires without duplicate close");
@@ -1403,7 +1410,7 @@ static void test_residual_alias_retirement(void)
               fs_cleanup_retry(&recovery,&report)==EIHNDL,"residual-alias exact final recovery");
     kproc_release(identity);
     same(&before,"residual alias retirement restores baseline");
-    kprintf("native exhausted ordinary aliases with retained SFT owner: PASS\r\n");
+    if (failures==initial_failures) kprintf("native exhausted ordinary aliases with retained SFT owner: PASS\r\n");
 }
 
 static void test_residual_file_ownership(void)
