@@ -102,6 +102,15 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument);
 typedef enum { KSCHED_WAIT_UNMANAGED, KSCHED_WAIT_READY, KSCHED_WAIT_CANCELLED } KSCHED_WAIT_RESULT;
 BOOL ksched_cancellation_pending(void); /* query only; never exits or consumes events */
 KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument);
+#if CONF_WITH_NATIVE_SCHED
+struct ksched_wait_observation;
+/* Owner exclusion must span observe/check/admit; retain source and argument
+ * through return. A generation change is a wake hint even if a competing
+ * consumer made the predicate false. Revalidate under the owner before commit.
+ * Current serialization is local IRQ exclusion, NOT an SMP owner lock. */
+KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *argument,
+                                                 const struct ksched_wait_observation *observation);
+#endif
 BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
 /* Standard async process calls are admitted only within a managed group.
  * Spawn consumes an unprepared, loaded basepage only on success. */

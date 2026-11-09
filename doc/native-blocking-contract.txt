@@ -82,3 +82,29 @@ accesses on 32-bit targets), retained descriptor operations, wake routing and
 per-CPU root-entry ownership. Existing cooperative tests/stamped result waits
 are a foundation, not proof that every filesystem/device wait is concurrent-safe.
 B2/C, timer preemption and SMP remain disabled.
+
+B2 owner-generation wake increment
+----------------------------------
+ksched_wait_cancelable_observed(predicate, retained_context, observation) now
+retains a COPY of the observation in the blocked task. The operation owns and
+pins the referenced sequence/context until return. With today's owner/IRQ
+exclusion held from observe/check through admission, a pre-admission generation
+change refuses sleep; a post-admission change wakes the task even if another
+consumer has already made its readiness predicate false. READY is therefore a
+revalidation hint, never proof of readiness or permission to consume an event.
+Cancellation still takes precedence before result commit.
+
+The task unpublishes predicate/context/sequence together under the leaf before
+returning to operation-local cleanup. The sequence pointer must not outlive the
+retained operation. Raw predicate waits remain unchanged; they have no implicit
+event subscriptions. The native probe really blocks a managed continuation,
+advances its owner generation from scheduler root, leaves its predicate false,
+then verifies resumption of the same THREAD and complete metadata detachment.
+This complements the pre-block completion race assertion on all three MMU
+architectures; it does not model a producer running on a second CPU.
+
+This is cooperative generation wake routing, not full concurrent owner locking.
+Event producers still need owner-protected state/sequence publication and an
+atomic IRQ pending/idle wake boundary before asynchronous admission is enabled.
+No #929 poll engine, deadline provider, copied IRQ-frame restore, user-return
+reschedule, timer preemption or SMP capability follows from this increment.

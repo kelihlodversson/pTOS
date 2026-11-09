@@ -60,6 +60,7 @@ typedef struct kernel_task {
     TASK_STATE state;
     BOOL (*ready)(void *);
     void *argument;
+    KSCHED_WAIT_OBSERVATION observation; /* owner storage retained until resume */
     LONG result;
     ULONG usage[2];
 } KERNEL_TASK;
@@ -451,8 +452,16 @@ static struct {
     UQUAD execution;
     BOOL pending, resumed, reaped;
 } wait_probe;
+static KSCHED_WAIT_SEQUENCE generation_probe;
+static BOOL generation_pending;
+static BOOL generation_never_ready(void *owner)
+{ return owner!=&generation_probe; }
 static void wait_probe_on_root(void)
 {
+    if (generation_pending) {
+        generation_pending=FALSE;
+        ksched_sequence_advance(&generation_probe);
+    }
     if (!wait_probe.pending) return;
     if (!ksched_admission_complete(&wait_probe.producer,1,82))
         panic("scheduler: native wait completion");
@@ -474,6 +483,7 @@ static void sequence_probe_on_yield(void)
     LONG output=-91;
     if (sequence_probed || !task || task->program!=run ||
         !(thread=ksched_exit_thread(run)) || ksched_cancellation_pending()) return;
+    sequence_probed=TRUE; /* the blocked probe must not recurse through a peer */
     tid=kthread_tid(thread);
     if (ksched_admission_create(task->process,1,&admission) ||
         ksched_waiter_attach(&admission,task->process,tid,task->execution.identity,1,&ticket))
@@ -486,8 +496,20 @@ static void sequence_probe_on_yield(void)
         ksched_waiter_take(&ticket,task->process,tid,task->execution.identity,&output,1) || output!=91)
         panic("scheduler: native sequence check/block retry");
     ksched_waiter_detach(&ticket); ksched_admission_release(&admission);
+    {
+        uintptr_t flags=native_sched_irq_save();
+        ksched_sequence_observe(&generation_probe,&observation);
+        generation_pending=TRUE;
+        if (ksched_wait_cancelable_observed(generation_never_ready,&generation_probe,&observation)!=KSCHED_WAIT_READY ||
+            generation_pending || !ksched_sequence_changed(&observation) ||
+            generation_never_ready(&generation_probe) || execution_cpu.current!=task ||
+            task->state!=TASK_RUNNING || task->observation.source || task->ready || task->argument)
+            panic("scheduler: native owner generation wake/detach");
+        native_sched_irq_restore(flags);
+    }
     sequence_probed=TRUE;
     kcprintf("native completion sequence check/block retry: PASS\n");
+    kcprintf("native owner generation wake with false predicate: PASS\n");
 }
 static void wait_probe_on_yield(void)
 {
@@ -962,6 +984,8 @@ static BOOL block_admit(KERNEL_TASK *task, BOOL (*ready)(void *), void *argument
     }
     task->ready=ready;
     task->argument=argument;
+    if (observation) task->observation=*observation;
+    else { task->observation.source=NULL; task->observation.value=0; }
     task->state=TASK_BLOCKED;
     runqueue_leave(guard);
     return TRUE;
@@ -979,6 +1003,8 @@ static BOOL block_observed(BOOL (*ready)(void *), void *argument,
         RUNQUEUE_GUARD guard=runqueue_enter();
         task->ready = NULL;
         task->argument = NULL;
+        task->observation.source=NULL;
+        task->observation.value=0;
         runqueue_leave(guard);
     }
     return TRUE;
@@ -1025,6 +1051,13 @@ static KSCHED_WAIT_RESULT wait_observed(BOOL (*ready)(void *), void *argument,
 }
 KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument)
 { return wait_observed(ready,argument,NULL); }
+KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *argument,
+                                                 const KSCHED_WAIT_OBSERVATION *observation)
+{
+    if (!ready || !observation || !observation->source)
+        panic("scheduler: invalid owner wait observation");
+    return wait_observed(ready,argument,observation);
+}
 
 static BOOL cancellation_wait(BOOL (*ready)(void *), void *argument)
 {
@@ -1054,7 +1087,7 @@ LONG ksched_result_wait(const KSCHED_ADMISSION *admission,LONG *results,UWORD co
         KSCHED_WAIT_RESULT wait;
         ksched_waiter_observe(context,&observation);
         if (ksched_waiter_ready(context)) break;
-        wait=wait_observed(ksched_waiter_ready,context,&observation);
+        wait=ksched_wait_cancelable_observed(ksched_waiter_ready,context,&observation);
         if (wait==KSCHED_WAIT_CANCELLED) { cancelled=TRUE; break; }
         if (wait==KSCHED_WAIT_UNMANAGED) { error=EINVFN; break; }
     }
@@ -1535,8 +1568,9 @@ static void scheduler_root_entry(void)
 #if CONF_WITH_CUIS
             if (task->state == TASK_DEFERRED) continue;
 #endif
-            if (task->state == TASK_BLOCKED && !task->ready(task->argument) &&
-                !cancel_wait_ready(task)) continue;
+            if (task->state == TASK_BLOCKED &&
+                !(task->observation.source && ksched_sequence_changed(&task->observation)) &&
+                !task->ready(task->argument) && !cancel_wait_ready(task)) continue;
             scheduler.next = task->next_task ? task->next_task : scheduler.tasks;
             cpu_claim_task(task);
             if(execution_cpu.pump && execution_cpu.budget) execution_cpu.budget--;

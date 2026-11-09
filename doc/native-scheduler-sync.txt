@@ -289,3 +289,16 @@ architecture-neutral operation contract for downstream #929, including retained
 handle incarnations, deadline/cancellation ordering, generation admission and
 retirement. This specifies prerequisites; raw callback/device waits have not
 been made IRQ/SMP-safe, and no poll engine or deferred dispatch is enabled.
+
+B2 blocked-owner observation lifetime
+------------------------------------
+Observed waits retain their sequence source through the operation, and copy
+only its pointer/value into task metadata. Snapshot/check/BLOCKED publication
+requires one owner exclusion; root recognizes a changed stamp before evaluating
+the level predicate. Resume clears all predicate/argument/observation metadata
+before the caller may drop operation references. A consumed event may make the
+predicate false without erasing the need to revalidate a generation wake.
+Future SMP must acquire the event owner before the leaf and pair publication
+with targeted wake routing. Reading a 64-bit source under local IRQ exclusion
+on current ARM/m68k is not an atomic remote-CPU access. No destructor or callback
+is introduced into a leaf section by this protocol.

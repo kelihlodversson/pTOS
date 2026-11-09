@@ -353,3 +353,14 @@ exception frames. See native-interrupt-frames.txt for lexical m68k fault-frame o
 remaining copied-frame restart, outer-return depth and SMP selection gates.
 K1 covers current boot-CPU cooperative loaded execution; B2/C remain disabled. native-blocking-contract.txt documents #929's
 required blocking contract without adding a descriptor engine or public API.
+
+B2 next increment: blocked-owner generation wake
+-----------------------------------------------
+Common observed waits now keep their owner stamp until resumption, wake on a
+post-block generation change even with a false predicate, and detach all wait
+metadata before cleanup. Native probes distinguish this from the existing
+pre-block check/retry test. The same common code serves x32, ARM and m68k.
+User-frame restore, owner locks/IRQ wake admission, final return eligibility and
+timer preemption are still gated. The independent residual-file ownership fix
+is PR #933; #931 retains responsibility for its own TASK_RETIRING and outer
+cleanup-cancellation/fatal-copy safety. None changes PROCESS reaping (#909).
