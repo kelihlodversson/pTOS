@@ -6,6 +6,8 @@
 #include "string.h"
 #include "kproc.h"
 
+SBYTE get_default_handle(int index) { (void)index; return -1; }
+
 LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
 {
     UWORD attempt;

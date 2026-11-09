@@ -18,6 +18,7 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 #include "fs.h"
+#include "console.h"
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
