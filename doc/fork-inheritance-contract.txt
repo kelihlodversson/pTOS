@@ -9,13 +9,16 @@ independent-KASPACE prerequisite #934. Production PRIVATE_VM saved-return
 integration must wait for #934's independent review and exact-head CI.
 
 Refreshed source checkpoint, 2026-11-09:
-  epic #903          13028a3903456e3394275be4c916bdd9c54f3707
+  epic #903          197d05ce6d71efb8e626df5b4e7db11d29f5c3fc
   saved return #932  3f9f7ff755d7f5c3a150df9b9f93eb1271eb9e74
   KASPACE/COW #934   3c14f2606535d383347d5975a1115aad0b9a2e17
   isolated proof    9ef7292a812b4463f6b921fedda442b517e9901d
   SFT ownership933  f38e56fd56474019c599eb55361495a676d37be6
 
-No #914/#931 implementation is imported. The current #933 close reports
+#931 is now merged into the upstream epic. #933 remains at its stated topic
+head and its owner is resolving new-epic conflicts. There is still no explicit
+owner agreement on the proposed inheritance operations; do not implement them
+from this document alone. No #933/#914 implementation is imported here. The current #933 close reports
 RETAINED, CONSUMED, TRANSFERRED and NOT_OWNED independently of error. Its
 FS_CLEANUP_TOKEN represents a residual transferred reference, not permission
 to manufacture or acquire an ordinary live reference. Existing fs_sft_claim
@@ -99,6 +102,50 @@ legacy f_own sweep must not also consume table-owned references. Transition of
 ordinary Pexec and nonfork PROCESSes requires explicit compatibility tests; do
 not switch just the fork child onto a table while leaving global-handle entry
 paths able to bypass it. Legacy non-ASPACE builds retain their current path.
+
+Current-epic descriptor migration audit
+--------------------------------------
+Path                              Required transition / invariant
+bdos/fsmain.c syshnd,              Resolve the current PROCESS's binding once;
+  getofd/getpfsslot                validate exact SFT identity, not raw h-NUMSTD.
+bdos/fsopnclo.c xopen/xcreat,       Open installs one local binding; close snapshots
+  xclose                          and consumes only that binding generation.
+bdos/fshand.c ixforce/xdup         Retain through the checked owner API, preserve
+                                  alias counts/offsets, do not copy PFS cookies.
+bdos/fsio.c + osif/uaccess         Audit std pretranslation and every direct SFT
+                                  use; avoid double local-to-slot translation.
+bdos/fileback.c fileback_get       Resolve/authenticate the local descriptor;
+                                  keep existing OFD/backing pin ownership.
+bdos/kfile.c kernel file helpers   Their handles still belong to current PROCESS;
+                                  they cannot bypass the new namespace.
+#933 fsclose/invalidation          Internal service/backend slot identities stay
+                                  distinct from user descriptor numbers; revoke
+                                  all matching local incarnations before reuse.
+bdos/proc.c release_pd_files       Table-owned references replace the f_own
+                                  inference exactly once; preserve legacy branch.
+bdos/proc.c ordinary Pexec         All new managed PROCESSes get valid independent
+                                  tables, not just fork children.
+#931 process_exec rights           A separate capability namespace, not a GEMDOS
+                                  file table or a descriptor admission lock.
+
+Suggested smaller prerequisites for owner agreement:
+A. The filesystem owner adds checked live acquire/expected-incarnation release
+   to its authoritative service with production-code error/rebind/invalidation
+   tests. Keep public behavior unchanged; preserve transferred-token semantics.
+B. Introduce opt-in bindings for ALL managed PROCESSes under one coherent gate,
+   including ordinary Pexec, open/close, kernel helpers, mmap, invalidation and
+   termination. Route every operation before supporting inheritance. Distinguish
+   internal raw service slots from user-local descriptors explicitly. Establish
+   an independent bounded descriptor admission protocol; #931 exec_committing
+   protects successor selection and cannot be repurposed as a file-table lock.
+C. Add factory inheritance only after B passes ordinary Pexec and lifecycle
+   acceptance. Use the checked owner operations; no direct counter updates.
+D. Add supported environment/CWD/runtime inheritance, then test a still-gated
+   fork policy. Public Pfork is a separate final increment after review.
+
+These stages are proposals, not a decision by the filesystem owner. The mixed
+transition cannot allow a managed PROCESS to bypass local lookup through old
+global APIs. Legacy non-ASPACE behavior stays on its original implementation.
 
 Construction transaction
 ------------------------
