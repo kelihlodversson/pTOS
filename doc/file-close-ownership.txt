@@ -210,3 +210,14 @@ checks both clusters reclaimed after repair. It also checks bounded permanent
 failure/error reporting, mixed live/residual aliases, stale tickets and exactly
 once disposal. Disk storage/failure is injected; ordinary native shutdown checks
 remain separate evidence and do not claim a native failing-medium experiment.
+
+Ordinary aliases can exhaust before the backend's total reference count.
+Repeated numeric Fclose(h) is legacy behavior and may consume references also
+named by standard aliases. When consumption or transfer leaves only service
+references, unpublish every standard alias still naming h immediately; the
+backend staying alive does not authorize ordinary descriptors. Do not wait for
+f_use==0. A consuming finalizer's replacement to another handle is preserved.
+Retirement must then leave the residual owner untouched and free its PD; exact
+FIFO recovery remains independent. Production close and real PROCESS-retirement
+fixtures plus an x32 real-FAT native test cover that ordering. The d588 baseline
+fails the new alias assertion; a passing old retry is not evidence of safety.

@@ -1372,6 +1372,40 @@ void x86_64_memtest_disposal_committed(PD *pd)
  * the last non-runnable association is detached. */
 /* Native kernel execution with a real FAT handle and real PROCESS teardown.
  * Only the repeated I/O error is injected; recovery uses the actual backend. */
+static void test_residual_alias_retirement(void)
+{
+    SNAP before;
+    PD *pd,*saved=run;
+    KPROC *identity;
+    LONG handle;
+    FS_CLOSE_REPORT report;
+    FS_CLEANUP_TOKEN recovery;
+    snap(&before);
+    pd=new_basepage(); if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd); run=pd;
+    handle=DISK_CALL(xopen("C:\\X32HELLO.TOS",0));
+    CHECK(handle>=NUMSTD && handle<NUMHANDLES,"residual-alias real FAT file");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(ixforce(0,(int)handle,pd)==E_OK,"residual-alias standard mapping");
+        fs_close_test_exhaust((WORD)handle);
+        CHECK(fs_close_bounded((WORD)handle,TRUE,&report)==EWRITF &&
+              report.disposition==FS_CLOSE_TRANSFERRED,"residual-alias transfer explicit owner");
+        recovery=report.token; fs_close_test_exhaust(-1);
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==E_OK &&
+              PD_UFT(pd)[0]==get_default_handle(0) && sft[handle-NUMSTD].f_use==1 &&
+              sft[handle-NUMSTD].f_cleanup_refs==1,"last ordinary close unpublishes exhausted standard alias");
+    }
+    run=saved; proc_dispose_process(identity);
+    CHECK(!kproc_ref_has_basepage(identity),"residual-only PROCESS retires without duplicate close");
+    if (handle>=NUMSTD && handle<NUMHANDLES)
+        CHECK(fs_cleanup_retry(&recovery,&report)==E_OK &&
+              fs_cleanup_retry(&recovery,&report)==EIHNDL,"residual-alias exact final recovery");
+    kproc_release(identity);
+    same(&before,"residual alias retirement restores baseline");
+    kprintf("native exhausted ordinary aliases with retained SFT owner: PASS\r\n");
+}
+
 static void test_residual_file_ownership(void)
 {
     SNAP s;
@@ -6043,6 +6077,7 @@ void x86_64_memtest_run(void)
 #endif
 #endif
     test_residual_file_ownership();
+    test_residual_alias_retirement();
     test_invalidated_standard_aliases();
     test_kthread_live_disposal();
     test_kthread_completion();

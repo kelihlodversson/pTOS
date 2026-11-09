@@ -17,7 +17,7 @@ static SBYTE child_files[NUMSTD];
 static UBYTE child_dirs[NUMCURDIR];
 static unsigned record, allocations, references, attempts, invalidations, directories;
 static unsigned first_closes;
-static BOOL exhaust,cleanup_started,probe_retirement;
+static BOOL exhaust,cleanup_started,probe_retirement,residual_only;
 static OFD independent_file;
 static unsigned blocked_rebinds;
 static unsigned transferred;
@@ -48,7 +48,7 @@ void procmem_free_owned(const void *pd, void (*before)(void *))
 {
     CHECK(pd == &owner && allocations == 1);
     before(&child);
-    CHECK(!record && references == (exhaust ? 1U : 0U) && directories == 1);
+    CHECK(!record && references == (exhaust || residual_only ? 1U : 0U) && directories == 1);
     CHECK(child_files[0]==get_default_handle(0) &&
           child_files[1]==get_default_handle(1));
     allocations = 0;
@@ -86,6 +86,9 @@ long fs_close_backend(WORD handle,volatile BOOL *consumed)
         return E_OK;
     }
     CHECK(references == 1);
+    if (sft[1].f_use>1 && !exhaust) {
+        sft[1].f_use--; *consumed=TRUE; return E_OK;
+    }
     if (++attempts == 1 || exhaust) {
         errdrv = 0;
         errcode = EWRITF;
@@ -154,6 +157,28 @@ int main(void)
     directories=0;
     proc_free_owned(&owner);
     CHECK(!allocations && !record && !references && sft[1].f_own==&owner && sft[1].f_use==1);
+    /* One transferred explicit reference and its standard alias. Repeated
+     * numeric close consumes the alias, not the residual owner. */
+    fs_sft_invalidated(1); sft[1].f_own=NULL; sft[1].f_use=0;
+    cleanup_started=FALSE; record=allocations=references=1;
+    residual_only=TRUE; directories=attempts=0;
+    { unsigned index; for(index=0;index<NUMSTD;index++) child_files[index]=-1; }
+    CHECK(fs_sft_claim(1)); sft[1].f_own=&child; sft[1].f_use=2;
+    child_files[0]=NUMSTD+1; exhaust=TRUE;
+    {
+        FS_CLOSE_REPORT result; FS_CLEANUP_TOKEN token;
+        CHECK(fs_close_bounded(NUMSTD+1,TRUE,&result)==EWRITF &&
+              result.disposition==FS_CLOSE_TRANSFERRED);
+        token=result.token; exhaust=FALSE;
+        CHECK(fs_close_once(NUMSTD+1,FALSE,&result)==E_OK &&
+              child_files[0]==get_default_handle(0) && sft[1].f_use==1);
+        proc_free_owned(&owner);
+        CHECK(!record && !allocations && references==1 &&
+              sft[1].f_cleanup_refs==1 && sft[1].f_own!=&child);
+        CHECK(fs_cleanup_retry(&token,&result)==E_OK && !references);
+        CHECK(fs_cleanup_retry(&token,&result)==EIHNDL);
+    }
+    puts("Production retirement after exhausted ordinary aliases leaves only exact residual owner: PASS (host)");
     puts("Exhausted close retries leave one reference without double release: PASS");
     return 0;
 }

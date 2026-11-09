@@ -49,6 +49,15 @@ void fs_sft_invalidated(int n)
     f->f_cleanup_state=FS_CLEANUP_INVALIDATED;
     f->f_cleanup_last_error=E_CHNG;
 }
+/* Residual references keep the backend alive, not ordinary descriptors.
+ * Numeric closes may consume the final ordinary alias before the final total
+ * count. Clear only aliases naming this slot; preserve callback rebindings. */
+static void unpublish_exhausted_aliases(WORD handle)
+{
+    FTAB *f=&sft[handle-NUMSTD];
+    if (f->f_use>=0 && (ULONG)f->f_use<=f->f_cleanup_refs)
+        kproc_standard_file_invalidate(handle);
+}
 /* pTOS defines jmp_buf as a concrete register array in include/setjmp.h;
  * these copies preserve its own setjmp.S ABI, as DISK_CALL does. This is
  * intentionally not a portable hosted-libc jmp_buf abstraction. CPU-owned
@@ -108,6 +117,7 @@ LONG fs_close_once(volatile WORD h, BOOL cleanup, FS_CLOSE_REPORT *out)
         f->f_cleanup_consumed++;
         if (!f->f_cleanup_refs) f->f_cleanup_state=FS_CLEANUP_COMPLETE;
     }
+    if (consumed) unpublish_exhausted_aliases(h);
     /* A final PFS release may rebind the unpublished standard entry. Only
      * relinquish this operation's old mapping, never a callback's new alias.
      * Slot reuse itself is excluded until f_close_busy is cleared below. */
@@ -137,6 +147,7 @@ static BOOL transfer_reference(FS_CLOSE_REPORT *r)
     f->f_cleanup_last_error=r->last_error;
     f->f_cleanup_state=FS_CLEANUP_PENDING;
     r->disposition=FS_CLOSE_TRANSFERRED;
+    unpublish_exhausted_aliases(r->token.handle);
     return TRUE;
 }
 static LONG bounded_close(WORD h, BOOL cleanup, BOOL dispose, FS_CLOSE_REPORT *out)
