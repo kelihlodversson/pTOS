@@ -39,6 +39,7 @@
 #include "procmem.h"
 #include "kaspace.h"
 #include "kthread.h"
+#include "proc_clone.h"
 #include "progimage.h"
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/startup.h"
@@ -1471,7 +1472,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
          * launch can still fail cleanly. */
         if (!kproc->kstack_phys) return FALSE;
         if (thread_result) {
-            *thread_result = kthread_create(pd);
+            *thread_result = proc_clone_prepare_loaded_thread(pd, kproc->active_space);
             return *thread_result != NULL;
         }
         return TRUE;
@@ -1590,7 +1591,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     /* The constructor retains this explicit construction space. Keep the
      * PROCESS's active-space view unpublished until preparation commits. */
     if (thread_result) {
-        thread = kthread_prepare(pd, owner);
+        thread = proc_clone_prepare_loaded_thread(pd, owner);
         if (!thread)
             return prepare_failed(kproc, owner);
     }
