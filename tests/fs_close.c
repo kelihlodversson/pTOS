@@ -27,7 +27,7 @@ long errcode,rwerr;
 int errdrv;
 #endif
 static unsigned freed,flushes,invalidations,closes,releases;
-static BOOL fail_disk,probe_busy;
+static BOOL fail_disk,probe_busy,rebind_standard;
 static LONG pfs_error,release_error;
 static OFD file;
 static BCB buffer;
@@ -61,9 +61,17 @@ long ixread(OFD *fd,long n,void *p) { (void)fd;(void)n;(void)p; abort(); }
 long ixwrite(OFD *fd,long n,void *p) { (void)fd;(void)n;(void)p; abort(); }
 CLNO getrealcl(CLNO n,DMD *d) { (void)n;(void)d; abort(); }
 void clfix(CLNO n,CLNO v,DMD *d) { (void)n;(void)v;(void)d; abort(); }
-static LONG driver_close(PFSCOOKIE *cookie) { CHECK(cookie==&sft[0].f_pfs); closes++; return pfs_error; }
+static LONG driver_close(PFSCOOKIE *cookie) { CHECK(cookie==&sft[0].f_pfs || cookie==&sft[1].f_pfs); closes++; return pfs_error; }
 static void driver_release(PFSCOOKIE *cookie)
-{ CHECK(cookie==&sft[0].f_pfs && owner.p_uft[0]!=NUMSTD); releases++; }
+{
+    CHECK((cookie==&sft[0].f_pfs && owner.p_uft[0]!=NUMSTD) ||
+          (cookie==&sft[1].f_pfs && owner.p_uft[0]!=NUMSTD+1));
+    releases++;
+    if (rebind_standard) {
+        CHECK(ixforce(0,NUMSTD+1,&owner)==E_OK);
+        CHECK(owner.p_uft[0]==NUMSTD+1 && sft[1].f_use==2);
+    }
+}
 LONG pfs_handle_close(PFSCOOKIE *cookie) { return cookie->fs->close(cookie); }
 static LONG driver_release_file(PFSCOOKIE *cookie)
 { driver_release(cookie); return release_error; }
@@ -179,6 +187,23 @@ int main(void)
     sft[0].f_ofd=NULL; sft[0].f_pfs.fs=NULL;
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EIHNDL && result.disposition==FS_CLOSE_CONSUMED);
     CHECK(!sft[0].f_own && !sft[0].f_use && !sft[0].f_cleanup_refs);
+    /* A real consuming PFS finalizer redirects the just-unpublished alias.
+     * The outer standard close must not discard that new live reference. */
+    CHECK(fs_sft_claim(0) && fs_sft_claim(1));
+    sft[0].f_own=&owner; sft[0].f_use=1; sft[0].f_pfs.fs=&driver;
+    sft[1].f_own=&owner; sft[1].f_use=1; sft[1].f_pfs.fs=&driver;
+    owner.p_uft[0]=NUMSTD; rebind_standard=TRUE;
+    CHECK(fs_close_bounded(0,FALSE,&result)==EWRITF &&
+          result.disposition==FS_CLOSE_CONSUMED);
+    CHECK(!sft[0].f_use && !sft[0].f_own && owner.p_uft[0]==NUMSTD+1 &&
+          sft[1].f_use==2 && closes==4 && releases==3);
+    rebind_standard=FALSE;
+    CHECK(fs_close_bounded(0,FALSE,&result)==E_OK &&
+          result.disposition==FS_CLOSE_CONSUMED && owner.p_uft[0]<0 && sft[1].f_use==1);
+    CHECK(fs_close_bounded(NUMSTD+1,FALSE,&result)==EWRITF &&
+          result.disposition==FS_CLOSE_CONSUMED && !sft[1].f_use && !sft[1].f_own &&
+          closes==6 && releases==4);
+    puts("PFS finalizer rebind preserves the replacement standard alias and reference: PASS");
     puts("Production FAT/PFS close ownership, bounded residual recovery and incarnation protection: PASS");
     return 0;
 }
