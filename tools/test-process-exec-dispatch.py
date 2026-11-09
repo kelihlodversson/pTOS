@@ -10,6 +10,7 @@ import kconfiglib
 ROOT=Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
 os.environ['CONFIG_']=''
+subprocess.run([sys.executable,'tools/test-process-exec-gates.py'],check=True)
 # No shipped preset opts ordinary applications into this validation interface.
 for preset in sorted(Path('configs').glob('*_defconfig')):
     ordinary=kconfiglib.Kconfig(warn_to_stderr=False)

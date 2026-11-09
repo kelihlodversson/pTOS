@@ -201,3 +201,15 @@ native/desktop/lifecycle and full CI acceptance, and request explicit owner
 activation review. Do not enable the hidden gate through a normal preset or
 claim public transport support while those prerequisites remain pending.
 The existing K5 checked-copy restriction continues to apply.
+
+Gate-combination proof (#938)
+----------------------------
+The production option is hidden: assigning CONF_WITH_PROCESS_EXEC=y in .config
+DOES NOT enable it. There is no production selector today. Future activation
+must add a reviewed supported selector/default or prompt; a bare select bypasses
+the selected symbol's dependencies and must not be used without matching guards.
+The gate fixture adds a dependency-checked selector only in a temporary Kconfig
+root and checks ordinary/test/production/both combinations against real build.mk
+and preprocessed Ssystem capability/dispatch cases. Both selected gates include
+exactly one adapter object. This is prospective configuration/preprocessor proof,
+not native production activation acceptance. No shipped source selects the gate.
