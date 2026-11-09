@@ -76,15 +76,15 @@ void proc_dispose_process(KPROC *p)
 {
     CHECK(p == (KPROC *)&child && scheduler_model_flags == 0x200);
     if (inject_retirement) {
-        KERNEL_TASK *previous=scheduler.current;
+        KERNEL_TASK *previous=execution_cpu.current;
         void *stale=&tasks[1];
         CHILD_WAIT wait;
         inject_retirement=FALSE;
         CHECK(tasks[1].state==TASK_RETIRING && !tasks[1].parent && !tasks[1].process &&
               !tasks[1].thread && references==1 && identities==1 && stacks==1);
-        scheduler.current=NULL;
+        execution_cpu.current=NULL;
         CHECK(!reap_finished_on_root(&tasks[1]));
-        scheduler.current=previous;
+        execution_cpu.current=previous;
         wait.parent=&owner; wait.pid=42;
         CHECK(child_ready(&wait) && ksched_process_commit(&stale)==EACCDN && stale==&tasks[1]);
         CHECK(references==1 && identities==1 && stacks==1);
