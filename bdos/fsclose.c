@@ -25,7 +25,7 @@ BOOL fs_sft_accessible(int n)
 BOOL fs_sft_claim(int n)
 {
     FTAB *f;
-    if (!valid_slot(n) || last_incarnation==~(UQUAD)0) return FALSE;
+    if (!kproc_file_references_allowed(run) || !valid_slot(n) || last_incarnation==~(UQUAD)0) return FALSE;
     f=&sft[n];
     if (f->f_own || f->f_use || f->f_close_busy || f->f_cleanup_refs) return FALSE;
     f->f_incarnation=++last_incarnation;

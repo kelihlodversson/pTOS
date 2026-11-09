@@ -23,9 +23,14 @@ static SBYTE child_files[NUMSTD];
 static UBYTE child_dirs[NUMCURDIR];
 static unsigned record, allocations, references, attempts, invalidations, directories;
 static unsigned first_closes;
-static BOOL exhaust;
+static BOOL exhaust,cleanup_started,probe_retirement;
+static OFD independent_file;
+static unsigned blocked_rebinds;
 static unsigned transferred;
 void panic(const char *format, ...) { fprintf(stderr,"panic: %s\n",format); abort(); }
+BOOL kproc_begin_file_cleanup(PD *pd)
+{ CHECK(pd==&child && record); CHECK(!cleanup_started); cleanup_started=TRUE; return TRUE; }
+BOOL kproc_file_references_allowed(PD *pd) { return pd!=&child || !cleanup_started; }
 SBYTE get_default_handle(int i) { (void)i; return -1; }
 void kproc_note_file_cleanup(PD *pd,LONG error,BOOL transfer)
 { CHECK(pd==&child); if (transfer) { CHECK(error==EWRITF); transferred++; } }
@@ -38,7 +43,7 @@ void kproc_standard_file_refs(ULONG *refs)
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 
-SBYTE *kproc_uft(PD *pd) { CHECK(pd == &child && record); return child_files; }
+SBYTE *kproc_uft(PD *pd) { if(pd==&owner) return owner.p_uft; CHECK(pd == &child && record); return child_files; }
 UBYTE *kproc_curdir(PD *pd) { CHECK(pd == &child && record); return child_dirs; }
 BOOL kproc_unlaunched(PD *pd) { return pd == &child && record; }
 BOOL kproc_discard(PD *pd) { CHECK(pd == &child && record); record = 0; return TRUE; }
@@ -56,7 +61,27 @@ void decr_curdir_usage(int index) { CHECK(index == 3); directories++; }
 void mark_bcbs_invalid(int drive) { CHECK(drive == 0); invalidations++; }
 long fs_close_backend(WORD handle,volatile BOOL *consumed)
 {
+    if (handle==NUMSTD+2) {
+        CHECK(sft[2].f_use>0); sft[2].f_use--; *consumed=TRUE;
+        if (!sft[2].f_use) { sft[2].f_own=NULL; sft[2].f_ofd=NULL; }
+        return E_OK;
+    }
     CHECK(handle == NUMSTD || handle == NUMSTD + 1);
+    if (probe_retirement && handle==NUMSTD+1 && attempts==1) {
+        /* Model a consuming finalizer: the old current alias has already
+         * been unpublished before it calls back into real ixforce. */
+        child_files[1]=get_default_handle(1);
+        references--; sft[1].f_use=0; sft[1].f_own=NULL; *consumed=TRUE;
+        CHECK(cleanup_started);
+        CHECK(ixforce(0,NUMSTD+2,&child)==EACCDN); /* already visited */
+        CHECK(ixforce(1,NUMSTD+2,&child)==EACCDN); /* current */
+        CHECK(ixforce(NUMSTD-1,NUMSTD+2,&child)==EACCDN); /* not yet visited */
+        blocked_rebinds+=3;
+        if (owner.p_uft[0]<0) CHECK(ixforce(0,NUMSTD+2,&owner)==E_OK);
+        CHECK(sft[2].f_use==2 && owner.p_uft[0]==NUMSTD+2);
+        attempts++;
+        return E_OK;
+    }
     if (handle == NUMSTD) {
         CHECK(references == 2);
         first_closes++;
@@ -76,18 +101,28 @@ long fs_close_backend(WORD handle,volatile BOOL *consumed)
 }
 int main(void)
 {
-    record = allocations = 1;
+    run=&owner;
+    cleanup_started=FALSE; record = allocations = 1;
     references = 2;
     CHECK(fs_sft_claim(0) && fs_sft_claim(1));
     sft[0].f_own=sft[1].f_own=&child; sft[0].f_use=sft[1].f_use=1;
     child_files[0] = NUMSTD;
     child_files[1] = NUMSTD + 1;
     child_dirs[0] = 3;
+    CHECK(fs_sft_claim(2)); sft[2].f_own=&owner; sft[2].f_use=1;
+    sft[2].f_ofd=&independent_file; independent_file.o_dfd=&independent_file.o_disk;
+    owner.p_uft[0]=-1; probe_retirement=TRUE;
     proc_free_owned(&owner);
     CHECK(!allocations && !record && !references && first_closes == 1 &&
           attempts == 2 && invalidations == 1);
+    CHECK(blocked_rebinds==3 && sft[2].f_use==2 && owner.p_uft[0]==NUMSTD+2);
+    probe_retirement=FALSE;
+    { FS_CLOSE_REPORT result;
+      CHECK(fs_close_once(0,FALSE,&result)==E_OK && owner.p_uft[0]<0 && sft[2].f_use==1);
+      CHECK(fs_close_once(NUMSTD+2,FALSE,&result)==E_OK && !sft[2].f_use && !sft[2].f_own); }
+    puts("Retirement rejects current/earlier/later callback alias attachment; independent owner survives: PASS");
     puts("Non-CUIS process cleanup completes after a disk-error longjmp: PASS");
-    record = allocations = 1;
+    cleanup_started=FALSE; record = allocations = 1;
     references = 2;
     attempts = invalidations = directories = first_closes = 0;
     exhaust = TRUE;
@@ -114,7 +149,7 @@ int main(void)
     }
     /* Production invalidation bookkeeping must unpublish aliases before reuse.
      * Then actual proc_free_owned must leave the replacement reference alone. */
-    record=allocations=1; references=0; exhaust=FALSE;
+    cleanup_started=FALSE; record=allocations=1; references=0; exhaust=FALSE;
     CHECK(fs_sft_claim(1)); sft[1].f_own=&child; sft[1].f_use=1;
     child_files[0]=NUMSTD+1; child_files[1]=get_default_handle(1);
     fs_sft_invalidated(1); sft[1].f_own=NULL; sft[1].f_use=0;

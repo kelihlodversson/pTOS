@@ -68,6 +68,7 @@ struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
     UQUAD number;                /* Generic non-recycled PROCESS identity. */
 #if CONF_WITH_USER_ASPACE
+    BOOL file_cleanup_started; /* No new references once retirement starts. */
     LONG cleanup_error;
     ULONG cleanup_transferred;
     UQUAD completion_order;
@@ -1178,6 +1179,19 @@ SBYTE *kproc_uft(PD *pd)
 #if CONF_WITH_USER_ASPACE
 /* Diagnostic only: residual file references are owned by the SFT service,
  * never by this retained identity. The first error survives PD retirement. */
+BOOL kproc_begin_file_cleanup(PD *pd)
+{
+    KPROC *p=kproc_find(pd);
+    if (!p) return TRUE; /* Trusted boot PD has no USER_ASPACE identity. */
+    if (p->file_cleanup_started) return FALSE;
+    p->file_cleanup_started=TRUE;
+    return TRUE;
+}
+BOOL kproc_file_references_allowed(PD *pd)
+{
+    KPROC *p=kproc_find(pd);
+    return !p || !p->file_cleanup_started;
+}
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
 {
     KPROC *p=kproc_find(pd);

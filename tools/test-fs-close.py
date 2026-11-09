@@ -18,10 +18,19 @@ with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
-    (work/'setjmp.h').write_text('#include <setjmp.h>\n')
+    (work/'setjmp.h').write_text('#include <setjmp.h>\n'
+        '#ifdef SETJMP_H\n#error kernel jmp_buf selected for hosted libc unwind\n#endif\n')
     cc=shlex.split(os.environ.get('HOSTCC','cc'))
-    subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
+    flags=cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
         '-ffunction-sections','-fdata-sections','-iquote',str(work),'-iquote','include',
-        '-Iinclude/arch/x86_64','-Iinclude','-iquote','bdos','-iquote','fs',
-        'tests/fs_close.c','bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'close')],check=True)
+        '-Iinclude/arch/x86_64','-iquote','bdos','-iquote','fs']
+    subprocess.run(flags+['tests/fs_close.c','bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'close')],check=True)
     subprocess.run([str(work/'close')],check=True)
+
+    config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
+    config.write_config(str(work/'config'))
+    subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
+                    '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
+    subprocess.run(flags+['tests/fs_close_rights.c','bdos/fsclose.c','bdos/fsopnclo.c',
+        'bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'rights')],check=True)
+    subprocess.run([str(work/'rights')],check=True)

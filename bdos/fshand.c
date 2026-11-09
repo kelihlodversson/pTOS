@@ -16,6 +16,9 @@
 #include "emutos.h"
 #include "fs.h"
 #include "gemerror.h"
+#if CONF_WITH_USER_ASPACE
+#include "kproc.h"
+#endif
 #include "bdosstub.h"
 
 /*
@@ -51,6 +54,7 @@ long ixforce(int std, int h, PD *p)
         return EIHNDL;
 
 #if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(p)) return EACCDN;
     if (PD_UFT(p)[std]>=NUMSTD && fs_sft_busy(PD_UFT(p)[std]-NUMSTD))
         return EACCDN;
 #endif
@@ -115,6 +119,9 @@ long xdup(WORD h)
 
     if ((h < 0) || (h >= NUMSTD))
         return EIHNDL;          /* only dup standard */
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
 
     fh = PD_UFT(run)[h];
 

@@ -212,7 +212,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     (noncuis / "setjmp.h").write_text("#include <setjmp.h>\n")
     (noncuis / "i18nconf.h").write_text("/* Host fixture. */\n")
     plain_command = [str(noncuis) if arg == str(rollback) else arg for arg in command]
-    subprocess.run([arg for arg in plain_command if arg != "tests/cuis/close_model.c"] + ["bdos/fsclose.c", "tests/cuis/noncuis_cleanup.c", "-o", str(noncuis / "test")], check=True)
+    subprocess.run([arg for arg in plain_command if arg != "tests/cuis/close_model.c"] + ["bdos/fsclose.c", "bdos/fshand.c", "bdos/fsmain.c", "tests/cuis/noncuis_cleanup.c", "-o", str(noncuis / "test")], check=True)
     subprocess.run([str(noncuis / "test")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",

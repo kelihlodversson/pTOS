@@ -27,12 +27,13 @@ long errcode,rwerr;
 int errdrv;
 #endif
 static unsigned freed,flushes,invalidations,closes,releases;
-static BOOL fail_disk,probe_busy,rebind_standard;
+static BOOL fail_disk,probe_busy,rebind_standard,retiring;
 static LONG pfs_error,release_error;
 static OFD file;
 static BCB buffer;
 static DMD media;
 void panic(const char *format, ...) { fprintf(stderr,"panic: %s\n",format); abort(); }
+BOOL kproc_file_references_allowed(PD *pd) { return pd!=&owner || !retiring; }
 SBYTE *kproc_uft(PD *pd) { return pd->p_uft; }
 SBYTE get_default_handle(int i) { (void)i; return -1; }
 void kproc_standard_file_invalidate(WORD handle)
@@ -203,6 +204,10 @@ int main(void)
     CHECK(fs_close_bounded(NUMSTD+1,FALSE,&result)==EWRITF &&
           result.disposition==FS_CLOSE_CONSUMED && !sft[1].f_use && !sft[1].f_own &&
           closes==6 && releases==4);
+    retiring=TRUE;
+    CHECK(!fs_sft_claim(0));
+    CHECK(ixforce(0,-1,&owner)==EACCDN);
+    puts("Retiring PROCESS cannot admit new SFT or standard references: PASS");
     puts("PFS finalizer rebind preserves the replacement standard alias and reference: PASS");
     puts("Production FAT/PFS close ownership, bounded residual recovery and incarnation protection: PASS");
     return 0;

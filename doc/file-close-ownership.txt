@@ -152,3 +152,32 @@ close-busy incarnation excludes reuse of that original slot during callback.
 A replacement alias and its use-count increment remain owned by the caller.
 The production regression invokes ixforce, getofd/getpfsslot and both subsequent
 closes, checking the replacement and finalizer counts through final disposal.
+
+Retirement admission and callback rebinding
+-----------------------------------------
+Before snapshotting any file references, release_pd_files irreversibly closes
+file-reference admission in the authoritative KPROC identity. Reentrant calls
+cannot force a reference into any standard index of that retiring PROCESS,
+including current, already-visited and not-yet-visited entries. Open/create/dup
+reject the loaded retiring owner before filesystem work, and SFT claim repeats
+the admission check. This does not freeze unrelated live PROCESS tables: a
+callback may retain a reference for a separate live owner. Ordinary Fclose in
+a live PROCESS still permits the tested finalizer redirection.
+
+The latch owns no resources and survives only as identity metadata. All normal
+USER_ASPACE PROCESSes have KPROC records; the trusted untracked boot PD keeps
+its existing behavior. Direct writes to UFT/refcounts are not an admission API.
+Current serialization is cooperative; future locking must acquire the PROCESS
+owner before SFT publication, not take a blocking owner lock under a leaf or
+GUI exclusion. This is not a general driver/IRQ/SMP reentrancy guarantee.
+
+Hosted unwind validation correction
+-----------------------------------
+The old test-fs-close runner's -Iinclude made its angle-bracket setjmp shim
+select the 13-long kernel buffer while linking libc setjmp/longjmp. Its earlier
+host unwind passes are not valid hosted-ABI evidence. The corrected runner uses
+quote-only repository lookup and system angle lookup, with an explicit error
+if the kernel SETJMP_H guard is selected. Normal, ASan/UBSan and fortified GCC13
+suites are rerun with the actual hosted buffer. Native tests still use the
+pTOS register-array ABI; their evidence is separate and unchanged by this
+host-runner correction.
