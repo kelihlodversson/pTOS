@@ -151,10 +151,12 @@ extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
 /* bdos/arch/x86_64/rwa.c */
 extern int x86_64_demand_page(UQUAD address, UQUAD error_code);
 
+#include "bdosdefs.h"
+#include "../../../bdos/kproc.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
-extern PD *run;
 #endif
+extern PD *run;
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
@@ -170,6 +172,8 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
             return;
 #if CONF_WITH_NATIVE_SCHED
         if (answer == 2 || answer == 3) ksched_fault(run, answer == 3 ? 10 : 9);
+#else
+        if (answer == 2 || answer == 3) kproc_note_fault(run, answer == 3 ? 10 : 9);
 #endif
         if (answer == 3)
             proc_fault("file mapping I/O error", frame->error_code,
@@ -190,11 +194,14 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
     if ((frame->cs & 3) == 3 && frame->vector != 2 /* NMI */ &&
         frame->vector != 8 /* #DF */ && frame->vector != 18 /* #MC */) {
 #if CONF_WITH_NATIVE_SCHED
-        ksched_fault(run, frame->vector == 6 ? 4 :
+        ksched_fault(run,
+#else
+        kproc_note_fault(run,
+#endif
+            frame->vector == 6 ? 4 :
             (frame->vector == 1 || frame->vector == 3) ? 5 :
             (frame->vector == 0 || frame->vector == 16 || frame->vector == 19) ? 8 :
             frame->vector == 17 ? 10 : 11);
-#endif
         proc_fault(vector_names[frame->vector], frame->error_code,
                    frame->vector == 14 ? x86_64_read_cr2() : 0, frame->rip, frame->rsp);
     }

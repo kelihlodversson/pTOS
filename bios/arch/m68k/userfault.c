@@ -27,6 +27,22 @@
 #endif
 
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
+#include "../../../bdos/kproc.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
+extern PD *run;
+/* Preserve architecture fault kind before proc_fault's generic fallback.
+ * Native scheduling owns per-THREAD intent until final PROCESS completion. */
+static void note_process_fault(WORD signal)
+{
+#if CONF_WITH_NATIVE_SCHED
+    ksched_fault(run, signal);
+#else
+    kproc_note_fault(run, signal);
+#endif
+}
+
 
 ULONG user_fault_frame;                 /* the exception frame (any_vec) */
 
@@ -79,6 +95,7 @@ void m68k_user_fault(void)
         address = *(const ULONG *)(f + 8);
     else if (((fv >> 12) == 0xa || (fv >> 12) == 0xb) && (*(const UWORD *)(f + F30_SSW) & SSW30_DF))
         address = *(const ULONG *)(f + F30_FADDR);    /* (68030 bus error: the data cycle that failed) */
+    if (proc_enum == 4) note_process_fault(4);
     proc_fault(cause_of(proc_enum), (UQUAD)proc_enum, address, pc, (UQUAD)(ULONG)proc_usp);
 }
 
@@ -269,12 +286,16 @@ int m68k_user_busfault(void)
                 answer = more;
         }
     }
-    if (answer == 2)
+    if (answer == 2) {
+        note_process_fault(9);
         proc_fault("no physical page left", (UQUAD)ssw, address, *(const ULONG *)(f + 2),
                    (UQUAD)(ULONG)proc_usp);
-    if (answer == 3)
+    }
+    if (answer == 3) {
+        note_process_fault(10);
         proc_fault("file mapping I/O error", (UQUAD)ssw, address, *(const ULONG *)(f + 2),
                    (UQUAD)(ULONG)proc_usp);
+    }
     if (answer != 1)
         return 0;
     if (writebacks &&

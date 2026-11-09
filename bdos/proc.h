@@ -24,6 +24,15 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+struct kproc;
+/* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
+ * Kernel-owned empty output handle; acquired before scheduler publication.
+ * Load/CWD/admission errors preserve output. No GUI session/token or reaping.
+ * Existing loader paths/environment and bounded no-unwind cleanup apply. */
+long proc_exec_observe(char *path, char *tail, char *environment, char *directory,
+                       struct kproc **observer);
+#endif
 #if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);

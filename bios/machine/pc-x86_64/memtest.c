@@ -54,6 +54,7 @@
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc_clone.h"
+#include "../../../bdos/process_observer.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
 #include "../../../bdos/arch/x86_64/thread_return_x32.h"
@@ -181,6 +182,19 @@ static int failures;
 static BOOL exit_handoff_watch;
 static ULONG exit_handoff_stages[4];
 static UQUAD exit_handoff_free_before;
+
+static unsigned fallback_observer_stages;
+void x86_64_memtest_fallback_observer(KPROC *process, BOOL ready)
+{
+    PROCESS_COMPLETION completion;
+    CHECK(kproc_ref_terminal(process) == ready, "fallback readiness follows syscall stack reclamation");
+    CHECK(kproc_ref_has_basepage(process) != ready, "fallback identity does not retain retired basepage");
+    CHECK(kproc_ref_completion(process, &completion), "fallback canonical completion snapshot");
+    if (ready)
+        CHECK(completion.state == PROCESS_COMPLETED &&
+              (completion.order_low || completion.order_high), "fallback completion gets terminal order");
+    fallback_observer_stages++;
+}
 
 void x86_64_memtest_exit_handoff(KPROC *process, PD *pd, UQUAD stack_phys,
                                 UWORD status, UWORD stage)
@@ -2092,9 +2106,15 @@ static void clone_observer_release(void *context)
 {
     CLONE_RUN_OBSERVER *watch = context;
     UWORD status;
+    PROCESS_COMPLETION completion;
     CHECK(watch->registered == 1 && !watch->released, "registered clone observer releases once");
     if (kproc_ref_status(watch->process, &status)) {
         watch->completed++;
+        CHECK(kproc_ref_terminal(watch->process) && kproc_ref_completion(watch->process,&completion) &&
+              completion.state==PROCESS_COMPLETED && (completion.order_low || completion.order_high) &&
+              (completion.kind==PROCESS_COMPLETION_NORMAL ? completion.status==status :
+               completion.kind==PROCESS_COMPLETION_SIGNAL && completion.signal>0 && !completion.status),
+              "native clone authoritative snapshot follows resource and wait publication");
         CHECK(status == watch->expected && !kproc_ref_has_basepage(watch->process),
               "observer retains correct completed PID/status after live resources retire");
     }
@@ -2207,10 +2227,132 @@ static LONG active_clone_construct(UWORD index)
     }
     return error;
 }
+static struct {
+    BOOL enabled, checked;
+    UWORD scenario, yields;
+    KPROC *parent;
+    PROCESS_OBSERVER *observer, *second;
+    LONG pid;
+} ordinary_observation;
+static void ordinary_observation_yield(void)
+{
+    KTHREAD *thread;
+    PROCESS_COMPLETION snapshot;
+    LONG waited;
+    char command[] = {2,'O','n',0};
+    static char environment[] = {0,0};
+    if (!ordinary_observation.enabled || !(thread=ksched_exit_thread(run)) ||
+        kthread_process(thread)!=ordinary_observation.parent || ordinary_observation.checked) return;
+    ordinary_observation.yields++;
+    if (ordinary_observation.yields==1) {
+        command[2]=ordinary_observation.scenario==2 ? 'f':'n';
+        ordinary_observation.pid=proc_exec_observe("C:\\X32HELLO.TOS",command,environment,NULL,
+                                                  &ordinary_observation.observer);
+        CHECK(ordinary_observation.pid>0 && ordinary_observation.observer,
+              "ordinary loader attaches retained observer before asynchronous publication");
+        if (ordinary_observation.pid<=0) return;
+        CHECK(process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
+              snapshot.state==PROCESS_UNSTARTED && !process_observer_ready(ordinary_observation.observer),
+              "ordinary observation is published before child user execution");
+        CHECK(process_observer_attach(ordinary_observation.observer,&ordinary_observation.second)==E_OK,
+              "multiple observers share the actual ordinary child identity");
+        return;
+    }
+    if (!ordinary_observation.observer) return;
+    if (ordinary_observation.scenario==1)
+        CHECK(ksched_wait_ready(process_observer_ready,ordinary_observation.observer)==KSCHED_WAIT_READY &&
+              process_observer_snapshot(ordinary_observation.observer,&snapshot) && snapshot.status==0xffff,
+              "observer-first ordinary completion is independent of Pwait");
+    waited=ksched_wait((WORD)ordinary_observation.pid,ordinary_observation.scenario==1 ? 1:0,0);
+    CHECK((WORD)((ULONG)waited>>16)==ordinary_observation.pid &&
+          (UWORD)waited==(ordinary_observation.scenario==2 ? 0x0400:0x00ff),
+          "ordinary observer does not consume the public PROCESS wait result");
+    CHECK(process_observer_ready(ordinary_observation.observer) &&
+          process_observer_snapshot(ordinary_observation.observer,&snapshot) &&
+          snapshot.state==PROCESS_COMPLETED && (snapshot.order_low || snapshot.order_high) &&
+          (ordinary_observation.scenario==2 ? snapshot.kind==PROCESS_COMPLETION_SIGNAL &&
+             snapshot.signal==4 && !snapshot.status : snapshot.kind==PROCESS_COMPLETION_NORMAL &&
+             snapshot.status==0xffff && !snapshot.signal),
+          "actual ordinary Pexec snapshot distinguishes full normal ffff from SIGILL after Pwait");
+    CHECK(process_observer_snapshot(ordinary_observation.second,&snapshot) &&
+          ksched_wait((WORD)ordinary_observation.pid,1,0)==EFILNF,
+          "independent observer survives exactly-once public reaping");
+    ordinary_observation.checked=TRUE;
+}
+static void test_discarded_observation(void)
+{
+    UWORD mode;
+    static PD allocation_owner;
+    for (mode=0;mode<2;mode++) {
+        SNAP baseline;
+        PD *pd;
+        void *environment;
+        PROCESS_OBSERVER *observer=NULL;
+        KPROC *target;
+        PROCESS_COMPLETION completion;
+        snap(&baseline);
+        pd=new_basepage();
+        CHECK(pd!=NULL,"allocate unstarted observed basepage");
+        if (!pd) return;
+        environment=USERPTR_TO_PTR(pd->p_env);
+        target=kproc_retain(pd);
+        CHECK(process_observer_attach(target,&observer)==E_OK,
+              "retain actual unstarted PROCESS identity before discard");
+        kproc_release(target);
+        if (!mode) CHECK(Mfree(pd)==E_OK,"free unstarted observed basepage");
+        else {
+            procmem_set_owner(pd,&allocation_owner);
+            procmem_pin((VADDR)(uintptr_t)pd,PAGE,1);
+            proc_free_owned(&allocation_owner);
+            CHECK(!process_observer_ready(observer) && procmem_size(pd) &&
+                  process_observer_snapshot(observer,&completion) && completion.state==PROCESS_UNSTARTED,
+                  "retired observed basepage remains pending through actual deferred pin reclamation");
+            procmem_pin((VADDR)(uintptr_t)pd,PAGE,-1);
+        }
+        CHECK(!procmem_size(pd) && process_observer_ready(observer) &&
+              process_observer_snapshot(observer,&completion) && completion.state==PROCESS_ABANDONED &&
+              !completion.kind && !completion.status && !completion.order_low && !completion.order_high,
+              "actual final allocation release publishes abandonment without fabricated completion");
+        CHECK(Mfree(environment)==E_OK,"release separately owned unused environment");
+        process_observer_release(&observer);
+        same(&baseline,"discarded observation reclaims allocation, mappings, handles and retained identity");
+    }
+}
+static void test_ordinary_observation(void)
+{
+    UWORD mode;
+    int before=failures;
+    static const char command[]={2,'O','p',0}, environment[]={0,0};
+    test_discarded_observation();
+    for (mode=0;mode<3;mode++) {
+        SNAP baseline;
+        LONG loaded, status;
+        PD *program;
+        snap(&baseline);
+        loaded=Pexec(PE_LOAD,"C:\\X32HELLO.TOS",command,environment);
+        CHECK(loaded>0,"load real ordinary observer parent");
+        if (loaded<=0) break;
+        program=(PD *)(uintptr_t)loaded;
+        CHECK(proc_prepare_scheduled(program)==E_OK,"prepare real ordinary observer parent");
+        bzero(&ordinary_observation,sizeof(ordinary_observation));
+        ordinary_observation.scenario=mode;
+        ordinary_observation.parent=kproc_retain(program);
+        ordinary_observation.enabled=TRUE;
+        CHECK(ksched_run(&program,1,&status)==E_OK && status==0x1357 && ordinary_observation.checked,
+              "ordinary observed child and parent execute actual native continuations");
+        ordinary_observation.enabled=FALSE;
+        process_observer_release(&ordinary_observation.observer);
+        process_observer_release(&ordinary_observation.second);
+        kproc_release(ordinary_observation.parent);
+        same(&baseline,"ordinary observation/Pwait releases all identities, mappings and stacks");
+    }
+    kcprintf("x86-64 ordinary PROCESS observation: %s\n",failures==before ? "PASS":"FAIL");
+}
 void x86_64_memtest_clone_yield(void)
 {
     UWORD i;
     KTHREAD *thread;
+    ordinary_observation_yield();
     if (!active_clone.enabled || !(thread = ksched_exit_thread(run))) return;
     if (kthread_process(thread) == active_clone.parent) {
         active_clone.parent_yields++;
@@ -3505,10 +3647,12 @@ void x86_64_memtest_callback_lazy_oom(void)
 }
 #endif
 
+static BOOL observe_probe_fault;
 static long run_probe(char mode)
 {
     char tail[2];
     PD *pd;
+    KPROC *fault_observer = NULL;
     long rc;
 
     tail[0] = mode;
@@ -3531,6 +3675,10 @@ static long run_probe(char mode)
         proc_free_owned(pd);
         return -1000;
     }
+    if (observe_probe_fault) {
+        fault_observer = kproc_retain(pd);
+        CHECK(fault_observer != NULL, "fault probe observer attaches before execution");
+    }
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
     if (mode == '=' || mode == '<' || mode == '(' || mode == ')' || mode == '"' ||
         mode == '.' || mode == '>' || mode == ',' || mode == '_' || mode == ';' || mode == '/' || mode == '-' || mode == '*') {
@@ -3546,6 +3694,15 @@ static long run_probe(char mode)
         set_owner(pd, pd);
         set_owner(USERPTR_TO_PTR(pd->p_env), pd);
         proc_free_owned(pd);
+    }
+    if (fault_observer) {
+        PROCESS_COMPLETION completion;
+        CHECK(kproc_ref_terminal(fault_observer) && !kproc_ref_has_basepage(fault_observer),
+              "fault probe observer ready after stack and PROCESS retirement");
+        CHECK(kproc_ref_completion(fault_observer,&completion) &&
+              completion.kind == PROCESS_COMPLETION_SIGNAL && completion.signal == 4 &&
+              !completion.status, "native fault producer preserves SIGILL with scheduler enabled or disabled");
+        kproc_release(fault_observer);
     }
     return rc;
 }
@@ -4669,6 +4826,9 @@ static void test_ring3(void)
     }
     test_cuis_scheduler();
     test_async_processes();
+#if CONF_WITH_MMAP
+    test_ordinary_observation();
+#endif
     {
         SNAP s;
         LONG result;
@@ -4781,6 +4941,20 @@ static void test_ring3(void)
     CHECK(run_probe('e') == 0, "failed exit handoff preserves legacy termination");
 #endif
     same(&s, "failed exit handoff rollback");
+    observe_probe_fault = TRUE;
+#if !CONF_WITH_NATIVE_SCHED
+    /* A managed THREAD must never fall back while still attached. The
+     * nested probe above covers its untracked child's refusal path. */
+    x86_64_memtest_fail_next_exit_handoff();
+#endif
+    CHECK(run_probe('\001') == 0xffff, "fault exit preserves full result and independent observation");
+    observe_probe_fault = FALSE;
+    same(&s, "failed fault handoff observer rollback");
+#if CONF_WITH_NATIVE_SCHED
+    CHECK(fallback_observer_stages == 2, "nested refused exit publishes observer after stack reclamation");
+#else
+    CHECK(fallback_observer_stages == 4, "refused normal/fault exits publish observers after stack reclamation");
+#endif
 
     /*
      * A ring-3 process runs another from inside its own system call

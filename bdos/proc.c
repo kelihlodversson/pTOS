@@ -23,6 +23,7 @@
 #include "kproc.h"
 #if CONF_WITH_USER_ASPACE
 #include "proc_clone.h"
+#include "process_observer.h"
 #endif
 #include "gemerror.h"
 #include "biosbind.h"
@@ -167,7 +168,11 @@ static void proc_release_block(void *base)
     /* the tables are in the record: release through it, then drop it */
     if (kproc_unlaunched((PD *)base))
         release_pd_files((PD *)base);
+#if CONF_WITH_USER_ASPACE
+    kproc_discard_after_free((PD *)base);
+#else
     kproc_discard((PD *)base);
+#endif
 #if CONF_WITH_USER_ASPACE
     /* a block lent to a launcher with an address space goes back, but only
      * after its basepage has been read: that launcher's page tables are loaded */
@@ -183,6 +188,9 @@ static void proc_release_block(void *base)
 static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
+#if CONF_WITH_USER_ASPACE
+    KPROC *observer = kproc_unlaunched(child) ? kproc_retain(child) : NULL;
+#endif
 
     /* (the tables go with the record: later users of the basepage find the
      * basepage's own, zero, ones and release nothing a second time) */
@@ -191,6 +199,10 @@ static void proc_drop_child_record(void *base)
     kproc_discard(child);
 #if CONF_WITH_USER_ASPACE
     kproc_unborrow(base);       /* lent to a launcher while it was built */
+    if (observer) {
+        kproc_publish_observers(observer);
+        kproc_release(observer);
+    }
 #endif
 }
 
@@ -492,28 +504,37 @@ static WORD envsize(char *env)
  */
 static PD *cur_p;
 
-#if CONF_WITH_CUIS
-static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory);
+struct kproc;
+static long exec_common(WORD flag, char *path, char *tail, char *env,
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_observed(flag,path,tail,env,0,0,FALSE,NULL);
+    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL);
 }
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+long proc_exec_observe(char *path, char *tail, char *env, char *directory,
+                       PROCESS_OBSERVER **out)
+{
+    if (!out || *out) return EINVAL;
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out));
+}
+#endif
+#if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
 {
-    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL));
 }
 long xexec_deferred(char *path, char *tail, char *env, ULONG session)
 {
-    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL));
 }
 long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
 {
-    return DISK_CALL(exec_observed(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL));
 }
-static long exec_observed(WORD flag, char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
-#else
-long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
+static long exec_common(WORD flag, char *path, char *tail, char *env,
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe)
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -526,6 +547,17 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
     long needed;
     FH fh;
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+    PROCESS_OBSERVER *observed = NULL;
+#else
+    UNUSED(observe);
+#endif
+#if !CONF_WITH_CUIS
+    UNUSED(session); UNUSED(token); UNUSED(deferred);
+#endif
+#if !CONF_WITH_NATIVE_SCHED
+    UNUSED(directory);
+#endif
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
@@ -829,20 +861,33 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
 #if CONF_WITH_NATIVE_SCHED
     if (flag == PE_ASYNC_LOADGO) {
-#if CONF_WITH_CUIS
         rc = directory ? fs_set_process_directory(directory,cur_p) : E_OK;
-        if (rc == E_OK)
+#if CONF_WITH_USER_ASPACE
+        if (rc == E_OK && observe) {
+            observed = kproc_retain(cur_p); /* before any task can be published */
+            if (!observed) rc = ENSMEM;
+        }
+#endif
+        if (rc == E_OK) {
+#if CONF_WITH_CUIS
             rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
 #else
-        rc = ksched_spawn(cur_p);
+            rc = ksched_spawn(cur_p);
 #endif
+        }
         if (rc < 0) {
 #if CONF_WITH_CUIS
             if (deferred) proc_dispose_deferred(cur_p);
             else
 #endif
                 proc_discard_scheduled(cur_p);
+#if CONF_WITH_USER_ASPACE
+            kproc_release(observed);
+#endif
         }
+#if CONF_WITH_USER_ASPACE
+        else if (observe) *observe = observed; /* kernel output, no fallible work follows */
+#endif
         return rc;
     }
 #endif
@@ -1365,6 +1410,7 @@ void proc_dispose_process(KPROC *process)
     if (complete)
         ksched_exited(p);
 #endif
+    kproc_publish_observers(process);
 }
 
 /* The launcher calls this only after leaving the child's syscall stack and
@@ -1373,6 +1419,9 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 {
     PD *p;
     jmp_buf saved_error;
+#if CONF_WITH_NATIVE_SCHED
+    BOOL managed;
+#endif
 
     /* Only the disk-error unwinder is supported by cleanup callbacks.
      * kdos_fclose catches recoverable errors locally. An escaping disk error
@@ -1395,6 +1444,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
         panic("invalid exit handoff");
     kproc_complete(p, status);
 #if CONF_WITH_NATIVE_SCHED
+    managed = ksched_finalizing_process(process);
     ksched_exiting(p, status);
 #endif
 #if CONF_WITH_PROCMEM
@@ -1410,6 +1460,10 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 #if CONF_WITH_CUIS
     ksched_exited_identity(process, p);
 #endif
+#if CONF_WITH_NATIVE_SCHED
+    if (!managed)
+#endif
+        kproc_publish_observers(process);
     memcpy(errbuf, saved_error, sizeof(errbuf));
 }
 
@@ -1451,6 +1505,9 @@ void xterm(UWORD rc)
 {
     PFVOID userterm;
     PD *p = run;
+#if CONF_WITH_USER_ASPACE
+    KPROC *fallback_observer = NULL;
+#endif
 #if CONF_WITH_NATIVE_SCHED
     KTHREAD *thread = ksched_exit_thread(p);
 #if CONF_WITH_PTERMGRP
@@ -1505,6 +1562,9 @@ void xterm(UWORD rc)
     kproc_require_no_threads(p);
     if (!kproc_begin_exit(p))
         panic("xterm: process disposal already committed");
+    fallback_observer = kproc_retain(p);
+    if (!fallback_observer) panic("fallback observer retention failed");
+    if (proc_defer_observer(p, fallback_observer)) fallback_observer = NULL;
 #endif
 #if CONF_WITH_KPROC
     kproc_complete(p, rc);
@@ -1530,6 +1590,14 @@ void xterm(UWORD rc)
      * termuser() will enter the gouser() code at the proper place.
      * sep 2005 RCL
      */
+#if CONF_WITH_USER_ASPACE
+    /* A kernel-code child has no separate syscall stack. User children defer
+     * this publication to their retained launcher, after stack reclamation. */
+    if (fallback_observer) {
+        kproc_publish_observers(fallback_observer);
+        kproc_release(fallback_observer);
+    }
+#endif
     run->p_dreg[0] = rc;
     termuser();
 }
@@ -1544,6 +1612,8 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
              cause, (long)code, (long)address, (long)pc, (long)sp);
 #if CONF_WITH_NATIVE_SCHED
     ksched_fault(run, 11); /* Keep a specific CPU/paging signal if already recorded. */
+#else
+    kproc_note_fault(run, 11);
 #endif
 #if CONF_WITH_USER_CALLBACKS
     user_callback_fault();

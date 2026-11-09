@@ -51,6 +51,8 @@ struct alloc {
     ULONG pages;
     const void *owner;          /* identity of the owning process, or NULL */
     ULONG pins;                 /* live address-space mappings of this block */
+    void (*notify)(void *);
+    void *notify_token;
     BOOL reclaim;               /* allocation itself owns deferred reclamation */
     UQUAD gen;                  /* unique per allocation, never reused */
 };
@@ -149,6 +151,8 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     a->owner = NULL;
     a->pins = 0;
     a->reclaim = FALSE;
+    a->notify = NULL;
+    a->notify_token = NULL;
     a->gen = ++gens;
     a->next = allocs;
     allocs = a;
@@ -192,6 +196,8 @@ static struct alloc **find_link(const void *p)
 static void release(struct alloc **link)
 {
     struct alloc *a = *link;
+    void (*notify)(void *) = a->notify;
+    void *token = a->notify_token;
 
     *link = a->next;
     set_pages((ULONG)((a->va - PROCMEM_WINDOW_BASE) / PAGE),
@@ -199,6 +205,7 @@ static void release(struct alloc **link)
     free_pages += a->pages;
     live_allocs--;
     kfree(a);
+    if (notify) notify(token);
 }
 
 BOOL procmem_shrink(void *p, ULONG bytes)
@@ -233,6 +240,15 @@ static void reclaim_unpinned(void)
         else
             link = &(*link)->next;
     }
+}
+
+BOOL procmem_on_free(void *base, void (*notify)(void *), void *token)
+{
+    struct alloc **link = find_link(base);
+    if (!link || !notify || (*link)->notify) return FALSE;
+    (*link)->notify = notify;
+    (*link)->notify_token = token;
+    return TRUE;
 }
 
 BOOL procmem_free(void *p)
