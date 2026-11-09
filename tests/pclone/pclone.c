@@ -266,16 +266,63 @@ volatile unsigned long fork_return_child_sp, fork_return_parent_sp, fork_return_
 #if defined(TEST_WITH_PRIVATE_CLONE)
 volatile unsigned long fork_private_cell, fork_private_root, fork_private_tid, fork_private_pid;
 volatile unsigned char *fork_private_heap;
+volatile unsigned char *fork_private_oom_page;
+volatile long fork_private_mode;
+void fork_private_child_finish(void);
+void fork_private_child_finish(void)
+{
+    long mode=fork_private_mode;
+    int bad=0;
+    if (mode>0 || mode==-2) {
+        unsigned char *stack=(unsigned char *)Malloc(8192);
+        long pid,status;
+        if (!stack) bad=1;
+        else {
+            memset(stack,0,8192);
+            fork_private_root=pclone_trap(0,0x895ffffdUL);
+            fork_private_tid=pclone_trap(0,0x895ffffeUL);
+            fork_private_pid=Pgetpid();
+            fork_private_cell=0x11223344UL;
+            fork_private_heap[17]=0x31;fork_private_heap[4127]=0x42;fork_private_heap[8237]=0;
+            fork_private_mode=mode==-2?-1:mode-1;
+            pid=fork_return_native(stack+4096,0x100);
+            if (pid<=0 || fork_return_bad) bad=2;
+            else if (mode==-2) (void)Pterm(73); /* child outlives this source root */
+            else {
+                status=Pwaitpid(pid,0,0);
+                if ((status>>16)!=pid || (status&65535)!=73 || Pwaitpid(pid,1,0)>=0 ||
+                    fork_private_cell!=0x11223344UL || fork_private_heap[17]!=0x31) bad=3;
+            }
+            if (Mfree(stack)) bad=4;
+        }
+    }
+    if (mode==-1) {
+        const char *message;
+        if (Pgetppid()==fork_private_pid) bad=5;
+        message=bad?"native same-trap private orphan: FAIL\r\n":"native same-trap private orphan: PASS\r\n";
+        while (*message) (void)Bconout(2,*message++); /* no inherited stdio is promised */
+    }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    if (mode==-3) {
+        if (pclone_trap(0,0xc8920301UL)!=0) bad=6;
+        else fork_private_oom_page[17]=0xff; /* real user COW fault, injected allocation failure */
+        bad=7; /* the fault must complete this PROCESS instead of returning */
+    }
+#endif
+    (void)Pterm(bad?74:73);
+}
+
 static void test_private_return(void)
 {
     unsigned char *stack = (unsigned char *)Malloc(8192);
-    long heap = Malloc(3*4096), pid, status;
+    long heap = Malloc(3*4096), oom = Malloc(4096), pid, status;
     int stage, cycle;
     ptest_begin("private-VM syscall return/COW (not Pfork)");
-    ptest_assert_msg(stack && heap > 0,"allocate private-return buffers");
-    if (!stack || heap <= 0) { ptest_pass(); return; }
+    ptest_assert_msg(stack && heap > 0 && oom > 0,"allocate private-return buffers");
+    if (!stack || heap <= 0 || oom <= 0) { ptest_pass(); return; }
     memset(stack,0,8192);
     fork_private_heap=(unsigned char *)heap;
+    fork_private_oom_page=(unsigned char *)oom;fork_private_oom_page[17]=0x23;
     fork_private_root=pclone_trap(0,0x895ffffdUL);
     fork_private_tid=pclone_trap(0,0x895ffffeUL);
     fork_private_pid=Pgetpid();
@@ -288,6 +335,10 @@ static void test_private_return(void)
         ptest_assert_msg(pid==-39L,"private mapping/table/ref allocation rollback");
     }
     for(cycle=0;cycle<8;cycle++) {
+        fork_private_mode=cycle==0?2:(cycle==1?-2:0);
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+        if (cycle==2)fork_private_mode=-3;
+#endif
         fork_private_cell=0x11223344UL;
         fork_private_heap[17]=0x31; fork_private_heap[4096+31]=0x42;
         fork_return_bad=0;
@@ -300,7 +351,15 @@ static void test_private_return(void)
         if(pid<=0)continue;
         if(cycle&1) { fork_private_cell=0xaabbccddUL; fork_private_heap[17]=0x61; }
         status=Pwaitpid(pid,0,0);
+        if (cycle==1) (void)Syield();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+        (void)pclone_trap(0,0xc8920300UL);
+        ptest_assert_msg((status>>16)==pid && (status&65535)==(cycle==2?0x900:73),
+                         "same-trap private tree/exit/OOM status is exact");
+#else
         ptest_assert_msg((status>>16)==pid && (status&65535)==73,"private child validates root/TID/state/COW and exits");
+#endif
+        ptest_assert_msg(fork_private_oom_page[17]==0x23,"same-trap COW fault preserves parent's mapping");
         ptest_assert_msg(Pwaitpid(pid,1,0)<0,"private child public status consumed once");
         ptest_assert_msg(fork_private_cell==((cycle&1)?0xaabbccddUL:0x11223344UL),"private global writes isolated");
         ptest_assert_msg(fork_private_heap[17]==((cycle&1)?0x61:0x31) && fork_private_heap[4096+31]==0x42,
@@ -308,7 +367,7 @@ static void test_private_return(void)
         ptest_assert_msg(fork_private_heap[8192+45]==0,"child lazy page does not materialize into parent");
         fork_private_heap[8192+45]=0; /* same zero contents on later snapshots */
     }
-    ptest_assert_msg(Mfree((void *)heap)==0 && Mfree(stack)==0,"private stack/heap release after waits");
+    ptest_assert_msg(Mfree((void *)heap)==0 && Mfree((void *)oom)==0 && Mfree(stack)==0,"private stack/heap release after waits");
     ptest_pass();
     if(!ptest_failures())conws("native PRIVATE_VM saved return and anonymous COW (not Pfork): PASS\r\n");
 }

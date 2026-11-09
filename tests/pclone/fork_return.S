@@ -1,4 +1,4 @@
-/* Shared-VM continuation proof. Child never returns through a C frame. */
+/* Shared-VM proof stays assembly-only. PRIVATE_VM may call the test helper. */
 #define CAT_(a,b) a##b
 #define CAT(a,b) CAT_(a,b)
 #define C_SYM(name) CAT(__USER_LABEL_PREFIX__,name)
@@ -130,8 +130,8 @@ C_SYM(fork_return_native):
         movabsq $0x3ff0000000000000,%rax
         cmpq %rax,-8(%rsp)
         jne .Lx_private_bad
-        movl $73,%edi
-        jmp .Lx_exit
+        call C_SYM(fork_private_child_finish)
+        ud2
 .Lx_private_bad:
         movl $74,%edi
         jmp .Lx_exit
@@ -289,8 +289,8 @@ C_SYM(fork_return_native):
         cmp r0,#0x88
         cmpeq r1,#0x99
         bne .La_private_bad
-        mov r1,#73
-        b .La_exit
+        bl C_SYM(fork_private_child_finish)
+        b .La_private_bad
 .La_private_bad:
         mov r1,#74
         b .La_exit
@@ -475,8 +475,8 @@ C_SYM(fork_return_native):
         cmp.l #7,%d4
         jne .Lm_private_bad
 .Lm_private_no_fp_check:
-        move.w #73,-(%sp)
-        bra .Lm_exit
+        jsr C_SYM(fork_private_child_finish)
+        illegal
 .Lm_private_bad:
         move.w #74,-(%sp)
         bra .Lm_exit

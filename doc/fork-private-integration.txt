@@ -58,17 +58,25 @@ Production integration plan after acceptance
 
 Evidence belongs to the exact resulting validation commit and configuration.
 The old9ef7292a8 native results must not be relabelled as this newer source.
-Broader same-trap nested fork/parent-death and fault-cancellation stress remain
-acceptance work even when the independent explicit-entry COW tree tests pass.
+Broader group cancellation and real memory-pressure stress remain acceptance
+work; injected COW allocation failure is not real allocator exhaustion.
 
 Local validation of this source combination
 ------------------------------------------
 Native QEMU: x32 headless22/0, ARM Cortex-A7 A3226/0, m68k04025/0; each five
 shutdown checks. Both shared/private saved-return markers and the independent
 entry/COW/orphan markers passed. Post-COW FP assertions passed on all three.
-The entry tests provide nested/orphan/parent-first/OOM lifecycle coverage; no
-same-trap nested/orphan coverage is implied. Public Pfork/Pvfork rejection tests
-still pass. No #933 file-error injection or complete inheritance is present.
+A follow-up strengthens the same-trap probe itself: PRIVATE_VM children call a
+user helper only after checking the original return CPU/FPU image. That helper
+creates a three-generation same-trap tree, or exits before its same-trap child
+runs, proving orphan adoption and independent root/user-stack survival. A third
+case injects allocation failure in an otherwise-valid user COW write; the parent
+reaps SIGKILL once and retains its unchanged mapping. Shared-VM children remain
+assembly-only; no shared-VM child returns through a copied C frame. User helper
+frames live in private user VM, never copied kernel C/scheduler continuations.
+The outer driver checks final global COW frame/reference baselines after source
+and descendants retire. Public Pfork/Pvfork rejection tests still pass. No #933
+file-error injection or complete inheritance is present.
 Host: KASPACE/startup/join/clone ownership, COW production metadata normally,
 ASan/UBSan and fortified host compiler, CUIS/PROCESS lifecycle, ABI/decoder,
 51 ELF tests and gitready pass. Host MMU mechanics remain models. Fortified

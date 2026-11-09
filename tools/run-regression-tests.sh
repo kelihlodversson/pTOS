@@ -583,7 +583,8 @@ fi
 # The validation combination must execute its same-trap independent-VM probe.
 if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PRIVATE_CLONE 1' "$top/obj/autoconf.h" &&
-   ! grep -aq 'native PRIVATE_VM saved return and anonymous COW (not Pfork): PASS' "$suite_log"; then
+   { ! grep -aq 'native PRIVATE_VM saved return and anonymous COW (not Pfork): PASS' "$suite_log" ||
+     ! grep -aq 'native same-trap private orphan: PASS' "$suite_log"; }; then
     record "private saved syscall return" FAIL "configured combined probe did not pass"
 fi
 
