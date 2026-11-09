@@ -138,6 +138,8 @@ LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity);
 #if CONF_WITH_USER_ASPACE
 /* Snapshot all live standard-handle aliases into OPNFILES counters. */
 void kproc_standard_file_refs(ULONG *references);
+/* Authoritative media retirement: unpublish all standard aliases before reuse. */
+void kproc_standard_file_invalidate(WORD handle);
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
 LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
 #endif

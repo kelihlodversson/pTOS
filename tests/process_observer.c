@@ -12,6 +12,7 @@
 PD caller, child;
 PD *run = &caller;
 volatile LONG hz_200;
+SBYTE get_default_handle(int i) { (void)i; return -1; }
 static unsigned allocations, frees;
 static BOOL fail_allocate;
 static PROCESS_OBSERVER *during_retirement;
@@ -62,6 +63,12 @@ int main(void)
     ULONG references;
     ULONG first_order;
     assert(kproc_create(&caller) && kproc_create(&child));
+    kproc_find(&caller)->uft[0]=NUMSTD;
+    kproc_find(&child)->uft[1]=NUMSTD;
+    kproc_find(&child)->uft[2]=NUMSTD+1;
+    kproc_standard_file_invalidate(NUMSTD);
+    assert(kproc_find(&caller)->uft[0]<0 && kproc_find(&child)->uft[1]<0 &&
+           kproc_find(&child)->uft[2]==NUMSTD+1);
     p=kproc_retain(&child); assert(p);
     assert(process_observer_attach(p,&a)==0 && process_observer_attach(p,&b)==0);
     assert(process_observer_attach(p,&a)==EINVAL && p->references==4);

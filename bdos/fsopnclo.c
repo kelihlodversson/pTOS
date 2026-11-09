@@ -58,6 +58,9 @@
 #include "console.h"
 #include "kprint.h"
 #include "bdosstub.h"
+#if CONF_WITH_USER_ASPACE
+#include "kproc.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -318,6 +321,9 @@ static long sftdel(FTAB *slot)
         rc = ofd_put(slot->f_ofd);
         if (rc < 0) return rc;
     }
+#if CONF_WITH_USER_ASPACE
+    kproc_standard_file_invalidate((WORD)((slot-sft)+NUMSTD));
+#endif
     slot->f_ofd = NULL; slot->f_own = NULL; slot->f_use = 0;
 #if CONF_WITH_PLUGGABLE_FS
     slot->f_pfs.fs = NULL;
@@ -428,6 +434,9 @@ long xclose(WORD h)
 #endif
     if (IS_BIOS_HANDLE(sft[h-NUMSTD].f_ofd))
     {
+#if CONF_WITH_USER_ASPACE
+        if (sft[h-NUMSTD].f_use==1) kproc_standard_file_invalidate(h);
+#endif
         if (!(--sft[h-NUMSTD].f_use))
         {
             sft[h-NUMSTD].f_ofd = 0;
@@ -466,6 +475,9 @@ long xclose(WORD h)
         /* close() only flushes this reference; release() alone consumes the
          * cookie. A nonlocal exit after this commit is a fail-stop violation. */
         *consumed=TRUE;
+        /* A consuming finalizer may reenter cleanup. Unpublish aliases before
+         * dropping the last count or invoking it, not after its return. */
+        if (sft[h-NUMSTD].f_use==1) kproc_standard_file_invalidate(h);
 #endif
         if (!(--sft[h-NUMSTD].f_use))
         {
@@ -497,6 +509,7 @@ long xclose(WORD h)
         /* opnfil reserves the SFT before MGET can terminate on exhaustion.
          * No OFD/cookie was acquired: consume only that empty reservation,
          * never quarantine or fabricate a file resource. */
+        if (sft[h-NUMSTD].f_use==1) kproc_standard_file_invalidate(h);
         if (--sft[h-NUMSTD].f_use==0) sft[h-NUMSTD].f_own=NULL;
         *consumed=TRUE;
 #endif

@@ -1392,7 +1392,7 @@ static void test_residual_file_ownership(void)
     PD *saved=run,*pd;
     KPROC *identity;
     FS_CLOSE_REPORT report;
-    FS_CLEANUP_TOKEN token;
+    FS_CLEANUP_TOKEN token,consumed;
     FS_CLEANUP_STATUS status;
     LONG handle;
     ULONG transferred;
@@ -1407,13 +1407,25 @@ static void test_residual_file_ownership(void)
     run=saved;
     CHECK(handle>=NUMSTD && handle<NUMHANDLES,"open real residual-cleanup FAT reference");
     if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(ixforce(0,(int)handle,pd)==E_OK,"retain a live standard alias during recovery");
+        fs_close_test_exhaust((WORD)handle);
+        CHECK(fs_close_bounded((WORD)handle,TRUE,&report)==EWRITF &&
+              report.disposition==FS_CLOSE_TRANSFERRED,"transfer first exact residual reference");
+        consumed=report.token;
+        fs_close_test_exhaust(-1);
+        CHECK(fs_cleanup_retry(&consumed,&report)==E_OK && sft[handle-NUMSTD].f_use==1,
+              "recover first ticket while inherited alias keeps its SFT incarnation alive");
         token.handle=(WORD)handle; token.incarnation=sft[handle-NUMSTD].f_incarnation;
+        token.reference=sft[handle-NUMSTD].f_cleanup_issued+1;
         fs_close_test_exhaust((WORD)handle);
     }
     proc_dispose_process(identity);
     fs_close_test_exhaust(-1);
     CHECK(!kproc_ref_has_basepage(identity),"residual file does not retain PD or execution resources");
     if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(token.incarnation==consumed.incarnation && token.reference>consumed.reference &&
+              fs_cleanup_retry(&consumed,&report)==EIHNDL && sft[handle-NUMSTD].f_cleanup_refs==1,
+              "completed ticket never revives after another transfer in the same incarnation");
         CHECK(kproc_ref_file_cleanup(identity,&transferred)==EWRITF && transferred==1,
               "retained identity preserves first cleanup error and exact transfer count");
         CHECK(fs_cleanup_snapshot(&token,&status)==E_OK && status.references==1 &&
@@ -1427,6 +1439,53 @@ static void test_residual_file_ownership(void)
     }
     kproc_release(identity);
     same(&s,"residual file recovery returns exact resource baseline");
+}
+
+/* Native production media invalidation/PD cleanup with a test-owned FAT OFD.
+ * No mounted drive is changed; the synthetic medium owns only this OFD. */
+static void test_invalidated_standard_aliases(void)
+{
+    SNAP before;
+    PD *pd,*saved=run;
+    KPROC *identity;
+    OFD *file;
+    DMD media;
+    FS_CLOSE_REPORT report;
+    int slot,i;
+    UQUAD incarnation;
+    snap(&before);
+    pd=new_basepage();
+    if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd);
+    for(i=0;i<2;i++) if(PD_UFT(pd)[i]>=NUMSTD) {
+        run=pd;
+        fs_close_bounded((WORD)i,FALSE,&report);
+        run=saved;
+        CHECK(report.disposition==FS_CLOSE_CONSUMED,"settle inherited alias before media fixture");
+    }
+    for(slot=0;slot<OPNFILES && sft[slot].f_own;slot++) ;
+    CHECK(slot<OPNFILES && fs_sft_claim(slot),"reserve a media-invalidation fixture slot");
+    if(slot==OPNFILES) { proc_dispose_process(identity); kproc_release(identity); return; }
+    file=MGET(OFD);
+    bzero(&media,sizeof(media));
+    file->o_dfd=&file->o_disk; file->o_disk.o_usecnt=1; file->o_refs=1;
+    file->o_dmd=&media;
+    sft[slot].f_ofd=file; sft[slot].f_own=pd; sft[slot].f_use=2;
+    PD_UFT(pd)[0]=PD_UFT(pd)[1]=(SBYTE)(slot+NUMSTD);
+    incarnation=sft[slot].f_incarnation;
+    ofd_invalidate_drive(&media);
+    CHECK(PD_UFT(pd)[0]<0 && PD_UFT(pd)[1]<0 && !sft[slot].f_own && !sft[slot].f_use,
+          "authoritative invalidation retires aliases before making the numeric slot reusable");
+    CHECK(fs_sft_claim(slot) && sft[slot].f_incarnation!=incarnation,"reuse slot with a distinct incarnation");
+    sft[slot].f_ofd=(OFD *)(intptr_t)-1; sft[slot].f_own=saved; sft[slot].f_use=1;
+    proc_dispose_process(identity);
+    CHECK(!kproc_ref_has_basepage(identity) && sft[slot].f_own==saved && sft[slot].f_use==1,
+          "retired PROCESS cannot close a replacement through a stale standard alias");
+    CHECK(fs_close_once((WORD)(slot+NUMSTD),FALSE,&report)==E_OK &&
+          report.disposition==FS_CLOSE_CONSUMED,"release the replacement owner exactly once");
+    kproc_release(identity);
+    same(&before,"media invalidation, slot reuse and PD disposal return resource baseline");
 }
 
 static void test_kthread_live_disposal(void)
@@ -5925,6 +5984,7 @@ void x86_64_memtest_run(void)
 #endif
 #endif
     test_residual_file_ownership();
+    test_invalidated_standard_aliases();
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();

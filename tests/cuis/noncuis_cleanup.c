@@ -29,6 +29,8 @@ void panic(const char *format, ...) { fprintf(stderr,"panic: %s\n",format); abor
 SBYTE get_default_handle(int i) { (void)i; return -1; }
 void kproc_note_file_cleanup(PD *pd,LONG error,BOOL transfer)
 { CHECK(pd==&child); if (transfer) { CHECK(error==EWRITF); transferred++; } }
+void kproc_standard_file_invalidate(WORD handle)
+{ unsigned i; for(i=0;i<NUMSTD;i++) if(child_files[i]==handle) child_files[i]=-1; }
 void kproc_standard_file_refs(ULONG *refs)
 { unsigned i; memset(refs,0,OPNFILES*sizeof(*refs));
   for (i=0;i<NUMSTD;i++) if (child_files[i]>=NUMSTD) refs[child_files[i]-NUMSTD]++; }
@@ -102,11 +104,23 @@ int main(void)
         FS_CLEANUP_TOKEN token;
         FS_CLEANUP_STATUS status;
         token.handle=NUMSTD+1; token.incarnation=sft[1].f_incarnation;
+        token.reference=sft[1].f_cleanup_issued;
         CHECK(fs_cleanup_snapshot(&token,&status)==E_OK && status.references==1);
         CHECK(kdos_fclose(NUMSTD+1)==EIHNDL && references==1);
         CHECK(fs_cleanup_retry(&token,&result)==E_OK && !references && first_closes==1);
         CHECK(fs_cleanup_retry(&token,&result)==EIHNDL && !references);
     }
+    /* Production invalidation bookkeeping must unpublish aliases before reuse.
+     * Then actual proc_free_owned must leave the replacement reference alone. */
+    record=allocations=1; references=0; exhaust=FALSE;
+    CHECK(fs_sft_claim(1)); sft[1].f_own=&child; sft[1].f_use=1;
+    child_files[0]=NUMSTD+1; child_files[1]=0;
+    fs_sft_invalidated(1); sft[1].f_own=NULL; sft[1].f_use=0;
+    CHECK(child_files[0]<0 && fs_sft_claim(1));
+    sft[1].f_own=&owner; sft[1].f_use=1;
+    directories=0;
+    proc_free_owned(&owner);
+    CHECK(!allocations && !record && !references && sft[1].f_own==&owner && sft[1].f_use==1);
     puts("Exhausted close retries leave one reference without double release: PASS");
     return 0;
 }

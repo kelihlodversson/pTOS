@@ -11,7 +11,7 @@
 #define FS_CLEANUP_COMPLETE 2
 #define FS_CLEANUP_INVALIDATED 3
 
-typedef struct { UQUAD incarnation; WORD handle; } FS_CLEANUP_TOKEN;
+typedef struct { UQUAD incarnation, reference; WORD handle; } FS_CLEANUP_TOKEN;
 typedef struct {
     LONG error, last_error;
     UWORD disposition;
@@ -22,7 +22,8 @@ typedef struct {
 } FS_CLOSE_REPORT;
 typedef struct {
     FS_CLEANUP_TOKEN token;
-    ULONG references;
+    ULONG references; /* 0/1 for this transfer, never a reusable batch right */
+    ULONG pending_references; /* aggregate pending count for the incarnation */
     LONG first_error, last_error;
     UWORD state;
 } FS_CLEANUP_STATUS;
