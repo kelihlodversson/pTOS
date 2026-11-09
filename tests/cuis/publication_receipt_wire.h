@@ -33,4 +33,10 @@ typedef char receipt_size[sizeof(TEST_PUBLICATION_RECEIPT)==64 ? 1 : -1];
 typedef char receipt_alignment[__alignof__(TEST_PUBLICATION_RECEIPT)==4 ? 1 : -1];
 typedef char receipt_scalar_width[sizeof(ULONG)==4 ? 1 : -1];
 typedef char receipt_address_width[sizeof(((TEST_PUBLICATION_RECEIPT *)0)->packet_address)==4 ? 1 : -1];
+/* SESSION_WAIT e/f proposal: bounded copied scalar array, no native pointers. */
+typedef struct {
+    ULONG handles[16];
+} __attribute__((aligned(4))) TEST_OBSERVER_WAIT_ARRAY;
+typedef char wait_array_size[sizeof(TEST_OBSERVER_WAIT_ARRAY)==64 ? 1 : -1];
+typedef char wait_array_alignment[__alignof__(TEST_OBSERVER_WAIT_ARRAY)==4 ? 1 : -1];
 #endif
