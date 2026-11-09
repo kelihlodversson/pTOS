@@ -140,6 +140,11 @@ int main(void)
     driver.release_file=driver_release_file; pfs_error=0; release_error=EWRITF;
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF && result.disposition==FS_CLOSE_CONSUMED);
     CHECK(releases==2 && closes==3 && !sft[0].f_use && !sft[0].f_cleanup_refs);
+    CHECK(fs_sft_claim(0));
+    sft[0].f_own=&owner; sft[0].f_use=1;
+    sft[0].f_ofd=NULL; sft[0].f_pfs.fs=NULL;
+    CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EIHNDL && result.disposition==FS_CLOSE_CONSUMED);
+    CHECK(!sft[0].f_own && !sft[0].f_use && !sft[0].f_cleanup_refs);
     puts("Production FAT/PFS close ownership, bounded residual recovery and incarnation protection: PASS");
     return 0;
 }

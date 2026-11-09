@@ -492,7 +492,16 @@ long xclose(WORD h)
 #else
     fd=getofd(h);
 #endif
-    if (!fd) return EIHNDL;
+    if (!fd) {
+#if CONF_WITH_USER_ASPACE
+        /* opnfil reserves the SFT before MGET can terminate on exhaustion.
+         * No OFD/cookie was acquired: consume only that empty reservation,
+         * never quarantine or fabricate a file resource. */
+        if (--sft[h-NUMSTD].f_use==0) sft[h-NUMSTD].f_own=NULL;
+        *consumed=TRUE;
+#endif
+        return EIHNDL;
+    }
     rc = ixclose(fd,CL_KEEP);
     if (sft[h-NUMSTD].f_use == 1) {
 #if CONF_WITH_USER_ASPACE
