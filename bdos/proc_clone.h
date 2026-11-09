@@ -101,6 +101,9 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION
  * asynchronous observer, returns positive signed TID or an error, and retains
  * no caller-stack data after return. Requires the current managed task. */
 LONG proc_clone_start_public(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *, VADDR pid, VADDR tid);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+LONG proc_clone_start_private_test(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *);
+#endif
 /* Owned observer required. Success consumes transaction and returns identities
  * immediately into an existing group; failures preserve it for abort except
  * explicit prepublication cancellation. No new waiter or public syscall. */

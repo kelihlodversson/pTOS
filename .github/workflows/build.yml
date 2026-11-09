@@ -67,6 +67,8 @@ jobs:
         run: sh tools/test-clone-abi.sh
       - name: Test address-space ownership
         run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
+      - name: Test independent VM COW ownership and rollback
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-private-aspace.sh
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
       - name: Build the enabled freestanding x32 core

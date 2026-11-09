@@ -292,6 +292,10 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
         kproc_active_space(tx->source) != tx->source_space ||
         (tx->policy != PROC_CLONE_SAME_PROCESS && !kproc_clone_target_ready(tx->process, tx->thread)))
         return EACCDN;
+#if CONF_WITH_PRIVATE_CLONE
+    if (tx->space != tx->source_space)
+        return thread_startup_prepare_cloned(tx->source_space, tx->space, args, FALSE, &tx->startup);
+#endif
     return thread_startup_prepare(tx->space, args, &tx->startup);
 }
 
@@ -396,7 +400,8 @@ static LONG public_back_range(KASPACE *space, VADDR address, ULONG bytes, UWORD 
     }
 }
 
-LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup, VADDR pid, VADDR tid)
+static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup,
+                             VADDR pid, VADDR tid, BOOL return_pid)
 {
     PROC_CLONE_TRANSACTION *tx = NULL;
     PROC_CLONE_OBSERVER *observer = NULL;
@@ -405,7 +410,9 @@ LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_A
     ULONG identity;
     LONG error;
     if (!args || !startup || (args->process_policy != PROC_CLONE_NEW_PROCESS &&
-        args->process_policy != PROC_CLONE_SAME_PROCESS) || args->vm_policy != PROC_CLONE_SHARE_VM)
+        args->process_policy != PROC_CLONE_SAME_PROCESS) ||
+        (return_pid ? (args->vm_policy != PROC_CLONE_PRIVATE_VM || args->process_policy != PROC_CLONE_NEW_PROCESS || pid || tid)
+                    : args->vm_policy != PROC_CLONE_SHARE_VM))
         return EINVAL;
     if (!ksched_clone_context(args->source,&controller)) return EINVFN;
     error = proc_clone(args,&tx);
@@ -416,7 +423,11 @@ LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_A
     if (!error) error = public_back_range(tx->space,startup->stack_base,startup->stack_size,ASPACE_PROT_USER | ASPACE_PROT_WRITE);
     if (!error && pid) error = public_back_range(tx->space,pid,4,ASPACE_PROT_USER | ASPACE_PROT_WRITE);
     if (!error && tid) error = public_back_range(tx->space,tid,4,ASPACE_PROT_USER | ASPACE_PROT_WRITE);
-    if (!error) error = thread_startup_prepare_public(tx->space,startup,&tx->startup);
+    if (!error) error =
+#if CONF_WITH_PRIVATE_CLONE
+        return_pid ? thread_startup_prepare_cloned(tx->source_space, tx->space, startup, TRUE, &tx->startup) :
+#endif
+        thread_startup_prepare_public(tx->space,startup,&tx->startup);
     if (!error) error = proc_clone_retain_startup_stack(tx);
     if (!error) error = proc_clone_prepare_outputs(tx,pid,tid);
     if (!error) error = proc_clone_observe_async(tx,&observer);
@@ -424,8 +435,14 @@ LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_A
 done:
     proc_clone_abort(&tx);
     proc_clone_observer_release(&observer);
-    return error ? error : (LONG)identity;
+    return error ? error : (return_pid ? (LONG)created.pid : (LONG)identity);
 }
+LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup, VADDR pid, VADDR tid)
+{ return clone_start_entry(args, startup, pid, tid, FALSE); }
+#if CONF_WITH_PRIVATE_CLONE_TEST
+LONG proc_clone_start_private_test(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup)
+{ return clone_start_entry(args, startup, 0, 0, TRUE); }
+#endif
 
 LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *created)
 {

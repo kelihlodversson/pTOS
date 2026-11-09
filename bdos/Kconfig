@@ -18,6 +18,14 @@ config CONF_WITH_PRIVATE_CLONE
       validated x32, ARMv7 and m68k 68040 MMU backends. This does not enable
       public Pfork/Pvfork or supply fork resource inheritance.
 
+config CONF_WITH_PRIVATE_CLONE_TEST
+    bool "Native private-VM clone/COW tests (test transport only)"
+    depends on CONF_WITH_PRIVATE_CLONE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Enable private Pclone size tags for native COW construction tests.
+      Children start at an explicit entry: this is not fork-return or Pfork.
+
 config CONF_WITH_PCLONE
     bool "Experimental Pclone"
     depends on CONF_WITH_KPROC

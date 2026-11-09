@@ -163,6 +163,7 @@ static LONG cow_clone_leaf(ASPACE *source, ASPACE *child, VADDR address,
     original = cow_find(source, address);
     if (!original) {
         if (cow_frame_find(physical)) return EINVFN; /* untracked owned alias */
+        if (cow_frame_count == ~(ULONG)0 || cow_reference_count == ~(ULONG)0) return EAGAIN;
         frame = clone_allocate(sizeof(*frame));
         if (!frame) return ENSMEM;
         original = clone_allocate(sizeof(*original));

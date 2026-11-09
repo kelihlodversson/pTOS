@@ -27,8 +27,9 @@ struct thread_startup_draft {
 #endif
 
 static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
-                            THREAD_STARTUP_DRAFT **result, BOOL public_return)
+                            THREAD_STARTUP_DRAFT **result, BOOL public_return, KASPACE *source)
 {
+    (void)source;
     if (!result || *result || !space || !args) return EINVAL;
 #if CONF_WITH_NATIVE_SCHED
     {
@@ -53,7 +54,11 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->args = *args;
         draft->image = NULL;
         draft->bridge = NULL;
-        error = thread_startup_arch_bridge_acquire(space, &draft->bridge);
+        error =
+#if CONF_WITH_PRIVATE_CLONE
+            source ? thread_startup_arch_bridge_acquire_cloned(source, space, &draft->bridge) :
+#endif
+            thread_startup_arch_bridge_acquire(space, &draft->bridge);
         if (!error) error = thread_startup_arch_prepare(kaspace_backend(space), &draft->args, draft->bridge, &draft->image);
         if (!error && public_return) error = thread_startup_arch_public_return(draft->image, draft->bridge);
         if (!error) error = kaspace_lease_acquire(space, args->entry, 1,
@@ -69,17 +74,22 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         return E_OK;
     }
 #else
-    (void)public_return; return EINVFN;
+    (void)public_return; (void)source; return EINVFN;
 #endif
 }
 LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, FALSE);
+    return startup_prepare(space, args, out, FALSE, NULL);
 }
 LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, TRUE);
+    return startup_prepare(space, args, out, TRUE, NULL);
 }
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_prepare_cloned(KASPACE *source, KASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                  BOOL public_return, THREAD_STARTUP_DRAFT **out)
+{ return startup_prepare(space, args, out, public_return, source); }
+#endif
 
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
 {

@@ -1892,6 +1892,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
+              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_PRIVATE_CLONE_TEST) \
               $(if $(filter y,$(CONF_WITH_NATIVE_SCHED)),-DTEST_WITH_NATIVE_SCHED) \
               $(if $(filter y,$(CONF_WITH_PTHJOIN)),-DTEST_WITH_PTHJOIN) \
               $(if $(filter y,$(CONF_WITH_PTERMGRP)),-DTEST_WITH_PTERMGRP) \

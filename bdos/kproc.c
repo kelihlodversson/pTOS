@@ -120,6 +120,9 @@ struct kproc {
     UBYTE clone_maps;
     void *clone_startup;
     PD *clone_controller_pd; /* pinned allocation, scheduler-root continuation */
+#if CONF_WITH_PRIVATE_CLONE
+    BOOL clone_controller_borrowed; /* independent-VM controller mapping */
+#endif
     UQUAD clone_controller_gen;
     KPROC *clone_controller_identity; /* owning if the root is tracked */
 #endif
@@ -700,6 +703,13 @@ failed:
 static void clone_drop_controller(KPROC *p)
 {
     if (p->clone_controller_pd) {
+#if CONF_WITH_PRIVATE_CLONE
+        if (p->clone_controller_borrowed) {
+            aspace_unborrow(kaspace_backend(p->clone_compat),
+                (VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD));
+            p->clone_controller_borrowed = FALSE;
+        }
+#endif
         procmem_pin((VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD), -1);
         p->clone_controller_pd = NULL;
         p->clone_controller_gen = 0;
@@ -749,6 +759,9 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
     VADDR page, end;
     KPROC *identity;
     UQUAD generation;
+#if CONF_WITH_PRIVATE_CLONE
+    BOOL missing = FALSE, present = FALSE;
+#endif
     if (!p || !p->clone_compat || p->clone_controller_pd || !controller ||
         !(generation = procmem_gen(controller)) ||
         !procmem_range_live((VADDR)(uintptr_t)controller, sizeof(PD))) return FALSE;
@@ -762,12 +775,30 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
     for (; page < end; page += USER_PAGE_SIZE) {
         PADDR physical;
         UWORD prot;
-        if (!aspace_translate(as, page, &physical, &prot) ||
-            physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
+        if (!aspace_translate(as, page, &physical, &prot)) {
+#if CONF_WITH_PRIVATE_CLONE
+            missing = TRUE; continue;
+#else
+            kproc_release(identity); return FALSE;
+#endif
+        }
+#if CONF_WITH_PRIVATE_CLONE
+        present = TRUE;
+#endif
+        if (physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
             kproc_release(identity);
             return FALSE;
         }
     }
+#if CONF_WITH_PRIVATE_CLONE
+    if (missing) {
+        if (present || !p->parent_identity || kproc_active_space(p->parent_identity) == p->clone_compat ||
+            !aspace_borrow(as, (VADDR)(uintptr_t)controller, sizeof(PD))) {
+            kproc_release(identity); return FALSE;
+        }
+        p->clone_controller_borrowed = TRUE;
+    }
+#endif
     procmem_pin((VADDR)(uintptr_t)controller, sizeof(PD), +1);
     p->clone_controller_pd = controller;
     p->clone_controller_gen = generation;
