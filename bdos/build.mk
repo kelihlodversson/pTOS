@@ -14,7 +14,7 @@ obj-$(CONF_WITH_USER_CALLBACKS) += user_callback.o callback_entry.o
 # Ssystem() (bdos/ssystem.c) is needed by every non-m68k/ColdFire arch --
 # see the comment in osif() (bdos/bdosmain.c).
 obj-$(CONF_WITH_SSYSTEM) += ssystem.o
-obj-$(CONF_WITH_PROCESS_EXEC_TEST) += process_exec_dispatch.o
+obj-$(CONF_WITH_PROCESS_EXEC_DISPATCH) += process_exec_dispatch.o
 obj-$(CONF_WITH_KCALL) += kcall.o
 
 # the file calls of kernel code (the scalable fonts' font files; Fopen() & co.

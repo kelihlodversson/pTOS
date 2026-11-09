@@ -1,9 +1,9 @@
-/* Test-gated Ssystem adapter. No public activation or discovery support. */
+/* Shared Ssystem adapter. The production gate remains hidden and disabled. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "ksched.h"
 #include "process_exec_internal.h"
-#if CONF_WITH_PROCESS_EXEC_TEST
+#if CONF_WITH_PROCESS_EXEC_DISPATCH
 extern PD *run;
 LONG proc_exec_dispatch(long address, long size)
 {
