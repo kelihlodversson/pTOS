@@ -73,6 +73,8 @@ jobs:
           /tmp/elf-shared-venv/bin/python tools/test-child-adapter.py
           HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-child-adapter.py
           ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-child-adapter.py
+      - name: Test GUI publication receipt review model and counterexamples
+        run: python3 tools/test-publication-receipt.py
       - name: Execution cleanup guard ownership
         run: /tmp/elf-shared-venv/bin/python tools/test-cleanup-guard.py
       - name: Test PROCESS-owned PFS directory preparation
