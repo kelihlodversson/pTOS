@@ -24,7 +24,7 @@
 #endif
 extern PD *run;
 
-typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
+typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
 } TASK_STATE;
 typedef struct kernel_task {
@@ -275,7 +275,7 @@ BOOL ksched_parent_pid(PD *pd, WORD *pid)
     if (!scheduler.active) return FALSE;
     for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state != TASK_UNUSED && task->state != TASK_RESERVED && task->program == pd) {
+        if (task->state != TASK_UNUSED && task->state != TASK_RESERVED && task->state != TASK_RETIRING && task->program == pd) {
             KERNEL_TASK *owner = completion_task(task);
             *pid = kproc_pid(owner->parent ? owner->parent : scheduler.root.pd);
             return TRUE;
@@ -303,7 +303,7 @@ void ksched_exiting(PD *pd, UWORD result)
     exiting = kproc_retain(pd); /* identity remains valid through committed cleanup */
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state == TASK_UNUSED || task->state == TASK_RESERVED) continue;
+        if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING) continue;
         if (task->parent == pd) {
             task->parent = NULL;
             if (task->state == TASK_ZOMBIE) task->state = TASK_DONE;
@@ -561,23 +561,42 @@ LONG ksched_join(ULONG tid, UQUAD address)
 }
 #endif
 
+/* Finish only after all private destruction has returned. The linked arena
+ * implementation preserves its storage/admission metadata in this helper. */
+static void clear_task(KERNEL_TASK *task)
+{
+    uintptr_t flags = native_sched_irq_save();
+    memset(task, 0, sizeof(*task));
+    native_sched_irq_restore(flags);
+}
 static void discard_process_task(KERNEL_TASK *task)
 {
-    KPROC *process = task->process;
-    KPROC *owner = task->deferred_owner_identity;
-    KTHREAD *thread = task->thread;
+    KPROC *process, *owner;
+    KTHREAD *thread;
+    uintptr_t flags = native_sched_irq_save();
     check_task_thread(task, 6);
-    /* Keep backend storage until the THREAD reclaimer returns. Callbacks may
-     * reenter admission, so DONE prevents reuse during resource destruction. */
-    task->state = TASK_DONE;
+    if (task->state != TASK_RESERVED && task->state != TASK_DEFERRED)
+        panic("process retirement outside private admission");
+    process = task->process;
+    owner = task->deferred_owner_identity;
+    thread = task->thread;
+    /* Transfer ownership to this continuation before any callback can yield.
+     * RETIRING is private: neither a public child nor a root-reapable task.
+     * Its backend/stack storage stays reserved until THREAD destruction ends. */
+    task->state = TASK_RETIRING;
     task->program = NULL;
+    task->parent = NULL;
+    task->process = NULL;
     task->thread = NULL;
     task->deferred_owner_identity = NULL;
+    task->ready = NULL;
+    task->argument = NULL;
+    native_sched_irq_restore(flags);
     proc_dispose_process(process);
     if (thread) kthread_destroy(thread);
     kproc_release(process);
     if (owner) kproc_release(owner);
-    memset(task, 0, sizeof(*task));
+    clear_task(task);
 }
 static void cancel_successors(KPROC *owner)
 {
@@ -747,7 +766,7 @@ static BOOL child_ready(void *argument)
     BOOL found = FALSE;
     for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->parent != wait->parent ||
+        if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != wait->parent ||
             (wait->pid > 0 && task->pid != wait->pid)) continue;
         found = TRUE;
         if (task->state == TASK_ZOMBIE) return TRUE;
@@ -771,7 +790,7 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
         for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
             KERNEL_TASK *task = &scheduler.tasks[i];
             ULONG status;
-            if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->parent != run ||
+            if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != run ||
                 (pid > 0 && task->pid != pid)) continue;
             found = TRUE;
             if (task->state != TASK_ZOMBIE) continue;
@@ -807,8 +826,15 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
 /* Called only after the scheduler has switched back to its root context.
  * A zombie keeps its process identity for waiters, but its continuation and
  * stack can never run again. Repeated passes leave already-reaped stacks alone. */
+#if CONF_WITH_X86_64_MEMTEST
+static ULONG retiring_root_passes;
+ULONG ksched_test_retiring_root_passes(void) { return retiring_root_passes; }
+#endif
 static BOOL reap_finished_on_root(KERNEL_TASK *task)
 {
+#if CONF_WITH_X86_64_MEMTEST
+    if (!scheduler.current && task->state == TASK_RETIRING) retiring_root_passes++;
+#endif
     if (scheduler.current || (task->state != TASK_DONE && task->state != TASK_ZOMBIE && task->state != TASK_DRAINING))
         return FALSE;
     if (task->thread) {
@@ -928,7 +954,7 @@ static LONG dispatch_group(UWORD count, LONG *results)
         for (i = 0; i < KSCHED_LIMIT; i++) {
             UWORD slot = (scheduler.next + i) % KSCHED_LIMIT;
             KERNEL_TASK *task = &scheduler.tasks[slot];
-            if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
+            if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
             if (task->state == TASK_DRAINING) { pending = TRUE; continue; }
             pending = TRUE;
             if (task->state == TASK_DEFERRED) continue;

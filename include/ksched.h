@@ -32,6 +32,7 @@ struct kthread;
 LONG ksched_task_reserve(BOOL root, void **slot);
 #if CONF_WITH_X86_64_MEMTEST
 void ksched_test_fail_clone_slot(void);
+ULONG ksched_test_retiring_root_passes(void);
 BOOL ksched_test_clone_masked(void);
 #endif
 void ksched_task_cancel(void **slot);
