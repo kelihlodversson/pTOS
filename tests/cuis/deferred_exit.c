@@ -7,6 +7,7 @@
 #include "procmem.h"
 #include "mem.h"
 #include "bdosstub.h"
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred exit:%d: %s\n",__LINE__,#c); abort(); } } while (0)

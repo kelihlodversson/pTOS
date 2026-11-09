@@ -1041,7 +1041,7 @@ void ksched_task_cancel(void **slot)
         (!scheduler.active && task != scheduler.tasks))
         panic("task cancellation outside private reservation");
     *slot = NULL;
-    memset(task, 0, sizeof(*task));
+    clear_task(task);
     if (!scheduler.active) { kfree(scheduler.tasks); scheduler.tasks = NULL; }
 }
 static void publish_task(void **slot, TASK_STATE state)

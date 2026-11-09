@@ -5,6 +5,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
+#include "scheduler_irq_model.h"
 #include "../../bdos/native_sched.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"publication:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static KERNEL_TASK table[KSCHED_LIMIT];
