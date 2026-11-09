@@ -8,6 +8,7 @@
 #include "thread_startup_x32.h"
 #include "thread_return_x32.h"
 #include "thread_startup_backend.h"
+#include "syscall_return.h"
 #include "gemerror.h"
 #include <assert.h>
 #include <stdlib.h>
@@ -45,6 +46,14 @@ BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes)
 }
 static UWORD code_prot = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
 static UWORD stack_prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
+#if CONF_WITH_FORK_RETURN_TEST
+static BOOL force_stack_alias;
+BOOL kstack_contains(PADDR physical, uintptr_t address)
+{
+    uintptr_t base = 0x100000 + (physical / 4096) * 16384 - 16384;
+    return force_stack_alias || (address >= base && address - base < 16384);
+}
+#endif
 #define CODE 0x400000UL
 #define STACK 0x10000000UL
 #define OUTPUT 0x20000000UL
@@ -132,6 +141,48 @@ int main(void)
     assert(space);
     args.entry = CODE; args.argument = 0xfedcba98UL;
     args.stack_base = STACK; args.stack_size = 8192;
+#if CONF_WITH_FORK_RETURN_TEST
+    {
+        SYSCALL_RETURN saved;
+        X32_THREAD_ENTRY_IMAGE expected;
+        LONG error = ENSMEM;
+        memset(&saved, 0, sizeof(saved));
+        saved.space = space; saved.mappings = args;
+        saved.user.cs = 0x2b; saved.user.ss = saved.user.ds = saved.user.es = 0x23;
+        saved.user.rip = CODE; saved.user.rsp = STACK + 512;
+        saved.user.cr3 = aspace_root(&backend); saved.user.rflags = 0x243;
+        saved.user.rax = 0x100000190ULL; saved.user.rbx = 0x12345678;
+        memset(saved.user.fpu, 0xa5, sizeof(saved.user.fpu));
+        expected = saved.user; expected.rax = 0;
+        before = allocations - frees;
+        /* Every allocation in real saved-return construction fails in turn.
+         * The final attempt succeeds once there is no remaining allocation. */
+        for (i = 1; i < 32; i++) {
+            fail_alloc = i;
+            error = thread_startup_prepare_saved_return(space, &saved, &draft);
+            fail_alloc = 0;
+            if (!error) {
+                image = thread_startup_image(draft);
+                assert(image->saved_return && !memcmp(&image->user, &expected, sizeof(expected)));
+                saved.user.rbx ^= 1;
+                assert(image->user.rbx == expected.rbx); /* no creator-record alias */
+                assert(kaspace_mapping_change(&backend, CODE, 1));
+                assert(thread_startup_validate(draft) == EIMBA);
+                thread_startup_abort(&draft);
+                break;
+            }
+            assert(error == ENSMEM && !draft && !stacks && !bridge_present);
+            assert(allocations - frees == before);
+        }
+        assert(!error && i < 32 && !stacks && allocations - frees == before);
+        force_stack_alias = TRUE;
+        assert(thread_startup_prepare_saved_return(space, &saved, &draft) == EACCDN);
+        force_stack_alias = FALSE;
+        saved.user.fs_base = 0x1000;
+        assert(thread_startup_prepare_saved_return(space, &saved, &draft) == EINVFN);
+        assert(!draft && !stacks && !bridge_present && allocations - frees == before);
+    }
+#endif
     {
         X32_RETURN_BRIDGE *bridge = NULL, *second = NULL;
         assert(x32_return_bridge_acquire(space,&bridge) == E_OK);

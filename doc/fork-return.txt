@@ -97,7 +97,11 @@ stack backing, saved startup, durable stack hold, output preparation, observer
 registration and final pre-spawn validation. Failures must execute no child;
 page accounting returns to baseline after rollback and exit/reap cycles.
 Production allocator failures within reused constructors retain their existing
-ownership/rollback tests. These fail-after-stage tests do not claim exhaustive
+ownership/rollback tests. The production x32 saved-return host fixture also
+fails every constructor allocation in turn, verifies balanced stacks/metadata,
+copies the creator record independently, and rejects revoked mappings, stack
+aliasing and unadmitted FS state. This is a construction model, not a hosted
+CPU execution proof. The fail-after-stage native tests do not claim exhaustive
 native allocation-site fault injection or concurrent mapping races.
 
 QEMU runtime results, exact commits, CI and limitations are recorded in PR #932.
