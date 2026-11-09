@@ -12,6 +12,7 @@
 PD caller, child;
 PD *run = &caller;
 volatile LONG hz_200;
+SBYTE get_default_handle(int i) { (void)i; return -1; }
 static unsigned allocations, frees;
 static BOOL fail_allocate;
 static PROCESS_OBSERVER *during_retirement;
@@ -62,6 +63,12 @@ int main(void)
     ULONG references;
     ULONG first_order;
     assert(kproc_create(&caller) && kproc_create(&child));
+    kproc_find(&caller)->uft[0]=NUMSTD;
+    kproc_find(&child)->uft[1]=NUMSTD;
+    kproc_find(&child)->uft[2]=NUMSTD+1;
+    kproc_standard_file_invalidate(NUMSTD);
+    assert(kproc_find(&caller)->uft[0]<0 && kproc_find(&child)->uft[1]<0 &&
+           kproc_find(&child)->uft[2]==NUMSTD+1);
     p=kproc_retain(&child); assert(p);
     assert(process_observer_attach(p,&a)==0 && process_observer_attach(p,&b)==0);
     assert(process_observer_attach(p,&a)==EINVAL && p->references==4);
@@ -72,12 +79,15 @@ int main(void)
     retained_number=p->number; retained_pid=p->pid;
     kproc_mark_started(&child);
     assert(process_observer_snapshot(a,&snap) && snap.state==PROCESS_RUNNING && snap.kind==PROCESS_COMPLETION_NONE);
+    kproc_note_file_cleanup(&child,EWRITF,TRUE);
+    kproc_note_file_cleanup(&child,EINTRN,FALSE);
     kproc_complete(&child,0xffff); kproc_note_fault(&child,4); kproc_complete(&child,9);
     assert(process_observer_snapshot(a,&snap) && snap.kind==PROCESS_COMPLETION_NORMAL && snap.status==0xffff && !snap.signal);
     assert(!process_observer_ready(a)); /* Committed result is not notification. */
     during_retirement=a;
     assert(kproc_begin_exit(&child)); kproc_destroy(&child); during_retirement=NULL;
     assert(!kproc_ref_has_basepage(p) && p->retired && p->references==3);
+    assert(kproc_ref_file_cleanup(p,&references)==EWRITF && references==1);
     assert(!process_observer_ready(a)); /* Scheduler has not published wait yet. */
     kproc_publish_observers(p); kproc_publish_observers(p);
     assert(process_observer_ready(a));

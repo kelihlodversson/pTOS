@@ -135,9 +135,13 @@ WORD kproc_pid(PD *pd);                 /* 0: no record */
  * without writing. The caller owns the reference; no PD is borrowed. */
 void kproc_set_executable_name(PD *pd, const char *path);
 LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity);
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
 /* Snapshot all live standard-handle aliases into OPNFILES counters. */
 void kproc_standard_file_refs(ULONG *references);
+/* Authoritative media retirement: unpublish all standard aliases before reuse. */
+void kproc_standard_file_invalidate(WORD handle);
+void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
+LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
 #endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
 SBYTE kproc_get_prio(PD *pd);

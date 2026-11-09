@@ -359,47 +359,56 @@ static void free_all_owned(PD *p, MPB *mpb)
  * slot or an interrupted close may outlive its original owner's basepage. */
 static char orphaned_sft_owner;
 #endif
+#if CONF_WITH_USER_ASPACE
+static void release_file_reference(PD *pd, WORD handle)
+{
+    FS_CLOSE_REPORT result;
+    fs_close_bounded(handle,TRUE,&result);
+    kproc_note_file_cleanup(pd,result.error,result.disposition==FS_CLOSE_TRANSFERRED);
+    if (result.disposition!=FS_CLOSE_CONSUMED && result.disposition!=FS_CLOSE_TRANSFERRED)
+        panic("process cleanup: missing file reference");
+}
+#endif
 static void release_pd_files(PD *r)
 {
     WORD h;
     WORD i;
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
     ULONG explicit_refs[OPNFILES];
 
-    /* An SFT slot retains f_own after its explicit handle is closed while
-     * standard aliases remain. Snapshot before dropping this process's
-     * aliases: only a reference beyond all live aliases is an explicit
-     * handle the owner sweep may close. Fdup uses a separate SFT slot. */
+    /* Snapshot before removing aliases. Residual kernel references are not
+     * a retiring PROCESS's explicit handle, nor another live alias. */
     kproc_standard_file_refs(explicit_refs);
-    for (i = 0; i < OPNFILES; i++)
-        explicit_refs[i] = r == sft[i].f_own && sft[i].f_use > 0 &&
-                          (ULONG)sft[i].f_use > explicit_refs[i];
+    for (i=0;i<OPNFILES;i++)
+        explicit_refs[i]=sft[i].f_own==r && sft[i].f_use>0 &&
+            (ULONG)sft[i].f_use>explicit_refs[i]+sft[i].f_cleanup_refs;
 #endif
-
-    /* check the standard devices in both file tables  */
-
-    for (i = 0; i < NUMSTD; i++)
-        if ((h = PD_UFT(r)[i]) > 0) {
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
-            kdos_fclose(h); /* Catch disk errors and finish the interrupted close. */
+    for (i=0;i<NUMSTD;i++)
+        if ((h=PD_UFT(r)[i])>=NUMSTD) {
+#if CONF_WITH_USER_ASPACE
+            release_file_reference(r,h);
+            /* Consumed or transferred: this PD no longer owns the alias. */
+            PD_UFT(r)[i]=0;
+#elif CONF_WITH_PROCMEM && CONF_WITH_KCALL
+            kdos_fclose(h);
 #else
             xclose(h);
 #endif
         }
-
-    for (i = 0; i < OPNFILES; i++)
-        if (r == sft[i].f_own
-#if CONF_WITH_CUIS
+    for (i=0;i<OPNFILES;i++)
+        if (r==sft[i].f_own
+#if CONF_WITH_USER_ASPACE
             && explicit_refs[i]
 #endif
         ) {
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+#if CONF_WITH_USER_ASPACE
+            release_file_reference(r,i+NUMSTD);
+#elif CONF_WITH_PROCMEM && CONF_WITH_KCALL
             kdos_fclose(i+NUMSTD);
 #else
             xclose(i+NUMSTD);
 #endif
         }
-
 
     /* decrement usage counts for current directories */
 
@@ -423,8 +432,8 @@ static void release_pd_files(PD *r)
     pfs_proc_exit(r);
 #endif
 #if CONF_WITH_USER_ASPACE
-    /* Preserve the allocated SFT slot without leaving a reusable PD address
-     * in f_own. A failed bounded close can still leak its handle reference. */
+    /* Inherited aliases and service-owned residual references reserve their
+     * exact SFT incarnation, never this retiring PD address. */
     for (i = 0; i < OPNFILES; i++)
         if (sft[i].f_own == r)
             sft[i].f_own = (PD *)&orphaned_sft_owner;

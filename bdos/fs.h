@@ -390,7 +390,15 @@ typedef struct
 {
     OFD *f_ofd;
     PD  *f_own;         /* file owners */
-    int f_use;          /* use count */
+    int f_use;          /* live aliases plus kernel-owned residual references */
+#if CONF_WITH_USER_ASPACE
+    UQUAD f_incarnation; /* never reused, even if slot/OFD addresses are */
+    ULONG f_cleanup_refs;
+    UQUAD f_cleanup_issued, f_cleanup_consumed, f_cleanup_invalid_from;
+    LONG f_cleanup_first_error, f_cleanup_last_error;
+    UWORD f_cleanup_state;
+    BOOL f_close_busy, f_close_cleanup;
+#endif
 #if CONF_WITH_PLUGGABLE_FS
     PFSCOOKIE f_pfs;    /* f_pfs.fs != NULL marks a handle owned by a
                          * pluggable filesystem driver with no legacy OFD
@@ -399,6 +407,7 @@ typedef struct
                          * or free alongside the slot itself. */
 #endif
 } FTAB;
+#include "fs_close.h"
 
 
 
