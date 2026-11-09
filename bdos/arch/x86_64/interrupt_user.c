@@ -77,14 +77,16 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
      * callback boundary. Unsupported/delayed restore remains unavailable. */
     if (capture->image.r15==0x7130000000713015ULL) {
         X86_USER_IRQ_FRAME *destination=(X86_USER_IRQ_FRAME *)(uintptr_t)frame;
+        UWORD byte;
         if (!x86_irq_same_entry_valid(capture,frame,&binding,execution->identity,
                                      capture->sequence,tid,execution->owner_cpu,USER_VA_LIMIT))
             panic("x32 copied IRQ image ownership mismatch");
         /* Deliberately clobber live saved fields so native user register checks
          * fail if the owned image is not actually copied back. Keep control
          * state untouched until the complete validated image is restored. */
-        destination->rax=0;
-        memset(destination->fx+160,0,256);
+        *(volatile UQUAD *)&destination->rax=0;
+        for(byte=160;byte<416;byte++) ((volatile UBYTE *)destination->fx)[byte]=0;
+        __asm__ volatile ("" ::: "memory");
         memcpy(destination,&capture->image,sizeof(*destination));
         irq_roundtrip_seen++;
     }
