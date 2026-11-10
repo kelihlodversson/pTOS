@@ -133,6 +133,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     native.load_config("configs/pc-x86_64_defconfig")
     native.syms["CONF_WITH_ELF_SHARED"].set_value(2)
     native.syms["CONF_WITH_LIBAES"].set_value(2)
+    # This fixture models the ordinary native loader and deferred teardown;
+    # executable interpreter dispatch has its own parser/boot fixtures.
+    native.syms["CONF_WITH_BINFMT"].set_value(0)
     native.write_config(str(rollback / "config"))
     subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
                     "--config", str(rollback / "config"), "--header",

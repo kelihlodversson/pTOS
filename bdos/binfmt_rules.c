@@ -31,6 +31,13 @@ static BOOL space(int c)
     return c == ' ' || c == '\t';
 }
 
+static BOOL has_nul(const UBYTE *bytes, ULONG length)
+{
+    ULONG i;
+    for (i = 0; i < length; i++) if (!bytes[i]) return TRUE;
+    return FALSE;
+}
+
 static char *trim(char *s)
 {
     char *end;
@@ -179,7 +186,7 @@ void binfmt_config_line(BINFMT_PARSER *p, char *line, ULONG length, BOOL overlon
     overlong = overlong || length > BINFMT_LINE;
     s = line;
     while (space(*s)) s++;
-    if (overlong || memchr(line, 0, length)) {
+    if (overlong || has_nul((const UBYTE *)line, length)) {
         if (*s == '[') { binfmt_config_end(p); p->section = -1; }
         invalid(p, lineno, overlong ? "line too long" : "NUL byte in configuration");
         return;
@@ -226,7 +233,7 @@ static LONG shebang(const BINFMT_REGISTRY *r, const UBYTE *data, ULONG length, B
     while (n < length && data[n] != '\n') n++;
     if (n > BINFMT_SHEBANG && !(n == BINFMT_SHEBANG + 1 && data[n - 1] == '\r')) return EPLFMT;
     if (n && data[n - 1] == '\r') n--;
-    if (memchr(data, 0, n)) return EPLFMT;
+    if (has_nul(data, n)) return EPLFMT;
     start = 2;
     while (start < n && space(data[start])) start++;
     end = start;
