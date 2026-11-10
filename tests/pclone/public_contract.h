@@ -1,6 +1,7 @@
 /* Included only by the managed, real-trap Pclone suite on each MMU target.
  * No kernel calls or modeled child publication stand in for these assertions. */
 static int phase1_contract_exercised;
+static unsigned phase1_rejection_case;
 static volatile unsigned phase1_entered;
 static volatile unsigned long phase1_argument;
 static volatile long phase1_pid;
@@ -48,6 +49,9 @@ static void phase1_finish(long tid, long pid)
     ptest_assert_msg(tid > 0,"Pclone returns a positive TID");
     if (tid <= 0) return;
     status = Pwaitpid(pid,0,0);
+    if (status <= 0 || (status & 65535)) {
+        char message[96]; sprintf(message,"ABI child tid=%ld pid=%ld status=%lx\r\n",tid,pid,status); conws(message);
+    }
     ptest_assert_msg(status > 0 && !(status & 65535),"void entry returns status zero on native backend");
     ptest_assert_msg(phase1_entered == 1 && phase1_argument == 0xfedcba98UL &&
                      (status >> 16) == phase1_pid && phase1_pid != Pgetpid(),
@@ -67,6 +71,11 @@ static void phase1_reject(const void *request, unsigned long size, long expected
     *pid = 0x12345678; *tid = 0x23456789;
     *frame = 0x3456789aUL; phase1_entered = 0;
     result = pclone_trap(request,size);
+    phase1_rejection_case++;
+    if (result != expected) {
+        char message[96]; sprintf(message,"ABI rejection %u got=%ld expected=%ld size=%lu\r\n",
+                                 phase1_rejection_case,result,expected,size); conws(message);
+    }
     ptest_assert_msg(result == expected,"native Pclone rejection has exact ABI status");
     ptest_assert_msg(*pid == 0x12345678 && *tid == 0x23456789 && *frame == 0x3456789aUL,
                      "rejection preserves both outputs and startup frame");
@@ -109,6 +118,10 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
         result = pclone_trap(&good,32);
         ptest_assert_msg(result > 0 && result == tid,"resource-copy public TID");
         phase1_finish(result,pid);
+        if (phase1_resource_error) {
+            char message[192]; sprintf(message,"ABI resource bits=%u error=%d parent=%s child=%s\r\n",
+                                      bits,phase1_resource_error,phase1_parent_path,phase1_child_path); conws(message);
+        }
         ptest_assert_msg(!phase1_resource_error && Dgetpath(phase1_child_path,3) == 0 &&
                          !strcmp(phase1_parent_path,phase1_child_path),
                          "four independent copy policies and PROCESS-local CWD mutation");
