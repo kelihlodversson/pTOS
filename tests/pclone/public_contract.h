@@ -255,8 +255,33 @@ static void test_public_contract(unsigned char *stack)
                          "28..31 prefix, 32 extension, unknown tail and no early dispatch");
         phase1_finish(result,size < 32 ? -1 : pid);
     }
-    bad = good; bad.child_pid = bad.child_tid = 0; phase1_entered = 0;
-    phase1_finish(pclone_trap(&bad,32),-1);
+    for (bit = 0; bit < 4; bit++) {
+        bad = good; pid = tid = -99; phase1_entered = 0;
+        bad.child_pid = (bit & 1) ? &pid : 0;
+        bad.child_tid = (bit & 2) ? &tid : 0;
+        result = pclone_trap(&bad,32);
+        ptest_assert_msg(result > 0 && ((bit & 1) ? pid > 0 : pid == -99) &&
+                         ((bit & 2) ? tid == result : tid == -99),
+                         "all optional PID/TID output combinations");
+        phase1_finish(result,(bit & 1) ? pid : -1);
+    }
+    bad = good; bad.flags |= CLONE_SAME_PROCESS;
+    phase1_entered = 0;
+    result = pclone_trap(&bad,32);
+    ptest_assert_msg(result > 0 && tid == result && pid == Pgetpid(),
+                     "same-PROCESS success returns TID and reports caller PID");
+    if (result > 0) {
+#if defined(TEST_WITH_PTHJOIN)
+        int32_t status = -99;
+        ptest_assert_msg(join_tid(result,&status) == 0 && status == 0,
+                         "same-PROCESS void entry forces zero THREAD completion");
+#else
+        (void)Syield(); (void)Syield();
+#endif
+        ptest_assert_msg(phase1_entered == 1 && phase1_pid == Pgetpid() &&
+                         Pwaitpid(-1,1,0) == -33L,
+                         "THREAD return does not manufacture a PROCESS completion");
+    }
     /* The input is copied once: a legal output may alias the request itself. */
     bad = good; bad.child_tid = (int32_t *)&bad.flags; phase1_entered = 0;
     result = pclone_trap(&bad,32);

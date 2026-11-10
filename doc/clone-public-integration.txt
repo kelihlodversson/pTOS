@@ -86,7 +86,7 @@ yield or a fallible operation in the final transition.
 
 EINVAL: bad scalar size/flags/alignment, undersized startup frame, non-NULL TLS.
 EIMBA: unreadable/wrapping pointers, inaccessible entry/stack/output or stale lease.
-ENSMEM: allocation/backing failure. EAGAIN: slot/identity capacity exhausted.
+ENSMEM: allocation/backing failure. EREADF: snapshot backing I/O failure. EAGAIN: slot/identity capacity exhausted.
 EINVFN: configuration/backend or policy unavailable. Do not advertise runtime
 capability merely because CONF_WITH_PCLONE routes a validated syscall. Unsupported
 configurations must not silently fall back to unsafely runnable legacy contexts.
