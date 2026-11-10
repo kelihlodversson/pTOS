@@ -2942,6 +2942,9 @@ static void test_ordinary_observation(void)
         ordinary_observation.enabled=FALSE;
         if (mode>=7 && mode<=11 && mode!=8) {
             PROCESS_COMPLETION parent_done, child_done;
+            /* This launch owns only the predecessor result. Its independent
+             * successor runs through later cooperative root entries. */
+            settle_scheduler();
             CHECK(process_observer_ready(ordinary_observation.observer) &&
                   process_observer_snapshot(ordinary_observation.observer,&child_done) &&
                   child_done.state==PROCESS_COMPLETED && child_done.kind==PROCESS_COMPLETION_NORMAL &&
