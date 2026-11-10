@@ -504,7 +504,11 @@ static void test_public_contract(unsigned char *stack)
         report = Fcreate(PHASE1_POLICY_FILE,0);
         ptest_assert_msg(report >= 6 && Fclose(report) == 0,"prepare orphan policy report");
         ptest_log_flush();
+        #if defined(__mc68000__)
+        image = Pexec(3,"C:\\CLNABI.TOS",tail,0);
+#else
         image = Pexec(3,"C:\\RUNTESTS.TOS",tail,0);
+#endif
         ptest_assert_msg(image > 0,"stage executable in loader-owned heap");
         if (image > 0) {
             child = Pexec(106,0,(void *)image,0);
