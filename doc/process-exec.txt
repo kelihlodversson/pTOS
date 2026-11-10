@@ -215,3 +215,13 @@ root and checks ordinary/test/production/both combinations against real build.mk
 and preprocessed Ssystem capability/dispatch cases. Both selected gates include
 exactly one adapter object. This is prospective configuration/preprocessor proof,
 not native production activation acceptance. No shipped source selects the gate.
+
+Native fixture gate alignment (#938 review)
+------------------------------------------
+The real test build exports production, test and shared-dispatch gates.
+Native discovery expectations depend only on production; operation tests and
+PROCXIT.TOS packaging depend on shared dispatch. LP64 MEMTEST checks use the
+same distinction. The host gate fixture reads the actual top-level Makefile
+exports/payload and preprocesses native fixture branches for every prospective
+combination; this CPP evidence does not execute native traps or enable a real
+production configuration. The hidden production gate still has no selector.

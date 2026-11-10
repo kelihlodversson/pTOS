@@ -57,7 +57,7 @@
 #include "../../../bdos/proc_clone.h"
 #include "../../../bdos/process_observer.h"
 #include "../../../bdos/process_exec_internal.h"
-#if CONF_WITH_PROCESS_EXEC_TEST
+#if CONF_WITH_PROCESS_EXEC_DISPATCH
 #include "../../../bdos/ssystem.h"
 #endif
 #if CONF_WITH_NATIVE_SCHED
@@ -2618,9 +2618,14 @@ static void test_native_exec_request(KPROC *owner)
         CHECK(kproc_copy_from_user_checked(&byte,data+PAGE,1)==E_OK && !byte,
               "lazy backing failure leaves a valid retryable user range");
     }
-#if CONF_WITH_PROCESS_EXEC_TEST
+#if CONF_WITH_PROCESS_EXEC_DISPATCH
+#if CONF_WITH_PROCESS_EXEC
+    CHECK(xssystem(S_INQUIRE,S_PROCEXEC,0)==E_OK,
+          "production PROCESS dispatch is advertised");
+#else
     CHECK(xssystem(S_INQUIRE,S_PROCEXEC,0)==EINVFN,
           "test-only PROCESS dispatch is never advertised");
+#endif
     CHECK(xssystem(S_PROCEXEC,(long)0x100001000ULL,72)==EIMBA &&
           xssystem(S_PROCEXEC,0x1000,(long)0x100000048ULL)==EINVAL &&
           xssystem(S_PROCEXEC,0x1000,-1L)==EINVAL,
