@@ -201,6 +201,14 @@ static void phase1_mapping_matrix(struct ptos_clone_args good, unsigned char *st
 }
 #endif
 
+static void phase1_account(const char *stage, long baseline)
+{
+    long usage[8];
+    if (Prusage(usage) == 0 && baseline >= 0 && usage[4] != baseline) {
+        char message[120]; sprintf(message,"ABI pages %s expected=%ld actual=%ld\r\n",stage,baseline,usage[4]); conws(message);
+    }
+}
+
 static void test_public_contract(unsigned char *stack)
 {
     struct {
@@ -235,6 +243,7 @@ static void test_public_contract(unsigned char *stack)
     /* Touch the retained stack before measuring failures: legitimate lazy
      * materialization is not rollback of a reservation. */
     for (size = 0; size < RUNNABLE_STACK_SIZE; size += 4096) stack[size] = 0;
+    phase1_account("initial",-1);
     ptest_assert_msg(Prusage(usage) == 0,"Phase1 initial page accounting"); baseline = usage[4];
     for (size = 28; size <= 36; size++) {
         request.args = good;
@@ -308,6 +317,7 @@ static void test_public_contract(unsigned char *stack)
     ptest_assert_msg(pclone_trap(0,0xc8920600UL) == 0,"arm final-publication abandonment");
     phase1_reject(&good,32,-326L,&pid,&tid,stack);
 #endif
+    phase1_account("rejections",baseline);
     /* Writable native outputs may straddle pages on the m68k two-byte ABI.
      * x32/A32 words stay aligned, with the two outputs on separate pages. */
     memory = Malloc(16384);
@@ -336,15 +346,19 @@ static void test_public_contract(unsigned char *stack)
     phase1_entered = 0;
     result = pclone_trap(&good,32);
     phase1_finish(result,pid); /* retry after every failure */
+    phase1_account("cross/retry",baseline);
     {
         static const char tail[] = "\017--abi-unmanaged";
         ptest_log_flush();
         ptest_assert_msg(Pexec(0,"runtests.tos",tail,0) == 0,
                          "nested synchronous launcher is not a managed THREAD");
     }
+    phase1_account("nested",baseline);
     phase1_resource_matrix(good);
+    phase1_account("resources",baseline);
 #if defined(TEST_WITH_MMAP)
     phase1_mapping_matrix(good,stack);
+    phase1_account("mappings",baseline);
 #endif
     ptest_assert_msg(Prusage(usage) == 0 && usage[4] == baseline,"Phase1 failed/successful traps restore mapped-page baseline");
     phase1_contract_exercised = 1;
