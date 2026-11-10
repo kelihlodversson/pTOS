@@ -1415,6 +1415,15 @@ static void test_runnable(void)
     has_fpu = 0;
 #endif
     probe.parent = Pgetpid();
+    /* All three Malloc reservations remain owned until the final baseline
+     * check below. Materialize them before intermediate page accounting:
+     * m68k's existing packed-trap reader may inspect readable argument words
+     * beyond the short Pterm frame into the adjacent reserved stack. */
+    for (cycle = 0; cycle < 3; cycle++) {
+        unsigned long page;
+        for (page = 0; page < RUNNABLE_STACK_SIZE; page += 4096)
+            runnable_stacks[cycle][page] = 0;
+    }
     test_public_contract(runnable_stacks[0]);
     for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 3; mode++) {
         probe.steps = probe.error = 0; probe.mode = mode;

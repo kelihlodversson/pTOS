@@ -10,3 +10,12 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror \
     tests/clone/handler.c bdos/clone.c bdos/clone_args.c -o "$work/handler"
 "$work/handler"
 echo 'Production xclone handler negative-argument tests: PASS'
+
+# Actual KPROC logical entry policy, including demand-paged PE_GO images.
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
+    -ffunction-sections -fdata-sections -fno-pie -no-pie \
+    -iquote include -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
+    -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
+    tests/clone/exec_permissions.c -Wl,--gc-sections -o "$work/exec-permissions"
+"$work/exec-permissions"
+echo 'Production KPROC staged-image/heap entry permissions (host page-table model): PASS'

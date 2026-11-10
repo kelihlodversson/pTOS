@@ -68,9 +68,11 @@ static void phase1_reject(const void *request, unsigned long size, long expected
                           int32_t *pid, int32_t *tid, unsigned char *stack)
 {
     long result;
-    unsigned long *frame = (unsigned long *)(stack + RUNNABLE_STACK_SIZE - 16);
+    unsigned char saved_frame[16];
+    unsigned char *frame = stack + RUNNABLE_STACK_SIZE - sizeof(saved_frame);
     *pid = 0x12345678; *tid = 0x23456789;
-    *frame = 0x3456789aUL; phase1_entered = 0;
+    memset(saved_frame,0x9a,sizeof(saved_frame));
+    memcpy(frame,saved_frame,sizeof(saved_frame)); phase1_entered = 0;
     result = pclone_trap(request,size);
     phase1_rejection_case++;
     if (result != expected) {
@@ -78,7 +80,8 @@ static void phase1_reject(const void *request, unsigned long size, long expected
                                  phase1_rejection_case,result,expected,size); conws(message);
     }
     ptest_assert_msg(result == expected,"native Pclone rejection has exact ABI status");
-    ptest_assert_msg(*pid == 0x12345678 && *tid == 0x23456789 && *frame == 0x3456789aUL,
+    ptest_assert_msg(*pid == 0x12345678 && *tid == 0x23456789 &&
+                     !memcmp(frame,saved_frame,sizeof(saved_frame)),
                      "rejection preserves both outputs and startup frame");
     (void)Syield(); (void)Syield();
     ptest_assert_msg(!phase1_entered && Pwaitpid(-1,1,0) == -33L,

@@ -121,3 +121,15 @@ not a silent skip, a new PROCESS namespace just for clone, or passing retries.
 Traditional-FAT native results must be labeled as that configuration and cannot
 substitute for the still-failing PFS configuration. No100% Phase1 acceptance
 or final owner approval is claimed while this native prerequisite is unresolved.
+
+Native accounting fixture boundary
+----------------------------------
+A diagnostic m68k run located the first extra private page at10008000, the
+start of the second still-owned Malloc stack, immediately after the first
+short Pterm return. The existing m68k packed trap reader probes up to13words
+and materializes readable lazy argument pages; this was not a retained return
+bridge or leaked execution stack. All three owned stack reservations are now
+materialized before intermediate accounting. The exact intermediate assertion
+and original final pre-allocation baseline assertion remain intact, and all
+three stacks must Mfree successfully. This does not claim an exact-arity m68k
+trap reader or treat transient materialization as a failed rollback.
