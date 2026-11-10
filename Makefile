@@ -725,11 +725,13 @@ ifdef ARCH_X86_64
 #
 # The PE backend does not look up symbols in an archive's ELF index, so the
 # FreeType library is linked as a whole (it only holds what is used anyway).
+# Set PE relocation/NX compatibility explicitly; binutils defaults vary.
 X86_64_LD = $(CROSS_COMPILE)ld
 X86_64_LIBGCC_DIR = $(shell dirname $(shell $(CC) $(MULTILIBFLAGS) -print-libgcc-file-name))
 
 $(EMUTOS_IMG): $(OBJECTS) $(FREETYPE_LIB)
 	$(X86_64_LD) -m i386pep -pie --subsystem 10 -e efi_main \
+	  --dynamicbase --high-entropy-va --nxcompat \
 	  -L$(X86_64_LIBGCC_DIR) \
 	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) \
 	  $(if $(FREETYPE_LIB),--whole-archive $(FREETYPE_LIB) --no-whole-archive) $(LIBS)

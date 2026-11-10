@@ -15,6 +15,22 @@
 set -e
 firmware=${OVMF_DIR:-/usr/share/OVMF}
 
+# Retain the guest's serial evidence in the check annotation as well as the
+# job log, so a firmware refusal can be diagnosed without downloading logs.
+boot_diagnostics()
+{
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ -n "${GITHUB_ACTIONS:-}" ] && [ -f boot.log ]; then
+        python3 - <<'PY'
+from pathlib import Path
+text = Path("boot.log").read_text(errors="replace")[-6000:]
+text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+print("::error title=x32 boot serial diagnostics::" + (text or "Serial log is empty"))
+PY
+    fi
+}
+trap boot_diagnostics EXIT
+
 # a configuration before this one left its files
 rm -rf esp boot.log boot-monitor.sock OVMF_VARS_4M.fd
 
