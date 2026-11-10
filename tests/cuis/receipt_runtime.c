@@ -17,6 +17,8 @@ static struct {
 } receipt_children[512];
 static BOOL receipt_close_error;
 static ULONG receipt_next,receipt_import_count,receipt_release_count;
+static CUIS_RECEIPT_TEST_RECORD *receipt_settling;
+static ULONG receipt_release_fences;
 LONG proc_exec_handle_prepare(KPROC *owner,char *path,char *tail,char *environment,char *directory,ULONG policy)
 {
     ULONG i=receipt_next++;
@@ -66,6 +68,10 @@ static void receipt_fixture_release(PROCESS_OBSERVER **observer)
 {
     typeof(receipt_children[0]) *child=(void *)*observer;
     if (!input_irqs || !cleanup_depth || !child->leases) __builtin_abort();
+    if (receipt_settling && child==&receipt_children[receipt_settling->tag-100]) {
+        if (cuis_receipt_test_reclaim(receipt_settling)!=EAGAIN) __builtin_abort();
+        receipt_release_fences++;
+    }
     child->leases--;receipt_release_count++;*observer=NULL;
 }
 BOOL process_observer_snapshot(const PROCESS_OBSERVER *observer,PROCESS_COMPLETION *out)
@@ -81,6 +87,18 @@ static void complete_receipt_child(CUIS_RECEIPT_TEST_RECORD *record,ULONG order)
     PROCESS_COMPLETION *c=&receipt_children[record->tag-100].completion;
     c->state=PROCESS_COMPLETED;c->kind=PROCESS_COMPLETION_NORMAL;c->status=0xffff;c->order_low=order;
 }
+static void receipt_wait_close(void)
+{
+    /* The hosted wait hook models the peer execution with its own IRQ state.
+     * Actual IRQ/root restoration is separately checked by native MEMTEST. */
+    BOOL blocked_irqs=input_irqs;
+    input_irqs=TRUE;
+    if (!receipt_settling || !find_handle(receipt_settling->source)->receipt_observations ||
+        proc_exec_handle_close((KPROC *)run,receipt_settling->tag)!=E_OK ||
+        cuis_receipt_test_reclaim(receipt_settling)!=EAGAIN) __builtin_abort();
+    complete_receipt_child(receipt_settling,12);
+    input_irqs=blocked_irqs;
+}
 static CUIS_RECEIPT_TEST_RECORD query_identity(CUIS_RECEIPT_TEST_RECORD receipt)
 {
     CUIS_RECEIPT_TEST_RECORD query={0};
@@ -90,7 +108,7 @@ static CUIS_RECEIPT_TEST_RECORD query_identity(CUIS_RECEIPT_TEST_RECORD receipt)
 }
 static int receipt_runtime_checks(void)
 {
-    CUIS_RECEIPT_TEST_RECORD a,b,old,query,quota[256];
+    CUIS_RECEIPT_TEST_RECORD a,b,old,query,c,quota[256];
     LONG quota_sources[16],extra;
     LONG source,destination,replacement;
     ULONG before,refs=process_references,i,j;
@@ -100,7 +118,11 @@ static int receipt_runtime_checks(void)
     run=&second;destination=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(destination>=0);
     run=&first;receipt_fixture_active=TRUE;
     CHECK(cuis_receipt_test_launch(source,destination,0,"child",tail,environment,&a)>0);
+    /* With an existing destination ring, allocator failure cannot turn an
+     * otherwise admissible launch into ENSMEM or consume its prepared right. */
+    fail_allocation=TRUE;
     CHECK(cuis_receipt_test_launch(source,destination,1,"child",tail,environment,&b)>0);
+    fail_allocation=FALSE;
     CHECK(a.state==CUIS_RECEIPT_BOUND && a.tag!=b.tag && receipt_active==2);
     query=query_identity(a);query.source_high=1;
     CHECK(cuis_receipt_test_query(&query)==EACCDN);
@@ -143,6 +165,7 @@ static int receipt_runtime_checks(void)
     CHECK(stream_output[0]==0x42);run=&first;
     CHECK(cuis_receipt_test_reclaim(&a)==EACCDN);
     CHECK(cuis_receipt_test_ack(&a)==E_OK && cuis_receipt_test_ack(&a)==E_OK);
+    CHECK(cuis_receipt_test_reclaim(&a)==EACCDN); /* ACK never consumes the right. */
     CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==E_OK);
     CHECK(cuis_receipt_test_commit(&a)==16 && !find_handle(destination)->stream_bytes);
     CHECK(cuis_receipt_test_reclaim(&a)==E_OK && cuis_receipt_test_reclaim(&a)==E_OK);
@@ -154,8 +177,18 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_commit(&old)==EIHNDL && cuis_receipt_test_ack(&old)==EIHNDL);
     CHECK(cuis_receipt_test_ack(&b)==E_OK && proc_exec_handle_close((KPROC *)run,b.tag)==E_OK &&
           cuis_receipt_test_reclaim(&b)==E_OK);
+    /* Actual SESSION_WAIT import envelope: CLOSE cannot revoke the lease;
+     * RECLAIM fails both while blocked and during final reference release. */
+    CHECK(cuis_receipt_test_launch(source,destination,2,"child",tail,environment,&c)>0);
+    memcpy(stream_input,&c.tag,sizeof(c.tag));
+    receipt_settling=&c;lifetime_wait_hook=receipt_wait_close;
+    CHECK(cuis_session_wait(source,0,CUIS_READY_CHILD,0,0x10000,1)==CUIS_READY_CHILD);
+    receipt_settling=NULL;
+    CHECK(!lifetime_wait_hook && receipt_release_fences==1 &&
+          !find_handle(source)->receipt_observations && !receipt_children[c.tag-100].leases);
+    CHECK(cuis_receipt_test_reclaim(&c)==E_OK);
     /* Full destination cannot create a false COMMITTED outcome. */
-    a.packet=0x10000;a.bytes=16;CHECK(cuis_receipt_test_prepare(&a)==E_OK);complete_receipt_child(&a,12);
+    a.packet=0x10000;a.bytes=16;CHECK(cuis_receipt_test_prepare(&a)==E_OK);complete_receipt_child(&a,13);
     find_handle(destination)->stream_bytes=CUIS_STREAM_BYTES;
     CHECK(cuis_receipt_test_commit(&a)==EAGAIN);query=query_identity(a);query.packet=0;
     CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_PREPARED);
@@ -174,7 +207,7 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_BOUND);
     CHECK(cuis_receipt_test_prepare(&a)==E_OK);
     memset(stream_input,0x44,16);CHECK(cuis_receipt_test_prepare(&a)==EACCDN);
-    complete_receipt_child(&a,13);cancel_pending=TRUE;
+    complete_receipt_child(&a,14);cancel_pending=TRUE;
     CHECK(cuis_receipt_test_commit(&a)==EACCDN && !find_handle(replacement)->stream_bytes);
     cancel_pending=FALSE;CHECK(cuis_receipt_test_ack(&a)==EIHNDL);
     CHECK(cuis_receipt_test_commit(&a)==16);
@@ -187,6 +220,32 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_commit(&a)==16 && find_handle(replacement)->stream_bytes==before &&
           proc_exec_handle_close((KPROC *)run,a.tag)==EIHNDL && cuis_receipt_test_reclaim(&a)==E_OK);
     CHECK(!receipt_active && receipt_import_count==receipt_release_count);
+    /* Retire each transport state with an independently retained endpoint.
+     * Retirement drops transport entitlement, never generic PROCESS rights or
+     * bytes already committed to the unrelated receiver. */
+    run=&second;CHECK(cuis_stream_service(CUIS_STREAM_READ,replacement,0x20000,16,0,0)==16);run=&first;
+    for (j=0;j<5;j++) {
+        CUIS_CLIENT *held;
+        KSCHED_CLEANUP_SCOPE scope={0};
+        extra=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(extra>=0);
+        CHECK(cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&c)>0);
+        if(j) {
+            memset(stream_input,0x70+j,16);c.packet=0x10000;c.bytes=16;
+            CHECK(cuis_receipt_test_prepare(&c)==E_OK);
+        }
+        if(j>=2) { complete_receipt_child(&c,20+j);CHECK(cuis_receipt_test_commit(&c)==16); }
+        if(j>=3) CHECK(cuis_receipt_test_ack(&c)==E_OK);
+        if(j==4) CHECK(proc_exec_handle_close((KPROC *)run,c.tag)==E_OK && cuis_receipt_test_reclaim(&c)==E_OK);
+        held=owned_client(extra);CHECK(client_get(held));
+        CHECK(cuis_service(CUIS_SESSION_END,extra)==E_OK && held->retired && !held->receipt_table);
+        query=query_identity(c);CHECK(cuis_receipt_test_query(&query)==EACCDN);
+        CHECK(proc_exec_handle_close((KPROC *)run,c.tag)==(j==4 ? EIHNDL:E_OK));
+        if(j>=2) {
+            run=&second;CHECK(cuis_stream_service(CUIS_STREAM_READ,replacement,0x20000,16,0,0)==16 && stream_output[0]==0x70+j);run=&first;
+        }
+        ksched_cleanup_begin(&scope);client_put(held);ksched_cleanup_end(&scope);
+        CHECK(!receipt_active && !find_handle(replacement)->stream_bytes);
+    }
     /* Exhaust actual fixed tables and all 256 active slots. Empty generation
      * fences remain charged; no allocator pressure may evict them. */
     quota_sources[0]=source;

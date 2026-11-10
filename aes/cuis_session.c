@@ -123,6 +123,7 @@ typedef struct cuis_client {
     UQUAD stream_sequence;
 #if CONF_WITH_CUIS_RECEIPT_TEST
     struct cuis_receipt_table *receipt_table;
+    ULONG receipt_observations; /* Import envelopes, including preflight/unwind. */
 #endif
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
     ULONG stream_head, stream_bytes;
@@ -1628,7 +1629,7 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->stream_read = client->stream_write = NULL; client->stream_sequence = 0;
         client->stream_data = NULL;
 #if CONF_WITH_CUIS_RECEIPT_TEST
-        client->receipt_table = NULL;
+        client->receipt_table = NULL; client->receipt_observations = 0;
 #endif
         client->stream_head = client->stream_bytes = 0;
         client->button_sequence = 0; client->button_policy = 1;
@@ -2504,6 +2505,17 @@ static ULONG observer_wait_leases;
 ULONG cuis_observer_test_leases(void) { return observer_wait_leases; }
 #endif
 
+#if CONF_WITH_CUIS_RECEIPT_TEST
+/* The caller still retains client. Keep the fence until all imported
+ * canonical references have actually been released outside exclusion. */
+static void receipt_observation_end(CUIS_CLIENT *client)
+{
+    UQUAD flags=cuis_input_lock();
+    client->receipt_observations--;
+    cuis_input_unlock(flags);
+}
+#endif
+
 typedef struct {
     CUIS_CLIENT *client;
     ULONG events, minimum, start, duration;
@@ -2516,6 +2528,9 @@ typedef struct {
     KPROC *owner;
     PROCESS_OBSERVER *observers[16];
     ULONG observer_count;
+#endif
+#if CONF_WITH_CUIS_RECEIPT_TEST
+    BOOL receipt_observing;
 #endif
 } CUIS_SESSION_WAIT_STATE;
 
@@ -2733,6 +2748,9 @@ static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG
         process_observer_release(&wait->observers[--wait->observer_count]);
     }
 #endif
+#if CONF_WITH_CUIS_RECEIPT_TEST
+    if (wait->receipt_observing) receipt_observation_end(client);
+#endif
     if (client) client_put(client);
 #if CONF_WITH_CUIS_OBSERVER_TEST
     if (wait->owner) kproc_release(wait->owner);
@@ -2837,6 +2855,12 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1) : 0;
 #if CONF_WITH_CUIS_OBSERVER_TEST
     if (observer_count) {
+#if CONF_WITH_CUIS_RECEIPT_TEST
+        if (client->receipt_observations==0xffffffffUL)
+            return finish_session_wait(&wait,flags,EAGAIN,FALSE);
+        client->receipt_observations++;
+        wait.receipt_observing=TRUE;
+#endif
         cuis_input_unlock(flags);
         ready=kproc_copy_from_user_checked(handles,observer_address,(ULONG)observer_count*4);
         /* Validate the complete copied array before taking the first lease. */

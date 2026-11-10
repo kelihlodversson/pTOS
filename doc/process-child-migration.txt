@@ -637,10 +637,35 @@ THREAD fault boundary, not arbitrary kernel callback/fatal-unwind safety.
 The production-C hosted fixture additionally fills all 256 active attempts and
 16 fixed tables, checks exhaustion before publication, reclaims all attempts,
 and proves empty generation fences still consume table quota. It checks a
-negative consumed CLOSE cannot reopen publication. Native interrupted ACK,
-CLOSE/destructor faults, retirement at every receipt state and exhaustive alias/
-lease overlap cases remain acceptance work. The source must receive independent
-review of the ordinary BIND-to-COMMIT IRQ boundary and full runtime contract.
+negative consumed CLOSE cannot reopen publication. RECLAIM now authenticates the
+source's retained PROCESS, probes its non-recycled generic right outside GUI
+exclusion, and requires EIHNDL (consumed right) before revalidating the exact
+endpoint/slot/generation. An open right returns EACCDN. A per-endpoint operation
+fence covers SESSION_WAIT preflight/import through final lease release and all
+receipt FIFO import/release envelopes; while any such operation is outstanding,
+RECLAIM returns EAGAIN. This conservatively fences all imported observations on
+that endpoint, rather than guessing which independent alias has settled. The
+fence is decremented only after actual canonical releases outside exclusion,
+including failed import/copy/cancellation and retired-endpoint cleanup. It is
+transport metadata, not an observer/status registry or generic CLOSE callback.
+Only committed ASYNC rights created by this helper enter this protocol; deferred
+predecessor destruction must not be added to its bounded BIND/COMMIT interval.
+
+Hosted production tests cover open-right rejection, real wait import/unwind,
+reclaim attempted during last lease release, error-consuming CLOSE, retirement
+at all five states and exact resources. Negative controls restore the redundant
+ring allocation, unrestricted right reclaim or premature lease reclaim; each
+must fail the unchanged strengthened assertions. Native MEMTEST checks actual
+CLOSE during a retained SESSION_WAIT followed by successful reclaim only after
+unwind, source retirement in BOUND/PREPARED/COMMITTED/ACKNOWLEDGED/RECLAIMED, and
+preserved committed receiver bytes/public wait results. The SAME_PROCESS fault
+fixture runs three times: actual ring-3 UD2 after COMMIT, after ACK before CLOSE,
+and after CLOSE before RECLAIM. Each survivor joins the publisher, recovers the
+tombstone, drains/retries without duplication and restores the outer baseline.
+These are native trusted-C prototype entry points plus user THREAD execution,
+not a public receipt trap/decoder or legacy console-launch integration proof.
+Arbitrary kernel/destructor-fault unwind remains unsupported. Independent review
+and exact-head compatibility/CI acceptance remain required before integration.
 Public activation has a separate acceptance gate and is not blocked by this GUI
 prototype. K5 remains the built-in single-CPU, non-preemptive no-yield/no-mapping-
 reentry backing provider; no arbitrary callback/unwind, preemption or SMP claim.

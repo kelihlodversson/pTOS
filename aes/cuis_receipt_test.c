@@ -69,7 +69,7 @@ LONG cuis_receipt_test_launch(ULONG source_id,ULONG destination_id,ULONG index,
     UQUAD flags,key;
     ULONG i;
     LONG right=0,result=EINVAL;
-    BOOL installed=FALSE;
+    BOOL installed=FALSE,need_storage=FALSE;
     if (!out || index>=RECEIPT_SLOTS) return EINVAL;
     ksched_cleanup_begin(&cleanup);
     owner=kproc_retain(run);
@@ -89,14 +89,21 @@ LONG cuis_receipt_test_launch(ULONG source_id,ULONG destination_id,ULONG index,
     }
     if (!client_get(source)) { source=destination=NULL; result=EAGAIN; cuis_input_unlock(flags); goto done; }
     if (!client_get(destination)) { destination=NULL; result=EAGAIN; cuis_input_unlock(flags); goto done; }
+    need_storage=destination->stream_data==NULL;
     cuis_input_unlock(flags);
-    /* Reserve all fallible transport storage before exposing the entitlement. */
-    storage=kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
-    if (!storage) { result=ENSMEM; goto done; }
+    /* Existing rings remain owned by the retained destination. Only prepare
+     * missing storage; memory pressure must not reject a reusable live ring. */
+    if (need_storage) {
+        storage=kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
+        if (!storage) { result=ENSMEM; goto done; }
+    }
     flags=cuis_input_lock();
     if (source->retired || destination->retired || owned_client(source_id)!=source ||
         find_handle(destination_id)!=destination || ksched_cancellation_pending()) {
         result=EACCDN; cuis_input_unlock(flags); goto done;
+    }
+    if (!destination->stream_data && !storage) {
+        result=EAGAIN; cuis_input_unlock(flags); goto done;
     }
     table=source->receipt_table;
     if (!table) {
@@ -207,6 +214,7 @@ LONG cuis_receipt_test_commit(const CUIS_RECEIPT_TEST_RECORD *record)
     UWORD *senders;
     PROCESS_COMPLETION completion;
     LONG result=EACCDN;
+    BOOL observing=FALSE;
     ksched_cleanup_begin(&cleanup);
     owner=kproc_retain(run);
     if (!owner) goto done;
@@ -219,6 +227,8 @@ LONG cuis_receipt_test_commit(const CUIS_RECEIPT_TEST_RECORD *record)
     if (slot->committed) { result=(LONG)slot->bytes; source=NULL; cuis_input_unlock(flags); goto done; }
     if (slot->state!=CUIS_RECEIPT_PREPARED) { source=NULL; result=EAGAIN; cuis_input_unlock(flags); goto done; }
     if (!client_get(source)) { source=NULL; result=EAGAIN; cuis_input_unlock(flags); goto done; }
+    if (source->receipt_observations==0xffffffffUL) { result=EAGAIN; cuis_input_unlock(flags); goto done; }
+    source->receipt_observations++; observing=TRUE;
     for (i=0;i<RECEIPT_SLOTS;i++) {
         CUIS_RECEIPT_SLOT *entry=&source->receipt_table->slots[i];
         states[i]=entry->state; generations[i]=entry->generation;
@@ -275,6 +285,7 @@ LONG cuis_receipt_test_commit(const CUIS_RECEIPT_TEST_RECORD *record)
     cuis_input_unlock(flags);
  done:
     for (i=0;i<RECEIPT_SLOTS;i++) if (leases[i]) process_observer_release(&leases[i]);
+    if (observing) receipt_observation_end(source);
     if (source) client_put(source);
     if (owner) kproc_release(owner);
     ksched_cleanup_end(&cleanup); return result;
@@ -292,14 +303,46 @@ LONG cuis_receipt_test_ack(const CUIS_RECEIPT_TEST_RECORD *record)
 }
 LONG cuis_receipt_test_reclaim(const CUIS_RECEIPT_TEST_RECORD *record)
 {
+    KSCHED_CLEANUP_SCOPE cleanup={0};
+    KPROC *owner=NULL;
+    PROCESS_OBSERVER *probe=NULL;
+    CUIS_CLIENT *source=NULL;
     CUIS_RECEIPT_SLOT *slot;
+    ULONG tag;
+    UQUAD flags;
     LONG result=EIHNDL;
-    UQUAD flags=cuis_input_lock();
-    slot=receipt_exact(receipt_source(record),record);
-    if (slot) {
-        if (slot->state==CUIS_RECEIPT_RECLAIMED) result=E_OK;
-        else if (slot->state==CUIS_RECEIPT_COMMITTED) result=EACCDN;
-        else { slot->state=CUIS_RECEIPT_RECLAIMED; receipt_active--; result=E_OK; }
+    ksched_cleanup_begin(&cleanup);
+    owner=kproc_retain(run);
+    if (!owner) { result=EACCDN; goto done; }
+    flags=cuis_input_lock();
+    source=receipt_source(record); slot=receipt_exact(source,record);
+    if (!slot || source->process!=owner) { source=NULL; cuis_input_unlock(flags); goto done; }
+    if (slot->state==CUIS_RECEIPT_RECLAIMED) {
+        source=NULL; result=E_OK; cuis_input_unlock(flags); goto done;
     }
-    cuis_input_unlock(flags); return result;
+    if (slot->state==CUIS_RECEIPT_COMMITTED) {
+        source=NULL; result=EACCDN; cuis_input_unlock(flags); goto done;
+    }
+    if (!client_get(source)) { source=NULL; result=EAGAIN; cuis_input_unlock(flags); goto done; }
+    tag=slot->tag;
+    cuis_input_unlock(flags);
+    /* BIND creates only committed ASYNC rights. Their scalar never recycles;
+     * EIHNDL proves CLOSE consumed it, including an error-returning CLOSE.
+     * Import/release outside GUI exclusion; generic CLOSE has no GUI callback. */
+    result=proc_exec_retain_observer(owner,tag,FALSE,&probe);
+    if (!result) { result=EACCDN; goto done; }
+    if (result!=EIHNDL) goto done;
+    flags=cuis_input_lock(); slot=receipt_exact(source,record);
+    if (source->retired || owned_client(record->source)!=source || !slot) result=EACCDN;
+    else if (slot->state==CUIS_RECEIPT_RECLAIMED) result=E_OK;
+    else if (slot->state==CUIS_RECEIPT_COMMITTED) result=EACCDN;
+    else if (source->receipt_observations) result=EAGAIN;
+    else { slot->state=CUIS_RECEIPT_RECLAIMED; receipt_active--; result=E_OK; }
+    cuis_input_unlock(flags);
+ done:
+    if (probe) process_observer_release(&probe);
+    if (source) client_put(source);
+    if (owner) kproc_release(owner);
+    ksched_cleanup_end(&cleanup);
+    return result;
 }
