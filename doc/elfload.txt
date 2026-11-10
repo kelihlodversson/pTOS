@@ -62,19 +62,22 @@ Mmap, including pending PE_LOAD images. See doc/x86_64-address-space.txt.
 The loader accepts a statically linked, native-endian ELF32 for the machine
 it was built for, in either of two forms:
 
-  1. A fixed base ET_EXEC linked with "ld --emit-relocs" (ld -q).  Normally
-     ld consumes and discards relocations at link time; -q keeps them in the
-     final binary so the loader can re-apply them at a different base.
+  1. A fixed base ET_EXEC. If it must run at a different address, link with
+     "ld --emit-relocs" (ld -q). Normally ld consumes and discards relocations
+     at link time; -q keeps them so the loader can re-apply them at another
+     base. With per-process address spaces, an ET_EXEC that stays at its
+     linked address needs neither relocation entries nor section headers.
 
   2. A position independent ET_DYN (PIE), linked with
      "ld -pie --no-dynamic-linker".  A PIE carries only the additive
      R_*_RELATIVE dynamic relocations it actually needs, and a program that
      stores no absolute pointer in its initialised data needs none at all.
 
-In both cases the relocation entries are read from the section headers, so
-the binary must keep them: do not strip it (no "strip", no "ld -s").  A
-binary that must be relocated but has no usable section header table is
-rejected.  Both ELF relocation encodings are applied: REL sections
+In the section-based relocation format the entries are read from section
+headers, so a binary that needs these relocations must keep them (no
+"strip", no "ld -s"). Missing usable relocation information when rebasing
+is required is rejected. The compact program-header format below is another
+way to retain it. Both ELF relocation encodings are applied: REL sections
 (SHT_REL), which ARM emits with the addend stored in the target word, and
 RELA sections (SHT_RELA), which m68k emits with an explicit addend field.
 
