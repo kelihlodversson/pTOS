@@ -72,13 +72,7 @@ struct aspace {
 #define PTE_FILE 0x400ULL
 /* Every record owns one physical page and a backing-object reference.
  * references counts mapped PTEs; the final PTE drops both page and record. */
-typedef struct file_page {
-    struct file_page *next;
-    FILE_BACKING *backing;
-    UQUAD physical, first_root;
-    ULONG offset, references;
-} FILE_PAGE;
-static FILE_PAGE *file_pages;
+#include "aspace_file_index.h"
 static ULONG file_page_count, file_page_refs, file_cross_shares;
 
 ULONG aspace_file_cross_shares(void) { return file_cross_shares; }
@@ -87,11 +81,11 @@ ULONG aspace_file_references(void) { return file_page_refs; }
 
 static void file_page_put(UQUAD physical)
 {
-    FILE_PAGE **link = &file_pages, *p;
-    while ((*link)->physical != physical) link = &(*link)->next;
-    p = *link; file_page_refs--;
+    FILE_PAGE *p = file_page_find(physical);
+    if (!p || !p->references) panic("missing file page reference");
+    file_page_refs--;
     if (--p->references) return;
-    *link = p->next; file_page_count--;
+    file_page_unpublish(p); file_page_count--;
     x86_64_pmem_free_pages(physical, 1);
     fileback_put(p->backing); kfree(p);
 }
@@ -644,9 +638,9 @@ int aspace_fault_file(ASPACE *as, UQUAD va, FILE_BACKING *backing, ULONG offset,
         old = *pte & PTE_ADDR;
     }
     if (!kaspace_mapping_change(as, va, X86_64_PAGE_SIZE)) return 2;
-    for (p = file_pages; p; p = p->next)
-        if ((old && p->physical == old) ||
-            (!old && p->backing == backing && p->offset == offset)) break;
+    if (old) p = file_page_find(old);
+    else for (p = file_pages; p; p = p->next)
+        if (p->backing == backing && p->offset == offset) break;
     /* A shared-page hit may still need new page tables and bookkeeping. */
     if (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST) return 2;
     if (!copy && p) {
@@ -678,7 +672,7 @@ int aspace_fault_file(ASPACE *as, UQUAD va, FILE_BACKING *backing, ULONG offset,
     pte = x86_64_user_pte(as->pml4_phys, va);
     *pte |= X86_64_PTE_OWNED;
     if (!copy) {
-        *pte |= PTE_FILE; p->next = file_pages; file_pages = p;
+        *pte |= PTE_FILE; file_page_publish(p);
         fileback_hold(backing); file_page_count++; file_page_refs++;
     }
     if (old) file_page_put(old);
@@ -1090,8 +1084,8 @@ static BOOL cow_map(ASPACE *as, VADDR va, PADDR physical, UWORD prot, BOOL owned
 static LONG cow_file_leaf(ASPACE *child, VADDR va, PADDR physical, UWORD protection)
 {
 #if CONF_WITH_MMAP
-    FILE_PAGE *page;
-    for (page = file_pages; page; page = page->next) if (page->physical == physical) {
+    FILE_PAGE *page = file_page_find(physical);
+    if (page) {
         if (page->references == ~(ULONG)0 || file_page_refs == ~(ULONG)0) return EAGAIN;
         if (!cow_map(child, va, physical, protection & ~ASPACE_PROT_WRITE, TRUE)) return ENSMEM;
         *x86_64_user_pte(child->pml4_phys, va) |= PTE_FILE;
@@ -1132,7 +1126,8 @@ LONG aspace_clone(ASPACE *source, ASPACE **out)
                 UWORD prot;
                 aspace_translate(source, va, NULL, &prot);
                 error = cow_clone_leaf(source, child, va, l1[i1] & PTE_ADDR, prot,
-                                      (l1[i1] & X86_64_PTE_OWNED) != 0);
+                                      (l1[i1] & X86_64_PTE_OWNED) != 0,
+                                      (l1[i1] & PTE_FILE) != 0);
                 if (error) goto failed;
             }
         }

@@ -143,41 +143,22 @@ ASPACE *aspace_create(void)
  * backends keep no flag for it.  Such a leaf is never writable -- a write
  * fault copies the page first (aspace_fault_file()).
  */
-typedef struct file_page {
-    struct file_page *next;
-    FILE_BACKING *backing;
-    PADDR physical, first_root;
-    ULONG offset, references;
-} FILE_PAGE;
-
-static FILE_PAGE *file_pages;
+#include "aspace_file_index.h"
 static ULONG file_page_count, file_page_refs, file_cross_shares;
 
 ULONG aspace_file_cross_shares(void) { return file_cross_shares; }
 ULONG aspace_file_pages(void) { return file_page_count; }
 ULONG aspace_file_references(void) { return file_page_refs; }
 
-static FILE_PAGE *file_page_find(PADDR physical)
-{
-    FILE_PAGE *p;
-
-    for (p = file_pages; p; p = p->next)
-        if (p->physical == physical)
-            return p;
-    return NULL;
-}
-
 static void file_page_put(PADDR physical)
 {
-    FILE_PAGE **link = &file_pages, *p;
+    FILE_PAGE *p = file_page_find(physical);
 
-    while ((*link)->physical != physical)
-        link = &(*link)->next;
-    p = *link;
+    if (!p || !p->references) panic("missing file page reference");
     file_page_refs--;
     if (--p->references)
         return;
-    *link = p->next;
+    file_page_unpublish(p);
     file_page_count--;
     pmem32_free(physical, 1);
     fileback_put(p->backing);
@@ -694,10 +675,9 @@ int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
         old = current;
     }
     if (!kaspace_mapping_change(as, va, PAGE)) return 2;
-    for (p = file_pages; p; p = p->next)
-        if (old != PMEM32_NONE ? p->physical == old
-                               : (p->backing == backing && p->offset == offset))
-            break;
+    if (old != PMEM32_NONE) p = file_page_find(old);
+    else for (p = file_pages; p; p = p->next)
+        if (p->backing == backing && p->offset == offset) break;
     /* A shared-page hit may still need new page tables and bookkeeping. */
     if (pmem32_free_bytes() < ASPACE_RESERVE + ASPACE_COST)
         return 2;
@@ -746,8 +726,7 @@ int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
         return 2;
     }
     if (!copy) {
-        p->next = file_pages;
-        file_pages = p;
+        file_page_publish(p);
         fileback_hold(backing);
         file_page_count++;
         file_page_refs++;
@@ -1106,7 +1085,7 @@ static void clone_leaf(VADDR va, PADDR physical, UWORD flags, void *argument)
         walk->error = EIMBA; return;
     }
     walk->error = cow_clone_leaf(walk->source, walk->child, va, physical, protection,
-                                (flags & ASPACE_LEAF_OWNED) != 0);
+                                (flags & ASPACE_LEAF_OWNED) != 0, TRUE);
 }
 LONG aspace_clone(ASPACE *source, ASPACE **out)
 {

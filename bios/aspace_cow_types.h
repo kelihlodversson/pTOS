@@ -1,13 +1,7 @@
 /* Private anonymous COW metadata. Included once by the selected MMU core.
  * Hardware descriptors and allocation mechanics remain in that core. */
+#include "aspace_index.h"
 #if CONF_WITH_PRIVATE_CLONE
-/* Intrusive AVL indexes: bounded logarithmic lookup without extra allocation.
- * The mapping list remains only the linear commit/rollback iteration view. */
-struct cow_index {
-    UQUAD key;
-    struct cow_index *left, *right;
-    UWORD height;
-};
 struct cow_frame {
     struct cow_index index;
     PADDR physical;

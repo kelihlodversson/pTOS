@@ -5,10 +5,14 @@
 #include "procmem.h"
 #include "kheap.h"
 #include "kaspace.h"
+#include "fileback.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+static ULONG index_visits;
+#define COW_INDEX_VISIT() (index_visits++)
+void panic(const char *format, ...);
 #include "../bios/aspace_cow_types.h"
 #define N 16386
 struct leaf { PADDR physical; UWORD prot; BOOL present, owned; };
@@ -16,8 +20,6 @@ struct aspace { struct leaf leaves[N]; struct cow_mapping *cow; struct cow_index
 static UBYTE ram[N][4096];
 static BOOL allocated[N], fail_page, fail_map;
 static ULONG allocations, frees, flushes, live_pages, fail_allocation;
-static ULONG index_visits;
-#define COW_INDEX_VISIT() (index_visits++)
 void panic(const char *format, ...) { (void)format; abort(); }
 void *kalloc(ULONG bytes)
 {
@@ -68,8 +70,17 @@ static BOOL cow_replace(ASPACE *as,VADDR va,PADDR p,UWORD prot)
     as->leaves[va/4096].physical=p; as->leaves[va/4096].prot=prot; return TRUE;
 }
 static void cow_flush(const ASPACE *as) { (void)as; flushes++; }
+#include "../bios/aspace_file_index.h"
+static ULONG file_queries;
+static BOOL file_hint=TRUE;
 static LONG cow_file_leaf(ASPACE *as,VADDR va,PADDR p,UWORD prot)
-{ (void)as;(void)va;(void)p;(void)prot;return 1; }
+{
+    (void)as;(void)va;(void)prot;
+    file_queries++;
+    /* These stress-cache records are unrelated to the modeled RAM leaves. */
+    assert(!file_page_find(p));
+    return 1;
+}
 #include "../bios/aspace_cow.h"
 void aspace_destroy(ASPACE *as)
 {
@@ -92,7 +103,7 @@ LONG aspace_clone(ASPACE *source,ASPACE **out)
     child=clone_allocate(sizeof(*child)); if(!child)return ENSMEM;
     for(i=0;i<N;i++) if(source->leaves[i].present) {
         struct leaf *leaf=&source->leaves[i];
-        error=cow_clone_leaf(source,child,i*4096,leaf->physical,leaf->prot,leaf->owned);
+        error=cow_clone_leaf(source,child,i*4096,leaf->physical,leaf->prot,leaf->owned,file_hint);
         if(error) { aspace_destroy(child);cow_finish_source(source,FALSE);return error; }
     }
     cow_finish_source(source,TRUE); *out=child;return E_OK;
@@ -160,8 +171,8 @@ static void populated_clone(unsigned count)
     assert(!cow_frames);
     aspace_destroy(child);
     assert(!cow_frames && !cow_frame_count && !cow_reference_count && !live_pages);
-    printf("Indexed COW clone %u populated pages: %lu metadata visits, exact reclamation PASS\n",
-           count,(unsigned long)visits);
+    printf("Indexed COW clone %u populated pages: %lu metadata visits (file hint %d), exact reclamation PASS\n",
+           count,(unsigned long)visits,file_hint);
 }
 int main(void)
 {
@@ -227,6 +238,36 @@ int main(void)
     assert(!cow_frame_count && !cow_reference_count && !live_pages && allocations==frees && flushes);
     populated_clone(1024);
     populated_clone(16384);
+    {
+        unsigned i;
+        ULONG queries;
+        FILE_PAGE **cache=calloc(16384,sizeof(*cache));
+        assert(cache);
+        /* Production cache index with16384 unrelated metadata records, not
+         * modeled allocated physical pages or real filesystem ownership. */
+        for(i=0;i<16384;i++) {
+            FILE_PAGE *page=kalloc(sizeof(*page)); assert(page);
+            page->physical=((UQUAD)1<<40)+(UQUAD)i*4096;
+            page->references=1; cache[i]=page; file_page_publish(page);
+        }
+        assert(check_index(file_page_index,0,((UQUAD)1<<41))==16384);
+        queries=file_queries;
+        populated_clone(1024); populated_clone(16384);
+        assert(file_queries-queries==2UL*(1024+16384));
+        /* x32's authoritative non-FILE PTE hint skips cache lookup entirely. */
+        file_hint=FALSE; queries=file_queries;
+        populated_clone(1024); populated_clone(16384);
+        assert(file_queries==queries);
+        for(i=0;i<16384;i++) {
+            unsigned slot=(i*4051UL)&16383;
+            FILE_PAGE *page=cache[slot];
+            assert(file_page_find(page->physical)==page && *page->previous==page);
+            file_page_unpublish(page); kfree(page);
+            if (!(i&255))
+                assert(check_index(file_page_index,0,((UQUAD)1<<41))==16383-i);
+        }
+        assert(!file_pages && !file_page_index); free(cache);
+    }
     assert(allocations==frees);
     puts("Production COW metadata/refcount/rollback with modeled MMU: PASS");
     return 0;

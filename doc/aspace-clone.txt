@@ -112,3 +112,14 @@ quadratic growing-list scans. Production host tests check ordering, heights,
 permuted deletion, rollback and final reclamation, and count metadata visits
 for1024 and16384 populated pages. They model leaves/physical RAM and do not
 claim native MMU/TLB timing measurements.
+
+Cached file-page physical identities use the same intrusive AVL implementation
+as anonymous COW metadata. The existing backing+offset reuse list remains a
+non-owning iteration view; final physical removal unpublishes both views before
+freeing the page/backing. x32 forwards the source PTE_FILE bit, so anonymous
+clone leaves bypass the cache entirely. ARM/m68k have no such descriptor bit
+and perform logarithmic physical lookup. Host metadata tests retain16384
+unrelated cache records, count clone work, exercise zero-query x32 anonymous
+hints and permuted cache teardown. They do not model filesystem I/O or claim
+native timing measurements; native mixed file/anonymous tests cover backend
+flag, backing reference and final-page release integration.
