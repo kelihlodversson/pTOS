@@ -1547,6 +1547,7 @@ void pclone_run_managed_tests(void)
         conws("m68k FPIAR write/read is not modeled; observable value preserved\r\n");
 #endif
     if (!ptest_failures()) {
+        conws("native Pclone ABI prefix/flags/pointers/atomic outputs: PASS\r\n");
 #if defined(__mc68000__)
         if (has_fpu && clone_fpu_expected_iar == 0x12345678UL)
             conws("native m68k nonzero FPIAR: PASS\r\n");

@@ -96,7 +96,7 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
     file = Fcreate("C:\\PCLABI.TMP",0);
     ptest_assert_msg(file >= 6,"resource-copy fixture file");
     if (file < 6) { (void)Fclose(saved); return; }
-    ptest_assert_msg(Dcreate("C:\\PCLABI") == 0 && Dsetpath("C:\\PCLABI") == 0 &&
+    ptest_assert_msg(Dsetpath("C:\\TESTS") == 0 &&
                      Dgetpath(phase1_parent_path,3) == 0 && Fwrite(file,2,"AB") == 2 &&
                      Fseek(0,file,0) == 0 && Fforce(0,file) == 0,
                      "prepare independent standard-handle and CWD policy");
@@ -117,7 +117,7 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
     }
     phase1_resources = 0;
     ptest_assert_msg(Fforce(0,saved) == 0 && Fclose(saved) == 0 && Fclose(file) == 0 &&
-                     Dsetpath("C:\\") == 0 && Ddelete("C:\\PCLABI") == 0 &&
+                     Dsetpath("C:\\") == 0 &&
                      Fdelete("C:\\PCLABI.TMP") == 0,"resource-copy fixture once-only cleanup");
 }
 
@@ -328,5 +328,5 @@ static void test_public_contract(unsigned char *stack)
     phase1_mapping_matrix(good,stack);
 #endif
     ptest_assert_msg(Prusage(usage) == 0 && usage[4] == baseline,"Phase1 failed/successful traps restore mapped-page baseline");
-    if (!ptest_failures()) conws("native Pclone ABI prefix/flags/pointers/atomic outputs: PASS\r\n");
+    conws("native Pclone ABI prefix/flags/pointers/atomic outputs: tested\r\n");
 }

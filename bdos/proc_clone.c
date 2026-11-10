@@ -1,4 +1,4 @@
-/* Trusted construction; runnable SAME_PROCESS startup remains gated. */
+/* Trusted PROCESS/THREAD construction; public policy lives in clone.c. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "biosext.h"
