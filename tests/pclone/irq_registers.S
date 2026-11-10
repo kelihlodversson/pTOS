@@ -224,8 +224,10 @@ clone_irq_registers:
         cmp r1,#0
         bne 2f
         ldr r1,[sp,#4]
-        ldr r12,=0x71307132
-        cmp r1,r12
+        /* r0 is already checked. Never reinstall the IRQ-window marker in
+         * r12 while r1 holds a comparison value rather than the loop count. */
+        ldr r0,=0x71307132
+        cmp r1,r0
         bne 2f
         ldr r12,=0x7130713e
         cmp lr,r12

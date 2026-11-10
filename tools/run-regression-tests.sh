@@ -595,12 +595,14 @@ fi
 
 # Generation publication in the check-to-block window must reject sleeping.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native completion sequence check/block retry: PASS' "$suite_log"; then
     record "native completion sequence" FAIL "check/block sequence assertion did not execute"
 fi
 
 # A generation change after BLOCKED must wake even if readiness is now false.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native owner generation wake with false predicate: PASS' "$suite_log"; then
     record "native owner generation wake" FAIL "blocked owner-generation assertion did not execute"
 fi
@@ -648,6 +650,7 @@ esac
 
 if [ "$machine" = pc-x86_64 ] &&
    grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
    grep -Eq '^#define CONF_WITH_(EXIT_HANDOFF_TEST|X86_64_MEMTEST) 1' "$top/obj/autoconf.h"; then
     if ! grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$suite_log"; then
         record "native user IRQ capture" FAIL "real ring-3 register pattern was not captured"
