@@ -50,6 +50,18 @@ config CONF_WITH_NATIVE_SCHED
       Scheduling is cooperative and does not require CUIS or external libaes.
 
 
+config CONF_WITH_PROCESS_EXEC_TEST
+    bool "TEST ONLY: PROCESS Ssystem transport (activation not accepted)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM
+    default n
+    help
+      Opt-in validation kernel for the unpublished S_PROCEXEC (-9) adapter.
+      Never enabled by a normal preset; S_INQUIRE still reports EINVFN.
+      This is not approval for ordinary application use. Final filesystem,
+      lifecycle, native trap and activation review gates remain required.
+      No CUIS registration, polling, preemption or SMP is implied.
+
+
 config CONF_WITH_PTERMGRP
     bool "Cooperative PROCESS group termination"
     depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE

@@ -57,6 +57,9 @@
 #include "../../../bdos/proc_clone.h"
 #include "../../../bdos/process_observer.h"
 #include "../../../bdos/process_exec_internal.h"
+#if CONF_WITH_PROCESS_EXEC_TEST
+#include "../../../bdos/ssystem.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
 #include "../../../bdos/arch/x86_64/thread_return_x32.h"
@@ -2615,6 +2618,15 @@ static void test_native_exec_request(KPROC *owner)
         CHECK(kproc_copy_from_user_checked(&byte,data+PAGE,1)==E_OK && !byte,
               "lazy backing failure leaves a valid retryable user range");
     }
+#if CONF_WITH_PROCESS_EXEC_TEST
+    CHECK(xssystem(S_INQUIRE,S_PROCEXEC,0)==EINVFN,
+          "test-only PROCESS dispatch is never advertised");
+    CHECK(xssystem(S_PROCEXEC,(long)0x100001000ULL,72)==EIMBA &&
+          xssystem(S_PROCEXEC,0x1000,(long)0x100000048ULL)==EINVAL &&
+          xssystem(S_PROCEXEC,0x1000,-1L)==EINVAL,
+          "LP64 Ssystem preserves high pointer and length bits before validation");
+#endif
+
     CHECK((LONG)data>0,"map actual user PROCESS request and arguments");
     if ((LONG)data<=0) return;
     lazy_environment=kproc_mmap(run,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);

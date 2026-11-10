@@ -50,7 +50,7 @@ jobs:
       - name: Install the host and x32 test packages
         uses: ./.github/actions/apt-install
         with:
-          packages: gcc-multilib qemu-system-x86 ovmf dosfstools mtools
+          packages: gcc-multilib gcc-13 qemu-system-x86 ovmf dosfstools mtools
       - name: Install the test tools for Python
         run: |
           python3 -m venv /tmp/elf-shared-venv
@@ -65,6 +65,11 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-fs-close.py
       - name: Test PROCESS-owned launch rights
         run: /tmp/elf-shared-venv/bin/python tools/test-process-exec-handles.py
+      - name: Test unpublished PROCESS dispatch and native-width ownership
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
       - name: Execution cleanup guard ownership
         run: /tmp/elf-shared-venv/bin/python tools/test-cleanup-guard.py
       - name: Test PROCESS-owned PFS directory preparation
