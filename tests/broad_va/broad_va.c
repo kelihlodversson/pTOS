@@ -5,9 +5,18 @@
 #include "test.h"
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#include <stdio.h>
 #include "include/mmapcall.h"
 
 void test_broad_va(void);
+
+static void expect_probe(long rc, const char *what)
+{
+    char text[120];
+
+    sprintf(text, "%s (%ld)", what, rc);
+    ptest_assert_msg(rc == 0, text);
+}
 
 static void run_high(void)
 {
@@ -22,7 +31,7 @@ static void run_high(void)
     *(volatile long *)address = 0x12345678L;
     for (i = 0; i < 3; i++) {
         rc = Pexec(PE_LOADGO, "C:\\HIIMAGE.TOS", "", 0);
-        ptest_assert_msg(rc == 0, "high ET_EXEC / low RAM direct probe failed");
+        expect_probe(rc, "high ET_EXEC / low RAM direct probe");
         ptest_assert_msg(*(volatile long *)address == 0x12345678L,
                          "a child's low mapping changed the parent's memory");
         bp = (BASEPAGE *)Pexec(PE_LOAD, "C:\\HIIMAGE.TOS", "", 0);
@@ -35,7 +44,7 @@ static void run_high(void)
         ptest_assert_msg(mm_map(0x41000000L, 1, PROT_NONE, 1) == -36L,
                          "a pending image's reservation was replaced");
         rc = Pexec(i == 1 ? PE_GO : PE_GO_FREE, "", bp, 0);
-        ptest_assert_msg(rc == 0, "high ET_EXEC split launch failed");
+        expect_probe(rc, "high ET_EXEC split launch");
         if (i == 1) {
             ptest_assert_msg(mm_map(0x41000000L, 1, PROT_NONE, 1) == -36L,
                              "PE_GO lost the caller's image reservation");
@@ -46,6 +55,18 @@ static void run_high(void)
         }
         rc = mm_map(0x41000000L, 1, PROT_NONE, 1);
         ptest_assert_msg(rc == 0x41000000L, "split image reservation leaked");
+        if (rc > 0)
+            mm_unmap(rc, 1);
+    }
+    bp = (BASEPAGE *)Pexec(PE_LOAD, "C:\\HIIMAGE.TOS", "", 0);
+    ptest_assert_msg((long)bp > 0, "discard fixture failed to load");
+    if ((long)bp > 0) {
+        void *env = bp->p_env;
+
+        ptest_assert_msg(Mfree(bp) == 0, "discarding pending high image failed");
+        Mfree(env);
+        rc = mm_map(0x41000000L, 1, PROT_NONE, 1);
+        ptest_assert_msg(rc == 0x41000000L, "discarded high image reservation leaked");
         if (rc > 0)
             mm_unmap(rc, 1);
     }
