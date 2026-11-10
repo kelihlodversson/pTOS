@@ -42,6 +42,23 @@ int main(void)
     fail_disk=FALSE;
     close_files();
     CHECK(freed==2 && !sft[0].f_use && !sft[0].f_cleanup_refs && owner.p_uft[0]<0);
+    /* Service recovery must progress without stealing an independent staged
+     * owner; final shutdown reports that outstanding owner instead. */
+    open_file(); sft[0].f_use=2; sft[0].f_staged_refs=1; fail_disk=TRUE;
+    CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF && sft[0].f_cleanup_refs==1);
+    ticket=result.token; fail_disk=FALSE;
+    close_files();
+    CHECK(freed==2 && sft[0].f_use==1 && sft[0].f_staged_refs==1 &&
+          !sft[0].f_cleanup_refs && shutdown_errors==2);
+    CHECK(fs_cleanup_retry(&ticket,&result)==EIHNDL);
+    {
+        FS_FILE_REFERENCE staged=FS_FILE_REFERENCE_INIT;
+        staged.handle=NUMSTD; staged.incarnation=sft[0].f_incarnation; staged.owned=TRUE;
+        CHECK(fs_reference_close(&staged,TRUE,&result)==E_OK && !staged.owned &&
+              freed==3 && !sft[0].f_staged_refs);
+    }
+    close_files(); CHECK(shutdown_errors==2 && freed==3);
+    puts("Production shutdown recovers service reference without consuming staged owner: PASS (host)");
     puts("Production shutdown: bounded residual failure, unlinked FAT recovery, mixed live/service aliases and exactly once: PASS (host)");
     return 0;
 }

@@ -12,6 +12,14 @@
 #define FS_CLEANUP_INVALIDATED 3
 
 typedef struct { UQUAD incarnation, reference; WORD handle; } FS_CLEANUP_TOKEN;
+struct kproc;
+/* Trusted MOVE-ONLY live owner, not a user capability or residual ticket.
+ * Initialize to zero. Never copy an owned record; storage must survive cleanup. */
+typedef struct { UQUAD incarnation; WORD handle; BOOL owned, closing; } FS_FILE_REFERENCE;
+#define FS_FILE_REFERENCE_INIT { 0, 0, FALSE, FALSE }
+LONG fs_reference_acquire(struct kproc *source, WORD descriptor,
+                          UQUAD expected_incarnation, FS_FILE_REFERENCE *out);
+
 typedef struct {
     LONG error, last_error;
     UWORD disposition;
@@ -32,6 +40,9 @@ typedef struct {
  * callbacks/I/O run outside caller leaf/IRQ/GUI exclusion. No scheduler queue. */
 LONG fs_close_bounded(WORD handle, BOOL dispose, FS_CLOSE_REPORT *report);
 LONG fs_close_once(WORD handle, BOOL cleanup, FS_CLOSE_REPORT *report);
+/* RETAINED leaves owned set; CONSUMED/TRANSFERRED clear it even on error.
+ * Revoked/stale incarnations clear ownership without touching replacement. */
+LONG fs_reference_close(FS_FILE_REFERENCE *reference, BOOL dispose, FS_CLOSE_REPORT *report);
 LONG fs_cleanup_snapshot(const FS_CLEANUP_TOKEN *token, FS_CLEANUP_STATUS *out);
 LONG fs_cleanup_retry(const FS_CLEANUP_TOKEN *token, FS_CLOSE_REPORT *report);
 /* Slot allocation/invalidation and access checks; no allocation or callbacks. */

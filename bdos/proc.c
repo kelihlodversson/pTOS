@@ -385,7 +385,7 @@ static void release_pd_files(PD *r)
     kproc_standard_file_refs(explicit_refs);
     for (i=0;i<OPNFILES;i++)
         explicit_refs[i]=sft[i].f_own==r && sft[i].f_use>0 &&
-            (ULONG)sft[i].f_use>explicit_refs[i]+sft[i].f_cleanup_refs;
+            (ULONG)sft[i].f_use>explicit_refs[i]+sft[i].f_cleanup_refs+sft[i].f_staged_refs;
 #endif
     for (i=0;i<NUMSTD;i++)
         if ((h=PD_UFT(r)[i])>=NUMSTD) {
