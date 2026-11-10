@@ -163,20 +163,21 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  * page tables, so each can use these same addresses for its own private
  * pages.
  *
- *   0x00000000 - 0x001fffff   unmapped (null guard, 2 MiB)
- *   0x00200000 - 0x003fffff   basepage, environment and TPA blocks
- *                             (procmem, X86_64_LOW_TPA_*; shared kernel view)
- *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB), then,
- *                             for a program loaded from a file, the startup
- *                             area USER_IMAGE_SLACK long after it
+ *   0x00000000 - 0x0000ffff   null guard / supervisor-only system vectors
+ *   0x00010000 - 0x07ffffff   ELF images and explicit private mappings
+ *                             (0x00400000 is the default image base)
+ *   0x08000000 - 0x0fffffff   reserved system window, including:
+ *   0x08000000 - 0x0bffffff   x32 framebuffer alias, supervisor-only
+ *   0x0e000000 - 0x0e1fffff   basepage, environment and TPA blocks
+ *                             (procmem; shared kernel view)
  *   0x0f000000 - 0x0ffbffff   optional standard ELF interpreter (Kconfig gated)
  *   0x0ffc0000 - 0x0ffc0fff   optional read-only executable callback stubs
  *   0x0ffd0000 - 0x0ffdffff   optional read-only executable x32 AES client
  *   0x0ffe0000 - 0x0ffeffff   optional read-only executable x32 VDI client;
  *                             private pages, outside image/heap windows
  *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
- *   0x10000000 - 0x7efeffff   Malloc() memory of a process, backed by private
- *                             pages as they are first touched (see below)
+ *   0x10000000 - 0x7effefff   ELF images, mappings and Malloc() memory,
+ *                             backed by private pages (see below)
  *   0x7efff000 - 0x7effffff   guard page: neither heap nor stack, never mapped
  *   0x7f000000 - 0x7fffffff   user stack (16 MiB by default), growing down,
  *                             likewise; Psetlimit() can make it bigger, and
@@ -185,6 +186,9 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  * Everything stays below 0x80000000, so that every address of a process is a
  * positive signed long (the old TOS habits of sign-extending pointers and of
  * returning negative GEMDOS error codes in the same register as addresses).
+ * Images reserve their whole segment envelope and USER_IMAGE_SLACK after
+ * the last page. Malloc() and Mmap() skip these reservations and each other;
+ * ordinary Mmap() placement prefers 16 MiB up to the system window.
  *
  * With CONF_WITH_DEMAND_PAGING the heap and the stack are lazy: Malloc() hands
  * out address space, and a page of it gets its (zeroed) physical page when the
@@ -206,6 +210,13 @@ typedef struct aspace ASPACE;     /* defined by the backend */
 #define USER_ANCESTORS    16
 #define USER_IMAGE_BASE  VADDR_C(0x00400000)
 #define USER_IMAGE_SIZE  VADDR_C(0x00400000)
+/* Shared process metadata must not occupy the low RAM an emulator maps.
+ * These addresses are supervisor-only except for a process's own blocks. */
+#define USER_PROCMEM_BASE VADDR_C(0x0e000000)
+#define USER_PROCMEM_SIZE VADDR_C(0x00200000)
+#define USER_ALLOC_MIN    VADDR_C(0x00010000)
+#define USER_SYSTEM_BASE  VADDR_C(0x08000000)
+#define USER_SYSTEM_LIMIT VADDR_C(0x10000000)
 /* Zeroed read/write memory mapped right after the last page of a program
  * loaded from a file: where the C startup code of the TOS tradition puts the
  * argv and environ arrays it builds (libcmini's parseargs() uses the space
@@ -227,6 +238,7 @@ typedef struct aspace ASPACE;     /* defined by the backend */
 #define USER_STACK_SIZE  VADDR_C(0x00040000)
 #endif
 #define USER_STACK_MIN   VADDR_C(0x00004000)   /* the least Psetlimit() allows */
+#define USER_ALLOC_LIMIT (USER_STACK_TOP - USER_STACK_SIZE - USER_PAGE_SIZE)
 
 ASPACE *aspace_create(void);
 void aspace_destroy(ASPACE *as);

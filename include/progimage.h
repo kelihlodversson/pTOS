@@ -19,9 +19,9 @@
  * address space, and the bytes to fill them with.  Two things make one: a
  * statically linked x32 ELF executable (ELFCLASS32, EM_X86_64, ET_EXEC) --
  * the built-in EmuCON, embedded in the kernel image -- or a layout the ELF
- * loader (bdos/elfld.c) built from a file, relocated into the image window.
- * This is not a general ELF loader.  Every PT_LOAD segment must lie inside the
- * user image window (USER_IMAGE_BASE, USER_IMAGE_SIZE),
+ * loader (bdos/elfld.c) built from a file, preserving its VA where possible.
+ * This is not a general ELF loader. Every PT_LOAD segment and the startup
+ * area must fit an allocatable user range (include/userlayout.h),
  * segments may not share a page, and the entry point must lie in an
  * executable one; anything else is refused before a page is mapped.
  */
@@ -66,7 +66,7 @@ BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout);
  * segment. */
 BOOL layout_valid(const PROG_LAYOUT *layout, BOOL strict);
 
-/* The same with another window for the segments than the image window: the
+/* The segment rules within an explicit range: the
  * memory a program loaded for its caller (Pexec(PE_LOAD)) is put in. */
 BOOL layout_valid_in(const PROG_LAYOUT *layout, BOOL strict,
                                 VADDR window_lo, VADDR window_hi);

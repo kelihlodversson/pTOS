@@ -1676,13 +1676,14 @@ static void test_mmap(void)
         CHECK(aspace_private_pages(as) == private_a,
               "unmap frees only pages that were backed");
         CHECK(kproc_mmap(a, 0, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == PTOS_MMAP_BASE &&
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == USER_SYSTEM_LIMIT &&
               aspace_private_pages(as) == private_a,
-              "full mapping window is reserved without physical pages");
-        CHECK(kproc_demand_page(a, PTOS_MMAP_LIMIT - PAGE, ASPACE_PROT_WRITE) == 1 &&
+              "large mapping skips the system window without physical pages");
+        CHECK(kproc_demand_page(a, USER_SYSTEM_LIMIT + PTOS_MMAP_LIMIT - PTOS_MMAP_BASE - PAGE,
+                                ASPACE_PROT_WRITE) == 1 &&
               aspace_private_pages(as) == private_a + 1,
               "sparse reservation backs only its last page on touch");
-        CHECK(kproc_munmap(a, PTOS_MMAP_BASE, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE) == 0 &&
+        CHECK(kproc_munmap(a, USER_SYSTEM_LIMIT, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE) == 0 &&
               aspace_private_pages(as) == private_a,
               "sparse unmap skips untouched pages");
     } else {
@@ -3073,8 +3074,9 @@ static void test_x32image(void)
             mutated(good, 24, 4, (ULONG)layout.seg[segment].vaddr,
                     "entry point in a non-executable segment refused");
     }
-    mutated(good, 52 + 8, 4, 0x100000, "segment below the image window refused");
-    mutated(good, 52 + 8, 4, 0x7ff000, "segment running past the image window refused");
+    mutated(good, 52 + 8, 4, 0, "segment in the low guard refused");
+    mutated(good, 52 + 8, 4, USER_SYSTEM_BASE, "segment in the system window refused");
+    mutated(good, 52 + 8, 4, 0x7ffff000, "segment in the stack refused");
     mutated(good, 52 + 24, 4, 7, "a writable and executable segment refused");
     mutated(good, 52 + 16, 4, 0x7fffffff, "file size beyond the file refused");
     mutated(good, 52 + 20, 4, 0, "empty segment refused");

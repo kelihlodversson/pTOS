@@ -65,18 +65,20 @@ void pc_x86_64_memory_init(void)
  * bdos/proc.c's alloc_tpa()/alloc_env() take reclaimable, tracked pages
  * from it instead of bump-allocating from a pool that never gave memory
  * back.  X86_64_LOW_TPA_VIRT_BASE/X86_64_LOW_TPA_BYTES (pc_x86_64_memory.h)
- * still say where it sits, because the pool below is placed after it.
+ * still say where it sits in the reserved system window.
  */
 
-/* Above the user image window (include/procmem.h): every address space maps
+/* In the reserved system window (include/procmem.h): every address space maps
  * the framebuffer supervisor-only, so it must not collide with anything a
  * process maps for itself. */
-#define X86_64_LOW_FB_VIRT_BASE (USER_IMAGE_BASE + USER_IMAGE_SIZE)
+#define X86_64_LOW_FB_VIRT_BASE USER_SYSTEM_BASE
+typedef char framebuffer_before_process_window[
+    (X86_64_LOW_FB_VIRT_BASE + X86_64_FRAMEBUFFER_MAX_BYTES <= USER_PROCMEM_BASE) ? 1 : -1];
 
 /*
  * A third pool (#332): the EFI GOP framebuffer, mapped read/write into
- * this kernel's own page tables at a fixed low virtual base right after
- * the user image window. Unlike the other two, this one's physical backing
+ * this kernel's own page tables at a fixed base in the system window.
+ * Unlike the other two, this one's physical backing
  * isn't allocated from pmem.c at all -- it's wherever firmware/hardware
  * already put the framebuffer (bios/machine/pc-x86_64/gop.c's own
  * gop_probe() reads that address from GOP itself) -- this file

@@ -13,6 +13,23 @@
 #
 
 set -e
+firmware=${OVMF_DIR:-/usr/share/OVMF}
+
+# Retain the guest's serial evidence in the check annotation as well as the
+# job log, so a firmware refusal can be diagnosed without downloading logs.
+boot_diagnostics()
+{
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ -n "${GITHUB_ACTIONS:-}" ] && [ -f boot.log ]; then
+        python3 - <<'PY'
+from pathlib import Path
+text = Path("boot.log").read_text(errors="replace")[-6000:]
+text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+print("::error title=x32 boot serial diagnostics::" + (text or "Serial log is empty"))
+PY
+    fi
+}
+trap boot_diagnostics EXIT
 
 # a configuration before this one left its files
 rm -rf esp boot.log boot-monitor.sock OVMF_VARS_4M.fd
@@ -41,14 +58,19 @@ cp x32noreloc.elf esp/X32NOREL.TOS
 cp x32big.elf esp/X32BIG.TOS
 # ... and one cut short, whose loading fails halfway
 head -c 2000 x32hello.elf > esp/X32TRUNC.TOS
-cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+cp "$firmware/OVMF_VARS_4M.fd" .
+
+# Use actual FAT sectors, as the mapping and regression boot tests do.
+# QEMU's vvfat writer cannot reliably model unlink/retained-file lifetimes
+# and can crash while these self-tests update the synthesized filesystem.
+tools/mkhdisk.sh obj/ci-x86_64-boot.img 33554432 esp/*
 
 rm -f boot.log boot-monitor.sock
 set +e
 timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+  -drive if=pflash,format=raw,readonly=on,file="$firmware/OVMF_CODE_4M.fd" \
   -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
-  -drive format=raw,file=fat:rw:esp \
+  -drive format=raw,file=obj/ci-x86_64-boot.img \
   -serial file:boot.log -display none \
   -monitor unix:boot-monitor.sock,server=on,wait=off
 qemu_exit=$?

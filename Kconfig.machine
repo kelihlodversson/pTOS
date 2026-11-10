@@ -644,7 +644,7 @@ config CPUFLAGS
 	default "-mcpu=5474" if MACHINE_FIREBEE
 	default "-mcpu=5475" if MACHINE_M548X
 	default "-m68040" if MACHINE_ARANYM
-	default "-m64" if MACHINE_PC_X86_64
+	default "-m64 -march=x86-64" if MACHINE_PC_X86_64
 	default "-m68000"
 	help
 	  Passed to the compiler and to the linker to select the instruction

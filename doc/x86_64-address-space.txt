@@ -65,16 +65,16 @@ Kernel low mappings
 
 Ring 0 services a process's system calls under that process's own CR3, so
 the kernel's low-half data must be reachable there too.  aspace_create()
-copies the kernel's 2 MiB mappings of
+copies the kernel's mappings of
 
-    0x00000000 - 0x001fffff   the system-vector area (OS variables, vectors)
-    0x00800000 - ...          the framebuffer, if there is one
+    0x00000000 - 0x0000ffff   the system-vector area (4 KiB pages)
+    0x08000000 - ...          the framebuffer, if there is one (2 MiB pages)
 
 into every address space WITHOUT the user bit.  Ring 3 faults on any of it,
 the null guard included, so a process still cannot read or write the system
 variables (EmuCON asks Ssystem() for _nflops, for example).  The framebuffer
-sits above the 4 MiB image window so that it never overlaps what a process
-maps for itself; x86_64_low_kernel_range() says where it ends.
+sits in the reserved system window so that it never overlaps private
+allocations; x86_64_low_kernel_range() says where it ends.
 
 Ring 0 can still write that data on a process's behalf through a pointer
 argument it did not check.  The GEMDOS (trap 1) calls are covered: every
@@ -90,12 +90,11 @@ x32 user virtual layout
 
 The constants are in include/procmem.h.
 
-    0x00000000 - 0x001fffff   unmapped: null guard (2 MiB)
-    0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
-    0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB); for a
-                              program loaded from a file also the startup
-                              area, 128 KiB of zeroed read/write memory right
-                              after the image's last page
+    0x00000000 - 0x0000ffff   supervisor-only vectors and null guard
+    0x00010000 - 0x07ffffff   ELF images and private mappings
+    0x08000000 - 0x0fffffff   reserved system window, including:
+    0x08000000 - 0x0bffffff   supervisor-only framebuffer alias (at most 64 MiB)
+    0x0e000000 - 0x0e1fffff   basepage, environment and TPA blocks (window)
     0x0f000000 - 0x0ffbffff   optional standard ELF interpreter
     0x0ffc0000 - 0x0ffc0fff   optional callback stubs, private read-only code
                               (CONF_WITH_USER_CALLBACKS; doc/user-callback-x32.txt)
@@ -104,7 +103,7 @@ The constants are in include/procmem.h.
     0x0ffe0000 - 0x0ffeffff   optional x32 VDI client, private read-only code
                               (CONF_WITH_X32_VDI; doc/vdi-x32.txt)
     0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (below)
-    0x10000000 - 0x7efeffff   Malloc() memory, backed when touched (below)
+    0x10000000 - 0x7effefff   ELF images, private mappings and Malloc() memory
     0x7efff000 - 0x7effffff   guard page, never mapped: between heap and stack
     0x7f000000 - 0x7fffffff   user stack (16 MiB by default), growing down
                               from USER_STACK_TOP, backed when
@@ -176,15 +175,16 @@ data or bss).  Where it is until the process runs depends on the Pexec() mode:
   (the same frames in both address spaces, counted), and this scheme would
   be replaced by that.
 
-  Where it goes.  A program is linked for an address.  If that lies in the
-  image window (USER_IMAGE_BASE, 4 MiB) and the process is a new one
-  (mode 0), it goes there and nothing is relocated; the Makefile's
-  X32_LDFLAGS (-Ttext-segment=0x400000, -z noseparate-code,
-  -z max-page-size=0x1000) give the two-segment layout of the built-in
-  EmuCON.  Otherwise -- a PIE, an ET_EXEC linked elsewhere, or any program
-  loaded into its caller's heap -- it is moved to the address it is given and
-  relocated by the distance, by the loader of doc/elfload.txt, so it must keep
-  its relocation entries (link with -q).
+  Where it goes. A native ET_EXEC preserves its PT_LOAD addresses whenever
+  its whole segment envelope and 128 KiB startup area fit an allocatable
+  range below the stack guard. This includes high addresses such as
+  0x41000000, without requiring relocation records. The default image base
+  remains 0x00400000 for an image that needs rebasing; there is no 4 MiB
+  image-size ceiling. A ring-3 PE_LOAD tries the linked address if it is in
+  the caller's heap range and free, otherwise an ordinary heap block. Only
+  rebasing requires usable relocations (-q for an ET_EXEC); without them it
+  is refused with EPLFMT. Malloc and Mmap skip the image, its gaps and startup
+  area, pending loaded images, each other, system mappings and the stack.
 
   How.  elf_pgmld() reads the file and relocates it in place, in the pages the
   image will run from, with no kernel buffer in between: the block in the
@@ -195,13 +195,11 @@ data or bss).  Where it is until the process runs depends on the Pexec() mode:
   permissions, or kproc_set_moved_image(); kproc_set_image() for a built-in
   ELF), and the block, when there is one, is recorded with the process the
   moment it is made (kproc_load_alloc()), so that a failed load, a disk error
-  included, gives it back with the process's record.  The size of a program
-  loaded into its caller's heap is limited by the heap; the others by the image
-  window.  kproc_prepare_user() adds the rest to the address space when the
+  included, gives it back with the process's record.  Image size is limited by the available virtual range and physical backing.  kproc_prepare_user() adds the rest to the address space when the
   process is launched (a built-in image's segments are mapped then, a PE_LOAD
   block is moved in), and the entry point is the one
   recorded in the KPROC record, not whatever the user-writable basepage says.
-  The rules (layout_valid()): every segment inside the window, no
+  The rules (layout_valid()): the whole image in an allocatable range, no
   two sharing a page, the entry point in an executable one.  The built-in
   programs also may not have a segment that is both writable and executable;
   a program loaded from a file may (a flat read+write+execute binary).

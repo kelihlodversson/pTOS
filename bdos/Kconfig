@@ -190,7 +190,7 @@ config CONF_WITH_MMAP
 	default n
 	help
 	  Provide Mmap, Munmap and Mprot for private anonymous and native FAT
-	  file pages in a separate per-process window. File pages are shared
+	  file pages in allocatable per-process address ranges. File pages are shared
 	  read-only until a private write fault; anonymous pages stay lazy zero.
 	  Enforce W^X, lifetime and memory limits. MAP_SHARED and replacing
 	  MAP_FIXED are not supported.  Needs isolated MMU address spaces

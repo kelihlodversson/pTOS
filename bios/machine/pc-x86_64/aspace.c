@@ -141,7 +141,7 @@ static UQUAD alloc_table_page(void *ctx)
  * Ring 0 services a process's system calls under that process's own CR3,
  * so the kernel's low-half data has to be reachable there too: the
  * system-vector area (the OS variables at 0x400.., the trap vectors), the
- * framebuffer, if there is one.  Each is a 2 MiB mapping copied
+ * framebuffer, if there is one.  These mappings are copied
  * from the kernel's own tables, supervisor-only -- ring 3 gets a fault from
  * all of it, the null guard included -- and placed so as not to overlap
  * anything a process maps for itself (include/procmem.h's layout).
@@ -150,9 +150,13 @@ static BOOL map_kernel_low(struct aspace *as)
 {
     UQUAD start, end, va, phys;
 
-    if (x86_64_kernel_low_2m_phys(0, &phys) &&
-        x86_64_map_kernel_2m_into(as->pml4_phys, 0, phys, alloc_table_page, as) != 0)
-        return FALSE;
+    /* Only the low guard is needed for vectors. Copy it as 4 KiB pages:
+     * copying the kernel's entire 2 MiB leaf would block private mappings
+     * above 64 KiB, even though no kernel data uses those addresses. */
+    if (x86_64_kernel_low_2m_phys(0, &phys))
+        for (va = 0; va < USER_ALLOC_MIN; va += X86_64_PAGE_SIZE)
+            if (!aspace_map_page(as, va, phys + va, ASPACE_PROT_WRITE))
+                return FALSE;
     x86_64_low_kernel_range(&start, &end);
     for (va = start; va < end; va += X86_64_PAGE_2M_SIZE)
         if (x86_64_kernel_low_2m_phys(va, &phys) &&

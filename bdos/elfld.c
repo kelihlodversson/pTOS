@@ -65,6 +65,7 @@
 #if CONF_WITH_USER_ASPACE
 #include "kheap.h"
 #include "procmem.h"
+#include "userlayout.h"
 #endif
 
 /*
@@ -1213,16 +1214,21 @@ LONG elf_pgmld(FH h, PD *p)
      * it will run from, with no buffer in between: the block a PE_LOAD by a
      * ring-3 caller gets in the caller's heap, or private pages of the new
      * process's own address space, made now (kproc_load_begin()) and entered
-     * for the loading.  It goes where it was linked for if that lies in the
-     * image window; otherwise it is moved into the window, to its first page,
-     * and relocated by the distance.
+     * for the loading. It keeps its link address where the layout permits;
+     * otherwise it moves to the default image base and is relocated.
      */
     {
         ULONG span = info.mem_end - info.link_base;
         ULONG lo = info.link_base & ~(ULONG)(USER_PAGE_SIZE - 1);
-        /* the window must also hold the startup area (USER_IMAGE_SLACK)
+        /* the range must also hold the startup area (USER_IMAGE_SLACK)
          * from the page after the image's last one */
-        ULONG limit = USER_IMAGE_BASE + USER_IMAGE_SIZE - USER_IMAGE_SLACK;
+        ULONG limit = USER_ALLOC_LIMIT;
+        ULONG image_bytes;
+
+        if (span > limit - USER_ALLOC_MIN - USER_IMAGE_SLACK - USER_PAGE_SIZE)
+            return ENSMEM;
+        image_bytes = ((span + info.link_base - lo + USER_PAGE_SIZE - 1)
+                       & ~(ULONG)(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK;
 
         place->va = 0;
         if (elf_into_caller && kproc_has_heap(run))
@@ -1241,7 +1247,7 @@ LONG elf_pgmld(FH h, PD *p)
                 > USER_HEAP_LIMIT - USER_HEAP_BASE)
                 return ENSMEM;
             place->pages = imgpages + USER_IMAGE_SLACK / USER_PAGE_SIZE;
-            place->va = kproc_load_alloc(run, p, place->pages * USER_PAGE_SIZE);
+            place->va = kproc_load_alloc(run, p, place->pages * USER_PAGE_SIZE, lo);
             if (!place->va)
                 return ENSMEM;
             bias = (LONG)((ULONG)place->va - lo);
@@ -1252,25 +1258,20 @@ LONG elf_pgmld(FH h, PD *p)
             /* (limit is page-aligned, so the end rounded up to a page is
              * within it exactly when the end is: no rounding that could wrap
              * a high-linked image's end to 0 on a 32-bit VADDR) */
-            if (info.link_base >= USER_IMAGE_BASE && info.mem_end <= limit)
+            if (user_layout_range(lo, image_bytes, limit))
                 bias = 0;
             else
                 bias = (LONG)(USER_IMAGE_BASE - lo);
             /* (span first: it keeps the sums below from wrapping) */
-            if (span > limit - USER_IMAGE_BASE
-             || (ULONG)info.link_base + (ULONG)bias < USER_IMAGE_BASE
-             || (ULONG)info.mem_end + (ULONG)bias > limit)
+            if (!user_layout_range(lo + (ULONG)bias, image_bytes, limit))
             {
-                KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
+                KDEBUG(("BDOS elf_pgmld: image does not fit an allocatable range\n"));
                 return ENSMEM;
             }
             /* the new process's address space is made now, with the image's
              * pages and the startup area after them: the file is read straight
              * into it, below */
-            if (!kproc_load_begin(p, lo + (ULONG)bias,
-                                  ((ULONG)info.mem_end + (ULONG)bias + USER_PAGE_SIZE - 1)
-                                  / USER_PAGE_SIZE * USER_PAGE_SIZE
-                                  + USER_IMAGE_SLACK - (lo + (ULONG)bias)))
+            if (!kproc_load_begin(p, lo + (ULONG)bias, image_bytes))
                 return ENSMEM;
             place->pending = TRUE;
             place->image_va = (ULONG)info.link_base + (ULONG)bias;

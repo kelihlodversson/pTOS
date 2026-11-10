@@ -1383,9 +1383,10 @@ int main(void)
     label_result = EACCDN;
     CHECK(mt_appl_init(other) == -1 && !live && gl_apid == -1 && other[2] == -1 && closes == 4);
     {
-        char name[9] = "untouched";
+        char name[9] = "sentinel";
         short type = -7, found = -7;
-        CHECK(appl_search(APP_FIRST,name,&type,&found) == 0 && type == -7 && found == -7);
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 0 && type == -7 && found == -7 &&
+              !__builtin_memcmp(name,"sentinel",9));
         label_result = 0; pid = 7;
         CHECK(appl_init() == 7);
         CHECK(appl_control(7,APC_INFO,&type) == 1 && type == 0);

@@ -203,8 +203,13 @@ C_SYM(main):
     mcr p15, 0, r3, c8, c7, 0       /* invalidate the TLB */
     mcr p15, 0, r3, c7, c5, 0       /* invalidate the instruction cache */
     mcr p15, 0, r3, c7, c5, 6       /* and the branch predictor */
+#ifdef TARGET_RPI1
     mcr p15, 0, r3, c7, c10, 4      /* data synchronization barrier */
     mcr p15, 0, r3, c7, c5, 4       /* flush the prefetch buffer */
+#else
+    dsb                             /* ARMv7+ barrier instructions */
+    isb
+#endif
     b   3f
 2:
 
