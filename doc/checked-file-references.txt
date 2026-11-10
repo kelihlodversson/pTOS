@@ -1,0 +1,106 @@
+Checked live SFT references -- stage A prerequisite (#895/#892/#893)
+==================================================================
+Integration base: epic 4e7c2cf4673a30103d0fa022933988c6453a92f0,
+which already contains accepted #933 and #936. This is only the focused
+checked-reference increment; it does not replay #933 or enable inheritance.
+Public fork/private clone/PROCESS dispatch and descriptor namespace migration
+remain gated. Historical failure reproductions and reviews remain in closed
+#939; #943 is the current integration candidate.
+
+fs_reference_acquire(source, descriptor, expected_incarnation, empty_out)
+authenticates a retained live CURRENT KPROC and its existing trusted binding.
+Standard descriptors resolve once through the KPROC UFT; legacy explicit ones
+must have an actual source-owned reference beyond all standard aliases, staged
+references and cleanup transfers. BIOS devices are not filesystem references.
+A matching, accessible, non-closing incarnation and unsaturated counters are
+required. Failure leaves out unchanged. Success adds one f_use and one
+f_staged_refs without allocation, callbacks, I/O, copying a cookie or changing
+OFD/PFS position. An acquisition is per binding, not per distinct SFT.
+
+FS_FILE_REFERENCE is a MOVE-ONLY trusted C owner, initialized to zero. It is
+not a user capability, must never be copied while owned, and stores no PD,
+KPROC, ASPACE, stack, descriptor number or persistent owner pointer. Its handle
+is an INTERNAL backend slot identity, not a newly published user descriptor.
+Caller-owned storage must survive callbacks and cancellation: use the accepted
+execution cleanup envelope and durable operation ownership, not a transient
+stack that can be unwound by arbitrary fatal driver exits. This service does
+not make such exits safe. 'closing' rejects reentry on the same owner record.
+
+fs_reference_close(reference, dispose, report) validates exact incarnation
+before backend work. It uses #933's bounded FAT/PFS close machinery, with no
+new finalizer or retry queue. RETAINED preserves the live owner even on error.
+CONSUMED or TRANSFERRED clears it even on error; another call then fails before
+backend access. dispose converts a retained reference to the existing exact
+FIFO FS_CLEANUP_TOKEN without another f_use. That token represents residual
+service ownership, never permission to acquire a live file reference.
+
+Authoritative media invalidation revokes staged counts with the other SFT
+references. Close of that revoked owner reports NOT_OWNED/E_CHNG; after slot
+reincarnation it reports NOT_OWNED/EIHNDL. Both clear the invalidated owner and
+never access the replacement. The old live-reference record cannot pin a reused
+numeric slot. An unknown NOT_OWNED while an unrevoked reference is expected is
+an invariant violation for callers, not permission to retry a numeric close.
+
+Ordinary access/close cannot consume f_staged_refs. When numeric consumption or
+transfer exhausts ordinary refs, standard aliases naming that slot are
+unpublished before retirement; a held staged/backend reference is not evidence
+of a live descriptor. Callback rebindings to other slots survive. Staged close
+normalizes only AFTER its own count is relinquished, so it cannot unpublish a
+still-live ordinary alias through a temporary count imbalance. StageB must
+publish/resolve authenticated bindings explicitly, not expose raw staged slots
+through legacy getofd/global lookup. PROCESS retirement excludes them
+from its legacy explicit-reference inference, closes its own aliases/explicit
+reference only, and replaces f_own's retiring PD address with the existing
+neutral owner. Staging survives without that PROCESS's execution resources.
+The bounded shutdown sweep will log/refuse a staged-only ordinary close rather
+than steal a staging owner's reference. Staging owners must settle before final
+shutdown; this patch does not create a global staging registry or force-release
+other operations. All finalizing close work must run outside leaf/GUI/IRQ
+exclusion. Output reports distinguish errors from ownership.
+
+Reentrant close and residual transfer
+------------------------------------
+The active backend close records its ordinary/staged/service reference class.
+A transfer can reserve only an available reference of its caller's own class,
+excluding an in-flight close of that class. Staged counts cannot fund ordinary
+retirement tickets, and an active staged close cannot hide a distinct ordinary
+reference. Recursive numeric disposal with no independent ordinary reference
+returns EACCDN/NOT_OWNED without issuing a ticket; close_once's retryable busy
+report is unchanged. The original owner completes its close. A separately
+owned ordinary reference can still transfer while another close is active.
+Tests use a real PFS callback, standard force/close, staged owners and exact
+residual recovery; callbacks perform no recursive backend close.
+
+Synchronization and migration
+-----------------------------
+Today source binding validation/count publication is a non-yielding single-CPU
+operation. IRQ handlers do not mutate filesystem bindings/SFTs. This is NOT SMP
+synchronization. Before preemption, PROCESS descriptor admission precedes the
+SFT owner exclusion; no callback, I/O or final destructor under either leaf
+publication boundary. Validate binding generation and expected incarnation in
+one admitted snapshot. A reversible descriptor admission mechanism is stage B;
+it is neither the irreversible retirement latch nor exec_committing. Until it
+exists no factory inheritance consumer is enabled by these helpers.
+
+Stage B migrates ALL managed PROCESS descriptors, ordinary Pexec, osif/kernel
+helpers, fileback and invalidation coherently. Resolve user-local numbers ONCE;
+keep backend slots distinct. Replace this helper's legacy binding resolution
+with that authoritative resolver, retain this service's count/close ownership,
+and remove the legacy f_own sweep for table-owned references. Never add a fork-
+only table or directly manipulate SFT counters from proc_clone. Non-ASPACE
+builds keep their original layout/path. Stage C acquires/rolls back the exact
+prefix transactionally; stage D supplies runtime/environment/CWD and public
+fork policy. Published inventory7f7a6ff43 remains the consumer migration map.
+
+Evidence
+--------
+tests/fs_reference.c uses production service/FAT/PFS close/invalidation with
+modeled PROCESS registry and injected disk/finalizer failures. Tests cover
+binding authentication, unchanged failed output, standard+explicit acquisition,
+saturation/busy/retirement rejection, source-dead ownership, staged-only raw
+close rejection, RETAINED vs TRANSFERRED, stale ticket/slot rejection, media
+revocation, PFS shared position and negative consuming finalization.
+The x32 embedded native test opens real FAT, acquires two staged refs, destroys
+its actual source KPROC/PD, checks exact surviving counts, injects bounded I/O
+failure and recovers the exact ticket to the original memory baseline. This is
+kernel-native lifecycle evidence, not user-visible fork inheritance evidence.

@@ -19,6 +19,11 @@
 #include "portab.h"
 #include "asm.h"
 
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched_legacy_irq.h"
+ULONG disable_interrupts(void) { return (ULONG)ksched_legacy_irq_disable(); }
+void enable_interrupts(void) { ksched_legacy_irq_enable(); }
+#else
 static ULONG save_rflags;
 
 /* disable interrupts */
@@ -36,3 +41,5 @@ void enable_interrupts(void)
 {
     __asm__ volatile ("pushq %0; popfq" :: "r"((UQUAD)save_rflags) : "memory", "cc");
 }
+
+#endif /* CONF_WITH_NATIVE_SCHED */

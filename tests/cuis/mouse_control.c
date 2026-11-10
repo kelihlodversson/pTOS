@@ -1,6 +1,6 @@
 /* Modal pointer ownership is session-wide and independent of draw/focus. */
 #define ML(s,a,b) cuis_mouse_lock(s,a,b)
-#define MW(s,e) cuis_session_wait(s,0,e|CUIS_READY_TIMER,0)
+#define MW(s,e) cuis_session_wait(s,0,e|CUIS_READY_TIMER,0,0,0)
 #define MR(s) cuis_input_config(CUIS_INPUT_RESULT,s,0x1000,0x1004,0x1008,0x100c,0x1010)
 static int mouse_control_checks(void)
 {

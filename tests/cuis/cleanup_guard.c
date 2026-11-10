@@ -12,7 +12,6 @@ static ULONG tids[2]={17,18};
 static BOOL pending, expect_panic;
 static unsigned deliveries;
 static jmp_buf fatal, delivered;
-PD *run;
 static KTHREAD *identity(unsigned i) { return (KTHREAD *)&tasks[i]; }
 BOOL kthread_is_executing(const KTHREAD *t) { return t==identity(0) || t==identity(1); }
 KPROC *kthread_process(const KTHREAD *t) { CHECK(kthread_is_executing(t)); return (KPROC *)&parent; }
@@ -28,7 +27,7 @@ void panic(const char *format,...)
 int main(void)
 {
     KSCHED_CLEANUP_SCOPE outer={0}, inner={0}, child={0}, empty={0}, stale;
-    run=&parent; scheduler.active=TRUE; scheduler.tasks=tasks; scheduler.current=&tasks[0];
+    run=&parent; scheduler.active=TRUE; scheduler.tasks=tasks; execution_cpu.current=&tasks[0];
     tasks[0].program=tasks[1].program=&parent;
     tasks[0].process=tasks[1].process=(KPROC *)&parent;
     tasks[0].thread=identity(0); tasks[1].thread=identity(1);
@@ -44,9 +43,9 @@ int main(void)
     ksched_cleanup_begin(&child); CHECK(!child.thread && child.active);
     ksched_cleanup_end(&child); run=&parent;
     CHECK(ksched_cleanup_active() && tasks[0].cleanup_depth==2);
-    scheduler.current=&tasks[1]; CHECK(!ksched_cleanup_active() && ksched_cancellation_pending());
+    execution_cpu.current=&tasks[1]; CHECK(!ksched_cleanup_active() && ksched_cancellation_pending());
     BAD(ksched_cleanup_end(&inner)); CHECK(!tasks[1].cleanup_depth);
-    scheduler.current=&tasks[0];
+    execution_cpu.current=&tasks[0];
     tasks[0].execution.identity++; BAD(ksched_cleanup_end(&inner)); tasks[0].execution.identity--;
     tids[0]++; BAD(ksched_cleanup_end(&inner)); tids[0]--;
     tasks[0].process=(KPROC *)&nested; BAD(ksched_cleanup_end(&inner)); tasks[0].process=(KPROC *)&parent;
@@ -57,7 +56,7 @@ int main(void)
     BAD(ksched_cleanup_end(&outer)); BAD(ksched_cleanup_end(&empty));
     if (!setjmp(delivered)) { ksched_cancel_point(); abort(); }
     CHECK(deliveries==1 && pending);
-    scheduler.current=NULL; ksched_cleanup_begin(&child); ksched_cleanup_end(&child);
+    execution_cpu.current=NULL; ksched_cleanup_begin(&child); ksched_cleanup_end(&child);
     CHECK(!tasks[0].cleanup_depth && !tasks[1].cleanup_depth && scheduler_model_flags==0x200);
     puts("Production cleanup guard: pending latch, nested PROCESS, sibling THREAD, identity/LIFO rejection and explicit checkpoint: PASS");
     return 0;

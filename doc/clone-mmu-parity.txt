@@ -153,3 +153,50 @@ FPU setting. Explicit --fpu and --require-nonzero-fpiar avoid silently claiming
 FPU execution from a CPU-only run. CI adds this native 060 configuration to the
 existing pinned legacy matrix. QEMU's 68060 PFLUSHA limitation (#913) remains;
 physical 68030/040/060 hardware and ARM/m68k external CUIS are not claimed.
+
+Scheduler storage follow-up (#713)
+-----------------------------------
+The initial eight-record arena no longer limits active concurrency. Stable
+linked slots grow before publication and are freed only after root drain.
+Native tests on all three MMU targets create twelve mixed independent PROCESS
+and SAME_PROCESS continuations, assert the exact four-round dispatch order,
+block the parent, consume PROCESS/TID completions, repeat and free stack holds.
+Production host tests inject growth allocation failure, preserve output/context
+identity, test stable slot reuse and traverse grown PID/context/wait/orphan
+records. Historical fixed-capacity fixtures now verify >8 publication, including
+ordinary async mode 106 and deferred GEM handoff replacement. Failure rollback
+remains tested independently. See doc/native-scheduler-plan.txt for the remaining
+borrowed-root/global-admission contract, CPU-specific IRQ frame audit and
+staged preemption/locking plan. No preemption or global background task lifetime
+is implied by arena growth. CUIS stream cancellation remains disabled.
+
+Persistent root follow-up (#713 A2a)
+-------------------------------------
+Dispatch/idle/root reap now use permanent 16 KiB kernel BSS stack/context storage,
+separate from the synchronous waiter continuation. Park clears borrowed CPU/
+PD/launcher/error/stack references; fresh attachment resumes the SAME root frame.
+Results pass through kernel slots before the attached waiter copies them out.
+Root cleanup has its own fail-stop disk-error boundary. Native MMU regressions
+exercise real task handoff on this owned stack; host stack-switch tests model
+CPU/MMU state separately from ASan ownership tests. Global background admission
+remains gated on detachable waiter execution and unmanaged root entry (A2c).
+A2b now supplies a pinned kernel-only controller basepage (no PID/KPROC),
+separately retained logical-parent identities and token-only admission/result
+records. Root never stores a caller result pointer, and abandoned owners cannot
+receive delivery. Native lifecycle assertions span actual async PROCESS
+retirement and root reap; host fault-injection models PROCESS/procmem endpoints.
+See doc/native-scheduler-plan.txt for the ownership and no-fail protocol.
+See doc/native-scheduler-plan.txt; no parent-return/background or preemption
+capability is claimed. No GUI ports, TLS or non-MMU scheduling added.
+
+A2c managed waiter prerequisite (#713)
+-------------------------------------
+Tasks now own their internal admission producer/cell independently of arena
+index; logical PPID comes only from retained KPROC parent identity. TID-bound
+result attachments block/resume through the existing backend and are retired
+only after execution is quiescent. Native kernel assertions exercise a real
+user THREAD's suspend/resume while its parent remains blocked, and abandoned
+attachment cleanup at root reap. Host CPU models cover cancellation/ref rollback.
+This is NOT user-visible background admission: unmanaged early return/root
+re-entry and independent anchor/storage reuse remain gated. No preemption.
+See doc/native-scheduler-plan.txt for exact remaining blockers and test scope.

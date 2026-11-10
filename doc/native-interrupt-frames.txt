@@ -1,0 +1,408 @@
+B1: architecture-owned interrupted-user state (#713)
+====================================================
+
+Implementation plan and boundaries
+-----------------------------------
+B0 repair comes first (panic declaration and prepared-slot initialization with
+strict GCC13/architecture warning gates). B1 does not enable a timer dispatcher,
+reschedule request or arbitrary kernel/IRQ continuation switch.
+
+B1a: separate global queue ownership from boot-CPU execution/root/attachment
+storage; pin a dispatched execution to that CPU until verified root handoff.
+Reaping and record reuse must reject an on-CPU execution even if the loaded
+current-task pointer has already been cleared by backend context restoration.
+Exercise the actual existing x32/ARM/m68k cooperative backends, nested Pexec,
+A2c return/park/resume, cancellation and exactly-once cleanup. This is the first
+independent production increment, not a claim of complete interrupted frames.
+
+B1b x32: reuse irqasm.S's saved 15 GPRs, FXSAVE and five-word user iretq frame.
+Define shared C/assembly offsets and validate user CS/SS, RFLAGS, RIP/RSP and
+frame origin. Retain CR3/ASPACE and TSS/syscall/IRQ-stack identity separately
+from the register payload. Copy only into preallocated THREAD-owned storage;
+keep the original IRQ return unmodified until capture/register-pattern tests
+pass. A kernel-mode IRQ must never be mistaken for a five-word user frame.
+
+B1b ARM Cortex-A7: extend the existing IRQ SRS/return wrapper with all R0-R12,
+user SP/LR, SPSR/CPSR/return PC, full D0-D31/FPSCR and the banked IRQ/SVC SP/LR
+needed to identify and abandon the exception continuation safely. Preserve
+8-byte stack alignment and use C/assembly layout assertions. Existing syscall
+frames cannot substitute for this: SVC dispatch may clobber scratch R12 and
+IRQ code currently saves only the ABI-required subset. Capture tests precede
+any modified RFE/exception-return path.
+
+B1b m68k: retain D0-D7/A0-A6, USP, supervisor/exception-stack identity, SR/PC,
+vector/format and exact exception-frame bytes, plus MMU root/control identity.
+Decode sizes by CPU/model and format; never copy a guessed constant length for
+030/040/060 bus/fault frames. Save the CPU-specific FSAVE state, FP0-FP7 and
+FPCR/FPSR/FPIAR using existing architecture primitives. Validate all supported
+formats and reject unsupported frames without changing RTE. Use QEMU040,
+pinned Hatari030/040 and Amiberry060 caches off/on with nonzero FPIAR; do not
+claim QEMU060 or native fastcall evidence without execution.
+
+B1c: bind each captured frame to retained THREAD/execution/CPU/ASPACE identities
+and explicit stack owners. Reconcile loaded launcher and error-continuation
+compatibility globals with CPU-local storage before IRQ captures may escape
+the current exception. No allocation/callback/user copy in IRQ capture. A
+capture is not permission to resume: safe exception-stack acknowledgement and
+return validation are mandatory before any eventual restore path.
+
+B2 alone adds deferred requests and a verified outer USER-return handoff, with
+owner/leaf/callback/fault/nested-launcher exclusions and revalidation. C alone
+adds controlled user-only preemption and CPU-bound no-Syield progress tests.
+SMP remains disabled: a boot-CPU slot/accessor is not an SMP implementation.
+
+Current B1a ownership
+---------------------
+The shared queue owns stable task records, RR cursor, admission and shutdown
+policy. A separate CPU-local execution record owns current/in-flight execution,
+root stack/context/resume, scoped caller attachment, pending clone handoff and
+leaf-recursion state. There is one boot CPU today; additional CPUs must supply
+architecture-local selection and actual shared-queue locking before activation.
+
+Dispatch claims the execution for that CPU before transferring control. It
+remains on-CPU through nested synchronous launchers, blocking preparation,
+termination intent and launcher finalization. Restoring the root context may
+clear the loaded current pointer, but cannot release this claim. Only the root,
+after verifying it is on its own permanent stack, acknowledges the handoff.
+Then and only then may THREAD/backend resources or task records be reaped/reused.
+The claim is a lifetime pin, not a second stack owner or completion mechanism.
+
+Root CPU snapshots include their launcher/error images; task snapshots retain
+the corresponding suspended execution images. The architecture-loaded
+current_launch/active and global run/errbuf compatibility slots still belong to
+the single boot CPU and are not safe for multiple CPUs or asynchronous kernel
+switching. Their full conversion is B1c, not implemented by renaming a structure.
+No full interrupted-user register payload is captured/restored by B1a. Existing
+cooperative setjmp/native contexts are not advertised as interrupt frames.
+
+Integration evidence must distinguish scheduler-stack/CPU ownership tests,
+modeled host contexts, real native execution and complete IRQ-frame preservation.
+Use an isolated validation branch for latest epic/#907 + the #910/#914 stack;
+never merge unrelated CUIS removals into this scheduler PR to make tests pass.
+Preserve both #917 physical-input admission fences and keep their cooperative
+precondition explicit until C introduces an operation-admission handshake.
+
+B1a validation (CPU ownership, not full interrupt-frame evidence)
+----------------------------------------------------------------
+Production-code host tests explicitly restore a cleared loaded-current pointer
+while the old execution is terminal: root reap refuses it until CPU handoff
+acknowledgement. They also cover both anchor-release orders, admission rollback,
+shutdown, retirement/reentrancy, detached results, blocked tasks and root reuse.
+GCC13 fortified and ASan/UBSan CUIS/ownership suites pass. Hosted CPU/MMU contexts
+are models; these results do not establish architecture IRQ register capture.
+
+Actual native execution: x32 desktop 23/0 plus five shutdown checks; ARM Cortex-A7
+27/0 plus five; m68k 68040 26/0 plus five. Existing public A2c launcher-return/
+later-child dispatch, twelve mixed PROCESS/THREAD peers, nested launchers,
+CPU/FPU state, joins, group cancellation, fault/TSR and cleanup tests are retained.
+The x32 memory/GEM/input boot suite and eager scheduler-disabled boot pass.
+Amiberry v8.5.0 68060 passes 25/0 caches off/on with strict nonzero FPIAR.
+Classic 192 KiB ROM/test disk, clone ABI/decoder, ELF52 and gitready pass.
+Pinned Hatari Falcon/TT execution and isolated latest-epic combined validation
+are recorded separately in the PR/checkpoint evidence after their completion.
+
+B1b first increment: x32 device-IRQ capture
+-------------------------------------------
+include/arch/x86_64/irqframe.h defines the exact 688-byte FXSAVE/GPR/vector/
+user-iretq image. C checks every field offset and total size; irqasm.S shares
+these constants. Before device dispatch/callbacks, it passes the original image
+to bdos/arch/x86_64/interrupt_user.c. It still restores that original FXSAVE,
+GPR and iretq image; the captured copy is never installed as a continuation.
+
+The generic target query admits only the boot CPU's pinned RUNNING execution,
+matching live KTHREAD/PROCESS/ASPACE and current PD. Nested Pexec executing a
+different PROCESS, blocked/stopped threads and leaf critical sections are
+ineligible. The query changes no reference counts and invokes no callbacks.
+It requires the existing masked device-IRQ entry and cannot yield. THREAD owns
+preallocated backend capture storage before publication. No IRQ allocation,
+user copy, demand fault, notification or reschedule occurs.
+
+The architecture backend validates native user CS/SS, low user RIP/RSP,
+RFLAGS privilege bits, vector/padding, CR3 against the retained KASPACE backend,
+and exact IRQ-frame/TSS-top/syscall-top binding. It copies all 512 FXSAVE bytes,
+15 GPRs and the user iretq frame, stamps execution/TID/CPU and advances a bounded
+per-execution capture sequence. Exhaustion refuses capture rather than wrapping.
+Only numeric register/source-address provenance is copied; it is never used
+as a borrowed image pointer or dereferenced after IRQ return. Existing KTHREAD
+ownership retains ASPACE and stack holds; this adds no second resource owner.
+
+The valid flag means only a copied diagnostic image within this on-CPU dispatch.
+It does NOT authorize restoring it, prove mapping permissions for future return,
+or represent a newly captured kernel IRQ. Root acknowledgement invalidates it
+before stack/record reclamation. B2 must require a fresh eligible user boundary
+and revalidate bindings/leases; it must never resume an old diagnostic snapshot.
+TLS and AVX/XSAVE state are unsupported; this is the existing x87/MMX/SSE ABI.
+
+A native ring-3 probe sets distinct nonzero upper/lower 64-bit GPR patterns,
+all 16 XMM registers, x87 ST0/control, MXCSR and DF, then executes a bounded
+no-syscall/no-yield loop. The test-gated kernel checks the actual captured bytes;
+root reports the result outside IRQ. The user probe also checks GPR, FPU/SSE
+and DF preservation after IRQ return. This is capture/return evidence, NOT
+CPU-bound scheduling progress or preemption. The memory-test boot requires this
+marker plus its existing full verdict. Ordinary desktop kernels still capture,
+but compile out kernel pattern diagnostics; the desktop user probe remains.
+
+Production-code host tests model CPU queries and check immutable source/copy
+ownership, failed CR3/stack binding, sequence exhaustion and unchanged kernel
+IRQ behavior. Separate scheduler tests reject foreign CPU, nested PROCESS,
+incompatible ASPACE, blocked and leaf-held targets. Native memory/GEM/form/input
+and desktop23/0+five shutdown checks pass; ARM27/0+five and m68k04026/0+five are
+compatibility execution, not new interrupted-frame evidence. Sanitized and
+fortified ownership/capture tests remain separately identified as host execution.
+
+Remaining B1b/B1c
+------------------
+ARM and m68k interrupted-user payload capture remains planned above; existing
+native clone/FPU execution does not prove it. Before any captured frame may
+escape its original exception, finish CPU-local loaded launcher/error state,
+ARM banked/exception/VFP ownership and m68k uenter/FPU/frame staging. x32 loaded
+current_launch, run/errbuf and syscall compatibility globals also remain boot-
+CPU-only; this increment neither converts those globals nor switches kernel
+frames. B1c and B2 are not complete. Preemption stays disabled.
+
+Current capability matrix (first B1b increment)
+------------------------------------------------
+                                x32              ARM MMU          m68k MMU
+Cooperative native scheduling   native tested    native tested    native tested
+Full copied device-IRQ image    native tested    not implemented  not implemented
+Captured image restore/dispatch unavailable      unavailable      unavailable
+Loaded-state B1c conversion     incomplete       incomplete       incomplete
+Timer preemption / SMP          disabled         disabled         disabled
+
+Native compatibility additionally passes pinned Hatari Falcon/TT030/04025/0
+in each mode and Amiberry68060 25/0 caches off/on, strict nonzero FPIAR in both.
+These m68k results do not establish interrupted-user payload capture. x32 eager
+scheduler-disabled boot, classic192KiB ROM/test disk, clone ABI/decoder, ELF52
+and gitready pass. Latest-epic combined validation is tracked separately from
+this branch's architecture evidence and exact-head GitHub CI.
+
+B1b ARM first capture increment (no restore or scheduling)
+---------------------------------------------------------
+The ARM virt and Raspberry Pi IRQ wrappers preserve R0-R12 and the original
+SVC LR before scratch use. They capture banked user SP/LR and IRQ SP/LR, the
+original SVC SP/LR, PC and SPSR, and the existing complete VFP block. Cortex-A7
+D32 frames are 352 bytes, with shared C/assembly offset/size assertions. Banked
+IRQ SP may legitimately be zero: SRS writes the retained SVC stack and the
+wrapper never pushes anything on an IRQ-mode stack. It is recorded, not treated
+as another owned execution stack. The caller's original frame remains the only
+source for VFP/GPR restore and RFE; the captured copy cannot be resumed.
+
+Before the device handler, a matched on-CPU execution receives a bounded copy
+in preallocated KTHREAD_CONTEXT storage. Validation binds it to the active
+launcher-owned syscall stack, expected ASPACE root, immutable execution/TID and
+CPU identity; kernel IRQs and nested different-PROCESS launchers are ineligible.
+The binding records TTBR0, SCTLR, TTBCR, DACR, CONTEXTIDR and FPEXC. Full VFP
+state means D0-D31/FPSCR for the supported Cortex-A7 hard-float configuration;
+VFP exception/restart and FIQ continuations are not added by this increment.
+The current loaded launcher still uses the boot-CPU slot: moving that loaded
+state and error continuations into CPU execution ownership remains B1c.
+
+Actual user tests fill R0-R12/user LR and all D0-D31/FPSCR, busy-loop through
+timer IRQs without a syscall, and verify register restoration. The kernel checks
+the copied pattern and reports capture evidence outside IRQ context from root.
+The test driver requires that evidence for configured Cortex-A7 clone suites.
+This is interrupted-frame capture, not CPU-bound peer progress or preemption.
+Host frame validation is labeled synthetic; native results are recorded in the
+PR capability matrix. m68k CPU-specific frames/FSAVE capture remains separate.
+
+B1b m68k first capture increment (hardware format 0 only)
+-------------------------------------------------------
+Real IRQ entry saves D0-D7/A0-A6 and USP before any device C handler. The saved
+SR/PC/format-vector header is the actual CPU exception, not int_timerc's
+synthetic supervisor return frame. QEMU Goldfish entry and Amiga CIA entry are
+hooked before their synthetic timer callbacks; Atari's hardware int_timerc
+entry is hooked directly. A supervisor callback is ineligible. All original
+register pops/RTE paths remain unchanged. Local IPL7 exclusion covers capture,
+not dispatch and not SMP synchronization.
+
+Only 030/040/060 hardware format-0 user IRQs pass admission: the exact image is
+72 bytes (USP, fifteen GPRs and eight hardware bytes). Other formats are rejected
+before copying payload, never guessed to have this size. The THREAD-owned copy
+binds the active launcher/syscall-stack interval, actual MMU root, CPU/model and
+FPU identity. The existing m68k_fpu_save/restore backend captures opaque FSAVE,
+FP0-FP7 and FPCR/FPSR/FPIAR into preallocated storage, restoring immediately.
+The bounded 216-byte FSAVE capacity and 324-byte backend layout are shared and
+asserted, not reinterpreted as a portable restart-frame ABI. Unsupported bus,
+fault, throwaway and extended-frame decoding remains B1b work before any restore.
+TC/SRP/control eligibility and full loaded-launcher/error/scratch conversion
+remain prerequisites; a format-0 diagnostic copy grants no switch capability.
+Root acknowledgement invalidates capture eligibility on every architecture.
+
+Real native probes busy-loop with independent D/A/USP/FPU patterns and verify
+the original IRQ return. QEMU68040 permits zero-only FPIAR, which is explicitly
+not nonzero-FPIAR evidence. Pinned Amiberry68060 is tested with explicit FPU,
+caches off/on and the existing strict nonzero-FPIAR verdict. Its debugger also
+reads test-only kernel capture counters before stopping: captured pattern count
+must be nonzero, mismatch count zero, and nonzero FPIAR captures nonzero. This
+avoids treating a passing user restore test as proof that kernel capture ran.
+Debug READ_MEM uses physical addresses; the runner converts the Amiga kernel
+window explicitly. No kernel pointer or test opcode is exposed to user mode.
+Native fastcall execution remains unverified; compile support is not a claim.
+
+Additional native evidence: pinned Amiberry68030/68882 also passes 25/0 caches
+off/on; debugger reads show nonzero captured frames, zero mismatches and nonzero
+FPIAR in both modes. The FSAVE image remains opaque and model-tagged. This is
+not a claim of native -mfastcall validation or of QEMU68060 support.
+
+B1c first ownership increment
+-----------------------------
+Native x32/ARM/m68k loaded launcher chains now live in NATIVE_SCHED_CPU, accessed
+by the architecture backend through ksched_loaded_launcher/set_loaded_launcher.
+They are saved/restored with the execution CPU image, never owned by a PROCESS
+or the runnable arena. The setter rejects runqueue-leaf mutation. The chain
+still borrows only the live, pinned launcher continuations: native root detach
+clears its saved caller image, and each launcher restores the previous chain
+before its own continuation ends. Non-scheduler builds retain legacy storage.
+CPU selection remains explicitly boot-CPU-only; these accessors do not enable
+SMP or asynchronous kernel switching.
+
+m68k removes global uenter staging. A 16-byte, offset-asserted kernel record
+lives in the launcher and is passed using the kernel ABI. Entry masks IRQs,
+copies PC/USP/SSP/argument before user RTE, and leaves no pointer into that
+record published. The optional register argument is temporarily owned by the
+new syscall stack and consumed before RTE; the original exception-frame shape
+and empty supervisor SP are preserved. No field is read after longjmp.
+
+Remaining B1c work is explicit: the loaded run ABI slot, errbuf/errcode/errdrv
+and callback/watchdog/error scratch still need CPU/execution ownership across
+all entry paths, including legacy/kernel launches. Global compatibility slots
+cannot simply be renamed into SMP support. B2/C remain gated on those audits,
+complete restore eligibility and safe user-return synchronization.
+
+K1 loaded execution scopes (supersedes the remaining-B1c inventory above)
+------------------------------------------------------------------------
+The selected CPU owns FS_ERROR_STATE: the loaded disk-error jump target,
+errcode, errdrv and rwerr. Each backend snapshots/restores the entire record,
+not merely the jump registers. Root clears every field before installing its
+own fail-stop target. Scoped disk calls and teardown restore the entire
+surrounding record on ordinary and exceptional return. Exit finalization still
+fails stop if a cleanup callback escapes; this is not filesystem transaction
+recovery and does not remove the documented bounded-close limitation.
+
+Each synchronous launcher now retains an immutable copy of its enclosing error
+scope before setjmp. After longjmp it restores that scope before reclaiming the
+child syscall stack or invoking finalizers. The enclosing scope is never
+modified across setjmp/longjmp. Native syscall return similarly restores its
+caller's scope before the cancellation checkpoint. Callback frames save/restore
+their invoking error scope before releasing their private stack. Loader image
+and error backup storage are invocation-local; successful loading uninstalls its
+local target before later admission, cleanup or nested launch.
+
+The frozen OSHEADER &run ABI is an alias of the first, offset-asserted PROCESS
+slot in the boot CPU record. There is no second mutable run mirror. All existing
+C/assembly consumers retain their symbol and pointer representation. Classic
+non-native kernels retain the original standalone slot. This is a boot-CPU
+compatibility contract, NOT CPU discovery, migration or SMP: additional CPUs
+must select their own current execution, while the system-wide legacy TOS ABI
+requires a separately specified compatibility policy.
+
+The loaded callback frame chain, invocation depth and token clock belong to the
+selected CPU. Watchdog deadlines belong to their retained callback frames;
+nested frames inherit the earliest deadline. Exhausted return tokens refuse
+invocation without wrap. Work-hook registration is shared service metadata,
+not a suspended execution. A callback cannot block/migrate; backend switching
+fails stop with a callback frame or leaf exclusion active. IRQ capture excludes
+callbacks even when their owner equals the scheduled PROCESS. Teardown refuses
+to retire an owner while a callback still references its live continuation.
+
+m68k exception/FPU eligibility audit
+------------------------------------
+Capture and restore eligibility are deliberately distinct. No copied exception
+frame is installed by these changes. Original device frames alone drive RTE.
+Header inspection reads only SR and format/vector before admission. The exact
+72-byte format-0 capture requires a supported model, a hardware interrupt vector
+(24..255), a matching stack top/root and a user, non-master frame. Every other
+format is rejected BEFORE copying any extended payload:
+
+  0: short interrupt frame; diagnostic capture only, never copied-frame restore.
+  1: throwaway/master interrupt state; not an independent user continuation.
+  2/3: instruction/coprocessor effective-address state; no copied-return decoder.
+  4: 060 access-error state; precise fault replay is owned by the fault handler.
+  7: 040 access-error/writeback state; replay may perform outstanding writes.
+  9: coprocessor/internal state; not interchangeable with a short interrupt.
+  A/B: 030 bus pipeline/data-cycle state; RTE may restart the original cycle.
+  5/6/8/C..F: not accepted by the supported MMU interrupt backend, including
+             formats belonging to other CPU generations or reserved formats.
+
+The existing userfault.c decoders for 030 A/B, 040 7 and 060 4 retain their
+original exception-stack ownership and restart/writeback decisions. They do not
+authorize detaching/copying those frames. Cross-check: Linux v6.12
+arch/m68k/include/asm/traps.h defines distinct fmt2/3/4/7/9/A/B payloads; no
+payload length is guessed or copied by the scheduler from that classification.
+
+FSAVE admission uses the actual processor.S hardware cookie: no FPU; 030 with
+coprocessor 68881/68882 (0x20000/0x40000/0x60000); 040 internal (0x80000); or
+060 internal (0x100000). Memory-mapped SFP004, unknown cookies and mismatched
+CPU/FPU pairs are rejected before executing FSAVE. Existing backend save/restore
+immediately reinstates the original FPU; opaque null/idle/busy images remain
+model-tagged diagnostics, not a validated remote restart ABI. FSAVE header and
+pending-FPU-exception eligibility, TC/SRP/control restoration, frame generation,
+mapping stability and exception-stack acknowledgement must be proven before B2.
+Nonzero FPIAR evidence remains emulator-specific; native fastcall is unverified.
+
+B2 readiness assessment
+------------------------
+K1 completes the loaded run/error/callback/watchdog ownership conversion for
+current single-CPU cooperative dispatch. m68k user fault and lazy-busfault entry
+now pass the original exception frame by the kernel ABI, retaining it on that
+invocation's stack. User fault classification uses that frame's vector and live
+USP, never reusable proc_enum/proc_usp staging. Those low-memory globals remain
+machine panic diagnostics only. ARM already passes its frame/control state as
+invocation arguments. x32 loaded GS swap state is now in its per-CPU entry record;
+compile-time assertions preserve assembly's kernel_rsp/user_rsp offsets.
+
+Legacy VDI/AES mask scopes also use CPU-owned flags and explicit active ownership
+on native kernels. Nesting/unmatched release fail stop; a live scope excludes
+backend switch and user IRQ capture. ARM mouse IRQ movement now uses its own
+lexical CPSR save/restore instead of claiming a scope it never released. Classic
+non-native implementations retain their ABI and original save-slot behavior.
+These scopes are not owner locks or SMP synchronization.
+
+K1 does not establish copied-frame restartability. ARM exception/VFP pending-state
+eligibility and x32 syscall/TSS/GS nesting still need outer-user-return depth and
+owner checks before B2. Hardware descriptor/banked exception stacks belong to the
+single boot CPU; architecture CPU selection and legacy TOS ABI policy must be
+specified before activating another CPU. Callback/filesystem kernel execution
+remains non-preemptible. Capture validity expires at verified root handoff.
+
+There is no captured-frame restore, deferred IRQ rescheduling, timer dispatch
+or SMP. Before B2, add owner-protected generations/pins to raw join/PROCESS and
+device predicate waits, validate restored frames natively on EACH backend, and
+prove exception-stack acknowledgement before any stack reuse. No raw callback
+predicate is upgraded to concurrent wake safety by this ownership increment.
+
+B2b first restricted restore proof: fresh x32 same-entry round trip
+----------------------------------------------------------------
+Test-only EXIT_HANDOFF_TEST/X86_64_MEMTEST kernels now round-trip the known
+ring-3 register-pattern probe through its preallocated THREAD-owned capture.
+This happens BEFORE IRQ dispatch, callbacks, scheduler entry or any yield. The
+original frame/IRQ stack stays live and is the freshness witness. Validation
+requires exact execution generation/TID/CPU/sequence, original frame address,
+CR3/TSS stack bindings, user iret controls and byte-identical image. It does not
+accept user-supplied data or an old diagnostic image after context selection.
+
+For a recognized pattern only, the test deliberately zeros saved RAX and XMM
+bytes, then copies the complete validated 688-byte owned image onto its same
+IRQ stack. The existing assembly FXRSTOR/GPR pops/IRETQ return to the actually
+interrupted user instruction; the ring-3 fixture checks all register/FPU
+patterns. A final full suite verdict is required in addition to the root's
+round-trip marker. The boot driver requires that marker alongside capture.
+Host tests exercise identity/sequence/CPU/TID and changed-source rejection;
+modeled CPU queries are not native restore evidence.
+
+This is NOT a scheduler handoff or general restorable saved continuation.
+No different task/root/GS/FS/TSS selection occurs, and no syscall nesting or
+mapping lifetime changes between copy and return. The original hardware return
+path remains authoritative after the probe. Ordinary kernels remain capture-
+only. ARM and m68k copied-frame return proofs remain unavailable; their original
+exception return is unchanged. No deferred involuntary scheduling, arbitrary
+kernel/IRQ continuation switching, timer preemption or SMP is enabled.
+
+Next prerequisites: an independently owned resume transaction with stable
+mapping/materialization/stack holds across a scheduler boundary, validated
+outer-syscall and user/kernel GS/FS/TSS selection on x32; banked/SPSR/VFP return
+proof on A32; actual model-specific RTE/FSAVE/FPIAR proof on 030/040/060. The
+current same-entry validator must never be promoted into a delayed restore API
+by omitting its untouched-source/freshness requirement. B2a IRQ generation and
+idle admission semantics are unchanged. #933's cooperative no-reentry filesystem
+assumptions must be reviewed again before making those paths preemptible.

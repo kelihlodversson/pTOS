@@ -17,9 +17,10 @@ static LONG wait_cookie(LONG session, UQUAD cookie)
     register UQUAD ax __asm__("rax") = ((UQUAD)CUIS_SERVICE_CLASS << 32) | CUIS_SESSION_WAIT;
     register UQUAD di __asm__("rdi") = (QUAD)session, si __asm__("rsi") = sizeof(PROBE_PACKET);
     register UQUAD dx __asm__("rdx") = CUIS_READY_STREAM, fourth __asm__("r10") = 0;
+    register UQUAD fifth __asm__("r8") = 0, sixth __asm__("r9") = 0;
     __asm__ volatile ("movq %[cookie], %%xmm7; syscall; movq %%xmm7, %[actual]"
         : "+a"(ax), [actual] "=r"(actual)
-        : "r"(di), "r"(si), "r"(dx), "r"(fourth), [cookie] "r"(cookie)
+        : "r"(di), "r"(si), "r"(dx), "r"(fourth), "r"(fifth), "r"(sixth), [cookie] "r"(cookie)
         : "rcx", "r11", "xmm7", "memory", "cc");
     return actual == cookie ? (LONG)ax : EIMBA;
 }

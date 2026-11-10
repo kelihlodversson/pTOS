@@ -184,16 +184,16 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-cast-function-type", "-Wno-clobbered",
                 "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections",
                 "-Iinclude/arch/x86_64", "-iquote", str(rollback), "-iquote", "include", "-iquote", "include/arch/x86_64", "-iquote", "bdos",
-                "bdos/proc.c", "bdos/kfile.c", "-Wl,--gc-sections"]
+                "bdos/proc.c", "bdos/kfile.c", "tests/cuis/close_model.c", "-Wl,--gc-sections"]
     for test in ("deferred_rollback", "deferred_exit"):
         subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)
         subprocess.run([str(rollback / test)], check=True)
-    subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_reference.c", "-o", str(rollback / "deferred_reference")], check=True)
+    subprocess.run([arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c", "tests/cuis/close_model.c")] + ["tests/cuis/deferred_reference.c", "-o", str(rollback / "deferred_reference")], check=True)
     subprocess.run([str(rollback / "deferred_reference")], check=True)
-    subprocess.run(command[:-3] + ["-Wl,--gc-sections", "tests/cuis/deferred_spawn.c", "-o", str(rollback / "deferred_spawn")], check=True)
+    subprocess.run([arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c", "tests/cuis/close_model.c")] + ["tests/cuis/deferred_spawn.c", "-o", str(rollback / "deferred_spawn")], check=True)
     subprocess.run([str(rollback / "deferred_spawn")], check=True)
-    unwind_command = [arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c")]
-    subprocess.run(unwind_command + ["tests/cuis/scheduler_publication.c", "-o", str(rollback / "scheduler-publication")], check=True)
+    unwind_command = [arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c", "tests/cuis/close_model.c")]
+    subprocess.run(unwind_command + ["bdos/sched_lifetime.c", "tests/cuis/scheduler_publication.c", "tests/cuis/scheduler_context.S", "-o", str(rollback / "scheduler-publication")], check=True)
     subprocess.run([str(rollback / "scheduler-publication")], check=True)
     subprocess.run(unwind_command + ["tests/cuis/exit_unwind.c", "-o", str(rollback / "exit-unwind")], check=True)
     subprocess.run([str(rollback / "exit-unwind")], check=True)
@@ -212,7 +212,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     (noncuis / "setjmp.h").write_text("#include <setjmp.h>\n")
     (noncuis / "i18nconf.h").write_text("/* Host fixture. */\n")
     plain_command = [str(noncuis) if arg == str(rollback) else arg for arg in command]
-    subprocess.run(plain_command + ["tests/cuis/noncuis_cleanup.c", "-o", str(noncuis / "test")], check=True)
+    subprocess.run([arg for arg in plain_command if arg != "tests/cuis/close_model.c"] + ["bdos/fsclose.c", "bdos/fshand.c", "bdos/fsmain.c", "tests/cuis/noncuis_cleanup.c", "-o", str(noncuis / "test")], check=True)
     subprocess.run([str(noncuis / "test")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",

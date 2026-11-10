@@ -4,13 +4,14 @@
 #include "kaspace.h"
 #include "procmem.h"
 #include "thread_startup.h"
+#include "syscall_return.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "thread_startup_backend.h"
 #include "ksched.h"
 #include "biosext.h"
 #include "setjmp.h"
 #include "string.h"
-extern jmp_buf errbuf;
+#include "fs_error.h"
 struct thread_startup_draft {
     KASPACE *space;
     THREAD_STARTUP_ARGS args;
@@ -19,6 +20,7 @@ struct thread_startup_draft {
     KASPACE_LEASE *leases[5]; /* entry, bridge, stack, PID output, TID output */
     THREAD_STARTUP_STATE state;
     BOOL outputs_prepared;
+    BOOL saved_return;
     VADDR outputs[2]; /* exact destinations retained; never written yet */
     THREAD_STARTUP_OBSERVER observer;
     void *observer_context;
@@ -27,8 +29,9 @@ struct thread_startup_draft {
 #endif
 
 static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
-                            THREAD_STARTUP_DRAFT **result, BOOL public_return)
+                            THREAD_STARTUP_DRAFT **result, BOOL public_return, KASPACE *source, const void *saved)
 {
+    (void)source;
     if (!result || *result || !space || !args) return EINVAL;
 #if CONF_WITH_NATIVE_SCHED
     {
@@ -44,6 +47,7 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         for (i = 0; i < 5; i++) draft->leases[i] = NULL;
         draft->state = THREAD_STARTUP_PREPARED;
         draft->outputs_prepared = FALSE;
+        draft->saved_return = saved != NULL;
         draft->outputs[0] = draft->outputs[1] = 0;
         draft->observer.acquire = NULL;
         draft->observer.release = NULL;
@@ -53,9 +57,16 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->args = *args;
         draft->image = NULL;
         draft->bridge = NULL;
-        error = thread_startup_arch_bridge_acquire(space, &draft->bridge);
+        error =
+#if CONF_WITH_PRIVATE_CLONE
+            source ? thread_startup_arch_bridge_acquire_cloned(source, space, &draft->bridge) :
+#endif
+            thread_startup_arch_bridge_acquire(space, &draft->bridge);
         if (!error) error = thread_startup_arch_prepare(kaspace_backend(space), &draft->args, draft->bridge, &draft->image);
         if (!error && public_return) error = thread_startup_arch_public_return(draft->image, draft->bridge);
+#if CONF_WITH_FORK_RETURN_TEST
+        if (!error && saved) error = thread_startup_arch_saved_return(draft->image, saved);
+#endif
         if (!error) error = kaspace_lease_acquire(space, args->entry, 1,
             ASPACE_PROT_USER | ASPACE_PROT_EXEC, &draft->leases[0]);
         if (!error) error = kaspace_lease_acquire(space, thread_startup_arch_bridge_address(draft->bridge), 1,
@@ -69,17 +80,29 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         return E_OK;
     }
 #else
-    (void)public_return; return EINVFN;
+    (void)public_return; (void)source; (void)saved; return EINVFN;
 #endif
 }
 LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, FALSE);
+    return startup_prepare(space, args, out, FALSE, NULL, NULL);
 }
 LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, TRUE);
+    return startup_prepare(space, args, out, TRUE, NULL, NULL);
 }
+#if CONF_WITH_FORK_RETURN_TEST
+LONG thread_startup_prepare_saved_return(KASPACE *space, const SYSCALL_RETURN *saved, THREAD_STARTUP_DRAFT **out)
+{
+    if (!saved || saved->space != space) return EACCDN;
+    return startup_prepare(space, &saved->mappings, out, FALSE, NULL, saved);
+}
+#endif
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_prepare_cloned(KASPACE *source, KASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                  BOOL public_return, THREAD_STARTUP_DRAFT **out)
+{ return startup_prepare(space, args, out, public_return, source, NULL); }
+#endif
 
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
 {
@@ -261,8 +284,10 @@ LONG thread_startup_run_preflight(THREAD_STARTUP_DRAFT *draft)
     if (!draft || draft->state != THREAD_STARTUP_OBSERVED) return EINVAL;
     error = thread_startup_validate(draft);
     if (error) return error;
-    draft->frame_alias = thread_startup_arch_frame_alias(kaspace_backend(draft->space), draft->image);
-    if (!draft->frame_alias) return EIMBA;
+    if (!draft->saved_return) {
+        draft->frame_alias = thread_startup_arch_frame_alias(kaspace_backend(draft->space), draft->image);
+        if (!draft->frame_alias) return EIMBA;
+    }
     for (i = 0; i < 2; i++) if (draft->outputs[i]) {
         draft->output_aliases[i] = aspace_user_write_alias(kaspace_backend(draft->space), draft->outputs[i], 4);
         if (!draft->output_aliases[i] &&
@@ -281,7 +306,7 @@ void thread_startup_commit_stores(THREAD_STARTUP_DRAFT *draft, WORD pid, ULONG t
 {
     UWORD i;
     ULONG values[2];
-    thread_startup_arch_commit_frame(draft->image, draft->frame_alias);
+    if (!draft->saved_return) thread_startup_arch_commit_frame(draft->image, draft->frame_alias);
     values[0] = (LONG)pid; values[1] = tid;
     for (i = 0; i < 2; i++) if (draft->output_aliases[i]) {
         if (draft->output_tails[i]) {
@@ -313,17 +338,17 @@ BOOL thread_startup_take_stacks(THREAD_STARTUP_DRAFT *draft, THREAD_STARTUP_STAC
 #if CONF_WITH_NATIVE_SCHED
 void thread_startup_reclaim(THREAD_STARTUP_DRAFT **handle)
 {
-    jmp_buf saved_error;
+    FS_ERROR_STATE saved_error;
     if (!handle || !*handle) return;
     if ((*handle)->state != THREAD_STARTUP_RUNNABLE || !ksched_startup_reclaimable(*handle))
         panic("startup reclaim outside stopped scheduler root");
-    memcpy(saved_error, errbuf, sizeof(errbuf));
+    saved_error = *fs_error_current();
     if (setjmp(errbuf)) {
-        memcpy(errbuf, saved_error, sizeof(errbuf));
+        *fs_error_current() = saved_error;
         panic("startup reclaim: cleanup callback escaped");
     }
     (*handle)->state = THREAD_STARTUP_RECLAIMABLE;
     thread_startup_abort(handle);
-    memcpy(errbuf, saved_error, sizeof(errbuf));
+    *fs_error_current() = saved_error;
 }
 #endif

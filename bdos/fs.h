@@ -71,10 +71,7 @@
 
 #include "setjmp.h"
 
-extern  long    rwerr;
-extern  jmp_buf errbuf;
-extern  int     errdrv;
-extern  long    errcode;
+#include "fs_error.h"
 
 /*
  * run a call that can reach the disk, for kernel code calling the GEMDOS
@@ -87,9 +84,9 @@ extern  long    errcode;
 __extension__                                                   \
 ({                                                              \
     long _rc;                                                   \
-    jmp_buf _saved;                                             \
+    FS_ERROR_SCOPE _saved;                                             \
                                                                 \
-    memcpy(_saved, errbuf, sizeof(errbuf));                     \
+    fs_error_scope_save(_saved);                     \
     if (setjmp(errbuf))                                         \
     {                                                           \
         _rc = errcode;                                          \
@@ -97,7 +94,7 @@ __extension__                                                   \
     }                                                           \
     else                                                        \
         _rc = (call);                                           \
-    memcpy(errbuf, _saved, sizeof(errbuf));                     \
+    fs_error_scope_restore(_saved);                     \
     _rc;                                                        \
 })
 
@@ -390,7 +387,16 @@ typedef struct
 {
     OFD *f_ofd;
     PD  *f_own;         /* file owners */
-    int f_use;          /* use count */
+    int f_use;          /* live aliases plus kernel-owned residual references */
+#if CONF_WITH_USER_ASPACE
+    UQUAD f_incarnation; /* never reused, even if slot/OFD addresses are */
+    ULONG f_cleanup_refs;
+    ULONG f_staged_refs; /* checked live refs not yet descriptor-bound */
+    UQUAD f_cleanup_issued, f_cleanup_consumed, f_cleanup_invalid_from;
+    LONG f_cleanup_first_error, f_cleanup_last_error;
+    UWORD f_cleanup_state;
+    BOOL f_close_busy, f_close_cleanup, f_close_staged;
+#endif
 #if CONF_WITH_PLUGGABLE_FS
     PFSCOOKIE f_pfs;    /* f_pfs.fs != NULL marks a handle owned by a
                          * pluggable filesystem driver with no legacy OFD
@@ -399,6 +405,7 @@ typedef struct
                          * or free alongside the slot itself. */
 #endif
 } FTAB;
+#include "fs_close.h"
 
 
 

@@ -10,10 +10,12 @@
 #include "emutos.h"
 #include "string.h"
 #include "fs.h"
+#include "console.h"
 #include "gemerror.h"
 #include "kproc.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "ksched_lifetime.h"
 #include "process_exec_internal.h"
 #endif
 #if CONF_WITH_CUIS
@@ -67,6 +69,10 @@ struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
     UQUAD number;                /* Generic non-recycled PROCESS identity. */
 #if CONF_WITH_USER_ASPACE
+    BOOL file_cleanup_started; /* No new references once retirement starts. */
+    PD *destroying_pd; /* Non-owning address only during active destruction. */
+    LONG cleanup_error;
+    ULONG cleanup_transferred;
     UQUAD completion_order;
     BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
     WORD exit_signal; /* Pending only for final execution; immutable at completion. */
@@ -124,6 +130,9 @@ struct kproc {
     UBYTE clone_maps;
     void *clone_startup;
     PD *clone_controller_pd; /* pinned allocation, scheduler-root continuation */
+#if CONF_WITH_PRIVATE_CLONE
+    BOOL clone_controller_borrowed; /* independent-VM controller mapping */
+#endif
     UQUAD clone_controller_gen;
     KPROC *clone_controller_identity; /* owning if the root is tracked */
 #endif
@@ -180,6 +189,17 @@ struct kproc {
 };
 
 static KPROC *kproc_list;
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kproc_has_aspace_peer(const KPROC *source)
+{
+    KPROC *p;
+    if (!source || !source->active_space) return TRUE;
+    for (p = kproc_list; p; p = p->next)
+        if (p != source && p->active_space && p->active_space == source->active_space)
+            return TRUE;
+    return FALSE;
+}
+#endif
 #if CONF_WITH_USER_ASPACE
 static UQUAD last_completion_order; /* Serialized terminal publication, not IRQ producer state. */
 #endif
@@ -574,6 +594,25 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     target->lim_data = source->lim_data;
     return TRUE;
 }
+#if CONF_WITH_PRIVATE_CLONE
+BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
+{
+    KPROC *peer;
+    if (!source || !source->active_space || !source->threads ||
+        !kproc_thread_is_sole(source, source->threads) || source->nheap || source->pending_space ||
+        source->give_back || source->lender || source->lost) return FALSE;
+    for (peer = kproc_list; peer; peer = peer->next)
+        if (peer != source && peer->active_space == source->active_space) return FALSE;
+    if (target) {
+        if (!kproc_clone_target_ready(target, NULL) || target->nheap) return FALSE;
+        target->stack_size = source->stack_size;
+        target->stack_low = source->stack_low;
+        target->stack_top = source->stack_top;
+        target->entry = source->entry;
+    }
+    return TRUE;
+}
+#endif
 
 KASPACE *kproc_active_space(const KPROC *process)
 {
@@ -709,6 +748,13 @@ failed:
 static void clone_drop_controller(KPROC *p)
 {
     if (p->clone_controller_pd) {
+#if CONF_WITH_PRIVATE_CLONE
+        if (p->clone_controller_borrowed) {
+            aspace_unborrow(kaspace_backend(p->clone_compat),
+                (VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD));
+            p->clone_controller_borrowed = FALSE;
+        }
+#endif
         procmem_pin((VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD), -1);
         p->clone_controller_pd = NULL;
         p->clone_controller_gen = 0;
@@ -758,6 +804,9 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
     VADDR page, end;
     KPROC *identity;
     UQUAD generation;
+#if CONF_WITH_PRIVATE_CLONE
+    BOOL missing = FALSE, present = FALSE;
+#endif
     if (!p || !p->clone_compat || p->clone_controller_pd || !controller ||
         !(generation = procmem_gen(controller)) ||
         !procmem_range_live((VADDR)(uintptr_t)controller, sizeof(PD))) return FALSE;
@@ -771,12 +820,30 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
     for (; page < end; page += USER_PAGE_SIZE) {
         PADDR physical;
         UWORD prot;
-        if (!aspace_translate(as, page, &physical, &prot) ||
-            physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
+        if (!aspace_translate(as, page, &physical, &prot)) {
+#if CONF_WITH_PRIVATE_CLONE
+            missing = TRUE; continue;
+#else
+            kproc_release(identity); return FALSE;
+#endif
+        }
+#if CONF_WITH_PRIVATE_CLONE
+        present = TRUE;
+#endif
+        if (physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
             kproc_release(identity);
             return FALSE;
         }
     }
+#if CONF_WITH_PRIVATE_CLONE
+    if (missing) {
+        if (present || !p->parent_identity || kproc_active_space(p->parent_identity) == p->clone_compat ||
+            !aspace_borrow(as, (VADDR)(uintptr_t)controller, sizeof(PD))) {
+            kproc_release(identity); return FALSE;
+        }
+        p->clone_controller_borrowed = TRUE;
+    }
+#endif
     procmem_pin((VADDR)(uintptr_t)controller, sizeof(PD), +1);
     p->clone_controller_pd = controller;
     p->clone_controller_gen = generation;
@@ -992,6 +1059,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_ASPACE
             if (kproc->threads)
                 panic("kproc_destroy: attached non-runnable threads");
+            kproc->file_cleanup_started=TRUE;
 #endif
 
 #if CONF_WITH_CUIS
@@ -1005,6 +1073,12 @@ void kproc_destroy(PD *pd)
 #endif
 #if CONF_WITH_PTHJOIN
             kthread_forget_completions(kproc);
+#endif
+#if CONF_WITH_USER_ASPACE
+            /* The live-registry cursor must be detached before child cleanup
+             * can reenter. Preserve closed admission through that cleanup and
+             * the later payload wipe; this address owns no PD resource. */
+            kproc->destroying_pd=pd;
 #endif
             *link = kproc->next;
             /* Keep the PID reserved even if cleanup re-enters allocation. */
@@ -1074,6 +1148,9 @@ void kproc_destroy(PD *pd)
                 kproc_release(parent_identity);
 #endif
             }
+#if CONF_WITH_USER_ASPACE
+            kproc->destroying_pd=NULL; /* No callback/PD access after this point. */
+#endif
             kproc_release(kproc); /* drop the lookup's ownership */
             return;
         }
@@ -1110,10 +1187,6 @@ LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity)
 WORD kproc_parent_pid(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
-#if CONF_WITH_NATIVE_SCHED
-    WORD pid;
-    if (ksched_parent_pid(pd, &pid)) return pid;
-#endif
 
 #if CONF_WITH_USER_ASPACE
     if (kproc && kproc->parent_identity)
@@ -1176,7 +1249,59 @@ SBYTE *kproc_uft(PD *pd)
     return kproc ? kproc->uft : pd->p_uft;
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
+/* Diagnostic only: residual file references are owned by the SFT service,
+ * never by this retained identity. The first error survives PD retirement. */
+static KPROC *file_admission_owner(PD *pd)
+{
+    KPROC *p=kproc_find(pd);
+    if (p || !pd) return p;
+    for (p=retired_processes;p;p=p->next)
+        if (p->destroying_pd==pd) return p;
+    return NULL;
+}
+BOOL kproc_begin_file_cleanup(PD *pd)
+{
+    KPROC *p=file_admission_owner(pd);
+    if (!p) return TRUE; /* Trusted boot PD has no USER_ASPACE identity. */
+    if (p->file_cleanup_started) return FALSE;
+    p->file_cleanup_started=TRUE;
+    return TRUE;
+}
+BOOL kproc_file_references_allowed(PD *pd)
+{
+    KPROC *p=file_admission_owner(pd);
+    return !p || !p->file_cleanup_started;
+}
+void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
+{
+    KPROC *p=kproc_find(pd);
+    if (!p) return;
+    if (!p->cleanup_error && error<0) p->cleanup_error=error;
+    if (transferred) {
+        if (p->cleanup_transferred==~(ULONG)0) panic("file cleanup count exhausted");
+        p->cleanup_transferred++;
+    }
+}
+LONG kproc_ref_file_cleanup(const KPROC *p, ULONG *transferred)
+{
+    if (!p) return EINVAL;
+    if (transferred) *transferred=p->cleanup_transferred;
+    return p->cleanup_error;
+}
+void kproc_standard_file_invalidate(WORD handle)
+{
+    KPROC *p;
+    WORD i;
+    for (p=kproc_list;p;p=p->next)
+        for (i=0;i<NUMSTD;i++)
+            if (p->uft[i]==handle) p->uft[i]=get_default_handle(i);
+    /* The currently loaded boot/kernel PD can lack a KPROC record. All
+     * ordinary USER_ASPACE PROCESS tables above are authoritative. */
+    if (run && !kproc_find(run))
+        for (i=0;i<NUMSTD;i++)
+            if (run->p_uft[i]==handle) run->p_uft[i]=get_default_handle(i);
+}
 void kproc_standard_file_refs(ULONG *references)
 {
     KPROC *kproc;
@@ -1443,8 +1568,26 @@ BOOL kproc_prepare_async_thread(PD *pd, PD *parent, PD *controller, KTHREAD **th
     KPROC *kproc = kproc_find(pd);
     if (thread) *thread = NULL;
     if (!kproc || kproc->started || kproc->aspace) return FALSE;
-    kproc->async_parent = controller;
-    return kproc_prepare_user_thread(pd, parent, thread);
+    {
+        KPROC *identity=kproc_find(parent), *retained=NULL;
+        PD *old=kproc->async_parent;
+        /* A detached kernel launch may have no logical parent. A non-NULL
+         * parent must be tracked: the controller is never a substitute PPID. */
+        if (!controller || (parent && !identity) ||
+            (identity && !(retained=kproc_retain_live(identity)))) return FALSE;
+        kproc->async_parent=controller;
+        if (!kproc_prepare_user_thread(pd,parent,thread)) {
+            kproc->async_parent=old; kproc_release(retained); return FALSE;
+        }
+        /* Logical parent identity and execution controller have separate lives.
+         * All fallible reference acquisition preceded the image transfer. */
+        kproc_release(kproc->parent_identity);
+        kproc->parent_identity=retained;
+        kproc->parent_untracked=FALSE;
+        kproc->parent_gen=0;
+        kproc->parent=controller;
+        return TRUE;
+    }
 }
 
 BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller)
@@ -1538,6 +1681,13 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
                                    ASPACE_PROT_WRITE)) {
         return prepare_failed(kproc, owner);
     }
+#if CONF_WITH_NATIVE_SCHED
+    /* The kernel controller mapping belongs to the ASPACE, not whichever
+     * PROCESS first launches through it. It survives all shared-VM peers. */
+    if (!kproc->async_parent && parent!=ksched_controller_pd() &&
+        !aspace_map_procmem(as,(VADDR)(uintptr_t)ksched_controller_pd(),sizeof(PD),ASPACE_PROT_WRITE))
+        return prepare_failed(kproc,owner);
+#endif
     if (!build_ancestors(kproc, as, parent)) {
         return prepare_failed(kproc, owner);
     }
@@ -2799,6 +2949,14 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
 #endif
     UWORD prot;
 
+#if CONF_WITH_PRIVATE_CLONE
+    /* Syscall copyout must split the same shared anonymous leaf as a user
+     * write fault, including image pages and already-dirtied file mappings. */
+    {
+        int rc = aspace_cow_fault(kproc->aspace, va, access);
+        if (rc >= 0) return rc;
+    }
+#endif
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_fault(kproc->active_space, va, access);
@@ -2824,6 +2982,12 @@ int kproc_demand_page(PD *pd, VADDR va, UWORD access)
 
     if (!kproc || !kproc->aspace)
         return 0;
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        int result = aspace_cow_fault(kproc->aspace, va, access);
+        if (result >= 0) return result;
+    }
+#endif
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_demand_page(kproc->active_space, va, access);
@@ -2882,6 +3046,10 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
         if (aspace_translate(kproc->aspace, page, NULL, &prot)) {
             if (!(prot & ASPACE_PROT_USER)) return FALSE;
             if (write && !(prot & ASPACE_PROT_WRITE)) {
+#if CONF_WITH_PRIVATE_CLONE
+                if (aspace_logical_protection(kproc->aspace, page, &prot) &&
+                    (prot & ASPACE_PROT_USER) && (prot & ASPACE_PROT_WRITE)) continue;
+#endif
 #if CONF_WITH_MMAP
                 if (aspace_file_cow(kproc->aspace, page) &&
                     kaspace_mmap_protection(kproc->active_space, page, &prot) &&
