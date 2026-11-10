@@ -12,6 +12,9 @@
 
 static int target = 946;
 static int *volatile pointer = &target;
+static const long guest_offsets[] = {
+    0, 0x00200000L - LOW, 0x00800000L - LOW, PAGES * MM_PAGE - MM_PAGE
+};
 
 static int fragmented_heap(void)
 {
@@ -77,15 +80,16 @@ int main(void)
     if (address != LOW)
         return 3;
     ram = (volatile unsigned char *)address;
-    /* Include the former metadata and framebuffer aliases, not just the
-     * beginning and end of the reservation. Every page must be private. */
-    for (i = 0; i < PAGES * MM_PAGE; i += MM_PAGE) {
-        if (ram[i] != 0)
+    /* Touch the ends and the former metadata and framebuffer aliases.
+     * Even a first read can allocate a private physical page: the Amiga
+     * test machine has less RAM than this virtual reservation. */
+    for (i = 0; i < (long)(sizeof(guest_offsets) / sizeof(guest_offsets[0])); i++) {
+        if (ram[guest_offsets[i]] != 0)
             return 4;
-        ram[i] = (unsigned char)(i / MM_PAGE + 1);
+        ram[guest_offsets[i]] = (unsigned char)(i + 1);
     }
-    for (i = 0; i < PAGES * MM_PAGE; i += MM_PAGE)
-        if (ram[i] != (unsigned char)(i / MM_PAGE + 1))
+    for (i = 0; i < (long)(sizeof(guest_offsets) / sizeof(guest_offsets[0])); i++)
+        if (ram[guest_offsets[i]] != (unsigned char)(i + 1))
             return 5;
     if (mm_map(LOW, 1, PROT_READ, 1) != -36L || ram[0] != 1)
         return 6;

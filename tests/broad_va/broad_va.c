@@ -10,12 +10,14 @@
 
 void test_broad_va(void);
 
+static char probe_failure[120];
+
 static void expect_probe(long rc, const char *what)
 {
-    char text[120];
-
-    sprintf(text, "%s (%ld)", what, rc);
-    ptest_assert_msg(rc == 0, text);
+    /* testlib keeps the first failure's pointer until ptest_pass(). */
+    if (rc && !probe_failure[0])
+        sprintf(probe_failure, "%s (%ld)", what, rc);
+    ptest_assert_msg(rc == 0, probe_failure);
 }
 
 static void run_high(void)
@@ -89,6 +91,7 @@ static void run_high(void)
 void test_broad_va(void)
 {
     ptest_begin("broad_va");
+    probe_failure[0] = '\0';
     run_high();
     ptest_pass();
 }
