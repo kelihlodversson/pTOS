@@ -1016,12 +1016,12 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/pclone/irq_registers.S tests/x32_probe/clone_threads.c tests/x32_probe/clone_registers.S tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+obj/x32/x32probe.elf: tests/pclone/irq_registers.S tests/x32_probe/receipt_fault.c tests/x32_probe/clone_threads.c tests/x32_probe/clone_registers.S tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
                     tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
                     include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
-                    obj/x32/libptos-vdi.a include/mman.h include/pclone.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
+                    obj/x32/libptos-vdi.a include/mman.h include/pclone.h include/threadcalls.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -include $(AUTOCONF_H) -o $@ \
 	  $(filter %.c %.S %.a,$^)
 

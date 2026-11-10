@@ -23,6 +23,9 @@ LONG kproc_copy_from_user_checked(void *out,VADDR address,ULONG bytes)
 LONG proc_exec_retain_observer(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_OBSERVER **out)
 {
     ULONG index;
+#ifdef RECEIPT_RUNTIME_FIXTURE
+    if (receipt_fixture_active) return receipt_fixture_import(owner,handle,prepared,out);
+#endif
     if (!input_irqs || !cleanup_depth || !wait_array_copied || prepared || *out) __builtin_abort();
     if (owner!=(KPROC *)run) return EACCDN;
     if (handle==31) return EACCDN;
@@ -34,11 +37,17 @@ LONG proc_exec_retain_observer(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_O
 }
 BOOL process_observer_ready(void *observer)
 {
+#ifdef RECEIPT_RUNTIME_FIXTURE
+    if (receipt_fixture_active) return receipt_fixture_ready(observer);
+#endif
     return observer==&wait_targets[0] ? wait_targets[0].ready:wait_targets[1].ready;
 }
 void process_observer_release(PROCESS_OBSERVER **out)
 {
     ULONG index=*out==(PROCESS_OBSERVER *)&wait_targets[1];
+#ifdef RECEIPT_RUNTIME_FIXTURE
+    if (receipt_fixture_active) { receipt_fixture_release(out); return; }
+#endif
     if (!input_irqs || !cleanup_depth || !*out || !wait_targets[index].leases) __builtin_abort();
     wait_targets[index].leases--; wait_releases++; *out=NULL;
 }

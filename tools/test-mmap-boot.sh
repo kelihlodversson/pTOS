@@ -176,6 +176,11 @@ if grep -q '^CONF_WITH_CUIS=y' .config; then
     grep -q 'x86-64 CUIS input history: PASS' "$log"
 fi
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
+if grep -q '^CONF_WITH_CUIS_RECEIPT_TEST=y' .config &&
+   grep -q '^CONF_WITH_PCLONE=y' .config && grep -q '^CONF_WITH_PTHJOIN=y' .config &&
+   grep -q '^CONF_WITH_MMAP=y' .config; then
+    grep -q 'x86-64 receipt publisher fault/recovery: PASS' "$log"
+fi
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi
 if [ "$expected" = PASS ] && grep -q '^CONF_WITH_NATIVE_SCHED=y' .config; then
