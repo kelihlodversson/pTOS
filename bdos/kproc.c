@@ -2234,18 +2234,18 @@ LONG kproc_check_launch(PD *pd, PD *caller)
 }
 
 #if KPROC_LEGACY_PRG
-BOOL kproc_record_legacy_text(PD *pd)
+BOOL kproc_record_legacy_text(PD *pd, ULONG text_bytes)
 {
     KPROC *kproc = kproc_find(pd);
     VADDR text = (VADDR)(uintptr_t)(pd + 1);
     if (!kproc) return FALSE;
     if (!kproc->legacy) return TRUE;
     if (kproc->aspace || kproc->has_image ||
-        kproc->legacy_text_recorded || pd->p_tlen < 0 ||
+        kproc->legacy_text_recorded || (ULONG)pd->p_tlen != text_bytes ||
         (VADDR)pd->p_tbase != text || text < (VADDR)(uintptr_t)kproc->user_start ||
         text > (VADDR)(uintptr_t)kproc->user_end ||
-        (VADDR)pd->p_tlen > (VADDR)(uintptr_t)kproc->user_end - text) return FALSE;
-    kproc->legacy_text_bytes = pd->p_tlen;
+        (VADDR)text_bytes > (VADDR)(uintptr_t)kproc->user_end - text) return FALSE;
+    kproc->legacy_text_bytes = text_bytes;
     kproc->legacy_text_recorded = TRUE;
     return TRUE;
 }
