@@ -2121,8 +2121,9 @@ TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
 else ifdef ARCH_X86_64
 # x32: a fixed base ET_EXEC linked with -q (RELA, R_X86_64_32), and the ET_DYN
-# shape (R_X86_64_RELATIVE)
-TEST_PTOS_RELOC_LDFLAGS  = $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -Wl,-e_start
+# shape (R_X86_64_RELATIVE). The fixed address is reserved system space,
+# forcing a real rebase even when valid high PT_LOAD addresses are kept.
+TEST_PTOS_RELOC_LDFLAGS  = $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = $(TEST_PIE_LDFLAGS)
 else
 # --oformat=elf32-m68k is required here for the same reason
