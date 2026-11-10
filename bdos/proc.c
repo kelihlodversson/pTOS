@@ -859,6 +859,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 
     /* now, load the rest of the program, perform relocation, close the file */
     rc = kpgmld(cur_p, fh, &hdr, path);
+#if KPROC_LEGACY_PRG
+    if (rc == E_OK && !kproc_record_legacy_text(cur_p)) rc = EPLFMT;
+#endif
     /* No later launch/admission/cleanup may retain this loader frame as its
      * disk-error target, especially across nested synchronous Pexec. */
 #if CONF_WITH_USER_ASPACE

@@ -278,6 +278,12 @@ BOOL aspace_map_page(ASPACE *as, VADDR va, PADDR phys, UWORD prot);
  * failure stay in the address space and go away with it.
  */
 BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
+#if defined(__m68k__) && CONF_WITH_PRG_LOADER
+/* Loader-only logical EXEC addition to already borrowed USER/WRITE procmem.
+ * No extra pin/allocation, preserves frame/ownership, checks the entire range
+ * before updates. m68k has no hardware NX; granularity is an MMU page. */
+BOOL aspace_mark_procmem_text(ASPACE *as, VADDR va, VADDR bytes);
+#endif
 
 /*
  * The block at va, which `as` mapped (or borrowed) whole, is shrinking to

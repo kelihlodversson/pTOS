@@ -1529,7 +1529,10 @@ void pclone_run_staged_tests(void)
     ptest_begin("Pclone from staged executable text");
     phase1_policy_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
     /* Loader-owned slack is resident data, but outside executable segments. */
-    phase1_policy_hole = (void *)(((unsigned long)_base->p_bbase + _base->p_blen + 65535UL) & ~4095UL);
+    if (_base->p_tbase == (void *)(_base + 1))
+        phase1_policy_hole = (void *)(((unsigned long)_base->p_hitpa - 4096UL) & ~4095UL);
+    else
+        phase1_policy_hole = (void *)(((unsigned long)_base->p_bbase + _base->p_blen + 8191UL) & ~4095UL);
     touch = *(volatile unsigned char *)phase1_policy_hole;
     (void)touch;
     ptest_assert_msg(stack > 0 && phase1_policy_stack,"staged-image entry stacks");

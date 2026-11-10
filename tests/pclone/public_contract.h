@@ -224,7 +224,7 @@ static long phase1_policy_checks(void)
     void *bad[3];
     args.flags = CLONE_VM; args.stack_base = phase1_policy_stack;
     args.stack_size = RUNNABLE_STACK_SIZE; args.child_pid = &pid; args.child_tid = &tid;
-    bad[0] = (void *)phase1_policy_data; bad[1] = (void *)phase1_policy_bss; bad[2] = phase1_policy_hole;
+    bad[0] = (void *)&phase1_policy_data[1023]; bad[1] = (void *)&phase1_policy_bss[1023]; bad[2] = phase1_policy_hole;
     for (i = 0; i < 3; i++) {
         pid = 0x12345678; tid = 0x23456789;
         memset(sentinel,0x96,sizeof(sentinel)); memcpy(frame,sentinel,sizeof(sentinel));
@@ -501,25 +501,34 @@ static void test_public_contract(unsigned char *stack)
     {
         static const char tail[] = "\14--abi-staged";
         long image, child, status, report;
-        report = Fcreate(PHASE1_POLICY_FILE,0);
-        ptest_assert_msg(report >= 6 && Fclose(report) == 0,"prepare orphan policy report");
-        ptest_log_flush();
-        #if defined(__mc68000__)
-        image = Pexec(3,"C:\\CLNABI.TOS",tail,0);
+        unsigned format;
+        for (format = 0; format <
+#if defined(__mc68000__)
+             2
 #else
-        image = Pexec(3,"C:\\RUNTESTS.TOS",tail,0);
+             1
 #endif
-        ptest_assert_msg(image > 0,"stage executable in loader-owned heap");
-        if (image > 0) {
-            child = Pexec(106,0,(void *)image,0);
-            ptest_assert_msg(child > 0,"publish staged executable through existing async loader");
-            if (child > 0) {
-                status = Pwaitpid(child,0,0);
-                ptest_assert_msg((status >> 16) == child && !(status & 65535),
-                                 "staged executable validates native Pclone text and zero return");
-                if ((status >> 16) == child && !(status & 65535)) phase1_policy_observe(child);
+             ; format++) {
+            report = Fcreate(PHASE1_POLICY_FILE,0);
+            ptest_assert_msg(report >= 6 && Fclose(report) == 0,"prepare orphan policy report");
+            ptest_log_flush();
+#if defined(__mc68000__)
+            image = Pexec(3,format ? "C:\\RUNTESTS.TOS" : "C:\\CLNABI.TOS",tail,0);
+#else
+            image = Pexec(3,"C:\\RUNTESTS.TOS",tail,0);
+#endif
+            ptest_assert_msg(image > 0,"stage executable in loader-owned heap");
+            if (image > 0) {
+                child = Pexec(106,0,(void *)image,0);
+                ptest_assert_msg(child > 0,"publish staged executable through existing async loader");
+                if (child > 0) {
+                    status = Pwaitpid(child,0,0);
+                    ptest_assert_msg((status >> 16) == child && !(status & 65535),
+                                     "staged executable validates native Pclone text and zero return");
+                    if ((status >> 16) == child && !(status & 65535)) phase1_policy_observe(child);
+                }
             }
-        }
+    }
     }
     phase1_account("staged",baseline);
     phase1_resource_matrix(good);

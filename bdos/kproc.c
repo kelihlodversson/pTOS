@@ -146,6 +146,10 @@ struct kproc {
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
     BOOL legacy;                /* a classic PRG: its stack is in its TPA (KPROC_LEGACY_PRG) */
+#if KPROC_LEGACY_PRG
+    ULONG legacy_text_bytes;    /* trusted loader snapshot, never reread from user PD */
+    BOOL legacy_text_recorded;
+#endif
 #if CONF_WITH_ELF_SHARED
     PROG_LAYOUT interpreter_layout;
     BOOL standard_entry;
@@ -1604,6 +1608,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     KASPACE *owner;
     VADDR env, tpa, hitpa;
     ULONG envbytes;
+    UWORD tpa_prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
 
     if (thread_result) *thread_result = NULL;
     if (!kproc || kproc->lost)
@@ -1654,6 +1659,11 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         return FALSE;
     }
 
+    if (!kproc->has_image
+#if KPROC_LEGACY_PRG
+        && !kproc->legacy_text_recorded
+#endif
+    ) tpa_prot |= ASPACE_PROT_EXEC;
     /*
      * The process's own environment block and its basepage + TPA + stack
      * (the PD is the first thing in the TPA allocation, p_hitpa its end):
@@ -1669,8 +1679,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     if (!aspace_map_procmem(as, env, envbytes,
                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
         !aspace_map_procmem(as, tpa, hitpa - tpa,
-                                   kproc->has_image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
-                                                : ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
+                                   tpa_prot) ||
         !aspace_map_procmem(as, (VADDR)(uintptr_t)
 #if CONF_WITH_NATIVE_SCHED
                                    (kproc->async_parent ? kproc->async_parent : parent),
@@ -1681,6 +1690,14 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
                                    ASPACE_PROT_WRITE)) {
         return prepare_failed(kproc, owner);
     }
+#if KPROC_LEGACY_PRG
+    /* A file-loaded PRG has a trusted text extent even though its TPA remains
+     * physically writable and the m68k CPU has no NX. Publish only those
+     * pages as logically executable. No extra pin or PROCESS lookup survives. */
+    if (kproc->legacy_text_recorded && kproc->legacy_text_bytes &&
+        !aspace_mark_procmem_text(as, tpa + sizeof(PD), kproc->legacy_text_bytes))
+        return prepare_failed(kproc, owner);
+#endif
 #if CONF_WITH_NATIVE_SCHED
     /* The kernel controller mapping belongs to the ASPACE, not whichever
      * PROCESS first launches through it. It survives all shared-VM peers. */
@@ -2217,6 +2234,22 @@ LONG kproc_check_launch(PD *pd, PD *caller)
 }
 
 #if KPROC_LEGACY_PRG
+BOOL kproc_record_legacy_text(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+    VADDR text = (VADDR)(uintptr_t)(pd + 1);
+    if (!kproc) return FALSE;
+    if (!kproc->legacy) return TRUE;
+    if (kproc->aspace || kproc->has_image ||
+        kproc->legacy_text_recorded || pd->p_tlen < 0 ||
+        (VADDR)pd->p_tbase != text || text < (VADDR)(uintptr_t)kproc->user_start ||
+        text > (VADDR)(uintptr_t)kproc->user_end ||
+        (VADDR)pd->p_tlen > (VADDR)(uintptr_t)kproc->user_end - text) return FALSE;
+    kproc->legacy_text_bytes = pd->p_tlen;
+    kproc->legacy_text_recorded = TRUE;
+    return TRUE;
+}
+
 void kproc_mark_legacy(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
