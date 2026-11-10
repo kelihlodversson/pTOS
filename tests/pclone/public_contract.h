@@ -201,6 +201,17 @@ static void phase1_mapping_matrix(struct ptos_clone_args good, unsigned char *st
 }
 #endif
 
+/* Warm only the caller's already-reserved demand stack, before either page
+ * baseline. A first deep trap/helper call may legitimately materialize it;
+ * that persistent residency is not a leaked clone allocation. */
+static void __attribute__((noinline)) phase1_warm_caller_stack(void)
+{
+    volatile unsigned char pages[8192];
+    unsigned i;
+    for (i = 0; i < sizeof(pages); i += 256) pages[i] = 0;
+    pages[sizeof(pages)-1] = 0;
+}
+
 static void phase1_account(const char *stage, long baseline)
 {
     long usage[8];

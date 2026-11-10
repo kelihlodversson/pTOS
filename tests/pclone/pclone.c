@@ -1401,6 +1401,7 @@ static void test_runnable(void)
     int32_t pid, tid, other_tid;
     volatile unsigned long parent_local = 0x2468ace0UL;
     long usage[8], baseline_pages;
+    phase1_warm_caller_stack();
     ptest_assert_msg(Prusage(usage) == 0,"initial mapping accounting");
     baseline_pages = usage[4];
     for (cycle = 0; cycle < 3; cycle++) {
