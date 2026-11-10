@@ -859,7 +859,9 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # harmless where the default already matches, and is what lets the
 # Homebrew "x86_64-elf-" toolchain build this program; see
 # doc/install.txt.
-X32_CFLAGS = -mx32 -ffreestanding -Wa,--noexecstack -fno-asynchronous-unwind-tables \
+# Match the kernel's SSE baseline even when the host compiler defaults to v3.
+# The interrupt/syscall paths preserve FXSAVE state, not AVX/XSAVE state.
+X32_CFLAGS = -mx32 -march=x86-64 -ffreestanding -Wa,--noexecstack -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
 X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \

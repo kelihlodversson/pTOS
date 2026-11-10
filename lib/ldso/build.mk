@@ -1,6 +1,6 @@
 # Freestanding userspace of the runtime linker: x32 (#660) and ARM (#693).  A
 # backend selects its flags here, and its directory under lib/ldso/arch/.
-LDSO_CFLAGS-$(ARCH_X86_64) = -mx32
+LDSO_CFLAGS-$(ARCH_X86_64) = -mx32 -march=x86-64
 LDSO_LDFLAGS-$(ARCH_X86_64) = -Wl,-m,elf32_x86_64
 LDSO_ARCH-$(ARCH_X86_64) = x32
 # ARM state, hard-float EABI, for the oldest core the system runs on (the same
