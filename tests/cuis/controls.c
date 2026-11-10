@@ -43,7 +43,7 @@ static int control_checks(void)
     CHECK(client->edge_count == 2);
     CHECK(point_at(25,35,1) && point_at(25,35,0));
     CHECK(client->edge_count == 2); /* Queued work clicks survive a border click. */
-    CHECK(cuis_session_wait(a,0,CUIS_READY_CONTROL,0) == CUIS_READY_CONTROL);
+    CHECK(cuis_session_wait(a,0,CUIS_READY_CONTROL,0,0,0) == CUIS_READY_CONTROL);
     fail_copy = TRUE; CHECK(CREAD(wa) == EIMBA); fail_copy = FALSE;
     CHECK(CREAD(wa) == 1 && copied[0] == 25 && copied[1] == 35 && copied[2] == 1 && copied[3] == 1);
     CHECK(CREAD(wa) == 1 && copied[2] == 0 && copied[3] == 1);
@@ -130,7 +130,7 @@ static int control_checks(void)
     run = &second; CHECK(cuis_mouse_lock(b,1,0) == E_OK);
     run = &first;
     CHECK(cuis_event_service(wa,CUIS_EVENT_CONTROL,0) == 1);
-    CHECK(cuis_session_wait(a,0,CUIS_READY_CONTROL,0) == CUIS_READY_CONTROL);
+    CHECK(cuis_session_wait(a,0,CUIS_READY_CONTROL,0,0,0) == CUIS_READY_CONTROL);
     CHECK(CREAD(wa) == ERANGE && cuis_event_service(wa,CUIS_EVENT_CONTROL,0) == 0);
     run = &second; CHECK(cuis_mouse_lock(b,0,0) == E_OK);
     run = &first; CHECK(cuis_display_lock(a,0,0) == E_OK);

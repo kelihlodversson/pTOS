@@ -751,8 +751,8 @@ static long native_cuis5(unsigned fn, long a, long b, long c, long d, long e)
     register unsigned long long si __asm__("rsi")=(long long)b;
     register unsigned long long dx __asm__("rdx")=(long long)c;
     register unsigned long long r10 __asm__("r10")=(long long)d;
-    register unsigned long long r8 __asm__("r8")=(long long)e;
-    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di),"r"(si),"r"(dx),"r"(r10),"r"(r8) : "rcx","r11","memory","cc");
+    register unsigned long long r8 __asm__("r8")=(long long)e, r9 __asm__("r9")=0;
+    __asm__ volatile ("syscall" : "+a"(ax) : "r"(di),"r"(si),"r"(dx),"r"(r10),"r"(r8),"r"(r9) : "rcx","r11","memory","cc");
     return (long)ax;
 }
 

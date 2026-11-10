@@ -64,7 +64,7 @@ static int input_history_checks(void)
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,3,3,1,0,0)==0);
     head=client->edge_head; count=client->edge_count;
     input_operation_hook=history_reject_observation;
-    CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON,0)==ERANGE && !input_operation_hook);
+    CHECK(cuis_session_wait(session,0,CUIS_READY_BUTTON,0,0,0)==ERANGE && !input_operation_hook);
     CHECK(client->edge_head==head && client->edge_count==count && !client->wait_operation &&
           !client->input_wait && client->references==1 && !client->input_result[1]);
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,1,1,0,0)==0);
@@ -136,7 +136,7 @@ static int input_history_checks(void)
     CHECK(button_history_next(client,&cursor,&edge)==BUTTON_HISTORY_EXHAUSTED);
     CHECK(!button_history_record(client,&event) && client->history_exhausted && client->button_sequence==~0ULL);
     sequence=client->wait_sequence;
-    CHECK(cuis_session_wait(replacement,0,CUIS_READY_BUTTON,0)==ERANGE && client->wait_sequence==sequence);
+    CHECK(cuis_session_wait(replacement,0,CUIS_READY_BUTTON,0,0,0)==ERANGE && client->wait_sequence==sequence);
     CHECK(!client->wait_operation && !client->input_wait && client->references==1);
     client->button_policy=~0ULL; button_history_policy(client);
     CHECK(client->button_policy==~0ULL && client->history_exhausted);

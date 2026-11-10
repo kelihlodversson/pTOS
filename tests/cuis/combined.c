@@ -1,4 +1,4 @@
-#define CW(h,n,e,t) cuis_session_wait(h,n,e,t)
+#define CW(h,n,e,t) cuis_session_wait(h,n,e,t,0,0)
 #define CR(h,n) cuis_stream_service(CUIS_STREAM_READ,h,0x20000,n,0,0)
 #define CS(h,n) cuis_stream_service(CUIS_STREAM_WRITE,h,0x10000,n,0,0)
 static int combined_checks(void)
