@@ -11,7 +11,6 @@
 static PD owner, successor, other;
 static KERNEL_TASK tasks[KSCHED_LIMIT];
 static unsigned phase, owner_refs, root_attempts;
-PD *run;
 static BOOL committing;
 BOOL kproc_exec_commit_begin(KPROC *p)
 { CHECK(p==(KPROC *)&owner); if(committing)return FALSE; committing=TRUE; return TRUE; }
@@ -21,14 +20,14 @@ void kproc_exec_commit_end(KPROC *p)
 
 static void reenter_root(void)
 {
-    KERNEL_TASK *previous = scheduler.current;
+    KERNEL_TASK *previous = execution_cpu.current;
     CHECK(scheduler_model_flags == 0x200);
     CHECK(tasks[1].state == TASK_RETIRING && !tasks[1].process &&
           !tasks[1].parent && !tasks[1].program && !tasks[1].thread &&
           !tasks[1].deferred_owner_identity && tasks[1].execution.stack.physical == 123);
-    scheduler.current = NULL; /* Model cleanup yielding to the verified root. */
+    execution_cpu.current = NULL; /* Model cleanup yielding to the verified root. */
     CHECK(!reap_finished_on_root(&tasks[1]));
-    scheduler.current = previous;
+    execution_cpu.current = previous;
     {
         void *nested = NULL;
         CHECK(ksched_task_reserve(FALSE, &nested) == E_OK && nested != &tasks[1]);
@@ -83,9 +82,8 @@ int main(void)
 {
     run = &owner;
     scheduler.active = TRUE;
-    scheduler.initial = 1;
-    scheduler.tasks = tasks;
-    scheduler.current = &tasks[0];
+    scheduler.tasks = tasks; initialize_task_table();
+    execution_cpu.current = &tasks[0];
     tasks[0].state = TASK_RUNNING;
     tasks[1].state = TASK_DEFERRED;
     tasks[1].pid = 42;
@@ -123,10 +121,14 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
     abort(); /* no published clone exists in this legacy fixture */
 }
 
+void ksched_admission_release(KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+
+void panic(const char *format,...) { (void)format; abort(); }
+
+PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
 
-void panic(const char *format, ...) { (void)format; abort(); }
 
 BOOL kthread_is_executing(const KTHREAD *t) { (void)t; return FALSE; }
 
@@ -135,3 +137,12 @@ ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
 KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
 
 KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }
+
+void ksched_admission_abandon(const KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+LONG ksched_admission_create(KPROC *p,UWORD n,KSCHED_ADMISSION *h)
+{ (void)p; (void)n; (void)h; abort(); }
+BOOL ksched_admission_retain(const KSCHED_ADMISSION *a,KSCHED_ADMISSION *b)
+{ (void)a; (void)b; abort(); }
+BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD n,LONG value)
+{ (void)h; (void)n; (void)value; abort(); }
+WORD kproc_pid(PD *p) { (void)p; return 7; }

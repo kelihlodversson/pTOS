@@ -135,9 +135,17 @@ WORD kproc_pid(PD *pd);                 /* 0: no record */
  * without writing. The caller owns the reference; no PD is borrowed. */
 void kproc_set_executable_name(PD *pd, const char *path);
 LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity);
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
 /* Snapshot all live standard-handle aliases into OPNFILES counters. */
 void kproc_standard_file_refs(ULONG *references);
+/* Authoritative media retirement: unpublish all standard aliases before reuse. */
+void kproc_standard_file_invalidate(WORD handle);
+/* Irreversible per-PROCESS file teardown admission; serialized by the
+ * cooperative owner. Reject callback attachment before the first release. */
+BOOL kproc_begin_file_cleanup(PD *pd);
+BOOL kproc_file_references_allowed(PD *pd);
+void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
+LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
 #endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
 SBYTE kproc_get_prio(PD *pd);
@@ -166,10 +174,18 @@ BOOL kproc_group_status(const KPROC *process, UWORD *status);
 #endif
 BOOL kproc_thread_start_allowed(const KPROC *process);
 BOOL kproc_thread_is_sole(KPROC *process, struct kthread *thread);
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kproc_has_aspace_peer(const KPROC *process);
+#endif
 /* Caller already holds the identity; only live resources may be acquired. */
 KPROC *kproc_retain_live(KPROC *process);
 PD *kproc_live_pd(const KPROC *process); /* borrowed during serialized live-resource operation */
 BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
+#if CONF_WITH_PRIVATE_CLONE
+/* Sole-thread/exclusive-VM source, no pending loader ledger. NULL target is
+ * preflight only; runtime bounds are copied without changing Pexec defaults. */
+BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source);
+#endif
 void proc_dispose_process(KPROC *process);
 struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */
 /* Explicit construction-space attachment never publishes active_space.

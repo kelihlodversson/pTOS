@@ -255,10 +255,31 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 libaes/CUIS sessions: PASS' "$log"
     grep -q 'x86-64 CUIS sessions: PASS' "$log"
 fi
+# These probes need the managed/asynchronous continuations supplied by the
+# MMAP, public Pclone or libaes fixtures. A scheduler-enabled eager baseline
+# without any of those fixtures cannot emit their markers.
+if grep -q '^CONF_WITH_NATIVE_SCHED *= *y' obj/auto.conf &&
+   grep -Eq '^CONF_WITH_(MMAP|PCLONE|LIBAES) *= *y' obj/auto.conf; then
+    grep -q 'native owner generation wake with false predicate: PASS' "$log"
+    grep -q 'native IRQ wake/idle admission and blocked-owner resume: PASS' "$log"
+    grep -q 'native scheduler durable controller/completion abandonment: PASS' "$log"
+    grep -q 'native managed TID admission wait/resume: PASS' "$log"
+    grep -q 'native quiescent waiter retirement: PASS' "$log"
+fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"
 if sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'; then
     echo 'Process fault after memory tests completed' >&2
     exit 1
+fi
+# The register-pattern IRQ probe executes in the public managed Pclone worker.
+if [ "$expected" = PASS ] && grep -q '^#define CONF_WITH_NATIVE_SCHED 1' obj/autoconf.h &&
+   grep -q '^#define CONF_WITH_PCLONE 1' obj/autoconf.h; then
+    grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$log" || {
+        echo "Missing actual ring-3 interrupted-user capture evidence" >&2; exit 1;
+    }
+    grep -aq "native x32 fresh owned IRQ image round trip: PASS" "$log" || {
+        echo "Missing native fresh owned IRQ image round-trip evidence" >&2; exit 1;
+    }
 fi
 echo "Private Mmap/Munmap/Mprot boot tests passed ($expected)."

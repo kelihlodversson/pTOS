@@ -5,6 +5,7 @@
 typedef struct file_backing FILE_BACKING;
 LONG fileback_get(LONG handle, FILE_BACKING **out);
 void fileback_hold(FILE_BACKING *backing);
+BOOL fileback_try_hold(FILE_BACKING *backing);
 void fileback_put(FILE_BACKING *backing);
 ULONG fileback_size(const FILE_BACKING *backing);
 LONG fileback_read(FILE_BACKING *backing, ULONG offset, void *buffer, ULONG size);

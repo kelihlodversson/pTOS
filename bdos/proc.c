@@ -18,6 +18,7 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 #include "fs.h"
+#include "console.h"
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
@@ -41,6 +42,7 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "ksched_lifetime.h"
 #include "kthread.h"
 #if CONF_WITH_CUIS
 #include "bdosbind.h"
@@ -80,7 +82,9 @@ static void proc_go(PD *p, WORD entry_type);
  * global variables
  */
 
-PD      *run;           /* ptr to PD for current process */
+#if !CONF_WITH_NATIVE_SCHED
+PD      *run;           /* classic single-execution ABI storage */
+#endif /* native kernels export the CPU-owned slot from native_sched.c */
 
 #if CONF_WITH_USER_ASPACE
 /* Kernel code marks a freshly created ROM basepage here before Pexec(). */
@@ -146,7 +150,7 @@ static BOOL schedule_launch(PD *p)
 {
     /* ROM entry points and explicit accessory starts retain their existing
      * launch path. A nested Pexec already has a stable group controller. */
-    return kernel_code_pd != p && !ksched_active();
+    return kernel_code_pd != p && !ksched_dispatching();
 }
 
 static LONG run_scheduled(PD *p, BOOL take_ownership)
@@ -293,7 +297,12 @@ static void xexec_free(void *addr)
  * carries no alignment guarantee beyond the compiler's incidental default.
  */
 static WORD    supstk[SUPSIZ] __attribute__((aligned(8))); /* common sup stack for all processes */
-static jmp_buf bakbuf;         /* longjmp buffer */
+#if !CONF_WITH_USER_ASPACE
+/* Classic non-MMU launches reuse the supervisor stack and never participate
+ * in native scheduling. Preserve their small-ROM loader implementation. */
+static jmp_buf bakbuf;
+static PD *cur_p;
+#endif
 
 
 /*
@@ -359,47 +368,59 @@ static void free_all_owned(PD *p, MPB *mpb)
  * slot or an interrupted close may outlive its original owner's basepage. */
 static char orphaned_sft_owner;
 #endif
+#if CONF_WITH_USER_ASPACE
+static void release_file_reference(PD *pd, WORD handle)
+{
+    FS_CLOSE_REPORT result;
+    fs_close_bounded(handle,TRUE,&result);
+    kproc_note_file_cleanup(pd,result.error,result.disposition==FS_CLOSE_TRANSFERRED);
+    if (result.disposition!=FS_CLOSE_CONSUMED && result.disposition!=FS_CLOSE_TRANSFERRED)
+        panic("process cleanup: missing file reference");
+}
+#endif
 static void release_pd_files(PD *r)
 {
     WORD h;
     WORD i;
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
     ULONG explicit_refs[OPNFILES];
 
-    /* An SFT slot retains f_own after its explicit handle is closed while
-     * standard aliases remain. Snapshot before dropping this process's
-     * aliases: only a reference beyond all live aliases is an explicit
-     * handle the owner sweep may close. Fdup uses a separate SFT slot. */
+    /* Close admission before any callback can attach another reference to
+     * this retiring table, including an already-visited standard index. */
+    if (!kproc_begin_file_cleanup(r)) return;
+    /* Snapshot before removing aliases. Residual kernel references are not
+     * a retiring PROCESS's explicit handle, nor another live alias. */
     kproc_standard_file_refs(explicit_refs);
-    for (i = 0; i < OPNFILES; i++)
-        explicit_refs[i] = r == sft[i].f_own && sft[i].f_use > 0 &&
-                          (ULONG)sft[i].f_use > explicit_refs[i];
+    for (i=0;i<OPNFILES;i++)
+        explicit_refs[i]=sft[i].f_own==r && sft[i].f_use>0 &&
+            (ULONG)sft[i].f_use>explicit_refs[i]+sft[i].f_cleanup_refs+sft[i].f_staged_refs;
 #endif
-
-    /* check the standard devices in both file tables  */
-
-    for (i = 0; i < NUMSTD; i++)
-        if ((h = PD_UFT(r)[i]) > 0) {
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
-            kdos_fclose(h); /* Catch disk errors and finish the interrupted close. */
+    for (i=0;i<NUMSTD;i++)
+        if ((h=PD_UFT(r)[i])>=NUMSTD) {
+#if CONF_WITH_USER_ASPACE
+            release_file_reference(r,h);
+            /* Consumed or transferred: this PD no longer owns the alias. */
+            PD_UFT(r)[i]=get_default_handle(i);
+#elif CONF_WITH_PROCMEM && CONF_WITH_KCALL
+            kdos_fclose(h);
 #else
             xclose(h);
 #endif
         }
-
-    for (i = 0; i < OPNFILES; i++)
-        if (r == sft[i].f_own
-#if CONF_WITH_CUIS
+    for (i=0;i<OPNFILES;i++)
+        if (r==sft[i].f_own
+#if CONF_WITH_USER_ASPACE
             && explicit_refs[i]
 #endif
         ) {
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+#if CONF_WITH_USER_ASPACE
+            release_file_reference(r,i+NUMSTD);
+#elif CONF_WITH_PROCMEM && CONF_WITH_KCALL
             kdos_fclose(i+NUMSTD);
 #else
             xclose(i+NUMSTD);
 #endif
         }
-
 
     /* decrement usage counts for current directories */
 
@@ -423,8 +444,8 @@ static void release_pd_files(PD *r)
     pfs_proc_exit(r);
 #endif
 #if CONF_WITH_USER_ASPACE
-    /* Preserve the allocated SFT slot without leaving a reusable PD address
-     * in f_own. A failed bounded close can still leak its handle reference. */
+    /* Inherited aliases and service-owned residual references reserve their
+     * exact SFT incarnation, never this retiring PD address. */
     for (i = 0; i < OPNFILES; i++)
         if (sft[i].f_own == r)
             sft[i].f_own = (PD *)&orphaned_sft_owner;
@@ -503,7 +524,6 @@ static WORD envsize(char *env)
 /* these variables are used to avoid the following warning:
  * variable `foo' might be clobbered by `longjmp' or `vfork'
  */
-static PD *cur_p;
 
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
@@ -555,6 +575,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
     long needed;
     FH fh;
+#if CONF_WITH_USER_ASPACE
+    PD *cur_p; /* assigned before setjmp, never changed across its return */
+    FS_ERROR_SCOPE loader_error;
+#endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
     PROCESS_OBSERVER *observed = NULL;
 #else
@@ -631,7 +655,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return (long)p;
 #if CONF_WITH_NATIVE_SCHED
     case PE_ASYNC_GO_FREE:
-        if (!ksched_spawn_allowed()) return EINVFN;
+        if (!ksched_async_allowed()) return EINVFN;
         p = (PD *)tail;
         rc = check_launch(p);
         if (rc) return rc;
@@ -639,7 +663,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         give_back_image(p, FALSE);
         return ksched_spawn(p);
     case PE_ASYNC_LOADGO:
-        if (!ksched_spawn_allowed()) return EINVFN;
+        if (!ksched_async_allowed()) return EINVFN;
         break;
 #endif
     case PE_GOTHENFREE:
@@ -803,11 +827,15 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         kproc_mark_legacy(p);
 #endif
 
-    /* use static variable to avoid the obscure longjmp warning */
+    /* The loaded image and enclosing target belong to this invocation. */
     cur_p = p;
 
     /* we have now allocated memory, so we need to intercept longjmp. */
+#if CONF_WITH_USER_ASPACE
+    fs_error_scope_save(loader_error);
+#else
     memcpy(bakbuf, errbuf, sizeof(errbuf));
+#endif
     if (setjmp(errbuf)) {
 
         KDEBUG(("Error and longjmp in xexec()!\n"));
@@ -821,11 +849,21 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         /* we still have to jump back to bdosmain.c so that the proper error
          * handling can occur.
          */
+#if CONF_WITH_USER_ASPACE
+        memcpy(errbuf, fs_error_scope_jump(loader_error), sizeof(errbuf));
+        longjmp(errbuf, 1);
+#else
         longjmp(bakbuf, 1);
+#endif
     }
 
     /* now, load the rest of the program, perform relocation, close the file */
     rc = kpgmld(cur_p, fh, &hdr, path);
+    /* No later launch/admission/cleanup may retain this loader frame as its
+     * disk-error target, especially across nested synchronous Pexec. */
+#if CONF_WITH_USER_ASPACE
+    fs_error_scope_restore(loader_error);
+#endif
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
@@ -1263,6 +1301,9 @@ static void proc_enter_user(WORD entry_type)
 
 static void proc_go(PD *p, WORD entry_type)
 {
+#if CONF_WITH_NATIVE_SCHED
+    PD *controller=ksched_launch_controller(p);
+#endif
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
     /* PTR_TO_USERPTR(), not the unchecked cast: `run` here is always
      * either a real, alloc_tpa()'d PD or the first process's parent,
@@ -1272,10 +1313,14 @@ static void proc_go(PD *p, WORD entry_type)
      * back and dereference it on every Pterm(), so a truncated value
      * here would fault there instead of trapping at the point of
      * corruption. */
+#if CONF_WITH_NATIVE_SCHED
+    p->p_parent=PTR_TO_USERPTR(controller ? controller : run);
+#else
     p->p_parent = PTR_TO_USERPTR(run);
+#endif
 #if CONF_WITH_KPROC
 #if CONF_WITH_NATIVE_SCHED
-    if (!kproc_clone_startup(p))
+    if (!controller && !kproc_clone_startup(p))
 #endif
         kproc_set_parent(p, run);   /* clone parent retain was prepared before commit */
 #endif
@@ -1302,7 +1347,7 @@ LONG proc_prepare_scheduled(PD *p)
 {
     if (!kproc_unlaunched(p)) return EIMBA;
     give_back_image(p, FALSE);
-    return kproc_prepare_user(p, run) ? E_OK : ENSMEM;
+    return kproc_prepare_async(p,run,ksched_controller_pd()) ? E_OK : ENSMEM;
 }
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {
@@ -1415,7 +1460,7 @@ void proc_dispose_process(KPROC *process)
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len)
 {
     PD *p;
-    jmp_buf saved_error;
+    FS_ERROR_STATE saved_error;
 #if CONF_WITH_NATIVE_SCHED
     BOOL managed;
 #endif
@@ -1427,9 +1472,9 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
      * On this fatal path consume the caller's handoff reference ourselves;
      * panic must not return. Arbitrary private longjmp targets are forbidden.
      */
-    memcpy(saved_error, errbuf, sizeof(errbuf));
+    saved_error = *fs_error_current();
     if (setjmp(errbuf)) {
-        memcpy(errbuf, saved_error, sizeof(errbuf));
+        *fs_error_current() = saved_error;
 #if CONF_WITH_PROCMEM
         proc_resident_pd = NULL;
         proc_resident_len = 0;
@@ -1461,7 +1506,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     if (!managed)
 #endif
         kproc_publish_observers(process);
-    memcpy(errbuf, saved_error, sizeof(errbuf));
+    *fs_error_current() = saved_error;
 }
 
 BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)

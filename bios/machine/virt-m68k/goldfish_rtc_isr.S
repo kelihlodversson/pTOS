@@ -12,6 +12,9 @@
  */
 
 #include "asmdefs.h"
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#include "arch/m68k/irqframe.h"
+#endif
 
         .globl  C_SYM(goldfish_rtc_isr)
         .extern C_SYM(goldfish_rtc_service)
@@ -21,6 +24,9 @@
         .text
 
 C_SYM(goldfish_rtc_isr):
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+        M68K_IRQ_CAPTURE
+#endif
         movem.l d0-d2/a0-a1,-(sp)      // save the registers goldfish_rtc_service() clobbers (d2 too under -mfastcall)
         jsr     C_SYM(goldfish_rtc_service)  // ack + re-arm the device (bios/machine/virt-m68k/goldfish_rtc.c)
 

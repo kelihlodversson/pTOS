@@ -8,6 +8,15 @@
 #include "mem.h"
 #include "procmem.h"
 #include "../../bdos/proc.c"
+#if CONF_WITH_NATIVE_SCHED
+PD *run; /* modeled CPU slot: this fixture does not link the dispatcher */
+#endif
+#if CONF_WITH_NATIVE_SCHED
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"exit unwind:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD child;
 static SBYTE files[NUMSTD];
@@ -16,14 +25,18 @@ static unsigned phase, commits, publications, releases, destroyed, successors;
 static BOOL disposing, managed_completion, wait_visible;
 static unsigned observer_publications;
 static jmp_buf fatal, original_error;
-jmp_buf errbuf;
-long errcode;
-int errdrv;
+
+
+
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 MPB pmd, pmdalt;
 int has_alt_ram;
-static void inject(unsigned at) { if (phase == at) longjmp(errbuf, 1); }
+static void inject(unsigned at)
+{
+    errcode=-101; errdrv=7; rwerr=-102;
+    if (phase == at) longjmp(errbuf, 1);
+}
 BOOL kproc_commit_exit_handoff(KPROC *p, PD **pd)
 {
     CHECK(p == (KPROC *)&child && !disposing);
@@ -48,7 +61,12 @@ void panic(const char *fmt, ...)
 }
 SBYTE *kproc_uft(PD *p) { CHECK(p == &child && !destroyed); return files; }
 UBYTE *kproc_curdir(PD *p) { CHECK(p == &child && !destroyed); return dirs; }
+BOOL kproc_begin_file_cleanup(PD *p) { CHECK(p==&child && disposing); return TRUE; }
 void kproc_standard_file_refs(ULONG *refs) { memset(refs, 0, OPNFILES * sizeof(*refs)); }
+LONG fs_close_bounded(WORD h,BOOL dispose,FS_CLOSE_REPORT *out)
+{ (void)h;(void)dispose;(void)out; abort(); }
+void kproc_note_file_cleanup(PD *p,LONG error,BOOL transferred)
+{ (void)p;(void)error;(void)transferred; abort(); }
 long kdos_fclose(long handle) { (void)handle; abort(); }
 void decr_curdir_usage(int n) { CHECK(n == 1); inject(2); }
 void kproc_destroy(PD *p) { CHECK(p == &child && disposing); destroyed++; inject(3); }
@@ -71,6 +89,7 @@ int main(void)
         disposing = FALSE; observer_publications=0;
         managed_completion=scheduler_case!=0; wait_visible=FALSE;
         dirs[0] = 1;
+        errcode=-31; errdrv=3; rwerr=-32;
         memset(errbuf, 0x5a, sizeof(errbuf));
         memcpy(original_error, errbuf, sizeof(errbuf));
         if (!setjmp(fatal)) {
@@ -87,6 +106,7 @@ int main(void)
             CHECK(phase && !proc_resident_pd && !proc_resident_len && !observer_publications);
         }
         CHECK(!memcmp(original_error, errbuf, sizeof(errbuf)));
+        CHECK(errcode==-31 && errdrv==3 && rwerr==-32);
         CHECK(commits == 1 && publications == 1 && releases == 1);
         CHECK(successors == (phase == 0 || phase == 4));
     }

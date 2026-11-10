@@ -12,7 +12,7 @@
 struct kproc {
     WORD pid;
     unsigned refs;
-    BOOL live, pending, model;
+    BOOL live, pending, model, started;
     KASPACE *space;
     KTHREAD *threads;
 };
@@ -43,6 +43,10 @@ KPROC *kproc_retain_live(KPROC *p)
     if (!p || !p->live || p->pending || (fail_retain_after && !--fail_retain_after)) return NULL;
     p->refs++; return p;
 }
+/* PD mechanics are modeled; the real loader/KPROC path is native-tested. */
+KPROC *kproc_retain(PD *pd) { return kproc_retain_live((KPROC *)pd); }
+PD *kproc_live_pd(const KPROC *p) { return p && p->live && !p->pending ? (PD *)p : NULL; }
+BOOL kproc_unlaunched(PD *pd) { return pd && !((KPROC *)pd)->started; }
 void kproc_release(KPROC *p) { if (p) { assert(p->refs); p->refs--; } }
 WORD kproc_ref_pid(const KPROC *p) { return p->pid; }
 KASPACE *kproc_active_space(const KPROC *p) { return p && p->live && !p->pending ? p->space : NULL; }
@@ -222,9 +226,63 @@ static void exercise(BOOL source_first)
 }
 BOOL aspace_private_range_ok(const ASPACE *as, VADDR address, VADDR bytes)
 { (void)as; (void)address; (void)bytes; return TRUE; }
+static unsigned loaded_reclaims;
+static void loaded_reclaim(void *resource) { assert(resource); loaded_reclaims++; }
+static void exercise_loaded(void)
+{
+    ASPACE backend = { 42 };
+    KPROC target;
+    KASPACE *space;
+    PROC_CLONE_ARGS args = { 0 };
+    PROC_CLONE_TRANSACTION *tx = NULL;
+    PROC_CLONE_RESULT result = PROC_CLONE_RESULT_INIT;
+    KTHREAD *thread;
+    unsigned stage, balance, destroyed = destroys;
+    LONG error;
+    memset(&target, 0, sizeof(target));
+    target.live = TRUE; target.pid = 44; target.refs = 1;
+    space = kaspace_adopt(&backend); assert(space);
+    args.source = &target;
+    args.process_policy = PROC_CLONE_LOADED_PROCESS;
+    args.vm_policy = PROC_CLONE_PREPARED_VM;
+    args.prepared_space = space;
+    balance = allocations - frees;
+    /* Fail each transaction/THREAD metadata allocation before loader adoption. */
+    for (stage = 1; stage < 8; stage++) {
+        fail_alloc_after = stage;
+        error = proc_clone(&args, &tx);
+        fail_alloc_after = 0;
+        if (!error) { proc_clone_abort(&tx); break; }
+        assert(error == ENSMEM && !tx);
+        assert(!target.space && !target.threads && target.refs == 1);
+        assert(allocations - frees == balance && destroys == destroyed);
+    }
+    assert(stage < 8 && !target.space && !target.threads && target.refs == 1);
+    assert(proc_clone(&args, &tx) == E_OK);
+    assert(proc_clone_commit(&tx, &result) == E_OK && !tx);
+    thread = result.thread;
+    assert(thread && result.pid == 44 && result.tid && !result.owned_process);
+    assert(!target.space && kthread_aspace(thread) == space && kthread_process(thread) == &target);
+    assert(!kthread_is_executing(thread));
+    assert(kthread_set_execution(thread, &target, loaded_reclaim));
+    assert(!kthread_start(thread)); /* loader has not committed its VM yet */
+    target.space = kaspace_share(space); /* existing loader adoption boundary */
+    assert(kthread_start(thread));
+    target.started = TRUE;
+    assert(!proc_clone_prepare_loaded_thread((PD *)&target, space));
+    assert(target.threads == thread && kthread_is_executing(thread));
+    kthread_stop(thread); kthread_destroy(thread);
+    assert(loaded_reclaims == 1 && !target.threads && target.refs == 1);
+    kaspace_put(target.space); target.space = NULL;
+    kaspace_put(space);
+    assert(destroys == destroyed + 1);
+    assert(allocations == frees);
+}
+
 int main(void)
 {
     exercise(FALSE); exercise(TRUE);
     assert(allocations == frees && destroys == 4 && resources == 6);
+    exercise_loaded();
     return 0;
 }

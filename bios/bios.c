@@ -26,6 +26,9 @@
 #include "../bdos/bdosstub.h"
 #include "../vdi/vdistub.h"
 #include "bdosbind.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
 #include "gemerror.h"
 #include "lineavars.h"
 #include "vt52.h"
@@ -1004,7 +1007,28 @@ static void run_auto_program(const char* filename)
     strcat(path, filename);
 
     KDEBUG(("Loading %s ...\n", path));
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS
+    if(!strcmp(filename,"GLBTEST.PRG")) {
+        LONG pid=Pexec(PE_ASYNC_LOADGO,path,"",NULL), result;
+        if(pid<=0) panic("native global async admission failed");
+        result=ksched_wait((WORD)pid,0,0);
+        if((ULONG)result!=((ULONG)pid<<16)) panic("native global async wait failed");
+        /* Separate completed synchronous admission, bounded detached pump,
+         * then a fresh user launcher whose PD may reuse the first one's. */
+        if(Pexec(PE_LOADGO,"C:\\GLBSRC.TOS","",NULL)) panic("native global launcher failed");
+        if(!ksched_active()) panic("native global child lost after launcher return");
+        ksched_yield();
+        if(!ksched_active()) panic("native global blocked child lost across park");
+        if(Pexec(PE_LOADGO,"C:\\GLBCHK.TOS","",NULL)) panic("native global later entry failed");
+        if(ksched_active()) panic("native global records survived final wait");
+    } else
+#endif
     Pexec(PE_LOADGO, path, "", NULL);
+#if CONF_WITH_NATIVE_SCHED
+    /* AUTO launches are synchronous, but independently admitted children are
+     * not their lifetime dependents. One bounded cooperative opportunity. */
+    ksched_yield();
+#endif
     KDEBUG(("[OK]\n"));
 }
 
