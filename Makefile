@@ -1986,9 +1986,9 @@ endif
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
-# The m68k harness is normally a flat TOS PRG (a deliberately RWX TPA).
-# Exercise staged ELF segment policy with the same native test objects too;
-# otherwise DATA in that flat PRG is not a non-executable ELF data segment.
+# Test both loader formats: m68k normally links a classic TOS PRG. Link the
+# same native objects as ELF too, with independent segment pages and holes.
+# The PRG loader snapshots its text extent; neither test relies on CPU NX.
 ifdef ARCH_M68K
 ifdef CONF_WITH_USER_ASPACE
 ifdef CONF_WITH_PCLONE

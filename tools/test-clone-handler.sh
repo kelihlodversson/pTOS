@@ -24,3 +24,11 @@ for demand in 0 1; do
     "$work/exec-permissions"
 done
 echo 'Production KPROC staged-image/heap entry permissions (host page-table model): PASS'
+
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
+    -ffunction-sections -fdata-sections -fno-pie -no-pie \
+    -iquote include -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
+    -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
+    tests/clone/procmem_text.c -Wl,--gc-sections -o "$work/procmem-text"
+"$work/procmem-text"
+echo 'Production PRG borrowed-text preflight/rights publication (host MMU model): PASS'

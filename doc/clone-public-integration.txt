@@ -247,6 +247,9 @@ PRIVATE_CLONE disabled. This survives CLONE_VM, owner exit and PD reuse with
 the KASPACE; unmap/protect/root retirement update or release the same policy.
 It is not hardware NX. x32/ARM keep their existing mapping permissions; COW
 lookup preserves logical rights while hardware WRITE is temporarily removed.
-A classic PRG/basepage-created flat RWX TPA remains its existing compatibility
-policy; segmented ELF DATA/BSS/gaps are not executable. Native ELF nested/
-orphan entry tests and traditional PRG execution are distinct evidence.
+File-loaded PRG text bounds are snapshotted by the trusted loader before the
+PD is exposed. Its existing borrowed TPA remains writable; only text pages
+carry logical EXEC. No new allocation pin or execution owner is created.
+Basepage-created caller-supplied code without a file text extent keeps its
+existing contract. Permissions are page-granular; this is not byte-level NX.
+Native nested/orphan tests exercise both segmented ELF and classic PRG.

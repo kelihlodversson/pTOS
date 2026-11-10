@@ -212,7 +212,9 @@ static volatile unsigned long phase1_policy_bss[1024] __attribute__((aligned(409
 static unsigned char *phase1_policy_stack;
 static void *phase1_policy_hole;
 struct phase1_policy_report { long magic, creator, worker, gate, done, error; };
-#define PHASE1_POLICY_FILE "C:\\PCLPOL.TMP"
+#define PHASE1_POLICY_ELF "C:\\PCLPOL.TMP"
+#define PHASE1_POLICY_PRG "C:\\PRGPOL.TMP"
+static const char *phase1_policy_file = PHASE1_POLICY_ELF;
 
 static long phase1_policy_checks(void)
 {
@@ -252,7 +254,7 @@ static void phase1_policy_child(void *argument)
         phase1_resource_error = (int)phase1_policy_checks();
     } else {
         struct phase1_policy_report report;
-        long file = Fopen(PHASE1_POLICY_FILE,2), error;
+        long file = Fopen(phase1_policy_file,2), error;
         unsigned i;
         if (file < 0) return;
         memset(&report,0,sizeof(report));
@@ -279,7 +281,7 @@ static void phase1_policy_observe(long staged_pid)
      * A retained parent identity may legitimately reserve its old PID. */
     for (i = 0; i < 4; i++)
         ptest_assert_msg(Pexec(0,"runtests.tos",tail,0) == 0,"PD churn after executable-owner retirement");
-    file = Fopen(PHASE1_POLICY_FILE,2);
+    file = Fopen(phase1_policy_file,2);
     ptest_assert_msg(file >= 6,"open orphan execute-policy report");
     if (file < 0) return;
     memset(&report,0,sizeof(report));
@@ -300,7 +302,7 @@ static void phase1_policy_observe(long staged_pid)
     }
     ptest_assert_msg(report.done && !report.error && Pwaitpid(report.worker,1,0) == -33L,
                      "orphan nested text accepted, data/BSS/hole rejected, no misdirected reap");
-    ptest_assert_msg(Fclose(file) == 0 && Fdelete(PHASE1_POLICY_FILE) == 0,"orphan policy report cleanup");
+    ptest_assert_msg(Fclose(file) == 0 && Fdelete(phase1_policy_file) == 0,"orphan policy report cleanup");
 }
 
 static void phase1_account(const char *stage, long baseline)
@@ -509,7 +511,8 @@ static void test_public_contract(unsigned char *stack)
              1
 #endif
              ; format++) {
-            report = Fcreate(PHASE1_POLICY_FILE,0);
+            phase1_policy_file = format ? PHASE1_POLICY_PRG : PHASE1_POLICY_ELF;
+            report = Fcreate(phase1_policy_file,0);
             ptest_assert_msg(report >= 6 && Fclose(report) == 0,"prepare orphan policy report");
             ptest_log_flush();
 #if defined(__mc68000__)
@@ -528,7 +531,7 @@ static void test_public_contract(unsigned char *stack)
                     if ((status >> 16) == child && !(status & 65535)) phase1_policy_observe(child);
                 }
             }
-    }
+        }
     }
     phase1_account("staged",baseline);
     phase1_resource_matrix(good);

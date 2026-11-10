@@ -1529,10 +1529,15 @@ void pclone_run_staged_tests(void)
     ptest_begin("Pclone from staged executable text");
     phase1_policy_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
     /* Loader-owned slack is resident data, but outside executable segments. */
-    if (_base->p_tbase == (void *)(_base + 1))
-        phase1_policy_hole = (void *)(((unsigned long)_base->p_hitpa - 4096UL) & ~4095UL);
-    else
+    if (_base->p_tbase == (void *)(_base + 1)) {
+        /* Classic p_hitpa is intentionally stale after CRT Mshrink. Use a
+         * resident TPA stack page, not the retired original allocation end. */
+        phase1_policy_hole = (void *)((unsigned long)&touch & ~4095UL);
+        phase1_policy_file = PHASE1_POLICY_PRG;
+    } else {
         phase1_policy_hole = (void *)(((unsigned long)_base->p_bbase + _base->p_blen + 8191UL) & ~4095UL);
+        phase1_policy_file = PHASE1_POLICY_ELF;
+    }
     touch = *(volatile unsigned char *)phase1_policy_hole;
     (void)touch;
     ptest_assert_msg(stack > 0 && phase1_policy_stack,"staged-image entry stacks");
@@ -1554,7 +1559,7 @@ void pclone_run_staged_tests(void)
         args.argument = (void *)1;
         result = pclone_trap(&args,32);
         ptest_assert_msg(result > 0 && result == tid,"orphan staged-policy child admitted");
-        file = Fopen(PHASE1_POLICY_FILE,2);
+        file = Fopen(phase1_policy_file,2);
         memset(&report,0,sizeof(report)); report.magic=0x50434c4eL;
         report.creator=Pgetpid(); report.worker=pid;
         ptest_assert_msg(file >= 6 && Fwrite(file,sizeof(report),&report) == sizeof(report) && Fclose(file)==0,
