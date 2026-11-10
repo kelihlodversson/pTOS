@@ -102,3 +102,22 @@ or exhaustive32bit identity-space execution test. Phase1 is ready for100%
 acceptance only after the actual criterion matrix is reviewed; final completion
 requires separate authorized merge and integration-head validation. No Phase2
 or downstream public feature is implemented by this focused contract work.
+
+Open native prerequisite finding (not accepted)
+----------------------------------------------
+The new resource matrix reproduces a pre-existing FAT/PFS CWD namespace bug on
+ARM/m68k's PLUGGABLE_FS configuration before public clone publication:
+ckdrv() installs a legacy dirtbl index into the same PD_CURDIR slot that PFS
+owns. pfs_cwd_set can then choose that free PFS slot as its new entry and release
+it through the old numeric index. Native diagnostics observed set slot1/old1
+/use1/pathTESTS immediately followed by slot1/use0/path fallback empty. Both
+Dgetpath and Dgetcwd lose the non-root directory; the COPY_CWD matrix fails.
+The original x32 traditional-FAT backend does not have this collision.
+
+A diagnostic-only attempt to stop the legacy write was rejected: subsequent
+relative program loading failed on ARM/m68k. It is NOT part of this candidate.
+A safe prerequisite needs coherent FAT/PFS directory-cookie and lookup lifetime,
+not a silent skip, a new PROCESS namespace just for clone, or passing retries.
+Traditional-FAT native results must be labeled as that configuration and cannot
+substitute for the still-failing PFS configuration. No100% Phase1 acceptance
+or final owner approval is claimed while this native prerequisite is unresolved.

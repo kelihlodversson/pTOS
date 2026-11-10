@@ -76,9 +76,7 @@ LONG    drvsel;
  */
 WORD ckdrv(int d, BOOL checkrem)
 {
-#if !CONF_WITH_PLUGGABLE_FS
     int curdir;
-#endif
     LONG mask;
     BPB *b;
 
@@ -116,7 +114,6 @@ WORD ckdrv(int d, BOOL checkrem)
         }
     }
 
-#if !CONF_WITH_PLUGGABLE_FS
     /*
      * ensure that current process has a valid default directory
      * on this drive
@@ -132,12 +129,6 @@ WORD ckdrv(int d, BOOL checkrem)
             return ENSMEM;
         PD_CURDIR(run)[d] = curdir;  /* link to process  */
     }
-
-#else
-    /* PFS owns PD_CURDIR's namespace. Its FAT adapter resolves absolute
-     * paths from retained directory cookies; drive/media validation must
-     * not install a legacy dirtbl index into that PROCESS-owned slot. */
-#endif
 
     return d;
 }
