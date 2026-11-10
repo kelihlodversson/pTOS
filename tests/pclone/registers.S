@@ -3,7 +3,13 @@
 #define CAT(a,b) CAT_(a,b)
 #define C_SYM(name) CAT(__USER_LABEL_PREFIX__,name)
 #if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE)
-#if defined(__arm__)
+#if defined(__x86_64__)
+        .text
+        .globl C_SYM(clone_abi_entry)
+C_SYM(clone_abi_entry):
+        movq %rdi,C_SYM(clone_abi_argument)(%rip)
+        jmp C_SYM(clone_abi_entry_body)
+#elif defined(__arm__)
         .text
         .arm
         .align 2

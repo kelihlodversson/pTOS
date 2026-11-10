@@ -7,7 +7,15 @@ static unsigned phase1_resources;
 static int phase1_resource_error;
 static char phase1_parent_path[128], phase1_child_path[128];
 
-static void phase1_entry(void *argument)
+#if defined(__x86_64__)
+volatile unsigned long long clone_abi_argument;
+void clone_abi_entry(void *argument);
+#define phase1_entry clone_abi_entry
+#else
+#define phase1_entry clone_abi_entry_body
+#endif
+void clone_abi_entry_body(void *argument);
+void clone_abi_entry_body(void *argument)
 {
     phase1_entered++;
     phase1_argument = (unsigned long)argument;
@@ -43,6 +51,10 @@ static void phase1_finish(long tid, long pid)
     ptest_assert_msg(phase1_entered == 1 && phase1_argument == 0xfedcba98UL &&
                      (status >> 16) == phase1_pid && phase1_pid != Pgetpid(),
                      "opaque high-bit argument and independent PROCESS identity");
+#if defined(__x86_64__)
+    ptest_assert_msg(clone_abi_argument == 0x00000000fedcba98ULL,
+                     "actual x32 entry register zero-extends the ILP32 opaque pointer");
+#endif
     ptest_assert_msg(Pwaitpid(phase1_pid,1,0) == -33L,"one PROCESS completion and one public reap");
 }
 
@@ -62,6 +74,18 @@ static void phase1_reject(const void *request, unsigned long size, long expected
                      "failed public call publishes no runnable child or zombie");
 }
 
+#if defined(__x86_64__)
+static long phase1_wide_trap(unsigned long long address, unsigned long long size)
+{
+    register unsigned long long call __asm__("rax") = (1ULL << 32) | GEMDOS_PCLONE;
+    register unsigned long long arg1 __asm__("rdi") = address;
+    register unsigned long long arg2 __asm__("rsi") = size;
+    __asm__ volatile ("syscall" : "+r"(call) : "r"(arg1), "r"(arg2)
+                      : "rcx", "r11", "memory", "cc");
+    return (long)(int)call;
+}
+#endif
+
 static void phase1_resource_matrix(struct ptos_clone_args good)
 {
     long saved = Fdup(0), file, result;
@@ -73,7 +97,8 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
     ptest_assert_msg(file >= 6,"resource-copy fixture file");
     if (file < 6) { (void)Fclose(saved); return; }
     ptest_assert_msg(Dcreate("C:\\PCLABI") == 0 && Dsetpath("C:\\PCLABI") == 0 &&
-                     Dgetpath(phase1_parent_path,3) == 0 && Fforce(0,file) == 0,
+                     Dgetpath(phase1_parent_path,3) == 0 && Fwrite(file,2,"AB") == 2 &&
+                     Fseek(0,file,0) == 0 && Fforce(0,file) == 0,
                      "prepare independent standard-handle and CWD policy");
     good.child_pid = &pid; good.child_tid = &tid;
     for (bits = 0; bits < 4; bits++) {
@@ -188,6 +213,9 @@ static void test_public_contract(unsigned char *stack)
     good = request.args;
     phase1_resources = 0; phase1_entered = 0;
     phase1_argument = 0; phase1_pid = 0; phase1_resource_error = 0;
+#if defined(__x86_64__)
+    clone_abi_argument = 0;
+#endif
     memset(phase1_parent_path,0,sizeof(phase1_parent_path));
     memset(phase1_child_path,0,sizeof(phase1_child_path));
     /* Touch the retained stack before measuring failures: legitimate lazy
@@ -238,6 +266,15 @@ static void test_public_contract(unsigned char *stack)
     phase1_reject((void *)0xfffffff0UL,32,-40L,&pid,&tid,stack);
     phase1_reject(&good,27,-25L,&pid,&tid,stack);
     phase1_reject(&good,0xffffffffUL,-40L,&pid,&tid,stack);
+#if defined(__x86_64__)
+    pid = 0x12345678; tid = 0x23456789; phase1_entered = 0;
+    ptest_assert_msg(phase1_wide_trap(0x100000000ULL | (unsigned long)&good,32) == -40L &&
+                     phase1_wide_trap((unsigned long)&good,0x100000020ULL) == -25L &&
+                     pid == 0x12345678 && tid == 0x23456789,
+                     "actual x32 trap rejects high64 native address/size without low32 truncation");
+    (void)Syield(); (void)Syield();
+    ptest_assert_msg(!phase1_entered && Pwaitpid(-1,1,0) == -33L,"high64 rejection exposes no child");
+#endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     /* Existing disabled test-control namespace; ordinary calls below still
      * use the exact public 32-byte CLONE_VM ABI, not the private-VM escape. */
