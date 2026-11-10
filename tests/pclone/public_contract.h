@@ -205,6 +205,7 @@ static void phase1_mapping_matrix(struct ptos_clone_args good, unsigned char *st
 static void phase1_account(const char *stage, long baseline)
 {
     long usage[8];
+    (void)Syield(); (void)Syield(); /* stopped-stack reclamation runs on root */
     if (Prusage(usage) == 0 && baseline >= 0 && usage[4] != baseline) {
         char message[120]; sprintf(message,"ABI private-bytes %s expected=%ld actual=%ld\r\n",stage,baseline,usage[4]); conws(message);
     }
