@@ -202,22 +202,11 @@ static void phase1_mapping_matrix(struct ptos_clone_args good, unsigned char *st
 }
 #endif
 
-/* Warm only the caller's already-reserved demand stack, before either page
- * baseline. A first deep trap/helper call may legitimately materialize it;
- * that persistent residency is not a leaked clone allocation. */
-static void __attribute__((noinline)) phase1_warm_caller_stack(void)
-{
-    volatile unsigned char pages[8192];
-    unsigned i;
-    for (i = 0; i < sizeof(pages); i += 256) pages[i] = 0;
-    pages[sizeof(pages)-1] = 0;
-}
-
 static void phase1_account(const char *stage, long baseline)
 {
     long usage[8];
     if (Prusage(usage) == 0 && baseline >= 0 && usage[4] != baseline) {
-        char message[120]; sprintf(message,"ABI pages %s expected=%ld actual=%ld\r\n",stage,baseline,usage[4]); conws(message);
+        char message[120]; sprintf(message,"ABI private-bytes %s expected=%ld actual=%ld\r\n",stage,baseline,usage[4]); conws(message);
     }
 }
 
@@ -268,6 +257,7 @@ static void test_public_contract(unsigned char *stack)
                          "28..31 prefix, 32 extension, unknown tail and no early dispatch");
         phase1_finish(result,size < 32 ? -1 : pid);
     }
+    phase1_account("prefix",baseline);
     {
         static const unsigned long opaque[] = {0,0x80000000UL,0xffffffffUL};
         for (bit = 0; bit < sizeof(opaque)/sizeof(opaque[0]); bit++) {
@@ -305,11 +295,13 @@ static void test_public_contract(unsigned char *stack)
                          Pwaitpid(-1,1,0) == -33L,
                          "THREAD return does not manufacture a PROCESS completion");
     }
+    phase1_account("optional/same",baseline);
     /* The input is copied once: a legal output may alias the request itself. */
     bad = good; bad.child_tid = (int32_t *)&bad.flags; phase1_entered = 0;
     result = pclone_trap(&bad,32);
     ptest_assert_msg(result > 0 && bad.flags == (unsigned long)result,"snapshot survives input/output alias");
     phase1_finish(result,pid);
+    phase1_account("input alias",baseline);
 #define REJECT(error) phase1_reject(&bad,32,(error),&pid,&tid,stack)
     bad = good; bad.flags = 0; REJECT(-32L);
     bad = good; bad.flags = CLONE_SAME_PROCESS; REJECT(-25L);
@@ -330,12 +322,14 @@ static void test_public_contract(unsigned char *stack)
     bad = good; bad.child_pid = (int32_t *)((unsigned char *)&tid + 2); REJECT(-25L);
     bad = good; bad.child_tid = (int32_t *)stack; REJECT(-25L);
     bad = good; bad.child_pid = (int32_t *)(stack + RUNNABLE_STACK_SIZE - 4); REJECT(-25L);
+    phase1_account("before code-output",baseline);
     bad = good; bad.child_tid = (int32_t *)((unsigned long)phase1_entry & ~3UL);
 #if defined(__mc68000__)
     REJECT(-25L); /* legacy image page is writable: explicit code-page overlap */
 #else
     REJECT(-40L); /* read-only executable leaf fails writable-range validation */
 #endif
+    phase1_account("after code-output",baseline);
 #undef REJECT
     phase1_reject(0,32,-40L,&pid,&tid,stack);
     phase1_reject((void *)0x80001000UL,32,-40L,&pid,&tid,stack);
