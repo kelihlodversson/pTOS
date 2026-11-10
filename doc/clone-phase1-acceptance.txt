@@ -155,3 +155,15 @@ m68k040 and x32/ARM native execution remain required.
 
 The PFS recovery audit and exact proposed independent prerequisite are in
 clone-pfs-prerequisite.txt. No filesystem prototype is included in #948.
+
+The native executable-policy fixture uses ELF on all targets. m68k's normal
+runtests.tos is a classic flat PRG whose existing TPA policy is RWX; its DATA
+cannot stand in for an explicitly non-executable ELF segment. CLNABI.TOS links
+the same native objects as ELF with distinct text/data/BSS pages and gaps.
+No invalid-entry assertion is skipped: all data/BSS/slack rejections and the
+orphan handshake run in that ELF image. The original PRG lifecycle/register
+suite still runs as compatibility evidence. This does not establish new
+per-segment permissions for classic PRG/basepage-created RWX images or a byte-
+granularity execute policy within a mixed executable page; those existing
+format/granularity boundaries require explicit owner assessment, not an NX
+claim. The old PROCESS-local staged ELF bypass is addressed by shared leaves.

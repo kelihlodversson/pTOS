@@ -238,3 +238,15 @@ The traditional FAT configuration and basic managed cloning are separate
 coverage; neither proves the failing PFS COPY_CWD contract. See the precise
 native prerequisite finding in clone-phase1-acceptance.txt. No final Phase1
 owner acceptance is claimed while that configuration remains unproven.
+
+Shared executable policy (#948 recovery)
+---------------------------------------
+The declaring mapping owns executable permission, not the PROCESS that first
+loaded it. m68k030/040/060 descriptors retain EXEC in software bits even with
+PRIVATE_CLONE disabled. This survives CLONE_VM, owner exit and PD reuse with
+the KASPACE; unmap/protect/root retirement update or release the same policy.
+It is not hardware NX. x32/ARM keep their existing mapping permissions; COW
+lookup preserves logical rights while hardware WRITE is temporarily removed.
+A classic PRG/basepage-created flat RWX TPA remains its existing compatibility
+policy; segmented ELF DATA/BSS/gaps are not executable. Native ELF nested/
+orphan entry tests and traditional PRG execution are distinct evidence.
