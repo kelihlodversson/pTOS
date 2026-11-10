@@ -290,6 +290,19 @@ static ULONG dir_refs(void)
     return sum;
 }
 
+/* A synchronous launch now returns at its own PROCESS completion. Tests
+ * retaining observer contexts must explicitly drive independent descendants
+ * before asserting final resource baselines or releasing those contexts. */
+static void settle_scheduler(void)
+{
+#if CONF_WITH_NATIVE_SCHED
+    ULONG start=(ULONG)hz_200;
+    if(ksched_dispatching()) return;
+    while(ksched_active() && (ULONG)((ULONG)hz_200-start)<1000) ksched_yield();
+    CHECK(!ksched_active(),"independent scheduler work drains through explicit cooperative entries");
+#endif
+}
+
 static void snap(SNAP *s)
 {
     s->dir_refs = dir_refs();
@@ -307,6 +320,7 @@ static BOOL same(const SNAP *a, const char *what)
     SNAP b;
     BOOL ok;
 
+    settle_scheduler();
     snap(&b);
     ok = a->pmem_free == b.pmem_free &&
          a->heap.live_blocks == b.heap.live_blocks &&
@@ -2928,6 +2942,9 @@ static void test_ordinary_observation(void)
         ordinary_observation.enabled=FALSE;
         if (mode>=7 && mode<=11 && mode!=8) {
             PROCESS_COMPLETION parent_done, child_done;
+            /* This launch owns only the predecessor result. Its independent
+             * successor runs through later cooperative root entries. */
+            settle_scheduler();
             CHECK(process_observer_ready(ordinary_observation.observer) &&
                   process_observer_snapshot(ordinary_observation.observer,&child_done) &&
                   child_done.state==PROCESS_COMPLETED && child_done.kind==PROCESS_COMPLETION_NORMAL &&
@@ -2969,8 +2986,8 @@ void x86_64_memtest_clone_yield(void)
             UWORD count = active_clone.scenario == 4 ? KSCHED_LIMIT : 1;
             active_clone.child_ticks = kproc_test_child_ticks(active_clone.parent);
             for (i = 0; i < count; i++) active_clone_construct(i);
-            if (active_clone.scenario == 4) CHECK(active_clone.successes == KSCHED_LIMIT-1,
-                  "actual active group exhausts its final slot without publishing an eighth child");
+            if (active_clone.scenario == 4) CHECK(active_clone.successes == KSCHED_LIMIT,
+                  "active group grows stable storage and publishes beyond its initial arena");
         } else if (active_clone.parent_yields == 2 && active_clone.successes && active_clone.scenario != 2 &&
                    active_clone.scenario != 4 && active_clone.scenario != 9) {
             LONG waited;
@@ -3089,6 +3106,7 @@ static void test_clone_execution(void)
         }
         bzero(exit_handoff_stages,sizeof(exit_handoff_stages)); exit_handoff_watch = TRUE;
         result = proc_clone_exec(&tx,&done);
+        settle_scheduler(); /* owned asynchronous observers may outlive this result */
         active_clone.enabled = FALSE;
         exit_handoff_watch = FALSE;
         CHECK(run == pd && aspace_is_current(as) && (mode == 11 ? !kproc_active_space(source) : kproc_active_space(source) == space) && kproc_ref_has_basepage(source),
@@ -3174,7 +3192,7 @@ static void test_return_bridge(void)
         KTHREAD *a, *b;
         VADDR rsp;
         UQUAD return_pc;
-        UWORD status;
+        UWORD status, stack_prot;
         LONG rc;
         UBYTE code[] = { 0xb8, 0x68, 0x24, 0, 0, 0xc3 }; /* EAX=0x2468; ret */
         snap(&baseline);
@@ -3197,8 +3215,12 @@ static void test_return_bridge(void)
         {
             VADDR custom_stack = kproc_uheap_alloc(pd, PAGE);
             KASPACE_LEASE *one = NULL, *two = NULL;
-            CHECK(custom_stack && kproc_demand_page(pd, custom_stack, ASPACE_PROT_WRITE) == 1,
-                  "back ordinary user-stack reservation before lifetime acquisition");
+            CHECK(custom_stack && kproc_demand_page(pd, custom_stack, ASPACE_PROT_WRITE) ==
+                  (CONF_WITH_DEMAND_PAGING ? 1 : 0) &&
+                  aspace_translate(as, custom_stack, NULL, &stack_prot) &&
+                  (stack_prot & (ASPACE_PROT_USER|ASPACE_PROT_WRITE)) ==
+                  (ASPACE_PROT_USER|ASPACE_PROT_WRITE),
+                  "ordinary user-stack reservation is writable under its eager/demand policy");
             CHECK(kaspace_stack_hold_acquire(space, custom_stack, PAGE, &one) == E_OK &&
                   kaspace_stack_hold_acquire(space, custom_stack, PAGE, &two) == E_OK &&
                   kthread_take_stack_hold(a, &one) && kthread_take_stack_hold(b, &two) && !one && !two,
@@ -3222,7 +3244,11 @@ static void test_return_bridge(void)
         CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &result) == E_OK,
               "independent PROCESS retains VM while original process executes");
         rsp = kproc_user_stack(pd);
-        CHECK(kproc_demand_page(pd, rsp, ASPACE_PROT_WRITE) == 1 &&
+        CHECK(kproc_demand_page(pd, rsp, ASPACE_PROT_WRITE) ==
+              (CONF_WITH_DEMAND_PAGING ? 1 : 0) &&
+              aspace_translate(as, rsp, NULL, &stack_prot) &&
+              (stack_prot & (ASPACE_PROT_USER|ASPACE_PROT_WRITE)) ==
+              (ASPACE_PROT_USER|ASPACE_PROT_WRITE) &&
               aspace_copy_to_user(as, rsp, &return_pc, sizeof(return_pc)),
               "kernel installs selected normal-return PC into existing launch stack");
         CHECK(kaspace_lease_acquire(space, rsp - 128, 136, ASPACE_PROT_USER | ASPACE_PROT_WRITE,
@@ -5141,7 +5167,7 @@ static void test_cuis_scheduler(void)
              * packets themselves; no kernel-only message bootstrap exists. */
             run = root;
             CHECK(ksched_run(programs, 0, results) == EINVAL, "scheduler rejects empty groups");
-            CHECK(ksched_run(programs, KSCHED_LIMIT + 1, results) == EINVAL, "scheduler enforces its task bound");
+            CHECK(ksched_run(programs, KSCHED_LIMIT + 1, results) == EINVAL, "scheduler validates its synchronous bootstrap batch bound");
             {
                 PD *duplicate[2] = { programs[0], programs[0] };
                 CHECK(ksched_run(duplicate, 2, results) == EINVAL, "scheduler rejects duplicate programs");
@@ -5218,7 +5244,7 @@ static void test_ring3(void)
 #endif
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
-    probe_expect(',', 0, "public SAME_PROCESS dispatch, private stacks/registers, Pterm/fault isolation, TSR refusal and exhaustion");
+    probe_expect(',', 0, "public SAME_PROCESS dispatch, private stacks/registers, Pterm/fault isolation, TSR refusal and scheduler growth");
     probe_expect('_',0x66,"initial Pterm retains PROCESS files until final sibling exit");
     probe_expect(';',0x66,"initial fault retains PROCESS resources and final sibling status");
     {
@@ -5444,6 +5470,7 @@ static void test_ring3(void)
         ULONG sessions = cuis_session_count();
         snap(&s);
         result = Pexec(PE_LOADGO, "C:\\GEM.TOS", "", NULL);
+        if (result) kcprintf("GEM lifecycle fixture returned %ld\n", (long)result);
         CHECK(result == 0, "standard GEM lifecycle, private globals and windowless timers");
         CHECK(cuis_session_count() == sessions, "implicit GEM sessions reclaimed on exit and _Exit");
         CHECK(cuis_context_test_reset(), "shared shell context persists after the final GUI client exits");

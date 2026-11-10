@@ -24,7 +24,7 @@
  * whatever the caller's own C call stack currently is. Resuming that
  * caller once the launched process's own Pterm()/Pterm0() runs -- deep
  * inside an entirely different, much-later call chain -- is exactly
- * what setjmp()/longjmp() are for: current_launch (below) is a
+ * what setjmp()/longjmp() are for: get_current_launch() (below) is a
  * LIFO stack of one jmp_buf per currently-suspended nesting level,
  * saved/restored around each gouser() call the same way ordinary nested
  * C calls naturally nest, with no need to touch any actual stack
@@ -92,7 +92,7 @@ static void clone_restore_base(ULONG msr, UQUAD value)
 extern void x86_64_enter_prepared_user(const X32_THREAD_ENTRY_IMAGE *) NORETURN;
 #endif
 
-extern jmp_buf errbuf;
+/* Loaded error state is declared by process.h. */
 
 /*
  * Declared directly, not through a shared header: bdos/build.mk's
@@ -139,6 +139,7 @@ void bdos_trap2(void)
  * comment.  NULL when nothing is currently launched.
  */
 struct x86_64_process_launch {
+    FS_ERROR_STATE error; /* immutable enclosing scope across setjmp/longjmp */
     jmp_buf resume;
     X86_64_PROCESS_LAUNCH *previous;
     PD *pd;
@@ -154,7 +155,14 @@ struct x86_64_process_launch {
 #endif
 };
 
-static X86_64_PROCESS_LAUNCH *current_launch;
+#if CONF_WITH_NATIVE_SCHED
+static X86_64_PROCESS_LAUNCH *get_current_launch(void) { return ksched_loaded_launcher(); }
+static void set_current_launch(X86_64_PROCESS_LAUNCH *launch) { ksched_set_loaded_launcher(launch); }
+#else
+static X86_64_PROCESS_LAUNCH *legacy_launch;
+static X86_64_PROCESS_LAUNCH *get_current_launch(void) { return legacy_launch; }
+static void set_current_launch(X86_64_PROCESS_LAUNCH *launch) { legacy_launch=launch; }
+#endif
 #if CONF_WITH_USER_ASPACE
 #if CONF_WITH_X86_64_MEMTEST
 static BOOL fail_next_exit_handoff;
@@ -164,7 +172,7 @@ void x86_64_memtest_fail_next_exit_handoff(void) { fail_next_exit_handoff = TRUE
  * The active syscall stack remains owned by this existing launcher. */
 BOOL proc_defer_observer(PD *pd, KPROC *observer)
 {
-    X86_64_PROCESS_LAUNCH *launch = current_launch;
+    X86_64_PROCESS_LAUNCH *launch = get_current_launch();
     if (!launch || launch->pd != pd || !launch->stack_phys) return FALSE;
     if (!observer || launch->exit_process || launch->fallback_observer)
         panic("duplicate fallback observer ownership");
@@ -178,7 +186,7 @@ BOOL proc_defer_observer(PD *pd, KPROC *observer)
 BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
     KPROC *process;
-    X86_64_PROCESS_LAUNCH *launch = current_launch;
+    X86_64_PROCESS_LAUNCH *launch = get_current_launch();
     if (!launch || launch->pd != pd || !launch->stack_phys || launch->exit_process)
         return FALSE;
     process = kproc_retain(pd);
@@ -221,17 +229,20 @@ extern void x86_64_set_irq_stack(UQUAD rsp);
 void x86_64_process_save(X86_64_PROCESS_CONTEXT *context)
 {
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(context->flags) :: "memory");
+#if CONF_WITH_NATIVE_SCHED
+    ksched_verify_switch_boundary();
+#endif
     __asm__ volatile ("fxsave %0" : "=m"(context->fpu));
     context->pd = run;
     context->cr3 = x86_64_read_cr3();
     context->kernel_rsp = x86_64_get_kernel_stack();
     context->user_rsp = x86_64_get_saved_user_rsp();
     context->irq_rsp = x86_64_get_irq_stack();
-    context->launch = current_launch;
+    context->launch = get_current_launch();
 #if CONF_WITH_NATIVE_SCHED
     context->native_task = ksched_context_id();
 #endif
-    memcpy(context->disk_error, errbuf, sizeof(errbuf));
+    context->disk_error = *fs_error_current();
     context->in_syscall = x86_64_gs_to_user();
     x86_64_write_cr3(x86_64_kernel_pml4_phys());
 }
@@ -241,11 +252,11 @@ void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *context)
     __asm__ volatile ("cli" ::: "memory");
     x86_64_syscall_abandoned();
     run = context->pd;
-    current_launch = context->launch;
+    set_current_launch(context->launch);
 #if CONF_WITH_NATIVE_SCHED
     ksched_context_restore(context->native_task);
 #endif
-    memcpy(errbuf, context->disk_error, sizeof(errbuf));
+    *fs_error_current() = context->disk_error;
     x86_64_write_cr3(context->cr3);
     x86_64_set_kernel_stack(context->kernel_rsp);
     x86_64_set_saved_user_rsp(context->user_rsp);
@@ -261,7 +272,7 @@ BOOL x86_64_process_is_accessory(void)
 {
     X86_64_PROCESS_LAUNCH *launch;
 
-    for (launch = current_launch; launch; launch = launch->previous)
+    for (launch = get_current_launch(); launch; launch = launch->previous)
         if (launch->entry_type == ENTRY_ACCESSORY)
             return TRUE;
     return FALSE;
@@ -373,12 +384,13 @@ void gouser_entry(WORD entry_type)
          * inside gem_main()'s own call chain) -- see this file's own top
          * comment on why that's safe here (an ordinary nested C call,
          * no stack pointer touched) and how the eventual Pterm()/
-         * Pterm0() finds its way back via current_launch.
+         * Pterm0() finds its way back via get_current_launch().
          */
         void (*target)(PD *) = (void (*)(PD *))exec_os;
         X86_64_PROCESS_LAUNCH launch;
 
-        launch.previous = current_launch;
+        launch.error = *fs_error_current();
+        launch.previous = get_current_launch();
         launch.pd = p;
         launch.stack_phys = 0;
         launch.entry_type = entry_type;
@@ -388,7 +400,7 @@ void gouser_entry(WORD entry_type)
 #endif
 
 
-        current_launch = &launch;
+        set_current_launch(&launch);
         if (setjmp(launch.resume) == 0) {
             target(p);
             panic("x86-64: kernel-code process entry returned unexpectedly\n");
@@ -400,7 +412,8 @@ void gouser_entry(WORD entry_type)
          * normally back through proc_go()/xexec() to this call's own
          * original caller -- run has already been reassigned to it by
          * xterm() by this point. */
-        current_launch = launch.previous;
+        set_current_launch(launch.previous);
+        *fs_error_current() = launch.error;
     } else {
         /*
          * A real, loaded process (#334).  Its address space was already
@@ -488,7 +501,8 @@ void gouser_entry(WORD entry_type)
          * context needs is put back below: its stack for the next call, its
          * page tables, its GS state, its saved user RSP.
          */
-        launch.previous = current_launch;
+        launch.error = *fs_error_current();
+        launch.previous = get_current_launch();
         launch.pd = p;
         launch.stack_phys = kstack_phys;
         launch.entry_type = entry_type;
@@ -496,7 +510,7 @@ void gouser_entry(WORD entry_type)
         launch.exit_process = NULL;
         launch.fallback_observer = NULL;
 #endif
-        current_launch = &launch;
+        set_current_launch(&launch);
         __asm__ volatile ("pushfq; popq %0" : "=r"(launcher_flags) :: "memory");
         x86_64_set_kernel_stack(kstack_top);
         x86_64_set_irq_stack(kstack_top + 8);
@@ -514,7 +528,8 @@ void gouser_entry(WORD entry_type)
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                               standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);
         }
-        current_launch = launch.previous;
+        set_current_launch(launch.previous);
+        *fs_error_current() = launch.error;
         /* Pterm() was a system call, still on the child's stack with the
          * kernel GS base swapped in: normalise that first, then restore the
          * launcher's own state.  Only now is the child's stack unused. */
@@ -614,7 +629,7 @@ void termuser(void)
      * arch the launcher comes from the process's kernel-private KPROC
      * record, never from p_parent, which the process can rewrite.
      *
-     * current_launch is the resume point gouser() pushed right before
+     * get_current_launch() is the resume point gouser() pushed right before
      * running this process, whether a "kernel-code process" (an ordinary
      * nested C call) or a real ring-3 one (which left the kernel by iretq,
      * so there is no suspended call chain, but the saved jmp_buf stands in
@@ -624,8 +639,8 @@ void termuser(void)
      * comment's own first paragraph describes -- back up to its caller).
      * It is only ever NULL if nothing was launched, which cannot get here.
      */
-    if (current_launch)
-        longjmp(current_launch->resume, 1);
+    if (get_current_launch())
+        longjmp(get_current_launch()->resume, 1);
 
     panic("x86-64: process terminated with no launch to resume, rc=%ld\n",
           (long)run->p_dreg[0]);

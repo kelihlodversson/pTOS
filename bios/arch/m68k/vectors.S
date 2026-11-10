@@ -10,6 +10,9 @@
 #define DBG_CHECK_READ_BYTE 0   // to trace check_read_byte() calls
 
 #include "asmdefs.h"
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#include "arch/m68k/irqframe.h"
+#endif
 
 // ==== Definitions ==========================================================
 
@@ -296,7 +299,10 @@ dump_stack:
         // process, and only that (the frame is at (sp); its status first)
         btst    #5,(sp)
         jne     dump_kernel_stack
-        move.l  sp,C_SYM(user_fault_frame)
+        move.l  sp,a0                  // retained original frame, not global staging
+#if !CONF_WITH_MFASTCALL
+        move.l  a0,-(sp)
+#endif
         move.w  #0x2000,sr              // supervisor mode, interrupts back on
         jsr     C_SYM(m68k_user_fault)  // does not return
 dump_kernel_stack:
@@ -333,9 +339,14 @@ buserr_user:
         btst    #5,(sp)                 // supervisor mode?
         jne     buserr_default
         movem.l d0-d7/a0-a6,-(sp)
-        lea     60(sp),a0               // the exception frame (a global: no argument, for -mfastcall)
-        move.l  a0,C_SYM(user_fault_frame)
+        lea     60(sp),a0               // exact original frame on this continuation
+#if !CONF_WITH_MFASTCALL
+        move.l  a0,-(sp)
+#endif
         jsr     C_SYM(m68k_user_busfault)
+#if !CONF_WITH_MFASTCALL
+        addq.l  #4,sp
+#endif
         tst.l   d0
         jeq     buserr_unhandled
         movem.l (sp)+,d0-d7/a0-a6
@@ -568,6 +579,9 @@ vbl_end:
 #define REAL_TIMER_C_HANDLER (CONF_WITH_MFP && !CONF_COLDFIRE_TIMER_C)
 
 C_SYM(int_timerc):
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+        M68K_IRQ_CAPTURE
+#endif
         addq.l  #1, C_SYM(hz_200).w           // increment 200 Hz counter
 
 #ifdef __mcoldfire__

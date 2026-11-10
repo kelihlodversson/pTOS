@@ -11,6 +11,12 @@
 #include "bdosstub.h"
 #include "string.h"
 
+#if CONF_WITH_NATIVE_SCHED
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"non-CUIS cleanup:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD owner, child;
 static SBYTE child_files[NUMSTD];
@@ -33,9 +39,6 @@ void kproc_standard_file_invalidate(WORD handle)
 void kproc_standard_file_refs(ULONG *refs)
 { unsigned i; memset(refs,0,OPNFILES*sizeof(*refs));
   for (i=0;i<NUMSTD;i++) if (child_files[i]>=NUMSTD) refs[child_files[i]-NUMSTD]++; }
-jmp_buf errbuf;
-long errcode, rwerr;
-int errdrv;
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 

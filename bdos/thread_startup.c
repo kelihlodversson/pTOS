@@ -11,7 +11,7 @@
 #include "biosext.h"
 #include "setjmp.h"
 #include "string.h"
-extern jmp_buf errbuf;
+#include "fs_error.h"
 struct thread_startup_draft {
     KASPACE *space;
     THREAD_STARTUP_ARGS args;
@@ -338,17 +338,17 @@ BOOL thread_startup_take_stacks(THREAD_STARTUP_DRAFT *draft, THREAD_STARTUP_STAC
 #if CONF_WITH_NATIVE_SCHED
 void thread_startup_reclaim(THREAD_STARTUP_DRAFT **handle)
 {
-    jmp_buf saved_error;
+    FS_ERROR_STATE saved_error;
     if (!handle || !*handle) return;
     if ((*handle)->state != THREAD_STARTUP_RUNNABLE || !ksched_startup_reclaimable(*handle))
         panic("startup reclaim outside stopped scheduler root");
-    memcpy(saved_error, errbuf, sizeof(errbuf));
+    saved_error = *fs_error_current();
     if (setjmp(errbuf)) {
-        memcpy(errbuf, saved_error, sizeof(errbuf));
+        *fs_error_current() = saved_error;
         panic("startup reclaim: cleanup callback escaped");
     }
     (*handle)->state = THREAD_STARTUP_RECLAIMABLE;
     thread_startup_abort(handle);
-    memcpy(errbuf, saved_error, sizeof(errbuf));
+    *fs_error_current() = saved_error;
 }
 #endif

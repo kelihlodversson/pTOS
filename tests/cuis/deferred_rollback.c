@@ -13,6 +13,15 @@
 #include "procmem.h"
 #include "process.h"
 
+#if CONF_WITH_NATIVE_SCHED
+PD *run; /* modeled CPU slot: this fixture does not link the dispatcher */
+#endif
+#if CONF_WITH_NATIVE_SCHED
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred rollback:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 
 /* Static, non-PIE blocks fit in the GEMDOS basepage's 32-bit pointers. */
@@ -33,14 +42,14 @@ static unsigned completion_stage;
 static PD *pending_request;
 static LONG rejection;
 
+
+
+
 static BOOL observer_mode, fail_observer_retain, deny_start;
 static LONG header_error, load_error, directory_error, spawn_result;
 static unsigned observer_refs, publications;
 static KPROC **observer_output;
 
-jmp_buf errbuf;
-long errcode;
-int errdrv;
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 MPB pmd, pmdalt;
@@ -329,4 +338,8 @@ int main(void)
     return 0;
 }
 
+PD *ksched_launch_controller(PD *p) { (void)p; return NULL; }
+
+BOOL ksched_dispatching(void) { return ksched_active(); }
+BOOL ksched_async_allowed(void) { return ksched_spawn_allowed(); }
 void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

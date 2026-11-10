@@ -7,8 +7,8 @@
  * bios/machine/<name>/shutdown.c).  What a platform cannot do it leaves
  * undone, and the sequence ends in the message and a halt.
  *
- * pTOS is single-tasking, so there is nothing to unwind: no process runs
- * again after this.
+ * Native scheduling admission/dispatch is closed before cleanup: no process
+ * may run again once system-wide file/mapping teardown starts.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -20,6 +20,9 @@
 #include "biosext.h"
 #include "kprint.h"
 #include "shutdown.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
 #if CONF_WITH_MMAP
 #include "kproc.h"
 #endif
@@ -96,6 +99,9 @@ long xshutdown(LONG mode)
     if (shutting_down)
         return EACCDN;       /* already on its way */
     shutting_down = TRUE;
+#if CONF_WITH_NATIVE_SCHED
+    ksched_shutdown_begin();
+#endif
 
     /* every open file of every process, then the buffers */
     close_files();

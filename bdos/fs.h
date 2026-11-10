@@ -71,10 +71,7 @@
 
 #include "setjmp.h"
 
-extern  long    rwerr;
-extern  jmp_buf errbuf;
-extern  int     errdrv;
-extern  long    errcode;
+#include "fs_error.h"
 
 /*
  * run a call that can reach the disk, for kernel code calling the GEMDOS
@@ -87,9 +84,9 @@ extern  long    errcode;
 __extension__                                                   \
 ({                                                              \
     long _rc;                                                   \
-    jmp_buf _saved;                                             \
+    FS_ERROR_SCOPE _saved;                                             \
                                                                 \
-    memcpy(_saved, errbuf, sizeof(errbuf));                     \
+    fs_error_scope_save(_saved);                     \
     if (setjmp(errbuf))                                         \
     {                                                           \
         _rc = errcode;                                          \
@@ -97,7 +94,7 @@ __extension__                                                   \
     }                                                           \
     else                                                        \
         _rc = (call);                                           \
-    memcpy(errbuf, _saved, sizeof(errbuf));                     \
+    fs_error_scope_restore(_saved);                     \
     _rc;                                                        \
 })
 

@@ -31,16 +31,22 @@ def main():
     local_labels.update(label for label in TYPED_LABEL.findall(text)
                         if label not in global_labels)
 
+    # Do not rewrite .ascii/.string data (or quoted debug/file names). A local
+    # symbol can also be a word in a diagnostic or a literal application token.
+    # GCC escapes embedded quotes/backslashes, so odd chunks are whole literals.
+    chunks = re.split(r'("(?:\\.|[^"\\])*")', text)
+
     # mintelf gas accepts GCC's private names only with a leading underscore.
     for label in sorted(local_labels, key=len, reverse=True):
         # A dot normally continues a symbol name, except for m68k operand
         # size suffixes (for example, "symbol.w").
         symbol = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(label)
                             + r"(?![A-Za-z0-9_]|\.(?![bwl](?:\b)))")
-        text = symbol.sub("_" + label, text)
+        for index in range(0, len(chunks), 2):
+            chunks[index] = symbol.sub("_" + label, chunks[index])
 
     with open(sys.argv[2], "w", encoding="utf-8") as destination:
-        destination.write(text)
+        destination.write("".join(chunks))
 
 
 if __name__ == "__main__":
