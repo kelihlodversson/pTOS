@@ -148,3 +148,17 @@ still requires the captured and selected shared space to match. On x32 the
 constructor-selected root survives copying the user image; a captured CR3 field
 cannot select the child's kernel-owned root. The production allocation/owned-
 image host regression supplies a different captured CR3 and checks that fact.
+
+ARM review corrections
+----------------------
+Both higher-half SVC routers retain the full eight-byte routing frame while
+unmasking IRQs, then restore original r0 and branch atomically with POP r0/pc.
+An IRQ must never see a half-popped four-byte-aligned SVC stack: IRQ entry
+switches to that stack before calling C. The test gate now requires CPU_ARMV7
+on ARM, excluding the RPi1/VFP D16 configuration from this D32 probe.
+The regression tools/test-fork-return-arm.py resolves real Kconfig prerequisites
+and assembles both production routing bodies. Structural instruction analysis
+checks alignment at every IRQ-enabled boundary and balanced frame removal;
+it is not a native injected-IRQ execution claim. Independent negative controls
+restore each misaligned router and remove the CPU gate, and fail precisely the
+corresponding assertions. Native A7/RPi2 runtime tests remain separate evidence.

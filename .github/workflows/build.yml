@@ -313,6 +313,10 @@ jobs:
         with:
           packages: --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
 
+      - name: Test ARM saved-return routing and admission
+        if: matrix.arch == 'arm'
+        run: python3 tools/test-fork-return-arm.py
+
       # for the interpreter the test script runs (setup-toolchain selects its
       # own Python, which the system's packages are not for)
       - name: Install fontTools

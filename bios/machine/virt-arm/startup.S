@@ -565,9 +565,10 @@ C_SYM(arm_dispatch_svc):
     ldr r0, [r0, ip, lsl #2]
     ldr ip, [sp, #4]
     str r0, [sp, #4]
-    ldr r0, [sp], #4
+    /* Keep the eight-byte routing frame aligned while IRQs are enabled.
+     * Restore original r0 and transfer control in one instruction. */
     cpsie i
-    ldr pc, [sp], #4
+    pop {r0,pc}
     bx  ip
 
     .globl C_SYM(arm_dispatch_prefetch_abort)
