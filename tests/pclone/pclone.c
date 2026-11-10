@@ -1518,6 +1518,26 @@ static void test_runnable(void)
                      "native mapped-page accounting returns to baseline");
 }
 void pclone_run_unmanaged_tests(void);
+void pclone_run_staged_tests(void);
+void pclone_run_staged_tests(void)
+{
+    struct ptos_clone_args args = {0};
+    int32_t pid = -1, tid = -1;
+    long stack = Malloc(RUNNABLE_STACK_SIZE), result;
+    ptest_begin("Pclone from staged executable text");
+    ptest_assert_msg(stack > 0,"staged-image entry stack");
+    if (stack > 0) {
+        args.flags = CLONE_VM; args.entry = phase1_entry;
+        args.stack_base = (void *)stack; args.stack_size = RUNNABLE_STACK_SIZE;
+        args.child_pid = &pid; args.child_tid = &tid;
+        phase1_expected_argument = 0; phase1_entered = 0; phase1_resources = 0;
+        result = pclone_trap(&args,32);
+        ptest_assert_msg(result > 0 && result == tid,"PE_LOAD/async-GO text is a valid Pclone entry");
+        phase1_finish(result,pid);
+        ptest_assert_msg(Mfree((void *)stack) == 0,"staged-image child releases its stack hold");
+    }
+    ptest_pass();
+}
 void pclone_run_unmanaged_tests(void)
 {
     struct ptos_clone_args args = {0};

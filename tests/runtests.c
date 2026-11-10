@@ -14,6 +14,7 @@
 #if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 void pclone_run_managed_tests(void);
 void pclone_run_unmanaged_tests(void);
+void pclone_run_staged_tests(void);
 #endif
 
 int main(void)
@@ -24,15 +25,18 @@ int main(void)
                  !memcmp(_base->p_cmdlin + 1, "--clone", 7);
     int unmanaged = (unsigned char)_base->p_cmdlin[0] == 15 &&
                     !memcmp(_base->p_cmdlin + 1,"--abi-unmanaged",15);
-    if (worker || unmanaged)
+    int staged = (unsigned char)_base->p_cmdlin[0] == 12 &&
+                 !memcmp(_base->p_cmdlin + 1,"--abi-staged",12);
+    if (worker || unmanaged || staged)
         ptest_log_append();
 #endif
 
     conws("pTOS regression tests\r\n\r\n");
 
 #if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
-    if (worker || unmanaged) {
+    if (worker || unmanaged || staged) {
         if (unmanaged) pclone_run_unmanaged_tests();
+        else if (staged) pclone_run_staged_tests();
         else pclone_run_managed_tests();
         failures = ptest_failures();
         ptest_log_flush();

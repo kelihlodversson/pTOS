@@ -33,6 +33,7 @@ void pclone_run_unmanaged_tests(void)
     /* This fixture exercises log ownership, not native clone execution. */
     abort(); /* No unmanaged worker is launched by this model. */
 }
+void pclone_run_staged_tests(void) { abort(); }
 
 void pclone_run_managed_tests(void)
 {

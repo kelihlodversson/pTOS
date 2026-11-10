@@ -400,6 +400,23 @@ static void test_public_contract(unsigned char *stack)
                          "nested synchronous launcher is not a managed THREAD");
     }
     phase1_account("nested",baseline);
+    {
+        static const char tail[] = "\14--abi-staged";
+        long image, child, status;
+        ptest_log_flush();
+        image = Pexec(3,"C:\\RUNTESTS.TOS",tail,0);
+        ptest_assert_msg(image > 0,"stage executable in loader-owned heap");
+        if (image > 0) {
+            child = Pexec(106,0,(void *)image,0);
+            ptest_assert_msg(child > 0,"publish staged executable through existing async loader");
+            if (child > 0) {
+                status = Pwaitpid(child,0,0);
+                ptest_assert_msg((status >> 16) == child && !(status & 65535),
+                                 "staged executable validates native Pclone text and zero return");
+            }
+        }
+    }
+    phase1_account("staged",baseline);
     phase1_resource_matrix(good);
     phase1_account("resources",baseline);
 #if defined(TEST_WITH_MMAP)
