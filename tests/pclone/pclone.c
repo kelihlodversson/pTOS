@@ -1534,9 +1534,11 @@ void pclone_run_staged_tests(void)
          * resident TPA stack page, not the retired original allocation end. */
         phase1_policy_hole = (void *)((unsigned long)&touch & ~4095UL);
         phase1_policy_file = PHASE1_POLICY_PRG;
+        phase1_policy_writable_text = 1;
     } else {
         phase1_policy_hole = (void *)(((unsigned long)_base->p_bbase + _base->p_blen + 8191UL) & ~4095UL);
         phase1_policy_file = PHASE1_POLICY_ELF;
+        phase1_policy_writable_text = 0;
     }
     touch = *(volatile unsigned char *)phase1_policy_hole;
     (void)touch;

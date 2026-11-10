@@ -211,6 +211,7 @@ static volatile unsigned long phase1_policy_data[1024] __attribute__((aligned(40
 static volatile unsigned long phase1_policy_bss[1024] __attribute__((aligned(4096)));
 static unsigned char *phase1_policy_stack;
 static void *phase1_policy_hole;
+static int phase1_policy_writable_text;
 struct phase1_policy_report { long magic, creator, worker, gate, done, error; };
 #define PHASE1_POLICY_ELF "C:\\PCLPOL.TMP"
 #define PHASE1_POLICY_PRG "C:\\PRGPOL.TMP"
@@ -238,7 +239,24 @@ static long phase1_policy_checks(void)
         (void)Syield(); (void)Syield();
         if (Pwaitpid(-1,1,0) != -33L) error |= 32;
     }
-    args.entry = phase1_entry; args.argument = 0; phase1_entered = 0;
+    /* Also execute the writable-PRG / readonly-ELF error contract from the
+     * actual staged image, including after its original PROCESS is gone. */
+    {
+        unsigned char before[4];
+        void *output = (void *)((unsigned long)phase1_entry & ~3UL);
+        memcpy(before,output,sizeof(before));
+        memcpy(frame,sentinel,sizeof(sentinel));
+        args.entry=phase1_entry; args.child_tid=output;
+        pid=0x12345678; tid=0x23456789;
+        result=pclone_trap(&args,32);
+        if(result != (phase1_policy_writable_text ? -25L : -40L) ||
+           pid!=0x12345678 || tid!=0x23456789 ||
+           memcmp(before,output,sizeof(before)) || memcmp(frame,sentinel,sizeof(sentinel))) error|=1024;
+        if(result>0) return error;
+        (void)Syield(); (void)Syield();
+        if(Pwaitpid(-1,1,0)!=-33L) error|=32;
+    }
+    args.entry = phase1_entry; args.argument = 0; args.child_tid=&tid; phase1_entered = 0;
     pid = tid = -99;
     result = pclone_trap(&args,32);
     if (result <= 0 || result != tid || pid <= 0 || pid == Pgetpid()) return error | 64;

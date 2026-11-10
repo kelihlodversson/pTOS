@@ -24,7 +24,7 @@ static unsigned changes, flushes;
 static PADDR physical[3];
 PADDR procmem_phys_of(VADDR page) { return page + 0x100000; }
 BOOL procmem_range_live(VADDR va,VADDR bytes)
-{ return live && va>=0x10000 && bytes<=0x13000-va; }
+{ return live && va>=0x10000 && va<=0x13000 && bytes<=0x13000-va; }
 BOOL kaspace_mapping_change(ASPACE *as,VADDR va,VADDR bytes)
 { assert(as && va==0x10000 && bytes==3*PAGE); return permitted; }
 BOOL aspace_hw_lookup(PADDR root,VADDR va,PADDR *p,UWORD *prot,UWORD *flags)
@@ -52,6 +52,9 @@ int main(void)
         rights[i]=ASPACE_PROT_USER|ASPACE_PROT_WRITE; present[i]=TRUE;
         physical[i]=procmem_phys_of(0x10000+i*PAGE);
     }
+    assert(!aspace_mark_procmem_text(NULL,0x10100,0x2000) && !changes);
+    assert(!aspace_mark_procmem_text(&as,0x10100,0) && !changes);
+    assert(!aspace_mark_procmem_text(&as,USER_VA_LIMIT-1,2) && !changes);
     /* Invalid second/final leaves must not partially mark earlier text. */
     present[1]=FALSE; assert(!aspace_mark_procmem_text(&as,0x10100,0x2000) && !changes);
     present[1]=TRUE; ownership[2]=ASPACE_LEAF_OWNED;
