@@ -13,10 +13,59 @@
 static int target = 946;
 static int *volatile pointer = &target;
 
+static int fragmented_heap(void)
+{
+    long blocks[64], base = 0, address;
+    int i;
+
+    /* Heap blocks and mappings alternate in address order. Allocation has
+     * to merge both lists; after freeing a pair, first fit must reuse it. */
+    for (i = 0; i < 64; i++) {
+        blocks[i] = (long)Malloc(MM_PAGE);
+        if (!i)
+            base = blocks[i];
+        if (base <= 0 || blocks[i] != base + 2 * i * MM_PAGE ||
+            mm_map(blocks[i] + MM_PAGE, 1, PROT_NONE, 1) != blocks[i] + MM_PAGE)
+            return 21;
+    }
+    if (Mfree((void *)blocks[0]) || mm_unmap(base + MM_PAGE, 1))
+        return 22;
+    address = (long)Malloc(2 * MM_PAGE);
+    if (address != base || Mfree((void *)address))
+        return 23;
+    for (i = 63; i > 0; i--)
+        if (mm_unmap(blocks[i] + MM_PAGE, 1) || Mfree((void *)blocks[i]))
+            return 24;
+    return 0;
+}
+
+static int automatic_mapping_limit(void)
+{
+    long old, first, pages, address;
+
+    old = Psetlimit(0x100, 0x00040000L);
+    if (old < 0)
+        return 25;
+    /* The largest allocatable mapping gap follows the image/startup area.
+     * Shrinking the stack creates more heap space above the mapping ceiling;
+     * an automatic mapping must neither cross nor use that extra space. */
+    first = (long)_base->p_bbase + _base->p_blen + 0x20000L;
+    pages = (0x7efff000L - first) / MM_PAGE;
+    if (mm_map(0L, pages + 1, PROT_NONE, 0) != -39L)
+        return 26;
+    address = mm_map(0L, pages, PROT_NONE, 0);
+    if (address != first || mm_prot(address + (pages - 1) * MM_PAGE, 1, PROT_READ) ||
+        *(volatile long *)(address + (pages - 1) * MM_PAGE) != 0 ||
+        mm_unmap(address, pages) || Psetlimit(0x100, old) != 0x00040000L)
+        return 27;
+    return 0;
+}
+
 int main(void)
 {
     volatile unsigned char *ram;
     long address, high, heap, largest, stack_limit, i;
+    int rc;
 
     if ((unsigned long)&main < 0x41000000UL ||
         (unsigned long)&main >= 0x41100000UL || *pointer != 946)
@@ -91,6 +140,12 @@ int main(void)
         return 12;
     if (Psetlimit(0x100, 0x40000000L) != -39L)
         return 13;
+    rc = fragmented_heap();
+    if (rc)
+        return rc;
+    rc = automatic_mapping_limit();
+    if (rc)
+        return rc;
     /* Leave the low guest RAM mapped: process teardown must reclaim it. */
     return 0;
 }

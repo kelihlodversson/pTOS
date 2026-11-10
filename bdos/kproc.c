@@ -1465,13 +1465,59 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
                             VADDR bytes, VADDR *largest)
 {
     VADDR first, end, found = 0;
+    VADDR image_first = 0, image_end = 0;
+    ULONG index = 0;
+    BOOL system_pending = TRUE;
+    BOOL image_pending = image_reservation(kproc, &image_first, &image_end);
+#if CONF_WITH_MMAP
+    const MMAP_REGION *region = kproc->mappings;
+#endif
 
+    /* Merge the two sorted allocation lists and the fixed intervals. Each
+     * reservation is consumed once, including overlaps with the image, so
+     * Malloc(-1) and first-fit allocation remain linear in the list sizes. */
     *largest = 0;
     while (at < limit) {
-        next_reservation(kproc, at, limit, TRUE, &first, &end);
-        if (first - at > *largest) *largest = first - at;
-        if (!found && bytes && first - at >= bytes) found = at;
-        at = end;
+        enum { GAP_END, GAP_SYSTEM, GAP_IMAGE, GAP_HEAP, GAP_MAPPING } source = GAP_END;
+
+        first = end = limit;
+        if (system_pending && USER_SYSTEM_BASE < first) {
+            first = USER_SYSTEM_BASE;
+            end = USER_SYSTEM_LIMIT;
+            source = GAP_SYSTEM;
+        }
+        if (image_pending && image_first < first) {
+            first = image_first;
+            end = image_end;
+            source = GAP_IMAGE;
+        }
+        if (index < kproc->nheap && kproc->heap[index].va < first) {
+            first = kproc->heap[index].va;
+            end = first + (VADDR)kproc->heap[index].pages * USER_PAGE_SIZE;
+            source = GAP_HEAP;
+        }
+#if CONF_WITH_MMAP
+        if (region && region->address < first) {
+            first = region->address;
+            end = first + region->length;
+            source = GAP_MAPPING;
+        }
+#endif
+        switch (source) {
+        case GAP_SYSTEM: system_pending = FALSE; break;
+        case GAP_IMAGE: image_pending = FALSE; break;
+        case GAP_HEAP: index++; break;
+#if CONF_WITH_MMAP
+        case GAP_MAPPING: region = region->next; break;
+#endif
+        default: break;
+        }
+        if (first > at) {
+            if (first - at > *largest) *largest = first - at;
+            if (!found && bytes && first - at >= bytes) found = at;
+        }
+        if (end > at)
+            at = end;
     }
     return found;
 }
@@ -1564,7 +1610,10 @@ static MMAP_REGION **mapping_slot(KPROC *kproc, UQUAD *address,
                                  UQUAD length, BOOL exact)
 {
     MMAP_REGION **link;
-    VADDR at, largest;
+    VADDR at, largest, limit = heap_limit(kproc);
+
+    if (limit > USER_ALLOC_LIMIT)
+        limit = USER_ALLOC_LIMIT;
 
     if (!*address || !mapping_range(*address, length) ||
         !reservation_free(kproc, (VADDR)*address, (VADDR)length)) {
@@ -1572,7 +1621,7 @@ static MMAP_REGION **mapping_slot(KPROC *kproc, UQUAD *address,
             return NULL;
         at = reservation_gap(kproc, PTOS_MMAP_BASE, PTOS_MMAP_LIMIT, (VADDR)length, &largest);
         if (!at)
-            at = reservation_gap(kproc, PTOS_MMAP_MIN, heap_limit(kproc), (VADDR)length, &largest);
+            at = reservation_gap(kproc, PTOS_MMAP_MIN, limit, (VADDR)length, &largest);
         if (!at)
             return NULL;
         *address = at;
