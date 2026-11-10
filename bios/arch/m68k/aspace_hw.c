@@ -16,7 +16,8 @@
  * the system variables, the BIOS stack, the low ST-RAM section), supervisor
  * only, at the addresses it has on every m68k machine: the same page table in
  * every root.  There is no execute permission on the 68040: every readable
- * page can be executed.
+ * page can be executed. U1 records the requested logical EXEC policy for
+ * kernel admission checks; it does not change CPU instruction permissions.
  *
  * Copyright (C) 2026 The pTOS development team
  *
@@ -71,6 +72,7 @@
 #endif
 #define PTE_S           0x080UL         /* supervisor only */
 #define PTE_G           0x400UL         /* the same in every address space */
+#define PTE_EXEC        0x200UL         /* U1: software logical execute policy, NOT hardware NX */
 #define PTE_OWNED       0x800UL         /* (a bit left to software) a private page */
 
 /*
@@ -313,12 +315,14 @@ static ULONG make_desc(PADDR phys, UWORD prot, UWORD flags)
         d |= PTE_W;
     if (flags & ASPACE_LEAF_OWNED)
         d |= PTE_OWNED;
+    if (prot & ASPACE_PROT_EXEC)
+        d |= PTE_EXEC;
     return d;
 }
 
 static UWORD desc_prot(ULONG d)
 {
-    UWORD prot = ASPACE_PROT_EXEC;      /* every readable page can be executed */
+    UWORD prot = (d & PTE_EXEC) ? ASPACE_PROT_EXEC : 0;
 
     if (!(d & PTE_S))
         prot |= ASPACE_PROT_USER;

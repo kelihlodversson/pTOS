@@ -1522,19 +1522,40 @@ void pclone_run_staged_tests(void);
 void pclone_run_staged_tests(void)
 {
     struct ptos_clone_args args = {0};
+    struct phase1_policy_report report;
     int32_t pid = -1, tid = -1;
-    long stack = Malloc(RUNNABLE_STACK_SIZE), result;
+    long stack = Malloc(RUNNABLE_STACK_SIZE), result, status, file;
+    volatile unsigned char touch;
     ptest_begin("Pclone from staged executable text");
-    ptest_assert_msg(stack > 0,"staged-image entry stack");
-    if (stack > 0) {
-        args.flags = CLONE_VM; args.entry = phase1_entry;
+    phase1_policy_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
+    /* Loader-owned slack is resident data, but outside executable segments. */
+    phase1_policy_hole = (void *)(((unsigned long)_base->p_bbase + _base->p_blen + 65535UL) & ~4095UL);
+    touch = *(volatile unsigned char *)phase1_policy_hole;
+    (void)touch;
+    ptest_assert_msg(stack > 0 && phase1_policy_stack,"staged-image entry stacks");
+    if (stack > 0 && phase1_policy_stack) {
+        ptest_assert_msg(phase1_policy_checks() == 0,"staged owner enforces text/data/BSS/image-hole policy");
+        args.flags = CLONE_VM; args.entry = phase1_policy_child;
         args.stack_base = (void *)stack; args.stack_size = RUNNABLE_STACK_SIZE;
         args.child_pid = &pid; args.child_tid = &tid;
-        phase1_expected_argument = 0; phase1_entered = 0; phase1_resources = 0;
+        phase1_resources = 0; phase1_resource_error = 0;
         result = pclone_trap(&args,32);
-        ptest_assert_msg(result > 0 && result == tid,"PE_LOAD/async-GO text is a valid Pclone entry");
-        phase1_finish(result,pid);
-        ptest_assert_msg(Mfree((void *)stack) == 0,"staged-image child releases its stack hold");
+        ptest_assert_msg(result > 0 && result == tid,"staged CLONE_VM PROCESS child admitted");
+        if (result > 0) {
+            status = Pwaitpid(pid,0,0);
+            ptest_assert_msg((status >> 16) == pid && !(status & 65535) && !phase1_resource_error,
+                             "nested shared child enforces original staged image policy");
+        }
+        /* Do not free the orphan's active stack or its nested-child stack.
+         * Their containing KASPACE owns all pages until its final reference. */
+        args.argument = (void *)1;
+        result = pclone_trap(&args,32);
+        ptest_assert_msg(result > 0 && result == tid,"orphan staged-policy child admitted");
+        file = Fopen(PHASE1_POLICY_FILE,2);
+        memset(&report,0,sizeof(report)); report.magic=0x50434c4eL;
+        report.creator=Pgetpid(); report.worker=pid;
+        ptest_assert_msg(file >= 6 && Fwrite(file,sizeof(report),&report) == sizeof(report) && Fclose(file)==0,
+                         "publish orphan identity before staged owner exits");
     }
     ptest_pass();
 }

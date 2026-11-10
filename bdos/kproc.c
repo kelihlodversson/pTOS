@@ -3659,54 +3659,20 @@ BOOL kproc_validate_user_range(VADDR address, ULONG size)
 BOOL kproc_validate_user_exec(VADDR address)
 {
     KPROC *kproc = kproc_find(run);
-    PADDR phys;
-    UWORD prot, logical;
-    BOOL known = FALSE;
+    UWORD prot;
 
     if (!kproc || !kproc->aspace || address >= USER_VA_LIMIT) return FALSE;
-    /* Hardware without NX reports all readable leaves executable. A known
-     * heap/mmap reservation must still authorize entry logically, even when
-     * its page is already resident. Hardware checks below remain mandatory. */
-#if CONF_WITH_MMAP
-    known = kaspace_mmap_protection(kproc->active_space, address, &logical);
+    /* Mapping-owned logical permissions survive CLONE_VM, creator retirement
+     * and PD reuse. m68k preserves EXEC in software descriptor bits even
+     * without PRIVATE_CLONE; no hardware NX or PROCESS-local layout is assumed.
+     * COW may temporarily remove hardware WRITE while retaining logical rights. */
+    if (!
+#if CONF_WITH_PRIVATE_CLONE
+        aspace_logical_protection(kproc->aspace, address, &prot)
+#else
+        aspace_translate(kproc->aspace, address, NULL, &prot)
 #endif
-    if (!known && kaspace_heap_contains(kproc->active_space, address)) {
-        logical = ASPACE_PROT_USER | ASPACE_PROT_WRITE; known = TRUE;
-    }
-    if (!known) {
-        ULONG i;
-        /* A moved PE_GO image is tracked in the legacy heap vector, but
-         * lazy_area's generic WRITE policy is not its segment policy. */
-        for (i = 0; i < kproc->nheap; i++) {
-            const struct uheap_block *b = &kproc->heap[i];
-            ULONG j;
-            VADDR page = address & ~(USER_PAGE_SIZE - 1);
-            if (address < b->va ||
-                address - b->va >= (VADDR)b->pages * USER_PAGE_SIZE) continue;
-            known = TRUE;
-            logical = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
-            if (b->kind != UH_IMAGE) break;
-            logical = 0;
-            for (j = 0; j < kproc->layout.nseg; j++) {
-                const PROG_SEGMENT *s = &kproc->layout.seg[j];
-                VADDR first = s->vaddr & ~(USER_PAGE_SIZE - 1);
-                VADDR end = (s->vaddr + s->memsz + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
-                if (page >= first && page < end) {
-                    logical = ASPACE_PROT_USER;
-                    if (s->flags & 1) logical |= ASPACE_PROT_EXEC;
-                    if (s->flags & 2) logical |= ASPACE_PROT_WRITE;
-                }
-            }
-            break;
-        }
-    }
-    if (!known && address >= USER_STACK_TOP - stack_bytes(kproc) && address < USER_STACK_TOP) {
-        logical = ASPACE_PROT_USER | ASPACE_PROT_WRITE; known = TRUE;
-    }
-    if (known && (logical & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) !=
-        (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) return FALSE;
-    if (!aspace_translate(kproc->aspace, address, &phys, &prot) &&
-        !lazy_area(kproc, address & ~(USER_PAGE_SIZE - 1), &prot)) return FALSE;
+        && !lazy_area(kproc, address & ~(USER_PAGE_SIZE - 1), &prot)) return FALSE;
     return (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) ==
            (ASPACE_PROT_USER | ASPACE_PROT_EXEC);
 }
