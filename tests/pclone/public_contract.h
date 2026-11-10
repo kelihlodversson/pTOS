@@ -274,13 +274,15 @@ static void phase1_policy_child(void *argument)
 static void phase1_policy_observe(long staged_pid)
 {
     struct phase1_policy_report report;
-    static const char tail[] = "\017--abi-unmanaged";
+    static const char tail[] = "\1w";
     long file;
     unsigned i;
-    /* Exercise fresh PROCESS/PD construction after the staged owner retired.
-     * A retained parent identity may legitimately reserve its old PID. */
+    /* The tiny existing global-scheduler payload exits23 before its role
+     * logic. Four real PROCESS/PD constructions fit while a PRG orphan pins
+     * the original TPA; recursively loading this large suite can exhaust
+     * m68k's bounded procmem window. The old parent PID may remain reserved. */
     for (i = 0; i < 4; i++)
-        ptest_assert_msg(Pexec(0,"runtests.tos",tail,0) == 0,"PD churn after executable-owner retirement");
+        ptest_assert_msg(Pexec(0,"C:\\GLOBALCH.TOS",tail,0) == 23,"PD churn after executable-owner retirement");
     file = Fopen(phase1_policy_file,2);
     ptest_assert_msg(file >= 6,"open orphan execute-policy report");
     if (file < 0) return;
@@ -428,7 +430,7 @@ static void test_public_contract(unsigned char *stack)
     bad = good; bad.child_pid = (int32_t *)(stack + RUNNABLE_STACK_SIZE - 4); REJECT(-25L);
     phase1_account("before code-output",baseline);
     bad = good; bad.child_tid = (int32_t *)((unsigned long)phase1_entry & ~3UL);
-#if defined(__mc68000__)
+#if defined(__mc68000__) && defined(TEST_IS_PRG)
     REJECT(-25L); /* legacy image page is writable: explicit code-page overlap */
 #else
     REJECT(-40L); /* read-only executable leaf fails writable-range validation */
@@ -505,17 +507,21 @@ static void test_public_contract(unsigned char *stack)
         long image, child, status, report;
         unsigned format;
         for (format = 0; format <
-#if defined(__mc68000__)
+#if defined(__mc68000__) && defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
              2
 #else
              1
 #endif
              ; format++) {
+#if defined(__mc68000__) && defined(TEST_IS_PRG) && !defined(TEST_WITH_ELF_LOADER)
+            phase1_policy_file = PHASE1_POLICY_PRG;
+#else
             phase1_policy_file = format ? PHASE1_POLICY_PRG : PHASE1_POLICY_ELF;
+#endif
             report = Fcreate(phase1_policy_file,0);
             ptest_assert_msg(report >= 6 && Fclose(report) == 0,"prepare orphan policy report");
             ptest_log_flush();
-#if defined(__mc68000__)
+#if defined(__mc68000__) && defined(TEST_WITH_ELF_LOADER)
             image = Pexec(3,format ? "C:\\RUNTESTS.TOS" : "C:\\CLNABI.TOS",tail,0);
 #else
             image = Pexec(3,"C:\\RUNTESTS.TOS",tail,0);
