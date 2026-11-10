@@ -486,6 +486,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
     long needed;
     FH fh;
+#if CONF_WITH_BINFMT
+    BINFMT_LAUNCH interpreter;
+#endif
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
@@ -642,7 +645,16 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
     elf_set_load_into_caller(flag == PE_LOAD);
 #endif
+#if CONF_WITH_BINFMT
+    rc = binfmt_load_header(path, tail, env ? env : (char *)USERPTR_TO_PTR(run->p_env), &hdr, &fh, &interpreter);
+    if (!rc && interpreter.environment) {
+        path = interpreter.path;
+        tail = interpreter.tail;
+        env = interpreter.environment;
+    }
+#else
     rc = kpgmhdrld(path, &hdr, &fh);
+#endif
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmhdrld returned %ld (0x%lx)\n",rc,rc));
         return rc;
@@ -650,6 +662,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* allocate the environment first, depending on memory policy */
     env_ptr = alloc_env(hdr.h01_flags, env);
+#if CONF_WITH_BINFMT
+    binfmt_release(&interpreter);
+#endif
     if (env_ptr == NULL) {
         KDEBUG(("BDOS xexec: no memory for environment\n"));
         xclose(fh);

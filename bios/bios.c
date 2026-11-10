@@ -24,6 +24,9 @@
 #include "bios.h"
 #include "shells.h"
 #include "../bdos/bdosstub.h"
+#if CONF_WITH_BINFMT
+#include "../bdos/binfmt.h"
+#endif
 #include "../vdi/vdistub.h"
 #include "bdosbind.h"
 #include "gemerror.h"
@@ -1167,6 +1170,9 @@ void biosmain(void)
 
     Dsetdrv(bootdev);           /* Set boot drive */
     init_default_environment(); /* Build default environment string */
+#if CONF_WITH_BINFMT
+    binfmt_boot_init();         /* before early CLI, AUTO or any user program */
+#endif
 
 #if CONF_WITH_VDI_SCALABLE_FONTS && defined(CONF_DEBUG_FREETYPE_TEST_FONT)
     vdi_freetype_test_font();   /* check FreeType's port layer with a font */

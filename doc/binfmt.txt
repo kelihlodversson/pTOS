@@ -1,0 +1,149 @@
+Executable interpreters and PTOS.INI (#944)
+==========================================
+
+CONF_WITH_BINFMT enables a boot-configured executable-format registry and #!
+scripts. It defaults on except for the 192/256 KiB and cartridge images.
+Supported native executables retain precedence. Unsupported formats and ELF
+architectures may select a userspace interpreter; file/I/O failures and malformed
+native images do not select one. The final interpreter is an ordinary native
+executable. There is no shared-library lookup, proc filesystem or runtime API.
+
+Boot configuration
+------------------
+Read exactly \PTOS.INI from the recorded boot drive, once after the filesystem
+and default environment are ready and before any early console, AUTO or user
+program. A C: boot reads C:\PTOS.INI, a D: boot D:\PTOS.INI. The current drive
+and working directory are not searched. A missing file is normal. An unreadable
+or oversized file produces a diagnostic and installs no configured handlers.
+Shebangs remain available without a configuration file.
+
+Example:
+
+    ; root of the boot drive
+    [binfmt.tos68k]
+    enabled = true
+    offset = 0
+    magic = 601A
+    mask = FFFF
+    interpreter = \BIN\PARATOS.TOS
+
+PTOS.INI is a section-based format, leaving other namespaces available for
+future pTOS settings. Accept LF and CRLF, blank lines and whole-line comments
+whose first non-space/tab byte is ; or #. Settings are key = value, split at
+the first equals sign. Trim spaces/tabs around sections, keys and values.
+Names and keys are ASCII case-insensitive; preserve value/path bytes. Values
+are literal and unquoted: no inline comments, escapes, expansion, includes or
+shell interpretation. Spaces inside a path are allowed. Both / and \ are path
+separators, including mixtures; backslashes are not escapes.
+
+Each [binfmt.NAME] section defines one handler. NAME contains ASCII letters,
+digits, underscores and hyphens. Keys:
+
+    enabled       optional true/false; default true
+    offset        optional unsigned decimal or 0x hexadecimal; default 0
+    magic         required nonempty hex byte sequence (601A, not 0x601A)
+    mask          optional hex bytes, same length as magic; default all FF
+    interpreter   required absolute interpreter pathname
+
+A root-relative interpreter (/BIN/EMU.TOS or \BIN\EMU.TOS) is rooted on the
+boot drive. An explicit drive-qualified absolute path (D:/BIN/EMU.TOS) is
+accepted. Relative paths, including drive-relative D:EMU.TOS, are rejected.
+Normalize only separators at the filesystem boundary; do not search PATH.
+
+Unknown sections are ignored. Unknown keys in a handler produce a diagnostic
+and are ignored. Invalid handlers are skipped as a unit, leaving valid handlers
+and boot operational. Duplicate keys invalidate their handler, including
+duplicates of unknown keys. Duplicate handler names retain the first definition
+and skip later ones. Malformed section headers cannot attach following settings
+to the preceding handler. Diagnostics identify line numbers.
+
+After native-format recognition, shebangs take precedence over configured rules.
+Enabled rules are tried in file order, selecting the first complete match:
+
+    (file[offset+i] & mask[i]) == (magic[i] & mask[i])
+
+A short header does not match. A selected interpreter's load failure is returned;
+it does not select a later rule. Validated definitions live in kernel storage
+after the configuration file has been closed.
+
+Shebangs
+--------
+The first two bytes must be #!, without whitespace or a BOM before them:
+
+    #!/BIN/SH.TOS
+    #!/BIN/SH.TOS -s
+
+Skip spaces/tabs after #!, then take the interpreter pathname up to a space/tab
+or line ending. The remaining nonempty text, after trimming its outer spaces/
+tabs, is ONE optional argument. Keep internal spaces, quotes and backslashes
+literal. There is no shell tokenization or expansion. Interpreter paths with
+spaces cannot be represented by this syntax. Resolve paths exactly as configured
+handler paths, accepting /, \ and drive-qualified absolute paths.
+
+LF, CRLF and a complete first line ending at EOF are accepted. An empty, relative,
+NUL-containing or overlong interpreter line fails. A recognized shebang with a
+parse/load error never falls through to configured rules.
+
+Launch context and chains
+-------------------------
+Configured formats receive:
+
+    interpreter original-program original-arguments-excluding-argv0
+
+Scripts receive:
+
+    interpreter [one-optional-argument] script-path original-arguments-excluding-argv0
+
+An interpreter may itself be a script or foreign binary. Reapply the same
+native/shebang/registry order, retaining each prefix in the resulting argv.
+Ultimately execute native code. Four interpreter redirections are allowed;
+cycles and depth exhaustion fail with EPLFMT. Native loader/ELF PT_INTERP
+operation is separate from these format redirections.
+
+Preserve the environment, working directory, inherited handles and exit status.
+The program pathname passed as an argument keeps the caller's spelling; relative
+program paths remain valid because the caller's directory is inherited.
+Replace any old ARGV extension with the complete resulting argument vector,
+including ARGV=NULL: indices for empty arguments. Preserve argument boundaries.
+Without ARGV, tokenize the bounded classic command tail: whitespace separates
+arguments, single/double quotes group them, doubled quote characters inside
+quotes represent literal quotes, and backslashes remain literal path separators.
+Unterminated quotes fail instead of losing arguments.
+
+Also supply a classic command tail, using MagX single-quote quoting when needed.
+Long or empty-argument command lines use the 127 ARGV marker; the environment
+contains every argument in full. An environment/argument overflow fails with
+ERANGE; no argument is silently dropped. Temporary kernel buffers are freed
+after copying the child environment, before a non-returning architecture launch.
+
+Implementation limits
+---------------------
+These bounds are checked; excess input is diagnosed/rejected, never truncated
+into a different handler or interpreter:
+
+    PTOS.INI size                          65536 bytes
+    INI line (excluding CR/LF)               512 bytes
+    Handler definitions                       8 (including disabled/invalid)
+    Handler NAME                             31 bytes
+    Keys per handler                         16 (including unknown keys)
+    Key name                                 63 bytes
+    Magic/mask                               32 bytes each
+    Inspected executable prefix            4096 bytes
+    Normalized interpreter pathname         259 bytes, excluding NUL
+    Shebang first line                      256 bytes, excluding CR/LF
+    Original program pathname              1023 bytes, excluding NUL
+    Rebuilt environment/ARGV              32766 bytes, including final NUL pair
+    Format interpreter redirections           4
+
+Normal filesystem pathname and native executable ABI constraints still apply.
+Building without CONF_WITH_BINFMT retains ordinary native loading and boot.
+
+Validation
+----------
+Run the production parser/argument code against host malformed-input tests:
+
+    sh tools/test-binfmt.sh
+    BINFMT_SANITIZE=1 sh tools/test-binfmt.sh
+
+Native boot fixtures and their reproduction commands are added with the runtime
+integration tests; interpreter selection does not depend on Paratos itself.

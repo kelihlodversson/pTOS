@@ -439,7 +439,7 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
  * program needs, expressed through the classic PGMHDR01 fields so that the
  * memory allocation logic in proc.c stays shared with the PRG loader.
  */
-LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
+LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign)
 {
     Elf32_Ehdr ehdr;
     ELFINFO info;
@@ -448,6 +448,14 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     r = read_at(h, 0UL, &ehdr, (LONG)sizeof(ehdr));
     if (r < 0L)
         return r;
+
+    /* A foreign class/endian/ISA may have a configured interpreter.
+     * Malformed native images remain native-loader failures. */
+    if (ehdr.e_ident[EI_CLASS] != ELFCLASS32 || ehdr.e_ident[EI_DATA] != ELF_DATA_EXPECTED ||
+        ehdr.e_machine != ELF_EM_EXPECTED) {
+        if (foreign) *foreign = TRUE;
+        return EPLFMT;
+    }
 
     r = elf_check_ehdr(&ehdr);
     if (r < 0L)

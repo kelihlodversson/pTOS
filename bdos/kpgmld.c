@@ -25,6 +25,14 @@
 #include "pghdr.h"
 #include "string.h"
 #include "kprint.h"
+#if CONF_WITH_BINFMT
+#include "bdosstub.h"
+#define HEADER_CALL(call) DISK_CALL(call)
+static BOOL pgmld_foreign;
+BOOL kpgm_can_interpret(void) { return pgmld_foreign; }
+#else
+#define HEADER_CALL(call) (call)
+#endif
 
 
 /*
@@ -69,16 +77,25 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
     LONG r;
     UBYTE magic[4];
 
-    r = xopen(s, 0);            /* open file for read */
+#if CONF_WITH_BINFMT
+    pgmld_foreign = FALSE;
+#endif
+    r = HEADER_CALL(xopen(s, 0)); /* open file for read */
     if (r < 0L)
         return r;
 
     *h = (FH) r ;               /* get file handle */
 
-    r = xread(*h, 4L, magic);   /* read magic number */
+    r = HEADER_CALL(xread(*h, 4L, magic)); /* read magic number */
     if (r < 0L)
         goto fail;
     if (r != 4) {
+#if CONF_WITH_BINFMT
+        pgmld_foreign = TRUE;
+#if CONF_WITH_PRG_LOADER
+        if (r >= 2 && magic[0] == 0x60 && magic[1] == 0x1a) pgmld_foreign = FALSE;
+#endif
+#endif
         r = EPLFMT;
         goto fail;
     }
@@ -88,7 +105,13 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
     if (magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F')
     {
         pgmld_format = PGMLD_ELF;
-        r = elf_pgmhdrld(*h, hd);
+        r = HEADER_CALL(elf_pgmhdrld(*h, hd,
+#if CONF_WITH_BINFMT
+                                   &pgmld_foreign
+#else
+                                   NULL
+#endif
+                                   ));
         if (r)
             goto fail;
         return 0;
@@ -102,12 +125,12 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
         pgmld_format = PGMLD_PRG;
 
         /* rewind past the 2-byte magic word to the program header */
-        r = xlseek(2L, *h, 0);
+        r = HEADER_CALL(xlseek(2L, *h, 0));
         if (r < 0L)
             goto fail;
 
         /* read in the program header */
-        r = xread(*h, (LONG)sizeof(PGMHDR01), hd);
+        r = HEADER_CALL(xread(*h, (LONG)sizeof(PGMHDR01), hd));
         if (r < 0L)
             goto fail;
         if (r != (LONG)sizeof(PGMHDR01)) {
@@ -120,9 +143,16 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
 #endif
 
     KDEBUG(("BDOS kpgmhdrld: Unknown executable format!\n"));
+#if CONF_WITH_BINFMT
+    pgmld_foreign = TRUE;
+#endif
     r = EPLFMT;
 fail:
+#if CONF_WITH_BINFMT
+    kdos_fclose(*h);
+#else
     xclose(*h);
+#endif
     return r;
 }
 
