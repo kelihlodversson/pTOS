@@ -88,12 +88,21 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     if (!args || !transaction || *transaction || !args->source ||
         (args->process_policy != PROC_CLONE_SAME_PROCESS &&
          args->process_policy != PROC_CLONE_PREPARED_PROCESS &&
-         args->process_policy != PROC_CLONE_NEW_PROCESS) ||
-        (args->vm_policy != PROC_CLONE_SHARE_VM && args->vm_policy != PROC_CLONE_PRIVATE_VM))
+         args->process_policy != PROC_CLONE_NEW_PROCESS &&
+         args->process_policy != PROC_CLONE_LOADED_PROCESS) ||
+        (args->vm_policy != PROC_CLONE_SHARE_VM && args->vm_policy != PROC_CLONE_PRIVATE_VM &&
+         args->vm_policy != PROC_CLONE_PREPARED_VM))
         return EINVAL;
     if (args->process_policy != PROC_CLONE_NEW_PROCESS && args->resources)
         return EINVAL;
-    if (args->process_policy == PROC_CLONE_SAME_PROCESS) {
+    if ((args->process_policy == PROC_CLONE_LOADED_PROCESS) !=
+        (args->vm_policy == PROC_CLONE_PREPARED_VM)) return EINVAL;
+    if (args->process_policy == PROC_CLONE_LOADED_PROCESS) {
+        if (args->prepared_process || !args->prepared_space ||
+            !kproc_thread_start_allowed(args->source) ||
+            !kproc_unlaunched(kproc_live_pd(args->source))) return EACCDN;
+        target = args->source;
+    } else if (args->process_policy == PROC_CLONE_SAME_PROCESS) {
         if (args->prepared_process) return EINVAL;
         target = args->source;
     } else if (args->process_policy == PROC_CLONE_NEW_PROCESS) {
@@ -115,7 +124,10 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
 #if CONF_WITH_PTERMGRP
     if (kproc_group_status(args->source, NULL)) return EACCDN;
 #endif
-    space = kproc_active_space(args->source);
+    space = args->process_policy == PROC_CLONE_LOADED_PROCESS ? args->prepared_space :
+        kproc_active_space(args->source);
+    if (args->process_policy == PROC_CLONE_LOADED_PROCESS &&
+        kproc_active_space(args->source) && kproc_active_space(args->source) != space) return EACCDN;
     if (!space || (target && target != args->source && !kproc_clone_target_ready(target, NULL)))
         return EACCDN;
     tx = kalloc(sizeof(*tx));
@@ -144,7 +156,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
         if (!tx->process) { error = EACCDN; goto failed; }
     }
     if (injected(2)) goto failed;
-    if (args->vm_policy == PROC_CLONE_SHARE_VM) tx->space = kaspace_share(space);
+    if (args->vm_policy != PROC_CLONE_PRIVATE_VM) tx->space = kaspace_share(space);
 #if CONF_WITH_PRIVATE_CLONE
     else {
         error = kaspace_clone(space, &tx->space);
@@ -154,7 +166,9 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     }
 #endif
     if (!tx->space || injected(3)) goto failed;
-    tx->thread = kthread_construct_identity(tx->process, tx->space);
+    tx->thread = args->process_policy == PROC_CLONE_LOADED_PROCESS ?
+        kthread_prepare(kproc_live_pd(tx->process), tx->space) :
+        kthread_construct_identity(tx->process, tx->space);
     if (!tx->thread || injected(4)) goto failed;
     *transaction = tx; /* the only publication during prepare */
     return E_OK;
@@ -174,12 +188,17 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     if (kproc_group_status(tx->source, NULL) || kproc_group_status(tx->process, NULL))
         return EACCDN;
 #endif
-    if (kproc_active_space(tx->source) != tx->source_space)
-        return EACCDN;
+    if (tx->policy == PROC_CLONE_LOADED_PROCESS) {
+        KASPACE *active = kproc_active_space(tx->process);
+        if (!kproc_thread_start_allowed(tx->process) ||
+            !kproc_unlaunched(kproc_live_pd(tx->process)) || (active && active != tx->space) ||
+            tx->startup || kthread_process(tx->thread) != tx->process ||
+            kthread_aspace(tx->thread) != tx->space) return EACCDN;
+    } else if (kproc_active_space(tx->source) != tx->source_space) return EACCDN;
     /* Identity-only commit cannot publish a startup image. The controlled
      * root runner is a separate NEW_PROCESS-only transaction boundary. */
     if (tx->startup) return thread_startup_publication_check(tx->startup);
-    if (tx->policy != PROC_CLONE_SAME_PROCESS) {
+    if (tx->policy != PROC_CLONE_SAME_PROCESS && tx->policy != PROC_CLONE_LOADED_PROCESS) {
         if (!kproc_clone_adopt_space(tx->process, tx->thread, tx->space))
             return EACCDN;
         tx->space = NULL; /* moved, not another reference */
@@ -198,6 +217,25 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     release_transaction(tx);
     *result = ready; /* kernel-owned result only; never a user child-TID write */
     return E_OK;
+}
+
+KTHREAD *proc_clone_prepare_loaded_thread(PD *pd, KASPACE *space)
+{
+    PROC_CLONE_ARGS args = { 0 };
+    PROC_CLONE_TRANSACTION *tx = NULL;
+    PROC_CLONE_RESULT result = PROC_CLONE_RESULT_INIT;
+    KPROC *target = kproc_retain(pd);
+    LONG error;
+    if (!target) return NULL;
+    args.source = target;
+    args.process_policy = PROC_CLONE_LOADED_PROCESS;
+    args.vm_policy = PROC_CLONE_PREPARED_VM;
+    args.prepared_space = space;
+    error = proc_clone(&args, &tx);
+    if (!error) error = proc_clone_commit(&tx, &result);
+    proc_clone_abort(&tx);
+    kproc_release(target);
+    return error ? NULL : result.thread;
 }
 
 static void observer_put(PROC_CLONE_OBSERVER *observer)

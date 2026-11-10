@@ -18,12 +18,14 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 #include "fs.h"
+#include "console.h"
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
 #if CONF_WITH_USER_ASPACE
 #include "proc_clone.h"
 #include "process_observer.h"
+#include "process_exec.h"
 #endif
 #include "gemerror.h"
 #include "biosbind.h"
@@ -358,47 +360,59 @@ static void free_all_owned(PD *p, MPB *mpb)
  * slot or an interrupted close may outlive its original owner's basepage. */
 static char orphaned_sft_owner;
 #endif
+#if CONF_WITH_USER_ASPACE
+static void release_file_reference(PD *pd, WORD handle)
+{
+    FS_CLOSE_REPORT result;
+    fs_close_bounded(handle,TRUE,&result);
+    kproc_note_file_cleanup(pd,result.error,result.disposition==FS_CLOSE_TRANSFERRED);
+    if (result.disposition!=FS_CLOSE_CONSUMED && result.disposition!=FS_CLOSE_TRANSFERRED)
+        panic("process cleanup: missing file reference");
+}
+#endif
 static void release_pd_files(PD *r)
 {
     WORD h;
     WORD i;
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
     ULONG explicit_refs[OPNFILES];
 
-    /* An SFT slot retains f_own after its explicit handle is closed while
-     * standard aliases remain. Snapshot before dropping this process's
-     * aliases: only a reference beyond all live aliases is an explicit
-     * handle the owner sweep may close. Fdup uses a separate SFT slot. */
+    /* Close admission before any callback can attach another reference to
+     * this retiring table, including an already-visited standard index. */
+    if (!kproc_begin_file_cleanup(r)) return;
+    /* Snapshot before removing aliases. Residual kernel references are not
+     * a retiring PROCESS's explicit handle, nor another live alias. */
     kproc_standard_file_refs(explicit_refs);
-    for (i = 0; i < OPNFILES; i++)
-        explicit_refs[i] = r == sft[i].f_own && sft[i].f_use > 0 &&
-                          (ULONG)sft[i].f_use > explicit_refs[i];
+    for (i=0;i<OPNFILES;i++)
+        explicit_refs[i]=sft[i].f_own==r && sft[i].f_use>0 &&
+            (ULONG)sft[i].f_use>explicit_refs[i]+sft[i].f_cleanup_refs+sft[i].f_staged_refs;
 #endif
-
-    /* check the standard devices in both file tables  */
-
-    for (i = 0; i < NUMSTD; i++)
-        if ((h = PD_UFT(r)[i]) > 0) {
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
-            kdos_fclose(h); /* Catch disk errors and finish the interrupted close. */
+    for (i=0;i<NUMSTD;i++)
+        if ((h=PD_UFT(r)[i])>=NUMSTD) {
+#if CONF_WITH_USER_ASPACE
+            release_file_reference(r,h);
+            /* Consumed or transferred: this PD no longer owns the alias. */
+            PD_UFT(r)[i]=get_default_handle(i);
+#elif CONF_WITH_PROCMEM && CONF_WITH_KCALL
+            kdos_fclose(h);
 #else
             xclose(h);
 #endif
         }
-
-    for (i = 0; i < OPNFILES; i++)
-        if (r == sft[i].f_own
-#if CONF_WITH_CUIS
+    for (i=0;i<OPNFILES;i++)
+        if (r==sft[i].f_own
+#if CONF_WITH_USER_ASPACE
             && explicit_refs[i]
 #endif
         ) {
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+#if CONF_WITH_USER_ASPACE
+            release_file_reference(r,i+NUMSTD);
+#elif CONF_WITH_PROCMEM && CONF_WITH_KCALL
             kdos_fclose(i+NUMSTD);
 #else
             xclose(i+NUMSTD);
 #endif
         }
-
 
     /* decrement usage counts for current directories */
 
@@ -422,8 +436,8 @@ static void release_pd_files(PD *r)
     pfs_proc_exit(r);
 #endif
 #if CONF_WITH_USER_ASPACE
-    /* Preserve the allocated SFT slot without leaving a reusable PD address
-     * in f_own. A failed bounded close can still leak its handle reference. */
+    /* Inherited aliases and service-owned residual references reserve their
+     * exact SFT incarnation, never this retiring PD address. */
     for (i = 0; i < OPNFILES; i++)
         if (sft[i].f_own == r)
             sft[i].f_own = (PD *)&orphaned_sft_owner;
@@ -506,35 +520,42 @@ static PD *cur_p;
 
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe);
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL);
+    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)
 {
     if (!out || *out) return EINVAL;
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out,NULL));
+}
+long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG policy,
+                       PROCESS_OBSERVER **out, void **prepared)
+{
+    if (!out || *out || !prepared || *prepared || policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,
+                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared));
 }
 #endif
 #if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL,NULL));
 }
 long xexec_deferred(char *path, char *tail, char *env, ULONG session)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL,NULL));
 }
 long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL));
 }
 #endif
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe)
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared)
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -551,9 +572,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     PROCESS_OBSERVER *observed = NULL;
 #else
     UNUSED(observe);
+    UNUSED(prepared);
 #endif
 #if !CONF_WITH_CUIS
-    UNUSED(session); UNUSED(token); UNUSED(deferred);
+    UNUSED(session); UNUSED(token);
+#if !CONF_WITH_NATIVE_SCHED
+    UNUSED(deferred);
+#endif
 #endif
 #if !CONF_WITH_NATIVE_SCHED
     UNUSED(directory);
@@ -869,6 +894,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         }
 #endif
         if (rc == E_OK) {
+            if (prepared) rc = ksched_process_prepare(cur_p, deferred, prepared);
+            else
 #if CONF_WITH_CUIS
             rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
 #else
@@ -876,11 +903,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
         }
         if (rc < 0) {
-#if CONF_WITH_CUIS
-            if (deferred) proc_dispose_deferred(cur_p);
-            else
-#endif
-                proc_discard_scheduled(cur_p);
+            proc_discard_scheduled(cur_p);
 #if CONF_WITH_USER_ASPACE
             kproc_release(observed);
 #endif
@@ -1355,19 +1378,6 @@ void proc_discard_accessory(PD *p)
     proc_discard_scheduled(p);
 }
 
-#if CONF_WITH_CUIS
-/* Pending successors were loaded with child-owned allocations. Their public
- * basepage is not mapped in the requesting process after async preparation. */
-void proc_dispose_deferred(PD *p)
-{
-#if CONF_WITH_USER_ASPACE
-    proc_dispose_retained(p);
-#else
-    proc_release_resources(p, FALSE);
-#endif
-}
-#endif
-
 void proc_dispose_detached(PD *p)
 {
 #if CONF_WITH_USER_ASPACE
@@ -1406,9 +1416,9 @@ void proc_dispose_process(KPROC *process)
 #endif
     }
     proc_release_resources(p, FALSE);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     if (complete)
-        ksched_exited(p);
+        ksched_exited_identity(process, p);
 #endif
     kproc_publish_observers(process);
 }
@@ -1457,7 +1467,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     UNUSED(resident_len);
 #endif
     proc_release_resources(p, TRUE);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     ksched_exited_identity(process, p);
 #endif
 #if CONF_WITH_NATIVE_SCHED
@@ -1507,9 +1517,13 @@ void xterm(UWORD rc)
     PD *p = run;
 #if CONF_WITH_USER_ASPACE
     KPROC *fallback_observer = NULL;
+#if CONF_WITH_NATIVE_SCHED
+    KPROC *exit_identity;
+#endif
 #endif
 #if CONF_WITH_NATIVE_SCHED
     KTHREAD *thread = ksched_exit_thread(p);
+    if (ksched_cleanup_active()) panic("nonreturning termination inside protected cleanup");
 #if CONF_WITH_PTERMGRP
     if (thread) {
         ksched_enter_exit(p);
@@ -1564,6 +1578,9 @@ void xterm(UWORD rc)
         panic("xterm: process disposal already committed");
     fallback_observer = kproc_retain(p);
     if (!fallback_observer) panic("fallback observer retention failed");
+#if CONF_WITH_NATIVE_SCHED
+    exit_identity = fallback_observer; /* Borrowed from local or launcher ownership. */
+#endif
     if (proc_defer_observer(p, fallback_observer)) fallback_observer = NULL;
 #endif
 #if CONF_WITH_KPROC
@@ -1580,10 +1597,10 @@ void xterm(UWORD rc)
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
 #endif
     proc_release_resources(p, TRUE);
-#if CONF_WITH_CUIS
+#if CONF_WITH_NATIVE_SCHED
     /* All process resources are gone. No cleanup can return to the caller
      * through the disk-error handler after making its successor runnable. */
-    ksched_exited(p);
+    ksched_exited_identity(exit_identity, p);
 #endif
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.

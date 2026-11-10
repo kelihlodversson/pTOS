@@ -24,15 +24,15 @@
 #endif
 extern PD *run;
 
-typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
-#if CONF_WITH_CUIS
+typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
-#endif
 } TASK_STATE;
 typedef struct kernel_task {
     PD *program, *parent;
     struct kernel_task *completion_owner; /* borrowed; NULL means this is the anchor */
     BOOL process_completed;
+    UQUAD cleanup_serial, cleanup_ticket; /* Reject stale scope copies at a reused depth. */
+    ULONG cleanup_depth; /* Owned by this validated execution, never its carrier child. */
 #if CONF_WITH_PTERMGRP
     BOOL cancel_boundary; /* only waits whose callers explicitly checkpoint */
     BOOL cancel_delivering; /* termination hooks must not recursively cancel */
@@ -42,10 +42,7 @@ typedef struct kernel_task {
 #if CONF_WITH_X86_64_MEMTEST
     ULONG prepared_tid;
 #endif
-#if CONF_WITH_CUIS
-    PD *deferred_owner;
-    KPROC *deferred_owner_identity; /* owning identity, not parent resources */
-#endif
+    KPROC *deferred_owner_identity; /* canonical predecessor, not PD/resources */
     WORD pid, signal;
     BOOL asynchronous, take_ownership, exited;
     THREAD_STARTUP_DRAFT *startup;
@@ -111,6 +108,51 @@ KTHREAD *ksched_exit_thread(PD *pd)
     return task->thread;
 }
 
+BOOL ksched_cleanup_active(void)
+{
+    return ksched_exit_thread(run) && scheduler.current->cleanup_depth != 0;
+}
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{
+    KTHREAD *thread;
+    uintptr_t flags = native_sched_irq_save();
+    if (!scope || scope->active) panic("cleanup scope entered twice");
+    memset(scope,0,sizeof(*scope));
+    scope->caller=run; scope->active=TRUE;
+    thread=ksched_exit_thread(run);
+    if (thread) {
+        KERNEL_TASK *task=scheduler.current;
+        if (!task->execution.identity || !task->process || task->process!=kthread_process(thread) ||
+            task->cleanup_depth==0xffffffffUL || task->cleanup_serial==~(UQUAD)0) panic("cleanup execution ownership invalid");
+        scope->thread=thread; scope->process=task->process;
+        scope->execution=task->execution.identity; scope->tid=kthread_tid(thread);
+        scope->depth=++task->cleanup_depth;
+        scope->parent_ticket=task->cleanup_ticket;
+        scope->ticket=++task->cleanup_serial;
+        task->cleanup_ticket=scope->ticket;
+    }
+    native_sched_irq_restore(flags);
+}
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{
+    KTHREAD *thread;
+    uintptr_t flags = native_sched_irq_save();
+    if (!scope || !scope->active || scope->caller!=run) panic("cleanup scope release ownership invalid");
+    thread=ksched_exit_thread(run);
+    if (scope->thread) {
+        KERNEL_TASK *task=scheduler.current;
+        if (thread!=scope->thread || !task || task->process!=scope->process ||
+            kthread_process(thread)!=scope->process || kthread_tid(thread)!=scope->tid ||
+            task->execution.identity!=scope->execution || task->cleanup_depth!=scope->depth ||
+            task->cleanup_ticket!=scope->ticket || !scope->ticket || !scope->depth) panic("cleanup scope release is not nested in its execution");
+        task->cleanup_depth--;
+        task->cleanup_ticket=scope->parent_ticket;
+    } else if (thread || scope->process || scope->tid || scope->depth || scope->execution ||
+               scope->ticket || scope->parent_ticket) panic("unmanaged cleanup changed execution");
+    memset(scope,0,sizeof(*scope));
+    native_sched_irq_restore(flags);
+}
+
 #if CONF_WITH_PTERMGRP
 /* This runs on a restored task/syscall stack, never on scheduler root. A
  * nested child owns a different launch chain and must return normally. */
@@ -118,7 +160,7 @@ void ksched_cancel_point(void)
 {
     KTHREAD *thread = ksched_exit_thread(run);
     UWORD status;
-    if (thread && !scheduler.current->cancel_delivering &&
+    if (thread && !ksched_cleanup_active() && !scheduler.current->cancel_delivering &&
         kproc_group_status(kthread_process(thread), &status)) xterm(status);
 }
 void ksched_enter_exit(PD *pd)
@@ -130,7 +172,7 @@ LONG ksched_termgrp(UWORD status)
     KTHREAD *thread = ksched_exit_thread(run);
     uintptr_t flags;
     if (!thread) return EINVFN;
-    if (scheduler.current->cancel_delivering) return EACCDN;
+    if (scheduler.current->cancel_delivering || ksched_cleanup_active()) return EACCDN;
     flags = native_sched_irq_save();
     if (!kproc_request_group_exit(kthread_process(thread), status)) {
         native_sched_irq_restore(flags); return EACCDN;
@@ -280,7 +322,7 @@ BOOL ksched_parent_pid(PD *pd, WORD *pid)
     if (!scheduler.active) return FALSE;
     for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state != TASK_UNUSED && task->state != TASK_RESERVED && task->program == pd) {
+        if (task->state != TASK_UNUSED && task->state != TASK_RESERVED && task->state != TASK_RETIRING && task->program == pd) {
             KERNEL_TASK *owner = completion_task(task);
             *pid = kproc_pid(owner->parent ? owner->parent : scheduler.root.pd);
             return TRUE;
@@ -308,7 +350,7 @@ void ksched_exiting(PD *pd, UWORD result)
     exiting = kproc_retain(pd); /* identity remains valid through committed cleanup */
     for (i = 0; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state == TASK_UNUSED || task->state == TASK_RESERVED) continue;
+        if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING) continue;
         if (task->parent == pd) {
             task->parent = NULL;
             if (task->state == TASK_ZOMBIE) task->state = TASK_DONE;
@@ -348,35 +390,37 @@ void ksched_exiting(PD *pd, UWORD result)
 #endif
 }
 
-#if CONF_WITH_CUIS
-/* The record and allocations have gone. Compare the old identity only;
- * neither the exiting process nor its cleanup can resume after this hook. */
-static void activate_successors(KPROC *process, PD *pd, BOOL use_identity)
-{
-    UWORD i;
-    if (!scheduler.active) return;
-    for (i = 0; i < KSCHED_LIMIT; i++) {
-        KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->state == TASK_DEFERRED && task->deferred_owner == pd &&
-            (!use_identity || !task->deferred_owner_identity ||
-             task->deferred_owner_identity == process)) {
-            if (task->deferred_owner_identity)
-                kproc_release(task->deferred_owner_identity);
-            task->deferred_owner_identity = NULL;
-            task->deferred_owner = NULL;
-            check_task_thread(task, 5);
-            task->state = TASK_NEW;
-        }
-    }
-}
-
-void ksched_exited(PD *pd) { activate_successors(NULL, pd, FALSE); }
-
+/* Activate only the retained canonical predecessor, after PROCESS cleanup.
+ * The caller owns a reference; a reused PD can never admit this successor. */
 void ksched_exited_identity(KPROC *process, PD *pd)
 {
-    activate_successors(process, pd, TRUE);
+    KPROC *stable;
+    UNUSED(pd);
+    if (!scheduler.active || !process) return;
+    stable=kproc_retain_identity(process);
+    if (!stable) panic("successor activation lost predecessor identity");
+    for (;;) {
+        UWORD i;
+        KPROC *owned=NULL;
+        uintptr_t flags=native_sched_irq_save();
+        for (i=0;i<KSCHED_LIMIT;i++) {
+            KERNEL_TASK *task=&scheduler.tasks[i];
+            if (task->state==TASK_DEFERRED && task->deferred_owner_identity==stable) {
+                owned=task->deferred_owner_identity;
+                task->deferred_owner_identity=NULL;
+                check_task_thread(task,5);
+                task->state=TASK_NEW;
+                break;
+            }
+        }
+        native_sched_irq_restore(flags);
+        if (!owned) break;
+        /* Release precisely the task's owner, outside metadata exclusion. A
+         * reentrant root can trim records, so restart without a saved cursor. */
+        kproc_release(owned);
+    }
+    kproc_release(stable);
 }
-#endif
 
 void ksched_fault(PD *pd, WORD signal)
 {
@@ -530,7 +574,10 @@ LONG ksched_yield(void)
     x86_64_memtest_clone_yield(); /* process context, before IRQ exclusion */
 #endif
     flags = native_sched_irq_save();
-    cancellation_wait(always_ready, NULL);
+    /* A protected cleanup must yield even with cancellation pending. It cannot
+     * advertise a cancellation boundary or spin on an already-CANCELLED wait. */
+    if (ksched_cleanup_active()) ksched_block(always_ready, NULL);
+    else cancellation_wait(always_ready, NULL);
     native_sched_irq_restore(flags);
 #if CONF_WITH_PTERMGRP
     ksched_cancel_point();
@@ -578,140 +625,229 @@ LONG ksched_join(ULONG tid, UQUAD address)
 }
 #endif
 
-#if CONF_WITH_CUIS
-static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred);
-static void discard_deferred(KERNEL_TASK *task)
+/* Finish only after all private destruction has returned. The linked arena
+ * implementation preserves its storage/admission metadata in this helper. */
+static void clear_task(KERNEL_TASK *task)
 {
-#if !CONF_WITH_USER_ASPACE
-    PD *program = task->program;
-#endif
-    KPROC *process = task->process;
-    KPROC *owner = task->deferred_owner_identity;
-    KTHREAD *thread = task->thread;
+    uintptr_t flags = native_sched_irq_save();
+    memset(task, 0, sizeof(*task));
+    native_sched_irq_restore(flags);
+}
+static void discard_process_task(KERNEL_TASK *task)
+{
+    KPROC *process, *owner;
+    KTHREAD *thread;
+    uintptr_t flags = native_sched_irq_save();
     check_task_thread(task, 6);
-    /* The thread's backend pointer refers into task: keep that storage intact
-     * until its reclaimer finishes. Neither this task nor its stack ever ran. */
-    /* Unpublish before callbacks without erasing the backend storage needed
-     * by the reclaimer. DONE also prevents reentrant spawn from reusing it. */
-    task->state = TASK_DONE;
+    if (task->state != TASK_RESERVED && task->state != TASK_DEFERRED)
+        panic("process retirement outside private admission");
+    process = task->process;
+    owner = task->deferred_owner_identity;
+    thread = task->thread;
+    /* Transfer ownership to this continuation before any callback can yield.
+     * RETIRING is private: neither a public child nor a root-reapable task.
+     * Its backend/stack storage stays reserved until THREAD destruction ends. */
+    task->state = TASK_RETIRING;
     task->program = NULL;
+    task->parent = NULL;
+    task->process = NULL;
     task->thread = NULL;
-    task->deferred_owner = NULL;
     task->deferred_owner_identity = NULL;
-    /* It never entered user mode; resource ownership is already the child's.
-     * Do not read its basepage after revoking the loader's borrowed mapping. */
-#if CONF_WITH_USER_ASPACE
+    task->ready = NULL;
+    task->argument = NULL;
+    native_sched_irq_restore(flags);
     proc_dispose_process(process);
-#else
-    proc_dispose_deferred(program);
-#endif
     if (thread) kthread_destroy(thread);
     kproc_release(process);
     if (owner) kproc_release(owner);
-    memset(task, 0, sizeof(*task));
+    clear_task(task);
+}
+static void cancel_successors(KPROC *owner)
+{
+    UWORD i;
+    for (i = 0; i < KSCHED_LIMIT; i++)
+        if (scheduler.tasks[i].state == TASK_DEFERRED &&
+            scheduler.tasks[i].deferred_owner_identity == owner)
+            discard_process_task(&scheduler.tasks[i]);
+}
+static LONG defer_cancel_owned(void)
+{
+    KPROC *owner;
+    if (!scheduler.active) return E_OK;
+    owner = kproc_retain(run);
+    if (!owner) return EAGAIN;
+    if (!kproc_exec_commit_begin(owner)) { kproc_release(owner); return EACCDN; }
+    cancel_successors(owner);
+    kproc_exec_commit_end(owner);
+    kproc_release(owner);
+    return E_OK;
 }
 LONG ksched_defer_cancel(void)
 {
+    KSCHED_CLEANUP_SCOPE scope={0};
+    LONG result;
+    ksched_cleanup_begin(&scope);
+    result=defer_cancel_owned();
+    ksched_cleanup_end(&scope);
+    return result;
+}
+LONG ksched_process_prepare(PD *pd, BOOL deferred, void **slot)
+{
     UWORD i;
+    KERNEL_TASK *task;
+    KPROC *owner = NULL;
+    void *reservation = NULL;
+    LONG result;
+    if (!slot || *slot) return EINVAL;
     if (!ksched_spawn_allowed()) return EINVFN;
-    for (i = scheduler.initial; i < KSCHED_LIMIT; i++)
-        if (scheduler.tasks[i].state == TASK_DEFERRED && scheduler.tasks[i].deferred_owner == run)
-            discard_deferred(&scheduler.tasks[i]);
+    if (next_identity == ~0ULL) return EAGAIN;
+    if (!kproc_unlaunched(pd) || kproc_user_root(pd)) return EIMBA;
+    for (i = 0; i < KSCHED_LIMIT; i++)
+        if (scheduler.tasks[i].program == pd) return EACCDN;
+    if (deferred) {
+        owner = kproc_retain(run);
+        if (!owner) return ENSMEM;
+    }
+    result = ksched_task_reserve(FALSE, &reservation);
+    if (result != E_OK) goto failed_owner;
+    task = reservation;
+    task->program = pd; /* Exclude recursive preparation of this image. */
+    if (!kthread_stack_allocate(&task->execution.stack)) {
+        result = ENSMEM;
+        ksched_task_cancel(&reservation);
+        goto failed_owner;
+    }
+    task->process = kproc_retain(pd);
+    if (!task->process) {
+        kthread_stack_release(&task->execution.stack);
+        ksched_task_cancel(&reservation);
+        result = ENSMEM;
+        goto failed_owner;
+    }
+    if (!kproc_prepare_async_thread(pd, run, scheduler.root.pd, &task->thread)) {
+        kproc_release(task->process);
+        kthread_stack_release(&task->execution.stack);
+        ksched_task_cancel(&reservation);
+        result = ENSMEM;
+        goto failed_owner;
+    }
+    adopt_task_execution(task);
+    task->pid = kproc_pid(pd);
+    task->parent = deferred ? NULL : run;
+    task->deferred_owner_identity = owner;
+    task->asynchronous = TRUE;
+    task->take_ownership = TRUE;
+    kproc_commit_async(pd);
+    *slot = reservation;
     return E_OK;
+ failed_owner:
+    if (owner) kproc_release(owner);
+    return result;
+}
+LONG ksched_process_publish(void **slot)
+{
+    KERNEL_TASK *task;
+    LONG pid;
+    if (!slot || !*slot) return EINVAL;
+    task=*slot;
+    if (task->state != TASK_RESERVED || !task->process || !task->thread) return EACCDN;
+    pid=task->pid;
+    if (task->deferred_owner_identity) publish_task(slot, TASK_DEFERRED);
+    else ksched_task_publish(slot);
+    return pid;
+}
+/* Caller already owns the predecessor selection transaction. Destructors
+ * finish before the first new publication store, never under runqueue exclusion. */
+static LONG finish_deferred_commit(void **slot, KPROC *owner)
+{
+    LONG result;
+    cancel_successors(owner);
+    result = ksched_process_publish(slot);
+    /* Preparation transferred loader ownership, and predecessor teardown is
+     * irreversible. A lost reservation here is internal corruption, not a
+     * recoverable loader error (which would invite double disposal). */
+    if (result < 0) panic("deferred publication lost prepared task");
+    kproc_exec_commit_end(owner);
+    return result;
+}
+LONG ksched_process_commit(void **slot)
+{
+    KERNEL_TASK *task;
+    KPROC *owner;
+    if (!slot || !*slot) return EINVAL;
+    task = *slot;
+    if (task->state != TASK_RESERVED || !task->process || !task->thread) return EACCDN;
+    owner = task->deferred_owner_identity;
+    if (!owner) return ksched_process_publish(slot);
+    if (!kproc_exec_commit_begin(owner)) return EACCDN; /* Slot remains owned. */
+    return finish_deferred_commit(slot, owner);
+}
+
+void ksched_process_cancel(void **slot)
+{
+    KERNEL_TASK *task;
+    if (!slot || !*slot) return;
+    task = *slot;
+    if (task->state != TASK_RESERVED || !task->process || !task->thread)
+        panic("process cancellation without preparation");
+    *slot = NULL;
+    discard_process_task(task);
+}
+#if CONF_WITH_CUIS
+static LONG spawn_configured_owned(PD *pd, ULONG session, ULONG token, BOOL deferred)
+{
+    void *slot = NULL;
+    KPROC *owner = NULL;
+    LONG result;
+    if (!ksched_spawn_allowed()) return EINVFN;
+    if (deferred) {
+        if (cuis_service(CUIS_SESSION_QUERY, session) != E_OK) return EACCDN;
+        /* Legacy immediate launch must reject reentry before preparation can
+         * consume the loader's image. Generic owned rights may retry COMMIT. */
+        owner = kproc_retain(run);
+        if (!owner) return ENSMEM;
+        if (!kproc_exec_commit_begin(owner)) { kproc_release(owner); return EACCDN; }
+    } else if (session || token) {
+        result = cuis_child_bind_spawn(session, token, pd);
+        if (result != E_OK) return result;
+    }
+    result = ksched_process_prepare(pd, deferred, &slot);
+    if (result != E_OK) {
+        if (owner) { kproc_exec_commit_end(owner); kproc_release(owner); }
+        return result;
+    }
+    if (owner) {
+        (void)finish_deferred_commit(&slot, owner);
+        kproc_release(owner);
+        return E_OK;
+    }
+    return ksched_process_publish(&slot);
+}
+static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
+{
+    KSCHED_CLEANUP_SCOPE scope={0};
+    LONG result;
+    /* The legacy loader also owns a prepared image and predecessor commit
+     * transaction across destructor callbacks. Protect through the final
+     * reference release; delivery belongs to the outer syscall boundary. */
+    ksched_cleanup_begin(&scope);
+    result=spawn_configured_owned(pd,session,token,deferred);
+    ksched_cleanup_end(&scope);
+    return result;
 }
 LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0,FALSE); }
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
 { return spawn_configured(pd,session,token,FALSE); }
 LONG ksched_defer(PD *pd, ULONG session)
 { return spawn_configured(pd,session,0,TRUE); }
-static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
 #else
 LONG ksched_spawn(PD *pd)
-#endif
 {
-    UWORD i;
-    KERNEL_TASK *task;
-    void *reservation = NULL;
-    LONG reserved;
-    if (!ksched_spawn_allowed()) return EINVFN;
-#if CONF_WITH_CUIS
-    if (deferred && cuis_service(CUIS_SESSION_QUERY,session) != E_OK) return EACCDN;
-#endif
-    if (next_identity == ~0ULL) return EAGAIN;
-    if (!kproc_unlaunched(pd) || kproc_user_root(pd)) return EIMBA;
-    for (i = 0; i < KSCHED_LIMIT; i++)
-        if (scheduler.tasks[i].program == pd) return EACCDN;
-    reserved = ksched_task_reserve(FALSE, &reservation);
-    if (reserved != E_OK) return reserved;
-    task = reservation;
-    /* Reserve the image identity too: recursive preparation must not start
-     * a second construction for the same PD in a different reserved slot. */
-    task->program = pd;
-    if (!kthread_stack_allocate(&task->execution.stack)) {
-        ksched_task_cancel(&reservation);
-        return ENSMEM;
-    }
-    task->process = kproc_retain(pd);
-    if (!task->process) {
-        kthread_stack_release(&task->execution.stack);
-        ksched_task_cancel(&reservation);
-        return ENSMEM;
-    }
-#if CONF_WITH_CUIS
-    if (!deferred && (session || token)) {
-        LONG result = cuis_child_bind_spawn(session,token,pd);
-        if (result != E_OK) {
-            kproc_release(task->process);
-            kthread_stack_release(&task->execution.stack);
-            ksched_task_cancel(&reservation);
-            return result;
-        }
-    }
-#endif
-#if CONF_WITH_CUIS
-    /* Acquire the predecessor identity before image preparation can consume
-     * a staged image. No fallible acquisitions may follow that transfer. */
-    if (deferred) {
-        task->deferred_owner_identity = kproc_retain(run);
-        if (!task->deferred_owner_identity && kproc_pid(run)) {
-            kproc_release(task->process);
-            kthread_stack_release(&task->execution.stack);
-            ksched_task_cancel(&reservation);
-            return ENSMEM;
-        }
-    }
-#endif
-    /* The optional THREAD is constructed inside preparation, before its
-     * irreversible image move; publication and stack transfer cannot fail. */
-    if (!kproc_prepare_async_thread(pd, run, scheduler.root.pd, &task->thread)) {
-#if CONF_WITH_CUIS
-        if (task->deferred_owner_identity) kproc_release(task->deferred_owner_identity);
-#endif
-        kproc_release(task->process);
-        kthread_stack_release(&task->execution.stack);
-        ksched_task_cancel(&reservation);
-        return ENSMEM;
-    }
-    adopt_task_execution(task);
-    task->pid = kproc_pid(pd);
-    task->parent = run;
-    task->asynchronous = TRUE;
-    task->take_ownership = TRUE;
-    kproc_commit_async(pd);
-#if CONF_WITH_CUIS
-    if (deferred) {
-        /* Publish only after every fallible preparation. Requests are detached
-         * shell handoffs, not children the exiting caller must later reap. */
-        ksched_defer_cancel();
-        task->parent = NULL;
-        task->deferred_owner = run;
-        publish_task(&reservation, TASK_DEFERRED);
-        return E_OK;
-    }
-#endif
-    ksched_task_publish(&reservation);
-    return task->pid;
+    void *slot = NULL;
+    LONG result = ksched_process_prepare(pd, FALSE, &slot);
+    return result == E_OK ? ksched_process_publish(&slot) : result;
 }
+#endif
 
 typedef struct { PD *parent; WORD pid; } CHILD_WAIT;
 static BOOL child_ready(void *argument)
@@ -721,7 +857,7 @@ static BOOL child_ready(void *argument)
     BOOL found = FALSE;
     for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
         KERNEL_TASK *task = &scheduler.tasks[i];
-        if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->parent != wait->parent ||
+        if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != wait->parent ||
             (wait->pid > 0 && task->pid != wait->pid)) continue;
         found = TRUE;
         if (task->state == TASK_ZOMBIE) return TRUE;
@@ -745,7 +881,7 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
         for (i = scheduler.initial; i < KSCHED_LIMIT; i++) {
             KERNEL_TASK *task = &scheduler.tasks[i];
             ULONG status;
-            if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->parent != run ||
+            if (task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != run ||
                 (pid > 0 && task->pid != pid)) continue;
             found = TRUE;
             if (task->state != TASK_ZOMBIE) continue;
@@ -781,8 +917,15 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
 /* Called only after the scheduler has switched back to its root context.
  * A zombie keeps its process identity for waiters, but its continuation and
  * stack can never run again. Repeated passes leave already-reaped stacks alone. */
+#if CONF_WITH_X86_64_MEMTEST
+static ULONG retiring_root_passes;
+ULONG ksched_test_retiring_root_passes(void) { return retiring_root_passes; }
+#endif
 static BOOL reap_finished_on_root(KERNEL_TASK *task)
 {
+#if CONF_WITH_X86_64_MEMTEST
+    if (!scheduler.current && task->state == TASK_RETIRING) retiring_root_passes++;
+#endif
     if (scheduler.current || (task->state != TASK_DONE && task->state != TASK_ZOMBIE && task->state != TASK_DRAINING))
         return FALSE;
     if (task->thread) {
@@ -902,12 +1045,10 @@ static LONG dispatch_group(UWORD count, LONG *results)
         for (i = 0; i < KSCHED_LIMIT; i++) {
             UWORD slot = (scheduler.next + i) % KSCHED_LIMIT;
             KERNEL_TASK *task = &scheduler.tasks[slot];
-            if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
+            if (task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->state == TASK_DONE || task->state == TASK_ZOMBIE) continue;
             if (task->state == TASK_DRAINING) { pending = TRUE; continue; }
             pending = TRUE;
-#if CONF_WITH_CUIS
             if (task->state == TASK_DEFERRED) continue;
-#endif
             if (task->state == TASK_BLOCKED && !task->ready(task->argument) &&
                 !cancel_wait_ready(task)) continue;
             scheduler.next = (slot + 1) % KSCHED_LIMIT;
@@ -991,7 +1132,7 @@ void ksched_task_cancel(void **slot)
         (!scheduler.active && task != scheduler.tasks))
         panic("task cancellation outside private reservation");
     *slot = NULL;
-    memset(task, 0, sizeof(*task));
+    clear_task(task);
     if (!scheduler.active) { kfree(scheduler.tasks); scheduler.tasks = NULL; }
 }
 static void publish_task(void **slot, TASK_STATE state)

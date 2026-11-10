@@ -179,6 +179,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
     if (cmdline[0] == 2 && cmdline[1] == 'O') {
         int i;
+        if (cmdline[2]=='y') gemdos0(0xff); /* Nested cleanup-guard identity probe. */
         if (cmdline[2]=='f') __asm__ volatile ("ud2");
         if (cmdline[2]=='p') {
             for (i=0;i<4;i++) gemdos0(0xff);

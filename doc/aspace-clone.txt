@@ -14,6 +14,20 @@ integration belongs to #932 and must preserve the child constructor's root.
 030/6888x, 060, non-MMU and ARMv6 private cloning remain unsupported. Atari and
 Amiga ROM-window MMU machines are explicitly rejected before construction. Existing saved-return ABI/FPU gates remain applicable.
 
+Reconciliation with accepted loader/PROCESS ownership
+---------------------------------------------------
+Integration base d843fc229 includes #933/#936/#943/#935/#938. The loaded
+PROCESS/PREPARED_VM constructor keeps the loader-selected construction space;
+it must not enter PRIVATE_VM cloning. Both SHARE_VM and PREPARED_VM retain
+that selected space, while only PRIVATE_VM creates an independent child.
+Every new THREAD is attached to its constructor-selected space. Non-loaded
+commit revalidates the independently retained source space; loaded commit
+keeps #936's live/unstarted/selected-space checks and delayed loader adoption.
+Rollback drops child execution/mapping ownership before exclusive-source COW
+collapse. Existing loader transaction tests reject the broken merged policy;
+private-enabled native suites additionally exercise ordinary and child launches.
+No #932 saved-return adapter or #942 allocation-generation holds are imported.
+
 Mapping and ownership contract
 ------------------------------
 Each clone owns independent root/table pages. Owned anonymous leaves share

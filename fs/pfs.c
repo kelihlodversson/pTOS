@@ -85,9 +85,9 @@ static struct pfs_ops *pfs_drive_fs(WORD drive)
 /* GEMDOS drive letter (0=A:) an absolute or relative path names, and a
  * pointer just past any "X:" prefix.  Defaults to the current drive.
  */
-static WORD pfs_path_drive(const char *path, const char **rest)
+static WORD pfs_path_drive_at(PD *process, const char *path, const char **rest)
 {
-    WORD drive = run->p_curdrv;
+    WORD drive = process->p_curdrv;
 
     if (path[0] && (path[1] == ':'))
     {
@@ -100,6 +100,11 @@ static WORD pfs_path_drive(const char *path, const char **rest)
 
     *rest = path;
     return drive;
+}
+
+static WORD pfs_path_drive(const char *path, const char **rest)
+{
+    return pfs_path_drive_at(run, path, rest);
 }
 
 /* Split 'path' (already past any drive prefix) into the directory
@@ -272,9 +277,9 @@ static void pfs_dirtbl_release(WORD n)
  * hazard for a driver whose release() actually frees something (e.g. a
  * future 9p driver's fid).
  */
-static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
+static LONG pfs_cwd_get_at(PD *process, struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
 {
-    WORD n = PD_CURDIR(run)[drive];
+    WORD n = PD_CURDIR(process)[drive];
 
     if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use &&
         (pfs_dirtbl[n].fs == fs) && (pfs_dirtbl[n].drive == drive))
@@ -293,40 +298,50 @@ static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const ch
     return fs->root(fs, drive, out);
 }
 
-/* Record a newly-resolved current directory for 'drive', replacing
- * whatever slot the process previously had for it.
- */
-static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const char *path)
+static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
 {
-    WORD old = PD_CURDIR(run)[drive];
-    WORD i;
+    return pfs_cwd_get_at(run, fs, drive, out, path, owned);
+}
 
-    pfs_dirtbl_release(old);
+/* Transfer an owned cookie only after acquiring replacement storage. Failure
+ * leaves both the caller's cookie and the PROCESS's previous CWD untouched. */
+static LONG pfs_cwd_set(PD *process, WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const char *path)
+{
+    WORD old = PD_CURDIR(process)[drive];
+    WORD i;
 
     if (!path[0])
     {
-        /* root: no slot needed, the sentinel (0) already means this */
-        PD_CURDIR(run)[drive] = 0;
+        PD_CURDIR(process)[drive] = 0;
+        pfs_dirtbl_release(old);
+        if (fs->release)
+            fs->release(cwd);
         return E_OK;
     }
 
     for (i = 1; i < PFS_MAX_CWD; i++)
         if (!pfs_dirtbl[i].use)
             break;
+    /* A uniquely owned old slot can be replaced even when the table is full.
+     * The new cookie is independent, so releasing the old one cannot free it. */
     if (i == PFS_MAX_CWD)
-        return ENSMEM;
+    {
+        if (old <= 0 || old >= PFS_MAX_CWD || pfs_dirtbl[old].use != 1)
+            return ENSMEM;
+        i = old;
+        pfs_dirtbl_release(old);
+        old = 0;
+    }
 
     pfs_dirtbl[i].fs = fs;
     pfs_dirtbl[i].drive = drive;
     pfs_dirtbl[i].use = 1;
     pfs_dirtbl[i].cwd = *cwd;
     strlcpy(pfs_dirtbl[i].path, path, sizeof(pfs_dirtbl[i].path));
-
-    PD_CURDIR(run)[drive] = i;
-
+    PD_CURDIR(process)[drive] = i;
+    pfs_dirtbl_release(old);
     return E_OK;
 }
-
 
 /* ------------------------------------------------------------------ */
 /* Fsfirst/Fsnext search state                                        */
@@ -601,7 +616,7 @@ static LONG pfs_path_append(char *newpath, size_t cap, const char *tail)
     }
 }
 
-LONG pfs_do_chdir(const char *path)
+static LONG pfs_chdir_at(PD *process, const char *path, BOOL select_drive)
 {
     struct pfs_ops *fs;
     WORD drive;
@@ -623,7 +638,7 @@ LONG pfs_do_chdir(const char *path)
         if ((*t == '*') || (*t == '?'))
             return EPTHNF;
 
-    drive = pfs_path_drive(path, &path);
+    drive = pfs_path_drive_at(process, path, &path);
 
     fs = pfs_drive_fs(drive);
     if (!fs)
@@ -649,7 +664,7 @@ LONG pfs_do_chdir(const char *path)
     else
     {
         const char *cwdpath;
-        rc = pfs_cwd_get(fs, drive, &dir, &cwdpath, &dir_owned);
+        rc = pfs_cwd_get_at(process, fs, drive, &dir, &cwdpath, &dir_owned);
         name = path;
         strlcpy(newpath, cwdpath, sizeof(newpath));
     }
@@ -658,14 +673,17 @@ LONG pfs_do_chdir(const char *path)
 
     if (!name[0])
     {
-        /* Dsetpath(".") or Dsetpath("\\") - 'dir' *is* the new current
-         * directory.  pfs_cwd_set() copies it into pfs_dirtbl[] on
-         * success, taking over whatever reference it held (owned or
-         * not) - release it ourselves only if that hand-off didn't
-         * happen (cwd_set failed) and it was ours to begin with. */
-        rc = pfs_cwd_set(drive, fs, &dir, newpath);
-        if ((rc < 0) && dir_owned && fs->release)
+        if (!dir_owned)
+        {
+            /* Already this PROCESS's directory: do not release/re-adopt a
+             * borrowed cookie or require a spare directory slot. */
+            if (select_drive) process->p_curdrv = drive;
+            return E_OK;
+        }
+        rc = pfs_cwd_set(process, drive, fs, &dir, newpath);
+        if ((rc < 0) && fs->release)
             fs->release(&dir);
+        if (rc == E_OK && select_drive) process->p_curdrv = drive;
         return rc;
     }
 
@@ -690,14 +708,26 @@ LONG pfs_do_chdir(const char *path)
      * canonical, not just whatever fs->lookup() was able to resolve. */
     rc = pfs_path_append(newpath, sizeof(newpath), name);
     if (rc >= 0)
-        rc = pfs_cwd_set(drive, fs, &target, newpath);
+        rc = pfs_cwd_set(process, drive, fs, &target, newpath);
 
     /* same hand-off logic as above: 'target' is always owned here, but
      * only ours to release if pfs_cwd_set() didn't take it over. */
     if ((rc < 0) && fs->release)
         fs->release(&target);
 
+    if (rc == E_OK && select_drive) process->p_curdrv = drive;
     return rc;
+}
+
+LONG pfs_do_chdir(const char *path)
+{
+    return pfs_chdir_at(run, path, FALSE);
+}
+
+LONG pfs_set_process_directory(const char *path, PD *process)
+{
+    if (!path || !process) return EINVAL;
+    return pfs_chdir_at(process, path, TRUE);
 }
 
 LONG pfs_do_getdir(char *buf, WORD drv)
@@ -737,6 +767,9 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     if (i == OPNFILES)
         return ENHNDL;
 
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_claim(i)) return ENHNDL;
+#endif
     sft[i].f_own = run;
     sft[i].f_use = 1;
     sft[i].f_ofd = NULL;

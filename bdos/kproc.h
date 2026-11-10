@@ -73,6 +73,17 @@ LONG kproc_identity_info(PD *caller, PROCESS_IDENTITY *info);
  * References are serialized by the current cooperative kernel. */
 KPROC *kproc_retain(PD *pd);
 void kproc_release(KPROC *process);
+/* Duplicate an already owned live or retired identity; caller keeps its own
+ * reference across this serialized acquisition. No numeric lookup/authority. */
+KPROC *kproc_retain_identity(KPROC *process);
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+struct process_exec_handle;
+struct process_exec_handle **kproc_exec_handles(KPROC *owner);
+/* Logical nonblocking transaction admission under the cooperative owner
+ * protocol. Prevent reentrant successor selection across destructor callbacks. */
+BOOL kproc_exec_commit_begin(KPROC *owner);
+void kproc_exec_commit_end(KPROC *owner);
+#endif
 WORD kproc_ref_pid(const KPROC *process);
 /* Completion may already have been recorded while the PD is still present. */
 BOOL kproc_ref_has_basepage(const KPROC *process);
@@ -124,9 +135,17 @@ WORD kproc_pid(PD *pd);                 /* 0: no record */
  * without writing. The caller owns the reference; no PD is borrowed. */
 void kproc_set_executable_name(PD *pd, const char *path);
 LONG kproc_ref_name(const KPROC *process, char *name, ULONG capacity);
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
 /* Snapshot all live standard-handle aliases into OPNFILES counters. */
 void kproc_standard_file_refs(ULONG *references);
+/* Authoritative media retirement: unpublish all standard aliases before reuse. */
+void kproc_standard_file_invalidate(WORD handle);
+/* Irreversible per-PROCESS file teardown admission; serialized by the
+ * cooperative owner. Reject callback attachment before the first release. */
+BOOL kproc_begin_file_cleanup(PD *pd);
+BOOL kproc_file_references_allowed(PD *pd);
+void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
+LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
 #endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
 SBYTE kproc_get_prio(PD *pd);
@@ -400,6 +419,10 @@ BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);
 /* No demand backing, allocation, I/O or xterm. Call after ordinary preflight;
  * later mapping changes fail instead of unwinding resource-owning callers. */
+/* Materialize legitimate lazy pages but return EIMBA/ENSMEM/EREADF instead
+ * of terminating. Existing ordinary copies keep their fatal fault policy. */
+LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
+LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size);
 #endif

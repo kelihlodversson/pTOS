@@ -10,10 +10,12 @@
 #include "emutos.h"
 #include "string.h"
 #include "fs.h"
+#include "console.h"
 #include "gemerror.h"
 #include "kproc.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "process_exec_internal.h"
 #endif
 #if CONF_WITH_CUIS
 #include "../aes/cuis.h"
@@ -38,6 +40,7 @@
 #include "procmem.h"
 #include "kaspace.h"
 #include "kthread.h"
+#include "proc_clone.h"
 #include "progimage.h"
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/startup.h"
@@ -65,6 +68,10 @@ struct kproc {
     ULONG references;            /* live lookup plus explicit retained references */
     UQUAD number;                /* Generic non-recycled PROCESS identity. */
 #if CONF_WITH_USER_ASPACE
+    BOOL file_cleanup_started; /* No new references once retirement starts. */
+    PD *destroying_pd; /* Non-owning address only during active destruction. */
+    LONG cleanup_error;
+    ULONG cleanup_transferred;
     UQUAD completion_order;
     BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
     WORD exit_signal; /* Pending only for final execution; immutable at completion. */
@@ -106,6 +113,8 @@ struct kproc {
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
+    BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
+    struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
     BOOL group_exiting;
@@ -376,6 +385,30 @@ static KPROC *kproc_reference(KPROC *process)
     process->references++;
     return process;
 }
+
+KPROC *kproc_retain_identity(KPROC *process)
+{
+    if (!process || !process->references) return NULL;
+    return kproc_reference(process);
+}
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+struct process_exec_handle **kproc_exec_handles(KPROC *owner)
+{
+    return owner && !owner->retired ? &owner->exec_handles : NULL;
+}
+BOOL kproc_exec_commit_begin(KPROC *owner)
+{
+    if (!kproc_live_pd(owner) || owner->exec_committing) return FALSE;
+    owner->exec_committing = TRUE;
+    return TRUE;
+}
+void kproc_exec_commit_end(KPROC *owner)
+{
+    if (!owner || !owner->exec_committing) panic("PROCESS launch selection ownership lost");
+    owner->exec_committing = FALSE;
+}
+
+#endif
 
 KPROC *kproc_retain(PD *pd)
 {
@@ -1014,6 +1047,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_ASPACE
             if (kproc->threads)
                 panic("kproc_destroy: attached non-runnable threads");
+            kproc->file_cleanup_started=TRUE;
 #endif
 
 #if CONF_WITH_CUIS
@@ -1028,10 +1062,21 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_PTHJOIN
             kthread_forget_completions(kproc);
 #endif
+#if CONF_WITH_USER_ASPACE
+            /* The live-registry cursor must be detached before child cleanup
+             * can reenter. Preserve closed admission through that cleanup and
+             * the later payload wipe; this address owns no PD resource. */
+            kproc->destroying_pd=pd;
+#endif
             *link = kproc->next;
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+            /* Registry cursor is detached; the lookup reference still owns
+             * this identity. Child teardown cannot invalidate an outer link. */
+            proc_exec_owner_exit(kproc);
+#endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
             if (kproc->test_controller_first) clone_drop_controller(kproc);
 #endif
@@ -1091,6 +1136,9 @@ void kproc_destroy(PD *pd)
                 kproc_release(parent_identity);
 #endif
             }
+#if CONF_WITH_USER_ASPACE
+            kproc->destroying_pd=NULL; /* No callback/PD access after this point. */
+#endif
             kproc_release(kproc); /* drop the lookup's ownership */
             return;
         }
@@ -1193,7 +1241,59 @@ SBYTE *kproc_uft(PD *pd)
     return kproc ? kproc->uft : pd->p_uft;
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_USER_ASPACE
+/* Diagnostic only: residual file references are owned by the SFT service,
+ * never by this retained identity. The first error survives PD retirement. */
+static KPROC *file_admission_owner(PD *pd)
+{
+    KPROC *p=kproc_find(pd);
+    if (p || !pd) return p;
+    for (p=retired_processes;p;p=p->next)
+        if (p->destroying_pd==pd) return p;
+    return NULL;
+}
+BOOL kproc_begin_file_cleanup(PD *pd)
+{
+    KPROC *p=file_admission_owner(pd);
+    if (!p) return TRUE; /* Trusted boot PD has no USER_ASPACE identity. */
+    if (p->file_cleanup_started) return FALSE;
+    p->file_cleanup_started=TRUE;
+    return TRUE;
+}
+BOOL kproc_file_references_allowed(PD *pd)
+{
+    KPROC *p=file_admission_owner(pd);
+    return !p || !p->file_cleanup_started;
+}
+void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
+{
+    KPROC *p=kproc_find(pd);
+    if (!p) return;
+    if (!p->cleanup_error && error<0) p->cleanup_error=error;
+    if (transferred) {
+        if (p->cleanup_transferred==~(ULONG)0) panic("file cleanup count exhausted");
+        p->cleanup_transferred++;
+    }
+}
+LONG kproc_ref_file_cleanup(const KPROC *p, ULONG *transferred)
+{
+    if (!p) return EINVAL;
+    if (transferred) *transferred=p->cleanup_transferred;
+    return p->cleanup_error;
+}
+void kproc_standard_file_invalidate(WORD handle)
+{
+    KPROC *p;
+    WORD i;
+    for (p=kproc_list;p;p=p->next)
+        for (i=0;i<NUMSTD;i++)
+            if (p->uft[i]==handle) p->uft[i]=get_default_handle(i);
+    /* The currently loaded boot/kernel PD can lack a KPROC record. All
+     * ordinary USER_ASPACE PROCESS tables above are authoritative. */
+    if (run && !kproc_find(run))
+        for (i=0;i<NUMSTD;i++)
+            if (run->p_uft[i]==handle) run->p_uft[i]=get_default_handle(i);
+}
 void kproc_standard_file_refs(ULONG *references)
 {
     KPROC *kproc;
@@ -1489,7 +1589,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
          * launch can still fail cleanly. */
         if (!kproc->kstack_phys) return FALSE;
         if (thread_result) {
-            *thread_result = kthread_create(pd);
+            *thread_result = proc_clone_prepare_loaded_thread(pd, kproc->active_space);
             return *thread_result != NULL;
         }
         return TRUE;
@@ -1608,7 +1708,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     /* The constructor retains this explicit construction space. Keep the
      * PROCESS's active-space view unpublished until preparation commits. */
     if (thread_result) {
-        thread = kthread_prepare(pd, owner);
+        thread = proc_clone_prepare_loaded_thread(pd, owner);
         if (!thread)
             return prepare_failed(kproc, owner);
     }
@@ -2927,15 +3027,15 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 /* The same, and the pages of its lazy areas that are not there yet get their
  * physical pages now (what a read or write of them by the process would do).
  * The first pass rejects a range before any page is backed.  A range that is
- * fine but cannot be backed ends the process. */
-static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
+ * fine but cannot be backed returns its precise error to the owning wrapper. */
+static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write, BOOL *backing_failed)
 {
 #if CONF_WITH_DEMAND_PAGING
     VADDR first = address & ~(USER_PAGE_SIZE - 1);
     VADDR last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
 
     if (!range_allowed(kproc, address, size, write))
-        return FALSE;
+        return EIMBA;
     for (page = first; page <= last; page += USER_PAGE_SIZE) {
         UWORD prot;
         int rc;
@@ -2943,20 +3043,36 @@ static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
             (!write || (prot & ASPACE_PROT_WRITE))) continue;
         rc = back_page(kproc, page, write ? ASPACE_PROT_WRITE : 0);
         if (rc != 1) {
-            if (rc == 3) {
-                kcprintf("process: file mapping I/O error\n");
-#if CONF_WITH_NATIVE_SCHED
-                ksched_fault(run, 10); /* SIGBUS */
-#endif
-                xterm((UWORD)-1);
-            }
-            lazy_oom();
+            if (backing_failed) *backing_failed=TRUE;
+            return rc==0 ? EIMBA : rc==3 ? EREADF : ENSMEM;
         }
     }
-    return TRUE;
+    return E_OK;
 #else
-    return range_allowed(kproc, address, size, write);   /* all of it is there */
+    UNUSED(backing_failed);
+    return range_allowed(kproc, address, size, write) ? E_OK : EIMBA;   /* all of it is there */
 #endif
+}
+
+/* Preserve fatal ordinary-copy semantics; resource-owning operations use the
+ * same backing engine's checked result and settle ownership before returning. */
+static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
+{
+    BOOL backing_failed=FALSE;
+    LONG error=back_user_range(kproc,address,size,write,&backing_failed);
+    if (error==E_OK) return TRUE;
+    if (error==EIMBA && !backing_failed) return FALSE;
+#if CONF_WITH_DEMAND_PAGING
+    if (error==EREADF) {
+        kcprintf("process: file mapping I/O error\n");
+#if CONF_WITH_NATIVE_SCHED
+        ksched_fault(run,10);
+#endif
+        xterm((UWORD)-1);
+    }
+    lazy_oom();
+#endif
+    return FALSE;
 }
 
 /*
@@ -3540,6 +3656,32 @@ BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size)
         return aspace_copy_to_user(kproc->aspace, address, src, size);
     memcpy((void *)(uintptr_t)address, src, size);
     return TRUE;
+}
+
+/* Error-returning copies share range checks, lazy backing and resident copy
+ * with ordinary uaccess. No THREAD termination may bypass local C cleanup. */
+static LONG checked_copy_range(VADDR address, ULONG size, BOOL write)
+{
+    KPROC *process=kproc_find(run);
+    if (!process || !size || address>=USER_VA_LIMIT || size>USER_VA_LIMIT-address) return EIMBA;
+    if (process->aspace) return back_user_range(process,address,size,write,NULL);
+    return validate_user(address,size,write) ? E_OK : EIMBA;
+}
+LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size)
+{
+    LONG error;
+    if (!size) return E_OK;
+    error=checked_copy_range(address,size,FALSE);
+    if (error!=E_OK) return error;
+    return kproc_copy_from_user_resident(dst,address,size) ? E_OK : EIMBA;
+}
+LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size)
+{
+    LONG error;
+    if (!size) return E_OK;
+    error=checked_copy_range(address,size,TRUE);
+    if (error!=E_OK) return error;
+    return kproc_copy_to_user_resident(address,src,size) ? E_OK : EIMBA;
 }
 
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size)
