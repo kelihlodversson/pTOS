@@ -234,7 +234,7 @@ class Metadata(unittest.TestCase):
                 run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                           "-ffunction-sections", "-fdata-sections", "-fno-builtin",
                           "-I" + str(self.path), "-Iinclude", "-Iinclude/arch/x86_64",
-                          "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c",
+                          "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c", "bdos/fsclose.c",
                           "-Wl,--gc-sections", "-o", str(binary)])
                 run([str(binary)])
                 if not pins:

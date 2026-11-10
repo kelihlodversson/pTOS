@@ -51,6 +51,7 @@
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/kthread_context.h"
 #include "../../../bdos/fs.h"
+#include "../../../bdos/console.h"
 #include "../../../bdos/mem.h"
 #include "../../../bdos/kthread.h"
 #include "../../../bdos/proc_clone.h"
@@ -1373,6 +1374,208 @@ void x86_64_memtest_disposal_committed(PD *pd)
 
 /* Detached cancellation keeps filesystem and mapping resources alive until
  * the last non-runnable association is detached. */
+/* Native kernel execution with a real FAT handle and real PROCESS teardown.
+ * Only the repeated I/O error is injected; recovery uses the actual backend. */
+static void test_checked_file_references(void)
+{
+    int initial_failures=failures;
+    SNAP before;
+    PD *saved=run,*pd;
+    KPROC *identity;
+    FS_FILE_REFERENCE first=FS_FILE_REFERENCE_INIT,second=FS_FILE_REFERENCE_INIT,empty=FS_FILE_REFERENCE_INIT;
+    FS_CLOSE_REPORT report;
+    FS_CLEANUP_TOKEN recovery;
+    LONG handle;
+    UQUAD incarnation;
+    snap(&before);
+    pd=new_basepage();
+    if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd);
+    run=pd;
+    handle=DISK_CALL(xopen("C:\\X32HELLO.TOS",0));
+    CHECK(handle>=NUMSTD && handle<NUMHANDLES,"checked reference real FAT open");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        incarnation=sft[handle-NUMSTD].f_incarnation;
+        CHECK(fs_reference_acquire(identity,(WORD)handle,incarnation+1,&first)==EIHNDL && !first.owned,
+              "stale binding cannot acquire replacement");
+        CHECK(fs_reference_acquire(identity,(WORD)handle,incarnation,&first)==E_OK && first.owned,
+              "authenticate explicit source reference");
+        CHECK(ixforce(0,(int)handle,pd)==E_OK &&
+              fs_reference_acquire(identity,0,incarnation,&second)==E_OK,
+              "acquire one exact reference per standard binding");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==E_OK && PD_UFT(pd)[0]==handle,
+              "first numeric close preserves remaining real ordinary alias");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==E_OK &&
+              PD_UFT(pd)[0]==get_default_handle(0) &&
+              fs_reference_acquire(identity,0,incarnation,&empty)==EIHNDL && !empty.owned,
+              "last ordinary numeric close unpublishes alias and rejects ghost acquisition");
+    }
+    run=saved;
+    proc_dispose_process(identity);
+    CHECK(!kproc_ref_has_basepage(identity),"staged references do not retain source PD");
+    if (first.owned && second.owned) {
+        CHECK(sft[handle-NUMSTD].f_use==2 && sft[handle-NUMSTD].f_staged_refs==2 &&
+              sft[handle-NUMSTD].f_own!=pd,"retirement closes only descriptor-owned refs");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==EIHNDL &&
+              fs_reference_close(&first,FALSE,&report)==E_OK && !first.owned,
+              "raw numeric close cannot consume a staged owner");
+        fs_close_test_exhaust((WORD)handle);
+        CHECK(fs_reference_close(&second,TRUE,&report)==EWRITF && !second.owned &&
+              report.disposition==FS_CLOSE_TRANSFERRED,"bounded staged failure transfers original ownership");
+        recovery=report.token;
+        fs_close_test_exhaust(-1);
+        CHECK(fs_reference_close(&second,TRUE,&report)==EIHNDL &&
+              fs_cleanup_retry(&recovery,&report)==E_OK &&
+              fs_cleanup_retry(&recovery,&report)==EIHNDL,"exact staged transfer recovery is once-only");
+    }
+    kproc_release(identity);
+    same(&before,"checked reference retirement/rollback restores baseline");
+    if (failures==initial_failures) kprintf("native checked SFT references across PROCESS retirement: PASS\r\n");
+}
+
+static void test_residual_alias_retirement(void)
+{
+    int initial_failures=failures;
+    SNAP before;
+    PD *pd,*saved=run;
+    KPROC *identity;
+    LONG handle;
+    FS_CLOSE_REPORT report;
+    FS_CLEANUP_TOKEN recovery;
+    snap(&before);
+    pd=new_basepage(); if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd); run=pd;
+    handle=DISK_CALL(xopen("C:\\X32HELLO.TOS",0));
+    CHECK(handle>=NUMSTD && handle<NUMHANDLES,"residual-alias real FAT file");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(ixforce(0,(int)handle,pd)==E_OK,"residual-alias standard mapping");
+        fs_close_test_exhaust((WORD)handle);
+        CHECK(fs_close_bounded((WORD)handle,TRUE,&report)==EWRITF &&
+              report.disposition==FS_CLOSE_TRANSFERRED,"residual-alias transfer explicit owner");
+        recovery=report.token; fs_close_test_exhaust(-1);
+        { LONG closed=fs_close_once((WORD)handle,FALSE,&report);
+          kprintf("alias-close diag handle=%ld rc=%ld use=%d residual=%lu uft=%d default=%d disposition=%u\r\n",
+                  (long)handle,(long)closed,sft[handle-NUMSTD].f_use,
+                  (unsigned long)sft[handle-NUMSTD].f_cleanup_refs,
+                  (int)PD_UFT(pd)[0],(int)get_default_handle(0),(unsigned)report.disposition);
+        CHECK(closed==E_OK &&
+              PD_UFT(pd)[0]==get_default_handle(0) && sft[handle-NUMSTD].f_use==1 &&
+              sft[handle-NUMSTD].f_cleanup_refs==1,"last ordinary close unpublishes exhausted standard alias"); }
+    }
+    run=saved; proc_dispose_process(identity);
+    CHECK(!kproc_ref_has_basepage(identity),"residual-only PROCESS retires without duplicate close");
+    if (handle>=NUMSTD && handle<NUMHANDLES)
+        CHECK(fs_cleanup_retry(&recovery,&report)==E_OK &&
+              fs_cleanup_retry(&recovery,&report)==EIHNDL,"residual-alias exact final recovery");
+    kproc_release(identity);
+    same(&before,"residual alias retirement restores baseline");
+    if (failures==initial_failures) kprintf("native exhausted ordinary aliases with retained SFT owner: PASS\r\n");
+}
+
+static void test_residual_file_ownership(void)
+{
+    SNAP s;
+    PD *saved=run,*pd;
+    KPROC *identity;
+    FS_CLOSE_REPORT report;
+    FS_CLEANUP_TOKEN token,consumed;
+    FS_CLEANUP_STATUS status;
+    LONG handle;
+    ULONG transferred;
+    snap(&s);
+    pd=new_basepage();
+    if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd);
+    CHECK(identity!=NULL,"retain cleanup diagnostic identity");
+    run=pd;
+    handle=DISK_CALL(xopen("C:\\X32HELLO.TOS",0));
+    run=saved;
+    CHECK(handle>=NUMSTD && handle<NUMHANDLES,"open real residual-cleanup FAT reference");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(ixforce(0,(int)handle,pd)==E_OK,"retain a live standard alias during recovery");
+        fs_close_test_exhaust((WORD)handle);
+        CHECK(fs_close_bounded((WORD)handle,TRUE,&report)==EWRITF &&
+              report.disposition==FS_CLOSE_TRANSFERRED,"transfer first exact residual reference");
+        consumed=report.token;
+        fs_close_test_exhaust(-1);
+        CHECK(fs_cleanup_retry(&consumed,&report)==E_OK && sft[handle-NUMSTD].f_use==1,
+              "recover first ticket while inherited alias keeps its SFT incarnation alive");
+        token.handle=(WORD)handle; token.incarnation=sft[handle-NUMSTD].f_incarnation;
+        token.reference=sft[handle-NUMSTD].f_cleanup_issued+1;
+        fs_close_test_exhaust((WORD)handle);
+    }
+    proc_dispose_process(identity);
+    fs_close_test_exhaust(-1);
+    CHECK(!kproc_ref_has_basepage(identity),"residual file does not retain PD or execution resources");
+    if (handle>=NUMSTD && handle<NUMHANDLES) {
+        CHECK(token.incarnation==consumed.incarnation && token.reference>consumed.reference &&
+              fs_cleanup_retry(&consumed,&report)==EIHNDL && sft[handle-NUMSTD].f_cleanup_refs==1,
+              "completed ticket never revives after another transfer in the same incarnation");
+        CHECK(kproc_ref_file_cleanup(identity,&transferred)==EWRITF && transferred==1,
+              "retained identity preserves first cleanup error and exact transfer count");
+        CHECK(fs_cleanup_snapshot(&token,&status)==E_OK && status.references==1 &&
+              status.state==FS_CLEANUP_PENDING,"retired PROCESS transfers one exact file incarnation");
+        CHECK(fs_close_once((WORD)handle,FALSE,&report)==EIHNDL,
+              "ordinary close cannot consume a kernel-owned residual reference");
+        CHECK(fs_cleanup_retry(&token,&report)==E_OK && report.disposition==FS_CLOSE_CONSUMED,
+              "explicit bounded recovery releases actual residual FAT reference");
+        CHECK(fs_cleanup_retry(&token,&report)==EIHNDL,
+              "repeated recovery cannot close or destroy twice");
+    }
+    kproc_release(identity);
+    same(&s,"residual file recovery returns exact resource baseline");
+}
+
+/* Native production media invalidation/PD cleanup with a test-owned FAT OFD.
+ * No mounted drive is changed; the synthetic medium owns only this OFD. */
+static void test_invalidated_standard_aliases(void)
+{
+    SNAP before;
+    PD *pd,*saved=run;
+    KPROC *identity;
+    OFD *file;
+    DMD media;
+    FS_CLOSE_REPORT report;
+    int slot,i;
+    UQUAD incarnation;
+    snap(&before);
+    pd=new_basepage();
+    if (!pd) return;
+    set_owner(pd,pd); set_owner(USERPTR_TO_PTR(pd->p_env),pd);
+    identity=kproc_retain(pd);
+    for(i=0;i<2;i++) if(PD_UFT(pd)[i]>=NUMSTD) {
+        run=pd;
+        fs_close_bounded((WORD)i,FALSE,&report);
+        run=saved;
+        CHECK(report.disposition==FS_CLOSE_CONSUMED,"settle inherited alias before media fixture");
+    }
+    for(slot=0;slot<OPNFILES && sft[slot].f_own;slot++) ;
+    CHECK(slot<OPNFILES && fs_sft_claim(slot),"reserve a media-invalidation fixture slot");
+    if(slot==OPNFILES) { proc_dispose_process(identity); kproc_release(identity); return; }
+    file=MGET(OFD);
+    bzero(&media,sizeof(media));
+    file->o_dfd=&file->o_disk; file->o_disk.o_usecnt=1; file->o_refs=1;
+    file->o_dmd=&media;
+    sft[slot].f_ofd=file; sft[slot].f_own=pd; sft[slot].f_use=2;
+    PD_UFT(pd)[0]=PD_UFT(pd)[1]=(SBYTE)(slot+NUMSTD);
+    incarnation=sft[slot].f_incarnation;
+    ofd_invalidate_drive(&media);
+    CHECK(PD_UFT(pd)[0]<0 && PD_UFT(pd)[1]<0 && !sft[slot].f_own && !sft[slot].f_use,
+          "authoritative invalidation retires aliases before making the numeric slot reusable");
+    CHECK(fs_sft_claim(slot) && sft[slot].f_incarnation!=incarnation,"reuse slot with a distinct incarnation");
+    sft[slot].f_ofd=(OFD *)(intptr_t)-1; sft[slot].f_own=saved; sft[slot].f_use=1;
+    proc_dispose_process(identity);
+    CHECK(!kproc_ref_has_basepage(identity) && sft[slot].f_own==saved && sft[slot].f_use==1,
+          "retired PROCESS cannot close a replacement through a stale standard alias");
+    CHECK(fs_close_once((WORD)(slot+NUMSTD),FALSE,&report)==E_OK &&
+          report.disposition==FS_CLOSE_CONSUMED,"release the replacement owner exactly once");
+    kproc_release(identity);
+    same(&before,"media invalidation, slot reuse and PD disposal return resource baseline");
+}
+
 static void test_kthread_live_disposal(void)
 {
     SNAP s;
@@ -2318,6 +2521,80 @@ static struct {
 } ordinary_observation;
 /* Exercise the private decoder with real user mappings before a public
  * syscall is enabled. Loader/observer ownership is production, not a model. */
+/* Minimal #933 integration: ordinary loader/admission and actual FAT aliases.
+ * Recovery owns only exact SFT transfer tickets, never launch rights or PDs. */
+static LONG test_restore_file_alias(WORD file, WORD saved)
+{
+    LONG error=kdos_fclose(file); /* Drop the extra alias, not the explicit file. */
+    PD_UFT(run)[4]=saved; /* Restore its already-owned original reference. */
+    return error;
+}
+static void test_exec_sft_failures(KPROC *owner)
+{
+    UWORD mode;
+    static char command[]={2,'O','n',0}, environment[]={0,0};
+    for (mode=0;mode<4;mode++) {
+        LONG file, handle, replacement=0, result;
+        WORD saved=PD_UFT(run)[4];
+        PROCESS_OBSERVER *observer=NULL, *next=NULL;
+        PROCESS_COMPLETION completion;
+        FS_CLEANUP_TOKEN first, second;
+        FS_CLOSE_REPORT report;
+        ULONG transferred;
+        file=Fopen("C:\\X32HELLO.TOS",0);
+        CHECK(file>=NUMSTD && ixforce(4,(int)file,run)==E_OK,"inherit a real FAT reference into transport preparation");
+        if (file<NUMSTD) return;
+        if (!mode) { fs_close_test_exhaust((WORD)file); ksched_test_fail_clone_slot(); }
+        handle=proc_exec_handle_prepare(owner,"C:\\X32HELLO.TOS",command,environment,NULL,
+                                       mode>=2 ? PROCESS_EXEC_DEFER_REPLACEMENT:PROCESS_EXEC_ASYNC);
+        fs_close_test_exhaust(-1);
+        CHECK(test_restore_file_alias((WORD)file,saved)==E_OK,"restore the parent alias independently of its child's resource owner");
+        if (!mode) CHECK(handle==ENSMEM,"failed PREPARE preserves the original admission error through retained-close rollback");
+        else {
+            CHECK(handle>0 && proc_exec_retain_observer(owner,handle,TRUE,&observer)==E_OK,
+                  "retain canonical prepared identity before a close error");
+            if (mode>=2) CHECK(proc_exec_handle_commit(owner,handle)>0,"commit the held successor before cancellation");
+            if (mode==3) {
+                CHECK(proc_exec_handle_prepare(owner,"C:\\MISSING.TOS",command,environment,NULL,
+                                               PROCESS_EXEC_DEFER_REPLACEMENT)==EFILNF &&
+                      process_observer_snapshot(observer,&completion) && completion.state==PROCESS_UNSTARTED,
+                      "failed replacement leaves the old selected successor unchanged");
+                CHECK(ixforce(4,(int)file,run)==E_OK,"inherit the same real file into a replacement");
+                replacement=proc_exec_handle_prepare(owner,"C:\\X32HELLO.TOS",command,environment,NULL,
+                                                     PROCESS_EXEC_DEFER_REPLACEMENT);
+                CHECK(test_restore_file_alias((WORD)file,saved)==E_OK && replacement>0 &&
+                      proc_exec_retain_observer(owner,replacement,TRUE,&next)==E_OK,
+                      "replacement owns all resources before irreversible old-successor teardown");
+            }
+            fs_close_test_exhaust((WORD)file);
+            if (mode==1) {
+                CHECK(proc_exec_handle_close(owner,handle)==EWRITF && proc_exec_handle_close(owner,handle)==EIHNDL,
+                      "CLOSE reports cleanup failure after consuming launch rights exactly once");
+            } else if (mode==2) CHECK(ksched_defer_cancel()==E_OK,"cancel held execution without reaping public completion");
+            else CHECK(proc_exec_handle_commit(owner,replacement)>0,"replacement publication completes after the old irreversible boundary");
+            CHECK(kproc_ref_file_cleanup(observer,&transferred)==EWRITF && transferred==1 &&
+                  process_observer_snapshot(observer,&completion) && completion.state==PROCESS_ABANDONED,
+                  "canonical diagnostic metadata survives failed resource cleanup and PD retirement");
+        }
+        first.handle=(WORD)file; first.incarnation=sft[file-NUMSTD].f_incarnation;
+        first.reference=sft[file-NUMSTD].f_cleanup_consumed+1;
+        if (mode==3) {
+            CHECK(ksched_defer_cancel()==E_OK && kproc_ref_file_cleanup(next,&transferred)==EWRITF && transferred==1,
+                  "a later successor cancellation creates a distinct retained file transfer");
+            second=first; second.reference++;
+        }
+        fs_close_test_exhaust(-1);
+        CHECK(fs_cleanup_retry(&first,&report)==E_OK && fs_cleanup_retry(&first,&report)==EIHNDL,
+              "exact transfer recovery is once-only and never closes a live parent alias");
+        if (mode==3) CHECK(fs_cleanup_retry(&second,&report)==E_OK && fs_cleanup_retry(&second,&report)==EIHNDL,
+                          "same-incarnation replacement cleanup tickets remain distinct");
+        if (mode>=2) CHECK(proc_exec_handle_close(owner,handle)==E_OK,"closing committed observation does not consume file recovery twice");
+        if (replacement) CHECK(proc_exec_handle_close(owner,replacement)==E_OK,"close independent replacement observation");
+        result=Fclose((WORD)file);
+        CHECK(result==E_OK,"parent's surviving file reference is still independently closeable");
+        process_observer_release(&observer); process_observer_release(&next);
+    }
+}
 static void test_native_exec_request(KPROC *owner)
 {
     VADDR data, request_address, lazy_environment;
@@ -2325,6 +2602,7 @@ static void test_native_exec_request(KPROC *owner)
     PROCESS_EXEC_REQUEST request;
     PROCESS_COMPLETION completion;
     static const char path[]="C:\\X32HELLO.TOS", tail[]={2,'O','n',0}, environment[]={0,0};
+    test_exec_sft_failures(owner);
     data=kproc_mmap(run,0,2*PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     if ((LONG)data>0) {
         UBYTE byte=1;
@@ -5875,6 +6153,10 @@ void x86_64_memtest_run(void)
     test_clone_execution();
 #endif
 #endif
+    test_residual_file_ownership();
+    test_checked_file_references();
+    test_residual_alias_retirement();
+    test_invalidated_standard_aliases();
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();
