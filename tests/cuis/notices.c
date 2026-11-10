@@ -26,7 +26,7 @@ static int notice_checks(void)
     CHECK(copied[0] == find_handle(sa)->aes_id && copied[1] == 1 && copied[2] == wb->identifier && copied[3] == 0);
     run = &first;
     yields = delay_yields;
-    CHECK(cuis_session_wait(sa, 16, CUIS_READY_NOTICE | CUIS_READY_TIMER, 0) ==
+    CHECK(cuis_session_wait(sa, 16, CUIS_READY_NOTICE | CUIS_READY_TIMER, 0,0,0) ==
           (CUIS_READY_NOTICE | CUIS_READY_TIMER) && delay_yields == yields);
     CHECK(NP(sa) == CUIS_NOTICE_REDRAW && copied[0] == a && copied[1] == wa->identifier);
     fail_copy = TRUE;

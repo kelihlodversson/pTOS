@@ -23,6 +23,11 @@
 #include "portab.h"
 #include "asm.h"
 
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched_legacy_irq.h"
+ULONG disable_interrupts(void) { return (ULONG)ksched_legacy_irq_disable(); }
+void enable_interrupts(void) { ksched_legacy_irq_enable(); }
+#else
 static ULONG save_cpsr;
 
 static inline ULONG read_cpsr(void)
@@ -57,3 +62,5 @@ void enable_interrupts(void)
 {
     write_cpsr(save_cpsr);
 }
+
+#endif /* CONF_WITH_NATIVE_SCHED */

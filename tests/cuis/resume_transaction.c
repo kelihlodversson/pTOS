@@ -11,7 +11,7 @@ static void resume_wait_hook(void)
     if (!token || resume_client->resume_operation!=token || !resume_client->button_resume_active ||
         input->start!=resume_start || input->duration!=resume_duration || input->count!=1 ||
         resume_client->references!=2) resume_bad=1;
-    if (cuis_session_wait(resume_handle,0,CUIS_READY_TIMER,0)!=EACCDN ||
+    if (cuis_session_wait(resume_handle,0,CUIS_READY_TIMER,0,0,0)!=EACCDN ||
         resume_client->resume_operation!=token || resume_client->button_resume_count!=count)
         resume_bad=1;
     if (resume_action==2) {
@@ -65,14 +65,14 @@ static int resume_transaction_checks(void)
         CHECK(cuis_input_config(CUIS_INPUT_INTERVAL,resume_handle,1000,1,0,0,0)==1000);
         CHECK(cuis_input_config(CUIS_INPUT_BUTTON,resume_handle,1,1,2,0,0)==0);
         resume_client->recent_count=0; input_sleeps=0; input_packet_mode=2; child_idle_at=2;
-        CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON|CUIS_READY_CHILD,0)==CUIS_READY_CHILD);
+        CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON|CUIS_READY_CHILD,0,0,0)==CUIS_READY_CHILD);
         CHECK(resume_client->button_resume_active && resume_client->button_resume.count==1);
         resume_start=resume_client->button_resume.start; resume_duration=resume_client->button_resume.duration;
         resume_client->input_result[0]=123; resume_client->input_result[1]=456;
         cancellation_owner=action==4?resume_client:NULL;
         visits=cancellation_visits;
         resume_action=action; input_operation_hook=resume_wait_hook; before=frees;
-        CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==(action==0?ERANGE:action==1?EAGAIN:action==3?(LONG)CUIS_READY_BUTTON:EACCDN));
+        CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0,0,0)==(action==0?ERANGE:action==1?EAGAIN:action==3?(LONG)CUIS_READY_BUTTON:EACCDN));
         cancel_pending=FALSE; cancellation_owner=NULL;
         CHECK(cancellation_visits==visits+(action==4) && !cancellation_bad);
         CHECK(!resume_bad && !input_operation_hook && input_irqs);
@@ -86,7 +86,7 @@ static int resume_transaction_checks(void)
                   resume_client->input_result[1]==2 && !resume_client->button_resume_active &&
                   !resume_client->button_resume_count && resume_client->edge_count==1);
             CHECK(cuis_input_config(CUIS_INPUT_BUTTON,resume_handle,1,1,1,0,0)==0);
-            CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON &&
+            CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON &&
                   resume_client->input_result[1]==1 && !resume_client->edge_count);
             CHECK(cuis_service(CUIS_SESSION_END,resume_handle)==0);
         } else {
@@ -97,19 +97,19 @@ static int resume_transaction_checks(void)
                 CHECK(resume_client->button_resume_active && resume_client->button_resume_count==2 &&
                       resume_client->button_resume.start==resume_start &&
                       resume_client->button_resume.duration==resume_duration+3);
-                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0)==CUIS_READY_TIMER);
+                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0,0,0)==CUIS_READY_TIMER);
                 CHECK(resume_client->button_resume_active && !resume_client->button_resume_count &&
                       resume_client->button_resume.count==2 && resume_client->button_resume.start==resume_start &&
                       resume_client->button_resume.duration==resume_duration+3);
-                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON);
+                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON);
                 CHECK(resume_client->input_result[1]==2 && !resume_client->button_resume_active &&
                       !resume_client->edge_count && !resume_client->button_resume_count);
             } else {
                 CHECK(!resume_client->button_resume_active && resume_client->edge_count==2);
-                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON);
+                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON);
                 CHECK((resume_client->input_result[4]&3)==2 && resume_client->edge_count==1);
                 CHECK(cuis_input_config(CUIS_INPUT_BUTTON,resume_handle,2,0,1,0,0)==0);
-                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON);
+                CHECK(cuis_session_wait(resume_handle,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON);
                 CHECK(!(resume_client->input_result[4]&3) && !resume_client->edge_count);
             }
             CHECK(cuis_service(CUIS_SESSION_END,resume_handle)==0);

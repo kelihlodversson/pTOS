@@ -14,7 +14,7 @@ static int surface_checks(void)
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,b,0) == CUIS_SURFACE_OWNED);
     CHECK(!focus_window && cuis_keyboard_event(0x1e0061));
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,b,20) == E_OK);
-    CHECK(cuis_session_wait(b,0,CUIS_READY_KEY,0) == CUIS_READY_KEY);
+    CHECK(cuis_session_wait(b,0,CUIS_READY_KEY,0,0,0) == CUIS_READY_KEY);
     CHECK((*find_owner(run))->input_result[0] == 0x1e0061);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,b,3) == EINVAL);
     run = &first;
@@ -26,7 +26,7 @@ static int surface_checks(void)
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,19) == E_OK);
     CHECK(cuis_vdi_clip(0,&rect) && rect.y == 0 && rect.height == display_height);
     CHECK(cuis_display_lock(a,0,0) == E_OK);
-    CHECK(cuis_session_wait(a,16,CUIS_READY_SURFACE,0) == CUIS_READY_SURFACE);
+    CHECK(cuis_session_wait(a,16,CUIS_READY_SURFACE,0,0,0) == CUIS_READY_SURFACE);
     CHECK(cuis_surface_service(CUIS_SURFACE_STATUS,a,1) & CUIS_SURFACE_DIRTY);
     window = cuis_window_service(CUIS_WINDOW_CREATE,0,0,100,100,0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
@@ -156,7 +156,7 @@ static int surface_cleanup_checks(void)
     CHECK(point_at(40,60,0));
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,a,1,1,2,0,0) == E_OK);
     input_ticks = 100; input_sleeps = 0; input_packet_mode = 9;
-    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_SURFACE,0) ==
+    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_SURFACE,0,0,0) ==
           (CUIS_READY_BUTTON|CUIS_READY_SURFACE));
     CHECK(input_sleeps >= 91 && input_sleeps <= 93);
     CHECK((*find_owner(run))->input_result[1] == 1);

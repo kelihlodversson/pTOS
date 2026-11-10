@@ -67,6 +67,12 @@ LONG fileback_get(LONG handle, FILE_BACKING **out)
     return E_OK;
 }
 void fileback_hold(FILE_BACKING *b) { if (b) b->references++; }
+BOOL fileback_try_hold(FILE_BACKING *b)
+{
+    if (!b || b->references == ~(ULONG)0) return FALSE;
+    b->references++;
+    return TRUE;
+}
 void fileback_put(FILE_BACKING *b)
 {
     if (!b) return;

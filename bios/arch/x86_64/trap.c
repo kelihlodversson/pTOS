@@ -163,7 +163,40 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  * context -- leaves the swapped state behind; x86_64_syscall_abandoned()
  * restores it.
  */
-static volatile int syscall_gs_swapped;
+/* The loaded swap state belongs to this CPU alongside its entry stack slots. */
+
+#if CONF_WITH_FORK_RETURN_TEST
+#include "../../../bdos/syscall_return.h"
+#include "string.h"
+static UQUAD return_read_msr(ULONG msr)
+{
+    ULONG lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((UQUAD)hi << 32) | lo;
+}
+static LONG return_probe(x86_64_trap_frame_t *f)
+{
+    SYSCALL_RETURN saved;
+    X32_THREAD_ENTRY_IMAGE *u = &saved.user;
+    bzero(&saved, sizeof(saved));
+    u->rax=f->rax; u->rbx=f->rbx; u->rcx=f->rcx; u->rdx=f->rdx;
+    u->rsi=f->rsi; u->rdi=f->rdi; u->rbp=f->rbp;
+    u->r8=f->r8; u->r9=f->r9; u->r10=f->r10; u->r11=f->r11;
+    u->r12=f->r12; u->r13=f->r13; u->r14=f->r14; u->r15=f->r15;
+    u->rip=f->rcx; u->rflags=f->r11; u->rsp=x86_64_get_saved_user_rsp();
+    u->cr3=kproc_user_root(run);
+    u->cs=X86_64_USER_CODE_SEL; u->ss=X86_64_USER_DATA_SEL;
+    __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
+        : "=m"(u->ds), "=m"(u->es), "=m"(u->fs), "=m"(u->gs));
+    u->fs_base=return_read_msr(0xc0000100);
+    u->gs_base=return_read_msr(0xc0000102); /* user half while SWAPGS is active */
+    memcpy(u->fpu, (const UBYTE *)f - 512, 512);
+    saved.mappings.entry=u->rip;
+    saved.mappings.stack_base=(u->rsp - 256) & ~15ULL;
+    saved.mappings.stack_size=512;
+    return proc_clone_return_probe(&saved, (UWORD)f->rsi);
+}
+#endif
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
@@ -171,13 +204,13 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
      * Pexec and AES dispatch. No global latch can leak to another return. */
 
     if (from_ring3)
-        syscall_gs_swapped = 1;
+        percpu.syscall_gs_swapped = 1;
 #if CONF_WITH_USER_CALLBACKS
     if (from_ring3) {
         kproc_record_rsp(run, x86_64_get_saved_user_rsp());
         if (!user_callback_syscall_allowed(frame->rax, frame->rdi)) {
             frame->rax = (UQUAD)(QUAD)EACCDN;
-            syscall_gs_swapped = 0;
+            percpu.syscall_gs_swapped = 0;
             return;
         }
     }
@@ -186,13 +219,19 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     if (from_ring3)
         x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
 #endif
+#if CONF_WITH_FORK_RETURN_TEST
+    if (from_ring3 && frame->rax == 0x100000190ULL && !frame->rdi &&
+        (frame->rsi & 0xffff0000UL) == FORK_RETURN_PROBE)
+        frame->rax = (QUAD)return_probe(frame);
+    else
+#endif
     trap_dispatch(frame, from_ring3);
 #if CONF_WITH_USER_CALLBACKS
     if (from_ring3)
         user_callback_return_work(x86_64_get_saved_user_rsp(), TRUE);
 #endif
     if (from_ring3)
-        syscall_gs_swapped = 0;
+        percpu.syscall_gs_swapped = 0;
 }
 
 /*
@@ -235,11 +274,11 @@ void x86_64_set_saved_user_rsp(UQUAD rsp)
  */
 int x86_64_gs_to_user(void)
 {
-    int was = syscall_gs_swapped;
+    int was = percpu.syscall_gs_swapped;
 
     if (was) {
         __asm__ volatile ("swapgs" ::: "memory");
-        syscall_gs_swapped = 0;
+        percpu.syscall_gs_swapped = 0;
     }
     return was;
 }
@@ -247,14 +286,14 @@ int x86_64_gs_to_user(void)
 void x86_64_gs_back_to_syscall(void)
 {
     __asm__ volatile ("swapgs" ::: "memory");
-    syscall_gs_swapped = 1;
+    percpu.syscall_gs_swapped = 1;
 }
 
 void x86_64_syscall_abandoned(void)
 {
-    if (syscall_gs_swapped) {
+    if (percpu.syscall_gs_swapped) {
         __asm__ volatile ("swapgs" ::: "memory");
-        syscall_gs_swapped = 0;
+        percpu.syscall_gs_swapped = 0;
     }
 }
 
@@ -380,7 +419,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
              fn == CUIS_DISPLAY_LOCK ? cuis_display_lock(frame->rdi, frame->rsi, frame->rdx) :
              fn == CUIS_WINDOW_REGION ? cuis_region_service(frame->rdi, frame->rsi, frame->rdx,
                  frame->r10, frame->r8, frame->r9) :
-             fn == CUIS_SESSION_WAIT ? cuis_session_wait(frame->rdi, frame->rsi, frame->rdx, frame->r10) :
+             fn == CUIS_SESSION_WAIT ? cuis_session_wait(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
              fn == CUIS_INPUT_STATE ? cuis_state_service(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK || fn == CUIS_STREAM_PENDING) ?
                  cuis_stream_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :

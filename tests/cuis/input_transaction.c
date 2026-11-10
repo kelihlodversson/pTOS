@@ -57,7 +57,7 @@ static int input_transaction_checks(void)
         transaction_client->input_result[0]=123; transaction_client->input_result[1]=456;
         cancellation_owner=transaction_client;
         visits=cancellation_visits; cancel_on_wait=1;
-        CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0)==EACCDN &&
+        CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0,0,0)==EACCDN &&
               !cancel_on_wait && cancellation_visits==visits+1 && !cancellation_bad &&
               !transaction_client->wait_operation && !transaction_client->input_wait &&
               transaction_client->references==1 && !transaction_client->edge_count &&
@@ -65,7 +65,7 @@ static int input_transaction_checks(void)
         visits=cancellation_visits;
         transaction_action=action; input_operation_hook=transaction_hook;
         result=cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON|CUIS_READY_KEY|
-                                 (action==6?CUIS_READY_TIMER:0),action==6?1:0);
+                                 (action==6?CUIS_READY_TIMER:0),action==6?1:0,0,0);
         cancel_pending=FALSE; cancellation_owner=NULL;
         CHECK(result==(action==0||action==1||action==3?EAGAIN:action==2?ERANGE:EACCDN));
         CHECK(cancellation_visits==visits+(action>=4) && !cancellation_bad);
@@ -75,16 +75,16 @@ static int input_transaction_checks(void)
               transaction_client->input_result[1]==456);
         if (action==2 || action==4 || action==5 || action==6) {
             CHECK(transaction_client->key_count==1);
-            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_KEY,0)==CUIS_READY_KEY &&
+            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_KEY,0,0,0)==CUIS_READY_KEY &&
                   transaction_client->input_result[0]==0x12345678UL && !transaction_client->key_count);
             end_keyboard();
         }
         if (action==3) {
             CHECK(transaction_client->saved_count==2 && transaction_client->edge_count==2);
             CHECK(cuis_input_config(CUIS_INPUT_BUTTON,transaction_session,1,1,1,0,0)==0);
-            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON);
+            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON);
             CHECK(cuis_input_config(CUIS_INPUT_BUTTON,transaction_session,1,0,1,0,0)==0);
-            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON &&
+            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON &&
                   !transaction_client->edge_count);
             CHECK(cuis_mouse_lock(transaction_session,0,0)==0);
             CHECK(transaction_client->edge_count==2 &&
@@ -97,20 +97,20 @@ static int input_transaction_checks(void)
         /* Retrying reads the actual journal payload selected by this view,
          * including older normal input restored after newer modal commits. */
         CHECK(cuis_input_config(CUIS_INPUT_BUTTON,transaction_session,1,1,1,0,0)==0);
-        CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON &&
+        CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON &&
               transaction_client->input_result[1]==1 && (transaction_client->input_result[4]&1));
         CHECK(transaction_client->edge_sequence[transaction_client->edge_head]==sequence+1);
         CHECK(cuis_input_config(CUIS_INPUT_BUTTON,transaction_session,1,0,1,0,0)==0);
-        CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON &&
+        CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON &&
               !(transaction_client->input_result[4]&1));
         if (!action) {
             CHECK(transaction_client->edge_count==1 &&
                   transaction_client->edge_sequence[transaction_client->edge_head]==transaction_last+1);
             CHECK(cuis_input_config(CUIS_INPUT_BUTTON,transaction_session,1,1,1,0,0)==0);
-            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0)==CUIS_READY_BUTTON &&
+            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0,0,0)==CUIS_READY_BUTTON &&
                   !transaction_client->edge_count);
             cancel_pending=TRUE;
-            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0)==EACCDN &&
+            CHECK(cuis_session_wait(transaction_session,0,CUIS_READY_BUTTON,0,0,0)==EACCDN &&
                   !transaction_client->edge_count && transaction_client->input_result[1]==1);
             cancel_pending=FALSE; /* A later request cannot retract committed input. */
         }

@@ -14,6 +14,14 @@ config CONF_WITH_CUIS
     depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
     select CONF_WITH_NATIVE_SCHED
 
+config CONF_WITH_CUIS_OBSERVER_TEST
+    bool "TEST ONLY: bounded CUIS PROCESS observer waits"
+    depends on CONF_WITH_CUIS && CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    default n
+    help
+      Default-off #907 prototype of SESSION_WAIT scalar handle-array preflight.
+      No production activation, receipt selector or CHILD API removal.
+
 config CONF_WITH_LIBAES
     bool "Experimental userspace GEM AES library over CUIS"
     depends on ARCH_X86_64 && CONF_WITH_ELF_SHARED
@@ -193,3 +201,11 @@ config CONF_WITH_NICELINES
 endif
 
 endmenu
+
+config CONF_WITH_CUIS_RECEIPT_TEST
+    bool "TEST ONLY: bounded CUIS publication receipt runtime"
+    depends on CONF_WITH_CUIS_OBSERVER_TEST
+    default n
+    help
+      Internal C prototype only. No public selector, production CHILD migration,
+      or PROCESS activation. Requires independent native recovery acceptance.

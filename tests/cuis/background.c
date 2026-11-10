@@ -104,7 +104,7 @@ static int background_checks(void)
 
 static int background_key_poll(LONG handle, ULONG key)
 {
-    CHECK(cuis_session_wait(handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0) ==
+    CHECK(cuis_session_wait(handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0,0,0) ==
           (LONG)(CUIS_READY_TIMER|(key ? CUIS_READY_KEY : 0)));
     CHECK(cuis_input_config(CUIS_INPUT_RESULT,handle,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK);
     CHECK((ULONG)copied[0] == key);
@@ -195,7 +195,7 @@ static int background_release_checks(void)
     run = &first;
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,a,1,0,1,0,0) == E_OK);
     input_sleeps = 0; input_packet_mode = 8;
-    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_BUTTON);
+    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,10,0,0) == CUIS_READY_BUTTON);
     CHECK(input_sleeps == 1 && !input_packet_mode && !background_capture && !pointer_buttons);
     CHECK(cuis_input_config(CUIS_INPUT_RESULT,a,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK);
     CHECK(copied[1] == 1 && copied[2] == 210 && copied[3] == 210 && !(copied[4] & 3));
@@ -203,7 +203,7 @@ static int background_release_checks(void)
     /* Ordinary uncaptured border hover still suppresses live button waits. */
     run = &second;
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,b,1,0,1,0,0) == E_OK);
-    CHECK(cuis_session_wait(b,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0) == CUIS_READY_TIMER);
+    CHECK(cuis_session_wait(b,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0,0,0) == CUIS_READY_TIMER);
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(allocations == frees && input_irqs && !input_bad_idle);
     return 0;

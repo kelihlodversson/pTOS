@@ -32,6 +32,9 @@ void x86_64_memtest_callback_exit(PD *pd, UWORD rc);
 #endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_CUIS
 void x86_64_memtest_cuis_wait(ULONG events);
+#if CONF_WITH_CUIS_OBSERVER_TEST
+void x86_64_memtest_observer_wait_admitted(void);
+#endif
 void x86_64_memtest_cuis_tick(void);
 #endif
 #endif

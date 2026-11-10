@@ -1,5 +1,5 @@
 /* Trusted keyboard delivery through active session waits and result snapshots. */
-#define KEY_POLL(s) cuis_session_wait(s,0,CUIS_READY_KEY|CUIS_READY_TIMER,0)
+#define KEY_POLL(s) cuis_session_wait(s,0,CUIS_READY_KEY|CUIS_READY_TIMER,0,0,0)
 #define KEY_RESULT(s) cuis_input_config(CUIS_INPUT_RESULT,s,0x1000,0x1004,0x1008,0x100c,0x1010)
 static int input_checks(void)
 {

@@ -4,12 +4,18 @@
 #include <stdlib.h>
 #include "emutos.h"
 #include "../../bdos/thread_startup.c"
+#if CONF_WITH_NATIVE_SCHED
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 #define CHECK(c) do { if (!(c)) abort(); } while (0)
 static THREAD_STARTUP_DRAFT record;
 static THREAD_STARTUP_DRAFT *handle;
 static UWORD phase, released, freed;
 static jmp_buf fatal, original;
-jmp_buf errbuf;
+
 BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *draft)
 { CHECK(draft == &record); return phase != 2; }
 void kaspace_lease_release(KASPACE_LEASE **lease) { CHECK(!*lease); }
@@ -20,6 +26,7 @@ void kfree(void *p) { CHECK(p == &record); freed++; }
 static void observer_release(void *context)
 {
     CHECK(context == &record && !released); released++;
+    errcode=-101; errdrv=7; rwerr=-102;
     if (phase == 1) longjmp(errbuf,1);
 }
 void panic(const char *fmt, ...)
@@ -35,6 +42,7 @@ int main(void)
         memset(&record,0,sizeof(record)); record.state = THREAD_STARTUP_RUNNABLE;
         record.observer.release = observer_release; record.observer_context = &record;
         handle = &record; released = freed = 0;
+        errcode=-31; errdrv=3; rwerr=-32;
         memset(errbuf,0x5a,sizeof(errbuf)); memcpy(original,errbuf,sizeof(errbuf));
         if (!setjmp(fatal)) {
             if (phase == 3) thread_startup_abort(&handle);
@@ -42,6 +50,7 @@ int main(void)
             CHECK(!phase);
         } else CHECK(phase);
         CHECK(!memcmp(original,errbuf,sizeof(errbuf)));
+        CHECK(errcode==-31 && errdrv==3 && rwerr==-32);
         CHECK(released == (phase <= 1 ? 1 : 0) && freed == (phase == 0 ? 1 : 0));
         if (phase <= 1) {
             CHECK(!handle);

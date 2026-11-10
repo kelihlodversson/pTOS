@@ -37,7 +37,7 @@
 #include "fs.h"            /* OPNFILES */
 #include "biosext.h"       /* phys_pages_total() */
 #include "kproc.h"
-#if CONF_WITH_PROCESS_EXEC_TEST
+#if CONF_WITH_PROCESS_EXEC_DISPATCH
 #include "process_exec_internal.h"
 #endif
 #include "bdosstub.h"
@@ -724,6 +724,9 @@ static BOOL ssystem_has_mode(WORD mode)
     switch (mode)
     {
     case S_INQUIRE:
+#if CONF_WITH_PROCESS_EXEC
+    case S_PROCEXEC:
+#endif
 #if CONF_WITH_KPROC
     case S_PROCNAME:
     case S_PROCIDENT:
@@ -845,7 +848,7 @@ LONG xssystem(WORD mode, long arg1, long arg2)
     case S_PROCIDENT:
         return ssystem_procident(arg1, arg2);
 #endif
-#if CONF_WITH_PROCESS_EXEC_TEST
+#if CONF_WITH_PROCESS_EXEC_DISPATCH
     case S_PROCEXEC:
         return proc_exec_dispatch(arg1,arg2);
 #endif

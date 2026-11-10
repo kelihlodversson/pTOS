@@ -563,3 +563,109 @@ real ULONG types, alignment 4 and assertions for size, scalar/address width and
 EVERY offset. check-publication-receipt-layout.sh compiles it with x32, ARM A32
 and m68k040 compilers. This is compile-only ABI evidence; it exposes no selector,
 handler, production structure or ARM/m68k userspace GUI implementation.
+
+Gated runtime prototype (#941, following accepted #937 3d1fedc46)
+---------------------------------------------------------------
+
+CONF_WITH_CUIS_RECEIPT_TEST requires the independent observer test gate and
+remains default off. Only trusted internal C fixture entry points exist. No
+numeric receipt opcode, public request decoder, production STREAM extension,
+public PROCESS activation or legacy CHILD cutover is added by this prototype.
+The fixed 64-byte record layout is preserved in cuis_receipt_test.h.
+
+Sixteen fixed source tables each contain sixteen fixed slots. Tables/fences are
+charged until exact endpoint retirement; active attempts are counted separately.
+No allocation or counter wrap can evict an outcome. Slots store endpoint/attempt
+identity, an opaque PROCESS right tag and immutable bytes, never a retained
+observer or copied PROCESS completion/order. ACK preserves the committed outcome;
+RECLAIM preserves a generation fence and QUERY exposes whether its terminal
+outcome was committed (internal state bit31) or cancelled. These test-only C
+state constants do not assign a public operation/selector. Adapter policy must finish observation and
+right cleanup before reclaiming; a negative consumed CLOSE never resets progress.
+
+The trusted launch fixture creates only an ordinary ASYNC generic PREPARE right.
+All fallible transport storage and temporary references are obtained first. BIND
+and the existing no-allocation/no-callback/no-yield ordinary COMMIT path share
+input IRQ exclusion, so sibling QUERY/CLOSE/END cannot enter their interval in
+the supported cooperative kernel. This is NOT a general deferred-commit guard:
+deferred replacement has destructor callbacks and must never enter this helper.
+No callback is added to generic PROCESS code. Console lease attachment and the
+actual transitional legacy-launch integration remain separate review work.
+
+FIFO is checked at packet COMMIT: copy the bounded live entitlement identities,
+import operation-local canonical observers outside exclusion, then revalidate
+all slot identities/states under exclusion. Read canonical ready snapshots there.
+A lower terminal ordinal in any unpublished BOUND/PREPARED slot returns EAGAIN.
+No allocation, usercopy, callback or yield occurs between the ordinal check and
+atomic byte/provenance/COMMITTED publication. A stalled/dead publisher does not
+own a lock: its endpoint entitlement is recoverable by a sibling. Missing owned
+rights fail safely rather than guessing completion from a PID or queued bytes.
+Committed/acknowledged retries bypass observation and never append again, even
+when the receiver has drained or retired and the original right was closed.
+All imported leases and final client/PROCESS references are released outside
+input exclusion under the owning execution cleanup scope.
+
+Evidence boundaries
+- The existing 26 Python review-model cases remain negative controls.
+- tools/test-cuis-receipts.py executes the production receipt C and ordinary CUIS
+  stream read/ring code with modeled canonical PROCESS and scheduler services.
+  It covers bounded admission, real ring drain then retry, canonical ordering,
+  immutable packet retry, checked-copy failure, pending cancellation, ACK/CLOSE/
+  reclaim, stale generations and destination retirement/new endpoint identity.
+- The gated native x32 MEMTEST fixture uses actual generic prepared children,
+  canonical completion ordinals/status ffff, both public Pwait orders, real CUIS
+  stream append/read/drain, duplicate retry, ACK tombstones and exact outer
+  PROCESS/heap/mapping resource baselines.
+
+A second real x32 probe creates publisher A and survivor/publisher B as distinct
+SAME_PROCESS THREADs. A snapshots ordinal N then stalls. A test-only rendezvous
+using the existing scheduler predicate permits child B to complete N+1 only
+after that snapshot. Publisher B stages its real packet and receives EAGAIN
+when trying to overtake A. A then commits and returns through the test Syield
+hook; ring-3 UD2 executes before any userspace delivery bookkeeping or publishing
+worker return. B joins the actual faulted THREAD (status ffff), verifies PROCESS
+completion has not occurred, drains A's packet, recovers COMMITTED, retries
+without appending, then publishes and drains N+1. ACK/CLOSE/RECLAIM and exact
+outer PROCESS/heap/mapping baselines complete before the source PROCESS exits.
+The leader uses GEMDOS_PTHJOIN from threadcalls.h, then frees both user stacks
+and reaches a separately checked final Syield marker; an early leader return
+cannot be masked by the last sibling's PROCESS exit status.
+The hook invokes production receipt code; there is no invented receipt trap or
+injected kernel exception inside a cleanup scope. This proves the stated user
+THREAD fault boundary, not arbitrary kernel callback/fatal-unwind safety.
+
+The production-C hosted fixture additionally fills all 256 active attempts and
+16 fixed tables, checks exhaustion before publication, reclaims all attempts,
+and proves empty generation fences still consume table quota. It checks a
+negative consumed CLOSE cannot reopen publication. RECLAIM now authenticates the
+source's retained PROCESS, probes its non-recycled generic right outside GUI
+exclusion, and requires EIHNDL (consumed right) before revalidating the exact
+endpoint/slot/generation. An open right returns EACCDN. A per-endpoint operation
+fence covers SESSION_WAIT preflight/import through final lease release and all
+receipt FIFO import/release envelopes; while any such operation is outstanding,
+RECLAIM returns EAGAIN. This conservatively fences all imported observations on
+that endpoint, rather than guessing which independent alias has settled. The
+fence is decremented only after actual canonical releases outside exclusion,
+including failed import/copy/cancellation and retired-endpoint cleanup. It is
+transport metadata, not an observer/status registry or generic CLOSE callback.
+Only committed ASYNC rights created by this helper enter this protocol; deferred
+predecessor destruction must not be added to its bounded BIND/COMMIT interval.
+
+Hosted production tests cover open-right rejection, real wait import/unwind,
+reclaim attempted during last lease release, error-consuming CLOSE, retirement
+at all five states and exact resources. Negative controls restore the redundant
+ring allocation, unrestricted right reclaim or premature lease reclaim; each
+must fail the unchanged strengthened assertions. Native MEMTEST checks actual
+CLOSE during a retained SESSION_WAIT followed by successful reclaim only after
+unwind, source retirement in BOUND/PREPARED/COMMITTED/ACKNOWLEDGED/RECLAIMED, and
+preserved committed receiver bytes/public wait results. The SAME_PROCESS fault
+fixture runs three times: actual ring-3 UD2 after COMMIT, after ACK before CLOSE,
+and after CLOSE before RECLAIM. Each survivor joins the publisher, recovers the
+tombstone, drains/retries without duplication and restores the outer baseline.
+These are native trusted-C prototype entry points plus user THREAD execution,
+not a public receipt trap/decoder or legacy console-launch integration proof.
+Arbitrary kernel/destructor-fault unwind remains unsupported. Independent review
+and exact-head compatibility/CI acceptance remain required before integration.
+Public activation has a separate acceptance gate and is not blocked by this GUI
+prototype. K5 remains the built-in single-CPU, non-preemptive no-yield/no-mapping-
+reentry backing provider; no arbitrary callback/unwind, preemption or SMP claim.

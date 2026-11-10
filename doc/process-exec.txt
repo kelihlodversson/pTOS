@@ -89,10 +89,12 @@ a prefix of user output, but cannot consume completion, observation, or Pwait.
 
 CLOSE supplies operation and handle only. It unlinks owned rights before
 cleanup, aborts an uncommitted image or releases committed observation, and
-never reaps or cancels a committed child. Cleanup may return a negative error
-after consumption: the handle remains closed and repeating CLOSE is EIHNDL.
-Residual file ownership belongs to the canonical SFT service. Other retained
-observer leases remain usable.
+never reaps or cancels a committed child. Filesystem cleanup may return an
+error AFTER consumption: this is a diagnostic outcome, not a retryable launch
+right. The exact residual reference belongs to the SFT service, without retaining
+a PD/ASPACE/stack. Read canonical cleanup diagnostics before dropping the last
+observer; never reconstruct a handle after destruction. Other retained observer
+leases remain usable. Public dispatch remains disabled.
 
 CANCEL_DEFERRED is designed as an idempotent current-PROCESS operation with zero
 handle and arguments. It cancels only the current owner's held, unexecuted
@@ -185,3 +187,41 @@ final-pin reclamation. Real x32 user continuations exercise prepared rights
 across yields, commit/cancel, public Pwait independence, CLOSE before execution
 and final owner teardown. These are not claims of a publicly enabled transport
 or ARM/m68k userspace GUI ports.
+
+Disabled activation preparation (#938)
+-------------------------------------
+CONF_WITH_PROCESS_EXEC is hidden and defaults to n. No shipped preset exposes
+it. CONF_WITH_PROCESS_EXEC_DISPATCH builds the single existing adapter when
+either that future production gate or the explicit test-only option is set.
+Only the production gate permits S_INQUIRE discovery; test-only builds still
+return EINVFN for discovery. The selector and 72/32 layouts are unchanged.
+
+This is configuration preparation, not public activation approval. Before any
+production enablement, reconcile against the actually integrated and accepted
+#933/#935 epic baseline, preserve C3a consumed-CLOSE errors, rerun exact-head
+native/desktop/lifecycle and full CI acceptance, and request explicit owner
+activation review. Do not enable the hidden gate through a normal preset or
+claim public transport support while those prerequisites remain pending.
+The existing K5 checked-copy restriction continues to apply.
+
+Gate-combination proof (#938)
+----------------------------
+The production option is hidden: assigning CONF_WITH_PROCESS_EXEC=y in .config
+DOES NOT enable it. There is no production selector today. Future activation
+must add a reviewed supported selector/default or prompt; a bare select bypasses
+the selected symbol's dependencies and must not be used without matching guards.
+The gate fixture adds a dependency-checked selector only in a temporary Kconfig
+root and checks ordinary/test/production/both combinations against real build.mk
+and preprocessed Ssystem capability/dispatch cases. Both selected gates include
+exactly one adapter object. This is prospective configuration/preprocessor proof,
+not native production activation acceptance. No shipped source selects the gate.
+
+Native fixture gate alignment (#938 review)
+------------------------------------------
+The real test build exports production, test and shared-dispatch gates.
+Native discovery expectations depend only on production; operation tests and
+PROCXIT.TOS packaging depend on shared dispatch. LP64 MEMTEST checks use the
+same distinction. The host gate fixture reads the actual top-level Makefile
+exports/payload and preprocesses native fixture branches for every prospective
+combination; this CPP evidence does not execute native traps or enable a real
+production configuration. The hidden production gate still has no selector.

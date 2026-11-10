@@ -23,6 +23,10 @@ LONG thread_startup_prepare(struct kaspace *space, const THREAD_STARTUP_ARGS *ar
                             THREAD_STARTUP_DRAFT **draft);
 /* Public void entry returns through the kernel-selected zero-status stub. */
 LONG thread_startup_prepare_public(struct kaspace *, const THREAD_STARTUP_ARGS *, THREAD_STARTUP_DRAFT **);
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_prepare_cloned(struct kaspace *, struct kaspace *, const THREAD_STARTUP_ARGS *,
+                                  BOOL public_return, THREAD_STARTUP_DRAFT **);
+#endif
 /* A revoked lease stays invalid even if the VA/permissions are restored. */
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft);
 typedef enum {

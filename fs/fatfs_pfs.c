@@ -690,6 +690,9 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
             ixclose(fd2,CL_DIR|CL_FULL);
             xmfreblk(fd2);
             sft[hnew-NUMSTD].f_own = 0;
+#if CONF_WITH_USER_ASPACE
+            sft[hnew-NUMSTD].f_use = 0;
+#endif
             sft[hnew-NUMSTD].f_ofd = 0;
         } else xclose(hnew);
         ixclose(fdparent,CL_DIR);
