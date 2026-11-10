@@ -3673,17 +3673,19 @@ BOOL kproc_validate_user_exec(VADDR address)
     if (!known && kaspace_heap_contains(kproc->active_space, address)) {
         logical = ASPACE_PROT_USER | ASPACE_PROT_WRITE; known = TRUE;
     }
-    if (!known && lazy_area(kproc, address & ~(USER_PAGE_SIZE - 1), &logical)) {
+    if (!known) {
         ULONG i;
-        known = TRUE;
         /* A moved PE_GO image is tracked in the legacy heap vector, but
          * lazy_area's generic WRITE policy is not its segment policy. */
         for (i = 0; i < kproc->nheap; i++) {
             const struct uheap_block *b = &kproc->heap[i];
             ULONG j;
             VADDR page = address & ~(USER_PAGE_SIZE - 1);
-            if (b->kind != UH_IMAGE || address < b->va ||
+            if (address < b->va ||
                 address - b->va >= (VADDR)b->pages * USER_PAGE_SIZE) continue;
+            known = TRUE;
+            logical = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
+            if (b->kind != UH_IMAGE) break;
             logical = 0;
             for (j = 0; j < kproc->layout.nseg; j++) {
                 const PROG_SEGMENT *s = &kproc->layout.seg[j];
@@ -3697,6 +3699,9 @@ BOOL kproc_validate_user_exec(VADDR address)
             }
             break;
         }
+    }
+    if (!known && address >= USER_STACK_TOP - stack_bytes(kproc) && address < USER_STACK_TOP) {
+        logical = ASPACE_PROT_USER | ASPACE_PROT_WRITE; known = TRUE;
     }
     if (known && (logical & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) !=
         (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) return FALSE;
