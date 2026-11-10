@@ -37,14 +37,27 @@ int main(int argc, char **argv)
             CHECK(argc == 7 && strstr(argv[1], "FOREIGN.TOS") &&
                   !strcmp(argv[2], "-s  --literal 'quotes'") && strstr(argv[3], "CHAIN.TOS"));
             start = 4;
-        } else if (!strcmp(kind, "DEPTH4")) {
-            CHECK(argc == 8);
+        } else if (!strcmp(kind, "DEPTH4") || !strcmp(kind, "SHORTCHAIN")) {
+            CHECK(argc == (!strcmp(kind, "DEPTH4") ? 8 : 6));
             for (i = 1; i <= 4; i++) {
                 char name[16];
                 sprintf(name, "D%d.TOS", 4 - i);
                 CHECK(strstr(argv[i], name));
             }
-            start = 5;
+            if (!strcmp(kind, "SHORTCHAIN")) {
+                CHECK(!strcmp(argv[5], "plain") && (unsigned char)_base->p_cmdlin[0] < 127);
+                start = 0;
+            } else start = 5;
+        } else if (!strcmp(kind, "STALE")) {
+            CHECK(argc == 4 && !strcmp(argv[2], "fresh") && !strcmp(argv[3], "tail"));
+            start = 0;
+        } else if (!strcmp(kind, "QUOTED")) {
+            CHECK(argc == 4 && !strcmp(argv[2], "it's") && !strcmp(argv[3], "literal\"quote") &&
+                  (unsigned char)_base->p_cmdlin[0] == 127);
+            start = 0;
+        } else if (!strcmp(kind, "SHORT")) {
+            CHECK(argc == 3 && !strcmp(argv[2], "plain") && (unsigned char)_base->p_cmdlin[0] < 127);
+            start = 0;
         } else if (!strcmp(kind, "CLASSIC")) {
             CHECK(argc == 6 && !strcmp(argv[2], "one") && !strcmp(argv[3], "two words") &&
                   !*argv[4] && !strcmp(argv[5], "it's"));

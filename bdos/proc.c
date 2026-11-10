@@ -638,9 +638,10 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return EFILNF;      /*  file not found      */
     }
 
-    /* load the header - if I/O error occurs now, the longjmp in rwabs will
-     * jump directly back to bdosmain.c, which is not a problem because
-     * we haven't allocated anything yet.
+    /* Load the header before allocating process memory. Interpreter probes
+     * guard disk I/O so their temporary buffers can be freed on failure;
+     * the ordinary loader may still return via bdosmain.c's disk longjmp
+     * when interpreter support is disabled.
      */
 #if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
     elf_set_load_into_caller(flag == PE_LOAD);

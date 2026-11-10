@@ -13,8 +13,9 @@
 #include "gemerror.h"
 
 typedef struct {
-    const char *environment, *arguments, *tail;
-    ULONG regular_size, argc;
+    const char *environment, *arguments;
+    char tail[128];
+    ULONG regular_size, argc, tail_size;
     UBYTE *empty;
 } ARGUMENTS;
 
@@ -31,7 +32,7 @@ static LONG argument_source(ARGUMENTS *a, const char *env, const char *tail, UBY
     const char *s, *metadata = NULL;
     memset(a, 0, sizeof(*a));
     memset(bitmap, 0, BINFMT_ARGC / 8);
-    a->environment = env; a->tail = tail; a->empty = bitmap;
+    a->environment = env; a->empty = bitmap;
     for (size = 0; size + 1 < BINFMT_ENV; size++)
         if (!env[size] && !env[size + 1]) break;
     if (size + 1 == BINFMT_ENV) return ERANGE;
@@ -46,7 +47,18 @@ static LONG argument_source(ARGUMENTS *a, const char *env, const char *tail, UBY
         s += strlen(s) + 1;
     }
     a->regular_size = s - env;
-    if (!a->arguments) return E_OK;
+    if (!a->arguments || (UBYTE)tail[0] != 127) {
+        /* An inherited ARGV belongs to the parent unless the caller marks
+         * this launch as extended. Strip it even when using a classic tail.
+         * Snapshot that tail before a chained redirect reuses its buffer. */
+        a->arguments = NULL;
+        size = (UBYTE)tail[0];
+        if (size > 127) return ERANGE;
+        for (i = 0; i < size && tail[i + 1]; i++) a->tail[i] = tail[i + 1];
+        a->tail[i] = 0;
+        a->tail_size = i;
+        return E_OK;
+    }
     s = a->arguments;
     while (*s) {
         if (++a->argc > BINFMT_ARGC) return ERANGE;
@@ -98,11 +110,8 @@ static LONG visit_arguments(const ARGUMENTS *a, const BINFMT_SELECTION *selectio
     }
     /* The classic tail is bounded by its length byte AND its first NUL.
      * Never read beyond the NUL validated by the user-copy boundary. */
-    n = (UBYTE)a->tail[0];
-    if (n > 127) return ERANGE;
-    s = a->tail + 1;
-    for (i = 0; i < n; i++) if (!s[i]) break;
-    n = i;
+    n = a->tail_size;
+    s = a->tail;
     at = 0;
     while (at < n) {
         ULONG used = 0;
@@ -157,7 +166,7 @@ static LONG empty_indices(void *context, const char *s, ULONG n, ULONG index)
         w->nulls = w->quoted = TRUE;
     }
     if (index) for (i = 0; i < n; i++)
-        if (whitespace((UBYTE)s[i]) || s[i] == '\'') w->quoted = TRUE;
+        if (whitespace((UBYTE)s[i]) || s[i] == '\'' || s[i] == '"') w->quoted = TRUE;
     return E_OK;
 }
 
@@ -204,6 +213,8 @@ LONG binfmt_arguments(const char *environment, const char *tail,
     if (!rc) rc = append(&writer, "", 1);
     if (rc) return rc;
     storage[writer.used] = 0;        /* alloc_env() may copy an even-size pad */
-    output_tail[0] = writer.nulls || writer.tail_size > 126 ? 127 : (char)writer.tail_size;
+    /* Native dynamic startup decodes quotes through ARGV, while legacy
+     * readers still receive the MagX-quoted tail bytes. */
+    output_tail[0] = writer.quoted || writer.tail_size > 126 ? 127 : (char)writer.tail_size;
     return E_OK;
 }

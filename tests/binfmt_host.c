@@ -6,6 +6,7 @@
 #include <string.h>
 #include "gemerror.h"
 #include "binfmt.h"
+#include "startup.h"
 
 static BINFMT_REGISTRY registry;
 static BINFMT_PARSER parser;
@@ -111,6 +112,33 @@ static void shebangs(void)
     assert(binfmt_select(&registry, (const UBYTE *)limit, 255, &s) == EPLFMT);
 }
 
+/* Consume the rewritten launch through the actual dynamic native startup,
+ * which honors the ARGV marker and uses a different classic-tail grammar. */
+static void dynamic_arguments(const char *const *expected, UWORD count)
+{
+    static unsigned char stack[8192];
+    DL_START_INFO info;
+    uint32_t rsp, used, argc, offset, address, i, size;
+    const uint32_t top = 0x80000000UL, base = top - sizeof(stack);
+    for (size = 0; size + 1 < BINFMT_ENV; size++)
+        if (!storage[size] && !storage[size + 1]) break;
+    assert(size + 1 < BINFMT_ENV);
+    memset(&info, 0, sizeof(info));
+    info.pagesz = 4096;
+    assert(dl_start_stack(stack, sizeof(stack), top, expected[0], strlen(expected[0]) + 1,
+                          (const unsigned char *)tail, sizeof(tail),
+                          (const unsigned char *)storage, size + 2, &info, &rsp, &used) == DL_OK);
+    assert(rsp + used == top && !(rsp & 15));
+    offset = rsp - base;
+    memcpy(&argc, stack + offset, 4);
+    assert(argc == count);
+    for (i = 0; i < argc; i++) {
+        memcpy(&address, stack + offset + 4 + i * 4, 4);
+        assert(address >= rsp && address < top);
+        assert(!strcmp((const char *)stack + address - base, expected[i]));
+    }
+}
+
 static void arguments(void)
 {
     BINFMT_SELECTION s;
@@ -119,6 +147,10 @@ static void arguments(void)
     const char expected_option[] = "DEMO=present\0ARGV=NULL:4,6\0C:\\EMU.TOS\0-s  --one-argument\0C:/APP.TOS\0one\0 \0two words\0 \0\0";
     const char classic[] = "one 'two words' '' 'it''s' C:\\DIR\\FILE";
     const char expected_classic[] = "X=1\0ARGV=NULL:4\0C:\\EMU.TOS\0APP.TOS\0one\0two words\0 \0it's\0C:\\DIR\\FILE\0\0";
+    const char *const stale_argv[] = {"C:\\EMU.TOS", "APP.TOS", "fresh"};
+    const char *const chain_argv[] = {"C:\\NEXT.TOS", "C:\\EMU.TOS", "APP.TOS", "fresh"};
+    const char *const apostrophe_argv[] = {"C:\\EMU.TOS", "APP.TOS", "it's"};
+    const char *const quote_argv[] = {"C:\\EMU.TOS", "APP.TOS", "literal\"quote"};
     char input_tail[128] = {127, 0};
     char *large = malloc(BINFMT_ENV + 2);
     assert(large);
@@ -136,13 +168,35 @@ static void arguments(void)
     assert(binfmt_arguments("\0", "", &s, "APP.TOS", storage, tail) == 0);
     assert(!memcmp(storage, "ARGV=\0C:\\EMU.TOS\0APP.TOS\0\0", 26));
     assert(tail[0] == 7 && !strcmp(tail + 1, "APP.TOS"));
+    input_tail[0] = 5; strcpy(input_tail + 1, "fresh");
+    assert(binfmt_arguments(env, input_tail, &s, "APP.TOS", storage, tail) == 0);
+    assert(!memcmp(storage, "DEMO=present\0ARGV=\0C:\\EMU.TOS\0APP.TOS\0fresh\0\0",
+                   sizeof("DEMO=present\0ARGV=\0C:\\EMU.TOS\0APP.TOS\0fresh\0\0") - 1));
+    assert(tail[0] == 13 && !strcmp(tail + 1, "APP.TOS fresh"));
+    dynamic_arguments(stale_argv, 3);
+    /* A short, unquoted chain reparses its own classic tail. The source
+     * and destination tail may be the same buffer in the kernel. */
+    memcpy(large, storage, BINFMT_ENV);
+    strcpy(s.interpreter, "C:\\NEXT.TOS");
+    assert(binfmt_arguments(large, tail, &s, "C:\\EMU.TOS", storage, tail) == 0);
+    assert(!strcmp(tail + 1, "C:\\EMU.TOS APP.TOS fresh") && tail[0] == 24);
+    dynamic_arguments(chain_argv, 4);
+    strcpy(s.interpreter, "C:\\EMU.TOS");
+    input_tail[0] = 127;
+    assert(binfmt_arguments("ARGV=\0old\0it's\0\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
+    assert(tail[0] == 127 && !strcmp(tail + 1, "'APP.TOS' 'it''s'"));
+    dynamic_arguments(apostrophe_argv, 3);
+    assert(binfmt_arguments("ARGV=\0old\0literal\"quote\0\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
+    assert(tail[0] == 127 && !strcmp(tail + 1, "'APP.TOS' 'literal\"quote'"));
+    dynamic_arguments(quote_argv, 3);
     input_tail[0] = 5; strcpy(input_tail + 1, "'oops");
     assert(binfmt_arguments("\0", input_tail, &s, "APP.TOS", storage, tail) == EINVAL);
-    assert(binfmt_arguments("ARGV=NULL:9\0old\0arg\0\0", "", &s, "APP.TOS", storage, tail) == EINVAL);
+    input_tail[0] = 127; input_tail[1] = 0;
+    assert(binfmt_arguments("ARGV=NULL:9\0old\0arg\0\0", input_tail, &s, "APP.TOS", storage, tail) == EINVAL);
     memset(large, 'a', BINFMT_ENV + 2);
     assert(binfmt_arguments(large, "", &s, "APP.TOS", storage, tail) == ERANGE);
     memcpy(large, "ARGV=\0old\0", 10); large[30000] = large[30001] = 0;
-    assert(binfmt_arguments(large, "", &s, "APP.TOS", storage, tail) == 0 && tail[0] == 127);
+    assert(binfmt_arguments(large, input_tail, &s, "APP.TOS", storage, tail) == 0 && tail[0] == 127);
     assert(strlen(storage + 25) > 29000);
     memcpy(large, "X=", 2); memset(large + 2, 'a', BINFMT_ENV - 4);
     large[BINFMT_ENV - 2] = large[BINFMT_ENV - 1] = 0;

@@ -106,13 +106,15 @@ The program pathname passed as an argument keeps the caller's spelling; relative
 program paths remain valid because the caller's directory is inherited.
 Replace any old ARGV extension with the complete resulting argument vector,
 including ARGV=NULL: indices for empty arguments. Preserve argument boundaries.
-Without ARGV, tokenize the bounded classic command tail: whitespace separates
+Use the caller's ARGV only when the command-tail length byte is 127. Otherwise
+discard any inherited ARGV extension and tokenize the bounded classic tail:
+whitespace separates
 arguments, single/double quotes group them, doubled quote characters inside
 quotes represent literal quotes, and backslashes remain literal path separators.
 Unterminated quotes fail instead of losing arguments.
 
 Also supply a classic command tail, using MagX single-quote quoting when needed.
-Long or empty-argument command lines use the 127 ARGV marker; the environment
+Long, quoted or empty-argument command lines use the 127 ARGV marker; the environment
 contains every argument in full. An environment/argument overflow fails with
 ERANGE; no argument is silently dropped. Temporary kernel buffers are freed
 after copying the child environment, before a non-returning architecture launch.

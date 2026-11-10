@@ -25,9 +25,15 @@ static void make_environment(const char *kind, int classic)
     sprintf(value, "BOOT=%c", 'A' + boot); at = append(at, value);
     sprintf(value, "FD=%ld", shared); at = append(at, value);
     if (!classic) {
-        at = append(at, !strcmp(kind, "LONG") ? "ARGV=" : "ARGV=NULL:2");
+        int plain = !strcmp(kind, "SHORT") || !strcmp(kind, "SHORTCHAIN");
+        int quoted = !strcmp(kind, "QUOTED");
+        at = append(at, plain || quoted || !strcmp(kind, "LONG") ? "ARGV=" : "ARGV=NULL:2");
         at = append(at, "original-name");
         if (!strcmp(kind, "LONG")) at = append(at, large);
+        else if (plain) at = append(at, "plain");
+        else if (quoted) {
+            at = append(at, "it's"); at = append(at, "literal\"quote");
+        }
         else {
             at = append(at, "two words"); at = append(at, " "); at = append(at, "quote'arg");
         }
@@ -40,10 +46,11 @@ static int run(const char *name, const char *kind, int mode, int classic, long e
     char path[80], tail[128] = {127, 0};
     long result, before = Fseek(0, (short)shared, 2);
     BASEPAGE *bp;
-    make_environment(kind, classic);
+    make_environment(kind, classic == 1 || classic == 2);
     sprintf(path, "%c:\\%s", 'A' + boot, name);
     if (classic) {
-        const char *text = classic == 1 ? "one 'two words' '' 'it''s'" : "one \"two words\" \"\" \"it's\"";
+        const char *text = classic == 3 ? "fresh tail" :
+            classic == 1 ? "one 'two words' '' 'it''s'" : "one \"two words\" \"\" \"it's\"";
         tail[0] = strlen(text); strcpy(tail + 1, text);
     }
     result = Pexec(mode == 6 ? 3 : 0, path, tail, environment);
@@ -86,6 +93,10 @@ int main(void)
             run("SUB\\FOREIGN.ELF", "ELF", mode, 0, 37, 1) ||
             run("SUB\\DEMO.FMT", "CLASSIC", mode, 1, 37, 1) ||
             run("SUB\\DEMO.FMT", "CLASSIC", mode, 2, 37, 1) ||
+            run("SUB\\DEMO.FMT", "STALE", mode, 3, 37, 1) ||
+            run("SUB\\DEMO.FMT", "QUOTED", mode, 0, 37, 1) ||
+            run("SUB\\DEMO.FMT", "SHORT", mode, 0, 37, 1) ||
+            run("SUB\\D0.TOS", "SHORTCHAIN", mode, 0, 37, 1) ||
             run("SUB\\DEMO.FMT", "LONG", mode, 0, 37, 1) ||
             run("BIN\\INTERP.TOS", "NATIVE", mode, 0, 37, 1)) goto failed;
 #if defined(__m68k__)
