@@ -867,19 +867,17 @@ X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
 x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
 
-# The same program linked for another address, which Pexec() has to move
-# into the image window and relocate (the relocations -q keeps are what it
-# uses).
+# The same program linked into the reserved system range: Pexec() has to
+# move it to the default image base and use the relocations kept by -q.
 x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -o $@ $^
 
 # ... and linked for another address without keeping the relocations (no -q):
 # Pexec() must refuse it, not run it with every absolute address wrong.
 x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x08000000 -o $@ $^
 
-# ... and one with a 6 MiB bss, bigger than the image window: only a PE_LOAD
-# from ring 3 (which loads it straight into the caller's heap) can take it.
+# ... and one with a 6 MiB bss, bigger than the old image window.
 x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
@@ -1783,7 +1781,7 @@ TEST_SUITES := $(sort $(foreach d,$(patsubst tests/%/,%,$(wildcard tests/*/)),\
 # can't recognize that executable's format at all, so the suite would
 # just fail on an unsupported configuration instead of testing anything.
 ifndef CONF_WITH_ELF_LOADER
-TEST_SUITES := $(filter-out pie_load load_fail,$(TEST_SUITES))
+TEST_SUITES := $(filter-out pie_load load_fail broad_va,$(TEST_SUITES))
 endif
 
 # ptos_reloc_load launches two separate executables (reloc_probe.c, built
@@ -1811,7 +1809,10 @@ endif
 # to show where the processes share one address space, and x32 has its own
 # ring-3 probe at boot.
 ifndef CONF_WITH_USER_ASPACE
-TEST_SUITES := $(filter-out isolation,$(TEST_SUITES))
+TEST_SUITES := $(filter-out isolation broad_va,$(TEST_SUITES))
+endif
+ifndef CONF_WITH_MMAP
+TEST_SUITES := $(filter-out broad_va,$(TEST_SUITES))
 endif
 ifdef ARCH_X86_64
 TEST_SUITES := $(filter-out isolation,$(TEST_SUITES))
@@ -1993,6 +1994,24 @@ else
 TEST_ISO_FILES =
 endif
 
+# Relocation-free ET_EXEC at the high address used by native emulators.
+# A link without -q proves both direct and split loads preserve its VA.
+ifneq ($(filter broad_va,$(TEST_SUITES)),)
+obj/high_probe.o: tests/broad_va/high_probe.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ifdef ARCH_M68K
+HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld -m m68kelf -Ttext-segment=0x41000000 -e _start \
+	  $(TEST_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+else
+HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(if $(ARCH_X86_64),$(X32_LDFLAGS_NOQ)) -Wl,-Ttext-segment=0x41000000,-e_start \
+	  $(TEST_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TEST_BROAD_VA_FILES = HIIMAGE.TOS
+endif
+
 # pBench, the graphics benchmark in tools/pBench (see doc/pbench.txt): a GEM
 # program built exactly like the test harness above (libcmini, userland
 # flags), but not part of it and not run by it.
@@ -2155,7 +2174,7 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
+TEST_HD_FILES = $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2171,7 +2190,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2237,7 +2256,7 @@ endif
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
-           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS \
+           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
            test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img

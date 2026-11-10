@@ -158,7 +158,15 @@ being treated as suites themselves. `tests/pie_load/`, for instance,
 also has `pie_probe.c`: a standalone payload `pie_load.c` launches via
 `Pexec()` to test the PIE ELF loader, built and linked separately from
 `runtests.tos` (see the Makefile's `pieprobe.tos` rule) rather than
-compiled in as a `test_<name>()` entry point.  `tests/mmu_state/` asks the
+compiled in as a `test_<name>()` entry point.
+
+`tests/broad_va/` launches `HIIMAGE.TOS`, a relocation-free ELF executable
+at `0x41000000`, through direct and split Pexec loads. It maps and touches
+private guest RAM from 64 KiB to 16 MiB, verifies isolation from its parent,
+checks high mappings, image/metadata/heap/stack collisions and cleanup.
+It is enabled with per-process address spaces, the ELF loader and Mmap.
+
+`tests/mmu_state/` asks the
 kernel what the MMU is, with `Ssystem(S_MMUPROBE)` (include/mmuprobe.h,
 bios/arch/m68k/mmuprobe.c, only in a build with the tests on an m68k image that
 runs in the upper half): translation is on with 4 KiB pages, the roots are set, a page of the program

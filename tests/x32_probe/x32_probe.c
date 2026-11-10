@@ -145,7 +145,7 @@ static s64 mmap_private(u64 address, u64 length, u64 protection, u64 flags, u64 
 static int mapping_api(void)
 {
     const u32 flags = MAP_PRIVATE | MAP_ANONYMOUS;
-    s64 address, second;
+    s64 address, second, heap;
     volatile u32 *data;
     int bad = 0;
 
@@ -203,9 +203,12 @@ static int mapping_api(void)
         gemdos(GEMDOS_MUNMAP, address, 12288) ||
         gemdos(GEMDOS_MUNMAP, address, 12288))
         bad |= 2048;                   /* adjacent reservations and holes */
-    if (sys(GEMDOS, GEMDOS_MPROT, 0x10000000, 4096, PROT_READ) != EIMBA ||
-        gemdos(GEMDOS_MUNMAP, 0x10000000, 4096) != EIMBA)
+    heap = gemdos(0x48, 4096, 0);
+    if (heap <= 0 || sys(GEMDOS, GEMDOS_MPROT, heap, 4096, PROT_READ) != EIMBA ||
+        gemdos(GEMDOS_MUNMAP, heap, 4096) != EIMBA)
         bad |= 4096;                   /* heap/stack/image are never affected */
+    if (heap > 0)
+        gemdos(0x49, heap, 0);
     second = mmap_private(0, 1, PROT_READ | PROT_WRITE, flags, 0);
     if (second != address || data[0] || gemdos(GEMDOS_MUNMAP, second, 1))
         bad |= 8192;                   /* lengths round up; no stale data */
