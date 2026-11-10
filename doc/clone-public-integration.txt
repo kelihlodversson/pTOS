@@ -70,7 +70,9 @@ The opaque argument is not dereferenced. Non-NULL tls remains EINVAL under #908;
 its existing slot cannot be removed, reused or treated as startup support.
 
 Outputs are optional, aligned writable int32_t destinations in the caller's
-KASPACE. Reject overlap with one another, startup stack or executable pages.
+KASPACE. Reject overlap with one another, the startup stack, the entry page
+or the trusted return-bridge page. Other output pages must pass the existing
+writable-memory validation; this is not a new executable-region policy.
 Back/COW and obtain protected RAM aliases before publication; revalidate at
 commit and seal all leases as one group. Reject same-address replacement as a
 stale lease, even if permissions match. On every failure leave both words and

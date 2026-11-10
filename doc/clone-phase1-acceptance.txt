@@ -33,7 +33,8 @@ Disabled/non-MMU configurations fail before touching an invalid pointer.
 Pfork/Pvfork, shared-VM Pexec and production PROCESS dispatch remain disabled.
 Entry must be executable; stack writable, aligned, large enough for the real
 startup frame. Optional outputs are native-aligned writable disjoint words,
-not overlapping stack/executable pages. They may alias the already-snapshotted
+not overlapping the startup stack, entry page or trusted return-bridge page.
+Other pages use existing writable-memory validation. They may alias the snapshotted
 input. No retained output pointer or post-store fallible operation. Public void
 entry return is THREAD status0; explicit Pterm uses its existing completion ABI.
 

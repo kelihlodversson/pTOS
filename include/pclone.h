@@ -26,7 +26,8 @@
  * field. Unknown flags/non-NULL TLS fail EINVAL; private/unmanaged/unavailable
  * policies fail EINVFN after argument validation, without output/publication.
  * Outputs are native-aligned writable words, disjoint from each other and the
- * startup stack/executable pages. They are initial snapshots, not exit stores.
+ * startup stack, entry page and trusted return-bridge page. These are initial
+ * snapshots, not exit stores.
  * The void entry's normal return terminates that THREAD with status zero. */
 struct ptos_clone_args {
     uint32_t flags;             /* CLONE_* policy bits */
