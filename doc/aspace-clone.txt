@@ -100,3 +100,15 @@ before mmap/lazy backing. Logical write eligibility alone is insufficient:
 physical leaves remain read-only until back_page resolves their owned COW
 record. Native probes exercise untouched child image, heap and dirty private
 file-mapping destinations and verify that parent bytes remain unchanged.
+
+Review corrections: public clone PID/TID output preparation resolves anonymous
+COW before heap/mmap backing, including untouched image/BSS output pages. COW
+metadata uses intrusive AVL indexes by virtual address and physical frame; the
+existing mapping list is only the linear commit/rollback view, not a second
+consumer or owner. Index nodes are embedded in existing records and require no
+new allocation/publication step. Lookup/insert/remove are O(log N), with bounded
+balanced recursion; clone metadata construction is O(N log N), rather than
+quadratic growing-list scans. Production host tests check ordering, heights,
+permuted deletion, rollback and final reclamation, and count metadata visits
+for1024 and16384 populated pages. They model leaves/physical RAM and do not
+claim native MMU/TLB timing measurements.

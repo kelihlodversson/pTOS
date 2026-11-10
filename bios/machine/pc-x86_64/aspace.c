@@ -46,6 +46,7 @@ struct aspace {
     UQUAD magic;
 #if CONF_WITH_PRIVATE_CLONE
     struct cow_mapping *cow;
+    struct cow_index *cow_root;
     BOOL clone_building;
 #endif
     UQUAD pml4_phys;

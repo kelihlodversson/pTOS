@@ -41,6 +41,8 @@ static volatile struct {
     unsigned char *heap, *mapping, *filemap;
 } private_probe;
 static unsigned char private_copyout[32] __attribute__((aligned(4096)));
+static struct { int32_t pid, tid; } private_outputs __attribute__((aligned(4096)));
+static void private_shared_entry(void *argument) { (void)argument; (void)Pterm(75); }
 static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
 static long private_sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
 {
@@ -110,6 +112,7 @@ static void private_entry(void *argument)
     if(private_probe.cell!=0x11223344UL || private_probe.heap[17]!=0x31 ||
        private_probe.heap[4096+31]!=0x42 || private_probe.heap[8192+45]!=0)bad=2;
     if(private_probe.mapping && (private_probe.mapping[5]!=0x21 || private_probe.mapping[4096+7]!=0))bad=3;
+    if (private_outputs.pid!=-1 || private_outputs.tid!=-1) bad=11;
     if (private_probe.filemap && (private_probe.filemap[11]!=0x35 ||
         private_probe.filemap[4096+13]!=0x46)) bad=9;
     /* No preceding user write to these destination pages: the syscall must
@@ -205,6 +208,7 @@ static void test_private_aspace(void)
         private_probe.mode=cycle==0?2:(cycle==1?-2:0);
         private_probe.cell=0x11223344UL;
         private_probe.heap[17]=0x31;private_probe.heap[4096+31]=0x42;
+        private_outputs.pid=-1; private_outputs.tid=-1; /* populate before clone */
         memset(private_copyout,0xa5,sizeof(private_copyout));
         memset(private_probe.heap+64,0xa5,32);
         if(private_probe.mapping)private_probe.mapping[5]=0x21;
@@ -212,6 +216,30 @@ static void test_private_aspace(void)
         child=pclone_trap(&args,0xc8920000UL|sizeof(args));
         ptest_assert_msg(child>0 && child!=Pgetpid(),"private clone publishes distinct PROCESS");
         if(child<=0)continue;
+        if(cycle==0) {
+            /* This output page has not been written since private cloning.
+             * Ordinary CLONE_VM publication must resolve its COW first. */
+            struct ptos_clone_args shared={0};
+            unsigned char *shared_stack=(unsigned char *)Malloc(32768);
+            long shared_tid;
+            ptest_assert_msg(shared_stack!=0,"shared clone output regression stack");
+            if(shared_stack) {
+                memset(shared_stack,0,32768);
+                shared.flags=CLONE_VM | CLONE_COPY_STANDARD_HANDLES;
+                shared.entry=private_shared_entry;
+                shared.stack_base=shared_stack; shared.stack_size=32768;
+                shared.child_pid=&private_outputs.pid; shared.child_tid=&private_outputs.tid;
+                shared_tid=pclone_trap(&shared,sizeof(shared));
+                ptest_assert_msg(shared_tid>0 && private_outputs.tid==(unsigned long)shared_tid &&
+                                 private_outputs.pid>0,"PID/TID copyout resolves untouched image COW");
+                if(shared_tid>0) {
+                    long reaped=Pwaitpid(private_outputs.pid,0,0);
+                    ptest_assert_msg((reaped>>16)==(long)private_outputs.pid &&
+                                     (reaped&65535)==75,"shared clone output child completion");
+                }
+                ptest_assert_msg(Mfree(shared_stack)==0,"shared clone output stack cleanup");
+            }
+        }
         if(cycle&1){private_probe.cell=0xaabbccddUL;private_probe.heap[17]=0x61;
             if(private_probe.filemap)private_probe.filemap[11]=0x75;}
         status=Pwaitpid(child,0,0);

@@ -1,17 +1,26 @@
 /* Private anonymous COW metadata. Included once by the selected MMU core.
  * Hardware descriptors and allocation mechanics remain in that core. */
 #if CONF_WITH_PRIVATE_CLONE
+/* Intrusive AVL indexes: bounded logarithmic lookup without extra allocation.
+ * The mapping list remains only the linear commit/rollback iteration view. */
+struct cow_index {
+    UQUAD key;
+    struct cow_index *left, *right;
+    UWORD height;
+};
 struct cow_frame {
+    struct cow_index index;
     PADDR physical;
     ULONG references;
-    struct cow_frame *next;
 };
 struct cow_mapping {
+    struct cow_index index;
     VADDR address;
     UWORD protection;
     BOOL prepared; /* new source record, reversible until clone commit */
     struct cow_frame *frame;
     struct cow_mapping *next;
+    struct cow_mapping **previous;
 };
 static BOOL cow_release_backing(PADDR physical);
 static void cow_unlink_mapping(ASPACE *, VADDR);

@@ -428,7 +428,11 @@ static LONG public_back_range(KASPACE *space, VADDR address, ULONG bytes, UWORD 
     for (page = address & ~(VADDR)(USER_PAGE_SIZE - 1); ; page += USER_PAGE_SIZE) {
         UWORD prot;
         if (!aspace_translate(as,page,NULL,&prot) || (prot & access) != access) {
-            int backed = kaspace_heap_demand_page(space,page,access);
+            int backed = -1;
+#if CONF_WITH_PRIVATE_CLONE
+            backed = aspace_cow_fault(as,page,access);
+#endif
+            if (backed == -1) backed = kaspace_heap_demand_page(space,page,access);
 #if CONF_WITH_MMAP
             if (backed == -1) backed = kaspace_mmap_demand_page(space,page,access);
 #endif

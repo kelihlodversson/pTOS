@@ -1,6 +1,6 @@
 /* Selected MMU core supplies cow_map/replace/flush and physical operations. */
 #if CONF_WITH_PRIVATE_CLONE
-static struct cow_frame *cow_frames;
+static struct cow_index *cow_frames;
 static ULONG cow_frame_count, cow_reference_count;
 static ULONG clone_fail_after;
 #if CONF_WITH_PRIVATE_CLONE_TEST
@@ -18,42 +18,111 @@ static void *clone_allocate(ULONG bytes)
 }
 ULONG aspace_cow_frames(void) { return cow_frame_count; }
 ULONG aspace_cow_references(void) { return cow_reference_count; }
-static struct cow_frame *cow_frame_find(PADDR physical)
+/* Each node is embedded first in its owning record. Rotations never move
+ * records: frame references and mapping iteration links remain stable. */
+#ifndef COW_INDEX_VISIT
+#define COW_INDEX_VISIT() ((void)0)
+#endif
+static int cow_height(const struct cow_index *node) { return node ? node->height : 0; }
+static void cow_height_update(struct cow_index *node)
 {
-    struct cow_frame *frame;
-    for (frame = cow_frames; frame; frame = frame->next)
-        if (frame->physical == physical) return frame;
+    int left = cow_height(node->left), right = cow_height(node->right);
+    node->height = 1 + (left > right ? left : right);
+}
+static struct cow_index *cow_rotate(struct cow_index *root, BOOL right)
+{
+    struct cow_index *top = right ? root->left : root->right;
+    if (right) { root->left = top->right; top->right = root; }
+    else { root->right = top->left; top->left = root; }
+    cow_height_update(root); cow_height_update(top); return top;
+}
+static struct cow_index *cow_balance(struct cow_index *root)
+{
+    int delta;
+    if (!root) return NULL;
+    cow_height_update(root);
+    delta = cow_height(root->left) - cow_height(root->right);
+    if (delta > 1) {
+        if (cow_height(root->left->left) < cow_height(root->left->right))
+            root->left = cow_rotate(root->left,FALSE);
+        return cow_rotate(root,TRUE);
+    }
+    if (delta < -1) {
+        if (cow_height(root->right->right) < cow_height(root->right->left))
+            root->right = cow_rotate(root->right,TRUE);
+        return cow_rotate(root,FALSE);
+    }
+    return root;
+}
+static struct cow_index *cow_index_find(struct cow_index *root, UQUAD key)
+{
+    while (root) {
+        COW_INDEX_VISIT();
+        if (key == root->key) return root;
+        root = key < root->key ? root->left : root->right;
+    }
     return NULL;
 }
+static struct cow_index *cow_index_add(struct cow_index *root, struct cow_index *node)
+{
+    if (!root) { node->left = node->right = NULL; node->height = 1; return node; }
+    COW_INDEX_VISIT();
+    if (node->key == root->key) panic("duplicate COW index");
+    if (node->key < root->key) root->left = cow_index_add(root->left,node);
+    else root->right = cow_index_add(root->right,node);
+    return cow_balance(root);
+}
+static struct cow_index *cow_index_remove(struct cow_index *root, UQUAD key)
+{
+    if (!root) panic("missing COW index");
+    COW_INDEX_VISIT();
+    if (key < root->key) root->left = cow_index_remove(root->left,key);
+    else if (key > root->key) root->right = cow_index_remove(root->right,key);
+    else {
+        struct cow_index *next = root->right;
+        if (!next) return root->left;
+        while (next->left) { COW_INDEX_VISIT(); next = next->left; }
+        next->right = cow_index_remove(root->right,next->key);
+        next->left = root->left;
+        return cow_balance(next);
+    }
+    return cow_balance(root);
+}
+static struct cow_frame *cow_frame_find(PADDR physical)
+{ return (struct cow_frame *)cow_index_find(cow_frames,physical); }
 static struct cow_mapping *cow_find(const ASPACE *as, VADDR address)
 {
-    struct cow_mapping *mapping;
-    address &= ~(VADDR)(USER_PAGE_SIZE - 1);
-    for (mapping = as->cow; mapping; mapping = mapping->next)
-        if (mapping->address == address) return mapping;
-    return NULL;
+    return (struct cow_mapping *)cow_index_find(as->cow_root,
+        address & ~(VADDR)(USER_PAGE_SIZE - 1));
+}
+static void cow_mapping_add(ASPACE *as, struct cow_mapping *mapping)
+{
+    mapping->index.key = mapping->address;
+    as->cow_root = cow_index_add(as->cow_root,&mapping->index);
+    mapping->next = as->cow; mapping->previous = &as->cow;
+    if (mapping->next) mapping->next->previous = &mapping->next;
+    as->cow = mapping;
+}
+static void cow_mapping_remove(ASPACE *as, struct cow_mapping *mapping)
+{
+    as->cow_root = cow_index_remove(as->cow_root,mapping->address);
+    *mapping->previous = mapping->next;
+    if (mapping->next) mapping->next->previous = mapping->previous;
+    kfree(mapping);
 }
 static void cow_unlink_mapping(ASPACE *as, VADDR address)
 {
-    struct cow_mapping **link = &as->cow, *mapping;
-    address &= ~(VADDR)(USER_PAGE_SIZE - 1);
-    while ((mapping = *link)) {
-        if (mapping->address == address) {
-            *link = mapping->next; kfree(mapping); return;
-        }
-        link = &mapping->next;
-    }
+    struct cow_mapping *mapping = cow_find(as,address);
+    if (mapping) cow_mapping_remove(as,mapping);
 }
 /* Drop metadata only. Ownership of the final physical page can be transferred
  * back to an ordinary unique leaf without freeing/reallocating that page. */
 static void cow_frame_drop(struct cow_frame *frame, BOOL release)
 {
-    struct cow_frame **link;
     if (!frame || !frame->references) panic("COW reference underflow");
     cow_reference_count--;
     if (--frame->references) return;
-    for (link = &cow_frames; *link != frame; link = &(*link)->next) { }
-    *link = frame->next; cow_frame_count--;
+    cow_frames = cow_index_remove(cow_frames,frame->physical); cow_frame_count--;
     if (release) COW_FREE(frame->physical);
     kfree(frame);
 }
@@ -82,7 +151,7 @@ void aspace_cow_collapse(ASPACE *as)
             struct cow_frame *frame = mapping->frame;
             if (!cow_replace(as, mapping->address, frame->physical, mapping->protection))
                 panic("COW exclusive collapse");
-            *link = mapping->next; kfree(mapping); cow_frame_drop(frame, FALSE);
+            cow_mapping_remove(as,mapping); cow_frame_drop(frame, FALSE);
             changed = TRUE;
         } else link = &mapping->next;
     }
@@ -129,7 +198,7 @@ static void cow_finish_source(ASPACE *source, BOOL commit)
         if (!commit && mapping->prepared) {
             struct cow_frame *frame = mapping->frame;
             if (frame->references != 1) panic("COW rollback retained child");
-            *link = mapping->next; kfree(mapping);
+            cow_mapping_remove(source,mapping);
             cow_frame_drop(frame, FALSE); /* original leaf still owns page */
             continue;
         }
@@ -181,11 +250,12 @@ static LONG cow_clone_leaf(ASPACE *source, ASPACE *child, VADDR address,
         original = clone_allocate(sizeof(*original));
         if (!original) { kfree(frame); return ENSMEM; }
         frame->physical = physical; frame->references = 1;
-        frame->next = cow_frames; cow_frames = frame;
+        frame->index.key = physical;
+        cow_frames = cow_index_add(cow_frames,&frame->index);
         cow_frame_count++; cow_reference_count++;
         original->address = address; original->protection = protection;
         original->frame = frame; original->prepared = TRUE;
-        original->next = source->cow; source->cow = original;
+        cow_mapping_add(source,original);
     }
     frame = original->frame;
     if (frame->references == ~(ULONG)0 || cow_reference_count == ~(ULONG)0) return EAGAIN;
@@ -196,7 +266,7 @@ static LONG cow_clone_leaf(ASPACE *source, ASPACE *child, VADDR address,
         kfree(copy); return ENSMEM;
     }
     frame->references++; cow_reference_count++;
-    copy->next = child->cow; child->cow = copy;
+    cow_mapping_add(child,copy);
     return E_OK;
 }
 #endif

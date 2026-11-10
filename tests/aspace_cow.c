@@ -10,12 +10,14 @@
 #include <string.h>
 #include <stdio.h>
 #include "../bios/aspace_cow_types.h"
-#define N 32
+#define N 16386
 struct leaf { PADDR physical; UWORD prot; BOOL present, owned; };
-struct aspace { struct leaf leaves[N]; struct cow_mapping *cow; };
+struct aspace { struct leaf leaves[N]; struct cow_mapping *cow; struct cow_index *cow_root; };
 static UBYTE ram[N][4096];
 static BOOL allocated[N], fail_page, fail_map;
 static ULONG allocations, frees, flushes, live_pages, fail_allocation;
+static ULONG index_visits;
+#define COW_INDEX_VISIT() (index_visits++)
 void panic(const char *format, ...) { (void)format; abort(); }
 void *kalloc(ULONG bytes)
 {
@@ -26,10 +28,14 @@ void *kalloc(ULONG bytes)
 void kfree(void *p) { if (p) { frees++; free(p); } }
 static PADDR page_alloc(void)
 {
-    unsigned i;
+    static unsigned cursor=1;
+    unsigned i,n;
     if (fail_page) return 0;
-    for (i=1;i<N;i++) if (!allocated[i]) {
-        allocated[i]=TRUE; live_pages++; memset(ram[i],0,4096); return i*4096;
+    for (n=1;n<N;n++) {
+        i=cursor; if (++cursor==N) cursor=1;
+        if (!allocated[i]) {
+            allocated[i]=TRUE; live_pages++; memset(ram[i],0,4096); return i*4096;
+        }
     }
     return 0;
 }
@@ -74,7 +80,7 @@ void aspace_destroy(ASPACE *as)
         cow_unlink_mapping(as,i*4096);
         if(!cow_release_backing(p)) page_free(p);
     }
-    assert(!as->cow); kfree(as);
+    assert(!as->cow && !as->cow_root); kfree(as);
 }
 LONG aspace_clone(ASPACE *source,ASPACE **out)
 {
@@ -102,6 +108,60 @@ static void write_byte(ASPACE *as,VADDR address,UBYTE byte)
 {
     assert(aspace_cow_fault(as,address,ASPACE_PROT_WRITE)==1);
     ram[as->leaves[address/4096].physical/4096][address%4096]=byte;
+}
+/* Structural and operation-count assertions, not a wall-clock benchmark. */
+static unsigned check_index(const struct cow_index *root, UQUAD low, UQUAD high)
+{
+    unsigned left,right;
+    if (!root) return 0;
+    assert(root->key>=low && root->key<high);
+    left=check_index(root->left,low,root->key);
+    right=check_index(root->right,root->key+1,high);
+    assert((int)cow_height(root->left)-(int)cow_height(root->right)>=-1 &&
+           (int)cow_height(root->left)-(int)cow_height(root->right)<=1);
+    assert(root->height==1+(cow_height(root->left)>cow_height(root->right)?
+                                cow_height(root->left):cow_height(root->right)));
+    return 1+left+right;
+}
+static void populated_clone(unsigned count)
+{
+    ASPACE *source=kalloc(sizeof(*source)), *child=NULL, *nested=NULL;
+    struct cow_mapping *mapping;
+    unsigned i;
+    ULONG visits;
+    for(i=1;i<=count;i++) {
+        PADDR physical=page_alloc(); assert(physical);
+        assert(cow_map(source,i*4096,physical,ASPACE_PROT_USER|ASPACE_PROT_WRITE,TRUE));
+    }
+    index_visits=0;
+    assert(aspace_clone(source,&child)==E_OK);
+    visits=index_visits;
+    /* The old two growing-list searches exceed268million visits at16384.
+     * Count all indexed searches/insertions, including rotation preparation. */
+    assert(visits>count && visits<96UL*count);
+    assert(check_index(source->cow_root,0,(UQUAD)N*4096)==count);
+    assert(check_index(child->cow_root,0,(UQUAD)N*4096)==count);
+    assert(check_index(cow_frames,0,(UQUAD)N*4096)==count);
+    for(mapping=source->cow;mapping;mapping=mapping->next)
+        assert(*mapping->previous==mapping && cow_find(source,mapping->address)==mapping);
+    assert(aspace_clone(child,&nested)==E_OK);
+    aspace_destroy(source); source=NULL;
+    aspace_destroy(nested); nested=NULL;
+    /* Odd permutation exercises interior/root/two-child AVL deletion through
+     * exclusive promotion, without allocating replacement physical pages. */
+    for(i=0;i<count;i++) {
+        unsigned page=1+((i*4051UL)&(count-1));
+        assert(aspace_cow_fault(child,page*4096,ASPACE_PROT_WRITE)==1);
+        if (!(i&255)) {
+            assert(check_index(child->cow_root,0,(UQUAD)N*4096)==count-i-1);
+            assert(check_index(cow_frames,0,(UQUAD)N*4096)==count-i-1);
+        }
+    }
+    assert(!cow_frames);
+    aspace_destroy(child);
+    assert(!cow_frames && !cow_frame_count && !cow_reference_count && !live_pages);
+    printf("Indexed COW clone %u populated pages: %lu metadata visits, exact reclamation PASS\n",
+           count,(unsigned long)visits);
 }
 int main(void)
 {
@@ -165,6 +225,9 @@ int main(void)
     write_byte(kaspace_backend(two),4096+17,44);
     kaspace_put(two);
     assert(!cow_frame_count && !cow_reference_count && !live_pages && allocations==frees && flushes);
+    populated_clone(1024);
+    populated_clone(16384);
+    assert(allocations==frees);
     puts("Production COW metadata/refcount/rollback with modeled MMU: PASS");
     return 0;
 }
