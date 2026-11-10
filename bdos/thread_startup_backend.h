@@ -5,6 +5,9 @@ struct aspace;
 /* Backend-owned trusted bridge capability; no architecture type leaks into
  * the generic transaction or caller-provided startup arguments. */
 LONG thread_startup_arch_bridge_acquire(struct kaspace *space, void **bridge);
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_arch_bridge_acquire_cloned(struct kaspace *source, struct kaspace *space, void **bridge);
+#endif
 BOOL thread_startup_arch_bridge_valid(const void *bridge);
 VADDR thread_startup_arch_bridge_address(const void *bridge);
 void thread_startup_arch_bridge_release(void **bridge);

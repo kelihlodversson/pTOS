@@ -129,6 +129,9 @@ struct kproc {
     UBYTE clone_maps;
     void *clone_startup;
     PD *clone_controller_pd; /* pinned allocation, scheduler-root continuation */
+#if CONF_WITH_PRIVATE_CLONE
+    BOOL clone_controller_borrowed; /* independent-VM controller mapping */
+#endif
     UQUAD clone_controller_gen;
     KPROC *clone_controller_identity; /* owning if the root is tracked */
 #endif
@@ -579,6 +582,25 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     target->lim_data = source->lim_data;
     return TRUE;
 }
+#if CONF_WITH_PRIVATE_CLONE
+BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
+{
+    KPROC *peer;
+    if (!source || !source->active_space || !source->threads ||
+        !kproc_thread_is_sole(source, source->threads) || source->nheap || source->pending_space ||
+        source->give_back || source->lender || source->lost) return FALSE;
+    for (peer = kproc_list; peer; peer = peer->next)
+        if (peer != source && peer->active_space == source->active_space) return FALSE;
+    if (target) {
+        if (!kproc_clone_target_ready(target, NULL) || target->nheap) return FALSE;
+        target->stack_size = source->stack_size;
+        target->stack_low = source->stack_low;
+        target->stack_top = source->stack_top;
+        target->entry = source->entry;
+    }
+    return TRUE;
+}
+#endif
 
 KASPACE *kproc_active_space(const KPROC *process)
 {
@@ -714,6 +736,13 @@ failed:
 static void clone_drop_controller(KPROC *p)
 {
     if (p->clone_controller_pd) {
+#if CONF_WITH_PRIVATE_CLONE
+        if (p->clone_controller_borrowed) {
+            aspace_unborrow(kaspace_backend(p->clone_compat),
+                (VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD));
+            p->clone_controller_borrowed = FALSE;
+        }
+#endif
         procmem_pin((VADDR)(uintptr_t)p->clone_controller_pd, sizeof(PD), -1);
         p->clone_controller_pd = NULL;
         p->clone_controller_gen = 0;
@@ -763,6 +792,9 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
     VADDR page, end;
     KPROC *identity;
     UQUAD generation;
+#if CONF_WITH_PRIVATE_CLONE
+    BOOL missing = FALSE, present = FALSE;
+#endif
     if (!p || !p->clone_compat || p->clone_controller_pd || !controller ||
         !(generation = procmem_gen(controller)) ||
         !procmem_range_live((VADDR)(uintptr_t)controller, sizeof(PD))) return FALSE;
@@ -776,12 +808,30 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
     for (; page < end; page += USER_PAGE_SIZE) {
         PADDR physical;
         UWORD prot;
-        if (!aspace_translate(as, page, &physical, &prot) ||
-            physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
+        if (!aspace_translate(as, page, &physical, &prot)) {
+#if CONF_WITH_PRIVATE_CLONE
+            missing = TRUE; continue;
+#else
+            kproc_release(identity); return FALSE;
+#endif
+        }
+#if CONF_WITH_PRIVATE_CLONE
+        present = TRUE;
+#endif
+        if (physical != procmem_phys_of(page) || !(prot & ASPACE_PROT_WRITE)) {
             kproc_release(identity);
             return FALSE;
         }
     }
+#if CONF_WITH_PRIVATE_CLONE
+    if (missing) {
+        if (present || !p->parent_identity || kproc_active_space(p->parent_identity) == p->clone_compat ||
+            !aspace_borrow(as, (VADDR)(uintptr_t)controller, sizeof(PD))) {
+            kproc_release(identity); return FALSE;
+        }
+        p->clone_controller_borrowed = TRUE;
+    }
+#endif
     procmem_pin((VADDR)(uintptr_t)controller, sizeof(PD), +1);
     p->clone_controller_pd = controller;
     p->clone_controller_gen = generation;
@@ -2866,6 +2916,14 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
 #endif
     UWORD prot;
 
+#if CONF_WITH_PRIVATE_CLONE
+    /* Syscall copyout must split the same shared anonymous leaf as a user
+     * write fault, including image pages and already-dirtied file mappings. */
+    {
+        int rc = aspace_cow_fault(kproc->aspace, va, access);
+        if (rc >= 0) return rc;
+    }
+#endif
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_fault(kproc->active_space, va, access);
@@ -2891,6 +2949,12 @@ int kproc_demand_page(PD *pd, VADDR va, UWORD access)
 
     if (!kproc || !kproc->aspace)
         return 0;
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        int result = aspace_cow_fault(kproc->aspace, va, access);
+        if (result >= 0) return result;
+    }
+#endif
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_demand_page(kproc->active_space, va, access);
@@ -2949,6 +3013,10 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
         if (aspace_translate(kproc->aspace, page, NULL, &prot)) {
             if (!(prot & ASPACE_PROT_USER)) return FALSE;
             if (write && !(prot & ASPACE_PROT_WRITE)) {
+#if CONF_WITH_PRIVATE_CLONE
+                if (aspace_logical_protection(kproc->aspace, page, &prot) &&
+                    (prot & ASPACE_PROT_USER) && (prot & ASPACE_PROT_WRITE)) continue;
+#endif
 #if CONF_WITH_MMAP
                 if (aspace_file_cow(kproc->aspace, page) &&
                     kaspace_mmap_protection(kproc->active_space, page, &prot) &&
