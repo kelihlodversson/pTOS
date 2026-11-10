@@ -1893,7 +1893,9 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
               $(if $(filter y,$(CONF_WITH_NATIVE_SCHED)),-DTEST_WITH_NATIVE_SCHED) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC)),-DTEST_WITH_PROCESS_EXEC) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_TEST)),-DTEST_WITH_PROCESS_EXEC_TEST) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_DISPATCH)),-DTEST_WITH_PROCESS_EXEC_DISPATCH) \
               $(if $(filter y,$(CONF_WITH_PTHJOIN)),-DTEST_WITH_PTHJOIN) \
               $(if $(filter y,$(CONF_WITH_PTERMGRP)),-DTEST_WITH_PTERMGRP) \
               $(if $(filter y,$(CONF_WITH_CUIS)),-DTEST_WITH_CUIS) \
@@ -2174,7 +2176,7 @@ GROUPCH.TOS: $(TEST_STARTUP) obj/group_child.o $(LIBCMINI_LIB)
 TEST_GROUP_FILES = GROUPCH.TOS
 endif
 
-ifdef CONF_WITH_PROCESS_EXEC_TEST
+ifdef CONF_WITH_PROCESS_EXEC_DISPATCH
 obj/process_transport_child.o: tests/process_transport/child.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 PROCXIT.TOS: $(TEST_STARTUP) obj/process_transport_child.o $(LIBCMINI_LIB)

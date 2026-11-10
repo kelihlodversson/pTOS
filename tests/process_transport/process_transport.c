@@ -30,9 +30,14 @@ void test_process_transport(void);
 void test_process_transport(void)
 {
     ptest_begin("process_transport");
+#ifdef TEST_WITH_PROCESS_EXEC
+    ptest_assert_msg(Ssystem(-1,PROCEXEC,0L)==0,
+                     "production PROCESS transport must be advertised");
+#else
     ptest_assert_msg(Ssystem(-1,PROCEXEC,0L)==EINVFN,
                      "unpublished PROCESS transport must not be advertised");
-#ifndef TEST_WITH_PROCESS_EXEC_TEST
+#endif
+#ifndef TEST_WITH_PROCESS_EXEC_DISPATCH
     ptest_assert_msg(Ssystem(PROCEXEC,0L,72L)==EINVFN,
                      "normal/unsupported kernel exposed test-only PROCESS dispatch");
 #else

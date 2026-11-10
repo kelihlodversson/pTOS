@@ -10,16 +10,21 @@ import kconfiglib
 ROOT=Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
 os.environ['CONFIG_']=''
+subprocess.run([sys.executable,'tools/test-process-exec-gates.py'],check=True)
 # No shipped preset opts ordinary applications into this validation interface.
 for preset in sorted(Path('configs').glob('*_defconfig')):
     ordinary=kconfiglib.Kconfig(warn_to_stderr=False)
     ordinary.load_config(str(preset))
     assert ordinary.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n', str(preset)
+    assert ordinary.syms['CONF_WITH_PROCESS_EXEC'].str_value=='n', str(preset)
+    assert ordinary.syms['CONF_WITH_PROCESS_EXEC_DISPATCH'].str_value=='n', str(preset)
 for preset in ('atari256', 'pc-x86_64-eager'):
     unsupported=kconfiglib.Kconfig(warn_to_stderr=False)
     unsupported.load_config('configs/'+preset+'_defconfig')
     unsupported.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
     assert unsupported.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n'
+    assert unsupported.syms['CONF_WITH_PROCESS_EXEC'].str_value=='n'
+    assert unsupported.syms['CONF_WITH_PROCESS_EXEC_DISPATCH'].str_value=='n'
 with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     work=Path(directory)
     config=kconfiglib.Kconfig(warn_to_stderr=False)
@@ -29,6 +34,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     assert config.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n'
     config.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='y'
+    assert config.syms['CONF_WITH_PROCESS_EXEC'].str_value=='n'
+    assert config.syms['CONF_WITH_PROCESS_EXEC_DISPATCH'].str_value=='y'
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
