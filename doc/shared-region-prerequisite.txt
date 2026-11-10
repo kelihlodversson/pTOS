@@ -1,0 +1,106 @@
+Shared-ASPACE allocation retention: prerequisite handoff
+======================================================
+
+Status
+------
+Design and production-KASPACE policy fixtures only. No allocation-retention
+implementation, shared-Pexec capability or native acceptance is claimed.
+Integration base: epic 2ff82163b1f1fab0af3115be5ecb102f6004d4a3, after
+#933/#936/#943/#934/#932/#914/#940/#941/#937 integration. This is the focused
+#942 design/fixture increment, not a replay of those prerequisites. Public
+modes 4/104/200, Pfork/Pvfork and generic PRIVATE_VM remain disabled. Accepted
+constructor, COW and saved-return work does not establish allocation retention.
+
+Observed owner boundaries
+-------------------------
+include/procmem.h exposes a non-recycled allocation generation and size, but
+procmem_pin is void, increments every overlapping allocation, and does not
+authenticate an expected generation, exact extent, overflow or rights.
+bios/procmem.c procmem_shrink does not consult pins before truncating pages;
+its documented precondition is that callers already unmapped the tail.
+Thus a new Pexec pin cannot itself protect against destructive shrink.
+
+bdos/kaspace.c leases retain KASPACE and resident translations. Durable holds
+reject mapping changes; ordinary stack holds also require heap/anonymous
+reservations. A missing/lazy translation cannot be acquired. Heap blocks and
+mmap regions have no non-recycled reservation generation. These are mapping
+holds, not independently authenticated allocation ownership. #934's COW
+logical permission work does not supply these missing allocation identities.
+
+Narrow kernel-owner request
+---------------------------
+Original owner request: #936, comment 6747061203. R1-R4 remain missing in the
+integrated source. Names below are conceptual operations, not proposed callable
+symbols or an approved ABI; implementation requires its own linear assignment.
+
+R1 Acquire allocation hold: expected allocation identity/generation, exact
+   range, rights and retained canonical PROCESS association; one move-only
+   owner token. Validate extent arithmetic, lifetime and count saturation
+   before mutation. A PD pointer is never the retained owner.
+R2 Acquire reservation hold: cover live lazy/file-backed/image/env/stack
+   reservations using existing KASPACE/heap/mmap owners and non-recycled
+   identity. Do not fault lazy mappings merely to obtain an owner, substitute
+   a physical alias, or transfer COW pages through move_private.
+R3 Preflight mutation: reject free/shrink/unmap/protect/ownership transfer
+   which would violate any retained range BEFORE metadata, leaves or source
+   ownership change. Multi-region mutation must preflight its entire set.
+R4 Drop hold: invalidate the token once; finish allocation/physical reclamation
+   only after all allocation/mapping/stopped-continuation owners finish.
+   No final callback or destruction under scheduler/GUI/leaf exclusion.
+
+The generic owners supply these primitives. The Pexec consumer will not add an
+allocation registry, raw pin-count manipulation, page-table code or a second
+reaper. An existing operation is preferable if its owner confirms R1-R4.
+
+Pexec consumer transaction after owner agreement
+------------------------------------------------
+1. Authenticate source/target KPROC, staged image, sole execution policy and
+   root. Allocate bounded region-set storage before acquiring references.
+2. Describe image, basepage, environment and user-stack extents with rights.
+   Coalesce only when authoritative allocation identity and rights agree;
+   overlapping roles alone do not imply identical allocation ownership.
+3. Acquire one owner token per distinct required allocation/reservation plus
+   required mapping/continuation holds. Record the exact completed prefix.
+4. Prepare child identity, fresh startup state and completion through the
+   existing proc_clone transaction; revalidate all identities before commit.
+5. Publication is no-fail. Attach each region-set to its distinct KPROC.
+   xexec alone chooses synchronous wait (4) or PID return (104).
+6. On failure unwind only the completed prefix, outside leaf exclusion, retain
+   the original constructor error and leave staged/source ownership intact.
+7. On completion release only that PROCESS's set after stopped execution;
+   source PD destruction/reuse cannot invalidate an orphan's tokens.
+
+Acceptance and current evidence
+-------------------------------
+tests/kaspace_lease.c runs production generic KASPACE code with host mapping
+fixtures under x32, ARM and m68k configurations. Added cases distinguish two
+independently released mapping holds, failed child-hold acquisition preserving
+the first hold, and explicit rejection of absent/lazy pages without leakage.
+These are host policy checks, NOT native allocation-retention execution.
+
+Still blocked: native exit orders, orphan/PD reuse, generation authentication,
+Mfree/Munmap protection of all image/env/basepage/stack regions, lazy/file/COW
+conflicts, nested stopped continuations and failure after every region token.
+They require R1-R4; old native constructor/COW results cannot satisfy them.
+These fixtures do not establish native allocation retention, GUI capability
+or a new ABI. Compatibility and exact-head CI evidence is recorded separately
+in #942; historical prerequisite results do not establish this head's acceptance.
+
+Descriptor work while waiting
+-----------------------------
+#943 integrated the checked-reference stage A; #939 is closed/superseded.
+doc/checked-file-references.txt is the authoritative current owner contract.
+fs_reference_acquire authenticates the current PROCESS binding and expected
+SFT incarnation, acquiring one live staged reference. Its move-only owner is
+distinct from FS_CLEANUP_TOKEN, which represents a residual service reference.
+No allocation hold may be manufactured from either file-owner token.
+
+Stage B still requires a reversible descriptor mutation/snapshot admission and
+one coherent ALL-managed-PROCESS namespace. Resolve user-local numbers once;
+keep backend slots distinct. Do not reuse the retirement latch, exec_committing
+or a global mutex as descriptor admission/incarnation authentication. Replace
+legacy source-binding resolution through the filesystem owner's agreed hook;
+retain its checked acquire/close accounting. Never translate an internal
+FAT/PFS cookie twice or add a fork-only descriptor table. The published
+inheritance inventory/regression specification remains the migration input;
+no filesystem implementation or reference counters change in this increment.
