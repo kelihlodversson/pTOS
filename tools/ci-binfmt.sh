@@ -4,6 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 arch=${1:?usage: tools/ci-binfmt.sh arm|x32|m68k}
+layout=${2:-private}
+suffix=
 case $arch in
     arm)
         config=virt-arm-aspace; prefix=arm-none-eabi-; libc_config=ptos_arm_defconfig
@@ -18,6 +20,13 @@ case $arch in
         flags=-m68000; libs=-lgcc ;;
     *) echo "unknown architecture: $arch" >&2; exit 2 ;;
 esac
+if [ "$layout" = shared ] && [ "$arch" = arm ]; then
+    config=virt-arm-cli
+    suffix=-shared
+elif [ "$layout" != private ]; then
+    echo 'only ARM supports the optional shared layout' >&2
+    exit 2
+fi
 make "${config}_defconfig"
 CONFIG_= python3 - <<'PY'
 import kconfiglib
@@ -29,7 +38,7 @@ for key, value in (("CONF_WITH_BINFMT", 2), ("CONF_WITH_MMAP", 2),
 c.write_config()
 PY
 make CROSS_COMPILE="$prefix" -j4
-build=$PWD/obj/binfmt/$arch
+build=$PWD/obj/binfmt/$arch$suffix
 libc=$build/libcmini
 mkdir -p "$build"
 rm -rf "$libc"

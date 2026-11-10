@@ -132,11 +132,19 @@ static void reset(int kind)
 
 static LONG load(void)
 {
+    static char child_environment[BINFMT_ENV];
     BINFMT_LAUNCH launch;
     PGMHDR01 header;
     FH handle;
     LONG rc = binfmt_load_header("C:\\APP.TOS", "", "X=1\0", &header, &handle, &launch);
-    if (!rc) assert(xclose(handle) == 0);
+    if (!rc) {
+        char *path = child_environment + (launch.path - launch.environment);
+        memcpy(child_environment, launch.environment, sizeof(child_environment));
+        binfmt_release_environment(&launch);
+        assert(!strcmp(path, "A:\\INTERP.TOS") && launch.tail && !launch.environment);
+        assert(!strcmp(launch.tail + 1, "C:\\APP.TOS"));
+        assert(xclose(handle) == 0);
+    }
     binfmt_release(&launch);
     return rc;
 }

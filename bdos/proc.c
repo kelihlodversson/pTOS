@@ -663,14 +663,22 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* allocate the environment first, depending on memory policy */
     env_ptr = alloc_env(hdr.h01_flags, env);
-#if CONF_WITH_BINFMT
-    binfmt_release(&interpreter);
-#endif
     if (env_ptr == NULL) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         KDEBUG(("BDOS xexec: no memory for environment\n"));
         xclose(fh);
         return ENSMEM;
     }
+#if CONF_WITH_BINFMT
+    if (interpreter.environment) {
+        /* The final interpreter name is argv[0] in the generated environment.
+         * Use its owned child copy after freeing the temporary argument arena. */
+        path = env_ptr + (interpreter.path - interpreter.environment);
+        binfmt_release_environment(&interpreter);
+    }
+#endif
 
     /* allocate the basepage depending on memory policy */
     needed = hdr.h01_tlen + hdr.h01_dlen + hdr.h01_blen + sizeof(PD);
@@ -696,6 +704,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* if failed, free env_ptr and return */
     if (p == NULL) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         KDEBUG(("BDOS xexec: no memory for TPA\n"));
         xexec_free(env_ptr);
         xclose(fh);
@@ -715,6 +726,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
+#if CONF_WITH_BINFMT
+    binfmt_release(&interpreter);       /* tail is now part of the basepage */
+#endif
     if (!kproc_create(p)) {
         xexec_free(env_ptr);
         xexec_free(p);

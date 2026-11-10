@@ -130,10 +130,18 @@ static BOOL same_path(const char *a, const char *b)
     }
 }
 
-void binfmt_release(BINFMT_LAUNCH *launch)
+void binfmt_release_environment(BINFMT_LAUNCH *launch)
 {
     release(launch->environment);
     launch->environment = NULL;
+    launch->path = NULL;
+}
+
+void binfmt_release(BINFMT_LAUNCH *launch)
+{
+    binfmt_release_environment(launch);
+    release(launch->tail);
+    launch->tail = NULL;
 }
 
 LONG binfmt_load_header(char *path, char *tail, char *environment,
@@ -166,15 +174,23 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         for (i = 0; i <= depth; i++)
             if (same_path(work->selection.interpreter, work->visited[i])) break;
         if (i <= depth) { rc = EPLFMT; break; }
+        if (!launch->tail) {
+            launch->tail = allocate(128);
+            if (!launch->tail) { rc = ENSMEM; break; }
+        }
         {
             char *next = allocate(BINFMT_ENV_WORK);
+            char *argv;
             if (!next) { rc = ENSMEM; break; }
             rc = binfmt_arguments(environment, tail, &work->selection, path, next, launch->tail);
             if (rc) { release(next); break; }
-            binfmt_release(launch);
+            binfmt_release_environment(launch);
             launch->environment = next;
+            /* The builder always supplies canonical ARGV followed by argv[0].
+             * Keep the pathname there so alloc_env() copies it for the loader. */
+            for (argv = next; *argv && strncmp(argv, "ARGV=", 5); argv += strlen(argv) + 1);
+            launch->path = argv + strlen(argv) + 1;
         }
-        strcpy(launch->path, work->selection.interpreter);
         path = launch->path; tail = launch->tail; environment = launch->environment;
         strcpy(work->visited[++depth], path);
     }

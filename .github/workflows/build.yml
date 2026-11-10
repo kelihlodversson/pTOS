@@ -311,15 +311,17 @@ jobs:
 
       - name: Run native executable-handler boot tests
         if: ${{ !cancelled() }}
-        run: tools/ci-binfmt.sh '${{ matrix.arch }}'
+        run: |
+          tools/ci-binfmt.sh '${{ matrix.arch }}'
+          if [ '${{ matrix.arch }}' = arm ]; then tools/ci-binfmt.sh arm shared; fi
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: binfmt-${{ matrix.arch }}
           path: |
-            obj/binfmt/${{ matrix.arch }}/*.log
-            obj/binfmt/${{ matrix.arch }}/test.json
+            obj/binfmt/${{ matrix.arch }}*/*.log
+            obj/binfmt/${{ matrix.arch }}*/test.json
           retention-days: 14
 
   pmmu-check:

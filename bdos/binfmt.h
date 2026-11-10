@@ -65,15 +65,15 @@ LONG binfmt_arguments(const char *environment, const char *tail,
                       const BINFMT_SELECTION *selection, const char *program,
                       char *storage, char output_tail[128]);
 
-/* Kernel integration. Temporary environment storage is released immediately
- * after alloc_env(), before entering any non-returning launch path. */
+/* Kernel integration. Path points to argv[0] inside the generated environment.
+ * The caller rebases it into the child's environment copy before releasing
+ * that storage; the separate tail is released after copying the basepage. */
 typedef struct {
-    char path[BINFMT_INTERPRETER];
-    char tail[128];
-    char *environment;
+    char *path, *tail, *environment;
 } BINFMT_LAUNCH;
 
 void binfmt_boot_init(void);
+void binfmt_release_environment(BINFMT_LAUNCH *launch);
 void binfmt_release(BINFMT_LAUNCH *launch);
 
 #endif

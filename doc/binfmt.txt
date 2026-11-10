@@ -118,6 +118,8 @@ Long, quoted or empty-argument command lines use the 127 ARGV marker; the enviro
 contains every argument in full. An environment/argument overflow fails with
 ERANGE; no argument is silently dropped. Temporary kernel buffers are freed
 after copying the child environment, before a non-returning architecture launch.
+Per-launch path/tail state stays off the small legacy filesystem stacks; the
+tail is released after copying the basepage and before native ELF relocation.
 
 Implementation limits
 ---------------------
@@ -158,6 +160,7 @@ drive/error across cleanup before re-entering GEMDOS's media-change recovery.
 Boot a small ordinary native interpreter, independently of Paratos:
 
     tools/ci-binfmt.sh arm
+    tools/ci-binfmt.sh arm shared
     tools/ci-binfmt.sh x32
     tools/ci-binfmt.sh m68k
 
