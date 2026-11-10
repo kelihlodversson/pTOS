@@ -21,6 +21,7 @@ static UBYTE image_area[sizeof(PD)+16] __attribute__((aligned(16)));
 #define image (*(PD *)image_area)
 static char environment[128];
 static const void *owners[2];
+void panic(const char *format, ...) { fprintf(stderr,"panic: %s\n",format); abort(); }
 static SBYTE parent_files[NUMSTD], child_files[NUMSTD];
 static UBYTE parent_dirs[NUMCURDIR], child_dirs[NUMCURDIR];
 static unsigned allocations, records, disposals, attempts, interrupted;

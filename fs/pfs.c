@@ -767,6 +767,9 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     if (i == OPNFILES)
         return ENHNDL;
 
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_claim(i)) return ENHNDL;
+#endif
     sft[i].f_own = run;
     sft[i].f_use = 1;
     sft[i].f_ofd = NULL;
