@@ -422,26 +422,13 @@ static void release_pd_files(PD *r)
 #endif
         }
 
-    /* decrement usage counts for current directories */
-
+#if CONF_WITH_PLUGGABLE_FS
+    /* These indices belong exclusively to PFS, not the legacy dirtbl. */
+    pfs_proc_exit(r);
+#else
     for (i = 0; i < NUMCURDIR; i++)
-    {
         if ((h = PD_CURDIR(r)[i]) != 0)
             decr_curdir_usage(h);
-    }
-
-#if CONF_WITH_PLUGGABLE_FS
-    /*
-     * p_curdir[] above indexes fs/pfs.c's own directory table instead of
-     * dirtbl[] for a pluggable drive - decr_curdir_usage() is harmless
-     * either way (it no-ops below NCURDIR's dirtbl[] range and dirtbl[]
-     * stays empty for the lifetime of a pluggable-fs build, since
-     * nothing calls incr_curdir_usage() once this option is on), but the
-     * pluggable table still needs its own matching cleanup so its slots
-     * (and any open Fsfirst/Fsnext searches this process owned) don't
-     * leak.
-     */
-    pfs_proc_exit(r);
 #endif
 #if CONF_WITH_USER_ASPACE
     /* Inherited aliases and service-owned residual references reserve their
@@ -1018,15 +1005,10 @@ static void init_pd_cwd_from(PD *p, PD *source)
     for (i = 0; i < NUMCURDIR; i++) {
         int dn = PD_CURDIR(source)[i];
         PD_CURDIR(p)[i] = dn;
-        if (dn)
-            dirtbl[dn].use++;
 #if CONF_WITH_PLUGGABLE_FS
-        /* p_curdir[] indexes fs/pfs.c's own table instead when this
-         * option is on (see the comment above PFS_MAX_CWD in fs/pfs.c);
-         * the dirtbl[] bump above is harmless but meaningless in that
-         * case, so also bump the table actually in use. */
-        if (dn)
-            pfs_cwd_addref((WORD)dn);
+        if (dn) pfs_cwd_addref((WORD)dn);
+#else
+        if (dn) dirtbl[dn].use++;
 #endif
     }
 

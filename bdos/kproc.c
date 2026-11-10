@@ -3661,13 +3661,20 @@ BOOL kproc_validate_user_exec(VADDR address)
     KPROC *kproc = kproc_find(run);
     PADDR phys;
     UWORD prot, logical;
+    BOOL known = FALSE;
 
     if (!kproc || !kproc->aspace || address >= USER_VA_LIMIT) return FALSE;
     /* Hardware without NX reports all readable leaves executable. A known
      * heap/mmap reservation must still authorize entry logically, even when
      * its page is already resident. Hardware checks below remain mandatory. */
-    if (lazy_area(kproc, address & ~(USER_PAGE_SIZE - 1), &logical) &&
-        (logical & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) !=
+#if CONF_WITH_MMAP
+    known = kaspace_mmap_protection(kproc->active_space, address, &logical);
+#endif
+    if (!known && kaspace_heap_contains(kproc->active_space, address)) {
+        logical = ASPACE_PROT_USER | ASPACE_PROT_WRITE; known = TRUE;
+    }
+    if (!known) known = lazy_area(kproc, address & ~(USER_PAGE_SIZE - 1), &logical);
+    if (known && (logical & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) !=
         (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) return FALSE;
     if (!aspace_translate(kproc->aspace, address, &phys, &prot) &&
         !lazy_area(kproc, address & ~(USER_PAGE_SIZE - 1), &prot)) return FALSE;

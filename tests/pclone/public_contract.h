@@ -107,13 +107,9 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
     ptest_assert_msg(file >= 6,"resource-copy fixture file");
     if (file < 6) { (void)Fclose(saved); return; }
     ptest_assert_msg(Dsetpath("C:\\TESTS") == 0 &&
-                     Dgetpath(phase1_parent_path,3) == 0 && Fwrite(file,2,"AB") == 2 &&
+                     Dgetpath(phase1_parent_path,3) == 0 && phase1_parent_path[0] && Fwrite(file,2,"AB") == 2 &&
                      Fseek(0,file,0) == 0 && Fforce(0,file) == 0,
                      "prepare independent standard-handle and CWD policy");
-    {
-        char message[192]; long cwd = Dgetcwd(phase1_child_path,3,sizeof(phase1_child_path));
-        sprintf(message,"ABI initial CWD legacy=%s generic=%s rc=%ld\r\n",phase1_parent_path,phase1_child_path,cwd); conws(message);
-    }
     good.child_pid = &pid; good.child_tid = &tid;
     for (bits = 0; bits < 4; bits++) {
         good.flags = CLONE_VM | (bits << 2);
