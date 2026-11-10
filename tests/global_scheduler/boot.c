@@ -33,13 +33,14 @@ static void write_log(void)
 }
 int main(void)
 {
-    long pid,fd,start,loaded,result;
+    long pid,fd,loaded,result;
+    unsigned long start;
     char tail[]={0,0};
     if(_base->p_cmdlin[0] && _base->p_cmdlin[1]=='w') { Pterm(23); return 99; }
     if(_base->p_cmdlin[0] && _base->p_cmdlin[1]=='n') { (void)Syield(); (void)Syield(); Pterm(19); return 99; }
     if(_base->p_cmdlin[0] && _base->p_cmdlin[1]=='g') {
-        start=Ssystem(2,0x4baL,0L);
-        do { read_log(); if(!data[5]) (void)Syield(); REQUIRE((unsigned long)(Ssystem(2,0x4baL,0L)-start)<1000,28); } while(!data[5]);
+        start=Ssystem(S_GETLVAL,0x4baL,0L);
+        do { read_log(); if(!data[5]) (void)Syield(); REQUIRE(((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start)<1000UL,28); } while(!data[5]);
         Pterm(29); return 99;
     }
     if(role==3) {
@@ -57,8 +58,8 @@ int main(void)
         read_log(); REQUIRE(data[3]==2 && data[1]!=Pgetpid(),8);
         /* No allocator-order assumption about this independent launcher. */
         data[7]=Pgetpid(); data[5]=1; write_log();
-        start=Ssystem(2,0x4baL,0L);
-        do { (void)Syield(); read_log(); REQUIRE((unsigned long)(Ssystem(2,0x4baL,0L)-start)<1000,10); } while(data[3]!=4);
+        start=Ssystem(S_GETLVAL,0x4baL,0L);
+        do { (void)Syield(); read_log(); REQUIRE(((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start)<1000UL,10); } while(data[3]!=4);
         REQUIRE(Pwaitpid((short)data[2],1,0)==-33L,11); /* orphan is not this PROCESS's zombie */
         /* The existing authoritative wait handles both early and late completion. */
         tail[0]=1; tail[1]='w';
@@ -95,8 +96,8 @@ int main(void)
     pid=Pexec(100,"C:\\GLOBALCH.TOS",tail,0); REQUIRE(pid>0,29);
     result=Pwaitpid((short)pid,0,0);
     REQUIRE((unsigned long)result==((unsigned long)pid<<16|29),30);
-    start=Ssystem(2,0x4baL,0L);
-    do { read_log(); if(!data[5]) (void)Syield(); REQUIRE((unsigned long)(Ssystem(2,0x4baL,0L)-start)<1000,20); } while(!data[5]);
+    start=Ssystem(S_GETLVAL,0x4baL,0L);
+    do { read_log(); if(!data[5]) (void)Syield(); REQUIRE(((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start)<1000UL,20); } while(!data[5]);
     data[3]=3; write_log();
     tail[0]=1; tail[1]='n';
     REQUIRE(Pexec(0,"C:\\GLOBALCH.TOS",tail,0)==19,21); /* nested launcher with global peers */

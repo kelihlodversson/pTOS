@@ -5,6 +5,8 @@ This is source-level/host evidence, not native IRQ or scheduling execution.
 """
 from pathlib import Path
 import re
+import os
+import shlex
 import subprocess
 import tempfile
 
@@ -73,3 +75,23 @@ with tempfile.TemporaryDirectory(prefix='ptos-memtest-probes-') as directory:
             result = subprocess.run(['sh', '-ec', 'log=$1\n' + block, 'probe', str(log)], cwd=top)
             assert (result.returncode != 0) == bool(required and missing), (enabled, missing, result.returncode)
 print('Production MEMTEST guards: 96 fixture/marker cases, enabled missing evidence still fails: PASS (host shell)')
+
+# Compile the real AUTO user program with bounded hosted endpoints. The
+# previous OS-version selector never advances and trips the yield limit.
+with tempfile.TemporaryDirectory(prefix='ptos-scheduler-clock-') as directory:
+    top = Path(directory)
+    (top / 'mint').mkdir()
+    (top / 'mint/basepage.h').write_text('typedef struct { unsigned char p_cmdlin[128]; void *p_env; } BASEPAGE;\nextern BASEPAGE *_base;\n')
+    (top / 'mint/osbind.h').write_text("""long Fopen(const char *,short); long Fcreate(const char *,short);
+long Fread(long,long,void *); long Fwrite(long,long,const void *); long Fclose(long);
+long Cconws(const char *); long Cconout(short); void Pterm(short);
+long Pexec(short,const char *,const void *,const void *); long Mfree(void *);
+""")
+    (top / 'mint/mintbind.h').write_text("""#define S_GETLVAL 0x000a
+long Ssystem(short,long,long); long Syield(void); long Pgetpid(void); long Pgetppid(void);
+long Pwaitpid(short,short,long);
+""")
+    command = shlex.split(os.environ.get('HOSTCC', 'cc')) + ['-std=gnu90', '-O2', '-Wall', '-Wextra', '-Werror',
+              '-I' + str(top), str(root / 'tests/global_scheduler/clock.c'), '-o', str(top / 'clock')]
+    subprocess.run(command, check=True)
+    subprocess.run([str(top / 'clock')], check=True)
