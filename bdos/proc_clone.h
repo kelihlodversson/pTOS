@@ -140,7 +140,7 @@ void proc_clone_release(PROC_CLONE_RESULT *result);
  * retained identity plus disposal obligation. Unknown policies fail EINVAL. */
 LONG proc_create_clone_process(struct kproc *source, UWORD resources, struct kproc **result);
 
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
 /* Inject failure after source, target, VM, THREAD, or owned-observer identity acquisition (1..5). */
 void proc_clone_test_fail_after(UWORD stage);
 void proc_clone_test_cancel_publication(void);

@@ -9,17 +9,18 @@
 #include "clone_args.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "proc_clone.h"
+#include "ksched.h"
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "kthread.h"
-#include "ksched.h"
 #include "procmem.h"
 #endif
 #endif
 
 static int clone_copy(void *context, uint64_t address, void *dst, uint32_t size)
 {
-    (void)context;
-    return kproc_copy_from_user(dst, (VADDR)address, size);
+    LONG *error = context;
+    *error = kproc_copy_from_user_checked(dst, (VADDR)address, size);
+    return *error == E_OK;
 }
 
 static int clone_access(void *context, uintptr_t address, uint32_t size, int kind)
@@ -30,10 +31,11 @@ static int clone_access(void *context, uintptr_t address, uint32_t size, int kin
 }
 #endif
 
-long xclone(uint64_t address, uint64_t size)
+static long clone_request(uint64_t address, uint64_t size)
 {
 #if CONF_WITH_USER_ASPACE
     CLONE_ARGS args;
+    LONG copy_error = E_OK;
     enum clone_copy_result copied;
     enum clone_validate_result valid;
     static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
@@ -58,6 +60,15 @@ long xclone(uint64_t address, uint64_t size)
                 if (size == 0xc8920300ULL || size == 0xc8920301ULL) {
                     aspace_cow_test_fail_allocation(size == 0xc8920301ULL); value = E_OK;
                 }
+                if (size >= 0xc8920400ULL && size <= 0xc8920405ULL) {
+                    proc_clone_test_fail_after((UWORD)(size & 255)); value = E_OK;
+                }
+                if (size >= 0xc8920500ULL && size <= 0xc8920505ULL) {
+                    proc_clone_factory_test_fail_after((UWORD)(size & 255)); value = E_OK;
+                }
+                if (size == 0xc8920600ULL) {
+                    proc_clone_test_cancel_publication(); value = E_OK;
+                }
                 kproc_release(source);
             }
             return value;
@@ -65,9 +76,9 @@ long xclone(uint64_t address, uint64_t size)
         private_test = TRUE; size &= 0xffff;
     }
 #endif
-    copied = clone_copy_v1(&args, address, size, clone_copy, NULL);
+    copied = clone_copy_v1(&args, address, size, clone_copy, &copy_error);
     if (copied == CLONE_COPY_BAD_SIZE) return EINVAL;
-    if (copied != CLONE_COPY_OK) return EIMBA;
+    if (copied != CLONE_COPY_OK) return copy_error != E_OK ? copy_error : EIMBA;
     valid = clone_validate_v1(&args, &abi, clone_access, NULL);
     if (valid == CLONE_INVALID) return EINVAL;
     if (valid != CLONE_VALID) return EIMBA;
@@ -111,4 +122,20 @@ long xclone(uint64_t address, uint64_t size)
 #endif
     /* Configurations without the native execution backend remain unsupported. */
     return EINVFN;
+}
+
+long xclone(uint64_t address, uint64_t size)
+{
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope = { 0 };
+    LONG result;
+    /* Factory rollback may release files and yield. Keep local transactions
+     * alive until cleanup ends; osif owns the later cancellation checkpoint. */
+    ksched_cleanup_begin(&scope);
+    result = clone_request(address, size);
+    ksched_cleanup_end(&scope);
+    return result;
+#else
+    return clone_request(address, size);
+#endif
 }

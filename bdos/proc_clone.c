@@ -39,7 +39,7 @@ struct proc_clone_transaction {
     BOOL asynchronous;
 };
 
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
 static UWORD fail_stage;
 static BOOL cancel_publication;
 void proc_clone_test_cancel_publication(void) { cancel_publication = TRUE; }
@@ -602,7 +602,7 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     }
     error = thread_startup_seal(tx->startup);
     if (error) { ksched_clone_end(&guard); goto failed; }
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
     if (cancel_publication) {
         cancel_publication = FALSE;
         ksched_clone_end(&guard);
@@ -653,7 +653,7 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
         kproc_active_space(tx->source) != tx->source_space) { error = EACCDN; goto failed; }
     error = thread_startup_seal(startup);
     if (error) goto failed;
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
     if (cancel_publication) {
         cancel_publication = FALSE;
         ksched_task_cancel(&slot);

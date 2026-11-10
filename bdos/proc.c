@@ -1041,7 +1041,7 @@ static void init_pd_files(PD *p)
 }
 
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
 static UWORD clone_factory_fail_stage;
 void proc_clone_factory_test_fail_after(UWORD stage) { clone_factory_fail_stage = stage; }
 static BOOL clone_factory_injected(UWORD stage)

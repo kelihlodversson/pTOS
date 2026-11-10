@@ -2,6 +2,7 @@
 #include "test.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
+#include "../../include/mman.h"
 #include <mint/osbind.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +10,7 @@
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
 
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+#if defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)
 static long pclone_trap(const void *args, unsigned long size)
 {
 #if defined(__mc68000__)
@@ -34,17 +35,9 @@ static long pclone_trap(const void *args, unsigned long size)
     return trap_1_wll(GEMDOS_PCLONE,(long)args,(long)size);
 #endif
 }
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-static volatile struct {
-    long parent, tid, root, mode;
-    unsigned long cell;
-    unsigned char *heap, *mapping, *filemap;
-} private_probe;
-static unsigned char private_copyout[32] __attribute__((aligned(4096)));
-static struct { int32_t pid, tid; } private_outputs __attribute__((aligned(4096)));
-static void private_shared_entry(void *argument) { (void)argument; (void)Pterm(75); }
-static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
-static long private_sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE)
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) || defined(TEST_WITH_MMAP)
+static long clone_test_sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
 {
 #if defined(__mc68000__)
     register long d0 __asm__("d0");
@@ -100,6 +93,17 @@ static long private_sys6(long fn, long a1, long a2, long a3, long a4, long a5, l
 #endif
 }
 
+#endif
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+static volatile struct {
+    long parent, tid, root, mode;
+    unsigned long cell;
+    unsigned char *heap, *mapping, *filemap;
+} private_probe;
+static unsigned char private_copyout[32] __attribute__((aligned(4096)));
+static struct { int32_t pid, tid; } private_outputs __attribute__((aligned(4096)));
+static void private_shared_entry(void *argument) { (void)argument; (void)Pterm(75); }
+static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
 static void private_entry(void *argument)
 {
     volatile unsigned long local=0x5a5aa5a5UL;
@@ -177,7 +181,7 @@ static void test_private_aspace(void)
     private_probe.parent=Pgetpid();private_probe.tid=private_query(3);private_probe.root=private_query(0);
     private_probe.heap=(unsigned char *)heap;
 #ifdef TEST_WITH_MMAP
-    mapping=private_sys6(0x17e,0,8192,3,0x22,-1,0);
+    mapping=clone_test_sys6(0x17e,0,8192,3,0x22,-1,0);
     ptest_assert_msg(mapping>0,"private anonymous mmap reservation");
 #endif
     private_probe.mapping=mapping>0?(unsigned char *)mapping:0;
@@ -189,7 +193,7 @@ static void test_private_aspace(void)
         if (data && handle>=0) {
             memset(data,0,8192); memset(data+64,0xa5,32); data[11]=0x35;data[4096+13]=0x46;
             ptest_assert_msg(Fwrite(handle,8192,data)==8192,"private file fixture contents");
-            filemap=private_sys6(0x17e,0,8192,3,2,handle,0);
+            filemap=clone_test_sys6(0x17e,0,8192,3,2,handle,0);
             ptest_assert_msg(filemap>0,"private file mapping reservation");
         }
         if (handle>=0) (void)Fclose(handle);
@@ -275,8 +279,8 @@ static void test_private_aspace(void)
         ptest_assert_msg(Pwaitpid(child,1,0)<0 && private_probe.heap[17]==0x31 &&
                          private_probe.cell==0x11223344UL,"COW failure leaves parent mapping/data valid");
     }
-    if(mapping>0)ptest_assert_msg(private_sys6(0x17f,mapping,8192,0,0,0,0)==0,"private mmap cleanup");
-    if(filemap>0)ptest_assert_msg(private_sys6(0x17f,filemap,8192,0,0,0,0)==0,"private file mapping cleanup");
+    if(mapping>0)ptest_assert_msg(clone_test_sys6(0x17f,mapping,8192,0,0,0,0)==0,"private mmap cleanup");
+    if(filemap>0)ptest_assert_msg(clone_test_sys6(0x17f,filemap,8192,0,0,0,0)==0,"private file mapping cleanup");
 #ifdef TEST_WITH_MMAP
     ptest_assert_msg(Fdelete("COWFILE.TMP")==0,"private backing fixture closes exactly once");
 #endif
@@ -287,6 +291,7 @@ static void test_private_aspace(void)
 #endif
 static volatile int entry_ran;
 static void child_entry(void *argument) { (void)argument; entry_ran = 1; }
+#endif
 #endif
 
 #if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
@@ -1387,6 +1392,8 @@ static void test_group_exit(void)
     for (i=0;i<5;i++) (void)Fdelete(files[i]);
 }
 #endif
+#include "public_contract.h"
+
 static void test_runnable(void)
 {
     int mode, cycle;
@@ -1408,6 +1415,7 @@ static void test_runnable(void)
     has_fpu = 0;
 #endif
     probe.parent = Pgetpid();
+    test_public_contract(runnable_stacks[0]);
     for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 3; mode++) {
         probe.steps = probe.error = 0; probe.mode = mode;
         pid = tid = -99;
@@ -1471,14 +1479,14 @@ static void test_runnable(void)
         extended.args.stack_base = runnable_stacks[0];
         extended.args.stack_size = RUNNABLE_STACK_SIZE;
         extended.args.child_tid = &tid; extended.args.child_pid = &pid;
-        for (size = 28; size <= 36; size += 8) {
+        for (size = 28; size <= 36; size++) {
             probe.steps = probe.error = 0; probe.mode = 0;
             pid = tid = -99;
             result = pclone_trap(&extended,size);
-            ptest_assert_msg(result > 0 && tid == result && (size == 28 ? pid == -99 : pid > 0),
+            ptest_assert_msg(result > 0 && tid == result && (size < 32 ? pid == -99 : pid > 0),
                              "native prefix and append-only publication contract");
             if (result > 0) {
-                waited = Pwaitpid(size == 28 ? -1 : pid,0,0);
+                waited = Pwaitpid(size < 32 ? -1 : pid,0,0);
                 ptest_assert_msg(waited > 0 && !(waited & 65535) && probe.steps == 12 && !probe.error,
                                  "append-only clone executes and waits");
             }
@@ -1499,6 +1507,28 @@ static void test_runnable(void)
         ptest_assert_msg(Mfree(runnable_stacks[cycle]) == 0,"clone stack hold released after root reap");
     ptest_assert_msg(Prusage(usage) == 0 && usage[4] == baseline_pages,
                      "native mapped-page accounting returns to baseline");
+}
+void pclone_run_unmanaged_tests(void);
+void pclone_run_unmanaged_tests(void)
+{
+    struct ptos_clone_args args = {0};
+    int32_t pid = 0x12345678, tid = 0x23456789;
+    long stack = Malloc(8192), parent = Pgetpid();
+    ptest_begin("Pclone nested unmanaged context");
+    ptest_assert_msg(stack > 0,"allocate valid unmanaged request stack");
+    if (stack > 0) {
+        args.entry = child_entry; args.stack_base = (void *)stack;
+        args.stack_size = 8192; args.child_pid = &pid; args.child_tid = &tid;
+        args.flags = CLONE_VM;
+        ptest_assert_msg(pclone_trap(&args,32) == -32L,"unmanaged NEW_PROCESS request fails EINVFN");
+        args.flags |= CLONE_SAME_PROCESS;
+        ptest_assert_msg(pclone_trap(&args,32) == -32L,"unmanaged SAME_PROCESS request fails EINVFN");
+        ptest_assert_msg(!entry_ran && pid == 0x12345678 && tid == 0x23456789 &&
+                         Pgetpid() == parent && Pwaitpid(-1,1,0) == -33L,
+                         "unsupported context preserves identity/outputs and publishes nothing");
+        ptest_assert_msg(Mfree((void *)stack) == 0,"unmanaged failure leaves no stack hold");
+    }
+    ptest_pass();
 }
 void pclone_run_managed_tests(void);
 void pclone_run_managed_tests(void)
@@ -1543,6 +1573,10 @@ void test_pclone(void);
 void test_pclone(void)
 {
     ptest_begin("pclone");
+#if (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)) && (!defined(TEST_WITH_PCLONE) || !defined(TEST_WITH_USER_ASPACE))
+    ptest_assert_msg(pclone_trap((void *)0x80001000UL,32) == -32L,
+                     "disabled/non-MMU Pclone fails before reading invalid user input");
+#endif
     /* These no-argument calls must fail before creating a child or blocking
      * the parent until saved-context/private-VM/exec-detach support exists.
      * Exercise the actual native trap and signed error result repeatedly. */
@@ -1575,7 +1609,7 @@ void test_pclone(void)
         ptest_assert_msg(pclone_trap(&args,0xffffffffUL) == -40L,"negative-looking size must not wrap");
 #ifndef TEST_WITH_NATIVE_SCHED
         args.flags = CLONE_VM;
-        ptest_assert_msg(pclone_trap(&args,28) == -32L,"shared VM backend remains unavailable on this architecture");
+        ptest_assert_msg(pclone_trap(&args,28) == -32L,"unmanaged context cannot publish shared-VM clone");
         args.flags = CLONE_VM | CLONE_SAME_PROCESS;
         ptest_assert_msg(pclone_trap(&args,32) == -32L,"same-process startup remains unavailable");
 #endif
