@@ -647,7 +647,13 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     elf_set_load_into_caller(flag == PE_LOAD);
 #endif
 #if CONF_WITH_BINFMT
-    rc = binfmt_load_header(path, tail, env ? env : (char *)USERPTR_TO_PTR(run->p_env), &hdr, &fh, &interpreter);
+    rc = binfmt_load_header(path, tail, env ? env : (char *)USERPTR_TO_PTR(run->p_env), &hdr, &fh, &interpreter,
+#if CONF_WITH_CUIS
+                           directory != NULL
+#else
+                           FALSE
+#endif
+                           );
     if (!rc && interpreter.environment) {
         path = interpreter.path;
         tail = interpreter.tail;

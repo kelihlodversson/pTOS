@@ -14,13 +14,15 @@ jmp_buf errbuf;
 long errcode, rwerr;
 int errdrv;
 WORD bootdev = 2;
+static PD parent;
+PD *run = &parent;
 
 static const char config[] = "[binfmt.test]\nmagic=4d46\ninterpreter=A:/INTERP.TOS\n";
 static const UBYTE foreign[] = "MFpayload", native[] = "\177ELFpayload";
 static struct { const UBYTE *data; long size, at; int kind; BOOL open; } files[16];
 static int allocations, handles, interpreter_opens, source_opens, scenario;
 static BOOL interrupted, changed;
-enum { NORMAL, CLOSE_PROBE, CLOSE_PREFIX, MEDIA_LOOKUP, READ_THEN_CLOSE, CLOSE_FORMAT };
+enum { NORMAL, CLOSE_PROBE, CLOSE_PREFIX, MEDIA_LOOKUP, READ_THEN_CLOSE, CLOSE_FORMAT, CWD_ERROR };
 
 static void disk_error(long code, int drive)
 {
@@ -67,7 +69,8 @@ long xopen(char *path, WORD mode)
     int h, kind;
     assert(mode == 0);
     if (!strcmp(path, "C:\\PTOS.INI")) { data = (const UBYTE *)config; size = sizeof(config) - 1; kind = 0; }
-    else if (!strcmp(path, "C:\\APP.TOS")) {
+    else if (!strcmp(path, "C:\\APP.TOS") || !strcmp(path, "APP.TOS") ||
+             !strcmp(path, "\\APP.TOS") || !strcmp(path, "D:APP.TOS") || !strcmp(path, "D:\\APP.TOS")) {
         data = foreign; size = sizeof(foreign) - 1; kind = 1; source_opens++;
     } else if (!strcmp(path, "A:\\INTERP.TOS")) {
         interpreter_opens++;
@@ -122,6 +125,14 @@ long xlseek(LONG offset, WORD handle, WORD mode)
     return offset;
 }
 
+long xgetdir(char *out, WORD drive)
+{
+    assert(drive == 3 || drive == 4);
+    if (scenario == CWD_ERROR) disk_error(E_CHNG, drive - 1);
+    strcpy(out, "\\SUB");
+    return E_OK;
+}
+
 static void reset(int kind)
 {
     assert(!allocations && !handles);
@@ -130,30 +141,36 @@ static void reset(int kind)
     errcode = rwerr = 0; errdrv = -1;
 }
 
-static LONG load(void)
+static LONG load_file(const char *name, BOOL qualify, const char *expected)
 {
     static char child_environment[BINFMT_ENV];
     BINFMT_LAUNCH launch;
     PGMHDR01 header;
     FH handle;
-    LONG rc = binfmt_load_header("C:\\APP.TOS", "", "X=1\0", &header, &handle, &launch);
+    LONG rc = binfmt_load_header((char *)name, "", "X=1\0", &header, &handle, &launch, qualify);
     if (!rc) {
         char *path = child_environment + (launch.path - launch.environment);
         memcpy(child_environment, launch.environment, sizeof(child_environment));
         binfmt_release_environment(&launch);
         assert(!strcmp(path, "A:\\INTERP.TOS") && launch.tail && !launch.environment);
-        assert(!strcmp(launch.tail + 1, "C:\\APP.TOS"));
+        assert(!strcmp(launch.tail + 1, expected));
         assert(xclose(handle) == 0);
     }
     binfmt_release(&launch);
     return rc;
 }
 
+static LONG load(void)
+{
+    return load_file("C:\\APP.TOS", FALSE, "C:\\APP.TOS");
+}
+
 static void failure(int kind, long code, int drive, int opens)
 {
     reset(kind);
     if (!setjmp(errbuf)) {
-        (void)load();
+        if (kind == CWD_ERROR) (void)load_file("APP.TOS", TRUE, "C:\\SUB\\APP.TOS");
+        else (void)load();
         assert(!"disk error must reach the enclosing GEMDOS recovery");
     }
     assert(errcode == code && rwerr == code && errdrv == drive);
@@ -162,6 +179,7 @@ static void failure(int kind, long code, int drive, int opens)
 
 int main(void)
 {
+    parent.p_curdrv = 2;
     binfmt_boot_init();
     reset(NORMAL);
     assert(load() == 0 && interpreter_opens == 1 && !allocations && !handles);
@@ -174,6 +192,14 @@ int main(void)
     /* osif() remounts the failing drive before restarting the syscall. */
     changed = TRUE;
     assert(load() == 0 && interpreter_opens == 2 && !allocations && !handles);
+    reset(NORMAL);
+    assert(load_file("APP.TOS", TRUE, "C:\\SUB\\APP.TOS") == 0);
+    assert(load_file("\\APP.TOS", TRUE, "C:\\APP.TOS") == 0);
+    assert(load_file("D:APP.TOS", TRUE, "D:\\SUB\\APP.TOS") == 0);
+    assert(load_file("D:\\APP.TOS", TRUE, "D:\\APP.TOS") == 0);
+    assert(load_file("APP.TOS", FALSE, "APP.TOS") == 0);
+    assert(!allocations && !handles);
+    failure(CWD_ERROR, E_CHNG, 2, 0);
     puts("binfmt disk cleanup and media-change recovery: PASS");
     return 0;
 }

@@ -104,6 +104,9 @@ operation is separate from these format redirections.
 Preserve the environment, working directory, inherited handles and exit status.
 The program pathname passed as an argument keeps the caller's spelling; relative
 program paths remain valid because the caller's directory is inherited.
+For CUIS launches that override the child's directory, qualify the original
+program against the parent's drive/per-drive directory first. This keeps the
+interpreter's input file independent of the overridden child directory.
 Replace any old ARGV extension with the complete resulting argument vector,
 including ARGV=NULL: indices for empty arguments. Preserve argument boundaries.
 Use the caller's ARGV only when the command-tail length byte is 127. Otherwise
