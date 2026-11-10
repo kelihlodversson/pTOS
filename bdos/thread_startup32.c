@@ -7,6 +7,7 @@
 #include "thread_startup_backend.h"
 #include "thread_startup32.h"
 #include "thread_return.h"
+#include "syscall_return.h"
 
 LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS *args)
 {
@@ -27,6 +28,9 @@ void thread_startup_arch_abort(void *image)
 {
     THREAD_STARTUP32 *draft = image;
     if (!draft) return;
+#if CONF_WITH_FORK_RETURN_TEST
+    kfree(draft->saved_return);
+#endif
     if (draft->syscall.physical) kstack_free(draft->syscall.physical);
     kthread_stack_release(&draft->scheduler_stack);
     kfree(draft);
@@ -124,3 +128,32 @@ LONG thread_startup_arch_public_return(void *image, const void *bridge)
     draft->return_pc = address;
     return E_OK;
 }
+#if CONF_WITH_FORK_RETURN_TEST
+LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
+{
+    THREAD_STARTUP32 *draft = image;
+    SYSCALL_USER_IMAGE *user;
+    if (!draft || !saved || draft->saved_return) return EINVAL;
+    if (draft->syscall.physical == draft->scheduler_stack.physical ||
+        kstack_contains(draft->syscall.physical, (uintptr_t)saved) ||
+        kstack_contains(draft->scheduler_stack.physical, (uintptr_t)saved)) return EACCDN;
+#if ARCH_ARM
+    if ((saved->user.status & 0x3f) != 0x10 || saved->user.pc != saved->mappings.entry)
+        return EINVFN; /* A32 user return only, no Thumb/pending exception restart */
+#else
+    if ((saved->user.frame.sr & 0x2000) || (saved->user.frame.format & 0xf000)) return EINVFN;
+#endif
+    user = kalloc(sizeof(*user));
+    if (!user) return ENSMEM;
+    *user = saved->user;
+#if ARCH_ARM
+    user->r[0] = 0;
+    draft->sp = user->usp;
+#else
+    user->frame.d[0] = 0;
+    draft->sp = user->frame.usp;
+#endif
+    draft->saved_return = user;
+    return E_OK;
+}
+#endif

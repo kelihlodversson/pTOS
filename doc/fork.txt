@@ -1,0 +1,145 @@
+Pfork / Pvfork prerequisite audit (#895)
+======================================
+
+Baseline: epic/889-process-scheduling, 7ae4f508cc26df4d0efae19dd3849738f1de114f.
+The original unsupported-capability audit is retained below. The F1 saved-
+return increment is described in doc/fork-return.txt: a test-only shared-VM
+continuation proof, not functional Pfork/Pvfork.
+Neither public syscall creates a child. Both explicitly return EINVFN (-32) before
+allocation, identity publication or parent suspension. No feature is enabled.
+
+ABI
+---
+Pfork is 283/0x11b; Pvfork is 275/0x113. Neither takes arguments. The original
+TRAP #1 binding pushes only the 16-bit opcode and removes two bytes afterward.
+tos.hyp documents int16_t returns: zero in the child, positive child PID in the
+parent, negative GEMDOS error. MiNTLib bindings return the trap's long result;
+the kernel must sign-extend errors and never substitute a TID for a PID.
+KPROC allocates positive signed WORD PIDs in 1..32767, appropriate to both.
+
+Sources inspected: tos.hyp 03a0abd16b8a1619918c70ae97f0ccf3da07a57a,
+gemdos/prozess/{pfork,pvfork}.ui; MiNTLib
+d8da2d89bce35a12986eb9256ecf210f3493c808, include/mint/mintbind.h
+(Pvfork uses trap_1_w_noclobber, Pfork trap_1_w).
+The documented supervisor caller creates a USER-mode child. Current MMU ARM
+and m68k GEMDOS assembly refuses supervisor trap callers; x32 kernel GEMDOS
+uses direct kcalls. Do not enable supervisor fork by clearing an S bit in an
+otherwise unaudited kernel frame. Preserve the existing refusal until a
+separately validated supervisor-to-user transition exists.
+
+Capability matrix (see fork-return.txt and PR #932 for native evidence)
+-------------------------------------------------------------------------
+                                           x32      A7/A32     m68k MMU
+Managed function-entry CLONE_VM             yes      yes        yes
+Distinct PROCESS/PID and initial THREAD/TID yes      yes        yes
+Private syscall and scheduler stacks        yes      yes        yes
+Transactional prepared/no-fail publication  yes      yes        yes
+Saved-return test startup (F1, gated)        yes      A32        040 only
+Independent-VM kaspace_clone                EINVFN   EINVFN     EINVFN
+Fork anonymous writable-page COW             absent   absent     absent
+Pexec(200) committed detach                  absent   absent     absent
+Pfork / Pvfork enabled                      no       no         no
+
+m68k includes the 030/040/060 backends, not just QEMU040. Non-MMU fork and
+shadow/quickswap remain #911. Existing file-backed MAP_PRIVATE COW is not
+an independent page-table clone, and does not satisfy anonymous fork COW.
+PR #910's reported native shared-VM tests are prior evidence only.
+
+Continuation and ownership findings
+-----------------------------------
+proc_clone.c rejects PRIVATE_VM before acquiring resources. SHARE_VM retains
+KASPACE, constructs KTHREAD and uses thread_startup for owned execution
+resources. Its identity-only commit creates no runnable context. Public
+startup takes entry/argument/stack, observes and seals mappings, then commits
+through existing scheduler publication. This must remain the one creation
+transaction, extended with a distinct saved-return startup policy.
+
+x32: bios/arch/x86_64/trapasm.S saves integer registers, return RIP/RFLAGS and
+512-byte FXSAVE on the calling THREAD's syscall stack. User RSP is separately
+held in GS per-CPU storage. x86_64_trap_frame_t alone is insufficient. A fresh
+child must restore the retained complete user image under its own CR3 and
+syscall/TSS/GS binding; no copied kernel C return addresses or jmp_buf.
+
+ARM: bdos/arch/arm/uspaceasm.S saves FPU_ALL_BYTES, banked user SP/LR, r0-r12,
+pad, SRS return PC/SPSR; uspace.c's uframe describes it. Existing syscall exit
+clears r12 (SVC routing used it). Preserving the original user r12 requires
+auditing that earlier routing boundary, not merely copying uframe. The child
+requires fresh SVC/scheduler stacks and RFE from its owned saved user frame.
+
+m68k: bdos/arch/m68k/uspace.c's uframe holds USP/D0-D7/A0-A6 only. The adjacent
+hardware SR/PC/format frame and FPU execution state are not a self-contained
+fork image. uspaceasm.S restores that original hardware frame using RTE.
+Fresh restore must support actual 030/040/060 exception/FPU formats, including
+nonzero FPIAR, without copying the active supervisor stack or global uenter.
+
+PR #914 reports IRQ capture and CPU-owned launcher chains, but explicitly
+disables copied-frame restore and preemption. IRQ capture is not the syscall
+return boundary. Do not import its branch or create another dispatcher here.
+
+Dependencies and interfaces
+---------------------------
+Owner       Required increment                         #895 consumer
+#713/#914   Owned user-return frame; fresh scheduler    Prepare saved-return
+            entry on child stack; block/wake and        startup before sealing;
+            root-acknowledged stopped-stack reclaim     never clone kernel stack
+#892        kaspace_clone + MMU COW backends            PRIVATE_VM proc_clone
+#891/#892   Mapping/allocation ownership in two VMs     Retain child user stack
+#892/#895   Full process resource-copy policy           Fork policy adapter
+#893       Final PROCESS completion; THREAD exit       Exit release of vfork
+#894       Successful Pexec(200) independent-VM commit  Exec release of vfork
+#909       Authoritative PROCESS waits/reaping         Ordinary child wait ABI
+#928/#907   Retained non-consuming completion observer Reuse, no new registry
+
+Resource gaps: proc_create_clone_process currently builds an EMPTY environment
+and optionally copies standard handles/CWD only. Explicit/nonstandard SFT
+handles are not duplicated. kproc_clone_inherit_identity copies process
+metadata/parent identity; it is not proof of complete signal disposition/mask
+inheritance. No signal-mask/disposition fields were found in KTHREAD/KPROC
+headers. Add supported inheritance to the shared factory, with allocation
+rollback and reference tests, rather than claiming Pexec-style defaults match
+fork. Do not share mutable FD tables merely because the ASPACE is shared.
+
+#892-scoped COW prerequisite must be independently reviewable. It needs parent
+and child page-table ownership, anonymous frame references, write-protection of
+both aliases, write-fault copy or exclusive promotion, TLB invalidation after
+permission/root changes, lazy/heap/mmap metadata cloning, stack/environment
+mapping retention and rollback at every allocation. Do not add page-table code
+to mintproc.c or advertise independent VM based on file COW tests.
+
+Initial enablement policy
+-------------------------
+Until explicit tests prove otherwise, reject multithreaded parents for both
+calls. The child would contain only the calling THREAD, never all siblings.
+Also reject other live PROCESS sharers for vfork: suspending one parent does
+not suspend every writer in its VM. Audit indirect shared-stack aliases.
+Fork from a runtime holding locks formerly owned by absent siblings is unsafe;
+no pthread-atfork or TLS support is implied by this proposed restriction.
+
+Pvfork must retain the parent's continuation/kernel stacks and both ASPACE
+references, establish a child-specific dependency, suspend before child publish
+and resume the child with zero. Parent returns the PID only after final child
+PROCESS completion or committed Pexec(200) VM detach. A failed/entered exec,
+unrelated Pexec child, leader THREAD exit with survivors, or public wait/reap
+does not release the dependency. Completion observation cannot consume the
+public zombie. Cancellation/parent death must detach the dependency exactly
+once without freeing a shared stack or stranding a surviving blocked parent.
+Child user-stack restrictions must be documented with the enabled ABI.
+
+Next working F1 milestone
+-------------------------
+Extend the existing startup transaction with an opaque backend-owned syscall
+return image, captured while the caller owns the user-return boundary. Prepare
+fresh execution stacks and launcher bindings, retain mappings/observers, and
+modify only the child result. Add proc_clone preparation for that image; all
+fallible work precedes the existing no-fail publication. Native tests must
+branch from the actual same trap on each CPU and verify PC/SP/flags/integer/FPU
+state, distinct PID/TID, parent/child completion and failure rollback. An image
+copy unit test or successful compilation cannot establish this milestone.
+
+Validation of this checkpoint
+-----------------------------
+tests/pclone uses real Pfork/Pvfork traps repeatedly and checks signed EINVFN,
+continued parent execution and stable PID. These are capability-rejection
+tests only; they do not exercise fork branch execution, isolation or vfork
+parent suspension. Native results and CI must be recorded separately in the
+draft PR; no native fork success or full F1-F5 acceptance is claimed here.

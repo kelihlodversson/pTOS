@@ -606,6 +606,11 @@ case "$machine" in
         ;;
 esac
 
+if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native shared-VM syscall-return probe (not Pfork): PASS' "$suite_log"; then
+    record "native saved syscall return" FAIL "configured shared-VM return probe did not pass"
+fi
+
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"

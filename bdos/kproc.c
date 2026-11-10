@@ -188,6 +188,17 @@ struct kproc {
 };
 
 static KPROC *kproc_list;
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kproc_has_aspace_peer(const KPROC *source)
+{
+    KPROC *p;
+    if (!source || !source->active_space) return TRUE;
+    for (p = kproc_list; p; p = p->next)
+        if (p != source && p->active_space && p->active_space == source->active_space)
+            return TRUE;
+    return FALSE;
+}
+#endif
 #if CONF_WITH_USER_ASPACE
 static UQUAD last_completion_order; /* Serialized terminal publication, not IRQ producer state. */
 #endif

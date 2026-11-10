@@ -165,6 +165,39 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  */
 static volatile int syscall_gs_swapped;
 
+#if CONF_WITH_FORK_RETURN_TEST
+#include "../../../bdos/syscall_return.h"
+#include "string.h"
+static UQUAD return_read_msr(ULONG msr)
+{
+    ULONG lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((UQUAD)hi << 32) | lo;
+}
+static LONG return_probe(x86_64_trap_frame_t *f)
+{
+    SYSCALL_RETURN saved;
+    X32_THREAD_ENTRY_IMAGE *u = &saved.user;
+    bzero(&saved, sizeof(saved));
+    u->rax=f->rax; u->rbx=f->rbx; u->rcx=f->rcx; u->rdx=f->rdx;
+    u->rsi=f->rsi; u->rdi=f->rdi; u->rbp=f->rbp;
+    u->r8=f->r8; u->r9=f->r9; u->r10=f->r10; u->r11=f->r11;
+    u->r12=f->r12; u->r13=f->r13; u->r14=f->r14; u->r15=f->r15;
+    u->rip=f->rcx; u->rflags=f->r11; u->rsp=x86_64_get_saved_user_rsp();
+    u->cr3=kproc_user_root(run);
+    u->cs=X86_64_USER_CODE_SEL; u->ss=X86_64_USER_DATA_SEL;
+    __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
+        : "=m"(u->ds), "=m"(u->es), "=m"(u->fs), "=m"(u->gs));
+    u->fs_base=return_read_msr(0xc0000100);
+    u->gs_base=return_read_msr(0xc0000102); /* user half while SWAPGS is active */
+    memcpy(u->fpu, (const UBYTE *)f - 512, 512);
+    saved.mappings.entry=u->rip;
+    saved.mappings.stack_base=(u->rsp - 256) & ~15ULL;
+    saved.mappings.stack_size=512;
+    return proc_clone_return_probe(&saved, (UWORD)f->rsi);
+}
+#endif
+
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     /* Stack-local policy belongs to this invocation across nested callbacks,
@@ -185,6 +218,12 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     if (from_ring3)
         x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
+#endif
+#if CONF_WITH_FORK_RETURN_TEST
+    if (from_ring3 && frame->rax == 0x100000190ULL && !frame->rdi &&
+        (frame->rsi & 0xffff0000UL) == FORK_RETURN_PROBE)
+        frame->rax = (QUAD)return_probe(frame);
+    else
 #endif
     trap_dispatch(frame, from_ring3);
 #if CONF_WITH_USER_CALLBACKS

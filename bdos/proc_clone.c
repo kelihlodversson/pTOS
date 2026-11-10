@@ -8,6 +8,7 @@
 #include "procmem.h"
 #include "kthread.h"
 #include "proc_clone.h"
+#include "syscall_return.h"
 #include "process_observer.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
@@ -443,6 +444,74 @@ static LONG public_back_range(KASPACE *space, VADDR address, ULONG bytes, UWORD 
         if (page == last) return E_OK;
     }
 }
+
+#if CONF_WITH_FORK_RETURN_TEST
+LONG proc_clone_prepare_saved_return(PROC_CLONE_TRANSACTION *tx, const SYSCALL_RETURN *saved)
+{
+    if (!tx || !saved || tx->startup || tx->policy != PROC_CLONE_NEW_PROCESS ||
+        saved->space != tx->space || saved->owner != ksched_exit_thread(run) ||
+        kthread_process(saved->owner) != tx->source ||
+        kthread_tid(tx->thread) == kthread_tid(saved->owner) ||
+        !kproc_thread_is_sole(tx->source, saved->owner)) return EACCDN;
+    return thread_startup_prepare_saved_return(tx->space, saved, &tx->startup);
+}
+static BOOL return_child_completed(void *context)
+{
+    PROCESS_COMPLETION completed;
+    return proc_clone_observer_process_snapshot(context, &completed) &&
+        completed.state == PROCESS_COMPLETED && (completed.order_low || completed.order_high);
+}
+
+/* Authenticated architecture dispatchers only. The test child must exit on
+ * this stack; the parent cannot execute user code until final completion.
+ * This deliberately provides no public fork/vfork semantics or inheritance. */
+LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
+{
+    PROC_CLONE_TRANSACTION *tx = NULL;
+    PROC_CLONE_OBSERVER *observer = NULL;
+    PROC_CLONE_IDENTITIES created = { 0, 0 };
+    KPROC *source = kproc_retain(run);
+    PD *controller;
+    PROC_CLONE_ARGS args = { 0 };
+    LONG error = EINVFN;
+    UWORD stage = 0;
+    if (!source || !saved) goto done;
+    saved->owner = ksched_exit_thread(run);
+    saved->space = kproc_active_space(source);
+    if (!saved->owner || !ksched_clone_context(source, &controller) ||
+        !kproc_thread_is_sole(source, saved->owner)) goto done;
+    /* Private native assertion aid: identity, not an execution-stack address. */
+    if (fail_stage == 0xfffe) { error = kthread_tid(saved->owner); goto done; }
+    if (fail_stage > 7 || kproc_has_aspace_peer(source)) goto done;
+    args.source = source; args.prepared_process = NULL;
+    args.process_policy = PROC_CLONE_NEW_PROCESS;
+    args.vm_policy = PROC_CLONE_SHARE_VM; args.resources = 0;
+#define RETURN_STAGE(call) do { error = (call); if (error) goto done; \
+    if (++stage == fail_stage) { error = ENSMEM; goto done; } } while (0)
+    RETURN_STAGE(proc_clone(&args, &tx));
+    RETURN_STAGE(public_back_range(saved->space, saved->mappings.stack_base,
+        saved->mappings.stack_size, ASPACE_PROT_USER | ASPACE_PROT_WRITE));
+    RETURN_STAGE(proc_clone_prepare_saved_return(tx, saved));
+    RETURN_STAGE(proc_clone_retain_startup_stack(tx));
+    RETURN_STAGE(proc_clone_prepare_outputs(tx, 0, 0));
+    RETURN_STAGE(proc_clone_observe_async(tx, &observer));
+    RETURN_STAGE(thread_startup_validate(tx->startup));
+#undef RETURN_STAGE
+    error = proc_clone_spawn(&tx, &created);
+    if (!error) {
+        /* No dispatch occurred after publication. Retained observation is
+         * non-consuming: the caller still owns one public Pwaitpid reap. */
+        if (!ksched_wait_ready(return_child_completed, observer))
+            panic("saved return lost managed parent");
+        error = created.pid;
+    }
+done:
+    proc_clone_abort(&tx);
+    proc_clone_observer_release(&observer);
+    kproc_release(source);
+    return error;
+}
+#endif
 
 static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup,
                              VADDR pid, VADDR tid, BOOL return_pid)
