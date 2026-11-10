@@ -2,7 +2,8 @@ Executable interpreters and PTOS.INI (#944)
 ==========================================
 
 CONF_WITH_BINFMT enables a boot-configured executable-format registry and #!
-scripts. It defaults on except for the 192/256 KiB and cartridge images.
+scripts. It defaults on except for the 192/256 KiB and cartridge images,
+including the 256 KiB Amiga ROMs.
 Supported native executables retain precedence. Unsupported formats and ELF
 architectures may select a userspace interpreter; file/I/O failures and malformed
 native images do not select one. The final interpreter is an ordinary native
@@ -145,5 +146,22 @@ Run the production parser/argument code against host malformed-input tests:
     sh tools/test-binfmt.sh
     BINFMT_SANITIZE=1 sh tools/test-binfmt.sh
 
-Native boot fixtures and their reproduction commands are added with the runtime
-integration tests; interpreter selection does not depend on Paratos itself.
+Boot a small ordinary native interpreter, independently of Paratos:
+
+    tools/ci-binfmt.sh arm
+    tools/ci-binfmt.sh x32
+    tools/ci-binfmt.sh m68k
+
+These commands replace the ignored kernel/libcmini configurations and build with
+the corresponding kernel toolchain. They need Python/kconfiglib, QEMU, mtools
+and mkfs.fat; x32 also needs OVMF (OVMF_DIR defaults to /usr/share/OVMF).
+QEMU_DATA_DIR optionally supplies QEMU's firmware data directory. Serial logs,
+the generated FAT disk and invocation metadata remain in obj/binfmt/ARCH/.
+
+The fixtures exercise configured formats and shebangs through Pexec(0) and
+load-then-run, four redirects, classic/ARGV arguments (including empty, quoted
+and long arguments), environment, directory and shared handles. They change the
+current drive and overwrite PTOS.INI after startup to verify boot-root lookup
+and one-time parsing. They cover foreign ELF/PRG handling, native precedence,
+malformed native ELF, missing interpreters, short headers, invalid scripts,
+cycles and depth failures, repeating failures to expose leaked handles.
