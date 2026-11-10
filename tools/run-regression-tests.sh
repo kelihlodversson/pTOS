@@ -580,6 +580,13 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     stop_vm
 fi
 
+# The experimental VM test must execute, not merely compile.
+if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   { ! grep -aq 'native independent KASPACE/COW entry probe (not Pfork): PASS' "$suite_log" ||
+     ! grep -aq 'native private orphan COW: PASS' "$suite_log"; }; then
+    record "native independent VM/COW" FAIL "configured private clone probe did not pass"
+fi
+
 # A configured rollback injection must actually have reached a user exit.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'exit handoff: injected preparation rollback' "$suite_log"; then
@@ -663,6 +670,11 @@ if [ "$machine" = virt-m68k-aspace ] &&
     if ! grep -aq 'native m68k interrupted-user GPR/USP/FPU format-0 capture: PASS' "$suite_log"; then
         record "native m68k user IRQ capture" FAIL "real user GPR/USP/FPU pattern was not captured"
     fi
+fi
+
+if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native shared-VM syscall-return probe (not Pfork): PASS' "$suite_log"; then
+    record "native saved syscall return" FAIL "configured shared-VM return probe did not pass"
 fi
 
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&

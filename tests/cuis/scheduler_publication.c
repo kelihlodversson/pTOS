@@ -434,4 +434,7 @@ int main(void)
     return 0;
 }
 
+
 ULONG kthread_tid(const KTHREAD *t) { (void)t; return 17; }
+
+KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }

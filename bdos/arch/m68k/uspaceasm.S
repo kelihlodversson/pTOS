@@ -151,3 +151,36 @@ no_fpu_reset:
         rte
 
 #endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_FORK_RETURN_TEST
+        .text
+        .globl C_SYM(m68k_enter_saved_user)
+C_SYM(m68k_enter_saved_user):
+        move.w #0x2700,sr
+#if CONF_WITH_MFASTCALL
+        move.l a0,a2
+        move.l d0,a3
+#else
+        move.l 4(sp),a2
+        move.l 8(sp),a3
+#endif
+        tst.l C_SYM(fputype)
+        jeq 4f
+        lea 72(a2),a0
+#if !CONF_WITH_MFASTCALL
+        move.l a0,-(sp)
+#endif
+        jsr C_SYM(m68k_fpu_restore_complete)
+#if !CONF_WITH_MFASTCALL
+        addq.l #4,sp
+#endif
+4:      move.l a3,sp
+        /* Fresh format-0 RTE frame; no kernel continuation is copied. */
+        move.w 70(a2),-(sp)
+        move.l 66(a2),-(sp)
+        move.w 64(a2),-(sp)
+        move.l (a2),a0
+        move.l a0,usp
+        movem.l 4(a2),d0-d7/a0-a6
+        rte
+#endif

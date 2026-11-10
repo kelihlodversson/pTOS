@@ -1,9 +1,9 @@
-/* DRAFT public transport layout for #907 review. No Ssystem handler is enabled
- * by this header; kernels currently return EINVFN for the proposed mode. */
+/* DRAFT transport layout for #907 review. Ordinary kernels return EINVFN;
+ * only explicit validation builds accept the unpublished Ssystem mode. */
 #ifndef PROCESS_EXEC_H
 #define PROCESS_EXEC_H
 #include "process_completion.h"
-/* Public dispatch selector is unassigned pending ABI review. */
+/* Agreed Ssystem selector -9 remains test-gated, never advertised. */
 #define PROCESS_EXEC_PREPARE 0UL
 #define PROCESS_EXEC_COMMIT 1UL
 #define PROCESS_EXEC_SNAPSHOT 2UL
@@ -20,8 +20,10 @@
  * CANCEL_DEFERRED has no handle/arguments: cancel the calling PROCESS's
  * unpublished successor, if any. Idempotent; never cancel a running PROCESS.
  * A failed replacement PREPARE/COMMIT must preserve the previous successor.
- * CLOSE of a valid owned handle consumes it without a later failure. Closing
- * a committed observer never cancels its successor; cancellation is explicit.
+ * CLOSE consumes a valid owned handle once, including when it returns a
+ * filesystem cleanup error. The right cannot be retried: residual references
+ * belong to the SFT service. Closing a committed observer never cancels its
+ * successor; cancellation is explicit.
  * SNAPSHOT alone copies a retryable non-consuming snapshot; a copy fault may
  * partially modify user memory but cannot consume the handle/completion. */
 typedef struct {
@@ -33,6 +35,9 @@ typedef struct {
 typedef char PROCESS_EXEC_REQUEST_LAYOUT[
     sizeof(PROCESS_EXEC_REQUEST)==72 && __alignof__(PROCESS_EXEC_REQUEST)==4 &&
     offsetof(PROCESS_EXEC_REQUEST,operation)==0 && offsetof(PROCESS_EXEC_REQUEST,handle)==4 &&
-    offsetof(PROCESS_EXEC_REQUEST,path)==16 && offsetof(PROCESS_EXEC_REQUEST,completion)==32 &&
+    offsetof(PROCESS_EXEC_REQUEST,policy)==8 && offsetof(PROCESS_EXEC_REQUEST,reserved)==12 &&
+    offsetof(PROCESS_EXEC_REQUEST,path)==16 && offsetof(PROCESS_EXEC_REQUEST,tail)==20 &&
+    offsetof(PROCESS_EXEC_REQUEST,environment)==24 && offsetof(PROCESS_EXEC_REQUEST,directory)==28 &&
+    offsetof(PROCESS_EXEC_REQUEST,completion)==32 &&
     offsetof(PROCESS_EXEC_REQUEST,reserved_tail)==64 ? 1 : -1];
 #endif

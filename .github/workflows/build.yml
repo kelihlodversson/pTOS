@@ -50,7 +50,7 @@ jobs:
       - name: Install the host and x32 test packages
         uses: ./.github/actions/apt-install
         with:
-          packages: gcc-multilib qemu-system-x86 ovmf dosfstools mtools
+          packages: gcc-multilib gcc-13 qemu-system-x86 ovmf dosfstools mtools
       - name: Install the test tools for Python
         run: |
           python3 -m venv /tmp/elf-shared-venv
@@ -61,12 +61,27 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test retained PROCESS completion ownership
         run: /tmp/elf-shared-venv/bin/python tools/test-process-observer.py
+      - name: Test exact SFT close ownership and bounded recovery
+        run: /tmp/elf-shared-venv/bin/python tools/test-fs-close.py
+      - name: Test PROCESS-owned launch rights
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-exec-handles.py
+      - name: Test unpublished PROCESS dispatch and native-width ownership
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+      - name: Execution cleanup guard ownership
+        run: /tmp/elf-shared-venv/bin/python tools/test-cleanup-guard.py
+      - name: Test PROCESS-owned PFS directory preparation
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-directory-pfs.py
       - name: Test regression worker log preservation
         run: python3 tools/test-testlib-log.py
       - name: Test clone ABI layout and pointer decoding
         run: sh tools/test-clone-abi.sh
       - name: Test address-space ownership
         run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
+      - name: Test independent VM COW ownership and rollback
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-private-aspace.sh
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
       - name: Build the enabled freestanding x32 core
@@ -297,6 +312,10 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+
+      - name: Test ARM saved-return routing and admission
+        if: matrix.arch == 'arm'
+        run: python3 tools/test-fork-return-arm.py
 
       # for the interpreter the test script runs (setup-toolchain selects its
       # own Python, which the system's packages are not for)

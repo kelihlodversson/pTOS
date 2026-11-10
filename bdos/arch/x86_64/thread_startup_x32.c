@@ -8,6 +8,7 @@
 #include "thread_startup_backend.h"
 #include "thread_startup_x32.h"
 #include "thread_return_x32.h"
+#include "syscall_return.h"
 #include <stddef.h>
 typedef char entry_layout_check[(offsetof(X32_THREAD_ENTRY_IMAGE, fpu) == 224 &&
     offsetof(X32_THREAD_ENTRY_IMAGE, cr3) == 144 && offsetof(X32_THREAD_ENTRY_IMAGE, ss) == 160 &&
@@ -151,3 +152,33 @@ LONG thread_startup_arch_public_return(void *image, const void *bridge)
     if (!draft || !address) return EIMBA;
     draft->return_pc = address; return E_OK;
 }
+#if CONF_WITH_FORK_RETURN_TEST
+LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
+{
+    X32_THREAD_STARTUP_DRAFT *draft = image;
+    if (!draft || !saved || saved->user.cs != X86_64_USER_CODE_SEL ||
+        saved->user.ss != X86_64_USER_DATA_SEL ||
+        saved->user.rip != saved->mappings.entry ||
+        saved->user.rsp < saved->mappings.stack_base + 128 ||
+        saved->user.rsp >= saved->mappings.stack_base + saved->mappings.stack_size ||
+        (saved->user.rflags & 0x27000)) return EINVFN;
+    /* The integrated cooperative context has no general segment/TLS switch
+     * contract. Capture all fields, but do not admit nondefault state until
+     * its scheduler/launcher nesting restoration has native evidence. */
+    if ((saved->user.ds && saved->user.ds != X86_64_USER_DATA_SEL) ||
+        (saved->user.es && saved->user.es != X86_64_USER_DATA_SEL) ||
+        saved->user.fs || saved->user.gs || saved->user.fs_base || saved->user.gs_base)
+        return EINVFN;
+    if (draft->syscall_physical == draft->scheduler_stack.physical ||
+        kstack_contains(draft->syscall_physical, (uintptr_t)saved) ||
+        kstack_contains(draft->scheduler_stack.physical, (uintptr_t)saved)) return EACCDN;
+    {
+        UQUAD selected_root = draft->user.cr3;
+        draft->user = saved->user;
+        draft->user.cr3 = selected_root; /* root belongs to the constructor */
+    }
+    draft->user.rax = 0;
+    draft->saved_return = TRUE;
+    return E_OK;
+}
+#endif

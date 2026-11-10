@@ -47,6 +47,22 @@ struct thread_startup_stack;
 struct proc_clone_transaction;
 struct kproc;
 struct kthread;
+/* Execution-owned cooperative cleanup scope. Zero-initialize before enter.
+ * Pending queries/latches stay visible; only delivery is deferred. End validates
+ * LIFO/execution ownership and never terminates. Checkpoint only after the
+ * outer operation has settled all local resources. Not a fault/longjmp guard. */
+typedef struct {
+    struct kthread *thread;
+    struct kproc *process;
+    PD *caller;
+    UQUAD execution;
+    ULONG tid, depth;
+    UQUAD ticket, parent_ticket;
+    BOOL active;
+} KSCHED_CLEANUP_SCOPE;
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *empty);
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope);
+BOOL ksched_cleanup_active(void);
 /* Shared publication storage for legacy process launches and trusted clone.
  * root=TRUE prepares a synchronous admission; FALSE reserves global async
  * storage from a live caller or the current managed task.
@@ -60,6 +76,7 @@ struct kthread;
 LONG ksched_task_reserve(BOOL root, void **slot);
 #if CONF_WITH_X86_64_MEMTEST
 void ksched_test_fail_clone_slot(void);
+ULONG ksched_test_retiring_root_passes(void);
 BOOL ksched_test_clone_masked(void);
 #endif
 void ksched_task_cancel(void **slot);
@@ -126,11 +143,25 @@ BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
  * Spawn consumes an unprepared, loaded basepage only on success. */
 BOOL ksched_spawn_allowed(void);
 LONG ksched_spawn(PD *pd);
+/* Successful preparation consumes a loaded unstarted image into private
+ * TASK_RESERVED ownership, including its THREAD and execution stack. Nothing
+ * is runnable/wait-visible. Failure leaves image ownership with the caller.
+ * Cancel consumes a prepared slot and disposes off-stack, outside exclusion.
+ * Publish consumes it exactly once, without allocation/copy/callback/yield.
+ * These are serialized owner operations, not a new scheduler or runqueue. */
+/* deferred retains the canonical predecessor before image transfer. */
+LONG ksched_process_prepare(PD *pd, BOOL deferred, void **slot);
+LONG ksched_process_publish(void **slot);
+/* Commit preflight can reject reentrant selection without consuming the slot.
+ * Deferred cleanup precedes no-fail publication; no callback runs in publish. */
+LONG ksched_process_commit(void **slot);
+void ksched_process_cancel(void **slot);
+/* Idempotent cancellation of only the current PROCESS's selected held successor.
+ * Uncommitted preparations and already runnable children are unaffected. */
+LONG ksched_defer_cancel(void);
 /* Internal observed launch, available only with CUIS. */
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token);
 LONG ksched_defer(PD *pd, ULONG session);
-LONG ksched_defer_cancel(void);
-void proc_dispose_deferred(PD *program);
 #if CONF_WITH_USER_ASPACE
 struct kproc;
 void proc_dispose_process(struct kproc *process);
@@ -142,8 +173,7 @@ LONG ksched_join(ULONG tid, UQUAD status);
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
 BOOL ksched_pid_reserved(WORD pid);
 void ksched_exiting(PD *pd, UWORD status);
-/* CUIS successor activation after complete teardown; pd is identity only. */
-void ksched_exited(PD *pd);
+/* Generic successor activation after complete teardown; identity is retained. */
 #if CONF_WITH_USER_ASPACE
 void ksched_exited_identity(struct kproc *process, PD *pd);
 #endif

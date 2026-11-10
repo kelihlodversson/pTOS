@@ -34,6 +34,257 @@ static long pclone_trap(const void *args, unsigned long size)
     return trap_1_wll(GEMDOS_PCLONE,(long)args,(long)size);
 #endif
 }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+static volatile struct {
+    long parent, tid, root, mode;
+    unsigned long cell;
+    unsigned char *heap, *mapping, *filemap;
+} private_probe;
+static unsigned char private_copyout[32] __attribute__((aligned(4096)));
+static struct { int32_t pid, tid; } private_outputs __attribute__((aligned(4096)));
+static void private_shared_entry(void *argument) { (void)argument; (void)Pterm(75); }
+static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
+static long private_sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+#if defined(__mc68000__)
+    register long d0 __asm__("d0");
+
+    __asm__ volatile (
+        "move.l %7,-(%%sp)\n\t"
+        "move.l %6,-(%%sp)\n\t"
+        "move.l %5,-(%%sp)\n\t"
+        "move.l %4,-(%%sp)\n\t"
+        "move.l %3,-(%%sp)\n\t"
+        "move.l %2,-(%%sp)\n\t"
+        "move.w %1,-(%%sp)\n\t"
+        "trap #1\n\t"
+        "lea 26(%%sp),%%sp"
+        : "=d" (d0)
+        : "r" ((short)fn), "r" (a1), "r" (a2), "r" (a3), "r" (a4), "r" (a5), "r" (a6)
+        : "d1", "d2", "a0", "a1", "a2", "memory", "cc");
+    return d0;
+#elif defined(__arm__)
+    register long r0 __asm__("r0") = fn;
+    register long r1 __asm__("r1") = a1;
+    register long r2 __asm__("r2") = a2;
+    register long r3 __asm__("r3") = a3;
+    register long r4 __asm__("r4") = a4;
+    register long r5 __asm__("r5") = a5;
+    register long r6 __asm__("r6") = a6;
+
+    __asm__ volatile (
+        "svc 1"
+        : "+r" (r0)
+        : "r" (r1), "r" (r2), "r" (r3), "r" (r4), "r" (r5), "r" (r6)
+        : "r12", "lr", "memory", "cc");
+    return r0;
+#elif defined(__x86_64__)
+    /* the x32 transport (bios/arch/x86_64/trap.h): RAX = (class 1 << 32) | function, the
+     * arguments in RDI, RSI, RDX, R10, R8 and R9, each an unsigned 32-bit value */
+    register unsigned long long rax __asm__("rax") = (1ULL << 32) | (unsigned long long)(unsigned long)fn;
+    register unsigned long long rdi __asm__("rdi") = (unsigned long)a1;
+    register unsigned long long rsi __asm__("rsi") = (unsigned long)a2;
+    register unsigned long long rdx __asm__("rdx") = (unsigned long)a3;
+    register unsigned long long r10 __asm__("r10") = (unsigned long)a4;
+    register unsigned long long r8 __asm__("r8") = (unsigned long)a5;
+    register unsigned long long r9 __asm__("r9") = (unsigned long)a6;
+
+    __asm__ volatile (
+        "syscall"
+        : "+r" (rax)
+        : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10), "r" (r8), "r" (r9)
+        : "rcx", "r11", "memory");
+    return (long)(int)rax;
+#else
+    return -32L;
+#endif
+}
+
+static void private_entry(void *argument)
+{
+    volatile unsigned long local=0x5a5aa5a5UL;
+    int bad=0;
+    (void)argument;
+    if(Pgetpid()==private_probe.parent ||
+       (private_probe.mode==-1 ? Pgetppid()==private_probe.parent :
+                                Pgetppid()!=private_probe.parent) ||
+       private_query(0)==private_probe.root || private_query(3)==private_probe.tid) bad=1;
+    if(private_probe.cell!=0x11223344UL || private_probe.heap[17]!=0x31 ||
+       private_probe.heap[4096+31]!=0x42 || private_probe.heap[8192+45]!=0)bad=2;
+    if(private_probe.mapping && (private_probe.mapping[5]!=0x21 || private_probe.mapping[4096+7]!=0))bad=3;
+    if (private_outputs.pid!=-1 || private_outputs.tid!=-1) bad=11;
+    if (private_probe.filemap && (private_probe.filemap[11]!=0x35 ||
+        private_probe.filemap[4096+13]!=0x46)) bad=9;
+    /* No preceding user write to these destination pages: the syscall must
+     * split anonymous COW itself, not rely on an earlier CPU write fault. */
+    if (private_probe.mode != -3 &&
+        (Ssystem(-7,(long)private_copyout,sizeof(private_copyout)) < 0 ||
+         Ssystem(-7,(long)(private_probe.heap+64),32) < 0 ||
+         (private_probe.filemap && Ssystem(-7,(long)(private_probe.filemap+64),32) < 0))) bad=10;
+    if (private_probe.mode > 0 || private_probe.mode == -2) {
+        struct ptos_clone_args nested={0};
+        unsigned char *stack=(unsigned char *)Malloc(32768);
+        long child, status;
+        if (!stack) bad=5;
+        else {
+            memset(stack,0,32768);
+            nested.flags=CLONE_VM | CLONE_COPY_STANDARD_HANDLES; nested.entry=private_entry;
+            nested.stack_base=stack; nested.stack_size=32768;
+            private_probe.parent=Pgetpid(); private_probe.tid=private_query(3);
+            private_probe.root=private_query(0);
+            private_probe.mode=private_probe.mode==-2?-1:private_probe.mode-1;
+            child=pclone_trap(&nested,0xc8920000UL|sizeof(nested));
+            if (child<=0) bad=6;
+            else if (private_probe.mode==-1) {
+                /* Exit before the independent descendant starts. Its source
+                 * root and stack mappings must survive this PROCESS's death. */
+                (void)Pterm(bad?74:73);
+            } else {
+                status=Pwaitpid(child,0,0);
+                if ((status>>16)!=child || (status&65535)!=73 ||
+                    Pwaitpid(child,1,0)>=0 || private_probe.cell!=0x11223344UL ||
+                    private_probe.heap[17]!=0x31) bad=7;
+            }
+            if (Mfree(stack)) bad=8;
+        }
+    }
+    if (private_probe.mode==-3) {
+        (void)pclone_trap(0,0xc8920301UL);
+        private_probe.heap[17]=0xff; /* injected allocation failure must kill only this PROCESS */
+        (void)Pterm(74);
+    }
+    private_probe.cell=0x66778899UL;
+    private_probe.heap[17]=0x71; private_probe.heap[4096+31]=0x81; private_probe.heap[8192+45]=0x91;
+    if(private_probe.mapping) {private_probe.mapping[5]=0x41;private_probe.mapping[4096+7]=0x51;}
+    if(private_probe.filemap) {private_probe.filemap[11]=0x55;private_probe.filemap[4096+13]=0x66;}
+    if(local!=0x5a5aa5a5UL)bad=4;
+    if (private_probe.mode==-1)
+        conws(bad?"native private orphan COW: FAIL\r\n":"native private orphan COW: PASS\r\n");
+    (void)Pterm(bad?74:73);
+}
+static void test_private_aspace(void)
+{
+    struct ptos_clone_args args={0};
+    unsigned char *stack=(unsigned char *)Malloc(32768);
+    long heap=Malloc(12288),mapping=-1,filemap=-1,child,status;
+    int cycle,stage;
+    ptest_begin("independent KASPACE/anonymous COW (not Pfork)");
+    ptest_assert_msg(stack && heap>0,"private clone test storage");
+    if(!stack || heap<=0) {ptest_pass();return;}
+    memset(stack,0,32768);
+    args.flags=CLONE_VM | CLONE_COPY_STANDARD_HANDLES; /* private size tag, not production flag semantics */
+    args.entry=private_entry;args.stack_base=stack;args.stack_size=32768;
+    private_probe.parent=Pgetpid();private_probe.tid=private_query(3);private_probe.root=private_query(0);
+    private_probe.heap=(unsigned char *)heap;
+#ifdef TEST_WITH_MMAP
+    mapping=private_sys6(0x17e,0,8192,3,0x22,-1,0);
+    ptest_assert_msg(mapping>0,"private anonymous mmap reservation");
+#endif
+    private_probe.mapping=mapping>0?(unsigned char *)mapping:0;
+#ifdef TEST_WITH_MMAP
+    {
+        unsigned char *data=(unsigned char *)Malloc(8192);
+        long handle=Fcreate("COWFILE.TMP",0);
+        ptest_assert_msg(data && handle>=0,"private file mapping fixture");
+        if (data && handle>=0) {
+            memset(data,0,8192); memset(data+64,0xa5,32); data[11]=0x35;data[4096+13]=0x46;
+            ptest_assert_msg(Fwrite(handle,8192,data)==8192,"private file fixture contents");
+            filemap=private_sys6(0x17e,0,8192,3,2,handle,0);
+            ptest_assert_msg(filemap>0,"private file mapping reservation");
+        }
+        if (handle>=0) (void)Fclose(handle);
+        if (data) (void)Mfree(data);
+    }
+#endif
+    private_probe.filemap=filemap>0?(unsigned char *)filemap:0;
+    if(private_probe.filemap)ptest_assert_msg(private_probe.filemap[11]==0x35,"clean file page before clone");
+    for(stage=1;stage<=24;stage++) {
+        ptest_assert_msg(pclone_trap(0,0xc8920200UL+stage)==0,"arm private clone allocation failure");
+        child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+        (void)pclone_trap(0,0xc8920200UL);
+        ptest_assert_msg(child==-39L,"transactional table/frame metadata failure publishes no child");
+    }
+    for(cycle=0;cycle<8;cycle++) {
+        private_probe.mode=cycle==0?2:(cycle==1?-2:0);
+        private_probe.cell=0x11223344UL;
+        private_probe.heap[17]=0x31;private_probe.heap[4096+31]=0x42;
+        private_outputs.pid=-1; private_outputs.tid=-1; /* populate before clone */
+        memset(private_copyout,0xa5,sizeof(private_copyout));
+        memset(private_probe.heap+64,0xa5,32);
+        if(private_probe.mapping)private_probe.mapping[5]=0x21;
+        if(private_probe.filemap)private_probe.filemap[11]=0x35; /* owned dirty page before clone */
+        child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+        ptest_assert_msg(child>0 && child!=Pgetpid(),"private clone publishes distinct PROCESS");
+        if(child<=0)continue;
+        if(cycle==0) {
+            /* This output page has not been written since private cloning.
+             * Ordinary CLONE_VM publication must resolve its COW first. */
+            struct ptos_clone_args shared={0};
+            unsigned char *shared_stack=(unsigned char *)Malloc(32768);
+            long shared_tid;
+            ptest_assert_msg(shared_stack!=0,"shared clone output regression stack");
+            if(shared_stack) {
+                memset(shared_stack,0,32768);
+                shared.flags=CLONE_VM | CLONE_COPY_STANDARD_HANDLES;
+                shared.entry=private_shared_entry;
+                shared.stack_base=shared_stack; shared.stack_size=32768;
+                shared.child_pid=&private_outputs.pid; shared.child_tid=&private_outputs.tid;
+                shared_tid=pclone_trap(&shared,sizeof(shared));
+                ptest_assert_msg(shared_tid>0 && private_outputs.tid==(unsigned long)shared_tid &&
+                                 private_outputs.pid>0,"PID/TID copyout resolves untouched image COW");
+                if(shared_tid>0) {
+                    long reaped=Pwaitpid(private_outputs.pid,0,0);
+                    ptest_assert_msg((reaped>>16)==(long)private_outputs.pid &&
+                                     (reaped&65535)==75,"shared clone output child completion");
+                }
+                ptest_assert_msg(Mfree(shared_stack)==0,"shared clone output stack cleanup");
+            }
+        }
+        if(cycle&1){private_probe.cell=0xaabbccddUL;private_probe.heap[17]=0x61;
+            if(private_probe.filemap)private_probe.filemap[11]=0x75;}
+        status=Pwaitpid(child,0,0);
+        if (cycle==1) (void)Syield(); /* existing scheduler retires the orphan */
+        ptest_assert_msg((status>>16)==child && (status&65535)==73,"native child validates private root/TID/stack/COW");
+        ptest_assert_msg(Pwaitpid(child,1,0)<0,"private PROCESS is publicly reaped once");
+        ptest_assert_msg(private_probe.cell==((cycle&1)?0xaabbccddUL:0x11223344UL),"private globals isolated");
+        ptest_assert_msg(private_probe.heap[17]==((cycle&1)?0x61:0x31) && private_probe.heap[4096+31]==0x42,
+                         "private partial-page writes isolated in either write order");
+        ptest_assert_msg(private_probe.heap[8192+45]==0,"lazy heap page independently backed");
+        for(stage=0;stage<32;stage++)
+            ptest_assert_msg(private_copyout[stage]==0xa5 && private_probe.heap[64+stage]==0xa5 &&
+                (!private_probe.filemap || private_probe.filemap[64+stage]==0xa5),
+                "syscall copyout splits image/heap/dirty-file COW without changing parent");
+        if(private_probe.filemap)ptest_assert_msg(
+            private_probe.filemap[11]==((cycle&1)?0x75:0x35) && private_probe.filemap[4096+13]==0x46,
+            "clean/lazy file and anonymous COW mixtures isolated");
+        if(private_probe.mapping) {
+            ptest_assert_msg(private_probe.mapping[5]==0x21 && private_probe.mapping[4096+7]==0,
+                             "mmap metadata/lazy backing and COW isolated");
+        }
+    }
+    if(private_probe.filemap)private_probe.filemap[11]=0x35;
+    private_probe.mode=-3; private_probe.cell=0x11223344UL;
+    private_probe.heap[17]=0x31;
+    child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+    ptest_assert_msg(child>0,"COW fault failure test child publishes");
+    if (child>0) {
+        status=Pwaitpid(child,0,0);
+        (void)pclone_trap(0,0xc8920300UL);
+        ptest_assert_msg((status>>16)==child && (status&65535)==0x900,
+                         "COW allocation failure completes child with SIGKILL");
+        ptest_assert_msg(Pwaitpid(child,1,0)<0 && private_probe.heap[17]==0x31 &&
+                         private_probe.cell==0x11223344UL,"COW failure leaves parent mapping/data valid");
+    }
+    if(mapping>0)ptest_assert_msg(private_sys6(0x17f,mapping,8192,0,0,0,0)==0,"private mmap cleanup");
+    if(filemap>0)ptest_assert_msg(private_sys6(0x17f,filemap,8192,0,0,0,0)==0,"private file mapping cleanup");
+#ifdef TEST_WITH_MMAP
+    ptest_assert_msg(Fdelete("COWFILE.TMP")==0,"private backing fixture closes exactly once");
+#endif
+    ptest_assert_msg(Mfree((void *)heap)==0 && Mfree(stack)==0,"private parent memory released");
+    ptest_pass();
+    if(!ptest_failures())conws("native independent KASPACE/COW entry probe (not Pfork): PASS\r\n");
+}
+#endif
 static volatile int entry_ran;
 static void child_entry(void *argument) { (void)argument; entry_ran = 1; }
 #endif
@@ -48,6 +299,65 @@ long clone_fpu_initial(void);
 unsigned long clone_fpu_observed, clone_fpu_expected_iar;
 #endif
 static long has_fpu;
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+long fork_return_native(void *, unsigned long);
+volatile unsigned long fork_return_bad, fork_return_child_pid;
+volatile unsigned long fork_return_use_fpu, fork_return_expected_iar, fork_return_expected_fpsr;
+volatile unsigned long fork_return_child_sp, fork_return_parent_sp, fork_return_child_tid;
+static void test_saved_return(void)
+{
+    unsigned char *stack = malloc(8192);
+    long pid, status, pages[8], baseline, parent_tid;
+    int stage, cycle;
+    ptest_begin("shared-VM syscall return (not Pfork)");
+    ptest_assert_msg(stack != NULL,"allocate shared-VM saved-return test stack");
+    if (!stack) { ptest_pass(); return; }
+#if defined(__mc68000__)
+    {
+        long cpu = 0;
+        (void)Ssystem(S_GETCOOKIE,0x5f435055L,&cpu);
+        if (cpu != 40) {
+            ptest_assert_msg(fork_return_native(stack + 4096, 0) == -32L,
+                             "unvalidated m68k saved-return CPU remains unsupported");
+            free(stack); ptest_pass(); return;
+        }
+    }
+    (void)Ssystem(S_GETCOOKIE,0x5f465055L,(long *)&fork_return_use_fpu);
+#endif
+    memset(stack, 0, 8192);
+    Prusage(pages); baseline = pages[4];
+    parent_tid = fork_return_native(stack + 4096, 0xfffe);
+    ptest_assert_msg(parent_tid > 0,"native parent has managed THREAD identity");
+    for (stage = 1; stage <= 7; stage++) {
+        fork_return_bad = fork_return_child_pid = 0;
+        pid = fork_return_native(stack + 4096, stage);
+        ptest_assert_msg(pid == -39L,"saved-return preparation rollback returns ENSMEM");
+        ptest_assert_msg(!fork_return_bad && !fork_return_child_pid,"failed preparation never executes child");
+    }
+    for (cycle = 0; cycle < 8; cycle++) {
+        fork_return_bad = fork_return_child_pid = 0;
+        pid = fork_return_native(stack + 4096, 0);
+        ptest_assert_msg(pid > 0 && pid != Pgetpid(),"saved return parent gets distinct child PID");
+        ptest_assert_msg(!fork_return_bad && fork_return_child_pid == (unsigned long)pid,
+                         "child executed after same originating trap with preserved user state");
+        ptest_assert_msg(fork_return_child_tid > 0 && fork_return_child_tid != (unsigned long)parent_tid,
+                         "saved return creates a distinct native THREAD/TID");
+        ptest_assert_msg(fork_return_child_sp == fork_return_parent_sp,
+                         "shared-VM proof retains original user SP");
+        if (pid > 0) {
+            status = Pwaitpid(pid, 0, 0);
+            ptest_assert_msg((status >> 16) == pid && (status & 65535) == 73,
+                             "saved-return child exits and is publicly reaped once");
+            ptest_assert_msg(Pwaitpid(pid, 1, 0) < 0,"saved-return child cannot be reaped twice");
+        }
+    }
+    Prusage(pages);
+    ptest_assert_msg(pages[4] == baseline,"saved-return repeated rollback/exit restores mapped pages");
+    free(stack);
+    ptest_pass();
+    if (!ptest_failures()) conws("native shared-VM syscall-return probe (not Pfork): PASS\r\n");
+}
+#endif
 static unsigned long stack_trim;
 static unsigned char *runnable_stacks[3];
 #define RUNNABLE_STACK_SIZE 32768UL
@@ -1193,6 +1503,12 @@ static void test_runnable(void)
 void pclone_run_managed_tests(void);
 void pclone_run_managed_tests(void)
 {
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+    test_saved_return();
+#endif
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    test_private_aspace();
+#endif
     ptest_begin("pclone managed execution");
     test_runnable();
     ptest_pass();
@@ -1227,6 +1543,21 @@ void test_pclone(void);
 void test_pclone(void)
 {
     ptest_begin("pclone");
+    /* These no-argument calls must fail before creating a child or blocking
+     * the parent until saved-context/private-VM/exec-detach support exists.
+     * Exercise the actual native trap and signed error result repeatedly. */
+    {
+        long pid = Pgetpid();
+        int fork_cycle;
+        for (fork_cycle = 0; fork_cycle < 16; fork_cycle++) {
+            ptest_assert_msg(Pfork() == -32L,"Pfork capability gate returns EINVFN");
+            ptest_assert_msg(Pvfork() == -32L,"Pvfork capability gate returns EINVFN without blocking");
+        }
+        ptest_assert_msg(Pgetpid() == pid,"rejected fork preserves caller PID");
+    }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    ptest_assert_msg(private_query(1)==0 && private_query(2)==0,"initial COW frame/reference baseline");
+#endif
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     {
         static unsigned char stack[256] __attribute__((aligned(16)));
@@ -1279,6 +1610,9 @@ void test_pclone(void)
 #endif
         }
     }
+#endif
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    ptest_assert_msg(private_query(1)==0 && private_query(2)==0,"final COW frame/reference baseline after both exits");
 #endif
     ptest_pass();
 }

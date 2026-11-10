@@ -5,10 +5,13 @@
 #include "portab.h"
 #include "thread_startup.h"
 #include "process_completion.h"
+struct _pd;
+struct kaspace;
 struct kproc;
 struct kthread;
 typedef struct proc_clone_transaction PROC_CLONE_TRANSACTION;
 typedef struct proc_clone_observer PROC_CLONE_OBSERVER;
+struct syscall_return;
 typedef struct { WORD pid; ULONG tid; } PROC_CLONE_IDENTITIES;
 typedef struct { WORD pid; ULONG tid; LONG status; } PROC_CLONE_COMPLETION;
 typedef enum { PROC_CLONE_OBSERVER_PREPARED, PROC_CLONE_OBSERVER_PUBLISHED,
@@ -17,9 +20,11 @@ typedef enum { PROC_CLONE_OBSERVER_PREPARED, PROC_CLONE_OBSERVER_PUBLISHED,
 typedef enum {
     PROC_CLONE_SAME_PROCESS,
     PROC_CLONE_PREPARED_PROCESS,
-    PROC_CLONE_NEW_PROCESS
+    PROC_CLONE_NEW_PROCESS,
+    PROC_CLONE_LOADED_PROCESS
 } PROC_CLONE_PROCESS_POLICY;
-typedef enum { PROC_CLONE_SHARE_VM, PROC_CLONE_PRIVATE_VM } PROC_CLONE_VM_POLICY;
+typedef enum { PROC_CLONE_SHARE_VM, PROC_CLONE_PRIVATE_VM,
+               PROC_CLONE_PREPARED_VM } PROC_CLONE_VM_POLICY;
 #define PROC_CLONE_COPY_STANDARD_HANDLES 1U
 #define PROC_CLONE_COPY_CWD              2U
 #define PROC_CLONE_RESOURCE_MASK         3U
@@ -39,6 +44,10 @@ typedef struct {
      * CWD inheritance. Explicit/nonstandard SFT handles are not duplicated.
      * Environment is initially empty; loader/image/startup remain separate. */
     UWORD resources;
+    /* LOADED_PROCESS/PREPARED_VM only. source is the loader-created target,
+     * not its parent. The loader retains this construction space and owns
+     * image/basepage/environment preparation. Ignored for other policies. */
+    struct kaspace *prepared_space;
 } PROC_CLONE_ARGS;
 
 typedef struct {
@@ -62,6 +71,9 @@ typedef struct {
  * or user code. Teardown callbacks obey the existing no-unwind/bounded-close
  * contract. Commit revalidates live state. */
 LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transaction);
+/* Existing loader initial THREAD, non-runnable. Uses the same transaction,
+ * does not adopt/publish the PROCESS space or consume loader resources. */
+struct kthread *proc_clone_prepare_loaded_thread(struct _pd *pd, struct kaspace *space);
 /* Commit requires an initialized, empty result (PROC_CLONE_RESULT_INIT).
  * A nonempty result returns EINVAL before any ownership transfer.
  * Commit transfers the non-runnable THREAD to result. A new or prepared target
@@ -101,6 +113,9 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION
  * asynchronous observer, returns positive signed TID or an error, and retains
  * no caller-stack data after return. Requires the current managed task. */
 LONG proc_clone_start_public(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *, VADDR pid, VADDR tid);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+LONG proc_clone_start_private_test(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *);
+#endif
 /* Owned observer required. Success consumes transaction and returns identities
  * immediately into an existing group; failures preserve it for abort except
  * explicit prepublication cancellation. No new waiter or public syscall. */

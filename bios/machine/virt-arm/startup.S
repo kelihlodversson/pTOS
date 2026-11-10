@@ -555,19 +555,23 @@ C_SYM(arm_dispatch_svc):
     // interrupt (e.g. bconin2()'s stop_until_interrupt() loop) unable to
     // ever be woken (#185).
     // The handler of TRAP #n is tos_vec_svc[n] (bios/arch/arm/vectors.c):
-    // r3 is borrowed to reach the array and restored from the stack (with IRQ
-    // still masked, as the exception left it), as every argument register is
-    // live.
-    str r3, [sp, #-4]!
+    // Keep the user registers intact while selecting the handler.
+    /* Preserve every user register while selecting the handler. The active
+     * stack word becomes the branch target only after original IP is loaded. */
+    push {r0,r12}
     mrs ip, spsr
-    tst ip, #0x20          // Thumb: the SVC is the halfword before lr
+    tst ip, #0x20
     ldrneh ip, [lr, #-2]
     ldreq ip, [lr, #-4]
-    and ip, ip, #0xF
-    ldr r3, =C_SYM(tos_vec_svc)
-    ldr ip, [r3, ip, lsl #2]
-    ldr r3, [sp], #4
+    and ip, ip, #0xf
+    ldr r0, =C_SYM(tos_vec_svc)
+    ldr r0, [r0, ip, lsl #2]
+    ldr ip, [sp, #4]
+    str r0, [sp, #4]
+    /* Keep the eight-byte routing frame aligned while IRQs are enabled.
+     * Restore original r0 and transfer control in one instruction. */
     cpsie i
+    pop {r0,pc}
     bx  ip
 
     .globl C_SYM(arm_dispatch_prefetch_abort)

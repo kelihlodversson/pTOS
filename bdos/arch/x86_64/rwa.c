@@ -78,15 +78,15 @@
 #include "ksched.h"
 #include "thread_startup.h"
 #include "thread_startup_x32.h"
-static UQUAD clone_read_fsbase(void)
+static UQUAD clone_read_base(ULONG msr)
 {
     ULONG lo, hi;
-    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xc0000100UL));
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
     return ((UQUAD)hi << 32) | lo;
 }
-static void clone_restore_fsbase(UQUAD value)
+static void clone_restore_base(ULONG msr, UQUAD value)
 {
-    __asm__ volatile ("wrmsr" :: "c"(0xc0000100UL), "a"((ULONG)value), "d"((ULONG)(value >> 32)) : "memory");
+    __asm__ volatile ("wrmsr" :: "c"(msr), "a"((ULONG)value), "d"((ULONG)(value >> 32)) : "memory");
 }
 
 extern void x86_64_enter_prepared_user(const X32_THREAD_ENTRY_IMAGE *) NORETURN;
@@ -440,7 +440,7 @@ void gouser_entry(WORD entry_type)
         THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
         const X32_THREAD_STARTUP_DRAFT *prepared = startup ? thread_startup_image(startup) : NULL;
         UWORD launcher_ds, launcher_es, launcher_fs, launcher_gs;
-        UQUAD launcher_fsbase;
+        UQUAD launcher_fsbase, launcher_gsbase;
         THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
 #endif
         UQUAD pml4_phys = kproc_user_root(p);
@@ -470,14 +470,18 @@ void gouser_entry(WORD entry_type)
 #if CONF_WITH_NATIVE_SCHED
         __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
                           : "=r"(launcher_ds), "=r"(launcher_es), "=r"(launcher_fs), "=r"(launcher_gs));
-        launcher_fsbase = clone_read_fsbase();
+        launcher_fsbase = clone_read_base(0xc0000100UL);
         if (prepared) { entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; standard_entry = FALSE; }
 #endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys || !kstack_phys || !user_rsp)
             panic("x86-64: process launched without an address space, stack or kernel stack\n");
-        if ((user_rsp & 15) != (standard_entry ? 0 : 8))
+        if (
+#if CONF_WITH_FORK_RETURN_TEST
+            !(prepared && prepared->saved_return) &&
+#endif
+            (user_rsp & 15) != (standard_entry ? 0 : 8))
             panic("x86-64: process stack not aligned for entry\n");
 
         /*
@@ -511,6 +515,9 @@ void gouser_entry(WORD entry_type)
         x86_64_set_kernel_stack(kstack_top);
         x86_64_set_irq_stack(kstack_top + 8);
         launcher_in_syscall = x86_64_gs_to_user();
+#if CONF_WITH_NATIVE_SCHED
+        launcher_gsbase = clone_read_base(0xc0000101UL);
+#endif
         if (setjmp(launch.resume) == 0) {
 #if CONF_WITH_NATIVE_SCHED
             if (prepared) {
@@ -531,7 +538,8 @@ void gouser_entry(WORD entry_type)
         if (prepared) {
             __asm__ volatile ("movw %0,%%ds; movw %1,%%es; movw %2,%%fs; movw %3,%%gs"
                               :: "r"(launcher_ds), "r"(launcher_es), "r"(launcher_fs), "r"(launcher_gs) : "memory");
-            clone_restore_fsbase(launcher_fsbase);
+            clone_restore_base(0xc0000100UL, launcher_fsbase);
+            clone_restore_base(0xc0000101UL, launcher_gsbase);
         }
 #endif
         x86_64_set_kernel_stack(launcher_stack);

@@ -39,12 +39,18 @@ long kdos_fopen(long name, long mode)
  * file is off its directory's list, and the failing drive's buffers have
  * been dropped, so closing again finds no more to do than release the
  * handle (or is interrupted by another drive's buffers, and is tried
- * again).  Only an interrupted close is repeated: one that returned, even
- * with an error, has given up its reference already.  The first result is
- * what is returned.
+ * again). MMU kernels use an explicit consumed/retained outcome: a normal
+ * FAT close error can also retain the reference, whereas a PFS close error
+ * can consume it. The first error is returned even if a later attempt frees
+ * the reference. This wrapper never transfers caller ownership. Classic
+ * kernels keep their historical bounded interrupted-close behavior.
  */
 long kdos_fclose(long h)
 {
+#if CONF_WITH_USER_ASPACE
+    FS_CLOSE_REPORT report;
+    return fs_close_bounded((WORD)h,FALSE,&report);
+#else
     long rc = 0, r;
     volatile BOOL returned;
     int tries;
@@ -64,6 +70,7 @@ long kdos_fclose(long h)
     }
 
     return rc;
+#endif
 }
 
 long kdos_fread(long h, long count, long buf)

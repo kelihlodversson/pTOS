@@ -43,6 +43,13 @@
 #endif
 #include "uaccess.h"
 #include "arch/m68k/userentry.h"
+#include "syscall_return.h"
+#if CONF_WITH_FORK_RETURN_TEST
+extern LONG mcpu;
+extern void m68k_enter_saved_user(const void *, ULONG) NORETURN;
+extern LONG m68k_fpu_save_complete(void *);
+extern void m68k_fpu_restore_complete(const void *);
+#endif
 
 extern long osif(short *pw);                    /* bdos/bdosmain.c */
 
@@ -112,6 +119,32 @@ void m68k_gemdos_dispatch(struct uframe *f)
         f->d[0] = (ULONG)ERANGE;
         return;
     }
+#if CONF_WITH_FORK_RETURN_TEST
+    if (pw[0] == 0x190 && !pw[1] && !pw[2] && (UWORD)pw[3] == 0x895f) {
+        SYSCALL_RETURN saved;
+        /* Only a hardware TRAP #1 format-0 frame, not an abbreviated uframe.
+         * QEMU040 idle/null FPU state is the first admitted model. */
+        if (mcpu != 40) { f->d[0] = EINVFN; return; }
+        memset(&saved, 0, sizeof(saved));
+        memcpy(&saved.user.frame, f, sizeof(saved.user.frame));
+        if (saved.user.frame.format != 0x84 || (saved.user.frame.sr & 0x2000)) {
+            f->d[0] = EINVFN; return;
+        }
+        if (fputype) {
+            if (m68k_fpu_save_complete(saved.user.fpu) != E_OK) {
+                f->d[0] = EINVFN; return;
+            }
+            m68k_fpu_restore_complete(saved.user.fpu);
+            if ((saved.user.fpu[0] && saved.user.fpu[0] != 0x40 && saved.user.fpu[0] != 0x41) ||
+                saved.user.fpu[1]) { f->d[0] = EINVFN; return; }
+        }
+        saved.mappings.entry = saved.user.frame.pc;
+        saved.mappings.stack_base = (f->usp - 256) & ~15UL;
+        saved.mappings.stack_size = 512;
+        f->d[0] = proc_clone_return_probe(&saved, (UWORD)pw[4]);
+        return;
+    }
+#endif
     if (pw[0] == SUPER) {
         LONG arg = ((LONG)(UWORD)pw[1] << 16) | (UWORD)pw[2];
 
@@ -322,6 +355,9 @@ void gouser(void)
 #endif
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) thread_startup_entering(startup);
+#if CONF_WITH_FORK_RETURN_TEST
+        if (prepared && prepared->saved_return) m68k_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
+#endif
 #endif
         m68k_enter_user(&initial_entry);
     }

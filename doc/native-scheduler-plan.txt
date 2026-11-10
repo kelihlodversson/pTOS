@@ -388,3 +388,20 @@ continuation across scheduler dispatch. Ordinary builds, A32 and m68k retain
 the original capture/return behavior; copied delayed restore and preemption
 remain disabled. See native-interrupt-frames.txt for the exact freshness and
 mapping/GS/TSS/stack limits. No #934/#936/GUI policy is imported here.
+
+Merge-train reconciliation after #932
+------------------------------------
+The scheduler now reconciles with epic 02c7345dc3e16807aa8200c57b760dd04e86df1a.
+Prepared launch/deferred cancellation uses canonical predecessor identities and
+TASK_RETIRING from #931, including execution-scoped cleanup tickets. Private
+teardown retains the linked record/backend until destruction returns; clear_task
+preserves arena links and admission ownership. Successor searches restart after
+reentrant destruction or final reference release. The permanent controller and
+bounded unmanaged root entry remain authoritative for ordinary admission.
+
+Merged SFT ownership/diagnostics (#933/#943), loaded PROCESS construction (#936),
+independent COW (#934), and gated saved-syscall-return proofs (#932) are preserved.
+The two #917 input-admission corrections remain in the integrated source; #917
+is retargeted to epic before any scheduler merge and must not replay its old
+stacked scheduler history. Its superseded disposition requires a separate check.
+No public dispatch, delayed IRQ restore, timer preemption or SMP is enabled.

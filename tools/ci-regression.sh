@@ -89,9 +89,14 @@ config = kconfiglib.Kconfig()
 config.load_config()
 config.syms['CONF_WITH_PCLONE'].set_value(2)
 config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
+config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
+config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].set_value(2)
+assert config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'y'
 config.syms['CONF_WITH_PTHJOIN'].set_value(2)
 config.syms['CONF_WITH_PTERMGRP'].set_value(2)
+config.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
+assert config.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_PTERMGRP'].str_value == 'y'
 assert config.syms['CONF_WITH_PTHJOIN'].str_value == 'y'
 if config.syms['ARCH_X86_64'].str_value != 'y':

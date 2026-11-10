@@ -1892,7 +1892,12 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
+              $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
+              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_PRIVATE_CLONE_TEST) \
               $(if $(filter y,$(CONF_WITH_NATIVE_SCHED)),-DTEST_WITH_NATIVE_SCHED) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC)),-DTEST_WITH_PROCESS_EXEC) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_TEST)),-DTEST_WITH_PROCESS_EXEC_TEST) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_DISPATCH)),-DTEST_WITH_PROCESS_EXEC_DISPATCH) \
               $(if $(filter y,$(CONF_WITH_PTHJOIN)),-DTEST_WITH_PTHJOIN) \
               $(if $(filter y,$(CONF_WITH_PTERMGRP)),-DTEST_WITH_PTERMGRP) \
               $(if $(filter y,$(CONF_WITH_CUIS)),-DTEST_WITH_CUIS) \
@@ -1945,6 +1950,11 @@ ifneq ($(filter pclone,$(TEST_SUITES)),)
 TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
 obj/clone_irq_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
+ifeq ($(CONF_WITH_FORK_RETURN_TEST),y)
+TEST_SUITE_OBJ += obj/fork_return_probe.o
+obj/fork_return_probe.o: tests/pclone/fork_return.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+endif
 obj/clone_registers.o: tests/pclone/registers.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 endif
@@ -2196,7 +2206,15 @@ TEST_GLOBAL_FILES = GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS
 TEST_GLOBAL_BUILD = GLOBALCH.TOS obj/global-stage/.stamp
 endif
 
-TEST_HD_FILES = $(TEST_GLOBAL_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
+ifdef CONF_WITH_PROCESS_EXEC_DISPATCH
+obj/process_transport_child.o: tests/process_transport/child.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+PROCXIT.TOS: $(TEST_STARTUP) obj/process_transport_child.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/process_transport_child.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_PROCESS_EXEC_FILES = PROCXIT.TOS
+endif
+
+TEST_HD_FILES = $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2212,7 +2230,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_GLOBAL_BUILD) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2278,7 +2296,7 @@ endif
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
-           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS GROUPCH.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
+           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS GROUPCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
            test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img

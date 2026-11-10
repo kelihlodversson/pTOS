@@ -1,0 +1,168 @@
+Pexec creation and executable-transition policy audit (#894 / #895)
+=================================================================
+
+Baseline: epic197d05ce6d71efb8e626df5b4e7db11d29f5c3fc (merged #931).
+This workstream owns executable creation/transition policy and fork/vfork.
+The scheduler, final PROCESS termination, public waits and filesystem reference
+service remain #713/#914, #893, #909 and #933 respectively. #907/#935 owns the
+public prepared-PROCESS transport, not a second loader or process constructor.
+
+Current mode matrix
+-------------------
+Mode       Current entry/ownership                 Required migration
+0          xexec load, new env/TPA/PD/KPROC,        Preserve sync launch/result.
+           loader image, inherited std/CWD;        Managed THREAD preparation
+           scheduler group or direct proc_go.     enters common clone factory.
+100        Same load; ksched_process_prepare,      Preserve PID/observer/deferred
+           async controller and publication.      policy and one public wait.
+3          Load-only staging; env/TPA owned        Preserve caller ownership and
+           by caller, loader grant recorded;      failed mode4 rejection without
+           may stage image in caller's heap.      consuming staged resources.
+4          Ring3 USER_ASPACE returns EINVFN        New distinct PROCESS+THREAD,
+           before changing image/ownership.       SHARE_VM; sync waits for full
+           Kernel/ROM legacy give-back remains.   PROCESS result, not same PID.
+104        No public implementation, EINVFN.      New distinct PROCESS+THREAD,
+                                                   SHARE_VM, async child PID.
+6          Existing staged image, isolated VM;     Preserve image-consuming launch
+           check grant, prepare before changing   and rollback/error boundaries;
+           env/TPA owner, then execute/free.       not shared mode4 semantics.
+106        Existing staged image -> async         Preserve isolated consuming
+           prepare/spawn, child PID.              launch, observer/wait behavior.
+200        No public implementation, EINVFN.      Reviewed same-PROCESS executable
+                                                   replacement with independent
+                                                   VM and committed detach event.
+5/7,50     Basepage/flags and NatFeats relocation  Preserve staging and legacy
+                                                   boot/ROM compatibility.
+
+Creation/ownership transition map
+---------------------------------
+xexec / xexec_observed / xexec_prepared (bdos/proc.c)
+  -> alloc_env + alloc_tpa + init_pd_fields + kproc_create
+     Ownership is child for0/100, caller for3. Existing std/CWD acquisition is
+     init_pd_files; descriptors/runtime are not full fork inheritance.
+  -> kpgmhdrld/kpgmld, ELF or PRG staging, kproc_set_image/load_begin/load_commit
+     Loader owns layout, relocation, entry/stack/image metadata and error scope.
+     It records pending KASPACE or caller-staged UH_LOADED grant, not runnable VM.
+  -> synchronous ordinary managed: ksched_exec -> run_group(prepare=TRUE)
+  -> async/observed/deferred: ksched_process_prepare -> kproc_prepare_async_thread
+  -> both: kproc_prepare_user_thread(pd,parent,&thread)
+     Scheduler task storage/continuation stack is already reserved. Loader
+     builds/maps image/environment/TPA/controller/ancestors and syscall stack.
+  -> proc_clone LOADED_PROCESS/PREPARED_VM (this first increment)
+     Explicit loader construction KASPACE; source denotes the existing target
+     PROCESS, not its parent's root. Uses existing transaction reference/THREAD
+     preparation and rollback, returns owned non-runnable initial THREAD.
+  -> move_loaded_image/layout_load and final KPROC active-space adoption
+  -> existing scheduler adopts execution resource then publishes task
+  -> proc_go sets parent/started and runs existing architecture launcher
+  -> existing launcher leaves syscall stack; #893 finalizes PROCESS
+  -> #909 public reap; observers retain separate canonical notification rights.
+
+No extra PID, descriptor table, reaper, loader or scheduler is created by the
+new policy. LOADED_PROCESS must use PREPARED_VM and a live unstarted target;
+SAME_PROCESS/NEW_PROCESS public clone policies cannot select this internal VM
+source. The transaction does not consume/adopt the loader's KASPACE, env, TPA,
+image or kernel stack. It retains only its temporary references and constructed
+THREAD. Its result has no owned_process disposal right. The loader remains
+responsible for subsequent failed image preparation/disposal.
+
+The old early already-prepared branch now uses the same helper with the active
+KASPACE, instead of a direct kthread_create. Fresh-image preparation calls it
+at the original kthread_prepare location before irreversible image transfer.
+All added allocation/commit checks are before that transfer. Root/group/async
+publication and stopped-stack reclamation are unchanged.
+
+Paths deliberately not yet migrated
+----------------------------------
+- Direct nested proc_go, ROM/accessory launch and group attachment of an already
+  prepared image still use their existing launcher/THREAD association. Their
+  topology must be reviewed before changing #713's continuation admission.
+- KPROC/env/TPA allocation and image-specific KASPACE construction still originate
+  in loader policy. This increment consolidates initial managed THREAD creation;
+  it does not claim complete Pexec -> proc_clone convergence.
+- PE_LOAD's source grant/UH_LOADED and isolated PE6/106 move ownership are not
+  replaced with shared VM. Legacy supervisor PE4 give-back is compatibility
+  only; do not build a new ring3 ownership subsystem around it.
+- #931 prepared rights remain transport/observation. Their cancellation guard,
+  pending cleanup, directory policy and irreversible replacement boundaries
+  remain in the existing owners; no launch-right API is added here.
+
+Fallible and irreversible boundaries
+-----------------------------------
+Image loading may allocate and perform I/O under the existing disk-error scope.
+The ordinary scheduler reserves its slots/execution stack before image adoption.
+The new clone transaction may fail allocating metadata/THREAD or retaining live
+identity/space; it releases only its own prefix and returns failure to the same
+loader cleanup path. It does not run the child or commit KPROC's active root.
+
+A staged image move is already irreversible in the current loader. This change
+adds no fallible operation after it. The existing standard-entry stack-bound
+invariant check still follows loading; its old ordering needs separate review
+before claiming a general no-fail executable-replacement transaction. Do not
+reuse the isolated move-private mechanism on COW/shared pages for exec200.
+
+Next default-off shared-VM increment (4/104)
+-----------------------------------------
+Use distinct PROCESS identities with the same retained KASPACE, not SAME_PROCESS.
+A loaded-image policy must authenticate the caller's PE_LOAD grant, retain
+image/stack/environment/basepage allocations and logical mappings through
+existing #892/#893 owners, allocate fresh execution/syscall stacks and register
+canonical completion before publication. The entry is the staged image entry,
+not a fork-return frame. Sync/async waiting is selected by xexec, never a new
+clone flag. Source-parent lifetime must not be borrowed through a stale PD.
+
+Required before activation: source Mfree/unmap cannot invalidate child code or
+stack, child finalization cannot release source mappings, ancestor death/orphan
+execution, nested sync/async launch, both exit orders, late/early once-only wait,
+all construction rollback and mode0/3/6/100/106 compatibility. Runtime ownership
+of heap/image ledgers and controller mappings needs a reviewed shared-space
+policy, not attachment of two KPROC records to one page-table pointer. Keep4/104
+EINVFN until native x32/A32/m68k040 and owner gates pass. Non-MMU compatibility
+continues its old path, without claiming new shared-VM parity.
+
+Committed executable replacement design (200)
+--------------------------------------------
+A separate reusable replacement transaction must stage the complete new image,
+independent KASPACE and initial user/kernel execution state while retaining the
+old PROCESS/VM. The PROCESS identity/PID and vfork dependency remain attached to
+that same PROCESS. Replacement cannot be represented by creating an unrelated
+child whose completion masquerades as exec. All file/directory/environment and
+startup preparation occurs before an irreversible commit.
+
+Commit validates the exact execution owner and target generation, switches the
+PROCESS image/root and new THREAD continuation at an owner-reviewed boundary,
+and forbids returning through the old user image. Old syscall/scheduler stacks
+and shared-space refs remain retained until the old execution has stopped and
+existing root reclamation can release them. KPROC currently forbids attaching a
+THREAD with another space while active_space differs; replacement needs an
+explicit reviewed staging/commit contract with #892/#713, not bypassing that
+check or copying a kernel continuation. No source/COW frame becomes privately
+writable merely through move_private. No public200 implementation is claimed.
+
+The child-specific vfork dependency is released only after successful replacement
+commit, or final PROCESS completion from #893. Exec entry, failed preparation,
+THREAD-only exit, unrelated launch and #909 wait consumption release nothing.
+Replacement should expose a committed-detach notification at the policy layer;
+it must not create another observer registry or executable loader.
+
+Inheritance dependency
+----------------------
+Common creation/runtime inheritance consumes the checked #933 owner service for
+PROCESS-local descriptors. No live acquire/expected-incarnation release API is
+agreed yet. No direct f_use/incarnation/ticket mutation is introduced here.
+CWD/environment/runtime and per-PROCESS local bindings must migrate coherently
+for ordinary Pexec as well as fork. The irreversible retirement-admission latch
+is not a reversible source snapshot guard. See the separate inheritance audit.
+
+First-increment local validation
+--------------------------------
+Native x32 desktop22/0 and headless22/0, ARM A3226/0, m68k04025/0, each five
+shutdown checks. Existing PIE load3 -> rejected4/104 -> successful6 and async
+PROCESS/wait regressions pass. Separate native x32 embedded MEMTEST with actual
+GEM/form/input boot passes. Host transaction/THREAD/KASPACE and CUIS lifecycle
+suites pass normally, ASan/UBSan and fortified host compiler; these model hosted
+CPU/MMU mechanics and are not native execution evidence. ELF51/51, clone ABI
+and gitready pass. Classic192KiB ROM builds warning-free,8966 bytes free.
+Exact-head GitHub/pinned-emulator results and independent review remain separate
+acceptance gates. No fortified GCC13 or new Hatari/Amiberry result is claimed
+from the local host compiler/QEMU runs.
