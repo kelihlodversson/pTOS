@@ -226,3 +226,13 @@ creation calls still use ordinary CLONE_VM/32, not private-VM startup. These
 controls are not public ABI or production activation. Actual group cancellation,
 x32 allocation/stale-mapping hooks and counted hosted production tests remain
 separate evidence layers. No Phase 2-8 capability follows from this contract.
+
+Open acceptance blocker
+-----------------------
+The expanded native Phase1 matrix exposes an existing FAT/PFS directory-index
+collision on the pluggable-FS ARM/m68k configuration. Its source CWD setup can
+lose a newly published PFS directory reference before the first tested clone.
+The traditional FAT configuration and basic managed cloning are separate
+coverage; neither proves the failing PFS COPY_CWD contract. See the precise
+native prerequisite finding in clone-phase1-acceptance.txt. No final Phase1
+owner acceptance is claimed while that configuration remains unproven.

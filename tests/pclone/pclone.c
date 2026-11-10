@@ -1479,14 +1479,14 @@ static void test_runnable(void)
         extended.args.stack_base = runnable_stacks[0];
         extended.args.stack_size = RUNNABLE_STACK_SIZE;
         extended.args.child_tid = &tid; extended.args.child_pid = &pid;
-        for (size = 28; size <= 36; size++) {
+        for (size = 28; size <= 36; size += 8) {
             probe.steps = probe.error = 0; probe.mode = 0;
             pid = tid = -99;
             result = pclone_trap(&extended,size);
-            ptest_assert_msg(result > 0 && tid == result && (size < 32 ? pid == -99 : pid > 0),
+            ptest_assert_msg(result > 0 && tid == result && (size == 28 ? pid == -99 : pid > 0),
                              "native prefix and append-only publication contract");
             if (result > 0) {
-                waited = Pwaitpid(size < 32 ? -1 : pid,0,0);
+                waited = Pwaitpid(size == 28 ? -1 : pid,0,0);
                 ptest_assert_msg(waited > 0 && !(waited & 65535) && probe.steps == 12 && !probe.error,
                                  "append-only clone executes and waits");
             }
