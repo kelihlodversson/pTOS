@@ -134,3 +134,24 @@ materialized before intermediate accounting. The exact intermediate assertion
 and original final pre-allocation baseline assertion remain intact, and all
 three stacks must Mfree successfully. This does not claim an exact-arity m68k
 trap reader or treat transient materialization as a failed rollback.
+
+Recovery: shared execute-policy ownership
+----------------------------------------
+The PROCESS-local staged-image lookup was not authoritative for nested
+CLONE_VM children. m68k now stores declared EXEC in each MMU leaf, including
+when PRIVATE_CLONE=n: U1/software bit9 on040/060, an ignored page-address bit
+in030's long descriptor. This is logical admission policy, NOT hardware NX.
+Map/protect/move/COW and unmap/root destruction own it with the mapping; no
+parent layout, retained PD, PID lookup or parallel permission registry is used.
+KPROC asks that shared mapping policy (including COW logical permissions).
+Native staged tests now check text/data/BSS/unclaimed image slack directly,
+from a CLONE_VM child, and from an orphan after the staged owner retires and
+fresh synchronous PROCESSes are constructed. A file handshake releases the
+orphan only after the parent's Pwait result; rejected calls preserve both
+outputs/full startup sentinel and create no observable child. Host page-table
+models separately test an empty child layout and substituted original PD.
+This correction is not accepted solely by the model: actual no-PRIVATE_CLONE
+m68k040 and x32/ARM native execution remain required.
+
+The PFS recovery audit and exact proposed independent prerequisite are in
+clone-pfs-prerequisite.txt. No filesystem prototype is included in #948.

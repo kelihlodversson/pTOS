@@ -1,0 +1,87 @@
+Pclone Phase 1 recovery: required FAT/PFS CWD prerequisite
+=======================================================
+Assessment against epic76f62a8c and #948 (no filesystem fix included here).
+This is a proposal for an independently reviewed prerequisite, not permission
+to open/merge another PR or begin Phase2. #948 must remain blocked until the
+prerequisite is authorized, reviewed, merged and tested on its actual epic.
+
+Why a one-site patch is unsafe
+-----------------------------
+1 fs/pfs.c owns pfs_dirtbl entries/cookies through PD_CURDIR indices; its
+  comment assumes FAT never uses legacy dirtbl. bdos/fsdrive.c ckdrv disproves
+  that assumption: root initialization writes a legacy slot into PD_CURDIR.
+  pfs_cwd_set may allocate that same number then release it as the old slot.
+2 Simply stopping that write breaks legacy relative loader lookup:
+  bdos/fsdir.c findit still indexes dirtbl[PD_CURDIR(run)[drive]].
+  fs/fatfs_pfs.c fat_getdir_path/fat_chdir_process also use legacy indices.
+  Absolute PFS driver lookups do not make these other consumers disappear.
+3 proc.c init_pd_cwd_from increments BOTH dirtbl[].use and pfs_cwd_addref;
+  release_pd_files decrements legacy entries before pfs_proc_exit decrements
+  PFS entries. This can touch unrelated slots; the old 'harmless' comments
+  are false. PD_CURDIR on ASPACE builds lives in KPROC, not user basepage data.
+4 PFS owns a driver cookie, but FAT root/lookup cookies are borrowed DND
+  pointers. fat_release currently releases only a search cursor. FAT's DND
+  cache scavengers (makdnd/process_dnd_tree) protect only legacy dirtbl holds.
+  Correct namespace separation alone would leave cached directory cookies
+  dangling after reclamation, removal or media change.
+5 pfs_cwd_addref returns void and increments signed WORD use without an
+  exhaustion/error contract. init_pd_cwd_from cannot propagate acquisition
+  failure to the clone factory or loader. pfs_proc_exit does not detach all
+  indices before invoking driver release callbacks. These need one deliberate
+  acquire/publish/release and retirement contract, not clone-specific patches.
+
+Proposed focused filesystem PR (requires separate authorization)
+---------------------------------------------------------------
+Keep the existing PFS CWD table as the sole PROCESS directory namespace in a
+pluggable build; preserve legacy dirtbl PROCESS semantics in non-PFS builds.
+No new public syscall, feature flag, competing PROCESS/CWD registry or change
+to SFT rights, scheduler policy, clone flags or Pexec modes.
+
+A Filesystem-owner acquire/replace/inherit/detach helpers must validate the
+  driver/drive/slot, acquire all references before publication, fail on
+  saturation/table/driver acquisition errors, and roll back unchanged parent
+  and child slots. Clone and ordinary construction use the same helpers.
+  Retirement unpublishes each owned slot before final driver release and
+  denies reattachment to a retired/retiring identity. PD reuse cannot inherit
+  an earlier owner. Release callbacks run outside scheduler/GUI exclusion.
+B FAT directory cookies need an exact lifetime hold recognized by the DND
+  cache/removal/media-invalidating owner. Reuse existing native cache-hold
+  mechanisms where possible, but never interpret a PFS slot as a dirtbl slot.
+  A stale cookie must not release a reused DND or slot after media change.
+  File cookies/search cursors remain distinct; other drivers retain their
+  existing real-resource release obligations. Avoid borrowed-cookie releases.
+C ckdrv performs media setup without publishing a legacy PROCESS index in a
+  PFS build. Relative native lookup/getdir/chdir/loader consumers resolve CWD
+  through the authoritative filesystem helper, including default-root and
+  non-FAT drivers. No temporary global run switch or borrowed PD publication.
+D Replace double acquire/release in proc.c; return failures into existing
+  factory rollback before runnable publication. Preserve #933/#943 cleanup
+  diagnostics, #931 cancellation envelopes and #942 allocation holds.
+
+Expected scope: fs/pfs.c/.h, fs/fatfs_pfs.c, bdos/fsdrive.c, fsdir.c,
+proc.c (and internal directory/cache declarations as required), plus counted
+production-code tests. kproc.c's existing owner-backed PD_CURDIR accessor
+should remain the identity boundary; no new public basepage representation.
+Driver-cookie retention and cache invalidation must be reviewed before fixing
+just the obvious index collision. This is broader than an ABI-only correction.
+
+Required independent acceptance
+-------------------------------
+Production code must exercise the real FAT adapter and ckdrv, not only the
+fake PFS driver: Dsetpath -> Dgetpath/Dgetcwd, relative loader operations,
+all four clone resource policies with PFS enabled, parent/child independent
+changes, both exit orders, nested clones, allocation/refcount failures,
+full-table replacement, driver release with real counted resources, retirement
+reentry, stale slot/PD reuse, DND scavenging/removal/media invalidation and
+exact final cookie/cache reference baselines. A negative-control case must
+reproduce the old collision. Preserve the existing failing native assertions.
+
+Run ARM Cortex-A7 and m68k040 standard-PFS native suites and five shutdown
+checks each, traditional FAT compatibility, x32's supported traditional FAT
+and external desktop/shutdown, host normal/ASan/UBSan/fortifiedGCC13,
+ABI/ELF, classic ROM and pinned emulator checks. Current real FAT PFS cookies
+are 32-bit only; do not silently enable x32 PFS as a prerequisite.
+
+After accepted integration, reconcile only #948's focused execute-policy/ABI
+changes and rerun its entire standard-PFS/traditional native matrix and final
+exact-head CI. No Phase1 100% claim or issue closure before that evidence.

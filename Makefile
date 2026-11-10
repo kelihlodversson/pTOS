@@ -1994,7 +1994,7 @@ ifdef CONF_WITH_USER_ASPACE
 ifdef CONF_WITH_PCLONE
 TEST_CLONE_ABI_FILES = CLNABI.TOS
 CLNABI.TOS: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
-	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
 	  $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
 	  -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 endif
