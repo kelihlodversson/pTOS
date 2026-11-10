@@ -110,6 +110,10 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
                      Dgetpath(phase1_parent_path,3) == 0 && Fwrite(file,2,"AB") == 2 &&
                      Fseek(0,file,0) == 0 && Fforce(0,file) == 0,
                      "prepare independent standard-handle and CWD policy");
+    {
+        char message[192]; long cwd = Dgetcwd(phase1_child_path,3,sizeof(phase1_child_path));
+        sprintf(message,"ABI initial CWD legacy=%s generic=%s rc=%ld\r\n",phase1_parent_path,phase1_child_path,cwd); conws(message);
+    }
     good.child_pid = &pid; good.child_tid = &tid;
     for (bits = 0; bits < 4; bits++) {
         good.flags = CLONE_VM | (bits << 2);
@@ -273,7 +277,12 @@ static void test_public_contract(unsigned char *stack)
     bad = good; bad.child_pid = (int32_t *)((unsigned char *)&tid + 2); REJECT(-25L);
     bad = good; bad.child_tid = (int32_t *)stack; REJECT(-25L);
     bad = good; bad.child_pid = (int32_t *)(stack + RUNNABLE_STACK_SIZE - 4); REJECT(-25L);
-    bad = good; bad.child_tid = (int32_t *)((unsigned long)phase1_entry & ~3UL); REJECT(-40L);
+    bad = good; bad.child_tid = (int32_t *)((unsigned long)phase1_entry & ~3UL);
+#if defined(__mc68000__)
+    REJECT(-25L); /* legacy image page is writable: explicit code-page overlap */
+#else
+    REJECT(-40L); /* read-only executable leaf fails writable-range validation */
+#endif
 #undef REJECT
     phase1_reject(0,32,-40L,&pid,&tid,stack);
     phase1_reject((void *)0x80001000UL,32,-40L,&pid,&tid,stack);
