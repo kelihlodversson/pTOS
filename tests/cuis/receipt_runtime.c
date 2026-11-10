@@ -113,6 +113,10 @@ static int receipt_runtime_checks(void)
     LONG source,destination,replacement;
     ULONG before,refs=process_references,i,j;
     char tail[]={0,0},environment[]={0,0};
+#ifdef RECEIPT_FIXTURE_FAIL_AT_256
+#line 256 "forced-receipt-check"
+    CHECK(FALSE);
+#endif
     stream_heap_mode=TRUE;
     run=&first; source=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(source>=0);
     run=&second;destination=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(destination>=0);
@@ -273,6 +277,8 @@ static int receipt_runtime_checks(void)
 int main(void)
 {
     int result=legacy_session_checks();
-    if(result)return result;
-    return receipt_runtime_checks();
+    if(!result) result=receipt_runtime_checks();
+    /* CHECK retains its source line for diagnostics. Host exit codes are only
+     * eight bits: neither a legacy nor a receipt failure may wrap to success. */
+    return result ? 1:0;
 }
