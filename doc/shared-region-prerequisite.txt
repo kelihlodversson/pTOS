@@ -5,10 +5,11 @@ Status
 ------
 Design and production-KASPACE policy fixtures only. No allocation-retention
 implementation, shared-Pexec capability or native acceptance is claimed.
-Base: accepted #936 ca9ec88e4e021c8ee762f925d628ed98c0795935, stacked above
-epic 197d05ce6d71efb8e626df5b4e7db11d29f5c3fc. Public modes 4/104/200,
-Pfork/Pvfork and generic PRIVATE_VM remain disabled. Do not merge this design
-into #934 or interpret accepted constructor/COW work as acceptance of it.
+Integration base: epic 2ff82163b1f1fab0af3115be5ecb102f6004d4a3, after
+#933/#936/#943/#934/#932/#914/#940/#941/#937 integration. This is the focused
+#942 design/fixture increment, not a replay of those prerequisites. Public
+modes 4/104/200, Pfork/Pvfork and generic PRIVATE_VM remain disabled. Accepted
+constructor, COW and saved-return work does not establish allocation retention.
 
 Observed owner boundaries
 -------------------------
@@ -28,8 +29,9 @@ logical permission work does not supply these missing allocation identities.
 
 Narrow kernel-owner request
 ---------------------------
-Coordinate on #936, comment 6747061203. Names below are conceptual operations,
-not proposed callable symbols or an approved ABI.
+Original owner request: #936, comment 6747061203. R1-R4 remain missing in the
+integrated source. Names below are conceptual operations, not proposed callable
+symbols or an approved ABI; implementation requires its own linear assignment.
 
 R1 Acquire allocation hold: expected allocation identity/generation, exact
    range, rights and retained canonical PROCESS association; one move-only
@@ -80,15 +82,25 @@ Still blocked: native exit orders, orphan/PD reuse, generation authentication,
 Mfree/Munmap protection of all image/env/basepage/stack regions, lazy/file/COW
 conflicts, nested stopped continuations and failure after every region token.
 They require R1-R4; old native constructor/COW results cannot satisfy them.
-No new GUI, ROM, ABI, fortified or CI acceptance follows from these fixtures.
+These fixtures do not establish native allocation retention, GUI capability
+or a new ABI. Compatibility and exact-head CI evidence is recorded separately
+in #942; historical prerequisite results do not establish this head's acceptance.
 
 Descriptor work while waiting
 -----------------------------
-#939 fetched head b63fd3dc90fafb2e8e0651f0bace4cec405bfaa4 is draft, not
-accepted. Stage-B interface request: #939 comment 6747076477. Its acquire
-routine currently resolves PD_UFT/global descriptors itself and accounts live
-records as staged references. Agree a coherent ALL-managed-PROCESS resolver
-and installed-binding ownership/transfer contract before wiring tables into
-ordinary file operations. Never translate an internal FAT/PFS cookie twice.
-The inventory and I01-I17 requirements remain in the separate inheritance
-design branch; no filesystem implementation or reference counters change here.
+#943 integrated the checked-reference stage A; #939 is closed/superseded.
+doc/checked-file-references.txt is the authoritative current owner contract.
+fs_reference_acquire authenticates the current PROCESS binding and expected
+SFT incarnation, acquiring one live staged reference. Its move-only owner is
+distinct from FS_CLEANUP_TOKEN, which represents a residual service reference.
+No allocation hold may be manufactured from either file-owner token.
+
+Stage B still requires a reversible descriptor mutation/snapshot admission and
+one coherent ALL-managed-PROCESS namespace. Resolve user-local numbers once;
+keep backend slots distinct. Do not reuse the retirement latch, exec_committing
+or a global mutex as descriptor admission/incarnation authentication. Replace
+legacy source-binding resolution through the filesystem owner's agreed hook;
+retain its checked acquire/close accounting. Never translate an internal
+FAT/PFS cookie twice or add a fork-only descriptor table. The published
+inheritance inventory/regression specification remains the migration input;
+no filesystem implementation or reference counters change in this increment.
