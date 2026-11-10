@@ -3192,7 +3192,7 @@ static void test_return_bridge(void)
         KTHREAD *a, *b;
         VADDR rsp;
         UQUAD return_pc;
-        UWORD status;
+        UWORD status, stack_prot;
         LONG rc;
         UBYTE code[] = { 0xb8, 0x68, 0x24, 0, 0, 0xc3 }; /* EAX=0x2468; ret */
         snap(&baseline);
@@ -3215,8 +3215,12 @@ static void test_return_bridge(void)
         {
             VADDR custom_stack = kproc_uheap_alloc(pd, PAGE);
             KASPACE_LEASE *one = NULL, *two = NULL;
-            CHECK(custom_stack && kproc_demand_page(pd, custom_stack, ASPACE_PROT_WRITE) == 1,
-                  "back ordinary user-stack reservation before lifetime acquisition");
+            CHECK(custom_stack && kproc_demand_page(pd, custom_stack, ASPACE_PROT_WRITE) ==
+                  (CONF_WITH_DEMAND_PAGING ? 1 : 0) &&
+                  aspace_translate(as, custom_stack, NULL, &stack_prot) &&
+                  (stack_prot & (ASPACE_PROT_USER|ASPACE_PROT_WRITE)) ==
+                  (ASPACE_PROT_USER|ASPACE_PROT_WRITE),
+                  "ordinary user-stack reservation is writable under its eager/demand policy");
             CHECK(kaspace_stack_hold_acquire(space, custom_stack, PAGE, &one) == E_OK &&
                   kaspace_stack_hold_acquire(space, custom_stack, PAGE, &two) == E_OK &&
                   kthread_take_stack_hold(a, &one) && kthread_take_stack_hold(b, &two) && !one && !two,
@@ -3240,7 +3244,11 @@ static void test_return_bridge(void)
         CHECK(proc_clone(&args, &tx) == E_OK && proc_clone_commit(&tx, &result) == E_OK,
               "independent PROCESS retains VM while original process executes");
         rsp = kproc_user_stack(pd);
-        CHECK(kproc_demand_page(pd, rsp, ASPACE_PROT_WRITE) == 1 &&
+        CHECK(kproc_demand_page(pd, rsp, ASPACE_PROT_WRITE) ==
+              (CONF_WITH_DEMAND_PAGING ? 1 : 0) &&
+              aspace_translate(as, rsp, NULL, &stack_prot) &&
+              (stack_prot & (ASPACE_PROT_USER|ASPACE_PROT_WRITE)) ==
+              (ASPACE_PROT_USER|ASPACE_PROT_WRITE) &&
               aspace_copy_to_user(as, rsp, &return_pc, sizeof(return_pc)),
               "kernel installs selected normal-return PC into existing launch stack");
         CHECK(kaspace_lease_acquire(space, rsp - 128, 136, ASPACE_PROT_USER | ASPACE_PROT_WRITE,
