@@ -28,6 +28,12 @@ void Cconws(const char *text) { (void)text; }
 void Cconout(int ch) { (void)ch; }
 void Pterm(int status) { (void)status; } /* main also returns its status. */
 
+void pclone_run_unmanaged_tests(void)
+{
+    /* This fixture exercises log ownership, not native clone execution. */
+    abort(); /* No unmanaged worker is launched by this model. */
+}
+
 void pclone_run_managed_tests(void)
 {
     ptest_begin("managed worker");
