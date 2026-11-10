@@ -1,5 +1,6 @@
 /* Included only by the managed, real-trap Pclone suite on each MMU target.
  * No kernel calls or modeled child publication stand in for these assertions. */
+static int phase1_contract_exercised;
 static volatile unsigned phase1_entered;
 static volatile unsigned long phase1_argument;
 static volatile long phase1_pid;
@@ -328,5 +329,6 @@ static void test_public_contract(unsigned char *stack)
     phase1_mapping_matrix(good,stack);
 #endif
     ptest_assert_msg(Prusage(usage) == 0 && usage[4] == baseline,"Phase1 failed/successful traps restore mapped-page baseline");
+    phase1_contract_exercised = 1;
     conws("native Pclone ABI prefix/flags/pointers/atomic outputs: tested\r\n");
 }

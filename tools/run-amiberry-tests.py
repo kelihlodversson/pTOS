@@ -160,6 +160,7 @@ def main():
         print('native IRQ captured frames=%d, mismatches=%d, nonzero FPIAR=%d' % tuple(irq_evidence))
     if a.require_managed_threads:
         markers = ('pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS',
+                   'native Pclone ABI prefix/flags/pointers/atomic outputs: PASS',
                    'native Pthjoin: PASS', 'native Ptermgrp: PASS', 'native libc exit: PASS')
         for marker in markers:
             if marker not in text:

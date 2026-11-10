@@ -1,0 +1,104 @@
+Phase 1 Pclone acceptance map (#890)
+==================================
+Baseline: epic 76f62a8cd273c322071026a3fb3a2502f396e9f5.
+Candidate is NOT yet accepted. Exact final SHA, native/CI results and owner
+verdict belong in the focused PR and issue checklist. No issue closure or
+integration is implied by this map. Historical rejection-only #904 statements
+remain provenance in clone-abi-design.txt, not present backend limitations.
+
+Frozen public contract
+----------------------
+GEMDOS trap #1 opcode190, architecture-native structure pointer plus size.
+The original prefix is28bytes; child_pid at28 extends it to32. Sizes28..31
+omit PID; >=32 includes it. Only the known prefix is copied once. Unknown tail
+bytes are ignored, but supplied address+size must fit32bit user arithmetic.
+No version field or integer replacement for public pointer members. Native
+alignment: x32/A32 four, m68k two. x32 LP64 kernel uses the explicit user32 wire
+snapshot and zero-extends its fields; full native syscall slots are validated
+before narrowing. The argument pointer is opaque, not dereferenced.
+
+Flags VM=1, SAME_PROCESS=2, COPY_STANDARD_HANDLES=4,COPY_CWD=8; unknown bits
+EINVAL. SAME_PROCESS requires VM and forbids resource-copy bits. VM creates a
+new PROCESS/PID sharing ASPACE; VM|SAME_PROCESS creates a THREAD/TID in the same
+PROCESS. Resource bits independently copy bindings/CWD, never PROCESS identity.
+No resource bits means default standard handles/CWD. No implicit nonstandard
+handle inheritance, environment sharing, signal policy, TLS or detach flag.
+Success returns positive int32 TID. Optional int32 child_tid reports it;
+optional child_pid reports the independently allocated PID or same PROCESS PID.
+Neither output is a capability, status store or clear-on-exit location.
+
+Non-NULL TLS fails EINVAL (#908 separate). Ordinary private flags0 and missing
+managed context/backend fail EINVFN after argument validation; no child/output.
+Disabled/non-MMU configurations fail before touching an invalid pointer.
+Pfork/Pvfork, shared-VM Pexec and production PROCESS dispatch remain disabled.
+Entry must be executable; stack writable, aligned, large enough for the real
+startup frame. Optional outputs are native-aligned writable disjoint words,
+not overlapping stack/executable pages. They may alias the already-snapshotted
+input. No retained output pointer or post-store fallible operation. Public void
+entry return is THREAD status0; explicit Pterm uses its existing completion ABI.
+
+Source and executable evidence map
+----------------------------------
+1 Opcode/native trap: pclone.h, mintproc_call(PCLONE), clone_request; real
+  tests/pclone/pclone.c pclone_trap uses x32 syscall, ARM svc1 or packed m68k
+  trap1; test_public_contract is invoked only in the actual managed worker.
+2 Layout: tests/clone/abi_layout.c + tools/check-clone-layout.sh x32/arm/m68k
+  assert every offset, native pointer widths/types, total/prefix size,
+  alignment, opcode and flag bits. Native matrix also checks size/alignment.
+3 Snapshot/sizing: clone_copy_v1 and clone_decode_v1; hosted decode.c verifies
+  exactly one copy, original snapshot despite later source mutation, ignored
+  tails, bad sizes/ranges and full-width zero extension. Common native matrix
+  tests every size28..36, invalid PID omitted by28..31, no early dispatch,
+  read-only/unaligned/cross-page request and inaccessible second input page.
+4 Flags/pointers: clone_validate_v1 plus public native matrix tests every
+  unknown flag bit, incompatible resources, non-NULL TLS, opaque high argument,
+  high-bit/missing/wrapping/inaccessible pointers, entry/stack/output
+  permissions, native alignment, alias and overlap. x32 raw syscall tests
+  genuine high64 slots without low32 redirection; assembly entry records the
+  full RDI before C can truncate it. Native resource matrix tests all four
+  copy policies, shared OFD position and independent child CWD mutation.
+5 Publication: proc_clone_start_public/clone_start_entry/proc_clone_spawn and
+  thread_startup_prepare_outputs/run_preflight/seal/commit. Native cross-page
+  outputs include m68k word straddling; missing optional outputs, request alias
+  and each rejected request preserve outputs/frame and create no runnable
+  child/zombie. MMAP-backed native RX entry/stack holds reject mprot/munmap
+  until stopped child reclamation, then unmap successfully. Native normal
+  void return forces incidental result register91 to status0; PID/TID and
+  once-only PROCESS reaping are separately asserted.
+6 Rollback/cancellation/capacity: existing disabled PRIVATE_CLONE_TEST control
+  namespace exposes the SAME established ten acquisition/factory failure
+  points and final publication abandonment on all three MMUs. Creation calls
+  use ordinary CLONE_VM/size32, not private startup. Exact ENSMEM/EAGAIN,
+  unchanged outputs/frame, no child and retry/page baseline are asserted.
+  This synthetic abandonment is NOT a real group-exit request. Existing
+  native group-cancel/exit/join regressions and x32 MEMTEST's real ring3
+  acquisition/capacity/cancellation/stale-mapping tests are separate evidence.
+  Hosted production factory/startup/publication/guard fixtures count all
+  references and inject partial failures; CPU/mapping providers are modeled.
+7 Context: nested synchronous --abi-unmanaged executable uses real Pclone
+  traps with valid VM and SAME_PROCESS requests, EINVFN/unchanged outputs/no
+  entry/no zombie. Ordinary --clone is admitted asynchronously and runs
+  supported PROCESS/THREAD calls. Legacy disabled configurations trap with a
+  deliberately invalid pointer and require EINVFN before any copy.
+8 Cleanup/copy: xclone uses the existing checked KPROC copy and execution-owned
+  cleanup scope through snapshot, construction, rollback and source release.
+  ENSMEM/EREADF/EIMBA return instead of fatal lazy-copy exit. Guard end never
+  checkpoints; existing osif post-operation boundary delivers cancellation
+  after cleanup. Handler model verifies scope/copy errors; production guard
+  and KPROC/native backing fixtures remain separately identified. Current
+  built-in backing must not yield/reenter mapping destruction; arbitrary
+  fatal/nonlocal driver unwind, preemption and SMP are not guaranteed.
+
+Required final acceptance
+--------------------------
+Run normal/ASan/UBSan/fortifiedGCC13, native x32/A7/m68k040 with shutdown,
+existing lifecycle/group/GUI suites, ABI/ELF, ROM/eager/gitready and all four
+exact-head workflows. The driver requires the new native ABI PASS marker only
+after the complete managed worker has passed; mere compilation is insufficient.
+Retain pinned Hatari/Amiberry FPU/nonzero FPIAR tests and all current deadlines.
+Record gaps explicitly: a hosted model, kernel self-test or synthetic failure
+control must never be relabeled as an actual public/native group-cancellation
+or exhaustive32bit identity-space execution test. Phase1 is ready for100%
+acceptance only after the actual criterion matrix is reviewed; final completion
+requires separate authorized merge and integration-head validation. No Phase2
+or downstream public feature is implemented by this focused contract work.

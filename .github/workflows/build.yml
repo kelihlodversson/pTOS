@@ -114,6 +114,8 @@ jobs:
           PY
           make CROSS_COMPILE= obj/ldso/libldso.a
           sh tools/test-clone-handler.sh
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" sh tools/test-clone-handler.sh
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-clone-handler.sh
           ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
           test -z "$(nm -u /tmp/ldso-core.o)"
       - name: Build and boot-test enabled mapping syscalls
