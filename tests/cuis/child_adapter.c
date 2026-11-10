@@ -9,7 +9,7 @@
 #include "../../lib/aes/children.c"
 #define VERIFY(c) do { if (!(c)) { fprintf(stderr,"child adapter:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static LONG notices[CUIS_CHILDREN_PER_SESSION], publication_error, reserve_result;
-static unsigned count, consumed, published, attempts, calls;
+static unsigned count, consumed, published, attempts, calls, launches;
 static ULONG last_function;
 static UQUAD last[6];
 static const LONG session_id = 71;
@@ -19,6 +19,8 @@ LONG cuis_call6(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d,UQUAD e,UQUAD f)
     unsigned i;
     VERIFY(a == (UQUAD)session_id);
     calls++; last_function=function;
+    if (function == CUIS_CHILD_LAUNCH || function == CUIS_CHILD_LAUNCH_DIRECTORY ||
+        function == CUIS_CONSOLE_LAUNCH_DIRECTORY) launches++;
     last[0]=a; last[1]=b; last[2]=c; last[3]=d; last[4]=e; last[5]=f;
     if (function == CUIS_CHILD_RESULT) {
         VERIFY(!b && !c && !d && !e && !f);
@@ -45,13 +47,13 @@ LONG cuis_call6(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d,UQUAD e,UQUAD f)
 UQUAD aes_gemdos_call4(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d)
 {
     VERIFY(function == 0x4b && a == PE_ASYNC_LOADGO);
-    calls++; last_function=function;
+    calls++; launches++; last_function=function;
     last[0]=a; last[1]=b; last[2]=c; last[3]=d;
     return 321;
 }
 static void reset(void)
 {
-    memset(notices,0,sizeof(notices)); count=consumed=published=attempts=calls=0;
+    memset(notices,0,sizeof(notices)); count=consumed=published=attempts=calls=launches=0;
     publication_error=0; reserve_result=17;
 }
 int main(void)
@@ -84,23 +86,23 @@ int main(void)
            attempts == count && calls == before+1);
     reset(); reserve_result=EAGAIN;
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,TRUE) == EAGAIN);
-    VERIFY(last_function == CUIS_CHILD_WATCH); /* Never publish without a slot. */
+    VERIFY(last_function == CUIS_CHILD_WATCH && !launches); /* Never publish without a slot. */
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,TRUE) == 123);
-    VERIFY(last_function == CUIS_CHILD_LAUNCH && last[1] == 17);
+    VERIFY(last_function == CUIS_CHILD_LAUNCH && last[1] == 17 && launches == 1);
     VERIFY(last[2] == (uintptr_t)path && last[3] == (uintptr_t)tail && last[4] == (uintptr_t)env && !last[5]);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,directory,TRUE,TRUE) == 123);
-    VERIFY(last_function == CUIS_CONSOLE_LAUNCH_DIRECTORY && last[1] == 17 && last[5] == (uintptr_t)directory);
+    VERIFY(last_function == CUIS_CONSOLE_LAUNCH_DIRECTORY && last[1] == 17 && last[5] == (uintptr_t)directory && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,directory,FALSE,FALSE) == 123);
-    VERIFY(last_function == CUIS_CHILD_LAUNCH_DIRECTORY && !last[1] && calls == 1);
+    VERIFY(last_function == CUIS_CHILD_LAUNCH_DIRECTORY && !last[1] && calls == 1 && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,TRUE,FALSE) == 123);
-    VERIFY(last_function == CUIS_CHILD_LAUNCH && !last[1] && last[5] == TRUE && calls == 1);
+    VERIFY(last_function == CUIS_CHILD_LAUNCH && !last[1] && last[5] == TRUE && calls == 1 && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,FALSE) == 321);
-    VERIFY(last_function == 0x4b && calls == 1); /* Ordinary Pexec stays independent. */
+    VERIFY(last_function == 0x4b && calls == 1 && launches == 1); /* Ordinary Pexec stays independent. */
     VERIFY(aes_child_defer(session_id,path,tail,env,directory) == 123);
     VERIFY(last_function == CUIS_PROCESS_DEFER_DIRECTORY && last[4] == (uintptr_t)directory);
     VERIFY(aes_child_defer(session_id,path,tail,env,NULL) == 123);
