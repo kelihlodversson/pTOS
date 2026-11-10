@@ -58,6 +58,9 @@
 #include "console.h"
 #include "kprint.h"
 #include "bdosstub.h"
+#if CONF_WITH_USER_ASPACE
+#include "kproc.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -90,6 +93,9 @@ static long sftdel(FTAB *sftp);
 long xcreat(char *name, UBYTE attr)
 {
     int a = attr & ~FA_SUBDIR;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
     ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_create(name, (UWORD)a);
@@ -111,6 +117,9 @@ long xcreat(char *name, UBYTE attr)
 long xopen(char *name, WORD mod)
 {
     int m = mod & VALID_FOPEN_BITS;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
     ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_open(name, m);
@@ -212,6 +221,9 @@ long opnfil(FCB *f, DND *dn, int mod)
     /* Reject reference overflow before allocating or publishing a slot. */
     shared = ofd_find(dn, dn->d_ofd->o_bytnum - 32);
     if (shared && shared->o_dfd->o_usecnt == 0x7fff) return ENSMEM;
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_claim(i)) return ENHNDL;
+#endif
     sft[i].f_own = run;
     sft[i].f_use = 1;
     h = i + NUMSTD;
@@ -315,6 +327,9 @@ static long sftdel(FTAB *slot)
         rc = ofd_put(slot->f_ofd);
         if (rc < 0) return rc;
     }
+#if CONF_WITH_USER_ASPACE
+    kproc_standard_file_invalidate((WORD)((slot-sft)+NUMSTD));
+#endif
     slot->f_ofd = NULL; slot->f_own = NULL; slot->f_use = 0;
 #if CONF_WITH_PLUGGABLE_FS
     slot->f_pfs.fs = NULL;
@@ -332,6 +347,9 @@ static void invalidate_file(OFD *fd)
     fd->o_dmd = NULL; fd->o_dnode = NULL; fd->o_dirfil = NULL;
     for (i = 0; i < OPNFILES; i++)
         if (sft[i].f_ofd == fd) {
+#if CONF_WITH_USER_ASPACE
+            fs_sft_invalidated(i);
+#endif
             sft[i].f_ofd = NULL; sft[i].f_own = NULL; sft[i].f_use = 0;
             handles = TRUE;
         }
@@ -389,9 +407,15 @@ void ofd_invalidate_drive(DMD *dm)
  *          operations inside the 'if' statement following the invocation
  *          of ixclose(), but I am leaving the flow of control intact.
  */
+#if CONF_WITH_USER_ASPACE
+long fs_close_backend(WORD h, volatile BOOL *consumed)
+#else
 long xclose(WORD h)
+#endif
 {
+#if !CONF_WITH_USER_ASPACE
     int h0;
+#endif
     OFD *fd;
     long rc;
 
@@ -402,6 +426,7 @@ long xclose(WORD h)
     if (h >= NUMHANDLES)            /* M01.01.1022.01 */
         return EIHNDL;
 
+#if !CONF_WITH_USER_ASPACE
     if ((h0 = h) < NUMSTD)
     {
         h = PD_UFT(run)[h];
@@ -411,14 +436,22 @@ long xclose(WORD h)
         if (h < NUMSTD)             /* "can't happen" (bug in Fforce()?) */
             return EIHNDL;
     }
-    else if (IS_BIOS_HANDLE(sft[h-NUMSTD].f_ofd))
+    else
+#endif
+    if (IS_BIOS_HANDLE(sft[h-NUMSTD].f_ofd))
     {
+#if CONF_WITH_USER_ASPACE
+        if (sft[h-NUMSTD].f_use==1) kproc_standard_file_invalidate(h);
+#endif
         if (!(--sft[h-NUMSTD].f_use))
         {
             sft[h-NUMSTD].f_ofd = 0;
             sft[h-NUMSTD].f_own = 0;
         }
 
+#if CONF_WITH_USER_ASPACE
+        *consumed=TRUE;
+#endif
         return E_OK;
     }
 
@@ -444,8 +477,22 @@ long xclose(WORD h)
          */
         rc = pfs_handle_close(&sft[h-NUMSTD].f_pfs);
 
+#if CONF_WITH_USER_ASPACE
+        /* close() only flushes this reference; release() alone consumes the
+         * cookie. A nonlocal exit after this commit is a fail-stop violation. */
+        *consumed=TRUE;
+        /* A consuming finalizer may reenter cleanup. Unpublish aliases before
+         * dropping the last count or invoking it, not after its return. */
+        if (sft[h-NUMSTD].f_use==1) kproc_standard_file_invalidate(h);
+#endif
         if (!(--sft[h-NUMSTD].f_use))
         {
+#if CONF_WITH_USER_ASPACE
+            if (pfs->release_file) {
+                LONG released=pfs->release_file(&sft[h-NUMSTD].f_pfs);
+                if (rc>=0) rc=released;
+            } else
+#endif
             if (pfs->release)
                 pfs->release(&sft[h-NUMSTD].f_pfs);
             sft[h-NUMSTD].f_pfs.fs = 0;
@@ -456,16 +503,38 @@ long xclose(WORD h)
     }
 #endif
 
-    if (!(fd = getofd(h)))
+#if CONF_WITH_USER_ASPACE
+    /* The close owner has already admitted this exact slot. Ordinary getofd
+     * deliberately rejects it while close is active. */
+    fd=sft[h-NUMSTD].f_ofd;
+#else
+    fd=getofd(h);
+#endif
+    if (!fd) {
+#if CONF_WITH_USER_ASPACE
+        /* opnfil reserves the SFT before MGET can terminate on exhaustion.
+         * No OFD/cookie was acquired: consume only that empty reservation,
+         * never quarantine or fabricate a file resource. */
+        if (sft[h-NUMSTD].f_use==1) kproc_standard_file_invalidate(h);
+        if (--sft[h-NUMSTD].f_use==0) sft[h-NUMSTD].f_own=NULL;
+        *consumed=TRUE;
+#endif
         return EIHNDL;
-
+    }
     rc = ixclose(fd,CL_KEEP);
-
-    if (sft[h-NUMSTD].f_use == 1)
+    if (sft[h-NUMSTD].f_use == 1) {
+#if CONF_WITH_USER_ASPACE
+        long released=sftdel(&sft[h-NUMSTD]);
+        if (released==E_OK) *consumed=TRUE;
+        return rc<0 ? rc : released;
+#else
         return sftdel(&sft[h-NUMSTD]);
-    else
-        sft[h-NUMSTD].f_use--;
-
+#endif
+    }
+    sft[h-NUMSTD].f_use--;
+#if CONF_WITH_USER_ASPACE
+    *consumed=TRUE;
+#endif
     return rc;
 }
 

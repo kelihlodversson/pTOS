@@ -9,6 +9,23 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_PRIVATE_CLONE
+    bool "Experimental independent MMU address-space clone"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING
+    default n
+    help
+      Transactional private address-space cloning and anonymous COW on the
+      validated x32, ARMv7 and m68k 68040 MMU backends. This does not enable
+      public Pfork/Pvfork or supply fork resource inheritance.
+
+config CONF_WITH_PRIVATE_CLONE_TEST
+    bool "Native private-VM clone/COW tests (test transport only)"
+    depends on CONF_WITH_PRIVATE_CLONE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Enable private Pclone size tags for native COW construction tests.
+      Children start at an explicit entry: this is not fork-return or Pfork.
+
 config CONF_WITH_PCLONE
     bool "Experimental Pclone"
     depends on CONF_WITH_KPROC
@@ -48,6 +65,33 @@ config CONF_WITH_NATIVE_SCHED
       independent of GUI session and input services. No preemption or Pfork.
       Available on x32, ARM MMU and m68k MMU user-address-space kernels.
       Scheduling is cooperative and does not require CUIS or external libaes.
+
+
+# Hidden until explicit public activation review. No preset may select this.
+config CONF_WITH_PROCESS_EXEC
+    bool
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM
+    default n
+    help
+      Production S_PROCEXEC dispatch and S_INQUIRE discovery. This gate is
+      deliberately hidden and disabled pending filesystem integration and
+      explicit kernel-owner activation approval. Test-only acceptance does
+      not enable this gate.
+
+config CONF_WITH_PROCESS_EXEC_DISPATCH
+    bool
+    default y if CONF_WITH_PROCESS_EXEC || CONF_WITH_PROCESS_EXEC_TEST
+
+config CONF_WITH_PROCESS_EXEC_TEST
+    bool "TEST ONLY: PROCESS Ssystem transport (activation not accepted)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM
+    default n
+    help
+      Opt-in validation kernel for the unpublished S_PROCEXEC (-9) adapter.
+      Never enabled by a normal preset; S_INQUIRE still reports EINVFN.
+      This is not approval for ordinary application use. Final filesystem,
+      lifecycle, native trap and activation review gates remain required.
+      No CUIS registration, polling, preemption or SMP is implied.
 
 
 config CONF_WITH_PTERMGRP

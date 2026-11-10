@@ -3,6 +3,7 @@
 #include "gemerror.h"
 #include "kheap.h"
 #include "procmem.h"
+#include "string.h"
 #include "kaspace.h"
 
 struct kaspace {
@@ -35,7 +36,13 @@ BOOL kaspace_lease_valid(const KASPACE_LEASE *lease)
     if (!lease || lease->revoked) return FALSE;
     for (page = lease->first; ; page += USER_PAGE_SIZE) {
         UWORD prot;
-        if (!aspace_translate(lease->space->backend, page, NULL, &prot) ||
+        if (!
+#if CONF_WITH_PRIVATE_CLONE
+            aspace_logical_protection(lease->space->backend, page, &prot)
+#else
+            aspace_translate(lease->space->backend, page, NULL, &prot)
+#endif
+            ||
             (prot & lease->access) != lease->access) return FALSE;
         if (page == lease->last) return TRUE;
     }
@@ -146,6 +153,23 @@ BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
         if (first <= lease->last && lease->first <= last) lease->revoked = TRUE;
     return TRUE;
 }
+#if CONF_WITH_PRIVATE_CLONE
+BOOL kaspace_cow_change(ASPACE *backend, VADDR address, VADDR bytes)
+{
+    KASPACE *space;
+    KASPACE_LEASE *lease;
+    VADDR first, last;
+    if (!bytes || address >= USER_VA_LIMIT || bytes > USER_VA_LIMIT - address) return FALSE;
+    first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
+    last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    for (space = spaces; space && space->backend != backend; space = space->next) { }
+    if (!space) return TRUE;
+    for (lease = space->leases; lease; lease = lease->next)
+        if (first <= lease->last && lease->first <= last && (lease->sealed || !lease->held))
+            return FALSE;
+    return TRUE;
+}
+#endif
 
 #if CONF_WITH_X86_64_MEMTEST
 static BOOL fail_next_adoption;
@@ -212,6 +236,12 @@ int kaspace_heap_demand_page(KASPACE *space, UQUAD address, UWORD access)
     if (!kaspace_heap_contains(space, address)) return -1;
     if (access & ~(ASPACE_PROT_USER | ASPACE_PROT_WRITE)) return 0;
     va = (VADDR)address;
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        int result = aspace_cow_fault(space->backend, va, access);
+        if (result >= 0) return result;
+    }
+#endif
     if (aspace_translate(space->backend, va, NULL, NULL)) return 0;
     return aspace_fault_in(space->backend, va, ASPACE_PROT_USER | ASPACE_PROT_WRITE) ? 1 : 2;
 #else
@@ -268,6 +298,12 @@ int kaspace_mmap_demand_page(KASPACE *space, UQUAD address, UWORD access)
     if (!region) return -1;
     if (!(region->prot & ASPACE_PROT_USER) || (access & ~region->prot)) return 0;
     va = (VADDR)address;
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        int result = aspace_cow_fault(space->backend, va, access);
+        if (result >= 0) return result;
+    }
+#endif
     if (aspace_translate(space->backend, va, NULL, NULL) &&
         !((access & ASPACE_PROT_WRITE) && aspace_file_cow(space->backend, va)))
         return 0;
@@ -319,7 +355,55 @@ void kaspace_put(KASPACE *space)
 
 LONG kaspace_clone(const KASPACE *source, KASPACE **result)
 {
+#if CONF_WITH_PRIVATE_CLONE
+    KASPACE *copy;
+    LONG error = ENSMEM;
+    if (!source || !result || *result) return EINVAL;
+    copy = kalloc(sizeof(*copy));
+    if (!copy) return ENSMEM;
+    copy->refs = 1;
+    if (source->heap.count) {
+        if (source->heap.count > ~(ULONG)0 / sizeof(*copy->heap.blocks)) goto failed;
+        copy->heap.blocks = kalloc(source->heap.count * sizeof(*copy->heap.blocks));
+        if (!copy->heap.blocks) goto failed;
+        memcpy(copy->heap.blocks, source->heap.blocks, source->heap.count * sizeof(*copy->heap.blocks));
+        copy->heap.count = copy->heap.capacity = source->heap.count;
+    }
+#if CONF_WITH_MMAP
+    {
+        MMAP_REGION *region, **tail = &copy->mmap.regions;
+        for (region = source->mmap.regions; region; region = region->next) {
+            MMAP_REGION *cloned = kalloc(sizeof(*cloned));
+            if (!cloned) goto failed;
+            *cloned = *region; cloned->next = NULL;
+            if (cloned->backing && !fileback_try_hold(cloned->backing)) {
+                kfree(cloned); error = EAGAIN; goto failed;
+            }
+            *tail = cloned; tail = &cloned->next;
+        }
+        copy->mmap.bytes = source->mmap.bytes;
+    }
+#endif
+    /* All generic allocations precede backend source write-protection. */
+    error = aspace_clone(source->backend, &copy->backend);
+    if (error) goto failed;
+    copy->next = spaces; spaces = copy;
+    *result = copy;
+    return E_OK;
+failed:
+    kfree(copy->heap.blocks);
+#if CONF_WITH_MMAP
+    while (copy->mmap.regions) {
+        MMAP_REGION *region = copy->mmap.regions;
+        copy->mmap.regions = region->next;
+        fileback_put(region->backing); kfree(region);
+    }
+#endif
+    kfree(copy);
+    return error;
+#else
     (void)source;
     if (result) *result = NULL;
     return EINVFN;
+#endif
 }

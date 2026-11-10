@@ -150,10 +150,10 @@ int main(void)
         saved.space = space; saved.mappings = args;
         saved.user.cs = 0x2b; saved.user.ss = saved.user.ds = saved.user.es = 0x23;
         saved.user.rip = CODE; saved.user.rsp = STACK + 512;
-        saved.user.cr3 = aspace_root(&backend); saved.user.rflags = 0x243;
+        saved.user.cr3 = 0xdead000; saved.user.rflags = 0x243;
         saved.user.rax = 0x100000190ULL; saved.user.rbx = 0x12345678;
         memset(saved.user.fpu, 0xa5, sizeof(saved.user.fpu));
-        expected = saved.user; expected.rax = 0;
+        expected = saved.user; expected.rax = 0; expected.cr3 = aspace_root(&backend);
         before = allocations - frees;
         /* Every allocation in real saved-return construction fails in turn.
          * The final attempt succeeds once there is no remaining allocation. */

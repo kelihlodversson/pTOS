@@ -1,0 +1,125 @@
+Independent KASPACE clone prerequisite (#892 / #895)
+==================================================
+
+Status
+------
+CONF_WITH_PRIVATE_CLONE is experimental and defaults off. It implements the
+PRIVATE_VM construction policy in the existing proc_clone transaction. It does
+not implement Pfork, Pvfork, complete fork inheritance or exec detach. Public
+Pfork/Pvfork and ordinary Pclone without CLONE_VM still return EINVFN.
+
+Native backend evidence: x32 QEMU, ARM A32 Cortex-A7 QEMU and m68k 68040 QEMU.
+The test-only explicit-entry probe is not a fork-return test. Saved-return
+integration belongs to #932 and must preserve the child constructor's root.
+030/6888x, 060, non-MMU and ARMv6 private cloning remain unsupported. Atari and
+Amiga ROM-window MMU machines are explicitly rejected before construction. Existing saved-return ABI/FPU gates remain applicable.
+
+Reconciliation with accepted loader/PROCESS ownership
+---------------------------------------------------
+Integration base d843fc229 includes #933/#936/#943/#935/#938. The loaded
+PROCESS/PREPARED_VM constructor keeps the loader-selected construction space;
+it must not enter PRIVATE_VM cloning. Both SHARE_VM and PREPARED_VM retain
+that selected space, while only PRIVATE_VM creates an independent child.
+Every new THREAD is attached to its constructor-selected space. Non-loaded
+commit revalidates the independently retained source space; loaded commit
+keeps #936's live/unstarted/selected-space checks and delayed loader adoption.
+Rollback drops child execution/mapping ownership before exclusive-source COW
+collapse. Existing loader transaction tests reject the broken merged policy;
+private-enabled native suites additionally exercise ordinary and child launches.
+No #932 saved-return adapter or #942 allocation-generation holds are imported.
+
+Mapping and ownership contract
+------------------------------
+Each clone owns independent root/table pages. Owned anonymous leaves share
+refcounted physical frames, initially read-only in both roots. Original logical
+permissions live in per-address COW metadata. A permitted write copies a shared
+frame or promotes an exclusive frame, then invalidates translations. Accessed
+and dirty state is preserved when updating permissions on an unchanged frame.
+Readonly owned pages share references too; write faults cannot promote them.
+
+Clean file leaves retain the existing file-page/cache references and private
+file fault policy; this is distinct from anonymous COW. Heap reservations, mmap
+regions and backing references are copied transactionally. Untouched lazy pages
+remain lazy and become independently backed in each KASPACE. Borrowed USER RAM
+is eagerly copied into child-owned pages, including environment/program images;
+non-RAM device/external mappings are rejected. Supervisor borrowed mappings are
+not inherited. Kernel mappings are supplied by the new root constructor. The
+clone controller separately owns its supervisor mapping and releases it before
+freeing the compatibility PD.
+
+All child allocation/mapping preparation precedes source write protection.
+Failure removes the unpublished child's references and newly prepared source
+metadata. Later constructor failure destroys the child then restores exclusive
+source leaves without allocation. Physical pages are freed only after their
+last owned leaf disappears. Metadata is kernel-owned; user code cannot supply
+physical addresses or refcounts.
+
+Durable logical leases survive COW because their VA and rights remain valid.
+Sealed/preparation leases cache physical aliases and block overlapping clone or
+COW changes. Moving COW pages through aspace_move_private is rejected pending a
+separately reviewed loader ownership contract. No loader, scheduler or reaper is
+introduced. Child bridge identity derives from a validated source bridge and
+its retained readonly mapping, never merely matching user-selected bytes.
+
+Factory restrictions
+--------------------
+PRIVATE_VM currently requires NEW_PROCESS, a sole source THREAD, no other
+PROCESS attached to the source ASPACE, and no pending loader/give-back/nheap
+ownership ledger. Fresh execution/syscall stacks remain architecture-owned.
+Only existing clone inheritance flags apply; complete descriptors/environment/
+signal semantics remain a separate increment coordinated with #893/#933.
+Ordinary Pexec construction defaults are unchanged.
+
+Validation and reproduction
+---------------------------
+The native test requires CONF_WITH_PRIVATE_CLONE_TEST, NATIVE_SCHED and PCLONE.
+It uses private tagged Pclone size values; no production ABI opcode/flag is
+assigned. It checks distinct PID/TID/root, private global/heap/mmap writes in
+both write orders, lazy pages, independent stack storage, 24 injected backend
+construction failures, eight clone/wait cycles, one public reap per child and
+zero final COW frame/reference counts after the source PROCESS exits. It also
+runs a three-generation private tree, parent-first exit with a surviving orphan
+(using existing scheduler adoption/cleanup), and an injected COW allocation
+failure that kills only the child and leaves parent data/mappings valid. Clean
+file pages and lazy file-backed pages are mixed with anonymous COW in the same
+clones; backing references survive descriptor close and child/parent teardown.
+
+tools/ci-regression.sh enables it for pc-x86_64, virt-arm-aspace and
+virt-m68k-aspace. tools/run-regression-tests.sh requires its runtime PASS marker.
+The standalone production metadata tests in tools/test-private-aspace.sh use a
+modeled MMU, covering nested clones, parent-first teardown, exclusive promotion,
+COW OOM and exhaustive allocation rollback. They are not native evidence.
+
+Remaining acceptance work includes broader fault-cancellation pressure tests
+and complete inheritance. A separate isolated
+saved-return PRIVATE_VM validation checkpoint is documented in #895/#932. This
+prerequisite does not justify enabling public Pfork or Pvfork.
+
+Kernel syscall copyout uses the same anonymous-COW split as user write faults
+before mmap/lazy backing. Logical write eligibility alone is insufficient:
+physical leaves remain read-only until back_page resolves their owned COW
+record. Native probes exercise untouched child image, heap and dirty private
+file-mapping destinations and verify that parent bytes remain unchanged.
+
+Review corrections: public clone PID/TID output preparation resolves anonymous
+COW before heap/mmap backing, including untouched image/BSS output pages. COW
+metadata uses intrusive AVL indexes by virtual address and physical frame; the
+existing mapping list is only the linear commit/rollback view, not a second
+consumer or owner. Index nodes are embedded in existing records and require no
+new allocation/publication step. Lookup/insert/remove are O(log N), with bounded
+balanced recursion; clone metadata construction is O(N log N), rather than
+quadratic growing-list scans. Production host tests check ordering, heights,
+permuted deletion, rollback and final reclamation, and count metadata visits
+for1024 and16384 populated pages. They model leaves/physical RAM and do not
+claim native MMU/TLB timing measurements.
+
+Cached file-page physical identities use the same intrusive AVL implementation
+as anonymous COW metadata. The existing backing+offset reuse list remains a
+non-owning iteration view; final physical removal unpublishes both views before
+freeing the page/backing. x32 forwards the source PTE_FILE bit, so anonymous
+clone leaves bypass the cache entirely. ARM/m68k have no such descriptor bit
+and perform logarithmic physical lookup. Host metadata tests retain16384
+unrelated cache records, count clone work, exercise zero-query x32 anonymous
+hints and permuted cache teardown. They do not model filesystem I/O or claim
+native timing measurements; native mixed file/anonymous tests cover backend
+flag, backing reference and final-page release integration.

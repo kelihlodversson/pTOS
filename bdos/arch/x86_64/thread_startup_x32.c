@@ -172,7 +172,11 @@ LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
     if (draft->syscall_physical == draft->scheduler_stack.physical ||
         kstack_contains(draft->syscall_physical, (uintptr_t)saved) ||
         kstack_contains(draft->scheduler_stack.physical, (uintptr_t)saved)) return EACCDN;
-    draft->user = saved->user;
+    {
+        UQUAD selected_root = draft->user.cr3;
+        draft->user = saved->user;
+        draft->user.cr3 = selected_root; /* root belongs to the constructor */
+    }
     draft->user.rax = 0;
     draft->saved_return = TRUE;
     return E_OK;

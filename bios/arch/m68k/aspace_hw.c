@@ -398,7 +398,7 @@ BOOL aspace_hw_update(PADDR root, VADDR va, UWORD prot, UWORD flags)
 
     if (!d || (va >> 12) < LOW_PAGES || !(*d & PDT_MASK))
         return FALSE;
-    *d = make_desc(*d & ~(PAGE - 1), prot, flags);
+    *d = make_desc(*d & ~(PAGE - 1), prot, flags) | (*d & 0x18UL); /* used/modified */
     return TRUE;
 }
 

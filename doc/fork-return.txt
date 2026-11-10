@@ -2,8 +2,10 @@ Saved syscall-return startup (#895 F1)
 =====================================
 
 This is a tightly gated, shared-VM native continuation proof, NOT Pfork or
-Pvfork. Public opcodes 0x11b and 0x113 still return EINVFN. No COW, complete
-fork inheritance, vfork dependency object or Pexec(200) detach is implemented.
+Pvfork. Public opcodes 0x11b and 0x113 still return EINVFN. The independent
+COW prerequisite is integrated separately; this saved-return probe remains
+shared-VM only. Complete fork inheritance, a vfork dependency object and
+Pexec(200) detach are not implemented.
 
 Enable CONF_WITH_FORK_RETURN_TEST explicitly (default n, requires native
 scheduling/Pclone/Pthjoin). The native CI address-space profiles enable it.
@@ -131,3 +133,18 @@ child-specific dependency, parent-death/cancellation ownership and release only
 on final PROCESS completion or successful VM-detach commit, never failed exec,
 THREAD-only exit or public wait consumption. Reuse #928 observation and #909
 public reaping, without another observer registry or loader.
+
+Current-epic reconciliation
+----------------------------
+The integration base is epic3ba9cf408953ce50fd4467915f592d6e2c835324, including
+#933/#943 SFT ownership, #936 LOADED_PROCESS/PREPARED_VM construction,
+#935/#938 dispatch gates and #934 independent KASPACE/COW. Both native private
+entry probes and shared saved-return probes remain independently test-gated.
+This increment does not import the separate PRIVATE_VM saved-return adapter,
+allocation-generation work, scheduler drafts or public fork/Pexec policies.
+Startup preparation retains separate cloned-source and saved-user-image
+arguments, preserving ordinary/cloned bridge ownership. Saved-return admission
+still requires the captured and selected shared space to match. On x32 the
+constructor-selected root survives copying the user image; a captured CR3 field
+cannot select the child's kernel-owned root. The production allocation/owned-
+image host regression supplies a different captured CR3 and checks that fact.

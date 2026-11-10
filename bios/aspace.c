@@ -50,8 +50,14 @@
 #define ASPACE_RESERVE  (32 * PAGE)
 #define ASPACE_COST     (8 * PAGE)
 
+#include "aspace_cow_types.h"
 struct aspace {
     ULONG magic;
+#if CONF_WITH_PRIVATE_CLONE
+    struct cow_mapping *cow;
+    struct cow_index *cow_root;
+    BOOL clone_building;
+#endif
     PADDR root;
     ULONG root_pages;
     PADDR *pages;               /* kheap vector: the table pages (not the root) */
@@ -91,7 +97,11 @@ static BOOL record_page(struct aspace *as, PADDR phys)
  * handed over so it cannot be forgotten */
 static PADDR alloc_table_page(void *ctx)
 {
-    PADDR phys = pmem32_alloc(1, 1);
+    PADDR phys =
+#if CONF_WITH_PRIVATE_CLONE
+        (((ASPACE *)ctx)->clone_building && clone_injected()) ? PMEM32_NONE :
+#endif
+        pmem32_alloc(1, 1);
 
     if (phys == PMEM32_NONE)
         return PMEM32_NONE;
@@ -133,41 +143,22 @@ ASPACE *aspace_create(void)
  * backends keep no flag for it.  Such a leaf is never writable -- a write
  * fault copies the page first (aspace_fault_file()).
  */
-typedef struct file_page {
-    struct file_page *next;
-    FILE_BACKING *backing;
-    PADDR physical, first_root;
-    ULONG offset, references;
-} FILE_PAGE;
-
-static FILE_PAGE *file_pages;
+#include "aspace_file_index.h"
 static ULONG file_page_count, file_page_refs, file_cross_shares;
 
 ULONG aspace_file_cross_shares(void) { return file_cross_shares; }
 ULONG aspace_file_pages(void) { return file_page_count; }
 ULONG aspace_file_references(void) { return file_page_refs; }
 
-static FILE_PAGE *file_page_find(PADDR physical)
-{
-    FILE_PAGE *p;
-
-    for (p = file_pages; p; p = p->next)
-        if (p->physical == physical)
-            return p;
-    return NULL;
-}
-
 static void file_page_put(PADDR physical)
 {
-    FILE_PAGE **link = &file_pages, *p;
+    FILE_PAGE *p = file_page_find(physical);
 
-    while ((*link)->physical != physical)
-        link = &(*link)->next;
-    p = *link;
+    if (!p || !p->references) panic("missing file page reference");
     file_page_refs--;
     if (--p->references)
         return;
-    *link = p->next;
+    file_page_unpublish(p);
     file_page_count--;
     pmem32_free(physical, 1);
     fileback_put(p->backing);
@@ -189,6 +180,9 @@ BOOL aspace_file_cow(const ASPACE *as, VADDR va)
 /* gives back the page of a private leaf: a file page loses a reference */
 static void release_backing(PADDR phys)
 {
+#if CONF_WITH_PRIVATE_CLONE
+    if (cow_release_backing(phys)) return;
+#endif
 #if CONF_WITH_MMAP
     if (IS_FILE_PAGE(phys)) {
         file_page_put(phys);
@@ -204,6 +198,9 @@ static void free_owned_leaf(VADDR va, PADDR phys, UWORD flags, void *ctx)
 
     (void)va;
     if (flags & ASPACE_LEAF_OWNED) {
+#if CONF_WITH_PRIVATE_CLONE
+        cow_unlink_mapping(as, va);
+#endif
         release_backing(phys);
         as->nowned--;
     }
@@ -275,6 +272,9 @@ static void flush_if_current(const struct aspace *as)
 
 BOOL aspace_map_page(ASPACE *as, VADDR va, PADDR phys, UWORD prot)
 {
+#if CONF_WITH_PRIVATE_CLONE
+    if (cow_find(as, va)) return FALSE;
+#endif
     if (!kaspace_mapping_change(as, va, PAGE)) return FALSE;
     if ((va | phys) & (PAGE - 1))
         return FALSE;
@@ -291,6 +291,16 @@ BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
     if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
     if (!bytes || va + bytes < va || !procmem_range_live(va, bytes))
         return FALSE;
+#if CONF_WITH_PRIVATE_CLONE
+    /* A fork snapshot may occupy a VA whose old procmem owner has exited.
+     * A new global procmem allocation must not overwrite that private copy. */
+    for (page = va & ~(VADDR)(USER_PAGE_SIZE - 1);
+         page < va + bytes; page += USER_PAGE_SIZE) {
+        PADDR physical; UWORD protection, flags;
+        if (aspace_hw_lookup(as->root, page, &physical, &protection, &flags) &&
+            (flags & ASPACE_LEAF_OWNED)) return FALSE;
+    }
+#endif
     /* Pin before mapping, and remember it before pinning, so every pin has
      * a record that destroy undoes; a half-finished mapping is covered too. */
     if (as->npins == as->pin_capacity) {
@@ -567,6 +577,9 @@ BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes)
 
         aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl);
         aspace_hw_unmap(as->root, va + i * PAGE);
+#if CONF_WITH_PRIVATE_CLONE
+        cow_unlink_mapping(as, va + i * PAGE);
+#endif
         release_backing(phys);
         as->nowned--;
     }
@@ -630,6 +643,9 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
 
         if (aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl)) {
             aspace_hw_unmap(as->root, va + i * PAGE);
+#if CONF_WITH_PRIVATE_CLONE
+            cow_unlink_mapping(as, va + i * PAGE);
+#endif
             release_backing(phys);
             as->nowned--;
         }
@@ -659,10 +675,9 @@ int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
         old = current;
     }
     if (!kaspace_mapping_change(as, va, PAGE)) return 2;
-    for (p = file_pages; p; p = p->next)
-        if (old != PMEM32_NONE ? p->physical == old
-                               : (p->backing == backing && p->offset == offset))
-            break;
+    if (old != PMEM32_NONE) p = file_page_find(old);
+    else for (p = file_pages; p; p = p->next)
+        if (p->backing == backing && p->offset == offset) break;
     /* A shared-page hit may still need new page tables and bookkeeping. */
     if (pmem32_free_bytes() < ASPACE_RESERVE + ASPACE_COST)
         return 2;
@@ -711,8 +726,7 @@ int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
         return 2;
     }
     if (!copy) {
-        p->next = file_pages;
-        file_pages = p;
+        file_page_publish(p);
         fileback_hold(backing);
         file_page_count++;
         file_page_refs++;
@@ -770,6 +784,9 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD 
     pages = (bytes + PAGE - 1) / PAGE;
     if (!range_is_private(from, va, pages))
         return FALSE;
+#if CONF_WITH_PRIVATE_CLONE
+    for (i = 0; i < pages; i++) if (cow_find(from, va + i * PAGE)) return FALSE;
+#endif
     for (i = 0; i < pages; i++) {
         PADDR phys;
         UWORD pr, fl;
@@ -839,8 +856,18 @@ static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL 
 
         if (!aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl))
             continue;
-        aspace_hw_update(as->root, va + i * PAGE,
-                         IS_FILE_PAGE(phys) ? (UWORD)(prot & ~ASPACE_PROT_WRITE) : prot, fl);
+#if CONF_WITH_PRIVATE_CLONE
+        {
+            struct cow_mapping *mapping = cow_find(as, va + i * PAGE);
+            if (mapping) mapping->protection = prot;
+            if (mapping) pr = prot & ~ASPACE_PROT_WRITE;
+            else
+#endif
+            pr = IS_FILE_PAGE(phys) ? (UWORD)(prot & ~ASPACE_PROT_WRITE) : prot;
+            aspace_hw_update(as->root, va + i * PAGE, pr, fl);
+#if CONF_WITH_PRIVATE_CLONE
+        }
+#endif
     }
     if (prot & ASPACE_PROT_EXEC)
         aspace_hw_code_changed();       /* (code relocated through the data side) */
@@ -953,6 +980,9 @@ void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes)
             pinned = TRUE;
             break;
         }
+#if CONF_WITH_PRIVATE_CLONE
+    if (!pinned) return; /* never unmap a copied/private former borrow */
+#endif
     page = va & ~(PAGE - 1);
     end = (va + bytes + PAGE - 1) & ~(PAGE - 1);
     for (; page < end; page += PAGE)
@@ -1012,5 +1042,87 @@ BOOL aspace_kernel_init(void)
     aspace_hw_switch(kernel_root);
     return TRUE;
 }
+
+#if CONF_WITH_PRIVATE_CLONE
+#define COW_FREE(p) pmem32_free((p), 1)
+#define COW_ALLOC() (pmem32_free_bytes() < ASPACE_RESERVE + ASPACE_COST ? PMEM32_NONE : pmem32_alloc(1, 1))
+#define COW_ALIAS(p) pmem32_virt(p)
+#define COW_RAM(p) pmem32_is_allocated(p)
+#define COW_NONE PMEM32_NONE
+#define COW_CODE_CHANGED() aspace_hw_code_changed()
+static void cow_flush(const ASPACE *as) { flush_if_current(as); }
+static BOOL cow_replace(ASPACE *as, VADDR va, PADDR physical, UWORD prot)
+{
+    PADDR old; UWORD before, flags;
+    if (!aspace_hw_lookup(as->root, va, &old, &before, &flags) || !(flags & ASPACE_LEAF_OWNED)) return FALSE;
+    if (old == physical) return aspace_hw_update(as->root, va, prot, flags);
+    return aspace_hw_map(as->root, va, physical, prot, flags, alloc_table_page, as);
+}
+static BOOL cow_map(ASPACE *as, VADDR va, PADDR physical, UWORD prot, BOOL owned)
+{
+    if (!aspace_hw_map(as->root, va, physical, prot,
+            owned ? ASPACE_LEAF_OWNED : 0, alloc_table_page, as)) return FALSE;
+    if (owned) as->nowned++;
+    return TRUE;
+}
+static LONG cow_file_leaf(ASPACE *child, VADDR va, PADDR physical, UWORD protection)
+{
+#if CONF_WITH_MMAP
+    FILE_PAGE *page = file_page_find(physical);
+    if (page) {
+        if (page->references == ~(ULONG)0 || file_page_refs == ~(ULONG)0) return EAGAIN;
+        if (!cow_map(child, va, physical, protection & ~ASPACE_PROT_WRITE, TRUE)) return ENSMEM;
+        page->references++; file_page_refs++;
+        return E_OK;
+    }
+#else
+    UNUSED(child); UNUSED(va); UNUSED(physical); UNUSED(protection);
+#endif
+    return 1;
+}
+#include "aspace_cow.h"
+struct clone_walk { ASPACE *source, *child; LONG error; };
+static void clone_leaf(VADDR va, PADDR physical, UWORD flags, void *argument)
+{
+    struct clone_walk *walk = argument;
+    UWORD protection, ignored;
+    PADDR page;
+    if (walk->error) return;
+    if (!aspace_hw_lookup(walk->source->root, va, &page, &protection, &ignored)) {
+        walk->error = EIMBA; return;
+    }
+    walk->error = cow_clone_leaf(walk->source, walk->child, va, physical, protection,
+                                (flags & ASPACE_LEAF_OWNED) != 0, TRUE);
+}
+LONG aspace_clone(ASPACE *source, ASPACE **out)
+{
+    struct clone_walk walk;
+    if (!source || !out || *out) return EINVAL;
+#if ARCH_M68K
+    {
+        extern LONG mcpu;
+        if (mcpu != 40 || CONF_M68K_ROM_WINDOW) return EINVFN;
+    }
+#elif defined(__ARM_ARCH) && __ARM_ARCH < 7
+    return EINVFN;
+#endif
+    if (!kaspace_cow_change(source, 0, USER_VA_LIMIT)) return EACCDN;
+    if (clone_injected()) return ENSMEM;
+    walk.child = aspace_create();
+    if (!walk.child) return ENSMEM;
+    walk.child->clone_building = TRUE;
+    walk.source = source; walk.error = E_OK;
+    aspace_hw_walk(source->root, clone_leaf, &walk);
+    if (walk.error) {
+        aspace_destroy(walk.child); cow_finish_source(source, FALSE);
+        return walk.error;
+    }
+    cow_finish_source(source, TRUE);
+    aspace_hw_code_changed();
+    walk.child->clone_building = FALSE;
+    *out = walk.child;
+    return E_OK;
+}
+#endif
 
 #endif /* CONF_WITH_USER_ASPACE */

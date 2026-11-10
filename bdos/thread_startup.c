@@ -29,8 +29,9 @@ struct thread_startup_draft {
 #endif
 
 static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
-                            THREAD_STARTUP_DRAFT **result, BOOL public_return, const void *saved)
+                            THREAD_STARTUP_DRAFT **result, BOOL public_return, KASPACE *source, const void *saved)
 {
+    (void)source;
     if (!result || *result || !space || !args) return EINVAL;
 #if CONF_WITH_NATIVE_SCHED
     {
@@ -56,7 +57,11 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->args = *args;
         draft->image = NULL;
         draft->bridge = NULL;
-        error = thread_startup_arch_bridge_acquire(space, &draft->bridge);
+        error =
+#if CONF_WITH_PRIVATE_CLONE
+            source ? thread_startup_arch_bridge_acquire_cloned(source, space, &draft->bridge) :
+#endif
+            thread_startup_arch_bridge_acquire(space, &draft->bridge);
         if (!error) error = thread_startup_arch_prepare(kaspace_backend(space), &draft->args, draft->bridge, &draft->image);
         if (!error && public_return) error = thread_startup_arch_public_return(draft->image, draft->bridge);
 #if CONF_WITH_FORK_RETURN_TEST
@@ -75,23 +80,28 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         return E_OK;
     }
 #else
-    (void)public_return; (void)saved; return EINVFN;
+    (void)public_return; (void)source; (void)saved; return EINVFN;
 #endif
 }
 LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, FALSE, NULL);
+    return startup_prepare(space, args, out, FALSE, NULL, NULL);
 }
 LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, TRUE, NULL);
+    return startup_prepare(space, args, out, TRUE, NULL, NULL);
 }
 #if CONF_WITH_FORK_RETURN_TEST
 LONG thread_startup_prepare_saved_return(KASPACE *space, const SYSCALL_RETURN *saved, THREAD_STARTUP_DRAFT **out)
 {
     if (!saved || saved->space != space) return EACCDN;
-    return startup_prepare(space, &saved->mappings, out, FALSE, saved);
+    return startup_prepare(space, &saved->mappings, out, FALSE, NULL, saved);
 }
+#endif
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_prepare_cloned(KASPACE *source, KASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                  BOOL public_return, THREAD_STARTUP_DRAFT **out)
+{ return startup_prepare(space, args, out, public_return, source, NULL); }
 #endif
 
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
