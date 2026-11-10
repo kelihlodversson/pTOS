@@ -93,6 +93,13 @@ jobs:
       - name: Boot the Amiga ROMs and run the tests
         run: sh tools/ci-amiberry.sh
 
+      - name: Native 68060 clone, join, cancellation and libc exit with FPU
+        env:
+          NATIVE_THREADS: "1"
+          AMIBERRY_FPU: "68060"
+          REQUIRE_FPIAR: "1"
+        run: sh tools/ci-amiberry.sh amiga-aspace040:68060
+
       - name: Keep the logs and the screens
         if: always()
         uses: actions/upload-artifact@v4

@@ -20,7 +20,7 @@ operations migrate; they are not the native CUIS protocol.
 GEM source compatibility is the public contract. Applications use standard
 GEM headers, function names, signatures, structures, constants and return
 conventions (appl_*, evnt_*, wind_*, menu_*, form_*, objc_*, graf_*, rsrc_*,
-shel_* and scrp_*). The aes_session_*, aes_window_*, aes_message_* and similar
+shel_* and scrp_*). The aes_session_*, aes_window_* and similar
 CUIS wrappers currently exported for migration tests are transitional
 implementation helpers, not a replacement application API. Move these behind
 the library boundary as the standard adapters migrate; applications must not
@@ -269,7 +269,7 @@ clipping, rendering coordination and event delivery remain subsequent work. No l
 All new kernel paths compile only with CONF_WITH_CUIS, selected by the
 external CONF_WITH_LIBAES feature.
 
-Visibility, stacking and redraw polling
+Visibility, stacking and damage
 --------------------------------------
 Additional calls in CUIS class 0x103 each take the window handle in RDI:
 
@@ -277,10 +277,9 @@ Additional calls in CUIS class 0x103 each take the window handle in RDI:
   7 HIDE     remove a visible window
   8 RAISE    move a visible window to the front
   9 LOWER    move a visible window to the back
- 10 REDRAW   consume a pending redraw indication (1 pending, 0 none)
 
 All return a negative GEMDOS error on failure. SHOW/HIDE/RAISE/LOWER return
-zero on success. libaes exports aes_window_show/hide/raise/lower/redraw.
+zero on success. libaes exports aes_window_show/hide/raise/lower.
 Unused registers are ignored; ownership and full-width handle validation
 are identical to the earlier window calls. SHOW on an already-visible
 window and HIDE on a hidden one are no-ops. RAISE/LOWER on a hidden window
@@ -297,101 +296,52 @@ next SHOW schedules one. Repeated changes coalesce. Invalid operations
 leave both order and pending redraws intact. Closing a session or exiting
 removes all its visible windows and marks surviving windows for redraw.
 
-REDRAW is owner-local, nonblocking polling, not an event wait. It clears
-only that window's pending indication; subsequent changes set it again.
-The syscall runs synchronously in the existing serialized kernel service
-path, without allocating queue entries. It does not authorize framebuffer
-writes. The snapshot/update calls below provide metadata coordination. Physical
-display clipping, VDI enforcement and atomic event waits remain necessary
-for complete concurrent rendering support. No pixels, legacy AES windows or input focus are changed
-by this slice. A full GEM wind_* adapter also remains subsequent work.
+Damage is observed through EVENT_WAIT or managed NOTICE_PEEK and delivered
+through NOTICE_PUBLISH. Libaes constructs the GEM redraw bytes. Publication
+clears the matching notice only after successful stream admission; failed
+copyout or queue pressure leaves it pending. DISPLAY_LOCK controls drawing.
 
-Visible-region snapshots and update sections
--------------------------------------------
-The next CUIS calls retain the flat scalar ABI:
+Visible-region snapshots and display ownership
+---------------------------------------------
+Production drawing uses DISPLAY_LOCK for recursive session-owned display
+coordination and WINDOW_REGION for visible rectangles. Libaes applies GEM
+window and workstation clipping policy. There is no separate per-window
+kernel update owner or second clipping ABI.
 
- 11 UPDATE_BEGIN  RDI=window
- 12 UPDATE_END    RDI=window
- 13 WINDOW_CLIP   RDI=window, RSI=index,
-                  RDX=LONG *x, R10=LONG *y, R8=LONG *width, R9=LONG *height
-
-libaes exports aes_update_begin(window), aes_update_end(window), and
-aes_window_clip(window, index, x, y, width, height). BEGIN/END return zero
-or a negative error. CLIP returns 1 for a rectangle, 0 at/past the end,
-or a negative error. There is no cursor, request block or negotiation.
-
-BEGIN requires an owned visible window and captures its rectangle minus
-all visible windows above it. Output rectangles are disjoint, have positive
-extents, and remain in the same native coordinate space. Touching edges do
-not occlude. A fully covered window has an empty snapshot. The snapshot
-uses at most 256 rectangles, with two bounded work buffers during capture;
-allocation or intermediate fragmentation overflow returns ENSMEM without
-acquiring the update section or altering window state/redraw flags.
-
-There is one nonblocking update section across CUIS sessions. A successful
-BEGIN freezes geometry/stacking operations until END. While held, all
-window mutations (including creation and otherwise-idempotent operations)
-return EAGAIN after the normal ownership checks. Another BEGIN, including
-a nested BEGIN, also returns EAGAIN. REDRAW polling remains permitted. A
-matching owner/window END releases the snapshot and update section;
-wrong-owner/window END returns EACCDN. This is not a recursive lock or an
-atomic event wait. Callers must finish promptly and retry busy operations.
-
-CLIP requires the matching active owner and window. The index is an unsigned
-32-bit scalar; full-width malformed handles/indices return EINVAL. Outputs
-are native 32-bit LONGs, copied through the existing per-process memory
-validation/copy facilities. Every output destination is validated before
-any value is copied; invalid, supervisor, read-only or high-bit addresses
-return EIMBA. Outputs are written in x,y,width,height order if they alias.
-At/past the end, no output pointers are inspected or written. Copy failures
-never advance a cursor: retry the same index. Output order is deterministic
-for a held snapshot but callers should not depend on a particular tiling.
-
-Session close and process exit/fault release an owned update section before
-freeing windows. Other processes may still terminate: their windows are
-removed and surviving windows marked for redraw. The held snapshot stays
-immutable; removing an occluder can only make it a conservative subset of
-the newly exposed area. Pending redraws survive END so that exposure is not
-lost. Subsequent BEGIN captures the expanded region.
-
-The snapshot/update calls provide the metadata used by the display/VDI
-integration below. They do not lock the legacy AES window manager or grant
-direct framebuffer access. Input/focus and atomic event waits remain later
-epic work. The kernel source and dispatch paths are enabled only by
-CONF_WITH_CUIS, selected by the external CONF_WITH_LIBAES feature.
+WINDOW_REGION subtracts higher visible windows from the physical display
+intersection. Rectangles are disjoint and positive; touching edges do not
+occlude. A fully covered or off-screen window has an empty list. Allocation
+or bounded intermediate fragmentation overflow returns ENSMEM with no
+published replacement. All outputs are validated before copying. Failed
+FIRST copyout leaves a held list intact; NEXT continues its immutable list
+while DISPLAY_LOCK is held. FIRST explicitly refreshes it. Session exit and
+final display release reclaim the associated lists.
 
 Physical display and native VDI integration
 -------------------------------------------
-UPDATE_BEGIN now intersects the window with the current physical display
-before subtracting higher windows. Native clip outputs therefore contain
-only physical display coordinates, even for negative origins and windows
-extending past an edge. A fully off-screen window has an empty snapshot.
-An unavailable/zero-sized display returns EINVFN without acquiring an
-update section. The VDI renderer additionally applies its signed-coordinate
-limits and the optional workstation clip to every screen write.
+WINDOW_REGION intersects windows with the current physical display before
+subtracting higher windows. Libaes consumes these rectangles and supplies
+explicit drawing clips. The VDI renderer additionally applies physical and
+signed-coordinate limits and the workstation clip to screen writes.
 
-Opening a CUIS session opts that process into region enforcement by the
-existing checked x32 VDI service (when CONF_WITH_X32_VDI is enabled). Lines,
-text, bars and filled rectangles require an active update section owned by
-the process; without one they return EACCDN. Drawing intersects the snapshot
-with the physical screen and workstation clip and renders once per disjoint
-region. Empty intersections draw nothing. Workstation clipping state and
-the associated Line-A globals are restored afterward. Attribute setters
-remain usable without an update. Another process's update section causes
-native screen writes to return EAGAIN, including writes by non-CUIS clients.
+CUIS clients require owned DISPLAY_LOCK for checked native screen writes;
+a foreign display owner returns EAGAIN and an unowned client returns
+EACCDN. This is display-wide drawing permission. Window-specific clipping
+belongs to libaes and its WINDOW_REGION iterator. Attribute setters remain
+available without drawing ownership.
 
 Whole-screen reads remain allowed for every app, including screenshot apps:
-VDI pixel reads do not require a CUIS session/update and are not restricted
+VDI pixel reads do not require CUIS display ownership and are not restricted
 to a window or its unoccluded area. Normal physical-coordinate and output
 memory validation still apply. A screenshot may read while another client
-holds an update section. Screen-copy source pixels are likewise unrestricted.
-Screen-to-screen copies by CUIS clients require an owned update and clip
+holds display ownership. Screen-copy source pixels are likewise unrestricted.
+Screen-to-screen copies by CUIS clients require owned display access and clip
 only the destination. Rows and disjoint row segments are processed in
 memmove order so overlapping copies do not overwrite later source pixels.
 Workstation clipping still restricts destination writes and is restored.
 
 Non-CUIS native VDI clients retain their previous drawing behavior when no
-update section is active. These changes do not retrofit the legacy AES
+display owner is active. These changes do not retrofit the legacy AES
 service or its direct kernel drawing, and are not a sandbox for all legacy
 interfaces. The external desktop still uses its legacy session path while
 GEM window/form/menu migration continues. Screen-to-memory raster binding
@@ -428,25 +378,16 @@ lifetime and console transitions retain their original behavior.
 
 Focus ownership foundation
 --------------------------
-CUIS adds three flat calls, each taking an owned window handle in RDI:
-
- 14 FOCUS_REQUEST  return zero on success or a negative GEMDOS error
- 15 FOCUS_QUERY    return 1 if focused, 0 if not, or a negative error
- 16 FOCUS_RELEASE  return zero on success or a negative error
-
-libaes exports aes_window_focus, aes_window_focused and aes_window_unfocus.
-Unused register slots are ignored. Malformed full-width handles return
+CUIS_FOCUS_QUERY takes an owned window handle and returns 1 if focused, 0
+if not, or a negative GEMDOS error. Malformed full-width handles return
 EINVAL; absent sessions and unknown/stale/foreign handles return EACCDN.
-A hidden window cannot request focus (EINVAL). Only the currently frontmost
-visible CUIS window may claim focus; a request for another visible window returns
-EACCDN. No foreign focus handle is exposed by QUERY.
+No foreign focus handle is exposed.
 
-Showing, raising and lowering windows do not automatically transfer focus.
-Focus and stacking remain distinct: an already-focused visible window can
-remain focused after being lowered. Repeating a focus request for the focused
-front window is a no-op. Releasing a non-focused owned window is also a no-op;
-releasing the focused window clears focus without selecting a fallback. Actual focus changes mark all visible CUIS
-windows for redraw so future decorations can reflect the change.
+libaes configures managed activation through WINDOW_POLICY. Showing or
+raising a managed window transfers focus; lowering the focused managed
+window selects the new front window. Unmanaged windows retain their
+existing stacking behavior. Raising an already focused front window is a
+no-op. Actual focus changes mark visible windows for redraw.
 
 Hiding/destroying a focused window transfers focus to the remaining front
 visible window, or clears it if none remains. The same rule applies while
@@ -454,28 +395,16 @@ closing sessions and reclaiming normal, raw-exit or faulted processes. A
 focus pointer is always removed before its window is freed. Removing an
 unfocused window does not change focus.
 
-Focus request/release are mutations and return EAGAIN while an update section
-is held, including otherwise-idempotent requests. QUERY remains available.
-New windows start without focus, and a boot with no focus stays that way
-until a successful request. This slice establishes the authoritative target
-for subsequent bounded input queues and atomic waits; it does not yet route
-hardware input, change legacy AES focus or add event delivery. All kernel
-focus state and paths remain under the external libaes CUIS configuration.
+Focus QUERY remains available while display ownership is held. Managed
+activation is driven by the existing libaes window policy and trusted input.
+All kernel focus state remains under the external libaes configuration.
 
 Focused keyboard queues and atomic waits
 ---------------------------------------
-CUIS adds flat keyboard calls using only RDI and RSI:
-
- 17 KEY_READ  RDI=owned window, RSI=ULONG *key
- 18 KEY_WAIT  RDI=owned window, RSI=sign-extended LONG timeout_ms
-
-libaes exports aes_key_read(window, key) and aes_key_wait(window, timeout_ms).
-READ returns 1 after copying one key, 0 if empty, or a negative GEMDOS error.
-WAIT returns 1 when a key is pending without consuming it, 0 on timeout, or
-a negative error. Zero milliseconds polls; -1 waits indefinitely. Other
-negative or noncanonical timeout values return EINVAL. Unused registers
-are ignored. Unknown/stale/foreign handles and unfocused windows return
-EACCDN; malformed full-width handles return EINVAL.
+Trusted keyboard input is consumed through SESSION_WAIT and its INPUT_RESULT
+snapshot. A ready wait commits one key; a rejected result copy leaves that
+snapshot available for retry. EVENT_WAIT(CUIS_EVENT_KEY) observes readiness
+without consuming keys. There is no separate private native keyboard read.
 
 Each window has a fixed 16-key FIFO. The existing BIOS keyboard translation
 feeds the focused window through an IRQ-safe, allocation-free producer.
@@ -521,21 +450,12 @@ no user-callable test injection interface is exposed.
 
 Pointer routing and combined waits
 ----------------------------------
-CUIS extends the flat register ABI with:
-
- 19 POINTER_READ RDI=owned window, RSI=LONG *x, RDX=LONG *y,
-                 R10=ULONG *buttons, R8=ULONG *state
- 20 EVENT_WAIT   RDI=owned window, RSI=event mask,
-                 RDX=sign-extended LONG timeout_ms
-
-libaes exports aes_pointer_read(window, x, y, buttons, state) and
-aes_event_wait(window, events, timeout_ms). POINTER_READ returns 1 for one
-snapshot, 0 when empty, or a negative GEMDOS error. Coordinates are absolute
-screen pixels. Buttons use bit 0 for left and bit 1 for right; state bits 0-1
-identify changed buttons and CUIS_POINTER_INSIDE (bit 2) identifies the
-window currently hit by the pointer. Capture can deliver outside snapshots.
-All four outputs are validated before copying; failed copyout retains the
-snapshot. Empty reads do not inspect output pointers.
+EVENT_WAIT takes an owned window, an event mask and a sign-extended LONG
+millisecond timeout. libaes uses it for native window-control dragging.
+INPUT_STATE supplies current absolute screen coordinates, button bits and
+modifiers. SESSION_WAIT with INPUT_BUTTON commits input from event history;
+INPUT_RESULT returns the retryable snapshot. A press and release delivered
+before the waiter resumes therefore retain the historical button result.
 
 A trusted relative mouse packet is clamped to the physical display and live
 VDI viewport. Hit testing uses the topmost shown window and half-open bounds.
@@ -561,11 +481,11 @@ EVENT_WAIT accepts any nonempty combination of CUIS_EVENT_KEY (1),
 CUIS_EVENT_POINTER (2), and CUIS_EVENT_REDRAW (4). It returns 1 if any requested
 source is pending, 0 on timeout, or a negative error; it consumes nothing and
 returns no event mask. Callers poll their requested sources after waking.
-Pointer overflow counts as pending; redraw remains pending until REDRAW is
-read. KEY-only waits require focus; mixed waits can observe pointer/redraw in
+Pointer overflow counts as pending; redraw remains pending until its managed notice is published. KEY-only waits require focus; mixed waits can observe pointer/redraw in
 a background window, while keyboard readiness still requires focus. Windows
 must be shown. Unknown mask bits and malformed timeouts return EINVAL.
-Timeout and owned-update restrictions match KEY_WAIT. Predicate checks and
+Zero timeout polls, -1 waits indefinitely, and other negative or noncanonical
+timeouts fail EINVAL. Blocking while owning an update fails EACCDN. Predicate checks and
 sleep use the same IRQ exclusion, avoiding lost wakeups between sources.
 
 Host tests exercise ownership, capture, enter/leave, coalescing, overflow,
@@ -579,52 +499,12 @@ queued legacy motion/cursor notifications and advance a generation checked
 before applying an in-flight native motion callback's result. IRQ fixtures
 cover guarded motion and reject an older callback completion after CUIS input.
 
-Bounded peer messages
----------------------
-CUIS transports opaque peer data separately from trusted input and redraws:
-
- 21 MESSAGE_SEND  RDI=destination session, RSI/RDX/R10/R8=ULONG words 0-3
- 22 MESSAGE_READ  RDI=owned session, RSI=LONG *sender,
-                  RDX/R10/R8/R9=ULONG *words 0-3 (four separate outputs)
- 23 MESSAGE_WAIT  RDI=owned session, RSI=sign-extended LONG timeout_ms
-
-Transitional libaes test wrappers are aes_message_send(destination, a, b,
-c, d), aes_message_read(session, sender, a, b, c, d), and
-aes_message_wait(session, timeout_ms). These are transport helpers, not the
-GEM application API; normal applications use appl_write/read and
-evnt_mesag/multi after their library adapters migrate. No request/reply
-structure or receiver grant handshake is used. Any registered client can
-send to another registered client, as normal GEM messaging requires.
-
-Payload words are unsigned 32-bit values; send slots with upper bits set
-return EINVAL. CUIS does not decode GEM message IDs or payloads. A peer
-message cannot fabricate trusted CUIS keyboard, pointer, focus or redraw
-notifications. Sender identity is assigned by the kernel, never supplied by
-the sender. Session handles are never reused. Peer discovery, mapping to GEM
-application IDs and GEM message adaptation remain later library work.
-
-SEND returns E_OK on acceptance, EAGAIN when the destination's 16-message
-FIFO is full, EACCDN for an absent destination or unregistered caller, or
-EINVAL for malformed slots. It never blocks, allocates or evicts an accepted
-message. Messages from all peers share FIFO acceptance order. These scalar
-results are private transport conventions, not appl_write return values.
-
-READ returns 1 after copying the kernel sender and all four payload words,
-0 when empty, or a negative error. All outputs are validated/backed before
-copyout, and a failed copy leaves the oldest message queued. Empty reads
-ignore output pointers. Reading another session is forbidden. Sender exit
-preserves accepted messages with the historical sender handle. Receiver exit
-discards its queue; no message holds a process/window pointer or file reference.
-
-CUIS_EVENT_MESSAGE (8) extends EVENT_WAIT: any queued message for the window
-owner makes it ready, independently of focus. A successful wait returns 1 and
-consumes nothing. MESSAGE_WAIT uses the same atomic predicate/sleep, timeout
-and owned-update rules without requiring a window or focus. Existing event
-masks retain their behavior. Managed tasks yield to the kernel scheduler; unmanaged callers retain the
-IRQ sleep path. Public asynchronous launch integration remains later work.
-Host tests model a peer posting at the sleep boundary; native boot tests
-verify scalar transport, cross-process delivery without a handshake,
-copyout recovery, queue bounds, ownership, readiness and timeouts.
+Peer messages use the opaque STREAM_WRITE/READ/PEEK services. Message
+readiness composes through SESSION_WAIT with CUIS_READY_STREAM and a byte
+minimum. No separate four-word message queue or message EVENT_WAIT bit exists.
+Native process/scheduler fixtures exchange explicit application packets over
+these active streams; a packet's reply endpoint is payload, not authenticated
+kernel provenance. Public GEM messages remain libaes policy.
 
 Kernel-managed native task scheduling
 -------------------------------------
@@ -679,9 +559,9 @@ Boot fixtures run two isolated standard-ELF/libaes clients through 64 message
 exchanges, with private data/library state and SSE checks. They also exercise
 focus-loss wakeup, all-blocked timeouts, a nested child's timed wait, normal
 exit, _Exit, faults, group bounds/duplicate rejection, allocation failure
-before launch and exact allocator/resource reclamation. Test-only kernel
-bootstrap messages supply known peer handles until application discovery
-migrates; no new application API is required.
+before launch and exact allocator/resource reclamation. Clients discover
+fixture labels through the existing directory and exchange stream packets;
+there is no kernel bootstrap transport or additional application API.
 
 Standard asynchronous process calls in managed groups
 ---------------------------------------------------
@@ -774,11 +654,11 @@ gl_apid and gl_ap_version. include/gem.h declares this implemented subset;
 the same application fixture also compiles against GEMlib's normal headers.
 This is the first public adapter slice, not a complete GEM AES replacement.
 Discovery and application pipes are described below. Message/timer combinations are described below; window/input event adapters
-remain subsequent work. At that stage aes_session_*/aes_window_*/aes_message_* exports
+remain subsequent work. At that stage aes_session_*/aes_window_* exports
 remain transitional test/migration interfaces, not application requirements.
 
-appl_init implicitly opens the process's CUIS session and returns its kernel
-PID as a positive short application ID (1..32767), or -1 on failure. Opaque
+appl_init implicitly opens the caller's CUIS client and returns its distinct
+AES client ID (1..32767), or -1 on failure. This ID is not a PID or TID. Opaque
 CUIS handles remain private and are never truncated to produce application
 IDs. Repeated initialization reuses the process registration. The caller's
 15-word global array is initialized with AES global-layout ABI 0x0400,
@@ -821,13 +701,19 @@ kernel records only a bounded, unmodified basename (up to 32 bytes) and
 opaque label bytes; GEM normalization remains in userspace. Anonymous
 basepage-only programs need not have a name. Duplicate labels resolve to
 the oldest still-registered session. Exit removes the label; reopening the
-same process uses a fresh private handle and the same PID application ID.
+same PROCESS uses a fresh private handle and may receive a different AES ID.
+A closed client ID can eventually be reused; private endpoint handles never
+recycle and continue to protect blocked operations against replacement.
 
 appl_find accepts normal eight-character names (short NUL-terminated names
 are padded), NULL/upper-word-zero self lookup, and the MultiTOS 0xffff/PID
 and 0xfffe/application-ID pointer selectors. Only registered peers convert;
 missing, exited or unregistered applications return -1. Handles are resolved
-and checked before conversion to a positive short PID; they are not narrowed.
+and checked before conversion to a positive short AES ID; they are not narrowed.
+The 0xffff selector converts a generic PROCESS PID to the lowest live AES
+client ID among its endpoints; 0xfffe converts an AES ID to its generic
+PROCESS PID. Ordinary discovery, writes and activation route by AES ID, never
+PID. Several clients may share a PROCESS number/PID without aliasing.
 Standard appl_getinfo AES_PROCESS (4) returns 1 with outputs 0,1,0,1:
 cooperative scheduling, PID conversion, no appl_search, native rsrc_rcfix.
 AES_INQUIRE (6) returns 1 with outputs 1,0,0,0, advertising APR_NOWAIT only.
@@ -846,7 +732,7 @@ neither interprets GEM message types nor rewrites opaque byte streams.
 Boolean APIs return 1 on success and 0 on error, not native negative errors.
 
 Each receiver has a lazy 65536-byte payload ring and a parallel 16-bit sender
-PID ring (192 KiB total), independent of message/write boundaries. Partial
+AES-client-ID ring (192 KiB total), independent of message/write boundaries. Partial
 reads immediately free capacity. A transfer's 32767-byte maximum is below
 half the byte capacity, avoiding metadata/packet fragmentation deadlocks
 between exact reads and atomic writes. One pending write snapshot per
@@ -854,7 +740,7 @@ sender is bounded by the same transfer limit and is attached to its session
 before user copying can fault. There are no unbounded packet lists. Native
 sender metadata comes from the kernel and survives sender exit; it describes
 the first byte read and is separate from peer-supplied GEM header contents.
-Historical sender PIDs are not authentication of a currently live process.
+Historical sender client IDs are not authentication of a currently live process.
 Peer bytes do not manufacture trusted keyboard/pointer/redraw events.
 
 All queued storage and pending snapshots are released on session/process
@@ -868,19 +754,14 @@ update fail with EACCDN. Ready/zero/poll operations retain their normal behavior
 
 Native CUIS calls use flat registers and scalar lengths/handles/errors:
 
- 25 SESSION_NAME(handle, buffer, capacity) -> basename length (NUL appended)
  26 SESSION_LABEL(handle, bytes, length)   -> E_OK; opaque labels up to 32 bytes
  27 LABEL_FIND(bytes, length)             -> peer handle
- 28 PEER_PID(handle)                      -> registered peer PID
- 29 PEER_BY_PID(pid)                      -> registered peer handle
  30 STREAM_WRITE(peer, buffer, length, block) -> exact byte count
- 31 STREAM_READ(own, buffer, length, block, optional_sender_pid) -> exact count
+ 31 STREAM_READ(own, buffer, length, block, optional_sender_id) -> exact count
 
 Invalid arguments/ownership and missing peers return ordinary negative
-errors. block is 0 (EAGAIN when not ready) or 1 (wait). These services and
-process-basename storage compile only with CONF_WITH_CUIS. The previous
-four-word opaque queue remains transitional; the public GEM pipe does not
-inherit its fixed size. Message/timer combined waits are described below; input/window integration
+errors. block is 0 (EAGAIN when not ready) or 1 (wait). These GUI services compile only with CONF_WITH_CUIS;
+PROCESS basename and identity snapshots are generic Ssystem services. Message/timer combined waits are described below; input/window integration
 remains subsequent work.
 
 Host tests cover lookup/ownership, capacity and allocation failures,
@@ -1051,8 +932,7 @@ mutations acquire/release it internally and nest inside an explicit update
 section, as GEM permits. Ordinary begins block cooperatively; NO_BLOCK does
 not dispatch or sleep. Timer/input/message waits are allowed while owning the
 GEM semaphore, as required for modal interaction; applications remain
-responsible for avoiding circular waits between peers. The older native
-per-window snapshot lock retains its stricter no-blocking-wait rule.
+responsible for avoiding circular waits between peers.
 Session close, normal/raw/fault exits release all nesting levels. Preemption
 and other architecture backends remain future work under #713.
 
@@ -1060,9 +940,7 @@ An owner holds the whole-screen update section and may paint dialog/menu
 areas outside its windows. Native VDI writes remain clipped to the captured
 screen bounds; other processes cannot write until release. Read/copy access
 to the entire screen remains available to all apps, including screenshot
-apps. Existing per-window snapshot updates remain separate and mutually
-exclusive with this global section; migration/test helpers must not mix the
-two lock families. Traditional in-kernel AES migration remains incomplete;
+apps. Traditional in-kernel AES migration remains incomplete;
 its final exclusion from CUIS kernels is still required at the epic cutover.
 
 wind_get(WF_FIRSTXYWH) restarts a per-window iterator, and WF_NEXTXYWH advances
@@ -1155,15 +1033,15 @@ ordinary button input. Existing pointer capture/release suppression remains
 in force when that window hides or exits. Input is routed to the current focus
 until the application actually tops the requested window.
 
-wind_get(WF_TOP) ignores the input handle and returns top ID, owner AES/PID,
+wind_get(WF_TOP) ignores the input handle and returns top ID, owner AES client ID,
 next ID below, and zero. WF_BOTTOM returns the bottom visible window ID,
 excluding the desktop, with other outputs zero. An empty stack returns ID 0.
 WF_OWNER accepts a live global ID (including another app's window) and returns
-owner AES/PID, open status, ID above and ID below; closed windows report no
+owner AES client ID, open status, ID above and ID below; closed windows report no
 neighbors. Queries are read-only; they do not grant permission to mutate a
 foreign window. Invalid/deleted IDs return GEM failure without changing
 outputs. Native metadata is range-checked before conversion to GEM shorts;
-invalid identifiers/PIDs or non-Boolean open status fail without truncation.
+invalid identifiers/client IDs or non-Boolean open status fail without truncation.
 Foreign geometry and desktop handle-0 metadata remain later work.
 No additional appl_getinfo extension bits are advertised in this slice.
 
@@ -1189,17 +1067,17 @@ Native additions, all under CONF_WITH_CUIS:
      Atomically appends 1-32 captured opaque bytes to the caller's own pipe
      and acknowledges the specified owned pending notice. No GEM header or
      format is interpreted in the kernel. Sender metadata remains the current
-     process PID independently of user-generated payload fields. A full pipe
+     AES client ID independently of user-generated payload fields. A full pipe
      returns EAGAIN without consuming the notice; source-copy/allocation or
      ownership failure likewise leaves it pending. Source access can fault,
      so client identity is checked again before publication. Notice flag
      updates and pipe publication use the same short IRQ exclusion.
 
-  41 STACK_QUERY(position, id*, owner_pid*, below_id*) -> E_OK / error.
+  41 STACK_QUERY(position, id*, owner_client_id*, below_id*) -> E_OK / error.
      Position 0 selects the front, 1 the back. Requires a registered caller;
      all three outputs are validated LONGs, with zero for an empty stack.
 
-  42 WINDOW_INFO(identifier, owner_pid*, visible*, above_id*, below_id*)
+  42 WINDOW_INFO(identifier, owner_client_id*, visible*, above_id*, below_id*)
      -> E_OK / error. Returns registered global window metadata as LONGs.
      Read-only stack/owner queries remain available during display updates.
 
@@ -1359,7 +1237,7 @@ requests and legacy/foreign held gestures cannot be stolen. Nesting an already
 owned grab succeeds immediately, even while buttons are down. Depth overflow
 fails without wrapping. A wait blocked by contention retains IRQ exclusion
 through scheduler publication, avoiding a lost wakeup. As with existing CUIS
-waits, a legacy per-window update snapshot owner cannot block on contention.
+waits use the same generic scheduler blocking mechanism.
 The global standard update semaphore remains independent.
 
 Final release and normal/raw/fault process exit release every nesting level.
@@ -1457,8 +1335,8 @@ screen cells while preserving the original positions of the remaining
 glyphs. An empty clip succeeds without painting. objc_find applies native 3D
 hit expansion.
 
-Drawing reuses an existing per-window update section without upgrading or
-releasing it. Otherwise it obtains a nested standard display update section.
+Drawing obtains a nested standard display update section and releases its
+own nesting level after rendering.
 Each draw opens a private virtual VDI workstation, preserving application
 workstation attributes. The kernel's existing CUIS draw policy still
 enforces display ownership; applications use FIRST/NEXT visible-region clips
@@ -1967,8 +1845,6 @@ CUIS additions (all arguments flat in registers, under CONF_WITH_CUIS):
 - 51 SURFACE_STATUS(session,action): action 0 queries OWNED/DIRTY/POINTER bits,
   action 1 acknowledges pending work, action 2 invalidates an owned surface.
   Acknowledge does not discard work during modal mouse control.
-- 52 CLOCK(session,0): returns the low 31 bits of the 200 Hz tick counter.
-  The maximum supported 32-bit millisecond timeout is shorter than its wrap.
 - 53 SURFACE_BEGIN(session,height): under the display lock, stages a positive
   strip height and grants painting without changing ownership or fallback order.
 - 54 SURFACE_END(session,commit): commits with 1 or cancels with 0 under the
@@ -2094,8 +1970,8 @@ CUIS adds three generic scalar operations under CONF_WITH_CUIS:
   ownership rules as WINDOW_CONFIGURE apply.
 - 56 CONTROL_READ(window,out_x,out_y,out_buttons,out_changed): read one trusted
   border-pointer record, returning 1, empty 0, or a negative error. All outputs
-  are LONGs, coordinates are screen-relative, and changed has the same button
-  bits as POINTER_READ. The caller must own the window. Failed output copies
+  are LONGs, coordinates are screen-relative, and changed uses bit 0 for left and bit 1
+  for right button transitions. The caller must own the window. Failed output copies
   do not pop the record. ERANGE cancels tracking after queue overflow or a
   target invalidation; no GEM gadget IDs, trees or messages enter the kernel.
 
@@ -2828,7 +2704,8 @@ GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
     if the same completion is still at its head. Failed copies, allocation,
     or pipe capacity leave it pending; reentrant reservation changes cannot
     publish or consume a replacement notice. Only a successful publication
-    consumes the record and nonblockingly reaps that specific child if it is still a native zombie. No unrelated child is read.
+    consumes the adapter record. It never consumes public PROCESS completion;
+    Pwaitpid can independently reap the child before or after publication.
 
 Capacity is reserved before CUIS_CHILD_LAUNCH, which runs the standard
 asynchronous load-and-go path with a stack-scoped observer. The observer is
@@ -2862,8 +2739,9 @@ completion, copy/allocation/backpressure failures, explicit native waits,
 reentrant cancellation/replacement/session exit, PID retention, a completion
 interrupting a two-click predicate and unchanged caller output on failure.
 Normal-header x32 clients cover full-word exits, exit/fault before appl_init,
-exactly-once messages, automatic selective reaping, explicit Pwaitpid retaining
-a notice, unrelated Pexec children and unchanged SHW_PARALLEL behavior.
+exactly-once messages and public reaping in either order, full normal 0xffff
+versus fault encoding, unrelated Pexec children and unchanged SHW_PARALLEL
+behavior.
 
 The transitional native AES binding calls its 16-byte message type
 AES_CLIENT_MESSAGE, avoiding a collision with GEMlib's standard AES_MESSAGE
@@ -2956,7 +2834,9 @@ keep their existing adapters and shell loop.
 Normal GEM application launches use AES4 shel_write mode 0. Launch success
 no longer means that the desktop should exit: its windows, menus, state and
 event loop remain live while children execute. The busy cursor is cleared
-on return from launch. Standard CH_EXIT messages refresh directory listings
+on return from launch. EmuDesk explicitly collects its own completed child
+with nonblocking Pwaitpid when handling CH_EXIT; libaes does not reap for it.
+Standard CH_EXIT messages refresh directory listings
 without restarting the desktop. Both normal termination and faults use the
 existing libaes child-completion path. Classic SHW_CHAIN remains separate
 compatibility support; it is not EmuDesk's normal launch policy.
@@ -3171,6 +3051,23 @@ Native metadata calls use flat arguments after the CUIS opcode:
 PEER_QUERY LABEL copies up to 32 opaque bytes without adding a terminator;
 TAG returns the tag, STATE returns HAS_SURFACE/HAS_BACKGROUND flags. BACKGROUND
 and ACTIVE return those peers' handles and require peer/address/capacity zero.
+IDENTITY (field 5) copies exactly 16 bytes of CUIS_PEER_IDENTITY_DATA:
+client_id, process_low, process_high, reserved=0. The positive short client ID
+belongs to the GUI endpoint; the non-recycled PROCESS number is generic KPROC
+identity, not a PID/TID or pointer. The client retains KPROC identity until
+final reclamation, without extending live PD/resources. This reference also
+reserves its PROCESS PID, so retirement must release it promptly after the
+last operation lease ends. The descriptor is
+snapshotted under the GUI lock before copyout, so no peer pointer survives
+user access. Several client descriptors may share one PROCESS number.
+HANDLE (field 6) takes a positive short AES ID in peer and returns its live
+opaque endpoint in one bounded scan. Address/capacity must be zero. This is
+routing lookup, not ownership acquisition or PID conversion; normal appl_write
+and APC_TOP need one query, without enumerating every endpoint.
+Wrong descriptor size is EINVAL; stale endpoint is EFILNF; failed copyout is
+EIMBA with no consumption. Private slots 28 and 29 are retired (EINVFN).
+The existing caller binding is not a promise of one client per PID; future
+THREAD/client bindings remain #896/#915 work.
 LABEL requires enough buffer space. The library publishes eight-byte labels
 and stores its GEM type and NM_APTERM consent in the opaque tag. Native code
 does not interpret the tag or impose GEM naming/type policy. Raising rejects
@@ -3510,3 +3407,61 @@ unimplemented capabilities or prevent the scoped initial cutover.
 Complete the desktop/accessory, standard GEM, RCS, callback/fault/cleanup,
 CLI/fallback, legacy architecture and release matrix before integration. Merge
 current master into the epic and resolve conflicts before marking #681 ready.
+
+Generic timer clock source (#907)
+--------------------------------
+libaes deadline and arrow-repeat calculations read the authoritative hz_200
+through GEMDOS Ssystem(S_GETLVAL,0x4ba,0). The userspace adapter retains the
+low-31-bit tick ring and original timer deadline across internal GUI wakes.
+This clock requires neither a CUIS session nor GUI registration. The maximum
+supported 32-bit millisecond timeout remains shorter than its wrap.
+
+Executable identity (#907)
+-------------------------
+libaes reads the current loaded-image basename from generic
+Ssystem(S_PROCNAME=-7), independently of CUIS registration. PROCESS metadata
+is copied from a retained identity into kernel-local storage before copyout;
+its bounded name survives PROCESS retirement without retaining the PD. AES
+label folding, eight-character naming and .ACC classification remain libaes
+policy. Private CUIS slot 25 is retired and returns EINVFN.
+
+Additional endpoints in one PROCESS (#907, not full #896)
+---------------------------------------------------------
+SESSION_START(0) returns/creates the default endpoint. SESSION_START(1), named
+CUIS_SESSION_NEW, creates a fresh endpoint with the same authenticated caller
+PROCESS. Other START arguments are EINVAL. Default window/input binding is not
+changed. Retiring the default does not promote an explicit survivor: START(0)
+then creates a new default, while PROCESS cleanup still visits all endpoints.
+QUERY/END, peer enumeration/descriptors and bounded nonblocking stream
+operations accept an explicitly owned endpoint handle. PROCESS cleanup retires
+all endpoints, whereas END retires only its named endpoint. No THREAD scheduler
+binding or separate C-runtime instance is implied. libaes's current shared
+runtime globals still select one application context; full MagiC multi-context
+window/input bindings and cancellable secondary waits remain #896/dependency work.
+Blocking stream operations on an additional endpoint return EINVFN. Such
+nonblocking operations prepare lazy/COW user buffers before reacquiring endpoint
+identity; no yield or mapping mutation may intervene under the cooperative
+copy contract. Future preemption needs mapping/operation lifetime synchronization.
+
+WRITE's sender argument is zero for the default source, or source endpoint
+handle + 1 for an explicit source. This is an owned endpoint selector, never a
+PID, PROCESS number, AES ID or user-supplied authenticated sender. READ/PEEK keep
+that argument's existing output-pointer meaning. libaes passes its source
+endpoint explicitly. appl_write preserves every caller payload byte, including
+16-byte application protocols. In-tree GEM message producers use AES client IDs
+in sender fields; payload fields are never authentication. The kernel's sender
+ring and cohort read-token checks
+remain authoritative (a first-byte sender is not whole-message authentication).
+
+AES client IDs now advance from 1 through 32767 without recycling during a boot.
+Exhaustion returns ENSMEM before publishing a handle or consuming references.
+Existing endpoints remain usable. This deliberate bound prevents unread stream,
+cohort or application messages from attributing an old sender to a replacement
+client. An AES ID is a short routing name, not an enduring capability; only the
+non-recycled opaque endpoint handle plus PROCESS ownership authorizes operations.
+
+Native GEM regression creates two endpoints in one real PROCESS/ASPACE, checks
+both descriptor PROCESS numbers against S_PROCIDENT/PID, routes ordinary GEM and
+explicit opaque stream messages, verifies deterministic lowest-ID PID conversion,
+and retires one client without completing PROCESS. Host production-code tests
+cover both endpoint release orders, stale handles, failure and ID exhaustion.

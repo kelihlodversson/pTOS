@@ -48,7 +48,7 @@ int gem_explicit_checks(short *global)
         }
         VERIFY(directory_call(0x19,0,0) == 2 && directory_call(0x47,(uintptr_t)current,3) == 0);
         VERIFY(equal(current,"\\GEMSYS"));
-        VERIFY(pid > 0 && pid != global[2]);
+        VERIFY(pid > 0 && pid != directory_call(0x10b,0,0));
         /* The console lease exists before the child gets its first timeslice. */
         result = wind_update(BEG_UPDATE|NO_BLOCK);
         VERIFY(result == (kind == TOSAPP ? 0 : 1));
@@ -59,6 +59,7 @@ int gem_explicit_checks(short *global)
             VERIFY(mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,3000,
                                  0,0,0,0,0,0,global) == MU_MESAG);
             VERIFY(message[0] == CH_EXIT && !message[1] && !message[2] && message[3] == pid && message[4] == 37);
+            VERIFY(waitpid(pid) == (int32_t)(((uint32_t)pid << 16) | 37));
         }
         VERIFY(wind_update(BEG_UPDATE|NO_BLOCK) && wind_update(END_UPDATE));
         VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,

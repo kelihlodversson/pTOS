@@ -63,9 +63,6 @@ C_SYM(enter):
         ldmia   sp, {sp, lr}^
         add     sp, sp, #8
         ldmfd   sp!, {r0-r12}           // all of them: nothing of the kernel's stays in a register
-        mov     ip, #0                  // (but r12: arm_dispatch_svc loaded the address of this
-                                        // entry into it, which is the caller's to see no more than
-                                        // any other kernel address; r12 is scratch across a call)
         add     sp, sp, #4
         rfefd   sp!
 
@@ -102,6 +99,19 @@ C_SYM(bdos_trap2):
  * to read.  The address space is loaded by the caller.
  */
 C_SYM(arm_enter_user):
+        mov     r7, #0                  // ordinary program has no return bridge
+        b       arm_user_entry_common
+#if CONF_WITH_NATIVE_SCHED
+        .globl C_SYM(arm_enter_prepared_user)
+C_SYM(arm_enter_prepared_user):
+        /* Immutable, kernel-owned THREAD_STARTUP32: entry, SP, argument, LR. */
+        mov     r3, r1
+        ldr     r7, [r0, #12]
+        ldr     r2, [r0, #8]
+        ldr     r1, [r0, #4]
+        ldr     r0, [r0]
+#endif
+arm_user_entry_common:
         mov     r4, r0                  // the entry point
         mov     r5, r1                  // the user stack pointer
         mov     r6, r2                  // the basepage
@@ -113,7 +123,7 @@ C_SYM(arm_enter_user):
         sub     sp, sp, #4
         str     r0, [sp]
         bne     2b
-        FPU_POP_ALL r7                  // FPSCR 0 and all the registers 0
+        FPU_POP_ALL r8                  // FPSCR 0 and all the registers 0
 #endif
         mov     r0, #0x10               // user mode, interrupts enabled
         sub     sp, sp, #8
@@ -121,7 +131,7 @@ C_SYM(arm_enter_user):
         str     r0, [sp, #4]            // cpsr
         cps     #0x1f                   // system mode: the registers of user mode
         mov     sp, r5
-        mov     lr, #0
+        mov     lr, r7
         cps     #0x13
         mov     r0, r6                  // the basepage
         mov     r1, #ARM_ENTRY_PROGRAM
@@ -139,3 +149,25 @@ C_SYM(arm_enter_user):
         rfefd   sp!
 
 #endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_FORK_RETURN_TEST
+        .text
+        .globl C_SYM(arm_enter_saved_user)
+C_SYM(arm_enter_saved_user):
+        /* Heap-owned user image -> a fresh child SVC return frame. */
+        mov r4,r0
+        mov sp,r1
+        sub sp,sp,#(FPU_ALL_BYTES + 72)
+        mov r2,sp
+        mov r3,#((FPU_ALL_BYTES + 72)/4)
+3:      ldr r0,[r4],#4
+        str r0,[r2],#4
+        subs r3,r3,#1
+        bne 3b
+        FPU_POP_ALL r4
+        ldmia sp,{sp,lr}^
+        add sp,sp,#8
+        ldmfd sp!,{r0-r12}
+        add sp,sp,#4
+        rfefd sp!
+#endif

@@ -21,6 +21,10 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#include "ksched_lifetime.h"
+#endif
 #include "asm.h"
 #include "fs.h"
 #include "biosdefs.h"
@@ -529,6 +533,12 @@ void osinit_after_xmaddalt(void)
         halt();
     }
 
+#if CONF_WITH_NATIVE_SCHED
+    {
+        PD *controller=procmem_alloc(sizeof(PD),PROCMEM_ZERO);
+        if (!controller || !ksched_controller_install(controller)) halt();
+    }
+#endif
     time_init();
 
     KDEBUG(("BDOS: address of basepage = %p\n", run));
@@ -672,10 +682,18 @@ long osif(short *pw);
  *  carries are checked first (uaccess.c).  Kernel code does not come this
  *  way: on x86-64 it calls the implementations directly (kcall.c).
  */
+#if CONF_WITH_PTERMGRP || CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_NATIVE_ABI
+static long osif_impl(long *pw)
+#else
+static long osif_impl(short *pw)
+#endif
+#else
 #if CONF_WITH_NATIVE_ABI
 long osif(long *pw)
 #else
 long osif(short *pw)
+#endif
 #endif
 {
     char **pb, *pb2, *p, ctmp;
@@ -1337,3 +1355,28 @@ restrt:
 
     return rc;
 }
+
+#if CONF_WITH_PTERMGRP || CONF_WITH_NATIVE_SCHED
+/* A nested child has completely finalized before its caller returns here.
+ * No operation-local filesystem/CUIS state is unwound by cancellation. */
+#if CONF_WITH_NATIVE_ABI
+long osif(long *pw)
+#else
+long osif(short *pw)
+#endif
+{
+    long result;
+    FS_ERROR_STATE enclosing_error = *fs_error_current();
+#if CONF_WITH_PTERMGRP
+    ksched_cancel_point();
+#endif
+    result = osif_impl(pw);
+    /* osif_impl's jump target died with that frame. Restore before any
+     * cancellation or callback can run on the enclosing continuation. */
+    *fs_error_current() = enclosing_error;
+#if CONF_WITH_PTERMGRP
+    ksched_cancel_point();
+#endif
+    return result;
+}
+#endif

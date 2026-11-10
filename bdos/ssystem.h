@@ -157,6 +157,21 @@ struct mem_info {
 #define S_MMUPROBE      ((WORD)0xfffa)
 #define S_DESKSET       ((WORD)0xfffb)
 
+/* Current PROCESS loaded-image basename, not an AES label. arg1 is a buffer,
+ * arg2 its full native-width capacity. Returns length excluding NUL; ERANGE
+ * leaves short buffers untouched. No GUI registration is needed. EINVFN
+ * without KPROC; EFILNF without a current PROCESS identity. */
+#define S_PROCNAME      ((WORD)0xfff9)
+
+/* Fixed-size PROCESS_IDENTITY in/out snapshot; arg2 must equal its size.
+ * Lookup by current PROCESS, non-recycled number or PID. No GUI discovery,
+ * ownership transfer, completion consumption or wait/reap authority. */
+#define S_PROCIDENT     ((WORD)0xfff8)
+
+/* Unpublished/test-gated PROCESS_EXEC_REQUEST transport. Native arg1 pointer,
+ * native arg2 size exactly72; S_INQUIRE deliberately never advertises it. */
+#define S_PROCEXEC      ((WORD)0xfff7)
+
 /* items of S_DESKSET */
 #define DESKSET_CEH         1   /* the critical error handler shows alerts: 0 or 1 */
 #define DESKSET_BACKGROUND  2   /* the pattern and colour of the AES desktop (a byte) */

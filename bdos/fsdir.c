@@ -677,11 +677,14 @@ long xrename(WORD n, char *p1, char *p2)
  *              EPTHNF
  *              ckdrv()
  */
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
 LONG fs_set_process_directory(char *path, PD *process)
 {
-    /* CUIS currently requires the native FAT configuration. */
+#if CONF_WITH_PLUGGABLE_FS
+    return DISK_CALL(pfs_set_process_directory(path, process));
+#else
     return DISK_CALL(fat_set_process_directory(path, process));
+#endif
 }
 #endif
 

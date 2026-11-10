@@ -24,6 +24,21 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+struct kproc;
+/* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
+ * Kernel-owned empty output handle; acquired before scheduler publication.
+ * Load/CWD/admission errors preserve output. No GUI session/token or reaping.
+ * Existing loader paths/environment and bounded no-unwind cleanup apply. */
+long proc_exec_observe(char *path, char *tail, char *environment, char *directory,
+                       struct kproc **observer);
+/* Same loader and observer acquisition, but hold a private scheduler admission.
+ * Success transfers the image to *prepared and returns E_OK, not a PID. Caller
+ * must publish or cancel it exactly once; output references are kernel-owned.
+ * Failure leaves both outputs empty and reclaims the unstarted image. */
+long proc_exec_prepare(char *path, char *tail, char *environment, char *directory, ULONG policy,
+                       struct kproc **observer, void **prepared);
+#endif
 #if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
@@ -31,7 +46,21 @@ long xexec_directory(char *path, char *tail, char *environment, ULONG session, U
 #endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
-WORD xtermres(long blkln, WORD rc);
+#if CONF_WITH_USER_ASPACE
+/* Request disposal of the currently live PD. Callers must not retain this
+ * pointer for retries after cleanup: its address may be reused. */
+void proc_dispose_retained(PD *pd);
+struct kproc;
+/* Identity-based request: a retained identity is safe even after PD reuse.
+ * Final cleanup must run from a safe execution stack. */
+void proc_dispose_process(struct kproc *process);
+struct kthread;
+/* Internal preparation for kthread_complete(), which immediately reaps the
+ * sole stopped association. Legacy untracked kernel parents must stay valid;
+ * native scheduler integration is rejected while it is active. */
+BOOL proc_prepare_completion(struct kproc *process, struct kthread *thread, UWORD status);
+#endif
+long xtermres(long blkln, WORD rc);
 
 #if CONF_WITH_USER_ASPACE
 void mark_kernel_code_pd(PD *p);

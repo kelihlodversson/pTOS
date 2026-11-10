@@ -135,7 +135,7 @@ $(LDSO_RUNTIME_DIR): $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 all: $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 
 obj/libaes/CUIS.TOS: tests/cuis/program.c tests/cuis/objects.c tests/cuis/drawing.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
-                     obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h include/gem.h include/cuis.h
+                     obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h tests/cuis/stream_probe.h include/gem.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.S %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -143,14 +143,14 @@ all: obj/libaes/CUIS.TOS
 endif
 
 obj/libaes/CUISCHED.TOS: tests/cuis/scheduled.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
-                         obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h include/gem.h include/cuis.h
+                         obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h tests/cuis/stream_probe.h include/gem.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.S %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/CUISCHED.TOS
 endif
 
-obj/libaes/ASYNC.TOS: tests/cuis/async.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h include/gem.h
+obj/libaes/ASYNC.TOS: tests/cuis/async.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h tests/cuis/stream_probe.h include/gem.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -229,7 +229,7 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMMCTL.TOS
 endif
 
-obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h tests/cuis/native_probe.h include/gem.h include/vdi_service.h $(AUTOCONF_H)
+obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h tests/cuis/native_probe.h tests/cuis/stream_probe.h include/gem.h include/vdi_service.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/GEMDRAW.TOS: tests/cuis/gem_selector.c tests/cuis/gem_selector.h tests/cuis/box_animations.c tests/cuis/box_animations.h tests/cuis/gem_tracking.c tests/cuis/gem_tracking.h tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
@@ -321,7 +321,7 @@ obj/libaes/shell_metadata.o: lib/aes/shell_metadata.c lib/aes/application.h lib/
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 
-obj/libaes/children.o: lib/aes/children.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/gem.h $(AUTOCONF_H)
+obj/libaes/children.o: lib/aes/children.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/gem.h include/bdosdefs.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 

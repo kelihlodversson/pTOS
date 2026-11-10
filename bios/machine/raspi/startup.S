@@ -11,6 +11,9 @@
 #include "header.h"
 #include "raspi_memmap.h"
 #include "arch/arm/fpusave.h"
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#include "arch/arm/irqframe.h"
+#endif
 
 #if defined(TARGET_RPI4)
 #define CORE0_MBOX3_SET             0xff80008C
@@ -668,20 +671,23 @@ C_SYM(arm_dispatch_svc):
     // pre-trap SPSR_svc), so this only bit us on the first blocking
     // console read a process makes (#185).
 #if CONF_WITH_HIGHER_HALF
-    // The handler of TRAP #n is tos_vec_svc[n] (bios/arch/arm/vectors.c): r3
-    // is borrowed to reach the array and restored from the stack (with IRQ
-    // still masked, as the exception left it), as every argument register is
-    // live.
-    str r3, [sp, #-4]!
+    // The handler of TRAP #n is tos_vec_svc[n]; preserve original IP too.
+    /* Preserve every user register while selecting the handler. The active
+     * stack word becomes the branch target only after original IP is loaded. */
+    push {r0,r12}
     mrs ip, spsr
-    tst ip, #0x20          // Thumb: the SVC is the halfword before lr
+    tst ip, #0x20
     ldrneh ip, [lr, #-2]
-    ldreq ip, [lr, #-4]      // load svc instruction from code
-    and ip, ip, #0xF       // mask out low nybble of instruction (we emulate trap #0 - #15)
-    ldr r3, =C_SYM(tos_vec_svc)
-    ldr ip, [r3, ip, lsl #2]
-    ldr r3, [sp], #4
+    ldreq ip, [lr, #-4]
+    and ip, ip, #0xf
+    ldr r0, =C_SYM(tos_vec_svc)
+    ldr r0, [r0, ip, lsl #2]
+    ldr ip, [sp, #4]
+    str r0, [sp, #4]
+    /* Keep the eight-byte routing frame aligned while IRQs are enabled.
+     * Restore original r0 and transfer control in one instruction. */
     cpsie i
+    pop {r0,pc}
 #else
     cpsie i
     mrs ip, spsr
@@ -763,11 +769,19 @@ C_SYM(arm_dispatch_irq):
     sub    lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
     cps    #0x13           /* switch to supervisor mode */
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    ARM_IRQ_PUSH_CAPTURE
+#else
     stmfd  sp!, {r0-r3, ip, lr} /* store registers not saved by the C handler (link register is important in case the interrupt interrupted while the processor was in SVC mode.)*/
     FPU_PUSH_ALL r0        /* the interrupted code's FPU state */
+#endif
     bl     C_SYM(raspi_int_handler)
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    ARM_IRQ_POP_CAPTURE
+#else
     FPU_POP_ALL r0
     ldmfd  sp!, {r0-r3, ip, lr}
+#endif
     rfefd  sp!             /* load pc and CPSR from stack */
 
 

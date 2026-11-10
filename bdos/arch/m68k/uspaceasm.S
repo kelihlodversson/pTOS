@@ -18,6 +18,7 @@
  */
 
 #include "asmdefs.h"
+#include "arch/m68k/userentry.h"
 
 #if CONF_WITH_USER_ASPACE
 
@@ -28,7 +29,6 @@
 
         .extern C_SYM(m68k_gemdos_dispatch)
         .extern C_SYM(old_trap2)
-        .extern C_SYM(uenter)
 
         .text
 
@@ -91,10 +91,10 @@ trap2_refuse:
         rte
 
 /*
- * void m68k_enter_user(void);
+ * void m68k_enter_user(const M68K_USER_ENTRY *entry);
  *
  * Leaves the kernel for a process that has not run yet, and does not return.
- * What it needs is in uenter (uspace.c): the entry point, the user stack
+ * What it needs is in launcher-owned kernel arguments: entry point, user stack
  * pointer and the top of the kernel stack of the process.  The kernel stack
  * becomes the (empty) supervisor stack, every register is cleared, and the
  * process starts in user mode with interrupts enabled.  The address space is
@@ -102,16 +102,19 @@ trap2_refuse:
  */
 C_SYM(m68k_enter_user):
         move.w  #0x2700,sr
-        lea     C_SYM(uenter),a0
-        move.l  8(a0),a1                // the top of the kernel stack
-        move.l  4(a0),d1                // the user stack pointer
-        move.l  (a0),d0                 // the entry point
+#if !CONF_WITH_MFASTCALL
+        move.l  4(sp),a0                // kernel-owned argument, still on launcher stack
+#endif
+        move.l  M68K_ENTRY_SSP(a0),a1                // the top of the kernel stack
+        move.l  M68K_ENTRY_USP(a0),d1                // the user stack pointer
+        move.l  M68K_ENTRY_PC(a0),d0                 // the entry point
         move.l  d1,a2
         move.l  a2,usp
         move.l  a1,sp
         clr.w   -(sp)                   // format 0, vector 0
         move.l  d0,-(sp)                // pc
         clr.w   -(sp)                   // sr: user mode, interrupts enabled
+        move.l  M68K_ENTRY_ARG(a0),-(sp) // no argument pointer survives publication/RTE
         tst.l   C_SYM(fputype)
         jeq     no_fpu_reset
         /* the process starts with an FPU as after a reset, not with what the
@@ -119,8 +122,11 @@ C_SYM(m68k_enter_user):
         clr.l   -(sp)
         clr.l   -(sp)
         clr.l   -(sp)
-        FRESTORE_SP_PLUS                // a NULL frame: pops its longword
-        lea     8(sp),sp                // (the extra longs of the 68060)
+        /* NULL consumes 4 bytes on 6888x/040, 12 on 060. Do not let
+         * post-increment plus a fixed adjustment discard the RTE frame. */
+        FRESTORE_SP
+        lea     12(sp),sp               // release exactly our three longs
+        jsr     C_SYM(m68k_fpu_init)
 no_fpu_reset:
         moveq   #0,d0
         moveq   #0,d1
@@ -137,6 +143,44 @@ no_fpu_reset:
         sub.l   a4,a4
         sub.l   a5,a5
         sub.l   a6,a6
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_MFASTCALL
+        move.l  (sp)+,a0                // native register-argument ABI
+#else
+        addq.l  #4,sp
+#endif
         rte
 
 #endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_USER_ASPACE && CONF_WITH_FORK_RETURN_TEST
+        .text
+        .globl C_SYM(m68k_enter_saved_user)
+C_SYM(m68k_enter_saved_user):
+        move.w #0x2700,sr
+#if CONF_WITH_MFASTCALL
+        move.l a0,a2
+        move.l d0,a3
+#else
+        move.l 4(sp),a2
+        move.l 8(sp),a3
+#endif
+        tst.l C_SYM(fputype)
+        jeq 4f
+        lea 72(a2),a0
+#if !CONF_WITH_MFASTCALL
+        move.l a0,-(sp)
+#endif
+        jsr C_SYM(m68k_fpu_restore_complete)
+#if !CONF_WITH_MFASTCALL
+        addq.l #4,sp
+#endif
+4:      move.l a3,sp
+        /* Fresh format-0 RTE frame; no kernel continuation is copied. */
+        move.w 70(a2),-(sp)
+        move.l 66(a2),-(sp)
+        move.w 64(a2),-(sp)
+        move.l (a2),a0
+        move.l a0,usp
+        movem.l 4(a2),d0-d7/a0-a6
+        rte
+#endif

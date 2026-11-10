@@ -1,0 +1,173 @@
+Pclone ABI foundation
+====================
+
+Scope
+-----
+Historical #890 foundation: the original prefix and Phase 1 rejection behavior
+are recorded below. The functional extension appends child_pid and accepts
+CLONE_* policy bits on managed native x32, ARM MMU and m68k MMU tasks;
+doc/clone-public-integration.txt and include/pclone.h define that current
+contract. All three use the common cooperative scheduler and lifecycle, with
+architecture-owned user entry and CPU/FPU context. Unsupported policies and
+unmanaged execution contexts remain gated with EINVFN. The remaining sections
+describe the historical Phase 1 foundation, not current backend availability.
+
+The combined scheduling and process-model epic (#713, #889) needs one clone
+path shared by public Pclone and the kernel's Pexec/Pfork/Pvfork paths.  The
+public entry must not pass a caller-owned argument structure to that path.
+This document records constraints on the first ABI slice (#890).  The draft
+initial structure is in include/pclone.h; creation remains unavailable until
+the process/thread backend in #891-#893 is implemented.
+
+Current boundaries
+------------------
+* x32 applications use 32-bit pointers while the x86-64 kernel is LP64.
+  ARM and m68k users also use 32-bit pointers, but their trap argument layouts
+  differ.  The public structure's pointer fields must use the caller's native
+  representation; the kernel must decode that representation explicitly.
+* bdos/mintproc.c reads native call arguments from long-sized slots but m68k
+  arguments from the packed trap frame.  This is distinct from decoding the
+  structure addressed by one of those arguments.  A 32-bit pointer field on
+  x32 must be zero-extended, including when bit 31 is set.
+* bdos/uaccess.c checks syscall buffers and bdos/kproc.c provides user-range
+  validation and copies.  Checks and copies must apply to the calling address
+  space, with overflow-safe range and alignment checks.  Copy the structure
+  once to kernel storage before interpreting its fields; user storage is not
+  a durable snapshot when multiple threads can share an address space.
+* The current scheduler already has task records and per-task scheduler stacks
+  in bdos/arch/x86_64/native_sched.c.  KPROC separately owns its address space,
+  process resources and syscall stack.  The new design must define ownership
+  and cleanup for both stacks before a thread can share a process or VM.
+  Process completion, CUIS child notifications, orphaning and wait state
+  cannot be emitted merely because one thread exits.
+
+Initial ABI and validation
+--------------------------
+The initial candidate has flags, native user pointers for entry,
+argument, stack base, TLS and optional child TID, and a 32-bit stack size.
+The structure address and size are separate syscall arguments.  The native
+layout is 28 bytes on x32, ARM and m68k, as verified by cross-compilation.
+On 32-bit kernels the snapshot uses the public structure directly. The x32
+kernel is 64-bit and uses a separate 32-bit native-endian snapshot to describe
+the user layout. The decoder converts addresses through uintptr_t to native
+pointer types and does not dereference them. These pointers remain untrusted
+user addresses. The snapshot helper checks the minimum size, 32-bit address
+bounds and copy result
+before publishing decoded arguments. It takes a caller-supplied copy
+function connected to the caller's address-space copy operation.
+
+The optional CONF_WITH_PCLONE configuration routes GEMDOS 0x190 through
+mintproc_call() to xclone(). Native ARM and x32 trap frames have one slot per
+argument; m68k trap frames contain two big-endian words per argument. Native
+slots retain their full width so validation can reject out-of-range values.
+On address-space kernels xclone() validates the snapshot and referenced
+memory before returning EINVFN for a valid request. Without user address spaces
+it currently returns EINVFN without reading the structure. The option
+defaults off and does not provide a working clone call.
+
+The size parameter determines which append-only fields are present; there is
+no version field. An implementation reads only fields it understands and
+accepts a larger size. New fields that request behavior unavailable to older
+kernels must be accompanied by a flag that older kernels reject; silently
+ignoring an unknown tail must not silently grant different clone semantics.
+
+Field contract
+--------------
+flags is reserved and must be zero. tls is reserved and must be NULL: target
+thread-pointer initialization and runtime TLS layout belong to independent #908. Nonzero
+values fail closed with EINVAL rather than promising a TLS convention.
+
+entry is the mandatory user function called with the opaque argument value.
+argument is optional and is not dereferenced by the kernel. Entry must be
+executable and aligned to 1 byte on x32, 4 on ARM (ARM instruction mode), and
+2 on m68k. Returning from entry will require a termination trampoline in
+#892/#893; no entry executes in this phase.
+
+stack_base is the lowest byte of a caller-allocated writable stack region;
+stack_size is its length, not an initial SP. Both base and length must be
+multiples of 16 on x32, 8 on ARM and 2 on m68k. The minimum length is 256 on
+x32 (including space for ABI startup and red zone), and 16 on ARM/m68k. The
+backend will derive the initial SP from the exclusive upper end and install
+the architecture-specific entry/return frame; it must not exceed this region.
+These minimums are initial ABI validation floors, not recommended application
+stack sizes. They do not establish that a final startup frame fits: context
+startup and its trampoline are not implemented here. #892 must calculate the
+complete frame, ABI argument/return slots, alignment adjustment and red-zone
+requirements before creating contexts, and fail closed if the supplied stack
+cannot accommodate them. It must resolve any additional minimum requirement
+without silently accepting an undersized region.
+
+child_tid is an optional native-aligned writable int32_t output. A future
+successful creation returns a nonnegative TID, distinct from a PID, and writes
+that TID to this output only at its successful commit point. This phase never
+writes it. Failure must leave the output unchanged. The caller owns the buffer;
+the future backend must pin or otherwise secure its lifetime until commit and
+must not retain it after the initial write. Join and exit notification are
+separate contracts in #893; child_tid is not an exit-status or clear-on-exit
+location. The same future backend must secure stack and entry mapping lifetime
+before exposing a runnable child. A validation result does not pin mappings.
+
+Errors and limits
+-----------------
+EINVAL reports a short or non-32-bit size, nonzero flags/TLS, insufficient stack
+length, or invalid alignment. EIMBA reports invalid/wrapping structure addresses,
+copy failure, non-executable entry, or inaccessible/non-writable referenced
+memory. A well-formed request returns EINVFN until #891-#893 provide the backend.
+Without user address spaces this phase returns EINVFN without dereferencing
+arguments; validated non-MMU creation remains a backend dependency.
+
+Validation covers x32, ARM and m68k structure layouts, high-bit 32-bit
+pointers, short/oversized input, invalid flags and ranges, unwritable outputs,
+overflow, alignment, and failure without child or output side effects.  The
+unsupported backend fails explicitly until a trusted proc_clone exists.
+Non-MMU behavior and races with address-space changes need explicit treatment;
+range checking alone is not a lifetime guarantee.
+
+Reproducing the ABI checks
+-------------------------
+With the project's existing toolchains on PATH:
+  sh tools/check-clone-layout.sh x32
+  sh tools/check-clone-layout.sh arm
+  sh tools/check-clone-layout.sh m68k
+CI runs x32 in the host clone suite, ARM in arm-virt and m68k in m68k-other,
+reusing each build job's installed compiler. These compile-only assertions
+check exact field offsets, size, pointer widths and target alignment. They do
+not establish runtime coverage. Production handler mocks and x32 QEMU cover
+runtime failure behavior. The pclone regression suite invokes the real ARM
+svc and m68k packed trap interfaces. Run it with the existing regression flow:
+  bash tools/ci-regression.sh virt-arm-aspace
+  bash tools/ci-regression.sh virt-m68k-aspace
+These two regression configurations explicitly enable CONF_WITH_PCLONE. The
+test checks valid-but-unsupported and malformed requests, unchanged TID output,
+and that the supplied entry never executes. In restricted workspaces the runner
+supports REGRESSION_RAW_DISK=1 and QEMU_DATA_DIR for a local QEMU installation.
+The trap test has been executed on virt-arm-aspace (QEMU cortex-a7, 32-bit EABI)
+and virt-m68k-aspace (QEMU m68040, packed GEMDOS trap ABI). Other ARM boards,
+m68k CPU variants and the m68k fastcall configuration have not been exercised
+by this new test.
+
+GEMDOS opcode
+-------------
+Reserve 0x190 for pTOS Pclone (include/pclone.h).  It is a pTOS extension,
+not a FreeMiNT assignment. Creation is unavailable in this phase.
+
+The following sources were checked on 2026-11-04:
+
+* FreeMiNT sys/syscall_vectors.c at 70e23ede3d8bc306105ca14c765679ca6191d9be
+  ends at 0x18f; 0x184-0x18f are reserved.  MiNTLib syscalls.master at
+  d8da2d89bce35a12986eb9256ecf210f3493c808 identifies 0x190 as its table
+  limit, not a syscall.  FreeMiNT assigns 0x17d to Maccess and reserves
+  0x17e/0x17f for mmap/munmap; pTOS uses 0x17c for Mprot.
+  https://github.com/freemint/freemint/blob/70e23ede3d8bc306105ca14c765679ca6191d9be/sys/syscall_vectors.c
+  https://github.com/freemint/mintlib/blob/d8da2d89bce35a12986eb9256ecf210f3493c808/syscall/syscalls.master
+* tos.hyp gemdos/gemdos_f.u at 03a0abd16b8a1619918c70ae97f0ccf3da07a57a
+  lists GEMDOS calls from TOS, MiNT, MagiC and other extensions.  Its next
+  listed calls after 0x183 are Atari Network Service calls at 0x1f7-0x1f9.
+  MagiC source at 90ae7dcc28c9dc45c3d1986a796ba7f71c2188d8 rejects GEMDOS
+  function numbers above 0x153 in kernel/dos/magidos.s.
+  https://github.com/th-otto/tos.hyp/blob/03a0abd16b8a1619918c70ae97f0ccf3da07a57a/gemdos/gemdos_f.u
+  https://github.com/th-otto/MagicMac/blob/90ae7dcc28c9dc45c3d1986a796ba7f71c2188d8/kernel/dos/magidos.s
+
+tos.hyp lists an XBIOS 0x190 call; XBIOS uses trap #14, a different namespace
+from GEMDOS trap #1.  These checks do not guarantee that undocumented or
+future third-party extensions will never use the same number.

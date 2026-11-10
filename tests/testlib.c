@@ -59,6 +59,14 @@ static void log_char(int ch)
 #define log_char(ch)
 #endif
 
+/* A fresh worker appends to the log already initialized by its launcher. */
+void ptest_log_append(void)
+{
+#ifdef TEST_LOG_FILE
+    log_started = 1;
+#endif
+}
+
 void ptest_log_flush(void)
 {
     log_flush();

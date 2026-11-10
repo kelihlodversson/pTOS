@@ -1,0 +1,311 @@
+Internal clone startup and publication (#892)
+============================================
+
+The internal x32 root runner and active-group spawn execute PROC_CLONE_NEW_PROCESS with
+PROC_CLONE_SHARE_VM: a distinct PROCESS/PID and exactly one KTHREAD share the
+source KASPACE. Public Pclone uses active-group startup on managed x32 tasks;
+SAME_PROCESS uses the thread-only handoff in thread-group-execution.txt.
+PREPARED_PROCESS runnable startup remains unsupported.
+Non-NULL Pclone.tls remains unsupported. No public termination semantics change.
+
+Execution preconditions
+-----------------------
+
+proc_clone_exec requires an empty value-only completion result and an owned
+construction transaction. The source must be the current live PROCESS, its
+ASPACE root must actually be current, and an execution association must retain
+its live resources throughout the call. An identity-only observer is insufficient.
+The target must still be an unstarted factory-owned PROCESS with one constructed
+KTHREAD and the original shared construction space. proc_clone_exec starts a
+fresh root group and waits; proc_clone_spawn publishes into the caller's current
+native group and returns identities immediately. Both use the same native
+dispatcher, task reservation and no-fail publication transaction. Active callers
+must own the current KTHREAD/PROCESS and current ASPACE, not a foreign callback
+or nested launcher's execution context.
+
+The factory already retains the parent's kernel identity. No parent reference is
+acquired after publication. Parent retirement/reuse cannot redirect notification
+through a replacement PD. The synchronous caller retains its own live execution
+resources; the child does not retain heavyweight parent resources for observation.
+
+Concrete ownership
+------------------
+
+Before publication the transaction owns source/target identities, the target
+KTHREAD, a shared KASPACE reference and a startup draft. The draft owns a backend
+CPU/FPU image, distinct syscall and scheduler stacks, bridge capability, startup
+mapping leases, optional output leases and a reversible lifecycle registration.
+KTHREAD separately owns a durable user-stack hold and PROCESS/ASPACE references.
+PROCESS membership and its startup pointer are borrowed, preventing cycles.
+
+Preparation temporarily maps the child's separately allocated PD and environment
+into the shared space using existing supervisor-only compatibility borrows. The
+entire ranges must be vacant; unrelated private mappings are never overwritten.
+Allocation generations are checked. Each successful borrow has one rollback bit
+and is removed before its process allocation is reclaimed. A retained KASPACE
+reference protects this bookkeeping until normal retirement or cancellation.
+
+Publication moves the transaction's PROCESS identity, KTHREAD and startup draft
+to the native task. Its KASPACE reference moves into KPROC.active_space. The
+syscall stack moves into KPROC, then gouser's existing launcher takes it through
+kproc_take_kernel_stack. The scheduler stack moves into KTHREAD_CONTEXT. The
+startup image owns neither stack after these transfers.
+
+Ordinary unvalidated backend association remains guarded. Trusted SAME_PROCESS
+publication may add an independent context to a live managed PROCESS. Pterm and
+the same return bridge now use a thread-only handoff; only its last association
+commits PROCESS cleanup. See thread-group-execution.txt for anchor/stack lifetime.
+
+Mapping leases and durable holds
+--------------------------------
+
+kaspace_lease_acquire requires already resident USER mappings with the required
+WRITE/EXEC permissions. It does not allocate, fault, COW or write user memory.
+Entry and bridge leases cover complete mapping pages. The stack lease covers the
+complete supplied reservation, including return slot, alignment loss and red zone.
+Optional PID/TID destinations are aligned four-byte RAM locations, separate from
+one another, the stack and executable pages. All backing is prepared explicitly.
+
+Preparation leases are permanently revocable: unmap/remap at the same address
+with identical permissions cannot revive a lease. Backend mutation barriers,
+not translation equality or a KASPACE reference, establish mapping identity.
+Group sealing validates every lease before sealing any member. A sealed overlap
+is rejected without modifying mappings or metadata. The short sealed window
+permits no callback, yield, user entry or mapping mutation.
+
+The shared policy remains:
+* Mmap backing, Munmap and Mprot check backend mutation barriers; logical mmap
+  permissions and resident/COW paths use the same KASPACE policy.
+* Ordinary Mfree/Mshrink release pages before changing heap metadata. A sealed
+  or durable-held overlap fails without deleting a reservation. Heap reuse cannot
+  restore a revoked preparation lease.
+* Already resident anonymous pages do not change identity; absent-page faults
+  pass mutation checks. File COW checks before I/O and page replacement.
+* Private moves validate both spaces. Loader borrowing, unborrowing, grants and
+  procmem mapping/shrink/release use the same barriers. Void compatibility APIs
+  cannot recover from a sealed overlap and fail-stop on invariant violation.
+* A lease retains KASPACE; final destruction cannot bypass it. Shutdown lazy
+  release honors holds. Registries are non-owning.
+
+Durable holds are different from publication seals and may survive callbacks,
+yields and execution. The user-stack hold accepts privately owned resident
+ordinary heap or anonymous mmap reservations, not loader staging, borrowed
+procmem pages, implicit original-process stack growth or unresolved file COW.
+It prevents free/unmap/permission replacement until KTHREAD is safely reaped.
+Release makes caller-owned memory releasable; it does not itself Mfree it.
+
+The kernel-selected bridge occupies a reserved final user page. Its immutable
+instruction image, effective USER|EXEC access and private mapping ownership are
+checked. A coincidentally matching mapping is not adopted. A capability retains
+the mapping and KASPACE; a borrowed registry shares it across drafts. Final
+capability release removes the page. Page-table capacity may remain reusable
+until final ASPACE destruction, as with existing unmap.
+
+Publication transaction
+-----------------------
+
+ CONSTRUCTED -> PREPARED -> OBSERVED -> SEALED -> COMMITTED -> RUNNABLE
+
+PREPARED includes CPU/FPU image, both kernel stacks, trusted bridge and startup
+leases. Observer registration and optional output preparation occur before
+sealing. Failed registration undoes its own partial work; a successful generic
+registration transfers one rollback/release obligation. It is not CUIS-specific.
+Callbacks cannot yield, privately unwind or reenter/cancel their transaction.
+
+proc_clone_exec reserves existing scheduler storage, prepares compatibility
+borrows, revalidates PROCESS/parent/ASPACE state, caches direct-map RAM aliases
+for the return slot and output words, and seals all leases. No user store occurs
+on preflight failure. Cancellation before publication consumes the transaction
+and releases all resources. Other preflight errors leave the handle and completion
+result owned by the caller for abort or retry, with user outputs unchanged.
+
+The native dispatcher saves its root context and establishes scheduler.resume
+before commit. Under the existing cooperative, interrupts-masked dispatch model,
+commit transfers stack/resource owners, binds the sole KTHREAD and validates its
+execution transition while the slot is still TASK_RESERVED. It consumes the
+transaction's owned pointers. Only then does the first externally visible store
+write the prepared user return slot. PID/TID stores use protected resident RAM
+aliases. COMMITTED -> RUNNABLE -> TASK_NEW consists only of stores and visibility
+barriers: no allocation, callback, yield, failure return or rollback intervenes.
+The scheduler cannot dispatch a partially published task.
+
+The task enters the existing proc_start_scheduled/gouser launcher. Its local
+launcher setjmp is established on the already reserved scheduler stack before
+IRET, after publication; this is an allocation-free continuation setup, not a
+second fallible context factory. Startup leases are released immediately before
+initial IRET. Durable user-stack and bridge holds remain through termination.
+
+The trusted identity-only commit still rejects startup drafts. Guarded
+promotion requires the exact exclusive PROCESS/ASPACE/startup/stack association;
+ordinary backend-install/start protections are preserved. Merely removing an
+identity_only check cannot authorize sibling execution.
+
+CPU/FPU entry and return
+------------------------
+
+The prepared x32 image is consumed at the existing ring-3 IRET boundary: CR3,
+RIP, RSP, RFLAGS, user selectors, all general registers and FXSAVE state are
+installed. FS/GS selectors and user bases start zero; this does not implement TLS.
+The existing launcher restores its own execution state after the child stops.
+Existing cooperative save/restore continues to own suspended register state.
+
+The internal test bridge ABI is kernel-selected:
+
+ LONG entry(void *argument) -> EAX result
+ bridge: EDI = EAX; RAX = (GEMDOS class 1 << 32) | Pterm 0x4c; syscall; ud2
+
+Public void (*entry)(void *) instead uses the adjacent immutable stub which
+sets EDI to zero regardless of EAX. Both stubs have the same trusted mapping
+identity and Pterm handoff. Explicit Pterm retains its supplied status.
+
+Pterm consumes the low 16 status bits. Normal return, explicit Pterm and entry
+fault use the merged xterm -> termuser -> launcher handoff -> proc_finalize_exit
+path. The sole attached KTHREAD uses the existing managed-task lifetime contract.
+No parallel termination, completion or CUIS lifetime mechanism is introduced.
+
+Reclamation and exceptional cleanup
+-----------------------------------
+
+The launcher leaves the child's syscall stack, restores the parent/kernel root,
+finalizes PROCESS resources and completion, and frees the transferred syscall
+stack exactly once. The scheduler task's continuation then stops. Scheduler root
+alone reaps KTHREAD_CONTEXT and its separate scheduler stack; the root proof
+requires a stopped task with no live PD. Its callback reclaims the startup draft
+and observer, then KTHREAD drops the durable user-stack hold, membership and
+ASPACE/PROCESS references. Observer-only identity references can outlive live
+resources without retaining PD allocations.
+
+Abort of COMMITTED/RUNNABLE drafts panics before consuming their handle. Published
+reclaim requires the verified stopped root context. Its observer/destructor disk
+error boundary, like proc_finalize_exit, restores the prior errbuf and fail-stops
+if cleanup escapes. It never retries partially completed publication or cleanup.
+Arbitrary private longjmp from a callback remains forbidden. The documented
+bounded-close exhausted-retry handle leak is unchanged; cleanup is not a
+transactional filesystem operation.
+
+Unpublished abort consumes its handle first, releases short leases before
+callbacks, then observer/image/stacks/bridge/KASPACE and transaction ownership.
+Repeated consumed-handle cancellation is harmless. Borrowed pointers are not
+independent ownership handles and cannot be used after consumption.
+
+Validation and remaining boundaries
+-----------------------------------
+
+The x32 production MEMTEST executes a newly constructed NEW_PROCESS/SHARE_VM
+clone, not only the legacy bridge. It checks initial CPU/FPU state, high-bit
+32-bit argument zero extension, PID/PPID, held-stack Mfree rejection, integer and
+XMM/x87/MXCSR preservation across three Syields, normal return, explicit Pterm,
+UD2 exit, observer completion and syscall/root-stack cleanup baselines. A kernel
+service fixture supplies the current parent execution association; it does not
+claim two independently runnable user threads or active-group async insertion.
+
+Failure tests cover output permission change, failed observer, slot OOM, either
+compatibility-borrow stage, unrelated private-map collision, and cancellation
+immediately before commit. User outputs remain unchanged. Host fault injection
+also verifies root-only reclaim, published-abort rejection, one-time callback
+release and fail-stop on an escaping observer disk error.
+
+This paragraph describes the earlier x32-only checkpoint. ARM/m68k native
+backends and managed-clone runtime coverage now follow clone-mmu-parity.txt. Host
+configuration models and ABI cross-compilation are not target runtime tests.
+Public flag/result ABI and managed active-group x32 startup are now implemented;
+remaining startup/backend integration stays in #892. Thread/group exit and joining remain #893, PROCESS waits #909, generic
+scheduling/preemption/non-MMU integration #713, shared-VM Pexec #894 and TLS #908.
+
+Before preemption/SMP, #713 must synchronize PROCESS state, mapping mutation,
+lease sealing, output writes, observer lifetime and task publication. Current
+cooperative serialization is not an SMP or timer-preemptive atomicity claim.
+
+Publication follow-up
+---------------------
+
+The private reserved state and common ksched_task_reserve/cancel/publish now
+serve both root clone execution and active legacy async/deferred launches.
+Explicit reservations also prevent callback-driven slot/image reuse. The
+subsequent active-child controller and owned-observer contracts are implemented
+below; reservation alone was not sufficient to grant that execution. See
+clone-execution-audit.txt and clone-public-integration.txt for the production
+audit and remaining public ABI gates.
+
+Active-group NEW_PROCESS lifetime
+--------------------------------
+
+proc_clone_spawn now reuses the active reservation path. A backend publication
+guard validates the actual current source task and masks IRQs through the final
+transition. The existing group's root continuation already exists; no dispatcher
+or PROCESS waiter is created. All fallible compatibility/controller mapping
+checks, reference acquisition, output aliases and sealing precede publication.
+The native backend consumes the prepared scheduler-stack owner as a typed record;
+PADDR/uintptr_t remain inside that record, suitable for 32-bit MMU backends too.
+
+Logical parent_identity is retained for historical PPID/notifications. The launch
+parent used by xterm is separately set to scheduler.root.pd, whose blocked
+continuation owns the group. KPROC retains the root's tracked identity, its
+allocation generation and an independent procmem pin. It accepts only an existing
+writable translation to that exact procmem page; it never overwrites or unborrows
+another owner's mapping. This first active backend rejects a missing/incompatible
+controller mapping. Controller ownership is released during process retirement,
+not kept by completion observers. A boot root without KPROC is still protected
+by allocation generation/pin and the existing blocked-root execution contract.
+
+The owned PROC_CLONE_OBSERVER is a heap record, not a caller-stack callback
+context. It holds only target completion identity and immutable PID/TID. Caller
+and startup registration own separate references. Abort changes PREPARED to
+CANCELLED without a completion; publication changes it to PUBLISHED; root detach
+changes it once to REAPED. A caller may release before child execution, or retain
+through wait, parent retirement and root reclamation. The result getter snapshots
+existing KPROC completion and does not publish another event, block, consume a
+zombie or format GUI messages. Cancelled/prepared records never report completion.
+The last record reference releases identity and memory once. The kernel caller
+must release or transfer its own handle; process exit does not discover arbitrary
+kernel-owned handles left on a stack. Borrowed registrations remain supported
+for synchronous root calls but are explicitly refused by active spawn.
+
+Async tasks retain the usual parent/zombie relationship. Existing ksched_wait
+handles a blocked or early wait; existing ksched_exiting clears parent links on
+retirement and makes completed orphans root-reapable. Active clone child usage
+is credited by the existing Pwait path once, not also at KPROC retirement. CUIS formatting remains in
+its existing task completion consumer. No second process completion/wait system
+has been introduced. Public managed x32 Pclone selects the owned observer path;
+SAME_PROCESS startup uses the shared thread-only lifetime contract.
+
+Production x32 tests enter the real active API from a kernel-only Syield hook
+on behalf of an executing ring-3 parent. They exercise parent continuation,
+blocked wait with independently yielding child, early completion before wait,
+normal return, fault, Ptermres, seven active children plus exhaustion, revoked
+outputs, last-moment cancellation, controller and observer acquisition failure,
+early caller-observer release and borrowed-context refusal. An orphan continues
+through actual creator PD reuse without notifying the replacement. Every case
+returns allocation/stack/controller-pin/reference counts to baseline. Generic
+owned-observer tests run as host models under x32/ARM/m68k configurations, including
+both release orders and independent completions. Those host models do not
+execute target CPU contexts; native ARM/m68k evidence is in clone-mmu-parity.txt. Legacy non-MMU m68k multitasking is #911 and is not
+an acceptance gate for this MMU slice.
+
+Public trap integration checkpoint
+----------------------------------
+
+Pclone snapshots either the legacy 28-byte prefix or the 32-byte extension once,
+normalizes ILP32 pointers, validates policies and dispatches NEW_PROCESS/SHARE_VM
+only from the current managed native task. Optional PID/TID stores and positive
+signed TID return use the same transaction. Non-NULL TLS and invalid flags fail
+before construction; private VM and unsupported architecture backends remain gated.
+
+Lazy heap/mmap entry, stack and output reservations are backed before startup
+lease acquisition. This construction path returns backing errors instead of
+invoking fatal ordinary user-copy OOM handling. No output or return slot is
+written before commit. The narrow publication IRQ guard excludes allocation,
+callbacks and cleanup; restoration precedes abort/cancellation and transaction
+release. Pwait usage policy is explicit, independent of controller-reference
+teardown order. See clone-public-integration.txt for the ABI and guard contract.
+
+SAME_PROCESS execution update
+------------------------------
+
+The historical sole-thread startup notes above describe the original NEW_PROCESS
+checkpoint. Managed x32 siblings now use per-task prepared CPU/syscall-stack
+resources, while one process-completion anchor survives initial-thread exit.
+THREAD exit does not release descriptors/CWD/PD or complete PROCESS while live
+siblings remain. The trusted return stub uses the same Pterm handoff; PROCESS
+completion and existing Pwait/CUIS consumers remain single-owner operations.
+See thread-group-execution.txt for the current contract and #713 blockers.

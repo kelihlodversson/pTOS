@@ -690,6 +690,9 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
             ixclose(fd2,CL_DIR|CL_FULL);
             xmfreblk(fd2);
             sft[hnew-NUMSTD].f_own = 0;
+#if CONF_WITH_USER_ASPACE
+            sft[hnew-NUMSTD].f_use = 0;
+#endif
             sft[hnew-NUMSTD].f_ofd = 0;
         } else xclose(hnew);
         ixclose(fdparent,CL_DIR);
@@ -1096,7 +1099,7 @@ LONG fat_rmdir_path(char *p)
     return fat_rmdir_dnd(d);
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
 static LONG fat_chdir_process(char *p, PD *process)
 #else
 LONG fat_chdir_path(char *p)
@@ -1114,7 +1117,7 @@ LONG fat_chdir_path(char *p)
     else
         dlog = run->p_curdrv;
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
     if (dlog < 0 || dlog >= BLKDEVNUM) return EDRIVE;
     olddir = PD_CURDIR(process)[dlog];
 #else
@@ -1130,7 +1133,7 @@ LONG fat_chdir_path(char *p)
     newdir = incr_curdir_usage(dnd);
     if (newdir < 0)
         return EPTHNF;
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
     PD_CURDIR(process)[dlog] = newdir;
 #else
     PD_CURDIR(run)[dlog] = newdir;
@@ -1142,7 +1145,7 @@ LONG fat_chdir_path(char *p)
     return E_OK;
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
 LONG fat_chdir_path(char *p)
 {
     return fat_chdir_process(p, run);

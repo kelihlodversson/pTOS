@@ -2,9 +2,16 @@
 #include "emutos.h"
 #include "bdosdefs.h"
 long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
-const char *kproc_executable_name(PD *pd);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
+/* CUIS selects native scheduling in production. The broad hosted runner uses
+ * a non-CUIS preset but includes this source explicitly. Match that dependency. */
+#undef CONF_WITH_NATIVE_SCHED
+#define CONF_WITH_NATIVE_SCHED 1
+/* Exercise the production cleanup-to-checkpoint call, with scheduler/THREAD
+ * termination mocked below so the host can inspect the post-cleanup state. */
+#undef CONF_WITH_PTERMGRP
+#define CONF_WITH_PTERMGRP 1
 #include "../../aes/cuis_session.c"
 
 static MFORM displayed_pointer;
@@ -26,12 +33,25 @@ static union {
 } pool[1024];
 static UBYTE stream_rings[8][CUIS_STREAM_BYTES * (1 + sizeof(UWORD))] __attribute__((aligned(16)));
 static ULONG stream_ring_count;
+/* Stream lifetime cases use real allocation/free so ASan observes retirement
+ * UAFs, while the older broad fixtures retain their deterministic pool. */
+extern void *malloc(__SIZE_TYPE__ size);
+extern void free(void *memory);
+static BOOL stream_heap_mode, stream_heap_bad, stream_resident_copy;
+static struct { void *address; BOOL live; } stream_heap[1024];
+static ULONG stream_heap_count;
+static void (*stream_operation_hook)(int phase); /* 0 preflight, 1 copyin, 2 copyout */
+static void stream_hook(int phase)
+{
+    if (stream_operation_hook) {
+        void (*hook)(int)=stream_operation_hook; stream_operation_hook=NULL; hook(phase);
+    }
+}
 static ULONG allocations, frees;
+static void *reuse_allocation;
 static BOOL fail_allocation;
 static ULONG fail_at_allocation;
 static LONG copied[5];
-static PD *input_message_sender;
-static LONG input_message_destination;
 static BOOL fail_copy;
 static UQUAD fail_copy_address;
 static BOOL input_irqs = TRUE, input_bad_idle;
@@ -43,7 +63,7 @@ static ULONG stream_change_after;
 static PD *stream_peer;
 static LONG stream_peer_handle;
 static ULONG input_packet_mode;
-static BOOL input_drop_focus, input_drop_on_validate;
+static BOOL input_drop_focus;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
 static void context_copy_hook(void);
 static void context_read_hook(void);
@@ -87,11 +107,52 @@ void cuis_input_clip_pointer(LONG *x, LONG *y)
 void cuis_input_call_pointer(SBYTE *packet) { (void)packet; legacy_pointer_calls++; }
 
 void cuis_input_test_wait(ULONG events) { (void)events; }
+static void (*input_operation_hook)(void);
 BOOL ksched_block(BOOL (*ready)(void *), void *argument)
 {
     (void)ready; (void)argument;
     if (input_irqs) input_bad_idle = TRUE;
+    if (input_operation_hook) {
+        void (*hook)(void)=input_operation_hook; input_operation_hook=NULL; hook();
+        return TRUE;
+    }
     return FALSE;
+}
+static ULONG cleanup_depth;
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{
+    if (scope->active) __builtin_abort();
+    scope->active=TRUE; scope->caller=run; scope->depth=++cleanup_depth;
+}
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{
+    if (!scope->active || scope->caller!=run || scope->depth!=cleanup_depth) __builtin_abort();
+    cleanup_depth--; scope->active=FALSE;
+}
+static BOOL cancel_pending;
+static CUIS_CLIENT *cancellation_owner;
+static BOOL cancellation_bad;
+static ULONG cancellation_visits;
+void ksched_cancel_point(void)
+{
+    cancellation_visits++;
+    if (!input_irqs || cleanup_depth) cancellation_bad=TRUE;
+    if (cancellation_owner && (cancellation_owner->input_wait || cancellation_owner->wait_operation ||
+        cancellation_owner->resume_operation || cancellation_owner->references!=1)) cancellation_bad=TRUE;
+}
+static int cancel_on_wait;
+static BOOL cancel_after_wake;
+static void (*lifetime_wait_hook)(void);
+BOOL ksched_cancellation_pending(void) { return cancel_pending; }
+KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument)
+{
+    if (lifetime_wait_hook) {
+        void (*hook)(void)=lifetime_wait_hook; lifetime_wait_hook=NULL; hook();
+        return KSCHED_WAIT_READY;
+    }
+    if (cancel_on_wait) { cancel_on_wait--; return KSCHED_WAIT_CANCELLED; }
+    if (cancel_after_wake) { cancel_after_wake=FALSE; cancel_pending=TRUE; return KSCHED_WAIT_READY; }
+    return ksched_block(ready, argument) ? KSCHED_WAIT_READY : KSCHED_WAIT_UNMANAGED;
 }
 LONG ksched_yield(void)
 {
@@ -161,13 +222,6 @@ void cuis_input_idle(void)
     }
     if (input_inject_after && input_sleeps == input_inject_after)
         cuis_keyboard_event(0xff123456UL);
-    if (input_message_sender) {
-        PD *saved = run;
-        run = input_message_sender;
-        input_message_sender = NULL;
-        cuis_message_service(CUIS_MESSAGE_SEND, input_message_destination, 11, 22, 33, 44, 0);
-        run = saved;
-    }
     if (mouse_release_owner) {
         PD *saved = run;
         run = mouse_release_owner;
@@ -201,14 +255,11 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 }
 BOOL kproc_validate_user_write(UQUAD address, ULONG size)
 {
+    if (!stream_resident_copy) stream_hook(0);
     if (region_exit_on_output) {
         region_exit_on_output = FALSE;
         cuis_process_exit(run);
         return FALSE;
-    }
-    if (input_drop_on_validate) {
-        input_drop_on_validate = FALSE;
-        set_focus(NULL);
     }
     if (address >= 0x20000 && address <= 0x28000 && size <= 0x28000 - address) return TRUE;
     return size == sizeof(LONG) && address >= 0x1000 && address <= 0x1010 &&
@@ -219,7 +270,7 @@ BOOL kproc_copy_to_user(UQUAD address, const void *source, ULONG size)
     if (fail_copy || address == fail_copy_address || !kproc_validate_user_write(address, size)) return FALSE;
     context_read_hook();
     if (address >= 0x20000) {
-        memcpy(stream_output + address - 0x20000, source, size); return TRUE;
+        memcpy(stream_output + (address - 0x20000), source, size); return TRUE;
     }
     copied[(address - 0x1000) / 4] = *(const LONG *)source;
     return TRUE;
@@ -238,12 +289,40 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
     }
     context_copy_hook();
     child_copy_hook();
-    memcpy(destination, stream_input + address - 0x10000, size); return TRUE;
+    memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
 }
-const char *kproc_executable_name(PD *pd) { (void)pd; return "GemTest.Prg"; }
+BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+{
+    stream_hook(0);
+    return !fail_copy && address >= 0x10000 && address <= 0x18000 && size <= 0x18000-address;
+}
+BOOL kproc_copy_from_user_resident(void *destination, UQUAD address, ULONG size)
+{
+    BOOL result;
+    stream_hook(1); stream_resident_copy=TRUE;
+    result=kproc_copy_from_user(destination,address,size);
+    stream_resident_copy=FALSE; return result;
+}
+BOOL kproc_copy_to_user_resident(UQUAD address, const void *source, ULONG size)
+{
+    BOOL result;
+    stream_hook(2); stream_resident_copy=TRUE;
+    result=kproc_copy_to_user(address,source,size);
+    stream_resident_copy=FALSE; return result;
+}
 
 void *kalloc(ULONG bytes)
 {
+    if (stream_heap_mode) {
+        void *p;
+        if (!bytes || fail_allocation || (fail_at_allocation && allocations==fail_at_allocation) ||
+            stream_heap_count==1024) return NULL;
+        p=malloc(bytes);
+        if (!p) return NULL;
+        memset(p,0xa5,bytes);
+        stream_heap[stream_heap_count].address=p; stream_heap[stream_heap_count++].live=TRUE;
+        allocations++; return p;
+    }
     if (bytes == sizeof(stream_rings[0])) {
         if (fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) || stream_ring_count == 8) return NULL;
         allocations++; return stream_rings[stream_ring_count++];
@@ -252,21 +331,51 @@ void *kalloc(ULONG bytes)
         fail_allocation || (fail_at_allocation && allocations == fail_at_allocation) ||
         allocations == 1024)
         return NULL;
+    if (reuse_allocation) {
+        void *result=reuse_allocation; reuse_allocation=NULL; allocations++;
+        memset(result,0xa5,bytes); return result;
+    }
     if (bytes == sizeof(CUIS_CLIENT)) memset(&pool[allocations], 0xa5, bytes);
     return &pool[allocations++];
 }
-void kfree(void *memory) { (void)memory; frees++; }
+void kfree(void *memory)
+{
+    if (stream_heap_mode) {
+        ULONG i=stream_heap_count;
+        while (i) if (stream_heap[--i].address==memory && stream_heap[i].live) {
+            stream_heap[i].live=FALSE; free(memory); frees++; return;
+        }
+        stream_heap_bad=TRUE; return;
+    }
+    (void)memory; frees++;
+}
+static ULONG process_references;
+KPROC *kproc_retain(PD *pd)
+{
+    if (!pd) return NULL;
+    process_references++; return (KPROC *)pd;
+}
+void kproc_release(KPROC *process)
+{
+    if (!process || !process_references) __builtin_abort();
+    process_references--;
+}
+UQUAD kproc_ref_number(const KPROC *process)
+{
+    return process == (KPROC *)&first ? 0x100000001ULL : 0x200000001ULL;
+}
 WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
+#include "observer_wait.c"
 #include "windows.c"
 #include "visibility.c"
 #include "regions.c"
 #include "focus.c"
 #include "input.c"
 #include "pointer.c"
-#include "messages.c"
 #include "delay.c"
 #include "streams.c"
+#include "stream_lifetime.c"
 #include "combined.c"
 #include "display.c"
 #include "notices.c"
@@ -281,12 +390,65 @@ WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
 #include "child_completion.c"
 #include "entries.c"
 #include "peers.c"
+#include "client_identity.c"
 #include "cohorts.c"
+#include "lifetime.c"
+#include "input_lifetime.c"
+#include "input_history.c"
+#include "resume_transaction.c"
+#include "input_transaction.c"
+
+static int cancellation_adapter_checks(void)
+{
+    LONG a, b;
+    run=&first; a=cuis_service(CUIS_SESSION_START,0);
+    run=&second; b=cuis_service(CUIS_SESSION_START,0);
+    CHECK(a>=0 && b>=0 && input_irqs);
+    cancel_pending=TRUE;
+    CHECK(cuis_delay_service(b,1000)==EACCDN && input_irqs);
+    CHECK(cuis_display_lock(b,1,1)==EACCDN && !display_owner && input_irqs);
+    CHECK(cuis_mouse_lock(b,1,1)==EACCDN && !mouse_owner && input_irqs);
+    cancel_pending=FALSE; cancel_after_wake=TRUE;
+    CHECK(cuis_delay_service(b,1000)==EACCDN && input_irqs && !cancel_after_wake);
+    cancel_pending=FALSE;
+    run=&first; CHECK(cuis_display_lock(a,1,0)==0);
+    run=&second; cancel_on_wait=1;
+    CHECK(cuis_display_lock(b,1,1)==EACCDN && input_irqs && display_owner->owner==&first);
+    cancel_on_wait=1;
+    CHECK(cuis_delay_service(b,1000)==EACCDN && input_irqs);
+    run=&first; CHECK(cuis_display_lock(a,0,0)==0);
+    CHECK(cuis_mouse_lock(a,1,0)==0);
+    run=&second; cancel_on_wait=1;
+    CHECK(cuis_mouse_lock(b,1,1)==EACCDN && input_irqs && mouse_owner->owner==&first);
+    run=&first; CHECK(cuis_mouse_lock(a,0,0)==0);
+    cuis_process_exit(&first); cuis_process_exit(&second);
+    CHECK(allocations==frees && !cancel_on_wait && !input_bad_idle);
+    next_handle=0; allocations=frees=0;
+    return 0;
+}
 
 int main(void)
 {
     LONG owner, other, reopened;
     int rc;
+    rc=observer_wait_checks();
+    if (rc) return rc;
+    rc=stream_lifetime_checks();
+    if (rc) return rc;
+    rc=input_transaction_checks();
+    if (rc) return rc;
+    CHECK(!cancellation_bad);
+    rc=resume_transaction_checks();
+    if (rc) return rc;
+    CHECK(!cancellation_bad);
+    rc=input_history_checks();
+    if (rc) return rc;
+    rc=input_lifetime_checks();
+    if (rc) return rc;
+    rc=lifetime_checks();
+    if (rc) return rc;
+    rc=cancellation_adapter_checks();
+    if (rc) return rc;
     CHECK(cuis_service(99, ~0ULL) == EINVFN);
     CHECK(cuis_service(CUIS_SESSION_QUERY, 0) == EACCDN);
     CHECK(cuis_service(CUIS_SESSION_END, 0) == EACCDN);
@@ -294,7 +456,8 @@ int main(void)
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM);
     CHECK(!allocations && !cuis_session_count());
     fail_allocation = FALSE;
-    owner = cuis_service(CUIS_SESSION_START, ~0ULL);
+    CHECK(cuis_service(CUIS_SESSION_START, ~0ULL) == EINVAL);
+    owner = cuis_service(CUIS_SESSION_START, 0);
     CHECK(owner == 0 && cuis_session_count() == 1);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == owner && allocations == 1);
     CHECK(cuis_service(CUIS_SESSION_QUERY, 0x100000000ULL | (ULONG)owner) == EINVAL);
@@ -324,7 +487,7 @@ int main(void)
     next_handle = 0x7fffffffUL;
     CHECK(cuis_service(CUIS_SESSION_START, 0) == 0x7fffffffL);
     /* An existing session can still be returned after handle exhaustion. */
-    CHECK(cuis_service(CUIS_SESSION_START, ~0ULL) == 0x7fffffffL);
+    CHECK(cuis_service(CUIS_SESSION_START, 0) == 0x7fffffffL);
     cuis_process_exit(&first);
     CHECK(cuis_service(CUIS_SESSION_START, 0) == ENSMEM && !cuis_session_count());
     CHECK(allocations == frees);
@@ -341,8 +504,6 @@ int main(void)
     rc = pointer_checks();
     if (rc) return rc;
     rc = window_limit_checks();
-    if (rc) return rc;
-    rc = message_checks();
     if (rc) return rc;
     rc = delay_checks();
     if (rc) return rc;
@@ -392,6 +553,8 @@ int main(void)
     if (rc) return rc;
     rc = entry_checks();
     if (rc) return rc;
+    rc = client_identity_checks();
+    if (rc) return rc;
     rc = peer_checks();
     if (rc) return rc;
     rc = cohort_checks();
@@ -401,5 +564,8 @@ int main(void)
     rc = cohort_origin_checks();
     if (rc) return rc;
     rc = cohort_result_checks();
-    return rc ? rc : process_defer_checks();
+    if (rc) return rc;
+    rc = process_defer_checks();
+    CHECK(!process_references);
+    return rc;
 }

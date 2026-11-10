@@ -177,6 +177,16 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
     const volatile char *cmdline = (const volatile char *)(unsigned long)(basepage + 0x80);
     static u32 *volatile null_pointer;
 
+    if (cmdline[0] == 2 && cmdline[1] == 'O') {
+        int i;
+        if (cmdline[2]=='y') gemdos0(0xff); /* Nested cleanup-guard identity probe. */
+        if (cmdline[2]=='f') __asm__ volatile ("ud2");
+        if (cmdline[2]=='p') {
+            for (i=0;i<4;i++) gemdos0(0xff);
+            gemdos1(0x4c,0x1357);
+        }
+        gemdos1(0x4c,0xffff);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'f')
         *null_pointer = 1;              /* a page fault in ring 3 */
     if (cmdline[0] == 9 && cmdline[1] == 'F') {

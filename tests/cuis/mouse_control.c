@@ -1,6 +1,6 @@
 /* Modal pointer ownership is session-wide and independent of draw/focus. */
 #define ML(s,a,b) cuis_mouse_lock(s,a,b)
-#define MW(s,e) cuis_session_wait(s,0,e|CUIS_READY_TIMER,0)
+#define MW(s,e) cuis_session_wait(s,0,e|CUIS_READY_TIMER,0,0,0)
 #define MR(s) cuis_input_config(CUIS_INPUT_RESULT,s,0x1000,0x1004,0x1008,0x100c,0x1010)
 static int mouse_control_checks(void)
 {
@@ -19,16 +19,13 @@ static int mouse_control_checks(void)
     CHECK(ML(a,0,0) == EACCDN && ML(b,1,0) == EACCDN);
     CHECK(ML(a,1,1) == E_OK && ML(a,1,0) == E_OK && mouse_depth == 2 && focus_window == wb);
     CHECK(cuis_mouse_active() && !ca->windows);
-    run = &second; CHECK(pointer_drain(window)); run = &first;
+    run = &second; clear_pointer_fixture(window); run = &first;
     CHECK(point_at(210,210,1) && focus_window == wb && !pointer_activation_drag);
     CHECK(ca->edge_count == 1 && !cb->edge_count && !wb->pointer_count);
     CHECK(cuis_keyboard_event(0x1234) && wb->key_count == 1);
     run = &second;
     CHECK(ML(b,1,0) == EAGAIN && ML(b,0,0) == EACCDN);
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
     input_sleeps = 0;
-    CHECK(ML(b,1,1) == EAGAIN && !input_sleeps);
-    CHECK(cuis_window_service(CUIS_UPDATE_END,window,0,0,0,0) == E_OK);
     CHECK(cuis_display_lock(b,1,0) == E_OK && cuis_vdi_policy() == 1);
     run = &first;
     CHECK(cuis_vdi_policy() == EAGAIN); /* Grabs do not grant drawing permission. */
@@ -64,9 +61,6 @@ static int mouse_control_checks(void)
     CHECK(own >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,own,1,0,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_WINDOW_SHOW,own,0,0,0,0) == E_OK);
     input_sleeps = 0;
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,own,0,0,0,0) == E_OK);
-    CHECK(cuis_display_lock(a,1,1) == EAGAIN && !input_sleeps);
-    CHECK(cuis_window_service(CUIS_UPDATE_END,own,0,0,0,0) == E_OK);
     CHECK(cuis_display_lock(a,1,1) == E_OK && cuis_display_lock(a,1,1) == E_OK && display_depth == 2);
     CHECK(cuis_display_lock(a,0,0) == E_OK && cuis_display_lock(a,0,0) == E_OK && mouse_depth == 2);
 
@@ -128,7 +122,8 @@ static int fresh_mouse_checks(void)
     run = &first; session = cuis_service(CUIS_SESSION_START,0); client = *find_owner(run);
     window = cuis_window_service(CUIS_WINDOW_CREATE,0,20,200,150,0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
     refresh_pointer_bounds(); pointer_suppressed = pointer_legacy_drag = FALSE;
     CHECK(point_at(40,60,0) && point_at(40,60,1) && point_at(40,60,0));
     CHECK(client->edge_count == 2);

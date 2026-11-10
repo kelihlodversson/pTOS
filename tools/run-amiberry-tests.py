@@ -84,7 +84,14 @@ def main():
     ap.add_argument('--amiberry', default=os.environ.get('AMIBERRY') or
                     os.path.expanduser('~/.local/src/amiberry/build/amiberry'))
     ap.add_argument('--timeout', type=float, default=1200, help='seconds for the whole suite')
+    ap.add_argument('--fpu', choices=['0','68881','68882','68040','68060'],
+                    help='explicit FPU model; omitted preserves the emulator default')
+    ap.add_argument('--require-nonzero-fpiar', action='store_true')
+    ap.add_argument('--irq-capture-state', type=lambda value: int(value, 0),
+                    help='physical debugger address of the test-only seen/error/nonzero-FPIAR ULONG array')
     ap.add_argument('--caches', action='store_true', help='CPU caches on')
+    ap.add_argument('--require-managed-threads', action='store_true',
+                    help='require native clone/join/group/libc exit worker verdicts')
     ap.add_argument('--halt', help='the address of halt() in the kernel (emutos.map): an image whose shell '
                     'is the harness halts the machine when it is done, and the emulator does not write the '
                     'log to the disk image until it is stopped, so the end is seen by the CPU')
@@ -108,8 +115,9 @@ def main():
     proc = None
     path = None
     text = ''
+    irq_evidence = None
     try:
-        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches)
+        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches, fpu=a.fpu)
         deadline = time.time() + a.timeout
         while time.time() < deadline:
             time.sleep(5)
@@ -122,6 +130,12 @@ def main():
                 break
             if a.halt and halted(ra, path, int(a.halt, 16)):
                 break
+        if a.irq_capture_state is not None:
+            # Read the captured kernel evidence before stopping the emulator.
+            # This is debugger inspection of real native capture, not a model.
+            irq_evidence = [int(ra.ipc(path, 'READ_MEM\t0x%x\t4' %
+                            (a.irq_capture_state + 4 * index)).splitlines()[-1], 0)
+                            for index in range(3)]
     finally:
         if proc:
             ra.stop(proc, path)
@@ -136,6 +150,23 @@ def main():
         return 1
     if int(m.group(2)) or 'All tests passed.' not in text:
         print('run-amiberry-tests: %s tests failed' % m.group(2), file=sys.stderr)
+        return 1
+    if a.irq_capture_state is not None:
+        if not irq_evidence or not irq_evidence[0] or irq_evidence[1] or (
+                a.require_nonzero_fpiar and not irq_evidence[2]):
+            print('run-amiberry-tests: missing or invalid native IRQ capture: %r' %
+                  (irq_evidence,), file=sys.stderr)
+            return 1
+        print('native IRQ captured frames=%d, mismatches=%d, nonzero FPIAR=%d' % tuple(irq_evidence))
+    if a.require_managed_threads:
+        markers = ('pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS',
+                   'native Pthjoin: PASS', 'native Ptermgrp: PASS', 'native libc exit: PASS')
+        for marker in markers:
+            if marker not in text:
+                print('run-amiberry-tests: missing managed runtime verdict: ' + marker, file=sys.stderr)
+                return 1
+    if a.require_nonzero_fpiar and 'native m68k nonzero FPIAR: PASS' not in text:
+        print('run-amiberry-tests: nonzero FPIAR was not runtime-verified', file=sys.stderr)
         return 1
     return 0
 

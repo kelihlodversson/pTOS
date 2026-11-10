@@ -59,7 +59,7 @@ static int pointer_checks(short *global)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, a, b, message[8] = { 0 }, global[15], top, owner, below, spare;
+    short id, peer, a, b, message[8] = { 0 }, global[15], top, owner, below, spare;
     short foreign, graphic_handle = 0, width, height, x, y, w, h, gadget, colour, bottom, spare_colour;
     OBJECT desktop = { -1,-1,-1,G_BOX,OF_LASTOB,0,{0x1173},0,0,0,0 };
     void *pointer;
@@ -121,6 +121,8 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_set(-1,WF_DCOLOR,W_NAME,0x1172,0x1174,0) == 1);
     child = process(0x4b, 100, (uintptr_t)"C:\\GEMFOC.TOS", (uintptr_t)tail, (uintptr_t)environment);
     VERIFY(child > 0 && control(message) && message[0] == 900); foreign = message[3];
+    peer = message[1];
+    VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);
     VERIFY(foreign > 0 && foreign != a && foreign != b);
     if (graphics) {
         VERIFY(gem_probe_pixel(graphic_handle,200,200) == 4);
@@ -129,26 +131,26 @@ int main(int argc, char **argv, char **envp)
     }
     VERIFY(wind_find(110,110) == foreign && mt_wind_find(159,159,global) == foreign);
     VERIFY(wind_find(160,159) == 0 && wind_find(159,160) == 0);
-    VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == foreign && owner == child && below == b);
+    VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == foreign && owner == peer && below == b);
     VERIFY(wind_get(0, WF_BOTTOM, &top, &owner, &below, &spare) == 1 && top == a);
     VERIFY(wind_get(b, WF_OWNER, &top, &owner, &below, &spare) == 1 && top == id && owner == 1 && below == foreign && spare == a);
     VERIFY(wind_set(foreign, WF_TOP, 0, 0, 0, 0) == 0);
-    VERIFY(command((short)child, 1, message));
+    VERIFY(command(peer, 1, message));
     VERIFY(wind_find(110,110) == b && wind_find(140,140) == foreign);
     VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == b && owner == id && below == a);
     VERIFY(wind_set(a, WF_TOP, 0, 0, 0, 0) == 1);
     VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == a && below == b);
-    VERIFY(command((short)child, 2, message));
+    VERIFY(command(peer, 2, message));
     VERIFY(wind_find(110,110) == foreign);
-    VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == foreign && owner == child);
-    VERIFY(command((short)child, 3, message));
+    VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == foreign && owner == peer);
+    VERIFY(command(peer, 3, message));
     VERIFY(wind_find(110,110) == b && wind_find(140,140) == 0);
-    VERIFY(wind_get(foreign, WF_OWNER, &top, &owner, &below, &spare) == 1 && top == child && !owner && !below && !spare);
+    VERIFY(wind_get(foreign, WF_OWNER, &top, &owner, &below, &spare) == 1 && top == peer && !owner && !below && !spare);
     VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == a);
-    VERIFY(command((short)child, 4, message));
+    VERIFY(command(peer, 4, message));
     VERIFY(wind_find(110,110) == foreign);
     message[0] = 5; message[1] = id;
-    VERIFY(appl_write((short)child, 16, message) == 1);
+    VERIFY(appl_write(peer, 16, message) == 1);
     status = process(0x13a, child, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     VERIFY(wind_get(0, WF_TOP, &top, &owner, &below, &spare) == 1 && top == a && owner == id);

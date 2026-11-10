@@ -1,4 +1,4 @@
-/* Process-owned native GUI sessions; never interpret GEM/AES wire formats. */
+/* Native GUI session identities; never interpret GEM/AES wire formats. */
 #include "emutos.h"
 #include "cuis.h"
 #include "cuis_region.h"
@@ -13,27 +13,48 @@
 #include "../bdos/fs.h"
 #include "../bdos/proc.h"
 #include "../bdos/uaccess.h"
+#if CONF_WITH_CUIS_OBSERVER_TEST
+#include "../bdos/process_exec_internal.h"
+#include "cuis_receipt_test.h"
+#endif
 
 extern PD *run;
 
-#define CUIS_MESSAGE_CAPACITY 16U
 #define CUIS_KEY_CAPACITY 16U
 #define CUIS_POINTER_CAPACITY 16U
 #define CUIS_WINDOW_LIMIT 256UL
 #define CUIS_STREAM_BYTES 65536UL
+#define CUIS_BUTTON_HISTORY_CAPACITY (4U * CUIS_POINTER_CAPACITY)
 typedef struct {
-    LONG sender_pid;
+    LONG sender_id;
     UBYTE data[1];
 } CUIS_PACKET;
 typedef struct {
     LONG x, y;
     ULONG buttons, state;
 } CUIS_POINTER;
+/* Durable routed-edge source; legacy normal/resume queues remain views. */
+typedef struct {
+    UQUAD sequence, policy;
+    CUIS_POINTER event;
+} CUIS_BUTTON_EDGE;
+typedef struct {
+    UQUAD next, policy;
+    ULONG session;
+    BOOL exhausted;
+} CUIS_BUTTON_CURSOR;
+typedef enum {
+    BUTTON_HISTORY_EVENT, BUTTON_HISTORY_EMPTY, BUTTON_HISTORY_GAP,
+    BUTTON_HISTORY_POLICY, BUTTON_HISTORY_EXHAUSTED, BUTTON_HISTORY_RETIRED
+} CUIS_BUTTON_READ;
+typedef struct cuis_stream_operation CUIS_STREAM_OPERATION;
 typedef struct cuis_window {
     struct cuis_client *client;
     struct cuis_window *next;
     struct cuis_window *znext;
     ULONG handle;
+    ULONG references; /* Registry/list reference plus retained event waiters. */
+    BOOL retired;
     UWORD identifier; /* Globally unique among live windows; reusable after destruction. */
     LONG x, y, width, height;
     BOOL visible, redraw, managed_activation;
@@ -55,11 +76,6 @@ typedef struct cuis_window {
 } CUIS_WINDOW;
 
 typedef struct {
-    ULONG sender;
-    ULONG words[4];
-} CUIS_MESSAGE;
-
-typedef struct {
     LONG x, y, width, height;
     BOOL leave;
 } CUIS_INPUT_RECTANGLE;
@@ -73,18 +89,24 @@ typedef struct {
     LONG x, y;
     ULONG buttons, modifiers;
     BOOL matched, tracking;
+    UQUAD history_through, history_policy;
+    UQUAD live_through; /* Last routed edge observed before button readiness. */
+    UQUAD history_first; /* Oldest uncommitted source identity required by this operation. */
+    BOOL history_observed;
+    CUIS_BUTTON_CURSOR history_cursor;
+    CUIS_BUTTON_READ history_read;
 } CUIS_INPUT_WAIT;
 typedef struct cuis_client {
     struct cuis_client *next;
-    PD *owner;
+    PD *owner; /* Borrowed only while live; cleared at retirement. */
+    ULONG references; /* Registry owns one; waits retain storage, never PD. */
+    BOOL retired;
     ULONG handle;
     CUIS_WINDOW *windows, *background;
     struct cuis_client *background_next;
     BOOL background_dirty;
     BOOL background_registered;
     ULONG window_count;
-    CUIS_MESSAGE messages[CUIS_MESSAGE_CAPACITY];
-    UWORD message_head, message_count;
     UBYTE label[CUIS_LABEL_MAX];
     ULONG label_length;
     ULONG tag; /* Opaque library metadata; native CUIS does not interpret it. */
@@ -94,26 +116,43 @@ typedef struct cuis_client {
     BOOL cohort_read_result;
     BOOL cohort_exit, cohort_delivered, cohort_accepted;
     UBYTE cohort_data[CUIS_COHORT_BYTES];
-    LONG pid;
-    CUIS_PACKET *pending_write;
+    UWORD aes_id;
+    BOOL explicit_client;
+    KPROC *process;
+    CUIS_STREAM_OPERATION *stream_read, *stream_write;
+    UQUAD stream_sequence;
+#if CONF_WITH_CUIS_RECEIPT_TEST
+    struct cuis_receipt_table *receipt_table;
+    ULONG receipt_observations; /* Import envelopes, including preflight/unwind. */
+#endif
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
     ULONG stream_head, stream_bytes;
     struct { ULONG token; WORD pid, signal; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
     UBYTE child_order[CUIS_CHILDREN_PER_SESSION];
     UWORD child_count;
+    CUIS_BUTTON_EDGE button_history[CUIS_BUTTON_HISTORY_CAPACITY];
+    UQUAD button_sequence, button_policy;
+    UWORD history_head, history_count;
+    BOOL history_exhausted;
     CUIS_POINTER button_edges[CUIS_POINTER_CAPACITY];
+    UQUAD edge_sequence[CUIS_POINTER_CAPACITY];
     ULONG edge_head, edge_count, recent_count, recent_buttons;
     CUIS_POINTER saved_edges[CUIS_POINTER_CAPACITY];
+    UQUAD saved_sequence[CUIS_POINTER_CAPACITY];
     ULONG saved_head, saved_count, saved_recent_count, saved_recent_buttons;
     BOOL isolated_mouse;
     BOOL pointer_style_set;
     UWORD pointer_hidden;
     MFORM pointer_style;
     CUIS_INPUT_FILTER input_filter;
-    CUIS_INPUT_WAIT *input_wait; /* Resident syscall stack, only while blocked. */
+    CUIS_INPUT_WAIT *input_wait; /* Borrowed sampler in retained client storage. */
+    CUIS_INPUT_WAIT active_input;
+    UQUAD wait_sequence, wait_operation; /* Session-local, never recycled. */
     CUIS_INPUT_WAIT button_resume;
     BOOL button_resume_active;
+    UQUAD resume_operation; /* Reservation, not transfer of persistent history. */
     CUIS_POINTER button_resume_edges[CUIS_POINTER_CAPACITY];
+    UQUAD resume_sequence[CUIS_POINTER_CAPACITY];
     UWORD button_resume_head, button_resume_count;
     ULONG keys[CUIS_KEY_CAPACITY];
     UWORD key_head, key_count;
@@ -121,6 +160,14 @@ typedef struct cuis_client {
     struct cuis_client *surface_next;
     LONG input_result[5]; /* key, count, x, y, packed buttons/modifiers */
 } CUIS_CLIENT;
+typedef enum { STREAM_ADMITTED, STREAM_PENDING, STREAM_COPYING, STREAM_COMMITTED, STREAM_RETIRED } CUIS_STREAM_STATE;
+struct cuis_stream_operation {
+    CUIS_CLIENT *source, *receiver; /* Source retained; extra receiver ref for WRITE. */
+    UQUAD token;
+    ULONG session, destination, kind, length, head;
+    CUIS_STREAM_STATE state;
+    CUIS_PACKET *packet; /* Sole owner until this operation is reclaimed. */
+};
 static CUIS_CLIENT *clients;
 static BOOL cohort_ready(CUIS_CLIENT *client);
 static void cohort_leave(CUIS_CLIENT *client);
@@ -140,6 +187,7 @@ static ULONG next_child_token;
 static ULONG input_interval = 450;
 static void sample_input_waits(void);
 static ULONG next_handle;
+static UWORD last_aes_id; /* Never recycled: unread sender metadata must not alias a new client. */
 static ULONG next_window_handle;
 /* Front to back, containing only visible windows from all sessions. */
 static CUIS_WINDOW *window_front;
@@ -150,10 +198,6 @@ static LONG pointer_x, pointer_y, pointer_width, pointer_height;
 static ULONG pointer_buttons;
 static BOOL pointer_activation_drag, pointer_control_drag;
 static BOOL pointer_initialized, pointer_seen, pointer_suppressed, pointer_legacy_drag;
-static CUIS_CLIENT *update_owner;
-static CUIS_WINDOW *update_window;
-static CUIS_RECT *update_clips;
-static ULONG update_count;
 static CUIS_CLIENT *mouse_owner;
 static CUIS_CLIENT *keyboard_owner;
 static ULONG keyboard_depth;
@@ -247,7 +291,7 @@ static void surface_register(CUIS_CLIENT *client, UWORD height)
 }
 static void surface_focus(void)
 {
-    if (!surface_focus_pending || display_owner || update_owner || surface_capture) return;
+    if (!surface_focus_pending || display_owner || surface_capture) return;
     surface_focus_pending = FALSE;
     if (focus_window && focus_window->client->surface_height && surface_owner != focus_window->client)
         surface_choose(focus_window->client);
@@ -265,16 +309,6 @@ static void surface_fallback(CUIS_CLIENT *exclude)
     for (client = surface_front; client; client = client->surface_next)
         if (client != exclude) break;
     surface_choose(client);
-}
-
-static void end_update(void)
-{
-    if (update_clips) kfree(update_clips);
-    update_clips = NULL;
-    update_count = 0;
-    update_owner = NULL;
-    surface_focus();
-    update_window = NULL;
 }
 
 static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total)
@@ -322,18 +356,6 @@ static LONG visible_regions(CUIS_WINDOW *window, CUIS_RECT **rects, ULONG *total
     return E_OK;
 }
 
-static LONG begin_update(CUIS_CLIENT *client, CUIS_WINDOW *window)
-{
-    LONG result;
-    if (console_owner || update_owner || display_owner) return EAGAIN;
-    if (!window->visible) return EINVAL;
-    result = visible_regions(window, &update_clips, &update_count);
-    if (result < 0) return result;
-    update_owner = client;
-    update_window = window;
-    return E_OK;
-}
-
 static void damage_windows(void)
 {
     CUIS_WINDOW *window;
@@ -378,6 +400,142 @@ static BOOL content_contains(CUIS_WINDOW *window)
         (QUAD)pointer_y < (QUAD)window->y+window->height-window->content_bottom;
 }
 
+/* Input IRQs excluded. A policy change invalidates cursors, never rewinds
+ * the producer identity. Counter exhaustion is latched, never wrapped. */
+static void button_history_policy(CUIS_CLIENT *client)
+{
+    if (client->button_policy == ~0ULL) client->history_exhausted = TRUE;
+    else client->button_policy++;
+}
+static UQUAD button_history_record(CUIS_CLIENT *client, const CUIS_POINTER *event)
+{
+    CUIS_BUTTON_EDGE *edge;
+    UWORD index;
+    if (client->history_exhausted || client->button_sequence == ~0ULL) {
+        client->history_exhausted = TRUE;
+        return 0;
+    }
+    if (client->history_count == CUIS_BUTTON_HISTORY_CAPACITY) {
+        client->history_head = (client->history_head+1) % CUIS_BUTTON_HISTORY_CAPACITY;
+        client->history_count--;
+    }
+    index = (client->history_head+client->history_count++) % CUIS_BUTTON_HISTORY_CAPACITY;
+    edge = &client->button_history[index];
+    edge->sequence = ++client->button_sequence;
+    edge->policy = client->button_policy;
+    edge->event = *event;
+    return edge->sequence;
+}
+/* Borrowed only under input exclusion. Compatibility queues select eligibility;
+ * the immutable journal supplies the event. No lookup fabricates an evicted ID. */
+static CUIS_BUTTON_EDGE *button_history_find(CUIS_CLIENT *client, UQUAD sequence)
+{
+    UQUAD offset;
+    CUIS_BUTTON_EDGE *edge;
+    if (!sequence || !client->history_count) return NULL;
+    edge = &client->button_history[client->history_head];
+    if (sequence < edge->sequence) return NULL;
+    offset = sequence-edge->sequence;
+    if (offset >= client->history_count) return NULL;
+    edge = &client->button_history[(client->history_head+(UWORD)offset)%CUIS_BUTTON_HISTORY_CAPACITY];
+    return edge->sequence == sequence ? edge : NULL;
+}
+static void button_history_begin(CUIS_CLIENT *client, CUIS_BUTTON_CURSOR *cursor)
+{
+    UWORD i;
+    cursor->session = client->handle;
+    cursor->policy = client->button_policy;
+    cursor->exhausted = client->history_exhausted || client->button_sequence == ~0ULL;
+    cursor->next = cursor->exhausted ? 0 : client->button_sequence+1;
+    /* New cursors start in the current policy epoch. Old epochs are retained
+     * only until bounded eviction; an existing cursor cannot cross epochs. */
+    for (i = 0; i < client->history_count; i++) {
+        CUIS_BUTTON_EDGE *edge = &client->button_history[(client->history_head+i)%CUIS_BUTTON_HISTORY_CAPACITY];
+        if (edge->policy == cursor->policy) {
+            cursor->next = edge->sequence;
+            cursor->exhausted = client->history_exhausted;
+            break;
+        }
+    }
+}
+static CUIS_BUTTON_READ button_history_next(CUIS_CLIENT *client, CUIS_BUTTON_CURSOR *cursor, CUIS_BUTTON_EDGE *result)
+{
+    CUIS_BUTTON_EDGE *edge;
+    UQUAD offset;
+    if (client->retired || cursor->session != client->handle) return BUTTON_HISTORY_RETIRED;
+    if (cursor->policy != client->button_policy) return BUTTON_HISTORY_POLICY;
+    if (cursor->exhausted || client->history_exhausted) return BUTTON_HISTORY_EXHAUSTED;
+    if (!client->history_count || cursor->next > client->button_sequence) return BUTTON_HISTORY_EMPTY;
+    edge = &client->button_history[client->history_head];
+    if (!cursor->next || cursor->next < edge->sequence) return BUTTON_HISTORY_GAP;
+    offset = cursor->next-edge->sequence;
+    if (offset >= client->history_count) return BUTTON_HISTORY_GAP;
+    edge = &client->button_history[(client->history_head+(UWORD)offset)%CUIS_BUTTON_HISTORY_CAPACITY];
+    if (edge->sequence != cursor->next) return BUTTON_HISTORY_GAP;
+    if (edge->policy != cursor->policy) return BUTTON_HISTORY_POLICY;
+    *result = *edge;
+    if (cursor->next == ~0ULL) cursor->exhausted = TRUE;
+    else cursor->next++;
+    return BUTTON_HISTORY_EVENT;
+}
+/* Observing the source never grants delivery eligibility or consumes a view.
+ * A journal/view gap is latched and rejects commit, never successful replay. */
+static void observe_button_history(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait)
+{
+    CUIS_BUTTON_EDGE edge;
+    CUIS_BUTTON_READ result;
+    if (wait->history_read != BUTTON_HISTORY_EMPTY) return;
+    do { result = button_history_next(client,&wait->history_cursor,&edge); }
+    while (result == BUTTON_HISTORY_EVENT);
+    wait->history_read = result;
+}
+
+#if CONF_WITH_X86_64_MEMTEST
+BOOL cuis_button_history_test(void)
+{
+    CUIS_CLIENT *client = kalloc(sizeof(*client));
+    CUIS_BUTTON_CURSOR cursor, saved;
+    CUIS_BUTTON_EDGE edge;
+    CUIS_POINTER event;
+    ULONG i;
+    BOOL ok = TRUE;
+    if (!client) return FALSE;
+    memset(client,0,sizeof(*client));
+    memset(&event,0,sizeof(event));
+    client->handle = 17; client->button_policy = 1;
+    button_history_begin(client,&cursor);
+    for (i = 0; i < CUIS_BUTTON_HISTORY_CAPACITY+1; i++) {
+        event.x = i; event.buttons = i&1;
+        if (button_history_record(client,&event) != i+1) ok = FALSE;
+    }
+    saved = cursor;
+    if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_GAP || cursor.next != saved.next) ok = FALSE;
+    button_history_begin(client,&cursor);
+    for (i = 1; i <= CUIS_BUTTON_HISTORY_CAPACITY; i++)
+        if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_EVENT ||
+            edge.sequence != i+1 || edge.event.x != (LONG)i || edge.event.buttons != (i&1)) ok = FALSE;
+    if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_EMPTY) ok = FALSE;
+    button_history_policy(client);
+    if (button_history_next(client,&cursor,&edge) != BUTTON_HISTORY_POLICY) ok = FALSE;
+    kfree(client);
+    return ok;
+}
+#endif
+
+/* Only a successful operation consumes its tentative normal-view prefix.
+ * Policy changes, FIFO overflow and newer IRQ data cannot be undone. */
+static void commit_initial_history(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait)
+{
+    if (wait->history_observed && !client->history_exhausted &&
+        wait->history_policy == client->button_policy)
+        while (client->edge_count && client->edge_sequence[client->edge_head] &&
+               client->edge_sequence[client->edge_head] <= wait->history_through) {
+            client->edge_head = (client->edge_head+1)%CUIS_POINTER_CAPACITY;
+            client->edge_count--;
+        }
+    wait->history_observed = FALSE;
+}
+
 /* IRQ keyboard delivery uses only the published focus pointer and its
  * resident bounded queue. Remove that pointer before a window can be freed. */
 static BOOL set_focus(CUIS_WINDOW *window)
@@ -391,6 +549,7 @@ static BOOL set_focus(CUIS_WINDOW *window)
             cancel_controls(focus_window);
             focus_window->key_head = focus_window->key_count = 0;
             if ((!window || window->client != focus_window->client) && focus_window->client != mouse_owner) {
+                button_history_policy(focus_window->client);
                 focus_window->client->edge_count = 0;
                 focus_window->client->recent_count = 0;
             }
@@ -438,6 +597,17 @@ static CUIS_WINDOW *window_at(LONG x, LONG y)
     return NULL;
 }
 
+/* Eviction is a producer policy, never a rollback. A required view entry
+ * cannot disappear unnoticed while a tentative consumer or resume owns it. */
+static void button_history_evict(CUIS_CLIENT *client, UQUAD sequence, BOOL resume)
+{
+    CUIS_INPUT_WAIT *active = client->input_wait;
+    if (active && (active->events & CUIS_READY_BUTTON) && active->history_first &&
+        sequence >= active->history_first) active->history_read = BUTTON_HISTORY_GAP;
+    if (resume && client->button_resume.history_first &&
+        sequence >= client->button_resume.history_first)
+        client->button_resume.history_read = BUTTON_HISTORY_GAP;
+}
 /* Expiry must precede admission of a packet: a delayed waiter must not
  * count a new press as part of an already completed click window. */
 static void expire_button_wait(CUIS_INPUT_WAIT *wait)
@@ -451,30 +621,53 @@ static void expire_button_wait(CUIS_INPUT_WAIT *wait)
  * routing calls this producer; opaque application messages never enter it. */
 static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
 {
-    CUIS_POINTER *event;
+    CUIS_POINTER *event, snapshot;
+    UQUAD sequence = 0;
     LONG x, y;
     ULONG buttons, modifiers;
     CUIS_INPUT_WAIT *wait = client->input_wait && (client->input_wait->events & CUIS_READY_BUTTON) ?
         client->input_wait : client->button_resume_active ? &client->button_resume : NULL;
-    if (changed) { client->recent_count = 1; client->recent_buttons = pointer_buttons; }
+    if (changed) {
+        cuis_input_snapshot(&x,&y,&buttons,&modifiers);
+        snapshot.x = pointer_x; snapshot.y = pointer_y;
+        snapshot.buttons = pointer_buttons; snapshot.state = modifiers;
+        sequence = button_history_record(client, &snapshot);
+        client->recent_count = 1; client->recent_buttons = pointer_buttons;
+    }
     expire_button_wait(wait);
-    if (changed && (client->button_resume_active || !wait || (wait->ready & CUIS_READY_BUTTON))) {
+    if (client->button_resume_active) expire_button_wait(&client->button_resume);
+    if (changed && sequence) {
+        if (wait && !(wait->ready & CUIS_READY_BUTTON)) {
+            wait->live_through = sequence;
+            if (!wait->history_first) wait->history_first = sequence;
+        }
+        if (client->button_resume_active && !(client->button_resume.ready & CUIS_READY_BUTTON)) {
+            client->button_resume.live_through = sequence;
+            if (!client->button_resume.history_first) client->button_resume.history_first = sequence;
+        }
+    }
+    /* Observation never removes delivery eligibility. Active normal tracking
+     * keeps the same bounded FIFO as an idle session; only commit consumes
+     * its observed prefix. Resume uses its existing disjoint cache view. */
+    if (changed) {
         if (client->button_resume_active && !(wait->ready & CUIS_READY_BUTTON)) {
             if (client->button_resume_count == CUIS_POINTER_CAPACITY) {
+                button_history_evict(client,client->resume_sequence[client->button_resume_head],TRUE);
                 client->button_resume_head = (client->button_resume_head+1) % CUIS_POINTER_CAPACITY;
                 client->button_resume_count--;
             }
+            client->resume_sequence[(client->button_resume_head+client->button_resume_count)%CUIS_POINTER_CAPACITY] = sequence;
             event = &client->button_resume_edges[(client->button_resume_head+client->button_resume_count++) % CUIS_POINTER_CAPACITY];
         } else {
             if (client->edge_count == CUIS_POINTER_CAPACITY) {
+                button_history_evict(client,client->edge_sequence[client->edge_head],FALSE);
                 client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
                 client->edge_count--;
             }
+            client->edge_sequence[(client->edge_head+client->edge_count)%CUIS_POINTER_CAPACITY] = sequence;
             event = &client->button_edges[(client->edge_head + client->edge_count++) % CUIS_POINTER_CAPACITY];
         }
-        cuis_input_snapshot(&x,&y,&buttons,&modifiers);
-        event->x = pointer_x; event->y = pointer_y;
-        event->buttons = pointer_buttons; event->state = modifiers;
+        *event = snapshot;
     }
 }
 /* Cached edges belong to the resumed predicate only after a compatible
@@ -482,17 +675,22 @@ static void button_enqueue(CUIS_CLIENT *client, ULONG changed)
 static void abandon_button_resume(CUIS_CLIENT *client)
 {
     CUIS_POINTER edges[CUIS_POINTER_CAPACITY];
+    UQUAD sequences[CUIS_POINTER_CAPACITY];
     UWORD i, count = client->button_resume_count+client->edge_count;
     UWORD skip = count > CUIS_POINTER_CAPACITY ? count-CUIS_POINTER_CAPACITY : 0;
     if (!client->button_resume_active) return;
     for (i = skip; i < count; i++) {
-        if (i < client->button_resume_count)
+        if (i < client->button_resume_count) {
             edges[i-skip] = client->button_resume_edges[(client->button_resume_head+i) % CUIS_POINTER_CAPACITY];
-        else
+            sequences[i-skip] = client->resume_sequence[(client->button_resume_head+i)%CUIS_POINTER_CAPACITY];
+        } else {
             edges[i-skip] = client->button_edges[(client->edge_head+i-client->button_resume_count) % CUIS_POINTER_CAPACITY];
+            sequences[i-skip] = client->edge_sequence[(client->edge_head+i-client->button_resume_count)%CUIS_POINTER_CAPACITY];
+        }
     }
     client->edge_head = 0; client->edge_count = count-skip;
     memcpy(client->button_edges,edges,client->edge_count*sizeof(edges[0]));
+    memcpy(client->edge_sequence,sequences,client->edge_count*sizeof(sequences[0]));
     client->button_resume_active = FALSE;
     client->button_resume_head = client->button_resume_count = 0;
 }
@@ -746,7 +944,10 @@ static void hide_window(CUIS_WINDOW *window)
     window->notices = 0;
     window->pointer_head = window->pointer_count = 0;
     window->pointer_overflow = FALSE;
-    if (window->client != mouse_owner) window->client->edge_count = window->client->recent_count = 0;
+    if (window->client != mouse_owner) {
+        button_history_policy(window->client);
+        window->client->edge_count = window->client->recent_count = 0;
+    }
     if (pointer_capture == window) {
         pointer_capture = NULL;
         pointer_activation_drag = FALSE;
@@ -776,12 +977,34 @@ static void background_remove(CUIS_CLIENT *client)
     }
 }
 
-static CUIS_CLIENT **find_owner(PD *owner)
+static CUIS_CLIENT **find_any_owner(PD *owner)
 {
     CUIS_CLIENT **link;
     for (link = &clients; *link && (*link)->owner != owner;
          link = &(*link)->next) ;
     return link;
+}
+
+/* Implicit GUI operations bind only the default endpoint. Explicit survivors
+ * must never silently become the default after SESSION_END. PROCESS cleanup
+ * deliberately uses find_any_owner() to retire every endpoint. */
+static CUIS_CLIENT **find_owner(PD *owner)
+{
+    CUIS_CLIENT **link;
+    for (link=&clients; *link && ((*link)->owner!=owner || (*link)->explicit_client);
+         link=&(*link)->next) ;
+    return link;
+}
+
+/* An endpoint handle authenticates a GUI operation within the current PROCESS.
+ * The default implicit window/input binding remains the default client; explicit
+ * peer/stream/session operations may address additional clients. */
+static CUIS_CLIENT *owned_client(UQUAD handle)
+{
+    CUIS_CLIENT *client;
+    for (client=clients;client;client=client->next)
+        if (client->owner==run && client->handle==handle) return client;
+    return NULL;
 }
 
 static void clear_display_regions(CUIS_CLIENT *client)
@@ -800,7 +1023,7 @@ static void clear_display_regions(CUIS_CLIENT *client)
 static BOOL display_available(void *argument)
 {
     (void)argument;
-    return !console_owner && !display_owner && !update_owner;
+    return !console_owner && !display_owner;
 }
 
 LONG cuis_pointer_style(UQUAD handle, UQUAD address, UQUAD hidden)
@@ -978,7 +1201,7 @@ LONG cuis_display_info(UQUAD selector)
         screen_get_current_mode_desc(&mode);
         if (!mode.width || !mode.height) result = EINVFN;
         else result = selector == 0 ? mode.width : selector == 1 ? mode.height :
-            selector == 2 ? surface_height : background_front ? background_front->pid : 0;
+            selector == 2 ? surface_height : background_front ? background_front->aes_id : 0;
     }
     cuis_input_unlock(flags); return result;
 }
@@ -993,9 +1216,7 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
-    if (function == CUIS_CLOCK) {
-        result = argument ? EINVAL : (LONG)(cuis_input_ticks() & 0x7fffffffUL);
-    } else if (function == CUIS_SURFACE_STATUS) {
+    if (function == CUIS_SURFACE_STATUS) {
         if (argument > 2) result = EINVAL;
         else if (argument == 2) {
             if (surface_owner != client) result = EACCDN;
@@ -1021,7 +1242,7 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     } else if (function == CUIS_SURFACE_REGISTER) {
         screen_get_current_mode_desc(&mode);
         if (argument && (argument > 32767 || argument >= mode.height || !mode.width)) result = EINVAL;
-        else if ((display_owner && display_owner != client) || (update_owner && update_owner != client) ||
+        else if ((display_owner && display_owner != client) ||
                  (surface_capture && surface_capture != client)) result = EAGAIN;
         else {
             if (surface_painter) result = EACCDN;
@@ -1032,6 +1253,52 @@ LONG cuis_surface_service(ULONG function, UQUAD handle, UQUAD argument)
     return result;
 }
 
+/* Input IRQs excluded, cooperative kernel serialization. A retained GUI
+ * object does not retain PROCESS resources. Retirement removes all routing
+ * and registry membership before dropping the list's reference. */
+static BOOL client_get(CUIS_CLIENT *client)
+{
+    if (client->retired || client->references == 0xffffffffUL) return FALSE;
+    client->references++;
+    return TRUE;
+}
+static void client_put(CUIS_CLIENT *client)
+{
+    if (!--client->references) {
+        if (client->stream_data) kfree(client->stream_data);
+        kproc_release(client->process);
+        kfree(client);
+    }
+}
+static void window_put(CUIS_WINDOW *window)
+{
+    if (!--window->references) kfree(window);
+}
+static void window_retire(CUIS_WINDOW *window)
+{
+    UQUAD flags = cuis_input_lock();
+    window->retired = TRUE;
+    window_put(window);
+    cuis_input_unlock(flags);
+}
+
+/* Opt-in callers have an explicit cleanup boundary for retained references
+ * and tentative state. They restore IRQs before entering termination. */
+static BOOL cancelable_wait(BOOL (*ready)(void *), void *argument)
+{
+    KSCHED_WAIT_RESULT result = ksched_wait_cancelable(ready, argument);
+    if (result == KSCHED_WAIT_UNMANAGED) cuis_input_idle();
+    return result == KSCHED_WAIT_CANCELLED;
+}
+static LONG cancel_after_unlock(UQUAD flags)
+{
+    cuis_input_unlock(flags);
+#if CONF_WITH_PTERMGRP
+    ksched_cancel_point();
+#endif
+    return EACCDN; /* defensive fallback; managed cancellation does not return */
+}
+
 LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 {
     CUIS_CLIENT *client;
@@ -1040,6 +1307,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     if (handle > 0x7fffffffULL || acquire > 1 || block > 1 || (!acquire && block)) return EINVAL;
     flags = cuis_input_lock();
     for (;;) {
+        if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
         client = *find_owner(run);
         if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
         if (!acquire) {
@@ -1055,7 +1323,7 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             display_depth++;
             cuis_input_unlock(flags); return E_OK;
         }
-        if (!console_owner && !display_owner && !update_owner) {
+        if (!console_owner && !display_owner) {
             screen_get_current_mode_desc(&mode);
             if (!mode.width || !mode.height) { cuis_input_unlock(flags); return EINVFN; }
             display_clip.x = display_clip.y = 0;
@@ -1067,16 +1335,15 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
          * that owner can be waiting for this gesture's mouse control.
          * EACCDN distinguishes contention from the EAGAIN borrow case below;
          * ordinary nonblocking callers retain their existing EAGAIN result. */
-        if (block && mouse_owner == client && update_owner != client) {
+        if (block && mouse_owner == client) {
             cuis_input_unlock(flags); return EACCDN;
         }
-        /* Waiting for a per-window section owned by this caller deadlocks. */
-        if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
+        if (!block) { cuis_input_unlock(flags); return EAGAIN; }
         /* This is an IRQ mask, not a held mutex. ksched_block requires
          * masked IRQs and restores the selected task's saved context; idle
          * uses STI/HLT/CLI. Unlocking here would race the availability check
          * against waiter publication (or HLT) and lose a release wakeup. */
-        if (!ksched_block(display_available, NULL)) cuis_input_idle();
+        if (cancelable_wait(display_available, NULL)) return cancel_after_unlock(flags);
     }
 }
 
@@ -1084,9 +1351,9 @@ LONG cuis_display_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 static BOOL mouse_available(void *argument)
 {
     CUIS_CLIENT *client = argument;
-    return !console_owner && !mouse_owner && (!pointer_buttons ||
+    return client->retired || (!console_owner && !mouse_owner && (!pointer_buttons ||
         surface_capture == client || background_capture == client ||
-        (pointer_capture && pointer_capture->client == client && !pointer_activation_drag));
+        (pointer_capture && pointer_capture->client == client && !pointer_activation_drag)));
 }
 
 static void end_keyboard(void)
@@ -1148,6 +1415,7 @@ static void end_mouse(void)
 {
     CUIS_CLIENT *client = mouse_owner;
     end_keyboard();
+    button_history_policy(mouse_owner);
     mouse_owner->edge_count = mouse_owner->recent_count = 0;
     mouse_owner = NULL; mouse_depth = 0;
     pointer_capture = pointer_hover = NULL; surface_capture = NULL; background_capture = NULL;
@@ -1157,6 +1425,7 @@ static void end_mouse(void)
     route_pointer(0);
     if (client->isolated_mouse) {
         memcpy(client->button_edges,client->saved_edges,sizeof(client->button_edges));
+        memcpy(client->edge_sequence,client->saved_sequence,sizeof(client->edge_sequence));
         client->edge_head = client->saved_head; client->edge_count = client->saved_count;
         client->recent_count = client->saved_recent_count; client->recent_buttons = client->saved_recent_buttons;
         client->isolated_mouse = FALSE;
@@ -1168,6 +1437,7 @@ static void end_mouse(void)
 
 LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
 {
+    BOOL cancel;
     CUIS_CLIENT *client;
     CUIS_WINDOW *window;
     UQUAD flags;
@@ -1175,6 +1445,7 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
     refresh_pointer_bounds();
     flags = cuis_input_lock();
     for (;;) {
+        if (ksched_cancellation_pending()) return cancel_after_unlock(flags);
         client = *find_owner(run);
         if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
         if (!acquire) {
@@ -1190,8 +1461,10 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
         }
         if (mouse_available(client)) {
             if (acquire == CUIS_MOUSE_FRESH) {
+                button_history_policy(client);
                 abandon_button_resume(client);
                 memcpy(client->saved_edges,client->button_edges,sizeof(client->button_edges));
+                memcpy(client->saved_sequence,client->edge_sequence,sizeof(client->edge_sequence));
                 client->saved_head = client->edge_head; client->saved_count = client->edge_count;
                 client->saved_recent_count = client->recent_count; client->saved_recent_buttons = client->recent_buttons;
                 client->button_resume_active = FALSE;
@@ -1206,20 +1479,33 @@ LONG cuis_mouse_lock(UQUAD handle, UQUAD acquire, UQUAD block)
             sample_input_waits();
             cuis_input_unlock(flags); return E_OK;
         }
-        if (!block || update_owner == client) { cuis_input_unlock(flags); return EAGAIN; }
+        if (!block) { cuis_input_unlock(flags); return EAGAIN; }
         /* Keep the availability test and waiter publication under the same
          * IRQ mask, just like DISPLAY_LOCK; no lock spans task execution. */
-        if (!ksched_block(mouse_available, client)) cuis_input_idle();
+        if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
+        cancel = cancelable_wait(mouse_available, client);
+        client_put(client);
+        if (cancel) return cancel_after_unlock(flags);
     }
 }
 
-static void session_exit(PD *owner)
+#if CONF_WITH_CUIS_RECEIPT_TEST
+static void receipt_retire(CUIS_CLIENT *client);
+#endif
+static void session_exit_client(CUIS_CLIENT *client)
 {
-    CUIS_CLIENT **link = find_owner(owner), *client = *link;
-    if (client) {
+    CUIS_CLIENT **link=&clients;
+    while (*link && *link!=client) link=&(*link)->next;
+    if (*link) {
         CUIS_WINDOW *window;
         ULONG i;
         UQUAD flags = cuis_input_lock();
+        client->retired = TRUE; /* Predicates wake without targeting a replacement session. */
+#if CONF_WITH_CUIS_RECEIPT_TEST
+        receipt_retire(client);
+#endif
+        if (client->stream_read) client->stream_read->state = STREAM_RETIRED;
+        if (client->stream_write) client->stream_write->state = STREAM_RETIRED;
         cohort_leave(client);
         for (i = 0; i < CUIS_ENTRY_LIMIT; i++)
             if (directory_entries[i].owner == client) directory_entries[i].owner = NULL;
@@ -1240,13 +1526,12 @@ static void session_exit(PD *owner)
         if (surface_owner == client) surface_fallback(client);
         if (mouse_owner == client) end_mouse();
         cuis_input_unlock(flags);
-        if (update_owner == client) end_update();
         if (display_owner == client) { clear_display_regions(client); display_owner = NULL; display_depth = 0; }
         while ((window = client->windows) != NULL) {
             client->windows = window->next;
             hide_window(window);
             window_total--;
-            kfree(window);
+            window_retire(window);
         }
         if (client->background) {
             clear_display_regions(client);
@@ -1255,16 +1540,16 @@ static void session_exit(PD *owner)
         flags = cuis_input_lock();
         surface_focus();
         cuis_pointer_sync();
-        cuis_input_unlock(flags);
         *link = client->next;
-        if (client->stream_data) kfree(client->stream_data);
-        if (client->pending_write) kfree(client->pending_write);
-        kfree(client);
+        client->owner = NULL;
+        client_put(client);
+        cuis_input_unlock(flags);
     }
 }
 
 void cuis_process_exit(PD *owner)
 {
+    CUIS_CLIENT *client;
     if (console_owner && console_owner == owner) {
         UQUAD flags = cuis_input_lock();
         console_owner = NULL;
@@ -1274,11 +1559,11 @@ void cuis_process_exit(PD *owner)
         damage_windows(); cuis_pointer_sync();
         cuis_input_unlock(flags);
     }
-    session_exit(owner);
+    while ((client=*find_any_owner(owner))!=NULL) session_exit_client(client);
 }
 
 #if CONF_WITH_X86_64_MEMTEST
-BOOL cuis_update_active(void) { return update_owner != NULL || display_owner != NULL; }
+BOOL cuis_update_active(void) { return display_owner != NULL; }
 BOOL cuis_mouse_active(void) { return mouse_owner != NULL; }
 BOOL cuis_focus_active(void) { return focus_window != NULL; }
 BOOL cuis_pointer_attached(void) { return pointer_hover != NULL || pointer_capture != NULL; }
@@ -1309,25 +1594,31 @@ ULONG cuis_session_count(void)
 LONG cuis_service(ULONG function, UQUAD handle)
 {
     CUIS_CLIENT *client;
+    KPROC *process;
     UQUAD flags;
 
     switch (function) {
     case CUIS_SESSION_START:
+        if (handle > CUIS_SESSION_NEW) return EINVAL;
         refresh_pointer_bounds();
         client = *find_owner(run);
-        if (client) return (LONG)client->handle;
+        if (client && !handle) return (LONG)client->handle;
         if (cohort.owner) return EAGAIN; /* A stable, closed cohort is in progress. */
-        if (!kproc_pid(run)) return EACCDN;
+
         /* Keep every successful result non-negative and never recycle a
          * handle. Stop at the signed 32-bit limit instead of wrapping. */
-        if (next_handle > 0x7fffffffUL) return ENSMEM;
+        if (next_handle > 0x7fffffffUL || last_aes_id==32767) return ENSMEM;
+        process = kproc_retain(run);
+        if (!process) return EACCDN;
         client = kalloc(sizeof(*client));
-        if (!client) return ENSMEM;
+        if (!client) { kproc_release(process); return ENSMEM; }
+        client->process = process;
+        client->references = 1; client->retired = FALSE;
+        client->explicit_client = handle == CUIS_SESSION_NEW;
         client->windows = client->background = NULL;
         client->background_next = NULL; client->background_dirty = FALSE;
         client->background_registered = FALSE;
         client->window_count = 0;
-        client->message_head = client->message_count = 0;
         client->label_length = 0;
         client->tag = 0;
         client->cohort_id = client->cohort_bytes = client->cohort_unread = 0;
@@ -1335,12 +1626,18 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->cohort_result_token = client->cohort_result_bytes = client->cohort_result_unread = 0;
         client->cohort_read_result = FALSE;
         client->cohort_exit = client->cohort_delivered = client->cohort_accepted = FALSE;
-        client->pid = kproc_pid(run);
-        client->pending_write = NULL; client->stream_data = NULL;
+        client->stream_read = client->stream_write = NULL; client->stream_sequence = 0;
+        client->stream_data = NULL;
+#if CONF_WITH_CUIS_RECEIPT_TEST
+        client->receipt_table = NULL; client->receipt_observations = 0;
+#endif
         client->stream_head = client->stream_bytes = 0;
+        client->button_sequence = 0; client->button_policy = 1;
+        client->history_head = client->history_count = 0; client->history_exhausted = FALSE;
         client->edge_head = client->edge_count = client->recent_count = client->recent_buttons = 0;
         client->input_wait = NULL;
-        client->button_resume_active = FALSE;
+        client->wait_sequence = client->wait_operation = 0;
+        client->button_resume_active = FALSE; client->resume_operation = 0;
         client->button_resume_head = client->button_resume_count = 0;
         memset(client->children,0,sizeof(client->children));
         client->child_count = 0;
@@ -1351,18 +1648,26 @@ LONG cuis_service(ULONG function, UQUAD handle)
         memset(&client->input_filter, 0, sizeof(client->input_filter));
         memset(client->input_result, 0, sizeof(client->input_result));
         client->owner = run;
-        client->handle = next_handle++;
         flags = cuis_input_lock();
-        client->next = clients;
-        clients = client;
+        if (last_aes_id==32767 || next_handle > 0x7fffffffUL) {
+            cuis_input_unlock(flags);
+            kproc_release(process); kfree(client); return ENSMEM;
+        }
+        client->aes_id = ++last_aes_id;
+        client->handle = next_handle++;
+        if (handle == CUIS_SESSION_NEW) {
+            CUIS_CLIENT **tail=&clients;
+            while (*tail) tail=&(*tail)->next;
+            client->next=NULL; *tail=client; /* Preserve existing default binding. */
+        } else { client->next=clients; clients=client; }
         cuis_input_unlock(flags);
         return (LONG)client->handle;
     case CUIS_SESSION_QUERY:
     case CUIS_SESSION_END:
         if (handle > 0x7fffffffULL) return EINVAL;
-        client = *find_owner(run);
-        if (!client || handle != client->handle) return EACCDN;
-        if (function == CUIS_SESSION_END) session_exit(run);
+        client = owned_client(handle);
+        if (!client) return EACCDN;
+        if (function == CUIS_SESSION_END) session_exit_client(client);
         return E_OK;
     default:
         return EINVFN;
@@ -1437,12 +1742,12 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
     owner = cohort.owner == client;
     if (function == CUIS_COHORT_BEGIN) {
         if (cohort.owner || console_owner || mouse_owner || keyboard_owner || pointer_capture ||
-            background_capture || surface_capture || update_owner || display_owner) { result = EAGAIN; goto out; }
+            background_capture || surface_capture || display_owner) { result = EAGAIN; goto out; }
         if (next_cohort == 0x7fffffffUL) { result = ENSMEM; goto out; }
         if (!client->stream_data) client->stream_data = kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
         if (!client->stream_data) { result = ENSMEM; goto out; }
         cohort.owner = client; cohort.token = ++next_cohort; cohort.phase = 1;
-        cohort.sender = (WORD)client->pid;
+        cohort.sender = (WORD)client->aes_id;
         for (peer = clients; peer; peer = peer->next) if (peer != client) {
             peer->cohort_id = cohort.token; peer->cohort_bytes = peer->cohort_unread = 0;
             peer->cohort_delivered = peer->cohort_accepted = peer->cohort_exit = FALSE;
@@ -1520,7 +1825,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
             else cohort.phase = 4; /* Keep registration closed until caller leaves/aborts. */
         } else {
             client->cohort_unread = client->stream_bytes+client->cohort_bytes;
-            cohort_append(client,client->cohort_data,client->cohort_bytes,(WORD)cohort.owner->pid);
+            cohort_append(client,client->cohort_data,client->cohort_bytes,(WORD)cohort.owner->aes_id);
             client->cohort_delivered = TRUE;
         }
         goto out;
@@ -1575,7 +1880,7 @@ LONG cuis_cohort_service(ULONG function, UQUAD session, UQUAD token, UQUAD a, UQ
         result = EACCDN;
     else {
         memcpy(cohort.data,data,length); cohort.bytes = length;
-        cohort.sender = (WORD)client->pid; cohort.phase = 3;
+        cohort.sender = (WORD)client->aes_id; cohort.phase = 3;
     }
 out:
     cuis_input_unlock(flags); return result;
@@ -1629,10 +1934,8 @@ LONG cuis_entry_service(ULONG function, UQUAD session, UQUAD slot, UQUAD peer, U
 /* Labels are opaque bytes. Filename/GEM naming policy belongs to libaes. */
 LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
-    CUIS_CLIENT *client = *find_owner(run), *peer, *found = NULL;
+    CUIS_CLIENT *client = function==CUIS_SESSION_LABEL ? owned_client(a) : *find_owner(run), *peer, *found = NULL;
     UBYTE label[CUIS_LABEL_MAX];
-    ULONG n;
-    const char *name;
     if (!client) return EACCDN;
     if (function == CUIS_LABEL_FIND) {
         if (!b || b > CUIS_LABEL_MAX) return EINVAL;
@@ -1642,23 +1945,8 @@ LONG cuis_directory_service(ULONG function, UQUAD a, UQUAD b, UQUAD c)
                 (!found || peer->handle < found->handle)) found = peer;
         return found ? (LONG)found->handle : EFILNF;
     }
-    if (function == CUIS_PEER_BY_PID) {
-        if (!a || a > 32767) return EINVAL;
-        for (peer = clients; peer && peer->pid != (LONG)a; peer = peer->next) ;
-        return peer ? (LONG)peer->handle : EFILNF;
-    }
     if (a > 0x7fffffffULL) return EINVAL;
-    if (function == CUIS_PEER_PID) {
-        peer = find_handle(a);
-        return peer ? peer->pid : EFILNF;
-    }
     if (a != client->handle) return EACCDN;
-    if (function == CUIS_SESSION_NAME) {
-        name = kproc_executable_name(run);
-        for (n = 0; name[n]; n++) ;
-        if (c > 0xffffffffULL || c < n + 1) return ERANGE;
-        return kproc_copy_to_user(b, name, n + 1) ? (LONG)n : EIMBA;
-    }
     if (function == CUIS_SESSION_LABEL) {
         if (c > CUIS_LABEL_MAX) return EINVAL;
         if (c && !kproc_copy_from_user(label, b, (ULONG)c)) return EIMBA;
@@ -1680,8 +1968,8 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
     LONG result = EFILNF;
     if (session > 0x7fffffffULL) return EINVAL;
     flags = cuis_input_lock();
-    client = *find_owner(run);
-    if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
+    client = owned_client(session);
+    if (!client) { cuis_input_unlock(flags); return EACCDN; }
     if (function == CUIS_SESSION_TAG) {
         if (handle > 0x7fffffffULL) result = EINVAL;
         else { client->tag = (ULONG)handle; result = E_OK; }
@@ -1697,7 +1985,7 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
         CUIS_WINDOW **link, *window, *selected_windows = NULL, **tail = &selected_windows;
         if (handle > 0x7fffffffULL) result = EINVAL;
         else if (!(peer = find_handle(handle))) result = EFILNF;
-        else if (console_owner || update_owner || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
+        else if (console_owner || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
                  pointer_capture || background_capture || surface_capture) result = EAGAIN;
         else {
             /* Extract one client's windows without reversing their order or
@@ -1717,8 +2005,14 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
             result = E_OK;
         }
     } else if (function != CUIS_PEER_QUERY) result = EINVFN;
-    else if (field > CUIS_PEER_ACTIVE || handle > 0x7fffffffULL || bytes > CUIS_LABEL_MAX) result = EINVAL;
-    else if (field == CUIS_PEER_BACKGROUND || field == CUIS_PEER_ACTIVE) {
+    else if (field > CUIS_PEER_HANDLE || handle > 0x7fffffffULL || bytes > CUIS_LABEL_MAX) result = EINVAL;
+    else if (field == CUIS_PEER_HANDLE) {
+        if (!handle || handle>32767 || address || bytes) result=EINVAL;
+        else {
+            for (peer=clients; peer; peer=peer->next)
+                if (peer->aes_id==handle) { result=(LONG)peer->handle; break; }
+        }
+    } else if (field == CUIS_PEER_BACKGROUND || field == CUIS_PEER_ACTIVE) {
         if (handle || address || bytes) result = EINVAL;
         else {
             selected = field == CUIS_PEER_BACKGROUND ? background_front : console_owner ? NULL :
@@ -1733,13 +2027,25 @@ LONG cuis_peer_service(ULONG function, UQUAD session, UQUAD handle, UQUAD field,
                 result = (LONG)peer->label_length;
                 if (result) memcpy(label,peer->label,(ULONG)result);
             }
+        } else if (field == CUIS_PEER_IDENTITY) {
+            if (bytes != sizeof(CUIS_PEER_IDENTITY_DATA)) result = EINVAL;
+            else {
+                CUIS_PEER_IDENTITY_DATA identity;
+                UQUAD number = kproc_ref_number(peer->process);
+                identity.client_id = peer->aes_id;
+                identity.process_low = (ULONG)number;
+                identity.process_high = (ULONG)(number >> 32);
+                identity.reserved = 0;
+                memcpy(label, &identity, sizeof(identity));
+                result = sizeof(identity);
+            }
         } else if (address || bytes) result = EINVAL;
         else if (field == CUIS_PEER_TAG) result = (LONG)peer->tag;
         else result = (peer->surface_height ? CUIS_PEER_HAS_SURFACE : 0) |
                       (peer->background_registered ? CUIS_PEER_HAS_BACKGROUND : 0);
     }
     cuis_input_unlock(flags);
-    if (function == CUIS_PEER_QUERY && field == CUIS_PEER_LABEL && result > 0 &&
+    if (function == CUIS_PEER_QUERY && (field == CUIS_PEER_LABEL || field == CUIS_PEER_IDENTITY) && result > 0 &&
         !kproc_copy_to_user(address,label,(ULONG)result)) return EIMBA;
     return result;
 }
@@ -1780,14 +2086,14 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     UQUAD flags;
     BOOL changed;
 
-    if ((function < CUIS_WINDOW_CREATE || function > CUIS_FOCUS_RELEASE ||
-         function == CUIS_WINDOW_CLIP) && function != CUIS_WINDOW_IDENTIFY &&
-        function != CUIS_WINDOW_OUTSET && function != CUIS_WINDOW_POLICY && function != CUIS_WINDOW_CONTENT && function != CUIS_WINDOW_CORNER)
-        return EINVFN;
+    if (!((function >= CUIS_WINDOW_CREATE && function <= CUIS_WINDOW_LOWER) ||
+          function == CUIS_FOCUS_QUERY ||
+          function == CUIS_WINDOW_IDENTIFY || function == CUIS_WINDOW_OUTSET || function == CUIS_WINDOW_POLICY ||
+          function == CUIS_WINDOW_CONTENT || function == CUIS_WINDOW_CORNER)) return EINVFN;
     client = *find_owner(run);
     if (!client) return EACCDN;
     if (function == CUIS_WINDOW_CREATE) {
-        if (update_owner || (display_owner && display_owner != client)) return EAGAIN;
+        if (display_owner && display_owner != client) return EAGAIN;
         if (!valid_geometry(a, b, c, d)) return EINVAL;
         if (window_total >= CUIS_WINDOW_LIMIT || client->window_count >= CUIS_WINDOWS_PER_SESSION ||
             next_window_handle > 0x7fffffffUL) return ENSMEM;
@@ -1795,6 +2101,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         if (!window) return ENSMEM;
         window->identifier = window_identifier();
         if (!window->identifier) { kfree(window); return ENSMEM; }
+        window->references = 1; window->retired = FALSE;
         window->client = client;
         window->handle = next_window_handle++;
         window->znext = NULL;
@@ -1828,15 +2135,8 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
     window = *link;
     if (!window) return EACCDN;
     if (function == CUIS_WINDOW_IDENTIFY) return window->identifier;
-    if (function == CUIS_UPDATE_BEGIN) return begin_update(client, window);
-    if (function == CUIS_UPDATE_END) {
-        if (update_owner != client || update_window != window) return EACCDN;
-        end_update();
-        return E_OK;
-    }
     if (function == CUIS_FOCUS_QUERY) return focus_window == window ? 1 : 0;
-    if ((update_owner || (display_owner && display_owner != client)) &&
-        function != CUIS_WINDOW_REDRAW) return EAGAIN;
+    if (display_owner && display_owner != client) return EAGAIN;
     switch (function) {
     case CUIS_WINDOW_DESTROY:
         if (window->pending_regions) kfree(window->pending_regions);
@@ -1845,7 +2145,7 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         *link = window->next;
         client->window_count--;
         window_total--;
-        kfree(window);
+        window_retire(window);
         break;
     case CUIS_WINDOW_CONFIGURE:
         if (!valid_geometry(b, c, d, e) ||
@@ -1945,25 +2245,6 @@ LONG cuis_window_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
         cuis_input_unlock(flags);
         damage_windows();
         break;
-    case CUIS_FOCUS_REQUEST:
-        if (!window->visible) return EINVAL;
-        if (window != window_front) return EACCDN;
-        if (set_focus(window)) damage_windows();
-        break;
-    case CUIS_FOCUS_RELEASE:
-        flags = cuis_input_lock();
-        changed = focus_window == window && set_focus(NULL);
-        cuis_input_unlock(flags);
-        if (changed) damage_windows();
-        break;
-    case CUIS_WINDOW_REDRAW:
-        /* Polling is nonblocking and does not grant permission to draw.
-         * Later clipping/display coordination must guard actual rendering. */
-        flags = cuis_input_lock();
-        changed = window->redraw;
-        window->redraw = FALSE;
-        cuis_input_unlock(flags);
-        return changed ? 1 : 0;
     }
     return E_OK;
 }
@@ -1980,7 +2261,6 @@ LONG cuis_windows_reset(UQUAD handle)
     if (!client || client->handle != handle) { cuis_input_unlock(flags); return EACCDN; }
     if (mouse_owner == client) end_mouse();
     if (keyboard_owner == client) end_keyboard();
-    if (update_owner == client) end_update();
     cuis_input_unlock(flags);
     result = cuis_display_lock(handle,1,1);
     if (result != E_OK) return result;
@@ -1995,28 +2275,6 @@ LONG cuis_windows_reset(UQUAD handle)
     display_depth = 0; display_owner = NULL;
     surface_focus(); cuis_pointer_sync();
     cuis_input_unlock(flags); return E_OK;
-}
-
-/* Indexed copyout has no mutable cursor: failed copyout can be retried without
- * dropping a region. Validate every destination before writing any output. */
-LONG cuis_clip_service(UQUAD handle, UQUAD index, UQUAD x, UQUAD y,
-                       UQUAD width, UQUAD height)
-{
-    CUIS_RECT *rect;
-    if (handle > 0x7fffffffULL || index > 0xffffffffULL) return EINVAL;
-    if (!update_owner || update_owner->owner != run ||
-        update_window->handle != handle) return EACCDN;
-    if (index >= update_count) return 0;
-    if (!kproc_validate_user_write(x, sizeof(LONG)) ||
-        !kproc_validate_user_write(y, sizeof(LONG)) ||
-        !kproc_validate_user_write(width, sizeof(LONG)) ||
-        !kproc_validate_user_write(height, sizeof(LONG))) return EIMBA;
-    rect = &update_clips[(ULONG)index];
-    if (!kproc_copy_to_user(x, &rect->x, sizeof(LONG)) ||
-        !kproc_copy_to_user(y, &rect->y, sizeof(LONG)) ||
-        !kproc_copy_to_user(width, &rect->width, sizeof(LONG)) ||
-        !kproc_copy_to_user(height, &rect->height, sizeof(LONG))) return EIMBA;
-    return 1;
 }
 
 /* User-output access can tear down the process/window. Resolve identities
@@ -2130,7 +2388,6 @@ LONG cuis_vdi_policy(void)
 {
     if (console_owner) return EAGAIN;
     if (display_owner) return display_owner->owner == run ? 1 : EAGAIN;
-    if (update_owner) return update_owner->owner == run ? 1 : EAGAIN;
     return *find_owner(run) ? EACCDN : 0;
 }
 BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
@@ -2145,15 +2402,7 @@ BOOL cuis_vdi_clip(ULONG index, CUIS_RECT *rect)
         }
         return TRUE;
     }
-    if (!update_owner || update_owner->owner != run || index >= update_count)
-        return FALSE;
-    *rect = update_clips[index];
-    if (surface_owner && rect->y < surface_owner->surface_height) {
-        LONG cut = surface_owner->surface_height-rect->y;
-        if (cut > rect->height) cut = rect->height;
-        rect->y += cut; rect->height -= cut;
-    }
-    return TRUE;
+    return FALSE;
 }
 
 typedef struct {
@@ -2169,53 +2418,61 @@ static BOOL wait_ready(void *argument)
     CUIS_WAIT *wait = argument;
     CUIS_WINDOW *window = wait->window;
     ULONG events = wait->events;
+    if (wait->client->retired || (window && window->retired)) return TRUE;
     if (window && (!window->visible || (events == CUIS_EVENT_KEY && focus_window != window))) return TRUE;
     if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
         ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
         ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
-        ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))) ||
-        ((events & CUIS_EVENT_MESSAGE) && wait->client->message_count)) return TRUE;
+        ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count)))) return TRUE;
     return wait->timeout >= 0 && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration;
+}
+
+/* One retained wait scope. No input queue is consumed here: READY only
+ * advertises data for the separate read operation. Cancel wins before ready.
+ * The predicate is unpublished by ksched before these references are put. */
+static LONG finish_event_wait(CUIS_WAIT *wait, UQUAD flags, LONG result, BOOL cancel)
+{
+    if (wait->window) window_put(wait->window);
+    client_put(wait->client);
+    if (cancel) return cancel_after_unlock(flags);
+    cuis_input_unlock(flags);
+    return result;
 }
 
 static LONG wait_events(CUIS_CLIENT *client, CUIS_WINDOW *window, ULONG events, UQUAD argument)
 {
     LONG timeout;
-    ULONG start, duration = 0;
+    ULONG duration = 0;
     UQUAD flags;
     CUIS_WAIT wait;
     timeout = (LONG)argument;
     if (argument != (UQUAD)(QUAD)timeout || timeout < -1) return EINVAL;
-    /* Include the current partial tick so a positive timeout cannot expire
-     * early just because the next 200 Hz tick was already imminent. */
+    /* Include the current partial tick: positive waits must not expire early. */
     if (timeout > 0) duration = (ULONG)timeout / 5 + ((ULONG)timeout % 5 != 0) + 1;
     flags = cuis_input_lock();
-    start = cuis_input_ticks();
+    if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
+    if (window && (window->client != client || window->retired || window->references == 0xffffffffUL)) {
+        client_put(client); cuis_input_unlock(flags); return EACCDN;
+    }
+    if (window) window->references++;
     wait.client = client; wait.window = window; wait.events = events;
-    wait.start = start; wait.duration = duration; wait.timeout = timeout;
+    wait.start = cuis_input_ticks(); wait.duration = duration; wait.timeout = timeout;
     for (;;) {
-        if (window && (!window->visible || (events == CUIS_EVENT_KEY && focus_window != window))) {
-            cuis_input_unlock(flags); return EACCDN;
-        }
+        if (ksched_cancellation_pending()) return finish_event_wait(&wait,flags,EACCDN,TRUE);
+        if (client->retired || (window && (window->retired || !window->visible ||
+            (events == CUIS_EVENT_KEY && focus_window != window))))
+            return finish_event_wait(&wait,flags,EACCDN,FALSE);
         if (((events & CUIS_EVENT_KEY) && focus_window == window && window->key_count) ||
             ((events & CUIS_EVENT_POINTER) && (window->pointer_count || window->pointer_overflow)) ||
             ((events & CUIS_EVENT_REDRAW) && window->redraw) ||
-            ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))) ||
-            ((events & CUIS_EVENT_MESSAGE) && client->message_count)) {
-            cuis_input_unlock(flags); return 1;
-        }
-        if (timeout >= 0 && (ULONG)(cuis_input_ticks() - start) >= duration) {
-            cuis_input_unlock(flags);
-            return 0;
-        }
-        if (update_owner && update_owner->owner == run) {
-            cuis_input_unlock(flags);
-            return EACCDN;
-        }
+            ((events & CUIS_EVENT_CONTROL) && (window->control_overflow || (!mouse_owner && window->control_count))))
+            return finish_event_wait(&wait,flags,1,FALSE);
+        if (timeout >= 0 && (ULONG)(cuis_input_ticks() - wait.start) >= duration)
+            return finish_event_wait(&wait,flags,0,FALSE);
 #if CONF_WITH_X86_64_MEMTEST
         if (timeout == -1) cuis_input_test_wait(events);
 #endif
-        if (!ksched_block(wait_ready, &wait)) cuis_input_idle();
+        if (cancelable_wait(wait_ready, &wait)) return finish_event_wait(&wait,flags,EACCDN,TRUE);
     }
 }
 
@@ -2229,27 +2486,52 @@ LONG cuis_delay_service(UQUAD handle, UQUAD milliseconds)
     if (handle > 0x7fffffffULL || milliseconds > 0xffffffffULL) return EINVAL;
     if (!client || client->handle != handle) return EACCDN;
     if (!milliseconds) return ksched_yield();
-    if (update_owner && update_owner->owner == run) return EACCDN;
     flags = cuis_input_lock();
+    if (!client_get(client)) { cuis_input_unlock(flags); return EACCDN; }
     wait.client = client; wait.window = NULL; wait.events = 0;
     wait.start = cuis_input_ticks(); wait.timeout = 0;
     wait.duration = (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1);
-    while (!wait_ready(&wait))
-        if (!ksched_block(wait_ready, &wait)) cuis_input_idle();
-    cuis_input_unlock(flags);
-    return E_OK;
+    for (;;) {
+        if (ksched_cancellation_pending()) return finish_event_wait(&wait,flags,EACCDN,TRUE);
+        if (client->retired) return finish_event_wait(&wait,flags,EACCDN,FALSE);
+        if (wait_ready(&wait)) break;
+        if (cancelable_wait(wait_ready, &wait)) return finish_event_wait(&wait,flags,EACCDN,TRUE);
+    }
+    return finish_event_wait(&wait,flags,E_OK,FALSE);
 }
 
-typedef struct {
-    ULONG handle, length;
-    BOOL write;
-} CUIS_STREAM_WAIT;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+static ULONG observer_wait_leases;
+ULONG cuis_observer_test_leases(void) { return observer_wait_leases; }
+#endif
+
+#if CONF_WITH_CUIS_RECEIPT_TEST
+/* The caller still retains client. Keep the fence until all imported
+ * canonical references have actually been released outside exclusion. */
+static void receipt_observation_end(CUIS_CLIENT *client)
+{
+    UQUAD flags=cuis_input_lock();
+    client->receipt_observations--;
+    cuis_input_unlock(flags);
+}
+#endif
 
 typedef struct {
     CUIS_CLIENT *client;
     ULONG events, minimum, start, duration;
     BOOL resumed_button;
-    CUIS_INPUT_WAIT input;
+    UQUAD resume_policy;
+    CUIS_INPUT_WAIT *input;
+    UQUAD operation;
+    KSCHED_CLEANUP_SCOPE cleanup;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    KPROC *owner;
+    PROCESS_OBSERVER *observers[16];
+    ULONG observer_count;
+#endif
+#if CONF_WITH_CUIS_RECEIPT_TEST
+    BOOL receipt_observing;
+#endif
 } CUIS_SESSION_WAIT_STATE;
 
 static BOOL client_window(CUIS_CLIENT *client, CUIS_WINDOW *window)
@@ -2267,11 +2549,13 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
     CUIS_INPUT_FILTER *filter = &client->input_filter;
     CUIS_INPUT_RECTANGLE *rect;
     CUIS_POINTER *edge;
-    ULONG i, bit;
+    ULONG i, bit, observed;
     BOOL owned, match, inside;
     LONG x, y;
     ULONG buttons, modifiers;
     if (console_owner) return;
+    if (wait == &client->active_input && (wait->events & CUIS_READY_BUTTON))
+        observe_button_history(client,wait);
     cuis_input_snapshot(&x, &y, &buttons, &modifiers);
     if (pointer_initialized) { x = pointer_x; y = pointer_y; buttons = pointer_buttons; }
     owned = !pointer_suppressed && !pointer_legacy_drag && !pointer_activation_drag && !pointer_control_drag &&
@@ -2302,16 +2586,22 @@ static void sample_input(CUIS_CLIENT *client, CUIS_INPUT_WAIT *wait, BOOL initia
          * the first matching edge so subsequent waits retain FIFO history.
          * These edges were already routed to this owner by trusted input;
          * current focus only governs live predicates, not queued history. */
-        while (client->edge_count && !(wait->ready & CUIS_READY_BUTTON)) {
-            edge = &client->button_edges[client->edge_head];
+        wait->history_policy = client->button_policy;
+        observed = 0;
+        while (observed < client->edge_count && !(wait->ready & CUIS_READY_BUTTON)) {
+            ULONG index = (client->edge_head+observed++)%CUIS_POINTER_CAPACITY;
+            CUIS_BUTTON_EDGE *record = button_history_find(client,client->edge_sequence[index]);
+            if (!record) { wait->history_read = BUTTON_HISTORY_GAP; return; }
+            edge = &record->event;
+            if (!wait->history_first) wait->history_first = record->sequence;
+            wait->history_through = record->sequence;
+            wait->history_observed = TRUE;
             if (((edge->buttons & filter->mask) == (filter->state & filter->mask)) != filter->invert) {
                 wait->ready |= CUIS_READY_BUTTON;
                 wait->count = filter->clicks ? 1 : 0;
                 wait->x = edge->x; wait->y = edge->y;
                 wait->buttons = edge->buttons; wait->modifiers = edge->state;
             }
-            client->edge_head = (client->edge_head + 1) % CUIS_POINTER_CAPACITY;
-            client->edge_count--;
         }
     }
     expire_button_wait(wait);
@@ -2364,9 +2654,10 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     CUIS_WINDOW *control;
     LONG result = 0;
     CUIS_WINDOW *window = focus_window;
+    if (wait->client->retired) return 0;
     if (wait->events & CUIS_READY_INPUT) {
-        sample_input(wait->client, &wait->input, FALSE);
-        result |= wait->input.ready;
+        sample_input(wait->client, wait->input, FALSE);
+        result |= wait->input->ready;
         if ((wait->events & CUIS_READY_KEY) &&
             (keyboard_owner ? (keyboard_owner == wait->client && wait->client->key_count) :
              (window ? client_window(wait->client, window) && window->key_count :
@@ -2377,20 +2668,27 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
         result |= CUIS_READY_STREAM;
     if ((wait->events & CUIS_READY_NOTICE) && notices_ready(wait->client)) result |= CUIS_READY_NOTICE;
     if ((wait->events & CUIS_READY_CHILD) && wait->client->child_count) result |= CUIS_READY_CHILD;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    if (wait->events & CUIS_READY_CHILD) {
+        ULONG i;
+        for (i=0;i<wait->observer_count;i++)
+            if (process_observer_ready(wait->observers[i])) { result |= CUIS_READY_CHILD; break; }
+    }
+#endif
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
     if ((wait->events & CUIS_READY_COHORT) && cohort_ready(wait->client) &&
-        (!wait->input.tracking || result)) result |= CUIS_READY_COHORT;
+        (!wait->input->tracking || result)) result |= CUIS_READY_COHORT;
     if ((wait->events & CUIS_READY_DISPLAY) && !console_owner &&
         (display_owner == wait->client || display_available(wait->client)) &&
-        (!wait->input.tracking || result)) result |= CUIS_READY_DISPLAY;
+        (!wait->input->tracking || result)) result |= CUIS_READY_DISPLAY;
     /* Internal work must not end an unfinished multi-click wait. Keep its
      * count, snapshot and original deadline resident until a user event is
      * ready; report the pending surface alongside that event. */
     if ((wait->events & CUIS_READY_SURFACE) && !console_owner && !mouse_owner && surface_owner == wait->client &&
-        wait->client->surface_events && (!wait->input.tracking || result))
+        wait->client->surface_events && (!wait->input->tracking || result))
         result |= CUIS_READY_SURFACE;
-    if ((wait->events & CUIS_READY_CONTROL) && !console_owner && (!wait->input.tracking || result)) {
+    if ((wait->events & CUIS_READY_CONTROL) && !console_owner && (!wait->input->tracking || result)) {
         for (control = wait->client->windows; control; control = control->next)
             if (control->control_overflow || (!mouse_owner && control->control_count)) { result |= CUIS_READY_CONTROL; break; }
     }
@@ -2400,69 +2698,256 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
      * ready. The caller's independent TIMER deadline remains in force. */
     if ((wait->events & CUIS_READY_SERVICE) &&
         (ULONG)(cuis_input_ticks()-wait->start) >= 2 &&
-        (!wait->input.tracking || result)) result |= CUIS_READY_SERVICE;
+        (!wait->input->tracking || result)) result |= CUIS_READY_SERVICE;
     return result;
 }
 
-static BOOL session_wait_ready(void *argument) { return session_ready(argument) != 0; }
+static BOOL resume_adoption_invalid(CUIS_SESSION_WAIT_STATE *wait)
+{
+    CUIS_CLIENT *client = wait->client;
+    return ((wait->events & CUIS_READY_BUTTON) && client->button_policy != wait->resume_policy) ||
+        (wait->resumed_button &&
+        (client->resume_operation != wait->operation || !client->button_resume_active ||
+         client->history_exhausted));
+}
+static LONG session_input_error(CUIS_SESSION_WAIT_STATE *wait)
+{
+    CUIS_CLIENT *client = wait->client;
+    if (resume_adoption_invalid(wait)) return EAGAIN;
+    if (!(wait->events & CUIS_READY_BUTTON)) return E_OK;
+    if (client->history_exhausted || wait->input->history_read == BUTTON_HISTORY_GAP ||
+        wait->input->history_read == BUTTON_HISTORY_EXHAUSTED ||
+        (wait->input->history_first && !button_history_find(client,wait->input->history_first)))
+        return ERANGE;
+    return E_OK;
+}
+static BOOL session_wait_ready(void *argument)
+{
+    CUIS_SESSION_WAIT_STATE *wait = argument;
+    return wait->client->retired || session_input_error(wait) || session_ready(wait) != 0;
+}
+static BOOL session_poll_ready(void *argument) { (void)argument; return TRUE; }
+
+/* Only the matching admitted operation may unpublish the sampler. Its client
+ * reference owns the sampler storage even after SESSION_END drops the registry.
+ * The scheduler has removed its predicate before calling this finalizer. */
+static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG result, BOOL cancel)
+{
+    CUIS_CLIENT *client = wait->client;
+    if (client && wait->operation && client->wait_operation == wait->operation) {
+        if (client->input_wait == wait->input) client->input_wait = NULL;
+        if (client->resume_operation == wait->operation) client->resume_operation = 0;
+        client->wait_operation = 0;
+    }
+    /* No scheduler predicate may retain wait here. The registry/operation has
+     * been unpublished before final references can run reentrant destruction. */
+    cuis_input_unlock(flags);
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    while (wait->observer_count) {
+        observer_wait_leases--;
+        process_observer_release(&wait->observers[--wait->observer_count]);
+    }
+#endif
+#if CONF_WITH_CUIS_RECEIPT_TEST
+    if (wait->receipt_observing) receipt_observation_end(client);
+#endif
+    if (client) client_put(client);
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    if (wait->owner) kproc_release(wait->owner);
+#endif
+    ksched_cleanup_end(&wait->cleanup);
+#if CONF_WITH_PTERMGRP
+    if (cancel) ksched_cancel_point();
+#else
+    (void)cancel;
+#endif
+    return result;
+}
+
+/* The sole consumer boundary for the existing normal/resume/live views.
+ * IRQ sampling only observes; cache prefixes and checkpoint ownership change
+ * here, after validation, without allocation, callback or yield. */
+static LONG commit_session_input(CUIS_SESSION_WAIT_STATE *wait, LONG ready)
+{
+    CUIS_CLIENT *client = wait->client;
+    CUIS_INPUT_WAIT *input = wait->input;
+    if (client->retired || client->wait_operation != wait->operation) return EACCDN;
+    { LONG error = session_input_error(wait); if (error) return error; }
+
+    if (!wait->resumed_button && input->live_through &&
+        wait->resume_policy == client->button_policy) {
+        input->history_policy = wait->resume_policy;
+        if (!input->history_observed || input->history_through < input->live_through)
+            input->history_through = input->live_through;
+        input->history_observed = TRUE;
+    }
+    commit_initial_history(client,input);
+    if (wait->resumed_button) {
+        while (client->button_resume_count &&
+               client->resume_sequence[client->button_resume_head] &&
+               client->resume_sequence[client->button_resume_head] <= input->live_through) {
+            client->button_resume_head = (client->button_resume_head+1)%CUIS_POINTER_CAPACITY;
+            client->button_resume_count--;
+        }
+    }
+    if (!(ready & CUIS_READY_BUTTON)) {
+        if (((ready & CUIS_READY_CHILD) || wait->resumed_button) && input->tracking) {
+            client->button_resume = *input;
+            client->button_resume.history_first = 0; /* Committed checkpoint is self-contained. */
+            client->button_resume.events = CUIS_READY_BUTTON;
+            client->button_resume.ready = 0;
+            client->button_resume_active = TRUE;
+            /* New checkpoint has no pre-existing resume view. An adopted
+             * checkpoint retains any suffix newer than the observed prefix. */
+            if (!wait->resumed_button) client->button_resume_head = client->button_resume_count = 0;
+        } else if (wait->resumed_button) abandon_button_resume(client);
+        input->tracking = FALSE;
+        sample_input(client,input,FALSE);
+    } else if (wait->resumed_button) {
+        /* Unconsumed suffix is returned in FIFO order, never thrown away
+         * merely because the adopted predicate completed. */
+        abandon_button_resume(client);
+    }
+    return E_OK;
+}
 
 /* Stream/notice checks do not consume data. Input completion captures a
  * key and predicate snapshot; one timer start survives all wakeups. No GEM
  * event masks or header formats cross this native scalar interface. */
-LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds)
+LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD milliseconds,
+                       UQUAD observer_address, UQUAD observer_count)
 {
-    CUIS_CLIENT *client = *find_owner(run);
-    CUIS_SESSION_WAIT_STATE wait;
+    CUIS_CLIENT *client;
+    CUIS_SESSION_WAIT_STATE wait={0};
     UQUAD flags;
     LONG ready;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    ULONG handles[16], i, j;
+#endif
     if (handle > 0x7fffffffULL || !events || events > CUIS_READY_ALL ||
         ((events & CUIS_READY_STREAM) && (!minimum || minimum > CUIS_STREAM_MAX)) ||
         ((events & CUIS_READY_TIMER) && milliseconds > 0xffffffffULL)) return EINVAL;
-    if (!client || handle != client->handle) return EACCDN;
-    if (events & CUIS_READY_INPUT) refresh_pointer_bounds();
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    if (observer_count>16 || (!observer_count && observer_address) ||
+        (observer_count && !(events & CUIS_READY_CHILD))) return EINVAL;
+    if (observer_count && (!observer_address || observer_address>0xffffffffULL ||
+        observer_count*4 > 0x100000000ULL-observer_address)) return EIMBA;
+    if (observer_count && (observer_address & 3)) return EINVAL;
+#else
+    if (observer_address || observer_count) return EINVFN;
+#endif
+    ksched_cleanup_begin(&wait.cleanup);
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    if (observer_count) wait.owner=kproc_retain(run);
+#endif
     flags = cuis_input_lock();
-    memset(&wait.input, 0, sizeof(wait.input));
-    wait.input.events = (ULONG)events;
+    client = observer_count ? owned_client(handle):*find_owner(run);
+    if (client && client->handle!=handle) client=NULL;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    if (observer_count && (!wait.owner || !client || client->process!=wait.owner))
+        return finish_session_wait(&wait,flags,EACCDN,FALSE);
+#endif
+    if (!client || !client_get(client)) return finish_session_wait(&wait,flags,EACCDN,FALSE);
+    wait.client = client;
+    wait.events=(ULONG)events; wait.minimum=(ULONG)minimum;
+    wait.start=cuis_input_ticks();
+    wait.duration=(events & CUIS_READY_TIMER) && milliseconds ?
+        (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1) : 0;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+    if (observer_count) {
+#if CONF_WITH_CUIS_RECEIPT_TEST
+        if (client->receipt_observations==0xffffffffUL)
+            return finish_session_wait(&wait,flags,EAGAIN,FALSE);
+        client->receipt_observations++;
+        wait.receipt_observing=TRUE;
+#endif
+        cuis_input_unlock(flags);
+        ready=kproc_copy_from_user_checked(handles,observer_address,(ULONG)observer_count*4);
+        /* Validate the complete copied array before taking the first lease. */
+        if (!ready) for (i=0;i<(ULONG)observer_count;i++) {
+            if (!handles[i]) { ready=EINVAL; break; }
+            for (j=0;j<i;j++) if (handles[j]==handles[i]) { ready=EINVAL; break; }
+            if (ready) break;
+        }
+        if (!ready) for (i=0;i<(ULONG)observer_count;i++) {
+            ready=proc_exec_retain_observer(wait.owner,handles[i],FALSE,&wait.observers[i]);
+            if (ready) break;
+            wait.observer_count++; observer_wait_leases++;
+        }
+        flags=cuis_input_lock();
+        if (ready) return finish_session_wait(&wait,flags,ready,FALSE);
+    }
+#endif
+    /* Fallible preflight can yield. Neither PD reuse nor a new endpoint may
+     * inherit this retained endpoint/PROCESS identity or tentative wait. */
+    if (client->retired || owned_client(handle)!=client)
+        return finish_session_wait(&wait,flags,EACCDN,FALSE);
+    if (ksched_cancellation_pending()) return finish_session_wait(&wait,flags,EACCDN,TRUE);
+    if (client->wait_operation || client->resume_operation)
+        return finish_session_wait(&wait,flags,EACCDN,FALSE);
+    if ((events & CUIS_READY_BUTTON) && client->history_exhausted)
+        return finish_session_wait(&wait,flags,ERANGE,FALSE);
+    if (client->wait_sequence == ~0ULL) return finish_session_wait(&wait,flags,ERANGE,FALSE);
+    wait.operation = client->wait_operation = ++client->wait_sequence;
+    wait.input = &client->active_input;
+    if (events & CUIS_READY_INPUT) refresh_pointer_bounds();
+    memset(wait.input, 0, sizeof(*wait.input));
+    wait.input->events = (ULONG)events;
+    if (events & CUIS_READY_BUTTON) {
+        button_history_begin(client,&wait.input->history_cursor);
+        wait.input->history_read = BUTTON_HISTORY_EMPTY;
+    }
     wait.resumed_button = FALSE;
+    wait.resume_policy = client->button_policy;
     if ((events & CUIS_READY_BUTTON) && client->button_resume_active) {
-        wait.input = client->button_resume;
-        wait.input.events = (ULONG)events;
-        client->button_resume_active = FALSE;
-        client->button_resume_head = client->button_resume_count = 0;
+        *wait.input = client->button_resume;
+        wait.input->events = (ULONG)events;
+        wait.input->history_observed = FALSE;
+        wait.input->history_first = client->button_resume_count ?
+            client->resume_sequence[client->button_resume_head] : 0;
+        button_history_begin(client,&wait.input->history_cursor);
+        if (wait.input->history_read != BUTTON_HISTORY_GAP)
+            wait.input->history_read = BUTTON_HISTORY_EMPTY;
+        client->resume_operation = wait.operation;
         wait.resumed_button = TRUE;
-        sample_input(client,&wait.input,FALSE);
+        sample_input(client,wait.input,FALSE);
     } else if (events & CUIS_READY_INPUT) {
-        sample_input(client,&wait.input,TRUE);
+        sample_input(client,wait.input,TRUE);
     }
     if (events & CUIS_READY_INPUT) {
-        client->input_wait = &wait.input;
+        client->input_wait = wait.input;
     }
-    wait.client = client; wait.events = (ULONG)events; wait.minimum = (ULONG)minimum;
-    wait.start = cuis_input_ticks();
-    wait.duration = (events & CUIS_READY_TIMER) && milliseconds ?
-        (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1) : 0;
+#if CONF_WITH_CUIS_OBSERVER_TEST && CONF_WITH_X86_64_MEMTEST
+    if (observer_count) {
+        extern void x86_64_memtest_observer_wait_admitted(void);
+        cuis_input_unlock(flags);
+        x86_64_memtest_observer_wait_admitted();
+        flags=cuis_input_lock();
+    }
+#endif
     if ((events & CUIS_READY_TIMER) && !milliseconds && !(session_ready(&wait) & ~CUIS_READY_TIMER)) {
         /* A zero timer poll also gives cooperative peers one opportunity,
          * unless a requested source was already ready at the initial check. */
-        cuis_input_unlock(flags);
-        ksched_yield();
-        flags = cuis_input_lock();
+        KSCHED_WAIT_RESULT result = ksched_wait_cancelable(session_poll_ready,NULL);
+        if (result == KSCHED_WAIT_CANCELLED) return finish_session_wait(&wait,flags,EACCDN,TRUE);
+        if (result == KSCHED_WAIT_UNMANAGED) {
+            cuis_input_unlock(flags);
+            ksched_yield();
+            flags = cuis_input_lock();
+        }
     }
     for (;;) {
+        /* Cancellation wins until the non-yielding commit. Cleanup unpublishes
+         * both operation identities before putting storage/restoring IRQs. */
+        if (ksched_cancellation_pending()) return finish_session_wait(&wait,flags,EACCDN,TRUE);
+        if (client->retired) return finish_session_wait(&wait,flags,EACCDN,FALSE);
+        { LONG error = session_input_error(&wait); if (error) return finish_session_wait(&wait,flags,error,FALSE); }
         ready = session_ready(&wait);
         if (ready) {
+            if (client->wait_operation != wait.operation) return finish_session_wait(&wait,flags,EACCDN,FALSE);
             if (events & CUIS_READY_INPUT) {
-                if (!(ready & CUIS_READY_BUTTON)) {
-                    if (((ready & CUIS_READY_CHILD) || wait.resumed_button) && wait.input.tracking) {
-                        client->button_resume = wait.input;
-                        client->button_resume.events = CUIS_READY_BUTTON;
-                        client->button_resume.ready = 0;
-                        client->button_resume_active = TRUE;
-                        client->button_resume_head = client->button_resume_count = 0;
-                    }
-                    wait.input.tracking = FALSE;
-                    sample_input(client, &wait.input, FALSE);
-                }
+                LONG error = commit_session_input(&wait,ready);
+                if (error) return finish_session_wait(&wait,flags,error,FALSE);
                 client->input_result[0] = 0;
                 if (ready & CUIS_READY_KEY) {
                     if (keyboard_owner == client || (!focus_window &&
@@ -2478,22 +2963,17 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
                 }
                 /* A per-call cap must not reduce a completed click count.
                  * Queued edges belong to newer input, not this snapshot. */
-                if ((ready & CUIS_READY_BUTTON) && wait.input.buttons == pointer_buttons &&
-                    !client->edge_count && wait.input.count > client->recent_count) {
-                    client->recent_buttons = pointer_buttons; client->recent_count = wait.input.count;
+                if ((ready & CUIS_READY_BUTTON) && wait.input->buttons == pointer_buttons &&
+                    !client->edge_count && wait.input->count > client->recent_count) {
+                    client->recent_buttons = pointer_buttons; client->recent_count = wait.input->count;
                 }
-                client->input_result[1] = ready & CUIS_READY_BUTTON ? wait.input.count : 0;
-                client->input_result[2] = wait.input.x; client->input_result[3] = wait.input.y;
-                client->input_result[4] = (wait.input.buttons & 0xffff) | ((wait.input.modifiers & 0xffff) << 16);
+                client->input_result[1] = ready & CUIS_READY_BUTTON ? wait.input->count : 0;
+                client->input_result[2] = wait.input->x; client->input_result[3] = wait.input->y;
+                client->input_result[4] = (wait.input->buttons & 0xffff) | ((wait.input->modifiers & 0xffff) << 16);
             }
-            client->input_wait = NULL;
-            cuis_input_unlock(flags); return ready;
+            return finish_session_wait(&wait,flags,ready,FALSE);
         }
-        if (update_owner == client) {
-            client->input_wait = NULL;
-            cuis_input_unlock(flags); return EACCDN;
-        }
-        if (!ksched_block(session_wait_ready, &wait)) cuis_input_idle();
+        if (cancelable_wait(session_wait_ready,&wait)) return finish_session_wait(&wait,flags,EACCDN,TRUE);
     }
 }
 
@@ -2520,15 +3000,25 @@ LONG cuis_input_config(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c,
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
-    if (function == CUIS_INPUT_RECT) client->input_filter.rect[a & 1] = rect;
-    else if (function == CUIS_INPUT_BUTTON) {
+    if (function == CUIS_INPUT_RECT) {
+        CUIS_INPUT_RECTANGLE *old = &client->input_filter.rect[a & 1];
+        if (old->x != rect.x || old->y != rect.y || old->width != rect.width ||
+            old->height != rect.height || old->leave != rect.leave) button_history_policy(client);
+        client->input_filter.rect[a & 1] = rect;
+    } else if (function == CUIS_INPUT_BUTTON) {
         if (client->input_filter.mask != (ULONG)a || client->input_filter.state != (ULONG)b ||
-            client->input_filter.clicks != (ULONG)c || client->input_filter.invert != (BOOL)d)
+            client->input_filter.clicks != (ULONG)c || client->input_filter.invert != (BOOL)d) {
+            button_history_policy(client);
             abandon_button_resume(client);
+        }
         client->input_filter.mask = (ULONG)a; client->input_filter.state = (ULONG)b;
         client->input_filter.clicks = (ULONG)c; client->input_filter.invert = (BOOL)d;
     } else if (function == CUIS_INPUT_INTERVAL) {
-        if (b) input_interval = (ULONG)a;
+        if (b && input_interval != (ULONG)a) {
+            CUIS_CLIENT *peer;
+            for (peer = clients; peer; peer = peer->next) button_history_policy(peer);
+            input_interval = (ULONG)a;
+        }
         i = input_interval;
         cuis_input_unlock(flags); return (LONG)i;
     } else {
@@ -2568,100 +3058,161 @@ LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD mod
     return copied ? E_OK : EIMBA;
 }
 
+static CUIS_STREAM_OPERATION **stream_slot(CUIS_STREAM_OPERATION *operation)
+{
+    return operation->kind == CUIS_STREAM_WRITE ?
+        &operation->source->stream_write : &operation->source->stream_read;
+}
+static BOOL stream_owned(CUIS_STREAM_OPERATION *operation)
+{
+    return operation->state != STREAM_RETIRED && operation->state != STREAM_COMMITTED &&
+        operation->token && operation->token <= operation->source->stream_sequence &&
+        !operation->source->retired && !operation->receiver->retired &&
+        operation->source->handle == operation->session &&
+        operation->receiver->handle == operation->destination &&
+        *stream_slot(operation) == operation;
+}
 static BOOL stream_ready(void *argument)
 {
-    CUIS_STREAM_WAIT *wait = argument;
-    CUIS_CLIENT *peer = find_handle(wait->handle);
-    /* A waiting writer retains only the non-reused handle, never a pointer
-     * into a receiver which can exit while the writer is suspended. */
-    return !peer || (wait->write ?
-        CUIS_STREAM_BYTES - peer->stream_bytes >= wait->length :
-        peer->stream_bytes >= wait->length);
+    CUIS_STREAM_OPERATION *operation = argument;
+    if (!stream_owned(operation)) return TRUE;
+    return operation->kind == CUIS_STREAM_WRITE ?
+        CUIS_STREAM_BYTES-operation->receiver->stream_bytes >= operation->length :
+        operation->source->stream_bytes >= operation->length;
+}
+/* Consumes the owning handle. Teardown can retire, but never free this scope. */
+static LONG stream_finish(CUIS_STREAM_OPERATION **handle, UQUAD flags, LONG result)
+{
+    CUIS_STREAM_OPERATION *operation = *handle;
+    *handle = NULL;
+    if (operation) {
+        if (*stream_slot(operation) == operation) *stream_slot(operation) = NULL;
+        if (operation->packet) kfree(operation->packet);
+        if (operation->kind == CUIS_STREAM_WRITE) client_put(operation->receiver);
+        client_put(operation->source);
+        kfree(operation);
+    }
+    cuis_input_unlock(flags);
+    return result;
 }
 
-/* Exact byte-stream transfers. A parallel sender-ID ring preserves trusted
- * metadata for partial reads without imposing packet boundaries on payloads. */
+/* Exact transfers. Faulting preflight precedes resource admission; subsequent
+ * copies are resident-only, so they cannot xterm an owning continuation. */
 LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD length,
                          UQUAD block, UQUAD sender)
 {
-    CUIS_CLIENT *client = *find_owner(run), *peer;
-    CUIS_PACKET *packet;
-    CUIS_STREAM_WAIT wait;
+    CUIS_CLIENT *client, *peer;
+    CUIS_STREAM_OPERATION *operation;
+    CUIS_STREAM_OPERATION **slot;
     UQUAD flags;
-    ULONG bytes, at, i;
+    ULONG session, bytes, at, i;
     UWORD *senders;
-    LONG result, pid;
+    LONG pid;
+    BOOL write, copied;
+    UBYTE *storage;
     if (function != CUIS_STREAM_READ && function != CUIS_STREAM_WRITE &&
         function != CUIS_STREAM_PEEK && function != CUIS_STREAM_PENDING) return EINVFN;
     if (handle > 0x7fffffffULL || length > CUIS_STREAM_MAX || block > 1) return EINVAL;
-    if (!client) return EACCDN;
-    if (function != CUIS_STREAM_WRITE && handle != client->handle) return EACCDN;
+    if (function==CUIS_STREAM_WRITE && sender>0x80000000ULL) return EINVAL;
+    flags=cuis_input_lock();
+    client=function==CUIS_STREAM_WRITE ? (sender ? owned_client(sender-1) : *find_owner(run)) : owned_client(handle);
+    if (!client || client->retired) { cuis_input_unlock(flags); return EACCDN; }
+    if (client->explicit_client && block) { cuis_input_unlock(flags); return EINVFN; }
+
     if (function == CUIS_STREAM_PENDING) {
-        if (buffer || length || block || sender) return EINVAL;
-        return (LONG)client->stream_bytes;
+        LONG result = buffer || length || block || sender ? EINVAL : (LONG)client->stream_bytes;
+        cuis_input_unlock(flags); return result;
     }
     peer = find_handle(handle);
-    if (!peer) return EACCDN;
-    if (!length) return 0;
-    wait.handle = (ULONG)handle; wait.length = (ULONG)length;
-    wait.write = function == CUIS_STREAM_WRITE;
-    if (wait.write) {
-        if (client->pending_write) return EACCDN;
-        packet = kalloc(sizeof(*packet) + (ULONG)length - 1);
-        if (!packet) return ENSMEM;
-        packet->sender_pid = client->pid;
-        /* Teardown also owns the snapshot if backing its input terminates
-         * the writer, or a future cancellation abandons this continuation. */
-        client->pending_write = packet;
-        if (!kproc_copy_from_user(packet->data, buffer, (ULONG)length)) {
-            client->pending_write = NULL; kfree(packet); return EIMBA;
-        }
-    }
-    if (wait.write) {
-        peer = find_handle(handle);
-        if (peer && !peer->stream_data)
-            peer->stream_data = kalloc(CUIS_STREAM_BYTES * (1 + sizeof(UWORD)));
-        if (!peer || !peer->stream_data) {
-            packet = client->pending_write; client->pending_write = NULL;
-            kfree(packet); return peer ? ENSMEM : EACCDN;
-        }
-    }
+    if (!peer || peer->retired) { cuis_input_unlock(flags); return EACCDN; }
+    if (!length) { cuis_input_unlock(flags); return 0; }
+    write = function == CUIS_STREAM_WRITE;
+    slot = write ? &client->stream_write : &client->stream_read;
+    if (*slot) { cuis_input_unlock(flags); return EACCDN; }
+    if (!write && !block && client->stream_bytes < length) { cuis_input_unlock(flags); return EAGAIN; }
+    session = client->handle; /* No borrowed pointer survives faulting preflight. */
+    cuis_input_unlock(flags);
+    if (write ? !kproc_validate_user_range(buffer,(ULONG)length) :
+        (!kproc_validate_user_write(buffer,(ULONG)length) ||
+         (sender && !kproc_validate_user_write(sender,sizeof(LONG))))) return EIMBA;
     flags = cuis_input_lock();
-    for (;;) {
-        peer = find_handle(handle);
-        if (!peer) { result = EACCDN; break; }
-        if (stream_ready(&wait)) {
-            if (wait.write) {
-                packet = client->pending_write;
-                at = (peer->stream_head + peer->stream_bytes) % CUIS_STREAM_BYTES;
-                bytes = CUIS_STREAM_BYTES - at;
-                if (bytes > length) bytes = (ULONG)length;
-                memcpy(peer->stream_data + at, packet->data, bytes);
-                if (bytes < length) memcpy(peer->stream_data, packet->data + bytes, (ULONG)length - bytes);
-                senders = (UWORD *)(peer->stream_data + CUIS_STREAM_BYTES);
-                for (i = 0; i < length; i++) senders[(at + i) % CUIS_STREAM_BYTES] = (UWORD)packet->sender_pid;
-                client->pending_write = NULL;
-                peer->stream_bytes += (ULONG)length;
-                cuis_input_unlock(flags);
-                kfree(packet);
-                return (LONG)length;
-            }
-            /* Back the whole output before the non-yielding copy/commit.
-             * Failed copyout leaves all bytes and sender metadata unread. */
+    client = owned_client(session); peer = find_handle(handle);
+    if (!client || client->retired || client->handle != session || !peer || peer->retired) { cuis_input_unlock(flags); return EACCDN; }
+    slot = write ? &client->stream_write : &client->stream_read;
+    if (*slot) { cuis_input_unlock(flags); return EACCDN; }
+    if (client->stream_sequence == ~0ULL) { cuis_input_unlock(flags); return ERANGE; }
+    operation = kalloc(sizeof(*operation));
+    if (!operation) { cuis_input_unlock(flags); return ENSMEM; }
+    if (!client_get(client)) { kfree(operation); cuis_input_unlock(flags); return EACCDN; }
+    if (write && !client_get(peer)) {
+        client_put(client); kfree(operation); cuis_input_unlock(flags); return EACCDN;
+    }
+    operation->source = client; operation->receiver = peer;
+    operation->session = session; operation->destination = (ULONG)handle;
+    operation->token = ++client->stream_sequence;
+    operation->kind = function; operation->length = (ULONG)length; operation->head = 0;
+    operation->packet = NULL; operation->state = STREAM_ADMITTED;
+    *slot = operation;
+    if (write) {
+        cuis_input_unlock(flags);
+        operation->packet = kalloc(sizeof(*operation->packet)+(ULONG)length-1);
+        flags = cuis_input_lock();
+        if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+        if (!operation->packet) return stream_finish(&operation,flags,ENSMEM);
+        operation->packet->sender_id = client->aes_id;
+        cuis_input_unlock(flags);
+        copied = kproc_copy_from_user_resident(operation->packet->data,buffer,(ULONG)length);
+        flags = cuis_input_lock();
+        if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+        if (!copied) return stream_finish(&operation,flags,EIMBA);
+        if (!peer->stream_data) {
             cuis_input_unlock(flags);
-            if (!kproc_validate_user_write(buffer, (ULONG)length) ||
-                (sender && !kproc_validate_user_write(sender, sizeof(LONG)))) return EIMBA;
+            storage = kalloc(CUIS_STREAM_BYTES*(1+sizeof(UWORD)));
             flags = cuis_input_lock();
-            if (!stream_ready(&wait)) continue;
-            senders = (UWORD *)(client->stream_data + CUIS_STREAM_BYTES);
-            pid = senders[client->stream_head];
-            bytes = CUIS_STREAM_BYTES - client->stream_head;
-            if (bytes > length) bytes = (ULONG)length;
-            if (!kproc_copy_to_user(buffer, client->stream_data + client->stream_head, bytes) ||
-                (bytes < length && !kproc_copy_to_user(buffer + bytes, client->stream_data, (ULONG)length - bytes)) ||
-                (sender && !kproc_copy_to_user(sender, &pid, sizeof(pid)))) {
-                cuis_input_unlock(flags); return EIMBA;
+            if (!stream_owned(operation)) {
+                if (storage) kfree(storage);
+                return stream_finish(&operation,flags,EACCDN);
             }
+            if (peer->stream_data) {
+                if (storage) kfree(storage); /* Another appender installed storage. */
+            } else {
+                if (!storage) return stream_finish(&operation,flags,ENSMEM);
+                peer->stream_data = storage;
+            }
+        }
+    }
+    operation->state = STREAM_PENDING;
+    for (;;) {
+        if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+        if (stream_ready(operation)) {
+            if (write) {
+                at = (peer->stream_head+peer->stream_bytes)%CUIS_STREAM_BYTES;
+                bytes = CUIS_STREAM_BYTES-at;
+                if (bytes > length) bytes = (ULONG)length;
+                memcpy(peer->stream_data+at,operation->packet->data,bytes);
+                if (bytes < length) memcpy(peer->stream_data,operation->packet->data+bytes,(ULONG)length-bytes);
+                senders = (UWORD *)(peer->stream_data+CUIS_STREAM_BYTES);
+                for (i = 0; i < length; i++) senders[(at+i)%CUIS_STREAM_BYTES] = (UWORD)operation->packet->sender_id;
+                peer->stream_bytes += (ULONG)length;
+                operation->state = STREAM_COMMITTED;
+                return stream_finish(&operation,flags,(LONG)length);
+            }
+            /* Exclusive READ/PEEK owns the selected head. Appenders cannot
+             * overwrite unread bytes; client retention owns the ring lifetime. */
+            operation->head = client->stream_head; operation->state = STREAM_COPYING;
+            senders = (UWORD *)(client->stream_data+CUIS_STREAM_BYTES);
+            pid = senders[operation->head];
+            bytes = CUIS_STREAM_BYTES-operation->head;
+            if (bytes > length) bytes = (ULONG)length;
+            cuis_input_unlock(flags);
+            copied = kproc_copy_to_user_resident(buffer,client->stream_data+operation->head,bytes) &&
+                (bytes == length || kproc_copy_to_user_resident(buffer+bytes,client->stream_data,(ULONG)length-bytes)) &&
+                (!sender || kproc_copy_to_user_resident(sender,&pid,sizeof(pid)));
+            flags = cuis_input_lock();
+            if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
+            if (!copied) return stream_finish(&operation,flags,EIMBA);
+            if (client->stream_head != operation->head || client->stream_bytes < length)
+                return stream_finish(&operation,flags,EAGAIN);
             /* Authenticate whole-range reads of opaque requests and results.
              * Prefix messages and partial overlap are ordinary bytes. A
              * result retains its producing token after cohort teardown. */
@@ -2679,67 +3230,21 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
                 client->cohort_read_offset = client->cohort_result_bytes-client->cohort_result_unread;
                 client->cohort_read_bytes = (ULONG)length; client->cohort_read_result = TRUE;
             }
-            if (function == CUIS_STREAM_PEEK) {
-                cuis_input_unlock(flags); return (LONG)length;
+            if (function != CUIS_STREAM_PEEK) {
+                client->cohort_result_unread = length >= client->cohort_result_unread ?
+                    0 : client->cohort_result_unread-(ULONG)length;
+                client->stream_head = (client->stream_head+(ULONG)length)%CUIS_STREAM_BYTES;
+                client->stream_bytes -= (ULONG)length;
+                if (client->cohort_id && client->cohort_delivered)
+                    client->cohort_unread = length >= client->cohort_unread ? 0 : client->cohort_unread-(ULONG)length;
             }
-            client->cohort_result_unread = length >= client->cohort_result_unread ?
-                0 : client->cohort_result_unread-(ULONG)length;
-            client->stream_head = (client->stream_head + (ULONG)length) % CUIS_STREAM_BYTES;
-            client->stream_bytes -= (ULONG)length;
-            if (client->cohort_id && client->cohort_delivered)
-                client->cohort_unread = length >= client->cohort_unread ? 0 : client->cohort_unread-(ULONG)length;
-            cuis_input_unlock(flags);
-            return (LONG)length;
+            operation->state = STREAM_COMMITTED;
+            return stream_finish(&operation,flags,(LONG)length);
         }
-        if (!block) { result = EAGAIN; break; }
-        if (update_owner == client) { result = EACCDN; break; }
-        if (!ksched_block(stream_ready, &wait)) cuis_input_idle();
+        if (!block) return stream_finish(&operation,flags,EAGAIN);
+        /* Ownership-only increment: no cancellation boundary in this frame. */
+        if (!ksched_block(stream_ready,operation)) cuis_input_idle();
     }
-    cuis_input_unlock(flags);
-    if (wait.write) {
-        packet = client->pending_write;
-        client->pending_write = NULL;
-        kfree(packet);
-    }
-    return result;
-}
-
-/* Flat calls; only the trusted producer can submit keyboard events. */
-LONG cuis_input_service(ULONG function, UQUAD handle, UQUAD argument)
-{
-    CUIS_CLIENT *client;
-    CUIS_WINDOW *window;
-    UQUAD flags;
-    ULONG key;
-
-    if (function != CUIS_KEY_READ && function != CUIS_KEY_WAIT) return EINVFN;
-    if (handle > 0x7fffffffULL) return EINVAL;
-    client = *find_owner(run);
-    if (!client) return EACCDN;
-    for (window = client->windows; window && window->handle != handle;
-         window = window->next) ;
-    if (!window) return EACCDN;
-    if (function == CUIS_KEY_READ) {
-        flags = cuis_input_lock();
-        if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
-        if (!window->key_count) { cuis_input_unlock(flags); return 0; }
-        cuis_input_unlock(flags);
-        /* Back lazy/COW output memory before the short queue transaction. */
-        if (!kproc_validate_user_write(argument, sizeof(key))) return EIMBA;
-        flags = cuis_input_lock();
-        if (focus_window != window) { cuis_input_unlock(flags); return EACCDN; }
-        if (!window->key_count) { cuis_input_unlock(flags); return 0; }
-        key = window->keys[window->key_head];
-        if (!kproc_copy_to_user(argument, &key, sizeof(key))) {
-            cuis_input_unlock(flags);
-            return EIMBA;
-        }
-        window->key_head = (window->key_head + 1) % CUIS_KEY_CAPACITY;
-        window->key_count--;
-        cuis_input_unlock(flags);
-        return 1;
-    }
-    return wait_events(client, window, CUIS_EVENT_KEY, argument);
 }
 
 static CUIS_WINDOW *input_window(UQUAD handle)
@@ -2754,13 +3259,13 @@ LONG cuis_event_service(UQUAD handle, UQUAD events, UQUAD timeout)
 {
     CUIS_WINDOW *window;
     if (handle > 0x7fffffffULL || !events ||
-        (events & ~(UQUAD)(CUIS_EVENT_KEY | CUIS_EVENT_POINTER | CUIS_EVENT_REDRAW | CUIS_EVENT_MESSAGE | CUIS_EVENT_CONTROL))) return EINVAL;
+        (events & ~(UQUAD)(CUIS_EVENT_KEY | CUIS_EVENT_POINTER | CUIS_EVENT_REDRAW | CUIS_EVENT_CONTROL))) return EINVAL;
     window = input_window(handle);
     if (!window) return EACCDN;
     refresh_pointer_bounds();
     return wait_events(*find_owner(run), window, (ULONG)events, timeout);
 }
-static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
+LONG cuis_control_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
 {
     CUIS_WINDOW *window;
     CUIS_POINTER event, *queue;
@@ -2770,13 +3275,13 @@ static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD but
     if (handle > 0x7fffffffULL) return EINVAL;
     window = input_window(handle);
     if (!window) return EACCDN;
-    if (control && mouse_owner && !window->control_overflow) return 0;
-    queue = control ? window->controls : window->pointer;
-    head = control ? &window->control_head : &window->pointer_head;
-    count = control ? &window->control_count : &window->pointer_count;
-    overflow = control ? &window->control_overflow : &window->pointer_overflow;
+    if (mouse_owner && !window->control_overflow) return 0;
+    queue = window->controls;
+    head = &window->control_head;
+    count = &window->control_count;
+    overflow = &window->control_overflow;
     flags = cuis_input_lock();
-    if (control && (!window->visible || window != window_front || window != focus_window)) cancel_controls(window);
+    if (!window->visible || window != window_front || window != focus_window) cancel_controls(window);
     if (*overflow) {
         *overflow = FALSE;
         cuis_input_unlock(flags); return ERANGE;
@@ -2804,15 +3309,6 @@ static LONG read_pointer(BOOL control, UQUAD handle, UQUAD x, UQUAD y, UQUAD but
     (*count)--;
     cuis_input_unlock(flags);
     return 1;
-}
-
-LONG cuis_pointer_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
-{
-    return read_pointer(FALSE,handle,x,y,buttons,changed);
-}
-LONG cuis_control_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD changed)
-{
-    return read_pointer(TRUE,handle,x,y,buttons,changed);
 }
 
 /* Generic notices are converted by libaes, then atomically appended as opaque
@@ -2875,7 +3371,7 @@ LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD 
     senders = (UWORD *)(client->stream_data + CUIS_STREAM_BYTES);
     for (i = 0; i < d; i++) {
         client->stream_data[(at + i) % CUIS_STREAM_BYTES] = data[i];
-        senders[(at + i) % CUIS_STREAM_BYTES] = (UWORD)client->pid;
+        senders[(at + i) % CUIS_STREAM_BYTES] = (UWORD)client->aes_id;
     }
     client->stream_bytes += (ULONG)d;
     window->notices &= ~(ULONG)b;
@@ -2927,7 +3423,7 @@ LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUA
         if (window) {
             for (client = clients; client && !owner; client = client->next)
                 for (scan = client->windows; scan; scan = scan->next) if (scan == window) { owner = client; break; }
-            values[0] = window->identifier; values[1] = owner ? owner->pid : 0;
+            values[0] = window->identifier; values[1] = owner ? owner->aes_id : 0;
             values[2] = window->znext ? window->znext->identifier : 0;
         }
     } else {
@@ -2935,7 +3431,7 @@ LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUA
             for (scan = client->windows; scan; scan = scan->next) if (scan->identifier == a) { owner = client; window = scan; break; }
         if (!window) { cuis_input_unlock(flags); return EACCDN; }
         if (window->visible) for (scan = window_front; scan && scan != window; scan = scan->znext) above = scan;
-        values[0] = owner->pid; values[1] = window->visible;
+        values[0] = owner->aes_id; values[1] = window->visible;
         values[2] = window->visible && above ? above->identifier : 0;
         values[3] = window->visible && window->znext ? window->znext->identifier : 0;
     }
@@ -2943,63 +3439,6 @@ LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUA
         cuis_input_unlock(flags); return EIMBA;
     }
     cuis_input_unlock(flags); return E_OK;
-}
-
-/* Opaque peer data cannot manufacture a trusted input or redraw event. */
-LONG cuis_message_service(ULONG function, UQUAD a, UQUAD b, UQUAD c,
-                          UQUAD d, UQUAD e, UQUAD f)
-{
-    CUIS_CLIENT *client, *peer;
-    CUIS_MESSAGE message;
-    UQUAD flags;
-
-    if (function < CUIS_MESSAGE_SEND || function > CUIS_MESSAGE_WAIT) return EINVFN;
-    if (a > 0x7fffffffULL) return EINVAL;
-    client = *find_owner(run);
-    if (!client) return EACCDN;
-    if (function == CUIS_MESSAGE_SEND) {
-        if (b > 0xffffffffULL || c > 0xffffffffULL ||
-            d > 0xffffffffULL || e > 0xffffffffULL) return EINVAL;
-        for (peer = clients; peer && peer->handle != a; peer = peer->next) ;
-        if (!peer) return EACCDN;
-        flags = cuis_input_lock();
-        if (peer->message_count == CUIS_MESSAGE_CAPACITY) {
-            cuis_input_unlock(flags); return EAGAIN;
-        }
-        message.sender = client->handle;
-        message.words[0] = (ULONG)b; message.words[1] = (ULONG)c;
-        message.words[2] = (ULONG)d; message.words[3] = (ULONG)e;
-        peer->messages[(peer->message_head + peer->message_count) % CUIS_MESSAGE_CAPACITY] = message;
-        peer->message_count++;
-        cuis_input_unlock(flags);
-        return E_OK;
-    }
-    if (a != client->handle) return EACCDN;
-    if (function == CUIS_MESSAGE_WAIT) return wait_events(client, NULL, CUIS_EVENT_MESSAGE, b);
-    if (function == CUIS_MESSAGE_READ) {
-        if (!client->message_count) return 0;
-        /* Back all five outputs before the short IRQ-masked copy/pop. */
-        if (!kproc_validate_user_write(b, sizeof(ULONG)) ||
-            !kproc_validate_user_write(c, sizeof(ULONG)) ||
-            !kproc_validate_user_write(d, sizeof(ULONG)) ||
-            !kproc_validate_user_write(e, sizeof(ULONG)) ||
-            !kproc_validate_user_write(f, sizeof(ULONG))) return EIMBA;
-        flags = cuis_input_lock();
-        if (!client->message_count) { cuis_input_unlock(flags); return 0; }
-        message = client->messages[client->message_head];
-        if (!kproc_copy_to_user(b, &message.sender, sizeof(ULONG)) ||
-            !kproc_copy_to_user(c, &message.words[0], sizeof(ULONG)) ||
-            !kproc_copy_to_user(d, &message.words[1], sizeof(ULONG)) ||
-            !kproc_copy_to_user(e, &message.words[2], sizeof(ULONG)) ||
-            !kproc_copy_to_user(f, &message.words[3], sizeof(ULONG))) {
-            cuis_input_unlock(flags); return EIMBA;
-        }
-        client->message_head = (client->message_head + 1) % CUIS_MESSAGE_CAPACITY;
-        client->message_count--;
-        cuis_input_unlock(flags);
-        return 1;
-    }
-    return EINVFN;
 }
 
 /* Opaque process completion notices. GEM layout is supplied by libaes. */
@@ -3132,12 +3571,11 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
     senders = (UWORD *)(client->stream_data+CUIS_STREAM_BYTES);
     for (i = 0; i < c; i++) {
         client->stream_data[(at+i) % CUIS_STREAM_BYTES] = data[i];
-        senders[(at+i) % CUIS_STREAM_BYTES] = (UWORD)client->pid;
+        senders[(at+i) % CUIS_STREAM_BYTES] = (UWORD)client->aes_id;
     }
     client->stream_bytes += (ULONG)c;
-    /* Only this explicitly observed child is reaped. If the application
-     * already collected it through MiNT, its retained notice is still valid. */
-    (void)ksched_wait(client->children[index].pid,1,0);
+    /* Publishing a GUI notice consumes only its adapter record. Public
+     * PROCESS completion belongs exclusively to the independent Pwait path. */
     child_remove(client,index);
     result = E_OK;
 child_done:
@@ -3206,8 +3644,7 @@ static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQU
         /* Own update nesting is released by the resident desktop after the
          * launch returns. Foreign drawing and all modal grabs must be idle. */
         flags = cuis_input_lock();
-        if (console_owner || console_launcher || (display_owner && display_owner != client) || mouse_owner || keyboard_owner ||
-            (update_owner && update_owner != client)) {
+        if (console_owner || console_launcher || (display_owner && display_owner != client) || mouse_owner || keyboard_owner) {
             cuis_input_unlock(flags);
             if (token) (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
             return EAGAIN;
@@ -3241,6 +3678,7 @@ static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQU
             surface_capture = background_capture = NULL;
             for (peer = clients; peer; peer = peer->next) {
                 peer->key_head = peer->key_count = 0;
+                button_history_policy(peer);
                 peer->edge_count = peer->recent_count = 0;
                 for (window = peer->windows; window; window = window->next) {
                     window->key_head = window->key_count = 0;
@@ -3302,3 +3740,7 @@ LONG cuis_process_defer_directory(UQUAD session, UQUAD path, UQUAD tail, UQUAD e
     if (!directory) return EINVAL;
     return process_defer(session,path,tail,environment,directory);
 }
+
+#if CONF_WITH_CUIS_RECEIPT_TEST
+#include "cuis_receipt_test.c"
+#endif

@@ -29,6 +29,30 @@ def run(args):
         result.check_returncode()
 
 
+class M68kLocalSymbolTests(unittest.TestCase):
+    def test_quoted_data_is_not_a_symbol_reference(self):
+        assembly = r''' .local scheduler
+ .type scheduler,@object
+scheduler:
+ .long scheduler
+ move.l scheduler.w,%d0
+ .ascii "native scheduler result: PASS\n"
+ .ascii "escaped \"scheduler\" and \\ scheduler"
+ .file "scheduler.c"
+'''
+        with tempfile.TemporaryDirectory() as work:
+            source = Path(work) / "in.s"
+            dest = Path(work) / "out.s"
+            source.write_text(assembly)
+            run([sys.executable, str(ROOT / "tools/fix-m68k-local-labels.py"),
+                 str(source), str(dest)])
+            fixed = dest.read_text()
+        self.assertIn("_scheduler:\n .long _scheduler", fixed)
+        self.assertIn("move.l _scheduler.w,%d0", fixed)
+        self.assertEqual([line for line in assembly.splitlines() if '"' in line],
+                         [line for line in fixed.splitlines() if '"' in line])
+
+
 class Symbol(C.Structure):
     _fields_ = [(n, C.c_uint32) for n in ("name", "value", "size")]
     _fields_ += [("info", C.c_ubyte), ("other", C.c_ubyte), ("shndx", C.c_uint16)]
@@ -234,7 +258,7 @@ class Metadata(unittest.TestCase):
                 run(CC + ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                           "-ffunction-sections", "-fdata-sections", "-fno-builtin",
                           "-I" + str(self.path), "-Iinclude", "-Iinclude/arch/x86_64",
-                          "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c",
+                          "-Ibdos", "-Ibios", "-Ifs", "tests/fat_reclaim/retry.c", "bdos/fsclose.c",
                           "-Wl,--gc-sections", "-o", str(binary)])
                 run([str(binary)])
                 if not pins:

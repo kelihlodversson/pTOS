@@ -9,14 +9,121 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_PRIVATE_CLONE
+    bool "Experimental independent MMU address-space clone"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING
+    default n
+    help
+      Transactional private address-space cloning and anonymous COW on the
+      validated x32, ARMv7 and m68k 68040 MMU backends. This does not enable
+      public Pfork/Pvfork or supply fork resource inheritance.
+
+config CONF_WITH_PRIVATE_CLONE_TEST
+    bool "Native private-VM clone/COW tests (test transport only)"
+    depends on CONF_WITH_PRIVATE_CLONE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Enable private Pclone size tags for native COW construction tests.
+      Children start at an explicit entry: this is not fork-return or Pfork.
+
+config CONF_WITH_PCLONE
+    bool "Experimental Pclone"
+    depends on CONF_WITH_KPROC
+    default n
+    help
+      Route Pclone through its architecture ABI dispatcher and validate its
+      arguments on address-space kernels. Managed native tasks on x32, ARM MMU
+      and m68k MMU can create a distinct process sharing their address space
+      with CLONE_VM, or add a thread to the current process with
+      CLONE_VM | CLONE_SAME_PROCESS. Unsupported policies, private-VM startup
+      and unmanaged execution contexts return EINVFN.
+      Kernels without user address spaces return EINVFN without reading args.
+
+config CONF_PCLONE_STACK_ALIGNMENT
+    int
+    default 16 if ARCH_X86_64
+    default 8 if ARCH_ARM
+    default 2
+
+config CONF_PCLONE_MIN_STACK
+    int
+    default 256 if ARCH_X86_64
+    default 16
+
+config CONF_PCLONE_ENTRY_ALIGNMENT
+    int
+    default 1 if ARCH_X86_64
+    default 4 if ARCH_ARM
+    default 2
+
 config CONF_WITH_NATIVE_SCHED
-    bool
-    depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
+    bool "Cooperative native scheduling"
+    depends on CONF_WITH_USER_ASPACE
     help
       Kernel-owned cooperative native process scheduling and standard MiNT
       asynchronous launch, yield and child waits. Selected by CUIS initially;
       independent of GUI session and input services. No preemption or Pfork.
-      Other architecture backends follow their isolated address spaces.
+      Available on x32, ARM MMU and m68k MMU user-address-space kernels.
+      Scheduling is cooperative and does not require CUIS or external libaes.
+
+
+# Hidden until explicit public activation review. No preset may select this.
+config CONF_WITH_PROCESS_EXEC
+    bool
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM
+    default n
+    help
+      Production S_PROCEXEC dispatch and S_INQUIRE discovery. This gate is
+      deliberately hidden and disabled pending filesystem integration and
+      explicit kernel-owner activation approval. Test-only acceptance does
+      not enable this gate.
+
+config CONF_WITH_PROCESS_EXEC_DISPATCH
+    bool
+    default y if CONF_WITH_PROCESS_EXEC || CONF_WITH_PROCESS_EXEC_TEST
+
+config CONF_WITH_PROCESS_EXEC_TEST
+    bool "TEST ONLY: PROCESS Ssystem transport (activation not accepted)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM
+    default n
+    help
+      Opt-in validation kernel for the unpublished S_PROCEXEC (-9) adapter.
+      Never enabled by a normal preset; S_INQUIRE still reports EINVFN.
+      This is not approval for ordinary application use. Final filesystem,
+      lifecycle, native trap and activation review gates remain required.
+      No CUIS registration, polling, preemption or SMP is implied.
+
+
+config CONF_WITH_PTERMGRP
+    bool "Cooperative PROCESS group termination"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Terminate all managed threads of the calling PROCESS at safe kernel
+      boundaries. Nested synchronous children finish normally before their
+      suspended launcher thread can stop. No preemption is enabled.
+
+config CONF_WITH_PTHJOIN
+    bool "Managed per-TID thread joins"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    default n
+    help
+      Retain small per-TID completion records after safe execution-stack reap.
+      Pthjoin joins only managed threads in the calling PROCESS; no GUI,
+      preemption, asynchronous signals or group termination is implied.
+
+config CONF_WITH_FORK_RETURN_TEST
+    bool "Native saved syscall-return probe (test only)"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+    depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
+    depends on !ARCH_ARM || CPU_ARMV7
+    default n
+    help
+      Enable a private Pclone test selector for shared-VM saved-return startup.
+      The sole-thread parent is blocked while the child uses its user stack.
+      ARM admission is limited to the reviewed ARMv7 backend; the RPi1's
+      VFP-only target is not supported by the D32 register probe.
+      This is not Pfork or Pvfork; both public calls remain unsupported.
 
 
 config CONF_LOGSEC_SIZE

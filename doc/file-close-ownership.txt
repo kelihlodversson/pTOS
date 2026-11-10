@@ -1,0 +1,223 @@
+File close and PROCESS-retirement ownership (#892/#893)
+====================================================
+
+Scope
+-----
+MMU kernels use the existing SFT and filesystem finalizers. This adds no
+scheduler work queue, public reaper, PROCESS registry or background retry.
+Classic non-ASPACE kernels retain their close implementation and SFT size.
+The implementation remains serialized/cooperative, not preemption/SMP safe.
+
+A negative error is not an ownership outcome
+------------------------------------------
+* FAT flush/disk-error longjmp: the SFT reference remains owned. Dirty metadata
+  or unlink reclamation can have progressed; retry resumes the existing OFD,
+  DFD and pending cluster, never a newly opened file.
+* FAT ofd_put/sftdel normal negative return: the reference remains owned too.
+  For example, an invalid zero pin count returns EINTRN without freeing it.
+* FAT successful release: one alias is consumed; only the final SFT group
+  release drops its OFD reference. Mapping pins remain independent owners.
+* PFS close normal return: one SFT alias is consumed, including on error.
+  A nonlocal disk-error escape before this point retains that alias.
+* PFS final file release: the cookie is consumed even on a normal error
+  return. release_file reports this error; the historical void release is
+  supported for infallible finalizers. An escape after consumption is fatal,
+  not a reason to repeat a possibly already-executed destructor.
+* BIOS pseudo-file close consumes one reference without filesystem I/O.
+
+fs_close_once reports RETAINED, CONSUMED or NOT_OWNED separately from error.
+fs_close_bounded retries disk unwinds at most BLKDEVNUM+1 times, preserving the
+first error even if a later attempt succeeds. It does not repeat normal
+retained errors, nor errors from consuming finalizers. kdos_fclose keeps
+caller ownership on retention. A failed standard close keeps its UFT alias.
+
+Retirement transfers a reference, not an execution owner
+-------------------------------------------------------
+PROCESS cleanup requests disposal. If close retains the reference, the
+service transfers that existing reference to f_cleanup_refs in the exact SFT
+incarnation. It does NOT increment f_use or acquire a PD/KPROC/ASPACE/THREAD
+reference. The caller unpublishes its alias after consumption or transfer.
+The owner sweep snapshots explicit handles before alias removal, subtracting
+all live aliases and already-transferred references, so it cannot retry the
+same retired alias as a second independent reference. f_own is replaced by
+a kernel sentinel before PD retirement; inherited live aliases remain valid.
+
+A pending reference reserves its SFT slot and OFD/cookie. Ordinary operations
+cannot consume cleanup-only references. An active close excludes same-slot
+I/O/close/dup/force; unrelated slots remain independent. The operation restores
+the complete enclosing filesystem disk-error target before returning.
+
+Each allocation gets a monotonically increasing, non-recycled incarnation.
+Counter exhaustion refuses admission. A trusted FS_CLEANUP_TOKEN identifies
+slot, incarnation and one monotonically issued transfer reference. fs_cleanup_snapshot reports PENDING, COMPLETE or
+INVALIDATED and the first/last error. fs_cleanup_retry performs one bounded
+recovery of that exact pending reference. Transfers are recovered FIFO within
+one SFT: a pending later ticket returns EAGAIN without mutation until earlier
+tickets are consumed. Issued/consumed counters reject replay without allocating
+an unbounded per-reference log. A completed ticket never revives when a later
+alias is transferred within the same still-live SFT incarnation. Snapshot
+references is 0/1 for that ticket; pending_references is the aggregate count.
+First/last errors remain diagnostic history for the entire SFT incarnation. A stale or already-consumed token fails;
+it cannot close a replacement slot even if its OFD storage address is reused.
+There is no automatic retry. A permanent/unrepaired error stays quarantined,
+occupying bounded filesystem capacity until an explicit repair/retry or the
+filesystem's authoritative media invalidation. It never becomes a false
+successful close. Media invalidation first unpublishes the authoritative standard aliases in
+all live KPROC tables (plus the loaded untracked kernel table), then makes the
+numeric SFT slot reusable through its existing finalizer. A retiring PROCESS
+must neither panic on a dead alias nor close a replacement through that number.
+Pending tickets become INVALIDATED; earlier recovered tickets remain COMPLETE.
+The filesystem disposes its old group, not the cleanup service.
+
+9P disposition
+--------------
+Final SFT Tclunk errors are returned through release_file instead of being
+lost in void release. Valid Rclunk/Rlerror ends the remote fid, releasing the
+local pool slot. Failed transport, bad tag/type or short response leaves the
+exact fid reserved in the driver pool until connection reset; it is not reused
+for an uncertain remote incarnation. This is bounded quarantine with the
+original error, not a retry queue or a retained PROCESS. Directory-cookie
+release still has its historical void interface; this increment does not
+claim error-reporting or cancellation-safe directory/search teardown.
+
+Prepared-launch contract (#931)
+-------------------------------
+kproc_ref_file_cleanup(retained_identity, &transferred) returns the first
+cleanup error plus a historical count of transferred references after PD
+retirement. This is diagnostic metadata only: it owns no file reference and
+does not change PROCESS completion status or the fixed 32-byte observer ABI.
+
+An owned CLOSE consumes its launch right exactly once, even if cleanup reports
+an error. An error after that point must not restore a retryable launch handle.
+The SFT service, rather than a dead launch/PROCESS, owns any retained reference.
+PREPARE rollback likewise releases execution resources and reports the original
+error; it must not promise that every failed filesystem close freed its file.
+Deferred replacement cannot claim unchanged-old-successor rollback after old
+successor destruction has begun. Keep its irreversible boundary explicit.
+
+The #931 cancellation guard and fatal-copy cleanup findings remain separate
+prerequisites. This file-close change does not authorize public activation.
+A cleanup guard must cover the OUTERMOST resource-owning operation; merely
+protecting the SFT transfer or TASK_RETIRING cannot prevent an earlier callback
+checkpoint from abandoning local rights. Fatal faults need an authoritative
+PROCESS-owned request buffer, not just deferred cooperative cancellation.
+
+Synchronization and tests
+-------------------------
+All blocking I/O, callbacks and potentially final releases require caller
+execution outside leaf runqueue/GUI exclusion and IRQ critical sections.
+Future locking order is PROCESS membership/completion -> filesystem/SFT owner
+(and mapping/lease owners in the documented order) -> leaf publication. Pin
+slot incarnation, ownership and active-close admission under the SFT owner
+lock, release it for callbacks/I/O, then revalidate before committing. Never
+hold a scheduler leaf lock through close, copy or a last-reference destructor.
+Local IRQ masking alone does not provide this SMP synchronization.
+
+The host close fixture compiles the production FAT/PFS backend, OFD finalizer,
+SFT service and real setjmp error recovery; only disk/driver responses and
+memory final releases are injected. The non-CUIS fixture runs real PROCESS
+cleanup and service through retirement. Native x32 memtest opens an actual FAT
+file, exhausts injected close errors during real PROCESS disposal, checks
+retired metadata and exact recovery, then checks resource baselines. These
+are distinct from real hardware I/O-failure evidence and from user-mode tests.
+
+K3 review corrections
+---------------------
+Review4510390362 exposed live standard aliases after media invalidation;
+review4510390418 exposed same-incarnation resurrection of a completed recovery
+right. The production alias invalidation helper and FIFO per-transfer identity
+above close those ownership gaps, rather than tolerating NOT_OWNED at PROCESS
+retirement or treating an SFT incarnation as a reusable batch-close right.
+Native x32 assertions now cover real PROCESS retirement after authoritative
+invalidation of a test-owned FAT OFD and immediate slot reuse, plus a real FAT
+handle recovered while an alias remains and a later failed transfer of that
+alias. Host tests exercise multiple distinct pending rights and FIFO refusal,
+production KPROC alias invalidation, and actual non-CUIS retirement. A synthetic
+medium is used for the native invalidation fixture; this is not hardware media
+removal evidence. Future owner locking must span alias retirement and slot
+invalidation in PROCESS-before-filesystem order; local cooperative serialization
+and no-yield metadata walks do not constitute an SMP registry lock.
+
+The same authoritative alias retirement applies to any final SFT consumption,
+not only media invalidation. In particular, a negative-but-consuming PFS close
+followed by an erroneous numeric retry cannot leave a dead standard alias for
+later PROCESS disposal. Aliases are unpublished before a consuming PFS finalizer
+can reenter cleanup; non-consuming FAT failures retain their mappings. This
+changes neither error visibility nor the existing public numeric-handle policy.
+
+A consuming PFS release callback may intentionally redirect a standard handle
+after the backend unpublishes the old final alias. The outer close resets the
+standard entry only while it still names its original numeric handle; the
+close-busy incarnation excludes reuse of that original slot during callback.
+A replacement alias and its use-count increment remain owned by the caller.
+The production regression invokes ixforce, getofd/getpfsslot and both subsequent
+closes, checking the replacement and finalizer counts through final disposal.
+
+Retirement admission and callback rebinding
+-----------------------------------------
+Before snapshotting any file references, release_pd_files irreversibly closes
+file-reference admission in the authoritative KPROC identity. Reentrant calls
+cannot force a reference into any standard index of that retiring PROCESS,
+including current, already-visited and not-yet-visited entries. Open/create/dup
+reject the loaded retiring owner before filesystem work, and SFT claim repeats
+the admission check. This does not freeze unrelated live PROCESS tables: a
+callback may retain a reference for a separate live owner. Ordinary Fclose in
+a live PROCESS still permits the tested finalizer redirection.
+
+The latch owns no resources and survives only as identity metadata. All normal
+USER_ASPACE PROCESSes have KPROC records; the trusted untracked boot PD keeps
+its existing behavior. Direct writes to UFT/refcounts are not an admission API.
+Current serialization is cooperative; future locking must acquire the PROCESS
+owner before SFT publication, not take a blocking owner lock under a leaf or
+GUI exclusion. This is not a general driver/IRQ/SMP reentrancy guarantee.
+
+Hosted unwind validation correction
+-----------------------------------
+The old test-fs-close runner's -Iinclude made its angle-bracket setjmp shim
+select the 13-long kernel buffer while linking libc setjmp/longjmp. Its earlier
+host unwind passes are not valid hosted-ABI evidence. The corrected runner uses
+quote-only repository lookup and system angle lookup, with an explicit error
+if the kernel SETJMP_H guard is selected. Normal, ASan/UBSan and fortified GCC13
+suites are rerun with the actual hosted buffer. Native tests still use the
+pTOS register-array ABI; their evidence is separate and unchanged by this
+host-runner correction.
+
+Unlinking a retiring KPROC does not turn it into the trusted boot exception.
+During kproc_destroy, an address-only destroying_pd marker survives in the
+retained identity prefix until all prepared-child/resource/parent-release
+callbacks finish. Admission checks consult this active destruction identity
+in the existing retired list as well as the live list, including after payload
+wipe. The marker owns no PD/ASPACE/stack and is cleared before the final lookup
+reference release; no later notification may use it. The still-running PD
+allocation cannot be reused before its destruction continuation returns.
+Production KPROC tests check admission after unlink and during the payload wipe,
+without granting the retained numeric identity live-PD access. Future owner-lock
+synchronization must cover both registry transitions and marker lifetime.
+
+Explicit shutdown is a recovery owner too
+----------------------------------------
+Shutdown's existing bounded file sweep must not feed service-only references
+back through ordinary xclose (which correctly rejects them). USER_ASPACE builds
+now consume live references normally and use the oldest exact FIFO transfer
+ticket for service-owned residuals, bounded to the admitted reference count and
+incarnation. Retained/permanent failures are reported and left owned; consuming
+errors do not cause duplicate close. Classic shutdown stays unchanged. This is
+an explicit shutdown attempt, not an automatic scheduler retry service.
+
+The production host shutdown test transfers an unlinked FAT file after a failed
+cluster flush, preserves its pending successor across repeated failure, then
+checks both clusters reclaimed after repair. It also checks bounded permanent
+failure/error reporting, mixed live/residual aliases, stale tickets and exactly
+once disposal. Disk storage/failure is injected; ordinary native shutdown checks
+remain separate evidence and do not claim a native failing-medium experiment.
+
+Ordinary aliases can exhaust before the backend's total reference count.
+Repeated numeric Fclose(h) is legacy behavior and may consume references also
+named by standard aliases. When consumption or transfer leaves only service
+references, unpublish every standard alias still naming h immediately; the
+backend staying alive does not authorize ordinary descriptors. Do not wait for
+f_use==0. A consuming finalizer's replacement to another handle is preserved.
+Retirement must then leave the residual owner untouched and free its PD; exact
+FIFO recovery remains independent. Production close and real PROCESS-retirement
+fixtures plus an x32 real-FAT native test cover that ordering. The d588 baseline
+fails the new alias assertion; a passing old retry is not evidence of safety.

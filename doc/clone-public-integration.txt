@@ -1,0 +1,190 @@
+Public clone integration contract (#890/#892)
+=================================================
+
+Public NEW_PROCESS/SHARE_VM startup is now connected on x32, ARM MMU and m68k MMU when Pclone and
+native cooperative scheduling are configured and the caller is a managed task
+in an active group. Other execution contexts remain
+unsupported (EINVFN). Managed SAME_PROCESS startup is also enabled through
+the thread-only lifetime described in thread-group-execution.txt. Private VM
+startup is not enabled.
+This is not an architecture capability negotiation ABI.
+
+Flags and results
+------------------------
+
+Use #890's CLONE_VM = 1<<0 and CLONE_SAME_PROCESS = 1<<1. Use the following
+resource bits:
+CLONE_COPY_STANDARD_HANDLES = 1<<2, CLONE_COPY_CWD = 1<<3. These map to the
+existing trusted factory's independent copy policies; they do not share mutable
+PROCESS tables. Resource bits default to neither copy. Explicit/nonstandard SFT
+handles are not duplicated. Priority/limits and parent identity follow the
+factory's documented inherited identity policy; environment starts empty.
+No signal-policy, TLS, detached-thread, exit-scope or sync/async flag is added.
+
+Preserve the public void (*entry)(void *) prototype. Normal return therefore
+means status zero, not an incidental EAX value. The trusted internal test bridge
+currently consumes LONG entry results; public startup selects the separately validated kernel-owned
+zero-status stub using the same Pterm handoff.
+Explicit Pterm keeps its supplied status. No user-supplied return PC or exit-scope
+flag is introduced. A prepared internal LONG-return image is not proof that the
+public void-entry return convention has been implemented.
+
+flags & ~0x0f: EINVAL.
+SAME_PROCESS without VM: EINVAL.
+SAME_PROCESS with resource-copy bits: EINVAL (resources already belong to PROCESS).
+VM alone, optionally with resource-copy bits: NEW_PROCESS/SHARE_VM.
+VM|SAME_PROCESS: add a THREAD/TID to the current PROCESS/ASPACE on managed
+x32, ARM MMU or m68k MMU.
+No VM or SAME_PROCESS: independent PROCESS/ASPACE, EINVFN until a private backend.
+Do not mistake any shared-ASPACE policy for sharing PID or PROCESS resources.
+
+Pclone returns a positive TID, never an overloaded PID. Before public publication,
+check that the allocated TID is representable as positive int32_t; otherwise
+EAGAIN with no output or runnable child. The internal ULONG TID namespace alone
+is not proof that a GEMDOS LONG return is nonnegative. Thread IDs and process IDs
+remain independent even if their numerical values happen to coincide.
+
+Append native int32_t *child_pid at offset 28. The complete extended structure is
+32 bytes; preserve every original field/offset, including reserved tls at 20 and
+child_tid at 24. On x32/ARM alignment is four, on m68k two, using existing native
+ABI conventions rather than packed synthetic arrays. child_pid is optional for
+NEW_PROCESS, including an older 28-byte caller. A caller needing PID supplies it;
+TID return is never a substitute. SAME_PROCESS reports the caller's PID. Both outputs are snapshots at creation, not clear-on-exit locations.
+
+Size remains a separate scalar, without a version/feature-negotiation field.
+Accept the original 28-byte prefix. Read child_pid only when size >= 32; sizes
+28..31 omit it. Accept larger append-only tails without reading unknown fields.
+Future behavior requiring a new tail also needs a rejectable new flag. Snapshot
+the understood fields once; never interpret an x32 structure at LP64 offsets.
+Validate overflow and the supplied address/size before copying the known prefix.
+
+Pointer and publication contract
+--------------------------------
+
+ARM and m68k decode their native 32-bit pointer members; x32 explicitly
+zero-extends each ILP32 pointer through uintptr_t. Decode m68k's packed trap
+arguments separately from the pointed-to structure; ARM/x32 use native argument
+slots. Keep entry/stack ABI alignment checks and actual startup-frame bounds.
+The opaque argument is not dereferenced. Non-NULL tls remains EINVAL under #908;
+its existing slot cannot be removed, reused or treated as startup support.
+
+Outputs are optional, aligned writable int32_t destinations in the caller's
+KASPACE. Reject overlap with one another, startup stack or executable pages.
+Back/COW and obtain protected RAM aliases before publication; revalidate at
+commit and seal all leases as one group. Reject same-address replacement as a
+stale lease, even if permissions match. On every failure leave both words and
+the return slot unchanged; retain no output pointer after the initial stores.
+
+xclone remains the untrusted boundary. It passes a kernel-owned normalized
+snapshot to trusted construction, never user storage. The transaction builds
+PROCESS/KASPACE/KTHREAD/context, secures execution holds, reserves scheduler
+storage and registers a generic observer before sealing. The scheduler must own
+a stable launcher/controller before any write. Only then transfer ownership,
+write the return frame/PID/TID and publish TASK_NEW without callbacks, allocation,
+yield or a fallible operation in the final transition.
+
+EINVAL: bad scalar size/flags/alignment, undersized startup frame, non-NULL TLS.
+EIMBA: unreadable/wrapping pointers, inaccessible entry/stack/output or stale lease.
+ENSMEM: allocation/backing failure. EAGAIN: slot/identity capacity exhausted.
+EINVFN: configuration/backend or policy unavailable. Do not advertise runtime
+capability merely because CONF_WITH_PCLONE routes a validated syscall. Unsupported
+configurations must not silently fall back to unsafely runnable legacy contexts.
+
+Active-group prerequisite and integration tests
+-----------------------------------------------
+
+ksched_task_reserve/cancel/publish is now shared by the internal root clone runner
+and existing async/deferred PROCESS launches. A private TASK_RESERVED cannot be
+selected by dispatch or waits, nor reused by a reentrant preparation. Legacy
+image identity is also reserved so recursive preparation cannot start the same
+PD in a second slot. No generic PROCESS waiter or second dispatcher is added.
+
+Active proc_clone publication now uses the established async separation. The
+logical parent retains identity only, while xterm returns to the stable scheduler
+root controller on the child's task stack. KPROC records the controller allocation
+generation, owns its pin and tracked identity, and validates the exact existing
+writable procmem mapping. It does not overwrite/borrow a replacement mapping.
+The group's blocked root continuation retains its own live execution resources.
+Controller ownership ends at child retirement; a completion snapshot does not
+keep heavyweight controller resources alive.
+
+A heap-owned PROC_CLONE_OBSERVER now replaces borrowed active callback contexts.
+Its caller and startup registration hold separate refs, with cancellation versus
+published/root-released states. Its nonblocking getter reads the existing KPROC
+completion; it neither creates a completion producer nor implements waiting or
+reaping. The record survives parent retirement and caller-handle release, and
+independent records retain distinct identities/status. GUI event formatting is
+still outside the generic clone layer. Public xclone drops its caller observer handle before returning; the startup
+registration owns the record until scheduler-root reclamation. an arbitrary caller-stack context is
+refused by active spawn.
+
+Established prerequisites for connecting xclone: production active clone execution, parent
+retirement/PD reuse, slot exhaustion, pre-commit cancellation and unchanged
+outputs, early completion and blocked-parent wakeup, owned observer rollback,
+normal/fault/TSR teardown and both stack release contexts. The public
+flag/size/child_pid/resource/error matrix now has cross-ABI layout, decoder,
+production handler and real x32 ring-3 trap tests.
+The production x32 MEMTEST now executes constructed active-group clones,
+including blocked/early wait, creator PD reuse, normal/fault/TSR exit and all
+ownership transfers. Host publication/observer fixtures remain models and are
+reported separately. Public flag/output/return ABI integration, including the
+void-entry zero-status bridge, is enabled in managed x32 groups. Runnable
+SAME_PROCESS now uses the internal #893 thread-only handoff foundation.
+See thread-group-execution.txt and thread-startup.txt for its execution contract.
+
+Internal #893 handoff foundation
+--------------------------------
+
+Managed x32 Pterm/return/fault stop only the current THREAD, including the leader.
+The final THREAD reserves PROCESS cleanup and publishes its completion. Existing
+single-thread behavior and final/sole-thread Ptermres remain; Ptermres refuses
+live siblings before any mutation. This enables SAME_PROCESS startup safely.
+
+Public Ptermgrp, group cancellation, Pthjoin and full cross-architecture
+termination remain #893. Generic waits/reaping remain #909. The existing Pwait
+consumer uses one PROCESS anchor, never a per-worker PID zombie. Details,
+reference graph, rollback and preemption requirements are in
+thread-group-execution.txt. No TLS implementation or new scheduler is added.
+
+Architecture execution
+------------------------
+
+x32, ARM MMU and m68k MMU share bdos/native_sched.c, KTHREAD stack ownership,
+proc_clone construction/publication, the bridge registry and the PROCESS exit
+finalizer. CPU state/IRQ operations and fresh supervisor-stack entry are backend
+operations. ARM/m68k use their existing gouser/termuser launchers and trap return
+paths, not a parallel process manager. See clone-mmu-parity.txt for entry frames,
+CPU/FPU ownership, executable evidence and limitations.
+
+Public managed NEW_PROCESS/SHARE_VM and SAME_PROCESS startup are tested on ARM
+Cortex-A7 and m68k 68040 QEMU without CUIS/libaes. The old 26/25 compatibility
+suites alone are not that evidence: the new managed worker executes actual
+clones, yields with register/FPU patterns and tests exit, wait and rollback.
+Legacy non-MMU m68k scheduling is #911, generic scheduling/preemption #713,
+PROCESS waits #909, shared-VM Pexec #894 and TLS independent #908.
+
+Publication exclusion and accounting
+-----------------------------------
+
+Construction remains serialized by the existing cooperative execution model.
+Reservation, factory work, compatibility/controller mappings, backing lazy heap
+or mmap startup ranges, aliases and observer setup run before IRQ exclusion.
+The guard revalidates the current managed task/controller, seals leases and
+performs the no-fail ownership/output/publication transition. It performs no
+allocation, teardown, filesystem callback or yield. Restore the entry IRQ state
+before cancellation, rollback or transaction destruction. MEMTEST allocation
+and free guards enforce the masked-window rule; failure/cancellation tests
+verify restoration. Preemption/SMP must serialize the entire prepare/revalidate
+protocol and range mutations under #713 before relying on this boundary.
+
+KPROC records child_usage_at_wait explicitly at commit. Async child usage is
+credited only when the existing Pwait consumes its zombie; controller lifetime
+or teardown order does not select accounting policy. The production test drops
+controller ownership before retirement accounting and verifies one wait credit.
+
+Public startup backs validated lazy reservations before acquiring leases. A
+backing failure returns ENSMEM/EIMBA, with no output or runnable child, rather
+than invoking ordinary user-copy fatal-OOM termination. Existing backed user
+pages can remain resident after a failed construction; no return-frame or
+identity data is stored until publication. ARM/m68k native ABI and packed-trap
+validation remain enabled while their runnable requests return EINVFN.

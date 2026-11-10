@@ -87,6 +87,24 @@ int main(void)
 
     switch (op)
     {
+    case 'n':
+    {
+        static const char normal[] = { 1, '0', 0 };
+        static const char fault[] = { 1, 'p', 0 };
+        static const char resident[] = { 1, 't', 0 };
+        if (Pexec(0, "C:\\ISOPROBE.TOS", normal, 0L) != 42)
+            return BROKEN;
+        if (Pexec(0, "C:\\ISOPROBE.TOS", fault, 0L) != 0xffffL)
+            return BROKEN;
+        if (Pexec(0, "C:\\ISOPROBE.TOS", resident, 0L) != 44)
+            return BROKEN;
+        return 43;
+    }
+    case 't':
+        /* Deliberately retain a page: this checks resident exit ordering,
+         * rather than the non-resident resource-baseline checks below. */
+        Ptermres(4096L, 44);
+        return BROKEN;
     case '0':
         return 42;
     case 'r':

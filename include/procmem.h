@@ -49,6 +49,10 @@
 
 void *procmem_alloc(ULONG bytes, UWORD flags);
 BOOL procmem_free(void *p);
+/* Attach one retained identity's no-I/O/no-reentry finalizer to an allocation.
+ * It runs only after actual release, including deferred pinned reclamation.
+ * Failure transfers nothing; neither the reusable base nor owner is the token. */
+BOOL procmem_on_free(void *base, void (*notify)(void *), void *token);
 /* Gives the pages after the first `bytes` (whole pages, at least one) of a live
  * allocation back to the window.  The caller has unmapped them from every
  * address space (aspace_shrink_procmem()) first.  FALSE if p is no allocation. */
@@ -87,8 +91,9 @@ BOOL procmem_range_live(VADDR va, VADDR bytes);
  * pinned: it cannot be released while the mapping exists, because the pages
  * would be handed to a new owner while the old process could still reach
  * them.  procmem_free() returns FALSE for a pinned block and leaves
- * it allocated; procmem_free_owned() skips it.  The address space
- * unpins when it is destroyed.
+ * it allocated; procmem_free_owned() schedules pinned blocks for reclamation
+ * after their last pin is dropped. Ownership transfer cancels that decision.
+ * The address space unpins only after the mapping is inaccessible.
  */
 BOOL procmem_pinned(const void *p);
 ULONG procmem_pins(const void *p);      /* the pin count itself */
@@ -99,8 +104,10 @@ PADDR procmem_phys_of(VADDR va);
 
 /*
  * Ownership, mirroring the GEMDOS memory descriptor owner: set_owner()
- * names the process that dies with the block, NULL (the initial state)
- * means permanent.  free_owned() releases every block owned by `owner`,
+ * names the process that dies with the block; setting it to NULL makes a
+ * block permanent. After owner cleanup a pinned block has no owner and is
+ * marked for deferred release; its allocation record carries that decision.
+ * free_owned() releases every block owned by `owner`,
  * calling pre_free(base) first for each (so the caller can drop anything
  * keyed by that address, such as a KPROC record).  keep() is Ptermres: the
  * owner's blocks become permanent, and the owner's own block -- the one
@@ -111,7 +118,7 @@ PADDR procmem_phys_of(VADDR va);
  * dereferenced.
  */
 void procmem_set_owner(const void *p, const void *owner);
-const void *procmem_owner(const void *p);   /* NULL: none, or not an allocation */
+const void *procmem_owner(const void *p);   /* NULL: no live owner, or not allocated */
 void procmem_free_owned(const void *owner, void (*pre_free)(void *base));
 void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
 
@@ -175,6 +182,7 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  *   0x0ffe0000 - 0x0ffeffff   optional read-only executable x32 VDI client;
  *                             private pages, outside image/heap windows
  *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
+ *   0x0fff1000 - 0x0fff1fff   optional ARM/m68k trusted THREAD return bridge
  *   0x10000000 - 0x7efeffff   Malloc() memory of a process, backed by private
  *                             pages as they are first touched (see below)
  *   0x7efff000 - 0x7effffff   guard page: neither heap nor stack, never mapped
@@ -204,6 +212,7 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  */
 #define USER_ANCESTORS_VA VADDR_C(0x0fff0000)
 #define USER_ANCESTORS    16
+#define USER_THREAD_RETURN_VA (USER_ANCESTORS_VA + USER_PAGE_SIZE)
 #define USER_IMAGE_BASE  VADDR_C(0x00400000)
 #define USER_IMAGE_SIZE  VADDR_C(0x00400000)
 /* Zeroed read/write memory mapped right after the last page of a program
@@ -229,6 +238,20 @@ typedef struct aspace ASPACE;     /* defined by the backend */
 #define USER_STACK_MIN   VADDR_C(0x00004000)   /* the least Psetlimit() allows */
 
 ASPACE *aspace_create(void);
+#if CONF_WITH_PRIVATE_CLONE
+/* Unpublished clone. Source permissions change only after every child resource
+ * is prepared. Borrowed RAM is copied; device mappings are unsupported. */
+LONG aspace_clone(ASPACE *source, ASPACE **result);
+BOOL aspace_logical_protection(const ASPACE *, VADDR, UWORD *);
+int aspace_cow_fault(ASPACE *, VADDR, UWORD);
+void aspace_cow_collapse(ASPACE *);
+ULONG aspace_cow_frames(void);
+ULONG aspace_cow_references(void);
+void aspace_clone_test_fail_after(ULONG count);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+void aspace_cow_test_fail_allocation(BOOL fail);
+#endif
+#endif
 void aspace_destroy(ASPACE *as);
 /* Makes `as` the address space in use (returns the root that was, for
  * aspace_leave()): the kernel can then address its user pages by their user
@@ -237,6 +260,7 @@ void aspace_destroy(ASPACE *as);
 ASPACE_ROOT aspace_enter(ASPACE *as);
 void aspace_leave(ASPACE_ROOT previous);
 ASPACE_ROOT aspace_root(const ASPACE *as);
+BOOL aspace_is_current(const ASPACE *as);
 
 /*
  * Maps one 4 KiB page: user virtual address va (page-aligned, and the
@@ -306,6 +330,9 @@ VADDR aspace_mappable_bytes(void);
  * is destroyed.
  */
 BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes);
+/* Resident privately owned non-file-cache pages only, for execution holds.
+ * Borrowed/procmem pages require another owner and are deliberately excluded. */
+BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
 
 #if ARCH_HAS_DEMAND_PAGING
 /*
@@ -384,6 +411,12 @@ BOOL aspace_user_range_ok(const ASPACE *as, VADDR va, VADDR bytes, BOOL write);
  * safe direct-map alias; it needs a separate access mechanism).
  */
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes);
+/* No-fault/no-write preflight, including direct-map RAM safety. A sealed
+ * mapping lease must protect this result until the corresponding copy. */
+BOOL aspace_copy_to_user_ok(const ASPACE *as, VADDR va, ULONG bytes);
+/* Prepublication only: one resident RAM page, return borrowed kernel alias.
+ * A sealed lease/hold must preserve its identity through the final store. */
+void *aspace_user_write_alias(const ASPACE *as, VADDR va, ULONG bytes);
 BOOL aspace_copy_to_user(const ASPACE *as, VADDR va, const void *src, ULONG bytes);
 
 /*
@@ -406,6 +439,9 @@ BOOL aspace_load_private(ASPACE *as, VADDR va, VADDR memsz,
  */
 PADDR kstack_alloc(uintptr_t *top);
 void kstack_free(PADDR phys);
+#if CONF_WITH_FORK_RETURN_TEST
+BOOL kstack_contains(PADDR phys, uintptr_t address);
+#endif
 
 /* Private backing pages the address space owns (diagnostics, tests). */
 ULONG aspace_private_pages(const ASPACE *as);

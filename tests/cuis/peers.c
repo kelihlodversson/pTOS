@@ -40,7 +40,7 @@ static int peer_checks(void)
     CHECK(cuis_peer_service(CUIS_PEER_RAISE,first_handle,first_handle,0,0,0) == E_OK);
     CHECK(!focus_window && windowless_focus && windowless_focus->handle == (ULONG)first_handle);
     CHECK(cuis_keyboard_event(0x1e0061));
-    CHECK(cuis_session_wait(first_handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0) & CUIS_READY_KEY);
+    CHECK(cuis_session_wait(first_handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0,0,0) & CUIS_READY_KEY);
     CHECK(cuis_display_lock(first_handle,1,0) == E_OK);
     CHECK(cuis_background(first_handle,1) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,first_handle,20) == E_OK);
@@ -70,9 +70,9 @@ static int peer_checks(void)
     CHECK(cuis_keyboard_event(0x300062));
     CHECK(cuis_peer_service(CUIS_PEER_RAISE,first_handle,second_handle,0,0,0) == E_OK);
     run = &second;
-    CHECK(cuis_session_wait(second_handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0) & CUIS_READY_KEY);
+    CHECK(cuis_session_wait(second_handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0,0,0) & CUIS_READY_KEY);
     CHECK((*find_owner(run))->input_result[0] == 0x1e0061);
-    CHECK(cuis_session_wait(second_handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0) & CUIS_READY_KEY);
+    CHECK(cuis_session_wait(second_handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0,0,0) & CUIS_READY_KEY);
     CHECK((*find_owner(run))->input_result[0] == 0x300062);
     run = &first;
     region_exit_on_output = TRUE;

@@ -31,6 +31,7 @@ BOOL desk_cache_exists(void);           /* desk_set_cache() has an effect */
 void desk_set_cache(WORD enable);       /* the CPU caches on or off */
 BOOL desk_can_shutdown(void);           /* Shutdown() can power off or reset */
 #if CONF_WITH_LIBAES_DESK
+LONG desk_reap_child(WORD pid);         /* parent policy: nonblocking Pwaitpid */
 void desk_poweroff(void);               /* native GEMDOS Shutdown(SHUT_POWER) */
 LONG desk_shutdown_token(void);
 BOOL desk_shutdown_refused(LONG token);

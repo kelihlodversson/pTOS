@@ -39,9 +39,10 @@ permissions:
   contents: read
 
 jobs:
+  # Temporary: pin the build matrix until Ubuntu 26.04 compatibility is validated.
   elf-shared-core:
     name: x32 ELF shared-library metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,7 +50,7 @@ jobs:
       - name: Install the host and x32 test packages
         uses: ./.github/actions/apt-install
         with:
-          packages: gcc-multilib qemu-system-x86 ovmf dosfstools mtools
+          packages: gcc-multilib gcc-13 qemu-system-x86 ovmf dosfstools mtools
       - name: Install the test tools for Python
         run: |
           python3 -m venv /tmp/elf-shared-venv
@@ -58,6 +59,37 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
       - name: Test CUIS ownership and caller-local AES object contracts
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
+      - name: Test bounded CUIS observer wait ownership (default off and gated)
+        run: /tmp/elf-shared-venv/bin/python tools/test-cuis-observers.py
+      - name: Test gated CUIS receipt runtime and canonical FIFO
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+          /tmp/elf-shared-venv/bin/python tests/cuis/publication_receipt.py
+          HOSTCC='gcc-13 -D_FORTIFY_SOURCE=3' /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+          HOSTCC='gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer' ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+      - name: Test retained PROCESS completion ownership
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-observer.py
+      - name: Test exact SFT close ownership and bounded recovery
+        run: /tmp/elf-shared-venv/bin/python tools/test-fs-close.py
+      - name: Test PROCESS-owned launch rights
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-exec-handles.py
+      - name: Test unpublished PROCESS dispatch and native-width ownership
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+      - name: Execution cleanup guard ownership
+        run: /tmp/elf-shared-venv/bin/python tools/test-cleanup-guard.py
+      - name: Test PROCESS-owned PFS directory preparation
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-directory-pfs.py
+      - name: Test regression worker log preservation
+        run: python3 tools/test-testlib-log.py
+      - name: Test clone ABI layout and pointer decoding
+        run: sh tools/test-clone-abi.sh
+      - name: Test address-space ownership
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
+      - name: Test independent VM COW ownership and rollback
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-private-aspace.sh
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
       - name: Build the enabled freestanding x32 core
@@ -69,9 +101,12 @@ jobs:
           config = kconfiglib.Kconfig()
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.syms["CONF_WITH_PCLONE"].set_value(2)
+          assert config.syms["CONF_WITH_PCLONE"].str_value == "y"
           config.write_config()
           PY
           make CROSS_COMPILE= obj/ldso/libldso.a
+          sh tools/test-clone-handler.sh
           ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
           test -z "$(nm -u /tmp/ldso-core.o)"
       - name: Build and boot-test enabled mapping syscalls
@@ -95,6 +130,37 @@ jobs:
           make CROSS_COMPILE= x32test x32-vdi-import-test
           readelf -d obj/libaes/CUIS.TOS | grep 'libaes.so'
           readelf -l obj/libaes/CUIS.TOS | grep '/GEMSYS/LIB/X32/LD.SO'
+          MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
+
+      - name: Boot-test gated PROCESS observer leases in CUIS waits
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          for name in ("CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP"):
+              config.syms[name].set_value(2)
+              assert config.syms[name].str_value == "y"
+          config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].set_value(2)
+          assert config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].str_value == "y"
+          config.write_config()
+          PY
+          make CROSS_COMPILE= -j2
+          MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
+
+      - name: Boot-test gated receipt runtime through real PROCESS and CUIS rings
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_CUIS_RECEIPT_TEST"].set_value(2)
+          assert config.syms["CONF_WITH_CUIS_RECEIPT_TEST"].str_value == "y"
+          config.write_config()
+          PY
+          make CROSS_COMPILE= -j2
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Exercise shared desktop and console consumers
@@ -157,7 +223,7 @@ jobs:
   # in the annotations and in the job's summary.
   build:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -178,6 +244,10 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
 
+      - name: Check clone user ABI layout
+        if: matrix.group == 'arm-virt' || matrix.group == 'm68k-other'
+        run: sh tools/check-clone-layout.sh "${{ matrix.arch }}"
+
       - name: Build the configurations
         run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
 
@@ -194,7 +264,7 @@ jobs:
   # (tools/ci-x86_64.sh, tools/ci-regression.sh).
   x86_64:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -248,7 +318,7 @@ jobs:
   # x86_64 job above): the machines of an architecture to a job.
   regression:
     name: regression ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -282,6 +352,10 @@ jobs:
         with:
           packages: --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
 
+      - name: Test ARM saved-return routing and admission
+        if: matrix.arch == 'arm'
+        run: python3 tools/test-fork-return-arm.py
+
       # for the interpreter the test script runs (setup-toolchain selects its
       # own Python, which the system's packages are not for)
       - name: Install fontTools
@@ -292,7 +366,7 @@ jobs:
 
   pmmu-check:
     name: PMMU startup check (virt-m68k-mmu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -323,7 +397,7 @@ jobs:
 
   release-archives:
     name: Release archives
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # release-emucon (part of "make release") builds against the
       # lib/libcmini submodule.
@@ -354,7 +428,7 @@ jobs:
   raspi-sdcard:
     name: Raspberry Pi SD card image
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -431,7 +505,7 @@ jobs:
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

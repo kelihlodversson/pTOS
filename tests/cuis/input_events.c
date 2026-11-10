@@ -1,5 +1,5 @@
 /* Application-level predicates use trusted packets, never user injection. */
-#define IW(h,e,t) cuis_session_wait(h,0,e,t)
+#define IW(h,e,t) cuis_session_wait(h,0,e,t,0,0)
 #define IR(h) cuis_input_config(CUIS_INPUT_RESULT,h,0x1000,0x1004,0x1008,0x100c,0x1010)
 #define IB(h,n,m,s,i) cuis_input_config(CUIS_INPUT_BUTTON,h,m,s,n,i,0)
 #define IX(h,n,l,x,y,w,z) cuis_input_config(CUIS_INPUT_RECT,h,n+2*l,(UQUAD)(QUAD)x,(UQUAD)(QUAD)y,(UQUAD)(QUAD)w,(UQUAD)(QUAD)z)

@@ -5,6 +5,7 @@
 
 #define CUIS_SERVICE_CLASS 0x103UL
 #define CUIS_SESSION_START 0UL
+#define CUIS_SESSION_NEW 1UL /* START argument: fresh endpoint, same owning PROCESS. */
 #define CUIS_SESSION_QUERY 1UL
 #define CUIS_SESSION_END 2UL
 #define CUIS_WINDOW_CREATE 3UL
@@ -14,26 +15,11 @@
 #define CUIS_WINDOW_HIDE 7UL
 #define CUIS_WINDOW_RAISE 8UL
 #define CUIS_WINDOW_LOWER 9UL
-#define CUIS_WINDOW_REDRAW 10UL
-#define CUIS_UPDATE_BEGIN 11UL
-#define CUIS_UPDATE_END 12UL
-#define CUIS_WINDOW_CLIP 13UL
-#define CUIS_FOCUS_REQUEST 14UL
 #define CUIS_FOCUS_QUERY 15UL
-#define CUIS_FOCUS_RELEASE 16UL
-#define CUIS_KEY_READ 17UL
-#define CUIS_KEY_WAIT 18UL
-#define CUIS_POINTER_READ 19UL
 #define CUIS_EVENT_WAIT 20UL
-#define CUIS_MESSAGE_SEND 21UL
-#define CUIS_MESSAGE_READ 22UL
-#define CUIS_MESSAGE_WAIT 23UL
 #define CUIS_SESSION_DELAY 24UL
-#define CUIS_SESSION_NAME 25UL
 #define CUIS_SESSION_LABEL 26UL
 #define CUIS_LABEL_FIND 27UL
-#define CUIS_PEER_PID 28UL
-#define CUIS_PEER_BY_PID 29UL
 #define CUIS_STREAM_WRITE 30UL
 #define CUIS_STREAM_READ 31UL
 #define CUIS_SESSION_WAIT 32UL
@@ -56,7 +42,6 @@
 #define CUIS_DISPLAY_REDRAW 49UL
 #define CUIS_SURFACE_REGISTER 50UL
 #define CUIS_SURFACE_STATUS 51UL
-#define CUIS_CLOCK 52UL
 #define CUIS_SURFACE_BEGIN 53UL
 #define CUIS_SURFACE_END 54UL
 #define CUIS_WINDOW_CONTENT 55UL
@@ -116,6 +101,21 @@
 #define CUIS_PEER_STATE 2UL
 #define CUIS_PEER_BACKGROUND 3UL
 #define CUIS_PEER_ACTIVE 4UL
+#define CUIS_PEER_IDENTITY 5UL
+#define CUIS_PEER_HANDLE 6UL /* QUERY: short AES ID -> opaque endpoint, no copyout. */
+/* GUI client identity and opaque owning PROCESS number are distinct. Multiple
+ * clients may name one PROCESS. This descriptor contains no PID or TID. */
+typedef struct {
+    ULONG client_id;
+    ULONG process_low, process_high;
+    ULONG reserved;
+} __attribute__((aligned(4))) CUIS_PEER_IDENTITY_DATA;
+typedef char CUIS_PEER_IDENTITY_LAYOUT[
+    sizeof(CUIS_PEER_IDENTITY_DATA) == 16 && __alignof__(CUIS_PEER_IDENTITY_DATA) == 4 &&
+    offsetof(CUIS_PEER_IDENTITY_DATA,client_id) == 0 &&
+    offsetof(CUIS_PEER_IDENTITY_DATA,process_low) == 4 &&
+    offsetof(CUIS_PEER_IDENTITY_DATA,process_high) == 8 &&
+    offsetof(CUIS_PEER_IDENTITY_DATA,reserved) == 12 ? 1 : -1];
 #define CUIS_PEER_HAS_SURFACE 1UL
 #define CUIS_PEER_HAS_BACKGROUND 2UL
 /* Session-owned opaque directory entries, independent of GEM policy. */
@@ -153,7 +153,6 @@
 #define CUIS_READY_TIMER 2UL
 #define CUIS_LABEL_MAX 32UL
 #define CUIS_STREAM_MAX 32767UL
-#define CUIS_EVENT_MESSAGE 8UL
 #define CUIS_EVENT_CONTROL 16UL
 #define CUIS_EVENT_KEY 1UL
 #define CUIS_EVENT_POINTER 2UL

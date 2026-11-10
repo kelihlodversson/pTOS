@@ -98,6 +98,10 @@ struct pfs_ops {
      */
     LONG (*open)(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out);
     LONG (*create)(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out);
+    /* close reports flush/operation errors but does not consume the cookie.
+     * The SFT consumes one alias after a normal return, even on error. A
+     * nonlocal disk-error unwind must leave that alias/cookie owned. Final
+     * release below consumes the cookie and must not unwind after consumption. */
     LONG (*close)(PFSCOOKIE *fc);
     LONG (*read)(PFSCOOKIE *fc, LONG pos, LONG len, UBYTE *buf);
     LONG (*write)(PFSCOOKIE *fc, LONG pos, LONG len, const UBYTE *buf);
@@ -166,6 +170,13 @@ struct pfs_ops {
      * by a native_handles driver, whose handles have a real OFD.
      */
     LONG (*fstat)(PFSCOOKIE *fc, PFSATTR *out);
+
+    /* Optional consuming final-file release, replacing release() for SFT
+     * cookies only. A normal return consumes the cookie even on error;
+     * return the disposal error rather than hiding it in a void destructor.
+     * Must not nonlocally escape after consumption. Directory release()
+     * semantics are unchanged. NULL uses the historical void release(). */
+    LONG (*release_file)(PFSCOOKIE *fc);
 };
 
 /* Claim 'drive' (0 = A:, 1 = B:, ...) for 'fs', up front (e.g. from a
@@ -245,6 +256,9 @@ LONG pfs_do_dfree(WORD drv, ULONG *buf);
 LONG pfs_do_mkdir(const char *path);
 LONG pfs_do_rmdir(const char *path);
 LONG pfs_do_chdir(const char *path);
+/* Trusted loader operation: resolve against the target PROCESS, select its
+ * drive only on success, and never switch the calling PROCESS/global run. */
+LONG pfs_set_process_directory(const char *path, PD *process);
 LONG pfs_do_getdir(char *buf, WORD drv);
 LONG pfs_do_open(const char *path, WORD mode);
 LONG pfs_do_create(const char *path, UWORD attr);

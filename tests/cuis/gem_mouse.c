@@ -23,7 +23,7 @@ static int input(short *global)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, global[15], message[8] = { 0 }, window, top, owner, below, spare;
+    short id, peer, global[15], message[8] = { 0 }, window, top, owner, below, spare;
     LONG child, status;
     char tail[3] = { 1, 'c', 0 };
     static const char environment[] = { 0, 0 };
@@ -51,24 +51,26 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_update(BEG_MCTRL|NO_BLOCK) == 1 && mt_wind_update(BEG_MCTRL,global) == 1);
     VERIFY(input(global)); /* No window is required to receive modal input. */
     child = process(0x4b,100,(uintptr_t)"C:\\GEMMCTL.TOS",(uintptr_t)tail,(uintptr_t)environment);
-    VERIFY(child > 0 && control_message(message) == 1 && message[0] == 900 && message[1] == child);
-    VERIFY(wind_get(0,WF_TOP,&top,&owner,&below,&spare) == 1 && top == message[3] && owner == child);
+    VERIFY(child > 0 && control_message(message) == 1 && message[0] == 900);
+    peer = message[1];
+    VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);
+    VERIFY(wind_get(0,WF_TOP,&top,&owner,&below,&spare) == 1 && top == message[3] && owner == peer);
     VERIFY(wind_update(BEG_UPDATE) == 1 && wind_update(END_UPDATE) == 1);
     message[0] = 1; message[1] = id;
-    VERIFY(appl_write((short)child,16,message) == 1);
+    VERIFY(appl_write(peer,16,message) == 1);
     VERIFY(control_message(message) == 1 && message[0] == 901);
     VERIFY(appl_yield() == 1 && appl_read(APR_NOWAIT,16,message) == 0);
     VERIFY(wind_update(END_MCTRL) == 1);
     VERIFY(appl_yield() == 1 && appl_read(APR_NOWAIT,16,message) == 0);
     VERIFY(wind_update(END_MCTRL) == 1);
-    VERIFY(control_message(message) == 1 && message[0] == 902 && message[1] == child);
+    VERIFY(control_message(message) == 1 && message[0] == 902 && message[1] == peer);
     VERIFY(wind_update(BEG_MCTRL|NO_BLOCK) == 0);
     message[0] = 2; message[1] = id;
-    VERIFY(appl_write((short)child,16,message) == 1 && wind_update(BEG_MCTRL) == 1);
+    VERIFY(appl_write(peer,16,message) == 1 && wind_update(BEG_MCTRL) == 1);
     status = process(0x13a,child,0,0,0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     VERIFY(wind_update(BEG_MCTRL) == 1 && appl_exit() == 1);
-    VERIFY(appl_init() == id && wind_update(BEG_MCTRL|NO_BLOCK) == 1);
+    id = appl_init(); VERIFY(id > 0 && wind_update(BEG_MCTRL|NO_BLOCK) == 1);
     VERIFY(wind_update(END_MCTRL) == 1 && wind_update(END_MCTRL) == 0 && appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM mouse control: PASS\r\n";
