@@ -2916,6 +2916,14 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
 #endif
     UWORD prot;
 
+#if CONF_WITH_PRIVATE_CLONE
+    /* Syscall copyout must split the same shared anonymous leaf as a user
+     * write fault, including image pages and already-dirtied file mappings. */
+    {
+        int rc = aspace_cow_fault(kproc->aspace, va, access);
+        if (rc >= 0) return rc;
+    }
+#endif
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_fault(kproc->active_space, va, access);

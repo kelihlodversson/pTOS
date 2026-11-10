@@ -40,6 +40,7 @@ static volatile struct {
     unsigned long cell;
     unsigned char *heap, *mapping, *filemap;
 } private_probe;
+static unsigned char private_copyout[32] __attribute__((aligned(4096)));
 static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
 static long private_sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
 {
@@ -111,6 +112,12 @@ static void private_entry(void *argument)
     if(private_probe.mapping && (private_probe.mapping[5]!=0x21 || private_probe.mapping[4096+7]!=0))bad=3;
     if (private_probe.filemap && (private_probe.filemap[11]!=0x35 ||
         private_probe.filemap[4096+13]!=0x46)) bad=9;
+    /* No preceding user write to these destination pages: the syscall must
+     * split anonymous COW itself, not rely on an earlier CPU write fault. */
+    if (private_probe.mode != -3 &&
+        (Ssystem(-7,(long)private_copyout,sizeof(private_copyout)) < 0 ||
+         Ssystem(-7,(long)(private_probe.heap+64),32) < 0 ||
+         (private_probe.filemap && Ssystem(-7,(long)(private_probe.filemap+64),32) < 0))) bad=10;
     if (private_probe.mode > 0 || private_probe.mode == -2) {
         struct ptos_clone_args nested={0};
         unsigned char *stack=(unsigned char *)Malloc(32768);
@@ -177,7 +184,7 @@ static void test_private_aspace(void)
         long handle=Fcreate("COWFILE.TMP",0);
         ptest_assert_msg(data && handle>=0,"private file mapping fixture");
         if (data && handle>=0) {
-            memset(data,0,8192); data[11]=0x35;data[4096+13]=0x46;
+            memset(data,0,8192); memset(data+64,0xa5,32); data[11]=0x35;data[4096+13]=0x46;
             ptest_assert_msg(Fwrite(handle,8192,data)==8192,"private file fixture contents");
             filemap=private_sys6(0x17e,0,8192,3,2,handle,0);
             ptest_assert_msg(filemap>0,"private file mapping reservation");
@@ -198,8 +205,10 @@ static void test_private_aspace(void)
         private_probe.mode=cycle==0?2:(cycle==1?-2:0);
         private_probe.cell=0x11223344UL;
         private_probe.heap[17]=0x31;private_probe.heap[4096+31]=0x42;
+        memset(private_copyout,0xa5,sizeof(private_copyout));
+        memset(private_probe.heap+64,0xa5,32);
         if(private_probe.mapping)private_probe.mapping[5]=0x21;
-        if(private_probe.filemap && cycle)private_probe.filemap[11]=0x35;
+        if(private_probe.filemap)private_probe.filemap[11]=0x35; /* owned dirty page before clone */
         child=pclone_trap(&args,0xc8920000UL|sizeof(args));
         ptest_assert_msg(child>0 && child!=Pgetpid(),"private clone publishes distinct PROCESS");
         if(child<=0)continue;
@@ -213,6 +222,10 @@ static void test_private_aspace(void)
         ptest_assert_msg(private_probe.heap[17]==((cycle&1)?0x61:0x31) && private_probe.heap[4096+31]==0x42,
                          "private partial-page writes isolated in either write order");
         ptest_assert_msg(private_probe.heap[8192+45]==0,"lazy heap page independently backed");
+        for(stage=0;stage<32;stage++)
+            ptest_assert_msg(private_copyout[stage]==0xa5 && private_probe.heap[64+stage]==0xa5 &&
+                (!private_probe.filemap || private_probe.filemap[64+stage]==0xa5),
+                "syscall copyout splits image/heap/dirty-file COW without changing parent");
         if(private_probe.filemap)ptest_assert_msg(
             private_probe.filemap[11]==((cycle&1)?0x75:0x35) && private_probe.filemap[4096+13]==0x46,
             "clean/lazy file and anonymous COW mixtures isolated");

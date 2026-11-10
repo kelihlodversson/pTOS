@@ -94,3 +94,9 @@ Remaining acceptance work includes broader fault-cancellation pressure tests
 and complete inheritance. A separate isolated
 saved-return PRIVATE_VM validation checkpoint is documented in #895/#932. This
 prerequisite does not justify enabling public Pfork or Pvfork.
+
+Kernel syscall copyout uses the same anonymous-COW split as user write faults
+before mmap/lazy backing. Logical write eligibility alone is insufficient:
+physical leaves remain read-only until back_page resolves their owned COW
+record. Native probes exercise untouched child image, heap and dirty private
+file-mapping destinations and verify that parent bytes remain unchanged.
