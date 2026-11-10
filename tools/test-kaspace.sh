@@ -130,3 +130,9 @@ ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie
     -Iinclude/arch/x86_64 -idirafter include -iquote bdos -iquote fs \
     tests/sched_result_wait.c bdos/sched_lifetime.c -Wl,--gc-sections -o "$work/result-wait"
 "$work/result-wait"
+# Force quoted kernel headers to precede system headers: the fixture must
+# explicitly retain the hosted jump ABI under this ordering as well.
+${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie -no-pie \
+    -ffunction-sections -fdata-sections -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 -iquote bdos -iquote fs \
+    -c tests/sched_result_wait.c -o "$work/result-wait-quoted.o"

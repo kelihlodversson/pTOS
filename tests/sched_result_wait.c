@@ -1,8 +1,10 @@
 /* Real result-wait/cancellation code; IRQ/CPU/PROCESS endpoints are host models. */
-#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <setjmp.h>
+/* CPU model uses libc jumps, never the kernel continuation buffer/ABI.
+ * Do not depend on compiler deduplication of quote/system include paths. */
+#define SETJMP_H
 #include "emutos.h"
 #undef CONF_WITH_PTERMGRP
 #define CONF_WITH_PTERMGRP 1
