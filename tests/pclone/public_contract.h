@@ -4,6 +4,7 @@ static int phase1_contract_exercised;
 static unsigned phase1_rejection_case;
 static volatile unsigned phase1_entered;
 static volatile unsigned long phase1_argument;
+static volatile unsigned long phase1_expected_argument;
 static volatile long phase1_pid;
 static unsigned phase1_resources;
 static int phase1_resource_error;
@@ -53,11 +54,11 @@ static void phase1_finish(long tid, long pid)
         char message[96]; sprintf(message,"ABI child tid=%ld pid=%ld status=%lx\r\n",tid,pid,status); conws(message);
     }
     ptest_assert_msg(status > 0 && !(status & 65535),"void entry returns status zero on native backend");
-    ptest_assert_msg(phase1_entered == 1 && phase1_argument == 0xfedcba98UL &&
+    ptest_assert_msg(phase1_entered == 1 && phase1_argument == phase1_expected_argument &&
                      (status >> 16) == phase1_pid && phase1_pid != Pgetpid(),
                      "opaque high-bit argument and independent PROCESS identity");
 #if defined(__x86_64__)
-    ptest_assert_msg(clone_abi_argument == 0x00000000fedcba98ULL,
+    ptest_assert_msg(clone_abi_argument == (unsigned long long)phase1_expected_argument,
                      "actual x32 entry register zero-extends the ILP32 opaque pointer");
 #endif
     ptest_assert_msg(Pwaitpid(phase1_pid,1,0) == -33L,"one PROCESS completion and one public reap");
@@ -244,6 +245,7 @@ static void test_public_contract(unsigned char *stack)
 #endif
                      "native public structure size/pointer width/alignment");
     good = request.args;
+    phase1_expected_argument = 0xfedcba98UL;
     phase1_resources = 0; phase1_entered = 0;
     phase1_argument = 0; phase1_pid = 0; phase1_resource_error = 0;
 #if defined(__x86_64__)
@@ -265,6 +267,16 @@ static void test_public_contract(unsigned char *stack)
                          (size < 32 ? pid == -99 : pid > 0),
                          "28..31 prefix, 32 extension, unknown tail and no early dispatch");
         phase1_finish(result,size < 32 ? -1 : pid);
+    }
+    {
+        static const unsigned long opaque[] = {0,0x80000000UL,0xffffffffUL};
+        for (bit = 0; bit < sizeof(opaque)/sizeof(opaque[0]); bit++) {
+            bad = good; bad.argument = (void *)opaque[bit];
+            phase1_expected_argument = opaque[bit]; phase1_entered = 0;
+            result = pclone_trap(&bad,32);
+            phase1_finish(result,pid);
+        }
+        phase1_expected_argument = 0xfedcba98UL;
     }
     for (bit = 0; bit < 4; bit++) {
         bad = good; pid = tid = -99; phase1_entered = 0;
