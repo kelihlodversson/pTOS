@@ -27,6 +27,7 @@
 #include "gemerror.h"
 #include "bdosstub.h"
 #include "setjmp.h"
+#include "fs_error.h"
 #include "kproc.h"
 #include "kprint.h"
 #include "biosext.h"
@@ -35,11 +36,16 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #include "native_sched_backend.h"
+#include "arch/arm/irqframe.h"
 #include "thread_startup32.h"
 #include "string.h"
 #include "fs.h"
 #endif
 #include "arch/arm/fpusave.h"
+#include "syscall_return.h"
+#if CONF_WITH_FORK_RETURN_TEST
+extern void arm_enter_saved_user(const void *, ULONG) NORETURN;
+#endif
 
 extern long osif(long *pw);                     /* bdos/bdosmain.c */
 
@@ -78,6 +84,29 @@ void arm_gemdos_dispatch(struct uframe *f)
 
     for (i = 0; i < 8; i++)
         pw[i] = (long)f->r[i];
+#if CONF_WITH_FORK_RETURN_TEST
+    if (pw[0] == 0x190 && !pw[1] && ((ULONG)pw[2] & 0xffff0000UL) == FORK_RETURN_PROBE) {
+        SYSCALL_RETURN saved;
+        typedef char frame_size_check[(sizeof(saved.user) == sizeof(*f)) ? 1 : -1];
+        (void)sizeof(frame_size_check);
+#if FPU_ALL_BYTES
+        {
+            ULONG fpexc;
+            __asm__ volatile ("vmrs %0,fpexc" : "=r"(fpexc));
+            if ((fpexc & 0xc0000000UL) != 0x40000000UL) {
+                f->r[0] = EINVFN; return; /* no pending VFP restart image */
+            }
+        }
+#endif
+        memset(&saved, 0, sizeof(saved));
+        memcpy(&saved.user, f, sizeof(*f));
+        saved.mappings.entry = f->lr;
+        saved.mappings.stack_base = (f->usp - 256) & ~15UL;
+        saved.mappings.stack_size = 512;
+        f->r[0] = proc_clone_return_probe(&saved, (UWORD)pw[2]);
+        return;
+    }
+#endif
     if (pw[0] == SUPER)
         f->r[0] = (ULONG)(pw[1] == 1 ? 0L : EACCDN);
     else
@@ -118,6 +147,7 @@ int arm_demand_page(ULONG address, ULONG fsr, int fetch)
  * Pexec() in progress, innermost first.
  */
 struct uspace_launch {
+    FS_ERROR_STATE error; /* immutable enclosing scope across setjmp/longjmp */
     jmp_buf resume;
     struct uspace_launch *previous;
     PD *pd;
@@ -130,32 +160,49 @@ struct uspace_launch {
     volatile ULONG exit_resident_len;
     volatile BOOL exit_final;
 };
-static struct uspace_launch *uspace_launch;
 #if CONF_WITH_NATIVE_SCHED
+static struct uspace_launch *get_uspace_launch(void) { return ksched_loaded_launcher(); }
+static void set_uspace_launch(struct uspace_launch *launch) { ksched_set_loaded_launcher(launch); }
+#else
+static struct uspace_launch *legacy_launch;
+static struct uspace_launch *get_uspace_launch(void) { return legacy_launch; }
+static void set_uspace_launch(struct uspace_launch *launch) { legacy_launch=launch; }
+#endif
+#if CONF_WITH_NATIVE_SCHED
+/* Borrowed only during IRQ capture on this CPU. The launcher retains the
+ * transferred syscall stack; no ownership is moved into the captured image. */
+BOOL arm_process_irq_stack(PD *pd, uintptr_t *base, uintptr_t *top)
+{
+    struct uspace_launch *launch=get_uspace_launch();
+    if (!launch || launch->pd!=pd || !launch->stack_phys || launch->exit_process) return FALSE;
+    *base=(uintptr_t)pmem32_virt(launch->stack_phys); *top=launch->stack_top;
+    return TRUE;
+}
 /* IRQ exclusion covers the serialized cooperative handoff, not execution.
  * User registers stay in the suspended trap frame on this context's stack.
  * Never publish another task until its continuation and resource owners exist. */
 void native_sched_save(NATIVE_SCHED_CONTEXT *context)
 {
     context->flags = native_sched_irq_save();
+    ksched_verify_switch_boundary();
     context->pd = run;
     context->root = aspace_hw_current();
     __asm__ volatile ("stmia %0,{sp,lr}^" :: "r"(&context->user_sp) : "memory");
 #ifdef __ARM_PCS_VFP
     __asm__ volatile ("vmrs %0,fpscr" : "=r"(context->fpscr));
 #endif
-    context->launch = uspace_launch;
+    context->launch = get_uspace_launch();
     context->native_task = ksched_context_id();
-    memcpy(context->disk_error, errbuf, sizeof(errbuf));
+    context->disk_error = *fs_error_current();
     aspace_hw_switch(aspace_kernel_root());
 }
 void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 {
     native_sched_irq_disable();
     run = context->pd;
-    uspace_launch = context->launch;
+    set_uspace_launch(context->launch);
     ksched_context_restore(context->native_task);
-    memcpy(errbuf, context->disk_error, sizeof(errbuf));
+    *fs_error_current() = context->disk_error;
     aspace_hw_switch(context->root);
     __asm__ volatile ("ldmia %0,{sp,lr}^; nop" :: "r"(&context->user_sp) : "memory");
 #ifdef __ARM_PCS_VFP
@@ -172,7 +219,7 @@ static BOOL injected_exit_failure;
  * The active syscall stack remains owned by this existing launcher. */
 BOOL proc_defer_observer(PD *pd, KPROC *observer)
 {
-    struct uspace_launch *launch = uspace_launch;
+    struct uspace_launch *launch = get_uspace_launch();
     if (!launch || launch->pd != pd || !launch->stack_phys) return FALSE;
     if (!observer || launch->exit_process || launch->fallback_observer)
         panic("duplicate fallback observer ownership");
@@ -182,7 +229,7 @@ BOOL proc_defer_observer(PD *pd, KPROC *observer)
 
 BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
-    struct uspace_launch *launch = uspace_launch;
+    struct uspace_launch *launch = get_uspace_launch();
     KPROC *process;
     if (!launch || launch->pd != pd || !launch->stack_phys || launch->exit_process)
         return FALSE;
@@ -258,13 +305,14 @@ void gouser(void)
      * launcher returns the exit code. xterm() restores `run`; deferred
      * finalization keeps the child mappings alive until this safe continuation.
      */
-    launch.previous = uspace_launch;
+    launch.error = *fs_error_current();
+    launch.previous = get_uspace_launch();
     launch.pd = p;
     launch.stack_phys = kstack_phys;
     launch.stack_top = kstack_top;
     launch.exit_process = NULL;
     launch.fallback_observer = NULL;
-    uspace_launch = &launch;
+    set_uspace_launch(&launch);
     __asm__ volatile ("mrs %0, cpsr" : "=r" (launcher_status));
     if (setjmp(launch.resume) == 0) {
         aspace_hw_switch(root);
@@ -274,12 +322,16 @@ void gouser(void)
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) {
             thread_startup_entering(startup);
+#if CONF_WITH_FORK_RETURN_TEST
+            if (prepared->saved_return) arm_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
+#endif
             arm_enter_prepared_user(prepared, (ULONG)kstack_top);
         }
 #endif
         arm_enter_user(entry, user_sp, (ULONG)(uintptr_t)p, (ULONG)kstack_top);
     }
-    uspace_launch = launch.previous;
+    set_uspace_launch(launch.previous);
+    *fs_error_current() = launch.error;
     {
         ASPACE_ROOT launcher = kproc_user_root(run);
 
@@ -318,8 +370,8 @@ void termuser(void)
      * bdos/proc.c's xterm() already did `run = kproc_get_parent(p);
      * run->p_dreg[0] = rc;`: the exit code is where proc_go()'s caller reads it.
      */
-    if (uspace_launch)
-        longjmp(uspace_launch->resume, 1);
+    if (get_uspace_launch())
+        longjmp(get_uspace_launch()->resume, 1);
 
     panic("process terminated with no launch to resume, rc=%ld\n", (long)run->p_dreg[0]);
 }

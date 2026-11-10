@@ -1,0 +1,407 @@
+Native scheduler migration and interruption contract (#713)
+===========================================================
+
+Current A2c architecture
+------------------------
+bdos/native_sched.c owns one cooperative round-robin for x32, ARM MMU and m68k
+MMU. CPU backends provide only continuation entry, CPU/FPU/MMU/IRQ save/restore,
+root context setup and idle. CUIS/libaes is not required. No preemption or SMP
+is enabled. A1 stable growth, A2a permanent root, A2b durable controller/results
+and A2c detached cooperative admission use this same dispatcher and queue.
+
+Root existence, queue ownership and caller attachment are distinct:
+- Permanent root: one aligned 16 KiB BSS stack, resume continuation and pinned
+  kernel controller basepage. The controller has no KPROC/PID, file/CWD or user
+  ASPACE and survives every ordinary launcher. Root frames never reside on a
+  user task's syscall or scheduler stack. Root owns its disk-error boundary;
+  an escaping cleanup callback fails stop without retry/publication repetition.
+- scheduler.active: stable queue storage exists, including while root is parked
+  with live NEW/BLOCKED/DRAINING/DEFERRED tasks, private reservations or zombies.
+- scheduler.entered: this root is executing or a managed task/nested launcher
+  is suspended through it. It is not a statement about queue existence.
+- Attached unmanaged caller: one scoped waiter_resume, retained entry_owner
+  identity and CPU/FPU/MMU/IRQ snapshot on the caller's still-live stack. Its
+  readiness predicate/argument is borrowed ONLY for that attachment. Root clears
+  predicate, argument and entry identity before returning; the caller clears
+  waiter_resume before restoring its CPU context. No later root entry can jump
+  into that old stack. Concurrent/reentrant attachments are rejected.
+- Managed TID waiter: a retained (PROCESS,TID,execution) ticket and its task's
+  existing stack/CPU continuation, independent of the unmanaged attachment.
+
+Logical parent is KPROC.parent_identity, not root.pd, admission owner, initial
+slot index or execution controller. Cached task parent PD links are valid only
+while that parent lives; ksched_exiting clears ALL of them before PD retirement.
+A historical parent identity retains no descriptors, PD or ASPACE. Async zombies
+and CUIS observers remain independent; #909 is the sole public PROCESS wait
+consumer. Nested synchronous Pexec remains on its existing carrier continuation
+and returns its own child's status; cancellation waits for its safe boundary.
+
+Admission, result delivery and return
+-------------------------------------
+1. Reserve stable private storage. KSCHED_LIMIT is the initial eight-record arena
+   and maximum explicit synchronous batch, not a runnable-task limit. Reuse an
+   UNUSED slot or append one stable node. Never realloc/move active records.
+2. Retain KPROC, KTHREAD/ASPACE, controller, execution-stack and observer owners.
+   A synchronous admission owns non-recycled token/cells; each task owns its
+   producer/cell. The waiter separately owns the consumer. Any fallible prepare,
+   mapping, image adoption preflight or output setup precedes publication.
+3. Publish TASK_NEW with no allocation, callback, yield, copyout or failure.
+   A private reservation is invisible to dispatch, wait and exit notifications.
+   Rollback consumes only private owners. Prepared synchronous admissions exclude
+   callback root entry/new overlapping admissions until committed or cancelled.
+4. A synchronous attachment enters root and waits only for ITS admission cells.
+   Root publishes each PROCESS result once after final-thread completion and
+   dependent execution reap. It need not drain unrelated work. The live caller
+   consumes its result into its own destination and drops its consumer handle.
+5. A normal public async Pexec100/106 returns the PID without dispatching or
+   retaining the caller's continuation. The child owns its prepared execution
+   and stable kernel controller independently of that caller's return/exit.
+6. A later unmanaged Syield (also used after ordinary AUTO program returns)
+   attaches afresh and pumps at most the number of live continuations counted
+   on entry. Each actual dispatch spends one budget unit. The one persistent RR
+   cursor survives attachments. If nothing is ready, the pump returns immediately
+   without polling/spinning on blocked tasks. Newly admitted tasks stay owned
+   even if the current budget finishes before they execute.
+7. The existing Pwait consumer can enter the same root to await its own child
+   predicate from an unmanaged caller. Its stack-local wait argument is scoped
+   to the live attachment and erased before return. Managed waits keep the same
+   existing cancellation/block/wake path. No second public waiter is created.
+
+The kernel root parks while blocked/runnable/zombie records remain, retaining
+none of the previous caller's CPU/launcher/error context. A later attachment
+installs a fresh root CPU context before resuming the permanent frame. A waiting
+synchronous attachment with no ready tasks uses backend IRQ idle; a bounded pump
+parks instead. A blocked child needs its ordinary predicate/event to become
+ready: cooperative scheduling does not promise CPU-bound or timer preemption.
+
+Owner retirement abandons admissions by retained KPROC identity. Detachment is
+not the same thing: a valid completed result is consumed once; a terminated owner
+cannot receive it. Retirement clears an attached jump buffer before identity
+release. A root whose attached owner is abandoned never resumes that caller;
+remaining managed tasks may continue/idle on the permanent root. No arbitrary
+nested kernel frame is forcibly unwound. Never-started disposal has no invented
+exit status. Callback cleanup obeys the existing fail-stop contract.
+
+Anchor and reclamation ownership
+---------------------------------
+Each live task owns exactly one generic KTHREAD and backend scheduler stack;
+launchers take/free syscall stacks only after leaving the child continuation.
+Root alone reaps stopped scheduler stacks/startup resources. A retained KPROC
+completion identity is separate from its execution/resource references.
+
+A SAME_PROCESS worker owns one counted completion_owner dependency. The PROCESS
+anchor cannot publish/release/recycle while any dependent may still reference
+it, including a leader-first DRAINING anchor. Last-thread completion changes the
+anchor once. Root reaps a stopped worker's execution BEFORE dropping its anchor
+reference. A second root pass completes anchors that precede their last worker
+in the list. Both list/release orders are tested. Worker completion is not a
+separate PROCESS zombie or result. Construction guards dependency exhaustion
+before no-fail publication; underflow/unprepared overflow fail stop.
+
+A record becomes reusable only when stopped/reaped, without a KTHREAD, PROCESS,
+producer handle or dependent/anchor reference. Private reservations, zombies and
+live predicates prevent reuse. No observer retains a raw task pointer: observed
+completion owns an independent identity/token. Root unpublishes terminal wait
+predicates before retiring operation references or execution stacks.
+
+Grown UNUSED nodes are trimmed on root, repairing the RR cursor before freeing.
+The base arena is freed only when EVERY slot is unused and unowned, including
+reservations and zombies. Consuming the last zombie outside root may release
+already-quiescent metadata, never a live execution stack. Results survive arena
+reclamation until their final handles are consumed/released. Permanent root
+storage/controller survive shutdown execution; cold boot resets BSS. There is
+no new shutdown drain/forced-cancellation policy.
+
+Managed result tickets
+-----------------------
+Managed result attachment: KSCHED_WAITER is another non-recycled 64-bit operation
+token, bound to (retained KPROC identity, TID, scheduler execution identity).
+Its kernel record owns a reference to the result admission and an identity-only
+actor reference. It stores NO PD, result destination, jmp_buf or CPU frame.
+A stale token cannot resolve reused storage. Wrong actor/TID/execution, invalid
+count, exhausted IDs, nonempty handles or allocation/ref failure reject without
+output delivery. Multiple TIDs may observe readiness, but only the existing
+admission's one successful consumer takes results. This is not Pthjoin or Pwait.
+
+ksched_result_wait() is internal and managed-execution-only. It verifies the
+current THREAD belongs to run (rejecting separate nested Pexec/foreign callback
+execution), admits its ticket, and blocks using the existing
+ksched_wait_cancelable() and task-owned CPU continuation. The predicate argument
+is retained kernel operation storage, not a pointer to a caller's local token.
+The existing round-robin resumes that same THREAD as soon as ITS result is ready;
+unrelated runnable/blocked continuations need not drain. Ready/consumed/abandoned
+states wake the operation to deliver a result or a terminal error. No new queue,
+dispatcher, public PROCESS waiter or callback mechanism is introduced.
+
+Before result consumption, pending cancellation wins even for already-complete
+results. The operation detaches/releases its owned refs, restores IRQ state,
+then enters the existing safe checkpoint. It cannot unwind arbitrary kernel or
+nested launcher frames. After successful consumption there is no rollback of
+delivered results. Explicit detach is idempotent through the owning handle and
+abandons only that attachment; another TID may still consume an unclaimed result.
+PROCESS completion still abandons admissions through the existing KPROC identity.
+
+An execution that never explicitly detaches cannot leak its ticket: scheduler
+root retires matching (PROCESS,TID,execution) attachments after the backend has
+stopped that continuation, before freeing KTHREAD/execution stacks. That task
+is DONE/ZOMBIE/DRAINING and its readiness predicate cannot be called again.
+Unpublish precedes final ref release; abandoned caller-stack handles become
+inert tokens, not dangling operation pointers. Retirement MUST NOT be invoked
+at cancellation-request time for a resumable blocked execution. No current
+stack is freed by this mechanism, and there is no strong reference cycle.
+
+
+Verification and evidence boundaries
+-------------------------------------
+Native regression builds run three real public user images through the AUTO
+coordinator (no test syscall). An ordinary async admission is prepared while no
+managed group is active, then consumed by the existing wait. A separate normal
+user launcher creates an async child, verifies it has not executed, returns and
+retires. A bounded independent kernel Syield enters root; the child writes its
+phase and blocks in Pwait for a new child. Root returns with both tasks alive.
+A fresh user launch enters the same root, opens the gate, lets the blocked child
+resume, performs nested Pexec and verifies orphan PPID0 and independent waits.
+It forces actual basepage retirement/reuse with two identical PE_LOAD operations,
+then verifies the orphan cannot be reaped through a replacement identity.
+This does not assume that a different image must immediately reuse its original
+parent's PD. The production host fixture separately forces reuse of that exact
+parent storage and verifies its old child's link/notification cannot revive.
+
+The ring-3 suites retain twelve mixed PROCESS/THREAD peers, leader-first and
+last-thread exit, joins, cancellation, faults/TSR, CPU/FPU/MMU patterns, observer
+lifetimes, malformed calls/rollback and exact resource baselines. x32 memory
+baseline tests now explicitly progress independent async children before dropping
+observer test contexts or comparing final counts; synchronous clone return no
+longer means every unrelated PROCESS drained.
+
+Production host tests exercise both anchor orders, delayed result publication,
+record exhaustion/reuse, private cancellation, parent PD reuse, abandoned waiter
+continuations and fail-stop cleanup. A real hosted alternate-stack root test
+performs 32 park/resume cycles, then returns one admission while an unrelated
+blocked task survives, performs a bounded empty pump and finally reclaims it.
+CPU/MMU effects are modeled there. Hosted ASan tests ownership but cannot execute
+this private kernel coroutine ABI; unsanitized/UBSan/fortified GCC13 use the
+project's fixture-local assembly, without weakening normal libc fortification.
+Native execution and pinned-emulator results are recorded in the PR matrix.
+
+Next milestone and synchronization
+-----------------------------------
+B must establish architecture-owned user interruption frames, deferred reschedule
+requests and per-CPU current/root/nested-launcher state before timer scheduling.
+C may then enable USER-only preemption with actual CPU-bound progress tests.
+No arbitrary kernel/BIOS/filesystem/CUIS/callback continuation may switch from IRQ.
+Membership/completion ownership precedes mapping/lease then leaf-runqueue locks.
+Serialize anchor dependency/ref release, reservation/reuse/trim, admission/ticket
+registries, attach/park and final result delivery against owner retirement. Wait
+admission/predicate/block/wake needs a race-free generation protocol. Root callback
+predicates/destructors/allocations/user copies must execute outside future runqueue
+locks. No blocking PROCESS lock under CUIS/input exclusion. 64-bit token accesses
+on 32-bit MMUs need protected accesses; local IRQ exclusion is not an SMP lock.
+
+The physical-button CI observation is traced in doc/native-scheduler-sync.txt:
+input could precede wait admission and validly return READY. The independently
+reviewed admission-fence tests preserve assertions/deadlines and reproduce the
+pre-admission result; exact-head CI remains a separate gate. Stream cancellation
+#907 and CUIS minimization #915 stay deferred. No GUI ports, TLS, fork or non-MMU scheduling is introduced.
+
+Timer/return readiness by architecture
+---------------------------------------
+x32: PIT IRQ0 drives 200Hz accounting through irq.c. irqasm.S saves 15 GPRs,
+FXSAVE image and iretq frame, acknowledges via dispatch, restores same frame.
+Its user-callback return hook already distinguishes user CS, but does not own a
+schedulable interruption. Need retained RIP/CS/RFLAGS/RSP/SS + all GPR/FPU state,
+CR3/TSS syscall-stack identity and an off-IRQ-stack handoff to root. Current
+setjmp scheduler state only represents cooperative kernel continuations.
+
+ARM Cortex-A7: generic physical timer PPI30 calls vector_5ms; dispatch_irq saves
+exception return state via SRS, caller-clobbered registers and FPU image on the
+SVC stack and returns with RFE. Callee-saved registers survive the C call but are
+NOT a complete stored preemption context. Need all R0-R12, user SP/LR, return
+PC/CPSR/SPSR, FPU/FPSCR and banked SVC/IRQ stack/return ownership. Save/restore
+currently serializes banked user SP/LR, TTBR root, launcher and disk-error state;
+trap frames/setjmp carry the rest at cooperative boundaries. Cannot longjmp a
+scheduler save from an IRQ and claim full interrupted-user register ownership.
+
+m68k: virt goldfish RTC/PIC returns via RTE; Atari MFP timer C and Amiga timer
+paths feed the classic 200Hz vectors. Ordinary ISR register saves + ABI are not
+an owned complete context. Need D0-D7/A0-A6, USP, the exact CPU-specific SR/PC
+exception frame, supervisor/exception stack, MMU root and complete FPU
+frame/FP0-7/FPCR/FPSR/FPIAR. 030/040/060 exception/FPU frame shapes differ. Global
+uenter staging and launcher/error state must become protected/per-execution
+before asynchronous dispatch. Preserve 060 cache and nonzero-FPIAR probes;
+QEMU 060 PFLUSHA remains separate #913, non-MMU scheduling #911.
+
+Interruption and synchronization policy
+----------------------------------------
+For this increment all switches remain explicit cooperative handoffs with IRQ
+state restored by existing backends. Interrupt handlers may produce events but
+cannot mutate/reap task records or switch arbitrary kernel frames. No new IRQ
+masking region, callback under a new lock, or permanent global IRQ mask is added.
+IRQ exclusion is local interrupt control, not an SMP lock.
+
+Future user-only preemption still needs serialization of membership/group-exit,
+TID join/completion claims, clone no-fail publication, root/anchor lifetime,
+ASPACE maps/faults/leases/copyout, current task and nested launch state. Timer
+interrupts set a request; kernel-owned state changes defer dispatch. Do not hold
+a lifecycle lock over copyin/out, allocation, I/O, callback or context handoff.
+
+Required lock policy before B/C: the runqueue lock is a LEAF. No readiness
+callback, last-reference destructor or PROCESS/CUIS notification runs under it.
+Resource owners (completion, input/device, membership) register readiness under
+their own lock, then briefly nest the runqueue lock to admit/block/wake; release
+all owner locks before handoff. A wakeup must pair a generation/predicate
+recheck with blocking so an event cannot be lost between check and sleep.
+Multi-resource clone publication needs the audited order membership -> mapping/
+lease -> runqueue, with fallible work outside and no callbacks after first
+output store. Completion-claim locks must not nest inversely through PROCESS
+teardown. CUIS/filesystem locks must not be acquired under runqueue; evaluate
+existing arbitrary predicates outside it before making the dispatcher locked.
+This is a migration constraint, NOT implemented SMP locking. All actual call
+sites/interrupt priorities need lock-order validation before enabling B/C.
+
+Filesystem/global watchdog and callback reentrancy remain non-preemptible;
+errbuf restoration at cooperative switches does not make interrupted filesystem
+operations reentrant. ARM banked LR/SP/FPSCR, m68k uenter and x32 TSS/current
+launch state require per-CPU ownership. Generic PROCESS waiting stays #909;
+TLS #908, non-MMU #911 and ARM/m68k GUI #898 are not scheduler prerequisites.
+CUIS stream cancellation stays disabled under its existing #907 contract.
+
+B0 synchronization foundation
+------------------------------
+See doc/native-scheduler-sync.txt for the production ownership/lock inventory,
+checked single-CPU leaf exclusion, stamped completion check/block admission,
+split-phase retirement and global shutdown-admission boundary. The document
+separates implemented guarantees from required owner locks, wait generations,
+record pins, per-CPU execution state and architecture user frames before B1/B2.
+Neither this boundary nor local IRQ masking provides SMP synchronization.
+
+B1a CPU execution ownership (preemption remains disabled)
+---------------------------------------------------------
+See doc/native-interrupt-frames.txt for the explicit x32/ARM/m68k frame plan,
+current implementation and remaining B1b/B1c boundaries. The shared runqueue no
+longer stores current execution, root stack/context, caller attachment or clone
+handoff state. A boot-CPU record owns these; a dispatched task stays pinned to
+that CPU until the root verifies its own stack and acknowledges the handoff.
+Clearing a backend-loaded current pointer cannot authorize reclamation. Record
+reuse, trimming and execution-resource destruction reject on-CPU continuations.
+This is a common architecture-neutral ownership prerequisite, not complete IRQ
+register-frame capture, SMP support or permission to switch an IRQ continuation.
+
+B1b x32 capture foundation
+---------------------------
+The first B1b increment copies the architecture's original full device-IRQ
+GPR/FXSAVE/user-iret image into preallocated THREAD backend storage, bound to
+CPU/execution/TID, retained ASPACE CR3 and TSS/syscall/IRQ stack identity. The
+original IRQ return path is unchanged. Real 64-bit ring-3 GPR/x87/XMM/DF patterns
+exercise capture and return; host models cover binding and lifetime rejection.
+See native-interrupt-frames.txt for the full contract, remaining ARM/m68k capture
+and B1c loaded-state conversion. No timer dispatch or preemption is enabled.
+
+Stack reconciliation after #910 merge
+-------------------------------------
+Epic079c896e6 contains the managed-thread implementation and subsequent CUIS
+identity/operation cleanup. PR914 now targets epic directly. Reconciliation
+retains the original scheduler commits rather than replaying #910, including
+all #917 admission fences and the later resumed-wait handshake. Native x32
+23/0, ARM27/0 and m68k04026/0 each pass five shutdown checks; production host
+ASan/UBSan and fortified GCC13 pass. The IRQ capture verdict is required only
+when its public Pclone worker is configured; internal-only scheduling does not
+execute that register-pattern probe. No preemption or restore path is enabled.
+
+B1b ARM capture checkpoint
+-------------------------
+The common dispatcher still makes no asynchronous scheduling decision. ARM IRQ
+entry now captures the complete integer/banked/VFP user frame into preallocated
+THREAD-owned storage, bound to its active launcher stack and actual MMU root.
+Original stack frames alone drive exception return. Native Cortex-A7 runs pass
+27 suites plus five shutdown checks, including the actual user IRQ pattern,
+A2c detached background execution and twelve mixed PROCESS/THREAD peers. Host
+frame-binding and ownership tests pass ASan/UBSan and fortified GCC13; those
+host inputs are synthetic, not native context evidence. m68k interrupted-frame
+capture and full CPU-local launcher/error conversion remain B1b/B1c work.
+
+B1b m68k format-0 checkpoint
+---------------------------
+The same preallocated capture/CPU binding contract now admits actual m68k
+hardware user interrupts, keeping synthetic timer continuations distinct.
+QEMU68040 passes 26/0 with five shutdown checks. Pinned Amiberry8.5.0/68060
+passes 25/0 caches off/on, including debugger-observed captured patterns,
+zero mismatches and strict nonzero FPIAR. Extended exception formats, complete
+restore eligibility and B1c loaded-state conversion remain gated. Capture
+continues to return through original IRQ frames; no preemption is enabled.
+
+The same format-0 capture/return probe also passes pinned Amiberry68030/68882
+25/0 caches off/on with real nonzero-FPIAR capture counts. Native fastcall and
+extended fault-frame decoding remain explicitly unverified/gated.
+
+B1c launcher and m68k staging ownership
+--------------------------------------
+Native launcher chains are CPU-owned; m68k entry uses a launcher-local immutable
+argument record instead of global staging. Local native x32/ARM/m68k suites
+pass 23/0, 27/0 and 26/0 respectively, each with five shutdown checks. This is
+an independently verified B1c increment, not completion of loaded run/disk-error
+or callback-state conversion, and not authority to resume a captured IRQ copy.
+
+K1 loaded state / K2 gate
+--------------------------
+CPU storage now owns the exported run ABI slot, complete loaded disk-error
+record and callback/watchdog execution chain. Launchers, callbacks and syscall
+returns restore their enclosing error scope before reclamation/cancellation.
+Loader error backups are lexical. Backend switches reject callback/leaf frames.
+m68k capture rejects unknown/mismatched hardware FPU cookies and all extended
+exception frames. See native-interrupt-frames.txt for lexical m68k fault-frame ownership and the
+remaining copied-frame restart, outer-return depth and SMP selection gates.
+K1 covers current boot-CPU cooperative loaded execution; B2/C remain disabled. native-blocking-contract.txt documents #929's
+required blocking contract without adding a descriptor engine or public API.
+
+B2 next increment: blocked-owner generation wake
+-----------------------------------------------
+Common observed waits now keep their owner stamp until resumption, wake on a
+post-block generation change even with a false predicate, and detach all wait
+metadata before cleanup. Native probes distinguish this from the existing
+pre-block check/retry test. The same common code serves x32, ARM and m68k.
+User-frame restore, owner locks/IRQ wake admission, final return eligibility and
+timer preemption are still gated. The independent residual-file ownership fix
+is PR #933; #931 retains responsibility for its own TASK_RETIRING and outer
+cleanup-cancellation/fatal-copy safety. None changes PROCESS reaping (#909).
+
+B2a: IRQ wake / idle ownership
+-----------------------------
+A CPU-owned wake epoch now pairs owner-sequence publication with root's final
+idle admission. Maskable IRQ entry notifies without dispatching or retaining a
+driver pointer. Root rechecks before the existing atomic backend idle and clears
+admission on wake/park. The retained blocked operation owns its event source.
+Native tests exercise a real IRQ wake plus same-execution resumption; the host
+fixture injects admission/park interleavings separately. No assembly user-return
+path is replaced. B2b restartable-frame proof and B2c deferred handoff remain
+gated; fork's independently owned syscall-return startup (#932) is a different
+contract and does not authorize restoring diagnostic IRQ captures.
+
+B2b restricted proof increment
+-----------------------------
+x32 test kernels can round-trip a freshly captured known user IRQ pattern
+through THREAD-owned storage back to the SAME entry stack before callbacks or
+scheduling. Host validation rejects changed image/binding/identity/sequence;
+native acceptance requires actual user register checks and the fresh-image
+marker plus final suite PASS. This is deliberately smaller than a restorable
+continuation across scheduler dispatch. Ordinary builds, A32 and m68k retain
+the original capture/return behavior; copied delayed restore and preemption
+remain disabled. See native-interrupt-frames.txt for the exact freshness and
+mapping/GS/TSS/stack limits. No #934/#936/GUI policy is imported here.
+
+Merge-train reconciliation after #932
+------------------------------------
+The scheduler now reconciles with epic 02c7345dc3e16807aa8200c57b760dd04e86df1a.
+Prepared launch/deferred cancellation uses canonical predecessor identities and
+TASK_RETIRING from #931, including execution-scoped cleanup tickets. Private
+teardown retains the linked record/backend until destruction returns; clear_task
+preserves arena links and admission ownership. Successor searches restart after
+reentrant destruction or final reference release. The permanent controller and
+bounded unmanaged root entry remain authoritative for ordinary admission.
+
+Merged SFT ownership/diagnostics (#933/#943), loaded PROCESS construction (#936),
+independent COW (#934), and gated saved-syscall-return proofs (#932) are preserved.
+The two #917 input-admission corrections remain in the integrated source; #917
+is retargeted to epic before any scheduler merge and must not replay its old
+stacked scheduler history. Its superseded disposition requires a separate check.
+No public dispatch, delayed IRQ restore, timer preemption or SMP is enabled.

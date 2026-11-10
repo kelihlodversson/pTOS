@@ -14,19 +14,23 @@ C_SYM(x86_64_enter_prepared_user):
         movq %rdi, %r15
         movq 144(%r15), %rax
         movq %rax, %cr3
-        movl $0xc0000100, %ecx /* FSBASE; TLS unsupported */
-        xorl %eax, %eax
-        xorl %edx, %edx
-        wrmsr
-        movw $0x23, %ax
+        movw 168(%r15), %ax
         movw %ax, %ds
+        movw 176(%r15), %ax
         movw %ax, %es
-        xorl %eax, %eax
+        movw 184(%r15), %ax
         movw %ax, %fs
+        movw 192(%r15), %ax
         movw %ax, %gs
+        movl $0xc0000100, %ecx
+        movq 200(%r15), %rax
+        movq %rax, %rdx
+        shrq $32, %rdx
+        wrmsr
         movl $0xc0000101, %ecx /* user GSBASE; hidden kernel GS stays intact */
-        xorl %eax, %eax
-        xorl %edx, %edx
+        movq 208(%r15), %rax
+        movq %rax, %rdx
+        shrq $32, %rdx
         wrmsr
         pushq 160(%r15)
         pushq 128(%r15)

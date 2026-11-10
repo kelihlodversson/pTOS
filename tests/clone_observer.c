@@ -50,7 +50,7 @@ int main(void)
     PROCESS_COMPLETION snapshot;
     unsigned i;
     memset(draft,0,sizeof(draft)); memset(tx,0,sizeof(tx));
-    for (i=0; i<2; i++) { tx[i].source=&source; tx[i].process=&target[i]; tx[i].space=space;
+    for (i=0; i<2; i++) { tx[i].source=&source; tx[i].process=&target[i]; tx[i].space=space; tx[i].source_space=space;
         tx[i].startup=&draft[i]; tx[i].policy=PROC_CLONE_NEW_PROCESS; tx[i].thread=(KTHREAD *)(uintptr_t)(i+1); }
     assert(proc_clone_observe_async(&tx[0],&sentinel) == EINVAL && sentinel == (PROC_CLONE_OBSERVER *)123 && !allocations);
     fail_allocate=TRUE;

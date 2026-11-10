@@ -1,0 +1,164 @@
+Saved syscall-return startup (#895 F1)
+=====================================
+
+This is a tightly gated, shared-VM native continuation proof, NOT Pfork or
+Pvfork. Public opcodes 0x11b and 0x113 still return EINVFN. The independent
+COW prerequisite is integrated separately; this saved-return probe remains
+shared-VM only. Complete fork inheritance, a vfork dependency object and
+Pexec(200) detach are not implemented.
+
+Enable CONF_WITH_FORK_RETURN_TEST explicitly (default n, requires native
+scheduling/Pclone/Pthjoin). The native CI address-space profiles enable it.
+The private test transport is Pclone(NULL, 0x895f0000 | stage), intercepted only
+by an authenticated user trap dispatcher, never by xclone's public decoder.
+Stage 0 creates the shared-VM child; 1..7 inject preparation failure; 0xfffe
+returns the current managed TID for assertions without creating anything.
+Other stages fail. This selector is not an allocated production syscall ABI.
+
+Ownership and publication
+-------------------------
+The architecture dispatcher captures USER state from its own active user
+syscall boundary. A SYSCALL_RETURN lives in that invocation; construction
+verifies the current managed THREAD/PROCESS, sole-thread membership, ASPACE
+identity and absence of other PROCESS sharers. proc_clone_prepare_saved_return
+checks the source THREAD and distinct child TID. The backend copies only user
+register/return state into the unpublished startup image. No child retains a
+pointer to the creator's stack record. No C stack, jmp_buf, kernel return
+address or scheduler continuation is copied.
+
+The existing proc_clone NEW_PROCESS/SHARE_VM transaction allocates the child
+PROCESS/PID and initial THREAD/TID. The new startup policy shares ordinary
+thread_startup validation, revocable leases, durable stack holds, observers,
+output preparation, sealing and no-fail scheduler publication. The unused
+normal entry-return bridge is retained conservatively, but saved-return
+commit never writes a fabricated return address into the user's stack.
+
+The backend allocates new syscall and scheduler stacks through the existing
+owners. kstack_contains checks that neither contains the parent's capture
+record, and the two allocations must differ. The existing launcher binds the
+child's root/syscall/TSS or supervisor-stack state; existing launcher handoff
+and stopped scheduler-root reclaim remain the only release owners.
+
+The probe prepares everything before publication. It then blocks the parent
+using ksched_wait_ready and the canonical non-consuming PROCESS snapshot:
+PROCESS_COMPLETED plus a nonzero delivery ordinal, not early status commitment.
+One public Pwaitpid reap remains for the parent. It creates no new completion
+registry or reaper. Cancellation cannot unwind this borrowed shared user stack
+while the child runs; the existing non-cancellable wait keeps the continuation.
+
+Architecture admission
+----------------------
+x32: capture syscall GPRs, RCX/R11 return RIP/RFLAGS, per-CPU user RSP and the
+entry stub's 512-byte FXSAVE. Capture selectors and user FS/GS bases (the hidden
+user GS half while SWAPGS is active). The existing prepared-user IRET path now
+loads those fields, the retained shared CR3 and the child's fresh stack binding.
+The enclosing launcher restores both FS and user GS bases. Only RAX changes to
+zero. RCX/R11 have their documented SYSCALL return meanings, not pre-SYSCALL
+values. DS/ES may be null or the user-data selector. Other segment state and
+nonzero FS/GS selector/base state is captured but
+rejected: general segment/TLS switching and nested restoration are not yet
+proved in the integrated cooperative context. No AVX, TLS runtime or
+IRQ/preemption restore capability is implied.
+
+ARM A32: preserve original r12 during higher-half SVC handler selection on
+virt and raspi, rather than routing through a kernel address exposed in IP.
+The syscall frame saves r0-r12, banked user SP/LR, PC/SPSR, D0-D31/FPSCR for
+A7 hard-float builds. Startup copies this user image into a fresh child SVC
+return frame and uses an independent RFE path. Only r0 changes. Thumb return
+and pending/disabled VFP execution (FPEXC.EX/EN) are rejected. This is not an
+arbitrary exception restart image.
+
+m68k: capture USP, D0-D7/A0-A6 and the adjacent hardware SR/PC/format word;
+compile-time checks pin the actual offsets. Initial admission is 68040 TRAP #1
+format 0 (vector 0x84), user mode, with null/idle 040 FPU state only. FSAVE is
+classified before reading FP registers; unadmitted busy/pending images are
+restored and rejected. Complete FP0-FP7/FPCR/FPSR/FPIAR are captured even for
+NULL state. A fresh child format-0 frame and owned USP are restored by RTE,
+with only D0 changed. No supervisor continuation is manufactured or copied.
+030/6888x and 060 return EINVFN, and native fastcall is gated off until their
+own frame/FPU restore proofs exist. QEMU040's zero-only FPIAR cannot establish
+nonzero-FPIAR preservation; no Hatari/Amiberry saved-return success is claimed.
+
+Native probe contract and tests
+------------------------------
+The test supplies an allocated, resident user stack and switches to its middle
+in assembly before the originating trap. Both contexts execute the instruction
+after that SAME trap. The child never returns through a shared C frame: it
+checks user state, records its PID/TID/SP, then calls raw Pterm. The parent is
+blocked in the kernel throughout. The bounded 512-byte mapping window covers
+this assembly-only stack use and red zone; it is not a general fork stack
+reservation or a safe arbitrary-C shared-stack API.
+
+All three native probes check result branches, distinct PID/TID, original SP,
+integer/condition registers and observable FPU/control state, then repeat eight
+exit/public-wait/double-reap cycles. x32 checks x87 control/data, MXCSR and
+XMM0/XMM15; ARM checks FPSCR, D0/D31 and original r12; m68k checks CCR, D/A
+patterns, FP0/FP7, FPCR/FPSR and observable FPIAR. Parent FP state is restored
+before returning to C. Seven fail-after-acquisition boundaries cover clone,
+stack backing, saved startup, durable stack hold, output preparation, observer
+registration and final pre-spawn validation. Failures must execute no child;
+page accounting returns to baseline after rollback and exit/reap cycles.
+Production allocator failures within reused constructors retain their existing
+ownership/rollback tests. The production x32 saved-return host fixture also
+fails every constructor allocation in turn, verifies balanced stacks/metadata,
+copies the creator record independently, and rejects revoked mappings, stack
+aliasing and unadmitted FS state. This is a construction model, not a hosted
+CPU execution proof. The fail-after-stage native tests do not claim exhaustive
+native allocation-site fault injection or concurrent mapping races.
+
+QEMU runtime results, exact commits, CI and limitations are recorded in PR #932.
+Compilation and hosted CPU/MMU models are not native continuation evidence.
+The harness requires the explicit saved-return PASS marker when configured.
+
+Integration handoff
+-------------------
+#713/#914: consume the same prepared startup/launcher and stopped-stack reclaim
+interfaces. Reconcile the narrow trap/current/loaded-launcher/GS hunks with
+K1 CPU accessors when reviewed; no scheduler draft is imported here and timer
+preemption is not a prerequisite for this cooperative proof.
+
+#892: implement independent kaspace_clone/page-table ownership, anonymous COW,
+frame references, write faults, TLB invalidation, lazy/heap/mmap metadata and
+rollback separately. The saved-return policy must select the CHILD root when
+PRIVATE_VM is supported, rather than retaining the captured parent's CR3.
+
+Inheritance: extend proc_create_clone_process transactionally. Today's empty
+environment and limited standard-handle/CWD policies remain unchanged and are
+not full fork inheritance. Define all supported descriptors, process metadata,
+signal disposition/mask and multithreaded-parent restrictions before enablement.
+
+#894: supply committed independent-VM Pexec(200) detach. The probe's synchronous
+shared-stack wait is not a vfork implementation. Public Pvfork needs a retained
+child-specific dependency, parent-death/cancellation ownership and release only
+on final PROCESS completion or successful VM-detach commit, never failed exec,
+THREAD-only exit or public wait consumption. Reuse #928 observation and #909
+public reaping, without another observer registry or loader.
+
+Current-epic reconciliation
+----------------------------
+The integration base is epic3ba9cf408953ce50fd4467915f592d6e2c835324, including
+#933/#943 SFT ownership, #936 LOADED_PROCESS/PREPARED_VM construction,
+#935/#938 dispatch gates and #934 independent KASPACE/COW. Both native private
+entry probes and shared saved-return probes remain independently test-gated.
+This increment does not import the separate PRIVATE_VM saved-return adapter,
+allocation-generation work, scheduler drafts or public fork/Pexec policies.
+Startup preparation retains separate cloned-source and saved-user-image
+arguments, preserving ordinary/cloned bridge ownership. Saved-return admission
+still requires the captured and selected shared space to match. On x32 the
+constructor-selected root survives copying the user image; a captured CR3 field
+cannot select the child's kernel-owned root. The production allocation/owned-
+image host regression supplies a different captured CR3 and checks that fact.
+
+ARM review corrections
+----------------------
+Both higher-half SVC routers retain the full eight-byte routing frame while
+unmasking IRQs, then restore original r0 and branch atomically with POP r0/pc.
+An IRQ must never see a half-popped four-byte-aligned SVC stack: IRQ entry
+switches to that stack before calling C. The test gate now requires CPU_ARMV7
+on ARM, excluding the RPi1/VFP D16 configuration from this D32 probe.
+The regression tools/test-fork-return-arm.py resolves real Kconfig prerequisites
+and assembles both production routing bodies. Structural instruction analysis
+checks alignment at every IRQ-enabled boundary and balanced frame removal;
+it is not a native injected-IRQ execution claim. Independent negative controls
+restore each misaligned router and remove the CPU gate, and fail precisely the
+corresponding assertions. Native A7/RPi2 runtime tests remain separate evidence.

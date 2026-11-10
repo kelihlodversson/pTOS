@@ -29,11 +29,16 @@ static struct process_exec_handle **find_handle(KPROC *owner, ULONG number)
     while (*link && (*link)->number != number) link = &(*link)->next;
     return *link ? link : NULL;
 }
-static void dispose_handle(struct process_exec_handle *handle)
+static LONG dispose_handle(struct process_exec_handle *handle)
 {
-    if (handle->prepared) ksched_process_cancel(&handle->prepared);
+    LONG error=E_OK;
+    if (handle->prepared) {
+        ksched_process_cancel(&handle->prepared);
+        error=kproc_ref_file_cleanup(handle->observer,NULL);
+    }
     process_observer_release(&handle->observer);
     kfree(handle);
+    return error;
 }
 static LONG handle_prepare_owned(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy)
 {
@@ -99,8 +104,7 @@ static LONG handle_close_owned(KPROC *owner, ULONG number)
     handle = *link;
     if (handle->committing) return EACCDN;
     *link = handle->next; /* Reentrant cleanup cannot close it a second time. */
-    dispose_handle(handle);
-    return E_OK;
+    return dispose_handle(handle);
 }
 LONG proc_exec_retain_observer(KPROC *owner, ULONG number, BOOL require_prepared, PROCESS_OBSERVER **out)
 {

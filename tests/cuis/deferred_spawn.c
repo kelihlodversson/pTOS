@@ -15,7 +15,6 @@ static BOOL prepare_ok, identity_ok, owner_ok;
 static void *execution;
 static void (*reclaimer)(void *);
 static BOOL stopped, inject_retirement, legacy_call;
-PD *run;
 static BOOL committing;
 BOOL kproc_exec_commit_begin(KPROC *p)
 { CHECK(p==(KPROC *)&owner); if(committing)return FALSE; committing=TRUE; return TRUE; }
@@ -76,15 +75,15 @@ void proc_dispose_process(KPROC *p)
 {
     CHECK(p == (KPROC *)&child && scheduler_model_flags == 0x200);
     if (inject_retirement) {
-        KERNEL_TASK *previous=scheduler.current;
+        KERNEL_TASK *previous=execution_cpu.current;
         void *stale=&tasks[1];
         CHILD_WAIT wait;
         inject_retirement=FALSE;
         CHECK(tasks[1].state==TASK_RETIRING && !tasks[1].parent && !tasks[1].process &&
               !tasks[1].thread && references==1 && identities==1 && stacks==1);
-        scheduler.current=NULL;
+        execution_cpu.current=NULL;
         CHECK(!reap_finished_on_root(&tasks[1]));
-        scheduler.current=previous;
+        execution_cpu.current=previous;
         wait.parent=&owner; wait.pid=42;
         CHECK(child_ready(&wait) && ksched_process_commit(&stale)==EACCDN && stale==&tasks[1]);
         CHECK(references==1 && identities==1 && stacks==1);
@@ -105,10 +104,9 @@ int main(void)
 {
     run = &owner;
     scheduler.active = TRUE;
-    scheduler.initial = 1;
-    scheduler.tasks = tasks;
-    scheduler.current = &tasks[0];
-    scheduler.root.pd = &owner;
+    scheduler.tasks = tasks; initialize_task_table();
+    execution_cpu.current = &tasks[0];
+    execution_cpu.root.pd = &owner;
     tasks[0].state = TASK_RUNNING;
     tasks[0].program=&owner; tasks[0].process=(KPROC *)&owner;
     tasks[0].thread=(KTHREAD *)&owner; tasks[0].execution.identity=71;
@@ -135,7 +133,7 @@ int main(void)
     stopped = TRUE; /* Backend handoff has abandoned the user continuation. */
     tasks[1].state = TASK_ZOMBIE;
     CHECK(!reap_finished_on_root(&tasks[1]) && stacks == 1 && references == 1);
-    scheduler.current = NULL;
+    execution_cpu.current = NULL;
     CHECK(reap_finished_on_root(&tasks[1]) && !stacks && references == 1);
     {
         unsigned reaped = stack_releases;
@@ -151,7 +149,7 @@ int main(void)
         void *slot = NULL;
         CHILD_WAIT wait;
         unsigned disposed = disposals;
-        scheduler.current = &tasks[0];
+        execution_cpu.current = &tasks[0];
         tasks[1].program = NULL; /* Modeled finalizer revokes the retired PD. */
         CHECK(ksched_process_publish(NULL)==EINVAL && ksched_process_publish(&slot)==EINVAL);
         CHECK(ksched_process_prepare(&child,FALSE,NULL) == EINVAL);
@@ -172,7 +170,7 @@ int main(void)
         CHECK(ksched_process_prepare(&child,FALSE,&slot) == E_OK);
         CHECK(ksched_process_publish(&slot) == 42 && !slot && tasks[1].state == TASK_NEW &&
               !child_ready(&wait));
-        tasks[1].state = TASK_DONE; scheduler.current = NULL;
+        tasks[1].state = TASK_DONE; execution_cpu.current = NULL;
         CHECK(reap_finished_on_root(&tasks[1]) && !references && !stacks && !identities);
     }
     puts("Deferred scheduler construction, rollback and identity handoff: PASS");
@@ -195,9 +193,27 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **startup)
 void *kalloc(ULONG bytes) { (void)bytes; abort(); }
 void kfree(void *pointer) { (void)pointer; abort(); }
 
+void ksched_admission_owner_exited(KPROC *owner) { (void)owner; }
+BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *h) { (void)h; return FALSE; }
+void ksched_admission_release(KSCHED_ADMISSION *h) { h->identity=0; }
+PD *ksched_controller_pd(void) { return &owner; }
+
+BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD index,LONG status)
+{ (void)h; (void)index; (void)status; abort(); } /* async slots are not launch results */
+
+void ksched_waiter_retire(KPROC *p,ULONG tid,UQUAD execution) { (void)p; (void)tid; (void)execution; }
+
+PD *kproc_live_pd(const KPROC *p) { return (PD *)p; }
+
+void ksched_admission_abandon(const KSCHED_ADMISSION *h) { if(h->identity) abort(); }
+
+LONG ksched_admission_create(KPROC *p,UWORD n,KSCHED_ADMISSION *h)
+{ (void)p; (void)n; (void)h; abort(); } /* no synchronous admission in this fixture */
+BOOL ksched_admission_retain(const KSCHED_ADMISSION *a,KSCHED_ADMISSION *b)
+{ (void)a; (void)b; abort(); }
 BOOL kthread_is_executing(const KTHREAD *t) { return t==(KTHREAD *)&owner; }
 
-ULONG kthread_tid(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return 7; }
+ULONG kthread_tid(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner || t==(KTHREAD *)&child); return t==(KTHREAD *)&owner ? 7:17; }
 
 KPROC *kthread_process(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return (KPROC *)&owner; }
 
