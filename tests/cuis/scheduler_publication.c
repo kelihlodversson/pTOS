@@ -31,7 +31,9 @@ static unsigned refused_disposals, observer_publications;
 
 static BOOL root_fault;
 static unsigned root_release_calls, process_releases;
-static BOOL allow_reap, reenter_cancel;
+static BOOL allow_reap, reenter_cancel, append_on_release, trim_on_release;
+static KERNEL_TASK *clearing_record;
+static void *appended_reservation;
 static void *replacement_reservation;
 static LONG fault_output;
 void *kalloc(ULONG bytes)
@@ -65,6 +67,18 @@ void kproc_release(KPROC *p)
 {
     CHECK(!execution_cpu.leaf_held);
     if (p) process_releases++;
+    if (append_on_release && p==(KPROC *)&parent) {
+        append_on_release=FALSE;
+        CHECK(clearing_record->state==TASK_RESERVED && !clearing_record->next_task);
+        CHECK(ksched_task_reserve(FALSE,&appended_reservation)==E_OK);
+        CHECK(clearing_record->next_task==appended_reservation);
+    }
+    if (trim_on_release && p==(KPROC *)&parent) {
+        trim_on_release=FALSE;
+        CHECK(clearing_record->state==TASK_RESERVED && clearing_record->next_task);
+        trim_unused_records();
+        CHECK(!clearing_record->next_task);
+    }
     if (reenter_cancel && p==(KPROC *)&parent) {
         reenter_cancel=FALSE;
         CHECK(!execution_cpu.entry_owner && !execution_cpu.waiter.identity);
@@ -425,6 +439,29 @@ int main(void)
         CHECK(!scheduler.tasks && !execution_cpu.waiter.identity && !execution_cpu.entry_owner && allocations==frees);
     }
     puts("Reentrant cancelled admission: detach-before-release preserves replacement owner/result identity: PASS (host)");
+    {
+        void *anchor=NULL, *held[KSCHED_LIMIT]={NULL};
+        CHECK(ksched_task_reserve(TRUE,&anchor)==E_OK);
+        execution_cpu.current=anchor; ((KERNEL_TASK *)anchor)->state=TASK_RUNNING;
+        for(i=0;i<KSCHED_LIMIT;i++) CHECK(ksched_task_reserve(FALSE,&held[i])==E_OK);
+        clearing_record=held[KSCHED_LIMIT-1];
+        CHECK(clearing_record!=&table[KSCHED_LIMIT-1] && !clearing_record->next_task);
+        CHECK(ksched_admission_create((KPROC *)&parent,1,&clearing_record->completion)==E_OK);
+        append_on_release=TRUE;
+        clear_task(clearing_record); held[KSCHED_LIMIT-1]=NULL;
+        CHECK(!append_on_release && appended_reservation && clearing_record->next_task==appended_reservation);
+        ksched_task_cancel(&appended_reservation); /* Keep its unused node for reentrant trimming. */
+        CHECK(ksched_task_reserve(FALSE,&held[KSCHED_LIMIT-1])==E_OK && held[KSCHED_LIMIT-1]==clearing_record);
+        CHECK(ksched_admission_create((KPROC *)&parent,1,&clearing_record->completion)==E_OK);
+        trim_on_release=TRUE;
+        clear_task(clearing_record); held[KSCHED_LIMIT-1]=NULL;
+        CHECK(!trim_on_release && !clearing_record->next_task);
+        for(i=0;i<KSCHED_LIMIT;i++) ksched_task_cancel(&held[i]);
+        execution_cpu.current=NULL; ((KERNEL_TASK *)anchor)->state=TASK_RESERVED;
+        ksched_task_cancel(&anchor);
+        CHECK(!scheduler.tasks && allocations==frees);
+    }
+    puts("Task clear preserves links appended/trimmed during final admission release: PASS (host reentry)");
     puts("Shared scheduler growth/publication: exhaustion, private reservations, cancellation, blocked/early wait and orphan identity: PASS");
 #ifndef __SANITIZE_ADDRESS__
     root_lifetime_check();

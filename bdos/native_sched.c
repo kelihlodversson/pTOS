@@ -240,7 +240,6 @@ static void clear_task(KERNEL_TASK *task)
     KERNEL_TASK *next;
     KSCHED_ADMISSION completion;
     RUNQUEUE_GUARD guard=runqueue_enter();
-    next=task->next_task;
     if (task->dependents || task->completion_owner || task->execution.on_cpu)
         panic("scheduler: clearing referenced task");
     completion=task->completion;
@@ -249,6 +248,9 @@ static void clear_task(KERNEL_TASK *task)
     runqueue_leave(guard);
     ksched_admission_release(&completion);
     guard=runqueue_enter();
+    /* Final release may reenter admission or root trimming. The reserved
+     * record survives, but its successor link can legitimately change. */
+    next=task->next_task;
     memset(task, 0, sizeof(*task));
     task->next_task = next;
     runqueue_leave(guard);
