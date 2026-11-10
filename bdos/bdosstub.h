@@ -39,6 +39,8 @@ extern PD *run;
  * The arguments are as for Fopen(), Fclose(), Fread() and Fseek(), as longs. */
 long kdos_fopen(long name, long mode);
 long kdos_fclose(long h);
+struct disk_error;
+long kdos_fclose_error(long h, struct disk_error *error);
 long kdos_fread(long h, long count, long buf);
 long kdos_fseek(long offset, long h, long mode);
 long kdos_fsfirst_at(long name, long att, DTA *dta);

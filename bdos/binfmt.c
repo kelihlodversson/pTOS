@@ -100,19 +100,19 @@ done:
     release(work);
 }
 
-static LONG read_header(const char *path, UBYTE *header)
+static LONG read_header(const char *path, UBYTE *header, DISK_ERROR *error)
 {
-    LONG handle = kdos_fopen((long)path, 0), rc, closed;
+    LONG handle = DISK_CALL_ERROR(xopen((char *)path, 0), error), rc, closed;
     ULONG size = 0;
     if (handle < 0) return handle;
     while (size < BINFMT_HEADER) {
-        rc = kdos_fread(handle, BINFMT_HEADER - size, (long)(header + size));
+        rc = DISK_CALL_ERROR(xread(handle, BINFMT_HEADER - size, header + size), error);
         if (rc < 0) break;
         if (!rc) break;
         if ((ULONG)rc > BINFMT_HEADER - size) { rc = EPLFMT; break; }
         size += rc;
     }
-    closed = kdos_fclose(handle);
+    closed = kdos_fclose_error(handle, error);
     if (rc < 0) return rc;
     return closed < 0 ? closed : (LONG)size;
 }
@@ -145,20 +145,21 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         BINFMT_SELECTION selection;
     } *work = NULL;
     LONG rc;
+    DISK_ERROR error = {0};
     unsigned int depth = 0, i;
 
     memset(launch, 0, sizeof(*launch));
     for (;;) {
-        rc = kpgmhdrld(path, header, handle);
-        if (rc != EPLFMT || !kpgm_can_interpret()) break;
+        rc = kpgmhdrld_error(path, header, handle, &error);
+        if (error.code || rc != EPLFMT || !kpgm_can_interpret()) break;
         if (!work) {
             if (strlen(path) >= BINFMT_PATH) { rc = ERANGE; break; }
             work = allocate(sizeof(*work));
             if (!work) { rc = ENSMEM; break; }
             strcpy(work->visited[0], path);
         }
-        rc = read_header(path, work->header);
-        if (rc < 0) break;
+        rc = read_header(path, work->header, &error);
+        if (error.code || rc < 0) break;
         rc = binfmt_select(&registry, work->header, rc, &work->selection);
         if (rc) { if (rc > 0) rc = EPLFMT; break; }
         if (depth == BINFMT_DEPTH) { rc = EPLFMT; break; }
@@ -177,7 +178,9 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         path = launch->path; tail = launch->tail; environment = launch->environment;
         strcpy(work->visited[++depth], path);
     }
+    if (error.code) rc = error.code;
     release(work);
     if (rc) binfmt_release(launch);
+    DISK_RETHROW(error);       /* osif() remounts/retries E_CHNG after cleanup */
     return rc;
 }

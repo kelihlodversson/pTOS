@@ -31,7 +31,7 @@ static PD *pending_request;
 static LONG rejection;
 
 jmp_buf errbuf;
-long errcode;
+long errcode, rwerr;
 int errdrv;
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];

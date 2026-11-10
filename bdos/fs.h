@@ -76,6 +76,13 @@ extern  jmp_buf errbuf;
 extern  int     errdrv;
 extern  long    errcode;
 
+/* Retain the first hard error across resource cleanup, which can itself
+ * touch another drive. The owner may rethrow it to osif() after cleanup. */
+typedef struct disk_error {
+    long code, rw;
+    int drive;
+} DISK_ERROR;
+
 /*
  * run a call that can reach the disk, for kernel code calling the GEMDOS
  * functions directly (bdos/kfile.c, bdos/arch/x86_64/kcall.c): the file
@@ -83,16 +90,23 @@ extern  long    errcode;
  * osif() sets up otherwise.  The call returns the error code, without
  * osif()'s media change retry.
  */
-#define DISK_CALL(call)                                         \
+#define DISK_CALL_ERROR(call, error)                            \
 __extension__                                                   \
 ({                                                              \
     long _rc;                                                   \
     jmp_buf _saved;                                             \
+    DISK_ERROR *_error = (error);                               \
                                                                 \
     memcpy(_saved, errbuf, sizeof(errbuf));                     \
     if (setjmp(errbuf))                                         \
     {                                                           \
         _rc = errcode;                                          \
+        if (_error && !_error->code)                            \
+        {                                                       \
+            _error->code = errcode;                             \
+            _error->drive = errdrv;                             \
+            _error->rw = rwerr;                                 \
+        }                                                       \
         mark_bcbs_invalid(errdrv);                              \
     }                                                           \
     else                                                        \
@@ -100,6 +114,17 @@ __extension__                                                   \
     memcpy(errbuf, _saved, sizeof(errbuf));                     \
     _rc;                                                        \
 })
+
+#define DISK_CALL(call) DISK_CALL_ERROR(call, NULL)
+
+#define DISK_RETHROW(error) do {                                \
+    if ((error).code) {                                         \
+        errcode = (error).code;                                 \
+        errdrv = (error).drive;                                 \
+        rwerr = (error).rw;                                     \
+        longjmp(errbuf, 1);                                     \
+    }                                                           \
+} while (0)
 
 #define longjmp_rwabs(flg,buf,cnt,rec,dev)            \
     if (rec <= 32767)                                 \

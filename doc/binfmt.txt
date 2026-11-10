@@ -147,6 +147,13 @@ Run the production parser/argument code against host malformed-input tests:
 
     sh tools/test-binfmt.sh
     BINFMT_SANITIZE=1 sh tools/test-binfmt.sh
+    python3 tools/test-binfmt-io.py
+    BINFMT_SANITIZE=1 python3 tools/test-binfmt-io.py
+
+The disk fault fixture compiles the production resolver, header loader and
+close wrapper. It injects read, close and media-change errors, checks that
+handles and temporary memory are released, and preserves the first failing
+drive/error across cleanup before re-entering GEMDOS's media-change recovery.
 
 Boot a small ordinary native interpreter, independently of Paratos:
 

@@ -27,7 +27,7 @@
 #include "kprint.h"
 #if CONF_WITH_BINFMT
 #include "bdosstub.h"
-#define HEADER_CALL(call) DISK_CALL(call)
+#define HEADER_CALL(call) DISK_CALL_ERROR(call, error)
 static BOOL pgmld_foreign;
 BOOL kpgm_can_interpret(void) { return pgmld_foreign; }
 #else
@@ -72,7 +72,11 @@ BOOL kpgm_is_prg(void)
  * the flags and the amount of memory needed. Then, we actually load
  * the program.
  */
+#if CONF_WITH_BINFMT
+LONG kpgmhdrld_error(char *s, PGMHDR01 *hd, FH *h, DISK_ERROR *error)
+#else
 LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
+#endif
 {
     LONG r;
     UBYTE magic[4];
@@ -149,12 +153,28 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
     r = EPLFMT;
 fail:
 #if CONF_WITH_BINFMT
-    kdos_fclose(*h);
+    {
+        LONG closed = kdos_fclose_error(*h, error);
+        if (closed < 0) {
+            pgmld_foreign = FALSE;
+            r = error->code ? error->code : closed;
+        }
+    }
 #else
     xclose(*h);
 #endif
     return r;
 }
+
+#if CONF_WITH_BINFMT
+LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
+{
+    DISK_ERROR error = {0};
+    LONG rc = kpgmhdrld_error(s, hd, h, &error);
+    DISK_RETHROW(error);
+    return rc;
+}
+#endif
 
 
 /*
