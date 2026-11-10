@@ -255,7 +255,11 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 libaes/CUIS sessions: PASS' "$log"
     grep -q 'x86-64 CUIS sessions: PASS' "$log"
 fi
-if grep -q '^CONF_WITH_NATIVE_SCHED *= *y' obj/auto.conf; then
+# These probes need the managed/asynchronous continuations supplied by the
+# MMAP, public Pclone or libaes fixtures. A scheduler-enabled eager baseline
+# without any of those fixtures cannot emit their markers.
+if grep -q '^CONF_WITH_NATIVE_SCHED *= *y' obj/auto.conf &&
+   grep -Eq '^CONF_WITH_(MMAP|PCLONE|LIBAES) *= *y' obj/auto.conf; then
     grep -q 'native owner generation wake with false predicate: PASS' "$log"
     grep -q 'native IRQ wake/idle admission and blocked-owner resume: PASS' "$log"
     grep -q 'native scheduler durable controller/completion abandonment: PASS' "$log"

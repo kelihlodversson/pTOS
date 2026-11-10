@@ -50,3 +50,26 @@ with tempfile.TemporaryDirectory(prefix='ptos-scheduler-probes-') as directory:
                             required = sched and ((clone and (handoff or memtest)) if label == 'native user IRQ capture' else handoff)
                             assert result.stdout == (label if required and not present else ''), (label, enabled, present, result.stdout)
 print('Production regression guards: 96 feature/marker cases, required missing evidence still fails: PASS (host shell)')
+
+# The disabled/eager MEMTEST baseline can enable the scheduler without any
+# executable asynchronous fixture. Run the actual five-marker shell block.
+mmap_script = (root / 'tools/test-mmap-boot.sh').read_text()
+start = mmap_script.index("if grep -q '^CONF_WITH_NATIVE_SCHED *= *y'")
+end = mmap_script.index('\nfi', start) + 3
+block = mmap_script[start:end]
+required_markers = re.findall(r"grep -q '([^']+: PASS)'", block)
+assert len(required_markers) == 5
+with tempfile.TemporaryDirectory(prefix='ptos-memtest-probes-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'boot.log'
+    for mask in range(16):
+        enabled = {name: bool(mask & (1 << i)) for i, name in enumerate(
+            ['NATIVE_SCHED', 'MMAP', 'PCLONE', 'LIBAES'])}
+        (top / 'obj/auto.conf').write_text(''.join('CONF_WITH_' + k + '=y\n' for k,v in enabled.items() if v))
+        required = enabled['NATIVE_SCHED'] and any(enabled[k] for k in ['MMAP', 'PCLONE', 'LIBAES'])
+        for missing in [None] + required_markers:
+            log.write_text('\n'.join(m for m in required_markers if m != missing) + '\n')
+            result = subprocess.run(['sh', '-ec', 'log=$1\n' + block, 'probe', str(log)], cwd=top)
+            assert (result.returncode != 0) == bool(required and missing), (enabled, missing, result.returncode)
+print('Production MEMTEST guards: 96 fixture/marker cases, enabled missing evidence still fails: PASS (host shell)')
