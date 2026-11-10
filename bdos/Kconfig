@@ -305,6 +305,7 @@ config CONF_WITH_PRG_LOADER
 config CONF_WITH_BINFMT
 	bool "Boot-configured executable interpreters and shebang scripts"
 	default n if TARGET_192 || TARGET_256 || TARGET_CART
+	default n if TARGET_AMIGA_ROM && !CONF_AMIGA_ROM_512K
 	default y
 	help
 	  Read PTOS.INI once from the boot drive before starting applications.
