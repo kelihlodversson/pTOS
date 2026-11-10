@@ -75,8 +75,13 @@ int main(void)
     VERIFY(aes_child_messages(session_id) == E_OK && attempts == before);
     reset(); count=CUIS_CHILDREN_PER_SESSION;
     for (i=0;i<count;i++) notices[i]=((LONG)(i+1)<<16)|i;
-    VERIFY(aes_child_messages(session_id) == E_OK && published == count);
-    VERIFY(aes_child_messages(session_id) == E_OK && published == count);
+    VERIFY(aes_child_messages(session_id) == E_OK && published == count && consumed == count &&
+           attempts == count && calls == 2*count);
+    /* A bounded batch must not issue a speculative RESULT after its final
+     * PUBLISH. An unbounded drain would make that extra call before returning. */
+    before=calls;
+    VERIFY(aes_child_messages(session_id) == E_OK && published == count &&
+           attempts == count && calls == before+1);
     reset(); reserve_result=EAGAIN;
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,TRUE) == EAGAIN);
     VERIFY(last_function == CUIS_CHILD_WATCH); /* Never publish without a slot. */
