@@ -214,7 +214,9 @@ Only the understood 28/32-byte input prefix is read, once. The request may be
 read-only or unaligned (copied as bytes into aligned kernel storage). Unknown
 tail bytes need not be readable, but address+declared-size must not wrap the
 32-bit user range. Writable outputs may alias the copied request; mutual output,
-startup-stack and executable-page overlap still fail. m68k output words have
+startup-stack, entry-page and trusted return-bridge-page overlap still fail.
+Other executable pages are not categorically excluded: they must pass the
+ordinary writable-memory checks. m68k output words have
 native two-byte alignment and may straddle pages; both backing aliases are
 secured before the first store. Successful outputs are not retained on exit.
 
