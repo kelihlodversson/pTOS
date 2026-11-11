@@ -62,10 +62,9 @@ runs:
     # above.
     - name: Install the m68k build tools
       if: inputs.arch == 'm68k'
-      shell: bash
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y dos2unix zip gcc-m68k-linux-gnu
+      uses: ./.github/actions/apt-install
+      with:
+        packages: dos2unix zip gcc-m68k-linux-gnu
 
     - name: Cache the m68k toolchain
       if: inputs.arch == 'm68k'
