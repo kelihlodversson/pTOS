@@ -98,6 +98,11 @@ int main(void)
     for (i=1; i<PFS_MAX_CWD; i++) while (pfs_dirtbl[i].use) pfs_dirtbl_release(i);
     memset(parent_dirs,0,sizeof(parent_dirs)); memset(child_dirs,0,sizeof(child_dirs));
     CHECK(acquired == released && run == &parent);
+    /* A stale empty small index must not consume its freshly reused slot. */
+    parent_dirs[2]=1;
+    CHECK(pfs_do_chdir("C:\\STALE") == E_OK && parent_dirs[2] == 1 &&
+          pfs_dirtbl[1].use == 1 && acquired == released+1);
+    pfs_proc_exit(&parent); CHECK(acquired == released);
     /* Parent-first release and nested inheritance never release a foreign slot. */
     CHECK(pfs_do_chdir("C:\\PARENT") == E_OK);
     CHECK(pfs_cwd_inherit(&child,&parent) == E_OK);

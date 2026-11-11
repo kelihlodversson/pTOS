@@ -1113,19 +1113,24 @@ LONG fat_rmdir_path(char *p)
     return fat_rmdir_dnd(d);
 }
 
+#if CONF_WITH_PLUGGABLE_FS
+LONG fat_chdir_path(char *path)
+{
+    return pfs_do_chdir(path); /* Dsetpath never selects the named drive. */
+}
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+LONG fat_set_process_directory(char *path, PD *process)
+{
+    return pfs_set_process_directory(path, process);
+}
+#endif
+#else
 #if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
 static LONG fat_chdir_process(char *p, PD *process)
 #else
 LONG fat_chdir_path(char *p)
 #endif
 {
-#if CONF_WITH_PLUGGABLE_FS
-#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
-    return pfs_set_process_directory(p, process);
-#else
-    return pfs_do_chdir(p);
-#endif
-#else
     DND *dnd;
     int olddir, newdir, dlog;
     const char *s;
@@ -1164,7 +1169,6 @@ LONG fat_chdir_path(char *p)
         decr_curdir_usage(olddir);
 
     return E_OK;
-#endif
 }
 
 #if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
@@ -1180,6 +1184,8 @@ LONG fat_set_process_directory(char *path, PD *process)
     return result;
 }
 #endif
+
+#endif /* CONF_WITH_PLUGGABLE_FS */
 
 LONG fat_getdir_path(char *buf, int drv)
 {
