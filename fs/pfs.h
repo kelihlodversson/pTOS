@@ -144,7 +144,10 @@ struct pfs_ops {
     /* Release any driver resources tied to a cookie the core is done
      * with (a directory cookie returned by lookup()/root(), or a file
      * cookie after close()).  May be NULL if the driver needs no
-     * per-cookie cleanup.
+     * per-cookie cleanup. Directory release consumes that cookie on normal
+     * return and must not escape through a disk-error/nonlocal continuation.
+     * Path dispatch guards disk faults before releasing temporary cookies;
+     * they do not make a failing consuming destructor retryable.
      */
     void (*release)(PFSCOOKIE *fc);
 

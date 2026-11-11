@@ -23,6 +23,62 @@
                                  * bdos/proc.c and bdos/umem.c */
 #include "../bdos/bdosstub.h"   /* for run, same convention as fs/fatfs_pfs.c */
 
+/* Disk-error guards are synchronous and retain no caller pointers. Helpers
+ * catch in their own frame, returning explicit failure metadata so caller
+ * locals never cross a setjmp boundary. The owner then releases temporary
+ * cookies before rethrowing into the original GEMDOS/DISK_CALL continuation.
+ * Directory release must consume on normal return and must not unwind. */
+typedef struct { BOOL raised; long code, rw; int drive; } PFS_DISK_FAILURE;
+#define PFS_TRY(call, failure) \
+__extension__ ({ \
+    LONG _pfs_result; \
+    FS_ERROR_SCOPE _pfs_outer; \
+    fs_error_scope_save(_pfs_outer); \
+    (failure)->raised = FALSE; \
+    if (setjmp(errbuf)) { \
+        (failure)->raised = TRUE; \
+        (failure)->code = errcode; (failure)->rw = rwerr; \
+        (failure)->drive = errdrv; _pfs_result = errcode; \
+    } else { \
+        _pfs_result = (call); \
+    } \
+    fs_error_scope_restore(_pfs_outer); \
+    _pfs_result; \
+})
+#define PFS_GUARD(call, cleanup) \
+__extension__ ({ \
+    PFS_DISK_FAILURE _pfs_failure; \
+    LONG _pfs_result = (call); \
+    if (_pfs_failure.raised) { \
+        cleanup; \
+        errcode = _pfs_failure.code; rwerr = _pfs_failure.rw; \
+        errdrv = _pfs_failure.drive; longjmp(errbuf, 1); \
+    } \
+    _pfs_result; \
+})
+
+static LONG pfs_try_lookup(struct pfs_ops *fs, PFSCOOKIE *dir, const char *path,
+                           PFSCOOKIE *out, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->lookup(dir, path, out), failure); }
+static LONG pfs_try_directory(LONG (*op)(PFSCOOKIE *, const char *),
+                              PFSCOOKIE *dir, const char *name, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(op(dir, name), failure); }
+static LONG pfs_try_open(struct pfs_ops *fs, PFSCOOKIE *dir, const char *name,
+                         WORD mode, PFSCOOKIE *out, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->open(dir, name, mode, out), failure); }
+static LONG pfs_try_create(struct pfs_ops *fs, PFSCOOKIE *dir, const char *name,
+                           UWORD attr, PFSCOOKIE *out, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->create(dir, name, attr, out), failure); }
+static LONG pfs_try_chattr(struct pfs_ops *fs, PFSCOOKIE *dir, const char *name,
+                           BOOL set, UWORD *attr, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->chattr(dir, name, set, attr), failure); }
+static LONG pfs_try_rename(struct pfs_ops *fs, PFSCOOKIE *dir1, const char *name1,
+                           PFSCOOKIE *dir2, const char *name2, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->rename(dir1, name1, dir2, name2), failure); }
+static LONG pfs_try_readdir(struct pfs_ops *fs, PFSCOOKIE *dir, LONG *cursor,
+                            char *name, int size, PFSATTR *attr, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->readdir(dir, cursor, name, size, attr), failure); }
+
 /* ------------------------------------------------------------------ */
 /* drive table                                                        */
 /* ------------------------------------------------------------------ */
@@ -510,13 +566,19 @@ static LONG pfs_resolve_dir(struct pfs_ops *fs, WORD drive, const char *path,
         return EPTHNF;
     }
 
-    rc = fs->lookup(&start, base, dircookie);
+    rc = PFS_GUARD(pfs_try_lookup(fs, &start, base, dircookie, &_pfs_failure),
+                  if (start_owned && fs->release) fs->release(&start));
     if (start_owned && fs->release)
         fs->release(&start);
 
     return rc;
 }
 
+
+static LONG pfs_try_resolve(struct pfs_ops *fs, WORD drive, const char *path,
+                            PFSCOOKIE *dir, const char **name, BOOL *owned,
+                            PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(pfs_resolve_dir(fs, drive, path, dir, name, owned), failure); }
 
 /* ------------------------------------------------------------------ */
 /* per-call handlers                                                  */
@@ -553,7 +615,8 @@ LONG pfs_do_mkdir(const char *path)
     if (rc < 0)
         return rc;
 
-    rc = fs->mkdir ? fs->mkdir(&dir, name) : EACCDN;
+    rc = fs->mkdir ? PFS_GUARD(pfs_try_directory(fs->mkdir, &dir, name, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
 
@@ -591,7 +654,8 @@ LONG pfs_do_rmdir(const char *path)
     if (rc < 0)
         return rc;
 
-    rc = fs->rmdir ? fs->rmdir(&dir, name) : EACCDN;
+    rc = fs->rmdir ? PFS_GUARD(pfs_try_directory(fs->rmdir, &dir, name, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
 
@@ -747,7 +811,8 @@ static LONG pfs_chdir_at(PD *process, const char *path, BOOL select_drive)
 
     /* fs->lookup() always produces a fresh, caller-owned 'target',
      * regardless of whether 'dir' was borrowed. */
-    rc = fs->lookup(&dir, name, &target);
+    rc = PFS_GUARD(pfs_try_lookup(fs, &dir, name, &target, &_pfs_failure),
+                  if (dir_owned && fs->release) fs->release(&dir));
     if (dir_owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
@@ -846,7 +911,8 @@ LONG pfs_do_open(const char *path, WORD mode)
     if (rc < 0)
         return rc;
 
-    rc = fs->open ? fs->open(&dir, name, mode, &fc) : EACCDN;
+    rc = fs->open ? PFS_GUARD(pfs_try_open(fs, &dir, name, mode, &fc, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
@@ -883,7 +949,8 @@ LONG pfs_do_create(const char *path, UWORD attr)
     if (rc < 0)
         return rc;
 
-    rc = fs->create ? fs->create(&dir, name, attr, &fc) : EACCDN;
+    rc = fs->create ? PFS_GUARD(pfs_try_create(fs, &dir, name, attr, &fc, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
@@ -920,7 +987,8 @@ LONG pfs_do_unlink(const char *path)
     if (rc < 0)
         return rc;
 
-    rc = fs->remove ? fs->remove(&dir, name) : EACCDN;
+    rc = fs->remove ? PFS_GUARD(pfs_try_directory(fs->remove, &dir, name, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
 
@@ -947,7 +1015,8 @@ LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
 
     attr = (UWORD)mod;
     if (fs->chattr)
-        rc = fs->chattr(&dir, name, wrt ? TRUE : FALSE, &attr);
+        rc = PFS_GUARD(pfs_try_chattr(fs, &dir, name, wrt ? TRUE : FALSE, &attr, &_pfs_failure),
+                      if (owned && fs->release) fs->release(&dir));
     else
         rc = wrt ? EACCDN : EINVFN;    /* unimplemented write op -> EACCDN,
                                          * matching mkdir/remove/rename's
@@ -984,14 +1053,19 @@ LONG pfs_do_rename(const char *p1, const char *p2)
     if (rc < 0)
         return rc;
 
-    rc = pfs_resolve_dir(fs, drive1, p2, &dir2, &name2, &owned2);
+    rc = PFS_GUARD(pfs_try_resolve(fs, drive1, p2, &dir2, &name2, &owned2, &_pfs_failure),
+                  if (owned1 && fs->release) fs->release(&dir1));
     if (rc < 0)
     {
         if (owned1 && fs->release) fs->release(&dir1);
         return rc;
     }
 
-    rc = fs->rename ? fs->rename(&dir1, name1, &dir2, name2) : EACCDN;
+    rc = fs->rename ? PFS_GUARD(pfs_try_rename(fs, &dir1, name1, &dir2, name2, &_pfs_failure),
+        if (fs->release) {
+            if (owned1) fs->release(&dir1);
+            if (owned2) fs->release(&dir2);
+        }) : EACCDN;
     if (fs->release)
     {
         if (owned1) fs->release(&dir1);
@@ -1088,8 +1162,9 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
         char name8_3[LEN_ZFNAME];
         PFSATTR attr;
 
-        rc = fs->readdir(&pfs_searches[i].dir, &pfs_searches[i].cursor,
-                          name8_3, sizeof(name8_3), &attr);
+        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].dir, &pfs_searches[i].cursor,
+                          name8_3, sizeof(name8_3), &attr, &_pfs_failure),
+                          pfs_search_free(&pfs_searches[i]));
         if (rc < 0)
         {
             pfs_search_free(&pfs_searches[i]);
@@ -1133,8 +1208,9 @@ LONG pfs_do_snext_at(DTAINFO *dta)
             return ENMFIL;
         }
 
-        rc = fs->readdir(&pfs_searches[i].dir, &pfs_searches[i].cursor,
-                          name8_3, sizeof(name8_3), &attr);
+        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].dir, &pfs_searches[i].cursor,
+                          name8_3, sizeof(name8_3), &attr, &_pfs_failure),
+                          pfs_search_free(&pfs_searches[i]));
         if (rc < 0)
         {
             pfs_search_free(&pfs_searches[i]);

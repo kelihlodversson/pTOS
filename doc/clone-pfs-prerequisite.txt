@@ -59,6 +59,13 @@ Scope and executable evidence
 Supported scope remains single-CPU cooperative execution. Driver release must
 consume its reference on normal return; arbitrary fatal/nonlocal driver unwind
 or arbitrary reentrant/yielding mapping/device callbacks are not made safe.
+Built-in disk errors are distinct: typed PFS call guards catch in their own
+frame, return explicit error metadata, release temporary directory cookies
+(and a failed search) in the owning frame, then rethrow to the original loaded
+GEMDOS/DISK_CALL error continuation. Nested resolution/rename cleans every
+selected directory, including media-change errors. Error/rw/drive metadata,
+GEMDOS media retry and kernel DISK_CALL error-return behavior are preserved.
+There is no asynchronous cleanup stack or pointer retained past a call.
 No SMP or preemptive filesystem guarantee follows from this fix.
 
 Production PFS hosted tests count every cookie and cover directory reads,
@@ -68,6 +75,10 @@ reentry, media tombstones, PD/slot reuse and exact final resource baselines.
 Production FAT cache tests execute makdnd and process_dnd_tree to prove held
 nodes survive both scavengers and are reclaimed/reused after their final hold.
 The hosted driver/allocation providers are models, not native MMU execution.
+Actual hosted filesystem longjmp injection covers lookup, both rename
+selections, all directory operations, search callbacks and borrowed CWDs, with
+exact cookie baselines and original error/rw/drive propagation. Hosted tests
+use libc's real jmp_buf; native kernels retain their architecture's own ABI.
 
 Actual native public-trap tests retain the four resource-copy policies and add
 non-root Dgetcwd, nested COPY_CWD, independent child directory changes, parent
