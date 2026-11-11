@@ -428,9 +428,7 @@ static void release_pd_files(PD *r)
     /* Legacy PROCESS slots own only legacy dirtbl references. */
     for (i = 0; i < NUMCURDIR; i++)
     {
-        h = PD_CURDIR(r)[i];
-        PD_CURDIR(r)[i] = 0;
-        if (h) decr_curdir_usage(h);
+        if ((h = PD_CURDIR(r)[i]) != 0) decr_curdir_usage(h);
     }
 #endif
 #if CONF_WITH_USER_ASPACE
@@ -637,6 +635,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             return ENSMEM;
         }
         p->p_flags = (ULONG)(uintptr_t)path;   /* set the flags */
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_USER_ASPACE
         rc = init_pd_files(p);
         if (rc != E_OK) {
             kproc_destroy(p);
@@ -644,6 +643,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             xexec_free(p);
             return rc;
         }
+#else
+        (void)init_pd_files(p);
+#endif
 #if CONF_WITH_USER_ASPACE
         hand_over(p);
 #endif
@@ -896,6 +898,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return ENSMEM;
     }
 #endif
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_USER_ASPACE
     rc = init_pd_files(cur_p);
     if (rc != E_OK) {
         kproc_destroy(cur_p);
@@ -903,6 +906,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         xexec_free(cur_p);
         return rc;
     }
+#else
+    (void)init_pd_files(cur_p);
+#endif
 #if CONF_WITH_USER_ASPACE
     if (flag == PE_LOAD)
         hand_over(cur_p);
@@ -1022,14 +1028,18 @@ static LONG init_pd_cwd_from(PD *p, PD *source)
     return pfs_cwd_inherit(p, source);
 #else
     int i, dn;
+#if CONF_WITH_USER_ASPACE
     for (i = 0; i < NUMCURDIR; i++) {
         dn = PD_CURDIR(source)[i];
         if (dn >= NCURDIR) return EIMBA;
-        if (dn && dirtbl[dn].dnd && dirtbl[dn].use == 0x7fff) return ENSMEM;
+        if (dn && dirtbl[dn].use == 0x7fff) return ENSMEM;
     }
+#endif
     for (i = 0; i < NUMCURDIR; i++) {
         dn = PD_CURDIR(source)[i];
-        if (dn && !dirtbl[dn].dnd) dn = 0; /* invalidated media: root */
+#if CONF_WITH_USER_ASPACE
+        if (dn && !dirtbl[dn].use) dn = 0; /* invalidated media: root */
+#endif
         if (dn) dirtbl[dn].use++;
         PD_CURDIR(p)[i] = dn;
     }
@@ -1040,8 +1050,12 @@ static LONG init_pd_cwd_from(PD *p, PD *source)
 
 static LONG init_pd_files(PD *p)
 {
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_USER_ASPACE
     LONG rc = init_pd_cwd_from(p, run);
     if (rc != E_OK) return rc;
+#else
+    (void)init_pd_cwd_from(p, run);
+#endif
     /* Preserve Pexec's existing standard-file inheritance policy. */
     (void)init_pd_standard_files_from(p, run);
     return E_OK;

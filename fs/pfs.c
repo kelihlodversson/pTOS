@@ -568,7 +568,21 @@ LONG pfs_do_rmdir(const char *path)
     const char *name;
     BOOL owned;
     LONG rc;
+    char trimmed[LEN_ZPATH];
+    size_t length = strlen(path);
 
+    /* rmdir consumes a parent/name pair, not a reference to its target.
+     * Strip only trailing separators, retaining the root sentinel. This
+     * avoids acquiring a temporary target hold that would either reject an
+     * unused directory or become dangling when removal frees its DND. */
+    if (length > 1 && path[length-1] == SLASH)
+    {
+        while (length > 1 && path[length-1] == SLASH) length--;
+        if (length >= sizeof(trimmed)) return ERANGE;
+        memcpy(trimmed, path, length);
+        trimmed[length] = 0;
+        path = trimmed;
+    }
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;

@@ -8,7 +8,7 @@ PD *run = &parent;
 LONG drvbits;
 static UBYTE parent_dirs[NUMCURDIR], child_dirs[NUMCURDIR], grandchild_dirs[NUMCURDIR];
 static unsigned char live[4096];
-static BOOL release_reentry;
+static BOOL release_reentry, removing;
 static unsigned acquired, released;
 static LONG lookup_error;
 static PD *retiring;
@@ -34,8 +34,16 @@ static LONG test_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
 static LONG lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
 {
     CHECK(run == &parent && path && dir->index > 0);
+    if (removing) CHECK(strcmp(path,"EMPTY")); /* remove via parent/name, not target cookie */
     if (lookup_error) return lookup_error;
     *out=*dir; out->index=++acquired; live[acquired]=1;
+    return E_OK;
+}
+static LONG remove_directory(PFSCOOKIE *dir, const char *name)
+{
+    CHECK(dir->fs == &fat_pfs_ops && live[dir->index]);
+    if (!name[0]) return EACCDN; /* drive root */
+    CHECK(!strcmp(name,"EMPTY"));
     return E_OK;
 }
 static void release(PFSCOOKIE *cookie)
@@ -58,7 +66,13 @@ int main(void)
     char path[LEN_ZPATH];
     unsigned baseline;
     fat_pfs_ops.root=test_root; fat_pfs_ops.lookup=lookup; fat_pfs_ops.release=release;
+    fat_pfs_ops.rmdir=remove_directory;
     parent.p_curdrv=child.p_curdrv=2;
+    removing=TRUE;
+    CHECK(pfs_do_rmdir("C:\\EMPTY\\") == E_OK && acquired == released);
+    CHECK(pfs_do_rmdir("C:\\EMPTY\\\\") == E_OK && acquired == released);
+    CHECK(pfs_do_rmdir("C:\\") == EACCDN && acquired == released);
+    removing=FALSE;
     CHECK(pfs_do_chdir("C:\\PARENT") == E_OK);
     old=parent_dirs[2]; CHECK(pfs_do_getdir(path,3) == E_OK && !strcmp(path,"PARENT"));
     CHECK(pfs_cwd_inherit(&child,&parent) == E_OK);

@@ -140,6 +140,15 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
     ptest_assert_msg(Fforce(0,saved) == 0 && Fclose(saved) == 0 && Fclose(file) == 0 &&
                      Dsetpath("C:\\") == 0 &&
                      Fdelete("C:\\PCLABI.TMP") == 0,"resource-copy fixture once-only cleanup");
+    ptest_assert_msg(Dcreate("C:\\PCLDIR") == 0 && Ddelete("C:\\PCLDIR\\") == 0,
+                     "trailing-slash removal releases only its parent lookup cookie");
+#if defined(TEST_WITH_PLUGGABLE_FS)
+    ptest_assert_msg(Dcreate("C:\\PCLDIR") == 0 && Dsetpath("C:\\PCLDIR") == 0 &&
+                     Ddelete("C:\\PCLDIR") == -36L && Ddelete("C:\\PCLDIR\\") == -36L,
+                     "an independently retained CWD blocks removal with or without trailing slash");
+    ptest_assert_msg(Dsetpath("C:\\") == 0 && Ddelete("C:\\PCLDIR\\") == 0,
+                     "final CWD release permits exactly-once directory removal");
+#endif
 }
 
 #if defined(TEST_WITH_MMAP)
